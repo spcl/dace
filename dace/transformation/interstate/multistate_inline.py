@@ -19,14 +19,16 @@ from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, ReturnBlock, 
 
 
 def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
-    """Whether two descriptors carry the same shape and the same strides.
+    """Whether two descriptors carry the same shape, strides and offset.
 
     ``Scalar`` reports strides as a list and ``Array`` as a tuple, and ``same_value`` counts the
     sequence type -- so a ``Scalar`` facing a length-1 ``Array``, the ordinary nested-SDFG boundary,
-    would refuse the inline over a container type. Compare by value.
+    would refuse the inline over a container type. Compare by value. A connector keeping an offset of
+    its own (one-based indices) addresses the container in another index space than the parent.
     """
     return (symbolic.same_value(tuple(outer_desc.shape), tuple(inner_desc.shape))
-            and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides)))
+            and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides))
+            and symbolic.same_value(tuple(outer_desc.offset), tuple(inner_desc.offset)))
 
 
 def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
@@ -311,18 +313,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # the parent sees ``inner_K = outer_expr`` as a normal iedge
         # assignment. Inner symbols absent from the outer scope get
         # added to the outer SDFG's symbol table with their inner
-        # type, preserving the strict-typing contract.
+        # type, preserving the strict-typing contract. A constant value
+        # (``{'M': 20}``) is substituted instead: there is no expression to
+        # propagate, and the inlined descriptors become constant-sized.
         identity_mapping: Dict[Any, Any] = {}
+        constant_mapping: Dict[Any, Any] = {}
         non_identity_mapping: Dict[str, str] = {}
         for k, v in nsdfg_node.symbol_mapping.items():
             if str(k) == str(v):
                 identity_mapping[k] = v
+            elif not symbolic.issymbolic(v):
+                constant_mapping[k] = v
             else:
                 non_identity_mapping[str(k)] = symbolic.symstr(v)
         # Two-step replacement (N -> __dacesym_N --> map[N]) for any
         # identity entries we want safe_replace's clash-handling for.
-        if identity_mapping:
-            symbolic.safe_replace(identity_mapping, nsdfg.replace_dict)
+        if identity_mapping or constant_mapping:
+            symbolic.safe_replace({**identity_mapping, **constant_mapping}, nsdfg.replace_dict)
 
         # The replacement restates the descriptors of this SDFG and the symbol mappings of the nested SDFGs within,
         # but not the connector descriptors inside those. Symbol mapping entries that are not plain symbols (e.g.,
@@ -469,6 +476,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # so the iedge assignments use the post-rename name.
         non_identity_mapping = {sym_replacements.get(k, k): v for k, v in non_identity_mapping.items()}
 
+        # Replace nested SDFG parents with new SDFG
+        for nstate in nsdfg.states():
+            nstate.sdfg = sdfg
+            for node in nstate.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    node.sdfg.parent_sdfg = sdfg
+                    node.sdfg.parent_nsdfg_node = node
+
+        # A key only the connector descriptors used binds nothing once the parent's containers replace them; the
+        # inlined states resolve their containers in the parent now.
+        used_inside = set()
+        for block in nsdfg.nodes():
+            used_inside |= block.used_symbols(all_symbols=True)
+        for ise in nsdfg.edges():
+            used_inside |= ise.data.free_symbols
+        non_identity_mapping = {k: v for k, v in non_identity_mapping.items() if k in used_inside}
+
         # Reconnect state machine. For each edge ``predecessor -> nsdfg_state``
         # we redirect it to ``predecessor -> source``; while doing so, plant the
         # non-identity symbol_mapping entries as interstate-edge assignments
@@ -503,14 +527,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Modify start state as necessary
         if outer_start_state is nsdfg_state:
             outer_state.parent_graph.start_block = outer_state.parent_graph.node_id(source)
-
-        # Replace nested SDFG parents with new SDFG
-        for nstate in nsdfg.states():
-            nstate.sdfg = sdfg
-            for node in nstate.nodes():
-                if isinstance(node, nodes.NestedSDFG):
-                    node.sdfg.parent_sdfg = sdfg
-                    node.sdfg.parent_nsdfg_node = node
 
         #######################################################
         # Remove nested SDFG and state

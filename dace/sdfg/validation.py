@@ -210,8 +210,9 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'Trying to read an inaccessible data container "{container}" '
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
-    # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+    # Check for interstate edges that write to scalars or arrays. Per region: this runs once per region, so
+    # passing the SDFG re-checked its edges every time and never checked a nested region's own
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
 
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
@@ -275,9 +276,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
 
-        # Test the return value.
+        # Test the return value. Only the top-level SDFG returns: a nested SDFG's ``__return*`` containers are
+        # connectors named after the caller's containers, which may be any subset of its return values.
         tuple_return_args = {n for n in sdfg._arrays if n.startswith('__return_')}
-        if '__return' in sdfg._arrays and tuple_return_args:
+        if sdfg.parent is not None:
+            tuple_return_args = set()
+        elif '__return' in sdfg._arrays and tuple_return_args:
             raise InvalidSDFGError(
                 'Ambiguous return values: an SDFG cannot have both a `__return` (single value) '
                 'and `__return_<i>` (tuple) data descriptor.', sdfg, None)
@@ -569,7 +573,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
         if isinstance(node, nd.EntryNode):
             try:
-                state.exit_node(node)
+                exit_node = state.exit_node(node)
             except StopIteration:
                 raise InvalidSDFGNodeError(
                     "Entry node does not have matching "
@@ -578,6 +582,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                 )
+
+            # A scope's entry and exit are two views of one Map/Consume object, and code that pairs them relies on
+            # that identity (CPU codegen keys the map's brace on it). Nodes cloned against separate deepcopy memos
+            # each get their own object, which otherwise first surfaces as unbalanced C++.
+            if isinstance(node, nd.MapEntry):
+                shared_scope = node.map is exit_node.map
+            elif isinstance(node, nd.ConsumeEntry):
+                shared_scope = node.consume is exit_node.consume
+            else:
+                shared_scope = True
+            if not shared_scope:
+                raise InvalidSDFGNodeError(
+                    "Entry and exit nodes do not share the same scope object (copied separately?)", state.parent_graph,
+                    state_id, nid)
 
         if isinstance(node, (nd.EntryNode, nd.ExitNode)):
             for iconn in node.in_connectors:

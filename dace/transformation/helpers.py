@@ -646,6 +646,14 @@ def nest_state_subgraph(sdfg: SDFG,
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
 
+    def boundary_descriptor(name: str) -> dace.data.Data:
+        """A View is a view only next to the data it views; the parent keeps its ``views`` edge, so inside the
+        nested SDFG the connector is a plain array."""
+        desc = sdfg.arrays[name]
+        datadesc = desc.as_array() if isinstance(desc, dace.data.View) else copy.deepcopy(desc)
+        datadesc.transient = False
+        return datadesc
+
     # Connected source/sink nodes outside subgraph become global data
     # descriptors in nested SDFG
     input_names = {}
@@ -656,9 +664,7 @@ def nest_state_subgraph(sdfg: SDFG,
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-            datadesc.transient = False
-            nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            nested_names[name] = nsdfg.add_datadesc(name, boundary_descriptor(name), find_new_name=True)
         new_name = nested_names[name]
         input_names[edge] = new_name
     for edge in outputs:
@@ -666,9 +672,7 @@ def nest_state_subgraph(sdfg: SDFG,
             continue
         name = edge.data.data
         if name not in nested_names:
-            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-            datadesc.transient = False
-            nested_names[name] = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            nested_names[name] = nsdfg.add_datadesc(name, boundary_descriptor(name), find_new_name=True)
         new_name = nested_names[name]
         output_names[edge] = new_name
     ###################
@@ -737,6 +741,10 @@ def nest_state_subgraph(sdfg: SDFG,
             if edge.data.is_empty():
                 continue
             edge.data.data = new_edge.data.data
+            # A bare whole-container memlet (``Memlet(data='s')``) names the whole connector, which validation
+            # can only check through an explicit subset.
+            if edge.data.subset is None:
+                edge.data.subset = Range.from_array(nsdfg.arrays[edge.data.data])
 
     # Add nested SDFG node to the input state. Ordered: these become the node's in/out
     # CONNECTORS, so a hash-ordered set here reorders the nested SDFG's interface.

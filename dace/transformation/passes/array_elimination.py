@@ -264,11 +264,15 @@ class ArrayElimination(ppl.Pass):
                 # CARRIER is the same container as the one being merged
                 # (``acc[c]`` in s243); this guard catches the orthogonal
                 # case where the carrier is a DIFFERENT transient.
+                # Sources that all feed one consumer (the bounds of a dynamic map range) already order every
+                # reader behind all of them, so folding them changes no order.
                 if state.in_degree(first_node) == 0 and len(nodeset) >= 2:
-                    if _state_has_read_write_sibling_carrier(state, data_container):
+                    consumers = {e.dst for node in nodeset for e in state.out_edges(node)}
+                    if len(consumers) > 1 and _state_has_read_write_sibling_carrier(state, data_container):
                         continue
                 if state.out_degree(first_node) == 0 and len(nodeset) >= 2:
-                    if _state_has_read_write_sibling_carrier(state, data_container):
+                    producers = {e.src for node in nodeset for e in state.in_edges(node)}
+                    if len(producers) > 1 and _state_has_read_write_sibling_carrier(state, data_container):
                         continue
 
                 for node in nodeset[first_node_idx + 1:]:

@@ -391,8 +391,11 @@ class PermuteDimensions(ppl.Pass):
                                               old_name=new_name,
                                               new_name=old_name)
 
-        # shapes/maps added above; memlets not yet permuted. recurse into nested SDFGs first
+        # shapes/maps added above; memlets not yet permuted. recurse into nested SDFGs first; a skipped state keeps
+        # the old layout, and so do the nested SDFGs in it (their connectors are the outer containers)
         for state in sdfg.states():
+            if sdfg == root and state in permute_states_to_skip:
+                continue
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
                     new_permute_map = dict()

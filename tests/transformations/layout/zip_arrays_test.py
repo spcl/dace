@@ -29,8 +29,14 @@ def madd(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
 
 @dace.program
 def mixed(A: dace.float64[N], K: dace.int64[N], C: dace.float64[N]):
+    # An explicit tasklet: the frontend would read the integer ``K[i]`` into a symbol inside a nested SDFG,
+    # and the struct path cannot address one field of a struct element there.
     for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
-        C[i] = A[i] + K[i]
+        with dace.tasklet:
+            a << A[i]
+            k << K[i]
+            c >> C[i]
+            c = a + k
 
 
 def test_zip_homogeneous_fields():
@@ -63,7 +69,12 @@ def test_zip_homogeneous_fields():
 @dace.program
 def mixed3(A: dace.float64[N], K: dace.int32[N], F: dace.float32[N], C: dace.float64[N]):
     for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
-        C[i] = A[i] + K[i] + F[i]
+        with dace.tasklet:
+            a << A[i]
+            k << K[i]
+            f << F[i]
+            c >> C[i]
+            c = a + k + f
 
 
 def test_zip_heterogeneous_struct_true_aos():
@@ -125,9 +136,10 @@ def test_zip_preserves_wcr_reduction():
     ref0, ref1 = KRED * x, 2.0 * KRED * x
 
     sdfg = dual_reduce.to_sdfg(simplify=True)
-    assert _wcr_count(sdfg) == 2
+    wcr_edges = _wcr_count(sdfg)  # both edges of each reduction's memlet path carry the wcr
+    assert wcr_edges == 4
     ZipArrays(zip_map={"Z": ["acc0", "acc1"]}).apply_pass(sdfg, {})
-    assert _wcr_count(sdfg) == 2, "Zip dropped the WCR"
+    assert _wcr_count(sdfg) == wcr_edges, "Zip dropped the WCR"
     sdfg.validate()
 
     Z = numpy.zeros((_N, 2))
@@ -143,9 +155,10 @@ def test_zip_unzip_wcr_roundtrip():
     ref0, ref1 = KRED * x, 2.0 * KRED * x
 
     sdfg = dual_reduce.to_sdfg(simplify=True)
+    wcr_edges = _wcr_count(sdfg)
     ZipArrays(zip_map={"Z": ["acc0", "acc1"]}).apply_pass(sdfg, {})
     UnzipArrays(unzip_map={"Z": ["acc0", "acc1"]}).apply_pass(sdfg, {})
-    assert _wcr_count(sdfg) == 2, "Zip->Unzip dropped the WCR"
+    assert _wcr_count(sdfg) == wcr_edges == 4, "Zip->Unzip dropped the WCR"
     sdfg.validate()
 
     a0, a1 = numpy.zeros(_N), numpy.zeros(_N)

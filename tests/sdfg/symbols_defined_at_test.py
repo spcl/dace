@@ -494,7 +494,7 @@ def test_forgetting_an_sdfg_resolves_it_again():
     """
     A resolver holds on to what it resolved until it is told that the SDFG changed, and then only drops that SDFG.
     """
-    sdfg = _make_sdfg("forget", nested=True)
+    sdfg = make_sdfg("forget", nested=True)
     outer_state = sdfg.states()[0]
     nsdfg_node = next(n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG))
     inner_state = nsdfg_node.sdfg.states()[0]

@@ -12,7 +12,7 @@ from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.transformation import transformation, helpers
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 @transformation.explicit_cf_compatible
@@ -98,6 +98,31 @@ class MapFission(transformation.SingleStateTransformation):
         return inputs & outputs
 
     @staticmethod
+    def iteration_invariant_copies(state: sd.SDFGState, map_entry: nodes.MapEntry, subgraph, border_arrays) -> Set[str]:
+        """Border transients written only by copies from ``map_entry`` that read no map parameter.
+
+        Every iteration copies the same value into them, so fission keeps them unwidened: the copy moves in
+        front of the new maps once, and every new map reads the one value.
+        """
+        params = set(map_entry.map.params)
+        candidates: Dict[str, bool] = {}
+        for node in subgraph.nodes():
+            if not isinstance(node, nodes.AccessNode) or node.data not in border_arrays:
+                continue
+            in_edges = state.in_edges(node)
+            invariant = bool(in_edges)
+            for e in in_edges:
+                if e.src is not map_entry or e.data.is_empty():
+                    invariant = False
+                    break
+                src_subset = e.data.get_src_subset(e, state)
+                if src_subset is None or params & {str(s) for s in src_subset.free_symbols}:
+                    invariant = False
+                    break
+            candidates[node.data] = candidates.get(node.data, True) and invariant
+        return {name for name, invariant in candidates.items() if invariant}
+
+    @staticmethod
     def _outside_map(node, scope_dict, entry_nodes):
         """ Returns True iff node is not in any of the scopes spanned by
             entry_nodes. """
@@ -149,6 +174,18 @@ class MapFission(transformation.SingleStateTransformation):
                                 return False
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
+            # A view of a connector container selects its window with the outer map's parameters; the fissioned maps
+            # would leave that view outside them, binding the whole container instead of one iteration's window.
+            for st in nsdfg_node.sdfg.states():
+                for view in st.data_nodes():
+                    if not isinstance(view.desc(nsdfg_node.sdfg), dt.View):
+                        continue
+                    view_edge = sdutil.get_view_edge(st, view)
+                    if (view_edge is not None and not view_edge.data.is_empty()
+                            and set(map_node.map.params) & {str(s)
+                                                            for s in view_edge.data.free_symbols}):
+                        return False
+
             # Reject if any interstate edge inside the nested SDFG has an
             # assignment that depends on the map iterator, either directly or
             # through a nested-SDFG input connector whose incoming memlet
@@ -262,6 +299,26 @@ class MapFission(transformation.SingleStateTransformation):
                         if isinstance(e.dst, nodes.AccessNode):
                             if e.dst.data in not_subgraph:
                                 return False
+
+                # A View between the components would stay bound by the removed map's parameters outside the new maps,
+                # and widening it would rebind it: one descriptor holds one binding.
+                if any(
+                        isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dt.View)
+                        for n in sg.scope_children()[None]):
+                    return False
+
+                # A border transient filled by a copy from outside the map is widened by the map extent and the
+                # copy moves out of the map. A copy reading the same element in every iteration instead keeps the
+                # transient as it is (see ``iteration_invariant_copies``); one that reads with only some of the
+                # map parameters would have to broadcast, which one copy cannot express.
+                params = set(map_node.map.params)
+                invariant = MapFission.iteration_invariant_copies(graph, map_node, sg, border_arrays)
+                for e in graph.out_edges(map_node):
+                    if (isinstance(e.dst, nodes.AccessNode) and e.dst.data in border_arrays
+                            and e.dst.data not in invariant and not e.data.is_empty()):
+                        src_subset = e.data.get_src_subset(e, graph)
+                        if src_subset is None or not params <= {str(s) for s in src_subset.free_symbols}:
+                            return False
 
         if expr_index == 1 and not self.fission_makes_progress(subgraphs, total_components):
             return False
@@ -420,6 +477,8 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Collect all border arrays and code->code edges
             arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
+            if self.expr_index == 0:
+                arrays -= MapFission.iteration_invariant_copies(state, map_entry, subgraph, arrays)
             scalars = defaultdict(list)
             for _, component_out in components:
                 for e in subgraph.out_edges(component_out):
@@ -684,13 +743,6 @@ class MapFission(transformation.SingleStateTransformation):
                                     else:
                                         e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
-        # A connector selecting one element of an augmented container becomes a view of it
-        for state in parent.states():
-            for node in state.nodes():
-                if (isinstance(node, nodes.NestedSDFG)
-                        and any(e.data.data in modified_arrays for e in state.all_edges(node))):
-                    node.integrate_into_parent()
-
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
             for edge in graph.in_edges(map_entry):
@@ -717,6 +769,14 @@ class MapFission(transformation.SingleStateTransformation):
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
+
+        # A connector selecting one element of an augmented container becomes a view of it. Integration resolves the
+        # symbols defined at each node, which needs well-formed scopes: the outer map must be gone first
+        for state in parent.states():
+            for node in state.nodes():
+                if (isinstance(node, nodes.NestedSDFG)
+                        and any(e.data.data in modified_arrays for e in state.all_edges(node))):
+                    node.integrate_into_parent()
 
         # NOTE: It is better to manually call memlet propagation here to ensure that all subsets are properly updated.
         # This can solve issues when, e.g., applying MapFission through `SDFG.apply_transformations_repeated`.
