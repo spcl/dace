@@ -108,6 +108,17 @@ def test_a_copy_beside_an_unordered_writer_stays():
     assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
 
 
+def test_a_copy_ordering_the_overwrite_through_the_snapshot_stays():
+    """CloudSC's ``zqx`` shape: only the snapshot's empty edge orders the clobber after the read, so dropping the
+    snapshot would leave ``use`` and ``clobber`` unordered."""
+    sdfg = copy_beside_a_writer(ordered=False)
+    state = sdfg.start_state
+    snapshot = next(node for node in state.data_nodes() if node.data == 's')
+    clobber = next(node for node in state.nodes() if isinstance(node, nodes.Tasklet) and node.label == 'clobber')
+    state.add_nedge(snapshot, clobber, dace.Memlet())
+    assert FoldScalarReadCopies().apply_pass(sdfg, {}) is None
+
+
 def test_a_copy_whose_writer_follows_the_read_folds():
     sdfg = copy_beside_a_writer(ordered=True)
     assert FoldScalarReadCopies().apply_pass(sdfg, {}) == 1
@@ -161,6 +172,7 @@ if __name__ == '__main__':
     test_a_recurrence_whose_write_follows_the_read_folds()
     test_a_copy_out_of_the_node_its_writer_fills_folds()
     test_a_copy_beside_an_unordered_writer_stays()
+    test_a_copy_ordering_the_overwrite_through_the_snapshot_stays()
     test_a_copy_whose_writer_follows_the_read_folds()
     test_a_scalar_read_again_in_another_state_stays()
     test_a_result_copy_beside_an_unordered_reader_stays()

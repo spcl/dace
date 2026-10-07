@@ -48,6 +48,10 @@ def foldable(sdfg: SDFG, state: SDFGState, copy: Any, counts: Dict[str, int]) ->
     consumers = state.out_edges(scalar)
     if not consumers or not all(isinstance(edge.dst, nodes.Tasklet) for edge in consumers):
         return None
+    # An empty edge out of the snapshot orders the read before a later overwrite of the source; folding would
+    # leave the reading tasklets unordered against that overwrite.
+    if any(edge.data.is_empty() for edge in consumers):
+        return None
     root = state.memlet_path(copy)[0].src
     if not isinstance(root, nodes.AccessNode) or root.data == scalar.data:
         return None
