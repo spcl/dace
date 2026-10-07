@@ -50,6 +50,7 @@ class Stencil(dace.library.LibraryNode):
     default_implementation = "pure"
 
     code = dace.properties.CodeProperty(
+        category="Semantics",
         desc=(
             "Stencil code accessing all the input connector at constant "
             "offsets relative to the center, e.g.: "
@@ -60,6 +61,7 @@ class Stencil(dace.library.LibraryNode):
     iterator_mapping = dace.properties.DictProperty(
         str,
         tuple,
+        category="Semantics",
         desc=(
             "Dictionary mapping lower-dimensional input fields to a tuple "
             " of booleans indicating which iterators to use for their "
@@ -69,6 +71,7 @@ class Stencil(dace.library.LibraryNode):
         default=collections.OrderedDict(),
     )
     boundary_conditions = dace.properties.OrderedDictProperty(
+        category="Semantics",
         desc=(
             "Boundary condition specifications for each accessed field, on "
             "the form: {'b': {'btype': 'constant', 'value': 3}}."

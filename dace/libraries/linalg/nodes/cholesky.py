@@ -122,7 +122,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
-    lower = dace.properties.Property(dtype=bool, default=True)
+    lower = dace.properties.Property(dtype=bool, default=True, category="Semantics")
 
     def __init__(self, name, lower=True, *args, **kwargs):
         super().__init__(

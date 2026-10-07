@@ -35,6 +35,7 @@ class CopyLibraryNode(nodes.LibraryNode):
     sync = properties.Property(
         dtype=bool,
         default=True,
+        category="Scheduling",
         desc="Emit __syncthreads() barriers around the SharedMemoryCollective copy (default True).",
     )
 

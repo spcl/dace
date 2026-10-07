@@ -82,14 +82,16 @@ class Ger(LibraryNode):
     default_implementation = None
 
     # Object fields
-    n_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    m_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    n_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1, category="Scheduling")
+    m_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1, category="Scheduling")
 
-    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
-    m = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("m"))
+    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"), category="Semantics")
+    m = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("m"), category="Semantics")
 
     alpha = SymbolicProperty(
-        default=1, desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A"
+        default=1,
+        category="Semantics",
+        desc="A scalar which will be multiplied with the outer product x*yT before adding matrix A",
     )
 
     def __init__(self, name, n=dace.symbolic.symbol("n"), m=dace.symbolic.symbol("m"), alpha=1, location=None):
