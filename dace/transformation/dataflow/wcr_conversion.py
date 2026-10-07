@@ -1429,7 +1429,14 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                     in_memlet = Memlet(data=self.inp.data, subset=copy.deepcopy(in_subset))
                 else:
                     in_memlet = Memlet.from_array(self.inp.data, sdfg.arrays[self.inp.data])
-                state.add_edge(read_back, None, new_tasklet, '__in1', _dst_memlet())
+                # A copy inside a map reads the destination back through the map entries it sits in, as expr 1
+                # does; a read-back added beside the scope would cross into it without one.
+                entries = []
+                scope = state.entry_node(self.inp)
+                while scope is not None:
+                    entries.insert(0, scope)
+                    scope = state.entry_node(scope)
+                state.add_memlet_path(read_back, *entries, new_tasklet, memlet=_dst_memlet(), dst_conn='__in1')
                 state.add_edge(self.inp, edge.src_conn, new_tasklet, '__in2', in_memlet)
                 state.add_edge(new_tasklet, '__out', self.output, edge.dst_conn, _dst_memlet())
             else:
