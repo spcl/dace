@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Resolve a hybrid state by wrapping its host code that touches arrays into size-1 GPU maps."""
+
 from collections import deque
 from copy import deepcopy
 
@@ -27,8 +28,9 @@ def wrap_host_code(sdfg: SDFG, state: SDFGState, host_maps: OrderedSet[nodes.Map
 
     for partition in partitions(state, separators):
         if not any(
-                isinstance(node, nodes.AccessNode) and not isinstance(sdfg.arrays[node.data], data.Scalar)
-                for node in partition):
+            isinstance(node, nodes.AccessNode) and not isinstance(sdfg.arrays[node.data], data.Scalar)
+            for node in partition
+        ):
             continue
         peel_outer_access_nodes(state, partition)
         closed = close_scopes(state, partition, separators)
@@ -51,16 +53,23 @@ def partitions(state: SDFGState, separators: OrderedSet[nodes.Node]) -> list[Ord
 def peel_outer_access_nodes(state: SDFGState, group: OrderedSet[nodes.Node]) -> None:
     """Peel access nodes off the group's boundary until none is left there: they stay outside the wrapper."""
     while True:
-        outer = OrderedSet(node for node in group if isinstance(node, nodes.AccessNode) and (all(
-            edge.src not in group for edge in state.in_edges(node)) or all(edge.dst not in group
-                                                                           for edge in state.out_edges(node))))
+        outer = OrderedSet(
+            node
+            for node in group
+            if isinstance(node, nodes.AccessNode)
+            and (
+                all(edge.src not in group for edge in state.in_edges(node))
+                or all(edge.dst not in group for edge in state.out_edges(node))
+            )
+        )
         if not outer:
             return
         group -= outer
 
 
-def close_scopes(state: SDFGState, region: OrderedSet[nodes.Node],
-                 separators: OrderedSet[nodes.Node]) -> OrderedSet[nodes.Node] | None:
+def close_scopes(
+    state: SDFGState, region: OrderedSet[nodes.Node], separators: OrderedSet[nodes.Node]
+) -> OrderedSet[nodes.Node] | None:
     """``region`` grown until every map scope it touches lies wholly inside it, or None.
 
     A size-1 map around half a scope is not a scope. None when closing would swallow a node of ``separators``
@@ -89,7 +98,7 @@ def close_scopes(state: SDFGState, region: OrderedSet[nodes.Node],
 
 def wrap_in_size1_map(state: SDFGState, region: OrderedSet[nodes.Node]) -> tuple[nodes.MapEntry, nodes.MapExit]:
     label, param = helpers.new_map_identifiers(state, "size1_wrap_region", "__wrap_i")
-    map_entry, map_exit = state.add_map(name=label, ndrange={param: '0:1'}, schedule=dtypes.ScheduleType.GPU_Device)
+    map_entry, map_exit = state.add_map(name=label, ndrange={param: "0:1"}, schedule=dtypes.ScheduleType.GPU_Device)
 
     # Lists, not sets: the connector numbering follows this order.
     boundary_in = [edge for node in region for edge in state.in_edges(node) if edge.src not in region]
@@ -158,8 +167,9 @@ def forward_input_only_map_data(state: SDFGState, map_entry: nodes.MapEntry, map
         state.add_edge(map_exit, out_conn, state.add_access(memlet.data), None, deepcopy(memlet))
 
 
-def last_access_nodes_in_map(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit,
-                             names: OrderedSet[str]) -> dict[str, nodes.AccessNode]:
+def last_access_nodes_in_map(
+    state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, names: OrderedSet[str]
+) -> dict[str, nodes.AccessNode]:
     """The access node of each name in ``names`` that a breadth-first walk from the entry reaches last."""
     last_access: dict[str, nodes.AccessNode] = {}
     queue = deque([map_entry])

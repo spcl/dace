@@ -5,7 +5,6 @@ from .ast_node import AST_Node
 
 
 class AST_ArrayAccess(AST_Node):
-
     def __init__(self, context, arrayname, accdims):
         AST_Node.__init__(self, context)
         self.arrayname = arrayname
@@ -31,13 +30,14 @@ class AST_ArrayAccess(AST_Node):
         # The basetype of an array access is the same as the basetype as the
         # array that is acccessed.
         vardef = self.search_vardef_in_scope(self.arrayname.get_name())
-        return (vardef.get_basetype())
+        return vardef.get_basetype()
 
     def get_dims(self):
         from .ast_matrix import AST_Matrix
         from .ast_loop import AST_ForLoop
         from .ast_values import AST_Constant, AST_Ident
         from .ast_range import AST_RangeExpression
+
         # array indexing has many forms/cases in matlab, here we implement
         # the semantics we are sure about
         dims = []
@@ -64,8 +64,9 @@ class AST_ArrayAccess(AST_Node):
                 elif isinstance(acc, AST_Ident):
                     vardef = self.search_vardef_in_scope(acc.get_name())
                     if vardef is None:
-                        raise ValueError("No definition found for " + acc.get_name() +
-                                         " which is used in Array Access: " + str(self))
+                        raise ValueError(
+                            "No definition found for " + acc.get_name() + " which is used in Array Access: " + str(self)
+                        )
                     if isinstance(vardef, AST_ForLoop) and acc.get_name() == vardef.var.get_name():
                         d = vardef.initializer.get_dims()[:-1]
                         if d != [1]:
@@ -104,6 +105,7 @@ class AST_ArrayAccess(AST_Node):
 
     def is_data_dependent_access(self):
         from .ast_values import AST_Constant
+
         res = False
         for a in self.accdims:
             if not isinstance(a, AST_Constant):
@@ -113,6 +115,7 @@ class AST_ArrayAccess(AST_Node):
         from .ast_values import AST_Ident
         from .ast_loop import AST_ForLoop
         from .ast_range import AST_RangeExpression
+
         # add a new variable to hold the result of this expression
         dims = self.get_dims()
         basetype = self.get_basetype()
@@ -137,7 +140,7 @@ class AST_ArrayAccess(AST_Node):
                 if isinstance(acc, AST_Ident):
                     vardef = self.search_vardef_in_scope(acc.get_name())
                     if vardef is None:
-                        raise ValueError('No definition found for ' + str(acc.get_name()))
+                        raise ValueError("No definition found for " + str(acc.get_name()))
                     elif isinstance(vardef, AST_ForLoop):
                         access_data_nodes.add(vardef.var)
                         access_dims.append(vardef.var.get_name())
@@ -150,7 +153,7 @@ class AST_ArrayAccess(AST_Node):
                         access_data_nodes.add(acc.rhs)
                     if (acc.lhs is None) and (acc.rhs is None):
                         d = arrdesc.shape
-                        access_dims.append('0:' + str(d[idx]))
+                        access_dims.append("0:" + str(d[idx]))
                 else:
                     acc.generate_code(sdfg, state)
                     access_data_nodes.add(acc)
@@ -162,20 +165,21 @@ class AST_ArrayAccess(AST_Node):
                 a = aa.get_name_in_sdfg(sdfg)
                 mdict[a] = a
             if len(mdict) == 0:
-                mdict = {'__DAPUNUSED_i': '0:1'}
-            men, mex = s.add_map('datadepacc', mdict)
-            men.add_in_connector('IN_1')
-            men.add_out_connector('OUT_1')
-            s.add_edge(arrnode, None, men, 'IN_1', dace.memlet.Memlet.from_array(arrnode.data, arrdesc))
+                mdict = {"__DAPUNUSED_i": "0:1"}
+            men, mex = s.add_map("datadepacc", mdict)
+            men.add_in_connector("IN_1")
+            men.add_out_connector("OUT_1")
+            s.add_edge(arrnode, None, men, "IN_1", dace.memlet.Memlet.from_array(arrnode.data, arrdesc))
             for a in access_data_nodes:
                 aname = a.get_name_in_sdfg(sdfg)
                 men.add_in_connector(aname)
                 datanode = a.get_datanode(sdfg, state)
-                s.add_edge(datanode, None, men, aname,
-                           dace.memlet.Memlet.from_array(datanode.data, datanode.desc(sdfg)))
-            tasklet = s.add_tasklet('ident', {'in'}, {'out'}, 'in=out;', dace.Language.CPP)
-            s.add_edge(men, 'OUT_1', tasklet, 'in', dace.memlet.Memlet.simple(arrnode, ','.join(access_dims)))
-            s.add_edge(tasklet, 'out', mex, None, dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
+                s.add_edge(
+                    datanode, None, men, aname, dace.memlet.Memlet.from_array(datanode.data, datanode.desc(sdfg))
+                )
+            tasklet = s.add_tasklet("ident", {"in"}, {"out"}, "in=out;", dace.Language.CPP)
+            s.add_edge(men, "OUT_1", tasklet, "in", dace.memlet.Memlet.simple(arrnode, ",".join(access_dims)))
+            s.add_edge(tasklet, "out", mex, None, dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
             s.add_edge(mex, None, resnode, None, dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
 
         print("The result of " + str(self) + " will be stored in " + str(name))

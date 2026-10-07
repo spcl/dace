@@ -1,15 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests constant folding with globals. """
+"""Tests constant folding with globals."""
+
 import dace
 import numpy as np
 
 from dace.frontend.python import astutils
-from dace.frontend.python.preprocessing import (GlobalResolver, ConditionalCodeResolver, DeadCodeEliminator)
+from dace.frontend.python.preprocessing import GlobalResolver, ConditionalCodeResolver, DeadCodeEliminator
 from dace.frontend.python.parser import DaceProgram
 
 
 class MyConfiguration:
-
     def __init__(self, parameter):
         self.p = parameter * 2
 
@@ -105,7 +105,7 @@ def test_dead_code_elimination_if():
     """
     Tests dead code elimination with compile-time if conditions.
     """
-    sym = dace.symbol('sym', positive=True)
+    sym = dace.symbol("sym", positive=True)
     cfg_symbolic = MyConfiguration(sym)
 
     @dace.program
@@ -116,15 +116,15 @@ def test_dead_code_elimination_if():
             return 4 * A
 
     parsed_code = _analyze_and_unparse_code(test)
-    assert '4' not in parsed_code
-    assert '2' in parsed_code
+    assert "4" not in parsed_code
+    assert "2" in parsed_code
 
 
 def test_dead_code_elimination_ifexp():
     """
     Tests dead code elimination with compile-time ternary expressions.
     """
-    sym = dace.symbol('sym', positive=True)
+    sym = dace.symbol("sym", positive=True)
     cfg_symbolic = MyConfiguration(sym)
 
     @dace.program
@@ -132,8 +132,8 @@ def test_dead_code_elimination_ifexp():
         return 2 * A if cfg_symbolic.q > sym else 4 * A
 
     parsed_code = _analyze_and_unparse_code(test)
-    assert '4' not in parsed_code
-    assert '2' in parsed_code
+    assert "4" not in parsed_code
+    assert "2" in parsed_code
 
 
 def test_dead_code_elimination_noelse():
@@ -149,8 +149,8 @@ def test_dead_code_elimination_noelse():
         return scale * A
 
     parsed_code = _analyze_and_unparse_code(test)
-    assert 'scale' not in parsed_code
-    assert '2' in parsed_code
+    assert "scale" not in parsed_code
+    assert "2" in parsed_code
 
 
 def test_dead_code_elimination_unreachable():
@@ -167,9 +167,9 @@ def test_dead_code_elimination_unreachable():
         return 4 * A
 
     parsed_code = _analyze_and_unparse_code(test)
-    assert '6' not in parsed_code and '4' not in parsed_code  # Dead code
-    assert '5' in parsed_code and '1' in parsed_code  # Condition
-    assert '3' in parsed_code and '2' in parsed_code  # Reachable code
+    assert "6" not in parsed_code and "4" not in parsed_code  # Dead code
+    assert "5" in parsed_code and "1" in parsed_code  # Condition
+    assert "3" in parsed_code and "2" in parsed_code  # Reachable code
 
 
 def test_lambda_args():
@@ -190,7 +190,7 @@ def test_lambda_args():
     assert np.allclose(b, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_instantiated_global()
     test_instantiated_global_resolve_functions()
     test_nested_globals()

@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Unit tests for the GPU to-device transformation. """
+"""Unit tests for the GPU to-device transformation."""
 
 import dace
 import numpy as np
@@ -26,7 +26,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
 
     @dace.program
     def main_program(a: dace.int32):
-        out = np.ndarray((10, ), dtype=np.int32)
+        out = np.ndarray((10,), dtype=np.int32)
         nested_program(a, out)
         return out
 
@@ -58,7 +58,7 @@ def test_write_subset():
 
 def test_write_full():
     """An array nothing reads, that a map overwrites entirely, needs no host-to-device copy; the copy-out remains."""
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def write_full(A: dace.int32[M, N]):
@@ -70,32 +70,36 @@ def test_write_full():
 
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, dace.nodes.AccessNode) and node.data == 'A':
-                assert state.out_degree(node) == 0, (f'"A" is read in {state.label!r}: the host array is '
-                                                     'still staged down before the map overwrites it')
+            if isinstance(node, dace.nodes.AccessNode) and node.data == "A":
+                assert state.out_degree(node) == 0, (
+                    f'"A" is read in {state.label!r}: the host array is still staged down before the map overwrites it'
+                )
     assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.in_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), 'the result never reaches the caller\'s array'
+        isinstance(node, dace.nodes.AccessNode) and node.data == "A" and state.in_degree(node) > 0
+        for state in sdfg.states()
+        for node in state.nodes()
+    ), "the result never reaches the caller's array"
 
 
 def test_a_partially_written_array_keeps_its_copy_in():
     """A map covering only part of the array is staged down: the copy-out returns the whole device buffer, so the
     elements the map skips must be the caller's."""
 
-    M = dace.symbol('M')
+    M = dace.symbol("M")
 
     @dace.program
     def write_interior(A: dace.int32[M]):
-        for i in dace.map[1:M - 1]:
+        for i in dace.map[1 : M - 1]:
             A[i] = i
 
     sdfg = write_interior.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations(simplify=False)
 
     assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.out_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), ('a partially written array lost its copy-in; the '
-                                                                'elements the map skips would come back as garbage')
+        isinstance(node, dace.nodes.AccessNode) and node.data == "A" and state.out_degree(node) > 0
+        for state in sdfg.states()
+        for node in state.nodes()
+    ), "a partially written array lost its copy-in; the elements the map skips would come back as garbage"
 
 
 def test_an_indirect_write_keeps_its_copy_in():
@@ -108,16 +112,24 @@ def test_an_indirect_write_keeps_its_copy_in():
             A[x[i], y[j]] = i + j
 
     sdfg = write_subset_dynamic.to_sdfg(simplify=True)
-    writes = [(e.data.subset, e.data.volume) for state in sdfg.states() for node in state.data_nodes()
-              if node.data == 'A' for e in state.in_edges(node)]
+    writes = [
+        (e.data.subset, e.data.volume)
+        for state in sdfg.states()
+        for node in state.data_nodes()
+        if node.data == "A"
+        for e in state.in_edges(node)
+    ]
     assert writes, 'no write to "A" to inspect'
-    assert any(str(subset) == '0:20, 0:20' and volume != 400
-               for subset, volume in writes), (f'the indirect write no longer over-approximates its subset: {writes}')
+    assert any(str(subset) == "0:20, 0:20" and volume != 400 for subset, volume in writes), (
+        f"the indirect write no longer over-approximates its subset: {writes}"
+    )
 
     sdfg.apply_gpu_transformations(simplify=False)
     assert any(
-        isinstance(node, dace.nodes.AccessNode) and node.data == 'A' and state.out_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes()), 'the indirect write lost its copy-in'
+        isinstance(node, dace.nodes.AccessNode) and node.data == "A" and state.out_degree(node) > 0
+        for state in sdfg.states()
+        for node in state.nodes()
+    ), "the indirect write lost its copy-in"
 
 
 @pytest.mark.gpu
@@ -151,7 +163,7 @@ def test_free_tasklet(transient, scalar):
     if scalar:
         arr_name, arr = sdfg.add_scalar("A", dace.float32, transient=transient)
     else:
-        arr_name, arr = sdfg.add_array("A", (4, ), dace.float32, transient=transient)
+        arr_name, arr = sdfg.add_array("A", (4,), dace.float32, transient=transient)
 
     an = state.add_access(arr_name)
 
@@ -169,7 +181,7 @@ def test_free_tasklet_connectorless_dependency_edge():
     """A global-code tasklet with a connector-less (empty-memlet) dependency in-edge, e.g. one sequencing a
     reduction-init tasklet, is wrapped in the GPU_Device map as a dependency edge without an IN_/OUT_ connector."""
     sdfg = dace.SDFG("gcode_depedge")
-    arr_name, _ = sdfg.add_array("A", (4, ), dace.float32, transient=False)
+    arr_name, _ = sdfg.add_array("A", (4,), dace.float32, transient=False)
     state = sdfg.add_state("main")
 
     seed = state.add_tasklet("seed", {}, {"_o"}, "_o = 0.0")
@@ -186,7 +198,7 @@ def test_free_tasklet_connectorless_dependency_edge():
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()
     test_write_full()

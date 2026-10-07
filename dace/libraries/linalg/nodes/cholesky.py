@@ -21,50 +21,51 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
-    ain_arr = sdfg.add_array('_a', inp_shape, dtype=dtype, strides=inp_desc.strides)
-    bout_arr = sdfg.add_array('_b', out_shape, dtype=dtype, strides=out_desc.strides)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
-    if implementation == 'cuSolverDn':
-        binout_arr = sdfg.add_array('_bt', inp_shape, dtype=dtype, transient=True, storage=storage)
+    ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
+    bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)
+    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=storage)
+    if implementation == "cuSolverDn":
+        binout_arr = sdfg.add_array("_bt", inp_shape, dtype=dtype, transient=True, storage=storage)
     else:
         binout_arr = bout_arr
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
-    potrf_node = Potrf('potrf', lower=node.lower)
+    potrf_node = Potrf("potrf", lower=node.lower)
     potrf_node.implementation = implementation
 
-    _, me, mx = state.add_mapped_tasklet('_uzero_',
-                                         dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
-                                         dict(_inp=Memlet.simple('_b', '__i, __j')),
-                                         '_out = (__i < __j) ? 0 : _inp;',
-                                         dict(_out=Memlet.simple('_b', '__i, __j')),
-                                         language=dace.dtypes.Language.CPP,
-                                         external_edges=True)
+    _, me, mx = state.add_mapped_tasklet(
+        "_uzero_",
+        dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
+        dict(_inp=Memlet.simple("_b", "__i, __j")),
+        "_out = (__i < __j) ? 0 : _inp;",
+        dict(_out=Memlet.simple("_b", "__i, __j")),
+        language=dace.dtypes.Language.CPP,
+        external_edges=True,
+    )
 
-    ain = state.add_read('_a')
-    info = state.add_access('_info')
-    if implementation == 'cuSolverDn':
+    ain = state.add_read("_a")
+    info = state.add_access("_info")
+    if implementation == "cuSolverDn":
         # cuSolverDn writes the info code through a device pointer; it is copied back to the host.
-        info_host_arr = sdfg.add_array('_info_host', [1],
-                                       dtype=dace.int32,
-                                       transient=True,
-                                       storage=dtypes.StorageType.CPU_Heap)
-        state.add_nedge(info, state.add_write('_info_host'), Memlet.from_array(*info_host_arr))
-        binout1 = state.add_access('_bt')
-        binout2 = state.add_access('_bt')
+        info_host_arr = sdfg.add_array(
+            "_info_host", [1], dtype=dace.int32, transient=True, storage=dtypes.StorageType.CPU_Heap
+        )
+        state.add_nedge(info, state.add_write("_info_host"), Memlet.from_array(*info_host_arr))
+        binout1 = state.add_access("_bt")
+        binout2 = state.add_access("_bt")
         binout3 = state.in_edges(me)[0].src
         bout = state.out_edges(mx)[0].dst
-        transpose_ain = Transpose('AT', dtype=dtype)
-        transpose_ain.implementation = 'cuBLAS'
-        state.add_edge(ain, None, transpose_ain, '_inp', Memlet.from_array(*ain_arr))
-        state.add_edge(transpose_ain, '_out', binout1, None, Memlet.from_array(*binout_arr))
-        transpose_out = Transpose('BT', dtype=dtype)
-        transpose_out.implementation = 'cuBLAS'
-        state.add_edge(binout2, None, transpose_out, '_inp', Memlet.from_array(*binout_arr))
-        state.add_edge(transpose_out, '_out', binout3, None, Memlet.from_array(*bout_arr))
+        transpose_ain = Transpose("AT", dtype=dtype)
+        transpose_ain.implementation = "cuBLAS"
+        state.add_edge(ain, None, transpose_ain, "_inp", Memlet.from_array(*ain_arr))
+        state.add_edge(transpose_ain, "_out", binout1, None, Memlet.from_array(*binout_arr))
+        transpose_out = Transpose("BT", dtype=dtype)
+        transpose_out.implementation = "cuBLAS"
+        state.add_edge(binout2, None, transpose_out, "_inp", Memlet.from_array(*binout_arr))
+        state.add_edge(transpose_out, "_out", binout3, None, Memlet.from_array(*bout_arr))
     else:
-        binout1 = state.add_access('_b')
+        binout1 = state.add_access("_b")
         binout2 = state.in_edges(me)[0].src
         binout3 = state.out_edges(mx)[0].dst
         state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
@@ -91,7 +92,6 @@ class ExpandCholeskyPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -101,7 +101,6 @@ class ExpandCholeskyOpenBLAS(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -111,7 +110,6 @@ class ExpandCholeskyMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -121,21 +119,26 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Cholesky(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "OpenBLAS": ExpandCholeskyOpenBLAS,
         "MKL": ExpandCholeskyMKL,
-        "cuSolverDn": ExpandCholeskyCuSolverDn
+        "cuSolverDn": ExpandCholeskyCuSolverDn,
     }
     default_implementation = None
 
     lower = dace.properties.Property(dtype=bool, default=True)
 
     def __init__(self, name, lower=True, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a"}, outputs={
-            "_b",
-        }, **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs={"_a"},
+            outputs={
+                "_b",
+            },
+            **kwargs,
+        )
         self.lower = lower
 
     def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
@@ -146,9 +149,11 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
             in_edges = list(state.in_edges_by_connector(self, "_a"))
             if in_edges:
                 outer = state.memlet_path(in_edges[0])[0].src
-                if (isinstance(outer, dace.sdfg.nodes.AccessNode)
-                        and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global):
-                    self.implementation = 'cuSolverDn'
+                if (
+                    isinstance(outer, dace.sdfg.nodes.AccessNode)
+                    and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global
+                ):
+                    self.implementation = "cuSolverDn"
         return super().expand(state_or_sdfg, state_or_impl, **kwargs)
 
     def validate(self, sdfg, state):
@@ -172,7 +177,10 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(out_memlet.subset)
         sqdims2 = squeezed2.squeeze()
 
-        desc_ain, desc_aout, = None, None
+        (
+            desc_ain,
+            desc_aout,
+        ) = None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_a":
                 desc_ain = sdfg.arrays[e.data.data]

@@ -4,7 +4,7 @@ import numpy as np
 import tests.codegen.sve.common as common
 import pytest
 
-N = dace.symbol('N', positive=True)
+N = dace.symbol("N", positive=True)
 
 
 @dace.program
@@ -34,7 +34,7 @@ def test_filter():
     N = 64
     ratio = np.float32(0.5)
 
-    print('Predicate-Based Filter. size=%d, ratio=%f' % (N, ratio))
+    print("Predicate-Based Filter. size=%d, ratio=%f" % (N, ratio))
 
     A = np.random.rand(N).astype(np.float32)
     B = np.zeros_like(A)
@@ -45,32 +45,32 @@ def test_filter():
 
     sdfg(A=A, out=B, outsz=outsize, ratio=ratio, N=N)
 
-    if dace.Config.get_bool('profiling'):
-        dace.timethis('filter', 'numpy', 0, regression, A, ratio)
+    if dace.Config.get_bool("profiling"):
+        dace.timethis("filter", "numpy", 0, regression, A, ratio)
 
     filtered = regression(A, ratio)
 
     if len(filtered) != outsize[0]:
         print("Difference in number of filtered items: %d (DaCe) vs. %d (numpy)" % (outsize[0], len(filtered)))
         totalitems = min(outsize[0], N)
-        print('DaCe:', B[:totalitems].view(type=np.ndarray))
-        print('Regression:', filtered.view(type=np.ndarray))
+        print("DaCe:", B[:totalitems].view(type=np.ndarray))
+        print("Regression:", filtered.view(type=np.ndarray))
         exit(1)
 
     # Sort the outputs
     filtered = np.sort(filtered)
-    B[:outsize[0]] = np.sort(B[:outsize[0]])
+    B[: outsize[0]] = np.sort(B[: outsize[0]])
 
     if len(filtered) == 0:
         print("==== Program end ====")
         exit(0)
 
-    diff = np.linalg.norm(filtered - B[:outsize[0]]) / float(outsize[0])
+    diff = np.linalg.norm(filtered - B[: outsize[0]]) / float(outsize[0])
     print("Difference:", diff)
     if diff > 1e-5:
         totalitems = min(outsize[0], N)
-        print('DaCe:', B[:totalitems].view(type=np.ndarray))
-        print('Regression:', filtered.view(type=np.ndarray))
+        print("DaCe:", B[:totalitems].view(type=np.ndarray))
+        print("Regression:", filtered.view(type=np.ndarray))
 
     print("==== Program end ====")
     assert diff <= 1e-5

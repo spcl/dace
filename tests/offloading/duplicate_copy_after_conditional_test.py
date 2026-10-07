@@ -3,6 +3,7 @@
 
 The copy follows the conditional once, not once per branch.
 """
+
 import collections
 import sys
 
@@ -13,7 +14,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -75,7 +76,7 @@ CONDITIONS = [0, 1, 2, 3]
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('c', CONDITIONS)
+@pytest.mark.parametrize("c", CONDITIONS)
 def test_the_offloaded_loop_computes_what_numpy_computes(c):
     sdfg = offloaded()
     for node, _ in sdfg.all_nodes_recursive():
@@ -90,8 +91,8 @@ def test_the_offloaded_loop_computes_what_numpy_computes(c):
     np.testing.assert_array_equal(B, want_B)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_loop_ending_in_a_conditional_copies_back_to_the_device_once()
-    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+    if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         for c in CONDITIONS:
             test_the_offloaded_loop_computes_what_numpy_computes(c)

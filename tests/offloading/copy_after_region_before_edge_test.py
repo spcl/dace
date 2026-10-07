@@ -3,6 +3,7 @@
 
 A loop is not a state, and a copy in front of an interstate edge is placed after the block the edge leaves.
 """
+
 import sys
 
 import numpy as np
@@ -12,7 +13,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -38,7 +39,7 @@ def test_a_loop_before_a_host_reading_edge_is_followed_by_its_copy_back():
     after = sdfg.successors(loop)
     assert len(after) == 1 and isinstance(after[0], dace.SDFGState), after
     copied = {e.data.data for e in after[0].edges()}
-    assert 'A_gpu' in copied, copied
+    assert "A_gpu" in copied, copied
 
 
 @pytest.mark.gpu
@@ -54,7 +55,7 @@ def test_the_host_read_after_the_loop_sees_the_device_result():
     np.testing.assert_array_equal(out, [3.0])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_loop_before_a_host_reading_edge_is_followed_by_its_copy_back()
-    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+    if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         test_the_host_read_after_the_loop_sees_the_device_result()

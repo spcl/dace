@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" A test for the MapToForLoop transformation. """
+"""A test for the MapToForLoop transformation."""
 
 import dace
 import numpy as np
@@ -29,5 +29,5 @@ def test_map2for_overlap():
     assert np.allclose(A, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_map2for_overlap()

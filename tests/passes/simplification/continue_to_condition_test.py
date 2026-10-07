@@ -342,7 +342,7 @@ def test_nested_loops():
     assert len(cont_nodes) == 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_regular_loop()
     test_flipped()
     test_no_condition()

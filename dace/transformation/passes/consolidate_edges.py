@@ -19,7 +19,7 @@ class ConsolidateEdges(ppl.Pass):
     per-tasklet memlets.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets
@@ -43,4 +43,4 @@ class ConsolidateEdges(ppl.Pass):
         return edges_removed
 
     def report(self, pass_retval: int) -> str:
-        return f'Consolidated {pass_retval} edges.'
+        return f"Consolidated {pass_retval} edges."

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Which blocks make an SDFG's control flow unstructured."""
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
@@ -57,7 +58,7 @@ def test_a_branch_in_a_conditional_block_is_structured() -> None:
     assert found == []
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_state_leaving_through_conditional_edges_is_unstructured()
     test_a_state_with_one_conditional_edge_is_unstructured()
     test_a_branch_in_a_conditional_block_is_structured()

@@ -3,6 +3,7 @@
 
 The placement visits each arm once, not once per route: 48 conditionals in a row have 2^48 routes.
 """
+
 import collections
 import sys
 
@@ -14,7 +15,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 IN_A_ROW = 48
 STEPS = 3
 
@@ -80,7 +81,7 @@ CONDITIONS = [0, 5, IN_A_ROW + 2]
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('c', CONDITIONS)
+@pytest.mark.parametrize("c", CONDITIONS)
 def test_the_offloaded_conditionals_compute_what_numpy_computes(c):
     sdfg = offloaded()
     for node, parent in sdfg.all_nodes_recursive():
@@ -93,8 +94,8 @@ def test_the_offloaded_conditionals_compute_what_numpy_computes(c):
     np.testing.assert_array_equal(A, want)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_conditionals_in_a_row_are_offloaded_and_keep_the_data_on_the_device()
-    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+    if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         for c in CONDITIONS:
             test_the_offloaded_conditionals_compute_what_numpy_computes(c)

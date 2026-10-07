@@ -2,9 +2,9 @@
 import dace
 import numpy as np
 
-M = dace.symbol('M')
-K = dace.symbol('K')
-N = dace.symbol('N')
+M = dace.symbol("M")
+K = dace.symbol("K")
+N = dace.symbol("N")
 
 
 @dace.program

@@ -30,20 +30,23 @@ class OffloadToAccelerator(ppl.Pass):
     ``NotImplementedError``. Loops, conditionals, ``break``, ``continue`` and ``return`` are supported.
     """
 
-    max_iterations = properties.Property(dtype=int,
-                                         default=1000,
-                                         desc="Safety bound on the placement fixpoint; reaching it is a bug.")
+    max_iterations = properties.Property(
+        dtype=int, default=1000, desc="Safety bound on the placement fixpoint; reaching it is a bug."
+    )
     pin_host_loop_maps = properties.Property(
         dtype=bool,
         default=False,
         desc="Keep the small maps of a serial host loop on the host when offloading them would copy what they "
-        "share with the loop's host code every iteration.")
+        "share with the loop's host code every iteration.",
+    )
 
-    def __init__(self,
-                 host_maps: HostMapSpec = False,
-                 max_iterations: int | None = None,
-                 pin_host_loop_maps: bool | None = None,
-                 **kwargs: Any) -> None:
+    def __init__(
+        self,
+        host_maps: HostMapSpec = False,
+        max_iterations: int | None = None,
+        pin_host_loop_maps: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         """
         :param host_maps: maps that keep a host schedule so the maps under them become the kernels, see
             :data:`~dace.transformation.passes.offloading.host_maps.HostMapSpec`; a map holding a callback stays on
@@ -72,8 +75,10 @@ class OffloadToAccelerator(ppl.Pass):
         """
         offending = [block.label for block in unstructured_control_flow(sdfg)]
         if offending:
-            raise NotImplementedError('OffloadToAccelerator requires structured control flow, which ControlFlowRaising '
-                                      f'could not produce: these blocks branch through interstate edges: {offending}')
+            raise NotImplementedError(
+                "OffloadToAccelerator requires structured control flow, which ControlFlowRaising "
+                f"could not produce: these blocks branch through interstate edges: {offending}"
+            )
         host_map_entries = find_host_maps(sdfg, self._host_maps)
         pinned = maps_pinned_by_host_loops(sdfg) if self.pin_host_loop_maps else OrderedSet()
         assign_schedules(sdfg, host_map_entries, pinned)
@@ -94,11 +99,13 @@ class OffloadToAccelerator(ppl.Pass):
         wants, wrapped = self.settle(sdfg, host_map_entries)
         placed_on_gpu = Placement(sdfg, wants).apply()
         if wrapped:
-            ppl.Pipeline([
-                FullMapFusion(strict_dataflow=True,
-                              perform_vertical_map_fusion=True,
-                              perform_horizontal_map_fusion=True)
-            ]).apply_pass(sdfg, {})
+            ppl.Pipeline(
+                [
+                    FullMapFusion(
+                        strict_dataflow=True, perform_vertical_map_fusion=True, perform_horizontal_map_fusion=True
+                    )
+                ]
+            ).apply_pass(sdfg, {})
         single_element_copies_into_map(sdfg)
 
         for state in sdfg.states():
@@ -123,9 +130,11 @@ class OffloadToAccelerator(ppl.Pass):
             if not locations.hybrid_states and not changed:
                 return wants, wrapped
             wrapped = wrapped or bool(locations.hybrid_states)
-        raise RuntimeError(f"OffloadToAccelerator did not reach a fixpoint in {self.max_iterations} iterations. "
-                           "The placement loop is expected to converge; treat this as a bug rather than raising "
-                           "the bound.")
+        raise RuntimeError(
+            f"OffloadToAccelerator did not reach a fixpoint in {self.max_iterations} iterations. "
+            "The placement loop is expected to converge; treat this as a bug rather than raising "
+            "the bound."
+        )
 
 
 def unstructured_control_flow(sdfg: SDFG) -> list[ControlFlowBlock]:
@@ -143,21 +152,25 @@ def unstructured_control_flow(sdfg: SDFG) -> list[ControlFlowBlock]:
     return found
 
 
-def assign_schedules(sdfg: SDFG,
-                     host_map_entries: OrderedSet[nodes.MapEntry],
-                     pinned: OrderedSet[nodes.MapEntry],
-                     host_level: bool = True) -> None:
+def assign_schedules(
+    sdfg: SDFG,
+    host_map_entries: OrderedSet[nodes.MapEntry],
+    pinned: OrderedSet[nodes.MapEntry],
+    host_level: bool = True,
+) -> None:
     """``GPU_Device`` for the maps and library nodes of a host level, ``Sequential`` below one (``Default`` can be
     lowered to CUDA in the wrong places). A host map keeps its body a host level, and so does a nested SDFG at
     one; a pinned map stays on the host with its subtree."""
 
-    def walk(children: dict[nodes.Node | None, list[nodes.Node]], entry: nodes.MapEntry | None,
-             host_level: bool) -> None:
+    def walk(
+        children: dict[nodes.Node | None, list[nodes.Node]], entry: nodes.MapEntry | None, host_level: bool
+    ) -> None:
         for node in children[entry]:
             on_host = node in host_map_entries or node in pinned
             if isinstance(node, (nodes.MapEntry, nodes.LibraryNode)):
-                node.schedule = (dtypes.ScheduleType.GPU_Device
-                                 if host_level and not on_host else dtypes.ScheduleType.Sequential)
+                node.schedule = (
+                    dtypes.ScheduleType.GPU_Device if host_level and not on_host else dtypes.ScheduleType.Sequential
+                )
             if isinstance(node, nodes.MapEntry):
                 walk(children, node, host_level and node in host_map_entries and node not in pinned)
             elif isinstance(node, nodes.NestedSDFG):

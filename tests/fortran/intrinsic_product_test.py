@@ -114,7 +114,6 @@ def test_fortran_frontend_product_2d():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_product_array()
     test_fortran_frontend_product_array_dim()
     test_fortran_frontend_product_2d()

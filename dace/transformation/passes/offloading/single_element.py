@@ -1,13 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Single-element containers: which form each takes across the host/device boundary, and where its copy happens."""
+
 from copy import deepcopy
 
 from ordered_set import OrderedSet
 
 from dace import data, dtypes, Memlet
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
-                                                                           ConvertScalarsToLengthOneArrays)
+from dace.transformation.passes.length_one_array_scalar_conversion import (
+    ConvertLengthOneArraysToScalars,
+    ConvertScalarsToLengthOneArrays,
+)
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 
@@ -16,11 +19,20 @@ def retype_single_elements(sdfg: SDFG, exceptions: OrderedSet[str]) -> OrderedSe
     """Device-written scalars become length-1 arrays (a kernel takes a scalar by value), the other length-1
     arrays scalars; ``exceptions`` are not asked again. Return the names asked for."""
     gpu_written = helpers.data_written_by_device_code(sdfg)
-    to_arrays = OrderedSet(name for name, desc in sdfg.arrays.items()
-                           if isinstance(desc, data.Scalar) and name in gpu_written and name not in exceptions)
+    to_arrays = OrderedSet(
+        name
+        for name, desc in sdfg.arrays.items()
+        if isinstance(desc, data.Scalar) and name in gpu_written and name not in exceptions
+    )
     # ``__return`` stays by reference: the caller reads the result back through it.
-    to_scalars = OrderedSet(name for name in sdfg.arrays if helpers.is_length1_array(name, sdfg)
-                            and name not in gpu_written and name not in exceptions and not name.startswith("__return"))
+    to_scalars = OrderedSet(
+        name
+        for name in sdfg.arrays
+        if helpers.is_length1_array(name, sdfg)
+        and name not in gpu_written
+        and name not in exceptions
+        and not name.startswith("__return")
+    )
 
     if to_arrays:
         ConvertScalarsToLengthOneArrays(recursive=True, preserve_abi=True, filter=to_arrays).apply_pass(sdfg, {})
@@ -38,9 +50,14 @@ def retype_single_elements(sdfg: SDFG, exceptions: OrderedSet[str]) -> OrderedSe
 
 def single_element_copies_into_map(sdfg: SDFG) -> None:
     """Move a single-element copy into the map that alone reads it: ``A -> s -> Map`` becomes ``A -> Map -> s``."""
-    changes = [(state, access, map_entry) for state in sdfg.states() for map_entry in state.nodes()
-               if isinstance(map_entry, nodes.MapEntry) for access in OrderedSet(state.predecessors(map_entry))
-               if is_movable_copy(sdfg, state, access)]
+    changes = [
+        (state, access, map_entry)
+        for state in sdfg.states()
+        for map_entry in state.nodes()
+        if isinstance(map_entry, nodes.MapEntry)
+        for access in OrderedSet(state.predecessors(map_entry))
+        if is_movable_copy(sdfg, state, access)
+    ]
     for state, access, map_entry in changes:
         rewire_access_into_map(state, access, map_entry)
 
@@ -48,10 +65,14 @@ def single_element_copies_into_map(sdfg: SDFG) -> None:
 def is_movable_copy(sdfg: SDFG, state: SDFGState, access: nodes.Node) -> bool:
     """A single-element container copied from another container and read only through a pass-through connector of
     one map (another reader would be left inside the map's scope; a dynamic input is not passed-on data)."""
-    return (isinstance(access, nodes.AccessNode) and state.in_degree(access) == 1 and state.out_degree(access) == 1
-            and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)
-            and (state.out_edges(access)[0].dst_conn or '').startswith('IN_')
-            and (isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg)))
+    return (
+        isinstance(access, nodes.AccessNode)
+        and state.in_degree(access) == 1
+        and state.out_degree(access) == 1
+        and isinstance(state.in_edges(access)[0].src, nodes.AccessNode)
+        and (state.out_edges(access)[0].dst_conn or "").startswith("IN_")
+        and (isinstance(sdfg.arrays[access.data], data.Scalar) or helpers.is_length1_array(access.data, sdfg))
+    )
 
 
 def rewire_access_into_map(state: SDFGState, access: nodes.AccessNode, map_entry: nodes.MapEntry) -> None:
@@ -59,7 +80,7 @@ def rewire_access_into_map(state: SDFGState, access: nodes.AccessNode, map_entry
     source_edge = state.in_edges(access)[0]
     access_to_map = state.out_edges(access)[0]
     old_in = access_to_map.dst_conn
-    old_out = 'OUT_' + old_in[len('IN_'):]
+    old_out = "OUT_" + old_in[len("IN_") :]
 
     connector = map_entry.next_connector(access.data)
     in_conn, out_conn = f"IN_{connector}", f"OUT_{connector}"

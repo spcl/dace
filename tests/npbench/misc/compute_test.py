@@ -14,7 +14,7 @@ def relerror(val, ref):
     return np.linalg.norm(val - ref) / np.linalg.norm(ref)
 
 
-M, N = (dace.symbol(s, dtype=dace.int64) for s in ('M', 'N'))
+M, N = (dace.symbol(s, dtype=dace.int64) for s in ("M", "N"))
 
 
 @dace.program
@@ -24,6 +24,7 @@ def compute(array_1: dace.int64[M, N], array_2: dace.int64[M, N], a: dace.int64,
 
 def initialize(M, N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     array_1 = rng.uniform(0, 1000, size=(M, N)).astype(np.int64)
     array_2 = rng.uniform(0, 1000, size=(M, N)).astype(np.int64)
@@ -34,10 +35,10 @@ def initialize(M, N):
 
 
 def run_compute(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs compute for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench S size)
     M, N = (2000, 2000)
@@ -49,11 +50,11 @@ def run_compute(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         val = sdfg(array_1=array_1, array_2=array_2, a=a, b=b, c=c, M=M, N=N)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and Validate result
     ref = compute.f(array_1, array_2, a, b, c)
-    assert (np.allclose(val, ref) or relerror(val, ref) < 1e-10)
+    assert np.allclose(val, ref) or relerror(val, ref) < 1e-10
     return sdfg
 
 
@@ -67,9 +68,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

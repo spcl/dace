@@ -19,7 +19,7 @@ def program_generator(size, factor):
 
 
 def test():
-    print('Reloadable DaCe program test')
+    print("Reloadable DaCe program test")
 
     array_one = np.random.rand(10).astype(np.float64)
     array_two = np.random.rand(20).astype(np.float64)

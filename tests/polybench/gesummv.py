@@ -2,18 +2,25 @@
 import dace
 import polybench
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
 sizes = [{N: 30}, {N: 90}, {N: 250}, {N: 1300}, {N: 2800}]
 
-args = [([N, N], datatype), ([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([1], datatype),
-        ([1], datatype)]
+args = [
+    ([N, N], datatype),
+    ([N, N], datatype),
+    ([N], datatype),
+    ([N], datatype),
+    ([N], datatype),
+    ([1], datatype),
+    ([1], datatype),
+]
 
-outputs = [(4, 'y')]
+outputs = [(4, "y")]
 
 
 def init_array(A, B, tmp, x, y, alpha, beta, n):
@@ -28,8 +35,15 @@ def init_array(A, B, tmp, x, y, alpha, beta, n):
 
 
 @dace.program
-def gesummv(A: datatype[N, N], B: datatype[N, N], tmp: datatype[N], x: datatype[N], y: datatype[N], alpha: datatype[1],
-            beta: datatype[1]):
+def gesummv(
+    A: datatype[N, N],
+    B: datatype[N, N],
+    tmp: datatype[N],
+    x: datatype[N],
+    y: datatype[N],
+    alpha: datatype[1],
+    beta: datatype[1],
+):
 
     @dace.map
     def compute_ty(i: _[0:N], j: _[0:N]):
@@ -52,5 +66,5 @@ def gesummv(A: datatype[N, N], B: datatype[N, N], tmp: datatype[N], x: datatype[
         oy = ialpha * it + ibeta * iy
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     polybench.main(sizes, args, outputs, init_array, gesummv)

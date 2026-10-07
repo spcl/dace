@@ -48,7 +48,7 @@ def test_serialize_int_float():
     assert obj.float_prop == 1.0
     json_obj = obj.to_json()
     # Force casting to int
-    json_obj['float_prop'] = int(json_obj['float_prop'])
+    json_obj["float_prop"] = int(json_obj["float_prop"])
     obj = MyObject.from_json(json_obj)
     assert obj.float_prop == 1.0
 
@@ -71,7 +71,7 @@ def test_serialize_infinity():
 
     sdfg = reduction_infinity_1.to_sdfg()
     json_string = json.dumps(sdfg.to_json())
-    assert (json_string.find('Infinity') == -1)
+    assert json_string.find("Infinity") == -1
 
     @dace.program
     def reduction_infinity_2(a: dace.float64[3]):
@@ -79,10 +79,10 @@ def test_serialize_infinity():
 
     sdfg = reduction_infinity_1.to_sdfg()
     json_string = json.dumps(sdfg.to_json())
-    assert (json_string.find('Infinity') == -1)
+    assert json_string.find("Infinity") == -1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_serialize_int_float()
     test_serialize_list_int64()
     test_serialize_infinity()

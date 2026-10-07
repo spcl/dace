@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Maps that stay on the host so the maps under them become the kernels (ICON's ``nblks`` over ``nproma``/``nlev``)."""
+
 import itertools
 from typing import Any
 from collections.abc import Iterable
@@ -26,7 +27,8 @@ def only_launches(children: Iterable[nodes.Node]) -> bool:
         if isinstance(node, (nodes.Tasklet, nodes.LibraryNode)):
             return False
         if isinstance(node, nodes.NestedSDFG) and not only_launches(
-                itertools.chain.from_iterable(state.scope_children()[None] for state in node.sdfg.states())):
+            itertools.chain.from_iterable(state.scope_children()[None] for state in node.sdfg.states())
+        ):
             return False
         launches = launches or isinstance(node, (nodes.MapEntry, nodes.NestedSDFG))
     return launches
@@ -40,15 +42,22 @@ def body_extents_depend_on_entry(state: SDFGState, entry: nodes.MapEntry) -> boo
         if not isinstance(node, nodes.MapEntry):
             continue
         # By name: two symbols that share a name but not their assumptions are one parameter.
-        extent_names = OrderedSet(name for rng in node.map.range for bound in rng
-                                  for name in symbolic.free_symbols_and_functions(bound))
+        extent_names = OrderedSet(
+            name for rng in node.map.range for bound in rng for name in symbolic.free_symbols_and_functions(bound)
+        )
         if params & extent_names or body_extents_depend_on_entry(state, node):
             return True
     return False
 
 
-def is_host_map(state: SDFGState, entry: nodes.MapEntry, auto: bool, pinned_labels: OrderedSet[str],
-                pinned_entries: OrderedSet[nodes.MapEntry], callbacks: OrderedSet[str]) -> bool:
+def is_host_map(
+    state: SDFGState,
+    entry: nodes.MapEntry,
+    auto: bool,
+    pinned_labels: OrderedSet[str],
+    pinned_entries: OrderedSet[nodes.MapEntry],
+    callbacks: OrderedSet[str],
+) -> bool:
     """A named map, a map holding a callback, or with ``auto`` a map that only launches, stays on the host."""
     named = entry in pinned_entries or entry.map.label in pinned_labels
     if (named or auto) and body_extents_depend_on_entry(state, entry):
@@ -82,16 +91,23 @@ def find_host_maps(sdfg: SDFG, spec: HostMapSpec = False) -> OrderedSet[nodes.Ma
             elif isinstance(item, str):
                 pinned_labels.add(item)
             else:
-                raise TypeError(f"host_maps takes map labels or MapEntry nodes, got {item!r} "
-                                f"of type {type(item).__name__}")
+                raise TypeError(
+                    f"host_maps takes map labels or MapEntry nodes, got {item!r} of type {type(item).__name__}"
+                )
     elif spec not in (None, True, False):
-        raise TypeError(f"host_maps must be None, a bool or a list of labels / MapEntry nodes, "
-                        f"got {type(spec).__name__}")
+        raise TypeError(
+            f"host_maps must be None, a bool or a list of labels / MapEntry nodes, got {type(spec).__name__}"
+        )
 
     callbacks = helpers.callback_symbol_names(sdfg)
-    return OrderedSet(node for nested in sdfg.all_sdfgs_recursive() for state in nested.states()
-                      for node in state.nodes() if isinstance(node, nodes.MapEntry)
-                      and is_host_map(state, node, spec is True, pinned_labels, pinned_entries, callbacks))
+    return OrderedSet(
+        node
+        for nested in sdfg.all_sdfgs_recursive()
+        for state in nested.states()
+        for node in state.nodes()
+        if isinstance(node, nodes.MapEntry)
+        and is_host_map(state, node, spec is True, pinned_labels, pinned_entries, callbacks)
+    )
 
 
 def host_code_containers(sdfg: SDFG, region: ControlFlowRegion) -> OrderedSet[str]:

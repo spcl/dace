@@ -17,8 +17,15 @@ from ordered_set import OrderedSet
 
 from dace import dtypes
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
-                             LoopRegion, ReturnBlock)
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+)
 
 import dace.transformation.passes.offloading.offloading_helpers as helpers
 from dace.transformation.passes.offloading import twins
@@ -31,7 +38,7 @@ Where = dict[str, bool]
 class Placement:
     """Place the containers of one SDFG, given what each of its states wants; run it with :meth:`apply`."""
 
-    __slots__ = ('fixed_storage', 'initial', 'placed_on_gpu', 'plan', 'sdfg', 'touched_by', 'wants')
+    __slots__ = ("fixed_storage", "initial", "placed_on_gpu", "plan", "sdfg", "touched_by", "wants")
 
     def __init__(self, sdfg: SDFG, wants: dict[SDFGState, Wants]) -> None:
         self.sdfg = sdfg
@@ -39,11 +46,15 @@ class Placement:
         # A view is placed with the container it aliases; a structure or container array is not placed.
         self.initial: Where = {
             name: helpers.is_array_stored_on_GPU(sdfg, name)
-            for name, desc in sdfg.arrays.items() if not desc.transient and helpers.is_array(name, sdfg)
+            for name, desc in sdfg.arrays.items()
+            if not desc.transient and helpers.is_array(name, sdfg)
         }
         # A shared-memory or register container keeps the scope-local storage it was given.
-        self.fixed_storage = OrderedSet(name for name, desc in sdfg.arrays.items()
-                                        if desc.storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register))
+        self.fixed_storage = OrderedSet(
+            name
+            for name, desc in sdfg.arrays.items()
+            if desc.storage in (dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register)
+        )
         #: Transients this placement put in device memory.
         self.placed_on_gpu: OrderedSet[str] = OrderedSet()
         self.plan = twins.CopyPlan(sdfg)
@@ -87,8 +98,9 @@ class Placement:
                 return None, block
         return current, blocks[-1]
 
-    def visit_state(self, region: ControlFlowRegion, state: SDFGState, above: list[ControlFlowBlock],
-                    where: Where) -> None:
+    def visit_state(
+        self, region: ControlFlowRegion, state: SDFGState, above: list[ControlFlowBlock], where: Where
+    ) -> None:
         wants = self.wants[state]
         targets: Where = {**dict.fromkeys(wants.gpu, True), **dict.fromkeys(wants.cpu, False)}
         self.place_copy_destinations(state, where, targets)
@@ -108,8 +120,9 @@ class Placement:
             if side is not None and helpers.is_array(dst.data, self.sdfg):
                 targets[dst.data] = side
 
-    def visit_loop(self, region: ControlFlowRegion, loop: LoopRegion, above: list[ControlFlowBlock],
-                   where: Where) -> None:
+    def visit_loop(
+        self, region: ControlFlowRegion, loop: LoopRegion, above: list[ControlFlowBlock], where: Where
+    ) -> None:
         entry: Where = {}
         self.first_uses(loop, entry)
         self.move(where, entry, region, loop, before=True, hoist_over=above)
@@ -118,8 +131,9 @@ class Placement:
         if body_end is not None:
             self.restore(body_end, where, loop, last, before=False)
 
-    def visit_conditional(self, region: ControlFlowRegion, block: ConditionalBlock, where: Where,
-                          loop_entry: Where) -> Where | None:
+    def visit_conditional(
+        self, region: ControlFlowRegion, block: ConditionalBlock, where: Where, loop_entry: Where
+    ) -> Where | None:
         self.move(where, dict.fromkeys(self.header_reads(block), False), region, block, before=True)
         twins.rename_header_reads(self.sdfg, block, self.header_reads(block))
         exits = []
@@ -158,13 +172,15 @@ class Placement:
             elif isinstance(block, ControlFlowRegion):
                 self.first_uses(block, entry)
 
-    def move(self,
-             where: Where,
-             targets: Where,
-             region: ControlFlowRegion,
-             block: ControlFlowBlock,
-             before: bool,
-             hoist_over: list[ControlFlowBlock] | None = None) -> None:
+    def move(
+        self,
+        where: Where,
+        targets: Where,
+        region: ControlFlowRegion,
+        block: ControlFlowBlock,
+        before: bool,
+        hoist_over: list[ControlFlowBlock] | None = None,
+    ) -> None:
         """Put each container of ``targets`` where it is wanted, copying the ones that are elsewhere next to ``block``.
 
         A container with no location yet is placed on that side without a copy: a transient lives on the side of
@@ -185,13 +201,17 @@ class Placement:
         for (anchor, to_gpu), names in grouped.items():
             self.plan.add(region, anchor, before, names, to_gpu)
 
-    def hoisted_anchor(self, region: ControlFlowRegion, above: list[ControlFlowBlock], block: ControlFlowBlock,
-                       name: str) -> ControlFlowBlock:
+    def hoisted_anchor(
+        self, region: ControlFlowRegion, above: list[ControlFlowBlock], block: ControlFlowBlock, name: str
+    ) -> ControlFlowBlock:
         """The earliest block of ``above`` + ``block`` that ``name`` can be copied in front of."""
         anchor = block
         for previous in reversed(above):
-            if (not isinstance(previous, SDFGState) or name in self.touched(previous)
-                    or name in self.edge_reads(region, anchor)):
+            if (
+                not isinstance(previous, SDFGState)
+                or name in self.touched(previous)
+                or name in self.edge_reads(region, anchor)
+            ):
                 break
             anchor = previous
         return anchor
@@ -203,8 +223,9 @@ class Placement:
             self.touched_by[state] = wants.gpu | wants.cpu | OrderedSet(node.data for node in state.data_nodes())
         return self.touched_by[state]
 
-    def restore(self, where: Where, reference: Where, region: ControlFlowRegion, block: ControlFlowBlock,
-                before: bool) -> None:
+    def restore(
+        self, where: Where, reference: Where, region: ControlFlowRegion, block: ControlFlowBlock, before: bool
+    ) -> None:
         """Copy the containers that ``where`` has somewhere else than ``reference`` back, next to ``block``."""
         targets = {name: on_gpu for name, on_gpu in reference.items() if name in where}
         self.move(where, targets, region, block, before)
@@ -220,8 +241,12 @@ class Placement:
 
     def edge_reads(self, region: ControlFlowRegion, block: ControlFlowBlock) -> OrderedSet[str]:
         """The arrays the interstate edges into ``block`` read."""
-        return OrderedSet(name for edge in region.in_edges(block) for name in edge.data.used_arrays(self.sdfg.arrays)
-                          if helpers.is_array(name, self.sdfg))
+        return OrderedSet(
+            name
+            for edge in region.in_edges(block)
+            for name in edge.data.used_arrays(self.sdfg.arrays)
+            if helpers.is_array(name, self.sdfg)
+        )
 
     def header_reads(self, block: ControlFlowBlock) -> OrderedSet[str]:
         """The containers a loop's or a conditional's header reads on the host."""

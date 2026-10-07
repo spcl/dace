@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Where each state wants its containers: on the host or on the device."""
+
 from typing import NamedTuple
 
 from ordered_set import OrderedSet
@@ -13,6 +14,7 @@ import dace.transformation.passes.offloading.offloading_helpers as helpers
 
 class Wants(NamedTuple):
     """The containers a state needs on the device and on the host; they never overlap in a settled state."""
+
     gpu: OrderedSet[str]
     cpu: OrderedSet[str]
 
@@ -26,7 +28,7 @@ class Locations:
     of them on the device, which is where wrapping its host code in size-1 maps puts them.
     """
 
-    __slots__ = ('host_maps', 'hybrid_states', 'sdfg')
+    __slots__ = ("host_maps", "hybrid_states", "sdfg")
 
     def __init__(self, sdfg: SDFG, host_maps: OrderedSet[nodes.MapEntry]) -> None:
         self.sdfg = sdfg
@@ -98,18 +100,25 @@ class Locations:
         arrays |= helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=True)
         return arrays
 
-    def add_map(self, state: SDFGState, entry: nodes.MapEntry, gpu: OrderedSet[str], cpu: OrderedSet[str],
-                on_device: bool) -> None:
+    def add_map(
+        self, state: SDFGState, entry: nodes.MapEntry, gpu: OrderedSet[str], cpu: OrderedSet[str], on_device: bool
+    ) -> None:
         """Add what ``entry``'s scope accesses: on the device if it or an enclosing map is a kernel.
 
         A host map is transparent: what its body leaves unclaimed goes to the device, the side of its kernels.
         """
         on_device = on_device or entry.map.schedule in dtypes.GPU_SCHEDULES
-        launcher = not on_device and entry in self.host_maps and any(
-            helpers.is_device_work(node)
-            for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes())
-        boundary = (helpers.get_data_used_by_access_nodes(self.sdfg, state, entry, downstream=False)
-                    | helpers.get_data_used_by_access_nodes(self.sdfg, state, state.exit_node(entry), downstream=True))
+        launcher = (
+            not on_device
+            and entry in self.host_maps
+            and any(
+                helpers.is_device_work(node)
+                for node in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
+            )
+        )
+        boundary = helpers.get_data_used_by_access_nodes(
+            self.sdfg, state, entry, downstream=False
+        ) | helpers.get_data_used_by_access_nodes(self.sdfg, state, state.exit_node(entry), downstream=True)
         if not launcher:
             (gpu if on_device else cpu).update(boundary)
 
@@ -123,8 +132,15 @@ class Locations:
         if launcher:
             gpu |= boundary - cpu
 
-    def add_scope_node(self, state: SDFGState, node: nodes.Node, entry: nodes.MapEntry, gpu: OrderedSet[str],
-                       cpu: OrderedSet[str], on_device: bool) -> None:
+    def add_scope_node(
+        self,
+        state: SDFGState,
+        node: nodes.Node,
+        entry: nodes.MapEntry,
+        gpu: OrderedSet[str],
+        cpu: OrderedSet[str],
+        on_device: bool,
+    ) -> None:
         """Add what ``node``, inside ``entry``'s scope, accesses beyond the scope boundary already counted."""
         if isinstance(node, nodes.AccessNode):
             used = helpers.get_data_used_by_access_nodes(self.sdfg, state, node, downstream=True)
@@ -140,8 +156,9 @@ class Locations:
             if on_device or name not in gpu:
                 (gpu if on_device else cpu).add(name)
 
-    def add_host_level_node(self, state: SDFGState, node: nodes.Node, gpu: OrderedSet[str],
-                            cpu: OrderedSet[str]) -> None:
+    def add_host_level_node(
+        self, state: SDFGState, node: nodes.Node, gpu: OrderedSet[str], cpu: OrderedSet[str]
+    ) -> None:
         """A library node at a host level goes where its schedule runs; a nested SDFG where its body wants its
         bound arrays."""
         if isinstance(node, nodes.LibraryNode):

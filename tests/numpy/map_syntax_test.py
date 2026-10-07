@@ -3,7 +3,7 @@ import numpy as np
 import dace
 import pytest
 
-M, N, K = (dace.symbol(name) for name in ['M', 'N', 'K'])
+M, N, K = (dace.symbol(name) for name in ["M", "N", "K"])
 
 
 @dace.program
@@ -23,7 +23,7 @@ def test_copy3d():
     copy3d(A, B)
 
     diff = np.linalg.norm(B - A) / (M * N)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
@@ -36,9 +36,9 @@ def test_map_python():
     assert np.allclose(A[:, 1:], B[:, 1:])
 
 
-@pytest.mark.skip('Fails due to bug in Python frontend')
+@pytest.mark.skip("Fails due to bug in Python frontend")
 def test_nested_map_with_indirection():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def indirect_to_indirect(arr1: dace.float64[N], ind: dace.int32[10], arr2: dace.float64[N]):
@@ -62,7 +62,7 @@ def test_nested_map_with_indirection():
     assert np.allclose(b, ref)
 
 
-@pytest.mark.skip('Fails due to bug in Python frontend')
+@pytest.mark.skip("Fails due to bug in Python frontend")
 def test_dynamic_map_range_scalar():
     """
     From issue #650.
@@ -85,7 +85,7 @@ def test_dynamic_map_range_scalar():
     assert np.allclose(B[:5], A[:5] + 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_copy3d()
     test_map_python()
     # test_nested_map_with_indirection()

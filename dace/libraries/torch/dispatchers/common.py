@@ -34,12 +34,13 @@ class DaceTorchFunction:
         ptr: Pointers to the initialized SDFG state handles. These must be
             passed as the first arguments to the function.
     """
+
     function: Callable
     compiled_sdfgs: List[CompiledSDFG]
     ptr: List[torch.Tensor]
 
 
-def get_arglist(module: 'dace.frontend.ml.torch.DaceModule') -> Tuple[List[str], List[str]]:
+def get_arglist(module: "dace.frontend.ml.torch.DaceModule") -> Tuple[List[str], List[str]]:
     """Get the list of forward-pass argument names for a module.
 
     :param module: The DaCe module to extract argument names from.
@@ -53,7 +54,7 @@ def get_arglist(module: 'dace.frontend.ml.torch.DaceModule') -> Tuple[List[str],
 
 
 def compile_and_init_sdfgs(
-    module: 'dace.frontend.ml.torch.DaceModule', dummy_inputs
+    module: "dace.frontend.ml.torch.DaceModule", dummy_inputs
 ) -> Union[Tuple[CompiledSDFG, torch.Tensor], Tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]]:
     """Compile SDFGs and initialize them using the provided dummy inputs.
 
@@ -77,9 +78,9 @@ def compile_and_init_sdfgs(
 
     if module.backward:
         forwarded_transients = {
-            name:
-            create_output_array(symbols, desc, use_torch=True, zeros=True)
-            if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
+            name: create_output_array(symbols, desc, use_torch=True, zeros=True)
+            if name not in module.dace_model.initialized_parameters
+            else module.dace_model.initialized_parameters[name]
             for name, desc in module._ad_inp_arrs.items()
         }
     else:

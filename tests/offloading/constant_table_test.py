@@ -26,41 +26,43 @@ def fill_then_kernel(host_read: str | None = None, looped: bool = False, scalar_
     by a tasklet after the kernel (``tasklet``); ``looped`` fills inside a loop; ``scalar_entry`` fills one element
     from the scalar ``s``.
     """
-    sdfg = dace.SDFG(f'fill_then_kernel_{host_read}_{looped}_{scalar_entry}')
-    sdfg.add_array('x', [N], dace.float64)
-    sdfg.add_array('y', [N], dace.float64)
-    sdfg.add_array('first', [1], dace.float64)
-    sdfg.add_scalar('s', dace.float64)
-    sdfg.add_array('table', [len(TABLE)], dace.float64, transient=True)
+    sdfg = dace.SDFG(f"fill_then_kernel_{host_read}_{looped}_{scalar_entry}")
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("y", [N], dace.float64)
+    sdfg.add_array("first", [1], dace.float64)
+    sdfg.add_scalar("s", dace.float64)
+    sdfg.add_array("table", [len(TABLE)], dace.float64, transient=True)
 
     if looped:
-        region = LoopRegion('fill_loop', 'r < 2', 'r', 'r = 0', 'r = r + 1')
+        region = LoopRegion("fill_loop", "r < 2", "r", "r = 0", "r = r + 1")
         sdfg.add_node(region, is_start_block=True)
-        fill = region.add_state('fill', is_start_block=True)
+        fill = region.add_state("fill", is_start_block=True)
     else:
-        region = fill = sdfg.add_state('fill', is_start_block=True)
-    table = fill.add_write('table')
+        region = fill = sdfg.add_state("fill", is_start_block=True)
+    table = fill.add_write("table")
     for index, value in enumerate(TABLE):
         if scalar_entry and index == 2:
-            tasklet = fill.add_tasklet(f'fill_{index}', {'inp'}, {'out'}, 'out = inp')
-            fill.add_edge(fill.add_read('s'), None, tasklet, 'inp', dace.Memlet('s[0]'))
+            tasklet = fill.add_tasklet(f"fill_{index}", {"inp"}, {"out"}, "out = inp")
+            fill.add_edge(fill.add_read("s"), None, tasklet, "inp", dace.Memlet("s[0]"))
         else:
-            tasklet = fill.add_tasklet(f'fill_{index}', {}, {'out'}, f'out = {value}')
-        fill.add_edge(tasklet, 'out', table, None, dace.Memlet(f'table[{index}]'))
+            tasklet = fill.add_tasklet(f"fill_{index}", {}, {"out"}, f"out = {value}")
+        fill.add_edge(tasklet, "out", table, None, dace.Memlet(f"table[{index}]"))
 
-    use = sdfg.add_state('use')
-    use.add_mapped_tasklet('scale', {'i': f'0:{N}'}, {
-        'x_in': dace.Memlet('x[i]'),
-        't_in': dace.Memlet(f'table[i % {len(TABLE)}]')
-    },
-                           'o = x_in * t_in', {'o': dace.Memlet('y[i]')},
-                           external_edges=True)
-    sdfg.add_edge(region, use, dace.InterstateEdge(assignments={'k': 'table[1]'} if host_read == 'interstate' else {}))
-    if host_read == 'tasklet':
-        after = sdfg.add_state_after(use, 'after')
-        tasklet = after.add_tasklet('peek', {'inp'}, {'out'}, 'out = inp')
-        after.add_edge(after.add_read('table'), None, tasklet, 'inp', dace.Memlet('table[2]'))
-        after.add_edge(tasklet, 'out', after.add_write('first'), None, dace.Memlet('first[0]'))
+    use = sdfg.add_state("use")
+    use.add_mapped_tasklet(
+        "scale",
+        {"i": f"0:{N}"},
+        {"x_in": dace.Memlet("x[i]"), "t_in": dace.Memlet(f"table[i % {len(TABLE)}]")},
+        "o = x_in * t_in",
+        {"o": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+    sdfg.add_edge(region, use, dace.InterstateEdge(assignments={"k": "table[1]"} if host_read == "interstate" else {}))
+    if host_read == "tasklet":
+        after = sdfg.add_state_after(use, "after")
+        tasklet = after.add_tasklet("peek", {"inp"}, {"out"}, "out = inp")
+        after.add_edge(after.add_read("table"), None, tasklet, "inp", dace.Memlet("table[2]"))
+        after.add_edge(tasklet, "out", after.add_write("first"), None, dace.Memlet("first[0]"))
     sdfg.validate()
     return sdfg
 
@@ -74,37 +76,40 @@ def offloaded(**options) -> dace.SDFG:
 
 def table_copies(sdfg: dace.SDFG) -> list:
     return [
-        (edge.src.data, edge.dst.data) for state in sdfg.all_states() for edge in state.edges()
-        if isinstance(edge.src, dace.nodes.AccessNode) and isinstance(edge.dst, dace.nodes.AccessNode) and 'table' in (
-            edge.src.data + edge.dst.data)
+        (edge.src.data, edge.dst.data)
+        for state in sdfg.all_states()
+        for edge in state.edges()
+        if isinstance(edge.src, dace.nodes.AccessNode)
+        and isinstance(edge.dst, dace.nodes.AccessNode)
+        and "table" in (edge.src.data + edge.dst.data)
     ]
 
 
-HOST_READS = [None, 'interstate', 'tasklet']
+HOST_READS = [None, "interstate", "tasklet"]
 
 
-@pytest.mark.parametrize('host_read', HOST_READS)
+@pytest.mark.parametrize("host_read", HOST_READS)
 def test_a_literal_table_is_a_constant_and_never_copied(host_read):
     sdfg = offloaded(host_read=host_read)
-    assert list(sdfg.constants['table']) == list(TABLE)
+    assert list(sdfg.constants["table"]) == list(TABLE)
     assert not table_copies(sdfg), table_copies(sdfg)
-    fill = next(state for state in sdfg.all_states() if state.label == 'fill')
-    assert not [node for node in fill.nodes() if isinstance(node, dace.nodes.Tasklet)], 'the fill still runs'
+    fill = next(state for state in sdfg.all_states() if state.label == "fill")
+    assert not [node for node in fill.nodes() if isinstance(node, dace.nodes.Tasklet)], "the fill still runs"
 
 
-UNFOLDED_OPTIONS = [{'looped': True}, {'scalar_entry': True}]
+UNFOLDED_OPTIONS = [{"looped": True}, {"scalar_entry": True}]
 
 
-@pytest.mark.parametrize('options', UNFOLDED_OPTIONS)
+@pytest.mark.parametrize("options", UNFOLDED_OPTIONS)
 def test_a_table_not_filled_once_with_literals_stays_an_array(options):
     """A fill that runs more than once, or one that reads a runtime value, is not a compile-time constant."""
     sdfg = offloaded(**options)
-    assert 'table' not in sdfg.constants
-    assert table_copies(sdfg), 'the kernel needs the host-filled table copied down'
+    assert "table" not in sdfg.constants
+    assert table_copies(sdfg), "the kernel needs the host-filled table copied down"
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('host_read', HOST_READS)
+@pytest.mark.parametrize("host_read", HOST_READS)
 def test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_read):
     sdfg = offloaded(host_read=host_read)
     x = np.random.default_rng(3).random(N)
@@ -112,7 +117,7 @@ def test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_rea
     first = np.zeros(1)
     sdfg(x=x, y=y, s=0.5, first=first)
     np.testing.assert_array_equal(y, x * np.array(TABLE)[np.arange(N) % len(TABLE)])
-    if host_read == 'tasklet':
+    if host_read == "tasklet":
         np.testing.assert_array_equal(first, [TABLE[2]])
 
 
@@ -121,14 +126,14 @@ def test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel
     sdfg = offloaded()
     objects = sdfg.generate_code()
     # The device translation unit is titled 'CUDA' on both GPU backends; HIP emits it as C++, not .cu
-    host = next(obj.clean_code for obj in objects if obj.language == 'cpp' and obj.name == sdfg.name)
-    device = next(obj.clean_code for obj in objects if obj.title == 'CUDA')
-    declaration = 'double table[4] = {'
+    host = next(obj.clean_code for obj in objects if obj.language == "cpp" and obj.name == sdfg.name)
+    device = next(obj.clean_code for obj in objects if obj.title == "CUDA")
+    declaration = "double table[4] = {"
     assert host.count(declaration) == 1, host
-    kernel = device[device.index('__global__'):]
+    kernel = device[device.index("__global__") :]
     assert kernel.count(declaration) == 1, kernel
-    signature = kernel[:kernel.index('{')]
-    assert 'table' not in signature, signature
+    signature = kernel[: kernel.index("{")]
+    assert "table" not in signature, signature
 
 
 @pytest.mark.gpu
@@ -141,13 +146,13 @@ def test_a_table_filled_from_a_scalar_computes_what_numpy_computes():
     np.testing.assert_array_equal(y, x * table[np.arange(N) % len(TABLE)])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for host_read in HOST_READS:
         test_a_literal_table_is_a_constant_and_never_copied(host_read)
     for options in UNFOLDED_OPTIONS:
         test_a_table_not_filled_once_with_literals_stays_an_array(options)
     test_a_constant_table_is_declared_once_per_side_and_never_passed_to_a_kernel()
-    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+    if len(sys.argv) > 1 and sys.argv[1] == "gpu":
         for host_read in HOST_READS:
             test_a_constant_table_read_in_a_kernel_computes_what_numpy_computes(host_read)
         test_a_table_filled_from_a_scalar_computes_what_numpy_computes()

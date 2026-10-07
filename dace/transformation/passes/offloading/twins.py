@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Twins: a container used on the side it does not live on is accessed, and copied, through a twin on that side."""
+
 from typing import NamedTuple
 
 from ordered_set import OrderedSet
@@ -23,8 +24,8 @@ def rename_interstate_reads(sdfg: SDFG, edges: list[MultiConnectorEdge]) -> None
 def rename_header_reads(sdfg: SDFG, block: ControlFlowBlock, names: OrderedSet[str]) -> None:
     """Loop bounds and conditions are host code too; the blocks inside have their own turn."""
     block.replace_meta_accesses(
-        {name: helpers.host_name(name)
-         for name in names if helpers.is_array_stored_on_GPU(sdfg, name)})
+        {name: helpers.host_name(name) for name in names if helpers.is_array_stored_on_GPU(sdfg, name)}
+    )
 
 
 def rename_in_state(sdfg: SDFG, state: SDFGState, where: dict[str, bool]) -> None:
@@ -60,12 +61,14 @@ def stage_views_with_their_origin(sdfg: SDFG, state: SDFGState, rename: dict[str
         twin = helpers.gpu_name(name) if to_gpu else helpers.host_name(name)
         if twin not in sdfg.arrays:
             desc = sdfg.arrays[name]
-            sdfg.add_view(twin,
-                          desc.shape,
-                          desc.dtype,
-                          storage=dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default,
-                          strides=desc.strides,
-                          offset=desc.offset)
+            sdfg.add_view(
+                twin,
+                desc.shape,
+                desc.dtype,
+                storage=dtypes.StorageType.GPU_Global if to_gpu else dtypes.StorageType.Default,
+                strides=desc.strides,
+                offset=desc.offset,
+            )
         rename[name] = twin
 
 
@@ -87,8 +90,9 @@ def place_views(sdfg: SDFG) -> None:
                 desc.storage = sdfg.arrays[origin.data].storage
 
 
-def insert_copy_state(sdfg: SDFG, region: ControlFlowRegion, block: ControlFlowBlock, before: bool,
-                      names: OrderedSet[str], to_gpu: bool) -> None:
+def insert_copy_state(
+    sdfg: SDFG, region: ControlFlowRegion, block: ControlFlowBlock, before: bool, names: OrderedSet[str], to_gpu: bool
+) -> None:
     """Insert a state copying ``names`` before or after ``block`` of ``region``; ``to_gpu`` says which way."""
     label = f"copy_{'_'.join(sorted(names))}_{'to_gpu' if to_gpu else 'to_host'}"
     if before:
@@ -106,10 +110,16 @@ def insert_copy_state(sdfg: SDFG, region: ControlFlowRegion, block: ControlFlowB
         if isinstance(sdfg.arrays[name], data.View):
             continue
         state.add_edge(
-            state.add_access(src), None, state.add_access(dst), None,
-            Memlet(data=src,
-                   subset=subsets.Range.from_array(sdfg.arrays[src]),
-                   other_subset=subsets.Range.from_array(sdfg.arrays[dst])))
+            state.add_access(src),
+            None,
+            state.add_access(dst),
+            None,
+            Memlet(
+                data=src,
+                subset=subsets.Range.from_array(sdfg.arrays[src]),
+                other_subset=subsets.Range.from_array(sdfg.arrays[dst]),
+            ),
+        )
 
 
 def register_twin(sdfg: SDFG, twin: str, home: str) -> None:
@@ -125,6 +135,7 @@ def register_twin(sdfg: SDFG, twin: str, home: str) -> None:
 
 class Copy(NamedTuple):
     """Copy ``names`` to the device or back, as a new state before or after ``block`` of ``region``."""
+
     region: ControlFlowRegion
     block: ControlFlowBlock
     before: bool
@@ -140,7 +151,7 @@ class CopyPlan:
     instead of wherever the copy was planned.
     """
 
-    __slots__ = ('copies', 'sdfg', 'skip_copy_in')
+    __slots__ = ("copies", "sdfg", "skip_copy_in")
 
     def __init__(self, sdfg: SDFG) -> None:
         self.sdfg = sdfg
@@ -148,21 +159,31 @@ class CopyPlan:
         self.skip_copy_in = helpers.overwritten_before_any_read(sdfg)
         self.copies: list[Copy] = []
 
-    def add(self, region: ControlFlowRegion, block: ControlFlowBlock, before: bool, names: OrderedSet[str],
-            to_gpu: bool) -> None:
+    def add(
+        self, region: ControlFlowRegion, block: ControlFlowBlock, before: bool, names: OrderedSet[str], to_gpu: bool
+    ) -> None:
         self.copies.append(Copy(region, block, before, names, to_gpu))
 
     def insert(self) -> None:
         """Turn the plan into states; call after every access is renamed."""
         sdfg = self.sdfg
-        written = OrderedSet(node.data for state in sdfg.states() for node in state.data_nodes()
-                             if state.in_degree(node) > 0)
+        written = OrderedSet(
+            node.data for state in sdfg.states() for node in state.data_nodes() if state.in_degree(node) > 0
+        )
         fills: dict[bool, OrderedSet[str]] = {True: OrderedSet(), False: OrderedSet()}
         for copy in self.copies:
-            names = OrderedSet(name for name in copy.names if not (copy.to_gpu and name in self.skip_copy_in) and (
-                helpers.is_array_stored_on_GPU(sdfg, name) != copy.to_gpu or helpers.twin_name(sdfg, name) in written))
-            constant = OrderedSet(name for name in names
-                                  if name not in written and helpers.twin_name(sdfg, name) not in written)
+            names = OrderedSet(
+                name
+                for name in copy.names
+                if not (copy.to_gpu and name in self.skip_copy_in)
+                and (
+                    helpers.is_array_stored_on_GPU(sdfg, name) != copy.to_gpu
+                    or helpers.twin_name(sdfg, name) in written
+                )
+            )
+            constant = OrderedSet(
+                name for name in names if name not in written and helpers.twin_name(sdfg, name) not in written
+            )
             fills[copy.to_gpu] |= constant
             if names - constant:
                 insert_copy_state(sdfg, copy.region, copy.block, copy.before, names - constant, copy.to_gpu)

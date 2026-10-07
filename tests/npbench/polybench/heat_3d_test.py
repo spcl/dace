@@ -12,21 +12,25 @@ from dace.autodiff import add_backward_pass
 # TSTEPS, N
 sizes = {"mini": (20, 10), "small": (40, 20), "medium": (100, 40), "large": (500, 120), "extra-large": (1000, 200)}
 
-N = dc.symbol('N', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
 
 
 @dc.program
 def heat_3d_kernel(TSTEPS: dc.int64, A: dc.float64[N, N, N], B: dc.float64[N, N, N]):
 
     for t in range(1, TSTEPS):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def initialize(N, datatype=np.float64):
@@ -40,19 +44,18 @@ def heat_3d_jax_kernel(jnp, lax, TSTEPS, A, B):
 
     def time_step(carry, t):
         A, B = carry
-        B_new = B.at[1:-1, 1:-1,
-                     1:-1].set(0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                               (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                               (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, :-2]) +
-                               A[1:-1, 1:-1, 1:-1])
-        A_new = A.at[1:-1, 1:-1,
-                     1:-1].set(0.125 *
-                               (B_new[2:, 1:-1, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[:-2, 1:-1, 1:-1]) +
-                               0.125 *
-                               (B_new[1:-1, 2:, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, :-2, 1:-1]) +
-                               0.125 *
-                               (B_new[1:-1, 1:-1, 2:] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, 1:-1, :-2]) +
-                               B_new[1:-1, 1:-1, 1:-1])
+        B_new = B.at[1:-1, 1:-1, 1:-1].set(
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, :-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A_new = A.at[1:-1, 1:-1, 1:-1].set(
+            0.125 * (B_new[2:, 1:-1, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[:-2, 1:-1, 1:-1])
+            + 0.125 * (B_new[1:-1, 2:, 1:-1] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, :-2, 1:-1])
+            + 0.125 * (B_new[1:-1, 1:-1, 2:] - 2.0 * B_new[1:-1, 1:-1, 1:-1] + B_new[1:-1, 1:-1, :-2])
+            + B_new[1:-1, 1:-1, 1:-1]
+        )
         return (A_new, B_new), None
 
     (A_final, B_final), _ = lax.scan(time_step, (A, B), jnp.arange(1, TSTEPS))
@@ -62,21 +65,25 @@ def heat_3d_jax_kernel(jnp, lax, TSTEPS, A, B):
 def ground_truth(TSTEPS, A, B):
 
     for t in range(1, TSTEPS):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def run_heat_3d(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Gesummv for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench small size)
     TSTEPS, N = sizes["small"]
@@ -99,7 +106,9 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
         initial_maps = count_maps(sdfg)
         sdfg = auto_optimize(sdfg, device_type)
         after_maps = count_maps(sdfg)
-        assert after_maps < initial_maps, f"Expected less maps, initially {initial_maps} many maps, but after optimization {after_maps}"
+        assert after_maps < initial_maps, (
+            f"Expected less maps, initially {initial_maps} many maps, but after optimization {after_maps}"
+        )
         sdfg(TSTEPS, A, B, N=N)
     # Compute ground truth and validate
     ground_truth(TSTEPS, A_ref, B_ref)
@@ -118,7 +127,7 @@ def run_heat_3d_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -136,7 +145,7 @@ def run_heat_3d_autodiff():
 
     # Numerically validate vs JAX
     jax_kernel = lambda TSTEPS, A, B: heat_3d_jax_kernel(jnp, lax, TSTEPS, A, B)
-    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0,))
     A_jax, B_jax = initialize(N)
     jax_grad_A = jax_grad(TSTEPS, A_jax, B_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -158,9 +167,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

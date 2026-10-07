@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fold literal-filled tables into SDFG constants."""
+
 import ast
 from typing import Any
 
@@ -25,7 +26,7 @@ class FoldConstantTables(ppl.Pass):
     assigning a literal, in one state outside every loop, and that nothing else writes.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
@@ -70,8 +71,9 @@ def literal_fills(sdfg: SDFG) -> dict[str, Fill]:
                     fills[node.data][1][edge.src] = write
     return {
         name: fill
-        for name, fill in fills.items() if name not in refused and sorted(
-            index for index, _ in fill[1].values()) == list(range(int(sdfg.arrays[name].total_size)))
+        for name, fill in fills.items()
+        if name not in refused
+        and sorted(index for index, _ in fill[1].values()) == list(range(int(sdfg.arrays[name].total_size)))
     }
 
 
@@ -82,7 +84,7 @@ def literal_write(state: SDFGState, edge) -> tuple[int, object] | None:
         return None
     index = edge.data.subset.min_element()[0] if edge.data.subset.num_elements() == 1 else None
     try:
-        statement, = ast.parse(tasklet.code.as_string.strip()).body
+        (statement,) = ast.parse(tasklet.code.as_string.strip()).body
         value = ast.literal_eval(statement.value)
     except (SyntaxError, ValueError, AttributeError):
         return None

@@ -3,6 +3,7 @@
 Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.e., memory preserving) for localized
 testing or optimization.
 """
+
 import networkx as nx
 from networkx.algorithms.flow import edmondskarp
 import sympy as sp
@@ -15,8 +16,12 @@ from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateE
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.state import ControlFlowBlock, StateSubgraphView, SubgraphView
-from dace.transformation.transformation import (MultiStateTransformation, PatternTransformation, SubgraphTransformation,
-                                                SingleStateTransformation)
+from dace.transformation.transformation import (
+    MultiStateTransformation,
+    PatternTransformation,
+    SubgraphTransformation,
+    SingleStateTransformation,
+)
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
 
@@ -27,7 +32,6 @@ except ImportError:
 
 
 class SDFGCutout(SDFG):
-
     # The base SDFG the cutout was created from.
     _base_sdfg: Optional[SDFG] = None
     # The input / output configurations of the cutout.
@@ -35,7 +39,7 @@ class SDFGCutout(SDFG):
     output_config: Set[str] = set()
 
     def __init__(self, name: str, constants_prop: Optional[Dict[str, Tuple[data.Data, Any]]] = None):
-        super(SDFGCutout, self).__init__(name + '_cutout', constants_prop)
+        super(SDFGCutout, self).__init__(name + "_cutout", constants_prop)
         self._base_sdfg = None
         self.input_config = set()
         self.output_config = set()
@@ -69,7 +73,7 @@ class SDFGCutout(SDFG):
                 vals[ip] = val
             return vals
         else:
-            raise RuntimeError('No data report found for the base SDFG.')
+            raise RuntimeError("No data report found for the base SDFG.")
 
     def translate_transformation_into(self, transformation: Union[PatternTransformation, SubgraphTransformation]):
         if isinstance(transformation, SingleStateTransformation):
@@ -111,7 +115,7 @@ class SDFGCutout(SDFG):
 
     def to_json(self, hash=False, include_transformation_history=False):
         cutout_json = super().to_json(hash, include_transformation_history)
-        cutout_json['type'] = SDFG.__name__
+        cutout_json["type"] = SDFG.__name__
         return cutout_json
 
     @classmethod
@@ -119,14 +123,16 @@ class SDFGCutout(SDFG):
         return super(SDFGCutout, cls).from_json(json_obj, context)
 
     @classmethod
-    def from_transformation(cls,
-                            sdfg: SDFG,
-                            transformation: Union[PatternTransformation, SubgraphTransformation],
-                            make_side_effects_global=True,
-                            use_alibi_nodes: bool = True,
-                            reduce_input_config=True,
-                            symbols_map: Optional[Dict[str, Any]] = None,
-                            preserve_guids: bool = False) -> Union['SDFGCutout', SDFG]:
+    def from_transformation(
+        cls,
+        sdfg: SDFG,
+        transformation: Union[PatternTransformation, SubgraphTransformation],
+        make_side_effects_global=True,
+        use_alibi_nodes: bool = True,
+        reduce_input_config=True,
+        symbols_map: Optional[Dict[str, Any]] = None,
+        preserve_guids: bool = False,
+    ) -> Union["SDFGCutout", SDFG]:
         """
         Create a cutout from a transformation's set of affected graph elements.
 
@@ -153,40 +159,45 @@ class SDFGCutout(SDFG):
         if transformation.cfg_id >= 0 and target_sdfg.cfg_list is not None:
             target_sdfg = target_sdfg.cfg_list[transformation.cfg_id]
 
-        if (all(isinstance(n, nd.Node) for n in affected_nodes)
-                or isinstance(transformation, (SubgraphTransformation, SingleStateTransformation))):
+        if all(isinstance(n, nd.Node) for n in affected_nodes) or isinstance(
+            transformation, (SubgraphTransformation, SingleStateTransformation)
+        ):
             state = target_sdfg.parent
             if transformation.state_id >= 0:
                 state = target_sdfg.node(transformation.state_id)
-            cutout = cls.singlestate_cutout(state,
-                                            *affected_nodes,
-                                            make_side_effects_global=make_side_effects_global,
-                                            use_alibi_nodes=use_alibi_nodes,
-                                            reduce_input_config=reduce_input_config,
-                                            symbols_map=symbols_map,
-                                            preserve_guids=preserve_guids)
+            cutout = cls.singlestate_cutout(
+                state,
+                *affected_nodes,
+                make_side_effects_global=make_side_effects_global,
+                use_alibi_nodes=use_alibi_nodes,
+                reduce_input_config=reduce_input_config,
+                symbols_map=symbols_map,
+                preserve_guids=preserve_guids,
+            )
             cutout.translate_transformation_into(transformation)
             return cutout
         elif isinstance(transformation, MultiStateTransformation):
-            cutout = cls.multistate_cutout(*affected_nodes,
-                                           make_side_effects_global=make_side_effects_global,
-                                           preserve_guids=preserve_guids)
+            cutout = cls.multistate_cutout(
+                *affected_nodes, make_side_effects_global=make_side_effects_global, preserve_guids=preserve_guids
+            )
             # If the cutout is an SDFG, there's no need to translate the transformation.
             if isinstance(cutout, SDFGCutout):
                 cutout.translate_transformation_into(transformation)
             return cutout
-        raise Exception('Unsupported transformation type: {}'.format(type(transformation)))
+        raise Exception("Unsupported transformation type: {}".format(type(transformation)))
 
     @classmethod
-    def singlestate_cutout(cls,
-                           state: SDFGState,
-                           *nodes: nd.Node,
-                           make_copy: bool = True,
-                           make_side_effects_global: bool = True,
-                           use_alibi_nodes: bool = True,
-                           reduce_input_config: bool = False,
-                           symbols_map: Optional[Dict[str, Any]] = None,
-                           preserve_guids: bool = False) -> 'SDFGCutout':
+    def singlestate_cutout(
+        cls,
+        state: SDFGState,
+        *nodes: nd.Node,
+        make_copy: bool = True,
+        make_side_effects_global: bool = True,
+        use_alibi_nodes: bool = True,
+        reduce_input_config: bool = False,
+        symbols_map: Optional[Dict[str, Any]] = None,
+        preserve_guids: bool = False,
+    ) -> "SDFGCutout":
         """
         Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
         The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
@@ -225,7 +236,7 @@ class SDFGCutout(SDFG):
         subgraph = _extend_subgraph_with_access_nodes(state, subgraph, use_alibi_nodes)
 
         # Make a new SDFG with the included constants, used symbols, and data containers.
-        cutout = SDFGCutout(sdfg.name + '_cutout', sdfg.constants_prop)
+        cutout = SDFGCutout(sdfg.name + "_cutout", sdfg.constants_prop)
         if preserve_guids:
             cutout.guid = sdfg.guid
         cutout._base_sdfg = sdfg
@@ -243,16 +254,16 @@ class SDFGCutout(SDFG):
             if memlet.data in cutout.arrays:
                 continue
             dataname = memlet.data
-            if '.' in dataname:
+            if "." in dataname:
                 # This is an access to a struct member, which typically happens for the memlets between an access node
                 # pointing to a struct (or view thereof), and a view pointing to the member. Assert that this is indeed
                 # the case (i.e., only one '.' is found in the name of the data being accessed), and if so, clone the
                 # struct (or struct view) data descriptor instead.
-                parts = dataname.split('.')
+                parts = dataname.split(".")
                 if len(parts) == 2:
                     dataname = parts[0]
                 else:
-                    raise RuntimeError('Attempting to add invalid multi-nested data ' + memlet.data + ' to a cutout')
+                    raise RuntimeError("Attempting to add invalid multi-nested data " + memlet.data + " to a cutout")
             new_desc = sdfg.arrays[dataname].clone()
             cutout.add_datadesc(dataname, new_desc)
 
@@ -291,19 +302,20 @@ class SDFGCutout(SDFG):
             if isinstance(new_node, nd.Node):
                 if isinstance(orig_node, (nd.EntryNode, nd.ExitNode)):
                     used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
-                    for conn in (new_node.in_connectors.keys() - used_connectors):
+                    for conn in new_node.in_connectors.keys() - used_connectors:
                         new_node.remove_in_connector(conn)
                     used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
-                    for conn in (new_node.out_connectors.keys() - used_connectors):
+                    for conn in new_node.out_connectors.keys() - used_connectors:
                         new_node.remove_out_connector(conn)
                 else:
                     used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
-                    for conn in (new_node.in_connectors.keys() - used_connectors):
+                    for conn in new_node.in_connectors.keys() - used_connectors:
                         prune = True
                         for e in state.in_edges(orig_node):
                             if e.dst_conn and e.dst_conn == conn:
-                                _, n_access = _create_alibi_access_node_for_edge(cutout, new_state, sdfg, e, None, None,
-                                                                                 new_node, conn)
+                                _, n_access = _create_alibi_access_node_for_edge(
+                                    cutout, new_state, sdfg, e, None, None, new_node, conn
+                                )
                                 e_path = state.memlet_path(e)
                                 translation_add_pairs.add((e_path[0].src, n_access))
                                 prune = False
@@ -311,19 +323,20 @@ class SDFGCutout(SDFG):
                         if prune:
                             new_node.remove_in_connector(conn)
                     used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
-                    for conn in (new_node.out_connectors.keys() - used_connectors):
+                    for conn in new_node.out_connectors.keys() - used_connectors:
                         prune = True
                         for e in state.out_edges(orig_node):
                             if e.src_conn and e.src_conn == conn:
-                                _, n_access = _create_alibi_access_node_for_edge(cutout, new_state, sdfg, e, new_node,
-                                                                                 conn, None, None)
+                                _, n_access = _create_alibi_access_node_for_edge(
+                                    cutout, new_state, sdfg, e, new_node, conn, None, None
+                                )
                                 e_path = state.memlet_path(e)
                                 translation_add_pairs.add((e_path[-1].dst, n_access))
                                 prune = False
                                 break
                         if prune:
                             new_node.remove_out_connector(conn)
-        for (outer, inner) in translation_add_pairs:
+        for outer, inner in translation_add_pairs:
             in_translation[outer] = inner
             out_translation[inner] = outer
 
@@ -336,8 +349,9 @@ class SDFGCutout(SDFG):
         if make_side_effects_global:
             in_reach, out_reach = _determine_cutout_reachability(cutout, sdfg, in_translation, out_translation)
             cutout.input_config = _cutout_determine_input_config(cutout, in_reach, in_translation, out_translation)
-            cutout.output_config = _cutout_determine_output_configuration(cutout, out_reach, in_translation,
-                                                                          out_translation)
+            cutout.output_config = _cutout_determine_output_configuration(
+                cutout, out_reach, in_translation, out_translation
+            )
             for d_name in cutout.input_config.union(cutout.output_config):
                 cutout.arrays[d_name].transient = False
 
@@ -356,11 +370,13 @@ class SDFGCutout(SDFG):
         return cutout
 
     @classmethod
-    def multistate_cutout(cls,
-                          *states: SDFGState,
-                          make_side_effects_global: bool = True,
-                          preserve_guids: bool = False,
-                          override_start_block: Optional[ControlFlowBlock] = None) -> Union['SDFGCutout', SDFG]:
+    def multistate_cutout(
+        cls,
+        *states: SDFGState,
+        make_side_effects_global: bool = True,
+        preserve_guids: bool = False,
+        override_start_block: Optional[ControlFlowBlock] = None,
+    ) -> Union["SDFGCutout", SDFG]:
         """
         Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
 
@@ -393,7 +409,7 @@ class SDFGCutout(SDFG):
         # Check that all states are inside the same SDFG.
         sdfg = list(states)[0].parent
         if any(i.parent != sdfg for i in states):
-            raise Exception('Not all cutout states reside in the same SDFG')
+            raise Exception("Not all cutout states reside in the same SDFG")
 
         cutout_states: Set[SDFGState] = set(states)
 
@@ -437,7 +453,7 @@ class SDFGCutout(SDFG):
         subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
 
         # Make a new SDFG with the included constants, used symbols, and data containers.
-        cutout = SDFGCutout(sdfg.name + '_cutout', sdfg.constants_prop)
+        cutout = SDFGCutout(sdfg.name + "_cutout", sdfg.constants_prop)
         cutout._base_sdfg = sdfg
         defined_symbols: Dict[str, data.Data] = dict()
         free_symbols: Set[str] = set()
@@ -449,7 +465,7 @@ class SDFGCutout(SDFG):
         for edge in subgraph.edges():
             is_edge: InterstateEdge = edge.data
             available_symbols = sdfg.symbols.keys()
-            free_symbols |= (is_edge.free_symbols & available_symbols)
+            free_symbols |= is_edge.free_symbols & available_symbols
             for rmem in is_edge.get_read_memlets(sdfg.arrays):
                 if rmem.data in cutout.arrays:
                     continue
@@ -511,8 +527,9 @@ class SDFGCutout(SDFG):
         if make_side_effects_global:
             in_reach, out_reach = _determine_cutout_reachability(cutout, sdfg, in_translation, out_translation)
             cutout.input_config = _cutout_determine_input_config(cutout, in_reach, in_translation, out_translation)
-            cutout.output_config = _cutout_determine_output_configuration(cutout, out_reach, in_translation,
-                                                                          out_translation)
+            cutout.output_config = _cutout_determine_output_configuration(
+                cutout, out_reach, in_translation, out_translation
+            )
             for d_name in cutout.input_config.union(cutout.output_config):
                 cutout.arrays[d_name].transient = False
 
@@ -525,9 +542,9 @@ class SDFGCutout(SDFG):
         return cutout
 
 
-def _transformation_determine_affected_nodes(sdfg: SDFG,
-                                             transformation: Union[PatternTransformation, SubgraphTransformation],
-                                             strict: bool = False) -> Set[Union[nd.Node, SDFGState]]:
+def _transformation_determine_affected_nodes(
+    sdfg: SDFG, transformation: Union[PatternTransformation, SubgraphTransformation], strict: bool = False
+) -> Set[Union[nd.Node, SDFGState]]:
     """
     For a given SDFG and transformation, determine the set of nodes that are affected by the transformation.
 
@@ -609,10 +626,12 @@ def _transformation_determine_affected_nodes(sdfg: SDFG,
     return affected_nodes
 
 
-def _reduce_in_configuration(state: SDFGState,
-                             affected_nodes: Set[nd.Node],
-                             use_alibi_nodes: bool = False,
-                             symbols_map: Optional[Dict[str, Any]] = None) -> Set[nd.Node]:
+def _reduce_in_configuration(
+    state: SDFGState,
+    affected_nodes: Set[nd.Node],
+    use_alibi_nodes: bool = False,
+    symbols_map: Optional[Dict[str, Any]] = None,
+) -> Set[nd.Node]:
     """
     For a given set of nodes that should be cut out in a single state cutout, try to reduce the size of the input
     configuration as much as possible by adding more nodes to find a S-T minimum 2-cut in the state.
@@ -740,7 +759,7 @@ def _reduce_in_configuration(state: SDFGState,
             # state input configuration, in which case we add an edge from the source to the sink with that volume.
             if isinstance(edge.dst, nd.AccessNode) and memlet.data in state_input_configuration:
                 if proxy_graph.has_edge(source, sink):
-                    proxy_graph[source][sink]['capacity'] += vol
+                    proxy_graph[source][sink]["capacity"] += vol
                 else:
                     proxy_graph.add_node(source)
                     proxy_graph.add_node(sink)
@@ -764,20 +783,20 @@ def _reduce_in_configuration(state: SDFGState,
             # If the destination is an access node that is part of the state input configuration, we add an edge from
             # the source with that volume.
             if proxy_graph.has_edge(source, proxy_edge_dst):
-                proxy_graph[source][proxy_edge_dst]['capacity'] += vol
+                proxy_graph[source][proxy_edge_dst]["capacity"] += vol
             else:
                 proxy_graph.add_edge(source, proxy_edge_dst, capacity=vol)
             # The actual edge between src and dst is set to have infinite capacity.
-            vol = float('inf')
+            vol = float("inf")
         elif isinstance(proxy_edge_src, nd.AccessNode) and not remain_free:
             # All outgoing edges from access nodes (with data) are set to have infinite capacity.
-            vol = float('inf')
+            vol = float("inf")
 
         if isinstance(proxy_edge_src, nd.ExitNode):
             proxy_edge_src = state.entry_node(proxy_edge_src)
 
         if proxy_graph.has_edge(proxy_edge_src, proxy_edge_dst):
-            proxy_graph[proxy_edge_src][proxy_edge_dst]['capacity'] += vol
+            proxy_graph[proxy_edge_src][proxy_edge_dst]["capacity"] += vol
         else:
             proxy_graph.add_node(proxy_edge_src)
             proxy_graph.add_node(proxy_edge_dst)
@@ -829,10 +848,16 @@ def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGStat
     return pred_frontier, pred_frontier_edges
 
 
-def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGState, original_sdfg: SDFG,
-                                       original_edge: MultiConnectorEdge[Memlet], from_node: Union[nd.Node, None],
-                                       from_connector: Union[str, None], to_node: Union[nd.Node, None],
-                                       to_connector: Union[str, None]) -> Tuple[data.Data, nd.AccessNode]:
+def _create_alibi_access_node_for_edge(
+    target_sdfg: SDFG,
+    target_state: SDFGState,
+    original_sdfg: SDFG,
+    original_edge: MultiConnectorEdge[Memlet],
+    from_node: Union[nd.Node, None],
+    from_connector: Union[str, None],
+    to_node: Union[nd.Node, None],
+    to_connector: Union[str, None],
+) -> Tuple[data.Data, nd.AccessNode]:
     """
     Add an alibi data container and access node to a dangling connector inside of scopes.
     Alibi nodes are never transient because they always represent a 'border' of the cutout and will consequently
@@ -840,27 +865,27 @@ def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGStat
     """
     original_edge.data
     access_size = original_edge.data.subset.size_exact()
-    container_name = '__cutout_' + str(original_edge.data.data)
+    container_name = "__cutout_" + str(original_edge.data.data)
     container_name = data.find_new_name(container_name, target_sdfg._arrays.keys())
     original_array = original_sdfg._arrays[original_edge.data.data]
-    memlet_str = ''
+    memlet_str = ""
     if original_edge.data.subset.num_elements_exact() > 1:
         access_size = original_edge.data.subset.size_exact()
         target_sdfg.add_array(container_name, access_size, original_array.dtype)
-        memlet_str = container_name + '['
+        memlet_str = container_name + "["
         sep = None
         for dim_len in original_edge.data.subset.bounding_box_size():
             if sep is not None:
-                memlet_str += ','
+                memlet_str += ","
             if dim_len > 1:
-                memlet_str += '0:' + str(dim_len - 1)
+                memlet_str += "0:" + str(dim_len - 1)
             else:
-                memlet_str += '0'
-            sep = ','
-        memlet_str += ']'
+                memlet_str += "0"
+            sep = ","
+        memlet_str += "]"
     else:
         target_sdfg.add_scalar(container_name, original_array.dtype)
-        memlet_str = container_name + '[0]'
+        memlet_str = container_name + "[0]"
     alibi_access_node = target_state.add_access(container_name)
     if from_node is None:
         target_state.add_edge(alibi_access_node, None, to_node, to_connector, Memlet(memlet_str))
@@ -869,9 +894,10 @@ def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGStat
     return target_sdfg.arrays[container_name], alibi_access_node
 
 
-def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView,
-                                       use_alibi_nodes: bool) -> StateSubgraphView:
-    """ Expands a subgraph view to include necessary input/output access nodes, using memlet paths. """
+def _extend_subgraph_with_access_nodes(
+    state: SDFGState, subgraph: StateSubgraphView, use_alibi_nodes: bool
+) -> StateSubgraphView:
+    """Expands a subgraph view to include necessary input/output access nodes, using memlet paths."""
     sdfg = state.parent
     result: List[nd.Node] = copy.copy(subgraph.nodes())
     queue: Deque[nd.Node] = deque(subgraph.nodes())
@@ -887,7 +913,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
             continue
         for e in state.in_edges(node):
             # Special case: IN_* connectors are not traversed further
-            if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and (e.dst_conn is None or e.dst_conn.startswith('IN_')):
+            if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and (e.dst_conn is None or e.dst_conn.startswith("IN_")):
                 continue
 
             # We don't want to extend access nodes over scope entry nodes, but rather we want to introduce alibi data
@@ -904,7 +930,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 
         for e in state.out_edges(node):
             # Special case: OUT_* connectors are not traversed further
-            if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and (e.src_conn is None or e.src_conn.startswith('OUT_')):
+            if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and (e.src_conn is None or e.src_conn.startswith("OUT_")):
                 continue
 
             # We don't want to extend access nodes over scope exit nodes, but rather we want to introduce alibi data
@@ -927,18 +953,21 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
         if isinstance(node, nd.ExitNode) and state.entry_node(node) not in result:
             enode = state.entry_node(node)
         if enode is not None:
-            raise ValueError(f'Cutout cannot expand graph implicitly since "{node}" is in the graph and "{enode}" is '
-                             'not. Please provide more nodes in the subgraph as necessary.')
+            raise ValueError(
+                f'Cutout cannot expand graph implicitly since "{node}" is in the graph and "{enode}" is '
+                "not. Please provide more nodes in the subgraph as necessary."
+            )
 
     return StateSubgraphView(state, result)
 
 
 def _determine_cutout_reachability(
-        ct: SDFG,
-        sdfg: SDFG,
-        in_translation: Dict[Any, Any],
-        out_translation: Dict[Any, Any],
-        state_reach: Dict[SDFGState, Set[SDFGState]] = None) -> Tuple[Set[SDFGState], Set[SDFGState]]:
+    ct: SDFG,
+    sdfg: SDFG,
+    in_translation: Dict[Any, Any],
+    out_translation: Dict[Any, Any],
+    state_reach: Dict[SDFGState, Set[SDFGState]] = None,
+) -> Tuple[Set[SDFGState], Set[SDFGState]]:
     """
     For a given cutout and its original SDFG, determine what parts of the SDFG (set of states) can reach the cutout,
     and what set of states can be reached from the cutout.
@@ -962,17 +991,18 @@ def _determine_cutout_reachability(
     for state in cutout_states:
         original_state = out_translation[state]
         for k, v in state_reach.items():
-            if (k not in in_translation or in_translation[k] not in cutout_states):
+            if k not in in_translation or in_translation[k] not in cutout_states:
                 if original_state is not None and original_state in v:
                     inverse_cutout_reach.add(k)
         for rstate in state_reach[original_state]:
-            if (rstate not in in_translation or in_translation[rstate] not in cutout_states):
+            if rstate not in in_translation or in_translation[rstate] not in cutout_states:
                 cutout_reach.add(rstate)
     return (inverse_cutout_reach, cutout_reach)
 
 
-def _cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState], in_translation: Dict[Any, Any],
-                                   out_translation: Dict[Any, Any]) -> Set[str]:
+def _cutout_determine_input_config(
+    ct: SDFG, inverse_cutout_reach: Set[SDFGState], in_translation: Dict[Any, Any], out_translation: Dict[Any, Any]
+) -> Set[str]:
     """
     Determines the input configuration for a given cutout SDFG.
     The input configuration is the set of data descriptors that are read inside the cutout, but may be written to
@@ -1037,8 +1067,9 @@ def _cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState
     return input_configuration
 
 
-def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState], in_translation: Dict[Any, Any],
-                                           out_translation: Dict[Any, Any]) -> Set[str]:
+def _cutout_determine_output_configuration(
+    ct: SDFG, cutout_reach: Set[SDFGState], in_translation: Dict[Any, Any], out_translation: Dict[Any, Any]
+) -> Set[str]:
     """
     Determines the output configuration for a given cutout SDFG.
     The output configuration is the set of data descriptors that are written inside the cutout, but may be read from
