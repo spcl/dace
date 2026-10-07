@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import sympy
 
 from dace import data, dtypes
+from dace.config import Config
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes.common import (bound_names, iteration_spaces, memlets_of,
                                                             names_in_subtrees, names_read, names_written, repository_of)
@@ -444,7 +445,9 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     call independent of the previous ones but may change results where such values reach outputs.
 
     :param stree: The schedule tree to transform in place.
-    :param max_array_bytes: Only move arrays of at most this many bytes (by default, planes of up to 2048 doubles).
+    :param max_array_bytes: Only move arrays of at most this many bytes (by default, planes of up to 2048 doubles),
+                            and of at most ``compiler.max_stack_array_size``: code generation allocates larger
+                            register arrays on the heap, every time their scope is entered.
     :param max_total_bytes: Move arrays of at most this many bytes in total.
     :param zero_read_before_written: Also move arrays that may be read before being written, zero-initialized.
     :return: The number of arrays moved.
@@ -453,6 +456,7 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     containers = root.containers
     uses, opaque = usable_accesses(root)
     liveness = Liveness(root, trust_reads=False)
+    max_array_bytes = min(max_array_bytes, Config.get('compiler', 'max_stack_array_size'))
     candidates = []
     for name, desc in containers.items():
         if (not desc.transient or type(desc) is not data.Array or name in opaque or name not in uses
