@@ -536,9 +536,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # SECOND state then WCR-accumulates (overlapping subset), the implicit seed
             # read is not an edge, so a later MapFusion / topological reorder could run the
             # accumulate before the seed init, zeroing the result (covariance /
-            # correlation ``mean[:] = 0.0; mean(+)= data[...]``). Order every second-state
-            # source leading to the accumulated node after the seed writer, and refuse when
-            # no source leads there (nothing to hang the ordering on).
+            # correlation ``mean[:] = 0.0; mean(+)= data[...]``). A transient scalar seed
+            # (``tmp = 0`` before ``tmp(+)= ...``) fuses: every second-state source leading
+            # to the accumulated node (for a source AccessNode, its consumers) is ordered
+            # after the seed writer, refused when no source leads there. Any other seeded
+            # container keeps its states apart.
             first_written: Dict[str, List] = {}
             first_writers: Dict[str, List[nodes.AccessNode]] = {}
             for n in first_output:
@@ -555,9 +557,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
                 if wsub is not None and all(subsets.intersects(wsub, fs) is False for fs in first_written[e.data.data]):
                     continue
+                seed = sdfg.arrays[e.data.data]
                 accumulated = second_state.memlet_path(e)[-1].dst
-                if (not isinstance(accumulated, nodes.AccessNode) or accumulated not in top2 or not any(
-                        nx.has_path(second_state._nx, i, accumulated) for i in second_sources if i is not accumulated)):
+                if (not (isinstance(seed, dt.Scalar) and seed.transient)
+                        or not isinstance(accumulated, nodes.AccessNode) or accumulated not in top2 or not any(
+                            nx.has_path(second_state._nx, i, accumulated)
+                            for i in second_sources if i is not accumulated)):
                     return False
                 self.connections_to_make.append(
                     ('seed', list(dict.fromkeys(first_writers[e.data.data])), [accumulated]))
@@ -1005,10 +1010,23 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # the hazard node, so the first-state endpoint is ordered before the whole
             # second-state chain producing / overwriting the datum. (RAW, a TRUE data
             # dependency, is handled by the common-data-node merge below, not here.)
-            for _kind, first_nodes, second_nodes in self.connections_to_make:
+            # A seeded accumulation is ordered by its ``seed`` entry; its WAW edges land on second-state source
+            # AccessNodes that may later merge upstream of the seed and close a cycle (ludcmp ``w``).
+            seeded = {n for kind, _, second_nodes in self.connections_to_make if kind == 'seed' for n in second_nodes}
+            for kind, first_nodes, second_nodes in self.connections_to_make:
+                if kind == 'waw' and node in seeded:
+                    continue
                 if node in second_nodes:
                     for i in top2:
                         if i not in second_state.source_nodes():
+                            continue
+                        if kind == 'seed' and isinstance(i, nodes.AccessNode):
+                            # A source AccessNode may merge into a first-state node upstream of the seed
+                            # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
+                            for j in first_nodes:
+                                for k in dict.fromkeys(e.dst for e in second_state.out_edges(i)):
+                                    if j in first_state.nodes() and nx.has_path(second_state._nx, k, node):
+                                        first_state.add_nedge(j, k, memlet.Memlet())
                             continue
                         # Plain reachability. (Do NOT use ``all_nodes_between``: it returns an
                         # EMPTY SET -- not None -- as soon as its DFS hits any sink that is not
