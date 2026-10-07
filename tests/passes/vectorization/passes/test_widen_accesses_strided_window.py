@@ -184,7 +184,7 @@ def test_linearized_multi_var_index_is_refused_not_broadcast():
                 validate_all=True,
             )
         ).apply_pass(sdfg, {})
-        refusals = [str(m.message) for m in caught if "refusing to vectorize" in str(m.message)]
+        refusals = [str(m.message) for m in caught if str(m.message).startswith("VectorizeMultiDim:")]
     sdfg.validate()
     assert any("indexed jointly by several of the tile iter-vars" in r for r in refusals), refusals
 
