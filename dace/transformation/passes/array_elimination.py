@@ -86,14 +86,13 @@ class ArrayElimination(ppl.Pass):
 
         # If node is completely removed from graph, erase data descriptor
         for aname, desc in list(sdfg.arrays.items()):
-            if isinstance(desc, data.DistributedDescriptor):
+            if not desc.transient:
                 continue
-            if not desc.transient or isinstance(desc, data.Scalar):
+            if isinstance(desc, data.Structure) and len(desc.members) > 0:
+                continue
+            if not isinstance(desc, (data.Array, data.Scalar, data.Structure)):
                 continue
             if aname not in access_sets or not access_sets[aname]:
-                desc = sdfg.arrays[aname]
-                if isinstance(desc, data.Structure) and len(desc.members) > 0:
-                    continue
                 sdfg.remove_data(aname, validate=False)
                 result.add(aname)
 

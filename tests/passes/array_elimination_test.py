@@ -52,6 +52,26 @@ def test_merge_simple():
     assert len(state.data_nodes()) == 2
 
 
+def test_remove_unused_scalars() -> None:
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [10], dace.float32)
+    sdfg.add_array("B", [10], dace.float32)
+    sdfg.add_scalar("tmp", dace.int32, transient=True)
+
+    state = sdfg.add_state()
+    state.add_mapped_tasklet("copy", {"i": dace.subsets.Range.from_string("0:10")},
+                             code="a = b; t=1",
+                             inputs={"a": dace.Memlet("A[i]")},
+                             outputs={
+                                 "b": dace.Memlet("B[i]"),
+                                 "t": dace.Memlet("tmp[0]")
+                             },
+                             external_edges=True)
+    sdfg.simplify()
+    assert "tmp" not in sdfg.arrays
+
+
 if __name__ == '__main__':
     test_redundant_simple()
     test_merge_simple()
+    test_remove_unused_scalars()
