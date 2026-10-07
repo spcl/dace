@@ -471,24 +471,45 @@ def map_tasklet_augassign_candidates(state: SDFGState, map_entry: nodes.MapEntry
                 }
 
 
-def runs_repeatedly(state: SDFGState) -> bool:
-    """Whether ``state`` runs once per iteration of an enclosing loop or map, nested SDFGs included.
+def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+    """Whether the writes of ``tasklet`` repeat on one element across an enclosing loop or map iteration.
 
-    A read-modify-write that runs once accumulates nothing; as a WCR it only loses its order against the
-    plain writes beside it (a peeled ``A[N-1] += 1`` fused next to the map writing ``A[i]``).
+    Only such a read-modify-write is an accumulation worth a WCR. One that runs once (a peeled ``A[N-1] += 1``)
+    or whose element varies with every enclosing iterator (``zqlhs[jn, jm, jl] /= ...``) accumulates nothing; as a
+    WCR it only loses its order against the plain writes beside it and its indexed form in the rendering.
+    Iterators are compared in the tasklet's namespace: an outer one a nested SDFG does not receive cannot index
+    the write, so it repeats it.
     """
+    written = {
+        str(sym)
+        for edge in state.out_edges(tasklet) if edge.data.subset is not None for sym in edge.data.subset.free_symbols
+    }
+    rename: Optional[dict[str, str]] = None  # outer name -> the tasklet's name; None while still in its SDFG
     block = state
     while block is not None:
         parent = block.parent_graph
-        if isinstance(parent, LoopRegion):
-            return True
+        if isinstance(parent, LoopRegion) and parent.loop_variable:
+            var = parent.loop_variable
+            if (var if rename is None else rename.get(var)) not in written:
+                return True
         if isinstance(parent, SDFG):
             nsdfg = parent.parent_nsdfg_node
             outer = parent.parent
             if nsdfg is None or outer is None:
                 return False
-            if outer.entry_node(nsdfg) is not None:
-                return True
+            mapped = {}
+            for inner, value in nsdfg.symbol_mapping.items():
+                inner_name = str(inner) if rename is None else rename.get(str(inner))
+                if inner_name is None:
+                    continue
+                for sym in symbolic.pystr_to_symbolic(str(value)).free_symbols:
+                    mapped[str(sym)] = inner_name
+            rename = mapped
+            scope = outer.entry_node(nsdfg)
+            while scope is not None:
+                if any(rename.get(param) not in written for param in scope.map.params):
+                    return True
+                scope = outer.entry_node(scope)
             block = outer
             continue
         block = parent
@@ -508,13 +529,12 @@ def augassign_to_wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, AugAssi
     :param state: The state to scan.
     :returns: Yields a pattern index and the node binding to match it with.
     """
-    repeated = runs_repeatedly(state)
     for node in state.nodes():
         if not isinstance(node, nodes.Tasklet):
             continue
         entry = state.entry_node(node)
         if entry is None:
-            if repeated:
+            if accumulates(state, node):
                 yield from free_tasklet_augassign_candidates(state, node)
         elif isinstance(entry, nodes.MapEntry):
             yield from map_tasklet_augassign_candidates(state, entry, node)
