@@ -475,22 +475,24 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
     """Whether the writes of ``tasklet`` repeat on one element across an enclosing loop or map iteration.
 
     Only such a read-modify-write is an accumulation worth a WCR. One that runs once (a peeled ``A[N-1] += 1``)
-    or whose element varies with every enclosing iterator (``zqlhs[jn, jm, jl] /= ...``) accumulates nothing; as a
-    WCR it only loses its order against the plain writes beside it and its indexed form in the rendering.
-    Iterators are compared in the tasklet's namespace: an outer one a nested SDFG does not receive cannot index
-    the write, so it repeats it.
+    or whose element every enclosing iterator separates injectively (``zqlhs[jn, jm, jl] /= ...``, but not
+    ``b[i // 2] += a[i]``) accumulates nothing; as a WCR it only loses its order against the plain writes beside
+    it and its indexed form in the rendering. Iterators are compared in the tasklet's namespace: an outer one a
+    nested SDFG does not receive cannot index the write, so it repeats it.
     """
-    written = {
-        str(sym)
-        for edge in state.out_edges(tasklet) if edge.data.subset is not None for sym in edge.data.subset.free_symbols
-    }
+    from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+    writes = [edge.data.subset for edge in state.out_edges(tasklet) if edge.data.subset is not None]
+
+    def separates(name: Optional[str]) -> bool:
+        return name is not None and bool(writes) and all(write_subset_is_injective(w, [name]) for w in writes)
+
     rename: Optional[dict[str, str]] = None  # outer name -> the tasklet's name; None while still in its SDFG
     block = state
     while block is not None:
         parent = block.parent_graph
         if isinstance(parent, LoopRegion) and parent.loop_variable:
             var = parent.loop_variable
-            if (var if rename is None else rename.get(var)) not in written:
+            if not separates(var if rename is None else rename.get(var)):
                 return True
         if isinstance(parent, SDFG):
             nsdfg = parent.parent_nsdfg_node
@@ -507,7 +509,7 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
             rename = mapped
             scope = outer.entry_node(nsdfg)
             while scope is not None:
-                if any(rename.get(param) not in written for param in scope.map.params):
+                if not all(separates(rename.get(param)) for param in scope.map.params):
                     return True
                 scope = outer.entry_node(scope)
             block = outer
