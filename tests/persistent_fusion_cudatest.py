@@ -8,102 +8,98 @@ from dace.sdfg.state import BreakBlock, LoopRegion
 from dace.transformation.subgraph import GPUPersistentKernel
 import pytest
 
-N = dace.symbol('N')
-nnz = dace.symbol('nnz')
+N = dace.symbol("N")
+nnz = dace.symbol("nnz")
 
 
 def _make_sdfg():
-    bfs = dace.SDFG('bfs')
+    bfs = dace.SDFG("bfs")
 
     # Inputs to the BFS SDFG
-    bfs.add_array('col_index', shape=[nnz], dtype=dace.int32)
-    bfs.add_array('row_index', shape=[N + 1], dtype=dace.int32)
-    bfs.add_scalar('root', dtype=dace.int32)
-    bfs.add_array('result', shape=[N], dtype=dace.int32)
-    bfs.add_symbol('depth', dace.int32)
+    bfs.add_array("col_index", shape=[nnz], dtype=dace.int32)
+    bfs.add_array("row_index", shape=[N + 1], dtype=dace.int32)
+    bfs.add_scalar("root", dtype=dace.int32)
+    bfs.add_array("result", shape=[N], dtype=dace.int32)
+    bfs.add_symbol("depth", dace.int32)
 
     # Transients fot interstate data transfers
     # TODO: Replace may_alias with better code generation
-    bfs.add_transient('count1', shape=[1], dtype=dace.int32, may_alias=True)
-    bfs.add_transient('frontier1', shape=[N], dtype=dace.int32, may_alias=True)
+    bfs.add_transient("count1", shape=[1], dtype=dace.int32, may_alias=True)
+    bfs.add_transient("frontier1", shape=[N], dtype=dace.int32, may_alias=True)
 
-    bfs.add_transient('count2', shape=[1], dtype=dace.int32, may_alias=True)
-    bfs.add_transient('frontier2', shape=[N], dtype=dace.int32, may_alias=True)
+    bfs.add_transient("count2", shape=[1], dtype=dace.int32, may_alias=True)
+    bfs.add_transient("frontier2", shape=[N], dtype=dace.int32, may_alias=True)
 
     # Transient streams to accommodate dynamic size of frontier arrays
-    bfs.add_stream('stream1', dtype=dace.int32, transient=True, buffer_size=N)
-    bfs.add_stream('stream2', dtype=dace.int32, transient=True, buffer_size=N)
+    bfs.add_stream("stream1", dtype=dace.int32, transient=True, buffer_size=N)
+    bfs.add_stream("stream2", dtype=dace.int32, transient=True, buffer_size=N)
 
     # Transients needed for update states
-    bfs.add_transient('temp_ids1', shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
-    bfs.add_transient('temp_ide1', shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
+    bfs.add_transient("temp_ids1", shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
+    bfs.add_transient("temp_ide1", shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
 
-    bfs.add_transient('temp_ids2', shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
-    bfs.add_transient('temp_ide2', shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
+    bfs.add_transient("temp_ids2", shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
+    bfs.add_transient("temp_ide2", shape=[1], dtype=dace.int32, storage=dace.StorageType.Register)
 
     # Adding states
     # init data
-    s_init = bfs.add_state('init', is_start_block=True)
+    s_init = bfs.add_state("init", is_start_block=True)
 
     # main loop
-    bfs_loop = LoopRegion('bfs_loop', 'count1[0] > 0', inverted=True)
-    bfs.add_edge(s_init, bfs_loop, dace.InterstateEdge(assignments={'depth': '1'}))
+    bfs_loop = LoopRegion("bfs_loop", "count1[0] > 0", inverted=True)
+    bfs.add_edge(s_init, bfs_loop, dace.InterstateEdge(assignments={"depth": "1"}))
 
     # copy of the states because we don't want to copy the data
-    s_reset1 = bfs_loop.add_state('reset1', is_start_block=True)
-    s_update1 = bfs_loop.add_state('update1')
-    s_reset2 = bfs_loop.add_state('reset2')
-    s_update2 = bfs_loop.add_state('update2')
-    break_block = BreakBlock('break')
+    s_reset1 = bfs_loop.add_state("reset1", is_start_block=True)
+    s_update1 = bfs_loop.add_state("update1")
+    s_reset2 = bfs_loop.add_state("reset2")
+    s_update2 = bfs_loop.add_state("update2")
+    break_block = BreakBlock("break")
     bfs_loop.add_node(break_block)
-    s_loop_end = bfs_loop.add_state('loop_end')
+    s_loop_end = bfs_loop.add_state("loop_end")
 
     bfs_loop.add_edge(s_reset1, s_update1, dace.InterstateEdge())
-    bfs_loop.add_edge(s_update1, s_reset2, dace.InterstateEdge('count2[0] > 0', assignments={'depth': 'depth + 1'}))
-    bfs_loop.add_edge(s_update1, break_block, dace.InterstateEdge('count2[0] <= 0'))
+    bfs_loop.add_edge(s_update1, s_reset2, dace.InterstateEdge("count2[0] > 0", assignments={"depth": "depth + 1"}))
+    bfs_loop.add_edge(s_update1, break_block, dace.InterstateEdge("count2[0] <= 0"))
     bfs_loop.add_edge(s_reset2, s_update2, dace.InterstateEdge(None))
 
-    bfs_loop.add_edge(s_update2, s_loop_end, dace.InterstateEdge(assignments={'depth': 'depth + 1'}))
+    bfs_loop.add_edge(s_update2, s_loop_end, dace.InterstateEdge(assignments={"depth": "depth + 1"}))
 
     # =============================================================
     # State: init
     # Filling init state with init of result, frontier1, and count1
 
-    root_in = s_init.add_read('root')
+    root_in = s_init.add_read("root")
 
-    count1_out = s_init.add_write('count1')
-    result_out = s_init.add_write('result')
-    frontier_out = s_init.add_write('frontier1')
+    count1_out = s_init.add_write("count1")
+    result_out = s_init.add_write("result")
+    frontier_out = s_init.add_write("frontier1")
 
-    s_init.add_memlet_path(root_in, frontier_out, memlet=dace.Memlet.simple(root_in.data, '0', other_subset_str='0'))
+    s_init.add_memlet_path(root_in, frontier_out, memlet=dace.Memlet.simple(root_in.data, "0", other_subset_str="0"))
 
     tasklet = s_init.add_tasklet(
-        'set_count1',
+        "set_count1",
         {},
-        {'out'},
-        'out = 1',
+        {"out"},
+        "out = 1",
     )
 
-    s_init.add_memlet_path(tasklet, count1_out, src_conn='out', memlet=dace.Memlet.simple(count1_out.data, '0'))
+    s_init.add_memlet_path(tasklet, count1_out, src_conn="out", memlet=dace.Memlet.simple(count1_out.data, "0"))
 
     map_entry, map_exit = s_init.add_map(
-        'set_result_map',
-        dict(i='0:N'),
+        "set_result_map",
+        dict(i="0:N"),
     )
 
-    tasklet = s_init.add_tasklet('set_result', {'root_idx'}, {'result_out'}, 'result_out = 0 if i == root_idx else -1')
+    tasklet = s_init.add_tasklet("set_result", {"root_idx"}, {"result_out"}, "result_out = 0 if i == root_idx else -1")
 
-    s_init.add_memlet_path(root_in,
-                           map_entry,
-                           tasklet,
-                           dst_conn='root_idx',
-                           memlet=dace.Memlet.simple(root_in.data, '0'))
+    s_init.add_memlet_path(
+        root_in, map_entry, tasklet, dst_conn="root_idx", memlet=dace.Memlet.simple(root_in.data, "0")
+    )
 
-    s_init.add_memlet_path(tasklet,
-                           map_exit,
-                           result_out,
-                           src_conn='result_out',
-                           memlet=dace.Memlet.simple(result_out.data, 'i'))
+    s_init.add_memlet_path(
+        tasklet, map_exit, result_out, src_conn="result_out", memlet=dace.Memlet.simple(result_out.data, "i")
+    )
 
     # -------------------------------------------------------------
 
@@ -111,39 +107,39 @@ def _make_sdfg():
     # State: reset
     # Filling reset states, respective count is reset to 0
 
-    count2_out = s_reset1.add_write('count2')
+    count2_out = s_reset1.add_write("count2")
     init_scalar(s_reset1, count2_out, 0)
 
-    count1_out = s_reset2.add_write('count1')
+    count1_out = s_reset2.add_write("count1")
     init_scalar(s_reset2, count1_out, 0)
 
     # -------------------------------------------------------------
 
     # Filling update states, only difference is which frontier/count they read/write from/to
 
-    front_in = s_update1.add_read('frontier1')
-    count_in = s_update1.add_read('count1')
+    front_in = s_update1.add_read("frontier1")
+    count_in = s_update1.add_read("count1")
 
-    front_out = s_update1.add_write('frontier2')
-    count_out = s_update1.add_write('count2')
+    front_out = s_update1.add_write("frontier2")
+    count_out = s_update1.add_write("count2")
 
-    stream2_io = s_update1.add_access('stream2')
+    stream2_io = s_update1.add_access("stream2")
 
-    temp_ids1_io = s_update1.add_access('temp_ids1')
-    temp_ide1_io = s_update1.add_access('temp_ide1')
+    temp_ids1_io = s_update1.add_access("temp_ids1")
+    temp_ide1_io = s_update1.add_access("temp_ide1")
 
     fill_update_state(s_update1, front_in, count_in, front_out, count_out, stream2_io, temp_ids1_io, temp_ide1_io)
 
-    front_in = s_update2.add_read('frontier2')
-    count_in = s_update2.add_read('count2')
+    front_in = s_update2.add_read("frontier2")
+    count_in = s_update2.add_read("count2")
 
-    front_out = s_update2.add_write('frontier1')
-    count_out = s_update2.add_write('count1')
+    front_out = s_update2.add_write("frontier1")
+    count_out = s_update2.add_write("count1")
 
-    stream1_io = s_update2.add_access('stream1')
+    stream1_io = s_update2.add_access("stream1")
 
-    temp_ids2_io = s_update2.add_access('temp_ids2')
-    temp_ide2_io = s_update2.add_access('temp_ide2')
+    temp_ids2_io = s_update2.add_access("temp_ids2")
+    temp_ide2_io = s_update2.add_access("temp_ide2")
 
     fill_update_state(s_update2, front_in, count_in, front_out, count_out, stream1_io, temp_ids2_io, temp_ide2_io)
 
@@ -159,120 +155,138 @@ def _make_sdfg():
 
 
 def init_scalar(state, node, value):
-    tasklet = state.add_tasklet('set_%s' % node.data, {}, {'out'}, '''
+    tasklet = state.add_tasklet(
+        "set_%s" % node.data,
+        {},
+        {"out"},
+        """
 out = %d
-        ''' % value)
+        """
+        % value,
+    )
 
-    state.add_memlet_path(tasklet, node, src_conn='out', memlet=dace.Memlet.simple(node.data, '0'))
+    state.add_memlet_path(tasklet, node, src_conn="out", memlet=dace.Memlet.simple(node.data, "0"))
 
 
 # Here the state is duplicated so the memory doesn't have to be copied from one to another
 # array.
-def fill_update_state(state, front_in, front_in_count, front_out, front_out_count, s_frontier_io, temp_ids_io,
-                      temp_ide_io):
-    row_index_in = state.add_read('row_index')
-    col_index_in = state.add_read('col_index')
-    result_in = state.add_read('result')
+def fill_update_state(
+    state, front_in, front_in_count, front_out, front_out_count, s_frontier_io, temp_ids_io, temp_ide_io
+):
+    row_index_in = state.add_read("row_index")
+    col_index_in = state.add_read("col_index")
+    result_in = state.add_read("result")
 
-    result_out = state.add_write('result')
+    result_out = state.add_write("result")
 
     # Map iterates over all nodes in frontier
-    front_enter, front_exit = state.add_map('frontier_map', dict(x='0:count_val'))
+    front_enter, front_exit = state.add_map("frontier_map", dict(x="0:count_val"))
 
-    state.add_memlet_path(front_in_count,
-                          front_enter,
-                          dst_conn='count_val',
-                          memlet=dace.Memlet.simple(front_in_count.data, '0'))
+    state.add_memlet_path(
+        front_in_count, front_enter, dst_conn="count_val", memlet=dace.Memlet.simple(front_in_count.data, "0")
+    )
 
     # Find number of neighbors of current node
-    t_find_range = state.add_tasklet('find_range', ['f_x', 'row'], ['index_start', 'index_end'], '''
+    t_find_range = state.add_tasklet(
+        "find_range",
+        ["f_x", "row"],
+        ["index_start", "index_end"],
+        """
 index_start = row[f_x]
 index_end = row[f_x + 1]
-        ''')
+        """,
+    )
 
     # iterate over all neighbors of current node
-    neigh_enter, neigh_exit = state.add_map('neighbor_map', dict(i='map_start:map_end'))
+    neigh_enter, neigh_exit = state.add_map("neighbor_map", dict(i="map_start:map_end"))
 
-    state.add_memlet_path(t_find_range,
-                          temp_ids_io,
-                          src_conn='index_start',
-                          memlet=dace.Memlet.simple(temp_ids_io.data, '0'))
+    state.add_memlet_path(
+        t_find_range, temp_ids_io, src_conn="index_start", memlet=dace.Memlet.simple(temp_ids_io.data, "0")
+    )
 
-    state.add_memlet_path(t_find_range,
-                          temp_ide_io,
-                          src_conn='index_end',
-                          memlet=dace.Memlet.simple(temp_ide_io.data, '0'))
+    state.add_memlet_path(
+        t_find_range, temp_ide_io, src_conn="index_end", memlet=dace.Memlet.simple(temp_ide_io.data, "0")
+    )
 
-    state.add_memlet_path(temp_ids_io,
-                          neigh_enter,
-                          dst_conn='map_start',
-                          memlet=dace.Memlet.simple(temp_ids_io.data, '0'))
+    state.add_memlet_path(
+        temp_ids_io, neigh_enter, dst_conn="map_start", memlet=dace.Memlet.simple(temp_ids_io.data, "0")
+    )
 
-    state.add_memlet_path(temp_ide_io,
-                          neigh_enter,
-                          dst_conn='map_end',
-                          memlet=dace.Memlet.simple(temp_ide_io.data, '0'))
+    state.add_memlet_path(
+        temp_ide_io, neigh_enter, dst_conn="map_end", memlet=dace.Memlet.simple(temp_ide_io.data, "0")
+    )
 
-    state.add_memlet_path(row_index_in,
-                          front_enter,
-                          t_find_range,
-                          dst_conn='row',
-                          memlet=dace.Memlet.simple(row_index_in.data, '0:N', num_accesses=2))
+    state.add_memlet_path(
+        row_index_in,
+        front_enter,
+        t_find_range,
+        dst_conn="row",
+        memlet=dace.Memlet.simple(row_index_in.data, "0:N", num_accesses=2),
+    )
 
-    state.add_memlet_path(front_in,
-                          front_enter,
-                          t_find_range,
-                          dst_conn='f_x',
-                          memlet=dace.Memlet.simple(front_in.data, 'x'))
+    state.add_memlet_path(
+        front_in, front_enter, t_find_range, dst_conn="f_x", memlet=dace.Memlet.simple(front_in.data, "x")
+    )
 
     # update tasklet (this is where the magic happens)
     t_add_neighbor = state.add_tasklet(
-        'add_neighbor', ['neighbor', 'res'], ['new_res', 'add_to_count', 'add_to_front'], '''
+        "add_neighbor",
+        ["neighbor", "res"],
+        ["new_res", "add_to_count", "add_to_front"],
+        """
 if res[neighbor] == -1:
   new_res[neighbor] = depth
   add_to_front = neighbor
   add_to_count = 1
-        ''')
+        """,
+    )
 
-    state.add_memlet_path(col_index_in,
-                          front_enter,
-                          neigh_enter,
-                          t_add_neighbor,
-                          dst_conn='neighbor',
-                          memlet=dace.Memlet.simple(col_index_in.data, 'i'))
+    state.add_memlet_path(
+        col_index_in,
+        front_enter,
+        neigh_enter,
+        t_add_neighbor,
+        dst_conn="neighbor",
+        memlet=dace.Memlet.simple(col_index_in.data, "i"),
+    )
 
-    state.add_memlet_path(result_in,
-                          front_enter,
-                          neigh_enter,
-                          t_add_neighbor,
-                          dst_conn='res',
-                          memlet=dace.Memlet.simple(result_in.data, '0:N', num_accesses=1))
+    state.add_memlet_path(
+        result_in,
+        front_enter,
+        neigh_enter,
+        t_add_neighbor,
+        dst_conn="res",
+        memlet=dace.Memlet.simple(result_in.data, "0:N", num_accesses=1),
+    )
 
-    state.add_memlet_path(t_add_neighbor,
-                          neigh_exit,
-                          front_exit,
-                          front_out_count,
-                          src_conn='add_to_count',
-                          memlet=dace.Memlet.simple(front_out_count.data,
-                                                    '0',
-                                                    num_accesses=-1,
-                                                    wcr_str='lambda a, b: a + b'))
+    state.add_memlet_path(
+        t_add_neighbor,
+        neigh_exit,
+        front_exit,
+        front_out_count,
+        src_conn="add_to_count",
+        memlet=dace.Memlet.simple(front_out_count.data, "0", num_accesses=-1, wcr_str="lambda a, b: a + b"),
+    )
 
-    state.add_memlet_path(t_add_neighbor,
-                          neigh_exit,
-                          front_exit,
-                          s_frontier_io,
-                          src_conn='add_to_front',
-                          memlet=dace.Memlet.simple(s_frontier_io.data, '0', num_accesses=-1))
+    state.add_memlet_path(
+        t_add_neighbor,
+        neigh_exit,
+        front_exit,
+        s_frontier_io,
+        src_conn="add_to_front",
+        memlet=dace.Memlet.simple(s_frontier_io.data, "0", num_accesses=-1),
+    )
 
-    state.add_memlet_path(t_add_neighbor,
-                          neigh_exit,
-                          front_exit,
-                          result_out,
-                          src_conn='new_res',
-                          memlet=dace.Memlet.simple(result_out.data, '0:N', num_accesses=-1))
+    state.add_memlet_path(
+        t_add_neighbor,
+        neigh_exit,
+        front_exit,
+        result_out,
+        src_conn="new_res",
+        memlet=dace.Memlet.simple(result_out.data, "0:N", num_accesses=-1),
+    )
 
-    state.add_memlet_path(s_frontier_io, front_out, memlet=dace.Memlet.simple(front_out.data, '0'))
+    state.add_memlet_path(s_frontier_io, front_out, memlet=dace.Memlet.simple(front_out.data, "0"))
 
 
 @pytest.mark.gpu
@@ -287,13 +301,13 @@ def test_persistent_fusion():
     subgraph = SubgraphView(sdfg, content_nodes)
     transform = GPUPersistentKernel()
     transform.setup_match(subgraph)
-    transform.kernel_prefix = 'bfs'
+    transform.kernel_prefix = "bfs"
     transform.apply(sdfg)
 
     subgraph = SubgraphView(sdfg, [s_init])
     transform = GPUPersistentKernel()
     transform.setup_match(subgraph)
-    transform.kernel_prefix = 'init'
+    transform.kernel_prefix = "init"
     transform.apply(sdfg)
 
     sdfg.validate()
@@ -320,7 +334,7 @@ def test_persistent_fusion():
     reference = nx.shortest_path(graph, source=srcnode)
     reference = np.array([len(reference[v]) - 1 if v in reference else np.iinfo(vtype).max for v in range(V)])
 
-    print('Breadth-First Search (E = {}, V = {})'.format(E, V))
+    print("Breadth-First Search (E = {}, V = {})".format(E, V))
 
     # Allocate output arrays
     depth = np.ndarray([V], vtype)
@@ -332,7 +346,7 @@ def test_persistent_fusion():
 
 @pytest.mark.gpu
 def test_persistent_fusion_interstate():
-    N = dace.symbol('N', dtype=dace.int64)
+    N = dace.symbol("N", dtype=dace.int64)
 
     @dace.program(auto_optimize=False, device=dace.DeviceType.GPU)
     def func(A: dace.float64[N], B: dace.float64[N]):
@@ -355,7 +369,7 @@ def test_persistent_fusion_interstate():
 
     transform = GPUPersistentKernel()
     transform.setup_match(subgraph)
-    transform.kernel_prefix = 'stuff'
+    transform.kernel_prefix = "stuff"
     transform.apply(sdfg)
 
     aref = np.copy(A)

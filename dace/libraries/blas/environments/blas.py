@@ -26,7 +26,7 @@ class BLAS:
 
     @staticmethod
     def cmake_libraries():
-        blas_path = ctypes.util.find_library('blas')
+        blas_path = ctypes.util.find_library("blas")
         if blas_path:
             return [blas_path]
         return []

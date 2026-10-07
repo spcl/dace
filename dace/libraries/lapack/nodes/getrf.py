@@ -25,7 +25,6 @@ class ExpandGetrfPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGetrfOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -34,26 +33,25 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(lapack_complex_float*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(lapack_complex_double*)"
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (
+            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetrfMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -62,26 +60,25 @@ class ExpandGetrfMKL(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(MKL_Complex8*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(MKL_Complex16*)"
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
-        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (
+            f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, {cast}_xin, {stride_x}, _ipiv);"
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetrfCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -91,13 +88,15 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         veclen = desc_x.dtype.veclen
 
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
-        func = func + 'getrf'
+        func = func + "getrf"
 
         n = n or node.n
         if veclen != 1:
             n /= veclen
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
+        code = (
+            environments.cusolverdn.cuSolverDn.handle_setup_code(node)
+            + f"""
                 int __dace_workspace_size = 0;
                 {cuda_type}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
@@ -110,15 +109,14 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
                     __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
                     {stride_x}, __dace_workspace, _ipiv, _res);
                 cudaFree(__dace_workspace);
-                """)
+                """
+        )
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dace.int32) if c == "_res" else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
 
         return tasklet
@@ -126,13 +124,12 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Getrf(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_ipiv", "_res"}, **kwargs)

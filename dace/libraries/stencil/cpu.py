@@ -8,7 +8,6 @@ from ._common import *
 
 @dace.library.expansion
 class ExpandStencilCPU(dace.library.ExpandTransformation):
-
     environments = []
 
     @staticmethod
@@ -17,8 +16,9 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         sdfg = dace.SDFG(node.label + "_outer")
         state = sdfg.add_state(node.label + "_outer")
 
-        (inputs, outputs, shape, field_to_data, field_to_desc, _,
-         vector_lengths) = parse_connectors(node, parent_state, parent_sdfg)
+        (inputs, outputs, shape, field_to_data, field_to_desc, _, vector_lengths) = parse_connectors(
+            node, parent_state, parent_sdfg
+        )
 
         #######################################################################
         # Tasklet code generation
@@ -35,8 +35,9 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         # Boundary condition generation
         #######################################################################
 
-        boundary_code, oob_cond = generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
-                                                               iterator_mapping)
+        boundary_code, oob_cond = generate_boundary_conditions(
+            node, shape, field_accesses, field_to_desc, iterator_mapping
+        )
 
         #######################################################################
         # Write all output memlets
@@ -45,30 +46,36 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         write_code = ""
         if len(oob_cond) > 1:
             write_code += "if not (" + " or ".join(sorted(oob_cond)) + "):\n"
-        write_code += "\n".join("{}_{} = {}".format("\t" if len(oob_cond) > 0 else "", field_accesses[output][tuple(
-            0 for _ in range(len(shape)))], field_accesses[output][tuple(0 for _ in range(len(shape)))], output)
-                                for output in outputs)
+        write_code += "\n".join(
+            "{}_{} = {}".format(
+                "\t" if len(oob_cond) > 0 else "",
+                field_accesses[output][tuple(0 for _ in range(len(shape)))],
+                field_accesses[output][tuple(0 for _ in range(len(shape)))],
+                output,
+            )
+            for output in outputs
+        )
 
         code = boundary_code + "\n" + code + "\n" + write_code
 
         input_connectors = sum(
             [
-                [f"_{c}" for c in field_accesses[k].values()] for k in inputs
+                [f"_{c}" for c in field_accesses[k].values()]
+                for k in inputs
                 # Don't include scalar variables
                 if sum(iterator_mapping[k], 0) > 0
             ],
-            [])
+            [],
+        )
         output_connectors = sum([[f"_{c}" for c in field_accesses[k].values()] for k in outputs], [])
 
         #######################################################################
         # Create tasklet
         #######################################################################
 
-        tasklet = state.add_tasklet(node.label + "_compute",
-                                    input_connectors,
-                                    output_connectors,
-                                    code,
-                                    language=dace.dtypes.Language.Python)
+        tasklet = state.add_tasklet(
+            node.label + "_compute", input_connectors, output_connectors, code, language=dace.dtypes.Language.Python
+        )
 
         #######################################################################
         # Build dataflow state
@@ -77,11 +84,11 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         parameters = [f"_i{i}" for i in range(len(shape))]
 
         entry, exit = state.add_map(
-            node.name + "_map", collections.OrderedDict(
-                (parameters[i], "0:" + str(shape[i])) for i in range(len(shape))))
+            node.name + "_map",
+            collections.OrderedDict((parameters[i], "0:" + str(shape[i])) for i in range(len(shape))),
+        )
 
         for field in inputs:
-
             dtype = field_to_desc[field].dtype
 
             read_node = state.add_read(field)
@@ -97,17 +104,18 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
 
         index_tuple = ", ".join(parameters)
         for field in outputs:
-
             dtype = field_to_desc[field].dtype
 
             data = sdfg.add_array(field, shape, dtype)
             write_node = state.add_write(field)
             for indices, connector in field_accesses[field].items():
-                state.add_memlet_path(tasklet,
-                                      exit,
-                                      write_node,
-                                      src_conn=f"_{connector}",
-                                      memlet=dace.Memlet(f"{field}[{index_tuple}]", dynamic=len(oob_cond) > 0))
+                state.add_memlet_path(
+                    tasklet,
+                    exit,
+                    write_node,
+                    src_conn=f"_{connector}",
+                    memlet=dace.Memlet(f"{field}[{index_tuple}]", dynamic=len(oob_cond) > 0),
+                )
 
         # Add scalars as symbols
         for field_name, mapping in iterator_mapping.items():

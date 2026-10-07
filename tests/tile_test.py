@@ -2,11 +2,11 @@
 import dace
 import numpy as np
 
-W = dace.symbol('W')
-H = dace.symbol('H')
+W = dace.symbol("W")
+H = dace.symbol("H")
 
-TW = dace.symbol('TW')
-TH = dace.symbol('TH')
+TW = dace.symbol("TW")
+TH = dace.symbol("TH")
 
 
 @dace.program
@@ -26,7 +26,7 @@ def test():
     TW = 16
     TH = 16
 
-    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W, H, TW, TH))
+    print("Transpose (Tiled) %dx%d (tile size: %dx%d)" % (W, H, TW, TH))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)

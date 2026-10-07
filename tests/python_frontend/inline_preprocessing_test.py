@@ -42,8 +42,8 @@ def test_inlinepp_simple():
     assert np.allclose(a[11], 13)
 
     sdfg = tester.to_sdfg(a)
-    assert _find_in_tasklet(sdfg, '13'), 'Inlined expression not found in tasklets'
-    assert _find_in_memlet(sdfg, '11'), 'Inlined expression not found in memlets'
+    assert _find_in_tasklet(sdfg, "13"), "Inlined expression not found in tasklets"
+    assert _find_in_memlet(sdfg, "11"), "Inlined expression not found in memlets"
 
 
 def test_inlinepp_fail():
@@ -95,9 +95,9 @@ def test_inlinepp_stateful():
         a[2] = dace.inline(stateful() * 2)
 
     sdfg = tester.to_sdfg()
-    assert _find_in_tasklet(sdfg, '12')
-    assert _find_in_tasklet(sdfg, '13')
-    assert _find_in_tasklet(sdfg, '28')
+    assert _find_in_tasklet(sdfg, "12")
+    assert _find_in_tasklet(sdfg, "13")
+    assert _find_in_tasklet(sdfg, "28")
 
     a = np.random.rand(3)
     sdfg(a)
@@ -118,9 +118,9 @@ def test_inlinepp_in_unroll():
             a[i] = dace.inline(stateful(i))
 
     sdfg = tester.to_sdfg()
-    assert _find_in_tasklet(sdfg, '12')
-    assert _find_in_tasklet(sdfg, '14')
-    assert _find_in_tasklet(sdfg, '16')
+    assert _find_in_tasklet(sdfg, "12")
+    assert _find_in_tasklet(sdfg, "14")
+    assert _find_in_tasklet(sdfg, "16")
 
     a = np.random.rand(3)
     sdfg(a)
@@ -141,7 +141,7 @@ class _TracerRegistry:
         return len(self._mapping)
 
 
-_tracers = _TracerRegistry('vapor', 'liquid', 'ice')
+_tracers = _TracerRegistry("vapor", "liquid", "ice")
 
 
 @dace.always_inline
@@ -151,14 +151,14 @@ def _tracer_count() -> int:
 
 def test_always_inline_method():
     # Regular Python semantics are unaffected by the decorator
-    assert _tracers.index('ice') == 2
+    assert _tracers.index("ice") == 2
 
     @dace.program
     def tester(a: dace.float64[10]):
-        a[_tracers.index('liquid')] = 1.0
+        a[_tracers.index("liquid")] = 1.0
 
     sdfg = tester.to_sdfg()
-    assert _find_in_memlet(sdfg, '1')
+    assert _find_in_memlet(sdfg, "1")
 
     a = np.zeros(10)
     sdfg(a)
@@ -191,7 +191,7 @@ def test_always_inline_fail():
         tester(np.zeros(10), 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_inlinepp_simple()
     test_inlinepp_fail()
     test_inlinepp_tuple_retval()

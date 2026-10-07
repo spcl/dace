@@ -11,7 +11,7 @@ import pytest
 ###############################################################################
 
 
-def make_sdfg(implementation, dtype, storage=dace.StorageType.Default, data_layout='CCC'):
+def make_sdfg(implementation, dtype, storage=dace.StorageType.Default, data_layout="CCC"):
     m = dace.symbol("m")
     n = dace.symbol("n")
     k = dace.symbol("k")
@@ -24,9 +24,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default, data_layo
 
     # Data layout is a 3-character string with either C (for row major)
     # or F (for column major) matrices for x, y, and z respectively.
-    xstrides = (k, 1) if data_layout[0] == 'C' else (1, m)
-    ystrides = (n, 1) if data_layout[1] == 'C' else (1, k)
-    zstrides = (n, 1) if data_layout[2] == 'C' else (1, m)
+    xstrides = (k, 1) if data_layout[0] == "C" else (1, m)
+    ystrides = (n, 1) if data_layout[1] == "C" else (1, k)
+    zstrides = (n, 1) if data_layout[2] == "C" else (1, m)
 
     sdfg.add_array("x" + suffix, [m, k], dtype, storage=storage, transient=transient, strides=xstrides)
     sdfg.add_array("y" + suffix, [k, n], dtype, storage=storage, transient=transient, strides=ystrides)
@@ -70,7 +70,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default, data_layo
 ###############################################################################
 
 
-def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', eps=1e-4):
+def _test_matmul(implementation, dtype, impl_name, storage, data_layout="CCC", eps=1e-4):
     sdfg = make_sdfg(impl_name, dtype, storage, data_layout)
     csdfg = sdfg.compile()
 
@@ -89,8 +89,7 @@ def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', e
     ref = np.dot(x, y)
 
     if dtype == dace.float16 and np.linalg.norm(z) == 0:
-        print('No computation performed, half-precision probably not '
-              'supported, skipping test.')
+        print("No computation performed, half-precision probably not supported, skipping test.")
         return
 
     diff = np.linalg.norm(ref - z)
@@ -103,26 +102,26 @@ def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', e
 def test_types():
     with change_default(blas, "cuBLAS"):
         # Try different data types
-        _test_matmul('cuBLAS double', dace.float64, 'cuBLAS', dace.StorageType.GPU_Global, eps=1e-6)
-        _test_matmul('cuBLAS half', dace.float16, 'cuBLAS', dace.StorageType.GPU_Global, eps=1)
-        _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS', dace.StorageType.GPU_Global)
-        _test_matmul('cuBLAS dcmplx', dace.complex128, 'cuBLAS', dace.StorageType.GPU_Global, eps=1e-6)
+        _test_matmul("cuBLAS double", dace.float64, "cuBLAS", dace.StorageType.GPU_Global, eps=1e-6)
+        _test_matmul("cuBLAS half", dace.float16, "cuBLAS", dace.StorageType.GPU_Global, eps=1)
+        _test_matmul("cuBLAS scmplx", dace.complex64, "cuBLAS", dace.StorageType.GPU_Global)
+        _test_matmul("cuBLAS dcmplx", dace.complex128, "cuBLAS", dace.StorageType.GPU_Global, eps=1e-6)
 
 
 # Try all data layouts
-LAYOUTS = map(lambda t: ''.join(t), itertools.product(*([['C', 'F']] * 3)))
+LAYOUTS = map(lambda t: "".join(t), itertools.product(*([["C", "F"]] * 3)))
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('dl', LAYOUTS)
+@pytest.mark.parametrize("dl", LAYOUTS)
 def test_layouts(dl):
     with change_default(blas, "cuBLAS"):
-        _test_matmul('cuBLAS float ' + dl, dace.float32, 'cuBLAS', dace.StorageType.GPU_Global, data_layout=dl)
+        _test_matmul("cuBLAS float " + dl, dace.float32, "cuBLAS", dace.StorageType.GPU_Global, data_layout=dl)
 
 
 @pytest.mark.gpu
 def test_batchmm():
-    b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+    b, m, n, k = tuple(dace.symbol(k) for k in "bmnk")
 
     with change_default(blas, "cuBLAS"):
 
@@ -144,7 +143,7 @@ def test_batchmm():
     ref = x @ y
 
     diff = np.linalg.norm(ref - z)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-6
 
 
@@ -179,8 +178,9 @@ def test_default_stream_blas_node():
 
 ###############################################################################
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import os
+
     try:
         test_batchmm()
         test_types()
@@ -188,7 +188,7 @@ if __name__ == '__main__':
         for dl in LAYOUTS:
             test_layouts(dl)
     except SystemExit as ex:
-        print('\n', flush=True)
+        print("\n", flush=True)
         # Skip all teardown to avoid crashes affecting exit code
         os._exit(ex.code)
     os._exit(0)

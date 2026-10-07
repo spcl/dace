@@ -4,6 +4,7 @@ Helps extracting the relevant information from MLIR for CodeGen of an MLIR taskl
 Can handle MLIR in generic form or in the supported dialect of pyMLIR
 Requires pyMLIR to run
 """
+
 try:
     import mlir
 except (ModuleNotFoundError, NameError, ImportError):
@@ -28,7 +29,7 @@ TYPE_DICT = {
     "i64": dace.int64,
     "f16": dace.float16,
     "f32": dace.float32,
-    "f64": dace.float64
+    "f64": dace.float64,
 }
 
 
@@ -40,9 +41,9 @@ def is_generic(ast: Union[mlir.astnodes.Module, mlir.astnodes.GenericModule]):
     return isinstance(ast, mlir.astnodes.GenericModule)
 
 
-def get_entry_func(ast: Union[mlir.astnodes.Module, mlir.astnodes.GenericModule],
-                   is_generic: bool,
-                   func_uid: str = None):
+def get_entry_func(
+    ast: Union[mlir.astnodes.Module, mlir.astnodes.GenericModule], is_generic: bool, func_uid: str = None
+):
     # mlir_entry is a reserved keyword for the entry function. In order to allow for multiple MLIR tasklets we append a UID
     entry_func_name = "mlir_entry"
     if func_uid is not None:
@@ -104,14 +105,14 @@ def get_entry_result_type(entry_func: Union[mlir.astnodes.Function, mlir.astnode
         generic_result_list = entry_func.attributes.values[1].value.value.result_types
         # Only one return value allowed as we can not match multiple return values
         if len(generic_result_list) != 1:
-            raise SyntaxError('Entry function in MLIR tasklet must return exactly one value.')
+            raise SyntaxError("Entry function in MLIR tasklet must return exactly one value.")
 
         return generic_result_list[0]
 
     dialect_result = entry_func.result_types
     # Only one return value allowed as we can not match multiple return values
     if isinstance(dialect_result, list):
-        raise SyntaxError('Entry function in MLIR tasklet must return exactly one value.')
+        raise SyntaxError("Entry function in MLIR tasklet must return exactly one value.")
 
     return dialect_result
 

@@ -5,14 +5,22 @@ from dace.symbolic import pystr_to_symbolic as s2s
 from dace.codegen.targets import cpp as dace_cpp
 
 
-def _make_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_graph.MultiConnectorEdge[dace.Memlet],
-                          dace_nodes.AccessNode]:
+def _make_sdfg() -> tuple[
+    dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_graph.MultiConnectorEdge[dace.Memlet], dace_nodes.AccessNode
+]:
     sdfg = dace.SDFG("copy_sdfg")
     state = sdfg.add_state()
 
     for sname in [
-            "__out_IDim_range_0", "__out_IDim_range_1", "__out_IDim_stride", "__out_JDim_range_0", "__out_JDim_range_1",
-            "__out_JDim_stride", "__out_KDim_range_0", "__out_KDim_range_1", "__out_KDim_stride"
+        "__out_IDim_range_0",
+        "__out_IDim_range_1",
+        "__out_IDim_stride",
+        "__out_JDim_range_0",
+        "__out_JDim_range_1",
+        "__out_JDim_stride",
+        "__out_KDim_range_0",
+        "__out_KDim_range_1",
+        "__out_KDim_stride",
     ]:
         sdfg.add_symbol(sname, dace.int32)
 
@@ -50,14 +58,14 @@ def _make_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace
     a = state.add_access("a")
     b = state.add_access("b")
     e = state.add_nedge(
-        a, b,
+        a,
+        b,
         dace.Memlet(
             data=a.data,
-            subset=
-            "0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), 0:max(0, __out_KDim_range_0, __out_KDim_range_1) - max(0, __out_KDim_range_0)",
-            other_subset=
-            "0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), -__out_KDim_range_0 + max(0, __out_KDim_range_0):max(0, __out_KDim_range_0, __out_KDim_range_1) - __out_KDim_range_0",
-        ))
+            subset="0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), 0:max(0, __out_KDim_range_0, __out_KDim_range_1) - max(0, __out_KDim_range_0)",
+            other_subset="0:max(0, __out_IDim_range_1 - __out_IDim_range_0), 0:max(0, __out_JDim_range_1 - __out_JDim_range_0), -__out_KDim_range_0 + max(0, __out_KDim_range_0):max(0, __out_KDim_range_0, __out_KDim_range_1) - __out_KDim_range_0",
+        ),
+    )
 
     sdfg.validate()
 
@@ -70,7 +78,8 @@ def test_copy_before_and_after_serialization():
     assert state1.number_of_edges() == 1
 
     copy_shape1, src_strides1, dst_strides1, _, _ = dace_cpp.memlet_copy_to_absolute_strides(
-        None, sdfg1, state1, e1, a1, b1)
+        None, sdfg1, state1, e1, a1, b1
+    )
     print(f"|{copy_shape1}| = {len(copy_shape1)}")
     assert len(copy_shape1) == 1
 
@@ -88,7 +97,8 @@ def test_copy_before_and_after_serialization():
     assert b2.data == b1.data
 
     copy_shape2, src_strides2, dst_strides2, _, _ = dace_cpp.memlet_copy_to_absolute_strides(
-        None, sdfg2, state2, e2, a2, b2)
+        None, sdfg2, state2, e2, a2, b2
+    )
 
     print(f"|{copy_shape2}| = {len(copy_shape2)}")
     assert len(copy_shape2) == 1

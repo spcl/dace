@@ -23,18 +23,20 @@ def test_module():
     torch_module = copy.deepcopy(module)
     dace_module = copy.deepcopy(module)
 
-    dace_module = DaceModule(dace_module,
-                             sdfg_name="test_full_training_graph_module",
-                             simplify=False,
-                             backward=True,
-                             training=True,
-                             auto_optimize=False)
+    dace_module = DaceModule(
+        dace_module,
+        sdfg_name="test_full_training_graph_module",
+        simplify=False,
+        backward=True,
+        training=True,
+        auto_optimize=False,
+    )
 
     x = torch.randn(8, 12)
 
     expected_output = torch_module(x)
     result = dace_module(x)
-    torch_tensors_close('output', expected_output, result)
+    torch_tensors_close("output", expected_output, result)
 
     dc_loss = dace_module(x).sum()
     dc_loss.backward()
@@ -43,8 +45,9 @@ def test_module():
     pt_loss.backward()
 
     tensors_close("loss", pt_loss, dc_loss)
-    assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters()), \
+    assert all(hasattr(p, "grad") and p.grad is not None for p in dace_module.parameters()), (
         "Not all parameters have gradients computed"
+    )
 
     for d, t in zip(dace_module.parameters(), torch_module.parameters()):
         torch_tensors_close("param", t.grad, d.grad)
@@ -68,7 +71,7 @@ def test_parse_backward_simple():
     sdfg.validate()
 
     result = sdfg(x.clone(), dy.clone())
-    tensors_close('x.grad', dy.reshape(10, 1).expand(10, 5), result)
+    tensors_close("x.grad", dy.reshape(10, 1).expand(10, 5), result)
 
 
 @pytest.mark.torch
@@ -88,7 +91,7 @@ def test_parse_backward_scalar():
     sdfg.validate()
 
     result = sdfg(x.clone())
-    tensors_close('x.grad', 1, result)
+    tensors_close("x.grad", 1, result)
 
 
 @pytest.mark.torch
@@ -122,7 +125,7 @@ def test_parse_backward_with_forwarding():
 
     result = sdfg(x.clone())
     expected = torch_fn(x.clone())
-    tensors_close('x.grad', expected, result)
+    tensors_close("x.grad", expected, result)
 
 
 @pytest.mark.torch
@@ -169,8 +172,8 @@ def test_two_backward_passes():
 
     r1, r2 = sdfg(x1.clone(), x2.clone(), dy.clone())
     ex_1, ex_2 = torch_fn(x1.clone(), x2.clone(), dy.clone())
-    tensors_close('x2.grad', ex_2, r2)
-    tensors_close('x1.grad', ex_1, r1)
+    tensors_close("x2.grad", ex_2, r2)
+    tensors_close("x1.grad", ex_1, r1)
 
 
 @pytest.mark.torch
@@ -215,7 +218,7 @@ def test_two_backward_passes_accumulate():
     result = sdfg(x1.clone(), dy.clone())
     expected = torch_fn(x1.clone(), dy.clone())
 
-    tensors_close('x.grad', expected, result)
+    tensors_close("x.grad", expected, result)
 
 
 if __name__ == "__main__":

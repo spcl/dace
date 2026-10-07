@@ -5,6 +5,7 @@ CloudSC is the scaling case: thousands of blocks nested many levels deep, where 
 is superlinear in nesting depth shows up as minutes rather than seconds. ConstantPropagation is the
 dominant term in ``simplify`` on this input.
 """
+
 import copy
 import os
 import statistics
@@ -14,8 +15,13 @@ import numpy as np
 import pytest
 
 import dace
-from tests.corpus.cloudsc.generate_data_for_cloudsc import (CLOUDSC_INPUT_RANGES, CLOUDSC_INT_RANGES, IEEE_CPU_ARGS,
-                                                            build_cloudsc_sdfg, generate_cloudsc_inputs)
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (
+    CLOUDSC_INPUT_RANGES,
+    CLOUDSC_INT_RANGES,
+    IEEE_CPU_ARGS,
+    build_cloudsc_sdfg,
+    generate_cloudsc_inputs,
+)
 
 #: Wall-clock budget for one ``simplify()`` of CloudSC.
 SIMPLIFY_BUDGET_SECONDS: float = 140.0
@@ -36,7 +42,7 @@ PARALLEL_NUMERIC_TOLERANCE: float = 1e-12
 #: entirely below freezing, so no liquid precipitation forms and its flux, its enthalpy flux and
 #: the rain-freezing fraction stay zero. They are still compared -- simplify must not make them
 #: nonzero -- but they cannot stand as proof that the kernel computed anything.
-UNWRITTEN_OUTPUTS: frozenset = frozenset({'pfhpsl', 'pfplsl', 'prainfrac_toprfz'})
+UNWRITTEN_OUTPUTS: frozenset = frozenset({"pfhpsl", "pfplsl", "prainfrac_toprfz"})
 
 
 @pytest.mark.long
@@ -45,8 +51,8 @@ def test_build_cloudsc_sdfg_hands_out_private_copies():
     first = build_cloudsc_sdfg(simplify=False)
     second = build_cloudsc_sdfg(simplify=False)
     assert first is not second
-    first.add_symbol('canary', dace.int32)
-    assert 'canary' not in second.symbols
+    first.add_symbol("canary", dace.int32)
+    assert "canary" not in second.symbols
 
 
 @pytest.mark.long
@@ -62,9 +68,10 @@ def test_simplify_stays_within_its_time_budget():
         durations.append(time.perf_counter() - start)
 
     median = statistics.median(durations)
-    reps = ', '.join('%.1f' % d for d in durations)
-    assert median < SIMPLIFY_BUDGET_SECONDS, (f'median simplify took {median:.1f}s, budget is '
-                                              f'{SIMPLIFY_BUDGET_SECONDS:.0f}s; reps={reps}')
+    reps = ", ".join("%.1f" % d for d in durations)
+    assert median < SIMPLIFY_BUDGET_SECONDS, (
+        f"median simplify took {median:.1f}s, budget is {SIMPLIFY_BUDGET_SECONDS:.0f}s; reps={reps}"
+    )
 
 
 @pytest.mark.long
@@ -76,12 +83,12 @@ def test_simplify_preserves_cloudsc_numerics_in_parallel():
     configuration nobody runs, hiding any defect that only appears once a map is split across
     threads -- so the comparison is at a reassociation-sized tolerance instead.
     """
-    assert os.environ.get('OMP_NUM_THREADS') != '1', 'single-threaded, this comparison proves nothing'
+    assert os.environ.get("OMP_NUM_THREADS") != "1", "single-threaded, this comparison proves nothing"
 
     reference = build_cloudsc_sdfg(simplify=False)
     candidate = build_cloudsc_sdfg(simplify=False)
     # Under the 'name' cache config the build folder is just the SDFG name, so equal names collide.
-    candidate.name = f'{candidate.name}_simplified'
+    candidate.name = f"{candidate.name}_simplified"
     candidate.simplify(validate=True)
 
     # A value comparison also passes when the pass did nothing, so pin that simplify rewrote the
@@ -91,27 +98,31 @@ def test_simplify_preserves_cloudsc_numerics_in_parallel():
 
     inputs = generate_cloudsc_inputs(reference)
     ref_run, cand_run = copy.deepcopy(inputs), copy.deepcopy(inputs)
-    saved_args = dace.Config.get('compiler', 'cpu', 'args')
+    saved_args = dace.Config.get("compiler", "cpu", "args")
     try:
         # -O0, no fast-math, no FP contraction: the compiler may not reassociate, so whatever
         # difference remains comes from simplify or from the thread schedule, not from -O3.
-        dace.Config.set('compiler', 'cpu', 'args', value=IEEE_CPU_ARGS)
+        dace.Config.set("compiler", "cpu", "args", value=IEEE_CPU_ARGS)
         reference(**ref_run)
         candidate(**cand_run)
     finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
+        dace.Config.set("compiler", "cpu", "args", value=saved_args)
 
     # Outputs are the arrays the generator leaves zeroed because the reference has no input range
     # for them. Two sides that both computed nothing agree perfectly, so grade them first.
     outputs = [
-        name for name, value in ref_run.items() if isinstance(value, np.ndarray) and value.size > 1
-        and name not in CLOUDSC_INPUT_RANGES and name not in CLOUDSC_INT_RANGES
+        name
+        for name, value in ref_run.items()
+        if isinstance(value, np.ndarray)
+        and value.size > 1
+        and name not in CLOUDSC_INPUT_RANGES
+        and name not in CLOUDSC_INT_RANGES
     ]
-    assert outputs, 'no output arrays to compare'
+    assert outputs, "no output arrays to compare"
     for name in outputs:
-        assert np.all(np.isfinite(ref_run[name])), f'{name} is not finite'
+        assert np.all(np.isfinite(ref_run[name])), f"{name} is not finite"
         if name not in UNWRITTEN_OUTPUTS:
-            assert np.any(ref_run[name] != 0.0), f'{name} is still at its zero initialisation'
+            assert np.any(ref_run[name] != 0.0), f"{name} is still at its zero initialisation"
 
     # Graded against each array's own scale: an absolute floor tied to the magnitude of the values
     # keeps an element that cancelled to near-zero from reading as a huge relative error, while the
@@ -122,11 +133,11 @@ def test_simplify_preserves_cloudsc_numerics_in_parallel():
         scale = float(np.max(np.abs(ref_val)))
         if not np.allclose(ref_val, cand_val, rtol=PARALLEL_NUMERIC_TOLERANCE, atol=PARALLEL_NUMERIC_TOLERANCE * scale):
             worst = float(np.max(np.abs(ref_val - cand_val)))
-            failures.append(f'{name}: max_abs={worst:.3e} scale={scale:.3e} rel={worst / scale:.3e}')
-    assert not failures, 'simplify changed the answer:\n' + '\n'.join(failures)
+            failures.append(f"{name}: max_abs={worst:.3e} scale={scale:.3e} rel={worst / scale:.3e}")
+    assert not failures, "simplify changed the answer:\n" + "\n".join(failures)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_build_cloudsc_sdfg_hands_out_private_copies()
     test_simplify_stays_within_its_time_budget()
     test_simplify_preserves_cloudsc_numerics_in_parallel()

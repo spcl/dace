@@ -23,14 +23,15 @@ def get_missing_arguments_message(function_name, missing_arguments, argument_typ
         function_name=function_name,
         num_missing=len(missing_arguments),
         argument_type=argument_type,
-        s='' if len(missing_arguments) == 1 else 's',
-        arglist=arglist)
+        s="" if len(missing_arguments) == 1 else "s",
+        arglist=arglist,
+    )
 
 
 @make_properties
 class ONNXOp(nd.LibraryNode):
-    """ Abstract superclass for all ONNX ops. Do not use this class, use the concrete subclasses
-        (e.g. :class:`~dace.libraries.onnx.nodes.onnx_op.ONNXConv`) instead.
+    """Abstract superclass for all ONNX ops. Do not use this class, use the concrete subclasses
+    (e.g. :class:`~dace.libraries.onnx.nodes.onnx_op.ONNXConv`) instead.
     """
 
     # Global properties
@@ -46,23 +47,24 @@ class ONNXOp(nd.LibraryNode):
         dtype=str,
         allow_none=True,
         category="Code Generation",
-        desc="Which implementation this library node will expand into in the backward pass.")
+        desc="Which implementation this library node will expand into in the backward pass.",
+    )
 
     def iter_outputs_in_onnx_order(self, state: SDFGState) -> List[MultiConnectorEdge]:
-        """ Iterate through the input edges in the same order as they would appear in an ONNX node proto.
-            This assumes that the node has been validated!
+        """Iterate through the input edges in the same order as they would appear in an ONNX node proto.
+        This assumes that the node has been validated!
 
-            :param state: the state containing this node.
-            :return: the out edges in the order as they would appear in the node proto.
+        :param state: the state containing this node.
+        :return: the out edges in the order as they would appear in the node proto.
         """
         return self._iter_params_in_onnx_order(state, inputs=False)
 
     def iter_inputs_in_onnx_order(self, state: SDFGState) -> List[MultiConnectorEdge]:
-        """ Iterate through the output edges in the same order as they would appear in an ONNX node proto.
-            This assumes that the node has been validated!
+        """Iterate through the output edges in the same order as they would appear in an ONNX node proto.
+        This assumes that the node has been validated!
 
-            :param state: the state containing this node.
-            :return: the in edges in the order as they would appear in the node proto.
+        :param state: the state containing this node.
+        :return: the in edges in the order as they would appear in the node proto.
         """
         return self._iter_params_in_onnx_order(state, inputs=True)
 
@@ -72,8 +74,9 @@ class ONNXOp(nd.LibraryNode):
             return []
         if parameters[-1].param_type == ONNXParameterType.Variadic:
             name = parameters[-1].name
-            parameters = itertools.chain([param.name for param in parameters[:-1]],
-                                         (name + "__" + str(i) for i in itertools.count()))
+            parameters = itertools.chain(
+                [param.name for param in parameters[:-1]], (name + "__" + str(i) for i in itertools.count())
+            )
         else:
             parameters = [param.name for param in parameters]
 
@@ -88,19 +91,19 @@ class ONNXOp(nd.LibraryNode):
         state: SDFGState,
         ignore_unknown=False,
     ) -> Iterator[Tuple[MultiConnectorEdge, bool]]:
-        """ Returns an iterator over tuples of an edge and a boolean that indicates whether that edge is an input,
-            ordered by the order required by the schema.
-            This method assumes that this node has been validated.
+        """Returns an iterator over tuples of an edge and a boolean that indicates whether that edge is an input,
+        ordered by the order required by the schema.
+        This method assumes that this node has been validated.
 
-            :param state: the state containing this node.
-            :param ignore_unknown: whether to ignore any edges that don't exist in the ONNX schema. Otherwise, an
-                                   error will be thrown.
+        :param state: the state containing this node.
+        :param ignore_unknown: whether to ignore any edges that don't exist in the ONNX schema. Otherwise, an
+                               error will be thrown.
         """
         in_edges: List[MultiConnectorEdge] = state.in_edges(self)
         out_edges: List[MultiConnectorEdge] = state.out_edges(self)
 
         def get_idx(parameters, name):
-            if '__' in name:
+            if "__" in name:
                 name, number = parse_variadic_param(name)
             else:
                 number = 0
@@ -110,8 +113,9 @@ class ONNXOp(nd.LibraryNode):
             if len(matched) != 1:
                 if ignore_unknown:
                     return None
-                raise ValueError("Found {} connectors with name '{}', expected to find exactly one".format(
-                    len(matched), name))
+                raise ValueError(
+                    "Found {} connectors with name '{}', expected to find exactly one".format(len(matched), name)
+                )
 
             parameter_idx = matched[0]
 
@@ -130,10 +134,10 @@ class ONNXOp(nd.LibraryNode):
         return itertools.chain(zip(sorted_in, itertools.repeat(True)), zip(sorted_out, itertools.repeat(False)))
 
     def validate(self, sdfg: SDFG, state: SDFGState):
-        """ Validate this node.
+        """Validate this node.
 
-            :param sdfg: the parent sdfg.
-            :param state: the parent state.
+        :param sdfg: the parent sdfg.
+        :param state: the parent state.
         """
         in_edges = state.in_edges(self)
         out_edges = state.out_edges(self)
@@ -149,19 +153,22 @@ class ONNXOp(nd.LibraryNode):
             if is_input:
                 conn_name = edge.dst_conn
                 if conn_name not in self.in_connectors:
-                    raise ValueError("Memlet {} leading to nonexistent input connector '{}'".format(
-                        edge.data, conn_name))
+                    raise ValueError(
+                        "Memlet {} leading to nonexistent input connector '{}'".format(edge.data, conn_name)
+                    )
             else:
                 conn_name = edge.src_conn
                 if conn_name not in self.out_connectors:
-                    raise ValueError("Memlet {} leading to nonexistent output connector '{}'".format(
-                        edge.data, conn_name))
+                    raise ValueError(
+                        "Memlet {} leading to nonexistent output connector '{}'".format(edge.data, conn_name)
+                    )
 
         # check that we have all required in_edges
         ##########################################
         required_inputs = {inp.name for inp in self.schema.inputs if inp.param_type == ONNXParameterType.Single}
-        passed_inputs = {inp.dst_conn
-                         for inp in in_edges if '__' not in inp.dst_conn}  # we will test variadic inputs separately
+        passed_inputs = {
+            inp.dst_conn for inp in in_edges if "__" not in inp.dst_conn
+        }  # we will test variadic inputs separately
         known_inputs = {inp.name for inp in self.schema.inputs}
 
         missing_inputs = required_inputs.difference(passed_inputs)
@@ -171,8 +178,9 @@ class ONNXOp(nd.LibraryNode):
         # check that we have all required out_edges
         ##########################################
         required_outputs = {outp.name for outp in self.schema.outputs if outp.param_type == ONNXParameterType.Single}
-        passed_outputs = {outp.src_conn
-                          for outp in out_edges if '__' not in outp.src_conn}  # we will test variadic inputs separately
+        passed_outputs = {
+            outp.src_conn for outp in out_edges if "__" not in outp.src_conn
+        }  # we will test variadic inputs separately
         known_outputs = {outp.name for outp in self.schema.outputs}
 
         missing_outputs = required_outputs.difference(passed_outputs)
@@ -194,7 +202,7 @@ class ONNXOp(nd.LibraryNode):
         # check variadic params
         ##########################################
         variadic_inputs = {inp.name for inp in self.schema.inputs if inp.param_type == ONNXParameterType.Variadic}
-        passed_variadic_inputs = {edge.dst_conn for edge in in_edges if '__' in edge.dst_conn}
+        passed_variadic_inputs = {edge.dst_conn for edge in in_edges if "__" in edge.dst_conn}
 
         seen_variadic_numbers = set()
         for param in passed_variadic_inputs:
@@ -210,10 +218,12 @@ class ONNXOp(nd.LibraryNode):
             if i not in seen_variadic_numbers:
                 raise ValueError(
                     "Since {} variadic inputs were passed, expected variadic parameter with number {}".format(
-                        len(seen_variadic_numbers), i))
+                        len(seen_variadic_numbers), i
+                    )
+                )
 
         variadic_outputs = {outp.name for outp in self.schema.outputs if outp.param_type == ONNXParameterType.Variadic}
-        passed_variadic_outputs = {edge.src_conn for edge in out_edges if '__' in edge.src_conn}
+        passed_variadic_outputs = {edge.src_conn for edge in out_edges if "__" in edge.src_conn}
         seen_variadic_numbers = set()
         for param in passed_variadic_outputs:
             name, number = parse_variadic_param(param)
@@ -228,7 +238,9 @@ class ONNXOp(nd.LibraryNode):
             if i not in seen_variadic_numbers:
                 raise ValueError(
                     "Since {} variadic outputs were passed, expected variadic parameter with number {}".format(
-                        len(seen_variadic_numbers), i))
+                        len(seen_variadic_numbers), i
+                    )
+                )
 
         # check that type params solve
         ##########################################
@@ -237,7 +249,7 @@ class ONNXOp(nd.LibraryNode):
         for edge, is_input in self.iter_edges(state):
             conn_name = edge.dst_conn if is_input else edge.src_conn
 
-            if '__' in conn_name:
+            if "__" in conn_name:
                 parsed_name, number = parse_variadic_param(conn_name)
             else:
                 parsed_name = conn_name
@@ -247,19 +259,26 @@ class ONNXOp(nd.LibraryNode):
             ]
 
             if len(matching) != 1:
-                raise ValueError("Expected to find one {} parameter in schema with name '{}', but found {}".format(
-                    "input" if is_input else "output", parsed_name, len(matching)))
+                raise ValueError(
+                    "Expected to find one {} parameter in schema with name '{}', but found {}".format(
+                        "input" if is_input else "output", parsed_name, len(matching)
+                    )
+                )
             matched = matching[0]
 
-            if '__' in conn_name and matched.param_type != ONNXParameterType.Variadic:
-                raise ValueError("Got variadic argument '{}' for non-variadic parameter '{}'."
-                                 " Ensure that non-variadic args do not contain '__'".format(conn_name, matched.name))
+            if "__" in conn_name and matched.param_type != ONNXParameterType.Variadic:
+                raise ValueError(
+                    "Got variadic argument '{}' for non-variadic parameter '{}'."
+                    " Ensure that non-variadic args do not contain '__'".format(conn_name, matched.name)
+                )
 
-            if '__' not in conn_name and matched.param_type == ONNXParameterType.Variadic:
+            if "__" not in conn_name and matched.param_type == ONNXParameterType.Variadic:
                 raise ValueError(
                     "Expected variadic argument for variadic parameter '{}', got '{}'. Use '{}__i' as the connector"
                     " name, where i is the desired index of the variadic parameter.".format(
-                        matched.name, conn_name, conn_name))
+                        matched.name, conn_name, conn_name
+                    )
+                )
 
             edge_data = edge.data.data
             edge_dtype = sdfg.arrays[edge_data].dtype
@@ -267,15 +286,19 @@ class ONNXOp(nd.LibraryNode):
             if matched.param_type == ONNXParameterType.Variadic and not matched.homogeneous:
                 # non homogeneous parameters don't need to be consistent
                 pass
-            elif matched.type_str in assigned_params and (assigned_params[matched.type_str] != edge_dtype and
-                                                          assigned_params[matched.type_str] != edge_dtype.base_type):
+            elif matched.type_str in assigned_params and (
+                assigned_params[matched.type_str] != edge_dtype
+                and assigned_params[matched.type_str] != edge_dtype.base_type
+            ):
                 raise ValueError(
                     "Could not solve type constraints;"
                     " excepted type '{expected}' for {param_type} '{conn_name}', got type '{actual}'".format(
                         expected=assigned_params[matched.type_str],
                         param_type="input" if is_input else "output",
                         conn_name=matched.name,
-                        actual=edge_dtype))
+                        actual=edge_dtype,
+                    )
+                )
 
             # otherwise, matched.type_str was not assigned a type yet: try to assign it
             cons = self.schema.type_constraints[matched.type_str]
@@ -285,7 +308,9 @@ class ONNXOp(nd.LibraryNode):
                         possible=cons.types,
                         param_type="input" if is_input else "output",
                         conn_name=matched.name,
-                        actual=edge_dtype))
+                        actual=edge_dtype,
+                    )
+                )
             assigned_params[matched.type_str] = edge_dtype.base_type
 
         # check that we have all required attributes
