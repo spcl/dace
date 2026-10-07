@@ -525,10 +525,10 @@ def test_horizontal_fusion_rejects_a_disagreeing_dynamic_map_range(binding: str)
 def test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets():
     """Two Maps whose ranges are bound by DIFFERENT tasklets must not be treated as agreeing.
 
-    The agreement proof for distinct sources is "nothing in this state writes that data", which is
-    vacuously true when the binding does not come from an AccessNode at all -- no AccessNode of that
-    data exists, so the scan finds no writer and declares the two bounds equal. Fusing then keeps one
-    binding and silently gives the other Map the wrong trip count.
+    Each bound reaches its Map through an AccessNode of the same container, written by its own tasklet in
+    this state. The agreement proof for distinct sources is "nothing in this state writes that data"; it
+    must see these writers, or it declares the two bounds equal and fusing gives one Map the other's trip
+    count.
     """
     sdfg = dace.SDFG(unique_name("dmr_bound_by_tasklets"))
     sdfg.add_scalar("bound", dace.int64, transient=True)
@@ -548,7 +548,9 @@ def test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets():
         )
         bound = state.add_tasklet(f"bound_{name}", set(), {"__out"}, f"__out = {value}")
         map_entry.add_in_connector("lim")
-        state.add_edge(bound, "__out", map_entry, "lim", dace.Memlet("bound[0]"))
+        bound_node = state.add_access("bound")
+        state.add_edge(bound, "__out", bound_node, None, dace.Memlet("bound[0]"))
+        state.add_edge(bound_node, None, map_entry, "lim", dace.Memlet("bound[0]"))
     sdfg.validate()
 
     entries = count_nodes(state, nodes.MapEntry, return_nodes=True)
