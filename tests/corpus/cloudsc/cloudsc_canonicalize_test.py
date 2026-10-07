@@ -77,23 +77,21 @@ _ARMS = {
 #: stale unnoticed. ``omp_parallel_for`` counts pragmas in the GENERATED CODE, and the code has two
 #: sources for them: every OUTERMOST Map, and the loop each ``Fill`` / ``Copy`` library node expands
 #: into. A Map nested inside another Map's scope correctly gets no pragma of its own. Measured at
-#: this pin: 496 Maps = 493 outermost + 3 nested, and 584 pragmas = those 493 + 91 from the 100
-#: library nodes (96 ``Fill`` + 4 ``Copy``; the rest collapse to a plain ``memset``).
+#: this pin: 442 Maps, all outermost, and 526 pragmas = those 442 + 84 from the expanded library nodes.
 #:
 #: ``_EXPECTED_OUTERMOST_MAPS`` is therefore pinned separately. It is what keeps "a Map codegen
 #: declines to emit a pragma for is a silent serialization" a real check -- against the total Map
-#: count that check only ever held by arithmetic coincidence, and it broke the moment canonicalize
-#: started nesting Maps or lifting library nodes.
+#: count that check only holds while canonicalize nests no Map.
 #:
-#: The loops that stay sequential are dominated by four unrolled families -- ``for_608_*``,
-#: ``for_1015_*``, ``for_1215_*_for_1227`` and ``for_1244_*_for_1245`` -- plus the ``for_767`` ICE
-#: slot and the ``for_1327_fis*`` fission remnants. Retargeting a per-iteration scratch slot as if
-#: it were a loop-carried accumulator is exactly the mistake that would parallelize some of these,
-#: and it is refused deliberately; see ``RetargetWCRAccumulator``'s guards.
-_EXPECTED_MAPS = 496
-_EXPECTED_OUTERMOST_MAPS = 493
-_EXPECTED_SEQUENTIAL_LOOPS = 31
-_EXPECTED_OMP_PARALLEL_FOR = 584
+#: The loops that stay sequential are ``for_404``, ``for_493_p0``, the two ``for_973``, ``for_1721_fis0``
+#: and the ``for_1146`` / ``for_1396`` / ``for_1456`` bodies. The unrolled families (``for_608_*``,
+#: ``for_1015_*``, ``for_1215_*``, ``for_1244_*``, ``for_767``, ``for_1327_fis*``) leave neither a loop nor a
+#: Map. Retargeting a per-iteration scratch slot as if it were a loop-carried accumulator is the mistake
+#: that would parallelize such a loop, and it is refused deliberately; see ``RetargetWCRAccumulator``'s guards.
+_EXPECTED_MAPS = 442
+_EXPECTED_OUTERMOST_MAPS = 442
+_EXPECTED_SEQUENTIAL_LOOPS = 9
+_EXPECTED_OMP_PARALLEL_FOR = 526
 
 
 def _map_entries(sdfg: dace.SDFG):
