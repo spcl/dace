@@ -226,7 +226,8 @@ def test_fused_diamond_loses_the_duplicate_map_fusion_carrier():
 #: The orphaned replica the fission leaves behind: the staging array it reads uninitialized, the two
 #: per-expression descriptors that chain stages through, and the tasklets that write it for nobody.
 #: All three descriptors carry the replica's ``nested_sdfg_`` prefix; the live half of the split
-#: works on ``a_slice_plus_x_slice`` and the ``_scan_*`` pair, so the sets never overlap.
+#: works on the ``_scan_*`` pair and the ``a_slice`` read (its result copy folds into the producing tasklet), so the
+#: sets never overlap.
 DEAD_REPLICA_ARRAY = 'nested_sdfg_a'
 DEAD_REPLICA_TRANSIENTS = {
     'nested_sdfg_a',
@@ -239,7 +240,7 @@ DEAD_REPLICA_TASKLETS = {
     '_assign_out_nested_sdfg_a_slice_plus_x_slice_to_nested_sdfg_a',
 }
 #: What the split's live half computes -- named so the removal below cannot quietly take it too.
-LIVE_TRANSIENTS = {'_scan_in_a', '_scan_seed_a', 'a_slice_plus_x_slice'}
+LIVE_TRANSIENTS = {'_scan_in_a', '_scan_seed_a', 'a_slice'}
 
 
 def test_fission_replica_is_absent_from_the_canonical_form():
