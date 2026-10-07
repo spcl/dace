@@ -8,6 +8,7 @@ from dace.sdfg.analysis.schedule_tree.passes.folding import fold_guards
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import forward_substitute_conditions
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import remove_dead_assignments
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import pair_complementary_guards
+from dace.sdfg.analysis.schedule_tree.passes.consecutive_loop_merging import merge_consecutive_loops
 from dace.sdfg.analysis.schedule_tree.passes.convert_map_to_loop import convert_map_to_loop
 from dace.sdfg.analysis.schedule_tree.passes.splitting import split_iteration_spaces
 from dace.sdfg.analysis.schedule_tree.passes.splitting import merge_contiguous_loops
