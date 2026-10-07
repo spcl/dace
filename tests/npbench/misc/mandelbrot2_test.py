@@ -7,9 +7,9 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'N'])
+XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ["XN", "YN", "N"])
 
-XN, YN, M, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'M', 'N'])
+XN, YN, M, N = (dc.symbol(s, dtype=dc.int64) for s in ["XN", "YN", "M", "N"])
 
 
 @dc.program
@@ -28,15 +28,16 @@ def linspace(start: dc.float64, stop: dc.float64, X: dc.float64[N]):
 
 
 @dc.program
-def mandelbrot_kernel(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax: dc.float64, maxiter: dc.int64,
-                      horizon: dc.float64):
+def mandelbrot_kernel(
+    xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax: dc.float64, maxiter: dc.int64, horizon: dc.float64
+):
     # Adapted from
     # https://thesamovar.wordpress.com/2009/03/22/fast-fractals-with-python-and-numpy/
     Xi = np.ndarray((XN, YN), dtype=np.int64)
     Yi = np.ndarray((XN, YN), dtype=np.int64)
     mgrid(Xi, Yi)
-    X = np.ndarray((XN, ), dtype=np.float64)
-    Y = np.ndarray((YN, ), dtype=np.float64)
+    X = np.ndarray((XN,), dtype=np.float64)
+    Y = np.ndarray((YN,), dtype=np.float64)
     linspace(xmin, xmax, X)
     linspace(ymin, ymax, Y)
     C = np.ndarray((XN, YN), dtype=np.complex128)
@@ -44,16 +45,15 @@ def mandelbrot_kernel(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax
         C[i, j] = X[i] + Y[j] * 1j
     N_ = np.zeros(C.shape, dtype=np.int64)
     Z_ = np.zeros(C.shape, dtype=np.complex128)
-    Xiv = np.reshape(Xi, (XN * YN, ))
-    Yiv = np.reshape(Yi, (XN * YN, ))
-    Cv = np.reshape(C, (XN * YN, ))
+    Xiv = np.reshape(Xi, (XN * YN,))
+    Yiv = np.reshape(Yi, (XN * YN,))
+    Cv = np.reshape(C, (XN * YN,))
 
     Z = np.zeros(Cv.shape, np.complex128)
-    I = np.ndarray((XN * YN, ), dtype=np.bool_)
+    I = np.ndarray((XN * YN,), dtype=np.bool_)
     length = XN * YN
     k = 0
     while length > 0 and k < maxiter:
-
         # Compute for relevant points only
         Z[:length] = np.multiply(Z[:length], Z[:length])
         Z[:length] = np.add(Z[:length], Cv[:length])
@@ -117,10 +117,10 @@ def ground_truth(xmin, xmax, ymin, ymax, xn, yn, itermax, horizon=2.0):
 
 
 def run_mandelbrot2(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs mandelbrot2 for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench small size)
     xmin, xmax, XN, ymin, ymax, YN, maxiter, horizon = -2.00, 0.50, 200, -1.25, 1.25, 200, 40, 2.0
@@ -131,7 +131,7 @@ def run_mandelbrot2(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         Z, N = sdfg(xmin, xmax, ymin, ymax, maxiter, horizon, XN=XN, YN=YN)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and validate
     Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, XN, YN, maxiter)
@@ -152,9 +152,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

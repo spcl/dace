@@ -8,19 +8,22 @@ import dace.libraries.blas as blas
 from dace.library import change_default
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
-    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+        pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    ],
+)
 def test_batchmm(implementation: str, dtype):
     """Test standard 3D batched matmul: [b, m, k] @ [b, k, n]"""
-    b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+    b, m, n, k = tuple(dace.symbol(k) for k in "bmnk")
 
     @dace.program
     def bmm(A: dtype[b, m, k], B: dtype[b, k, n], C: dtype[b, m, n]):
@@ -45,19 +48,22 @@ def test_batchmm(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
-    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+        pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    ],
+)
 def test_batchmm_broadcast_rhs(implementation: str, dtype):
     """Test 3D batched matmul with broadcast on RHS: [b, m, k] @ [k, n]"""
-    b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+    b, m, n, k = tuple(dace.symbol(k) for k in "bmnk")
 
     @dace.program
     def bmm_broadcast(A: dtype[b, m, k], B: dtype[k, n], C: dtype[b, m, n]):
@@ -82,19 +88,22 @@ def test_batchmm_broadcast_rhs(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
-    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+        pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    ],
+)
 def test_batchmm_broadcast_lhs(implementation: str, dtype):
     """Test 3D batched matmul with broadcast on LHS: [m, k] @ [b, k, n]"""
-    b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+    b, m, n, k = tuple(dace.symbol(k) for k in "bmnk")
 
     @dace.program
     def bmm_broadcast(A: dtype[m, k], B: dtype[b, k, n], C: dtype[b, m, n]):
@@ -119,16 +128,19 @@ def test_batchmm_broadcast_lhs(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
-    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+        pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    ],
+)
 def test_batchmm_4d(implementation: str, dtype):
     """Test 4D batched matmul: [b1, b2, m, k] @ [b1, b2, k, n]"""
     b1, b2, m, n, k = 4, 2, 64, 128, 64
@@ -154,16 +166,19 @@ def test_batchmm_4d(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
-    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+        pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    ],
+)
 def test_batchmm_4d_broadcast_rhs(implementation: str, dtype):
     """Test 4D batched matmul with broadcast on RHS: [b1, b2, m, k] @ [k, n]"""
     b1, b2, m, n, k = 4, 2, 64, 128, 64
@@ -189,16 +204,19 @@ def test_batchmm_4d_broadcast_rhs(implementation: str, dtype):
         assert np.allclose(ref, z)
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("pure", dace.float32),
-    pytest.param("pure", dace.float64),
-    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
-    pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
-    pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("pure", dace.float32),
+        pytest.param("pure", dace.float64),
+        pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+        pytest.param("cuBLAS", dace.float32, marks=pytest.mark.gpu),
+        pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu),
+        pytest.param("OpenBLAS", dace.float32, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, marks=pytest.mark.lapack),
+    ],
+)
 def test_batchmm_4d_broadcast_lhs(implementation: str, dtype):
     """Test 4D batched matmul with broadcast on LHS: [m, k] @ [b1, b2, k, n]"""
     b1, b2, m, n, k = 4, 2, 64, 128, 64

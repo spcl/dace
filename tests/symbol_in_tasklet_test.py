@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-value = dace.symbol('value', dtype=dace.float32)
+value = dace.symbol("value", dtype=dace.float32)
 
 
 @dace.program
@@ -29,6 +29,6 @@ def test_explicit():
     assert out[0] == np.float32(1.5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_numpy()
     test_explicit()

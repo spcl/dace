@@ -3,11 +3,10 @@ import unittest
 import dace
 import numpy as np
 
-B, M, N, K, L, O = tuple(dace.symbol(k) for k in 'BMNKLO')
+B, M, N, K, L, O = tuple(dace.symbol(k) for k in "BMNKLO")
 
 
 class MatrixMultiplication(unittest.TestCase):
-
     def test_mmm(self):
 
         @dace.program
@@ -69,5 +68,5 @@ class MatrixMultiplication(unittest.TestCase):
         self.assertTrue(np.allclose(c, a @ b))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-N, Nt = (dc.symbol(s, dtype=dc.int64) for s in ('N', 'Nt'))
+N, Nt = (dc.symbol(s, dtype=dc.int64) for s in ("N", "Nt"))
 
 
 @dc.program
@@ -31,7 +31,7 @@ def getAcc(pos: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64, softening:
     dz = z.T - z
 
     # matrix that stores 1/r^3 for all particle pairwise particle separations
-    inv_r3 = (dx**2 + dy**2 + dz**2 + softening**2)
+    inv_r3 = dx**2 + dy**2 + dz**2 + softening**2
     # inv_r3[inv_r3>0] = inv_r3[inv_r3>0]**(-1.5)
     I = inv_r3 > 0
     np.power(inv_r3, -1.5, out=inv_r3, where=I)
@@ -95,8 +95,14 @@ def getEnergy(pos: dc.float64[N, 3], vel: dc.float64[N, 3], mass: dc.float64[N],
 
 
 @dc.program
-def nbody(mass: dc.float64[N], pos: dc.float64[N, 3], vel: dc.float64[N, 3], dt: dc.float64, G: dc.float64,
-          softening: dc.float64):
+def nbody(
+    mass: dc.float64[N],
+    pos: dc.float64[N, 3],
+    vel: dc.float64[N, 3],
+    dt: dc.float64,
+    G: dc.float64,
+    softening: dc.float64,
+):
 
     # Convert to Center-of-Mass frame
     np.subtract(vel, np.mean(np.reshape(mass, (N, 1)) * vel, axis=0) / np.mean(mass), out=vel)
@@ -136,6 +142,7 @@ def nbody(mass: dc.float64[N], pos: dc.float64[N, 3], vel: dc.float64[N, 3], dt:
 
 def initialize(N, tEnd, dt):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     mass = 20.0 * np.ones((N, 1)) / N  # total mass of particles is 20
     pos = rng.random((N, 3))  # randomly selected positions and velocities
@@ -167,8 +174,8 @@ def getAcc_np(pos, mass, G, softening):
     dz = z.T - z
 
     # matrix that stores 1/r^3 for all particle pairwise particle separations
-    inv_r3 = (dx**2 + dy**2 + dz**2 + softening**2)
-    inv_r3[inv_r3 > 0] = inv_r3[inv_r3 > 0]**(-1.5)
+    inv_r3 = dx**2 + dy**2 + dz**2 + softening**2
+    inv_r3[inv_r3 > 0] = inv_r3[inv_r3 > 0] ** (-1.5)
 
     ax = G * (dx * inv_r3) @ mass
     ay = G * (dy * inv_r3) @ mass
@@ -256,10 +263,10 @@ def nbody_np(mass, pos, vel, N, Nt, dt, G, softening):
 
 
 def run_nbody(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs nbody for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench small size)
     N, tEnd, dt, softening, G = 25, 2.0, 0.05, 0.1, 1.0
@@ -294,9 +301,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

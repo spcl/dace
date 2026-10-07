@@ -6,8 +6,8 @@ import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 # TRUE

@@ -40,5 +40,5 @@ def test_map_dim_shuffle():
     assert sdfg.apply_transformations_repeated(MapDimShuffle, options={"parameters": ["k", "i", "l"]}) == 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_map_dim_shuffle()

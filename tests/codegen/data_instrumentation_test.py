@@ -36,10 +36,10 @@ def test_dump():
 
     # Verify instrumented data
     dreport = sdfg.get_instrumented_data()
-    assert dreport.keys() == {'A', 'tmp', '__return'}
-    assert np.allclose(dreport['A'], A)
-    assert np.allclose(dreport['tmp'], A + 1)
-    assert np.allclose(dreport['__return'], A + 6)
+    assert dreport.keys() == {"A", "tmp", "__return"}
+    assert np.allclose(dreport["A"], A)
+    assert np.allclose(dreport["tmp"], A + 1)
+    assert np.allclose(dreport["__return"], A + 6)
 
 
 @pytest.mark.gpu
@@ -60,12 +60,12 @@ def test_dump_gpu():
 
     # Verify instrumented data
     dreport = sdfg.get_instrumented_data()
-    assert dreport.keys() == {'A', 'gpu_A', 'tmp', 'gpu___return', '__return'}
-    assert np.allclose(dreport['A'], A)
-    assert np.allclose(dreport['gpu_A'], A)
-    assert np.allclose(dreport['tmp'], A + 1)
-    assert np.allclose(dreport['gpu___return'], A + 6)
-    assert np.allclose(dreport['__return'], A + 6)
+    assert dreport.keys() == {"A", "gpu_A", "tmp", "gpu___return", "__return"}
+    assert np.allclose(dreport["A"], A)
+    assert np.allclose(dreport["gpu_A"], A)
+    assert np.allclose(dreport["tmp"], A + 1)
+    assert np.allclose(dreport["gpu___return"], A + 6)
+    assert np.allclose(dreport["__return"], A + 6)
 
 
 def test_dump_gpu_synchronizes():
@@ -85,12 +85,12 @@ def test_dump_gpu_synchronizes():
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
     # Pin the backend so the check needs no device present.
-    with dace.config.set_temporary('compiler', 'cuda', 'backend', value='cuda'):
-        code = next(c.clean_code for c in sdfg.generate_code() if 'serializer->save(' in c.clean_code)
+    with dace.config.set_temporary("compiler", "cuda", "backend", value="cuda"):
+        code = next(c.clean_code for c in sdfg.generate_code() if "serializer->save(" in c.clean_code)
 
-    before_each_save = code.split('serializer->save(')[:-1]
+    before_each_save = code.split("serializer->save(")[:-1]
     assert before_each_save
-    assert all('DeviceSynchronize' in chunk for chunk in before_each_save), code
+    assert all("DeviceSynchronize" in chunk for chunk in before_each_save), code
 
 
 def test_dump_no_report():
@@ -108,10 +108,10 @@ def test_dump_no_report():
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
     for each_invocation in (True, False):
-        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=each_invocation):
+        with dace.config.set_temporary("instrumentation", "report_each_invocation", value=each_invocation):
             code = sdfg.generate_code()[0].clean_code
-        assert 'dace::perf::Report report;' not in code
-        assert '__state->report' not in code
+        assert "dace::perf::Report report;" not in code
+        assert "__state->report" not in code
 
 
 @pytest.mark.datainstrument
@@ -150,7 +150,7 @@ def test_restore_gpu():
     sdfg.apply_gpu_transformations()
 
     # Instrument everything but the return value
-    _instrument(sdfg, dace.DataInstrumentationType.Save, ignore='return')
+    _instrument(sdfg, dace.DataInstrumentationType.Save, ignore="return")
 
     A = np.random.rand(20, 20)
     acopy = np.copy(A)
@@ -159,7 +159,7 @@ def test_restore_gpu():
 
     # Verify instrumented data
     dreport = sdfg.get_instrumented_data()
-    _instrument(sdfg, dace.DataInstrumentationType.Restore, ignore='return')
+    _instrument(sdfg, dace.DataInstrumentationType.Restore, ignore="return")
 
     A[:] = 5
     result = sdfg.call_with_instrumented_data(dreport, A)
@@ -185,13 +185,13 @@ def test_dinstr_versioning():
     sdfg(A, B)
 
     dreport = sdfg.get_instrumented_data()
-    assert len(dreport['A']) == 2
-    assert len(dreport['B']) == 2
+    assert len(dreport["A"]) == 2
+    assert len(dreport["B"]) == 2
 
-    assert np.allclose(dreport['A'][0], oa)
-    assert np.allclose(dreport['A'][1], oa + 2)
-    assert np.allclose(dreport['B'][0], oa + 1)
-    assert np.allclose(dreport['B'][1], oa + 3)
+    assert np.allclose(dreport["A"][0], oa)
+    assert np.allclose(dreport["A"][1], oa + 2)
+    assert np.allclose(dreport["B"][0], oa + 1)
+    assert np.allclose(dreport["B"][1], oa + 3)
 
 
 @pytest.mark.datainstrument
@@ -211,10 +211,10 @@ def test_dinstr_in_loop():
     result = sdfg(A)
     dreport = sdfg.get_instrumented_data()
     assert len(dreport.keys()) == 3
-    assert len(dreport['__return']) == 1 + 2 * 20
+    assert len(dreport["__return"]) == 1 + 2 * 20
 
-    assert np.allclose(dreport['__return'][0], A)
-    assert np.allclose(dreport['__return'][-1], result)
+    assert np.allclose(dreport["__return"][0], A)
+    assert np.allclose(dreport["__return"][-1], result)
 
 
 @pytest.mark.datainstrument
@@ -226,10 +226,10 @@ def test_dinstr_strided():
         return tmp + 5
 
     sdfg = dinstr.to_sdfg(simplify=True)
-    sdfg.arrays['tmp'].total_size = 32 * 32
-    sdfg.arrays['tmp'].strides = (32, 1)
+    sdfg.arrays["tmp"].total_size = 32 * 32
+    sdfg.arrays["tmp"].strides = (32, 1)
 
-    _instrument(sdfg, dace.DataInstrumentationType.Save, ignore='return')
+    _instrument(sdfg, dace.DataInstrumentationType.Save, ignore="return")
 
     A = np.random.rand(20, 20)
     result = sdfg(A)
@@ -237,22 +237,22 @@ def test_dinstr_strided():
 
     # Verify instrumented data
     dreport: InstrumentedDataReport = sdfg.get_instrumented_data()
-    assert np.allclose(dreport['A'], A)
-    assert np.allclose(dreport['tmp'], A + 1)
+    assert np.allclose(dreport["A"], A)
+    assert np.allclose(dreport["tmp"], A + 1)
 
     # Modify instrumented data and restore
-    tmp = dreport['tmp']
+    tmp = dreport["tmp"]
     tmp *= 2
     dreport.update_report()
 
-    _instrument(sdfg, dace.DataInstrumentationType.Restore, ignore='return')
+    _instrument(sdfg, dace.DataInstrumentationType.Restore, ignore="return")
     result = sdfg.call_with_instrumented_data(dreport, A=A)
     assert np.allclose(result, 2 * A + 7)
 
 
 @pytest.mark.datainstrument
 def test_dinstr_symbolic():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def dinstr(A: dace.float64[2 * N, 20]):
@@ -268,8 +268,8 @@ def test_dinstr_symbolic():
 
     # Verify instrumented data
     dreport: InstrumentedDataReport = sdfg.get_instrumented_data()
-    assert np.allclose(dreport['A'], A)
-    assert np.allclose(dreport['tmp'], A + 1)
+    assert np.allclose(dreport["A"], A)
+    assert np.allclose(dreport["tmp"], A + 1)
 
 
 @pytest.mark.datainstrument
@@ -280,15 +280,15 @@ def test_dinstr_hooks():
         arr = a + b
         return arr + 1
 
-    with dace.instrument_data(dace.DataInstrumentationType.Save, filter='a??'):
+    with dace.instrument_data(dace.DataInstrumentationType.Save, filter="a??"):
         result_ab = sample(0.0, 1.0)
 
     # Optionally, get the serialized data containers
     dreport = sample.to_sdfg().get_instrumented_data()
-    assert dreport.keys() == {'arr'}  # dreport['arr'] is now the internal ``arr``
+    assert dreport.keys() == {"arr"}  # dreport['arr'] is now the internal ``arr``
 
     # Reload latest instrumented data (can be customized if ``restore_from`` is given)
-    with dace.instrument_data(dace.DataInstrumentationType.Restore, filter='a??'):
+    with dace.instrument_data(dace.DataInstrumentationType.Restore, filter="a??"):
         result_cd = sample(2.0, 3.0)  # where ``c, d`` are different from ``a, b``
 
     assert np.allclose(result_ab, result_cd)
@@ -310,18 +310,18 @@ def test_dinstr_in_loop_conditional_cpp():
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.AccessNode):
             node.instrument = dace.DataInstrumentationType.Save
-            node.instrument_condition = CodeBlock('i == 0', language=dace.Language.CPP)
+            node.instrument_condition = CodeBlock("i == 0", language=dace.Language.CPP)
 
-    A = np.ones((20, ))
-    B = np.ones((20, ))
+    A = np.ones((20,))
+    B = np.ones((20,))
     B[0] = 20
     _ = sdfg(A)
     dreport = sdfg.get_instrumented_data()
     assert len(dreport.keys()) == 3
-    assert len(dreport['__return']) == 3
+    assert len(dreport["__return"]) == 3
 
-    assert np.allclose(dreport['__return'][0], A)
-    assert np.allclose(dreport['__return'][-1], B)
+    assert np.allclose(dreport["__return"][0], A)
+    assert np.allclose(dreport["__return"][-1], B)
 
 
 @pytest.mark.datainstrument
@@ -340,20 +340,20 @@ def test_dinstr_in_loop_conditional_python():
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.AccessNode):
             node.instrument = dace.DataInstrumentationType.Save
-            node.instrument_condition = CodeBlock('i ** 2 == 4', language=dace.Language.Python)
+            node.instrument_condition = CodeBlock("i ** 2 == 4", language=dace.Language.Python)
 
-    A = np.ones((20, ))
-    B = np.ones((20, ))
-    C = np.ones((20, ))
+    A = np.ones((20,))
+    B = np.ones((20,))
+    C = np.ones((20,))
     ret = sdfg(A)
     dreport = sdfg.get_instrumented_data()
     B[0:2] = ret[0:2]
     C[0:3] = ret[0:3]
     assert len(dreport.keys()) == 2
-    assert len(dreport['__return']) == 2
+    assert len(dreport["__return"]) == 2
 
-    assert np.allclose(dreport['__return'][0], B)
-    assert np.allclose(dreport['__return'][1], C)
+    assert np.allclose(dreport["__return"][0], B)
+    assert np.allclose(dreport["__return"][1], C)
 
 
 @pytest.mark.datainstrument
@@ -368,15 +368,15 @@ def test_symbol_dump():
     for state in sdfg.states():
         state.symbol_instrument = dace.DataInstrumentationType.Save
 
-    A = np.ones((20, ))
+    A = np.ones((20,))
     sdfg(A)
     dreport = sdfg.get_instrumented_data()
 
     assert len(dreport.keys()) == 1
-    assert 'i' in dreport.keys()
-    assert len(dreport['i']) == 19
+    assert "i" in dreport.keys()
+    assert len(dreport["i"]) == 19
     desired = list(range(0, 19))
-    assert np.allclose(dreport['i'], desired)
+    assert np.allclose(dreport["i"], desired)
 
 
 @pytest.mark.datainstrument
@@ -390,21 +390,21 @@ def test_symbol_dump_conditional():
     sdfg = dinstr.to_sdfg(simplify=True)
     for state in sdfg.states():
         state.symbol_instrument = dace.DataInstrumentationType.Save
-        state.symbol_instrument_condition = CodeBlock('i == 18', language=dace.Language.Python)
+        state.symbol_instrument_condition = CodeBlock("i == 18", language=dace.Language.Python)
 
-    A = np.ones((20, ))
+    A = np.ones((20,))
     sdfg(A)
     dreport = sdfg.get_instrumented_data()
 
     assert len(dreport.keys()) == 1
-    assert 'i' in dreport.keys()
-    assert len(dreport.files['i']) == 1
-    assert dreport['i'] == 18
+    assert "i" in dreport.keys()
+    assert len(dreport.files["i"]) == 1
+    assert dreport["i"] == 18
 
 
 @pytest.mark.datainstrument
 def test_symbol_restore():
-    j = dace.symbol('j')
+    j = dace.symbol("j")
 
     @dace.program
     def dinstr(A: dace.float64[20]):
@@ -416,18 +416,18 @@ def test_symbol_restore():
     # TODO(later): Make it so symbols can be instrumented on any Control flow block
     sdfg = dinstr.to_sdfg(simplify=False)
     sdfg.start_state.symbol_instrument = dace.DataInstrumentationType.Save
-    A = np.ones((20, ))
+    A = np.ones((20,))
     sdfg(A, j=15)
     dreport = sdfg.get_instrumented_data()
 
     sdfg.start_state.symbol_instrument = dace.DataInstrumentationType.Restore
-    A = np.ones((20, ))
+    A = np.ones((20,))
     sdfg.call_with_instrumented_data(dreport, A, j=10)
 
-    assert np.allclose(A, np.zeros((15, )).tolist() + np.ones((5, )).tolist())
+    assert np.allclose(A, np.zeros((15,)).tolist() + np.ones((5,)).tolist())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_dump()
     test_symbol_dump()
     test_symbol_dump_conditional()

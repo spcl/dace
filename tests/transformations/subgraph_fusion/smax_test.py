@@ -9,7 +9,7 @@ import dace.sdfg.nodes as nodes
 from dace.sdfg.graph import SubgraphView
 
 dace_dtype = dace.float32
-H, B, SN, SM = (dace.symbol(s) for s in ('H', 'B', 'SN', 'SM'))
+H, B, SN, SM = (dace.symbol(s) for s in ("H", "B", "SN", "SM"))
 
 
 @dace.program
@@ -26,7 +26,7 @@ def softmax(X_in: dace_dtype[H, B, SN, SM]):
             mx << tmp_max[i, j, k]
             o >> tmp_out[i, j, k, l]
             o = math.exp(inp - mx)
-    #tmp_out = np.exp(X_in - tmp_max)
+    # tmp_out = np.exp(X_in - tmp_max)
 
     tmp_sum = dace.reduce(lambda a, b: a + b, tmp_out, identity=0, axis=3)
     for i, j, k, l in dace.map[0:H, 0:B, 0:SN, 0:SM]:
@@ -64,7 +64,7 @@ def get_partition(sdfg, graph):
 
 def test_2fuse():
     sdfg = softmax.to_sdfg()
-    sdfg.name = 'softmax_2part'
+    sdfg.name = "softmax_2part"
     sdfg.simplify()
     X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
 
@@ -88,7 +88,7 @@ def test_2fuse():
 
 def test_1fuse():
     sdfg = softmax.to_sdfg()
-    sdfg.name = 'softmax_fused'
+    sdfg.name = "softmax_fused"
     sdfg.simplify()
     X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
 
@@ -113,7 +113,7 @@ def test_1fuse():
 
 def test_1fuse():
     sdfg = softmax.to_sdfg()
-    sdfg.name = 'softmax_fused'
+    sdfg.name = "softmax_fused"
     sdfg.simplify()
     X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
 
@@ -125,7 +125,7 @@ def test_1fuse():
     expand_maps(sdfg, sdfg.nodes()[0])
     fusion(sdfg, sdfg.nodes()[0])
 
-    #sdfg.specialize({'SM':SM})
+    # sdfg.specialize({'SM':SM})
     csdfg = sdfg.compile()
     res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg

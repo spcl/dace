@@ -44,22 +44,22 @@ def test_transpose():
 
     realB = np.transpose(A)
     rel_error = np.linalg.norm(B - realB) / np.linalg.norm(realB)
-    print('Relative_error:', rel_error)
+    print("Relative_error:", rel_error)
     assert rel_error <= 1e-5
 
 
 # TODO: Enable after fixing HPTT in CI
 # @pytest.mark.hptt
-@pytest.mark.skip('HPTT is not supported in CI')
+@pytest.mark.skip("HPTT is not supported in CI")
 def test_hptt():
-    with dace.config.set_temporary('library', 'ttranspose', 'default_implementation', value='HPTT'):
+    with dace.config.set_temporary("library", "ttranspose", "default_implementation", value="HPTT"):
         test_transpose_axes0()
         test_transpose_axes1()
         test_transpose_axes2()
         test_transpose_none()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_transpose_axes0()
     test_transpose_axes1()
     test_transpose_axes2()

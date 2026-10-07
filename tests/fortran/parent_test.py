@@ -42,7 +42,6 @@ def test_fortran_frontend_parent():
         assert arg.parent == main_program
 
     for subroutine in ast.subroutine_definitions:
-
         assert subroutine.parent is None
         assert subroutine.execution_part.parent == subroutine
         for execution in subroutine.execution_part.execution:
@@ -87,6 +86,5 @@ def test_fortran_frontend_module():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_parent()
     test_fortran_frontend_module()

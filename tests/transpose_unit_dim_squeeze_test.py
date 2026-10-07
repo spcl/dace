@@ -2,6 +2,7 @@
 """A 2D array with a unit dim (``(N, 1)`` / ``(1, N)``) must transpose to the swapped shape; the
 frontend used to squeeze it and reject ``(N, 1).T`` as "not a matrix". An integer index, by
 contrast, squeezes its axis (``x[:, 1]`` is ``(N,)``) per numpy."""
+
 import numpy as np
 
 import dace

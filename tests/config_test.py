@@ -143,7 +143,7 @@ def test_config_isolation_multi_thread():
     assert initial_value == Config.get(CONFIG_KEY)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_set_temporary()
     test_temporary_config()
     test_temporary_config_exception()

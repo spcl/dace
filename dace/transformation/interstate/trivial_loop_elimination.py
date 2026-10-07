@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Eliminates trivial loop """
+"""Eliminates trivial loop"""
 
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
@@ -52,7 +52,7 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         graph.add_node(self.loop.start_block)
         for e in graph.in_edges(self.loop):
             graph.add_edge(e.src, self.loop.start_block, e.data)
-        sink = graph.add_state(self.loop.label + '_sink')
+        sink = graph.add_state(self.loop.label + "_sink")
         for n in self.loop.sink_nodes():
             graph.add_edge(n, sink, InterstateEdge())
         for e in graph.out_edges(self.loop):

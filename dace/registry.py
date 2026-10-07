@@ -1,12 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains class decorators to ease creating classes and enumerations whose
-    subclasses and values can be registered externally. """
+"""Contains class decorators to ease creating classes and enumerations whose
+subclasses and values can be registered externally."""
 
 from dace import attr_enum
 from typing import Dict, Type, TypeVar
 
-T = TypeVar('T')
-E = TypeVar('E', bound=attr_enum.ExtensibleAttributeEnum)
+T = TypeVar("T")
+E = TypeVar("E", bound=attr_enum.ExtensibleAttributeEnum)
 
 
 def make_registry(cls: Type[T]) -> Type[T]:
@@ -42,11 +42,11 @@ def autoregister(cls: Type, **kwargs):
     """
     registered = False
     for base in cls.__bases__:
-        if hasattr(base, '_registry_') and hasattr(base, 'register'):
+        if hasattr(base, "_registry_") and hasattr(base, "register"):
             base.register(cls, **kwargs)
             registered = True
     if not registered:
-        raise TypeError('Class does not extend registry classes')
+        raise TypeError("Class does not extend registry classes")
     return cls
 
 
@@ -65,5 +65,5 @@ def undefined_safe_enum(cls: type[E]) -> type[E]:
     """
     if not issubclass(cls, attr_enum.ExtensibleAttributeEnum):
         raise TypeError("Only ExtensibleAttributeEnum subclasses may be used with undefined values")
-    cls.register('Undefined')
+    cls.register("Undefined")
     return cls

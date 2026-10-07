@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`FillLibraryNode` and its pure / CPU / CUDA / tasklet expansions."""
+
 import contextlib
 from typing import Optional, Sequence
 
@@ -10,13 +11,15 @@ import pytest
 import numpy as np
 
 
-def make_fill_sdfg(implementation: Optional[str],
-                   shape: Sequence[int],
-                   subset: str,
-                   gpu: bool = True,
-                   name: str = "fill_sdfg",
-                   dtype: dace.dtypes.typeclass = dace.dtypes.float64,
-                   value=0) -> dace.SDFG:
+def make_fill_sdfg(
+    implementation: Optional[str],
+    shape: Sequence[int],
+    subset: str,
+    gpu: bool = True,
+    name: str = "fill_sdfg",
+    dtype: dace.dtypes.typeclass = dace.dtypes.float64,
+    value=0,
+) -> dace.SDFG:
     """Build an SDFG that fills a sub-region of a single array.
 
     :param implementation: ``FillLibraryNode.implementation`` (``None`` keeps ``'Auto'``).
@@ -38,14 +41,15 @@ def make_fill_sdfg(implementation: Optional[str],
     libnode = FillLibraryNode(name="fill_libnode", value=value)
     if implementation is not None:
         libnode.implementation = implementation
-    state.add_edge(libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, out, None,
-                   dace.memlet.Memlet(f"{arr_name}[{subset}]"))
+    state.add_edge(
+        libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, out, None, dace.memlet.Memlet(f"{arr_name}[{subset}]")
+    )
     return sdfg
 
 
 def _get_sdfg(implementation: Optional[str], gpu: bool = True) -> dace.SDFG:
     """1-D slice fill."""
-    return make_fill_sdfg(implementation, (200, ), "50:100", gpu=gpu, name="fill_sdfg")
+    return make_fill_sdfg(implementation, (200,), "50:100", gpu=gpu, name="fill_sdfg")
 
 
 def _get_multi_dim_sdfg(implementation: Optional[str], gpu: bool = True) -> dace.SDFG:
@@ -62,7 +66,7 @@ def test_fill_pure_1d_cpu():
     sdfg.validate()
     exe = sdfg.compile()
 
-    B = np.ones((200, ), dtype=np.float64)
+    B = np.ones((200,), dtype=np.float64)
     exe(B=B)
 
     assert np.all(B[:50] == 1)
@@ -98,7 +102,7 @@ def test_fill_pure_1d_gpu():
     sdfg.validate()
     exe = sdfg.compile()
 
-    B = cp.ones((200, ), dtype=cp.float64)
+    B = cp.ones((200,), dtype=cp.float64)
     exe(gpuB=B)
 
     assert cp.all(B[:50] == 1)
@@ -137,7 +141,7 @@ def test_fill_cuda_1d_gpu():
     sdfg.validate()
     exe = sdfg.compile()
 
-    B = cp.ones((200, ), dtype=cp.float64)
+    B = cp.ones((200,), dtype=cp.float64)
     exe(gpuB=B)
 
     assert cp.all(B[:50] == 1)
@@ -213,14 +217,14 @@ def test_fill_cuda_rejects_non_contiguous_subset():
 
 def test_fill_register_outside_kernel_routes_to_cpu_tasklet():
     """A Fill on a Register outside a GPU kernel scope lowers to a direct host-side Tasklet."""
-    sdfg = dace.SDFG('fill_reg_outside_kernel')
-    sdfg.add_array('R', [1], dace.float64, dace.StorageType.Register, transient=True)
-    state = sdfg.add_state('s')
+    sdfg = dace.SDFG("fill_reg_outside_kernel")
+    sdfg.add_array("R", [1], dace.float64, dace.StorageType.Register, transient=True)
+    state = sdfg.add_state("s")
 
-    r = state.add_access('R')
-    fill_node = FillLibraryNode(name='fill_r')
+    r = state.add_access("R")
+    fill_node = FillLibraryNode(name="fill_r")
     state.add_node(fill_node)
-    state.add_edge(fill_node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, r, None, dace.Memlet('R[0]'))
+    state.add_edge(fill_node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, r, None, dace.Memlet("R[0]"))
 
     sdfg.expand_library_nodes()
 
@@ -229,24 +233,24 @@ def test_fill_register_outside_kernel_routes_to_cpu_tasklet():
     assert nsdfg_count == 0, "Host register fill should expand to a direct Tasklet, not a NestedSDFG."
 
     assignments = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and '= 0' in n.code.as_string
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and "= 0" in n.code.as_string
     ]
     assert assignments, "Expected a basic literal assignment tasklet on the host."
 
 
 def test_fill_register_inside_kernel_routes_to_sequential():
     """A multi-element Fill targeting a Register array inside a GPU kernel maps to sequential in-kernel logic."""
-    sdfg = dace.SDFG('fill_reg_inside_kernel')
-    sdfg.add_array('R', [4], dace.float64, dace.StorageType.Register, transient=True)
-    state = sdfg.add_state('s')
+    sdfg = dace.SDFG("fill_reg_inside_kernel")
+    sdfg.add_array("R", [4], dace.float64, dace.StorageType.Register, transient=True)
+    state = sdfg.add_state("s")
 
-    me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
-    r = state.add_access('R')
-    fill_node = FillLibraryNode(name='fill_r')
+    me, mx = state.add_map("kernel", dict(i="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    r = state.add_access("R")
+    fill_node = FillLibraryNode(name="fill_r")
     state.add_node(fill_node)
 
     state.add_memlet_path(me, fill_node, memlet=dace.Memlet())
-    state.add_edge(fill_node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, r, None, dace.Memlet('R[0:4]'))
+    state.add_edge(fill_node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, r, None, dace.Memlet("R[0:4]"))
     state.add_memlet_path(r, mx, memlet=dace.Memlet())
 
     sdfg.expand_library_nodes()
@@ -254,8 +258,9 @@ def test_fill_register_inside_kernel_routes_to_sequential():
     # Ensure it did not lower to a host-side or invalid device-side memset call. The expansion
     # names the API after the configured backend, so match both spellings, not just cuda's.
     memsets = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and ('cudaMemset' in n.code.as_string or 'hipMemset' in n.code.as_string)
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet) and ("cudaMemset" in n.code.as_string or "hipMemset" in n.code.as_string)
     ]
     assert len(memsets) == 0, "Cannot issue a device memset on local GPU registers."
 
@@ -268,22 +273,23 @@ def test_fill_single_gpu_shared_inside_kernel_expands_clean():
     code (a device-side ``_out = 0``) and must expand cleanly. Regression: the ``tasklet`` guard fired
     on exactly this valid case, and its error path dereferenced the output *name* (a ``str``) as
     ``inp.storage`` -> ``AttributeError``."""
-    sdfg = dace.SDFG('fill_shared_inside_kernel')
-    sdfg.add_array('s', [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
-    state = sdfg.add_state('s')
+    sdfg = dace.SDFG("fill_shared_inside_kernel")
+    sdfg.add_array("s", [1], dace.float64, dace.StorageType.GPU_Shared, transient=True)
+    state = sdfg.add_state("s")
 
-    me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.dtypes.ScheduleType.GPU_Device)
-    s_acc = state.add_access('s')
-    fill_node = FillLibraryNode(name='fill_s')
+    me, mx = state.add_map("kernel", dict(i="0:1"), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    s_acc = state.add_access("s")
+    fill_node = FillLibraryNode(name="fill_s")
     state.add_node(fill_node)
     state.add_memlet_path(me, fill_node, memlet=dace.Memlet())
-    state.add_edge(fill_node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, s_acc, None, dace.Memlet('s[0]'))
+    state.add_edge(fill_node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, s_acc, None, dace.Memlet("s[0]"))
     state.add_memlet_path(s_acc, mx, memlet=dace.Memlet())
 
     sdfg.expand_library_nodes()  # must not raise
 
-    assert any(isinstance(n, dace.nodes.Tasklet) and '= 0' in n.code.as_string
-               for n, _ in sdfg.all_nodes_recursive()), "Expected a scalar zero-assignment tasklet."
+    assert any(
+        isinstance(n, dace.nodes.Tasklet) and "= 0" in n.code.as_string for n, _ in sdfg.all_nodes_recursive()
+    ), "Expected a scalar zero-assignment tasklet."
 
 
 def test_fill_tasklet_rejects_gpu_storage_from_host_scope():
@@ -291,7 +297,7 @@ def test_fill_tasklet_rejects_gpu_storage_from_host_scope():
     cannot target GPU-resident storage (a scalar assignment cannot write device memory), so it must
     raise a clean ``ValueError``. Regression: the guard tested the wrong side, letting this host->GPU
     case through instead of rejecting it."""
-    sdfg = make_fill_sdfg("tasklet", (1, ), "0:1", gpu=True, name="fill_tasklet_host_gpu")
+    sdfg = make_fill_sdfg("tasklet", (1,), "0:1", gpu=True, name="fill_tasklet_host_gpu")
     sdfg.validate()
     with pytest.raises(ValueError):
         sdfg.expand_library_nodes()
@@ -302,16 +308,16 @@ def test_fill_pure_strided_map_matches_array():
     extent as the wrapper array descriptor. Regression: ``map_lengths`` was recomputed from
     ``out_subset.size()`` instead of the collapsed shape used for the array, so the map bounds
     could diverge from the array rank/extent."""
-    sdfg = make_fill_sdfg(None, (9, ), "0:9:3", gpu=False, name="fill_strided_cpu")
+    sdfg = make_fill_sdfg(None, (9,), "0:9:3", gpu=False, name="fill_strided_cpu")
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()  # a diverged map/array would fail validation here
     exe = sdfg.compile()
 
-    B = np.ones((9, ), dtype=np.float64)
+    B = np.ones((9,), dtype=np.float64)
     exe(B=B)
 
-    expected = np.ones((9, ), dtype=np.float64)
+    expected = np.ones((9,), dtype=np.float64)
     expected[0:9:3] = 0  # indices 0, 3, 6
     np.testing.assert_array_equal(B, expected)
 
@@ -333,8 +339,9 @@ def cpu_fill_sdfg(extent, name):
     sdfg.add_array("dst", [extent], dace.float64, dace.dtypes.StorageType.CPU_Heap)
     state = sdfg.add_state("s")
     libnode = FillLibraryNode(name="ms")
-    state.add_edge(libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None,
-                   dace.Memlet(f"dst[0:{extent}]"))
+    state.add_edge(
+        libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet(f"dst[0:{extent}]")
+    )
     sdfg.validate()
     return sdfg, libnode
 
@@ -350,10 +357,10 @@ def test_fill_below_threshold_emits_a_single_call():
     with _pinned_transfer_threshold(1024):
         sdfg, libnode = cpu_fill_sdfg(100, "fill_below_threshold")
         sdfg.expand_library_nodes(recursive=True)
-        assert libnode.implementation == 'CPU'
+        assert libnode.implementation == "CPU"
         code = _generated_code(sdfg)
-        assert 'std::fill_n' in code
-        assert '#pragma omp parallel for' not in code
+        assert "std::fill_n" in code
+        assert "#pragma omp parallel for" not in code
 
 
 def test_fill_at_threshold_emits_omp_parallel_for():
@@ -361,71 +368,74 @@ def test_fill_at_threshold_emits_omp_parallel_for():
     with _pinned_transfer_threshold(1024):
         sdfg, libnode = cpu_fill_sdfg(4096, "fill_at_threshold")
         sdfg.expand_library_nodes(recursive=True)
-        assert libnode.implementation == 'pure'
+        assert libnode.implementation == "pure"
         code = _generated_code(sdfg)
-        assert '#pragma omp parallel for' in code
-        assert 'std::fill_n' not in code
+        assert "#pragma omp parallel for" in code
+        assert "std::fill_n" not in code
 
 
 def test_fill_symbolic_size_emits_omp_parallel_for():
     """A symbolic (compile-time-unknown) CPU fill size is assumed large, so it takes the same
     OpenMP-parallel path as a large constant, never the single ``std::fill_n``."""
     with _pinned_transfer_threshold(1024):
-        n = dace.symbol('N_fill_symbolic')
+        n = dace.symbol("N_fill_symbolic")
         sdfg, libnode = cpu_fill_sdfg(n, "fill_symbolic_size")
         sdfg.expand_library_nodes(recursive=True)
-        assert libnode.implementation == 'pure'
+        assert libnode.implementation == "pure"
         code = _generated_code(sdfg)
-        assert '#pragma omp parallel for' in code
-        assert 'std::fill_n' not in code
+        assert "#pragma omp parallel for" in code
+        assert "std::fill_n" not in code
 
 
 if __name__ == "__main__":
     pytest.main([__file__])
 
 NARROW_FLOATS = [
-    pytest.param(dace.float16, 'float16'),
-    pytest.param(dace.bfloat16, 'bfloat16'),
-    pytest.param(dace.float8_e4m3fn, 'float8_e4m3fn'),
-    pytest.param(dace.float8_e5m2, 'float8_e5m2'),
+    pytest.param(dace.float16, "float16"),
+    pytest.param(dace.bfloat16, "bfloat16"),
+    pytest.param(dace.float8_e4m3fn, "float8_e4m3fn"),
+    pytest.param(dace.float8_e5m2, "float8_e5m2"),
 ]
 
 
-@pytest.mark.parametrize('dtype,label', NARROW_FLOATS)
-@pytest.mark.parametrize('value', [0.0, 1.0, -1.0, 0.5, 2.0])
+@pytest.mark.parametrize("dtype,label", NARROW_FLOATS)
+@pytest.mark.parametrize("value", [0.0, 1.0, -1.0, 0.5, 2.0])
 def test_fill_narrow_float_writes_the_value(dtype, label, value):
     """A reduced-precision fill must write the value the destination type can hold, whichever
     lowering the object representation selects. One byte (fp8) makes every value byte-splat, so
     those always memset; two bytes (fp16, bfloat16) only do for zero."""
     n = 64
-    sdfg = make_fill_sdfg("CPU", (n, ),
-                          f"0:{n}",
-                          gpu=False,
-                          name=f"fill_{label}_{str(value).replace('.', '_').replace('-', 'neg')}",
-                          dtype=dtype,
-                          value=value)
+    sdfg = make_fill_sdfg(
+        "CPU",
+        (n,),
+        f"0:{n}",
+        gpu=False,
+        name=f"fill_{label}_{str(value).replace('.', '_').replace('-', 'neg')}",
+        dtype=dtype,
+        value=value,
+    )
     npdt = dtype.as_numpy_dtype()
     buf = np.full(n, 7, dtype=npdt)
     sdfg(B=buf)
     assert np.array_equal(buf, np.full(n, value, dtype=npdt)), f"{label} fill of {value}"
 
 
-@pytest.mark.parametrize('dtype,label', NARROW_FLOATS)
-@pytest.mark.parametrize('value', [0.0, 1.0])
+@pytest.mark.parametrize("dtype,label", NARROW_FLOATS)
+@pytest.mark.parametrize("value", [0.0, 1.0])
 def test_fill_narrow_float_host_lowering_is_one_call(dtype, label, value):
     """The host fill is a single ``std::fill_n`` whatever the value's object representation is:
     gcc and clang both reduce it to a memset when the representation allows, and dace always
     builds Release. What must hold here is that the fill stays one call and never degrades to an
     element map."""
     n = 64
-    tag = str(value).replace('.', '_')
-    sdfg = make_fill_sdfg("CPU", (n, ), f"0:{n}", gpu=False, dtype=dtype, value=value, name=f"lowering_{label}_{tag}")
+    tag = str(value).replace(".", "_")
+    sdfg = make_fill_sdfg("CPU", (n,), f"0:{n}", gpu=False, dtype=dtype, value=value, name=f"lowering_{label}_{tag}")
     code = sdfg.generate_code()[0].clean_code
-    assert 'std::fill_n' in code
-    assert '#pragma omp parallel for' not in code
+    assert "std::fill_n" in code
+    assert "#pragma omp parallel for" not in code
 
 
-@pytest.mark.parametrize('dtype,label', NARROW_FLOATS)
+@pytest.mark.parametrize("dtype,label", NARROW_FLOATS)
 def test_fill_narrow_float_gpu_routing_follows_the_byte_pattern(dtype, label):
     """``cudaMemsetAsync`` writes one byte, and no optimizer can widen it, so the GPU choice must
     still be made from the object representation. A one-byte type (fp8) can memset any value; a
@@ -435,18 +445,20 @@ def test_fill_narrow_float_gpu_routing_follows_the_byte_pattern(dtype, label):
         expected_memset = (dtype.bytes == 1) or value == 0.0
         assert (pattern is not None) == expected_memset, f"{label} {value}"
 
-    sdfg = make_fill_sdfg(None, (64, ), "0:64", gpu=True, dtype=dtype, value=1.0, name=f"gpu_route_{label}")
+    sdfg = make_fill_sdfg(None, (64,), "0:64", gpu=True, dtype=dtype, value=1.0, name=f"gpu_route_{label}")
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
     chosen = select_fill_implementation(node, sdfg.start_state)
-    assert chosen == ('CUDA' if dtype.bytes == 1 else 'pure'), f"{label} routed to {chosen}"
+    assert chosen == ("CUDA" if dtype.bytes == 1 else "pure"), f"{label} routed to {chosen}"
 
 
-def make_dynamic_fill_sdfg(shape: Sequence[int],
-                           subset: str,
-                           gpu: bool = True,
-                           dtype: dace.dtypes.typeclass = dace.dtypes.float64,
-                           value_dtype: dace.dtypes.typeclass = dace.dtypes.float64,
-                           name: str = "dynamic_fill") -> dace.SDFG:
+def make_dynamic_fill_sdfg(
+    shape: Sequence[int],
+    subset: str,
+    gpu: bool = True,
+    dtype: dace.dtypes.typeclass = dace.dtypes.float64,
+    value_dtype: dace.dtypes.typeclass = dace.dtypes.float64,
+    name: str = "dynamic_fill",
+) -> dace.SDFG:
     """Build an SDFG that fills a sub-region with a value supplied through ``_fill_val``."""
     sdfg = dace.SDFG(name)
     arr_name = "gpuB" if gpu else "B"
@@ -460,55 +472,47 @@ def make_dynamic_fill_sdfg(shape: Sequence[int],
     val = state.add_access("V")
     libnode = FillLibraryNode(name="fill_libnode", value=0)
     state.add_edge(val, None, libnode, FillLibraryNode.VALUE_CONNECTOR_NAME, dace.memlet.Memlet("V[0]"))
-    state.add_edge(libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, out, None,
-                   dace.memlet.Memlet(f"{arr_name}[{subset}]"))
+    state.add_edge(
+        libnode, FillLibraryNode.OUTPUT_CONNECTOR_NAME, out, None, dace.memlet.Memlet(f"{arr_name}[{subset}]")
+    )
     return sdfg
 
 
 def test_fill_dynamic_value_cpu_routes_to_cpu_for_contiguous_32bit():
     """A dynamic <=32-bit value on a contiguous CPU subset lowers to ``std::fill_n``."""
-    sdfg = make_dynamic_fill_sdfg((100, ),
-                                  "0:100",
-                                  gpu=False,
-                                  dtype=dace.float32,
-                                  value_dtype=dace.float32,
-                                  name="fill_dyn_cpu_f32")
+    sdfg = make_dynamic_fill_sdfg(
+        (100,), "0:100", gpu=False, dtype=dace.float32, value_dtype=dace.float32, name="fill_dyn_cpu_f32"
+    )
     sdfg.validate()
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
-    assert select_fill_implementation(node, sdfg.start_state) == 'CPU'
+    assert select_fill_implementation(node, sdfg.start_state) == "CPU"
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
-    assert 'std::fill_n' in code
+    assert "std::fill_n" in code
     assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code
 
 
 def test_fill_dynamic_value_cpu_64bit_routes_to_pure():
     """A dynamic 64-bit value has no single-call runtime memset, so it routes to ``pure``."""
-    sdfg = make_dynamic_fill_sdfg((100, ),
-                                  "0:100",
-                                  gpu=False,
-                                  dtype=dace.float64,
-                                  value_dtype=dace.float64,
-                                  name="fill_dyn_cpu_f64")
+    sdfg = make_dynamic_fill_sdfg(
+        (100,), "0:100", gpu=False, dtype=dace.float64, value_dtype=dace.float64, name="fill_dyn_cpu_f64"
+    )
     sdfg.validate()
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
-    assert select_fill_implementation(node, sdfg.start_state) == 'pure'
+    assert select_fill_implementation(node, sdfg.start_state) == "pure"
 
 
 def test_fill_dynamic_value_cpu_runs_and_writes_value():
     """A dynamic CPU fill actually writes the supplied value into the destination array."""
-    sdfg = make_dynamic_fill_sdfg((64, ),
-                                  "0:64",
-                                  gpu=False,
-                                  dtype=dace.float64,
-                                  value_dtype=dace.float64,
-                                  name="fill_dyn_cpu_run")
+    sdfg = make_dynamic_fill_sdfg(
+        (64,), "0:64", gpu=False, dtype=dace.float64, value_dtype=dace.float64, name="fill_dyn_cpu_run"
+    )
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
     exe = sdfg.compile()
 
-    B = np.ones((64, ), dtype=np.float64)
+    B = np.ones((64,), dtype=np.float64)
     V = np.array([3.5], dtype=np.float64)
     exe(B=B, V=V)
     np.testing.assert_array_equal(B, np.full(64, 3.5, dtype=np.float64))
@@ -516,12 +520,9 @@ def test_fill_dynamic_value_cpu_runs_and_writes_value():
 
 def test_fill_dynamic_value_rejects_multi_element_subset():
     """The value connector must address exactly one element."""
-    sdfg = make_dynamic_fill_sdfg((64, ),
-                                  "0:64",
-                                  gpu=False,
-                                  dtype=dace.float64,
-                                  value_dtype=dace.float64,
-                                  name="fill_dyn_multi")
+    sdfg = make_dynamic_fill_sdfg(
+        (64,), "0:64", gpu=False, dtype=dace.float64, value_dtype=dace.float64, name="fill_dyn_multi"
+    )
     state = sdfg.start_state
     fill = next(n for n in state.nodes() if isinstance(n, FillLibraryNode))
     # Replace the single-element input memlet with a multi-element one.
@@ -537,12 +538,9 @@ def test_fill_dynamic_value_rejects_multi_element_subset():
 
 def test_fill_dynamic_value_rejects_dtype_mismatch():
     """The value descriptor dtype must match the output array dtype."""
-    sdfg = make_dynamic_fill_sdfg((64, ),
-                                  "0:64",
-                                  gpu=False,
-                                  dtype=dace.float64,
-                                  value_dtype=dace.float32,
-                                  name="fill_dyn_mismatch")
+    sdfg = make_dynamic_fill_sdfg(
+        (64,), "0:64", gpu=False, dtype=dace.float64, value_dtype=dace.float32, name="fill_dyn_mismatch"
+    )
     with pytest.raises(dace.sdfg.validation.InvalidSDFGError, match="dtype"):
         sdfg.validate()
 
@@ -550,16 +548,13 @@ def test_fill_dynamic_value_rejects_dtype_mismatch():
 @pytest.mark.gpu
 def test_fill_dynamic_value_gpu_routes_to_cuda_for_32bit():
     """A dynamic <=32-bit value on a contiguous GPU subset lowers to ``<backend>MemsetAsync``."""
-    sdfg = make_dynamic_fill_sdfg((100, ),
-                                  "0:100",
-                                  gpu=True,
-                                  dtype=dace.float32,
-                                  value_dtype=dace.float32,
-                                  name="fill_dyn_gpu_f32")
+    sdfg = make_dynamic_fill_sdfg(
+        (100,), "0:100", gpu=True, dtype=dace.float32, value_dtype=dace.float32, name="fill_dyn_gpu_f32"
+    )
     sdfg.validate()
     node = next(n for n in sdfg.start_state.nodes() if isinstance(n, FillLibraryNode))
-    assert select_fill_implementation(node, sdfg.start_state) == 'CUDA'
+    assert select_fill_implementation(node, sdfg.start_state) == "CUDA"
     sdfg.expand_library_nodes()
     code = _generated_code(sdfg)
-    assert 'MemsetAsync' in code
+    assert "MemsetAsync" in code
     assert f"{FillLibraryNode.VALUE_CONNECTOR_NAME}" in code

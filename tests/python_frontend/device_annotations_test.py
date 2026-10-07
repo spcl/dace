@@ -30,7 +30,7 @@ def test_storage():
 @pytest.mark.gpu
 def test_schedule():
     Seq = ScheduleType.Sequential
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def add2(X: dace.float32[32, 32] @ StorageType.GPU_Global):
@@ -63,7 +63,7 @@ def test_pythonmode():
 
 
 def test_inline_storage_hint():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester():
@@ -71,14 +71,14 @@ def test_inline_storage_hint():
         return b + 1
 
     sdfg = tester.to_sdfg(simplify=False)
-    assert sdfg.arrays['b'].storage == StorageType.CPU_ThreadLocal
+    assert sdfg.arrays["b"].storage == StorageType.CPU_ThreadLocal
 
     b = tester(N=10)
     assert np.allclose(b, 2)
 
 
 def test_annotated_storage_hint():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester():
@@ -86,7 +86,7 @@ def test_annotated_storage_hint():
         return b + 1
 
     sdfg = tester.to_sdfg(simplify=False)
-    assert sdfg.arrays['b'].storage == StorageType.CPU_ThreadLocal
+    assert sdfg.arrays["b"].storage == StorageType.CPU_ThreadLocal
 
     b = tester(N=10)
     assert np.allclose(b, 2)
