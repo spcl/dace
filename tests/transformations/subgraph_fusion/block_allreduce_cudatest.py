@@ -6,8 +6,8 @@ from dace.transformation.dataflow import ReduceExpansion
 
 from dace.libraries.standard.nodes.reduce import Reduce
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -25,7 +25,7 @@ def test_blockallreduce():
     for node in graph.nodes():
         if isinstance(node, Reduce):
             reduce_node = node
-    reduce_node.implementation = 'CUDA (device)'
+    reduce_node.implementation = "CUDA (device)"
 
     csdfg = sdfg.compile()
     result1 = csdfg(A=A, M=30, N=30)
@@ -37,7 +37,7 @@ def test_blockallreduce():
     # expand first
     transform = ReduceExpansion()
     transform.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
-    transform.reduce_implementation = 'CUDA (block allreduce)'
+    transform.reduce_implementation = "CUDA (block allreduce)"
     transform.apply(sdfg.node(0), sdfg)
     csdfg = sdfg.compile()
     result2 = csdfg(A=A, M=30, N=30)
@@ -48,5 +48,5 @@ def test_blockallreduce():
     assert np.allclose(result1, result2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_blockallreduce()

@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains functions related to pattern matching in transformations. """
+"""Contains functions related to pattern matching in transformations."""
 
 import collections
 from dataclasses import dataclass
@@ -26,44 +26,53 @@ class PatternMatchAndApply(ppl.Pass):
     pattern in the SDFG and applies it.
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
-    transformations = properties.ListProperty(element_type=xf.PatternTransformation,
-                                              default=[],
-                                              desc='The list of transformations to apply')
+    transformations = properties.ListProperty(
+        element_type=xf.PatternTransformation, default=[], desc="The list of transformations to apply"
+    )
 
     permissive = properties.Property(
         dtype=bool,
         default=False,
-        desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
-    validate = properties.Property(dtype=bool,
-                                   default=True,
-                                   desc='If True, validates the SDFG after all transformations have been applied.')
-    validate_all = properties.Property(dtype=bool,
-                                       default=False,
-                                       desc='If True, validates the SDFG after each transformation applies.')
-    states = properties.ListProperty(element_type=SDFGState,
-                                     default=None,
-                                     allow_none=True,
-                                     desc='If not None, only applies transformations to the given states.')
+        desc="Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.",
+    )
+    validate = properties.Property(
+        dtype=bool, default=True, desc="If True, validates the SDFG after all transformations have been applied."
+    )
+    validate_all = properties.Property(
+        dtype=bool, default=False, desc="If True, validates the SDFG after each transformation applies."
+    )
+    states = properties.ListProperty(
+        element_type=SDFGState,
+        default=None,
+        allow_none=True,
+        desc="If not None, only applies transformations to the given states.",
+    )
 
-    print_report = properties.Property(dtype=bool,
-                                       default=None,
-                                       allow_none=True,
-                                       desc='Whether to show debug prints (or None to use configuration file).')
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   desc='Whether to show progress printouts (or None to use configuration file).')
+    print_report = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        desc="Whether to show debug prints (or None to use configuration file).",
+    )
+    progress = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        desc="Whether to show progress printouts (or None to use configuration file).",
+    )
 
-    def __init__(self,
-                 transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
-                 permissive: bool = False,
-                 validate: bool = True,
-                 validate_all: bool = False,
-                 states: Optional[List[SDFGState]] = None,
-                 print_report: Optional[bool] = None,
-                 progress: Optional[bool] = None) -> None:
+    def __init__(
+        self,
+        transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
+        permissive: bool = False,
+        validate: bool = True,
+        validate_all: bool = False,
+        states: Optional[List[SDFGState]] = None,
+        print_report: Optional[bool] = None,
+        progress: Optional[bool] = None,
+    ) -> None:
         if isinstance(transformations, xf.TransformationBase):
             self.transformations = [transformations]
         else:
@@ -98,21 +107,29 @@ class PatternMatchAndApply(ppl.Pass):
         for xform in self.transformations:
             if sdfg.root_sdfg.using_explicit_control_flow:
                 if not xform.__explicit_cf_compatible__:
-                    warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
-                                  ' due to incompatibility with experimental control flow blocks. If the ' +
-                                  'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                  'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                                  xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                                  'please annotate it with the class decorator ' +
-                                  '`@dace.transformation.explicit_cf_compatible`. see ' +
-                                  '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                                  'for more information.')
+                    warnings.warn(
+                        "Pattern matching is skipping transformation "
+                        + xform.__class__.__name__
+                        + " due to incompatibility with experimental control flow blocks. If the "
+                        + "SDFG does not contain experimental blocks, ensure the top level SDFG does "
+                        + "not have `SDFG.using_explicit_control_flow` set to True. If "
+                        + xform.__class__.__name__
+                        + " is compatible with experimental blocks, "
+                        + "please annotate it with the class decorator "
+                        + "`@dace.transformation.explicit_cf_compatible`. see "
+                        + "`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` "
+                        + "for more information."
+                    )
                     continue
 
             # Find only the first match
             try:
-                match = next(m for m in match_patterns(
-                    sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states))
+                match = next(
+                    m
+                    for m in match_patterns(
+                        sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states
+                    )
+                )
             except StopIteration:
                 continue
 
@@ -131,9 +148,10 @@ class PatternMatchAndApply(ppl.Pass):
         if self.validate:
             sdfg.validate()
 
-        if (len(applied_transformations) > 0
-                and (self.print_report or (self.print_report is None and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
+        if len(applied_transformations) > 0 and (
+            self.print_report or (self.print_report is None and Config.get_bool("debugprint"))
+        ):
+            print("Applied {}.".format(", ".join(["%d %s" % (len(v), k) for k, v in applied_transformations.items()])))
 
         if len(applied_transformations) == 0:  # Signal that no transformation was applied
             return None
@@ -149,27 +167,35 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     ``order_by_transformation``).
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
-    order_by_transformation = properties.Property(dtype=bool,
-                                                  default=True,
-                                                  desc='Whether or not to order by transformation.')
+    order_by_transformation = properties.Property(
+        dtype=bool, default=True, desc="Whether or not to order by transformation."
+    )
 
-    def __init__(self,
-                 transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
-                 permissive: bool = False,
-                 validate: bool = True,
-                 validate_all: bool = False,
-                 states: Optional[List[SDFGState]] = None,
-                 print_report: Optional[bool] = None,
-                 progress: Optional[bool] = None,
-                 order_by_transformation: bool = True) -> None:
+    def __init__(
+        self,
+        transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
+        permissive: bool = False,
+        validate: bool = True,
+        validate_all: bool = False,
+        states: Optional[List[SDFGState]] = None,
+        print_report: Optional[bool] = None,
+        progress: Optional[bool] = None,
+        order_by_transformation: bool = True,
+    ) -> None:
         super().__init__(transformations, permissive, validate, validate_all, states, print_report, progress)
         self.order_by_transformation = order_by_transformation
 
     # Helper function for applying and validating a transformation
-    def _apply_and_validate(self, match: xf.PatternTransformation, sdfg: SDFG, start: float,
-                            pipeline_results: Dict[str, Any], applied_transformations: Dict[str, Any]):
+    def _apply_and_validate(
+        self,
+        match: xf.PatternTransformation,
+        sdfg: SDFG,
+        start: float,
+        pipeline_results: Dict[str, Any],
+        applied_transformations: Dict[str, Any],
+    ):
         tcfg = sdfg.cfg_list[match.cfg_id]
         graph = tcfg.node(match.state_id) if match.state_id >= 0 else tcfg
 
@@ -182,22 +208,23 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
         applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg))
         if self.progress or (self.progress is None and (time.time() - start) > 5):
-            print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
-                                                    for k, v in applied_transformations.items()])),
-                  end='')
+            print(
+                "Applied {}.\r".format(", ".join(["%d %s" % (len(v), k) for k, v in applied_transformations.items()])),
+                end="",
+            )
         if self.validate_all:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
                 raise InvalidSDFGError(
-                    f'Validation failed after applying {match_name}. '
-                    f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
+                    f"Validation failed after applying {match_name}. {type(err).__name__}: {err}", sdfg, match.state_id
+                ) from err
 
     def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool) -> Dict[str, List[Any]]:
         """
         Internal apply pass method that can run once through the graph or repeatedly.
         """
-        if self.progress is None and not Config.get_bool('progress'):
+        if self.progress is None and not Config.get_bool("progress"):
             self.progress = False
 
         start = time.time()
@@ -208,7 +235,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
         # Ensure transformations are unique
         if len(xforms) != len(set(xforms)):
-            raise ValueError('Transformation set must be unique')
+            raise ValueError("Transformation set must be unique")
 
         if self.order_by_transformation:
             applied_anything = True
@@ -217,25 +244,31 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 for xform in xforms:
                     if sdfg.root_sdfg.using_explicit_control_flow:
                         if not xform.__explicit_cf_compatible__:
-                            warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
-                                          ' due to incompatibility with experimental control flow blocks. If the ' +
-                                          'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                          'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                                          xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                                          'please annotate it with the class decorator ' +
-                                          '`@dace.transformation.explicit_cf_compatible`. see ' +
-                                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                                          'for more information.')
+                            warnings.warn(
+                                "Pattern matching is skipping transformation "
+                                + xform.__class__.__name__
+                                + " due to incompatibility with experimental control flow blocks. If the "
+                                + "SDFG does not contain experimental blocks, ensure the top level SDFG does "
+                                + "not have `SDFG.using_explicit_control_flow` set to True. If "
+                                + xform.__class__.__name__
+                                + " is compatible with experimental blocks, "
+                                + "please annotate it with the class decorator "
+                                + "`@dace.transformation.explicit_cf_compatible`. see "
+                                + "`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` "
+                                + "for more information."
+                            )
                             continue
 
                     applied = True
                     while applied:
                         applied = False
-                        for match in match_patterns(sdfg,
-                                                    permissive=self.permissive,
-                                                    patterns=[xform],
-                                                    states=self.states,
-                                                    metadata=self._metadata):
+                        for match in match_patterns(
+                            sdfg,
+                            permissive=self.permissive,
+                            patterns=[xform],
+                            states=self.states,
+                            metadata=self._metadata,
+                        ):
                             self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                             applied = True
                             applied_anything = True
@@ -247,11 +280,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             applied = True
             while applied:
                 applied = False
-                for match in match_patterns(sdfg,
-                                            permissive=self.permissive,
-                                            patterns=xforms,
-                                            states=self.states,
-                                            metadata=self._metadata):
+                for match in match_patterns(
+                    sdfg, permissive=self.permissive, patterns=xforms, states=self.states, metadata=self._metadata
+                ):
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                     applied = True
                     break
@@ -261,8 +292,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 sdfg.validate()
             except InvalidSDFGError as err:
                 if applied and match is not None:
-                    raise InvalidSDFGError(f"Validation failed after applying {match.print_match(self)}.", self,
-                                           match.state_id) from err
+                    raise InvalidSDFGError(
+                        f"Validation failed after applying {match.print_match(self)}.", self, match.state_id
+                    ) from err
                 else:
                     raise err
 
@@ -284,28 +316,28 @@ class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     applied on that location.
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=True)
 
 
 def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGraph]) -> nx.DiGraph:
-    """ Collapses a directed multigraph into a networkx directed graph.
+    """Collapses a directed multigraph into a networkx directed graph.
 
-        In the output directed graph, each node is a number, which contains
-        itself as node_data['node'], while each edge contains a list of the
-        data from the original edges as its attribute (edge_data[0...N]).
+    In the output directed graph, each node is a number, which contains
+    itself as node_data['node'], while each edge contains a list of the
+    data from the original edges as its attribute (edge_data[0...N]).
 
-        :param graph: Directed multigraph object to be collapsed.
-        :return: Collapsed directed graph object.
+    :param graph: Directed multigraph object to be collapsed.
+    :return: Collapsed directed graph object.
     """
 
     # Create the digraph nodes.
-    digraph_nodes: List[Tuple[int, Dict[str, nd.Node]]] = ([None] * graph.number_of_nodes())
+    digraph_nodes: List[Tuple[int, Dict[str, nd.Node]]] = [None] * graph.number_of_nodes()
     node_id = {}
     for i, node in enumerate(graph.nodes()):
-        digraph_nodes[i] = (i, {'node': node})
+        digraph_nodes[i] = (i, {"node": node})
         node_id[node] = i
 
     # Create the digraph edges.
@@ -329,19 +361,19 @@ def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGra
 
 
 def type_match(graph_node, pattern_node):
-    """ Checks whether the node types of the inputs match.
+    """Checks whether the node types of the inputs match.
 
-        :param graph_node: First node (in matched graph).
-        :param pattern_node: Second node (in pattern subgraph).
-        :return: True if the object types of the nodes match, False otherwise.
-        :raise TypeError: When at least one of the inputs is not a dictionary
-                          or does not have a 'node' attribute.
-        :raise KeyError: When at least one of the inputs is a dictionary,
-                         but does not have a 'node' key.
+    :param graph_node: First node (in matched graph).
+    :param pattern_node: Second node (in pattern subgraph).
+    :return: True if the object types of the nodes match, False otherwise.
+    :raise TypeError: When at least one of the inputs is not a dictionary
+                      or does not have a 'node' attribute.
+    :raise KeyError: When at least one of the inputs is a dictionary,
+                     but does not have a 'node' key.
     """
-    if isinstance(pattern_node['node'], xf.PatternNode):
-        return isinstance(graph_node['node'], pattern_node['node'].node)
-    return isinstance(graph_node['node'], type(pattern_node['node']))
+    if isinstance(pattern_node["node"], xf.PatternNode):
+        return isinstance(graph_node["node"], pattern_node["node"].node)
+    return isinstance(graph_node["node"], type(pattern_node["node"]))
 
 
 def type_or_class_match(node_a, node_b):
@@ -361,29 +393,36 @@ def type_or_class_match(node_a, node_b):
                         but does not have a 'node' key.
     :see: enumerate_matches
     """
-    if isinstance(node_b['node'], type):
-        return issubclass(type(node_a['node']), node_b['node'])
-    elif isinstance(node_a['node'], type):
-        return issubclass(type(node_b['node']), node_a['node'])
-    elif isinstance(node_b['node'], xf.PatternNode):
-        return isinstance(node_a['node'], node_b['node'].node)
-    elif isinstance(node_a['node'], xf.PatternNode):
-        return isinstance(node_b['node'], node_a['node'].node)
-    return isinstance(node_a['node'], type(node_b['node']))
+    if isinstance(node_b["node"], type):
+        return issubclass(type(node_a["node"]), node_b["node"])
+    elif isinstance(node_a["node"], type):
+        return issubclass(type(node_b["node"]), node_a["node"])
+    elif isinstance(node_b["node"], xf.PatternNode):
+        return isinstance(node_a["node"], node_b["node"].node)
+    elif isinstance(node_a["node"], xf.PatternNode):
+        return isinstance(node_b["node"], node_a["node"].node)
+    return isinstance(node_a["node"], type(node_b["node"]))
 
 
-def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], collapsed_graph: nx.DiGraph,
-                                 subgraph: Dict[int, int], sdfg: SDFG, xform: Union[xf.PatternTransformation,
-                                                                                    Type[xf.PatternTransformation]],
-                                 expr_idx: int, nxpattern: nx.DiGraph, state_id: int, permissive: bool,
-                                 options: Dict[str, Any]) -> Optional[xf.PatternTransformation]:
+def _try_to_match_transformation(
+    graph: Union[ControlFlowRegion, SDFGState],
+    collapsed_graph: nx.DiGraph,
+    subgraph: Dict[int, int],
+    sdfg: SDFG,
+    xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
+    expr_idx: int,
+    nxpattern: nx.DiGraph,
+    state_id: int,
+    permissive: bool,
+    options: Dict[str, Any],
+) -> Optional[xf.PatternTransformation]:
     """
     Helper function that tries to instantiate a pattern match into a
     transformation object.
     """
     # `collapse_multigraph_to_nx` numbers the nodes in the order of `graph.nodes()`, so the index of
     # a node in the collapsed graph is its node ID; `graph.node_id` would find it by a linear scan.
-    subgraph = {nxpattern.nodes[j]['node']: i for i, j in subgraph.items()}
+    subgraph = {nxpattern.nodes[j]["node"]: i for i, j in subgraph.items()}
 
     try:
         if isinstance(xform, xf.PatternTransformation):
@@ -401,29 +440,36 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
 
         if sdfg.root_sdfg.using_explicit_control_flow:
             if not match.__explicit_cf_compatible__:
-                warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
-                              ' due to incompatibility with experimental control flow blocks. If the ' +
-                              'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                              'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                              match.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                              'please annotate it with the class decorator ' +
-                              '`@dace.transformation.explicit_cf_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                              'for more information.')
+                warnings.warn(
+                    "Pattern matching is skipping transformation "
+                    + match.__class__.__name__
+                    + " due to incompatibility with experimental control flow blocks. If the "
+                    + "SDFG does not contain experimental blocks, ensure the top level SDFG does "
+                    + "not have `SDFG.using_explicit_control_flow` set to True. If "
+                    + match.__class__.__name__
+                    + " is compatible with experimental blocks, "
+                    + "please annotate it with the class decorator "
+                    + "`@dace.transformation.explicit_cf_compatible`. see "
+                    + "`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` "
+                    + "for more information."
+                )
                 return None
 
         cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
         match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
         match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
-        if Config.get_bool('optimizer', 'match_exception'):
+        if Config.get_bool("optimizer", "match_exception"):
             raise
         if not isinstance(xform, type):
             xft = type(xform)
         else:
             xft = xform
-        print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-              ' {e}'.format(p=xft.__name__, c=e.__class__.__name__, e=e))
+        print(
+            "WARNING: {p}::can_be_applied triggered a {c} exception: {e}".format(
+                p=xft.__name__, c=e.__class__.__name__, e=e
+            )
+        )
         return None
 
     if match_found:
@@ -436,8 +482,9 @@ TransformationData = List[Tuple[Type[xf.PatternTransformation], int, nx.DiGraph,
 PatternMetadataType = Tuple[TransformationData, TransformationData]
 
 
-def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
-                                options: Optional[List[Dict[str, Any]]] = None) -> PatternMetadataType:
+def get_transformation_metadata(
+    patterns: List[Type[xf.PatternTransformation]], options: Optional[List[Dict[str, Any]]] = None
+) -> PatternMetadataType:
     """
     Collect all transformation expressions and metadata once, for use when
     applying transformations repeatedly.
@@ -454,8 +501,9 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
     interstate_transformations: TransformationData = []
     for pattern, opts in zip(patterns, options):
         # Find if the transformation is inter-state
-        is_interstate = (isinstance(pattern, xf.MultiStateTransformation)
-                         or (isinstance(pattern, type) and issubclass(pattern, xf.MultiStateTransformation)))
+        is_interstate = isinstance(pattern, xf.MultiStateTransformation) or (
+            isinstance(pattern, type) and issubclass(pattern, xf.MultiStateTransformation)
+        )
         for i, expr in enumerate(pattern.expressions()):
             # Make a networkx-version of the match subgraph
             nxpattern = collapse_multigraph_to_nx(expr)
@@ -477,13 +525,13 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
 
 
 def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
-    """ Match based on the VF2 algorithm for general SI. """
+    """Match based on the VF2 algorithm for general SI."""
     graph_matcher = iso.DiGraphMatcher(digraph, nxpattern, node_match=node_pred, edge_match=edge_pred)
     yield from graph_matcher.subgraph_isomorphisms_iter()
 
 
 def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
-    """ Match individual nodes. """
+    """Match individual nodes."""
     pnid = next(iter(nxpattern))
     pnode = nxpattern.nodes[pnid]
 
@@ -493,13 +541,13 @@ def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
 
 
 def _unconnected_pair_matcher(digraph, nxpattern, node_pred, edge_pred):
-    """ Match two pattern nodes that are not connected by an edge.
+    """Match two pattern nodes that are not connected by an edge.
 
-        Yields the same matches in the same order as ``_subgraph_isomorphism_matcher``, whose
-        subgraph isomorphisms are induced: ordered pairs of distinct nodes that satisfy the node
-        predicate, are not adjacent in either direction and have no self-edge. VF2 runs its
-        feasibility test on every graph node for the second pattern node, once per candidate for
-        the first, which dominates the matching time on large states.
+    Yields the same matches in the same order as ``_subgraph_isomorphism_matcher``, whose
+    subgraph isomorphisms are induced: ordered pairs of distinct nodes that satisfy the node
+    predicate, are not adjacent in either direction and have no self-edge. VF2 runs its
+    feasibility test on every graph node for the second pattern node, once per candidate for
+    the first, which dominates the matching time on large states.
     """
     first, second = nxpattern
     first_pattern_node = nxpattern.nodes[first]
@@ -518,48 +566,53 @@ def _unconnected_pair_matcher(digraph, nxpattern, node_pred, edge_pred):
 
 
 def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
-    """ Match individual edges. """
+    """Match individual edges."""
     pedge = next(iter(nxpattern.edges))
     pu = nxpattern.nodes[pedge[0]]
     pv = nxpattern.nodes[pedge[1]]
 
     if edge_pred is None:
         for u, v in digraph.edges:
-            if (node_pred(digraph.nodes[u], pu) and node_pred(digraph.nodes[v], pv)):
+            if node_pred(digraph.nodes[u], pu) and node_pred(digraph.nodes[v], pv):
                 if u is v:  # Skip self-edges
                     continue
                 yield {u: pedge[0], v: pedge[1]}
     else:
         for u, v in digraph.edges:
-            if (node_pred(digraph.nodes[u], pu) and node_pred(digraph.nodes[v], pv)
-                    and edge_pred(digraph.edges[u, v], nxpattern.edges[pedge])):
+            if (
+                node_pred(digraph.nodes[u], pu)
+                and node_pred(digraph.nodes[v], pv)
+                and edge_pred(digraph.edges[u, v], nxpattern.edges[pedge])
+            ):
                 if u is v:  # Skip self-edges
                     continue
                 yield {u: pedge[0], v: pedge[1]}
 
 
-def match_patterns(sdfg: SDFG,
-                   patterns: Union[Type[xf.PatternTransformation], List[Type[xf.PatternTransformation]]],
-                   node_match: Callable[[Any, Any], bool] = type_match,
-                   edge_match: Optional[Callable[[Any, Any], bool]] = None,
-                   permissive: bool = False,
-                   metadata: Optional[PatternMetadataType] = None,
-                   states: Optional[List[SDFGState]] = None,
-                   options: Optional[List[Dict[str, Any]]] = None):
-    """ Returns a generator of Transformations that match the input SDFG.
-        Ordered by SDFG ID.
+def match_patterns(
+    sdfg: SDFG,
+    patterns: Union[Type[xf.PatternTransformation], List[Type[xf.PatternTransformation]]],
+    node_match: Callable[[Any, Any], bool] = type_match,
+    edge_match: Optional[Callable[[Any, Any], bool]] = None,
+    permissive: bool = False,
+    metadata: Optional[PatternMetadataType] = None,
+    states: Optional[List[SDFGState]] = None,
+    options: Optional[List[Dict[str, Any]]] = None,
+):
+    """Returns a generator of Transformations that match the input SDFG.
+    Ordered by SDFG ID.
 
-        :param sdfg: The SDFG to match in.
-        :param patterns: PatternTransformation type (or list thereof) to match.
-        :param node_match: Function for checking whether two nodes match.
-        :param edge_match: Function for checking whether two edges match.
-        :param permissive: Match transformations in permissive mode.
-        :param metadata: Transformation metadata that can be reused.
-        :param states: If given, only tries to match single-state
-                       transformations on this list.
-        :param options: An optional iterable of transformation parameter
-                        dictionaries.
-        :return: A list of PatternTransformation objects that match.
+    :param sdfg: The SDFG to match in.
+    :param patterns: PatternTransformation type (or list thereof) to match.
+    :param node_match: Function for checking whether two nodes match.
+    :param edge_match: Function for checking whether two edges match.
+    :param permissive: Match transformations in permissive mode.
+    :param metadata: Transformation metadata that can be reused.
+    :param states: If given, only tries to match single-state
+                   transformations on this list.
+    :param options: An optional iterable of transformation parameter
+                    dictionaries.
+    :return: A list of PatternTransformation objects that match.
     """
 
     if isinstance(patterns, type):
@@ -588,8 +641,9 @@ def match_patterns(sdfg: SDFG,
 
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1,
-                                                     permissive, opts)
+                match = _try_to_match_transformation(
+                    cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1, permissive, opts
+                )
                 if match is not None:
                     yield match
 
@@ -606,16 +660,16 @@ def match_patterns(sdfg: SDFG,
 
             for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                    match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
-                                                         state_id, permissive, opts)
+                    match = _try_to_match_transformation(
+                        state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, state_id, permissive, opts
+                    )
                     if match is not None:
                         yield match
 
 
-def enumerate_matches(sdfg: SDFG,
-                      pattern: gr.Graph,
-                      node_match=type_or_class_match,
-                      edge_match=None) -> Iterator[gr.SubgraphView]:
+def enumerate_matches(
+    sdfg: SDFG, pattern: gr.Graph, node_match=type_or_class_match, edge_match=None
+) -> Iterator[gr.SubgraphView]:
     """
     Returns a generator of subgraphs that match the given subgraph pattern.
 
@@ -626,11 +680,12 @@ def enumerate_matches(sdfg: SDFG,
     :return: Yields SDFG subgraph view objects.
     """
     if len(pattern.nodes()) == 0:
-        raise ValueError('Subgraph pattern cannot be empty')
+        raise ValueError("Subgraph pattern cannot be empty")
 
     # Find if the subgraph is within states or SDFGs
-    is_interstate = (isinstance(pattern.node(0), SDFGState)
-                     or (isinstance(pattern.node(0), type) and pattern.node(0) is SDFGState))
+    is_interstate = isinstance(pattern.node(0), SDFGState) or (
+        isinstance(pattern.node(0), type) and pattern.node(0) is SDFGState
+    )
 
     # Collapse multigraphs into directed graphs
     pattern_digraph = collapse_multigraph_to_nx(pattern)
@@ -638,17 +693,15 @@ def enumerate_matches(sdfg: SDFG,
     # Find matches in all SDFGs and nested SDFGs
     for graph in sdfg.all_sdfgs_recursive():
         if is_interstate:
-            graph_matcher = iso.DiGraphMatcher(collapse_multigraph_to_nx(graph),
-                                               pattern_digraph,
-                                               node_match=node_match,
-                                               edge_match=edge_match)
+            graph_matcher = iso.DiGraphMatcher(
+                collapse_multigraph_to_nx(graph), pattern_digraph, node_match=node_match, edge_match=edge_match
+            )
             for subgraph in graph_matcher.subgraph_isomorphisms_iter():
                 yield gr.SubgraphView(graph, [graph.node(i) for i in subgraph.keys()])
         else:
             for state in graph.nodes():
-                graph_matcher = iso.DiGraphMatcher(collapse_multigraph_to_nx(state),
-                                                   pattern_digraph,
-                                                   node_match=node_match,
-                                                   edge_match=edge_match)
+                graph_matcher = iso.DiGraphMatcher(
+                    collapse_multigraph_to_nx(state), pattern_digraph, node_match=node_match, edge_match=edge_match
+                )
                 for subgraph in graph_matcher.subgraph_isomorphisms_iter():
                     yield gr.SubgraphView(state, [state.node(i) for i in subgraph.keys()])

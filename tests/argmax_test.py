@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-pair = dace.struct('pair', idx=dace.int32, val=dace.float64)
+pair = dace.struct("pair", idx=dace.int32, val=dace.float64)
 
 
 @dace.program
@@ -28,5 +28,5 @@ def test_argmax():
     assert result[0][0] == np.argmax(A)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_argmax()

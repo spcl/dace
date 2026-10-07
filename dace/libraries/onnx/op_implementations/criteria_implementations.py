@@ -36,9 +36,9 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
 
         # The weights and log_prob arguments are optional
         # We don't support them in this implementation
-        if 'weights' in node.in_connectors:
+        if "weights" in node.in_connectors:
             return False
-        if 'log_prob' in node.out_connectors:
+        if "log_prob" in node.out_connectors:
             return False
 
         return True
@@ -53,15 +53,15 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
         :return: A nested SDFG implementing the SoftmaxCrossEntropyLoss operation.
         """
 
-        if node.reduction == 'mean':
+        if node.reduction == "mean":
 
             def reduction(x):
                 return np.mean(x)
-        elif node.reduction == 'none':
+        elif node.reduction == "none":
 
             def reduction(x):
                 return x
-        elif node.reduction == 'sum':
+        elif node.reduction == "sum":
 
             def reduction(x):
                 return np.sum(x)

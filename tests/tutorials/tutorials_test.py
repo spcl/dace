@@ -23,5 +23,5 @@ def test_notebook_exec(notebook):
             raise
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main(["-v", __file__])

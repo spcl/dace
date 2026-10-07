@@ -14,7 +14,7 @@ class ScalarFission(ppl.Pass):
     Fission transient scalars or arrays of size 1 that are dominated by a write into separate data containers.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -91,4 +91,4 @@ class ScalarFission(ppl.Pass):
         return results
 
     def report(self, pass_retval: Any) -> Optional[str]:
-        return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+        return f"Renamed {len(pass_retval)} scalars: {pass_retval}."

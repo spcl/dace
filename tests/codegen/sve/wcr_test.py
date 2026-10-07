@@ -2,7 +2,7 @@
 import dace
 from tests.codegen.sve.common import get_code
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def test_wcr_sum():
@@ -17,8 +17,8 @@ def test_wcr_sum():
 
     code = get_code(program)
 
-    assert 'ReductionType::Sum' in code
-    assert 'svaddv' in code
+    assert "ReductionType::Sum" in code
+    assert "svaddv" in code
 
 
 def test_wcr_min():
@@ -33,8 +33,8 @@ def test_wcr_min():
 
     code = get_code(program)
 
-    assert 'ReductionType::Min' in code
-    assert 'svminv' in code
+    assert "ReductionType::Min" in code
+    assert "svminv" in code
 
 
 def test_wcr_max():
@@ -49,5 +49,5 @@ def test_wcr_max():
 
     code = get_code(program)
 
-    assert 'ReductionType::Max' in code
-    assert 'svmaxv' in code
+    assert "ReductionType::Max" in code
+    assert "svmaxv" in code

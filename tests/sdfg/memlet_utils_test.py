@@ -19,35 +19,35 @@ def _replace_zero_with_one(memlet: dace.Memlet) -> dace.Memlet:
     return memlet
 
 
-@pytest.mark.parametrize('filter_type', ['none', 'same_array', 'different_array'])
+@pytest.mark.parametrize("filter_type", ["none", "same_array", "different_array"])
 def test_replace_memlet(filter_type: str) -> None:
     # Prepare SDFG
-    sdfg = dace.SDFG('replace_memlet')
-    sdfg.add_array('A', [2, 2], dace.float64)
-    sdfg.add_array('B', [1], dace.float64)
+    sdfg = dace.SDFG("replace_memlet")
+    sdfg.add_array("A", [2, 2], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
     state1 = sdfg.add_state()
     state2 = sdfg.add_state()
     state3 = sdfg.add_state()
     end_state = sdfg.add_state()
-    sdfg.add_edge(state1, state2, dace.InterstateEdge('A[0, 0] > 0'))
-    sdfg.add_edge(state1, state3, dace.InterstateEdge('A[0, 0] <= 0'))
+    sdfg.add_edge(state1, state2, dace.InterstateEdge("A[0, 0] > 0"))
+    sdfg.add_edge(state1, state3, dace.InterstateEdge("A[0, 0] <= 0"))
     sdfg.add_edge(state2, end_state, dace.InterstateEdge())
     sdfg.add_edge(state3, end_state, dace.InterstateEdge())
 
-    t2 = state2.add_tasklet('write_one', {}, {'out'}, 'out = 1')
-    t3 = state3.add_tasklet('write_two', {}, {'out'}, 'out = 2')
-    w2 = state2.add_write('B')
-    w3 = state3.add_write('B')
-    state2.add_memlet_path(t2, w2, src_conn='out', memlet=dace.Memlet('B'))
-    state3.add_memlet_path(t3, w3, src_conn='out', memlet=dace.Memlet('B'))
+    t2 = state2.add_tasklet("write_one", {}, {"out"}, "out = 1")
+    t3 = state3.add_tasklet("write_two", {}, {"out"}, "out = 2")
+    w2 = state2.add_write("B")
+    w3 = state3.add_write("B")
+    state2.add_memlet_path(t2, w2, src_conn="out", memlet=dace.Memlet("B"))
+    state3.add_memlet_path(t3, w3, src_conn="out", memlet=dace.Memlet("B"))
 
     # Filter memlets
-    if filter_type == 'none':
+    if filter_type == "none":
         filter = set()
-    elif filter_type == 'same_array':
-        filter = {'A'}
-    elif filter_type == 'different_array':
-        filter = {'B'}
+    elif filter_type == "same_array":
+        filter = {"A"}
+    elif filter_type == "different_array":
+        filter = {"B"}
 
     # Replace memlets in conditions
     replacer = mu.MemletReplacer(sdfg.arrays, _replace_zero_with_one, filter)
@@ -61,7 +61,7 @@ def test_replace_memlet(filter_type: str) -> None:
     B = np.array([0], dtype=np.float64)
     sdfg(A=A, B=B)
 
-    if filter_type in {'none', 'same_array'}:
+    if filter_type in {"none", "same_array"}:
         assert B[0] == 2
     else:
         assert B[0] == 1
@@ -96,10 +96,12 @@ def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge)
     in_edge = next(iter(state.in_edges(tasklet)))
     out_edge = next(iter(state.out_edges(tasklet)))
 
-    assert all(pattern.fullmatch(str(idxs[0]).strip())
-               for idxs in in_edge.data.src_subset), f"IN: {in_edge.data.src_subset}"
-    assert all(pattern.fullmatch(str(idxs[0]).strip())
-               for idxs in out_edge.data.dst_subset), f"OUT: {out_edge.data.dst_subset}"
+    assert all(pattern.fullmatch(str(idxs[0]).strip()) for idxs in in_edge.data.src_subset), (
+        f"IN: {in_edge.data.src_subset}"
+    )
+    assert all(pattern.fullmatch(str(idxs[0]).strip()) for idxs in out_edge.data.dst_subset), (
+        f"OUT: {out_edge.data.dst_subset}"
+    )
 
     # Now call it again after the optimization.
     sdfg(a=a, b=b_opt)
@@ -107,8 +109,7 @@ def _perform_non_lin_delin_test(sdfg: dace.SDFG, edge: graph.MultiConnectorEdge)
 
 
 def _make_non_lin_delin_sdfg(
-    shape_a: Tuple[int, ...],
-    shape_b: Optional[Tuple[int, ...]] = None
+    shape_a: Tuple[int, ...], shape_b: Optional[Tuple[int, ...]] = None
 ) -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
 
     if shape_b is None:
@@ -118,7 +119,7 @@ def _make_non_lin_delin_sdfg(
     state = sdfg.add_state(is_start_block=True)
 
     ac = []
-    for name, shape in [('a', shape_a), ('b', shape_b)]:
+    for name, shape in [("a", shape_a), ("b", shape_b)]:
         sdfg.add_array(
             name=name,
             shape=shape,
@@ -266,10 +267,10 @@ def test_memlet_dict() -> None:
     assert len(memlet_dict) == 0
 
 
-if __name__ == '__main__':
-    test_replace_memlet('none')
-    test_replace_memlet('same_array')
-    test_replace_memlet('different_array')
+if __name__ == "__main__":
+    test_replace_memlet("none")
+    test_replace_memlet("same_array")
+    test_replace_memlet("different_array")
 
     test_non_lin_delin_1()
     test_non_lin_delin_2()

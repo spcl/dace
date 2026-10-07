@@ -11,21 +11,21 @@ def test_extract_all_dims():
     """
 
     # Create a simple SDFG with a 3D map
-    sdfg = dace.SDFG('test_extract_all_dims')
+    sdfg = dace.SDFG("test_extract_all_dims")
     state = sdfg.add_state()
 
-    sdfg.add_array('A', [10, 20, 30], dace.float64)
-    sdfg.add_array('B', [10, 20, 30], dace.float64)
+    sdfg.add_array("A", [10, 20, 30], dace.float64)
+    sdfg.add_array("B", [10, 20, 30], dace.float64)
 
-    map_entry, map_exit = state.add_map('map', dict(i='0:10', j='0:20', k='0:30'))
+    map_entry, map_exit = state.add_map("map", dict(i="0:10", j="0:20", k="0:30"))
 
-    a_read = state.add_read('A')
-    b_write = state.add_write('B')
+    a_read = state.add_read("A")
+    b_write = state.add_write("B")
 
-    tasklet = state.add_tasklet('compute', {'a_in'}, {'b_out'}, 'b_out = a_in')
+    tasklet = state.add_tasklet("compute", {"a_in"}, {"b_out"}, "b_out = a_in")
 
-    state.add_memlet_path(a_read, map_entry, tasklet, dst_conn='a_in', memlet=dace.Memlet('A[i, j, k]'))
-    state.add_memlet_path(tasklet, map_exit, b_write, src_conn='b_out', memlet=dace.Memlet('B[i, j, k]'))
+    state.add_memlet_path(a_read, map_entry, tasklet, dst_conn="a_in", memlet=dace.Memlet("A[i, j, k]"))
+    state.add_memlet_path(tasklet, map_exit, b_write, src_conn="b_out", memlet=dace.Memlet("B[i, j, k]"))
 
     # When all dimensions are extracted, there should be no remainder map
     extracted_map, remainder_map = xfh.extract_map_dims(sdfg, map_entry, [0, 1, 2])
@@ -44,21 +44,21 @@ def test_extract_partial_dims():
     """
 
     # Create a simple SDFG with a 3D map
-    sdfg = dace.SDFG('test_extract_partial_dims')
+    sdfg = dace.SDFG("test_extract_partial_dims")
     state = sdfg.add_state()
 
-    sdfg.add_array('A', [10, 20, 30], dace.float64)
-    sdfg.add_array('B', [10, 20, 30], dace.float64)
+    sdfg.add_array("A", [10, 20, 30], dace.float64)
+    sdfg.add_array("B", [10, 20, 30], dace.float64)
 
-    map_entry, map_exit = state.add_map('map', dict(i='0:10', j='0:20', k='0:30'))
+    map_entry, map_exit = state.add_map("map", dict(i="0:10", j="0:20", k="0:30"))
 
-    a_read = state.add_read('A')
-    b_write = state.add_write('B')
+    a_read = state.add_read("A")
+    b_write = state.add_write("B")
 
-    tasklet = state.add_tasklet('compute', {'a_in'}, {'b_out'}, 'b_out = a_in')
+    tasklet = state.add_tasklet("compute", {"a_in"}, {"b_out"}, "b_out = a_in")
 
-    state.add_memlet_path(a_read, map_entry, tasklet, dst_conn='a_in', memlet=dace.Memlet('A[i, j, k]'))
-    state.add_memlet_path(tasklet, map_exit, b_write, src_conn='b_out', memlet=dace.Memlet('B[i, j, k]'))
+    state.add_memlet_path(a_read, map_entry, tasklet, dst_conn="a_in", memlet=dace.Memlet("A[i, j, k]"))
+    state.add_memlet_path(tasklet, map_exit, b_write, src_conn="b_out", memlet=dace.Memlet("B[i, j, k]"))
 
     # Extract only first 2 dimensions
     extracted_map, remainder_map = xfh.extract_map_dims(sdfg, map_entry, [0, 1])
@@ -70,12 +70,14 @@ def test_extract_partial_dims():
     assert extracted_map != remainder_map, "Extracted and remainder maps should be different"
 
     # Extracted map should have 2 parameters
-    assert len(
-        extracted_map.map.params) == 2, f"Expected 2 parameters in extracted map, got {len(extracted_map.map.params)}"
+    assert len(extracted_map.map.params) == 2, (
+        f"Expected 2 parameters in extracted map, got {len(extracted_map.map.params)}"
+    )
 
     # Remainder map should have 1 parameter
-    assert len(
-        remainder_map.map.params) == 1, f"Expected 1 parameter in remainder map, got {len(remainder_map.map.params)}"
+    assert len(remainder_map.map.params) == 1, (
+        f"Expected 1 parameter in remainder map, got {len(remainder_map.map.params)}"
+    )
 
 
 def test_extract_single_dim_from_multidim():
@@ -84,21 +86,21 @@ def test_extract_single_dim_from_multidim():
     """
 
     # Create a simple SDFG with a 3D map
-    sdfg = dace.SDFG('test_extract_single_dim')
+    sdfg = dace.SDFG("test_extract_single_dim")
     state = sdfg.add_state()
 
-    sdfg.add_array('A', [10, 20, 30], dace.float64)
-    sdfg.add_array('B', [10, 20, 30], dace.float64)
+    sdfg.add_array("A", [10, 20, 30], dace.float64)
+    sdfg.add_array("B", [10, 20, 30], dace.float64)
 
-    map_entry, map_exit = state.add_map('map', dict(i='0:10', j='0:20', k='0:30'))
+    map_entry, map_exit = state.add_map("map", dict(i="0:10", j="0:20", k="0:30"))
 
-    a_read = state.add_read('A')
-    b_write = state.add_write('B')
+    a_read = state.add_read("A")
+    b_write = state.add_write("B")
 
-    tasklet = state.add_tasklet('compute', {'a_in'}, {'b_out'}, 'b_out = a_in')
+    tasklet = state.add_tasklet("compute", {"a_in"}, {"b_out"}, "b_out = a_in")
 
-    state.add_memlet_path(a_read, map_entry, tasklet, dst_conn='a_in', memlet=dace.Memlet('A[i, j, k]'))
-    state.add_memlet_path(tasklet, map_exit, b_write, src_conn='b_out', memlet=dace.Memlet('B[i, j, k]'))
+    state.add_memlet_path(a_read, map_entry, tasklet, dst_conn="a_in", memlet=dace.Memlet("A[i, j, k]"))
+    state.add_memlet_path(tasklet, map_exit, b_write, src_conn="b_out", memlet=dace.Memlet("B[i, j, k]"))
 
     # Extract only the first dimension
     extracted_map, remainder_map = xfh.extract_map_dims(sdfg, map_entry, [0])
@@ -109,15 +111,17 @@ def test_extract_single_dim_from_multidim():
     assert extracted_map != remainder_map, "Extracted and remainder maps should be different"
 
     # Extracted map should have 1 parameter
-    assert len(
-        extracted_map.map.params) == 1, f"Expected 1 parameter in extracted map, got {len(extracted_map.map.params)}"
+    assert len(extracted_map.map.params) == 1, (
+        f"Expected 1 parameter in extracted map, got {len(extracted_map.map.params)}"
+    )
 
     # Remainder map should have 2 parameters
-    assert len(
-        remainder_map.map.params) == 2, f"Expected 2 parameters in remainder map, got {len(remainder_map.map.params)}"
+    assert len(remainder_map.map.params) == 2, (
+        f"Expected 2 parameters in remainder map, got {len(remainder_map.map.params)}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_extract_all_dims()
     test_extract_partial_dims()
     test_extract_single_dim_from_multidim()

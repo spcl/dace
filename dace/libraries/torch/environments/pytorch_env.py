@@ -20,6 +20,7 @@ def torch_cpp_extension():
     something imported this module (a wedged driver turns that probe into a hang).
     """
     import torch.utils.cpp_extension  # noqa: PLC0415  -- deferred on purpose, see docstring
+
     return torch.utils.cpp_extension
 
 
@@ -95,7 +96,7 @@ class PyTorchGPU:
         :raises RuntimeError: If a required library cannot be found.
         """
         backend = get_gpu_backend()
-        if backend == 'hip':
+        if backend == "hip":
             library_names = ["c10", "torch", "torch_cpu", "torch_hip", "torch_python", "c10_hip"]
             runtime_lib = "amdhip64"
         else:

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests static and runtime assertions in dace programs. """
+"""Tests static and runtime assertions in dace programs."""
+
 import dace
 import pytest
 import numpy as np
@@ -38,7 +39,7 @@ def test_runtime_assert():
     prog_runtime(A)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_static_assert()
     test_static_assert_fail()
     test_runtime_assert()

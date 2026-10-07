@@ -4,7 +4,7 @@ import dace
 import pytest
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -33,7 +33,7 @@ def test_missing_arguments_regression():
 
     @dace.program
     def tester(x: dace.float64[20, 20]):
-        gdx = np.ones((10, ), dace.float64)
+        gdx = np.ones((10,), dace.float64)
         for T in range(2):
             nester(x, gdx, T)
 
@@ -61,7 +61,7 @@ def test_nested_call_with_too_small_argument():
         for i in range(5):
             callee(a[:, i])
 
-    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='declared with 10 elements'):
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="declared with 10 elements"):
         caller.to_sdfg(simplify=False)
 
 
@@ -73,7 +73,7 @@ def test_nested_call_with_reshaped_argument():
 
     @dace.program
     def caller(a: dace.float64[5, 4]):
-        callee(a.reshape((20, )))
+        callee(a.reshape((20,)))
 
     A = np.random.rand(5, 4)
     expected = A + 1
@@ -89,11 +89,11 @@ def test_nested_call_with_reshaped_too_large_argument():
 
     @dace.program
     def caller(a: dace.float64[5, 4]):
-        callee(a.reshape((20, )))
+        callee(a.reshape((20,)))
 
     A = np.random.rand(5, 4)
     expected = A.copy()
-    expected.reshape((20, ))[:10] += 1
+    expected.reshape((20,))[:10] += 1
     caller(A)
     assert np.allclose(A, expected)
 
@@ -106,14 +106,14 @@ def test_nested_call_with_reshaped_too_small_argument():
 
     @dace.program
     def caller(a: dace.float64[5, 4]):
-        callee(a.reshape((20, )))
+        callee(a.reshape((20,)))
 
     A = np.random.rand(5, 4)
-    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='declared with 30 elements'):
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="declared with 30 elements"):
         caller(A)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_extra_args()
     test_missing_arguments_regression()
     test_missing_arguments_2_regression()

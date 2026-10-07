@@ -6,7 +6,6 @@ import dace.library
 
 @dace.library.environment
 class OpenBLAS:
-
     # NOTE: This works with OpenBLAS on Linux when liblapack and libblas are
     # pointing to libopenblas through update-alternatives.
 
@@ -27,7 +26,7 @@ class OpenBLAS:
     @staticmethod
     def cmake_libraries():
         paths = []
-        for lib in ['lapacke', 'cblas', 'blas']:
+        for lib in ["lapacke", "cblas", "blas"]:
             path = ctypes.util.find_library(lib)
             if path:
                 paths.append(path)
