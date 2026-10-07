@@ -230,7 +230,7 @@ class DaceNodeBackwardImplementations:
             assert added
 
         backward_state.add_node(rev)
-        # yapf: disable
+        # fmt: off
         return (
             rev,
             BackwardResult(required_grad_names={
@@ -242,7 +242,7 @@ class DaceNodeBackwardImplementations:
                     for n in given_gradients
                 }),
         )
-        # yapf: enable
+        # fmt: on
 
     def reverse_tasklet(
         self,

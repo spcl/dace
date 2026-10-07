@@ -158,7 +158,6 @@ def test_cast_float_to_long(device):
 
 @pytest.mark.onnx
 @pytest.mark.parametrize("device", DEVICES)
-#+yapf: disable
 @pytest.mark.parametrize("reduce_type, keepdims, axes",
                          [('Sum',  True,  [0]),
                           ('Sum',  False, [-1]),
@@ -168,8 +167,7 @@ def test_cast_float_to_long(device):
                           ('Max',  True,  [-1]),
                           ('Mean', True,  [-1]),
                           ('Mean', True,  [0, -1]),
-                          ('Mean', False, [0])])
-#+yapf: enable
+                          ('Mean', False, [0])])  # fmt: skip
 def test_reduce(keepdims, reduce_type, axes, device):
 
     X = np.random.normal(scale=10, size=(2, 4, 10)).astype(np.float32)
