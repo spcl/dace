@@ -329,6 +329,22 @@ def test_int64_power_compiles_as_an_integer():
     assert np.allclose(a, 1.0)
 
 
+def test_interstate_assignment_keeps_array_access_and_evaluation_order():
+    """An interstate assignment reading an array is rewritten only at its ``**``: the array access stays a
+    subscript (not a SymPy ``Subscript(...)`` call) and the floating-point operations keep their written order."""
+    sdfg = dace.SDFG("assign")
+    sdfg.add_array("rho", [4], dace.float64)
+    sdfg.add_symbol("lam", dace.float64)
+    first = sdfg.add_state("first", is_start_block=True)
+    second = sdfg.add_state("second")
+    edge = sdfg.add_edge(
+        first, second, dace.InterstateEdge(assignments={"v": "((4.0 * lam) / rho[1]) * (lam ** 2.0) + lam ** (- 0.75)"})
+    )
+
+    assert RelaxIntegerPowers().apply_pass(sdfg, {}) == 1
+    assert edge.data.assignments["v"] == "((((4.0 * lam) / rho[1]) * ipow(lam, 2)) + (lam ** (- 0.75)))"
+
+
 if __name__ == "__main__":
     test_ipow_lowers_to_cpp_ipow()
     test_ipow_roundtrips_through_serialization()
@@ -353,3 +369,4 @@ if __name__ == "__main__":
     test_descending_loop_still_relaxes()
     test_loop_condition_off_by_one_not_relaxed()
     test_int64_power_compiles_as_an_integer()
+    test_interstate_assignment_keeps_array_access_and_evaluation_order()
