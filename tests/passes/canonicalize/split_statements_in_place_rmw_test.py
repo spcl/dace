@@ -136,12 +136,17 @@ def test_canonicalize_reaches_a_fixed_point():
         assert _shape(sdfg) == after_two
 
 
+def aliases(state, node) -> bool:
+    """Whether ``node`` writes an outer container it also reads, under the same connector name or not."""
+    read = {e.data.data for e in state.in_edges(node) if not e.data.is_empty()}
+    return any(e.data.data in read for e in state.out_edges(node) if not e.data.is_empty())
+
+
 def test_split_statements_refuses_the_in_place_body():
     """The refusal is at the decision, not the rewrite: no groups, hence no mutation."""
     sdfg = guard_flip.to_sdfg(simplify=True)
     canonicalize(sdfg, peel_limit=4, break_anti_dependence=True)
-    aliased = [(n, p) for n, p in sdfg.all_nodes_recursive()
-               if isinstance(n, nodes.NestedSDFG) and any(c in n.in_connectors for c in n.out_connectors)]
+    aliased = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and aliases(p, n)]
     assert aliased, 'canonicalization no longer manufactures an input/output-aliased NestedSDFG'
     for node, state in aliased:
         assert SplitStatements._independent_output_groups(state, node) is None

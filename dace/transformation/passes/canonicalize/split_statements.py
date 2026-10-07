@@ -1014,6 +1014,12 @@ class SplitStatements(ppl.Pass):
         # to stay inside one statement, which :func:`rmw_stays_in_writer_group` decides once the
         # groups are known; the connector test here is the cheap way to skip it entirely.
         rmw = [c for c in out_conns if c in node.in_connectors]
+        # The same carry under two connector names (a privatized ``_nnr_rwout_a`` writing back the ``a`` an input
+        # reads) is invisible to that test and to the per-group dependency analysis: refuse it outright.
+        read_outer = {e.data.data for e in state.in_edges(node) if e.data is not None and e.dst_conn not in rmw}
+        if any(e.data is not None and e.data.data in read_outer and e.src_conn not in node.in_connectors
+               for e in state.out_edges(node)):
+            return None
         # A black-box body is not analyzable: ``_output_dependency`` reads the memlets, which
         # do not describe an opaque node's effects, and ``_split`` would then duplicate them.
         if has_opaque_code(node.sdfg):
