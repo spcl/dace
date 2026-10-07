@@ -11,6 +11,43 @@ from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
 from typing import List, Optional, Set
 
 
+def merge_node_expresses_where(arrays: dict, cond: str, left: str, right: str, out: str) -> bool:
+    """Whether ``out = where(cond, left, right)`` is exactly a MergeLibraryNode: three arrays of one type (so no
+    cast), and a condition that does not widen the result."""
+    if left not in arrays or right not in arrays or arrays[left].dtype != arrays[right].dtype:
+        return False
+    return list(broadcast_together(arrays[cond].shape, arrays[out].shape)[0]) == list(arrays[out].shape)
+
+
+def where_as_merge_node(
+    state: SDFGState,
+    cond: str,
+    left: str,
+    right: str,
+    out: str,
+    left_node: Optional[nodes.AccessNode],
+    right_node: Optional[nodes.AccessNode],
+    generated_nodes: Optional[Set[nodes.Node]],
+) -> None:
+    """Wire ``out = where(cond, left, right)`` as a MergeLibraryNode, reusing the given access nodes."""
+    from dace.libraries.standard.nodes import MergeLibraryNode  # Avoid import loop
+
+    arrays = state.sdfg.arrays
+    node = MergeLibraryNode("_where_")
+    new_nodes = [node, state.add_write(out)]
+    state.add_edge(node, node.OUTPUT_CONNECTOR_NAME, new_nodes[1], None, Memlet.from_array(out, arrays[out]))
+    for conn, name, given in (
+        (node.TRUE_CONNECTOR_NAME, left, left_node),
+        (node.FALSE_CONNECTOR_NAME, right, right_node),
+        (node.MASK_CONNECTOR_NAME, cond, None),
+    ):
+        src = given or state.add_read(name)
+        new_nodes += [] if given else [src]
+        state.add_edge(src, None, node, conn, Memlet.from_array(name, arrays[name]))
+    if generated_nodes is not None:
+        generated_nodes.update(new_nodes)
+
+
 @oprepo.replaces("numpy.where")
 def _array_array_where(
     visitor: ProgramVisitor,
@@ -57,10 +94,11 @@ def _array_array_where(
     right_shape = right_arr.shape if right_arr else [1]
     cond_shape = cond_arr.shape if cond_arr else [1]
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
-
-    # Broadcast condition with broadcasted left+right
-    _, _, _, cond_idx, _ = broadcast_together(cond_shape, out_shape)
+    # The result has the broadcast shape of all three arguments: a condition wider than both operands widens it
+    full_shape = broadcast_together(broadcast_together(left_shape, right_shape)[0], cond_shape)[0]
+    (out_shape, all_idx_dict, out_idx, left_idx, _) = broadcast_together(left_shape, full_shape)
+    right_idx = broadcast_together(right_shape, full_shape)[3]
+    cond_idx = broadcast_together(cond_shape, full_shape)[3]
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -109,6 +147,17 @@ def _array_array_where(
                     generated_nodes.add(n2)
             state.add_edge(n2, None, tasklet, "__in2", Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, "__out", n3, None, Memlet.from_array(out_operand, out_arr))
+    elif merge_node_expresses_where(sdfg.arrays, cond_operand, left_operand, right_operand, out_operand):
+        where_as_merge_node(
+            state,
+            cond_operand,
+            left_operand,
+            right_operand,
+            out_operand,
+            left_operand_node,
+            right_operand_node,
+            generated_nodes,
+        )
     else:
         inputs = {}
         inputs["__incond"] = Memlet.simple(cond_operand, cond_idx)

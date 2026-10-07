@@ -244,9 +244,15 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     dtype = nsdfg.symbols[s]
                 else:
                     dtype = sdfg.symbols[s]
-                name, _ = sdfg.add_scalar(f"__sym_out_{s}", dtype, transient=True, find_new_name=True)
+                # The connector connects the two scalars by name, so it must be free in both SDFGs
+                name = sdfg._find_new_name(f"__sym_out_{s}")
+                suffix = 0
+                while nsdfg.is_name_used(name):
+                    name = sdfg._find_new_name(f"__sym_out_{s}_{suffix}")
+                    suffix += 1
+                sdfg.add_scalar(name, dtype, transient=True)
                 out_mapping[s] = name
-                nname, ndesc = nsdfg.add_scalar(f"__sym_out_{s}", dtype, find_new_name=True)
+                nname, ndesc = nsdfg.add_scalar(name, dtype)
                 # Part (1)
                 tasklet = out_state.add_tasklet(f"set_{nname}", {}, {"__out"}, f"__out = {s}")
                 acc = out_state.add_access(nname)
