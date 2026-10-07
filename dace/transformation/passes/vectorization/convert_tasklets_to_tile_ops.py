@@ -1413,10 +1413,10 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_edge = out_edges[0]
         store = self._find_downstream_store(inner_state, out_edge)
         if store is None:
-            raise NotImplementedError(f"{tasklet.label}: masked write ``_o = IT(cond, val)`` whose output "
-                                      f"{out_edge.dst!r} does not feed a single downstream store. The "
-                                      f"masked-store lowering needs exactly one store to gate on ``cond``; this shape "
-                                      f"(no store / fan-out to several stores) is not yet handled.")
+            raise VectorizeUnsupported(f"{tasklet.label}: masked write ``_o = IT(cond, val)`` whose output "
+                                       f"{out_edge.dst!r} does not feed a single downstream store. The "
+                                       f"masked-store lowering needs exactly one store to gate on ``cond``; this shape "
+                                       f"(no store / fan-out to several stores) is not yet handled.")
         cond_edge = in_edges[cond_conn]
         cond_an = self._resolve_cond_tile(inner_state, cond_edge)
         self._apply_cond_mask_to_store(inner_state, store, cond_an)
@@ -1977,6 +1977,11 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             iter_vars = tuple(params[len(params) - len(self.body_widths):])
             try:
                 total += self._convert_inner(nsdfg_node.sdfg, iter_vars)
+            except VectorizeUnsupported as unsupported:
+                # A body shape no tile op expresses leaves this map scalar, not the whole kernel.
+                if unsupported.maps:
+                    raise
+                raise VectorizeUnsupported(str(unsupported), maps=(map_entry.map.label, )) from unsupported
             finally:
                 self.body_widths = self.widths
         # Post-conditions.

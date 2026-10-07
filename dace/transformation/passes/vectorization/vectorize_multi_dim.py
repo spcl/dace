@@ -530,9 +530,8 @@ class _AssertTileOpsLowered(ppl.Pass):
         found = lane_varying_interstate_guard(sdfg, self._widths)
         if found is not None:
             block, violation = found
-            raise VectorizeUnsupported(
-                f"lane-varying guard over an interstate assignment: {violation}",
-                maps=tuple(source_map_label(label) for label in innermost_enclosing_map_label(block.sdfg)))
+            raise VectorizeUnsupported(f"lane-varying guard over an interstate assignment: {violation}",
+                                       maps=innermost_enclosing_map_label(block.sdfg))
         return None
 
 
@@ -1002,7 +1001,7 @@ class VectorizeMultiDim(ppl.Pipeline):
                 result = self._vectorize_once(sdfg, pipeline_results)
                 break
             except VectorizeUnsupported as unsupported:
-                marked = mark_maps_no_vectorize(snapshot, unsupported.maps)
+                marked = mark_maps_no_vectorize(snapshot, tuple(source_map_label(label) for label in unsupported.maps))
                 if not marked:
                     warnings.warn(f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
                                   f"un-tiled (correct, un-optimized): {unsupported}")

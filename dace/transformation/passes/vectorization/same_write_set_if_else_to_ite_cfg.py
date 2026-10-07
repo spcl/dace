@@ -680,7 +680,10 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # Pass 2: per-clone-unique renames for INTERNAL transient writes (no multi-state
         # writes). One fresh name per source array; every clone-side AccessNode +
         # incident memlet rewritten to it.
+        # A read-only node keeps the original name, so only the memlets of the renamed nodes follow it: a
+        # read-modify-write (``z = z * x``) still reads the value from before the clone.
         internal_renames: dict = {}
+        renamed_nodes: list = []
         for _old, new in node_map.items():
             if not isinstance(new, dace.nodes.AccessNode):
                 continue
@@ -691,14 +694,16 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
             if desc is None or not desc.transient:
                 continue
             if dst.in_degree(new) == 0:
-                continue  # read-only in this clone -- keep the original name
+                continue
             if arr_name not in internal_renames:
                 internal_renames[arr_name] = sdfg.add_datadesc(arr_name, copy.deepcopy(desc), find_new_name=True)
-            new.data = internal_renames[arr_name]
-        if internal_renames:
-            for e in dst.edges():
-                if e.data is not None and e.data.data in internal_renames:
-                    e.data.data = internal_renames[e.data.data]
+            renamed_nodes.append((new, arr_name))
+        for node, arr_name in renamed_nodes:
+            for edge in dst.all_edges(node):
+                for tree_edge in dst.memlet_tree(edge):
+                    if tree_edge.data is not None and tree_edge.data.data == arr_name:
+                        tree_edge.data.data = internal_renames[arr_name]
+            node.data = internal_renames[arr_name]
         # Pass 3: rebuild predicated WCR escapes as ``_then = base <op> acc``.
         for edge, base_name, base_subset in wcr_escapes:
             self._seed_wcr_then(dst, edge, base_name, base_subset)
