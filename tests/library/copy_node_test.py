@@ -174,6 +174,24 @@ def test_copy_cpu_memcpy():
     np.testing.assert_array_equal(B[50:100], A[150:200])
 
 
+def test_copy_cpu_memcpy_non_trivially_copyable():
+    """CPU expansion of a non-trivially-copyable type must not emit a raw memcpy, which skips its copy assignment."""
+    sdfg, _ = _make_copy_sdfg(
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, name="A"),
+        _ArraySpec(shape=[200], storage=dace.dtypes.StorageType.CPU_Heap, name="B"),
+        implementation="MemcpyCPU",
+        name="copy_cpu_memcpy_non_trivially_copyable",
+        dtype=dace.opaque("non_trivial"),
+    )
+    sdfg.append_global_code(
+        "struct non_trivial { double v; non_trivial& operator=(const non_trivial& o) { v = o.v; return *this; } };"
+    )
+    sdfg.expand_library_nodes()
+
+    assert "memcpy(" not in _generated_code(sdfg)
+    sdfg.compile()
+
+
 def test_copy_fortran_packed_same_rank():
     """Same-rank Fortran-packed (column-major) full copy is contiguous and same-layout, so the
     Auto path routes it to the serial ``std::memcpy`` (``MemcpyCPU``); a flat byte copy is exact
@@ -1674,7 +1692,7 @@ def test_copy_below_threshold_emits_memcpy():
         sdfg.expand_library_nodes(recursive=True)
         assert libnode.implementation == "MemcpyCPU"
         code = _generated_code(sdfg)
-        assert "memcpy(" in code
+        assert "dace::CopyImpl<" in code
         assert "#pragma omp parallel for" not in code
 
 
@@ -1686,7 +1704,7 @@ def test_copy_at_threshold_emits_omp_parallel_for():
         assert libnode.implementation == "MappedTasklet"
         code = _generated_code(sdfg)
         assert "#pragma omp parallel for" in code
-        assert "memcpy(" not in code
+        assert "dace::CopyImpl<" not in code
 
 
 def test_copy_symbolic_size_emits_omp_parallel_for():
@@ -1699,7 +1717,7 @@ def test_copy_symbolic_size_emits_omp_parallel_for():
         assert libnode.implementation == "MappedTasklet"
         code = _generated_code(sdfg)
         assert "#pragma omp parallel for" in code
-        assert "memcpy(" not in code
+        assert "dace::CopyImpl<" not in code
 
 
 # --- Regression pins for the codegen bugs fixed alongside the explicit-copy lowering ---
@@ -1779,7 +1797,7 @@ def test_copy_between_two_cpu_storages_is_a_memcpy():
         name="copy_threadlocal_to_heap",
     )
     sdfg.expand_library_nodes()
-    assert "memcpy(" in _generated_code(sdfg)
+    assert "dace::CopyImpl<" in _generated_code(sdfg)
 
 
 def test_copy_struct_member_name_is_a_valid_identifier():

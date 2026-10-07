@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module contains classes and functions that implement the orthogonal
 stencil tiling transformation."""
 
@@ -44,19 +44,24 @@ class StencilTiling(transformation.SubgraphTransformation):
     """
 
     # Properties
-    debug = Property(desc="Debug mode", dtype=bool, default=False)
+    debug = Property(category="Diagnostics", desc="Debug mode", dtype=bool, default=False)
 
-    prefix = Property(dtype=str, default="stencil", desc="Prefix for new inner tiled range symbols")
+    prefix = Property(
+        dtype=str, default="stencil", category="Parameters", desc="Prefix for new inner tiled range symbols"
+    )
 
-    strides = ShapeProperty(dtype=tuple, default=(1,), desc="Tile stride")
+    strides = ShapeProperty(dtype=tuple, default=(1,), category="Parameters", desc="Tile stride")
 
     schedule = Property(
         dtype=dace.dtypes.ScheduleType,
         default=dace.dtypes.ScheduleType.Default,
+        category="Scheduling",
         desc="Dace.Dtypes.ScheduleType of Inner Maps",
     )
 
-    unroll_loops = Property(desc="Unroll Inner Loops if they have Size > 1", dtype=bool, default=False)
+    unroll_loops = Property(
+        category="Scheduling", desc="Unroll Inner Loops if they have Size > 1", dtype=bool, default=False
+    )
 
     @staticmethod
     def coverage_dicts(sdfg, graph, map_entry, outer_range=True):
@@ -360,7 +365,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             # first find out variable mapping
             for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                 mapping = []
-                for dim in e.data.subset:
+                for dim in e.data.subset.ndrange():
                     syms = set()
                     for d in dim:
                         syms |= symbolic.symlist(d).keys()

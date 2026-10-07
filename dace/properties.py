@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -91,7 +91,25 @@ class PropertyError(Exception):
 
 class Property(Generic[T]):
     """Class implementing properties of DaCe objects that conform to strong
-    typing, and allow conversion to and from strings to be edited."""
+    typing, and allow conversion to and from strings to be edited.
+
+    The ``category`` argument groups properties in viewers and editors. Categories are chosen by the
+    semantics of the property, so the same concept gets the same category everywhere (IR nodes, data
+    descriptors, library nodes, transformations, and passes). The vocabulary is:
+
+    * ``General``: identity and miscellanea (labels, names, connectors, data references, types, shapes).
+    * ``Semantics``: what an element computes or moves (code, subsets, ranges, conditions, math parameters).
+    * ``Memory``: storage, layout, and allocation (storage type, lifetime, strides, alignment, transience).
+    * ``Scheduling``: parallelism and hardware mapping (schedules, block sizes, OpenMP, unrolling).
+    * ``Code Generation``: affects only emitted/compiled code (implementations, extra code, build settings).
+    * ``Frontend``: populated by frontends (debug information, argument names, callback mappings).
+    * ``Instrumentation``: instrumentation types and conditions.
+    * ``Analysis``: facts filled in by analyses (execution counts, ranges, volumes, conditions).
+    * ``Parameters``: main knobs of transformations and passes (tile sizes, names, modes).
+    * ``Applicability``: where and how strictly a transformation or pass applies (filters, safety checks).
+    * ``Diagnostics``: user-facing validation and verbosity options.
+    * ``(Debug)``: internal bookkeeping (e.g., GUIDs, IDs, histories); hidden by viewers.
+    """
 
     #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
     attr_name: Optional[str] = None
@@ -208,7 +226,7 @@ class Property(Generic[T]):
             raise RuntimeError("Attribute name not set")
         return getattr(obj, name)
 
-    def __set__(self, obj, val):
+    def __set__(self, obj, val: T):
         # If custom setter is specified, use it
         if self.setter:
             return self.setter(obj, val)
@@ -271,7 +289,7 @@ class Property(Generic[T]):
         self._setter = val
 
     @property
-    def dtype(self):
+    def dtype(self) -> type[T]:
         return self._dtype
 
     @property
@@ -508,7 +526,7 @@ class OrderedDictProperty(Property):
 class ListProperty(Property[List[T]]):
     """Property type for lists."""
 
-    def __init__(self, element_type: T, *args, **kwargs):
+    def __init__(self, element_type: type[T], *args, **kwargs):
         """
         Create a List property with a uniform element type.
 
@@ -815,10 +833,10 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
             return None
 
 
-class RangeProperty(Property):
+class RangeProperty(Property[dace.subsets.Range]):
     """Custom Property type for `dace.subsets.Range` members."""
 
-    def __set__(self, obj, value):
+    def __set__(self, obj, value: Union[dace.subsets.Range, List[int]]):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
         super(RangeProperty, self).__set__(obj, value)

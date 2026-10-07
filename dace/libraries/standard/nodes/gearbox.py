@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
+from dace.sdfg import dealias
 
 
 @dace.library.expansion
@@ -173,7 +174,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                 src_conn=buffer_name_inner,
                 memlet=dace.Memlet(f"{buffer_name}[0:{large_veclen}]"),
             )
-
+            dealias.integrate_nested_sdfg(nested_sdfg)
         else:  # Not elementwise, one side is a vector of vectors
             vtype = out_desc.dtype if is_pack else in_desc.dtype
 
@@ -242,7 +243,9 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
     default_implementation = "pure"
 
     # Properties
-    size = dace.properties.SymbolicProperty(desc="Number of wide vectors to convert to/from narrow vectors.", default=0)
+    size = dace.properties.SymbolicProperty(
+        category="Semantics", desc="Number of wide vectors to convert to/from narrow vectors.", default=0
+    )
 
     def __init__(self, size, name=None, schedule=None, **kwargs):
         """

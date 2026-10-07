@@ -92,15 +92,16 @@ def test_nested_symbol_mapping_referencing_outer_map_param_roundtrips():
     inner = dace.SDFG("inner")
     inner.add_symbol("first", dace.int32)
     inner.add_symbol("last", dace.int32)
-    inner.add_array("A0", (10,), dace.int32)
-    inner.add_array("B0", (10,), dace.int32)
+    # Connectors are the containers they are connected to (see ``dace.sdfg.dealias.integrate_nested_sdfg``)
+    inner.add_array("A0", (2, 10), dace.int32)
+    inner.add_array("B0", (2, 10), dace.int32)
     istate = inner.add_state("s", is_start_block=True)
     istate.add_mapped_tasklet(
         "plus",
         map_ranges={"j": "first:last"},
-        inputs={"__a": dace.Memlet(data="A0", subset="j")},
+        inputs={"__a": dace.Memlet(data="A0", subset="0, j")},
         code="__b = __a + 1",
-        outputs={"__b": dace.Memlet(data="B0", subset="j")},
+        outputs={"__b": dace.Memlet(data="B0", subset="0, j")},
         external_edges=True,
     )
 
@@ -113,6 +114,7 @@ def test_nested_symbol_mapping_referencing_outer_map_param_roundtrips():
     )
     state.add_memlet_path(a, me, nsdfg, memlet=dace.Memlet(data="A", subset="0, 0:10"), dst_conn="A0")
     state.add_memlet_path(nsdfg, mx, b, memlet=dace.Memlet(data="B", subset="0, 0:10"), src_conn="B0")
+    sdfg.validate()
 
     s1, s2 = _resave(sdfg)
     assert s1 == s2

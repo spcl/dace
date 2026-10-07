@@ -1,8 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module contains classes that implement the reduce-map transformation."""
 
 from dace import dtypes
-from dace.sdfg import SDFG, nodes, utils, graph
+from dace.sdfg import SDFG, nodes, utils, graph, dealias
 from dace.memlet import Memlet
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import SDFGState
@@ -32,13 +32,18 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
     reduce = transformation.PatternNode(stdlib.Reduce)
 
-    debug = Property(desc="Debug Info", dtype=bool, default=False)
+    debug = Property(category="Diagnostics", desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transientin registers", dtype=bool, default=False)
+    create_in_transient = Property(
+        category="Memory", desc="Create local in-transientin registers", dtype=bool, default=False
+    )
 
-    create_out_transient = Property(desc="Create local out-transientin registers", dtype=bool, default=False)
+    create_out_transient = Property(
+        category="Memory", desc="Create local out-transientin registers", dtype=bool, default=False
+    )
 
     reduce_implementation = Property(
+        category="Code Generation",
         desc="Reduce implementation of inner reduce. If specified,overrides any existing implementations",
         dtype=str,
         default=None,
@@ -379,5 +384,6 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         utils.change_edge_dest(state, node, nsdfg)
         utils.change_edge_src(state, node, nsdfg)
         state.remove_node(node)
+        dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
         return nsdfg

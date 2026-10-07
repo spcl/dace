@@ -1268,9 +1268,10 @@ class ControlGraphView(BlockGraphView, abc.ABC):
         replace_in_graph: bool = True,
         replace_keys: bool = False,
     ):
-        symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v for k, v in repl.items()
-        }
+        if symrepl is None:
+            symrepl = {
+                symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v for k, v in repl.items()
+            }
 
         if replace_in_graph:
             # Replace in inter-state edges
@@ -1289,21 +1290,33 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 
 @make_properties
 class ControlFlowBlock(BlockGraphView, abc.ABC):
-    guid = Property(dtype=str, allow_none=False)
+    guid = Property(dtype=str, allow_none=False, category="(Debug)")
 
-    is_collapsed = Property(dtype=bool, desc="Show this block as collapsed", default=False)
+    is_collapsed = Property(dtype=bool, category="General", desc="Show this block as collapsed", default=False)
 
-    pre_conditions = DictProperty(key_type=str, value_type=list, desc="Pre-conditions for this block")
-    post_conditions = DictProperty(key_type=str, value_type=list, desc="Post-conditions for this block")
-    invariant_conditions = DictProperty(key_type=str, value_type=list, desc="Invariant conditions for this block")
+    pre_conditions = DictProperty(
+        key_type=str, value_type=list, category="Analysis", desc="Pre-conditions for this block"
+    )
+    post_conditions = DictProperty(
+        key_type=str, value_type=list, category="Analysis", desc="Post-conditions for this block"
+    )
+    invariant_conditions = DictProperty(
+        key_type=str, value_type=list, category="Analysis", desc="Invariant conditions for this block"
+    )
     ranges = DictProperty(
-        key_type=str, value_type=Range, default={}, desc="Variable ranges across this block, typically within loops"
+        key_type=str,
+        value_type=Range,
+        default={},
+        category="Analysis",
+        desc="Variable ranges across this block, typically within loops",
     )
 
     executions = SymbolicProperty(
-        default=0, desc="The number of times this block gets executed (0 stands for unbounded)"
+        default=0, category="Analysis", desc="The number of times this block gets executed (0 stands for unbounded)"
     )
-    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this block is dynamic")
+    dynamic_executions = Property(
+        dtype=bool, default=True, category="Analysis", desc="The number of executions of this block is dynamic"
+    )
 
     _label: str
 
@@ -1427,26 +1440,34 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     """An acyclic dataflow multigraph in an SDFG, corresponding to a
     single state in the SDFG state machine."""
 
-    nosync = Property(dtype=bool, default=False, desc="Do not synchronize at the end of the state")
+    nosync = Property(
+        dtype=bool, default=False, category="Scheduling", desc="Do not synchronize at the end of the state"
+    )
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
 
     symbol_instrument = EnumProperty(
         dtype=dtypes.DataInstrumentationType,
+        category="Instrumentation",
         desc="Instrument symbol values when this state is executed",
         default=dtypes.DataInstrumentationType.No_Instrumentation,
     )
     symbol_instrument_condition = CodeProperty(
+        category="Instrumentation",
         desc="Condition under which to trigger the symbol instrumentation",
         default=CodeBlock("1", language=dtypes.Language.CPP),
     )
 
     location = DictProperty(
-        key_type=str, value_type=sympy.Basic, desc="Full storage location identifier (e.g., rank, GPU ID)"
+        key_type=str,
+        value_type=sympy.Basic,
+        category="Scheduling",
+        desc="Full storage location identifier (e.g., rank, GPU ID)",
     )
 
     def __repr__(self) -> str:
@@ -1922,14 +1943,19 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param outputs: Output connectors of the nested SDFG. Can be a set of connector names
                         (types will be auto-detected) or a dict mapping connector names to data types.
         :param symbol_mapping: A dictionary mapping nested SDFG symbol names to expressions in the
-                               parent SDFG's scope. If None, symbols are mapped to themselves.
+                               parent SDFG's scope. It is stored on the node as given, and free symbols
+                               of the nested SDFG without an entry are mapped to themselves. Entries that
+                               map a symbol to a parent symbol are folded into the nested SDFG when it is
+                               integrated (see ``dace.sdfg.dealias.fold_symbol_mapping``).
         :param name: Name of the nested SDFG node. If None, uses the nested SDFG's label.
         :param location: Execution location descriptor for the nested SDFG.
         :param debuginfo: Debug information for the nested SDFG node.
         :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
         :return: The created NestedSDFG node.
-        :raises ValueError: If neither sdfg nor external_path is provided, or if required symbols
-                           are missing from the symbol mapping.
+        :raises ValueError: If neither sdfg nor external_path is provided.
+        :note: Once the node's edges are connected, call ``NestedSDFG.integrate_into_parent()`` on the returned
+               node. Integration makes the connectors' descriptors those of the parent's containers, as a valid
+               SDFG requires (see ``dace.sdfg.dealias.integrate_nested_sdfg``).
         """
         if name is None:
             name = sdfg.label
@@ -1967,25 +1993,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if sdfg is not None:
             sdfg.parent_nsdfg_node = s
 
-            # Add "default" undefined symbols if None are given
-            symbols = sdfg.free_symbols
-            if symbol_mapping is None:
-                symbol_mapping = {s: s for s in symbols}
-                s.symbol_mapping = symbol_mapping
-
-            # Validate missing symbols
-            missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
-            if missing_symbols and self.sdfg is not None:
-                # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in defined_symbols}
-                symbol_mapping.update(parent_mapping)
-                s.symbol_mapping = symbol_mapping
-                missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols:
-                raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
+            # Free symbols without an entry are the parent's symbols of the same name
+            symbol_mapping = dict(symbol_mapping or {})
+            for fs in sdfg.free_symbols:
+                symbol_mapping.setdefault(fs, fs)
+            s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
+            defined_symbols = self.defined_symbols() if self.sdfg is not None else {}
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
                     sdfg.add_symbol(sym, infer_expr_type(symval, defined_symbols) or dtypes.typeclass(int))
@@ -2789,6 +2804,15 @@ class SymbolResolver:
             )
         return state.symbols_defined_at(node, state_symbols=state_symbols)
 
+    def forget(self, sdfg: "SDFG") -> None:
+        """Drops what was resolved for the states of an SDFG, after its symbols or data descriptors changed.
+
+        :param sdfg: The SDFG that changed. The SDFGs nested in it are resolved separately and kept.
+        """
+        if self._per_sdfg.pop(sdfg, None) is None:
+            return
+        self._per_state = {state: syms for state, syms in self._per_state.items() if state.sdfg is not sdfg}
+
 
 @make_properties
 class ContinueBlock(ControlFlowBlock):
@@ -2916,6 +2940,7 @@ class AbstractControlFlowRegion(
         from dace.sdfg import propagation as sdprop
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -3508,32 +3533,44 @@ class LoopRegion(ControlFlowRegion):
         serialize_if=lambda ustmnt: ustmnt is not None,
         allow_none=True,
         default=None,
+        category="Semantics",
         desc="The loop update statement. May be None if the update happens elsewhere.",
     )
     init_statement = CodeProperty(
         serialize_if=lambda istmnt: istmnt is not None,
         allow_none=True,
         default=None,
+        category="Semantics",
         desc="The loop init statement. May be None if the initialization happens elsewhere.",
     )
-    loop_condition = CodeProperty(allow_none=True, default=None, desc="The loop condition")
+    loop_condition = CodeProperty(allow_none=True, default=None, category="Semantics", desc="The loop condition")
     inverted = Property(
-        dtype=bool, default=False, desc="If True, the loop condition is checked after the first iteration."
+        dtype=bool,
+        default=False,
+        category="Semantics",
+        desc="If True, the loop condition is checked after the first iteration.",
     )
     update_before_condition = Property(
         dtype=bool,
         default=True,
+        category="Semantics",
         desc="If False, the loop condition is checked before the update statement is"
         + " executed. This only applies to inverted loops, turning them from a typical "
         + "do-while style into a while(true) with a break before the update (at the end "
         + "of an iteration) if the condition no longer holds.",
     )
-    loop_variable = Property(dtype=str, default="", desc="The loop variable, if given")
+    loop_variable = Property(dtype=str, default="", category="Semantics", desc="The loop variable, if given")
     unroll = Property(
-        dtype=bool, default=False, desc="If True, indicates that this loop should be unrolled during code generation."
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="If True, indicates that this loop should be unrolled during code generation.",
     )
     unroll_factor = Property(
-        dtype=int, default=0, desc="If unrolling is enabled, the factor by which to unroll the loop."
+        dtype=int,
+        default=0,
+        category="Scheduling",
+        desc="If unrolling is enabled, the factor by which to unroll the loop.",
     )
 
     def __init__(
@@ -3931,6 +3968,7 @@ class LoopRegion(ControlFlowRegion):
             return
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -4229,6 +4267,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
         """
         from dace.sdfg import propagation as sdprop
 
+        # Branch conditions are evaluated regardless of which branch is taken.
+        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays)
+
         has_condition = False
 
         for condition, region in self._branches:
@@ -4435,7 +4476,7 @@ class UnstructuredControlFlow(ControlFlowRegion):
 
 @make_properties
 class NamedRegion(ControlFlowRegion):
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     def __init__(self, label: str, sdfg: Optional["SDFG"] = None, debuginfo: Optional[dtypes.DebugInfo] = None):
         super().__init__(label, sdfg)
@@ -4444,7 +4485,7 @@ class NamedRegion(ControlFlowRegion):
 
 @make_properties
 class FunctionCallRegion(NamedRegion):
-    arguments = DictProperty(str, str)
+    arguments = DictProperty(str, str, category="Frontend")
 
     def __init__(
         self,

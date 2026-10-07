@@ -9,7 +9,7 @@ from collections.abc import Iterator
 import dace
 from dace import data, dtypes
 from dace.libraries.standard.nodes import Reduce
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutil
 
 
 def gpu_auto_reduce_sdfg(name: str, view_storage: dtypes.StorageType | None = None) -> dace.SDFG:
@@ -51,14 +51,25 @@ def map_schedules(sdfg: dace.SDFG) -> set[dtypes.ScheduleType]:
 
 
 def test_reduce_reading_a_view_gets_a_plain_array_inside():
-    """A cloned ``ArrayView`` descriptor is a view of nothing inside the nested SDFG, which validation refuses."""
+    """A cloned ``ArrayView`` descriptor is a view of nothing inside the nested SDFG, which validation refuses.
+
+    Under the nested SDFG contract (see ``dace.sdfg.dealias.integrate_nested_sdfg``) the connector is the container
+    itself, a plain array, and ``_in`` is a reshaping view of it rather than a view of nothing.
+    """
     sdfg = gpu_auto_reduce_sdfg("gpu_auto_reduce_views_class", dtypes.StorageType.GPU_Global)
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    inner = list(nested_descriptors(sdfg, "_in"))
-    assert inner, "the GPUAuto expansion did not run"
-    assert not any(isinstance(desc, data.View) for desc in inner)
+    assert list(nested_descriptors(sdfg, "_in")), "the GPUAuto expansion did not run"
+    for node, _ in sdfg.all_nodes_recursive():
+        if not isinstance(node, nodes.NestedSDFG):
+            continue
+        for connector in node.in_connectors.keys() | node.out_connectors.keys():
+            assert not isinstance(node.sdfg.arrays[connector], data.View)
+        for state in node.sdfg.states():
+            for access in state.data_nodes():
+                if isinstance(access.desc(node.sdfg), data.View):
+                    assert sdutil.get_view_edge(state, access) is not None, access.data
 
 
 def test_reduce_reads_storage_through_the_view():
