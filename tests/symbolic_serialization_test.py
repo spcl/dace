@@ -184,9 +184,6 @@ def test_same_name_symbols_with_different_dtypes_serialize_independently():
     assert symbolic.serialize_symbolic(default) == '$i'
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="symbol identity is the name until the symbol registry, so same-named symbols of two dtypes compare equal")
 def test_symbol_dtype_is_part_of_identity():
     """SymPy's equality, hashing and constructor caches key on ``_hashable_content``. With the dtype left out of it,
     an expression built around a default-typed symbol is handed back from the cache for the same-name symbol of
@@ -817,16 +814,10 @@ def test_cloudsc_fixture_deserializes_to_real_sdfg_despite_stale_version_stamp()
         assert not isinstance(node, dace.serialize.SerializableObject)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="symbol identity is the name until the symbol registry, so same-named symbols of two dtypes compare equal")
 def test_symbol_dtype_is_part_of_symbol_identity():
     assert symbolic.symbol('i', dace.int64) != symbolic.symbol('i', dace.int32)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="symbol identity is the name until the symbol registry, so sympy's caches hand back the dtype minted first")
 def test_typed_symbol_survives_a_poisoned_sympy_cache():
     """A same-name symbol of another dtype must not be handed back by SymPy's global ``@cacheit`` LRUs."""
     sympy.Mod(symbolic.symbol('cached_i', dace.int64), symbolic.TypedConstant(np.int16(3)))

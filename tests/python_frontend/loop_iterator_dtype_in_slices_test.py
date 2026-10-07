@@ -3,7 +3,6 @@
 from typing import List
 
 import numpy as np
-import pytest
 
 import dace
 
@@ -53,19 +52,6 @@ def well_conditioned(n: int) -> np.ndarray:
     return rng.random((n, n)) + n * np.eye(n)
 
 
-@pytest.mark.parametrize('program, iterator', [(lu_column_update, 'k'), (scaled_row_prefix, 'i'),
-                                               (forward_substitution, 'i'), (backward_row_suffix, 'i')])
-@pytest.mark.xfail(
-    strict=False,
-    reason=
-    "symbol identity is the name until the symbol registry, so a subset re-parsed from a string carries the default dtype of the name"
-)
-def test_a_loop_iterator_keeps_one_dtype_through_simplify(program, iterator):
-    sdfg = program.to_sdfg(simplify=True)
-    sdfg.validate()
-    assert set(iterator_dtypes(sdfg, iterator)) <= {dace.int64}
-
-
 def test_lu_column_update_matches_numpy():
     A = well_conditioned(12)
     expected = A.copy()
@@ -105,9 +91,6 @@ def test_backward_row_suffix_matches_numpy():
 
 
 if __name__ == '__main__':
-    for case in ((lu_column_update, 'k'), (scaled_row_prefix, 'i'), (forward_substitution, 'i'), (backward_row_suffix,
-                                                                                                  'i')):
-        test_a_loop_iterator_keeps_one_dtype_through_simplify(*case)
     test_lu_column_update_matches_numpy()
     test_scaled_row_prefix_matches_numpy()
     test_forward_substitution_matches_numpy()

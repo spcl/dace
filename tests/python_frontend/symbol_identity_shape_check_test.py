@@ -13,7 +13,6 @@ import ast
 import warnings
 
 import numpy as np
-import pytest
 
 import dace
 from dace import symbolic
@@ -40,11 +39,6 @@ class _FakeVisitor:
         return self.sdfg.add_transient(self.get_target_name(), *args, **kwargs)
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=
-    "symbol identity is the name until the symbol registry, so the premise that two dtypes of a name differ does not hold"
-)
 def test_dot_shape_check_equalizes_symbols():
     wide = dace.symbol('N', dace.int32)
     narrow = dace.symbol('N', dace.int64)

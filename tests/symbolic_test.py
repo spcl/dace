@@ -119,9 +119,6 @@ def test_renaming_plain_symbols_matches_subs(text: str) -> None:
     assert sympy.srepr(renamed) == sympy.srepr(raw.subs(repl))
 
 
-@pytest.mark.xfail(strict=False,
-                   reason="symbol identity is the name until the symbol registry, so a same-named symbol another test "
-                   "made first can supply the dtype")
 @pytest.mark.parametrize('text', ['i + 1 < N', 'Min(i, N - 1) + 2*j**2', 'int_floor(N, 2) >= j'])
 def test_renaming_gives_the_replacement_dtype(text: str) -> None:
     raw = symbolic.sympify_text(text, None)

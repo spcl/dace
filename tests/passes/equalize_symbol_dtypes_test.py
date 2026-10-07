@@ -7,7 +7,6 @@ declared one afterwards.
 """
 from typing import Dict, Set
 
-import pytest
 import sympy
 
 import dace
@@ -17,13 +16,6 @@ from dace.sdfg.state import LoopRegion, sdfg_scope_symbols
 from dace.transformation.passes.equalize_symbol_dtypes import equalize, equalized
 
 N = dace.symbol('N', dtype=dace.int64)
-
-#: Until the symbol registry a symbol's identity is its name, so a same-named symbol another test made first can
-#: supply the dtype and make a rebuild a no-op.
-NAME_IDENTITY = pytest.mark.xfail(
-    strict=False,
-    reason="symbol identity is the name until the symbol registry, so a same-named symbol "
-    "another test made first can supply the dtype")
 
 
 def bound_symbols(expr) -> Set[symbolic.symbol]:
@@ -86,7 +78,6 @@ def copy_with_range_at_int32(label: str) -> dace.SDFG:
     return sdfg
 
 
-@NAME_IDENTITY
 def test_a_memlet_spelling_a_declared_symbol_at_another_dtype_is_rebuilt():
     sdfg = copy_with_range_at_int32('equalize_memlet_spelling')
     assert dtypes_of(sdfg)['N'] == {dace.int64, dace.int32}
@@ -97,7 +88,6 @@ def test_a_memlet_spelling_a_declared_symbol_at_another_dtype_is_rebuilt():
     sdfg.validate()
 
 
-@NAME_IDENTITY
 def test_a_consistent_sdfg_is_left_alone():
     sdfg = copy_with_range_at_int32('equalize_consistent')
     equalize(sdfg)
@@ -130,7 +120,6 @@ def test_a_loop_iterator_takes_the_dtype_the_loop_declares():
     assert dtypes_of(sdfg)['i'] == {iterator_dtype}
 
 
-@NAME_IDENTITY
 def test_a_nested_declaration_follows_the_symbol_it_is_mapped_onto():
     inner = dace.SDFG('equalize_nested_inner')
     inner.add_symbol('N', dace.int32)
@@ -159,7 +148,6 @@ def test_the_stage_reads_names_from_text_at_the_declared_dtype():
     assert symbolic.declared_symbol_dtype('N') is None
 
 
-@NAME_IDENTITY
 def test_a_name_minted_inside_the_stage_is_rebuilt_on_exit():
     sdfg = copy_with_range_at_int32('equalize_stage_exit')
     equalize(sdfg)
