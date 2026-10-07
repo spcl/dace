@@ -1,16 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for half-precision syntax quirks. """
+"""Tests for half-precision syntax quirks."""
 
 import dace
 import numpy as np
 import pytest
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _config():
     # Prerequisite for tests: CUDA compute capability >= 6.0
-    dace.Config.set('compiler', 'cuda', 'cuda_arch', value='60')
+    dace.Config.set("compiler", "cuda", "cuda_arch", value="60")
 
 
 @pytest.mark.gpu
@@ -67,7 +67,7 @@ def test_dropout():
                 a << A[i]
                 d << mask[i]
                 o >> out[i]
-                #o = a * dace.float16(d)
+                # o = a * dace.float16(d)
                 o = a if d else dace.float16(0)
         return out
 
@@ -79,7 +79,7 @@ def test_dropout():
     assert np.allclose(out, A * mask)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_relu()
     test_relu_2()
     test_dropout()

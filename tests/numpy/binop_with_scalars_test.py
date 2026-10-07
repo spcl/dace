@@ -193,7 +193,7 @@ def test_gter(A: dace.int64, B: dace.int64[5, 5]):
     return A >= B
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # generate this with
     # cat binop_with_scalars_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_addl()

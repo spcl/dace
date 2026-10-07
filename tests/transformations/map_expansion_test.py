@@ -97,7 +97,7 @@ def test_expand_without_dynamic_inputs():
     def expansion(A: dace.float32[20, 30, 5], rng: dace.int32[2]):
 
         @dace.map
-        def mymap(i: _[0:20], j: _[rng[0]:rng[1]], k: _[0:5]):
+        def mymap(i: _[0:20], j: _[rng[0] : rng[1]], k: _[0:5]):
             a << A[i, j, k]
             b >> A[i, j, k]
             b = a * 2
@@ -110,14 +110,14 @@ def test_expand_without_dynamic_inputs():
     sdfg = expansion.to_sdfg()
     sdfg(A=A, rng=b)
     diff = np.linalg.norm(A - expected)
-    print('Difference (before transformation):', diff)
+    print("Difference (before transformation):", diff)
 
     sdfg.apply_transformations(MapExpansion)
 
     sdfg(A=A, rng=b)
     expected[:, 5:10, :] *= 2
     diff2 = np.linalg.norm(A - expected)
-    print('Difference:', diff2)
+    print("Difference:", diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
 
 
@@ -140,7 +140,7 @@ def test_expand_with_limits():
     sdfg.simplify()
     sdfg(A=A)
     diff = np.linalg.norm(A - expected)
-    print('Difference (before transformation):', diff)
+    print("Difference (before transformation):", diff)
 
     sdfg.apply_transformations(MapExpansion, options=dict(expansion_limit=1))
 
@@ -168,7 +168,7 @@ def test_expand_with_limits():
     sdfg(A=A)
     expected *= 2
     diff2 = np.linalg.norm(A - expected)
-    print('Difference:', diff2)
+    print("Difference:", diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
     assert len(map_entries) == 2
 
@@ -205,7 +205,7 @@ def test_expand_with_dependency_edges():
     assert np.all(B == B_expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_expand_with_inputs()
     test_expand_without_inputs()
     test_expand_without_dynamic_inputs()

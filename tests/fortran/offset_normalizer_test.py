@@ -30,7 +30,6 @@ def test_fortran_frontend_offset_normalizer_1d():
     ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
-
         loop = subroutine.execution_part.execution[1]
         idx_assignment = loop.body.execution[1]
         assert idx_assignment.rval.rval.value == "50"
@@ -41,8 +40,8 @@ def test_fortran_frontend_offset_normalizer_1d():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 1
-    assert sdfg.data('d').shape[0] == 5
+    assert len(sdfg.data("d").shape) == 1
+    assert sdfg.data("d").shape[0] == 5
 
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -77,16 +76,15 @@ def test_fortran_frontend_offset_normalizer_2d():
     ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
-
         loop = subroutine.execution_part.execution[1]
         nested_loop = loop.body.execution[1]
 
         idx = nested_loop.body.execution[1]
-        assert idx.lval.name == 'tmp_index_0'
+        assert idx.lval.name == "tmp_index_0"
         assert idx.rval.rval.value == "50"
 
         idx2 = nested_loop.body.execution[3]
-        assert idx2.lval.name == 'tmp_index_1'
+        assert idx2.lval.name == "tmp_index_1"
         assert idx2.rval.rval.value == "7"
 
     # Now test to verify it executes correctly
@@ -95,9 +93,9 @@ def test_fortran_frontend_offset_normalizer_2d():
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 2
-    assert sdfg.data('d').shape[0] == 5
-    assert sdfg.data('d').shape[1] == 3
+    assert len(sdfg.data("d").shape) == 2
+    assert sdfg.data("d").shape[0] == 5
+    assert sdfg.data("d").shape[1] == 3
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -131,28 +129,27 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop():
     ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
-
         loop = subroutine.execution_part.execution[1]
         nested_loop = loop.body.execution[1]
 
         idx = nested_loop.body.execution[1]
-        assert idx.lval.name == 'tmp_index_0'
+        assert idx.lval.name == "tmp_index_0"
         assert idx.rval.rval.value == "50"
 
         idx2 = nested_loop.body.execution[3]
-        assert idx2.lval.name == 'tmp_index_1'
+        assert idx2.lval.name == "tmp_index_1"
         assert idx2.rval.rval.value == "7"
 
     # Now test to verify it executes correctly with no normalization
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
-    sdfg.save('test.sdfg')
+    sdfg.save("test.sdfg")
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    assert len(sdfg.data('d').shape) == 2
-    assert sdfg.data('d').shape[0] == 5
-    assert sdfg.data('d').shape[1] == 3
+    assert len(sdfg.data("d").shape) == 2
+    assert sdfg.data("d").shape[0] == 5
+    assert sdfg.data("d").shape[1] == 3
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -162,7 +159,6 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_offset_normalizer_1d()
     test_fortran_frontend_offset_normalizer_2d()
     test_fortran_frontend_offset_normalizer_2d_arr2loop()

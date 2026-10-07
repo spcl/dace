@@ -15,10 +15,10 @@ sizes = {
     "small": (20, 25, 30),
     "medium": (40, 50, 60),
     "large": (140, 150, 160),
-    "extra-large": (220, 250, 270)
+    "extra-large": (220, 250, 270),
 }
 
-NR, NQ, NP = (dc.symbol(s, dtype=dc.int64) for s in ('NR', 'NQ', 'NP'))
+NR, NQ, NP = (dc.symbol(s, dtype=dc.int64) for s in ("NR", "NQ", "NP"))
 
 
 @dc.program
@@ -51,10 +51,10 @@ def ground_truth(NR, NQ, NP, A, C4):
 
 
 def run_doitgen(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Doitgen for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     NQ, NR, NP = sizes["mini"]
@@ -83,7 +83,7 @@ def run_doitgen_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -123,9 +123,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

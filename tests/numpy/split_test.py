@@ -2,6 +2,7 @@
 """
 Tests variants of the numpy split array manipulation.
 """
+
 import dace
 import numpy as np
 from common import compare_numpy_output
@@ -33,7 +34,7 @@ def test_uneven_split_fail():
 
 def test_symbolic_split_fail():
     with pytest.raises(ValueError):
-        n = dace.symbol('n')
+        n = dace.symbol("n")
 
         @dace.program
         def tester():
@@ -86,7 +87,7 @@ def test_split_sequence_2():
 
 
 def test_split_sequence_symbolic():
-    n = dace.symbol('n')
+    n = dace.symbol("n")
 
     @dace.program
     def tester(arr: dace.float64[3 * n]):
@@ -127,7 +128,7 @@ def test_dsplit_4d():
     return a, b, c
 
 
-@pytest.mark.parametrize('out_idx', [0, 1])
+@pytest.mark.parametrize("out_idx", [0, 1])
 def test_compiletime_split(out_idx):
 
     @dace.program
@@ -135,7 +136,7 @@ def test_compiletime_split(out_idx):
         x0, x1, x2, x3, x4, x5 = np.split(x[:, in_indices], 6, axis=1)
         factor = 1 / 12
         o = out_index
-        y[:, o:o + 1] = factor * (-(x1 + x2) + (x0 + x1) - (x0 + x4) + (x3 + x4) + (x2 + x5) - (x3 + x5))
+        y[:, o : o + 1] = factor * (-(x1 + x2) + (x0 + x1) - (x0 + x4) + (x3 + x4) + (x2 + x5) - (x3 + x5))
 
     x = np.random.rand(1000, 8)
     y = np.zeros_like(x)

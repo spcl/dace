@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Helpers of the experimental CUDA codegen."""
+
 from typing import Iterator, Tuple
 
 from dace import Config
@@ -27,18 +28,19 @@ def host_read_device_copies(state: SDFGState, consumer: nodes.Node) -> Iterator[
 
 
 def generate_sync_debug_call() -> str:
-    if not Config.get_bool('compiler', 'cuda', 'syncdebug'):
+    if not Config.get_bool("compiler", "cuda", "syncdebug"):
         return ""
     backend: str = common.get_gpu_backend()
-    return (f"DACE_GPU_CHECK({backend}GetLastError());\n"
-            f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")
+    return f"DACE_GPU_CHECK({backend}GetLastError());\nDACE_GPU_CHECK({backend}DeviceSynchronize());\n"
 
 
 def assigned_stream_expr(node: nodes.Node) -> str:
     """The GPU stream expression of ``node``; raises ``ValueError`` if it has none."""
     if node.gpu_stream_id is None:
-        raise ValueError(f"No GPU stream assigned to node {node}. Check whether the node is relevant for GPU "
-                         "stream assignment and, if it is, why the GPU stream pipeline assigned none.")
+        raise ValueError(
+            f"No GPU stream assigned to node {node}. Check whether the node is relevant for GPU "
+            "stream assignment and, if it is, why the GPU stream pipeline assigned none."
+        )
     return common.gpu_stream_expr(node.gpu_stream_id)
 
 

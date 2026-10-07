@@ -50,11 +50,9 @@ class ExpandPgemmMKLMPICH(ExpandTransformation):
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc,
                 _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc);
         """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
@@ -111,11 +109,9 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
                 _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, _c, &__state->__int_one, &__state->__int_one, _c_ldesc);
         """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
@@ -130,15 +126,14 @@ class ExpandPgemmReferenceOpenMPI(ExpandTransformation):
 
 @dace.library.node
 class Pgemm(dace.sdfg.nodes.LibraryNode):
-    """Executes alpha * (A @ B) + beta * C.
-    """
+    """Executes alpha * (A @ B) + beta * C."""
 
     # Global properties
     implementations = {
         "MKLMPICH": ExpandPgemmMKLMPICH,
         "MKLOpenMPI": ExpandPgemmMKLOpenMPI,
         "ReferenceMPICH": ExpandPgemmReferenceMPICH,
-        "ReferenceOpenMPI": ExpandPgemmReferenceOpenMPI
+        "ReferenceOpenMPI": ExpandPgemmReferenceOpenMPI,
     }
     default_implementation = None
 

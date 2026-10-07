@@ -16,7 +16,6 @@ def trivial_loop(data: dace.float64[I, J]):
 
 
 class TrivialLoopEliminationTest(unittest.TestCase):
-
     def test_semantic_eq(self):
         A1 = np.random.rand(16, 16)
         A2 = np.copy(A1)
@@ -31,5 +30,5 @@ class TrivialLoopEliminationTest(unittest.TestCase):
         self.assertTrue(np.allclose(A1, A2))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

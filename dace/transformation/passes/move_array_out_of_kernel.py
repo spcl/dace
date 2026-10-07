@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that hoists kernel-local transients out of GPU kernels into device-global allocations."""
+
 import ast
 import copy
 import itertools
@@ -83,10 +84,9 @@ def lift_prefix(levels: list[Scope], state: SDFGState, src: nodes.Node) -> Prefi
         # The exit node closes the scope, so an edge leaving it runs outside.
         closes = entry_state is state and src is state.exit_node(entry)
         inside = not closes and helpers.contained_in(state, src, entry)
-        for param, (start, end, step), origin in zip(entry.map.params,
-                                                     entry.map.range,
-                                                     entry.map.range.min_element(),
-                                                     strict=True):
+        for param, (start, end, step), origin in zip(
+            entry.map.params, entry.map.range, entry.map.range.min_element(), strict=True
+        ):
             if inside:
                 index = symbolic.symbol(param) - origin
                 prefix.append((index, index, sympy.S.One))
@@ -105,11 +105,11 @@ def assigns_symbol(sdfg: SDFG, name: str) -> bool:
 class SubscriptPrefixer(ast.NodeTransformer):
     """Prepend fixed leading index expressions to every subscript of one array name."""
 
-    __slots__ = ('array_name', 'changed', 'prefix')
+    __slots__ = ("array_name", "changed", "prefix")
 
     def __init__(self, array_name: str, prefix: list[str]):
         self.array_name = array_name
-        self.prefix = [ast.parse(expr, mode='eval').body for expr in prefix]
+        self.prefix = [ast.parse(expr, mode="eval").body for expr in prefix]
         self.changed = False
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
@@ -170,6 +170,7 @@ def bind_symbols(hierarchy: list[SDFG], needed: list[str]) -> None:
 @dataclass(slots=True)
 class LiftPlan:
     """What lifting one transient rewrites, computed before anything changes."""
+
     name: str
     owner: SDFG
     desc: dt.Array
@@ -210,8 +211,13 @@ class MoveArrayOutOfKernel(ppl.Pass):
         :raises NotImplementedError: An array cannot be given one disjoint slice per kernel iteration.
         """
         # A register cannot accumulate across threads, so a WCR target stays in memory.
-        accumulated = OrderedSet(e.data.data for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states()
-                                 for e in state.edges() if e.data.wcr is not None)
+        accumulated = OrderedSet(
+            e.data.data
+            for nsdfg in sdfg.all_sdfgs_recursive()
+            for state in nsdfg.states()
+            for e in state.edges()
+            if e.data.wcr is not None
+        )
         handled = 0
         for name, desc, owner, kernel, kernel_state in self.kernel_internal_gpu_global_transients(sdfg):
             if name not in accumulated and is_register_demotable(desc, self.register_demotion_max_elements):
@@ -221,13 +227,17 @@ class MoveArrayOutOfKernel(ppl.Pass):
             plan = self.plan_lift(name, owner, kernel_state)
             if plan is None:
                 continue
-            reason = ('with storage type GPU_Global'
-                      if desc.storage is dtypes.StorageType.GPU_Global else f'of symbolic shape {list(desc.shape)}')
+            reason = (
+                "with storage type GPU_Global"
+                if desc.storage is dtypes.StorageType.GPU_Global
+                else f"of symbolic shape {list(desc.shape)}"
+            )
             warnings.warn(
                 f"Transient array '{name}' {reason} detected inside kernel {kernel}. Neither GPU_Global "
                 f"memory nor a variable-length local array can be allocated within a GPU kernel; the "
                 f"array will be lifted outside the kernel as a non-transient GPU_Global array.",
-                stacklevel=2)
+                stacklevel=2,
+            )
             desc.storage = dtypes.StorageType.GPU_Global
             self.move_array(plan, kernel, kernel_state)
             handled += 1
@@ -236,15 +246,22 @@ class MoveArrayOutOfKernel(ppl.Pass):
 
     @staticmethod
     def kernel_internal_gpu_global_transients(
-            sdfg: SDFG) -> list[tuple[str, dt.Array, SDFG, nodes.MapEntry, SDFGState]]:
+        sdfg: SDFG,
+    ) -> list[tuple[str, dt.Array, SDFG, nodes.MapEntry, SDFGState]]:
         """Transients that :func:`needs_global_memory`, accessed only inside one ``GPU_Device`` map."""
         users: dict[tuple[SDFG, str], OrderedSet[Scope | None]] = {}
         for owner in sdfg.all_sdfgs_recursive():
             for state in owner.states():
                 for node in state.data_nodes():
                     if needs_global_memory(owner.arrays[node.data]):
-                        kernel = next((scope for scope in helpers.get_parent_maps(state, node)
-                                       if scope[0].map.schedule == dtypes.ScheduleType.GPU_Device), None)
+                        kernel = next(
+                            (
+                                scope
+                                for scope in helpers.get_parent_maps(state, node)
+                                if scope[0].map.schedule == dtypes.ScheduleType.GPU_Device
+                            ),
+                            None,
+                        )
                         users.setdefault((owner, node.data), OrderedSet()).add(kernel)
         result = []
         for (owner, name), kernels in users.items():
@@ -271,26 +288,34 @@ class MoveArrayOutOfKernel(ppl.Pass):
                     # An edge into or out of a view aliases its data; it copies nothing.
                     if any(isinstance(desc, dt.View) for desc in descs):
                         continue
-                    if (all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
-                            and any(desc.transient for desc in descs) and
-                        (is_devicelevel_gpu(nsdfg, state, edge.src) or is_devicelevel_gpu(nsdfg, state, edge.dst))):
-                        offenders.append(f"  - {edge.src.data} -> {edge.dst.data} in state "
-                                         f"'{state.label}' (SDFG '{nsdfg.name}')")
+                    if (
+                        all(desc.storage is dtypes.StorageType.GPU_Global for desc in descs)
+                        and any(desc.transient for desc in descs)
+                        and (is_devicelevel_gpu(nsdfg, state, edge.src) or is_devicelevel_gpu(nsdfg, state, edge.dst))
+                    ):
+                        offenders.append(
+                            f"  - {edge.src.data} -> {edge.dst.data} in state '{state.label}' (SDFG '{nsdfg.name}')"
+                        )
         if offenders:
-            raise ValueError("Transient GPU_Global arrays cannot live inside a kernel scope. Offenders:\n" +
-                             "\n".join(offenders))
+            raise ValueError(
+                "Transient GPU_Global arrays cannot live inside a kernel scope. Offenders:\n" + "\n".join(offenders)
+            )
 
     def plan_lift(self, name: str, owner: SDFG, kernel_state: SDFGState) -> LiftPlan | None:
         """Everything the lift of ``owner``'s ``name`` rewrites, or ``None`` if a nest would misread its index."""
         accesses = [(node, state) for state in owner.all_states() for node in state.data_nodes() if node.data == name]
         levels = self.slice_levels(name, accesses)
-        prefixes = [(edge, lift_prefix(levels, state, edge.src)) for state in owner.all_states()
-                    for edge in state.edges() if edge.data.data == name or any(
-                        isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))]
+        prefixes = [
+            (edge, lift_prefix(levels, state, edge.src))
+            for state in owner.all_states()
+            for edge in state.edges()
+            if edge.data.data == name
+            or any(isinstance(node, nodes.AccessNode) and node.data == name for node in (edge.src, edge.dst))
+        ]
         desc = owner.arrays[name]
         shape_info = self.get_new_shape_info(desc, [entry for entry, _ in reversed(levels)])
         bounds = [bound for _, prefix in prefixes for dim in prefix for bound in dim]
-        bounds += shape_info[0][:len(shape_info[0]) - len(desc.shape)]
+        bounds += shape_info[0][: len(shape_info[0]) - len(desc.shape)]
         needed = sorted({str(sym) for bound in bounds for sym in symbolic.pystr_to_symbolic(bound).free_symbols})
         hierarchy = sdfg_chain(owner, kernel_state.sdfg)
         conflict = binding_conflict(hierarchy, needed)
@@ -330,8 +355,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
         plan.desc.transient = False
         self.lift_array_through_nested_sdfgs(name, kernel, plan.hierarchy)
 
-    def reshape_descendants(self, sdfg: SDFG, name: str, desc: dt.Array, prefix_at: Callable[[SDFGState, nodes.Node],
-                                                                                             Prefix]) -> None:
+    def reshape_descendants(
+        self, sdfg: SDFG, name: str, desc: dt.Array, prefix_at: Callable[[SDFGState, nodes.Node], Prefix]
+    ) -> None:
         """Give every nest below ``sdfg`` that ``name`` reaches the lifted descriptor and index its accesses by the
         slice the nest sees: a nested SDFG's data has the shape of the data connected to it (No-View nested SDFGs).
 
@@ -341,16 +367,16 @@ class MoveArrayOutOfKernel(ppl.Pass):
             for node in state.nodes():
                 if not isinstance(node, nodes.NestedSDFG):
                     continue
-                conns = ({e.dst_conn
-                          for e in state.in_edges(node) if e.data.data == name}
-                         | {e.src_conn
-                            for e in state.out_edges(node) if e.data.data == name})
+                conns = {e.dst_conn for e in state.in_edges(node) if e.data.data == name} | {
+                    e.src_conn for e in state.out_edges(node) if e.data.data == name
+                }
                 if not conns:
                     continue
                 prefix = prefix_at(state, node)
                 if any(begin != end for begin, end, _ in prefix):
                     raise NotImplementedError(
-                        f"Nest {node.label} reads '{name}' outside the kernel levels it is lifted by")
+                        f"Nest {node.label} reads '{name}' outside the kernel levels it is lifted by"
+                    )
                 inner = node.sdfg
                 defined = state.symbols_defined_at(node)
                 needed = {
@@ -372,12 +398,14 @@ class MoveArrayOutOfKernel(ppl.Pass):
                         for tasklet in (n for n in inner_state.nodes() if isinstance(n, nodes.Tasklet)):
                             code = tasklet.code.as_string
                             if tasklet.language is not dtypes.Language.Python:
-                                if re.search(rf'\b{re.escape(conn)}\s*\[', code):
+                                if re.search(rf"\b{re.escape(conn)}\s*\[", code):
                                     raise NotImplementedError(
-                                        f"Tasklet {tasklet.label} subscripts '{conn}' in {tasklet.language.name}")
+                                        f"Tasklet {tasklet.label} subscripts '{conn}' in {tasklet.language.name}"
+                                    )
                                 continue
-                            tasklet.code = properties.CodeBlock(prepend_subscript_indices(code, conn, point),
-                                                                tasklet.language)
+                            tasklet.code = properties.CodeBlock(
+                                prepend_subscript_indices(code, conn, point), tasklet.language
+                            )
                     self.prefix_control_flow(inner, conn, point)
                     self.reshape_descendants(inner, conn, inner.arrays[conn], lambda _state, _node: prefix)
 
@@ -387,7 +415,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         chains = [gpu_levels(state, node) for node, state in accesses]
         deepest = max(chains, key=len)
         for chain in chains:
-            if [entry for entry, _ in chain] != [entry for entry, _ in deepest[:len(chain)]]:
+            if [entry for entry, _ in chain] != [entry for entry, _ in deepest[: len(chain)]]:
                 raise NotImplementedError(f"Cannot lift '{name}': it is accessed under sibling GPU maps")
         return deepest
 
@@ -411,10 +439,11 @@ class MoveArrayOutOfKernel(ppl.Pass):
         prefix = lift_prefix(levels, state, tasklet)
         if any(dim[0] != dim[1] for dim in prefix):
             raise NotImplementedError(
-                f"Tasklet {tasklet.label} reads '{name}' outside the kernel levels it is lifted by")
+                f"Tasklet {tasklet.label} reads '{name}' outside the kernel levels it is lifted by"
+            )
         code = tasklet.code.as_string
         if tasklet.language is not dtypes.Language.Python:
-            if re.search(rf'\b{re.escape(name)}\s*\[', code):
+            if re.search(rf"\b{re.escape(name)}\s*\[", code):
                 raise NotImplementedError(f"Tasklet {tasklet.label} subscripts '{name}' in {tasklet.language.name}")
             return
         point = [symbolic.symstr(dim[0]) for dim in prefix]
@@ -425,7 +454,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         """Prepend ``point`` to the subscripts of ``name`` that interstate edges, loops and branches read."""
 
         def rewrite(code: str) -> str:
-            new_code = prepend_subscript_indices(code, name, point or ['0'])
+            new_code = prepend_subscript_indices(code, name, point or ["0"])
             if point is None and new_code != code:
                 raise NotImplementedError(f"Control flow of {sdfg.name} reads '{name}', which varies per GPU thread")
             return new_code
@@ -438,15 +467,20 @@ class MoveArrayOutOfKernel(ppl.Pass):
         exit_node = state.exit_node(kernel)
         source = self.get_nearest_access_node([node for node, _ in plan.accesses], exit_node, state)
         entries = [entry for entry, _ in helpers.get_parent_maps(state, source)]
-        exits = [state.exit_node(entry) for entry in entries[:entries.index(kernel) + 1]]
+        exits = [state.exit_node(entry) for entry in entries[: entries.index(kernel) + 1]]
         whole = subsets.Range.from_array(desc).ndrange()
         for src, dst in zip([source, *exits[:-1]], exits, strict=True):
             prefix = lift_prefix(plan.levels, state, src)
-            dst.add_in_connector(f'IN_{name}')
-            dst.add_out_connector(f'OUT_{name}')
-            state.add_edge(src, None if src is source else f'OUT_{name}', dst, f'IN_{name}',
-                           Memlet(data=name, subset=subsets.Range(prefix + whole[len(prefix):])))
-        state.add_edge(exit_node, f'OUT_{name}', state.add_access(name), None, Memlet.from_array(name, desc))
+            dst.add_in_connector(f"IN_{name}")
+            dst.add_out_connector(f"OUT_{name}")
+            state.add_edge(
+                src,
+                None if src is source else f"OUT_{name}",
+                dst,
+                f"IN_{name}",
+                Memlet(data=name, subset=subsets.Range(prefix + whole[len(prefix) :])),
+            )
+        state.add_edge(exit_node, f"OUT_{name}", state.add_access(name), None, Memlet.from_array(name, desc))
 
     def lift_array_through_nested_sdfgs(self, name: str, kernel: nodes.MapEntry, hierarchy: list[SDFG]) -> None:
         """Declare the array at every level from the owner up to the kernel's SDFG and connect it outward."""
@@ -454,8 +488,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
             nsdfg_node = inner.parent_nsdfg_node
             state = inner.parent
             new_desc = copy.deepcopy(inner.arrays[name])
-            symbolic.safe_replace(nsdfg_node.symbol_mapping,
-                                  lambda repl, desc=new_desc: replace_properties_dict(desc, repl))
+            symbolic.safe_replace(
+                nsdfg_node.symbol_mapping, lambda repl, desc=new_desc: replace_properties_dict(desc, repl)
+            )
             outer.add_datadesc(name, new_desc)
 
             exits = []
@@ -466,11 +501,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
                 if entry is kernel:
                     break
             nsdfg_node.add_out_connector(name)
-            state.add_memlet_path(nsdfg_node,
-                                  *exits,
-                                  state.add_access(name),
-                                  src_conn=name,
-                                  memlet=Memlet.from_array(name, new_desc))
+            state.add_memlet_path(
+                nsdfg_node, *exits, state.add_access(name), src_conn=name, memlet=Memlet.from_array(name, new_desc)
+            )
         # The outermost descriptor is allocated by codegen instead of expected as a kernel input.
         hierarchy[-1].arrays[name].transient = True
 
@@ -490,7 +523,7 @@ class MoveArrayOutOfKernel(ppl.Pass):
         elif array_desc.is_packed_fortran_strides():
             inner_order = list(range(len(array_desc.shape)))
         else:
-            raise NotImplementedError(f'Cannot lift {array_desc}: only packed C or Fortran strides are supported.')
+            raise NotImplementedError(f"Cannot lift {array_desc}: only packed C or Fortran strides are supported.")
 
         extended_size: list[symbolic.SymbolicType] = []
         new_offsets = list(array_desc.offset)
@@ -510,8 +543,9 @@ class MoveArrayOutOfKernel(ppl.Pass):
         return list(lifted.shape), list(new_strides), new_total_size, new_offsets
 
     @staticmethod
-    def get_nearest_access_node(access_nodes: list[nodes.AccessNode], node: nodes.Node,
-                                state: SDFGState) -> nodes.AccessNode:
+    def get_nearest_access_node(
+        access_nodes: list[nodes.AccessNode], node: nodes.Node, state: SDFGState
+    ) -> nodes.AccessNode:
         """Closest of ``access_nodes`` to ``node`` in ``state``, by undirected graph distance.
 
         :raises RuntimeError: No candidate is connected to ``node``.

@@ -69,5 +69,5 @@ def test_sftw():
     assert np.allclose(A, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_sftw()

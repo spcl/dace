@@ -8,18 +8,19 @@ import dace
 from dace import nodes
 from dace.dtypes import ScheduleType
 
-W = dace.symbol('W')
-H = dace.symbol('H')
-nnz = dace.symbol('nnz')
+W = dace.symbol("W")
+H = dace.symbol("H")
+nnz = dace.symbol("nnz")
 
 
 @dace.program
-def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W],
-         b: dace.float32[H]):
+def spmv(
+    A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W], b: dace.float32[H]
+):
     for ignore in dace.map[0]:
         for i in dace.map[0:H]:
 
-            @dace.map(_[A_row[i]:A_row[i + 1]])
+            @dace.map(_[A_row[i] : A_row[i + 1]])
             def compute(j):
                 a << A_val[j]
                 in_x << x[A_col[j]]
@@ -79,7 +80,7 @@ def verify(sdfg):
     # Column data
     A_col = dace.ndarray([A_row[height]], dtype=dace.uint32)
     for i in range(height):
-        A_col[A_row[i]:A_row[i + 1]] = np.sort(np.random.choice(width, A_row[i + 1] - A_row[i], replace=False))
+        A_col[A_row[i] : A_row[i + 1]] = np.sort(np.random.choice(width, A_row[i + 1] - A_row[i], replace=False))
 
     # values
     A_val = np.random.rand(A_row[height]).astype(dace.float32.type)
@@ -94,6 +95,6 @@ def verify(sdfg):
     assert np.allclose(b, A_sparse.dot(x)), "Result doesn't match!"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_persistent_dynamic_map()
     test_persistent_default()

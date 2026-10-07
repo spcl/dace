@@ -19,7 +19,6 @@ def copy(inp: dace.float32[I, J], out: dace.float32[I, J]):
 
 
 class MapDimShuffleTest(unittest.TestCase):
-
     def semantic_eq(self, params):
         A = np.random.rand(16, 8).astype(np.float32)
         B1 = np.zeros((16, 8), dtype=np.float32)
@@ -28,18 +27,18 @@ class MapDimShuffleTest(unittest.TestCase):
         sdfg = copy.to_sdfg()
         sdfg(inp=A, out=B1, I=A.shape[0], J=A.shape[1])
 
-        count = sdfg.apply_transformations(MapDimShuffle, options={'parameters': params})
+        count = sdfg.apply_transformations(MapDimShuffle, options={"parameters": params})
         self.assertGreater(count, 0)
         sdfg(inp=A, out=B2, I=A.shape[0], J=A.shape[1])
 
         self.assertLess(np.linalg.norm(B1 - B2), 1e-8)
 
     def test_semantic_eq(self):
-        self.semantic_eq(['x', 'y'])
+        self.semantic_eq(["x", "y"])
 
     def test_semantic_eq_trivial_trafo(self):
-        self.semantic_eq(['y', 'x'])
+        self.semantic_eq(["y", "x"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

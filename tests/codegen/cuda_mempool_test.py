@@ -9,8 +9,10 @@ import pytest
 def count_frees_on_stream_zero(code: str, name: str) -> int:
     """``<backend>FreeAsync`` calls of ``name`` on stream 0, spelled either way the two codegens name it."""
     return len(
-        re.findall(rf'{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)',
-                   code))
+        re.findall(
+            rf"{common.get_gpu_backend()}FreeAsync\({name}, (?:__state->gpu_context->streams\[0\]|gpu_stream0)", code
+        )
+    )
 
 
 CudaArray = dace.data.Array(dace.float64, [20], storage=dace.StorageType.GPU_Global)
@@ -40,11 +42,12 @@ def test_memory_pool():
     assert sdfg.number_of_nodes() >= 2
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 2
-    assert code.count(f'{common.get_gpu_backend()}FreeAsync') == 2
+    assert code.count(f"{common.get_gpu_backend()}MallocAsync") == 2
+    assert code.count(f"{common.get_gpu_backend()}FreeAsync") == 2
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     a_expected = cp.copy(a)
@@ -75,11 +78,12 @@ def test_memory_pool_state():
             me.schedule = dace.ScheduleType.GPU_Device
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
-    assert code.count(f'{common.get_gpu_backend()}Free') == 1
+    assert code.count(f"{common.get_gpu_backend()}MallocAsync") == 1
+    assert code.count(f"{common.get_gpu_backend()}Free") == 1
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     c = cp.random.rand(20)
@@ -99,9 +103,9 @@ def test_memory_pool_tasklet():
         with dace.tasklet(dace.Language.CPP):
             t << tmp
             b >> B
-            '''
+            """
             // Do nothing
-            '''
+            """
         A[:] = B
 
     sdfg = tester.to_sdfg()
@@ -113,11 +117,12 @@ def test_memory_pool_tasklet():
             me.schedule = dace.ScheduleType.GPU_Device
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
-    assert code.count(f'{common.get_gpu_backend()}FreeAsync') == 1
+    assert code.count(f"{common.get_gpu_backend()}MallocAsync") == 1
+    assert code.count(f"{common.get_gpu_backend()}FreeAsync") == 1
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     b_expected = cp.copy(b)
@@ -146,7 +151,7 @@ def test_memory_pool_multistate():
 
     sdfg = tester.to_sdfg(simplify=False)
     for aname, arr in sdfg.arrays.items():
-        if aname == 'pooled':
+        if aname == "pooled":
             arr.storage = dace.StorageType.GPU_Global
             arr.pool = True
     for me, _ in sdfg.all_nodes_recursive():
@@ -154,11 +159,12 @@ def test_memory_pool_multistate():
             me.schedule = dace.ScheduleType.GPU_Device
 
     code = sdfg.generate_code()[0].clean_code
-    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
-    assert count_frees_on_stream_zero(code, 'pooled') == 1
+    assert code.count(f"{common.get_gpu_backend()}MallocAsync") == 1
+    assert count_frees_on_stream_zero(code, "pooled") == 1
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(20)
     b = cp.random.rand(20)
     b_expected = cp.copy(a)
@@ -168,51 +174,56 @@ def test_memory_pool_multistate():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('cnd', (0, 1))
+@pytest.mark.parametrize("cnd", (0, 1))
 def test_memory_pool_if_states(cnd):
     N = 20
-    sdfg = dace.SDFG('test_memory_pool_if_states')
-    sdfg.add_symbol('cnd', stype=dace.int32)
+    sdfg = dace.SDFG("test_memory_pool_if_states")
+    sdfg.add_symbol("cnd", stype=dace.int32)
 
-    A, A_desc = sdfg.add_array('A', shape=[N], dtype=dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    A, A_desc = sdfg.add_array("A", shape=[N], dtype=dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
     tmp, tmp_desc = sdfg.add_temp_transient_like(A_desc)
     tmp_desc.pool = True
 
-    entry_state = sdfg.add_state('entry', is_start_block=True)
-    exit_state = sdfg.add_state('exit')
+    entry_state = sdfg.add_state("entry", is_start_block=True)
+    exit_state = sdfg.add_state("exit")
 
-    tstate = sdfg.add_state('true_branch')
-    sdfg.add_edge(entry_state, tstate, dace.InterstateEdge(condition='Eq(cnd, 0)'))
+    tstate = sdfg.add_state("true_branch")
+    sdfg.add_edge(entry_state, tstate, dace.InterstateEdge(condition="Eq(cnd, 0)"))
     sdfg.add_edge(tstate, exit_state, dace.InterstateEdge())
 
-    fstate = sdfg.add_state('false_branch')
-    sdfg.add_edge(entry_state, fstate, dace.InterstateEdge(condition='Ne(cnd, 0)'))
+    fstate = sdfg.add_state("false_branch")
+    sdfg.add_edge(entry_state, fstate, dace.InterstateEdge(condition="Ne(cnd, 0)"))
     sdfg.add_edge(fstate, exit_state, dace.InterstateEdge())
 
     tmp_node = tstate.add_access(tmp)
-    tstate.add_mapped_tasklet('write_zero',
-                              map_ranges=dict(i=f'0:{N}'),
-                              inputs={},
-                              outputs={'_val': dace.Memlet(data=tmp, subset='i')},
-                              output_nodes={tmp: tmp_node},
-                              code='_val = 0.0',
-                              external_edges=True)
+    tstate.add_mapped_tasklet(
+        "write_zero",
+        map_ranges=dict(i=f"0:{N}"),
+        inputs={},
+        outputs={"_val": dace.Memlet(data=tmp, subset="i")},
+        output_nodes={tmp: tmp_node},
+        code="_val = 0.0",
+        external_edges=True,
+    )
     tstate.add_nedge(tmp_node, tstate.add_access(A), sdfg.make_array_memlet(A))
 
-    fstate.add_mapped_tasklet('write_cond',
-                              map_ranges=dict(i=f'0:{N}'),
-                              inputs={},
-                              outputs={'_val': dace.Memlet(data=A, subset='i')},
-                              code='_val = dace.float64(cnd)',
-                              external_edges=True)
+    fstate.add_mapped_tasklet(
+        "write_cond",
+        map_ranges=dict(i=f"0:{N}"),
+        inputs={},
+        outputs={"_val": dace.Memlet(data=A, subset="i")},
+        code="_val = dace.float64(cnd)",
+        external_edges=True,
+    )
 
     sdfg.validate()
     code = sdfg.generate_code()[0].clean_code
-    assert code.count(f'{common.get_gpu_backend()}MallocAsync') == 1
+    assert code.count(f"{common.get_gpu_backend()}MallocAsync") == 1
     assert count_frees_on_stream_zero(code, tmp) == 1
 
     # Test code
     import cupy as cp
+
     a = cp.random.rand(N)
     a_expected = cp.full(N, cnd, dtype=cp.float64)
     sdfg(A=a, cnd=cnd)
@@ -222,41 +233,49 @@ def test_memory_pool_if_states(cnd):
 def pooled_through_two_states(lifetime: dace.AllocationLifetime) -> dace.SDFG:
     """``A`` is copied to a pooled ``tmp`` and back in two states; a third state (map ``triple``) does not use it."""
     N = 20
-    sdfg = dace.SDFG(f'pool_release_{lifetime.name.lower()}')
-    sdfg.add_array('A', [N], dace.float64, storage=dace.StorageType.GPU_Global)
-    _, tmp_desc = sdfg.add_transient('tmp', [N], dace.float64, storage=dace.StorageType.GPU_Global, lifetime=lifetime)
+    sdfg = dace.SDFG(f"pool_release_{lifetime.name.lower()}")
+    sdfg.add_array("A", [N], dace.float64, storage=dace.StorageType.GPU_Global)
+    _, tmp_desc = sdfg.add_transient("tmp", [N], dace.float64, storage=dace.StorageType.GPU_Global, lifetime=lifetime)
     tmp_desc.pool = True
-    stages = (('fill', 'A[i]', 'tmp[i]', '_o = _i'), ('drain', 'tmp[i]', 'A[i]', '_o = _i + 1.0'),
-              ('triple', 'A[i]', 'A[i]', '_o = _i * 3.0'))
+    stages = (
+        ("fill", "A[i]", "tmp[i]", "_o = _i"),
+        ("drain", "tmp[i]", "A[i]", "_o = _i + 1.0"),
+        ("triple", "A[i]", "A[i]", "_o = _i * 3.0"),
+    )
     previous = None
     for label, src, dst, code in stages:
         state = sdfg.add_state(label, is_start_block=previous is None)
         if previous is not None:
             sdfg.add_edge(previous, state, dace.InterstateEdge())
-        state.add_mapped_tasklet(label, {'i': f'0:{N}'}, {'_i': dace.Memlet(src)},
-                                 code, {'_o': dace.Memlet(dst)},
-                                 schedule=dace.ScheduleType.GPU_Device,
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            label,
+            {"i": f"0:{N}"},
+            {"_i": dace.Memlet(src)},
+            code,
+            {"_o": dace.Memlet(dst)},
+            schedule=dace.ScheduleType.GPU_Device,
+            external_edges=True,
+        )
         previous = state
     return sdfg
 
 
-@pytest.mark.parametrize('lifetime', (dace.AllocationLifetime.Global, dace.AllocationLifetime.Persistent))
+@pytest.mark.parametrize("lifetime", (dace.AllocationLifetime.Global, dace.AllocationLifetime.Persistent))
 def test_pooled_array_is_freed_once(lifetime):
     """A global pooled array is released right after its last use, and every pooled array exactly once: a
     persistent one outlives the call, so it is only freed on exit."""
-    code = ''.join(obj.clean_code for obj in pooled_through_two_states(lifetime).generate_code())
+    code = "".join(obj.clean_code for obj in pooled_through_two_states(lifetime).generate_code())
 
-    frees = [m.start() for m in re.finditer(r'(cuda|hip)Free(Async)?\((__state->__\d+_)?tmp\b', code)]
+    frees = [m.start() for m in re.finditer(r"(cuda|hip)Free(Async)?\((__state->__\d+_)?tmp\b", code)]
     assert len(frees) == 1, code
-    launch = re.search(r'__dace_runkernel_triple\w*\(__state, A[,)]', code).start()
+    launch = re.search(r"__dace_runkernel_triple\w*\(__state, A[,)]", code).start()
     if lifetime == dace.AllocationLifetime.Global:
-        assert frees[0] < launch, 'the global pooled array is released only after a state that no longer uses it'
+        assert frees[0] < launch, "the global pooled array is released only after a state that no longer uses it"
     else:
-        assert frees[0] > code.index('__dace_exit_'), 'a persistent pooled array is released before exit'
+        assert frees[0] > code.index("__dace_exit_"), "a persistent pooled array is released before exit"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for lifetime in [dace.AllocationLifetime.Global, dace.AllocationLifetime.Persistent]:
         test_pooled_array_is_freed_once(lifetime)
     test_memory_pool()

@@ -36,7 +36,6 @@ def run_correctness(func):
 
 
 class SDFGBackwardRunner:
-
     def __init__(self, sdfg, target, simplify=True):
         if simplify:
             sdfg.simplify()
@@ -50,8 +49,7 @@ class SDFGBackwardRunner:
             for node in state.nodes():
                 if isinstance(node, nd.AccessNode):
                     arr = node.desc(sdfg)
-                    if (arr.dtype in [dace.float32, dace.float64] and not arr.transient
-                            and node.data not in seen_names):
+                    if arr.dtype in [dace.float32, dace.float64] and not arr.transient and node.data not in seen_names:
                         required_grads.append(node)
                         seen_names.add(node.data)
 
@@ -65,15 +63,16 @@ class SDFGBackwardRunner:
 
         for name, arr in self.sdfg.arrays.items():
             # Skip gradient target, dunder names, inputs, and transients
-            if (name == gradient_target or name.startswith("__") or name in inputs or arr.transient):
+            if name == gradient_target or name.startswith("__") or name in inputs or arr.transient:
                 continue
 
             dtype = getattr(np, arr.dtype.to_string())
             intermediate_arrs[name] = np.zeros(arr.shape, dtype=dtype)
 
         inputs.update(intermediate_arrs)
-        inputs["gradient_" + self.target] = np.ones((1, ),
-                                                    dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
+        inputs["gradient_" + self.target] = np.ones(
+            (1,), dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string())
+        )
 
         self.sdfg(**inputs)
 
@@ -615,7 +614,9 @@ def test_reshape_reuse_in_same_state():
     return (
         SDFGBackwardRunner(sdfg, "__return", simplify=False),
         torch_func,
-        dict(inp=np.random.rand(9).astype(np.float64), ),
+        dict(
+            inp=np.random.rand(9).astype(np.float64),
+        ),
     )
 
 

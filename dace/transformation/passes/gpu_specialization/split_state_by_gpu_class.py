@@ -5,6 +5,7 @@ Independent CPU components and the CPU prefixes of mixed ``[CPU?, GPU, CPU?]`` c
 predecessor state; lifting the GPU middle out leaves the CPU suffix in the original state. Interleaved patterns
 (``GPU -> CPU -> GPU``, cycles, ``MIXED`` interior nodes) are refused.
 """
+
 from typing import Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, SDFGState
@@ -15,9 +16,11 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import state_fission
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from ordered_set import OrderedSet
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (classify_node, fold_kinds, NodeKind)
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_stream_wiring_applied,
-                                                                               weakly_connected_node_sets)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import classify_node, fold_kinds, NodeKind
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    is_stream_wiring_applied,
+    weakly_connected_node_sets,
+)
 
 #: A mixed WCC as ``(cpu_prefix, gpu_middle, cpu_suffix)``.
 Chain = Tuple[List[nodes.Node], List[nodes.Node], List[nodes.Node]]
@@ -87,9 +90,10 @@ class SplitStateByGPUClass(ppl.Pass):
         if is_stream_wiring_applied(sdfg):
             return None
         # Root states only: the scheduler classifies loops, conditionals and nested SDFGs as a whole.
-        states_split = sum(1 for block in list(sdfg.nodes())
-                           if isinstance(block, SDFGState) and self.split_one_state(block, sdfg))
-        return {'states_split': states_split} if states_split else None
+        states_split = sum(
+            1 for block in list(sdfg.nodes()) if isinstance(block, SDFGState) and self.split_one_state(block, sdfg)
+        )
+        return {"states_split": states_split} if states_split else None
 
     @staticmethod
     def split_one_state(state: SDFGState, sdfg: SDFG) -> bool:

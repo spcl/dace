@@ -6,7 +6,7 @@ import numpy as np
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('block_size', [None, '64,8,1'])
+@pytest.mark.parametrize("block_size", [None, "64,8,1"])
 def test_thread_specialization_noncontiguous_blocks(block_size):
 
     @dace.program
@@ -40,7 +40,7 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
     expected[:, 33:60] += 6
 
     if block_size is not None:
-        with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):
+        with dace.config.set_temporary("compiler", "cuda", "default_block_size", value=block_size):
             sdfg(a)
     else:
         sdfg(a)
@@ -48,6 +48,6 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
     assert np.allclose(a, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_thread_specialization_noncontiguous_blocks(None)
-    test_thread_specialization_noncontiguous_blocks('64,8,1')
+    test_thread_specialization_noncontiguous_blocks("64,8,1")

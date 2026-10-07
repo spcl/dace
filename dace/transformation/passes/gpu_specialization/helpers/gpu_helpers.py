@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared utilities of the GPU-specialization passes."""
+
 from typing import Dict, List, Optional
 
 from ordered_set import OrderedSet
@@ -28,13 +29,15 @@ def enclosing_map_chain(state: SDFGState, node: nodes.Node, schedule: dtypes.Sch
     scope cache stale."""
     state._clear_scopedict_cache()
     return [
-        entry for entry, entry_state in reversed(get_parent_maps(state, node))
+        entry
+        for entry, entry_state in reversed(get_parent_maps(state, node))
         if entry_state is state and isinstance(entry, nodes.MapEntry) and entry.map.schedule == schedule
     ]
 
 
-def innermost_enclosing_map(state: SDFGState, node: nodes.Node,
-                            schedule: dtypes.ScheduleType) -> Optional[nodes.MapEntry]:
+def innermost_enclosing_map(
+    state: SDFGState, node: nodes.Node, schedule: dtypes.ScheduleType
+) -> Optional[nodes.MapEntry]:
     """Innermost ``MapEntry`` with ``schedule`` enclosing ``node``, or None."""
     chain = enclosing_map_chain(state, node, schedule)
     return chain[-1] if chain else None
@@ -42,8 +45,9 @@ def innermost_enclosing_map(state: SDFGState, node: nodes.Node,
 
 def is_inside_gpu_device_kernel(sub_sdfg: SDFG) -> bool:
     """Whether ``sub_sdfg`` is, transitively, the body of a GPU_Device map."""
-    return is_in_scope(sub_sdfg.parent_sdfg, sub_sdfg.parent, sub_sdfg.parent_nsdfg_node,
-                       [dtypes.ScheduleType.GPU_Device])
+    return is_in_scope(
+        sub_sdfg.parent_sdfg, sub_sdfg.parent, sub_sdfg.parent_nsdfg_node, [dtypes.ScheduleType.GPU_Device]
+    )
 
 
 def in_scope_of(state: SDFGState, node: nodes.Node, schedules) -> bool:
@@ -56,6 +60,7 @@ def in_scope_of(state: SDFGState, node: nodes.Node, schedules) -> bool:
 def weakly_connected_node_sets(graph) -> List[OrderedSet]:
     """Weakly connected components of ``graph``, in node order (networkx yields hash order, which varies per run)."""
     import networkx as nx
+
     order = {node: index for index, node in enumerate(graph.nodes())}
     components = [sorted(c, key=order.__getitem__) for c in nx.weakly_connected_components(graph.nx)]
     return [OrderedSet(c) for c in sorted(components, key=lambda c: order[c[0]])]
@@ -67,8 +72,10 @@ def is_gpu_copy_or_fill_libnode(node, sdfg: SDFG, state: SDFGState) -> bool:
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
     if isinstance(node, CopyLibraryNode):
-        return (node.src_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
-                or node.dst_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES)
+        return (
+            node.src_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
+            or node.dst_storage(state) in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES
+        )
     if isinstance(node, FillLibraryNode):
         for e in state.out_edges(node):
             if e.data and e.data.data and sdfg.arrays[e.data.data].storage in dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES:
@@ -83,8 +90,11 @@ def is_gpu_kernel_launcher(node) -> bool:
 
 def is_gpu_stream_consumer(node, sdfg: SDFG, state: SDFGState) -> bool:
     """A kernel entry, a GPU copy or fill library node, or a lowered runtime-call tasklet."""
-    return (is_gpu_kernel_launcher(node) or is_gpu_copy_or_fill_libnode(node, sdfg, state)
-            or is_already_lowered_gpu_runtime_call(node))
+    return (
+        is_gpu_kernel_launcher(node)
+        or is_gpu_copy_or_fill_libnode(node, sdfg, state)
+        or is_already_lowered_gpu_runtime_call(node)
+    )
 
 
 def is_already_lowered_gpu_runtime_call(node) -> bool:
@@ -142,5 +152,6 @@ def persisted_stream_assignments(sdfg: SDFG) -> Dict[nodes.Node, int]:
     """Every ``Node.gpu_stream_id`` set across the hierarchy; the per-node property is the durable record."""
     return {
         n: n.gpu_stream_id
-        for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Node) and n.gpu_stream_id is not None
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.Node) and n.gpu_stream_id is not None
     }

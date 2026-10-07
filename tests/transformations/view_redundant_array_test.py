@@ -62,24 +62,27 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
     sdfg.add_array("T", [9], dtype=dace.float32, transient=True)
     sdfg.add_array("O", [3, 3], dtype=dace.float32, transient=False)
 
-    state.add_mapped_tasklet("add_one",
-                             dict(i="0:9"),
-                             dict(inp=dace.Memlet("I[i]")),
-                             "out = inp + 1",
-                             dict(out=dace.Memlet("T[i]")),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "add_one",
+        dict(i="0:9"),
+        dict(inp=dace.Memlet("I[i]")),
+        "out = inp + 1",
+        dict(out=dace.Memlet("T[i]")),
+        external_edges=True,
+    )
     copy_state = sdfg.add_state_after(state)
-    copy_state.add_edge(copy_state.add_read("T"), None, copy_state.add_write("O"), None,
-                        sdfg.make_array_memlet(copy_subset))
+    copy_state.add_edge(
+        copy_state.add_read("T"), None, copy_state.add_write("O"), None, sdfg.make_array_memlet(copy_subset)
+    )
 
     sdfg.simplify()
     if nonstrict:
         sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
-        assert (len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2)
+        assert len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2
 
-    I = np.ones((9, )).astype(np.float32)
+    I = np.ones((9,)).astype(np.float32)
     O = np.zeros((3, 3)).astype(np.float32)
     sdfg(I=I, O=O)
     assert np.allclose(O.flatten(), I + 1)
@@ -94,25 +97,28 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
     sdfg.add_array("T", [3, 3], dtype=dace.float32, transient=True)
     sdfg.add_array("O", [9], dtype=dace.float32, transient=False)
 
-    state.add_mapped_tasklet("add_one",
-                             dict(i="0:3", j="0:3"),
-                             dict(inp=dace.Memlet("I[i, j]")),
-                             "out = inp + 1",
-                             dict(out=dace.Memlet("T[i, j]")),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "add_one",
+        dict(i="0:3", j="0:3"),
+        dict(inp=dace.Memlet("I[i, j]")),
+        "out = inp + 1",
+        dict(out=dace.Memlet("T[i, j]")),
+        external_edges=True,
+    )
     copy_state = sdfg.add_state_after(state)
-    copy_state.add_edge(copy_state.add_read("T"), None, copy_state.add_write("O"), None,
-                        sdfg.make_array_memlet(copy_subset))
+    copy_state.add_edge(
+        copy_state.add_read("T"), None, copy_state.add_write("O"), None, sdfg.make_array_memlet(copy_subset)
+    )
 
     sdfg.simplify()
     if nonstrict:
         sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
-        assert (len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2)
+        assert len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2
 
     I = np.ones((3, 3)).astype(np.float32)
-    O = np.zeros((9, )).astype(np.float32)
+    O = np.zeros((9,)).astype(np.float32)
     sdfg(I=I, O=O)
     assert np.allclose(O, (I + 1).flatten())
 
@@ -126,17 +132,20 @@ def test_unsqueeze_view_removal():
 
     tnode = state.add_access("T")
     state.add_edge(tnode, None, state.add_write("O"), None, sdfg.make_array_memlet("O"))
-    state.add_mapped_tasklet("set_one",
-                             dict(i="0:9"), {},
-                             "out = 1",
-                             dict(out=dace.Memlet("T[i]")),
-                             external_edges=True,
-                             output_nodes=dict(T=tnode))
+    state.add_mapped_tasklet(
+        "set_one",
+        dict(i="0:9"),
+        {},
+        "out = 1",
+        dict(out=dace.Memlet("T[i]")),
+        external_edges=True,
+        output_nodes=dict(T=tnode),
+    )
 
     sdfg.apply_transformations_repeated(UnsqueezeViewRemove)
 
     # Ensure view is removed
-    assert (len([n for n in sdfg.node(0).data_nodes() if isinstance(n.desc(sdfg), data.View)]) == 0)
+    assert len([n for n in sdfg.node(0).data_nodes() if isinstance(n.desc(sdfg), data.View)]) == 0
 
     O = np.zeros((1, 9, 1)).astype(np.float32)
     sdfg(O=O)
@@ -147,18 +156,18 @@ def test_view_offset_removal():
     sdfg = dace.SDFG("testing")
     state = sdfg.add_state()
 
-    i = dace.symbol('i')
-    sdfg.add_array('inout', [20, 20], dtype=dace.float64, transient=False)
-    sdfg.add_transient('tmp', [20 - i], dtype=dace.float64)
-    sdfg.add_view('view', [20 - i], dtype=dace.float64)
+    i = dace.symbol("i")
+    sdfg.add_array("inout", [20, 20], dtype=dace.float64, transient=False)
+    sdfg.add_transient("tmp", [20 - i], dtype=dace.float64)
+    sdfg.add_view("view", [20 - i], dtype=dace.float64)
 
-    r = state.add_read('inout')
-    w = state.add_write('inout')
-    t = state.add_access('tmp')
-    v = state.add_access('view')
-    state.add_edge(r, None, v, 'views', dace.Memlet('inout[1, i:20]'))
-    state.add_edge(v, None, t, None, dace.Memlet('tmp[0:20-i]'))
-    state.add_edge(t, None, w, None, dace.Memlet('inout[2, i:20]'))
+    r = state.add_read("inout")
+    w = state.add_write("inout")
+    t = state.add_access("tmp")
+    v = state.add_access("view")
+    state.add_edge(r, None, v, "views", dace.Memlet("inout[1, i:20]"))
+    state.add_edge(v, None, t, None, dace.Memlet("tmp[0:20-i]"))
+    state.add_edge(t, None, w, None, dace.Memlet("inout[2, i:20]"))
 
     assert sdfg.apply_transformations_repeated(RemoveSliceView) == 1
 
@@ -201,31 +210,31 @@ def test_transient_removal_uneven_flow_through_map():
     st0 = g.add_state()
     st1 = g.add_state_after(st0)
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
-    X, _ = g.add_array('X', [N, N], dtype=dace.float64)
-    T0, _ = g.add_transient('T0', [N, N], dtype=dace.float64)
-    T1, _ = g.add_transient('T1', [N, N], dtype=dace.float64)
-    Y, _ = g.add_array('Y', [N, N], dtype=dace.float64)
+    X, _ = g.add_array("X", [N, N], dtype=dace.float64)
+    T0, _ = g.add_transient("T0", [N, N], dtype=dace.float64)
+    T1, _ = g.add_transient("T1", [N, N], dtype=dace.float64)
+    Y, _ = g.add_array("Y", [N, N], dtype=dace.float64)
     T1a = st0.add_access(T1)
     X, T0, T1b, Y = tuple(st1.add_access(u) for u in (X, T0, T1, Y))
 
     # Initialize T1 with zeros.
-    mE, mX = st0.add_map('T1_set0', dict(i='0:N', j='0:N'))
-    mX.add_scope_connectors('out')
-    zt = st0.add_tasklet('set_zero', inputs={}, outputs={'out'}, code="out = 0.0")
+    mE, mX = st0.add_map("T1_set0", dict(i="0:N", j="0:N"))
+    mX.add_scope_connectors("out")
+    zt = st0.add_tasklet("set_zero", inputs={}, outputs={"out"}, code="out = 0.0")
     st0.add_edge(mE, None, zt, None, dace.Memlet())
-    st0.add_edge(zt, 'out', mX, 'IN_out', dace.Memlet(f"{T1a.data}[i, j]"))
-    st0.add_edge(mX, 'OUT_out', T1a, None, g.make_array_memlet(T1a.data))
+    st0.add_edge(zt, "out", mX, "IN_out", dace.Memlet(f"{T1a.data}[i, j]"))
+    st0.add_edge(mX, "OUT_out", T1a, None, g.make_array_memlet(T1a.data))
     # Write the full T0 transient.
-    c = st1.add_tasklet('copy', inputs={'inp'}, outputs={'out'}, code="out = inp")
-    mE, mX = st1.add_map('copy_map', dict(i='0:N', j='0:N'))
-    mE.add_scope_connectors('inp')
-    mX.add_scope_connectors('out')
-    st1.add_edge(X, None, mE, 'IN_inp', g.make_array_memlet(X.data))
-    st1.add_edge(mE, 'OUT_inp', c, 'inp', dace.Memlet(f"{X.data}[i, j]"))
-    st1.add_edge(c, 'out', mX, 'IN_out', dace.Memlet(f"{T0.data}[i, j]"))
-    st1.add_edge(mX, 'OUT_out', T0, None, g.make_array_memlet(T0.data))
+    c = st1.add_tasklet("copy", inputs={"inp"}, outputs={"out"}, code="out = inp")
+    mE, mX = st1.add_map("copy_map", dict(i="0:N", j="0:N"))
+    mE.add_scope_connectors("inp")
+    mX.add_scope_connectors("out")
+    st1.add_edge(X, None, mE, "IN_inp", g.make_array_memlet(X.data))
+    st1.add_edge(mE, "OUT_inp", c, "inp", dace.Memlet(f"{X.data}[i, j]"))
+    st1.add_edge(c, "out", mX, "IN_out", dace.Memlet(f"{T0.data}[i, j]"))
+    st1.add_edge(mX, "OUT_out", T0, None, g.make_array_memlet(T0.data))
     # Forward only the boundary to the T1 transient.
     st1.add_edge(T0, None, T1b, None, dace.Memlet(f"{T0.data}[0:N, N-1] -> [0:N, N-1]"))
     # Forward the full transient.
@@ -246,25 +255,25 @@ def test_transient_removal_uneven_flow_through_map():
     np.testing.assert_allclose(Yout[:, 4], Xin[:, 4])
 
 
-@pytest.mark.parametrize('identity', [True, False])
+@pytest.mark.parametrize("identity", [True, False])
 def test_identity_view_written_by_library_node(identity: bool):
     """
     A view that is the whole container it views only renames the data the memlets refer to, so it can be removed
     even when a library node writes it. A view that reinterprets the container cannot.
     """
-    sdfg = dace.SDFG(f'identity_view_libnode_{identity}')
-    sdfg.add_array('X', [4, 3, 5], dace.float64)
-    sdfg.add_array('B', [4, 3], dace.float64)
+    sdfg = dace.SDFG(f"identity_view_libnode_{identity}")
+    sdfg.add_array("X", [4, 3, 5], dace.float64)
+    sdfg.add_array("B", [4, 3], dace.float64)
     if identity:
-        sdfg.add_view('V', [4, 3], dace.float64)
+        sdfg.add_view("V", [4, 3], dace.float64)
     else:
-        sdfg.add_view('V', [12], dace.float64)
+        sdfg.add_view("V", [12], dace.float64)
     state = sdfg.add_state()
-    reduce = state.add_reduce('lambda a, b: a + b', axes=[2], identity=0)
-    view = state.add_access('V')
-    state.add_edge(state.add_read('X'), None, reduce, None, dace.Memlet('X[0:4, 1, 0:5]'))
-    state.add_edge(reduce, None, view, None, dace.Memlet('V[0:4, 1]' if identity else 'V[4:8]'))
-    state.add_edge(view, 'views', state.add_write('B'), None, dace.Memlet('B[0:4, 0:3]'))
+    reduce = state.add_reduce("lambda a, b: a + b", axes=[2], identity=0)
+    view = state.add_access("V")
+    state.add_edge(state.add_read("X"), None, reduce, None, dace.Memlet("X[0:4, 1, 0:5]"))
+    state.add_edge(reduce, None, view, None, dace.Memlet("V[0:4, 1]" if identity else "V[4:8]"))
+    state.add_edge(view, "views", state.add_write("B"), None, dace.Memlet("B[0:4, 0:3]"))
     sdfg.validate()
 
     assert (RemoveSliceView.can_be_applied_to(sdfg, view=view) is True) == identity
@@ -280,7 +289,7 @@ def test_identity_view_written_by_library_node(identity: bool):
     assert np.allclose(B[:, 1], X[:, 1, :].sum(axis=1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_redundant_array_removal()
     test_redundant_array_1_into_2_dims("O", False)
     test_redundant_array_1_into_2_dims("T", False)
