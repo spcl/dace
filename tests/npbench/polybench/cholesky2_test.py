@@ -12,15 +12,15 @@ from dace.transformation.auto.auto_optimize import auto_optimize
 # N
 sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
 
-N = dc.symbol('N', dtype=dc.int64)
-k = dc.symbol('k', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
+k = dc.symbol("k", dtype=dc.int64)
 
 
 @dc.program
 def triu(A: dc.float64[N, N]):
     B = np.zeros_like(A)
     for i in dc.map[0:N]:
-        for j in dc.map[i + k:N]:
+        for j in dc.map[i + k : N]:
             B[i, j] = A[i, j]
     return B
 
@@ -33,8 +33,8 @@ def cholesky2_kernel(A: dc.float64[N, N]):
 def init_data(N, datatype=np.float64):
     A = np.empty((N, N), dtype=datatype)
     for i in range(N):
-        A[i, :i + 1] = np.fromfunction(lambda j: (-j % N) / N + 1, (i + 1, ), dtype=datatype)
-        A[i, i + 1:] = 0.0
+        A[i, : i + 1] = np.fromfunction(lambda j: (-j % N) / N + 1, (i + 1,), dtype=datatype)
+        A[i, i + 1 :] = 0.0
         A[i, i] = 1.0
     A[:] = A @ np.transpose(A)
 
@@ -46,10 +46,10 @@ def ground_truth(N, A):
 
 
 def run_cholesky2(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Cholesky2 for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]
@@ -77,9 +77,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

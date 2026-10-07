@@ -2,6 +2,7 @@
 """``MergeLibraryNode``: the per-element select, Fortran ``MERGE(tsource, fsource, mask)`` and NumPy
 ``where(mask, t, f)``. Every operand broadcasts against the result by the NumPy rule, with its shape
 taken from its own memlet, which covers Fortran's scalar ``MERGE`` variants too."""
+
 import dace
 from dace import library, nodes
 from dace.libraries.standard.helper import broadcast_indices, broadcast_map_expansion
@@ -11,16 +12,20 @@ from dace.transformation.transformation import ExpandTransformation
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """One map doing the per-element select."""
+
     environments = []
 
     @classmethod
     def expansion(cls, node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         t, f, mask, out = node.validate(parent_sdfg, parent_state)
         inputs = {node.TRUE_CONNECTOR_NAME: t, node.FALSE_CONNECTOR_NAME: f, node.MASK_CONNECTOR_NAME: mask}
-        return broadcast_map_expansion(node.label, parent_sdfg, {
-            c: (e.data, None)
-            for c, e in inputs.items()
-        }, (node.OUTPUT_CONNECTOR_NAME, out.data), '_mrg_out_v = _mrg_t_v if _mrg_mask_v else _mrg_f_v')
+        return broadcast_map_expansion(
+            node.label,
+            parent_sdfg,
+            {c: (e.data, None) for c, e in inputs.items()},
+            (node.OUTPUT_CONNECTOR_NAME, out.data),
+            "_mrg_out_v = _mrg_t_v if _mrg_mask_v else _mrg_f_v",
+        )
 
 
 @library.node
@@ -37,19 +42,23 @@ class MergeLibraryNode(nodes.LibraryNode):
     OUTPUT_CONNECTOR_NAME = "_mrg_out"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs=[self.TRUE_CONNECTOR_NAME, self.FALSE_CONNECTOR_NAME, self.MASK_CONNECTOR_NAME],
-                         outputs=[self.OUTPUT_CONNECTOR_NAME],
-                         **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs=[self.TRUE_CONNECTOR_NAME, self.FALSE_CONNECTOR_NAME, self.MASK_CONNECTOR_NAME],
+            outputs=[self.OUTPUT_CONNECTOR_NAME],
+            **kwargs,
+        )
 
     def validate(self, sdfg, state):
         """:returns: The edges on the true, false, mask and output connectors, in that order.
 
         :raises ValueError: unless each connector has exactly one edge and every input broadcasts to the output.
         """
-        edges = [[e for e in state.in_edges(self) if e.dst_conn == c]
-                 for c in (self.TRUE_CONNECTOR_NAME, self.FALSE_CONNECTOR_NAME, self.MASK_CONNECTOR_NAME)]
+        edges = [
+            [e for e in state.in_edges(self) if e.dst_conn == c]
+            for c in (self.TRUE_CONNECTOR_NAME, self.FALSE_CONNECTOR_NAME, self.MASK_CONNECTOR_NAME)
+        ]
         edges.append([e for e in state.out_edges(self) if e.src_conn == self.OUTPUT_CONNECTOR_NAME])
         if any(len(es) != 1 for es in edges):
             raise ValueError(f"{type(self).__name__} expects exactly one edge per connector")

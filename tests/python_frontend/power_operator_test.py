@@ -11,20 +11,20 @@ def pow_num_literals(a: dace.int64[1]):
 
 
 def test_pow_num_literals():
-    res = np.zeros((1, ), dtype=np.int64)
+    res = np.zeros((1,), dtype=np.int64)
     pow_num_literals(a=res)
-    assert (res[0] == 8)
+    assert res[0] == 8
 
 
 @dace.program
 def pow_op_preced(a: dace.int64[1]):
-    a[0] = -1**2
+    a[0] = -(1**2)
 
 
 def test_pow_op_preced():
-    res = np.zeros((1, ), dtype=np.int64)
+    res = np.zeros((1,), dtype=np.int64)
     pow_op_preced(a=res)
-    assert (res[0] == -1)
+    assert res[0] == -1
 
 
 @dace.program
@@ -33,9 +33,9 @@ def pow_neg_exp(a: dace.float64[1]):
 
 
 def test_pow_neg_exp():
-    res = np.zeros((1, ), dtype=np.float64)
+    res = np.zeros((1,), dtype=np.float64)
     pow_neg_exp(a=res)
-    assert (res[0] == 0.01)
+    assert res[0] == 0.01
 
 
 in_types = [dace.float32, dace.float64, dace.int8, dace.int16, dace.int32, dace.int64]

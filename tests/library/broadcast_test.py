@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the :class:`Broadcast` library node: Fortran ``SPREAD`` and the right-aligned NumPy rule."""
+
 import itertools
 import os
 
@@ -9,7 +10,7 @@ import pytest
 import dace
 from dace.libraries.standard.nodes import Broadcast
 
-N = dace.symbol('N', dace.int64, nonnegative=True)
+N = dace.symbol("N", dace.int64, nonnegative=True)
 
 #: One compiled library per built SDFG and process: a reused name would load the previous case's library,
 #: and pytest-xdist workers share the build folder.
@@ -18,15 +19,16 @@ BUILD_IDS = itertools.count()
 
 def build(src_shape, dst_shape, dim, src_dtype=dace.float64, dst_dtype=dace.float64, src_memlet=None, **desc):
     """One Broadcast from ``src`` to ``dst``; the memlets cover the whole arrays unless ``src_memlet`` is given."""
-    sdfg = dace.SDFG(f'broadcast_{os.getpid()}_{next(BUILD_IDS)}')
-    sdfg.add_array('src', list(src_shape), src_dtype, **desc.get('src', {}))
-    sdfg.add_array('dst', list(dst_shape), dst_dtype, **desc.get('dst', {}))
+    sdfg = dace.SDFG(f"broadcast_{os.getpid()}_{next(BUILD_IDS)}")
+    sdfg.add_array("src", list(src_shape), src_dtype, **desc.get("src", {}))
+    sdfg.add_array("dst", list(dst_shape), dst_dtype, **desc.get("dst", {}))
     state = sdfg.add_state()
-    node = Broadcast('broadcast', dim=dim)
+    node = Broadcast("broadcast", dim=dim)
     state.add_node(node)
-    state.add_edge(state.add_read('src'), None, node, '_src', src_memlet
-                   or dace.Memlet.from_array('src', sdfg.arrays['src']))
-    state.add_edge(node, '_dst', state.add_write('dst'), None, dace.Memlet.from_array('dst', sdfg.arrays['dst']))
+    state.add_edge(
+        state.add_read("src"), None, node, "_src", src_memlet or dace.Memlet.from_array("src", sdfg.arrays["src"])
+    )
+    state.add_edge(node, "_dst", state.add_write("dst"), None, dace.Memlet.from_array("dst", sdfg.arrays["dst"]))
     return sdfg
 
 
@@ -34,10 +36,10 @@ def spread(src, dim, ncopies):
     return np.repeat(np.expand_dims(src, dim - 1), ncopies, axis=dim - 1)
 
 
-SPREAD_CASES = [((3, ), 1, 2), ((3, ), 2, 4), ((2, 3), 2, 5), ((1, ), 1, 4)]
+SPREAD_CASES = [((3,), 1, 2), ((3,), 2, 4), ((2, 3), 2, 5), ((1,), 1, 4)]
 
 
-@pytest.mark.parametrize('src_shape, dim, ncopies', SPREAD_CASES)
+@pytest.mark.parametrize("src_shape, dim, ncopies", SPREAD_CASES)
 def test_spread_inserts_the_axis_at_dim(src_shape, dim, ncopies):
     src = np.arange(1.0, np.prod(src_shape) + 1).reshape(src_shape).copy()
     expected = spread(src, dim, ncopies)
@@ -49,20 +51,20 @@ def test_spread_inserts_the_axis_at_dim(src_shape, dim, ncopies):
 def test_spread_of_a_fortran_scalar_fills_a_vector():
     """A Fortran scalar arrives as an array of one element; ``SPREAD(s, 1, n)`` has rank 1."""
     dst = np.zeros(5)
-    build((1, ), (5, ), 1)(src=np.array([2.5]), dst=dst)
+    build((1,), (5,), 1)(src=np.array([2.5]), dst=dst)
     np.testing.assert_array_equal(dst, np.full(5, 2.5))
 
 
 NUMPY_RULE_CASES = [
-    ((3, ), (2, 3)),
+    ((3,), (2, 3)),
     ((3, 1), (3, 4)),
     ((1, 4), (3, 4)),
-    ((1, ), (2, 5)),
+    ((1,), (2, 5)),
     ((2, 3), (4, 2, 3)),
 ]
 
 
-@pytest.mark.parametrize('src_shape, dst_shape', NUMPY_RULE_CASES)
+@pytest.mark.parametrize("src_shape, dst_shape", NUMPY_RULE_CASES)
 def test_numpy_rule_agrees_with_numpy(src_shape, dst_shape):
     src = np.arange(np.prod(src_shape), dtype=np.float64).reshape(src_shape).copy()
     dst = np.zeros(dst_shape)
@@ -71,22 +73,22 @@ def test_numpy_rule_agrees_with_numpy(src_shape, dst_shape):
 
 
 REFUSED_CASES = [
-    ((3, ), (2, 5), None, 'cannot broadcast'),
-    ((3, 2), (4, 3, 2, 2), 1, 'adds one axis'),
-    ((3, ), (3, 3), 3, 'out of range'),
+    ((3,), (2, 5), None, "cannot broadcast"),
+    ((3, 2), (4, 3, 2, 2), 1, "adds one axis"),
+    ((3,), (3, 3), 3, "out of range"),
 ]
 
 
-@pytest.mark.parametrize('src_shape, dst_shape, dim, message', REFUSED_CASES)
+@pytest.mark.parametrize("src_shape, dst_shape, dim, message", REFUSED_CASES)
 def test_a_shape_that_cannot_broadcast_is_refused_before_expansion(src_shape, dst_shape, dim, message):
     with pytest.raises(ValueError, match=message):
         sdfg = build(src_shape, dst_shape, dim)
-        (state, ) = sdfg.states()
+        (state,) = sdfg.states()
         next(n for n in state.nodes() if isinstance(n, Broadcast)).validate(sdfg, state)
 
 
 def test_symbolic_extents_expand_and_run():
-    sdfg = build((N, ), (3, N), 1)
+    sdfg = build((N,), (3, N), 1)
     sdfg.expand_library_nodes()
     src = np.arange(6.0)
     dst = np.zeros((3, 6))
@@ -96,20 +98,20 @@ def test_symbolic_extents_expand_and_run():
 
 def test_operands_are_read_and_written_by_their_own_strides():
     """Column-major operands: the expanded connectors keep the strides, so no packed C layout is assumed."""
-    sdfg = build((3, 2), (4, 3, 2), None, src={'strides': (1, 3)}, dst={'strides': (1, 4, 12)})
+    sdfg = build((3, 2), (4, 3, 2), None, src={"strides": (1, 3)}, dst={"strides": (1, 4, 12)})
     sdfg.expand_library_nodes()
     inner = next(n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
-    assert tuple(inner.arrays['_src'].strides) == (1, 3)
-    assert tuple(inner.arrays['_dst'].strides) == (1, 4, 12)
+    assert tuple(inner.arrays["_src"].strides) == (1, 3)
+    assert tuple(inner.arrays["_dst"].strides) == (1, 4, 12)
     src = np.asfortranarray(np.arange(6.0).reshape(3, 2).copy())
-    dst = np.zeros((4, 3, 2), order='F')
+    dst = np.zeros((4, 3, 2), order="F")
     sdfg(src=src, dst=dst)
     np.testing.assert_array_equal(dst, np.broadcast_to(src, (4, 3, 2)))
 
 
 def test_a_sliced_source_with_a_lower_bound_offset():
     """A descriptor offset of -1 puts the elements the memlet ``src[1:4]`` selects at ``src[0:3]``."""
-    sdfg = build((6, ), (2, 3), 1, src={'offset': [-1]}, src_memlet=dace.Memlet('src[1:4]'))
+    sdfg = build((6,), (2, 3), 1, src={"offset": [-1]}, src_memlet=dace.Memlet("src[1:4]"))
     src = np.arange(6.0)
     dst = np.zeros((2, 3))
     sdfg(src=src, dst=dst)
@@ -118,7 +120,7 @@ def test_a_sliced_source_with_a_lower_bound_offset():
 
 def test_the_destination_type_converts():
     dst = np.zeros((2, 3), dtype=np.float32)
-    build((3, ), (2, 3), 1, src_dtype=dace.int32, dst_dtype=dace.float32)(src=np.arange(3, dtype=np.int32), dst=dst)
+    build((3,), (2, 3), 1, src_dtype=dace.int32, dst_dtype=dace.float32)(src=np.arange(3, dtype=np.int32), dst=dst)
     np.testing.assert_array_equal(dst, spread(np.arange(3, dtype=np.float32), 1, 2))
 
 
@@ -148,7 +150,7 @@ def test_the_library_call_in_a_program_keeps_its_dim():
     np.testing.assert_array_equal(out, spread(a, 2, 4))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for case in SPREAD_CASES:
         test_spread_inserts_the_axis_at_dim(*case)
     test_spread_of_a_fortran_scalar_fills_a_vector()

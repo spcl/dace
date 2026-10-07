@@ -12,7 +12,7 @@ from dace.transformation.auto.auto_optimize import auto_optimize
 # N
 sizes = {"mini": 60, "small": 180, "medium": 500, "large": 2800, "extra-large": 5600}
 
-N = dc.symbol('N', dtype=dc.int32)
+N = dc.symbol("N", dtype=dc.int32)
 
 
 @dc.program
@@ -77,9 +77,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

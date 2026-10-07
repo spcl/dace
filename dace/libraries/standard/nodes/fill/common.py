@@ -3,6 +3,7 @@
 
 Imported by both the node and its expansions, so it must not import either.
 """
+
 from typing import List, Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
@@ -52,11 +53,11 @@ def cpp_literal(value, dtype: dace.dtypes.typeclass) -> str:
     narrowed = numpy_scalar(value, dtype).item()
     ctype = dtype.ctype
     if isinstance(narrowed, bool):
-        return 'true' if narrowed else 'false'
+        return "true" if narrowed else "false"
     if isinstance(narrowed, complex):
         return f"{ctype}({narrowed.real!r}, {narrowed.imag!r})"
     if isinstance(narrowed, float):
-        return f"{narrowed!r}f" if ctype == 'float' else repr(narrowed)
+        return f"{narrowed!r}f" if ctype == "float" else repr(narrowed)
     return repr(narrowed)
 
 
@@ -70,8 +71,9 @@ def python_literal(value, dtype: dace.dtypes.typeclass) -> str:
     return repr(numpy_scalar(value, dtype).item())
 
 
-def make_fill_skeleton(node: "FillLibraryNode",
-                       parent_state: dace.SDFGState) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, List]:
+def make_fill_skeleton(
+    node: "FillLibraryNode", parent_state: dace.SDFGState
+) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, List]:
     """Build the shared SDFG skeleton for the mapped (``ExpandPure``) fill expansion.
 
     :param node: The fill library node being expanded.

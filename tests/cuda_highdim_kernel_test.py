@@ -5,26 +5,26 @@ import numpy as np
 import pytest
 
 # Symbols
-N = dace.symbol('N')
-M = dace.symbol('M')
-K = dace.symbol('K')
-L = dace.symbol('L')
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K")
+L = dace.symbol("L")
 
-X = dace.symbol('X')
-Y = dace.symbol('Y')
-Z = dace.symbol('Z')
-W = dace.symbol('W')
-U = dace.symbol('U')
+X = dace.symbol("X")
+Y = dace.symbol("Y")
+Z = dace.symbol("Z")
+W = dace.symbol("W")
+U = dace.symbol("U")
 
 
 @dace.program
 def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K, L]):
 
     @dace.mapscope
-    def kernel(i: _[5:N - 5], j: _[0:M], k: _[7:K - 1], l: _[0:L]):
+    def kernel(i: _[5 : N - 5], j: _[0:M], k: _[7 : K - 1], l: _[0:L]):
 
         @dace.map
-        def block(a: _[0:X], b: _[0:Y], c: _[1:Z], d: _[2:W - 1], e: _[0:U]):
+        def block(a: _[0:X], b: _[0:Y], c: _[1:Z], d: _[2 : W - 1], e: _[0:U]):
             input << A[i, j, k, l, a, b, c, d, e]
             output >> B(1, lambda a, b: a + b)[i, j, k, l]
             output = input
@@ -50,7 +50,7 @@ def _test(sdfg):
     U = 5
     dims = tuple(s for s in (N, M, K, L, X, Y, Z, W, U))
     outdims = tuple(s for s in (N, M, K, L))
-    print('High-dimensional GPU kernel test', dims)
+    print("High-dimensional GPU kernel test", dims)
 
     A = dace.ndarray((N, M, K, L, X, Y, Z, W, U), dtype=dace.uint64)
     B = dace.ndarray((N, M, K, L), dtype=dace.uint64)
@@ -66,7 +66,7 @@ def _test(sdfg):
     sdfg(A=A, B=B, N=N, M=M, K=K, L=L, X=X, Y=Y, Z=Z, W=W, U=U)
 
     diff = np.linalg.norm(B_regression - B) / (N * M * K * L)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-5
 
 
@@ -132,12 +132,12 @@ def test_highdim_default_block_size():
         for i, j in dace.map[0:1024, 0:1024] @ dace.ScheduleType.GPU_Device:
             a[i, j] = 1
 
-    with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='32, 8, 2'):
-        with pytest.warns(UserWarning, match='has more dimensions'):
-            with pytest.warns(match='No `gpu_block_size` property'):
+    with dace.config.set_temporary("compiler", "cuda", "default_block_size", value="32, 8, 2"):
+        with pytest.warns(UserWarning, match="has more dimensions"):
+            with pytest.warns(match="No `gpu_block_size` property"):
                 sdfg = tester.to_sdfg()
                 gpu_code = sdfg.generate_code()[1]
-                assert 'dim3(32, 16, 1)' in gpu_code.code
+                assert "dim3(32, 16, 1)" in gpu_code.code
 
 
 def test_block_size_mismatch_warning():
@@ -151,7 +151,7 @@ def test_block_size_mismatch_warning():
                 a[i + bi, j + bj] = 1
 
     sdfg = tester.to_sdfg()
-    with pytest.warns(UserWarning, match='Multiple thread-block maps'):
+    with pytest.warns(UserWarning, match="Multiple thread-block maps"):
         sdfg.generate_code()
 
 

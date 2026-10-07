@@ -2,14 +2,14 @@
 import dace
 import numpy as np
 
-W = dace.symbol('W')
-H = dace.symbol('H')
+W = dace.symbol("W")
+H = dace.symbol("H")
 
 
 @dace.program
 def confres_test(A: dace.float32[W, H], B: dace.float32[H, W, H], red1: dace.float32[3], red2: dace.float32[1]):
 
-    @dace.map(_[0:H - 1, 0:W - 1])
+    @dace.map(_[0 : H - 1, 0 : W - 1])
     def compute(i, j):
         a << A[j, i]
         b >> B[i, j, 0]
@@ -23,16 +23,16 @@ def confres_test(A: dace.float32[W, H], B: dace.float32[H, W, H], red1: dace.flo
         r2 = 2
 
     dace.reduce(lambda a, b: a + b, A, red2)
-    red1[0:1] = dace.reduce(lambda a, b: a + b, B[2:H - 2, 5])
-    red1[1:] = dace.reduce(lambda a, b: a + b, B[3:H - 3, 5:7, :], axis=(2, 0))
-    red1[0:1] = dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :])
+    red1[0:1] = dace.reduce(lambda a, b: a + b, B[2 : H - 2, 5])
+    red1[1:] = dace.reduce(lambda a, b: a + b, B[3 : H - 3, 5:7, :], axis=(2, 0))
+    red1[0:1] = dace.reduce(lambda a, b: a - b, B[2 : H - 2, 5, :])
 
 
 def test():
     W = 20
     H = 20
 
-    print('Conflict Resolution Test %dx%d' % (W, H))
+    print("Conflict Resolution Test %dx%d" % (W, H))
 
     A = dace.ndarray([W, H], dtype=dace.float32)
     B = dace.ndarray([H, W, H], dtype=dace.float32)

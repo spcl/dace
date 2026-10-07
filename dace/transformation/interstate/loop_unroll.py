@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop unroll transformation """
+"""Loop unroll transformation"""
 
 import ast
 import copy
@@ -18,21 +18,23 @@ from dace.transformation.passes.analysis import loop_analysis
 @make_properties
 @xf.explicit_cf_compatible
 class LoopUnroll(xf.MultiStateTransformation):
-    """ Unrolls a for-loop into multiple individual control flow regions """
+    """Unrolls a for-loop into multiple individual control flow regions"""
 
     loop = xf.PatternNode(LoopRegion)
 
     count = Property(
         dtype=int,
         default=0,
-        category='Parameters',
-        desc='Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)',
+        category="Parameters",
+        desc="Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)",
     )
 
-    inline_iterations = Property(dtype=bool,
-                                 default=True,
-                                 category='Parameters',
-                                 desc="Whether or not to inline individual iterations' CFGs after unrolling")
+    inline_iterations = Property(
+        dtype=bool,
+        default=True,
+        category="Parameters",
+        desc="Whether or not to inline individual iterations' CFGs after unrolling",
+    )
 
     @classmethod
     def expressions(cls):
@@ -72,7 +74,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             stride = symbolic.evaluate(stride, sdfg.constants)
             loop_diff = int(symbolic.evaluate(end - start, sdfg.constants))
         except TypeError:
-            raise TypeError('Loop difference and strides cannot be symbolic.')
+            raise TypeError("Loop difference and strides cannot be symbolic.")
 
         # get_loop_end is the INCLUSIVE last iterate, so range's exclusive bound sits one unit
         # past it in the direction of travel: above when ascending, below when descending.
@@ -82,7 +84,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         # ambiguous start. Give it an empty predecessor instead. Guard on the iteration count, not
         # on loop_diff's sign, which is negative for every descending loop.
         if len(offsets) > 0 and graph.start_block is self.loop:
-            pre_state = graph.add_state(self.loop.label + '_unroll_pre', is_start_block=True)
+            pre_state = graph.add_state(self.loop.label + "_unroll_pre", is_start_block=True)
             graph.add_edge(pre_state, self.loop, sd.InterstateEdge())
 
         # Create states for loop subgraph
@@ -127,18 +129,24 @@ class LoopUnroll(xf.MultiStateTransformation):
                     continue
                 it.inline()
 
-    def instantiate_loop_iteration(self,
-                                   graph: ControlFlowRegion,
-                                   loop: LoopRegion,
-                                   value: symbolic.SymbolicType,
-                                   index: int,
-                                   label_suffix: Optional[str] = None) -> ControlFlowRegion:
-        it_label = loop.label + '_' + loop.loop_variable + (label_suffix
-                                                            if label_suffix is not None else symbolic.symstr(value))
+    def instantiate_loop_iteration(
+        self,
+        graph: ControlFlowRegion,
+        loop: LoopRegion,
+        value: symbolic.SymbolicType,
+        index: int,
+        label_suffix: Optional[str] = None,
+    ) -> ControlFlowRegion:
+        it_label = (
+            loop.label
+            + "_"
+            + loop.loop_variable
+            + (label_suffix if label_suffix is not None else symbolic.symstr(value))
+        )
         if not dtypes.validate_name(it_label):
             # A negative iterate renders a bare '-', which is not a legal identifier. The
             # enumeration index always is.
-            it_label = loop.label + '_' + loop.loop_variable + str(index)
+            it_label = loop.label + "_" + loop.loop_variable + str(index)
         iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
 
         # The label is loop label + iterate value, which collides when sibling loops share a label
@@ -203,9 +211,9 @@ class LoopUnroll(xf.MultiStateTransformation):
         for node in iteration_region.all_nodes_recursive():
             if isinstance(node, NestedSDFG):
                 if loop.loop_variable in node.symbol_mapping:
-                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
-                        loop.loop_variable: value_str
-                    }).visit(node.symbol_mapping[loop.loop_variable])
+                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({loop.loop_variable: value_str}).visit(
+                        node.symbol_mapping[loop.loop_variable]
+                    )
                 if loop.loop_variable in node.symbol_mapping:
                     del node.symbol_mapping[loop.loop_variable]
 

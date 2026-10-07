@@ -46,7 +46,7 @@ def _free_symbol_names(value: str) -> FrozenSet[str]:
 def _expression_names(value: str) -> Optional[FrozenSet[str]]:
     """The names an expression reads, or None if it does not parse."""
     try:
-        tree = ast.parse(value.strip(), mode='eval')
+        tree = ast.parse(value.strip(), mode="eval")
     except (SyntaxError, ValueError):
         return None
     return frozenset(node.id for node in ast.walk(tree) if isinstance(node, ast.Name))
@@ -101,7 +101,7 @@ def is_array_access(value: Optional[str]) -> bool:
 def reads_struct_member(value: str) -> bool:
     """``value`` reads an attribute off a plain name; a callee (``math.floor``) does not count."""
     try:
-        tree = ast.parse(value.strip(), mode='eval')
+        tree = ast.parse(value.strip(), mode="eval")
     except (SyntaxError, ValueError):
         return False
     callees = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
@@ -128,7 +128,7 @@ def resolve_value(value, table: Dict[str, Any]):
     if not repl:
         return value
     try:
-        tree = ast.parse(value.strip(), mode='eval')
+        tree = ast.parse(value.strip(), mode="eval")
         return astutils.unparse(astutils.ASTFindReplace(repl).visit(tree))
     except Exception:
         return value
@@ -160,7 +160,7 @@ def loop_bound_symbols(loop: LoopRegion) -> Set[str]:
     update statements whole, LHS included, so a value known for an iteration variable would spell
     ``(- 1) = ((- 1) + 1)``."""
     bound = {s for e in loop.all_interstate_edges() for s in e.data.assignments.keys()}
-    for blk in itertools.chain((loop, ), loop.all_control_flow_blocks()):
+    for blk in itertools.chain((loop,), loop.all_control_flow_blocks()):
         if not isinstance(blk, LoopRegion):
             continue
         if blk.loop_variable:
@@ -266,9 +266,11 @@ class SymbolPropagation(ppl.Pass):
         # A new free symbol means a value rendered into a name that does not resolve.
         new_free: Set[str] = {str(s) for s in sdfg.free_symbols} - before_free
         if new_free:
-            raise ValueError(f"SymbolPropagation introduced free symbol(s) {sorted(new_free)}: a propagated "
-                             f"value rendered to an unresolvable name. Symbol propagation must only eliminate "
-                             f"symbols, never introduce them.")
+            raise ValueError(
+                f"SymbolPropagation introduced free symbol(s) {sorted(new_free)}: a propagated "
+                f"value rendered to an unresolvable name. Symbol propagation must only eliminate "
+                f"symbols, never introduce them."
+            )
 
         return propagated if propagated else None
 
@@ -352,7 +354,7 @@ class SymbolPropagation(ppl.Pass):
         if eliminated:
             still_bound = {k for ie in sd.all_interstate_edges() for k in ie.data.assignments.keys()}
             for name in eliminated:
-                if (name in sd.symbols and name not in still_bound and name not in used_in_ir):
+                if name in sd.symbols and name not in still_bound and name not in used_in_ir:
                     del sd.symbols[name]
         return eliminated
 
@@ -482,8 +484,9 @@ class SymbolPropagation(ppl.Pass):
                 self._combine_syms(new_in_syms, sym_table)
 
         # A nested start block inherits its parent's symbols; a nested SDFG has a symbol mapping.
-        if (parent.start_block == cfg_blk and not isinstance(parent, SDFG)) or (isinstance(parent, ConditionalBlock)
-                                                                                and cfg_blk in parent.sub_regions()):
+        if (parent.start_block == cfg_blk and not isinstance(parent, SDFG)) or (
+            isinstance(parent, ConditionalBlock) and cfg_blk in parent.sub_regions()
+        ):
             # Some shapes carry their own, so combine rather than assert.
             if new_in_syms:
                 self._combine_syms(new_in_syms, in_syms[parent])
@@ -596,10 +599,9 @@ class SymbolPropagation(ppl.Pass):
             # tasklet by prepending ``auto i = ...;``, and a second round prepends it again.
             if isinstance(cfg_blk, LoopRegion):
                 meta_read = meta_read_symbols(cfg_blk)
-                cfg_blk.replace_meta_accesses({
-                    s: v
-                    for s, v in new_in_syms.items() if s in meta_read and s not in loop_carried
-                })
+                cfg_blk.replace_meta_accesses(
+                    {s: v for s, v in new_in_syms.items() if s in meta_read and s not in loop_carried}
+                )
             elif isinstance(cfg_blk, ConditionalBlock):
                 meta_read = meta_read_symbols(cfg_blk)
                 cfg_blk.replace_meta_accesses({s: v for s, v in new_in_syms.items() if s in meta_read})
@@ -613,8 +615,7 @@ class SymbolPropagation(ppl.Pass):
                 edge_free = {str(s) for s in edge.data.free_symbols}
                 edge_keys = set(edge.data.assignments.keys())
                 edge_subs = {
-                    s: v
-                    for s, v in new_out_syms.items() if s in edge_free and not (free_symbol_names(v) & edge_keys)
+                    s: v for s, v in new_out_syms.items() if s in edge_free and not (free_symbol_names(v) & edge_keys)
                 }
                 edge.data.replace_dict(edge_subs, replace_keys=False)
 

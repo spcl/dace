@@ -16,7 +16,7 @@ def cr_complex(input, output):
 
 
 def test_cr_complex():
-    print('CR non-atomic (complex value) test')
+    print("CR non-atomic (complex value) test")
 
     A = np.random.rand(N).astype(np.complex128)
     A += np.random.rand(N).astype(np.complex128) * 1j
@@ -30,7 +30,7 @@ def test_cr_complex():
     assert diff <= 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cr_complex()
 
 

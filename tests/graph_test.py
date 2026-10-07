@@ -4,7 +4,6 @@ from dace.sdfg.graph import *
 
 
 class TestOrderedGraphs(unittest.TestCase):
-
     def test_ordered_digraph(self):
         g = OrderedDiGraph()
         g.add_edge(0, 7, "abc")
@@ -109,9 +108,10 @@ class TestOrderedGraphs(unittest.TestCase):
 
     def test_dfs_edges(self):
 
-        sdfg = dace.SDFG('test_dfs_edges')
-        before, _, _ = sdfg.add_loop_state_machine(sdfg.add_state(), sdfg.add_state(), sdfg.add_state(), 'i', '0',
-                                                   'i < 10', 'i + 1')
+        sdfg = dace.SDFG("test_dfs_edges")
+        before, _, _ = sdfg.add_loop_state_machine(
+            sdfg.add_state(), sdfg.add_state(), sdfg.add_state(), "i", "0", "i < 10", "i + 1"
+        )
 
         visited_edges = list(sdfg.dfs_edges(before))
         assert len(visited_edges) == len(set(visited_edges))

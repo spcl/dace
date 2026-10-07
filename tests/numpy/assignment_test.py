@@ -130,8 +130,8 @@ def test_annotated_assign_type():
 
     # Test types
     sdfg = annassign.to_sdfg()
-    assert 't' not in sdfg.symbols or sdfg.symbols['t'] == dace.int64
-    b = next(arr for _, name, arr in sdfg.arrays_recursive() if name == 'b')
+    assert "t" not in sdfg.symbols or sdfg.symbols["t"] == dace.int64
+    b = next(arr for _, name, arr in sdfg.arrays_recursive() if name == "b")
     assert b.dtype == dace.float64
 
     # Test program correctness
@@ -160,7 +160,7 @@ def test_annotated_assign_with_value():
     assert np.allclose(b, np.sum(a, axis=1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_multiassign()
     test_multiassign_mutable()
     test_assign()

@@ -3,13 +3,14 @@
 Sample showing the Shiloach-Viskin pointer-chasing connected components graph algorithm in the explicit DaCe syntax.
 It showcases write-conflicting accesses, location constraints, and explicit data movement volume.
 """
+
 import argparse
 import dace
 import numpy as np
 import networkx as nx
 
-E = dace.symbol('E')
-V = dace.symbol('V')
+E = dace.symbol("E")
+V = dace.symbol("V")
 
 
 @dace.program
@@ -39,7 +40,7 @@ def shiloach_vishkin(EL: dace.uint64[2 * E, 2], comp: dace.uint64[V]):
 
         # Hook in parallel. Notice that writing to `comp` may have conflicts, but the last access will "win" and set
         # the flag.
-        for e in dace.map[0:2 * E]:
+        for e in dace.map[0 : 2 * E]:
             with dace.tasklet:
                 u << EL[e, 0]
                 v << EL[e, 1]
@@ -60,7 +61,7 @@ def shiloach_vishkin(EL: dace.uint64[2 * E, 2], comp: dace.uint64[V]):
         # backwards, so we introduce this as a location constraint "hint" in the memlet.
         for v in dace.map[0:V]:
             with dace.tasklet:
-                inp << comp(-1)[0:v + 1]  # The volume is unknown, but the location constraints are known
+                inp << comp(-1)[0 : v + 1]  # The volume is unknown, but the location constraints are known
                 out >> comp(-1)[v]
 
                 p = inp[v]
@@ -81,7 +82,7 @@ if __name__ == "__main__":
     E = args.edges
     V = args.vertices
 
-    print(f'Connected Components (Shiloach-Vishkin) E={E}, V={V}')
+    print(f"Connected Components (Shiloach-Vishkin) E={E}, V={V}")
 
     # Create a random graph and use it to create an edge list (EL)
     graph = nx.gnm_random_graph(V, E, seed=args.seed)
@@ -98,5 +99,5 @@ if __name__ == "__main__":
     # Verify correctness
     cc = nx.number_connected_components(graph)
     diff = abs(cc - len(np.unique(comp)))
-    print("Difference:", diff, '(dace-sv:', len(np.unique(comp)), ', networkx:', cc, ')')
+    print("Difference:", diff, "(dace-sv:", len(np.unique(comp)), ", networkx:", cc, ")")
     exit(0 if diff == 0 else 1)

@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" This sample uses basic grid-search based tuning to adapt memory layouts for a simple matrix multiplication. """
+"""This sample uses basic grid-search based tuning to adapt memory layouts for a simple matrix multiplication."""
+
 import dace
 from dace.codegen.instrumentation.report import InstrumentationReport
 import itertools
@@ -14,7 +15,7 @@ dtype = dace.float64
 REPS = 10
 
 # Define symbols
-M, K, N = tuple(dace.symbol(name) for name in ('M', 'K', 'N'))
+M, K, N = tuple(dace.symbol(name) for name in ("M", "K", "N"))
 
 
 # Our program is a simple matrix multiplication with unknown dimensions
@@ -24,8 +25,9 @@ def matmult(A: dtype[M, K], B: dtype[K, N], C: dtype[M, N]):
         C[:] = A @ B
 
 
-def test_configuration(a_trans: bool, b_trans: bool, a_padding: int, b_padding: int, M: int, K: int,
-                       N: int) -> InstrumentationReport:
+def test_configuration(
+    a_trans: bool, b_trans: bool, a_padding: int, b_padding: int, M: int, K: int, N: int
+) -> InstrumentationReport:
     """
     Tests a single configuration of A and B and returns the instrumentation
     report from running the SDFG.
@@ -59,21 +61,19 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int, b_padding: 
     #       dimension of "strides" contains the number of elements to skip in
     #       order to get to the next element in that dimension. For example,
     #       contiguous dimensions are denoted by 1
-    sdfg.arrays['A'].strides = a_strides
-    sdfg.arrays['A'].total_size = total_a
-    sdfg.arrays['B'].strides = b_strides
-    sdfg.arrays['B'].total_size = total_b
+    sdfg.arrays["A"].strides = a_strides
+    sdfg.arrays["A"].total_size = total_a
+    sdfg.arrays["B"].strides = b_strides
+    sdfg.arrays["B"].total_size = total_b
 
     # Create matching arrays in numpy and fill with random values
     nbytes = dtype.bytes
-    A = np.ndarray([M, K],
-                   dtype.type,
-                   buffer=np.ndarray([total_a], dtype.type),
-                   strides=[s * nbytes for s in a_strides])
-    B = np.ndarray([K, N],
-                   dtype.type,
-                   buffer=np.ndarray([total_b], dtype.type),
-                   strides=[s * nbytes for s in b_strides])
+    A = np.ndarray(
+        [M, K], dtype.type, buffer=np.ndarray([total_a], dtype.type), strides=[s * nbytes for s in a_strides]
+    )
+    B = np.ndarray(
+        [K, N], dtype.type, buffer=np.ndarray([total_b], dtype.type), strides=[s * nbytes for s in b_strides]
+    )
 
     A[:] = np.random.rand(M, K)
     B[:] = np.random.rand(K, N)
@@ -81,7 +81,7 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int, b_padding: 
 
     # Invoke SDFG: compile without additional transformations and run
     csdfg = sdfg.compile()
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):  # Allow strided views as arguments
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):  # Allow strided views as arguments
         csdfg(A=A, B=B, C=C, M=np.int32(M), K=np.int32(K), N=np.int32(N))
     assert np.allclose(A @ B, C)
 
@@ -89,17 +89,17 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int, b_padding: 
     return sdfg.get_latest_report()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Define some example sizes or use command line arguments
     M = int(sys.argv[1] if len(sys.argv) > 1 else 257)
     K = int(sys.argv[2] if len(sys.argv) > 2 else 258)
     N = int(sys.argv[3] if len(sys.argv) > 3 else 319)
 
     # Disable debug printouts
-    dace.Config.set('debugprint', value=False)
+    dace.Config.set("debugprint", value=False)
 
     # Create options for storage orders and padding
-    ORDERS = ['normal', 'transposed']
+    ORDERS = ["normal", "transposed"]
     PADDINGS = [1, 16, 512, 4096]
 
     best_config = (None, None, None, None)
@@ -109,8 +109,9 @@ if __name__ == '__main__':
     for tA_order, tB_order in itertools.product(ORDERS, ORDERS):
         for tA_padding, tB_padding in itertools.product(PADDINGS, PADDINGS):
             print(tA_order, tA_padding, tB_order, tB_padding)
-            report = test_configuration(tA_order == 'transposed', tB_order == 'transposed', tA_padding, tB_padding, M,
-                                        K, N)
+            report = test_configuration(
+                tA_order == "transposed", tB_order == "transposed", tA_padding, tB_padding, M, K, N
+            )
 
             # Obtain the first entry type from the report (there is only one)
             durations = next(iter(next(iter(report.durations.values())).values()))
@@ -126,7 +127,7 @@ if __name__ == '__main__':
 
     # Print out best configuration
     A_order, A_padding, B_order, B_padding = best_config
-    print('Fastest configuration for (%dx%dx%d) is:' % (M, K, N))
-    print('  A with storage order %s, padding = %d' % (A_order, A_padding))
-    print('  B with storage order %s, padding = %d' % (B_order, B_padding))
-    print('  Runtime: %f ms' % best_runtime)
+    print("Fastest configuration for (%dx%dx%d) is:" % (M, K, N))
+    print("  A with storage order %s, padding = %d" % (A_order, A_padding))
+    print("  B with storage order %s, padding = %d" % (B_order, B_padding))
+    print("  Runtime: %f ms" % best_runtime)
