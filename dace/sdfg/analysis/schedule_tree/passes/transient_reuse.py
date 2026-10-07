@@ -102,7 +102,7 @@ class _Event:
     writes_at_all: bool = False  # Whether the child may write the container (also conditionally)
 
 
-class _Liveness:
+class Liveness:
     """Live segments of transients in program order (preorder positions of the tree), taking loops into account: a
     container whose values do not flow between the iterations of a loop is live only in parts of the loop body."""
 
@@ -229,6 +229,17 @@ class _Liveness:
         """Live segments of a container, and whether it is read before being written (live on entry)."""
         return self._analyze(self.root, uses)
 
+    def exposed_in(self, scope: tn.ScheduleTreeScope, uses: List[_Use]) -> bool:
+        """
+        Whether one execution of a scope's children (e.g., one iteration of a loop) may read a container before
+        writing it there.
+
+        :param scope: The scope, which must contain all of ``uses``.
+        :param uses: The uses of the container (see ``usable_accesses``).
+        :return: True unless every read is proven to follow a write of the same elements in the same execution.
+        """
+        return self._analyze(scope, uses)[1]
+
     def _analyze(self, context: tn.ScheduleTreeNode, uses: List[_Use]) -> Tuple[List[Tuple[int, int]], bool]:
         # Group the uses by the child of the context containing them, in program order
         groups: Dict[int, Tuple[tn.ScheduleTreeNode, List[_Use]]] = {}
@@ -312,7 +323,7 @@ def _fits(desc: data.Array, slot: data.Array) -> bool:
     return True
 
 
-def _usable_accesses(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[_Use]], Set[str]]:
+def usable_accesses(root: tn.ScheduleTreeRoot) -> Tuple[Dict[str, List[_Use]], Set[str]]:
     """The memlet uses of every container, and the containers accessed in ways other than through the memlets of
     statements (e.g., by name in conditions, as copy targets or through views)."""
     uses: Dict[str, List[_Use]] = {}
@@ -358,8 +369,8 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
     """
     root = stree.get_root()
     containers = root.containers
-    uses, opaque = _usable_accesses(root)
-    liveness = _Liveness(root, trust_reads)
+    uses, opaque = usable_accesses(root)
+    liveness = Liveness(root, trust_reads)
     candidates = []
     for name, name_uses in uses.items():
         desc = containers.get(name)
@@ -440,8 +451,8 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     """
     root = stree.get_root()
     containers = root.containers
-    uses, opaque = _usable_accesses(root)
-    liveness = _Liveness(root, trust_reads=False)
+    uses, opaque = usable_accesses(root)
+    liveness = Liveness(root, trust_reads=False)
     candidates = []
     for name, desc in containers.items():
         if (not desc.transient or type(desc) is not data.Array or name in opaque or name not in uses
