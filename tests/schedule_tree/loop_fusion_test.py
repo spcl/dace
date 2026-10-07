@@ -209,6 +209,40 @@ def test_refine_field_to_plane():
     _run_equal(stree, reference)
 
 
+def _condition_tree(condition: str) -> tn.ScheduleTreeRoot:
+    stree = _tree([])
+    consumer = _tasklet('b = value', {'value': 'T[0, 0, k]'}, {'b': 'B[0, 0, k]'})
+    guard = tn.IfScope(condition=dace.properties.CodeBlock(condition), children=[consumer])
+    producer = _tasklet('b = a', {'a': 'A[0, 0, k]'}, {'b': 'T[0, 0, k]'})
+    loop = dace.sdfg.state.LoopRegion('vertical', f'k < {NK}', 'k', 'k = 0', 'k = k + 1')
+    stree.add_children([tn.ForScope(loop=loop, children=[producer, guard])])
+    return stree
+
+
+def test_refine_condition_access():
+    stree, reference = _condition_tree('T[0, 0, k] >= 0'), _condition_tree('T[0, 0, k] >= 0')
+    guard = next(n for n in stree.preorder_traversal() if isinstance(n, tn.IfScope))
+
+    assert refine_loop_local_transients(stree) == 1
+    assert tuple(stree.containers['T'].shape) == (NI, NJ, 1)
+    assert guard.condition.as_string == '(T[0, 0, 0] >= 0)'
+    _run_equal(stree, reference)
+
+
+def test_refine_condition_access_can_be_disabled():
+    stree = _condition_tree('T[0, 0, k] >= 0')
+
+    assert refine_loop_local_transients(stree, refine_in_conditions=False) == 0
+    assert tuple(stree.containers['T'].shape) == (NI, NJ, NK)
+
+
+def test_refine_condition_access_not_across_levels():
+    stree = _condition_tree('T[0, 0, k - 1] >= 0')
+
+    assert refine_loop_local_transients(stree) == 0
+    assert tuple(stree.containers['T'].shape) == (NI, NJ, NK)
+
+
 def test_refine_not_across_levels():
     """``T[k - 1]`` is read in the next iteration of the vertical loop."""
     make = lambda: _two_nests('T[i, j, k - 1]')
