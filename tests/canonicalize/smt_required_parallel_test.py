@@ -227,18 +227,20 @@ def test_overwriting_scatter_keeps_the_whole_guard():
 
 
 def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():
-    """The exempt side. ``A[IDX[k]] = A[IDX[k]] + B[k]`` reaches codegen as an atomic WCR
-    accumulate, which is correct for ANY index array, so a guard here would abort on inputs the
+    """The exempt side. ``A[IDX[k]] = A[IDX[k]] + B[k]`` reaches codegen as a race-free WCR
+    accumulate -- a tree reduction (``reduction(+:A[...])``) from the new CPU codegen, ``reduce_atomic``
+    from the old one -- which is correct for ANY index array, so a guard here would abort on inputs the
     program computes right.
 
-    The atomic is asserted in the emitted text because it IS the exemption's premise: drop the
-    atomic and the same unguarded Map becomes a race. The numbers are asserted against the
+    The race-free combine is asserted in the emitted text because it IS the exemption's premise: drop
+    it and the same unguarded Map becomes a race. The numbers are asserted against the
     duplicate-index reference so the exemption can never be widened into a wrong answer."""
     sdfg = cpu_canon(unique_scatter.to_sdfg(simplify=True))
     assert not guard_check_nodes(sdfg), 'an accumulation must not pay for a conflict check'
     assert not guard_trap_tasklets(sdfg), 'an accumulation must not be able to abort'
     code = '\n'.join(c.code for c in sdfg.generate_code())
-    assert 'reduce_atomic' in code, 'the exemption is sound only while the combine is atomic'
+    assert 'reduce_atomic' in code or re.search(r'reduction\(\+:A\[', code), \
+        'the exemption is sound only while the combine is race-free'
 
     n = 8
     idx = np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64)  # deliberately NOT a permutation

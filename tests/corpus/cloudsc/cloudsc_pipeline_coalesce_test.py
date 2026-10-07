@@ -162,12 +162,11 @@ def test_coalescing_does_not_change_the_numbers(premapped):
 
 
 def test_the_accumulation_reaching_the_band_needs_no_atomic(premapped):
-    """The third sweep accumulates one element per iteration, so the graph handed to the band must
-    already say so: an inlined RMW body leaves its whole-array memlet on the enclosing map exit, and
-    codegen reads that box as the write set and emits an atomic the write does not need."""
+    """The third sweep updates one element per iteration, so it reaches the band as a plain
+    read-modify-write: neither a WCR nor an atomic the write does not need."""
     code = copy.deepcopy(premapped).generate_code()[0].code
-    assert '>::reduce(' in code, 'the accumulation reaching the band is not a WCR any more'
-    assert 'reduce_atomic' not in code, 'a per-element accumulation was emitted as an atomic'
+    assert '>::reduce' not in code, 'a per-element update reached the band as a WCR'
+    assert 'reduction(' not in code, 'a per-element update was emitted as an OpenMP reduction'
 
 
 def test_reapplying_the_band_is_a_no_op(premapped):
