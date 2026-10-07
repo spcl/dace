@@ -6,11 +6,11 @@ The legacy generator declares an allocated array and then assigns the allocation
 statements landing in two streams::
 
     double *tmp;
-    tmp = new (std::align_val_t(64)) double [N];
+    tmp = dace::aligned_new_array<double>(N, 64);
 
 The readable generator fuses them into a single definition carrying a restrict qualifier::
 
-    double* __restrict__ tmp = new (std::align_val_t(64)) double [N];
+    double* __restrict__ tmp = dace::aligned_new_array<double>(N, 64);
 
 Fusing is only a textual merge of two writes, so it is sound exactly when both land in the SAME
 scope. DaCe deliberately separates them (a DECLARATION may be hoisted to an outer scope while the
@@ -120,9 +120,9 @@ def code_for(build, name, implementation):
         return generated_code(build(name))
 
 
-#: Both generators allocate through the aligned ``operator new[]``.
-ALIGNED_NEW = r"new\s+\(std::align_val_t\(64\)\)\s+double\s*\["
-#: The fused definition: ``<type>* __restrict__ <name> = new (std::align_val_t(64)) <type> [<count>];``
+#: Both generators allocate through ``dace::aligned_new_array``.
+ALIGNED_NEW = r"dace::aligned_new_array<double>\("
+#: The fused definition: ``<type>* __restrict__ <name> = dace::aligned_new_array<<type>>(<count>, 64);``
 FUSED = re.compile(r"double\*\s+__restrict__\s+tmp\s*=\s*" + ALIGNED_NEW)
 #: The legacy split pair.
 SPLIT_DECL = re.compile(r"double\s*\*\s*tmp\s*;")
@@ -169,14 +169,14 @@ def test_may_alias_drops_restrict(require_experimental):
 def test_constant_extent_is_fused(require_experimental):
     """A COMPILE-TIME-CONSTANT extent is fused like a runtime one.
 
-    The aligned ``operator new[]`` is spelled with a placement argument, not an alignment attribute on the element
+    ``dace::aligned_new_array`` takes the alignment as an argument, not as an attribute on the element
     type, so the fused definition does not name an over-aligned fixed array type (GCC 16 rejects that: "alignment of
     array elements is greater than element size"). ``write_once_heap_sdfg`` allocates ``s`` with a constant extent
     of 2, routed through an ``s_size()`` helper (a length-1 transient becomes a Scalar first);
     ``test_write_once_heap_bit_exact`` compiles and runs it.
     """
     code = code_for(write_once_heap_sdfg, "fused_const_extent", EXPERIMENTAL)
-    assert re.search(r"double\*\s+__restrict__\s+s\s*=\s*" + ALIGNED_NEW + r"(?:s_size\(\)|2)\]", code), (
+    assert re.search(r"double\*\s+__restrict__\s+s\s*=\s*" + ALIGNED_NEW + r"(?:s_size\(\)|2), 64\)", code), (
         f"expected a fused definition for a constant extent:\n{code}"
     )
     assert "DACE_ALIGN" not in code, f"the alignment attribute must not return:\n{code}"

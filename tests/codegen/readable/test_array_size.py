@@ -192,7 +192,7 @@ def size_helper_definition(code: str, array: str) -> str:
 def allocation_line(code: str, array: str) -> str:
     """The aligned ``new[]`` allocation statement for ``array`` (matched at a word boundary)."""
     pattern = re.compile(r"(?<!\w)%s = " % re.escape(array))
-    lines = [line.strip() for line in code.splitlines() if "std::align_val_t" in line and pattern.search(line)]
+    lines = [line.strip() for line in code.splitlines() if "aligned_new_array" in line and pattern.search(line)]
     assert lines, "experimental codegen emitted no aligned allocation for %s" % array
     return lines[0]
 
@@ -214,7 +214,7 @@ def test_symbolic_size_helper(require_experimental):
     assert "constexpr" in definition, definition
     assert "int64_t M" in definition and "int64_t N" in definition, definition
     assert "(M * N)" in definition, definition
-    assert "new (std::align_val_t(64)) double [T_size(M, N)]" in allocation_line(code, "T")
+    assert "dace::aligned_new_array<double>(T_size(M, N), 64)" in allocation_line(code, "T")
 
 
 def test_ipow_size_helper(require_experimental):
@@ -232,7 +232,7 @@ def test_ipow_size_helper(require_experimental):
     # RelaxIntegerPowers lowers ``N**2`` to ``ipow(N, 2)``; ``ipow`` is a constexpr runtime helper, so
     # the constexpr size function may call it directly (see dace/runtime/include/dace/math.h).
     assert "ipow(N, 2)" in definition, definition
-    assert "new (std::align_val_t(64)) double [T_size(N)]" in allocation_line(code, "T")
+    assert "dace::aligned_new_array<double>(T_size(N), 64)" in allocation_line(code, "T")
 
 
 def test_constant_size_helper(require_experimental):
@@ -249,7 +249,7 @@ def test_constant_size_helper(require_experimental):
     expected_qual = "consteval" if int(str(Config.get("compiler", "cpp_standard")).strip()) >= 20 else "constexpr"
     assert expected_qual in definition, definition
     assert "T_size()" in definition and "return 200;" in definition, definition
-    assert "new (std::align_val_t(64)) double [T_size()]" in allocation_line(code, "T")
+    assert "dace::aligned_new_array<double>(T_size(), 64)" in allocation_line(code, "T")
 
 
 def test_bare_single_symbol_not_wrapped(require_experimental):
@@ -263,7 +263,7 @@ def test_bare_single_symbol_not_wrapped(require_experimental):
 
     code = experimental_code(build, "baresize_inspect")
     assert "T_size" not in code, "a bare single-symbol size must not be wrapped in a helper"
-    assert "new (std::align_val_t(64)) double [N]" in allocation_line(code, "T")
+    assert "dace::aligned_new_array<double>(N, 64)" in allocation_line(code, "T")
 
 
 def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):

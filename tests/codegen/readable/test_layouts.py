@@ -289,8 +289,8 @@ def test_alignment(require_experimental):
 
     # The experimental generator allocates T with the base aligned new[], at the descriptor's alignment.
     code = experimental_code(build, "aligned_inspect")
-    assert any("T = new (std::align_val_t(128))" in line for line in code.splitlines()), (
-        "experimental codegen did not use a 128-byte aligned new[] for T"
+    assert any("T = dace::aligned_new_array<double>(" in line and ", 128)" in line for line in code.splitlines()), (
+        "experimental codegen did not allocate T aligned to its 128 bytes"
     )
 
 
