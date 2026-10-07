@@ -11,6 +11,7 @@ from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes.common import (iteration_spaces, memlets_of, names_read, names_written,
                                                             repository_of)
+from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import Liveness, usable_accesses
 
 
 def _sequential_loops(node: tn.ScheduleTreeNode) -> List[tn.ScheduleTreeScope]:
@@ -48,8 +49,10 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope) -> int:
     streaming whole fields through memory.
 
     Iteration ``v`` only accesses the elements at index ``v`` in that dimension, which no other iteration accesses, so
-    sharing one element among all iterations is valid as long as the loop is sequential; reads of elements that the
-    iteration has not written would read undefined values before and after. Transients that are viewed, accessed
+    sharing one element among all iterations is valid as long as the loop is sequential and every iteration writes
+    what it reads before reading it. A transient an iteration may read before writing (e.g., halo points that a
+    stencil reads but only some iterations compute) is left alone: such a read sees an element no iteration wrote
+    (e.g., zero-initialized), where the shared element would hold what an earlier iteration wrote. Transients that are viewed, accessed
     other than through single-element-per-dimension memlets, or accessed outside the loop are left alone. Run this
     while producers and consumers are in one loop (e.g., after fusing loops, before index-set splitting separates
     iterations into several loops).
@@ -80,6 +83,9 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope) -> int:
                 opaque |= {m.data for m in memlets_of(node, attr)}
         opaque |= {m.data for m in memlets_of(node, 'memlet')}
         opaque |= (names_read(node) | names_written(node)) & containers.keys() - covered
+
+    live_uses, _ = usable_accesses(root)
+    liveness = Liveness(root, trust_reads=False)
 
     removed = 0
     for name, uses in accesses.items():
@@ -115,6 +121,8 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope) -> int:
                 dim = dims.pop()
                 if dim in contracted or desc.shape[dim] == 1:
                     continue
+                if name not in live_uses or liveness.exposed_in(loop, live_uses[name]):
+                    continue  # An iteration may read an element before writing it
                 contracted.add(dim)
         if not contracted:
             continue

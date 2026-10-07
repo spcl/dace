@@ -224,6 +224,23 @@ def test_refine_not_across_loops():
     assert refine_loop_local_transients(make()) == 0
 
 
+def test_refine_not_read_before_written():
+    """
+    ``T`` is written on even levels only and read on every level: an odd level reads the element that no level wrote
+    (zero here, as the program zero-initializes it), while a plane would hold the value of the level before.
+    """
+
+    def make():
+        guarded = tn.IfScope(condition=dace.properties.CodeBlock('k % 2 == 0'),
+                             children=[_tasklet('o = 2 * a', {'a': 'A[i, j, k]'}, {'o': 'T[i, j, k]'})])
+        stree = _tree([(0, NK - 1, [guarded], 'k')])
+        stree.children[0].add_children(
+            [_plane([_tasklet('b = x + 1', {'x': 'T[i, j, k]'}, {'b': 'B[i, j, k]'})], 'second')])
+        return stree
+
+    assert refine_loop_local_transients(make()) == 0
+
+
 def test_refine_pointwise_to_scalar():
     body = lambda: [
         _tasklet('o = 2 * a', {'a': 'A[i, j, k]'}, {'o': 'T[i, j, k]'}),
@@ -261,5 +278,6 @@ if __name__ == '__main__':
     test_refine_field_to_plane()
     test_refine_not_across_levels()
     test_refine_not_across_loops()
+    test_refine_not_read_before_written()
     test_refine_pointwise_to_scalar()
     test_fuse_then_refine()
