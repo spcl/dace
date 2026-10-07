@@ -6,6 +6,7 @@ read into a ``__sym_`` symbol on an interstate edge and substituted into the sha
 descriptor in place so it can still be read or reassigned. Each shape captures its own symbol, so
 two arrays sized from the same reused name keep their own extents.
 """
+
 import ast
 import types
 
@@ -15,7 +16,7 @@ import pytest
 import dace
 from dace.frontend.python.newast import ProgramVisitor
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -126,12 +127,10 @@ def test_promotion_leaves_the_descriptor_in_place():
     # The scalar read by each ``__sym_... = <scalar>`` assignment must survive as a descriptor;
     # deleting it is what broke later reads of the size.
     sources = {
-        rhs
-        for e in sdfg.all_interstate_edges()
-        for lhs, rhs in e.data.assignments.items() if lhs.startswith('__sym_')
+        rhs for e in sdfg.all_interstate_edges() for lhs, rhs in e.data.assignments.items() if lhs.startswith("__sym_")
     }
-    assert sources, 'the size scalar must be read into a symbol'
-    assert all(src in sdfg.arrays for src in sources), 'the size descriptor must survive promotion'
+    assert sources, "the size scalar must be read into a symbol"
+    assert all(src in sdfg.arrays for src in sources), "the size descriptor must survive promotion"
     sdfg.validate()
 
 
@@ -146,7 +145,7 @@ def test_shape_stays_correct_through_simplify():
         sdfg = size_from_empty.to_sdfg(simplify=simplify)
         out = np.zeros(n)
         sdfg(a=a, Nt=np.int64(nt), out=out, N=n)
-        assert np.allclose(out, a * 2.0), f'wrong result with simplify={simplify}'
+        assert np.allclose(out, a * 2.0), f"wrong result with simplify={simplify}"
 
 
 def test_a_size_one_array_is_read_through_a_subscript():
@@ -174,7 +173,7 @@ def calls_size_from_empty(a: dace.float64[N], Nt: dace.int64, out: dace.float64[
     size_from_empty(a, Nt, out)
 
 
-@pytest.mark.parametrize('program', [size_from_empty_into_a_branch, calls_size_from_empty])
+@pytest.mark.parametrize("program", [size_from_empty_into_a_branch, calls_size_from_empty])
 def test_a_size_assigned_into_a_region_is_defined_before_the_allocation(program):
     """The promoted size reaches a conditional, or a nested SDFG's loops, on the edge entering it."""
     n, nt = 6, 9
@@ -196,7 +195,7 @@ def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
     out[0] = np.sum(b)
 
 
-@pytest.mark.parametrize('program,expected', [(zeros_from_size, 0.0), (ones_from_size, 4.0)])
+@pytest.mark.parametrize("program,expected", [(zeros_from_size, 0.0), (ones_from_size, 4.0)])
 def test_the_fill_constructors_accept_a_computed_size(program, expected):
     """zeros/ones/full build their transient on their own path, which also has to promote the size."""
     out = np.zeros(1)
@@ -300,13 +299,13 @@ def test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent():
 def test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx():
     """A name the preprocessing builds may lack ``ctx`` (on Python 3.12 the attribute is missing), and it is still a
     write: the loop must drop that size's shape version, and keep the one of a size it only reads."""
-    target = ast.Name(id='n')
-    vars(target).pop('ctx', None)  # Python 3.13+ fills in a default ctx; 3.12 leaves it out
-    loop = ast.parse('for i in range(m):\n    n = n + 1').body[0]
+    target = ast.Name(id="n")
+    vars(target).pop("ctx", None)  # Python 3.13+ fills in a default ctx; 3.12 leaves it out
+    loop = ast.parse("for i in range(m):\n    n = n + 1").body[0]
     loop.body[0].targets = [target]
-    visitor = types.SimpleNamespace(shape_promotions={'n': 'n_version', 'm': 'm_version'}, variables={})
+    visitor = types.SimpleNamespace(shape_promotions={"n": "n_version", "m": "m_version"}, variables={})
     ProgramVisitor.drop_shape_versions_written_in(visitor, loop)
-    assert visitor.shape_promotions == {'m': 'm_version'}
+    assert visitor.shape_promotions == {"m": "m_version"}
 
 
 def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
@@ -330,7 +329,7 @@ def test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version():
     assert np.allclose(px, expected), px
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_loop_storing_through_a_slice_by_a_size_keeps_its_shape_version()
     test_a_loop_drops_the_shape_version_of_a_size_it_assigns_without_a_ctx()
     test_a_shape_made_after_a_slice_by_the_same_size_shares_its_extent()

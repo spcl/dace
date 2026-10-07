@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Correctness tests for the :class:`Norm2` library node pure expansion."""
+
 import numpy as np
 
 import dace
@@ -7,7 +8,7 @@ from dace.libraries.standard.nodes import Norm2
 
 
 def _build(in_shape, dtype, dim=None):
-    shape_tag = '_'.join(map(str, in_shape))
+    shape_tag = "_".join(map(str, in_shape))
     sdfg = dace.SDFG(f"norm2_dim{dim}_{shape_tag}_{dtype.to_string()}")
     sdfg.add_array("v", list(in_shape), dtype)
     if dim is None:
@@ -18,8 +19,8 @@ def _build(in_shape, dtype, dim=None):
     state = sdfg.add_state()
     node = Norm2("norm2", dim=dim)
     state.add_node(node)
-    state.add_edge(state.add_read("v"), None, node, '_x', dace.Memlet.from_array("v", sdfg.arrays["v"]))
-    state.add_edge(node, '_out', state.add_write("r"), None, dace.Memlet.from_array("r", sdfg.arrays["r"]))
+    state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(node, "_out", state.add_write("r"), None, dace.Memlet.from_array("r", sdfg.arrays["r"]))
     sdfg.expand_library_nodes()
     return sdfg
 
@@ -50,8 +51,8 @@ def test_norm2_2d_dim1():
     np.testing.assert_allclose(r, np.linalg.norm(x, axis=0), rtol=1e-12)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_norm2_whole_array()
     test_norm2_random_1d()
     test_norm2_2d_dim1()
-    print('Norm2 tests PASS')
+    print("Norm2 tests PASS")

@@ -5,6 +5,7 @@ Fortran ``NORM2(X [, DIM])`` returns ``sqrt(sum(X**2))``.  Without
 ``DIM`` the result is a scalar over the whole array; with ``DIM``
 the reduction is along one axis and the result is rank-(R-1).
 """
+
 import dace
 import dace.library
 import dace.properties
@@ -109,10 +110,12 @@ class Norm2(dace.sdfg.nodes.LibraryNode):
     implementations = {"pure": ExpandNorm2Pure}
     default_implementation = "pure"
 
-    dim = dace.properties.Property(dtype=int,
-                                   default=None,
-                                   allow_none=True,
-                                   desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array.")
+    dim = dace.properties.Property(
+        dtype=int,
+        default=None,
+        allow_none=True,
+        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array.",
+    )
 
     def __init__(self, name, *, dim=None, **kwargs):
         super().__init__(name, inputs={"_x"}, outputs={"_out"}, **kwargs)
@@ -138,13 +141,13 @@ class Norm2(dace.sdfg.nodes.LibraryNode):
         return desc_x, desc_out, dim_zero
 
 
-@oprepo.replaces('dace.libraries.standard.norm2')
-@oprepo.replaces('dace.libraries.standard.Norm2')
-def norm2_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, out, *, dim=None):
+@oprepo.replaces("dace.libraries.standard.norm2")
+@oprepo.replaces("dace.libraries.standard.Norm2")
+def norm2_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, out, *, dim=None):
     x_in = state.add_read(x)
     w = state.add_write(out)
     node = Norm2("norm2", dim=dim)
     state.add_node(node)
-    state.add_edge(x_in, None, node, '_x', mm.Memlet(x))
-    state.add_edge(node, '_out', w, None, mm.Memlet(out))
+    state.add_edge(x_in, None, node, "_x", mm.Memlet(x))
+    state.add_edge(node, "_out", w, None, mm.Memlet(out))
     return []

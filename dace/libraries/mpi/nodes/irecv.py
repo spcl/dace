@@ -4,13 +4,11 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, expanded_input_connectors,
-                                           validate_integer_descriptor)
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_connectors, validate_integer_descriptor
 
 
 @dace.library.expansion
 class ExpandIrecvMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -28,33 +26,34 @@ class ExpandIrecvMPI(ExpandTransformation):
             code = f"""static MPI_Datatype newtype;
                         static int init=1;
                         if (init) {{
-                           MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
+                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
                            MPI_Type_commit(&newtype);
                            init = 0;
                         }}
                             """
             mpi_dtype_str = "newtype"
             count_str = "1"
-        buffer_offset = 0  #this is here because the frontend already changes the pointer
+        buffer_offset = 0  # this is here because the frontend already changes the pointer
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
 
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
         return tasklet
 
 
 @dace.library.node
 class Irecv(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandIrecvMPI,
@@ -80,12 +79,12 @@ class Irecv(MPINode):
             if e.dst_conn == "_tag":
                 tag = sdfg.arrays[e.data.data]
 
-        validate_integer_descriptor(src, 'Source')
-        validate_integer_descriptor(tag, 'Tag')
+        validate_integer_descriptor(src, "Source")
+        validate_integer_descriptor(tag, "Tag")
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_buffer':
+            if src_conn == "_buffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
                 # compute buffer offset

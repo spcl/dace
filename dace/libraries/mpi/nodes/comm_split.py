@@ -10,7 +10,6 @@ from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_
 
 @dace.library.expansion
 class ExpandCommSplitMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -20,13 +19,15 @@ class ExpandCommSplitMPI(ExpandTransformation):
         code = f"""
             _newcomm = MPI_COMM_NULL;
             MPI_Comm_split({comm}, _color, _key, &_newcomm);"""
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dtypes.Language.CPP,
-                                          side_effects=True)
-        conn = {c: (dtypes.opaque("MPI_Comm") if c == '_newcomm' else t) for c, t in tasklet.out_connectors.items()}
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
+        conn = {c: (dtypes.opaque("MPI_Comm") if c == "_newcomm" else t) for c, t in tasklet.out_connectors.items()}
         tasklet.out_connectors = conn
         return tasklet
 

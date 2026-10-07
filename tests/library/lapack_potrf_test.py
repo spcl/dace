@@ -12,6 +12,7 @@ from dace.memlet import Memlet
 
 def generate_matrix(size, dtype):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     A = rng.random((size, size), dtype=dtype)
     return (0.5 * A @ A.T).copy()
@@ -31,7 +32,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     if transient:
         x_arr = sdfg.add_array("x" + suffix, [n, n], dtype, storage=storage, transient=transient)
-        xt_arr = sdfg.add_array('xt' + suffix, [n, n], dtype, storage=storage, transient=transient)
+        xt_arr = sdfg.add_array("xt" + suffix, [n, n], dtype, storage=storage, transient=transient)
     sdfg.add_array("result" + suffix, [1], dace.dtypes.int32, storage=storage, transient=transient)
 
     if transient:
@@ -47,10 +48,10 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         transpose_out.implementation = "cuBLAS"
         state.add_nedge(xhi, xi, Memlet.from_array(*xhost_arr))
         state.add_nedge(xo, xho, Memlet.from_array(*xhost_arr))
-        state.add_memlet_path(xi, transpose_in, dst_conn='_inp', memlet=Memlet.from_array(*x_arr))
-        state.add_memlet_path(transpose_in, xin, src_conn='_out', memlet=Memlet.from_array(*xt_arr))
-        state.add_memlet_path(xout, transpose_out, dst_conn='_inp', memlet=Memlet.from_array(*xt_arr))
-        state.add_memlet_path(transpose_out, xo, src_conn='_out', memlet=Memlet.from_array(*x_arr))
+        state.add_memlet_path(xi, transpose_in, dst_conn="_inp", memlet=Memlet.from_array(*x_arr))
+        state.add_memlet_path(transpose_in, xin, src_conn="_out", memlet=Memlet.from_array(*xt_arr))
+        state.add_memlet_path(xout, transpose_out, dst_conn="_inp", memlet=Memlet.from_array(*xt_arr))
+        state.add_memlet_path(transpose_out, xo, src_conn="_out", memlet=Memlet.from_array(*x_arr))
     else:
         xin = state.add_access("x" + suffix)
         xout = state.add_access("x" + suffix)
@@ -61,10 +62,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     state.add_memlet_path(xin, potrf_node, dst_conn="_xin", memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n * n))
     state.add_memlet_path(potrf_node, result, src_conn="_res", memlet=Memlet.simple(result, "0", num_accesses=1))
-    state.add_memlet_path(potrf_node,
-                          xout,
-                          src_conn="_xout",
-                          memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n * n))
+    state.add_memlet_path(
+        potrf_node, xout, src_conn="_xout", memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n * n)
+    )
 
     return sdfg
 
@@ -72,14 +72,17 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, storage",
+    [
+        pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    ],
+)
 def test_potrf(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     potrf_sdfg = sdfg.compile()

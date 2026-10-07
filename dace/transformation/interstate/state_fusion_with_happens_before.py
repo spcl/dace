@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" State fusion transformation """
+"""State fusion transformation"""
 
 import warnings
 from typing import Dict, List, Optional
@@ -13,15 +13,23 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.sdfg.validation import InvalidSDFGEdgeError
 from dace.transformation import transformation
-from dace.transformation.interstate.state_fusion import (MATCH_ERRORS, is_fusible_state_shape, is_start_block,
-                                                         keep_start_block)
+from dace.transformation.interstate.state_fusion import (
+    MATCH_ERRORS,
+    is_fusible_state_shape,
+    is_start_block,
+    keep_start_block,
+)
 
 
 # Helper class for finding connected component correspondences
 class CCDesc:
-
-    def __init__(self, first_input_nodes: List[nodes.AccessNode], first_output_nodes: List[nodes.AccessNode],
-                 second_input_nodes: List[nodes.AccessNode], second_output_nodes: List[nodes.AccessNode]) -> None:
+    def __init__(
+        self,
+        first_input_nodes: List[nodes.AccessNode],
+        first_output_nodes: List[nodes.AccessNode],
+        second_input_nodes: List[nodes.AccessNode],
+        second_output_nodes: List[nodes.AccessNode],
+    ) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
         self.first_input_nodes = first_input_nodes
         self.first_outputs = {n.data for n in first_output_nodes}
@@ -89,8 +97,8 @@ def mismatched_data_edges(state: SDFGState, owner_sdfg):
             continue
         # A copy between two AccessNodes ``A[i] -> B[0]`` is recorded with ``memlet.data == 'A'``
         # (one side); the other side lives in ``other_subset``. So this is an OR, not an AND.
-        src_match = (src_an is not None and (name == src_an.data or name == e.src_conn))
-        dst_match = (dst_an is not None and (name == dst_an.data or name == e.dst_conn))
+        src_match = src_an is not None and (name == src_an.data or name == e.src_conn)
+        dst_match = dst_an is not None and (name == dst_an.data or name == e.dst_conn)
         if not (src_match or dst_match):
             yield eid, e, src_an, dst_an, name
 
@@ -98,26 +106,29 @@ def mismatched_data_edges(state: SDFGState, owner_sdfg):
 @transformation.explicit_cf_compatible
 @properties.make_properties
 class StateFusionExtended(transformation.MultiStateTransformation):
-    """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
-        An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.
-        The merge is made by identifying the source in the first state and the sink in the second state,
-        and linking the bottom of the appropriate source subgraph in the first state with the top of the
-        appropriate sink subgraph in the second state.
+    """Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
+    An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.
+    The merge is made by identifying the source in the first state and the sink in the second state,
+    and linking the bottom of the appropriate source subgraph in the first state with the top of the
+    appropriate sink subgraph in the second state.
 
-        State-fusion takes two states that are connected through a single edge,
-        and fuses them into one state. If permissive, also applies if potential memory
-        access hazards are created.
+    State-fusion takes two states that are connected through a single edge,
+    and fuses them into one state. If permissive, also applies if potential memory
+    access hazards are created.
     """
+
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
 
     strict_validate = properties.Property(
         dtype=bool,
         default=False,
-        desc=("Run ``sdfg.validate()`` after ``apply`` (paranoid debug mode). When ``False`` (the default in hot "
-              "paths), only a cheap structural check on the fused state runs -- catches the historical bug class "
-              "(orphan nodes, mismatched ``memlet.data``) without paying the full-SDFG-validate cost. The cheap "
-              "check is *always* on; this knob only adds the full validate on top."),
+        desc=(
+            "Run ``sdfg.validate()`` after ``apply`` (paranoid debug mode). When ``False`` (the default in hot "
+            "paths), only a cheap structural check on the fused state runs -- catches the historical bug class "
+            "(orphan nodes, mismatched ``memlet.data``) without paying the full-SDFG-validate cost. The cheap "
+            "check is *always* on; this knob only adds the full validate on top."
+        ),
     )
 
     @staticmethod
@@ -172,8 +183,14 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         return result
 
     @staticmethod
-    def memlets_intersect(graph_a: SDFGState, group_a: List[nodes.AccessNode], inputs_a: bool, graph_b: SDFGState,
-                          group_b: List[nodes.AccessNode], inputs_b: bool) -> bool:
+    def memlets_intersect(
+        graph_a: SDFGState,
+        group_a: List[nodes.AccessNode],
+        inputs_a: bool,
+        graph_b: SDFGState,
+        group_b: List[nodes.AccessNode],
+        inputs_b: bool,
+    ) -> bool:
         """
         Performs an all-pairs check for subset intersection on two
         groups of nodes. If group intersects or result is indeterminate,
@@ -188,8 +205,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         :return: True if subsets intersect or result is indeterminate.
         """
         # Set traversal functions
-        src_subset = lambda e: (e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset)
-        dst_subset = lambda e: (e.data.dst_subset if e.data.dst_subset is not None else e.data.src_subset)
+        src_subset = lambda e: e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset
+        dst_subset = lambda e: e.data.dst_subset if e.data.dst_subset is not None else e.data.src_subset
         if inputs_a:
             edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
             subset_a = src_subset
@@ -217,31 +234,52 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     return True
         return False
 
-    def has_path(self, first_state: SDFGState, second_state: SDFGState,
-                 match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], node_a: nodes.Node, node_b: nodes.Node) -> bool:
-        """ Check for paths between the two states if they are fused. """
+    def has_path(
+        self,
+        first_state: SDFGState,
+        second_state: SDFGState,
+        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
+        node_a: nodes.Node,
+        node_b: nodes.Node,
+    ) -> bool:
+        """Check for paths between the two states if they are fused."""
         for match_a, match_b in match_nodes.items():
             if nx.has_path(first_state._nx, node_a, match_a) and nx.has_path(second_state._nx, match_b, node_b):
                 return True
         return False
 
-    def _check_all_paths(self, first_state: SDFGState, second_state: SDFGState,
-                         match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], nodes_first: List[nodes.AccessNode],
-                         nodes_second: List[nodes.AccessNode], first_read: bool, second_read: bool) -> bool:
+    def _check_all_paths(
+        self,
+        first_state: SDFGState,
+        second_state: SDFGState,
+        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
+        nodes_first: List[nodes.AccessNode],
+        nodes_second: List[nodes.AccessNode],
+        first_read: bool,
+        second_read: bool,
+    ) -> bool:
         for node_a in nodes_first:
             succ_a = first_state.successors(node_a)
             for node_b in nodes_second:
                 if all(self.has_path(first_state, second_state, match_nodes, sa, node_b) for sa in succ_a):
                     return True
         # Path not found, check memlets
-        if StateFusionExtended.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
-                                                 second_read):
+        if StateFusionExtended.memlets_intersect(
+            first_state, nodes_first, first_read, second_state, nodes_second, second_read
+        ):
             return False
         return True
 
-    def _check_paths(self, first_state: SDFGState, second_state: SDFGState,
-                     match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], nodes_first: List[nodes.AccessNode],
-                     nodes_second: List[nodes.AccessNode], first_read: bool, second_read: bool) -> bool:
+    def _check_paths(
+        self,
+        first_state: SDFGState,
+        second_state: SDFGState,
+        match_nodes: Dict[nodes.AccessNode, nodes.AccessNode],
+        nodes_first: List[nodes.AccessNode],
+        nodes_second: List[nodes.AccessNode],
+        first_read: bool,
+        second_read: bool,
+    ) -> bool:
         # The hazard is covered when the ordering the interstate edge used to give us is
         #  reproduced by dataflow once the states are merged: a first-state node reaches a
         #  second-state node through a node that exists in both, i.e. through one of the
@@ -279,8 +317,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 return True
 
         # Not ordered by dataflow. Only an actual overlap is a hazard.
-        return not StateFusionExtended.memlets_intersect(first_state, nodes_first, first_read, second_state,
-                                                         nodes_second, second_read)
+        return not StateFusionExtended.memlets_intersect(
+            first_state, nodes_first, first_read, second_state, nodes_second, second_read
+        )
 
     @classmethod
     def state_has_side_effect_node(cls, state: SDFGState, sdfg) -> bool:
@@ -312,7 +351,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # Every reproducible shape is refused structurally in ``check_fusible``; a match that
             # still trips a library invariant is an upstream defect. Refuse it, but say so, so a
             # swallowed defect stays visible instead of silently disabling fusion.
-            warnings.warn(f'{type(self).__name__}: refusing match, unexpected subgraph: {e!r}')
+            warnings.warn(f"{type(self).__name__}: refusing match, unexpected subgraph: {e!r}")
         # A refused match must never leave a HALF-filled recorder behind: ``apply`` would then wire
         # an incomplete set of happens-before edges, i.e. drop an ordering.
         self.connections_to_make.clear()
@@ -326,7 +365,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # order, so a side effect (I/O, a trap guard, a stateful library / MPI call) whose order
         # is guaranteed by the interstate edge -- not by a data dependence -- would be reordered
         # or run concurrently once the two states become one.
-        if (self.state_has_side_effect_node(first_state, sdfg) or self.state_has_side_effect_node(second_state, sdfg)):
+        if self.state_has_side_effect_node(first_state, sdfg) or self.state_has_side_effect_node(second_state, sdfg):
             return False
 
         out_edges = graph.out_edges(first_state)
@@ -361,8 +400,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 # Fail if assignments have free symbols that are updated in the
                 # first state
                 freesyms = out_edges[0].data.free_symbols
-                if freesyms and any(n.data in freesyms for n in first_state.nodes()
-                                    if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0):
+                if freesyms and any(
+                    n.data in freesyms
+                    for n in first_state.nodes()
+                    if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0
+                ):
                     return False
                 # Fail if symbols assigned on the first edge are free symbols on the
                 # second edge
@@ -391,9 +433,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         if not permissive:
             # Strict mode that inhibits state fusion if Python callbacks are involved
-            if Config.get_bool('frontend', 'dont_fuse_callbacks'):
-                for node in (first_state.data_nodes() + second_state.data_nodes()):
-                    if node.data == '__pystate':
+            if Config.get_bool("frontend", "dont_fuse_callbacks"):
+                for node in first_state.data_nodes() + second_state.data_nodes():
+                    if node.data == "__pystate":
                         return False
 
             # Library nodes and nested SDFGs carry dependencies fusion cannot see.
@@ -420,8 +462,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     first_producers[n.data] = first_producers.get(n.data, 0) + 1
             second_scope = second_state.scope_dict()
             second_writes = {
-                n.data
-                for n in second_state.data_nodes() if second_scope[n] is None and second_state.in_degree(n) > 0
+                n.data for n in second_state.data_nodes() if second_scope[n] is None and second_state.in_degree(n) > 0
             }
             for dname in second_writes:
                 desc = sdfg.arrays.get(dname)
@@ -436,8 +477,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # state would be ambiguous).
             first_in_edges = graph.in_edges(first_state)
             second_in_edges = graph.in_edges(second_state)
-            if ((not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0)
-                    and len(second_in_edges) != 1):
+            if (not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0) and len(
+                second_in_edges
+            ) != 1:
                 return False
 
             # Get connected components. `weakly_connected_components` hands back `set`s, so
@@ -445,24 +487,30 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             #  `in_state_order()`.
             first_cc = sorted(
                 (in_state_order(first_state, cc) for cc in nx.weakly_connected_components(first_state._nx)),
-                key=lambda cc: first_state.node_id(cc[0]))
+                key=lambda cc: first_state.node_id(cc[0]),
+            )
             second_cc = sorted(
                 (in_state_order(second_state, cc) for cc in nx.weakly_connected_components(second_state._nx)),
-                key=lambda cc: second_state.node_id(cc[0]))
+                key=lambda cc: second_state.node_id(cc[0]),
+            )
 
             # Find source/sink (data) nodes, again in state order rather than in `set` order.
             top1, top2 = top_level_nodes(first_state), top_level_nodes(second_state)
-            first_input = in_state_order(first_state,
-                                         [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)])
+            first_input = in_state_order(
+                first_state, [n for n in first_state.source_nodes() if isinstance(n, nodes.AccessNode)]
+            )
             first_input_set = set(first_input)
             first_output = in_state_order(
-                first_state, [n for n in top1 if isinstance(n, nodes.AccessNode) and n not in first_input_set])
+                first_state, [n for n in top1 if isinstance(n, nodes.AccessNode) and n not in first_input_set]
+            )
             first_output_set = set(first_output)
-            second_input = in_state_order(second_state,
-                                          [n for n in second_state.source_nodes() if isinstance(n, nodes.AccessNode)])
+            second_input = in_state_order(
+                second_state, [n for n in second_state.source_nodes() if isinstance(n, nodes.AccessNode)]
+            )
             second_input_set = set(second_input)
             second_output = in_state_order(
-                second_state, [n for n in top2 if isinstance(n, nodes.AccessNode) and n not in second_input_set])
+                second_state, [n for n in top2 if isinstance(n, nodes.AccessNode) and n not in second_input_set]
+            )
             second_output_set = set(second_output)
 
             # WCR is a read-modify-write: an accumulate ``a(+)= ...`` implicitly READS
@@ -561,7 +609,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         cons = e.dst
                         if isinstance(cons, nodes.EntryNode):
                             cons = next(
-                                (v for v in first_state.scope_children()[cons] if isinstance(v, nodes.ExitNode)), None)
+                                (v for v in first_state.scope_children()[cons] if isinstance(v, nodes.ExitNode)), None
+                            )
                             if cons is None:
                                 return None
                         elif isinstance(cons, nodes.LibraryNode):
@@ -586,7 +635,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 consumers = ordering_endpoints(readers)
                 if not consumers:
                     return False
-                for a in (nx.ancestors(second_state._nx, we.src) | {we.src}):
+                for a in nx.ancestors(second_state._nx, we.src) | {we.src}:
                     if not isinstance(a, nodes.AccessNode) or a.data not in first_out_data:
                         continue
                     if second_state.in_degree(a) != 0:
@@ -627,7 +676,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         if consumers is None:
                             return False
                         if consumers:
-                            self.connections_to_make.append(('war', consumers, [wnode]))
+                            self.connections_to_make.append(("war", consumers, [wnode]))
                         break
 
             # Find source/sink (data) nodes by connected component
@@ -659,8 +708,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             # Recreate fused connected component correspondences, and then
             # check for hazards
-            resulting_ccs: List[CCDesc] = StateFusionExtended.find_fused_components(first_cc_input, first_cc_output,
-                                                                                    second_cc_input, second_cc_output)
+            resulting_ccs: List[CCDesc] = StateFusionExtended.find_fused_components(
+                first_cc_input, first_cc_output, second_cc_input, second_cc_output
+            )
 
             if len(resulting_ccs) > 1:
                 # Declared side effects would race across parallel components. An effect
@@ -675,11 +725,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for fused_cc in resulting_ccs:
                 # Write-Write hazard - data is output of both first and second
                 # states, without a read in between
-                write_write_candidates = ((fused_cc.first_outputs & fused_cc.second_outputs) - fused_cc.second_inputs)
+                write_write_candidates = (fused_cc.first_outputs & fused_cc.second_outputs) - fused_cc.second_inputs
 
                 # Find the leaf (topological) instances of the matches
                 order = [
-                    x for x in reversed(list(nx.topological_sort(first_state._nx)))
+                    x
+                    for x in reversed(list(nx.topological_sort(first_state._nx)))
                     if isinstance(x, nodes.AccessNode) and x.data in fused_cc.first_outputs
                 ]
                 # Those nodes will be the connection points upon fusion. Both the names and
@@ -687,8 +738,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 #  and `_check_paths()` stops at the first match that has a path, so an
                 #  arbitrary order makes the verdict differ between runs.
                 match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order if n.data == match):
-                    next(n for n in in_state_order(second_state, fused_cc.second_input_nodes) if n.data == match)
+                    next(n for n in order if n.data == match): next(
+                        n for n in in_state_order(second_state, fused_cc.second_input_nodes) if n.data == match
+                    )
                     for match in sorted(fused_cc.first_outputs & fused_cc.second_inputs)
                 }
 
@@ -701,8 +753,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
-                    if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second, False,
-                                             False):
+                    if not self._check_paths(
+                        first_state, second_state, match_nodes, nodes_first, nodes_second, False, False
+                    ):
                         return False
                 # End of write-write hazard check
 
@@ -734,8 +787,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                 #                                     \-> (c)  |
                                 # in the first state, and the same memory is inout in the second state
                                 # All paths need to lead to `src`
-                                if not self._check_all_paths(first_state, second_state, match_nodes, nodes_first,
-                                                             nodes_second, True, False):
+                                if not self._check_all_paths(
+                                    first_state, second_state, match_nodes, nodes_first, nodes_second, True, False
+                                ):
                                     return False
 
                                 # Same-cc write-after-read (first reads ``d``, second writes
@@ -762,9 +816,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                             # later reorder cannot flip the last writer.
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]
-                                if StateFusionExtended.memlets_intersect(first_state, nodes_first, False, second_state,
-                                                                         nodes_second, False):
-                                    self.connections_to_make.append(('waw', nodes_first, nodes_second))
+                                if StateFusionExtended.memlets_intersect(
+                                    first_state, nodes_first, False, second_state, nodes_second, False
+                                ):
+                                    self.connections_to_make.append(("waw", nodes_first, nodes_second))
                     # End of data race check
 
                 # Read-after-write dependencies: if there is an output of the
@@ -772,7 +827,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 # from the input of the first state lead to the output.
                 # Otherwise, there may be a RAW due to topological sort or
                 # concurrency.
-                second_inout = ((fused_cc.first_inputs | fused_cc.first_outputs) & fused_cc.second_outputs)
+                second_inout = (fused_cc.first_inputs | fused_cc.first_outputs) & fused_cc.second_outputs
                 for inout in sorted(second_inout):
                     nodes_first = [n for n in match_nodes if n.data == inout]
                     if any(first_state.out_degree(n) > 0 for n in nodes_first):
@@ -783,16 +838,17 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     # case, there is no hazard):
                     nodes_first = in_state_order(
                         first_state,
-                        {n
-                         for n in fused_cc.first_input_nodes + fused_cc.first_output_nodes if n.data == inout})
-                    nodes_second = in_state_order(second_state,
-                                                  {n
-                                                   for n in fused_cc.second_output_nodes if n.data == inout})
+                        {n for n in fused_cc.first_input_nodes + fused_cc.first_output_nodes if n.data == inout},
+                    )
+                    nodes_second = in_state_order(
+                        second_state, {n for n in fused_cc.second_output_nodes if n.data == inout}
+                    )
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
-                    if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second, True,
-                                             False):
+                    if not self._check_paths(
+                        first_state, second_state, match_nodes, nodes_first, nodes_second, True, False
+                    ):
                         return False
 
                 # End of read-write hazard check
@@ -800,14 +856,15 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 # Read-after-write dependencies: if there is more than one first
                 # output with the same data, make sure it can be unambiguously
                 # connected to the second state
-                if (len(fused_cc.first_output_nodes) > len(fused_cc.first_outputs)):
+                if len(fused_cc.first_output_nodes) > len(fused_cc.first_outputs):
                     for inpnode in fused_cc.second_input_nodes:
                         found = None
                         for outnode in fused_cc.first_output_nodes:
                             if outnode.data != inpnode.data:
                                 continue
-                            if StateFusionExtended.memlets_intersect(first_state, [outnode], False, second_state,
-                                                                     [inpnode], True):
+                            if StateFusionExtended.memlets_intersect(
+                                first_state, [outnode], False, second_state, [inpnode], True
+                            ):
                                 # If found more than once, either there is a
                                 # path from one to another or it is ambiguous
                                 if found is not None:
@@ -889,15 +946,19 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # NOTE: We exclude Views from the process of merging common data nodes because it may lead to double edges.
         # The lookup only asks "is this a View", and a descriptor that is gone is not one.
         second_mid = [
-            x for x in list(nx.topological_sort(second_state._nx)) if isinstance(x, nodes.AccessNode)
-            and second_state.out_degree(x) > 0 and not isinstance(sdfg.arrays.get(x.data), dt.View)
+            x
+            for x in list(nx.topological_sort(second_state._nx))
+            if isinstance(x, nodes.AccessNode)
+            and second_state.out_degree(x) > 0
+            and not isinstance(sdfg.arrays.get(x.data), dt.View)
         ]
 
         # Merge second state to first state
         # First keep a backup of the topological sorted order of the nodes
         sdict = first_state.scope_dict()
         order = [
-            x for x in reversed(list(nx.topological_sort(first_state._nx)))
+            x
+            for x in reversed(list(nx.topological_sort(first_state._nx)))
             if isinstance(x, nodes.AccessNode) and sdict[x] is None
         ]
         for node in second_state.nodes():
@@ -905,7 +966,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 # update parent information
                 node.sdfg.parent = first_state
 
-            #The node could have been added when adding connections by add_nedge hence the need to check
+            # The node could have been added when adding connections by add_nedge hence the need to check
             if node not in first_state.nodes():
                 first_state.add_node(node)
 
@@ -939,7 +1000,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # Merge common (data) nodes
         merged_nodes = set()
         for node in second_mid:
-
             # merge only top level nodes, skip everything else
             if node not in top2:
                 continue
@@ -948,7 +1008,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # still list may already have been removed. Ask the graph (O(1) dict lookup): querying
             # a removed node raises KeyError.
             candidates = [
-                x for x in order
+                x
+                for x in order
                 if x.data == node.data and x in top and x not in merged_nodes and x in first_state._nodes
             ]
             source_node = first_state.in_degree(node) == 0
@@ -965,8 +1026,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 # Pinned by compound_nest's per-iteration ``arr_index`` (TSVC-
                 # shape sibling tasklets where both writers feed disjoint ``arr``
                 # subsets).
-                node_waw_flagged = any(node in second_nodes
-                                       for kind, first_nodes, second_nodes in self.connections_to_make if kind == 'waw')
+                node_waw_flagged = any(
+                    node in second_nodes
+                    for kind, first_nodes, second_nodes in self.connections_to_make
+                    if kind == "waw"
+                )
                 for cand in candidates:
                     if node_waw_flagged and first_state.in_degree(cand) > 0:
                         continue
@@ -1042,8 +1106,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # rather than emit a silently reordered kernel. Cheap: one DAG test.
         if not nx.is_directed_acyclic_graph(fused_state._nx):
             raise InvalidSDFGEdgeError(
-                'StateFusionExtended produced a cyclic state: the RAW/WAR/WAW ordering edges '
-                'cannot be linearized (unsolvable dependency combination)', ssdfg, state_id, None)
+                "StateFusionExtended produced a cyclic state: the RAW/WAR/WAW ordering edges "
+                "cannot be linearized (unsolvable dependency combination)",
+                ssdfg,
+                state_id,
+                None,
+            )
 
         for eid, e, src_an, dst_an, name in mismatched_data_edges(fused_state, ssdfg):
             if (e.src, e.dst, name) in preexisting:

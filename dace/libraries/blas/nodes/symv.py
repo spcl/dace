@@ -13,7 +13,6 @@ from dace.frontend.common import op_repository as oprepo
 
 @dace.library.expansion
 class ExpandSymvOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -22,22 +21,19 @@ class ExpandSymvOpenBLAS(ExpandTransformation):
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
         prefix = func.lower()
-        uplo = 'CblasUpper' if node.uplo else 'CblasLower'
+        uplo = "CblasUpper" if node.uplo else "CblasLower"
         a, b = node.alpha, node.beta
         code = f"""
         cblas_{prefix}copy({n}, _yin, {syi}, _yout, {syo});
         cblas_{prefix}symv(CblasColMajor, {uplo}, {n}, ({dt.ctype})({a}), _A, {lda}, _x, {sx}, ({dt.ctype})({b}), _yout, {syo});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandSymvMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -47,7 +43,6 @@ class ExpandSymvMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandSymvCuBLAS(ExpandTransformation):
-
     environments = [environments.cublas.cuBLAS]
 
     @staticmethod
@@ -55,7 +50,7 @@ class ExpandSymvCuBLAS(ExpandTransformation):
         (desc_A, lda), (_, sx), (_, syi), syo, n = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        uplo = 'CUBLAS_FILL_MODE_UPPER' if node.uplo else 'CUBLAS_FILL_MODE_LOWER'
+        uplo = "CUBLAS_FILL_MODE_UPPER" if node.uplo else "CUBLAS_FILL_MODE_LOWER"
         a, b = node.alpha, node.beta
         code = environments.cublas.cuBLAS.handle_setup_code(node)
         code += f"""
@@ -63,16 +58,13 @@ class ExpandSymvCuBLAS(ExpandTransformation):
         cublas{func}copy(__dace_cublas_handle, {n}, _yin, {syi}, _yout, {syo});
         cublas{func}symv(__dace_cublas_handle, {uplo}, {n}, &__alpha, _A, {lda}, _x, {sx}, &__beta, _yout, {syo});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.node
 class Symv(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {"OpenBLAS": ExpandSymvOpenBLAS, "MKL": ExpandSymvMKL, "cuBLAS": ExpandSymvCuBLAS}
     default_implementation = None
@@ -112,19 +104,19 @@ class Symv(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.symv')
-@oprepo.replaces('dace.libraries.blas.Symv')
-def symv_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
+@oprepo.replaces("dace.libraries.blas.symv")
+@oprepo.replaces("dace.libraries.blas.Symv")
+def symv_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
     result = result if result is not None else y
     A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
     y_out = state.add_write(result)
 
-    libnode = Symv('symv', uplo=uplo, alpha=alpha, beta=beta)
+    libnode = Symv("symv", uplo=uplo, alpha=alpha, beta=beta)
     state.add_node(libnode)
 
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(y_in, None, libnode, '_yin', mm.Memlet(y))
-    state.add_edge(libnode, '_yout', y_out, None, mm.Memlet(result))
+    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, "_yin", mm.Memlet(y))
+    state.add_edge(libnode, "_yout", y_out, None, mm.Memlet(result))
 
     return []

@@ -10,6 +10,7 @@ reasoning, and print to the matching ``dace::<type>(x)`` C++ cast
 (truncating for int) -- so the SAME bare spelling round-trips through the
 sympy printer and cppunparse to identical code.
 """
+
 import pytest
 
 import dace
@@ -17,12 +18,15 @@ from dace.symbolic import pystr_to_symbolic
 from dace.codegen.targets.cpp import sym2cpp
 
 
-@pytest.mark.parametrize("expr,cpp", [
-    ("int32(qm) + 1", "(dace::int32(qm) + 1)"),
-    ("int64(x)", "(dace::int64(x))"),
-    ("float32(i) * 2", "(2*dace::float32(i))"),
-    ("float64(i) - r", "(-r + dace::float64(i))"),
-])
+@pytest.mark.parametrize(
+    "expr,cpp",
+    [
+        ("int32(qm) + 1", "(dace::int32(qm) + 1)"),
+        ("int64(x)", "(dace::int64(x))"),
+        ("float32(i) * 2", "(2*dace::float32(i))"),
+        ("float64(i) - r", "(-r + dace::float64(i))"),
+    ],
+)
 def test_typecast_prints_to_dace_cast(expr, cpp):
     assert sym2cpp(pystr_to_symbolic(expr)) == cpp
 

@@ -38,15 +38,15 @@ def test_nest_oneelementmap():
 
 
 def test_internal_outarray():
-    sdfg = dace.SDFG('internal_outarr')
-    sdfg.add_array('A', [20], dace.float64)
+    sdfg = dace.SDFG("internal_outarr")
+    sdfg.add_array("A", [20], dace.float64)
     state = sdfg.add_state()
 
-    me, mx = state.add_map('_', dict(i='0:1'))
-    t = state.add_tasklet('doit', {}, {'a'}, 'a = 0')
-    w = state.add_write('A')
+    me, mx = state.add_map("_", dict(i="0:1"))
+    t = state.add_tasklet("doit", {}, {"a"}, "a = 0")
+    w = state.add_write("A")
     state.add_nedge(me, t, dace.Memlet())
-    state.add_edge(t, 'a', w, None, dace.Memlet('A[1]'))
+    state.add_edge(t, "a", w, None, dace.Memlet("A[1]"))
     state.add_nedge(w, mx, dace.Memlet())
 
     subgraph = StateSubgraphView(state, [t, w])
@@ -58,24 +58,24 @@ def test_internal_outarray():
 
 
 def test_nested_symbol_dtypes():
-    M = dace.symbol('M', dace.int64)
-    sdfg = dace.SDFG('nested_symbol_dtypes')
-    sdfg.add_symbol('M', dace.int64)
-    sdfg.add_array('A', [M], dace.float64)
-    sdfg.add_array('B', [M], dace.float64)
+    M = dace.symbol("M", dace.int64)
+    sdfg = dace.SDFG("nested_symbol_dtypes")
+    sdfg.add_symbol("M", dace.int64)
+    sdfg.add_array("A", [M], dace.float64)
+    sdfg.add_array("B", [M], dace.float64)
     state = sdfg.add_state()
 
-    me, mx = state.add_map('m', dict(j='0:M'))
-    t = state.add_tasklet('doit', {'a'}, {'b'}, 'b = a + j')
-    r = state.add_read('A')
-    w = state.add_write('B')
-    state.add_memlet_path(r, me, t, dst_conn='a', memlet=dace.Memlet('A[j]'))
-    state.add_memlet_path(t, mx, w, src_conn='b', memlet=dace.Memlet('B[j]'))
+    me, mx = state.add_map("m", dict(j="0:M"))
+    t = state.add_tasklet("doit", {"a"}, {"b"}, "b = a + j")
+    r = state.add_read("A")
+    w = state.add_write("B")
+    state.add_memlet_path(r, me, t, dst_conn="a", memlet=dace.Memlet("A[j]"))
+    state.add_memlet_path(t, mx, w, src_conn="b", memlet=dace.Memlet("B[j]"))
 
     nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, [t]))
     # Scope symbols must keep their parent-defined types (j is an int64 map parameter)
-    assert nsdfg.sdfg.symbols['M'] == dace.int64
-    assert nsdfg.sdfg.symbols['j'] == dace.int64
+    assert nsdfg.sdfg.symbols["M"] == dace.int64
+    assert nsdfg.sdfg.symbols["j"] == dace.int64
 
     a = np.random.rand(10)
     b = np.zeros(10)
@@ -121,7 +121,7 @@ def test_nest_cf_simple_for_loop():
 
     @dace.program
     def simple_for_loop():
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         for i in range(10):
             A[i] = i
         return A
@@ -144,7 +144,7 @@ def test_nest_cf_simple_while_loop():
     @dace.program
     def simple_while_loop():
         i = 0
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         while i < 10:
             A[i] = i
             i = update(A[i])
@@ -223,7 +223,7 @@ def test_nest_cf_simple_if_chain():
 
 
 def test_nest_two_loops_with_same_variable():
-    """ Nesting a second region that defines the same symbol must name its symbol output consistently. """
+    """Nesting a second region that defines the same symbol must name its symbol output consistently."""
 
     @dace.program
     def two_loops(A: dace.float64[10], B: dace.float64[10]):
@@ -248,7 +248,7 @@ def test_nest_two_loops_with_same_variable():
     assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
     test_nested_symbol_dtypes()

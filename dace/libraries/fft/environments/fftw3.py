@@ -6,6 +6,7 @@ Links against the system-installed ``libfftw3`` (double precision) +
 
     sudo apt-get install libfftw3-dev
 """
+
 import ctypes.util
 
 import dace.library

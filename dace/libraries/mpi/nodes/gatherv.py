@@ -10,7 +10,6 @@ from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_
 
 @library.expansion
 class ExpandGathervMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -32,29 +31,28 @@ class ExpandGathervMPI(ExpandTransformation):
                         _outbuffer, _recvcounts, _displs, {out_mpi_dtype_str},
                         _root, {comm});
             """
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP,
-                                side_effects=True)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
         return tasklet
 
 
 @library.node
 class Gatherv(MPINode):
-
     implementations = {
         "MPI": ExpandGathervMPI,
     }
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inbuffer", "_recvcounts", "_displs", "_root"},
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(
+            name, *args, inputs={"_inbuffer", "_recvcounts", "_displs", "_root"}, outputs={"_outbuffer"}, **kwargs
+        )
 
     def validate(self, sdfg, state):
         inbuffer, outbuffer, recvcounts, displs, root = None, None, None, None, None
@@ -81,7 +79,7 @@ class Gatherv(MPINode):
 
         in_count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
+            if dst_conn == "_inbuffer":
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 

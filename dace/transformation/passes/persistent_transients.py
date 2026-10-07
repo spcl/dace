@@ -12,8 +12,11 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 #: Lifetimes a promotion would DEMOTE: Global belongs to the program, External to the caller.
-STRONGER_THAN_PERSISTENT = (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.Global,
-                            dtypes.AllocationLifetime.External)
+STRONGER_THAN_PERSISTENT = (
+    dtypes.AllocationLifetime.Persistent,
+    dtypes.AllocationLifetime.Global,
+    dtypes.AllocationLifetime.External,
+)
 
 
 def persistent_size_symbols(sdfg: SDFG) -> Set[str]:
@@ -104,14 +107,15 @@ class MakeTransientsPersistent(ppl.Pass):
     already outlive a Persistent one.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     toplevel_only = properties.Property(
         dtype=bool,
         default=True,
-        desc='Only promote access nodes that appear outside every map/consume scope. A descriptor '
-        'used inside a scope is allocated per scope entry, which persistent allocation would '
-        'serialize across the threads that share the state struct.')
+        desc="Only promote access nodes that appear outside every map/consume scope. A descriptor "
+        "used inside a scope is allocated per scope entry, which persistent allocation would "
+        "serialize across the threads that share the state struct.",
+    )
 
     def __init__(self, toplevel_only: bool = True):
         self.toplevel_only = toplevel_only
@@ -146,11 +150,18 @@ class MakeTransientsPersistent(ppl.Pass):
                     continue
                 desc = dnode.desc(nsdfg)
                 # A struct member follows its container.
-                if (dnode.root_data != dnode.data
-                        and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
+                if (
+                    dnode.root_data != dnode.data
+                    and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent
+                ):
                     continue
-                if (dnode.data in nsdfg.constants_prop or not desc.transient or type(desc) is not dt.Array
-                        or desc.storage == dtypes.StorageType.Register or desc.lifetime in STRONGER_THAN_PERSISTENT):
+                if (
+                    dnode.data in nsdfg.constants_prop
+                    or not desc.transient
+                    or type(desc) is not dt.Array
+                    or desc.storage == dtypes.StorageType.Register
+                    or desc.lifetime in STRONGER_THAN_PERSISTENT
+                ):
                     refused.add(dnode.data)
                     continue
                 if not size_is_program_wide(nsdfg, desc, allowed):

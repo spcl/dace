@@ -14,12 +14,12 @@ def test_infer_expr_type_of_typed_constant():
 
 
 def test_infer_expr_type_with_typed_constant_expression():
-    expr = symbolic.symbol('N', dtype=dtypes.int32) + symbolic.TypedConstant(np.uint64(1))
+    expr = symbolic.symbol("N", dtype=dtypes.int32) + symbolic.TypedConstant(np.uint64(1))
 
-    inferred = type_inference.infer_expr_type(expr, {'N': dtypes.int32})
+    inferred = type_inference.infer_expr_type(expr, {"N": dtypes.int32})
 
     assert inferred == dtypes.uint64
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

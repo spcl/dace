@@ -43,7 +43,6 @@ class ExpandScalPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandScalOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -54,7 +53,7 @@ class ExpandScalOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandScalPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         prefix = func.lower()
@@ -74,17 +73,14 @@ class ExpandScalOpenBLAS(ExpandTransformation):
             cblas_{prefix}scal({n}, ({dtype.ctype})({a}), _res, {stride_res});
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandScalMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -94,7 +90,6 @@ class ExpandScalMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandScalCuBLAS(ExpandTransformation):
-
     environments = [environments.cublas.cuBLAS]
 
     @staticmethod
@@ -105,7 +100,7 @@ class ExpandScalCuBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandScalPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         n = n or node.n or sz
@@ -118,17 +113,14 @@ class ExpandScalCuBLAS(ExpandTransformation):
         cublas{func}scal(__dace_cublas_handle, {n}, &__alpha, _res, {stride_res});
         """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class Scal(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "pure": ExpandScalPure,
@@ -155,17 +147,17 @@ class Scal(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.scal')
-@oprepo.replaces('dace.libraries.blas.Scal')
-def scal_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, result=None):
+@oprepo.replaces("dace.libraries.blas.scal")
+@oprepo.replaces("dace.libraries.blas.Scal")
+def scal_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, a, x, result=None):
     result = result if result is not None else x
     x_in = state.add_read(x)
     res_out = state.add_write(result)
 
-    libnode = Scal('scal', a=a, n=sdfg.arrays[x].shape[0])
+    libnode = Scal("scal", a=a, n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
 
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(libnode, '_res', res_out, None, mm.Memlet(result))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(libnode, "_res", res_out, None, mm.Memlet(result))
 
     return []

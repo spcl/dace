@@ -10,19 +10,20 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors
 
 @dace.library.expansion
 class ExpandCommF2cMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         code = "_comm = MPI_Comm_f2c((MPI_Fint)_fcomm);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP,
-                                          side_effects=True)
-        conn = {c: (dtypes.opaque("MPI_Comm") if c == '_comm' else t) for c, t in tasklet.out_connectors.items()}
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+            side_effects=True,
+        )
+        conn = {c: (dtypes.opaque("MPI_Comm") if c == "_comm" else t) for c, t in tasklet.out_connectors.items()}
         tasklet.out_connectors = conn
         return tasklet
 

@@ -8,6 +8,7 @@ Covers:
 * tie-break direction toggle via ``back``
 * 0-based vs 1-based output via ``one_based``
 """
+
 import numpy as np
 
 import dace
@@ -29,8 +30,8 @@ def _build_whole(node_cls, in_shape, dtype, *, one_based=True, back=False):
     state = sdfg.add_state()
     node = node_cls(node_cls.__name__.lower(), one_based=one_based, back=back, dim=None)
     state.add_node(node)
-    state.add_edge(state.add_read("v"), None, node, '_x', dace.Memlet.from_array("v", sdfg.arrays["v"]))
-    state.add_edge(node, '_idx', state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
+    state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(node, "_idx", state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
     sdfg.expand_library_nodes()
     return sdfg
 
@@ -43,8 +44,8 @@ def _build_dim(node_cls, in_shape, dim, dtype, *, one_based=True, back=False):
     state = sdfg.add_state()
     node = node_cls(node_cls.__name__.lower(), one_based=one_based, back=back, dim=dim)
     state.add_node(node)
-    state.add_edge(state.add_read("v"), None, node, '_x', dace.Memlet.from_array("v", sdfg.arrays["v"]))
-    state.add_edge(node, '_idx', state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
+    state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(node, "_idx", state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
     sdfg.expand_library_nodes()
     return sdfg
 
@@ -118,7 +119,7 @@ def test_argmax_2d_dim1():
     rng = np.random.default_rng(3)
     x = rng.standard_normal((4, 6))
     sdfg = _build_dim(ArgMax, x.shape, 1, dace.float64)
-    idx = np.zeros((6, ), dtype=np.int32)
+    idx = np.zeros((6,), dtype=np.int32)
     sdfg(v=x, idx=idx)
     np.testing.assert_array_equal(idx, np.argmax(x, axis=0) + 1)
 
@@ -128,12 +129,12 @@ def test_argmin_2d_dim2():
     rng = np.random.default_rng(4)
     x = rng.standard_normal((5, 7))
     sdfg = _build_dim(ArgMin, x.shape, 2, dace.float64)
-    idx = np.zeros((5, ), dtype=np.int32)
+    idx = np.zeros((5,), dtype=np.int32)
     sdfg(v=x, idx=idx)
     np.testing.assert_array_equal(idx, np.argmin(x, axis=1) + 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_argmin_whole_array_one_based()
     test_argmax_whole_array_one_based()
     test_argmin_whole_array_zero_based()
@@ -141,4 +142,4 @@ if __name__ == '__main__':
     test_argmin_last_occurrence_back()
     test_argmax_2d_dim1()
     test_argmin_2d_dim2()
-    print('ArgMin / ArgMax library node tests PASS')
+    print("ArgMin / ArgMax library node tests PASS")

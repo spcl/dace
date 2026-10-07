@@ -10,7 +10,6 @@ from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_
 
 @dace.library.expansion
 class ExpandAbortMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -19,12 +18,14 @@ class ExpandAbortMPI(ExpandTransformation):
         comm = resolve_comm(node, parent_state)
         code = f"""
             MPI_Abort({comm}, _errorcode);"""
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dtypes.Language.CPP,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
         return tasklet
 
 

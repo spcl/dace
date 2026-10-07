@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that a loop-dependent index that is not affine in the loop variable keeps the whole array dimension. """
+"""Tests that a loop-dependent index that is not affine in the loop variable keeps the whole array dimension."""
+
 import numpy as np
 
 import dace
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -19,11 +20,13 @@ def rotating_table_read(a: dace.float64[N, 3], tbl: dace.int32[3], out: dace.flo
 def test_modulo_index_in_nested_loop_passes_the_whole_table():
     sdfg = rotating_table_read.to_sdfg(simplify=False)
     table_shapes = [
-        n.sdfg.arrays[e.dst_conn].shape for n, state in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.NestedSDFG) for e in state.in_edges(n)
+        n.sdfg.arrays[e.dst_conn].shape
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.NestedSDFG)
+        for e in state.in_edges(n)
         if n.sdfg.arrays[e.dst_conn].dtype == dace.int32
     ]
-    assert table_shapes and all(shape == (3, ) for shape in table_shapes), table_shapes
+    assert table_shapes and all(shape == (3,) for shape in table_shapes), table_shapes
 
     rng = np.random.default_rng(0)
     a = rng.random((5, 3))
@@ -38,5 +41,5 @@ def test_modulo_index_in_nested_loop_passes_the_whole_table():
     assert np.allclose(out, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_modulo_index_in_nested_loop_passes_the_whole_table()

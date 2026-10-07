@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the orthogonal
-    tiling transformation. """
+"""This module contains classes and functions that implement the orthogonal
+tiling transformation."""
 
 from dace import symbolic
 from dace.properties import make_properties, Property, ShapeProperty
@@ -13,41 +13,42 @@ from dace.transformation import transformation
 
 @make_properties
 class MapTiling(transformation.SingleStateTransformation):
-    """ Implements the orthogonal tiling transformation.
+    """Implements the orthogonal tiling transformation.
 
-        Orthogonal tiling is a type of nested map fission that creates tiles
-        in every dimension of the matched Map.
+    Orthogonal tiling is a type of nested map fission that creates tiles
+    in every dimension of the matched Map.
     """
+
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    prefix = Property(dtype=str, default="tile", category='Parameters', desc="Prefix for new range symbols")
-    tile_sizes = ShapeProperty(dtype=tuple,
-                               default=(128, 128, 128),
-                               category='Parameters',
-                               desc="Tile size per dimension")
+    prefix = Property(dtype=str, default="tile", category="Parameters", desc="Prefix for new range symbols")
+    tile_sizes = ShapeProperty(
+        dtype=tuple, default=(128, 128, 128), category="Parameters", desc="Tile size per dimension"
+    )
 
-    strides = ShapeProperty(dtype=tuple,
-                            default=tuple(),
-                            category='Parameters',
-                            desc="Tile stride (enables overlapping tiles). If empty, matches tile")
+    strides = ShapeProperty(
+        dtype=tuple,
+        default=tuple(),
+        category="Parameters",
+        desc="Tile stride (enables overlapping tiles). If empty, matches tile",
+    )
 
-    tile_offset = ShapeProperty(dtype=tuple,
-                                default=None,
-                                category='Parameters',
-                                desc="Negative Stride offset per dimension",
-                                allow_none=True)
+    tile_offset = ShapeProperty(
+        dtype=tuple, default=None, category="Parameters", desc="Negative Stride offset per dimension", allow_none=True
+    )
 
-    divides_evenly = Property(dtype=bool,
-                              default=False,
-                              category='Applicability',
-                              desc="Tile size divides dimension length evenly")
-    tile_trivial = Property(dtype=bool, default=False, category='Parameters', desc="Tiles even if tile_size is 1")
+    divides_evenly = Property(
+        dtype=bool, default=False, category="Applicability", desc="Tile size divides dimension length evenly"
+    )
+    tile_trivial = Property(dtype=bool, default=False, category="Parameters", desc="Tiles even if tile_size is 1")
 
-    skew = Property(dtype=bool,
-                    default=False,
-                    category='Parameters',
-                    desc="If True, offsets inner tile back such that it starts with zero")
+    skew = Property(
+        dtype=bool,
+        default=False,
+        category="Parameters",
+        desc="If True, offsets inner tile back such that it starts with zero",
+    )
 
     @staticmethod
     def annotates_memlets():
@@ -69,6 +70,7 @@ class MapTiling(transformation.SingleStateTransformation):
         map_entry = self.map_entry
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.strip_mining import StripMining
+
         stripmine_subgraph = {StripMining.map_entry: self.subgraph[MapTiling.map_entry]}
         cfg_id = graph.parent_graph.cfg_id
         last_map_entry = None
@@ -103,7 +105,7 @@ class MapTiling(transformation.SingleStateTransformation):
             # Special case: Tile size of 1 should be omitted from inner map
             if tile_size == 1 and tile_stride == 1 and self.tile_trivial == False:
                 stripmine.dim_idx = dim_idx
-                stripmine.new_dim_prefix = ''
+                stripmine.new_dim_prefix = ""
                 stripmine.tile_size = str(tile_size)
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = True
@@ -128,7 +130,7 @@ class MapTiling(transformation.SingleStateTransformation):
                 new_map_entry = graph.in_edges(map_entry)[0].src
                 mapcollapse_subgraph = {
                     MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
-                    MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
+                    MapCollapse.inner_map_entry: graph.node_id(new_map_entry),
                 }
                 mapcollapse = MapCollapse()
                 mapcollapse.setup_match(sdfg, cfg_id, self.state_id, mapcollapse_subgraph, 0)

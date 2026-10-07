@@ -31,9 +31,9 @@ def expanded_input_connectors(node: nodes.Node, state: Any) -> Dict[str, Any]:
 
 def resolve_comm(node: nodes.Node, state: Any) -> str:
     """Communicator token for an MPI node: _comm if wired, else _grid if wired, else MPI_COMM_WORLD."""
-    if input_descriptor_name(node, state, '_comm'):
+    if input_descriptor_name(node, state, "_comm"):
         return "_comm"
-    if input_descriptor_name(node, state, '_grid'):
+    if input_descriptor_name(node, state, "_grid"):
         return "_grid"
     return "MPI_COMM_WORLD"
 

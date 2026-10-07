@@ -43,7 +43,7 @@ def get_proto_attr(proto, name: str):
     def is_ascii(s: str) -> bool:
         """Check if a string is ASCII-encodable."""
         try:
-            s.encode('ascii')
+            s.encode("ascii")
         except UnicodeEncodeError:
             return False
         else:
@@ -52,7 +52,8 @@ def get_proto_attr(proto, name: str):
     if not is_ascii(name):
         raise ValueError(
             f"Attempted to access non-ASCII property name '{name}' on protobuf {proto} (type {type(proto)}). "
-            "Please open an issue")
+            "Please open an issue"
+        )
 
     return getattr(proto, name)
 
@@ -74,7 +75,8 @@ def convert_onnx_proto(attribute):
             return ONNXParameterType.Variadic
         else:
             raise NotImplementedError(
-                "Only single, optional and variadic formal parameters are supported, got".format(attribute))
+                "Only single, optional and variadic formal parameters are supported, got".format(attribute)
+            )
 
     if type(attribute) is onnx.defs.OpSchema.AttrType:
         if attribute == onnx.defs.OpSchema.AttrType.FLOAT:
@@ -92,7 +94,7 @@ def convert_onnx_proto(attribute):
         elif attribute == onnx.defs.OpSchema.AttrType.TENSOR:
             return ONNXAttributeType.Tensor
         else:
-            if config.Config.get_bool('debugprint'):
+            if config.Config.get_bool("debugprint"):
                 print("Got unsupported attribute type {}".format(attribute))
             return ONNXAttributeType.Unsupported
 
@@ -120,9 +122,9 @@ def attribute_proto_converters() -> Dict[int, Callable]:
         elif k == "INTS":
             inv_map[v] = lambda attr: list(get_proto_attr(attr, "ints"))
         elif k == "STRING":
-            inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode('utf-8')
+            inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode("utf-8")
         elif k == "STRINGS":
-            inv_map[v] = lambda attr: list(map(lambda x: x.decode('utf-8'), get_proto_attr(attr, "strings")))
+            inv_map[v] = lambda attr: list(map(lambda x: x.decode("utf-8"), get_proto_attr(attr, "strings")))
         elif k == "TENSOR":
             inv_map[v] = lambda attr: to_array(get_proto_attr(attr, "t"))
     return inv_map
@@ -140,27 +142,29 @@ def convert_attribute_proto(proto):
     if onnx_type not in inv_map:
         type_str = {v: k for k, v in onnx.AttributeProto.AttributeType.items()}[onnx_type]
         raise NotImplementedError(
-            "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {}"
-            .format(type_str))
+            "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {}".format(
+                type_str
+            )
+        )
 
     return inv_map[onnx_type](proto)
 
 
 ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
-    'bool': dt.bool,
-    'int8': dt.int8,
-    'int16': dt.int16,
-    'int32': dt.int32,
-    'int64': dt.int64,
-    'uint8': dt.uint8,
-    'uint16': dt.uint16,
-    'uint32': dt.uint32,
-    'uint64': dt.uint64,
-    'float16': dt.float16,
-    'float': dt.float32,
-    'double': dt.float64,
-    'complex64': dt.complex64,
-    'complex128': dt.complex128,
+    "bool": dt.bool,
+    "int8": dt.int8,
+    "int16": dt.int16,
+    "int32": dt.int32,
+    "int64": dt.int64,
+    "uint8": dt.uint8,
+    "uint16": dt.uint16,
+    "uint32": dt.uint32,
+    "uint64": dt.uint64,
+    "float16": dt.float16,
+    "float": dt.float32,
+    "double": dt.float64,
+    "complex64": dt.complex64,
+    "complex128": dt.complex128,
 }
 
 
@@ -177,7 +181,8 @@ def typeclass_to_onnx_tensor_type_int(dtype: typeclass) -> int:
 def onnx_tensor_type_to_typeclass_map() -> Dict[int, typeclass]:
     return {
         v: ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
-        for k, v in onnx.TensorProto.DataType.items() if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS
+        for k, v in onnx.TensorProto.DataType.items()
+        if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS
     }
 
 
@@ -185,10 +190,11 @@ def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
     inv_map = onnx_tensor_type_to_typeclass_map()
 
     if elem_type not in inv_map:
-        raise ValueError("Got unsupported ONNX tensor type: {}".format({
-            v: k
-            for k, v in onnx.TensorProto.DataType.items()
-        }[elem_type]))
+        raise ValueError(
+            "Got unsupported ONNX tensor type: {}".format(
+                {v: k for k, v in onnx.TensorProto.DataType.items()}[elem_type]
+            )
+        )
 
     return inv_map[elem_type]
 
@@ -242,4 +248,4 @@ def clean_onnx_name(name: str) -> str:
         name = f"ONNX_{name}"
 
     # Replace special characters with their textual equivalents
-    return (name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH").replace("-", "DASH"))
+    return name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH").replace("-", "DASH")

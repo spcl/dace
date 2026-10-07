@@ -12,7 +12,7 @@ class _ExtensibleAttributeEnumMeta(EnumMeta):
         # Find and remove dataclasses from namespace before enum creation
         dataclass_members = {}
         for key in list(namespace.keys()):
-            if not key.startswith('_'):
+            if not key.startswith("_"):
                 value = namespace[key]
                 if isinstance(value, type) and is_dataclass(value):
                     dataclass_members[key] = value
@@ -21,7 +21,7 @@ class _ExtensibleAttributeEnumMeta(EnumMeta):
         for key in dataclass_members:
             del namespace[key]
             # Also remove from EnumDict's member tracking if present
-            if hasattr(namespace, '_member_names') and key in namespace._member_names:
+            if hasattr(namespace, "_member_names") and key in namespace._member_names:
                 if isinstance(namespace._member_names, list):
                     namespace._member_names.remove(key)
                 else:
@@ -189,7 +189,7 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
         return obj
 
     def __getattr__(self, name: str):
-        if name.startswith('_'):
+        if name.startswith("_"):
             raise AttributeError(name)
         if self._dataclass_type is not None and not isinstance(self._value_, type):
             return getattr(self._value_, name)
@@ -298,20 +298,22 @@ class ExtensibleAttributeEnum(Enum, metaclass=_ExtensibleAttributeEnumMeta):
         """
         Deserialize an ExtensibleAttributeEnum member from a JSON object.
         """
-        type_name = json_obj['type']
-        member_name = type_name.split('.')[-1]
+        type_name = json_obj["type"]
+        member_name = type_name.split(".")[-1]
         member = cls[member_name]
 
         if member._is_template:
             # Try to create instance from dataclass fields
             from dace import serialize
+
             fields = member._dataclass_type.__dataclass_fields__
             # Only a class can guide deserialization; a typing annotation such as ``Optional[bool]`` cannot
             data_fields = {
-                k: serialize.from_json(v,
-                                       context,
-                                       known_type=fields[k].type if isinstance(fields[k].type, type) else None)
-                for k, v in json_obj.items() if k != 'type'
+                k: serialize.from_json(
+                    v, context, known_type=fields[k].type if isinstance(fields[k].type, type) else None
+                )
+                for k, v in json_obj.items()
+                if k != "type"
             }
             if data_fields:
                 return member(**data_fields)

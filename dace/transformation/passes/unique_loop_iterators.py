@@ -48,7 +48,8 @@ class UniqueLoopIterators(ppl.Pass):
         default=True,
         desc=(
             "If True, emit a post-loop state assigning the original loop variable its counted "
-            "exit value so downstream reads see the iterator-after-loop value. Required especially for Fortran inputs"),
+            "exit value so downstream reads see the iterator-after-loop value. Required especially for Fortran inputs"
+        ),
     )
 
     def __init__(self, assign_loop_iterator_post_value: bool = True):
@@ -97,9 +98,7 @@ class UniqueLoopIterators(ppl.Pass):
         if not isinstance(cfg, dace.SDFG):
             owner = cfg.sdfg
             for aname in {
-                    n.data
-                    for st in cfg.all_states()
-                    for n in st.nodes() if isinstance(n, dace.nodes.AccessNode)
+                n.data for st in cfg.all_states() for n in st.nodes() if isinstance(n, dace.nodes.AccessNode)
             }:
                 desc = owner.arrays.get(aname)
                 if desc is not None and old_name in {str(s) for s in desc.free_symbols}:
@@ -265,9 +264,11 @@ class UniqueLoopIterators(ppl.Pass):
                     if post_value is not None:
                         post_value_str = dace.symbolic.symstr(post_value, arrayexprs=array_names).strip()
                         if post_value_str:
-                            cfg.parent_graph.add_state_after(cfg,
-                                                             f"{_POST_VALUE_STATE_PREFIX}_{self._next_id}",
-                                                             assignments={old_name: f"({post_value_str})"})
+                            cfg.parent_graph.add_state_after(
+                                cfg,
+                                f"{_POST_VALUE_STATE_PREFIX}_{self._next_id}",
+                                assignments={old_name: f"({post_value_str})"},
+                            )
             elif old_name in sdfg.symbols and old_name not in sdfg.used_symbols(all_symbols=False):
                 # The rename was scoped to ``cfg`` so the LoopRegion's
                 # body, init/condition/update no longer reference
@@ -312,7 +313,7 @@ class UniqueLoopIterators(ppl.Pass):
         prefix = f"{_LOOP_ITER_NAME_PREFIX}_"
 
         def _id_of(name: str) -> int:
-            suffix = name[len(prefix):]
+            suffix = name[len(prefix) :]
             return int(suffix) if name.startswith(prefix) and suffix.isdigit() else -1
 
         max_id = -1

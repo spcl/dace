@@ -4,28 +4,28 @@ import dace
 from dace import symbolic
 import numpy as np
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 def test_general_einsum():
 
     @dace.program
     def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M], C: dace.float64[M]):
-        return np.einsum('ij,ji,i->', A, B, C)
+        return np.einsum("ij,ji,i->", A, B, C)
 
     A = np.random.rand(10, 20)
     B = np.random.rand(20, 10)
     C = np.random.rand(10)
     out = einsumtest(A, B, C)
-    assert np.allclose(out, np.einsum('ij,ji,i->', A, B, C))
+    assert np.allclose(out, np.einsum("ij,ji,i->", A, B, C))
 
 
 def test_matmul():
 
     @dace.program
     def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M]):
-        return np.einsum('ik,kj', A, B)
+        return np.einsum("ik,kj", A, B)
 
     A = np.random.rand(10, 20)
     B = np.random.rand(20, 10)
@@ -36,7 +36,7 @@ def test_batch_matmul():
 
     @dace.program
     def einsumtest(A: dace.float64[4, M, N], B: dace.float64[4, N, M]):
-        return np.einsum('bik,bkj->bij', A, B)
+        return np.einsum("bik,bkj->bij", A, B)
 
     A = np.random.rand(4, 10, 20)
     B = np.random.rand(4, 20, 10)
@@ -46,53 +46,63 @@ def test_batch_matmul():
 def test_opteinsum_sym():
 
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
-                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
-        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
+    def einsumtest(
+        A: dace.float64[N, N, N, N],
+        B: dace.float64[N, N, N, N],
+        C: dace.float64[N, N, N, N],
+        D: dace.float64[N, N, N, N],
+        E: dace.float64[N, N, N, N],
+    ):
+        return np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
     try:
         einsumtest(A, B, C, D, E)
-        raise AssertionError('Exception should have been raised')
+        raise AssertionError("Exception should have been raised")
     except ValueError:
-        print('Exception successfully caught')
+        print("Exception successfully caught")
 
 
 def test_opteinsum():
     N = 10
 
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
-                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
-        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
+    def einsumtest(
+        A: dace.float64[N, N, N, N],
+        B: dace.float64[N, N, N, N],
+        C: dace.float64[N, N, N, N],
+        D: dace.float64[N, N, N, N],
+        E: dace.float64[N, N, N, N],
+    ):
+        return np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
 
-    assert np.allclose(einsumtest(A, B, C, D, E), np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E))
+    assert np.allclose(einsumtest(A, B, C, D, E), np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E))
 
 
 def test_einsum_libnode():
     from dace.libraries.blas.nodes.einsum import Einsum
 
-    sdfg = dace.SDFG('tester')
-    sdfg.arg_names = ['A', 'B']
-    sdfg.add_array('A', (20, 21), dace.float64)
-    sdfg.add_array('B', (21, 22), dace.float64)
-    sdfg.add_array('__return', (20, 22), dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.arg_names = ["A", "B"]
+    sdfg.add_array("A", (20, 21), dace.float64)
+    sdfg.add_array("B", (21, 22), dace.float64)
+    sdfg.add_array("__return", (20, 22), dace.float64)
 
     state = sdfg.add_state()
-    r1 = state.add_read('A')
-    r2 = state.add_read('B')
-    w = state.add_write('__return')
-    enode = Einsum('einsum')
-    enode.einsum_str = 'ik,kj->ij'
-    enode.in_connectors = {'a': None, 'b': None}
-    enode.out_connectors = {'out': None}
+    r1 = state.add_read("A")
+    r2 = state.add_read("B")
+    w = state.add_write("__return")
+    enode = Einsum("einsum")
+    enode.einsum_str = "ik,kj->ij"
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
     state.add_node(enode)
 
-    state.add_edge(r1, None, enode, 'a', dace.Memlet('A'))
-    state.add_edge(r2, None, enode, 'b', dace.Memlet('B'))
-    state.add_edge(enode, 'out', w, None, dace.Memlet('__return'))
+    state.add_edge(r1, None, enode, "a", dace.Memlet("A"))
+    state.add_edge(r2, None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", w, None, dace.Memlet("__return"))
 
     A = np.random.rand(20, 21)
     B = np.random.rand(21, 22)
@@ -101,9 +111,10 @@ def test_einsum_libnode():
 
 def test_lift_einsum():
     from dace.transformation.dataflow import LiftEinsum
-    N = dace.symbol('N')
-    M = dace.symbol('M')
-    K = dace.symbol('K')
+
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    K = dace.symbol("K")
 
     @dace.program
     def tester(A: dace.float64[M, K], B: dace.float64[K, N]):
@@ -130,7 +141,7 @@ def test_lift_einsum_mttkrp():
 
     @dace.program
     def tester(A, B, C, D):
-        for i, j, k, a in dace.map[0:A.shape[0], 0:A.shape[1], 0:A.shape[2], 0:B.shape[1]]:
+        for i, j, k, a in dace.map[0 : A.shape[0], 0 : A.shape[1], 0 : A.shape[2], 0 : B.shape[1]]:
             with dace.tasklet:
                 x << A[i, j, k]
                 y << B[j, a]
@@ -147,10 +158,10 @@ def test_lift_einsum_mttkrp():
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ijk,jl,kl->il'
+            assert node.einsum_str == "ijk,jl,kl->il"
 
     sdfg(A, B, C, D)
-    assert np.allclose(D, np.einsum('ijk,jl,kl->il', A, B, C))
+    assert np.allclose(D, np.einsum("ijk,jl,kl->il", A, B, C))
 
 
 def test_lift_einsum_reduce():
@@ -172,12 +183,12 @@ def test_lift_einsum_reduce():
     # the pure lowering explicitly instead of depending on whichever is the default.
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, Reduce):
-            n.implementation = 'pure'
+            n.implementation = "pure"
     sdfg.expand_library_nodes()
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ijk->'
+            assert node.einsum_str == "ijk->"
 
     # Specialize to ensure Reduce node is there
     sdfg.expand_library_nodes(recursive=False)
@@ -185,7 +196,7 @@ def test_lift_einsum_reduce():
     assert tuple(rnode.axes) == (0, 1, 2)
 
     sdfg(A, B)
-    assert np.allclose(B, np.einsum('ijk->', A))
+    assert np.allclose(B, np.einsum("ijk->", A))
 
 
 def test_lift_einsum_reduce_partial():
@@ -207,20 +218,20 @@ def test_lift_einsum_reduce_partial():
     # the pure lowering explicitly instead of depending on whichever is the default.
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, Reduce):
-            n.implementation = 'pure'
+            n.implementation = "pure"
     sdfg.expand_library_nodes()
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ijk->ik'
+            assert node.einsum_str == "ijk->ik"
 
     # Specialize to ensure Reduce node is there
     sdfg.expand_library_nodes(recursive=False)
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
-    assert tuple(rnode.axes) == (1, )
+    assert tuple(rnode.axes) == (1,)
 
     sdfg(A, B)
-    assert np.allclose(B, np.einsum('ijk->ik', A))
+    assert np.allclose(B, np.einsum("ijk->ik", A))
 
 
 def test_lift_einsum_outerproduct():
@@ -230,7 +241,7 @@ def test_lift_einsum_outerproduct():
     @dace.program
     def tester(A, B):
         C = np.ndarray([B.shape[0], A.shape[0]], A.dtype)
-        for i, j in dace.map[0:A.shape[0], 0:B.shape[0]]:
+        for i, j in dace.map[0 : A.shape[0], 0 : B.shape[0]]:
             with dace.tasklet:
                 a << A[i]
                 b << B[j]
@@ -246,9 +257,9 @@ def test_lift_einsum_outerproduct():
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'i,j->ji'
+            assert node.einsum_str == "i,j->ji"
 
-    assert np.allclose(sdfg(A, B), np.einsum('i,j->ji', A, B))
+    assert np.allclose(sdfg(A, B), np.einsum("i,j->ji", A, B))
 
 
 def test_lift_einsum_beta():
@@ -258,7 +269,7 @@ def test_lift_einsum_beta():
     @dace.program
     def tester(A, B):
         C = np.ones_like(A)
-        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+        for i, j, k in dace.map[0 : A.shape[0], 0 : A.shape[0], 0 : A.shape[0]]:
             with dace.tasklet:
                 a << A[i, k]
                 b << B[k, j]
@@ -275,24 +286,24 @@ def test_lift_einsum_beta():
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ij,jk->ik'
+            assert node.einsum_str == "ij,jk->ik"
             assert symbolic.equal_valued(1, node.alpha)
             assert symbolic.equal_valued(1, node.beta)
 
     assert np.allclose(sdfg(A, B), C)
 
 
-@pytest.mark.parametrize('symbolic_alpha', (False, True))
+@pytest.mark.parametrize("symbolic_alpha", (False, True))
 def test_lift_einsum_alpha_beta(symbolic_alpha):
     from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
 
-    alph = dace.symbol('alph') if symbolic_alpha else 2
+    alph = dace.symbol("alph") if symbolic_alpha else 2
 
     @dace.program
     def tester(A, B):
         C = np.ones_like(A)
-        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+        for i, j, k in dace.map[0 : A.shape[0], 0 : A.shape[0], 0 : A.shape[0]]:
             with dace.tasklet:
                 a << A[i, k]
                 b << B[k, j]
@@ -308,7 +319,7 @@ def test_lift_einsum_alpha_beta(symbolic_alpha):
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ij,jk->ik'
+            assert node.einsum_str == "ij,jk->ik"
             assert node.alpha == alph
             assert symbolic.equal_valued(1, node.beta)
 
@@ -322,7 +333,7 @@ def test_c_transposed():
 
     @dace.program
     def fn(a, b, c):
-        c[:] = np.einsum('nm,nf->fm', a, b)
+        c[:] = np.einsum("nm,nf->fm", a, b)
 
     a = np.random.rand(N, F_in)
     b = np.random.rand(N, F_out)
@@ -335,7 +346,7 @@ def test_c_transposed():
     assert np.allclose(c, c_expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_general_einsum()
     test_matmul()
     test_batch_matmul()

@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class CUDA:
-
     cmake_minimum_version = None
     cmake_packages = ["CUDA"]
     cmake_variables = {}
@@ -14,7 +13,7 @@ class CUDA:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["cuda_runtime.h"]}
+    headers = {"frame": ["cuda_runtime.h"]}
     state_fields = []
     init_code = ""
     finalize_code = ""

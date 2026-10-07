@@ -5,13 +5,11 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-from dace.libraries.mpi.nodes.node import (MPINode, expanded_input_connectors, resolve_comm,
-                                           validate_integer_descriptor)
+from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, resolve_comm, validate_integer_descriptor
 
 
 @dace.library.expansion
 class ExpandIsendMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -35,7 +33,7 @@ class ExpandIsendMPI(ExpandTransformation):
             code += f"""static MPI_Datatype newtype;
                         static int init=1;
                         if (init) {{
-                           MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
+                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
                            MPI_Type_commit(&newtype);
                            init=0;
                         }}
@@ -48,34 +46,34 @@ class ExpandIsendMPI(ExpandTransformation):
             code += f"""// MPI_Type_free(&newtype);
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+            side_effects=True,
+        )
         conn = tasklet.in_connectors
-        conn = {c: (dtypes.int32 if c == '_dest' else t) for c, t in conn.items()}
+        conn = {c: (dtypes.int32 if c == "_dest" else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == "_request" else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
         return tasklet
 
 
 @dace.library.node
 class Isend(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandIsendMPI,
     }
     default_implementation = "MPI"
 
-    nosync = dace.properties.Property(dtype=bool,
-                                      default=False,
-                                      category="Scheduling",
-                                      desc="Do not sync if memory is on GPU")
+    nosync = dace.properties.Property(
+        dtype=bool, default=False, category="Scheduling", desc="Do not sync if memory is on GPU"
+    )
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={"_request"}, **kwargs)
@@ -97,12 +95,12 @@ class Isend(MPINode):
             if e.src_conn == "_request":
                 req = sdfg.arrays[e.data.data]
 
-        validate_integer_descriptor(dest, 'Destination')
-        validate_integer_descriptor(tag, 'Tag')
+        validate_integer_descriptor(dest, "Destination")
+        validate_integer_descriptor(tag, "Tag")
 
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_buffer':
+            if dst_conn == "_buffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
                 # compute buffer offset

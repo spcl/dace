@@ -13,7 +13,6 @@ from dace.frontend.common import op_repository as oprepo
 
 @dace.library.expansion
 class ExpandSyrkOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -22,23 +21,20 @@ class ExpandSyrkOpenBLAS(ExpandTransformation):
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
         prefix = func.lower()
-        uplo = 'CblasUpper' if node.uplo else 'CblasLower'
-        trans = 'CblasTrans' if node.transA else 'CblasNoTrans'
+        uplo = "CblasUpper" if node.uplo else "CblasLower"
+        trans = "CblasTrans" if node.transA else "CblasNoTrans"
         a, b = node.alpha, node.beta
         code = f"""
         std::memcpy(_Cout, _Cin, sizeof({dt.ctype}) * ({n}) * ({ldc_in}));
         cblas_{prefix}syrk(CblasRowMajor, {uplo}, {trans}, {n}, {k}, ({dt.ctype})({a}), _A, {lda}, ({dt.ctype})({b}), _Cout, {ldc_out});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandSyrkMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -48,7 +44,6 @@ class ExpandSyrkMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandSyrkCuBLAS(ExpandTransformation):
-
     environments = [environments.cublas.cuBLAS]
 
     @staticmethod
@@ -56,8 +51,8 @@ class ExpandSyrkCuBLAS(ExpandTransformation):
         (desc_A, lda), (desc_Cin, ldc_in), ldc_out, n, k = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
-        uplo = 'CUBLAS_FILL_MODE_UPPER' if node.uplo else 'CUBLAS_FILL_MODE_LOWER'
-        trans = 'CUBLAS_OP_T' if node.transA else 'CUBLAS_OP_N'
+        uplo = "CUBLAS_FILL_MODE_UPPER" if node.uplo else "CUBLAS_FILL_MODE_LOWER"
+        trans = "CUBLAS_OP_T" if node.transA else "CUBLAS_OP_N"
         a, b = node.alpha, node.beta
         code = environments.cublas.cuBLAS.handle_setup_code(node)
         code += f"""
@@ -66,16 +61,13 @@ class ExpandSyrkCuBLAS(ExpandTransformation):
                         cudaMemcpyDeviceToDevice, __dace_current_stream);
         cublas{func}syrk(__dace_cublas_handle, {uplo}, {trans}, {n}, {k}, &__alpha, _A, {lda}, &__beta, _Cout, {ldc_out});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.node
 class Syrk(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {"OpenBLAS": ExpandSyrkOpenBLAS, "MKL": ExpandSyrkMKL, "cuBLAS": ExpandSyrkCuBLAS}
     default_implementation = None
@@ -120,27 +112,20 @@ class Syrk(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.syrk')
-@oprepo.replaces('dace.libraries.blas.Syrk')
-def syrk_libnode(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 A,
-                 C,
-                 result=None,
-                 uplo=False,
-                 transA=False,
-                 alpha=1,
-                 beta=0):
+@oprepo.replaces("dace.libraries.blas.syrk")
+@oprepo.replaces("dace.libraries.blas.Syrk")
+def syrk_libnode(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, C, result=None, uplo=False, transA=False, alpha=1, beta=0
+):
     result = result if result is not None else C
     A_in, C_in = state.add_read(A), state.add_read(C)
     C_out = state.add_write(result)
 
-    libnode = Syrk('syrk', uplo=uplo, transA=transA, alpha=alpha, beta=beta)
+    libnode = Syrk("syrk", uplo=uplo, transA=transA, alpha=alpha, beta=beta)
     state.add_node(libnode)
 
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(C_in, None, libnode, '_Cin', mm.Memlet(C))
-    state.add_edge(libnode, '_Cout', C_out, None, mm.Memlet(result))
+    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
+    state.add_edge(C_in, None, libnode, "_Cin", mm.Memlet(C))
+    state.add_edge(libnode, "_Cout", C_out, None, mm.Memlet(result))
 
     return []

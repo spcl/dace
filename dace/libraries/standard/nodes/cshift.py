@@ -7,6 +7,7 @@ shape as ``arr`` whose element along ``dim`` (default 1) at position
 whole array: a rank-R input rotates each (R-1)-cross-section
 perpendicular to ``dim`` independently.
 """
+
 import dace
 import dace.library
 import dace.properties
@@ -17,6 +18,7 @@ from dace.transformation.transformation import ExpandTransformation
 @dace.library.expansion
 class ExpandCShiftPure(ExpandTransformation):
     """Pure expansion of :class:`CShift` -- a single Map reading ``_x`` at the rotated index."""
+
     environments = []
 
     @staticmethod
@@ -28,10 +30,12 @@ class ExpandCShiftPure(ExpandTransformation):
         n = shape[dim_zero]
         # Fail loud: no fabricated ``__shift`` fallback -- it would leak as an unbound free symbol.
         if node.shift is None:
-            raise ValueError(f"CShift '{node.label}': shift is None.  The shift amount must "
-                             "be set on the node (a constant or an SDFG-bound symbol) before "
-                             "expansion -- the bridge supplies it from the Fortran "
-                             "CSHIFT(arr, shift) argument.")
+            raise ValueError(
+                f"CShift '{node.label}': shift is None.  The shift amount must "
+                "be set on the node (a constant or an SDFG-bound symbol) before "
+                "expansion -- the bridge supplies it from the Fortran "
+                "CSHIFT(arr, shift) argument."
+            )
         shift = node.shift
 
         sdfg = dace.SDFG(node.label + "_sdfg")
@@ -79,12 +83,12 @@ class CShift(dace.sdfg.nodes.LibraryNode):
     implementations = {"pure": ExpandCShiftPure}
     default_implementation = "pure"
 
-    dim = dace.properties.Property(dtype=int,
-                                   default=1,
-                                   desc="Fortran 1-based axis to rotate along (CSHIFT default 1).")
-    shift = dace.properties.SymbolicProperty(allow_none=True,
-                                             default=None,
-                                             desc="Shift amount; ``None`` raises ValueError at expansion time.")
+    dim = dace.properties.Property(
+        dtype=int, default=1, desc="Fortran 1-based axis to rotate along (CSHIFT default 1)."
+    )
+    shift = dace.properties.SymbolicProperty(
+        allow_none=True, default=None, desc="Shift amount; ``None`` raises ValueError at expansion time."
+    )
 
     def __init__(self, name, *, dim=1, shift=None, **kwargs):
         super().__init__(name, inputs={"_x"}, outputs={"_out"}, **kwargs)

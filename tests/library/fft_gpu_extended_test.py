@@ -9,6 +9,7 @@ Extends the basic 1-D coverage in :file:`fft_test.py` with:
 
 All tests run only when the ``gpu`` marker is selected.
 """
+
 import numpy as np
 import pytest
 
@@ -19,7 +20,7 @@ from dace.codegen.common import get_gpu_backend
 
 def _gpu_fft() -> str:
     """The FFT implementation of the configured GPU backend."""
-    return {'cuda': 'cuFFT', 'hip': 'hipFFT'}[get_gpu_backend()]
+    return {"cuda": "cuFFT", "hip": "hipFFT"}[get_gpu_backend()]
 
 
 def _expand_with(backend, nodes_to_set):
@@ -90,7 +91,7 @@ def test_gpu_fft_complex64_roundtrip():
     @dace.program
     def roundtrip(x: dace.complex64[N]):
         y = np.fft.fft(x)
-        return np.fft.ifft(y, norm='forward')
+        return np.fft.ifft(y, norm="forward")
 
     sdfg = roundtrip.to_sdfg()
     sdfg.apply_gpu_transformations()
@@ -108,7 +109,7 @@ def test_gpu_fft_complex64_roundtrip():
     np.testing.assert_allclose(z / N, x, rtol=1e-3, atol=1e-5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_gpu_fft_2d()
     test_gpu_fft_3d()
     test_gpu_fft_complex64_roundtrip()

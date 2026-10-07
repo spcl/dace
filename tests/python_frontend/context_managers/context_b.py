@@ -8,7 +8,6 @@ def dace_blocker(f):
 
 
 class MyContextManager:
-
     def __init__(self, seed):
         self.rng = np.random.default_rng(seed)
 
@@ -16,7 +15,7 @@ class MyContextManager:
     def __enter__(self):
         a = self.rng.integers(51, 100)
         b = self.rng.integers(51, 100)
-        print(f'Computing GCD of {a} and {b}')
+        print(f"Computing GCD of {a} and {b}")
         return np.gcd(a, b)
 
     @dace_blocker

@@ -17,24 +17,23 @@ from dace.frontend.common import einsum
 class Einsum(nodes.LibraryNode):
     # Set the default expansion of the node to 'specialize' (registered below)
     implementations = {}
-    default_implementation = 'specialize'
+    default_implementation = "specialize"
 
     # Configurable properties of the einsum node
-    einsum_str = properties.Property(dtype=str,
-                                     default='',
-                                     category='Semantics',
-                                     desc='The Einstein notation string that describes this einsum')
+    einsum_str = properties.Property(
+        dtype=str, default="", category="Semantics", desc="The Einstein notation string that describes this einsum"
+    )
 
-    alpha = properties.SymbolicProperty(category='Semantics',
-                                        desc='The coefficient to multiply the inputs with',
-                                        default=1.0)
-    beta = properties.SymbolicProperty(category='Semantics',
-                                       desc='The coefficient to multiply the output with when added to the product',
-                                       default=0.0)
+    alpha = properties.SymbolicProperty(
+        category="Semantics", desc="The coefficient to multiply the inputs with", default=1.0
+    )
+    beta = properties.SymbolicProperty(
+        category="Semantics", desc="The coefficient to multiply the output with when added to the product", default=0.0
+    )
 
 
 # Define the expansion, which specializes the einsum by lowering it to either a BLAS operation or a direct contraction
-@library.register_expansion(Einsum, 'specialize')
+@library.register_expansion(Einsum, "specialize")
 class SpecializeEinsum(xf.ExpandTransformation):
     # Define environments necessary for this expansion (optional, can be an empty list)
     environments = []
@@ -44,7 +43,7 @@ class SpecializeEinsum(xf.ExpandTransformation):
     @staticmethod
     def expansion(node: Einsum, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
         # Make an SDFG for the expansion
-        sdfg = SDFG('einsum')
+        sdfg = SDFG("einsum")
         state = sdfg.add_state()
 
         # Add the given arrays (as given by memlets) to the expansion SDFG
@@ -55,31 +54,37 @@ class SpecializeEinsum(xf.ExpandTransformation):
             desc = parent_sdfg.arrays[e.data.data]
             insubset = deepcopy(e.data.src_subset)
             isqdim = insubset.squeeze()
-            sdfg.add_array(e.dst_conn,
-                           insubset.size(),
-                           desc.dtype,
-                           strides=[s for i, s in enumerate(desc.strides) if i in isqdim],
-                           storage=desc.storage)
+            sdfg.add_array(
+                e.dst_conn,
+                insubset.size(),
+                desc.dtype,
+                strides=[s for i, s in enumerate(desc.strides) if i in isqdim],
+                storage=desc.storage,
+            )
 
         for e in parent_state.out_edges(node):
             output = e.src_conn
             desc = parent_sdfg.arrays[e.data.data]
             outsubset = deepcopy(e.data.dst_subset)
             osqdim = outsubset.squeeze()
-            sdfg.add_array(output,
-                           outsubset.size(),
-                           desc.dtype,
-                           strides=[s for i, s in enumerate(desc.strides) if i in osqdim],
-                           storage=desc.storage)
+            sdfg.add_array(
+                output,
+                outsubset.size(),
+                desc.dtype,
+                strides=[s for i, s in enumerate(desc.strides) if i in osqdim],
+                storage=desc.storage,
+            )
         #######################################
 
         # Fill SDFG with einsum contents
-        einsum.create_einsum_sdfg(sdfg,
-                                  state,
-                                  node.einsum_str,
-                                  *sorted(inputs),
-                                  output=output,
-                                  output_name=output,
-                                  alpha=node.alpha,
-                                  beta=node.beta)
+        einsum.create_einsum_sdfg(
+            sdfg,
+            state,
+            node.einsum_str,
+            *sorted(inputs),
+            output=output,
+            output_name=output,
+            alpha=node.alpha,
+            beta=node.beta,
+        )
         return sdfg

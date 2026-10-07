@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class hipFFT:
-
     cmake_minimum_version = None
     cmake_packages = [""]
     cmake_variables = {}
@@ -14,7 +13,7 @@ class hipFFT:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["hipfft/hipfft.h", "hipfft/hipfftXt.h"], 'cuda': ["hipfft/hipfft.h", "hipfft/hipfftXt.h"]}
+    headers = {"frame": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"], "cuda": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"]}
     state_fields = []
     init_code = ""
     finalize_code = ""

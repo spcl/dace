@@ -33,16 +33,15 @@ def test_fortran_frontend_parent():
     visitor = ast_transforms.ScopeVarsDeclarations()
     visitor.visit(ast)
 
-    for var in ['d', 'arr', 'arr3']:
-        assert ('scope_test', var) in visitor.scope_vars
-        assert isinstance(visitor.scope_vars[('scope_test', var)], ast_internal_classes.Var_Decl_Node)
-        assert visitor.scope_vars[('scope_test', var)].name == var
+    for var in ["d", "arr", "arr3"]:
+        assert ("scope_test", var) in visitor.scope_vars
+        assert isinstance(visitor.scope_vars[("scope_test", var)], ast_internal_classes.Var_Decl_Node)
+        assert visitor.scope_vars[("scope_test", var)].name == var
 
-    for var in ['d', 'arr4']:
-        assert ('scope_test_function', var) in visitor.scope_vars
-        assert visitor.scope_vars[('scope_test_function', var)].name == var
+    for var in ["d", "arr4"]:
+        assert ("scope_test_function", var) in visitor.scope_vars
+        assert visitor.scope_vars[("scope_test_function", var)].name == var
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_parent()

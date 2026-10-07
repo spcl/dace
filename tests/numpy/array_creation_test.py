@@ -18,8 +18,8 @@ def empty():
 
 def test_empty():
     out = empty()
-    assert (list(out.shape) == [M, N])
-    assert (out.dtype == np.uint32)
+    assert list(out.shape) == [M, N]
+    assert out.dtype == np.uint32
 
 
 @dace.program
@@ -30,8 +30,8 @@ def empty_like1(A: dace.complex64[N, M, 2]):
 def test_empty_like1():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like1(A)
-    assert (list(out.shape) == [N, M, 2])
-    assert (out.dtype == np.complex64)
+    assert list(out.shape) == [N, M, 2]
+    assert out.dtype == np.complex64
 
 
 @dace.program
@@ -42,8 +42,8 @@ def empty_like2(A: dace.complex64[N, M, 2]):
 def test_empty_like2():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like2(A)
-    assert (list(out.shape) == [2, N, N])
-    assert (out.dtype == np.complex64)
+    assert list(out.shape) == [2, N, N]
+    assert out.dtype == np.complex64
 
 
 @dace.program
@@ -54,8 +54,8 @@ def empty_like3(A: dace.complex64[N, M, 2]):
 def test_empty_like3():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like3(A)
-    assert (list(out.shape) == [N, M, 2])
-    assert (out.dtype == np.uint8)
+    assert list(out.shape) == [N, M, 2]
+    assert out.dtype == np.uint8
 
 
 @compare_numpy_output()
@@ -237,7 +237,7 @@ def program_strides_3():
     return A
 
 
-@pytest.mark.skip(reason='Temporarily skipping due to a sporadic issue on CI')
+@pytest.mark.skip(reason="Temporarily skipping due to a sporadic issue on CI")
 def test_strides_3():
     A = program_strides_3()
     assert A.strides == (8, 16)
@@ -245,15 +245,15 @@ def test_strides_3():
 
 
 def test_zeros_symbolic_size_scalar():
-    K = dace.symbol('K')
+    K = dace.symbol("K")
 
     @dace.program
     def zeros_symbolic_size():
         return np.zeros((K), dtype=np.uint32)
 
     out = zeros_symbolic_size(K=10)
-    assert (list(out.shape) == [10])
-    assert (out.dtype == np.uint32)
+    assert list(out.shape) == [10]
+    assert out.dtype == np.uint32
 
 
 def test_ones_scalar_size_scalar():

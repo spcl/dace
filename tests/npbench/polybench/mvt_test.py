@@ -12,7 +12,7 @@ from dace.autodiff import add_backward_pass
 # N
 sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
 
-N = dc.symbol('N', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
 
 
 @dc.program
@@ -23,10 +23,10 @@ def mvt_kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N], y_2: dc
 
 
 def initialize(N, datatype=np.float64):
-    x1 = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
-    x2 = np.fromfunction(lambda i: ((i + 1) % N) / N, (N, ), dtype=datatype)
-    y_1 = np.fromfunction(lambda i: ((i + 3) % N) / N, (N, ), dtype=datatype)
-    y_2 = np.fromfunction(lambda i: ((i + 4) % N) / N, (N, ), dtype=datatype)
+    x1 = np.fromfunction(lambda i: (i % N) / N, (N,), dtype=datatype)
+    x2 = np.fromfunction(lambda i: ((i + 1) % N) / N, (N,), dtype=datatype)
+    y_1 = np.fromfunction(lambda i: ((i + 3) % N) / N, (N,), dtype=datatype)
+    y_2 = np.fromfunction(lambda i: ((i + 4) % N) / N, (N,), dtype=datatype)
     A = np.fromfunction(lambda i, j: (i * j % N) / N, (N, N), dtype=datatype)
 
     return x1, x2, y_1, y_2, A
@@ -39,10 +39,10 @@ def mvt_jax_kernel(jnp, x1, x2, y_1, y_2, A):
 
 
 def run_mvt(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs MVT for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench small size)
     N = sizes["small"]
@@ -72,12 +72,13 @@ def run_mvt_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N], y_2: dc.float64[N], A: dc.float64[N,
-                                                                                                                    N]):
+    def autodiff_kernel(
+        x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N], y_2: dc.float64[N], A: dc.float64[N, N]
+    ):
         mvt_kernel(x1, x2, y_1, y_2, A)
         return np.sum(x2)
 
@@ -113,9 +114,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

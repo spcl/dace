@@ -11,7 +11,6 @@ from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_
 
 @library.expansion
 class ExpandGatherMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -37,17 +36,18 @@ class ExpandGatherMPI(ExpandTransformation):
                        _outbuffer, ({out_count_str})/_commsize, {out_mpi_dtype_str},
                        _root, {comm});
             """
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class Gather(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandGatherMPI,
@@ -79,11 +79,11 @@ class Gather(MPINode):
         in_count_str = "XXX"
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_outbuffer':
+            if src_conn == "_outbuffer":
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 out_count_str = "*".join(dims)
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
+            if dst_conn == "_inbuffer":
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 
@@ -92,7 +92,6 @@ class Gather(MPINode):
 
 @library.expansion
 class ExpandBlockGatherMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -103,13 +102,13 @@ class ExpandBlockGatherMPI(ExpandTransformation):
         if out_buffer.dtype.veclen > 1:
             raise NotImplementedError
 
-        subarray_type = input_descriptor_name(node, parent_state, '_subarray')
-        gather_grid = input_descriptor_name(node, parent_state, '_gather_grid')
-        reduce_grid = input_descriptor_name(node, parent_state, '_reduce_grid')
+        subarray_type = input_descriptor_name(node, parent_state, "_subarray")
+        gather_grid = input_descriptor_name(node, parent_state, "_gather_grid")
+        reduce_grid = input_descriptor_name(node, parent_state, "_reduce_grid")
         if subarray_type is None:
-            raise ValueError('BlockGather requires an incoming _subarray connector')
+            raise ValueError("BlockGather requires an incoming _subarray connector")
         if gather_grid is None:
-            raise ValueError('BlockGather requires an incoming _gather_grid connector')
+            raise ValueError("BlockGather requires an incoming _gather_grid connector")
 
         if reduce_grid:
             code = f"""
@@ -127,17 +126,18 @@ class ExpandBlockGatherMPI(ExpandTransformation):
                 }}
             """
 
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class BlockGather(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandBlockGatherMPI,

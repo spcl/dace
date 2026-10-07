@@ -9,6 +9,7 @@ single batched 1-D DFT along that axis.  These tests pin that against numpy
 *without* needing an external FFT library (unlike ``fft_axis_test.py`` which is
 FFTW3-gated).
 """
+
 import numpy as np
 import pytest
 
@@ -19,7 +20,7 @@ from dace.libraries.fft.nodes import FFT
 # ---------------------------------------------------------------------------
 # Full N-D (axis=None) via the numpy frontend (fftn / ifftn)
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize('shape', [(8, 12), (4, 6, 5)])
+@pytest.mark.parametrize("shape", [(8, 12), (4, 6, 5)])
 def test_pure_fftn(shape):
 
     @dace.program
@@ -32,7 +33,7 @@ def test_pure_fftn(shape):
     np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.parametrize('norm', ['backward', 'forward', 'ortho'])
+@pytest.mark.parametrize("norm", ["backward", "forward", "ortho"])
 def test_pure_ifftn_2d(norm):
     shape = (8, 12)
 
@@ -49,12 +50,15 @@ def test_pure_ifftn_2d(norm):
 # ---------------------------------------------------------------------------
 # Batched 1-D (axis=k) via the numpy frontend (fft(x, axis=k))
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize('shape,axis', [
-    ((8, 12), 0),
-    ((8, 12), -1),
-    ((4, 6, 5), 1),
-    ((4, 6, 5), -1),
-])
+@pytest.mark.parametrize(
+    "shape,axis",
+    [
+        ((8, 12), 0),
+        ((8, 12), -1),
+        ((4, 6, 5), 1),
+        ((4, 6, 5), -1),
+    ],
+)
 def test_pure_fft_axis(shape, axis):
 
     @dace.program
@@ -88,15 +92,15 @@ def test_pure_ifft_axis_inverse():
 # ---------------------------------------------------------------------------
 def test_pure_fftn_inplace():
     shape = (6, 5)
-    sdfg = dace.SDFG('inplace_fftn')
-    sdfg.add_array('buf', shape, dace.complex128)
+    sdfg = dace.SDFG("inplace_fftn")
+    sdfg.add_array("buf", shape, dace.complex128)
     state = sdfg.add_state()
-    rnode = state.add_read('buf')
-    wnode = state.add_write('buf')
-    node = FFT('fft')  # axis=None -> full 2-D fftn
+    rnode = state.add_read("buf")
+    wnode = state.add_write("buf")
+    node = FFT("fft")  # axis=None -> full 2-D fftn
     state.add_node(node)
-    state.add_edge(rnode, None, node, '_inp', dace.Memlet.from_array('buf', sdfg.arrays['buf']))
-    state.add_edge(node, '_out', wnode, None, dace.Memlet.from_array('buf', sdfg.arrays['buf']))
+    state.add_edge(rnode, None, node, "_inp", dace.Memlet.from_array("buf", sdfg.arrays["buf"]))
+    state.add_edge(node, "_out", wnode, None, dace.Memlet.from_array("buf", sdfg.arrays["buf"]))
     sdfg.expand_library_nodes()
 
     rng = np.random.default_rng(4)
@@ -110,7 +114,7 @@ def test_pure_fftn_inplace():
 # Symbolic dimensions -- the shape is only known at call time.
 # ---------------------------------------------------------------------------
 def test_pure_fftn_symbolic():
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def tester(x: dace.complex128[M, N]):
@@ -137,10 +141,10 @@ def test_pure_rank1_unchanged():
     np.testing.assert_allclose(y, np.fft.fft(x), rtol=1e-10, atol=1e-10)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_pure_fftn((8, 12))
     test_pure_fftn((4, 6, 5))
-    for nrm in ('backward', 'forward', 'ortho'):
+    for nrm in ("backward", "forward", "ortho"):
         test_pure_ifftn_2d(nrm)
     for sh, ax in (((8, 12), 0), ((8, 12), -1), ((4, 6, 5), 1), ((4, 6, 5), -1)):
         test_pure_fft_axis(sh, ax)
@@ -148,4 +152,4 @@ if __name__ == '__main__':
     test_pure_fftn_inplace()
     test_pure_fftn_symbolic()
     test_pure_rank1_unchanged()
-    print('pure N-D FFT tests PASS')
+    print("pure N-D FFT tests PASS")

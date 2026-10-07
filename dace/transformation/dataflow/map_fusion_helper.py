@@ -67,12 +67,10 @@ def find_parameter_remapping(
         simp = lambda e: e  # noqa: E731 [lambda-assignment]
 
     first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
-        for param, rng in zip(first_params, first_map.range)
+        param: tuple(simp(r) for r in rng) for param, rng in zip(first_params, first_map.range)
     }
     second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in rng)
-        for param, rng in zip(second_params, second_map.range)
+        param: tuple(simp(r) for r in rng) for param, rng in zip(second_params, second_map.range)
     }
 
     # Parameters of the second map that have not yet been matched to a parameter
@@ -199,7 +197,7 @@ def get_new_conn_name(
 
     # If we have a MapExit or have a nested Map we never consolidate or if
     #  especially requested.
-    if (isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges):
+    if isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges:
         return to_node.next_connector(old_conn), False
 
     # Now look for an edge that already referees to the data of the edge.
@@ -234,10 +232,12 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
-    return ((edge_that_is_already_present.dst_conn[3:],
-             True) if edge_that_is_already_present_subset.covers(edge_to_move_subset)
-            or edge_to_move_subset.covers(edge_that_is_already_present_subset) else
-            (to_node.next_connector(old_conn), False))
+    return (
+        (edge_that_is_already_present.dst_conn[3:], True)
+        if edge_that_is_already_present_subset.covers(edge_to_move_subset)
+        or edge_to_move_subset.covers(edge_that_is_already_present_subset)
+        else (to_node.next_connector(old_conn), False)
+    )
 
 
 def relocate_nodes(
@@ -315,9 +315,11 @@ def relocate_nodes(
                 #  value, so the one being moved is a redundant redefinition -- drop it. A
                 #  disagreeing binding would need renaming, which is not implemented.
                 if not dynamic_map_range_binding_agrees(state, to_node, from_node, dmr_symbol):
-                    raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                                              f" to '{to_node}', but the symbol is already known there, but the"
-                                              " renaming is not implemented.")
+                    raise NotImplementedError(
+                        f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                        f" to '{to_node}', but the symbol is already known there, but the"
+                        " renaming is not implemented."
+                    )
                 source = edge_to_move.src
                 state.remove_edge(edge_to_move)
                 from_node.remove_in_connector(dmr_symbol)
@@ -326,7 +328,8 @@ def relocate_nodes(
                 continue
             if not to_node.add_in_connector(dmr_symbol, force=False):
                 raise RuntimeError(  # Might fail because of out connectors.
-                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
+                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
+                )
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
@@ -487,8 +490,11 @@ def is_node_reachable_from(
     """
 
     def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-        return (edge.dst for edge in graph.out_edges(node)
-                if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty()))
+        return (
+            edge.dst
+            for edge in graph.out_edges(node)
+            if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty())
+        )
 
     to_visit: List[nodes.Node] = [begin]
     seen: Set[nodes.Node] = set()
@@ -896,8 +902,11 @@ def dynamic_map_range_binding_agrees(
     if edge is None or other_edge is None:
         return False
     data = edge.data.data
-    if (data != other_edge.data.data or edge.src_conn != other_edge.src_conn
-            or edge.data.subset != other_edge.data.subset):
+    if (
+        data != other_edge.data.data
+        or edge.src_conn != other_edge.src_conn
+        or edge.data.subset != other_edge.data.subset
+    ):
         return False
     if edge.src is other_edge.src:
         return True
@@ -919,8 +928,9 @@ def dynamic_map_ranges_agree(
         return False
     # The second Map's bindings are moved onto the first Map by `relocate_nodes()`, and a name
     #  that is already an OUT connector there can neither be added nor renamed.
-    return all(symbol not in first_map_entry.out_connectors
-               for symbol in second_map_entry.dynamic_input_connectors - shared)
+    return all(
+        symbol not in first_map_entry.out_connectors for symbol in second_map_entry.dynamic_input_connectors - shared
+    )
 
 
 def can_topologically_be_fused(

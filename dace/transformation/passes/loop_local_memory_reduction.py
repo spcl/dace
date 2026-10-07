@@ -7,7 +7,12 @@ from dace.sdfg.state import LoopRegion
 from dace.data import Scalar
 from dace.transformation import transformation as xf
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import loop_analysis, StateReachability, FindAccessStates, ConditionUniqueWrites
+from dace.transformation.passes.analysis import (
+    loop_analysis,
+    StateReachability,
+    FindAccessStates,
+    ConditionUniqueWrites,
+)
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
@@ -98,14 +103,15 @@ class LoopLocalMemoryReduction(ppl.Pass):
         dtype=bool,
         default=True,
         category="Memory",
-        desc=
-        "Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
+        desc="Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
     )
 
-    assume_positive_symbols = properties.Property(dtype=bool,
-                                                  default=False,
-                                                  category="Applicability",
-                                                  desc="Assume symbols are positive when checking for applicability.")
+    assume_positive_symbols = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Assume symbols are positive when checking for applicability.",
+    )
 
     skip_arrays = properties.SetProperty(
         element_type=str,
@@ -206,12 +212,19 @@ class LoopLocalMemoryReduction(ppl.Pass):
         uncond_write_indices = list()
         all_write_indices = list()
 
-        read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
-        uncond_write_edges = set(e for st in loop.all_states() for an in st.data_nodes()
-                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an))
-        all_write_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                              for e in st.in_edges(an))
+        read_edges = set(
+            e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
+        )
+        uncond_write_edges = set(
+            e
+            for st in loop.all_states()
+            for an in st.data_nodes()
+            if an.data == array_name and an not in self.cond_unique
+            for e in st.in_edges(an)
+        )
+        all_write_edges = set(
+            e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
+        )
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
@@ -238,8 +251,12 @@ class LoopLocalMemoryReduction(ppl.Pass):
             defined_syms.update(edge.data.assignments.keys())
 
         resolved_step = symbolic.resolve_symbol_to_constant(step, sdfg)
-        return (itervar not in defined_syms and step.free_symbols.isdisjoint(defined_syms)
-                and step.free_symbols.isdisjoint({itervar}) and resolved_step is not None)
+        return (
+            itervar not in defined_syms
+            and step.free_symbols.isdisjoint(defined_syms)
+            and step.free_symbols.isdisjoint({itervar})
+            and resolved_step is not None
+        )
 
     def _get_K_values(
         self,
@@ -276,13 +293,13 @@ class LoopLocalMemoryReduction(ppl.Pass):
             a = dim_read_indices[0][0] * step
             if a >= 1:
                 span = (write_ub - read_lb) / a
-                cond = (uncond_write_lb > read_ub)  # At least one write index must be higher than all read indices
+                cond = uncond_write_lb > read_ub  # At least one write index must be higher than all read indices
             if a == 0:
                 span = len(dim_read_indices + dim_write_indices)
                 cond = True  # No condition needed
             if a <= -1:
                 span = (read_ub - write_ub) / (-a)
-                cond = (uncond_write_ub < read_lb)  # At least one write index must be lower than all read indices
+                cond = uncond_write_ub < read_lb  # At least one write index must be lower than all read indices
 
             # Relaxation: when writes are not strictly past all reads, the buffer can
             # still be safely reused if every read happens after every write within the
@@ -339,7 +356,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # can be matched against the loop's top-level CFG.
         cur = block
         while cur is not None:
-            parent = getattr(cur, 'parent_graph', None)
+            parent = getattr(cur, "parent_graph", None)
             if parent is loop:
                 return cur
             if parent is None:
@@ -458,8 +475,9 @@ class LoopLocalMemoryReduction(ppl.Pass):
         self.write_before_read_cache[cache_key] = result
         return result
 
-    def _write_is_loop_local(self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG,
-                             loop: LoopRegion) -> bool:
+    def _write_is_loop_local(
+        self, array_name: str, write_indices: list[list[tuple]], sdfg: sd.SDFG, loop: LoopRegion
+    ) -> bool:
         # The (overapproximated) written subset must be written before read or not read at all.
         # TODO: This is overly conservative. Just checks if there are access nodes after the loop.
 
@@ -543,7 +561,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         # None of the indices can depend on changing symbols (i.e. symbols updated in the loop).
         for il in read_indices + all_write_indices:
-            for (a, b) in il:
+            for a, b in il:
                 if any(s.name in changing_syms for s in a.free_symbols.union(b.free_symbols)):
                     return
 
@@ -597,14 +615,16 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # The offset b must be multiple of a if a != 0.
         step = symbolic.resolve_symbol_to_constant(loop_analysis.get_loop_stride(loop), sdfg)
         a = a_values.pop() * step
-        if a != 0 and any(i[1] % a != 0 for il in collapsed_read_indices + collapsed_all_write_indices
-                          for i in il if i[0] != 0):
+        if a != 0 and any(
+            i[1] % a != 0 for il in collapsed_read_indices + collapsed_all_write_indices for i in il if i[0] != 0
+        ):
             return
 
         # All constants (a == 0) must be in the same dimension.
         for dim in range(len(collapsed_read_indices[0])):
             if any(il[dim][0] == 0 for il in collapsed_read_indices + collapsed_all_write_indices) and any(
-                    il[dim][0] != 0 for il in collapsed_read_indices + collapsed_all_write_indices):
+                il[dim][0] != 0 for il in collapsed_read_indices + collapsed_all_write_indices
+            ):
                 return
 
         # Outside of the loop, the written subset of the array must be written before read or not read at all.
@@ -612,8 +632,15 @@ class LoopLocalMemoryReduction(ppl.Pass):
             return
 
         # A K value must be found for the combined 1D access.
-        collapsed_K = self._get_K_values(array_name, collapsed_read_indices, collapsed_uncond_write_indices,
-                                         collapsed_all_write_indices, step, sdfg, loop)
+        collapsed_K = self._get_K_values(
+            array_name,
+            collapsed_read_indices,
+            collapsed_uncond_write_indices,
+            collapsed_all_write_indices,
+            step,
+            sdfg,
+            loop,
+        )
         if all(k is None for k in collapsed_K):
             return
 
@@ -626,10 +653,12 @@ class LoopLocalMemoryReduction(ppl.Pass):
         self.num_applications += 1
 
         # Replace all read and write edges in the loop with modulo accesses.
-        read_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
-        write_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name
-                          for e in st.in_edges(an))
+        read_edges = set(
+            e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.out_edges(an)
+        )
+        write_edges = set(
+            e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name for e in st.in_edges(an)
+        )
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.
         for edge in read_edges:

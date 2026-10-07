@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains the GPU Transform Map transformation. """
+"""Contains the GPU Transform Map transformation."""
 
 from dace import data, dtypes, sdfg as sd
 from dace.sdfg import nodes
@@ -13,29 +13,28 @@ from dace.properties import Property, make_properties
 
 @make_properties
 class GPUTransformMap(transformation.SingleStateTransformation):
-    """ Implements the GPUTransformMap transformation.
+    """Implements the GPUTransformMap transformation.
 
-        Converts a single map to a GPU-scheduled map and creates GPU arrays
-        outside it, generating CPU<->GPU memory copies automatically.
+    Converts a single map to a GPU-scheduled map and creates GPU arrays
+    outside it, generating CPU<->GPU memory copies automatically.
     """
 
     fullcopy = Property(category="Memory", desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
     toplevel_trans = Property(category="Memory", desc="Make all GPU transients top-level", dtype=bool, default=False)
 
-    register_trans = Property(category="Memory",
-                              desc="Make all transients inside GPU maps registers",
-                              dtype=bool,
-                              default=False)
+    register_trans = Property(
+        category="Memory", desc="Make all transients inside GPU maps registers", dtype=bool, default=False
+    )
 
-    sequential_innermaps = Property(category="Scheduling",
-                                    desc="Make all internal maps Sequential",
-                                    dtype=bool,
-                                    default=False)
+    sequential_innermaps = Property(
+        category="Scheduling", desc="Make all internal maps Sequential", dtype=bool, default=False
+    )
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
+
     reduce = transformation.PatternNode(stdlib.Reduce)
 
     @classmethod
@@ -48,7 +47,7 @@ class GPUTransformMap(transformation.SingleStateTransformation):
             candidate_map = map_entry.map
 
             # Map schedules that are disallowed to transform to GPUs
-            if (candidate_map.schedule in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES):
+            if candidate_map.schedule in [dtypes.ScheduleType.MPI] + dtypes.GPU_SCHEDULES:
                 return False
             if sd.is_devicelevel_gpu(sdfg, graph, map_entry):
                 return False
@@ -61,15 +60,18 @@ class GPUTransformMap(transformation.SingleStateTransformation):
             # allocated on non-default space
             subgraph = graph.scope_subgraph(map_entry)
             for node in subgraph.nodes():
-                if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage != dtypes.StorageType.Default
-                        and node.desc(sdfg).storage != dtypes.StorageType.Register):
+                if (
+                    isinstance(node, nodes.AccessNode)
+                    and node.desc(sdfg).storage != dtypes.StorageType.Default
+                    and node.desc(sdfg).storage != dtypes.StorageType.Register
+                ):
                     return False
 
             # If one of the outputs is a stream, do not match
             map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
-                if (isinstance(dst, nodes.AccessNode) and isinstance(sdfg.arrays[dst.data], data.Stream)):
+                if isinstance(dst, nodes.AccessNode) and isinstance(sdfg.arrays[dst.data], data.Stream):
                     return False
 
             return True
@@ -98,6 +100,7 @@ class GPUTransformMap(transformation.SingleStateTransformation):
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
+
         transformation = GPUTransformSDFG()
         transformation.setup_match(sdfg, 0, -1, {}, 0)
         transformation.register_trans = self.register_trans

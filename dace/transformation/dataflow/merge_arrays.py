@@ -7,7 +7,7 @@ from dace.sdfg.propagation import propagate_memlet
 
 
 class InMergeArrays(transformation.SingleStateTransformation):
-    """ Merge duplicate arrays connected to the same scope entry. """
+    """Merge duplicate arrays connected to the same scope entry."""
 
     array1 = transformation.PatternNode(nodes.AccessNode)
     array2 = transformation.PatternNode(nodes.AccessNode)
@@ -42,25 +42,32 @@ class InMergeArrays(transformation.SingleStateTransformation):
         # Ensure arr1 and arr2's node IDs are ordered (avoid duplicates)
         arr1_id = graph.node_id(self.array1)
         arr2_id = graph.node_id(self.array2)
-        if (graph.in_degree(arr1) == 0 and graph.in_degree(arr2) == 0 and arr1_id >= arr2_id):
+        if graph.in_degree(arr1) == 0 and graph.in_degree(arr2) == 0 and arr1_id >= arr2_id:
             return False
 
         map = self.map_entry
 
         # If array's connector leads directly to map, skip it
-        if all(e.dst_conn and not e.dst_conn.startswith('IN_') for e in graph.edges_between(arr1, map)):
+        if all(e.dst_conn and not e.dst_conn.startswith("IN_") for e in graph.edges_between(arr1, map)):
             return False
-        if all(e.dst_conn and not e.dst_conn.startswith('IN_') for e in graph.edges_between(arr2, map)):
+        if all(e.dst_conn and not e.dst_conn.startswith("IN_") for e in graph.edges_between(arr2, map)):
             return False
 
-        if (any(e.dst != map for e in graph.out_edges(arr1)) or any(e.dst != map for e in graph.out_edges(arr2))):
+        if any(e.dst != map for e in graph.out_edges(arr1)) or any(e.dst != map for e in graph.out_edges(arr2)):
             return False
 
         # Ensure arr1 and arr2 are the first two incoming nodes (avoid further
         # duplicates)
         all_source_nodes = set(
-            graph.node_id(e.src) for e in graph.in_edges(map) if e.src != arr1 and e.src != arr2
-            and e.src.data == arr1.data and e.dst_conn and e.dst_conn.startswith('IN_') and graph.in_degree(e.src) == 0)
+            graph.node_id(e.src)
+            for e in graph.in_edges(map)
+            if e.src != arr1
+            and e.src != arr2
+            and e.src.data == arr1.data
+            and e.dst_conn
+            and e.dst_conn.startswith("IN_")
+            and graph.in_degree(e.src) == 0
+        )
         if any(nid < arr1_id or nid < arr2_id for nid in all_source_nodes):
             return False
 
@@ -70,7 +77,7 @@ class InMergeArrays(transformation.SingleStateTransformation):
         arr = self.array1
         map = self.map_entry
         nid1, nid2 = graph.node_id(self.array1), graph.node_id(self.array2)
-        return '%s (%d, %d) -> %s' % (arr.data, nid1, nid2, map.label)
+        return "%s (%d, %d) -> %s" % (arr.data, nid1, nid2, map.label)
 
     def apply(self, graph, sdfg):
         array = self.array1
@@ -80,8 +87,14 @@ class InMergeArrays(transformation.SingleStateTransformation):
 
         # Find all other incoming access nodes without incoming edges
         source_edges = [
-            e for e in graph.in_edges(map) if isinstance(e.src, nodes.AccessNode) and e.src.data == array.data
-            and e.src != array and e.dst_conn and e.dst_conn.startswith('IN_') and graph.in_degree(e.src) == 0
+            e
+            for e in graph.in_edges(map)
+            if isinstance(e.src, nodes.AccessNode)
+            and e.src.data == array.data
+            and e.src != array
+            and e.dst_conn
+            and e.dst_conn.startswith("IN_")
+            and graph.in_degree(e.src) == 0
         ]
 
         # Modify connectors to point to first array
@@ -91,26 +104,25 @@ class InMergeArrays(transformation.SingleStateTransformation):
             connectors_to_remove.add(connector)
             for inner_edge in graph.out_edges(map):
                 if inner_edge.src_conn[4:] == connector:
-                    inner_edge._src_conn = 'OUT_' + result_connector
+                    inner_edge._src_conn = "OUT_" + result_connector
 
         # Remove other nodes from state
         graph.remove_nodes_from(set(e.src for e in source_edges))
 
         # Remove connectors from scope entry
         for c in connectors_to_remove:
-            map.remove_in_connector('IN_' + c)
-            map.remove_out_connector('OUT_' + c)
+            map.remove_in_connector("IN_" + c)
+            map.remove_out_connector("OUT_" + c)
 
         # Re-propagate memlets
         edge_to_propagate = next(e for e in graph.out_edges(map) if e.src_conn[4:] == result_connector)
-        map_edge._data = propagate_memlet(dfg_state=graph,
-                                          memlet=edge_to_propagate.data,
-                                          scope_node=map,
-                                          union_inner_edges=True)
+        map_edge._data = propagate_memlet(
+            dfg_state=graph, memlet=edge_to_propagate.data, scope_node=map, union_inner_edges=True
+        )
 
 
 class OutMergeArrays(transformation.SingleStateTransformation):
-    """ Merge duplicate arrays connected to the same scope entry. """
+    """Merge duplicate arrays connected to the same scope entry."""
 
     array1 = transformation.PatternNode(nodes.AccessNode)
     array2 = transformation.PatternNode(nodes.AccessNode)
@@ -146,20 +158,26 @@ class OutMergeArrays(transformation.SingleStateTransformation):
             return False
 
         # Ensure arr1 and arr2's node IDs are ordered (avoid duplicates)
-        if (graph.out_degree(arr1) == 0 and graph.out_degree(arr2) == 0 and arr1_id >= arr2_id):
+        if graph.out_degree(arr1) == 0 and graph.out_degree(arr2) == 0 and arr1_id >= arr2_id:
             return False
 
         map = self.map_exit
 
-        if (any(e.src != map for e in graph.in_edges(arr1)) or any(e.src != map for e in graph.in_edges(arr2))):
+        if any(e.src != map for e in graph.in_edges(arr1)) or any(e.src != map for e in graph.in_edges(arr2)):
             return False
 
         # Ensure arr1 and arr2 are the first two sink nodes (avoid further
         # duplicates)
         all_sink_nodes = set(
-            graph.node_id(e.dst) for e in graph.out_edges(map)
-            if e.dst != arr1 and e.dst != arr2 and e.dst.data == arr1.data and e.src_conn
-            and e.src_conn.startswith('OUT_') and graph.out_degree(e.dst) == 0)
+            graph.node_id(e.dst)
+            for e in graph.out_edges(map)
+            if e.dst != arr1
+            and e.dst != arr2
+            and e.dst.data == arr1.data
+            and e.src_conn
+            and e.src_conn.startswith("OUT_")
+            and graph.out_degree(e.dst) == 0
+        )
         if any(nid < arr1_id or nid < arr2_id for nid in all_sink_nodes):
             return False
 
@@ -169,7 +187,7 @@ class OutMergeArrays(transformation.SingleStateTransformation):
         arr = self.array1
         map = self.map_exit
         nid1, nid2 = graph.node_id(self.array1), graph.node_id(self.array2)
-        return '%s (%d, %d) -> %s' % (arr.data, nid1, nid2, map.label)
+        return "%s (%d, %d) -> %s" % (arr.data, nid1, nid2, map.label)
 
     def apply(self, graph, sdfg):
         array = self.array1
@@ -179,8 +197,14 @@ class OutMergeArrays(transformation.SingleStateTransformation):
 
         # Find all other outgoing access nodes without outgoing edges
         dst_edges = [
-            e for e in graph.out_edges(map) if isinstance(e.dst, nodes.AccessNode) and e.dst.data == array.data
-            and e.dst != array and e.src_conn and e.src_conn.startswith('OUT_') and graph.out_degree(e.dst) == 0
+            e
+            for e in graph.out_edges(map)
+            if isinstance(e.dst, nodes.AccessNode)
+            and e.dst.data == array.data
+            and e.dst != array
+            and e.src_conn
+            and e.src_conn.startswith("OUT_")
+            and graph.out_degree(e.dst) == 0
         ]
 
         # Modify connectors to point to first array
@@ -190,26 +214,25 @@ class OutMergeArrays(transformation.SingleStateTransformation):
             connectors_to_remove.add(connector)
             for inner_edge in graph.in_edges(map):
                 if inner_edge.dst_conn[3:] == connector:
-                    inner_edge.dst_conn = 'IN_' + result_connector
+                    inner_edge.dst_conn = "IN_" + result_connector
 
         # Remove other nodes from state
         graph.remove_nodes_from(set(e.dst for e in dst_edges))
 
         # Remove connectors from scope entry
         for c in connectors_to_remove:
-            map.remove_in_connector('IN_' + c)
-            map.remove_out_connector('OUT_' + c)
+            map.remove_in_connector("IN_" + c)
+            map.remove_out_connector("OUT_" + c)
 
         # Re-propagate memlets
         edge_to_propagate = next(e for e in graph.in_edges(map) if e.dst_conn[3:] == result_connector)
-        map_edge._data = propagate_memlet(dfg_state=graph,
-                                          memlet=edge_to_propagate.data,
-                                          scope_node=map,
-                                          union_inner_edges=True)
+        map_edge._data = propagate_memlet(
+            dfg_state=graph, memlet=edge_to_propagate.data, scope_node=map, union_inner_edges=True
+        )
 
 
 class MergeSourceSinkArrays(transformation.SingleStateTransformation):
-    """ Merge duplicate arrays that are source/sink nodes. """
+    """Merge duplicate arrays that are source/sink nodes."""
 
     array1 = transformation.PatternNode(nodes.AccessNode)
 

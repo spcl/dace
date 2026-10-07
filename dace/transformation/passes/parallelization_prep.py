@@ -13,6 +13,7 @@ Transformation classes are imported lazily inside the methods: importing them at
 module load would cycle (this package is imported by the transformations those
 imports pull in).
 """
+
 from typing import Any, Dict, Optional
 
 from dace import properties, symbolic
@@ -38,6 +39,7 @@ def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> Optional[int]:
     embed the pass, not part of that fix. With the bail in place the ``+ 1`` below is only ever reached
     for a positive stride, where it is the correct inclusive-end adjustment."""
     from dace.transformation.passes.analysis import loop_analysis
+
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
@@ -71,6 +73,7 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     of the SDFG untouched. Interstate matching ignores ``apply_transformations``' ``states=`` filter,
     so drive the fusion on each adjacent pair directly. Returns the number fused."""
     from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+
     fused = 0
     changed = True
     while changed:
@@ -79,14 +82,14 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
         for cfr in cfrs:
             for edge in list(cfr.edges()):
                 u, v = edge.src, edge.dst
-                if (isinstance(u, SDFGState) and isinstance(v, SDFGState)
-                        and StateFusionExtended.can_be_applied_to(sdfg, first_state=u, second_state=v)):
-                    StateFusionExtended.apply_to(sdfg,
-                                                 first_state=u,
-                                                 second_state=v,
-                                                 verify=False,
-                                                 annotate=False,
-                                                 save=False)
+                if (
+                    isinstance(u, SDFGState)
+                    and isinstance(v, SDFGState)
+                    and StateFusionExtended.can_be_applied_to(sdfg, first_state=u, second_state=v)
+                ):
+                    StateFusionExtended.apply_to(
+                        sdfg, first_state=u, second_state=v, verify=False, annotate=False, save=False
+                    )
                     fused += 1
                     changed = True
                     break
@@ -105,12 +108,13 @@ class ShortLoopUnroll(ppl.Pass):
     sub-loops: far less deepcopy volume and no intermediate blow-up (measured 6.5x faster on CloudSC vs
     unroll-then-global-fuse), so it is unconditional."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     unroll_limit = properties.Property(
         dtype=int,
         default=DEFAULT_UNROLL_LIMIT,
-        desc='Fully unroll constant-trip loops with at most this many iterations (0 disables).')
+        desc="Fully unroll constant-trip loops with at most this many iterations (0 disables).",
+    )
 
     def __init__(self, unroll_limit: int = DEFAULT_UNROLL_LIMIT):
         self.unroll_limit = unroll_limit
@@ -143,6 +147,7 @@ class ShortLoopUnroll(ppl.Pass):
         if self.unroll_limit <= 0:
             return None
         from dace.transformation.interstate.loop_unroll import LoopUnroll
+
         unrolled = 0
         # Unrolls that raised part-way through ``LoopUnroll.apply``. Counted separately from
         # ``unrolled`` so they feed the return value (the graph may be half-rewritten) without
@@ -194,6 +199,7 @@ class ShortLoopUnroll(ppl.Pass):
         if unrolled:
             # Propagate once, at the end of the pass (not per-apply).
             from dace.sdfg.propagation import propagate_memlets_sdfg
+
             propagate_memlets_sdfg(sdfg)
             return unrolled
         return 0 if partial else None

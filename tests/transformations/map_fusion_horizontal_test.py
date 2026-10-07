@@ -27,7 +27,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
     for name in names:
         sdfg.add_array(
             name,
-            shape=((10, 4) if name == "out" else (10, )),
+            shape=((10, 4) if name == "out" else (10,)),
             dtype=dace.float64,
             transient=False,
         )
@@ -55,10 +55,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
     state.add_mapped_tasklet(
         "comp_4",
         map_ranges={"__i": "0:10"},
-        inputs={
-            "__in1": dace.Memlet("A[__i]"),
-            "__in2": dace.Memlet("D[__i]")
-        },
+        inputs={"__in1": dace.Memlet("A[__i]"), "__in2": dace.Memlet("D[__i]")},
         code="__out = __in1 + __in2",
         outputs={"__out": dace.Memlet(f"out[__i, 3]")},
         input_nodes=input_nodes,
@@ -78,7 +75,7 @@ def _make_vertical_map_sdfg() -> dace.SDFG:
     for name in names:
         sdfg.add_array(
             name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=(name == "t"),
         )
@@ -281,8 +278,9 @@ def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
     assert expected_final_label == final_me.map.label
 
 
-def _make_slicing_map(state: dace.SDFGState, name: str, source: nodes.AccessNode, target: str,
-                      slices: int) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+def _make_slicing_map(
+    state: dace.SDFGState, name: str, source: nodes.AccessNode, target: str, slices: int
+) -> Tuple[nodes.MapEntry, nodes.MapExit]:
     """A Map whose body writes ``slices`` disjoint columns of ``target`` from ``slices`` tasklets.
 
     All of those writes land on the SAME ``IN_1`` of the MapExit -- one connector carrying several
@@ -320,7 +318,7 @@ def test_horizontal_fusion_relocates_a_multi_edge_connector_once():
     """
     sdfg = dace.SDFG(unique_name("horizontal_multi_edge_connector"))
     state = sdfg.add_state(is_start_block=True)
-    sdfg.add_array("A", shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("A", shape=(10,), dtype=dace.float64, transient=False)
     for name in ("out1", "out2"):
         sdfg.add_array(name, shape=(10, 3), dtype=dace.float64, transient=False)
 
@@ -342,10 +340,12 @@ def test_horizontal_fusion_relocates_a_multi_edge_connector_once():
     assert len(fused_exits) == 1
     fused_exit = fused_exits[0]
 
-    dangling_in = sorted(c for c in fused_exit.in_connectors
-                         if not any(e.dst_conn == c for e in state.in_edges(fused_exit)))
-    dangling_out = sorted(c for c in fused_exit.out_connectors
-                          if not any(e.src_conn == c for e in state.out_edges(fused_exit)))
+    dangling_in = sorted(
+        c for c in fused_exit.in_connectors if not any(e.dst_conn == c for e in state.in_edges(fused_exit))
+    )
+    dangling_out = sorted(
+        c for c in fused_exit.out_connectors if not any(e.src_conn == c for e in state.out_edges(fused_exit))
+    )
     assert not dangling_in, f"MapExit kept in-connectors with no edge: {dangling_in}"
     assert not dangling_out, f"MapExit kept out-connectors with no edge: {dangling_out}"
     # Nothing may be lost either: every slice write of both Maps still reaches the fused exit.
@@ -362,9 +362,9 @@ def _make_shared_dynamic_map_range_sdfg(binding: str) -> dace.SDFG:
     """
     sdfg = dace.SDFG(unique_name(f"shared_dmr_{binding}"))
     for name in ("bound", "other_bound"):
-        sdfg.add_array(name, shape=(1, ), dtype=dace.int64, transient=False)
+        sdfg.add_array(name, shape=(1,), dtype=dace.int64, transient=False)
     for name in ("A", "B"):
-        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=False)
     state = sdfg.add_state(is_start_block=True)
 
     first_source = state.add_access("bound")
@@ -426,8 +426,8 @@ def test_horizontal_fusion_keeps_the_dynamic_map_range_bound():
     sdfg = _make_shared_dynamic_map_range_sdfg("same_data")
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True) == 1
 
-    bound = np.full((1, ), 4, dtype=np.int64)
-    args = {name: np.full((10, ), -1.0, dtype=np.float64) for name in ("A", "B")}
+    bound = np.full((1,), 4, dtype=np.int64)
+    args = {name: np.full((10,), -1.0, dtype=np.float64) for name in ("A", "B")}
     expected = {name: np.where(np.arange(10) < 4, value, -1.0) for name, value in (("A", 1.0), ("B", 2.0))}
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -449,7 +449,9 @@ def test_horizontal_fusion_keeps_the_dynamic_map_range_bound():
                             for name, value in (("A", 1.0), ("B", 2.0))}
                 csdfg(bound=bound, other_bound=bound.copy(), **args)
                 sys.exit(0 if all(np.array_equal(args[n], expected[n]) for n in args) else 2)
-            """) % sdfg_path)
+            """)
+                % sdfg_path
+            )
         result = subprocess.run([sys.executable, child], capture_output=True, text=True, timeout=60)
         assert not result.returncode, f"fused Map did not honor the dynamic bound: {result.stderr}"
 
@@ -468,7 +470,7 @@ def test_horizontal_fusion_rejects_a_disagreeing_dynamic_map_range(binding: str)
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_horizontal_fusion_relocates_a_multi_edge_connector_once()
     test_horizontal_fusion_drops_an_equal_dynamic_map_range("same_node")
     test_horizontal_fusion_drops_an_equal_dynamic_map_range("same_data")

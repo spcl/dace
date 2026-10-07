@@ -4,6 +4,7 @@
 ``transA``/``transB=True`` must compute ``A^T @ B`` / ``A @ B^T`` without
 materialising a transposed copy of the operand.
 """
+
 import dace
 import numpy as np
 import pytest
@@ -43,12 +44,15 @@ def _reference(a, b, transA, transB):
     return a_eff @ b_eff
 
 
-@pytest.mark.parametrize("transA,transB", [
-    (False, False),
-    (True, False),
-    (False, True),
-    (True, True),
-])
+@pytest.mark.parametrize(
+    "transA,transB",
+    [
+        (False, False),
+        (True, False),
+        (False, True),
+        (True, True),
+    ],
+)
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_matmul_trans_flags(transA, transB, dtype):
     rng = np.random.default_rng(seed=0)

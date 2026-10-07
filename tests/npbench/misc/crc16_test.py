@@ -6,16 +6,16 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 poly: dace.uint16 = 0x8408
 
 
 # Adapted from https://gist.github.com/oysstu/68072c44c02879a2abf94ef350d1c7c6
 @dace.program
 def crc16_kernel(data: dace.uint8[N]):
-    '''
+    """
     CRC-16-CCITT Algorithm
-    '''
+    """
     crc: dace.uint16 = 0xFFFF
     for i in range(N):
         b = data[i]
@@ -26,7 +26,7 @@ def crc16_kernel(data: dace.uint8[N]):
             else:
                 crc >>= 1
             cur_byte >>= 1
-    crc = (~crc & 0xFFFF)
+    crc = ~crc & 0xFFFF
     crc = (crc << 8) | ((crc >> 8) & 0xFF)
 
     return crc & 0xFFFF
@@ -34,15 +34,16 @@ def crc16_kernel(data: dace.uint8[N]):
 
 def initialize(N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    data = rng.integers(0, 256, size=(N, ), dtype=np.uint8)
+    data = rng.integers(0, 256, size=(N,), dtype=np.uint8)
     return data
 
 
 def ground_truth(data, poly=0x8408):
-    '''
+    """
     CRC-16-CCITT Algorithm
-    '''
+    """
     crc = 0xFFFF
     for b in data:
         cur_byte = 0xFF & b
@@ -52,17 +53,17 @@ def ground_truth(data, poly=0x8408):
             else:
                 crc >>= 1
             cur_byte >>= 1
-    crc = (~crc & 0xFFFF)
+    crc = ~crc & 0xFFFF
     crc = (crc << 8) | ((crc >> 8) & 0xFF)
 
     return crc & 0xFFFF
 
 
 def run_crc16(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs CRC16 for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench small size)
     N = 1600
@@ -73,7 +74,7 @@ def run_crc16(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         out = sdfg(data, N=N)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and validate
     out_ref = ground_truth(data)
@@ -91,9 +92,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

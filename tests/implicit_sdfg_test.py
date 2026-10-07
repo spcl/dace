@@ -15,5 +15,5 @@ def test_implicit():
     assert np.allclose(B, A * 5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_implicit()

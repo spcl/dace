@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests write-conflict resolution tiling """
+"""Tests write-conflict resolution tiling"""
+
 import dace
 from dace.transformation.auto import auto_optimize as aopt
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _runtest(sdfg: dace.SDFG, n: int, add_symbol: bool = True):
@@ -33,7 +34,7 @@ def test_shortmap():
 
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
-    assert 'atomic' not in sdfg.generate_code()[0].code
+    assert "atomic" not in sdfg.generate_code()[0].code
     _runtest(sdfg, 4, False)
     del sdfg
 
@@ -48,7 +49,7 @@ def test_symmap():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    assert "reduce(" in code and code.count("atomic") == 1
     _runtest(sdfg, 257)
     del sdfg
 
@@ -67,11 +68,11 @@ def test_libnode():
     # whichever one happens to be the default.
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, dace.libraries.standard.nodes.Reduce):
-            n.implementation = 'pure'
+            n.implementation = "pure"
     sdfg.expand_library_nodes()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    assert "reduce(" in code and code.count("atomic") == 1
     _runtest(sdfg, 257)
     del sdfg
 
@@ -86,8 +87,8 @@ def test_block_reduction():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    if dace.Config.get_bool('optimizer', 'autotile_partial_parallelism'):
-        assert 'reduce(' in code and code.count('atomic') == 0
+    if dace.Config.get_bool("optimizer", "autotile_partial_parallelism"):
+        assert "reduce(" in code and code.count("atomic") == 0
     _runtest2d(sdfg, 257, 257)
     del sdfg
 
@@ -102,12 +103,12 @@ def test_block_reduction_short():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    assert "reduce(" in code and code.count("atomic") == 1
     _runtest2d(sdfg, 257, 2)
     del sdfg
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symmap()
     test_shortmap()
     test_libnode()

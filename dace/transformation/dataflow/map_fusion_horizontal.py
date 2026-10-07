@@ -120,7 +120,8 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  would turn it into a matcher crash.
         if self.only_inner_maps and self.only_toplevel_maps:
             raise ValueError(
-                "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionHorizontal instance.")
+                "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionHorizontal instance."
+            )
 
     @classmethod
     def expressions(cls) -> Any:
@@ -146,10 +147,19 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         """
         try:
             return self.can_be_applied_impl(graph, expr_index, sdfg, permissive)
-        except (ValueError, RuntimeError, KeyError, StopIteration, TypeError, AttributeError,
-                AssertionError) as exception:
-            warnings.warn(f"MapFusionHorizontal.can_be_applied() refused a malformed match:"
-                          f" {type(exception).__name__}: {exception}")
+        except (
+            ValueError,
+            RuntimeError,
+            KeyError,
+            StopIteration,
+            TypeError,
+            AttributeError,
+            AssertionError,
+        ) as exception:
+            warnings.warn(
+                f"MapFusionHorizontal.can_be_applied() refused a malformed match:"
+                f" {type(exception).__name__}: {exception}"
+            )
             return False
 
     def can_be_applied_impl(
@@ -219,13 +229,16 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  produces for a WAR/WAW hazard, are not parallel but can still be fused if no
         #  iteration can collide with a different one. See `analyze_happens_before_fusion()`.
         if not maps_are_parallel:
-            return mfhelper.analyze_happens_before_fusion(
-                state=graph,
-                sdfg=sdfg,
-                first_map_entry=first_map_entry,
-                second_map_entry=second_map_entry,
-                param_repl=param_repl,
-            ) is not None
+            return (
+                mfhelper.analyze_happens_before_fusion(
+                    state=graph,
+                    sdfg=sdfg,
+                    first_map_entry=first_map_entry,
+                    second_map_entry=second_map_entry,
+                    param_repl=param_repl,
+                )
+                is not None
+            )
 
         return True
 

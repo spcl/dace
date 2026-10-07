@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`~dace.transformation.passes.parallelization_prep.ShortLoopUnroll`.
 SDFGs are produced through the DaCe Python frontend."""
+
 import numpy as np
 
 import dace

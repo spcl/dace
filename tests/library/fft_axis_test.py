@@ -6,6 +6,7 @@ complex128 inputs through the FFT lib node's FFTW3 expansion and
 compares against numpy.  Axis=None (full N-D) is already covered by
 ``fft_test.py``.
 """
+
 import numpy as np
 import pytest
 
@@ -34,7 +35,7 @@ def test_fft_axis_last_2d_fftw3():
         return np.fft.fft(x, axis=-1)
 
     sdfg = fft_axis_last.to_sdfg()
-    prev = _expand('FFTW3', [fftlib.FFT])
+    prev = _expand("FFTW3", [fftlib.FFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -55,7 +56,7 @@ def test_fft_axis_first_2d_fftw3():
         return np.fft.fft(x, axis=0)
 
     sdfg = fft_axis_first.to_sdfg()
-    prev = _expand('FFTW3', [fftlib.FFT])
+    prev = _expand("FFTW3", [fftlib.FFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -76,7 +77,7 @@ def test_fft_axis_last_3d_fftw3():
         return np.fft.fft(x, axis=-1)
 
     sdfg = fft_axis_last_3d.to_sdfg()
-    prev = _expand('FFTW3', [fftlib.FFT])
+    prev = _expand("FFTW3", [fftlib.FFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -88,8 +89,8 @@ def test_fft_axis_last_3d_fftw3():
     np.testing.assert_allclose(y, np.fft.fft(x, axis=-1), rtol=1e-12, atol=1e-12)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_fft_axis_last_2d_fftw3()
     test_fft_axis_first_2d_fftw3()
     test_fft_axis_last_3d_fftw3()
-    print('FFT axis FFTW3 lowering tests PASS')
+    print("FFT axis FFTW3 lowering tests PASS")

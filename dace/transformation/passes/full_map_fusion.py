@@ -18,7 +18,7 @@ class FullMapFusion(ppl.Pass):
     flags, both default to `True`. They allow to enable disable the two fusion components.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     # Settings
     only_toplevel_maps = properties.Property(
@@ -97,12 +97,14 @@ class FullMapFusion(ppl.Pass):
         dtype=bool,
         default=True,
         category="Diagnostics",
-        desc='If True, validates the SDFG after all transformations have been applied.',
+        desc="If True, validates the SDFG after all transformations have been applied.",
     )
-    validate_all = properties.Property(dtype=bool,
-                                       default=False,
-                                       category="Diagnostics",
-                                       desc='If True, validates the SDFG after each transformation applies.')
+    validate_all = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Diagnostics",
+        desc="If True, validates the SDFG after each transformation applies.",
+    )
 
     def __init__(
         self,
@@ -150,7 +152,7 @@ class FullMapFusion(ppl.Pass):
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
         if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
-            raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
+            raise ValueError("Neither perform `MapFusionVertical` nor `MapFusionHorizontal`")
         if not self.perform_vertical_map_fusion:
             unique_vertical_arguments = {
                 "strict_dataflow": strict_dataflow,
@@ -161,12 +163,13 @@ class FullMapFusion(ppl.Pass):
             specified_vertical_arguments = [arg for arg, val in unique_vertical_arguments.items() if val is not None]
             if specified_vertical_arguments:
                 raise ValueError(
-                    f'Used `FullMapFusion` without vertical Map fusion, but speciefied: {", ".join(specified_vertical_arguments)}'
+                    f"Used `FullMapFusion` without vertical Map fusion, but speciefied: {', '.join(specified_vertical_arguments)}"
                 )
         if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
-                    f'Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
+                    f"Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor"
+                )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -212,7 +215,8 @@ class FullMapFusion(ppl.Pass):
                     never_consolidate_edges=self.never_consolidate_edges,
                     # TODO: Remove once issue#1911 has been solved.
                     _single_use_data=pipeline_results["FindSingleUseData"],
-                ))
+                )
+            )
 
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
@@ -225,7 +229,8 @@ class FullMapFusion(ppl.Pass):
                     only_if_common_ancestor=self.only_if_common_ancestor,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
-                ))
+                )
+            )
 
         pazz = pmp.PatternMatchAndApplyRepeated(
             fusion_transforms,

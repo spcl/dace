@@ -6,8 +6,7 @@ from dace.symbolic import sympy_numeric_fix, pystr_to_symbolic, symstr
 def test_float_zero_stays_float():
     """sympy.Float(0.0) must not be demoted to int(0)."""
     result = sympy_numeric_fix(sympy.Float(0.0))
-    assert isinstance(result, sympy.Float), \
-        f"Float(0.0) demoted to {type(result).__name__}"
+    assert isinstance(result, sympy.Float), f"Float(0.0) demoted to {type(result).__name__}"
     assert float(result) == 0.0
 
 
@@ -36,7 +35,7 @@ def test_float_prints_clean():
     """5.0 should print as '5.0', not '5.00000000000000'."""
     result = sympy_numeric_fix(sympy.Float(5.0))
     s = symstr(result)
-    assert s == '5.0', f"Expected '5.0', got '{s}'"
+    assert s == "5.0", f"Expected '5.0', got '{s}'"
 
 
 def test_huge_python_int_becomes_oo():

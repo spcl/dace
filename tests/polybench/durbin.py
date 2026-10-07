@@ -2,9 +2,9 @@
 import dace
 import polybench
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -83,5 +83,5 @@ def durbin(r: datatype[N], y: datatype[N]):
             out_y = in_a
 
 
-if __name__ == '__main__':
-    polybench.main(sizes, args, [(1, 'y')], init_array, durbin)
+if __name__ == "__main__":
+    polybench.main(sizes, args, [(1, "y")], init_array, durbin)
