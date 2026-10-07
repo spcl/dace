@@ -44,8 +44,8 @@ class CodeLibraryNode(LibraryNode):
     implementations = {}
     default_implementation = None
 
-    inputdict = Property(dtype=dict, default={})
-    outputdict = Property(dtype=dict, default={})
+    inputdict = Property(dtype=dict, default={}, category="General")
+    outputdict = Property(dtype=dict, default={}, category="General")
 
     def has_side_effects(self, sdfg) -> bool:
         # By default, assume code library nodes have side effects unless said otherwise
