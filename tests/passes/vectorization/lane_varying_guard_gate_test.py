@@ -107,10 +107,10 @@ def test_azimint_naive_masked_counter_is_predicated_per_lane():
 
     assert no_conditional_interstate_assign_on_widened_data(sdfg, WIDTHS) is None
 
-    # One reduction buffer per accumulator (stored by a masked copy), and one per-lane select per accumulator. The counter
-    # used to reach its buffer through an unmasked constant broadcast and no select at all, so it
-    # is the SECOND select that this pins -- a count of one is the old miscompile.
-    assert len(_tile_nodes(sdfg, "MaskedCopyLibraryNode", into="_red_buf")) == 2, "expected two reduction buffers"
+    # One horizontal reduction per accumulator, and one per-lane select per accumulator. The counter used to reach
+    # its reduction through an unmasked constant broadcast and no select at all, so it is the SECOND select that
+    # this pins -- a count of one is the old miscompile.
+    assert len(_tile_nodes(sdfg, "TileReduce")) == 2, "expected one reduction per accumulator"
     selects = _tile_nodes(sdfg, "TileITE")
     assert len(selects) == 2, (
         f"expected a per-lane select for the float accumulator AND the counter, got {[n.label for n in selects]}"
