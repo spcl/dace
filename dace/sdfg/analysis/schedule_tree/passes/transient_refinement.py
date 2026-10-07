@@ -100,7 +100,9 @@ def _rewrite_condition(code: CodeBlock, accesses: List[ast.Subscript], name: str
     code.code = tree.body
 
 
-def refine_loop_local_transients(stree: tn.ScheduleTreeScope, refine_in_conditions: bool = True) -> int:
+def refine_loop_local_transients(stree: tn.ScheduleTreeScope,
+                                 trust_reads: bool = False,
+                                 refine_in_conditions: bool = True) -> int:
     """
     Shrink each transient array to the part that one iteration of a loop uses, when no value it holds is used by
     another iteration: a dimension that every access indexes with exactly the variable ``v`` of an enclosing
@@ -120,6 +122,10 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope, refine_in_conditio
     iterations into several loops).
 
     :param stree: The schedule tree to transform in place.
+    :param trust_reads: Assume that no iteration reads an element of a transient before writing it, i.e., that such
+                        reads would see undefined values anyway (as with temporaries on the stack of each call), and
+                        shrink such transients too. Results may then change where those values reach outputs (e.g.,
+                        halo points that the program never computes).
     :param refine_in_conditions: Analyze and rewrite direct transient subscripts in Python conditions. A condition
         access is unsupported if it refers to a container without subscripting it, uses a slice, supplies a number of
         indices different from the container rank, or uses chained/indirect subscripting (for example,
@@ -203,7 +209,7 @@ def refine_loop_local_transients(stree: tn.ScheduleTreeScope, refine_in_conditio
                 dim = dims.pop()
                 if dim in contracted or desc.shape[dim] == 1:
                     continue
-                if name not in live_uses or liveness.exposed_in(loop, live_uses[name]):
+                if not trust_reads and (name not in live_uses or liveness.exposed_in(loop, live_uses[name])):
                     continue  # An iteration may read an element before writing it
                 contracted.add(dim)
         if not contracted:
