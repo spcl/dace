@@ -471,6 +471,30 @@ def map_tasklet_augassign_candidates(state: SDFGState, map_entry: nodes.MapEntry
                 }
 
 
+def runs_repeatedly(state: SDFGState) -> bool:
+    """Whether ``state`` runs once per iteration of an enclosing loop or map, nested SDFGs included.
+
+    A read-modify-write that runs once accumulates nothing; as a WCR it only loses its order against the
+    plain writes beside it (a peeled ``A[N-1] += 1`` fused next to the map writing ``A[i]``).
+    """
+    block = state
+    while block is not None:
+        parent = block.parent_graph
+        if isinstance(parent, LoopRegion):
+            return True
+        if isinstance(parent, SDFG):
+            nsdfg = parent.parent_nsdfg_node
+            outer = parent.parent
+            if nsdfg is None or outer is None:
+                return False
+            if outer.entry_node(nsdfg) is not None:
+                return True
+            block = outer
+            continue
+        block = parent
+    return False
+
+
 def augassign_to_wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, AugAssignBinding]]:
     """Enumerate ``(expr_index, binding)`` for every ``AugAssignToWCR`` candidate anchored on
     a combining Tasklet in ``state``.
@@ -484,12 +508,14 @@ def augassign_to_wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, AugAssi
     :param state: The state to scan.
     :returns: Yields a pattern index and the node binding to match it with.
     """
+    repeated = runs_repeatedly(state)
     for node in state.nodes():
         if not isinstance(node, nodes.Tasklet):
             continue
         entry = state.entry_node(node)
         if entry is None:
-            yield from free_tasklet_augassign_candidates(state, node)
+            if repeated:
+                yield from free_tasklet_augassign_candidates(state, node)
         elif isinstance(entry, nodes.MapEntry):
             yield from map_tasklet_augassign_candidates(state, entry, node)
 

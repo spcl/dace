@@ -2159,12 +2159,19 @@ def test_loop_to_reduce_doesnt_lift_break_loop():
 # fixtures pin that the direct walk finds and applies exactly what the generic driver did.
 
 
+def in_a_loop(sdfg: dace.SDFG) -> dace.SDFGState:
+    """A body state of a 4-trip loop: the per-state driver converts a free tasklet only where it repeats."""
+    loop = LoopRegion('repeat', 'r < 4', 'r', 'r = 0', 'r = r + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    return loop.add_state('body', is_start_block=True)
+
+
 def build_free_tasklet_rmw():
-    """Expr 0: ``A[0] -> tasklet -> A[0]``, no map, no staging copies."""
+    """Expr 0: ``A[0] -> tasklet -> A[0]`` in a loop body, no map, no staging copies."""
     sdfg = dace.SDFG('free_tasklet_rmw')
     sdfg.add_array('A', [1], dace.float64)
     sdfg.add_array('B', [6], dace.float64)
-    state = sdfg.add_state('body', is_start_block=True)
+    state = in_a_loop(sdfg)
     a_r = state.add_read('A')
     b_r = state.add_read('B')
     a_w = state.add_write('A')
@@ -2195,14 +2202,14 @@ def build_free_map_rmw():
 
 
 def build_copy_wrapped_rmw():
-    """Expr 2: ``A[0] -> copy_in -> tasklet -> copy_out -> A[0]``, private scalar staging."""
+    """Expr 2: ``A[0] -> copy_in -> tasklet -> copy_out -> A[0]`` in a loop body, private scalar staging."""
     sdfg = dace.SDFG('copy_wrapped_rmw')
     sdfg.add_array('A', [2], dace.float64)
     sdfg.add_array('B', [6], dace.float64)
     sdfg.add_scalar('a_in', dace.float64, transient=True)
     sdfg.add_scalar('b_in', dace.float64, transient=True)
     sdfg.add_scalar('a_sum', dace.float64, transient=True)
-    state = sdfg.add_state('body', is_start_block=True)
+    state = in_a_loop(sdfg)
     a_r = state.add_read('A')
     a_in = state.add_access('a_in')
     b_r = state.add_read('B')
@@ -2218,6 +2225,21 @@ def build_copy_wrapped_rmw():
     state.add_edge(a_sum, None, a_w, None, mm.Memlet('A[0]'))
     sdfg.reset_cfg_list()
     return sdfg
+
+
+def test_a_read_modify_write_that_runs_once_stays_plain():
+    """Outside any loop or map an RMW accumulates nothing, and as a WCR it would lose its order against the
+    plain writes a fusion puts beside it (a peeled ``A[N-1] += 1`` next to the map writing ``A[i]``)."""
+    sdfg = dace.SDFG('rmw_once')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [6], dace.float64)
+    state = sdfg.add_state('once', is_start_block=True)
+    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
+    state.add_edge(state.add_read('A'), None, tasklet, '__in1', mm.Memlet('A[0]'))
+    state.add_edge(state.add_read('B'), None, tasklet, '__in2', mm.Memlet('B[2]'))
+    state.add_edge(tasklet, '__out', state.add_write('A'), None, mm.Memlet('A[0]'))
+    assert augassign_to_wcr_in_state(AugAssignToWCR(), sdfg, state) == 0
+    assert not any(e.data.wcr for e in state.edges())
 
 
 @pytest.mark.parametrize('build', (build_free_tasklet_rmw, build_free_map_rmw, build_copy_wrapped_rmw))
