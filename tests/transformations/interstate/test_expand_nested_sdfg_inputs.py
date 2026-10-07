@@ -671,11 +671,11 @@ def test_threads_scalar_connector_scatter_index():
     assert np.allclose(dst, ref), f"scatter diverged, max|diff|={np.abs(dst - ref).max():.3e}"
 
 
-# CloudSC's flux body writes ``pfsqrf[jk, jl]``, reads it back and writes it again. Nesting the column
-# map body binds ``pfsqrf`` twice: once through an access node INSIDE the map (the write-then-reread)
-# and once through the MapExit (the final write). Folding the two onto one connector must keep the
-# MapExit path, or the write never leaves the map and whatever reads ``pfsqrf`` after it -- a copy
-# out to the host -- no longer waits for the kernel.
+# CloudSC's flux body writes ``pfsqrf[jk, jl]``, reads it back and writes it again: through an access
+# node INSIDE the map (the write-then-reread) and through the MapExit (the final write). Nesting the
+# column map body binds ``pfsqrf`` through one connector, and that connector must keep the MapExit
+# path, or the write never leaves the map and whatever reads ``pfsqrf`` after it -- a copy out to the
+# host -- no longer waits for the kernel.
 FLUX_ROWS, FLUX_COLS = 6, 8
 
 
@@ -724,7 +724,7 @@ def nest_and_expand_flux_body():
     nsdfg = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
     state = sdfg.states()[0]
     written = [e for e in state.out_edges(nsdfg) if e.data.data == "rf"]
-    assert len(written) == 2, f"fixture must bind 'rf' through two out-connectors, got {written}"
+    assert len(written) == 1, f"nesting must bind 'rf' through one out-connector, got {written}"
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg, state

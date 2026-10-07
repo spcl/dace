@@ -129,7 +129,8 @@ def spell_extent_as_source(sdfg: SDFG, target: Any, source: Any, mapping: Dict[s
     name = str(target)
     if not isinstance(target, sympy.Symbol) or name not in sdfg.symbols or name in sdfg.arrays:
         return
-    sdfg.replace_dict({name: str(source)}, symrepl={target: source})
+    # ``replace_dict`` looks the key up by name; a typed ``target`` hashes apart from that lookup.
+    sdfg.replace_dict({name: str(source)}, symrepl={pystr_to_symbolic(name): source})
     sdfg.symbols.pop(name, None)
     parent = sdfg.parent_nsdfg_node
     owner = parent.symbol_mapping if parent is not None else mapping
