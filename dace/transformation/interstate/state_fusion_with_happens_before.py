@@ -533,25 +533,34 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
             # WCR is a read-modify-write: an accumulate ``a(+)= ...`` implicitly READS
             # the prior (seed) value of ``a``. If the FIRST state WRITES an array the
-            # SECOND state then WCR-accumulates (overlapping subset), fusing the two
-            # states into one drops the seed->accumulate ordering -- the implicit seed
-            # read is not an edge, so a later MapFusion / topological reorder can run the
+            # SECOND state then WCR-accumulates (overlapping subset), the implicit seed
+            # read is not an edge, so a later MapFusion / topological reorder could run the
             # accumulate before the seed init, zeroing the result (covariance /
-            # correlation ``mean[:] = 0.0; mean(+)= data[...]``). The states must stay
-            # ordered, so refuse the fusion (the seed read is a genuine RAW dependency).
+            # correlation ``mean[:] = 0.0; mean(+)= data[...]``). Order every second-state
+            # source leading to the accumulated node after the seed writer, and refuse when
+            # no source leads there (nothing to hang the ordering on).
             first_written: Dict[str, List] = {}
+            first_writers: Dict[str, List[nodes.AccessNode]] = {}
             for n in first_output:
                 for e in first_state.in_edges(n):
                     if e.data is not None and not e.data.is_empty():
                         ss = e.data.get_dst_subset(e, first_state) or e.data.subset
                         if ss is not None:
                             first_written.setdefault(n.data, []).append(ss)
+                            first_writers.setdefault(n.data, []).append(n)
+            second_sources = second_state.source_nodes()
             for e in (second_state.edges() if first_written else ()):
                 if e.data is None or e.data.wcr is None or e.data.data not in first_written:
                     continue
                 wsub = e.data.get_dst_subset(e, second_state) or e.data.subset
-                if wsub is None or any(subsets.intersects(wsub, fs) is not False for fs in first_written[e.data.data]):
+                if wsub is not None and all(subsets.intersects(wsub, fs) is False for fs in first_written[e.data.data]):
+                    continue
+                accumulated = second_state.memlet_path(e)[-1].dst
+                if (not isinstance(accumulated, nodes.AccessNode) or accumulated not in top2 or not any(
+                        nx.has_path(second_state._nx, i, accumulated) for i in second_sources if i is not accumulated)):
                     return False
+                self.connections_to_make.append(
+                    ('seed', list(dict.fromkeys(first_writers[e.data.data])), [accumulated]))
 
             # Write-after-read into a sink: a second-state write to an element the
             # first state reads, landing on a pure sink (no outgoing edges), cannot be
