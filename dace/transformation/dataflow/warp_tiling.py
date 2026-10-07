@@ -2,7 +2,7 @@
 import copy
 
 import numpy as np
-from dace import properties, nodes, dtypes, subsets, symbolic
+from dace import graphlib as nx, properties, nodes, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
 from dace.frontend.operations import detect_reduction_type
 from dace.transformation import transformation as xf, helpers as xfh
@@ -39,11 +39,14 @@ def seed_lane_partial(state: SDFGState, inner_map: nodes.MapEntry, name: str, li
 
 
 def accumulator_source(state: SDFGState, inner_map: nodes.MapEntry, data: str) -> nodes.AccessNode:
-    """The access node holding ``data`` as ``inner_map`` starts: the one feeding the map, else a fresh read
-    (the value an earlier state left)."""
-    for edge in state.in_edges(inner_map):
-        if isinstance(edge.src, nodes.AccessNode) and edge.src.data == data:
-            return edge.src
+    """The access node holding ``data`` as ``inner_map`` starts: the last one upstream of the map, else a fresh
+    read (the value an earlier state left)."""
+    upstream = nx.ancestors(state._nx, inner_map)
+    held = [n for n in upstream if isinstance(n, nodes.AccessNode) and n.data == data]
+    # The last write before the map is the one no other holder of ``data`` follows
+    last = [n for n in held if not any(m is not n and nx.has_path(state._nx, n, m) for m in held)]
+    if len(last) == 1:
+        return last[0]
     return state.add_read(data)
 
 

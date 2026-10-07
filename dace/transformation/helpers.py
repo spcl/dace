@@ -618,10 +618,11 @@ def nest_state_subgraph(
     # Re-anchor such an edge on the AccessNode outside the subgraph. Only a single-element access
     # is unambiguous -- a wider memlet naming the inner container does not carry which outer
     # element it moves -- so leave those exactly as they are.
-    outer_ends = [(e, state.memlet_path(e)[0].src) for e in inputs]
-    outer_ends += [(e, state.memlet_path(e)[-1].dst) for e in outputs]
+    # An empty boundary edge names no container, and a scope-binding one may carry a connector on one side only
+    outer_ends = [(e, state.memlet_path(e)[0].src) for e in inputs if e.data.data is not None]
+    outer_ends += [(e, state.memlet_path(e)[-1].dst) for e in outputs if e.data.data is not None]
     for boundary_edge, outer_node in outer_ends:
-        if boundary_edge.data.data is None or boundary_edge.data.data not in subgraph_transients:
+        if boundary_edge.data.data not in subgraph_transients:
             continue
         if not isinstance(outer_node, nodes.AccessNode):
             continue
@@ -1965,6 +1966,14 @@ def reconnect_edge_through_map(
                      keeps destination of edge.
     :return: A 2-tuple of (incoming edge, outgoing edge).
     """
+    if edge.data.is_empty():
+        # An empty memlet binds to a scope without connectors; a connector pair would leave one side ``None``
+        result = (
+            state.add_edge(edge.src, edge.src_conn, new_node, None, Memlet()),
+            state.add_edge(new_node, None, edge.dst, edge.dst_conn, Memlet()),
+        )
+        state.remove_edge(edge)
+        return result
     if keep_src:
         result = state.add_edge_pair(
             new_node, edge.dst, edge.src, edge.data, internal_connector=edge.dst_conn, external_connector=edge.src_conn

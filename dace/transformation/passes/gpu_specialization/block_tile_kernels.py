@@ -132,8 +132,8 @@ def single_lane_nodes(
     if not strided or not all(strided_map_is_safe(s, entry) for s, entry in strided):
         return None
     # Nesting the lane body follows every edge into it back to its source; an ordering edge off the
-    # kernel entry has no connector to follow.
-    if any(edge.data.is_empty() for edge in state.out_edges(kernel)):
+    # kernel entry has no connector to follow. One that only binds an input-less node to the scope does not order.
+    if any(edge.data.is_empty() and state.in_degree(edge.dst) > 1 for edge in state.out_edges(kernel)):
         return None
     skipped: Set[nodes.Node] = set()
     for s, entry in strided:
