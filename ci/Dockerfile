@@ -19,7 +19,7 @@ RUN apt-get update -qq && apt-get install -qq -y \
     apt-get clean
 
 # Install uv
-ARG UV_VERSION=0.6.12
+ARG UV_VERSION=0.12.23
 ADD https://astral.sh/uv/${UV_VERSION}/install.sh /uv-installer.sh
 RUN UV_UNMANAGED_INSTALL="/opt/uv" sh /uv-installer.sh && rm /uv-installer.sh
 ENV PATH="/opt/uv:$PATH"
@@ -35,11 +35,4 @@ ENV VIRTUAL_ENV=${UV_PROJECT_ENVIRONMENT}
 ARG PY_VERSION=3.10
 RUN uv venv -p ${PY_VERSION} --link-mode copy ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
-
-# Install test dependencies
-RUN uv pip install \
-    pytest-xdist \
-    coverage \
-    codecov-cli \
-    flake8
-RUN uv pip install cupy
+# The test job syncs the dependencies from uv.lock into this venv
