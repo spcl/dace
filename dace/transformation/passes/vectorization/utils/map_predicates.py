@@ -314,6 +314,27 @@ def is_tile_eligible(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | 
     return True
 
 
+def reduction_index_symbols(edge) -> set[str]:
+    """The symbols indexing the element a WCR ``edge`` into a map exit accumulates into.
+
+    A No-View nested body binds its whole container (``y[0:N]``), so the element is the one its inner writes to
+    that connector index (``y[i]``), read through the node's symbol mapping.
+    """
+    if not isinstance(edge.src, dace.nodes.NestedSDFG) or edge.src_conn is None:
+        return {str(s) for s in required(edge.data.subset).free_symbols}
+    nsdfg = edge.src
+    names: set[str] = set()
+    for inner_state in nsdfg.sdfg.states():
+        for inner in inner_state.edges():
+            if inner.data.data != edge.src_conn or inner.data.subset is None or not isinstance(
+                    inner.dst, dace.nodes.AccessNode) or inner.dst.data != edge.src_conn:
+                continue
+            for sym in inner.data.subset.free_symbols:
+                outer = nsdfg.symbol_mapping.get(str(sym), sym)
+                names |= {str(s) for s in symbolic.pystr_to_symbolic(str(outer)).free_symbols}
+    return names
+
+
 def tiled_param_count(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int) -> int:
     """How many innermost params of ``map_entry`` a ``K``-dim tiling strides.
 
@@ -329,11 +350,10 @@ def tiled_param_count(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int) 
     """
     if len(map_entry.map.params) < K:
         return K
-    reduced = {
-        str(s)
-        for e in state.in_edges(state.exit_node(map_entry)) if e.data.wcr is not None
-        for s in required(e.data.subset).free_symbols
-    }
+    reduced = set()
+    for e in state.in_edges(state.exit_node(map_entry)):
+        if e.data.wcr is not None:
+            reduced |= reduction_index_symbols(e)
     params = map_entry.map.params
     count = 0
     for param in reversed(params[len(params) - K:]):

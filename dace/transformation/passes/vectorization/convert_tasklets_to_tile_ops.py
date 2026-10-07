@@ -67,6 +67,14 @@ _COMPARISON_BINOPS = {"<", "<=", ">", ">=", "==", "!="}
 #: (excludes non-associative ``-`` / ``/``).
 _SUPPORTED_REDUCE_OPS = {"+", "*", "min", "max"}
 
+#: The conflict resolution each supported reduction op accumulates with.
+_REDUCE_OP_WCR = {
+    "+": "lambda a, b: a + b",
+    "*": "lambda a, b: a * b",
+    "min": "lambda a, b: min(a, b)",
+    "max": "lambda a, b: max(a, b)",
+}
+
 #: ``TileUnop.op`` labels this pass lowers to, matched against the tasklet body
 #: (after the DaCe paren wrap is stripped). The leading ``-`` form aliases ``neg``.
 _SUPPORTED_UNOPS = {
@@ -1239,8 +1247,21 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # scalar accumulator; the new _dst edge writes the result on top.
         inner_state.add_edge(val_edge.src, val_edge.src_conn, reduce_node, "_src",
                              dace.Memlet.from_memlet(val_edge.data))
-        inner_state.add_edge(reduce_node, "_dst", out_edge.dst, out_edge.dst_conn,
-                             dace.Memlet.from_memlet(out_edge.data))
+        dst_memlet = dace.Memlet.from_memlet(out_edge.data)
+        # The dropped read-back is what accumulated across tiles; a No-View body writes the element plainly (its WCR
+        # sits on the boundary edge), so the write carries the reduction itself.
+        read = acc_in_edge.data
+        staged = acc_in_edge.src
+        if isinstance(staged, AccessNode) and inner_state.in_degree(staged) == 1:
+            # A loop-invariant read-back is staged once (``y[i] -> y_const -> fold``).
+            copy_edge = inner_state.in_edges(staged)[0]
+            if isinstance(copy_edge.src, AccessNode) and copy_edge.src.data == out_edge.data.data:
+                read = dace.Memlet(data=copy_edge.src.data,
+                                   subset=copy_edge.data.get_src_subset(copy_edge, inner_state))
+        reads_back = read.data == out_edge.data.data and read.subset == out_edge.data.subset
+        if dst_memlet.wcr is None and reads_back:
+            dst_memlet.wcr = _REDUCE_OP_WCR[op]
+        inner_state.add_edge(reduce_node, "_dst", out_edge.dst, out_edge.dst_conn, dst_memlet)
         acc_src = acc_in_edge.src
         for edge in list(in_edges.values()) + list(out_edge_list):
             inner_state.remove_edge(edge)
