@@ -25,11 +25,15 @@ class LoopUnroll(xf.MultiStateTransformation):
     count = Property(
         dtype=int,
         default=0,
+        category="Parameters",
         desc="Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)",
     )
 
     inline_iterations = Property(
-        dtype=bool, default=True, desc="Whether or not to inline individual iterations' CFGs after unrolling"
+        dtype=bool,
+        default=True,
+        category="Parameters",
+        desc="Whether or not to inline individual iterations' CFGs after unrolling",
     )
 
     @classmethod

@@ -20,7 +20,7 @@ class Enumerator:
     based on custom rules and criteria.
     """
 
-    debug = Property(desc="Debug mode", default=False, dtype=bool)
+    debug = Property(category="Diagnostics", desc="Debug mode", default=False, dtype=bool)
 
     def __init__(
         self, sdfg: SDFG, graph: SDFGState, subgraph: SubgraphView = None, condition_function: Callable = None
