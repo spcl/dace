@@ -23,7 +23,7 @@ prefix params allowed); a pair whose bodies are not single fusable nested SDFGs 
 """
 import copy
 
-from typing import Any, Tuple
+from typing import Any, Dict, Tuple
 
 import dace
 from dace import properties, symbolic
@@ -40,6 +40,18 @@ from dace.sdfg.narrowing import as_expr
 #: Tail markers this pass folds into the ``else`` arm. ``__masked_tail`` is a tile body placed as
 #: is; ``__scalar_tail`` is a step-1 body that needs the lane loop around it.
 _TAIL_MARKERS: Tuple[str, ...] = (MASKED_TAIL_MARKER, SCALAR_TAIL_MARKER)
+
+
+def connector_symbol_mapping(nsdfg: NestedSDFG, mapping: Dict[str, Any]) -> Dict[str, Any]:
+    """A copy of ``mapping`` that also maps, to itself, every symbol a connector's descriptor in ``nsdfg``
+    names: a reused body is placed where those symbols carry the same name, and a No-View nested SDFG must
+    map every symbol its boundary descriptors use."""
+    result = copy.deepcopy(mapping)
+    for conn in list(nsdfg.in_connectors) + list(nsdfg.out_connectors):
+        for sym in sorted(str(s) for s in nsdfg.sdfg.arrays[conn].free_symbols):
+            if sym not in result:
+                result[sym] = symbolic.pystr_to_symbolic(sym)
+    return result
 
 
 @properties.make_properties
@@ -301,7 +313,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
         node = st.add_nested_sdfg(tile_nsdfg.sdfg,
                                   inputs=copy.deepcopy(tile_nsdfg.in_connectors),
                                   outputs=copy.deepcopy(tile_nsdfg.out_connectors),
-                                  symbol_mapping=copy.deepcopy(tile_nsdfg.symbol_mapping))
+                                  symbol_mapping=connector_symbol_mapping(tile_nsdfg, tile_nsdfg.symbol_mapping))
         for conn in tile_nsdfg.in_connectors:
             an = st.add_access(conn)
             st.add_edge(an, None, node, conn, dace.Memlet.from_array(conn, body.arrays[conn]))
@@ -321,7 +333,7 @@ class FuseBranchedTailRemainder(ppl.Pass):
                             {loop_var: dace.subsets.Range([(loop_lb, symbolic.simplify(tail_ub), 1)])},
                             schedule=dace.dtypes.ScheduleType.Sequential)
         # Remap the scalar body's tiled iter-symbol to this loop var; every other mapping is kept.
-        sym_map = copy.deepcopy(rem_nsdfg.symbol_mapping)
+        sym_map = connector_symbol_mapping(rem_nsdfg, rem_nsdfg.symbol_mapping)
         sym_map[tiled_param] = symbolic.pystr_to_symbolic(loop_var)
         node = st.add_nested_sdfg(rem_nsdfg.sdfg,
                                   inputs=copy.deepcopy(rem_nsdfg.in_connectors),

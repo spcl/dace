@@ -44,7 +44,10 @@ def test_the_reduce_keeps_reducing_the_row_after_widening():
     for node, state in reduces:
         (edge, ) = state.in_edges(node)
         extents = edge.data.subset.size()
-        assert all(extents[axis] != 1 for axis in node.axes), (str(edge.data), node.axes)
+        # Under the No-View contract the input keeps its full rank (``a[i, 0:M]``), so a reduced axis may have
+        # extent 1; what must hold is that the row axis, every axis wider than 1, is still reduced.
+        wide = [axis for axis, extent in enumerate(extents) if extent != 1]
+        assert wide and (node.axes is None or set(wide) <= set(node.axes)), (str(edge.data), node.axes)
 
 
 def test_the_result_copy_lands_on_its_row():
