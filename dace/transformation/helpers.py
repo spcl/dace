@@ -599,34 +599,32 @@ def nest_state_subgraph(sdfg: SDFG,
         boundary_edge.data.data = outer_node.data
         boundary_edge.data.subset = Range.from_array(outer_desc)
 
-    # An AccessNode that a boundary edge already carries needs NO second interface. The two paths
-    # give the SAME container two connectors -- the boundary one, plus a "referenced in full" one
-    # whose parent side is a fresh in-scope AccessNode wired to the scope node by an empty ordering
-    # edge. For a container the scope reads from outside (a scalar staged in through ``IN_x``, e.g.
-    # after ``LoopInvariantCodeMotion`` hoists its writer out of the map) that second interface
-    # reads the in-scope allocation, which nothing writes: the body's reader binds to it, the
-    # boundary connector is later pruned as unused, and with it the ``IN_x`` edge that ordered the
-    # map after the writer -- so the map is emitted BEFORE the value is assigned and reads
-    # uninitialized memory. Only the endpoint of a boundary edge naming this very container is
-    # skipped; an AccessNode that merely shares a container with some other boundary edge keeps its
-    # own full-array interface.
-    # Membership only; ``dict`` as the ordered set the rest of this function uses.
-    carried_ends = [(id(e.dst), e.data.data) for e in inputs]
-    carried_ends += [(id(e.src), e.data.data) for e in outputs]
-    boundary_carried = dict.fromkeys(carried_ends)
-
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
     input_arrays = {}
     output_arrays = {}
+    # A boundary edge's own endpoint is that boundary's interface, whatever its other edges are.
+    carried = {id(e.dst)
+               for e in inputs if e.data.data is not None} | {id(e.src)
+                                                              for e in outputs if e.data.data is not None}
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients):
-            if (id(node), node.data) in boundary_carried:
+            if id(node) in carried:
                 continue
             if node.has_reads(state):
                 input_arrays[node.data] = None
             if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
+    # One container, one connector: a container a boundary edge already moves in a direction needs no
+    # full-array interface in that direction, and its boundary connector takes the container's own name
+    # (below). A second interface binds the same outer container twice: an input one reads a fresh
+    # in-scope access node that bypasses the ``IN_x`` edge ordering the map after the writer, and two
+    # output ones write back unordered (an RMW chain through interior access nodes of ``A`` ending on
+    # the scope exit stored its stale middle value last).
+    for edge in inputs:
+        input_arrays.pop(edge.data.data, None)
+    for edge in outputs:
+        output_arrays.pop(edge.data.data, None)
 
     # Create the nested SDFG
     nsdfg = SDFG(name or 'nested_' + state.label)
@@ -658,7 +656,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # descriptors in nested SDFG
     input_names = {}
     output_names = {}
-    nested_names: Dict[str, str] = {}
+    nested_names: Dict[str, str] = {name: name for name in [*input_arrays, *output_arrays]}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
