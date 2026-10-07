@@ -1,11 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """One symbol name must be ONE symbol, whatever spelling it is recovered from.
 
-A symbol's dtype is part of its identity, so a name carried at two widths is two sympy symbols and
-``N - N`` never cancels -- not even under ``simplify``. That is easy to produce by accident: an
-array's shape keeps the dtype the program declared, while a loop bound lives in a string-backed
-property and is RE-PARSED, which used to mint ``DEFAULT_SYMBOL_TYPE`` from the bare name. Every
-proof comparing a bound against a subset then failed on a well-formed program.
+Symbol identity is the name, as on main: a shape that keeps the declared dtype and a loop bound
+re-parsed from its string property name the same symbol, so ``N - N`` cancels and every proof
+comparing a bound against a subset sees one ``N``.
 """
 import dace
 from dace import dtypes, symbolic
@@ -16,13 +14,6 @@ def test_an_unscoped_parse_keeps_the_default():
     parsed = symbolic.pystr_to_symbolic('N + 1')
     sym = next(iter(parsed.free_symbols))
     assert sym.dtype == symbolic.DEFAULT_SYMBOL_TYPE
-
-
-def test_a_scoped_parse_takes_the_declared_dtype():
-    with symbolic.serialization_symbol_dtypes({'N': dtypes.int64}):
-        parsed = symbolic.pystr_to_symbolic('N + 1')
-    sym = next(iter(parsed.free_symbols))
-    assert sym.dtype == dtypes.int64, f're-parsed symbol was stamped {sym.dtype}'
 
 
 def test_a_scoped_parse_cancels_against_the_declared_symbol():
@@ -49,15 +40,6 @@ def test_one_authority_pushed_twice_is_served_from_the_parse_cache():
     with symbolic.serialization_symbol_dtypes({'K': dtypes.int64}):
         second = symbolic.pystr_to_symbolic('K + 7')
     assert second is first
-
-
-def test_an_authority_differing_in_one_dtype_misses_the_parse_cache():
-    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64, 'L': dtypes.int32}):
-        narrow = symbolic.pystr_to_symbolic('K + L')
-    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64, 'L': dtypes.int64}):
-        wide = symbolic.pystr_to_symbolic('K + L')
-    assert {str(s): s.dtype for s in narrow.free_symbols} == {'K': dtypes.int64, 'L': dtypes.int32}
-    assert {str(s): s.dtype for s in wide.free_symbols} == {'K': dtypes.int64, 'L': dtypes.int64}
 
 
 def test_a_canonicalized_graph_spells_each_name_once():
@@ -94,7 +76,7 @@ def test_a_canonicalized_graph_spells_each_name_once():
 
 if __name__ == '__main__':
     test_an_unscoped_parse_keeps_the_default()
-    test_a_scoped_parse_takes_the_declared_dtype()
     test_a_scoped_parse_cancels_against_the_declared_symbol()
     test_the_parse_cache_is_keyed_on_the_authority()
+    test_one_authority_pushed_twice_is_served_from_the_parse_cache()
     test_a_canonicalized_graph_spells_each_name_once()

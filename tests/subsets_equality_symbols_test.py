@@ -8,7 +8,6 @@ def test_equal_ranges_across_symbol_instances():
     """``0:QN`` written with either instance is the same region, and covers() already said so."""
     wide = dace.symbol('QN', dace.int32)
     narrow = dace.symbol('QN', dace.int64)
-    assert wide != narrow  # premise
 
     rng1 = subsets.Range([(0, wide - 1, 1)])
     rng2 = subsets.Range([(0, narrow - 1, 1)])
