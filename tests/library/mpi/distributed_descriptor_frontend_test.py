@@ -19,7 +19,7 @@ def _incoming_descriptor_name(sdfg, node, connector):
 
 @pytest.mark.mpi
 def test_create_cart_bcast_uses_process_grid_descriptor():
-    MPI = pytest.importorskip('mpi4py.MPI')
+    MPI = pytest.importorskip("mpi4py.MPI")
 
     @dace.program
     def pgrid_bcast(A: dace.int32[10]):
@@ -30,7 +30,7 @@ def test_create_cart_bcast_uses_process_grid_descriptor():
     sdfg = pgrid_bcast.to_sdfg()
     process_grids = sdfg.process_grids
 
-    assert not hasattr(sdfg, '_pgrids')
+    assert not hasattr(sdfg, "_pgrids")
     assert len(process_grids) == 1
     pgrid_name, pgrid = next(iter(process_grids.items()))
     assert isinstance(pgrid, ProcessGrid)
@@ -39,12 +39,12 @@ def test_create_cart_bcast_uses_process_grid_descriptor():
 
     bcasts = [node for state in sdfg.states() for node in state.nodes() if isinstance(node, Bcast)]
     assert len(bcasts) == 1
-    assert _incoming_descriptor_name(sdfg, bcasts[0], '_grid') == pgrid_name
+    assert _incoming_descriptor_name(sdfg, bcasts[0], "_grid") == pgrid_name
 
 
 @pytest.mark.mpi
 def test_create_cart_subgrid_bcast_uses_descriptor_name():
-    MPI = pytest.importorskip('mpi4py.MPI')
+    MPI = pytest.importorskip("mpi4py.MPI")
 
     @dace.program
     def subgrid_bcast(A: dace.int32[10], rank: dace.int32):
@@ -64,22 +64,24 @@ def test_create_cart_subgrid_bcast_uses_descriptor_name():
     assert len(process_grids) == 2
     assert all(pgrid.name == pgrid_name for pgrid_name, pgrid in process_grids.items())
 
-    init_code = sdfg.init_code['frame'].as_string
-    dummy_fields = '\n'.join(field for state in sdfg.states() for node in state.nodes() if isinstance(node, Dummy)
-                             for field in node.fields)
+    init_code = sdfg.init_code["frame"].as_string
+    dummy_fields = "\n".join(
+        field for state in sdfg.states() for node in state.nodes() if isinstance(node, Dummy) for field in node.fields
+    )
     for pgrid_name in process_grids:
-        assert f'__state->{pgrid_name}' in init_code
-        assert f'MPI_Comm {pgrid_name};' in dummy_fields
+        assert f"__state->{pgrid_name}" in init_code
+        assert f"MPI_Comm {pgrid_name};" in dummy_fields
 
     bcasts = [node for state in sdfg.states() for node in state.nodes() if isinstance(node, Bcast)]
     assert len(bcasts) == 2
-    assert all(_incoming_descriptor_name(sdfg, bcast, '_grid') in process_grids for bcast in bcasts)
+    assert all(_incoming_descriptor_name(sdfg, bcast, "_grid") in process_grids for bcast in bcasts)
 
     sdfg.expand_library_nodes()
-    tasklet_code = '\n'.join(node.code.as_string for state in sdfg.states() for node in state.nodes()
-                             if isinstance(node, dace.nodes.Tasklet))
-    assert '_grid' in tasklet_code
-    assert '_comm' not in tasklet_code
+    tasklet_code = "\n".join(
+        node.code.as_string for state in sdfg.states() for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)
+    )
+    assert "_grid" in tasklet_code
+    assert "_comm" not in tasklet_code
 
 
 if __name__ == "__main__":

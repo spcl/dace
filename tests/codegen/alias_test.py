@@ -1,12 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests aliasing analysis. """
+"""Tests aliasing analysis."""
+
 import pytest
 import dace
 
-AliasedArray = dace.data.Array(dace.float64, (20, ), may_alias=True)
+AliasedArray = dace.data.Array(dace.float64, (20,), may_alias=True)
 
 
-@pytest.mark.parametrize('may_alias', (False, True))
+@pytest.mark.parametrize("may_alias", (False, True))
 def test_simple_program(may_alias):
     desc = AliasedArray if may_alias else dace.float64[20]
 
@@ -17,9 +18,9 @@ def test_simple_program(may_alias):
     code = tester.to_sdfg().generate_code()[0]
 
     if may_alias:
-        assert code.clean_code.count('__restrict__') == 0
+        assert code.clean_code.count("__restrict__") == 0
     else:
-        assert code.clean_code.count('__restrict__') >= 3
+        assert code.clean_code.count("__restrict__") >= 3
 
 
 def test_multi_nested():
@@ -39,7 +40,7 @@ def test_multi_nested():
     code = tester.to_sdfg(simplify=False).generate_code()[0]
 
     # Restrict keyword should show up once per aliased array, even if nested programs say otherwise
-    assert code.clean_code.count('__restrict__') == 4  # = [__program, tester, interim, nested]
+    assert code.clean_code.count("__restrict__") == 4  # = [__program, tester, interim, nested]
 
 
 def test_inference():
@@ -60,10 +61,10 @@ def test_inference():
 
     # Restrict keyword should never show up in "nested", since arrays are aliased,
     # but should show up in [__program, tester, interim]
-    assert code.clean_code.count('__restrict__') == 3
+    assert code.clean_code.count("__restrict__") == 3
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_simple_program(False)
     test_simple_program(True)
     test_multi_nested()

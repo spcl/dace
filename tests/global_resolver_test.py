@@ -17,14 +17,13 @@ def toresolve():
 
 
 class TestGlobalResolver(unittest.TestCase):
-
     def test_simple(self):
         test_ast, _, _, _ = astutils.function_to_ast(toresolve)
-        code = astutils.unparse(GlobalResolver({'b': 9, 'a': -4}).visit(test_ast))
-        self.assertTrue('return 9' in code)
-        self.assertTrue('f(a, b)' in code)
-        self.assertTrue('g(b' in code)
+        code = astutils.unparse(GlobalResolver({"b": 9, "a": -4}).visit(test_ast))
+        self.assertTrue("return 9" in code)
+        self.assertTrue("f(a, b)" in code)
+        self.assertTrue("g(b" in code)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

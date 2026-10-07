@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
 
 @dace.library.expansion
 class ExpandRecvMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -24,29 +23,28 @@ class ExpandRecvMPI(ExpandTransformation):
             code = f""" static MPI_Datatype newtype;
                         static int init=1;
                         if (init) {{
-                           MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
+                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
                            MPI_Type_commit(&newtype);
                            init=0;
                         }}
                             """
             mpi_dtype_str = "newtype"
-            count_str = '1'
+            count_str = "1"
         buffer_offset = 0  # this is here because the frontend already changes the ptr
-        code += f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        code += (
+            f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
+        )
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class Recv(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandRecvMPI,
@@ -72,12 +70,12 @@ class Recv(MPINode):
             if e.dst_conn == "_tag":
                 tag = sdfg.arrays[e.data.data]
 
-        validate_integer_descriptor(src, 'Source')
-        validate_integer_descriptor(tag, 'Tag')
+        validate_integer_descriptor(src, "Source")
+        validate_integer_descriptor(tag, "Tag")
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_buffer':
+            if src_conn == "_buffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
                 # compute buffer offset

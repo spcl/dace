@@ -12,13 +12,13 @@ def test_integer_overlap_same_step_no_cover():
     subset1 = Range.from_string("0:10:1")
     subset2 = Range.from_string("5:11:1")
 
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
     subset1 = Range.from_string("0:10:2")
     subset2 = Range.from_string("2:11:1")
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
 
 def test_integer_bounding_box_cover_coprime_step():
@@ -29,18 +29,18 @@ def test_integer_bounding_box_cover_coprime_step():
     subset1 = Range.from_string("0:10:3")
     subset2 = Range.from_string("0:10:2")
 
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
     subset1 = Range.from_string("0:10:3, 5:10:2")
     subset2 = Range.from_string("0:10:2, 5:10:4")
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
     subset1 = Range.from_string("0:10:3, 6:10:2")
     subset2 = Range.from_string("0:10:2, 5:10:4")
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
 
 def test_integer_same_step_different_start():
@@ -52,7 +52,7 @@ def test_integer_same_step_different_start():
     subset1 = Range.from_string("0:10:3")
     subset2 = Range.from_string("1:10:3")
 
-    assert (subset1.covers_precise(subset2) is False)
+    assert subset1.covers_precise(subset2) is False
 
 
 def test_integer_bounding_box_symbolic_step():
@@ -68,14 +68,14 @@ def test_integer_bounding_box_symbolic_step():
     subset2 = Range.from_string("0:10:s")
     subset3 = Range.from_string("0:10:2 * s")
 
-    assert (subset1.covers_precise(subset2))
-    assert (subset1.covers_precise(subset3))
-    assert (subset3.covers_precise(subset1) is False)
-    assert (subset3.covers_precise(subset2) is False)
+    assert subset1.covers_precise(subset2)
+    assert subset1.covers_precise(subset3)
+    assert subset3.covers_precise(subset1) is False
+    assert subset3.covers_precise(subset2) is False
 
     subset1 = Range.from_string("30:50:k")
     subset2 = Range.from_string("40:50:k")
-    assert (subset1.covers_precise(subset2) is False)
+    assert subset1.covers_precise(subset2) is False
 
 
 def test_ranges_symbolic_boundaries():
@@ -86,43 +86,43 @@ def test_ranges_symbolic_boundaries():
     """
     subset1 = Range.from_string("N:M:1")
     subset2 = Range.from_string("N:M:2")
-    assert (subset1.covers_precise(subset2))
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2)
+    assert subset2.covers_precise(subset1) is False
 
     subset1 = Range.from_string("N + 1:M:1")
     subset2 = Range.from_string("N:M:2")
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
     subset1 = Range.from_string("-N:M:1")
     subset2 = Range.from_string("N:M:2")
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
 
 def test_symbolic_boundaries_not_symbolic_positive():
     """
     Tests from test_symbolic_boundaries with symbolic_positive flag deactivated.
     """
-    symbolic_positive = Config.get('optimizer', 'symbolic_positive')
-    Config.set('optimizer', 'symbolic_positive', value=False)
+    symbolic_positive = Config.get("optimizer", "symbolic_positive")
+    Config.set("optimizer", "symbolic_positive", value=False)
 
     subset1 = Range.from_string("N:M:1")
     subset2 = Range.from_string("N:M:2")
-    assert (subset1.covers_precise(subset2))
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2)
+    assert subset2.covers_precise(subset1) is False
 
     subset1 = Range.from_string("N + 1:M:1")
     subset2 = Range.from_string("N:M:2")
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
     subset1 = Range.from_string("-N:M:1")
     subset2 = Range.from_string("N:M:2")
-    assert (subset1.covers_precise(subset2) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    assert subset1.covers_precise(subset2) is False
+    assert subset2.covers_precise(subset1) is False
 
-    Config.set('optimizer', 'symbolic_positive', value=symbolic_positive)
+    Config.set("optimizer", "symbolic_positive", value=symbolic_positive)
 
 
 def test_range_indices():
@@ -135,20 +135,20 @@ def test_range_indices():
     If i is not in r's bounding box i.covers_precise(r) and r.covers_precise(i)
     should return false
     """
-    subset1 = Range.from_string('1')
-    subset2 = Range.from_string('0:2:1')
-    assert (subset2.covers_precise(subset1))
-    assert (subset1.covers_precise(subset2) is False)
+    subset1 = Range.from_string("1")
+    subset2 = Range.from_string("0:2:1")
+    assert subset2.covers_precise(subset1)
+    assert subset1.covers_precise(subset2) is False
 
-    subset1 = Range.from_string('3')
-    subset2 = Range.from_string('0:4:2')
-    assert (subset2.covers_precise(subset1) is False)
-    assert (subset2.covers_precise(subset1) is False)
+    subset1 = Range.from_string("3")
+    subset2 = Range.from_string("0:4:2")
+    assert subset2.covers_precise(subset1) is False
+    assert subset2.covers_precise(subset1) is False
 
-    subset1 = Range.from_string('3')
-    subset2 = Range.from_string('0:2:1')
-    assert (subset2.covers_precise(subset1) is False)
-    assert (subset1.covers_precise(subset2) is False)
+    subset1 = Range.from_string("3")
+    subset2 = Range.from_string("0:2:1")
+    assert subset2.covers_precise(subset1) is False
+    assert subset1.covers_precise(subset2) is False
 
 
 def test_index_index():
@@ -156,45 +156,45 @@ def test_index_index():
     Tests the handling of indices covering indices.
     Given two indices i1 and i2 i1.covers_precise should only return true iff i1 = i2
     """
-    subset1 = Range.from_string('1')
-    subset2 = Range.from_string('1')
-    assert (subset2.covers_precise(subset1))
-    assert (subset1.covers_precise(subset2))
+    subset1 = Range.from_string("1")
+    subset2 = Range.from_string("1")
+    assert subset2.covers_precise(subset1)
+    assert subset1.covers_precise(subset2)
 
-    subset1 = Range.from_string('1')
-    subset2 = Range.from_string('2')
-    assert (subset2.covers_precise(subset1) is False)
-    assert (subset1.covers_precise(subset2) is False)
+    subset1 = Range.from_string("1")
+    subset2 = Range.from_string("2")
+    assert subset2.covers_precise(subset1) is False
+    assert subset1.covers_precise(subset2) is False
 
-    subset1 = Range.from_string('1, 2')
-    subset2 = Range.from_string('1, 2')
-    assert (subset2.covers_precise(subset1))
-    assert (subset1.covers_precise(subset2))
+    subset1 = Range.from_string("1, 2")
+    subset2 = Range.from_string("1, 2")
+    assert subset2.covers_precise(subset1)
+    assert subset1.covers_precise(subset2)
 
-    subset1 = Range.from_string('2, 1')
-    subset2 = Range.from_string('1, 2')
-    assert (subset2.covers_precise(subset1) is False)
-    assert (subset1.covers_precise(subset2) is False)
+    subset1 = Range.from_string("2, 1")
+    subset2 = Range.from_string("1, 2")
+    assert subset2.covers_precise(subset1) is False
+    assert subset1.covers_precise(subset2) is False
 
-    subset1 = Range.from_string('i')
-    subset2 = Range.from_string('j')
-    assert (subset2.covers_precise(subset1) is False)
-    assert (subset1.covers_precise(subset2) is False)
+    subset1 = Range.from_string("i")
+    subset2 = Range.from_string("j")
+    assert subset2.covers_precise(subset1) is False
+    assert subset1.covers_precise(subset2) is False
 
-    subset1 = Range.from_string('i')
-    subset2 = Range.from_string('i')
-    assert (subset2.covers_precise(subset1))
-    assert (subset1.covers_precise(subset2))
+    subset1 = Range.from_string("i")
+    subset2 = Range.from_string("i")
+    assert subset2.covers_precise(subset1)
+    assert subset1.covers_precise(subset2)
 
-    subset1 = Range.from_string('i, j')
-    subset2 = Range.from_string('i, k')
-    assert (subset2.covers_precise(subset1) is False)
-    assert (subset1.covers_precise(subset2) is False)
+    subset1 = Range.from_string("i, j")
+    subset2 = Range.from_string("i, k")
+    assert subset2.covers_precise(subset1) is False
+    assert subset1.covers_precise(subset2) is False
 
-    subset1 = Range.from_string('i, j')
-    subset2 = Range.from_string('i, j')
-    assert (subset2.covers_precise(subset1))
-    assert (subset1.covers_precise(subset2))
+    subset1 = Range.from_string("i, j")
+    subset2 = Range.from_string("i, j")
+    assert subset2.covers_precise(subset1)
+    assert subset1.covers_precise(subset2)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@ import dace
 import numpy as np
 from dace.transformation.passes.transient_reuse import TransientReuse
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 @dace.program
@@ -49,5 +49,5 @@ def test_reuse():
     assert diff <= 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_reuse()

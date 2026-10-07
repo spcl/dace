@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode
 
 @dace.library.expansion
 class ExpandAllgatherMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -28,17 +27,14 @@ class ExpandAllgatherMPI(ExpandTransformation):
                           _outbuffer, {out_count_str}/_commsize, {out_mpi_dtype_str},
                           MPI_COMM_WORLD);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class Allgather(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandAllgatherMPI,
@@ -65,11 +61,11 @@ class Allgather(MPINode):
         in_count_str = "XXX"
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_outbuffer':
+            if src_conn == "_outbuffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 out_count_str = "*".join(dims)
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
+            if dst_conn == "_inbuffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 

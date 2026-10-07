@@ -10,7 +10,7 @@ from dace import symbolic
 def test_undefined_symbol_creation():
     # Test that UndefinedSymbol can be created
     us = symbolic.UndefinedSymbol()
-    assert us.name == '?'
+    assert us.name == "?"
     assert isinstance(us, symbolic.symbol)
     assert isinstance(us, symbolic.UndefinedSymbol)
 
@@ -18,7 +18,7 @@ def test_undefined_symbol_creation():
 def test_undefined_symbol_operations():
     # Test that operations with UndefinedSymbol result in UndefinedSymbol
     us = symbolic.UndefinedSymbol()
-    s = symbolic.symbol('N')
+    s = symbolic.symbol("N")
 
     # Test various operations
     assert isinstance(us + s, symbolic.UndefinedSymbol)
@@ -38,7 +38,7 @@ def test_undefined_symbol_operations():
 def test_undefined_symbol_comparisons():
     # Test that comparisons with UndefinedSymbol using inequal_symbols return True
     us = symbolic.UndefinedSymbol()
-    s = symbolic.symbol('N')
+    s = symbolic.symbol("N")
 
     # Test that symbolic.inequal_symbols handles UndefinedSymbol
     assert symbolic.inequal_symbols(us, s) is True
@@ -52,7 +52,7 @@ def test_undefined_symbol_comparisons():
 def test_undefined_symbol_in_issymbolic():
     # Test that issymbolic recognizes UndefinedSymbol
     us = symbolic.UndefinedSymbol()
-    s = symbolic.symbol('N')
+    s = symbolic.symbol("N")
 
     assert symbolic.issymbolic(us)
     assert symbolic.issymbolic(us + s)
@@ -62,13 +62,13 @@ def test_undefined_symbol_in_issymbolic():
 def test_undefined_symbol_in_evaluate():
     # Test that evaluate raises TypeError for expressions with UndefinedSymbol
     us = symbolic.UndefinedSymbol()
-    s = symbolic.symbol('N')
+    s = symbolic.symbol("N")
 
     with pytest.raises(TypeError):
-        symbolic.evaluate(us, {'N': 5})
+        symbolic.evaluate(us, {"N": 5})
 
     with pytest.raises(TypeError):
-        symbolic.evaluate(us + s, {'N': 5})
+        symbolic.evaluate(us + s, {"N": 5})
 
     with pytest.raises(TypeError):
         symbolic.evaluate(sympy.sin(us), {us: 7})
@@ -78,8 +78,8 @@ def test_undefined_symbol_propagation():
     """Tests that UndefinedSymbol propagates through symbolic expressions."""
 
     # Create expressions with undefined symbols
-    a = symbolic.symbol('a')
-    b = symbolic.symbol('b')
+    a = symbolic.symbol("a")
+    b = symbolic.symbol("b")
     undefined = symbolic.UndefinedSymbol()
 
     # Operations directly on undefined should result in undefined
@@ -106,7 +106,7 @@ def test_undefined_symbol_math_functions():
     import sympy
 
     us = UndefinedSymbol()
-    s = symbol('N')
+    s = symbol("N")
 
     # Test that any operation with UndefinedSymbol produces undefined results
     # These might not return UndefinedSymbol directly, but should be treated as undefined
@@ -128,7 +128,7 @@ def test_undefined_symbol_math_functions():
 def test_is_undefined_function():
     """Test the is_undefined function works correctly."""
     us = symbolic.UndefinedSymbol()
-    s = symbolic.symbol('N')
+    s = symbolic.symbol("N")
 
     # Test with UndefinedSymbol directly
     assert symbolic.is_undefined(us) is True
@@ -155,7 +155,7 @@ def test_is_undefined_function():
     assert symbolic.is_undefined("N") is False
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_undefined_symbol_creation()
     test_undefined_symbol_operations()
     test_undefined_symbol_comparisons()

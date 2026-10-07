@@ -4,7 +4,7 @@ import numpy as np
 from dace.transformation.dataflow import StripMining, Vectorization
 from dace.libraries.standard.memory import aligned_ndarray
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -22,7 +22,7 @@ def multiply(X: dace.float64[N], Y: dace.float64[N], Z: dace.float64[N]):
 def test_tiling_vectorization():
     size = 256
     vector_len = 2  # Use 4 for AVX
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         np.random.seed(0)
         X = aligned_ndarray(np.random.rand(size))
         Y = aligned_ndarray(np.random.rand(size))
@@ -30,12 +30,9 @@ def test_tiling_vectorization():
 
         sdfg = multiply.to_sdfg()
         sdfg.simplify()
-        sdfg.apply_transformations([StripMining, Vectorization],
-                                   options=[{
-                                       'tile_size': str(vector_len)
-                                   }, {
-                                       'vector_len': vector_len
-                                   }])
+        sdfg.apply_transformations(
+            [StripMining, Vectorization], options=[{"tile_size": str(vector_len)}, {"vector_len": vector_len}]
+        )
         sdfg(X=X, Y=Y, Z=Z, N=size)
 
         assert np.allclose(Z, X * Y)

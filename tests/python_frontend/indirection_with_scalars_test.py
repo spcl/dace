@@ -16,7 +16,7 @@ def test_toplevel_scalar_indirection():
     B = np.random.rand(4).astype(np.float32)
     toplevel_scalar_indirection(A, B)
     ref = A[0, 0, :, 0]
-    assert (np.array_equal(B, ref))
+    assert np.array_equal(B, ref)
 
 
 @dc.program
@@ -33,7 +33,7 @@ def test_nested_scalar_indirection():
     B = np.random.rand(2, 4).astype(np.float32)
     nested_scalar_indirection(A, B)
     ref = A[:, 0, :, 0]
-    assert (np.array_equal(B, ref))
+    assert np.array_equal(B, ref)
 
 
 def test_array_element_scalar_indirection():
@@ -74,8 +74,8 @@ def test_array_element_scalar_indirection_in_map():
 def test_submatrix():
     dtype = dc.float64
     data_index = dc.int32
-    M, N, P = (dc.symbol(s) for s in 'MNP')
-    x0, x1 = dc.symbol('x0'), dc.symbol('x1')
+    M, N, P = (dc.symbol(s) for s in "MNP")
+    x0, x1 = dc.symbol("x0"), dc.symbol("x1")
 
     @dc.program
     def create_submatrix():

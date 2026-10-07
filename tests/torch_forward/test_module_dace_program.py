@@ -16,12 +16,12 @@ from tests.utils import tensors_close, torch_tensors_close
 @pytest.mark.torch
 def test_parse_forward_simple():
     torch_module = torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2))
-    dace_module = DaceModule(torch_module, sdfg_name='test_parse_forward_simple')
+    dace_module = DaceModule(torch_module, sdfg_name="test_parse_forward_simple")
     x = torch.randn(2, 12)
     expected = torch_module(x)
     result = dace_module(x)
 
-    torch_tensors_close('output', expected, result)
+    torch_tensors_close("output", expected, result)
 
     @dace
     def train_step(y):
@@ -32,20 +32,21 @@ def test_parse_forward_simple():
         return cpu.sum()
 
     result = train_step(x)
-    tensors_close('parsed', expected.sum(), result)
+    tensors_close("parsed", expected.sum(), result)
 
 
 @pytest.mark.torch
 def test_parse_forward_nested():
 
-    torch_module = torch.nn.Sequential(torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)),
-                                       nn.Softmax(dim=1))
-    dace_module2 = DaceModule(torch_module, sdfg_name='test_parse_forward_nested')
+    torch_module = torch.nn.Sequential(
+        torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)), nn.Softmax(dim=1)
+    )
+    dace_module2 = DaceModule(torch_module, sdfg_name="test_parse_forward_nested")
     x = torch.randn(2, 12)
     expected = torch_module(x)
     result = dace_module2(x)
 
-    torch_tensors_close('output', expected, result)
+    torch_tensors_close("output", expected, result)
 
     @dace
     def train_step(y):
@@ -55,7 +56,7 @@ def test_parse_forward_nested():
         return cpu.sum()
 
     result = train_step(x)
-    tensors_close('parsed', expected.sum(), result)
+    tensors_close("parsed", expected.sum(), result)
 
 
 if __name__ == "__main__":
