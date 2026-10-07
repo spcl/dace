@@ -7,6 +7,7 @@ as a view: the argument keeps its shape but takes the enclosing container's stri
 SDFG contract asks that every connector standing for it be restated the same way -- inside the
 callee, and in the view the call site leaves behind.
 """
+
 import numpy as np
 
 import dace
@@ -35,12 +36,12 @@ def sliced_input(q: dace.float64[I, J, K], out: dace.float64[I, J, K - 1]):
 
 @dace.program
 def sliced_output(q: dace.float64[I, J, K - 1], out: dace.float64[I, J, K]):
-    _scale(q, out[:, :, :K - 1])
+    _scale(q, out[:, :, : K - 1])
 
 
 @dace.program
 def sliced_both(q: dace.float64[I, J, K], out: dace.float64[I, J, K]):
-    _scale(q[:, :, :K - 1], out[:, :, 1:])
+    _scale(q[:, :, : K - 1], out[:, :, 1:])
 
 
 @dace.program
@@ -53,7 +54,7 @@ def _shift(src: dace.float64[I, J, K - 2], dst: dace.float64[I, J, K - 2]):
 @dace.program
 def _shift_middle(src: dace.float64[I, J, K - 1], dst: dace.float64[I, J, K - 1]):
     """Slices its own arguments again, so what it passes on is a window of a window."""
-    _shift(src[:, :, 1:], dst[:, :, :K - 2])
+    _shift(src[:, :, 1:], dst[:, :, : K - 2])
     for i, j in dace.map[0:I, 0:J]:
         dst[i, j, K - 2] = src[i, j, 0]
 
@@ -65,7 +66,7 @@ def sliced_plane(q: dace.float64[I, J, K], out: dace.float64[I, J, K]):
 
 @dace.program
 def sliced_twice(q: dace.float64[I, J, K], out: dace.float64[I, J, K]):
-    _shift_middle(q[:, :, :K - 1], out[:, :, 1:])
+    _shift_middle(q[:, :, : K - 1], out[:, :, 1:])
 
 
 def test_sliced_input():
@@ -79,7 +80,7 @@ def test_sliced_output():
     q = np.random.rand(I, J, K - 1)
     out = np.zeros((I, J, K))
     sliced_output(q, out)
-    assert np.allclose(out[:, :, :K - 1], q * 2.0 + 1.0)
+    assert np.allclose(out[:, :, : K - 1], q * 2.0 + 1.0)
     assert np.allclose(out[:, :, K - 1], 0.0)
 
 
@@ -87,7 +88,7 @@ def test_sliced_both():
     q = np.random.rand(I, J, K)
     out = np.zeros((I, J, K))
     sliced_both(q, out)
-    assert np.allclose(out[:, :, 1:], q[:, :, :K - 1] * 2.0 + 1.0)
+    assert np.allclose(out[:, :, 1:], q[:, :, : K - 1] * 2.0 + 1.0)
     assert np.allclose(out[:, :, 0], 0.0)
 
 
@@ -113,9 +114,9 @@ def test_sliced_twice():
     out = np.zeros((I, J, K))
     sliced_twice(q, out)
 
-    inner = q[:, :, :K - 1]
+    inner = q[:, :, : K - 1]
     expected = np.zeros((I, J, K))
-    expected[:, :, 1:K - 1] = inner[:, :, 1:] * 3.0
+    expected[:, :, 1 : K - 1] = inner[:, :, 1:] * 3.0
     expected[:, :, K - 1] = inner[:, :, 0]
     assert np.allclose(out, expected)
 
@@ -128,19 +129,17 @@ def test_sliced_through_nested_methods():
     """
 
     class Stencil:
-
         def __init__(self, work):
             self.work = work
 
         @dace.method
         def __call__(self, src: dace.float64[I, J, K - 2], dst: dace.float64[I, J, K - 2]):
-            for i, j, k in dace.map[0:I, 0:J, 0:K - 2]:
+            for i, j, k in dace.map[0:I, 0:J, 0 : K - 2]:
                 self.work[i, j, k] = src[i, j, k] * 2.0
-            for i, j, k in dace.map[0:I, 0:J, 0:K - 2]:
+            for i, j, k in dace.map[0:I, 0:J, 0 : K - 2]:
                 dst[i, j, k] = self.work[i, j, k] + 1.0
 
     class Holder:
-
         def __init__(self, work):
             self.work = work
             self.stencil = Stencil(work)
@@ -152,22 +151,21 @@ def test_sliced_through_nested_methods():
                 dst[i, j, K - 2] = self.work[i, j, 0]
 
     class Top:
-
         def __init__(self):
             self.work = np.zeros((I, J, K - 2))
             self.holder = Holder(self.work)
 
         @dace.method
         def __call__(self, q: dace.float64[I, J, K], out: dace.float64[I, J, K]):
-            self.holder(q[:, :, :K - 1], out[:, :, 1:])
+            self.holder(q[:, :, : K - 1], out[:, :, 1:])
 
     q = np.random.rand(I, J, K)
     out = np.zeros((I, J, K))
     Top()(q, out)
 
-    work = q[:, :, 1:K - 1] * 2.0
+    work = q[:, :, 1 : K - 1] * 2.0
     expected = np.zeros((I, J, K))
-    expected[:, :, 1:K - 1] = work + 1.0
+    expected[:, :, 1 : K - 1] = work + 1.0
     expected[:, :, K - 1] = work[:, :, 0]
     assert np.allclose(out, expected)
 
@@ -184,11 +182,11 @@ def test_sliced_both_unvalidated():
     q = np.random.rand(I, J, K)
     out = np.zeros((I, J, K))
     csdfg(q=q, out=out)
-    assert np.allclose(out[:, :, 1:], q[:, :, :K - 1] * 2.0 + 1.0)
+    assert np.allclose(out[:, :, 1:], q[:, :, : K - 1] * 2.0 + 1.0)
     assert np.allclose(out[:, :, 0], 0.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_sliced_input()
     test_sliced_output()
     test_sliced_both()

@@ -4,7 +4,7 @@ import numpy as np
 
 
 def test():
-    W = dp.symbol('W')
+    W = dp.symbol("W")
 
     @dp.program
     def indirection(A, x, B):
@@ -33,8 +33,8 @@ def test():
 
 
 def test_two_nested_levels_indirection():
-    W = dp.symbol('W')
-    H = dp.symbol('H')
+    W = dp.symbol("W")
+    H = dp.symbol("H")
 
     @dp.program
     def indirection(A, x, B):
@@ -49,7 +49,7 @@ def test_two_nested_levels_indirection():
     w = h = 5
 
     A = np.arange(10, 10 + w * w, dtype=np.float64)
-    B = np.zeros((w, ), dtype=np.float64)
+    B = np.zeros((w,), dtype=np.float64)
     x = np.random.randint(0, w * w, w, dtype=np.uint32)
 
     indirection(A, x, B, W=w, H=h)
@@ -60,8 +60,8 @@ def test_two_nested_levels_indirection():
 
 
 def test_multi_dimensional_indirection():
-    W = dp.symbol('W')
-    H = dp.symbol('H')
+    W = dp.symbol("W")
+    H = dp.symbol("H")
 
     @dp.program
     def indirection(A, x, B):

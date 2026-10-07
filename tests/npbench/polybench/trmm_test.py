@@ -12,7 +12,7 @@ from dace.autodiff import add_backward_pass
 # M, N
 sizes = {"mini": (20, 30), "small": (60, 80), "medium": (200, 240), "large": (1000, 1200), "extra-large": (2000, 2600)}
 
-M, N, S = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'S'))
+M, N, S = (dc.symbol(s, dtype=dc.int64) for s in ("M", "N", "S"))
 
 
 @dc.program
@@ -20,7 +20,7 @@ def trmm_kernel(alpha: dc.float64, A: dc.float64[M, M], B: dc.float64[M, N]):
 
     for i in range(M):
         for j in range(N):
-            B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])
+            B[i, j] += np.dot(A[i + 1 :, i], B[i + 1 :, j])
     B *= alpha
 
 
@@ -58,15 +58,15 @@ def trmm_jax_kernel(jnp, lax, alpha, A, B):
 def ground_truth(alpha, A, B):
     for i in range(B.shape[0]):
         for j in range(B.shape[1]):
-            B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])
+            B[i, j] += np.dot(A[i + 1 :, i], B[i + 1 :, j])
     B *= alpha
 
 
 def run_trmm(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs trmm for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
@@ -95,7 +95,7 @@ def run_trmm_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -113,7 +113,7 @@ def run_trmm_autodiff():
 
     # Numerically validate vs JAX
     jax_kernel = lambda alpha, A, B: trmm_jax_kernel(jnp, lax, alpha, A, B)
-    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0,))
     alpha, A_jax, B_jax = initialize(M, N)
     jax_grad_A = jax_grad(alpha, A_jax, B_jax)
     np.testing.assert_allclose(gradient_A, jax_grad_A)
@@ -133,14 +133,13 @@ def test_autodiff():
     pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
-    with dace.config.set_temporary('testing', 'serialization', value=False):
+    with dace.config.set_temporary("testing", "serialization", value=False):
         run_trmm_autodiff()
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

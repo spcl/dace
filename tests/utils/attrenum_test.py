@@ -2,6 +2,7 @@
 """
 Tests the extensible attributed enum class.
 """
+
 from dataclasses import dataclass
 from enum import auto, Enum
 
@@ -63,7 +64,7 @@ def test_attrenum_dynamic_creation():
 
 def test_attrenum_listing():
     names = [v.name for v in Vehicle]
-    assert names == ['UNKNOWN', 'BICYCLE', 'CAR', 'TRUCK', 'BOAT', 'SHIP']
+    assert names == ["UNKNOWN", "BICYCLE", "CAR", "TRUCK", "BOAT", "SHIP"]
 
 
 def test_attrenum_equality():
@@ -138,13 +139,13 @@ def test_serialization():
     # Serialize instance
     car = Vehicle.CAR(vin="123", make="Toyota", horsepower=200)
     car_json = serialize.to_json(car)
-    assert car_json == {'type': 'Vehicle.CAR', 'vin': '123', 'make': 'Toyota', 'horsepower': 200}
+    assert car_json == {"type": "Vehicle.CAR", "vin": "123", "make": "Toyota", "horsepower": 200}
     car_restored = serialize.from_json(car_json)
     assert car_restored == car
 
     # Serialize template
     truck_json = serialize.to_json(Vehicle.TRUCK)
-    assert truck_json == {'type': 'Vehicle.TRUCK'}
+    assert truck_json == {"type": "Vehicle.TRUCK"}
     truck_restored = serialize.from_json(truck_json)
     assert truck_restored == Vehicle.TRUCK
 
@@ -181,15 +182,15 @@ def test_serialization_nestedclass():
     plane = Vehicle.PLANE(model=PlaneModelType.MODEL_ONE, details=PlaneDetails(range_km=5000, capacity=180))
     plane_json = serialize.to_json(plane)
     assert plane_json == {
-        'type': 'Vehicle.PLANE',
-        'model': 'MODEL_ONE',
-        'is_plane': 'TRUE',
-        'details': {
-            'type': 'PlaneDetails',
-            'range_km': 5000,
-            'capacity': 180,
-            'is_plane': 'FALSE',
-        }
+        "type": "Vehicle.PLANE",
+        "model": "MODEL_ONE",
+        "is_plane": "TRUE",
+        "details": {
+            "type": "PlaneDetails",
+            "range_km": 5000,
+            "capacity": 180,
+            "is_plane": "FALSE",
+        },
     }
     plane_restored = serialize.from_json(plane_json)
     assert plane_restored == plane

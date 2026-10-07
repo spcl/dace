@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the distribution of the thread-blocks of a kernel over the chiplets of a GPU. """
+"""Tests the distribution of the thread-blocks of a kernel over the chiplets of a GPU."""
 
 import re
 import sys
@@ -50,7 +50,7 @@ def explicit_threadblock(a: dace.float64[N, M] @ dace.StorageType.GPU_Global):
             a[i + bi, j + bj] = 1.0
 
 
-def _fake_amdsmi(chiplets, handles=(object(), )):
+def _fake_amdsmi(chiplets, handles=(object(),)):
     """
     Returns a stand-in for the ``amdsmi`` module that reports GPUs with ``chiplets`` chiplets.
 
@@ -59,10 +59,10 @@ def _fake_amdsmi(chiplets, handles=(object(), )):
 
     :param handles: Processor handles the module reports, empty to mimic a machine without a GPU.
     """
-    module = types.ModuleType('amdsmi')
+    module = types.ModuleType("amdsmi")
     module.calls = []
-    module.amdsmi_init = lambda: module.calls.append('init')
-    module.amdsmi_shut_down = lambda: module.calls.append('shut_down')
+    module.amdsmi_init = lambda: module.calls.append("init")
+    module.amdsmi_shut_down = lambda: module.calls.append("shut_down")
     module.amdsmi_get_processor_handles = lambda: list(handles)
     module.amdsmi_get_gpu_xcd_counter = lambda handle: chiplets
     return module
@@ -79,9 +79,9 @@ def _generate(program, chiplets=None, allow_distribution=None):
     """
     with dace.config.temporary_config():
         # Set explicitly, so that the test does not depend on the GPU of the machine it runs on
-        dace.config.Config.set('compiler', 'cuda', 'backend', value='hip')
+        dace.config.Config.set("compiler", "cuda", "backend", value="hip")
         if chiplets is not None:
-            dace.config.Config.set('compiler', 'cuda', 'chiplet_number', value=chiplets)
+            dace.config.Config.set("compiler", "cuda", "chiplet_number", value=chiplets)
 
         # `get_gpu_backend` caches its result for the whole process, so the backend set above only
         # reaches the code generator if that cache is cleared first. It is cleared again afterwards,
@@ -108,26 +108,26 @@ def test_chiplet_distribution():
     # The first grid dimension is padded to a multiple of the number of chiplets, which makes the
     # chiplet a block runs on `blockIdx.x % chiplets` under the hardware round-robin scheduling, and
     # the blocks of the first dimension are permuted so that every chiplet owns a contiguous chunk
-    assert 'dim3(36, 512, 1)' in code
-    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6)' in code
+    assert "dim3(36, 512, 1)" in code
+    assert "((blockIdx.x % 6) * 6 + blockIdx.x / 6)" in code
 
     # The second dimension of the map keeps the second grid dimension
-    assert re.search(r'\w+ = blockIdx\.y;', code)
+    assert re.search(r"\w+ = blockIdx\.y;", code)
 
     # The blocks that the padding adds beyond the range of the map have to be masked out
-    assert re.search(r'if \(\w+ < %d\)' % M, code)
+    assert re.search(r"if \(\w+ < %d\)" % M, code)
 
 
 def test_chiplet_distribution_without_threadblock_map(monkeypatch):
     # Kernels without an inner thread-block map offset the block index by the thread index
     # themselves. `AddThreadBlockMap` inserts such a map into every simple kernel, so it is
     # disabled here to generate a kernel that does not have one.
-    monkeypatch.setattr(AddThreadBlockMap, 'can_be_applied', lambda *args, **kwargs: False)
+    monkeypatch.setattr(AddThreadBlockMap, "can_be_applied", lambda *args, **kwargs: False)
     code = _generate(two_dimensional, CHIPLETS)
 
-    assert 'dim3(36, 512, 1)' in code
-    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6) * 32 + threadIdx.x' in code
-    assert re.search(r'if \(\w+ < %d\)' % M, code)
+    assert "dim3(36, 512, 1)" in code
+    assert "((blockIdx.x % 6) * 6 + blockIdx.x / 6) * 32 + threadIdx.x" in code
+    assert re.search(r"if \(\w+ < %d\)" % M, code)
 
 
 def test_chiplet_distribution_for_three_dimensional_grid():
@@ -135,48 +135,48 @@ def test_chiplet_distribution_for_three_dimensional_grid():
     # all three of them, and leaves the other two dimensions of the map on their own grid dimension
     code = _generate(three_dimensional, CHIPLETS)
 
-    assert 'dim3(36, 512, 8)' in code
-    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6)' in code
-    assert re.search(r'\w+ = blockIdx\.y;', code)
-    assert re.search(r'\w+ = blockIdx\.z;', code)
-    assert re.search(r'if \(\w+ < %d\)' % M, code)
+    assert "dim3(36, 512, 8)" in code
+    assert "((blockIdx.x % 6) * 6 + blockIdx.x / 6)" in code
+    assert re.search(r"\w+ = blockIdx\.y;", code)
+    assert re.search(r"\w+ = blockIdx\.z;", code)
+    assert re.search(r"if \(\w+ < %d\)" % M, code)
 
 
 def test_chiplet_number_detected(monkeypatch):
     # The number of chiplets is not configured, so it is detected through `amdsmi` and the grid is
     # distributed over the chiplets of the GPU without any configuration
     amdsmi = _fake_amdsmi(CHIPLETS)
-    monkeypatch.setitem(sys.modules, 'amdsmi', amdsmi)
+    monkeypatch.setitem(sys.modules, "amdsmi", amdsmi)
 
     code = _generate(two_dimensional)
 
-    assert 'dim3(36, 512, 1)' in code
-    assert '((blockIdx.x % 6) * 6 + blockIdx.x / 6)' in code
+    assert "dim3(36, 512, 1)" in code
+    assert "((blockIdx.x % 6) * 6 + blockIdx.x / 6)" in code
 
     # The query initializes `amdsmi` and shuts it down again, exactly once
-    assert amdsmi.calls == ['init', 'shut_down']
+    assert amdsmi.calls == ["init", "shut_down"]
 
 
 def test_detected_chiplet_number_is_written_back(monkeypatch):
     # The detected number replaces the 0 of the configuration entry, so that the rest of the process
     # sees the number of chiplets the code is generated for
     amdsmi = _fake_amdsmi(CHIPLETS)
-    monkeypatch.setitem(sys.modules, 'amdsmi', amdsmi)
+    monkeypatch.setitem(sys.modules, "amdsmi", amdsmi)
 
     with dace.config.temporary_config():
-        dace.config.Config.set('compiler', 'cuda', 'backend', value='hip')
+        dace.config.Config.set("compiler", "cuda", "backend", value="hip")
         common.get_gpu_backend.cache_clear()
         common.get_gpu_chiplet_count.cache_clear()
         try:
             first = two_dimensional.to_sdfg()
-            assert 'dim3(36, 512, 1)' in first.generate_code()[1].code
-            assert int(dace.config.Config.get('compiler', 'cuda', 'chiplet_number')) == CHIPLETS
+            assert "dim3(36, 512, 1)" in first.generate_code()[1].code
+            assert int(dace.config.Config.get("compiler", "cuda", "chiplet_number")) == CHIPLETS
 
             # The next kernel is distributed over the same number of chiplets, without querying again
             second = two_dimensional.to_sdfg()
-            second.name = 'two_dimensional_second_kernel'
-            assert 'dim3(36, 512, 1)' in second.generate_code()[1].code
-            assert amdsmi.calls == ['init', 'shut_down']
+            second.name = "two_dimensional_second_kernel"
+            assert "dim3(36, 512, 1)" in second.generate_code()[1].code
+            assert amdsmi.calls == ["init", "shut_down"]
         finally:
             common.get_gpu_backend.cache_clear()
             common.get_gpu_chiplet_count.cache_clear()
@@ -184,42 +184,42 @@ def test_detected_chiplet_number_is_written_back(monkeypatch):
 
 def test_chiplet_number_detection_failure_warns(monkeypatch):
     # `amdsmi` ships with ROCm, so importing it fails on a machine that generates code without it
-    monkeypatch.setitem(sys.modules, 'amdsmi', None)
+    monkeypatch.setitem(sys.modules, "amdsmi", None)
 
-    with pytest.warns(UserWarning, match='amdsmi'):
+    with pytest.warns(UserWarning, match="amdsmi"):
         code = _generate(two_dimensional)
 
-    assert 'dim3(32, 512, 1)' in code
-    assert 'blockIdx.x % ' not in code
+    assert "dim3(32, 512, 1)" in code
+    assert "blockIdx.x % " not in code
 
 
 def test_chiplet_number_detection_without_gpu_warns(monkeypatch):
     # A machine with ROCm but without a GPU, a login node for instance, reports no processor handle
     amdsmi = _fake_amdsmi(CHIPLETS, handles=())
-    monkeypatch.setitem(sys.modules, 'amdsmi', amdsmi)
+    monkeypatch.setitem(sys.modules, "amdsmi", amdsmi)
 
-    with pytest.warns(UserWarning, match='did not report any GPU'):
+    with pytest.warns(UserWarning, match="did not report any GPU"):
         code = _generate(two_dimensional)
 
-    assert 'dim3(32, 512, 1)' in code
-    assert 'blockIdx.x % ' not in code
+    assert "dim3(32, 512, 1)" in code
+    assert "blockIdx.x % " not in code
 
     # `amdsmi` is shut down again even though the query failed
-    assert amdsmi.calls == ['init', 'shut_down']
+    assert amdsmi.calls == ["init", "shut_down"]
 
 
 def test_chiplet_distribution_explicitly_disabled():
     code = _generate(two_dimensional, 1)
 
-    assert 'dim3(32, 512, 1)' in code
-    assert 'blockIdx.x % ' not in code
+    assert "dim3(32, 512, 1)" in code
+    assert "blockIdx.x % " not in code
 
     # Disabling the distribution is deliberate, so it is not reported. Note that the label of the
     # kernel contains the name of this file, so the messages themselves have to be matched.
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+        warnings.simplefilter("always")
         _generate(two_dimensional, 1)
-    assert not [w for w in caught if re.search(r'chiplets?[ ,.]|chiplet_number', str(w.message))]
+    assert not [w for w in caught if re.search(r"chiplets?[ ,.]|chiplet_number", str(w.message))]
 
 
 def test_chiplet_distribution_disabled_per_map():
@@ -228,24 +228,24 @@ def test_chiplet_distribution_disabled_per_map():
     # propagation of the property by `AddThreadBlockMap`.
     code = _generate(two_dimensional, CHIPLETS, allow_distribution=False)
 
-    assert 'dim3(32, 512, 1)' in code
-    assert 'blockIdx.x % ' not in code
+    assert "dim3(32, 512, 1)" in code
+    assert "blockIdx.x % " not in code
 
     # Opting out is not a misconfiguration, so it is not reported. Note that the label of the kernel
     # contains the name of this file, so the messages themselves have to be matched.
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+        warnings.simplefilter("always")
         _generate(two_dimensional, CHIPLETS, allow_distribution=False)
-    assert not [w for w in caught if re.search(r'chiplets?[ ,.]|chiplet_number', str(w.message))]
+    assert not [w for w in caught if re.search(r"chiplets?[ ,.]|chiplet_number", str(w.message))]
 
 
 def test_chiplet_distribution_disabled_per_map_without_threadblock_map(monkeypatch):
     # Same, for a kernel whose map is the kernel map itself (see the test above)
-    monkeypatch.setattr(AddThreadBlockMap, 'can_be_applied', lambda *args, **kwargs: False)
+    monkeypatch.setattr(AddThreadBlockMap, "can_be_applied", lambda *args, **kwargs: False)
     code = _generate(two_dimensional, CHIPLETS, allow_distribution=False)
 
-    assert 'dim3(32, 512, 1)' in code
-    assert 'blockIdx.x % ' not in code
+    assert "dim3(32, 512, 1)" in code
+    assert "blockIdx.x % " not in code
 
 
 def test_chiplet_distribution_with_threadblock_map():
@@ -253,26 +253,26 @@ def test_chiplet_distribution_with_threadblock_map():
 
     # The block size comes from the thread-block map, not from `compiler.cuda.default_block_size`,
     # while the grid is distributed over the chiplets
-    assert 'dim3(%d, %d, 1)' % (TBX, TBY) in code
-    assert 'dim3(18, 128, 1)' in code
+    assert "dim3(%d, %d, 1)" % (TBX, TBY) in code
+    assert "dim3(18, 128, 1)" in code
 
     # The thread-block map maps work to the threads of the block, so the index of the distributed
     # dimension is not offset by the thread index, unlike in a kernel without such a map
-    assert '(%d * ((blockIdx.x %% 6) * 3 + blockIdx.x / 6))' % TBX in code
-    assert '(%d * blockIdx.y)' % TBY in code
-    assert re.search(r'if \(\w+ < %d\)' % M, code)
+    assert "(%d * ((blockIdx.x %% 6) * 3 + blockIdx.x / 6))" % TBX in code
+    assert "(%d * blockIdx.y)" % TBY in code
+    assert re.search(r"if \(\w+ < %d\)" % M, code)
 
-    assert re.search(r'\w+ = threadIdx\.x;', code)
-    assert re.search(r'\w+ = threadIdx\.y;', code)
+    assert re.search(r"\w+ = threadIdx\.x;", code)
+    assert re.search(r"\w+ = threadIdx\.y;", code)
 
 
 def test_chiplet_distribution_disabled_per_map_with_threadblock_map():
     code = _generate(explicit_threadblock, CHIPLETS, allow_distribution=False)
 
     # The grid is left alone, and the block size is unaffected either way
-    assert 'dim3(16, 128, 1)' in code
-    assert 'dim3(%d, %d, 1)' % (TBX, TBY) in code
-    assert 'blockIdx.x % ' not in code
+    assert "dim3(16, 128, 1)" in code
+    assert "dim3(%d, %d, 1)" % (TBX, TBY) in code
+    assert "blockIdx.x % " not in code
 
 
 def test_allow_chiplet_threadblock_distribution_is_serialized():
@@ -284,7 +284,8 @@ def test_allow_chiplet_threadblock_distribution_is_serialized():
     restored = dace.SDFG.from_json(sdfg.to_json())
 
     maps = [
-        node.map for node, _ in restored.all_nodes_recursive()
+        node.map
+        for node, _ in restored.all_nodes_recursive()
         if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device
     ]
     assert maps
@@ -294,11 +295,11 @@ def test_allow_chiplet_threadblock_distribution_is_serialized():
 def test_invalid_chiplet_number():
     # 0 is the value that asks for the number of chiplets to be detected, so only a negative number
     # of chiplets is invalid
-    with pytest.raises(ValueError, match='chiplet'):
+    with pytest.raises(ValueError, match="chiplet"):
         _generate(two_dimensional, -1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_chiplet_distribution()
     test_chiplet_distribution_for_three_dimensional_grid()
     test_chiplet_distribution_explicitly_disabled()

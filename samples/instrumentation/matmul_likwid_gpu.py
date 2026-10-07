@@ -2,9 +2,9 @@
 import dace
 import numpy as np
 
-M = dace.symbol('M')
-K = dace.symbol('K')
-N = dace.symbol('N')
+M = dace.symbol("M")
+K = dace.symbol("K")
+N = dace.symbol("N")
 
 
 @dace.program
@@ -61,7 +61,7 @@ for nsdfg in sdfg.all_sdfgs_recursive():
 # During execution, the counters for different parts of the SDFG and different
 # threads are measured by likwid and written into a performance report
 # in form of events. This report is saved at .dacecache/matmul/perf.
-with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
+with dace.config.set_temporary("instrumentation", "report_each_invocation", value=False):
     csdfg = sdfg.compile()
 
     for _ in range(10):

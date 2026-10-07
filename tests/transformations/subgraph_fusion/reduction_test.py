@@ -7,8 +7,8 @@ from util import expand_reduce
 import dace
 from dace.transformation.dataflow import ReduceExpansion
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 @dace.program

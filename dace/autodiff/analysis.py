@@ -2,6 +2,7 @@
 """
 Analysis helpers for autodiff
 """
+
 from typing import Dict, Set, Tuple, Optional
 import collections
 
@@ -56,11 +57,9 @@ def inverse_reachability(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
     return inverse_reachability
 
 
-def is_previously_written(sdfg: SDFG,
-                          state: SDFGState,
-                          node: nodes.Node,
-                          array_name: str,
-                          access_sets: Optional[AccessSets] = None) -> bool:
+def is_previously_written(
+    sdfg: SDFG, state: SDFGState, node: nodes.Node, array_name: str, access_sets: Optional[AccessSets] = None
+) -> bool:
     """
     Determine whether the given array name was written before the current node.
 

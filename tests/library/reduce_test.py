@@ -7,22 +7,22 @@ import dace
 import dace.libraries.standard as std
 from dace import SDFG, Memlet
 
-C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
+C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ("C_in", "C_out", "H", "K", "N", "W"))
 
 
 def make_sdfg():
-    g = SDFG('prog')
-    g.add_array('A', (N, 1, 1, C_in, C_out), dace.float32, strides=(C_in * C_out, C_in * C_out, C_in * C_out, C_out, 1))
-    g.add_array('C', (N, H, W, C_out), dace.float32, strides=(C_out * H * W, C_out * W, C_out, 1))
+    g = SDFG("prog")
+    g.add_array("A", (N, 1, 1, C_in, C_out), dace.float32, strides=(C_in * C_out, C_in * C_out, C_in * C_out, C_out, 1))
+    g.add_array("C", (N, H, W, C_out), dace.float32, strides=(C_out * H * W, C_out * W, C_out, 1))
 
-    st0 = g.add_state('st0', is_start_block=True)
+    st0 = g.add_state("st0", is_start_block=True)
     st = st0
 
-    A = st.add_access('A')
-    C = st.add_access('C')
-    R = st.add_reduce('lambda x, y: x + y', [1, 2, 3], 0)
-    st.add_nedge(A, R, Memlet(expr='A[0:N, 0, 0, 0:C_in, 0:C_out]'))
-    st.add_nedge(R, C, Memlet(expr='C[0:N, 5, 5, 0:C_out]'))
+    A = st.add_access("A")
+    C = st.add_access("C")
+    R = st.add_reduce("lambda x, y: x + y", [1, 2, 3], 0)
+    st.add_nedge(A, R, Memlet(expr="A[0:N, 0, 0, 0:C_in, 0:C_out]"))
+    st.add_nedge(R, C, Memlet(expr="C[0:N, 5, 5, 0:C_out]"))
 
     return g, R
 
@@ -33,7 +33,7 @@ def test_library_node_expand_reduce_pure():
     A = np.ones((n, 1, 1, cin, cout), np.float32)
 
     g, R = make_sdfg()
-    R.implementation = 'pure-seq'
+    R.implementation = "pure-seq"
     g.validate()
     g.compile()
 
@@ -41,7 +41,7 @@ def test_library_node_expand_reduce_pure():
     g(A=A, C=wantC, N=n, C_in=cin, C_out=cout, H=h, K=k, W=w)
 
     g, R = make_sdfg()
-    R.implementation = 'pure'
+    R.implementation = "pure"
     g.validate()
     g.compile()
 
@@ -61,7 +61,7 @@ def test_pure_seq_row_sums_in_a_map():
 
     sdfg = row_sums.to_sdfg()
     rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
-    rednode.implementation = 'pure-seq'
+    rednode.implementation = "pure-seq"
 
     A = np.random.rand(10, 4)
     B = np.zeros(10)
@@ -69,17 +69,24 @@ def test_pure_seq_row_sums_in_a_map():
     assert np.allclose(B, A.sum(axis=1))
 
 
-_impls = ['pure', 'CUDA (device)', 'pure-seq', 'GPUAuto']
-_case_params = [([1, 64, 60, 60], (0, 2, 3), [64], np.float32), ([8, 512, 4096], (0, 1), [4096], np.float32),
-                ([8, 512, 4096], (0, 1), [4096], np.float64), ([1024, 8], (0), [8], np.float32),
-                ([111, 111, 111], (0, 1), [111], np.float64), ([111, 111, 111], (1, 2), [111], np.float64),
-                ([1000000], (0), [1], np.float64), ([1111111], (0), [1], np.float64),
-                ([123, 21, 26, 8], (1, 2), [123, 8], np.float32), ([2, 512, 2], (0, 2), [512], np.float32),
-                ([512, 555, 257], (0, 2), [555], np.float64)]
+_impls = ["pure", "CUDA (device)", "pure-seq", "GPUAuto"]
+_case_params = [
+    ([1, 64, 60, 60], (0, 2, 3), [64], np.float32),
+    ([8, 512, 4096], (0, 1), [4096], np.float32),
+    ([8, 512, 4096], (0, 1), [4096], np.float64),
+    ([1024, 8], (0), [8], np.float32),
+    ([111, 111, 111], (0, 1), [111], np.float64),
+    ([111, 111, 111], (1, 2), [111], np.float64),
+    ([1000000], (0), [1], np.float64),
+    ([1111111], (0), [1], np.float64),
+    ([123, 21, 26, 8], (1, 2), [123, 8], np.float32),
+    ([2, 512, 2], (0, 2), [512], np.float32),
+    ([512, 555, 257], (0, 2), [555], np.float64),
+]
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('impl,test_case', itertools.product(_impls, _case_params))
+@pytest.mark.parametrize("impl,test_case", itertools.product(_impls, _case_params))
 def test_multidim_gpu(impl, test_case):
     in_shape, ax, out_shape, dtype = test_case
     print(in_shape, ax, out_shape, dtype)
@@ -101,7 +108,7 @@ def test_multidim_gpu(impl, test_case):
     assert np.allclose(b, np.sum(a, axis=axes))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for params in itertools.product(_impls, _case_params):
         test_multidim_gpu(params[0], params[1])
     test_library_node_expand_reduce_pure()

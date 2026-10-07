@@ -8,7 +8,7 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-N = dc.symbol('N', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
 
 
 @dc.program
@@ -21,6 +21,7 @@ def go_fast_kernel(a: dc.float64[N, N]):
 
 def initialize(N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     x = rng.random((N, N), dtype=np.float64)
     return x
@@ -34,10 +35,10 @@ def ground_truth(a):
 
 
 def run_go_fast(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs go_fast for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench small size)
     N = 2000
@@ -48,7 +49,7 @@ def run_go_fast(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         out = sdfg(a, N=N)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and validate
     out_ref = ground_truth(a)
@@ -78,7 +79,7 @@ def run_go_fast_autodiff():
 
     # Initialize gradient computation data
     gradient_a = np.zeros_like(a)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -117,9 +118,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

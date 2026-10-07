@@ -3,4 +3,4 @@
 from .module import DaceModule
 from .interface import module
 
-__all__ = ['DaceModule', 'module']
+__all__ = ["DaceModule", "module"]

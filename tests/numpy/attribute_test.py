@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -94,7 +94,7 @@ def test_attribute_function():
     assert np.allclose(a, np.arange(10).reshape(10, 1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_attribute_in_ranged_loop()
     test_attribute_in_ranged_loop_symbolic()
     test_attribute_new_state()

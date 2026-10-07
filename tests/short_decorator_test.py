@@ -13,5 +13,5 @@ def test_short_decorator():
     assert np.allclose(short_decorator(A), A + A)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_short_decorator()

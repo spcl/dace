@@ -9,9 +9,9 @@ from dace.sdfg import infer_types
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('input_array', [True, False])
-@pytest.mark.parametrize('output_array', [True, False])
-@pytest.mark.parametrize('expand_first', [True, False])
+@pytest.mark.parametrize("input_array", [True, False])
+@pytest.mark.parametrize("output_array", [True, False])
+@pytest.mark.parametrize("expand_first", [True, False])
 def test_gpu(input_array, output_array, expand_first):
 
     sdfg = dace.SDFG("test_gpu_scalars")
@@ -60,7 +60,7 @@ def test_gpu(input_array, output_array, expand_first):
     assert output_arr[0] == 2
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_gpu(True, True, False)
     test_gpu(True, True, True)
     test_gpu(False, False, False)
