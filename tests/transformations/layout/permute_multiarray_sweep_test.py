@@ -99,7 +99,7 @@ def build_problem(kernel, seed):
 # Each case is (kernel, permute_map). The permute_map names only the subset of arrays to relayout;
 # arrays absent from it keep their logical layout. 1D arrays (matvec's v, out) carry the identity
 # permute [0] to exercise that path transparently.
-# yapf: disable
+# fmt: off
 CASES = [
     # saxpy2d: permute x, y, both, and a mixed identity+swap
     ("saxpy2d", {"x": [1, 0]}),
@@ -142,7 +142,7 @@ CASES = [
     ("matvec", {"A": [1, 0], "v": [0], "out": [0]}),
     ("matvec", {"v": [0]}),
 ]
-# yapf: enable
+# fmt: on
 
 
 def case_id(kernel, permute_map):

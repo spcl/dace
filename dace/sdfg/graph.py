@@ -911,11 +911,11 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     if TYPE_CHECKING:
         # Type-only: the runtime edges are MultiConnectorEdge objects; no override, so no extra call per query.
-        # yapf: disable
+        # fmt: off
         def edges(self) -> List[MultiConnectorEdge[EdgeT]]: ...
         def all_edges(self, *nodes: NodeT) -> Iterable[MultiConnectorEdge[EdgeT]]: ...
         def edge_bfs(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[MultiConnectorEdge[EdgeT]]: ...
-        # yapf: enable
+        # fmt: on
 
     def in_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
         return super().in_edges(node)

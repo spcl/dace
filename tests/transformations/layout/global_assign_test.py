@@ -240,12 +240,12 @@ def test_dp_tie_breaks_toward_identity_not_toward_the_last_kernel():
         ("A", 1, "identity"): 1.5, ("A", 1, "perm120"): 1.5, ("A", 1, "perm201"): 1.5,
         ("A", 2, "identity"): 1.5, ("A", 2, "perm120"): 1.5, ("A", 2, "perm201"): 1.0,
         ("A", 3, "identity"): 1.5, ("A", 3, "perm120"): 1.0, ("A", 3, "perm201"): 1.0,
-    }  # yapf: disable
+    }  # fmt: skip
     rel = {
         ("A", "identity", "perm120"): 0.0, ("A", "identity", "perm201"): 0.0,
         ("A", "perm120", "identity"): 0.5, ("A", "perm120", "perm201"): 0.5,
         ("A", "perm201", "identity"): 0.0, ("A", "perm201", "perm120"): 0.5,
-    }  # yapf: disable
+    }  # fmt: skip
     costs = three_layout_table(node, rel, entry_conversion_needed={"A": True})
     dp = per_array_dp(costs, 4)["A"]
     oracle = brute_force_trajectories(costs, 4)["A"]

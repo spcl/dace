@@ -39,7 +39,7 @@ class Memlet(object):
                        'runtime (e.g., data dependent)')
     if TYPE_CHECKING:
         # Type-only view of the SubsetProperty descriptors below: reads are Optional[Subset], writes also take strings.
-        # yapf: disable
+        # fmt: off
         @property
         def subset(self) -> Optional[subsets.Subset]: ...
         @subset.setter
@@ -48,7 +48,7 @@ class Memlet(object):
         def other_subset(self) -> Optional[subsets.Subset]: ...
         @other_subset.setter
         def other_subset(self, value: Union[str, subsets.Subset, None]) -> None: ...
-        # yapf: enable
+        # fmt: on
     else:
         subset = SubsetProperty(allow_none=True,
                                 category='Semantics',
