@@ -8,7 +8,7 @@ same value exactly when nothing can write ``A`` between the copy and the tasklet
 one state, so a write in another state runs wholly before or wholly after both and cannot interfere; only a
 write in the same state that is ordered neither before the copy nor after every consumer can. A result
 copy folds by the mirror rule: no other access to the array may fall between the producing tasklet and the
-write.
+write. A read-modify-write (the producing tasklet reads the array it writes) keeps its result copy.
 """
 from typing import Any, Dict, Iterator, List, Optional, Set
 
@@ -94,6 +94,12 @@ def foldable_write(sdfg: SDFG, state: SDFGState, produce: Any, counts: Dict[str,
         return None
     array = sdfg.arrays[target.dst.data]
     if isinstance(array, (data.Scalar, data.Stream)) or array.dtype != desc.dtype:
+        return None
+    # A read-modify-write keeps its result scalar: that staging is the copy-wrapped shape the WCR passes match,
+    # and the direct form loses the order of its reads against the write (``B[j] = B[j-1] + B[j]``).
+    if any(
+            state.memlet_path(edge)[0].src.data == target.dst.data for edge in state.in_edges(produce.src)
+            if isinstance(state.memlet_path(edge)[0].src, nodes.AccessNode)):
         return None
     subset = write_subset(target)
     if subset is None or symbolic.equal(subset.num_elements(), 1) is not True:

@@ -155,6 +155,19 @@ def test_a_result_copy_whose_reader_runs_first_folds():
     assert 'r' not in {node.data for node in sdfg.start_state.data_nodes()}
 
 
+def test_a_read_modify_write_keeps_its_result_scalar():
+    """``t(A[0]) -> r -> A[0]``: the result copy of a tasklet that reads the array it writes stays, the staged
+    read-modify-write the WCR passes match; only the read copy folds."""
+    sdfg = result_copy_beside_a_reader(ordered=False)
+    state = sdfg.start_state
+    produce = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet) and n.label == 'produce')
+    produce.add_in_connector('a')
+    produce.code = dace.properties.CodeBlock('o = a + 3.0')
+    state.add_edge(state.add_read('A'), None, produce, 'a', dace.Memlet('A[0]'))
+    FoldScalarReadCopies().apply_pass(sdfg, {})
+    assert 'r' in {node.data for node in state.data_nodes()}
+
+
 if __name__ == '__main__':
     test_a_read_only_copy_folds()
     test_a_same_element_update_folds()
@@ -165,3 +178,4 @@ if __name__ == '__main__':
     test_a_scalar_read_again_in_another_state_stays()
     test_a_result_copy_beside_an_unordered_reader_stays()
     test_a_result_copy_whose_reader_runs_first_folds()
+    test_a_read_modify_write_keeps_its_result_scalar()
