@@ -7,7 +7,7 @@ import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes import (convert_diamonds_to_selects, fold_guards, flatten_contiguous_nests,
                                                      forward_substitute_conditions, fuse_rolled_loops,
-                                                     hoist_select_arms, merge_contiguous_loops,
+                                                     hoist_condition_reads, hoist_select_arms, merge_contiguous_loops,
                                                      pair_complementary_guards, remove_dead_assignments,
                                                      remove_dead_stores, reroll_statements, split_iteration_spaces,
                                                      unswitch_invariant_guards)
@@ -488,6 +488,80 @@ def test_substitute_skips_lossy_conversion():
     stree.add_child(tn.ForScope(loop=loop, children=[_bool_tasklet('t', 'a * 0.5', {'a': 'A[k]'}), guard]))
     assert forward_substitute_conditions(stree) == 0
     assert remove_dead_assignments(stree) == 0
+
+
+def _condition_read_tree(condition: str) -> tn.ScheduleTreeRoot:
+    """``for i in range(1, 7): T[i] = A[i] - 0.5; if <condition>: B[i] = 2 * T[i] else: B[i] = 1``, with a transient
+    array ``T``."""
+    sdfg = dace.SDFG('hoist_condition_reads')
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('B', [8], dace.float64)
+    sdfg.add_array('T', [8], dace.float64, transient=True)
+    sdfg.add_state(is_start_block=True)
+    stree = _tree(sdfg)
+    guard = tn.IfScope(condition=dace.properties.CodeBlock(condition),
+                       children=[_tasklet('b = 2 * t', {'t': 'T[i]'}, {'b': 'B[i]'})])
+    otherwise = tn.ElseScope(children=[_tasklet('b = 1', {}, {'b': 'B[i]'})])
+    loop = dace.sdfg.state.LoopRegion('loop', 'i < 7', 'i', 'i = 1', 'i = i + 1')
+    stree.children = []
+    stree.add_child(
+        tn.ForScope(loop=loop, children=[_tasklet('t = a - 0.5', {'a': 'A[i]'}, {'t': 'T[i]'}), guard, otherwise]))
+    return stree
+
+
+def test_hoist_condition_reads():
+    condition = 'T[i] * A[i] > T[i] - 0.25'
+    stree, reference = _condition_read_tree(condition), _condition_read_tree(condition)
+    assert hoist_condition_reads(stree) == 1
+    tn.validate_children_and_parents_align(stree, root=True)
+    hoisted, = [n for n in _nodes(stree, tn.TaskletNode) if n.node.label == 'condition']
+    assert sorted(m.data for m in hoisted.in_memlets.values()) == ['A', 'T']  # ``T[i]`` is read once
+    name = hoisted.out_memlets['__out'].data
+    assert _conditions(stree) == [name] and stree.containers[name].dtype == dace.bool_
+    A = np.random.default_rng(0).random(8)
+    results = []
+    for tree in (reference, stree):
+        B = np.zeros(8)
+        _run(tree, A=A.copy(), B=B)
+        results.append(B)
+    assert np.array_equal(results[0], results[1])
+
+    # Forward substitution substitutes the value back into the condition
+    assert forward_substitute_conditions(stree) > 0
+    assert 'T[i]' in _conditions(stree)[0]
+
+
+@pytest.mark.parametrize(
+    'condition',
+    [
+        'A[i] > 0.5',  # No transient
+        'i > 1 and T[i - 2] > 0',  # Evaluated only if the first operand holds, out of bounds otherwise
+        '0 < A[i] < T[i + 2]',  # Evaluated only if the first comparison holds, out of bounds otherwise
+        '(T[i + 2] if i < 6 else A[i]) > 0',  # Evaluated in one arm, out of bounds in the other
+        'T[int(A[i] * 6)] > 0',  # Index read from a container
+    ])
+def test_hoist_condition_reads_not(condition):
+    stree = _condition_read_tree(condition)
+    assert hoist_condition_reads(stree) == 0
+    assert not stree.containers.keys() - {'A', 'B', 'T'}
+
+
+@pytest.mark.parametrize(
+    'condition',
+    [
+        'A[i] > 0.5 and T[i - 1] > 0',  # Skipped by the condition, but in bounds for every i
+        'T[i] > 0 and T[i] < 0.25',  # Read anyway by the first operand
+    ])
+def test_hoist_condition_reads_short_circuit(condition):
+    stree, reference = _condition_read_tree(condition), _condition_read_tree(condition)
+    assert hoist_condition_reads(stree) == 1
+    A = np.random.default_rng(1).random(8)
+    results = []
+    for tree in (reference, stree):
+        B = np.zeros(8)
+        _run(tree, A=A.copy(), B=B)
+        results.append(B)
+    assert np.array_equal(results[0], results[1])
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1241,6 +1315,14 @@ if __name__ == '__main__':
     test_substitute_output_of_multi_output_tasklet_then_unswitch()
     test_substitute_through_tasklet_locals()
     test_substitute_not_from_tasklet_overwriting_its_input()
+    test_hoist_condition_reads()
+    test_hoist_condition_reads_not('A[i] > 0.5')
+    test_hoist_condition_reads_not('i > 1 and T[i - 2] > 0')
+    test_hoist_condition_reads_not('0 < A[i] < T[i + 2]')
+    test_hoist_condition_reads_not('(T[i + 2] if i < 6 else A[i]) > 0')
+    test_hoist_condition_reads_short_circuit('A[i] > 0.5 and T[i - 1] > 0')
+    test_hoist_condition_reads_short_circuit('T[i] > 0 and T[i] < 0.25')
+    test_hoist_condition_reads_not('T[int(A[i] * 6)] > 0')
     test_pair_complementary_guards('k < 4', 'k >= 4', lambda k, flag: k < 4)
     test_pair_not_when_first_body_writes_condition()
     test_pair_not_for_unrelated_conditions()

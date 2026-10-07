@@ -6,6 +6,7 @@ Each module holds one family of passes; all passes are importable from this pack
 """
 from dace.sdfg.analysis.schedule_tree.passes.folding import fold_guards
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import forward_substitute_conditions
+from dace.sdfg.analysis.schedule_tree.passes.canonicalization import hoist_condition_reads
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import remove_dead_assignments
 from dace.sdfg.analysis.schedule_tree.passes.canonicalization import pair_complementary_guards
 from dace.sdfg.analysis.schedule_tree.passes.convert_map_to_loop import convert_map_to_loop

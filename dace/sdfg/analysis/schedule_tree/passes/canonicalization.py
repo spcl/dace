@@ -1,14 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Passes that bring conditions into a canonical form: pairing complementary guards, and substituting the values conditions read."""
+"""Passes that bring conditions into a canonical form: pairing complementary guards, substituting the values conditions
+read, and reading containers before conditions."""
 import ast
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+
+import sympy
 
 from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
+from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.passes.common import (AccessIndex, bound_names, condition_of, is_pure,
-                                                            names_in_subtrees, names_written, range_analysis)
+                                                            iteration_spaces, names_in_subtrees, names_written,
+                                                            range_analysis, repository_of)
 
 
 def _access(memlet: Memlet, containers: Dict[str, data.Data]) -> ast.expr:
@@ -358,3 +363,164 @@ def pair_complementary_guards(stree: tn.ScheduleTreeScope) -> int:
             scope.children = []
             scope.add_children(result)
     return paired
+
+
+def _condition_accesses(condition: ast.expr, containers: Dict[str, data.Data]) -> Optional[List[tuple]]:
+    """The container accesses of a condition as ``(container, element, AST node, conditional)``: subscripts with one
+    index per dimension, and single-element containers by name; ``conditional`` if the condition evaluates the access
+    only depending on the values of others (in a later operand of ``and``/``or``, a later comparison of a chain, an arm
+    of ``a if c else b``). ``None`` if an access is not a single element known before the condition (slices, indices
+    that read containers, arrays by name)."""
+    accesses = []
+
+    def visit(node: ast.AST, conditional: bool) -> bool:
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in containers:
+            indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            if (len(indices) != len(containers[node.value.id].shape) or any(isinstance(i, ast.Slice) for i in indices)
+                    or any(isinstance(n, ast.Name) and n.id in containers for i in indices for n in ast.walk(i))):
+                return False
+            element = f'{node.value.id}[{", ".join(ast.unparse(i) for i in indices)}]'
+            accesses.append((node.value.id, element, node, conditional))
+            return True
+        if isinstance(node, ast.Name) and node.id in containers:
+            if containers[node.id].total_size != 1:
+                return False
+            accesses.append((node.id, f'{node.id}[0]', node, False))  # Always in bounds
+            return True
+        if isinstance(node, ast.BoolOp):
+            return all(visit(v, conditional or k > 0) for k, v in enumerate(node.values))
+        if isinstance(node, ast.Compare):
+            return visit(node.left, conditional) and all(
+                visit(c, conditional or k > 0) for k, c in enumerate(node.comparators))
+        if isinstance(node, ast.IfExp):
+            return visit(node.test, conditional) and visit(node.body, True) and visit(node.orelse, True)
+        return all(visit(child, conditional) for child in ast.iter_child_nodes(node))
+
+    return accesses if visit(condition, False) else None
+
+
+def _in_bounds(node: ast.Subscript, desc: data.Data, ranges: Dict[str, Tuple[int, int]]) -> bool:
+    """Whether every index of a subscript is within the shape of its container, for all values of the variables in
+    ``ranges`` (``(lowest, highest)`` by name), with no other names in the indices."""
+    indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    for index, size in zip(indices, desc.shape):
+        size = sympy.sympify(size)
+        try:
+            expr = sympy.expand(symbolic.pystr_to_symbolic(ast.unparse(index)))
+        except (TypeError, ValueError, SyntaxError, sympy.SympifyError):
+            return False
+        if not size.is_Integer or any(str(sym) not in ranges for sym in expr.free_symbols):
+            return False
+        low = high = expr
+        for sym in expr.free_symbols:
+            coefficient = sympy.diff(expr, sym)
+            if not coefficient.is_number:
+                return False  # Not linear
+            first, last = ranges[str(sym)]
+            low = low.subs(sym, first if coefficient > 0 else last)
+            high = high.subs(sym, last if coefficient > 0 else first)
+        if not (low.is_Integer and high.is_Integer and low >= 0 and high < size):
+            return False
+    return True
+
+
+def _loop_ranges(node: tn.ScheduleTreeNode, repository) -> Dict[str, Tuple[int, int]]:
+    """``(lowest, highest)`` value of each variable of the loops and maps enclosing ``node`` with constant bounds."""
+    ranges: Dict[str, Tuple[int, int]] = {}
+    unknown: Set[str] = set()
+    scope = node.parent
+    while scope is not None:
+        for _, var, space in iteration_spaces(scope, repository):
+            if var in ranges or var in unknown:
+                continue  # Bound by an inner scope
+            first = None if space is None else sympy.sympify(space.start)
+            last = None if space is None else sympy.sympify(space.end)
+            if first is None or last is None or not first.is_Integer or not last.is_Integer:
+                unknown.add(var)
+            else:
+                ranges[var] = (int(min(first, last)), int(max(first, last)))
+        scope = scope.parent
+    return ranges
+
+
+class _ReplaceAccesses(ast.NodeTransformer):
+    """Replaces AST nodes (by identity) with names."""
+
+    def __init__(self, names: Dict[int, str]):
+        self.names = names
+
+    def visit(self, node: ast.AST):
+        if id(node) in self.names:
+            return ast.copy_location(ast.Name(id=self.names[id(node)], ctx=ast.Load()), node)
+        return super().visit(node)
+
+
+def hoist_condition_reads(stree: tn.ScheduleTreeScope) -> int:
+    """
+    Read the transient arrays an ``if`` condition reads in a tasklet before it: ``if T[i, k] * U[i, k] < 0:`` becomes
+    ``c = tasklet(T[i, k], U[i, k])`` followed by ``if c:``, with a new transient boolean scalar ``c``.
+
+    The passes that change transients (refinement, reuse of memory, moving to the stack) analyze and rewrite memlets,
+    and leave containers that conditions read by name alone; after this pass, those accesses are memlets too. Only
+    conditions that read a transient array are rewritten, and only if every container access in them can be evaluated
+    before the condition: an access the condition may skip (e.g., the second operand of ``and``) must read an element
+    the condition reads anyway, or one within the shape of its container for every iteration of the enclosing loops
+    (such accesses are then read even where the condition would have skipped them), and no index may read a container
+    (see :func:`_condition_accesses`). ``elif`` conditions stay as they are, since they are
+    evaluated only if the conditions before them do not hold.
+    :func:`forward_substitute_conditions` does the opposite (it substitutes the boolean back into the condition), so
+    this pass runs after it, before the transient passes.
+
+    :param stree: The schedule tree (or subtree) to transform in place.
+    :return: The number of conditions rewritten.
+    """
+    root = stree.get_root()
+    containers = root.containers
+    repository = repository_of(root)
+    hoisted = 0
+
+    def hoist(scope: tn.ScheduleTreeScope) -> None:
+        nonlocal hoisted
+        result = []
+        for child in scope.children:
+            if isinstance(child, tn.ScheduleTreeScope):
+                hoist(child)
+            condition = condition_of(child) if type(child) is tn.IfScope else None
+            accesses = None
+            if condition is not None and is_pure(condition):
+                accesses = _condition_accesses(condition, containers)
+            if accesses and any(containers[c].transient and containers[c].total_size != 1 for c, *_ in accesses):
+                # Reading an access the condition may skip is safe if it reads an element read anyway, or one in bounds
+                certain = {element for _, element, _, conditional in accesses if not conditional}
+                conditional = [(c, n) for c, element, n, cond in accesses if cond and element not in certain]
+                if conditional:
+                    ranges = _loop_ranges(child, repository)
+                    if not all(_in_bounds(n, containers[c], ranges) for c, n in conditional):
+                        accesses = None
+            if accesses and any(containers[c].transient and containers[c].total_size != 1 for c, *_ in accesses):
+                connectors: Dict[str, str] = {}  # By element read
+                for _, element, _, _ in accesses:
+                    connectors.setdefault(element, f'__in{len(connectors)}')
+                names = {id(node): connectors[element] for _, element, node, _ in accesses}
+                expression = ast.unparse(_ReplaceAccesses(names).visit(condition))  # The condition is replaced below
+                name = data.find_new_name('__condition', containers)
+                containers[name] = data.Scalar(dtypes.bool_, transient=True)
+                tasklet = nodes.Tasklet('condition', {c: None
+                                                      for c in connectors.values()}, {'__out': None},
+                                        f'__out = {expression}')
+                read = tn.TaskletNode(node=tasklet,
+                                      in_memlets={
+                                          c: Memlet(e)
+                                          for e, c in connectors.items()
+                                      },
+                                      out_memlets={'__out': Memlet(f'{name}[0]')})
+                read.parent = scope
+                result.append(read)
+                child.condition = CodeBlock(name)
+                hoisted += 1
+            result.append(child)
+        if len(result) != len(scope.children):
+            scope.children = result
+
+    hoist(stree)
+    return hoisted
