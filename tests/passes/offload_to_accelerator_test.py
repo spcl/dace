@@ -160,29 +160,27 @@ def test_apply_gpu_transformations_offloads_with_the_pass():
         'no `_host` staging: apply_gpu_transformations did not run the offloading pass'
 
 
-def test_simplify_is_honoured_by_the_offloading():
+def test_simplify_is_honoured_by_the_offloading(monkeypatch):
     """``simplify`` is ``apply_gpu_transformations``'s contract, not the offloading's.
 
-    ``OffloadToAccelerator`` takes no such option and leaves the copy states it inserts unfused, so
-    a caller that asked for a simplified graph has to be handed one by the method itself.
+    ``OffloadToAccelerator`` takes no such option, so a caller that asked for a simplified graph has to be
+    handed one by the method itself, and one that did not must not be.
     """
+    calls = []
+    original = dace.SDFG.simplify
+
+    def counting_simplify(self, *args, **kwargs):
+        calls.append(self)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(dace.SDFG, 'simplify', counting_simplify)
     plain = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
-    simplified = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
     plain.apply_gpu_transformations(validate=False, simplify=False)
+    assert plain not in calls
+    simplified = canonicalized_with_gpu_inputs(GUARDED_KERNEL)
     simplified.apply_gpu_transformations(validate=False, simplify=True)
-    plain.validate()
+    assert simplified in calls
     simplified.validate()
-
-    def size(sdfg):
-        """States, dataflow nodes, dataflow edges. Asserting on any single count would pin the
-        incidental shape simplify happens to reach rather than the contract that it shrinks."""
-        return (len(sdfg.states()), sum(len(s.nodes())
-                                        for s in sdfg.states()), sum(len(s.edges()) for s in sdfg.states()))
-
-    before, after = size(plain), size(simplified)
-    assert all(a <= b for a, b in zip(after, before)), (f'simplify=True grew the graph: {before} -> {after}')
-    assert after != before, (f'simplify=True left the graph at {before} (states, nodes, edges), identical to '
-                             'simplify=False, so the argument did nothing')
 
 
 def test_an_offloaded_scan_gets_its_device_lowering():
