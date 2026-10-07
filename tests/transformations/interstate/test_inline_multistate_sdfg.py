@@ -394,6 +394,34 @@ def test_outer_names_stay_exact_across_lowered_maps():
     assert lowered == 2, lowered
 
 
+def test_inline_keeps_a_constant_mapped_symbol_the_nested_loop_reassigns():
+    """A nested loop counter mapped to a constant (``i: 1``, as constant propagation leaves it) seeds the loop;
+    substituting ``1`` for ``i`` throughout the body would also rewrite ``i = i + 1`` and never end the loop."""
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("inline_constant_seeded_counter")
+    sdfg.add_array("A", (N,), dace.int32)
+    state = sdfg.add_state()
+    inner = dace.SDFG("counter_loop")
+    inner.add_array("B", (N,), dace.int32)
+    guard = inner.add_state("guard", is_start_block=True)
+    body = inner.add_state("body")
+    done = inner.add_state("done")
+    inner.add_edge(guard, body, dace.InterstateEdge(condition="i <= N"))
+    inner.add_edge(body, guard, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    inner.add_edge(guard, done, dace.InterstateEdge(condition="i > N"))
+    tasklet = body.add_tasklet("write", {}, {"__out"}, "__out = i - 1")
+    body.add_edge(tasklet, "__out", body.add_write("B"), None, Memlet("B[i - 1]"))
+    node = state.add_nested_sdfg(inner, {}, {"B"}, {"N": "N", "i": 1})
+    state.add_edge(node, "B", state.add_write("A"), None, Memlet.from_array("A", sdfg.arrays["A"]))
+
+    _apply_inline(sdfg)
+    assigned = {k: v for e in sdfg.all_interstate_edges() for k, v in e.data.assignments.items()}
+    assert assigned.get("i") in ("i + 1", "1"), assigned
+    A = np.zeros(10, dtype=np.int32)
+    sdfg(A=A, N=10)
+    assert np.array_equal(A, np.arange(10, dtype=np.int32))
+
+
 if __name__ == "__main__":
     test_inline_preserves_pre_and_post_numerics()
     test_inline_lowers_non_identity_symbol_mapping_to_iedge_assignment()
@@ -404,4 +432,5 @@ if __name__ == "__main__":
     test_outer_names_of_a_nested_sdfg_stop_at_its_subtree()
     test_outer_names_of_a_nested_sdfg_skip_a_sibling()
     test_outer_names_stay_exact_across_lowered_maps()
+    test_inline_keeps_a_constant_mapped_symbol_the_nested_loop_reassigns()
     print("all ok")

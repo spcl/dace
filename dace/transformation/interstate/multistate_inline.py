@@ -323,14 +323,17 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # added to the outer SDFG's symbol table with their inner
         # type, preserving the strict-typing contract. A constant value
         # (``{'M': 20}``) is substituted instead: there is no expression to
-        # propagate, and the inlined descriptors become constant-sized.
+        # propagate, and the inlined descriptors become constant-sized --
+        # unless the nested SDFG assigns the symbol, whose later values the
+        # constant would overwrite (a loop counter it seeds).
+        _, nested_assigned, _ = outer_names(nsdfg)
         identity_mapping: Dict[Any, Any] = {}
         constant_mapping: Dict[Any, Any] = {}
         non_identity_mapping: Dict[str, str] = {}
         for k, v in nsdfg_node.symbol_mapping.items():
             if str(k) == str(v):
                 identity_mapping[k] = v
-            elif not symbolic.issymbolic(v):
+            elif not symbolic.issymbolic(v) and str(k) not in nested_assigned:
                 constant_mapping[k] = v
             else:
                 non_identity_mapping[str(k)] = symbolic.symstr(v)
