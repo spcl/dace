@@ -5,7 +5,7 @@ import numpy as np
 
 from dace.sdfg.validation import InvalidSDFGEdgeError
 
-W = dace.symbol('W')
+W = dace.symbol("W")
 
 number = 42
 
@@ -51,12 +51,12 @@ def test():
 
 
 def test_duplicate_object():
-    sdfg = dace.SDFG('shouldfail')
-    sdfg.add_array('A', [20], dace.float64)
+    sdfg = dace.SDFG("shouldfail")
+    sdfg.add_array("A", [20], dace.float64)
     state = sdfg.add_state()
-    a = state.add_read('A')
-    b = state.add_write('A')
-    memlet = dace.Memlet('A[0]')
+    a = state.add_read("A")
+    b = state.add_write("A")
+    memlet = dace.Memlet("A[0]")
     state.add_nedge(a, b, memlet)
     state.add_nedge(a, b, memlet)
 

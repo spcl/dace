@@ -21,14 +21,12 @@ def make_sdfg(dtype):
     outbuf = state.add_access("outbuf")
     alltoall_node = mpi.nodes.alltoall.Alltoall("alltoall")
 
-    state.add_memlet_path(inbuf,
-                          alltoall_node,
-                          dst_conn="_inbuffer",
-                          memlet=Memlet.simple(inbuf, "0:n", num_accesses=n))
-    state.add_memlet_path(alltoall_node,
-                          outbuf,
-                          src_conn="_outbuffer",
-                          memlet=Memlet.simple(outbuf, "0:n", num_accesses=n))
+    state.add_memlet_path(
+        inbuf, alltoall_node, dst_conn="_inbuffer", memlet=Memlet.simple(inbuf, "0:n", num_accesses=n)
+    )
+    state.add_memlet_path(
+        alltoall_node, outbuf, src_conn="_outbuffer", memlet=Memlet.simple(outbuf, "0:n", num_accesses=n)
+    )
 
     return sdfg
 
@@ -36,12 +34,16 @@ def make_sdfg(dtype):
 ###############################################################################
 
 
-@pytest.mark.parametrize("implementation, dtype", [
-    pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
-    pytest.param("MPI", dace.float64, marks=pytest.mark.mpi)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype",
+    [
+        pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
+        pytest.param("MPI", dace.float64, marks=pytest.mark.mpi),
+    ],
+)
 def test_mpi(implementation, dtype):
     from mpi4py import MPI as MPI4PY
+
     np_dtype = getattr(np, dtype.to_string())
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
@@ -63,9 +65,9 @@ def test_mpi(implementation, dtype):
 
     # now B should be an array of size,
     # containing (size / size_per_proc) repeated chunked_data
-    chunked_data = A[rank * size_per_proc:(rank + 1) * size_per_proc]
+    chunked_data = A[rank * size_per_proc : (rank + 1) * size_per_proc]
     correct_data = np.tile(chunked_data, int(size / size_per_proc))
-    if (not np.allclose(B, correct_data)):
+    if not np.allclose(B, correct_data):
         raise (ValueError("The received values are not what I expected on root."))
 
 

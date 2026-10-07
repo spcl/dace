@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from dace.sdfg import SDFG
     from dace.codegen.compiled_sdfg import CompiledSDFG
 
-CallHookType = Callable[['SDFG'], None]
-CompiledCallHookType = Callable[['CompiledSDFG', Tuple[Any, ...]], None]
+CallHookType = Callable[["SDFG"], None]
+CompiledCallHookType = Callable[["CompiledSDFG", Tuple[Any, ...]], None]
 GeneratorType = Generator[Any, None, None]
 
 # Global list of hooks
@@ -23,8 +23,12 @@ _SDFG_CALL_HOOKS: List[GeneratorType] = []
 _COMPILED_SDFG_CALL_HOOKS: List[GeneratorType] = []
 
 
-def _register_hook(hook_list: List[GeneratorType], before_hook: Optional[Callable[..., None]],
-                   after_hook: Optional[Callable[..., None]], context_manager: Optional[GeneratorType]) -> int:
+def _register_hook(
+    hook_list: List[GeneratorType],
+    before_hook: Optional[Callable[..., None]],
+    after_hook: Optional[Callable[..., None]],
+    context_manager: Optional[GeneratorType],
+) -> int:
     """
     Internal function that registers function or context manager hooks to be called.
     :param hook_list: The list of hooks to register to.
@@ -35,9 +39,9 @@ def _register_hook(hook_list: List[GeneratorType], before_hook: Optional[Callabl
     :return: The unique identifier of the hook (for removal).
     """
     if before_hook is None and after_hook is None and context_manager is None:
-        raise ValueError('At least one of before_hook, after_hook, or context_manager must be specified')
+        raise ValueError("At least one of before_hook, after_hook, or context_manager must be specified")
     if (before_hook is not None or after_hook is not None) and context_manager is not None:
-        raise ValueError('Cannot specify both before_hook/after_hook and context_manager')
+        raise ValueError("Cannot specify both before_hook/after_hook and context_manager")
 
     if context_manager is not None:
         hook = context_manager
@@ -58,10 +62,12 @@ def _register_hook(hook_list: List[GeneratorType], before_hook: Optional[Callabl
     return hook_id
 
 
-def register_sdfg_call_hook(*,
-                            before_hook: Optional[CallHookType] = None,
-                            after_hook: Optional[CallHookType] = None,
-                            context_manager: Optional[GeneratorType] = None) -> int:
+def register_sdfg_call_hook(
+    *,
+    before_hook: Optional[CallHookType] = None,
+    after_hook: Optional[CallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+) -> int:
     """
     Registers a hook that is called when an SDFG is called.
 
@@ -74,10 +80,12 @@ def register_sdfg_call_hook(*,
     return _register_hook(_SDFG_CALL_HOOKS, before_hook, after_hook, context_manager)
 
 
-def register_compiled_sdfg_call_hook(*,
-                                     before_hook: Optional[CompiledCallHookType] = None,
-                                     after_hook: Optional[CompiledCallHookType] = None,
-                                     context_manager: Optional[GeneratorType] = None) -> int:
+def register_compiled_sdfg_call_hook(
+    *,
+    before_hook: Optional[CompiledCallHookType] = None,
+    after_hook: Optional[CompiledCallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+) -> int:
     """
     Registers a hook that is called when a compiled SDFG is called.
 
@@ -97,7 +105,7 @@ def unregister_sdfg_call_hook(hook_id: int):
     :param hook_id: The unique identifier of the hook.
     """
     if hook_id >= len(_SDFG_CALL_HOOKS):
-        raise ValueError('Invalid hook ID')
+        raise ValueError("Invalid hook ID")
     _SDFG_CALL_HOOKS[hook_id] = None
 
 
@@ -108,15 +116,17 @@ def unregister_compiled_sdfg_call_hook(hook_id: int):
     :param hook_id: The unique identifier of the hook.
     """
     if hook_id >= len(_COMPILED_SDFG_CALL_HOOKS):
-        raise ValueError('Invalid hook ID')
+        raise ValueError("Invalid hook ID")
     _COMPILED_SDFG_CALL_HOOKS[hook_id] = None
 
 
 @contextmanager
-def on_call(*,
-            before: Optional[CallHookType] = None,
-            after: Optional[CallHookType] = None,
-            context_manager: Optional[GeneratorType] = None):
+def on_call(
+    *,
+    before: Optional[CallHookType] = None,
+    after: Optional[CallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+):
     """
     Context manager that registers a function to be called around each SDFG call.
     Use this to modify the SDFG before it is compiled and run.
@@ -155,10 +165,12 @@ def on_call(*,
 
 
 @contextmanager
-def on_compiled_sdfg_call(*,
-                          before: Optional[CompiledCallHookType] = None,
-                          after: Optional[CompiledCallHookType] = None,
-                          context_manager: Optional[GeneratorType] = None):
+def on_compiled_sdfg_call(
+    *,
+    before: Optional[CompiledCallHookType] = None,
+    after: Optional[CompiledCallHookType] = None,
+    context_manager: Optional[GeneratorType] = None,
+):
     """
     Context manager that registers a function to be called around each compiled SDFG call.
     Use this to wrap the compiled SDFG's C function call.
@@ -196,8 +208,9 @@ def on_compiled_sdfg_call(*,
 # Input type
 
 
-def _as_context_manager(begin_func: Union[Callable[..., Any], ContextManager],
-                        end_func: Optional[Callable[..., Any]] = None) -> GeneratorType:
+def _as_context_manager(
+    begin_func: Union[Callable[..., Any], ContextManager], end_func: Optional[Callable[..., Any]] = None
+) -> GeneratorType:
     """
     Returns a context manager from a begin and end functions, if not already given.
 
@@ -206,9 +219,9 @@ def _as_context_manager(begin_func: Union[Callable[..., Any], ContextManager],
     :return: Context manager that calls the given functions.
     """
     # Already a context manager
-    if hasattr(begin_func, '__enter__'):
+    if hasattr(begin_func, "__enter__"):
         if end_func is not None:
-            raise ValueError('A context manager cannot be given with an end function')
+            raise ValueError("A context manager cannot be given with an end function")
         return begin_func
 
     if end_func is None:
@@ -234,7 +247,7 @@ def _as_context_manager(begin_func: Union[Callable[..., Any], ContextManager],
 
 
 @contextmanager
-def invoke_sdfg_call_hooks(sdfg: 'SDFG'):
+def invoke_sdfg_call_hooks(sdfg: "SDFG"):
     """
     Internal context manager that calls all SDFG call hooks in their registered order.
     """
@@ -260,13 +273,13 @@ class invoke_compiled_sdfg_call_hooks(contextlib.AbstractContextManager):
         direct implementation.
     """
 
-    __slots__ = ('compiled_sdfg', 'args', 'exit_stack')
+    __slots__ = ("compiled_sdfg", "args", "exit_stack")
 
-    def __init__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]) -> None:
-        self.compiled_sdfg: 'CompiledSDFG' = compiled_sdfg
+    def __init__(self, compiled_sdfg: "CompiledSDFG", args: Tuple[Any, ...]) -> None:
+        self.compiled_sdfg: "CompiledSDFG" = compiled_sdfg
         self.args: Tuple[Any, ...] = args
 
-    def __enter__(self) -> 'CompiledSDFG':
+    def __enter__(self) -> "CompiledSDFG":
         if _COMPILED_SDFG_CALL_HOOKS:
             compiled_sdfg = self.compiled_sdfg
             self.exit_stack = stack = ExitStack().__enter__()
@@ -295,7 +308,7 @@ def _install_hooks_helper(config_name: str, register_hook_func: Callable[[Genera
     hooklist = config.Config.get(config_name)
     if not hooklist:
         return
-    hooklist = hooklist.split(',')
+    hooklist = hooklist.split(",")
     for hook in hooklist:
         hookfunc = pydoc.locate(hook)
         if hookfunc is None:
@@ -305,10 +318,11 @@ def _install_hooks_helper(config_name: str, register_hook_func: Callable[[Genera
 
 
 def _install_hooks_from_config():
-    _install_hooks_helper('call_hooks', register_sdfg_call_hook)
-    _install_hooks_helper('compiled_sdfg_call_hooks', register_sdfg_call_hook)
+    _install_hooks_helper("call_hooks", register_sdfg_call_hook)
+    _install_hooks_helper("compiled_sdfg_call_hooks", register_sdfg_call_hook)
 
     # Convenience hooks
-    if config.Config.get_bool('profiling'):
+    if config.Config.get_bool("profiling"):
         from dace.frontend.operations import CompiledSDFGProfiler
+
         register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler())

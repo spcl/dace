@@ -8,7 +8,7 @@ from dace.memlet import Memlet
 # Constructs an SDFG with multiple tasklets manually and runs it
 def test():
     # Externals (parameters, symbols)
-    N = dp.symbol('N')
+    N = dp.symbol("N")
     n = 20
     input = dp.ndarray([n], dp.int64)
     sum = dp.ndarray([1], dp.int64)
@@ -18,29 +18,29 @@ def test():
     product[:] = dp.int64(1)
 
     # Construct SDFG
-    mysdfg = SDFG('multiple_cr')
-    mysdfg.add_array('A', [N], dp.int64)
-    mysdfg.add_array('s', [1], dp.int64)
-    mysdfg.add_array('p', [1], dp.int64)
+    mysdfg = SDFG("multiple_cr")
+    mysdfg.add_array("A", [N], dp.int64)
+    mysdfg.add_array("s", [1], dp.int64)
+    mysdfg.add_array("p", [1], dp.int64)
     state = mysdfg.add_state()
-    A = state.add_access('A')
-    s = state.add_access('s')
-    p = state.add_access('p')
+    A = state.add_access("A")
+    s = state.add_access("s")
+    p = state.add_access("p")
 
-    map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))
-    state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
+    map_entry, map_exit = state.add_map("mymap", dict(i="0:N"))
+    state.add_edge(A, None, map_entry, None, Memlet.simple(A, "0:N"))
 
     # Tasklet 1
-    t1 = state.add_tasklet('task1', {'a'}, {'b'}, 'b = a')
-    state.add_edge(map_entry, None, t1, 'a', Memlet.simple(A, 'i'))
-    state.add_edge(t1, 'b', map_exit, None, Memlet.simple(s, '0', wcr_str='lambda a,b: a+b'))
-    state.add_edge(map_exit, None, s, None, Memlet.simple(s, '0'))
+    t1 = state.add_tasklet("task1", {"a"}, {"b"}, "b = a")
+    state.add_edge(map_entry, None, t1, "a", Memlet.simple(A, "i"))
+    state.add_edge(t1, "b", map_exit, None, Memlet.simple(s, "0", wcr_str="lambda a,b: a+b"))
+    state.add_edge(map_exit, None, s, None, Memlet.simple(s, "0"))
 
     # Tasklet 2
-    t2 = state.add_tasklet('task2', {'a'}, {'b'}, 'b = a')
-    state.add_edge(map_entry, None, t2, 'a', Memlet.simple(A, 'i'))
-    state.add_edge(t2, 'b', map_exit, None, Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
-    state.add_edge(map_exit, None, p, None, Memlet.simple(p, '0'))
+    t2 = state.add_tasklet("task2", {"a"}, {"b"}, "b = a")
+    state.add_edge(map_entry, None, t2, "a", Memlet.simple(A, "i"))
+    state.add_edge(t2, "b", map_exit, None, Memlet.simple(p, "0", wcr_str="lambda a,b: a*b"))
+    state.add_edge(map_exit, None, p, None, Memlet.simple(p, "0"))
 
     mysdfg(A=input, s=sum, p=product, N=n)
 
@@ -49,5 +49,5 @@ def test():
     assert diff_sum <= 1e-5 and diff_prod <= 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()

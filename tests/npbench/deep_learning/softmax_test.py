@@ -8,7 +8,7 @@ import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.autodiff import add_backward_pass
 
-N, H, SM = (dc.symbol(s, dc.int64) for s in ('N', 'H', 'SM'))
+N, H, SM = (dc.symbol(s, dc.int64) for s in ("N", "H", "SM"))
 
 
 # Numerically-stable version of softmax
@@ -22,6 +22,7 @@ def softmax_kernel(x: dc.float32[N, H, SM, SM]):
 
 def initialize(N, H, SM):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     x = rng.random((N, H, SM, SM), dtype=np.float32)
     return x
@@ -42,10 +43,10 @@ def softmax_jax_kernel(jnp, x):
 
 
 def run_softmax(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Softmax for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench small size)
     N, H, SM = 16, 16, 128
@@ -74,7 +75,7 @@ def run_softmax_autodiff():
 
     # Initialize gradient computation data
     gradient_x = np.zeros_like(x)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -109,9 +110,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

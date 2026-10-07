@@ -17,18 +17,12 @@ def test_map_unroll():
     entry_inner, exit_inner = outer_state.add_map("map_inner", {"k": "0:2"})
     nsdfg = dace.SDFG("unroll_nested")
     nsdfg_node = outer_state.add_nested_sdfg(nsdfg, {"x"}, {"y"})
-    outer_state.add_memlet_path(read,
-                                entry_outer,
-                                entry_inner,
-                                nsdfg_node,
-                                dst_conn="x",
-                                memlet=dace.Memlet(f"input_array[i, k, j]"))
-    outer_state.add_memlet_path(nsdfg_node,
-                                exit_inner,
-                                exit_outer,
-                                write,
-                                src_conn="y",
-                                memlet=dace.Memlet(f"output_array[j, k, i]"))
+    outer_state.add_memlet_path(
+        read, entry_outer, entry_inner, nsdfg_node, dst_conn="x", memlet=dace.Memlet(f"input_array[i, k, j]")
+    )
+    outer_state.add_memlet_path(
+        nsdfg_node, exit_inner, exit_outer, write, src_conn="y", memlet=dace.Memlet(f"output_array[j, k, i]")
+    )
 
     nsdfg.add_array("x", [1], dace.int32)
     nsdfg.add_array("y", [1], dace.int32)

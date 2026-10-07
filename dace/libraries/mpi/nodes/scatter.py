@@ -11,7 +11,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @library.expansion
 class ExpandScatterMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -38,7 +37,6 @@ class ExpandScatterMPI(ExpandTransformation):
 
 @library.node
 class Scatter(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandScatterMPI,
@@ -70,11 +68,11 @@ class Scatter(MPINode):
         in_count_str = "XXX"
         out_count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_outbuffer':
+            if src_conn == "_outbuffer":
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 out_count_str = "*".join(dims)
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
+            if dst_conn == "_inbuffer":
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 
@@ -83,7 +81,6 @@ class Scatter(MPINode):
 
 @library.expansion
 class ExpandBlockScatterMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -94,13 +91,13 @@ class ExpandBlockScatterMPI(ExpandTransformation):
         if inp_buffer.dtype.veclen > 1:
             raise NotImplementedError
 
-        subarray_type = input_descriptor_name(node, parent_state, '_subarray')
-        scatter_grid = input_descriptor_name(node, parent_state, '_scatter_grid')
-        bcast_grid = input_descriptor_name(node, parent_state, '_bcast_grid')
+        subarray_type = input_descriptor_name(node, parent_state, "_subarray")
+        scatter_grid = input_descriptor_name(node, parent_state, "_scatter_grid")
+        bcast_grid = input_descriptor_name(node, parent_state, "_bcast_grid")
         if subarray_type is None:
-            raise ValueError('BlockScatter requires an incoming _subarray connector')
+            raise ValueError("BlockScatter requires an incoming _subarray connector")
         if scatter_grid is None:
-            raise ValueError('BlockScatter requires an incoming _scatter_grid connector')
+            raise ValueError("BlockScatter requires an incoming _scatter_grid connector")
 
         code = f"""
             if (__state->{scatter_grid}_valid) {{
@@ -114,17 +111,18 @@ class ExpandBlockScatterMPI(ExpandTransformation):
                 }}
             """
 
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @library.node
 class BlockScatter(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandBlockScatterMPI,

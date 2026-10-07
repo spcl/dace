@@ -1,26 +1,27 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for an issue where copy code would be generated multiple times. """
+"""Tests for an issue where copy code would be generated multiple times."""
+
 import dace
 import numpy as np
 
 
 def test_multicopy():
-    sdfg = dace.SDFG('multicopy')
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('B', [1], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
+    sdfg = dace.SDFG("multicopy")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [1], dace.float64)
+    sdfg.add_array("C", [1], dace.float64)
     state = sdfg.add_state()
-    a = state.add_read('A')
-    b = state.add_write('B')
-    c = state.add_write('C')
-    state.add_nedge(a, b, dace.Memlet('A[0]'))
-    state.add_nedge(a, c, dace.Memlet('C[0]'))
+    a = state.add_read("A")
+    b = state.add_write("B")
+    c = state.add_write("C")
+    state.add_nedge(a, b, dace.Memlet("A[0]"))
+    state.add_nedge(a, c, dace.Memlet("C[0]"))
 
     # Check generated code. The regression under test is DUPLICATED copy code, so what matters is
     # the count, not which lowering produced it: with explicit copy nodes a single-element copy
     # becomes a scalar-assignment tasklet instead of the dace::CopyND runtime template.
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('CopyND') + code.count('_cpy_out = _cpy_in;') == 2
+    assert code.count("CopyND") + code.count("_cpy_out = _cpy_in;") == 2
 
     # Check outputs
     A = np.random.rand(1)
@@ -31,5 +32,5 @@ def test_multicopy():
     assert np.allclose(A, C)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_multicopy()

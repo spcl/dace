@@ -3,7 +3,7 @@ from typing import List
 import dace
 from dace.transformation.dataflow import MapTiling
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def test_map_tiling_with_strides():
@@ -25,15 +25,11 @@ def test_map_tiling_with_strides():
     map_entry = map_entries[0]
 
     tile_sizes = [32]
-    MapTiling.apply_to(sdfg=sdfg,
-                       options={
-                           "prefix": "b",
-                           "tile_sizes": tile_sizes,
-                           "divides_evenly": False,
-                           "tile_trivial": True,
-                           "skew": False
-                       },
-                       map_entry=map_entry)
+    MapTiling.apply_to(
+        sdfg=sdfg,
+        options={"prefix": "b", "tile_sizes": tile_sizes, "divides_evenly": False, "tile_trivial": True, "skew": False},
+        map_entry=map_entry,
+    )
     inner_map_entry = map_entry
     outer_map_entry = state.entry_node(inner_map_entry)
 
@@ -161,21 +157,21 @@ def test_symbol_rename_reaches_strip_mined_bound():
             b[i] = a[i] * 2.0
 
     sdfg = scale.to_sdfg(simplify=True)
-    assert sdfg.apply_transformations(MapTiling, options=dict(tile_sizes=(32, ))) == 1
+    assert sdfg.apply_transformations(MapTiling, options=dict(tile_sizes=(32,))) == 1
     state = sdfg.states()[0]
     outer = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) is None)
     inner = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and state.entry_node(n) is outer)
     tile_param = outer.map.params[0]
-    assert tile_param in str(inner.map.range), 'the inner bound must depend on the tile iterator'
+    assert tile_param in str(inner.map.range), "the inner bound must depend on the tile iterator"
 
-    sdfg.replace(tile_param, 'q')
+    sdfg.replace(tile_param, "q")
 
-    assert tile_param not in str(inner.map.range), f'stale tile iterator left in {inner.map.range}'
+    assert tile_param not in str(inner.map.range), f"stale tile iterator left in {inner.map.range}"
     stale = [str(e.data) for e in state.edges() if e.data is not None and tile_param in str(e.data.subset)]
-    assert not stale, f'stale tile iterator left in memlets: {stale}'
+    assert not stale, f"stale tile iterator left in memlets: {stale}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_map_tiling_with_strides()
     test_memlet_tree()
     test_symbol_rename_reaches_strip_mined_bound()

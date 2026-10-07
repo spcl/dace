@@ -13,7 +13,7 @@ from dace.autodiff import add_backward_pass
 # Note: these have been swapped to improve numerical stability
 sizes = {"mini": (30, 20), "small": (80, 60), "medium": (240, 200), "large": (1200, 1000), "extra-large": (2600, 2000)}
 
-M, N, S = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'S'))
+M, N, S = (dc.symbol(s, dtype=dc.int64) for s in ("M", "N", "S"))
 
 
 @dc.program
@@ -35,6 +35,7 @@ def gramschmidt_kernel(A: dc.float64[M, N]):
 
 def initialize(M, N, datatype=np.float64):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     A = rng.random((M, N), dtype=datatype)
@@ -94,10 +95,10 @@ def ground_truth(A):
 
 
 def run_gramschmidt(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Gesummv for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
@@ -127,7 +128,7 @@ def run_gramschmidt_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -167,9 +168,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]
