@@ -129,16 +129,19 @@ class BackwardPass(nodes.LibraryNode):
     given_gradients = properties.DictProperty(
         key_type=str,
         value_type=str,
+        category="Semantics",
         desc="Mapping between connector names of the given gradients and the names of the arrays they correspond to.",
     )
     required_gradients = properties.DictProperty(
         key_type=str,
         value_type=str,
+        category="Semantics",
         desc="Mapping from array name for which a gradient should be computed to the name of the connector that will receive the gradient.",
     )
 
     _conflicted_gradients = properties.SetProperty(
         element_type=str,
+        category="(Debug)",
         desc="Keys from required_gradients for which the gradients are also computed elsewhere, and thus writes to the "
         " buffer need to be with write-conflict-resolution. Note: this field is automatically populated upon expansion.",
     )

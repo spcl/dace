@@ -1290,21 +1290,33 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 
 @make_properties
 class ControlFlowBlock(BlockGraphView, abc.ABC):
-    guid = Property(dtype=str, allow_none=False)
+    guid = Property(dtype=str, allow_none=False, category="(Debug)")
 
-    is_collapsed = Property(dtype=bool, desc="Show this block as collapsed", default=False)
+    is_collapsed = Property(dtype=bool, category="General", desc="Show this block as collapsed", default=False)
 
-    pre_conditions = DictProperty(key_type=str, value_type=list, desc="Pre-conditions for this block")
-    post_conditions = DictProperty(key_type=str, value_type=list, desc="Post-conditions for this block")
-    invariant_conditions = DictProperty(key_type=str, value_type=list, desc="Invariant conditions for this block")
+    pre_conditions = DictProperty(
+        key_type=str, value_type=list, category="Analysis", desc="Pre-conditions for this block"
+    )
+    post_conditions = DictProperty(
+        key_type=str, value_type=list, category="Analysis", desc="Post-conditions for this block"
+    )
+    invariant_conditions = DictProperty(
+        key_type=str, value_type=list, category="Analysis", desc="Invariant conditions for this block"
+    )
     ranges = DictProperty(
-        key_type=str, value_type=Range, default={}, desc="Variable ranges across this block, typically within loops"
+        key_type=str,
+        value_type=Range,
+        default={},
+        category="Analysis",
+        desc="Variable ranges across this block, typically within loops",
     )
 
     executions = SymbolicProperty(
-        default=0, desc="The number of times this block gets executed (0 stands for unbounded)"
+        default=0, category="Analysis", desc="The number of times this block gets executed (0 stands for unbounded)"
     )
-    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this block is dynamic")
+    dynamic_executions = Property(
+        dtype=bool, default=True, category="Analysis", desc="The number of executions of this block is dynamic"
+    )
 
     _label: str
 
@@ -1428,26 +1440,34 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     """An acyclic dataflow multigraph in an SDFG, corresponding to a
     single state in the SDFG state machine."""
 
-    nosync = Property(dtype=bool, default=False, desc="Do not synchronize at the end of the state")
+    nosync = Property(
+        dtype=bool, default=False, category="Scheduling", desc="Do not synchronize at the end of the state"
+    )
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
 
     symbol_instrument = EnumProperty(
         dtype=dtypes.DataInstrumentationType,
+        category="Instrumentation",
         desc="Instrument symbol values when this state is executed",
         default=dtypes.DataInstrumentationType.No_Instrumentation,
     )
     symbol_instrument_condition = CodeProperty(
+        category="Instrumentation",
         desc="Condition under which to trigger the symbol instrumentation",
         default=CodeBlock("1", language=dtypes.Language.CPP),
     )
 
     location = DictProperty(
-        key_type=str, value_type=sympy.Basic, desc="Full storage location identifier (e.g., rank, GPU ID)"
+        key_type=str,
+        value_type=sympy.Basic,
+        category="Scheduling",
+        desc="Full storage location identifier (e.g., rank, GPU ID)",
     )
 
     def __repr__(self) -> str:
@@ -3515,32 +3535,44 @@ class LoopRegion(ControlFlowRegion):
         serialize_if=lambda ustmnt: ustmnt is not None,
         allow_none=True,
         default=None,
+        category="Semantics",
         desc="The loop update statement. May be None if the update happens elsewhere.",
     )
     init_statement = CodeProperty(
         serialize_if=lambda istmnt: istmnt is not None,
         allow_none=True,
         default=None,
+        category="Semantics",
         desc="The loop init statement. May be None if the initialization happens elsewhere.",
     )
-    loop_condition = CodeProperty(allow_none=True, default=None, desc="The loop condition")
+    loop_condition = CodeProperty(allow_none=True, default=None, category="Semantics", desc="The loop condition")
     inverted = Property(
-        dtype=bool, default=False, desc="If True, the loop condition is checked after the first iteration."
+        dtype=bool,
+        default=False,
+        category="Semantics",
+        desc="If True, the loop condition is checked after the first iteration.",
     )
     update_before_condition = Property(
         dtype=bool,
         default=True,
+        category="Semantics",
         desc="If False, the loop condition is checked before the update statement is"
         + " executed. This only applies to inverted loops, turning them from a typical "
         + "do-while style into a while(true) with a break before the update (at the end "
         + "of an iteration) if the condition no longer holds.",
     )
-    loop_variable = Property(dtype=str, default="", desc="The loop variable, if given")
+    loop_variable = Property(dtype=str, default="", category="Semantics", desc="The loop variable, if given")
     unroll = Property(
-        dtype=bool, default=False, desc="If True, indicates that this loop should be unrolled during code generation."
+        dtype=bool,
+        default=False,
+        category="Scheduling",
+        desc="If True, indicates that this loop should be unrolled during code generation.",
     )
     unroll_factor = Property(
-        dtype=int, default=0, desc="If unrolling is enabled, the factor by which to unroll the loop."
+        dtype=int,
+        default=0,
+        category="Scheduling",
+        desc="If unrolling is enabled, the factor by which to unroll the loop.",
     )
 
     def __init__(
@@ -4446,7 +4478,7 @@ class UnstructuredControlFlow(ControlFlowRegion):
 
 @make_properties
 class NamedRegion(ControlFlowRegion):
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     def __init__(self, label: str, sdfg: Optional["SDFG"] = None, debuginfo: Optional[dtypes.DebugInfo] = None):
         super().__init__(label, sdfg)
@@ -4455,7 +4487,7 @@ class NamedRegion(ControlFlowRegion):
 
 @make_properties
 class FunctionCallRegion(NamedRegion):
-    arguments = DictProperty(str, str)
+    arguments = DictProperty(str, str, category="Frontend")
 
     def __init__(
         self,

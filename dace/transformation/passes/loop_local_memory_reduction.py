@@ -95,17 +95,22 @@ class LoopLocalMemoryReduction(ppl.Pass):
     bitmask_indexing = properties.Property(
         dtype=bool,
         default=True,
+        category="Parameters",
         desc="Whether or not to use bitmasking for modulo operations when the reduced memory size is a power of two.",
     )
 
     next_power_of_two = properties.Property(
         dtype=bool,
         default=True,
+        category="Memory",
         desc="Whether or not to round up the reduced memory size to the next power of two (enables bitmasking instead of modulo).",
     )
 
     assume_positive_symbols = properties.Property(
-        dtype=bool, default=False, desc="Assume symbols are positive when checking for applicability."
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Assume symbols are positive when checking for applicability.",
     )
 
     num_applications = 0  # To track number of applications for testing

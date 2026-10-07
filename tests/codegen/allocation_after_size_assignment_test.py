@@ -117,9 +117,9 @@ def allocation_and_assignment_lines(sdfg: dace.SDFG):
     """The line indices of the allocation of ``b`` and of the last assignment of ``K``, and whether ``b`` is freed."""
     lines = sdfg.generate_code()[0].clean_code.splitlines()
     # The allocation and the free read differently with and without an aligned allocation.
-    alloc = next(i for i, line in enumerate(lines) if re.search(r"\bb = new\b", line))
+    alloc = next(i for i, line in enumerate(lines) if re.search(r"\bb = (new\b|dace::aligned_new_array<)", line))
     assign = max(i for i, line in enumerate(lines) if re.match(r"\s*K = ", line))
-    freed = any(re.search(r"delete\[\]\s*b\b|delete\[\]\s*\(\s*b\b", line) for line in lines)
+    freed = any(re.search(r"delete\[\]\s*b\b|aligned_delete_array\(\s*b\b", line) for line in lines)
     return alloc, assign, freed
 
 

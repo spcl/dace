@@ -21,8 +21,12 @@ class RemoveUnusedSymbols(ppl.Pass):
 
     CATEGORY: str = "Simplification"
 
-    recursive = properties.Property(dtype=bool, default=True, desc="Prune nested SDFGs recursively")
-    symbols = properties.SetProperty(element_type=str, allow_none=True, desc="Limit considered symbols to this set")
+    recursive = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Prune nested SDFGs recursively"
+    )
+    symbols = properties.SetProperty(
+        element_type=str, allow_none=True, category="Applicability", desc="Limit considered symbols to this set"
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols

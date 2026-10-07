@@ -191,8 +191,8 @@ class Inv(dace.sdfg.nodes.LibraryNode):
     implementations = {"OpenBLAS": ExpandInvOpenBLAS, "MKL": ExpandInvMKL, "cuSolverDn": ExpandInvCuSolverDn}
     default_implementation = None
 
-    overwrite = dace.properties.Property(dtype=bool, default=False)
-    use_getri = dace.properties.Property(dtype=bool, default=True)
+    overwrite = dace.properties.Property(dtype=bool, default=False, category="Semantics")
+    use_getri = dace.properties.Property(dtype=bool, default=True, category="Code Generation")
 
     # Object fields
     def __init__(self, name, overwrite_a=False, use_getri=True, *args, **kwargs):
