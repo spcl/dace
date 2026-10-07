@@ -26,26 +26,37 @@ class CompositeFusion(transformation.SubgraphTransformation):
     transformation before fusion.
     """
 
-    debug = Property(desc="Debug mode", dtype=bool, default=False)
+    debug = Property(category="Diagnostics", desc="Debug mode", dtype=bool, default=False)
 
-    allow_expansion = Property(desc="Allow MultiExpansion first", dtype=bool, default=True)
+    allow_expansion = Property(category="Applicability", desc="Allow MultiExpansion first", dtype=bool, default=True)
 
-    allow_tiling = Property(desc="Allow StencilTiling (after MultiExpansion)", dtype=bool, default=False)
+    allow_tiling = Property(
+        category="Applicability", desc="Allow StencilTiling (after MultiExpansion)", dtype=bool, default=False
+    )
 
     transient_allocation = EnumProperty(
+        category="Memory",
         desc="Storage Location to push transients to that are fully contained within the subgraph.",
         dtype=dtypes.StorageType,
         default=dtypes.StorageType.Default,
     )
 
     schedule_innermaps = Property(
-        desc="Schedule of inner fused maps", dtype=dtypes.ScheduleType, default=None, allow_none=True
+        category="Scheduling",
+        desc="Schedule of inner fused maps",
+        dtype=dtypes.ScheduleType,
+        default=None,
+        allow_none=True,
     )
 
-    stencil_unroll_loops = Property(desc="Unroll inner stencil loops if they have size > 1", dtype=bool, default=False)
-    stencil_strides = ShapeProperty(dtype=tuple, default=(1,), desc="Stencil tile stride")
+    stencil_unroll_loops = Property(
+        category="Scheduling", desc="Unroll inner stencil loops if they have size > 1", dtype=bool, default=False
+    )
+    stencil_strides = ShapeProperty(dtype=tuple, default=(1,), category="Parameters", desc="Stencil tile stride")
 
-    expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
+    expansion_split = Property(
+        category="Applicability", desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True
+    )
 
     def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         graph: SDFGState = subgraph.graph

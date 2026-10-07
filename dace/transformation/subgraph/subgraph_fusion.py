@@ -40,23 +40,28 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     preprocessing step.
     """
 
-    debug = Property(desc="Show debug info", dtype=bool, default=False)
+    debug = Property(category="Diagnostics", desc="Show debug info", dtype=bool, default=False)
 
     transient_allocation = EnumProperty(
         dtype=dtypes.StorageType,
+        category="Memory",
         desc="Storage Location to push transients to that are fully contained within the subgraph.",
         default=dtypes.StorageType.Default,
     )
 
     schedule_innermaps = Property(
+        category="Scheduling",
         desc="Schedule of inner maps. If none, keeps schedule.",
         dtype=dtypes.ScheduleType,
         default=None,
         allow_none=True,
     )
-    consolidate = Property(desc="Consolidate edges that enter and exit the fused map.", dtype=bool, default=False)
+    consolidate = Property(
+        category="Parameters", desc="Consolidate edges that enter and exit the fused map.", dtype=bool, default=False
+    )
 
     propagate = Property(
+        category="Parameters",
         desc="Propagate memlets of edges that enter and exit the fused map."
         "Disable if this causes problems (e.g., if memlet propagation does"
         "not work correctly).",
@@ -65,6 +70,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     )
 
     disjoint_subsets = Property(
+        category="Applicability",
         desc="Check for disjoint subsets in can_be_applied. If multiple"
         "access nodes pointing to the same data appear within a subgraph"
         "to be fused, this check confirms that their access sets are"
@@ -75,6 +81,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     keep_global = ListProperty(
         str,
+        category="Memory",
         desc="A list of array names to treat as non-transients and not compress",
     )
 

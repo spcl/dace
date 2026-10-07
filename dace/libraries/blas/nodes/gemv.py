@@ -44,13 +44,11 @@ class ExpandGemvPure(ExpandTransformation):
 
         N, M = trans_shape_a[0], trans_shape_a[1]
 
-        if outer_array_a.storage != outer_array_x.storage:
-            raise ValueError("Input matrices must have same storage")
-        storage = outer_array_a.storage
+        blas_helpers.check_one_device(outer_array_a, outer_array_x)
 
-        _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=storage)
-        _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=storage)
-        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=storage)
+        _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=outer_array_x.storage)
+        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=outer_array_y.storage)
 
         mul_program = "__out = {} * __A * __x".format(node.alpha)
 
@@ -62,7 +60,7 @@ class ExpandGemvPure(ExpandTransformation):
             output_nodes = None
         else:
             mul_out, mul_out_array = tmp, array_tmp = sdfg.add_transient(
-                "gemv_tmp", shape_y, dtype_y, storage=storage, find_new_name=True
+                "gemv_tmp", shape_y, dtype_y, storage=outer_array_y.storage, find_new_name=True
             )
 
             access_tmp = state.add_read(tmp)
@@ -371,13 +369,13 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    alpha = properties.SymbolicProperty(allow_none=False, default=1)
-    beta = properties.SymbolicProperty(allow_none=False, default=0)
+    alpha = properties.SymbolicProperty(allow_none=False, default=1, category="Semantics")
+    beta = properties.SymbolicProperty(allow_none=False, default=0, category="Semantics")
 
-    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
+    transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
 
-    n = properties.SymbolicProperty(allow_none=True, default=None)
-    m = properties.SymbolicProperty(allow_none=True, default=None)
+    n = properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
+    m = properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, location=None, transA=False, alpha=1, beta=0):
         super().__init__(

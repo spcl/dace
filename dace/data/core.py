@@ -71,15 +71,22 @@ class Data:
                 if isinstance(v, Data):
                     v.transient = value
 
-    dtype = TypeClassProperty(default=dtypes.int32)
-    shape = ShapeProperty(default=[])
-    transient = Property(dtype=bool, default=False, setter=_transient_setter)
-    storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
-    lifetime = EnumProperty(
-        dtype=dtypes.AllocationLifetime, desc="Data allocation span", default=dtypes.AllocationLifetime.Scope
+    dtype = TypeClassProperty(default=dtypes.int32, category="General")
+    shape = ShapeProperty(default=[], category="General")
+    transient = Property(dtype=bool, default=False, setter=_transient_setter, category="Memory")
+    storage = EnumProperty(
+        dtype=dtypes.StorageType, category="Memory", desc="Storage location", default=dtypes.StorageType.Default
     )
-    location = DictProperty(key_type=str, value_type=str, desc="Full storage location identifier (e.g., rank, GPU ID)")
-    debuginfo = DebugInfoProperty(allow_none=True)
+    lifetime = EnumProperty(
+        dtype=dtypes.AllocationLifetime,
+        category="Memory",
+        desc="Data allocation span",
+        default=dtypes.AllocationLifetime.Scope,
+    )
+    location = DictProperty(
+        key_type=str, value_type=str, category="Memory", desc="Full storage location identifier (e.g., rank, GPU ID)"
+    )
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     def __init__(self, dtype, shape, transient, storage, location, lifetime, debuginfo):
         self.dtype = dtype
@@ -276,7 +283,7 @@ class Data:
 class Scalar(Data):
     """Data descriptor of a scalar value."""
 
-    allow_conflicts = Property(dtype=bool, default=False)
+    allow_conflicts = Property(dtype=bool, default=False, category="Code Generation")
 
     def __init__(
         self,
@@ -455,6 +462,7 @@ class Array(Data):
     allow_conflicts = Property(
         dtype=bool,
         default=False,
+        category="Code Generation",
         desc="If enabled, allows more than one "
         "memlet to write to the same memory location without conflict "
         "resolution.",
@@ -462,29 +470,42 @@ class Array(Data):
 
     strides = ShapeProperty(
         # element_type=symbolic.pystr_to_symbolic,
-        desc="For each dimension, the number of elements to skip in order to obtain the next element in that dimension."
+        category="Memory",
+        desc="For each dimension, the number of elements to "
+        "skip in order to obtain the next element in "
+        "that dimension.",
     )
 
-    total_size = SymbolicProperty(default=0, desc="The total allocated size of the array. Can be used for padding.")
+    total_size = SymbolicProperty(
+        default=0, category="Memory", desc="The total allocated size of the array. Can be used for padding."
+    )
 
-    offset = ShapeProperty(desc="Initial offset to translate all indices by.")
+    offset = ShapeProperty(category="Memory", desc="Initial offset to translate all indices by.")
 
     may_alias = Property(
-        dtype=bool, default=False, desc="This pointer may alias with other pointers in the same function"
+        dtype=bool,
+        default=False,
+        category="Memory",
+        desc="This pointer may alias with other pointers in the same function",
     )
 
-    alignment = Property(dtype=int, default=0, desc="Allocation alignment hint in bytes.")
+    alignment = Property(dtype=int, default=0, category="Memory", desc="Allocation alignment hint in bytes.")
 
-    start_offset = Property(dtype=int, default=0, desc="Allocation offset elements for manual alignment (pre-padding)")
+    start_offset = Property(
+        dtype=int, default=0, category="Memory", desc="Allocation offset elements for manual alignment (pre-padding)"
+    )
     optional = Property(
         dtype=bool,
         default=None,
         allow_none=True,
+        category="General",
         desc="Specifies whether this array may have a value of None. "
         "If False, the array must not be None. If option is not set, "
         "it is inferred by other properties and the OptionalArrayInference pass.",
     )
-    pool = Property(dtype=bool, default=False, desc="Hint to the allocator that using a memory pool is preferred")
+    pool = Property(
+        dtype=bool, default=False, category="Memory", desc="Hint to the allocator that using a memory pool is preferred"
+    )
 
     def __init__(
         self,
@@ -803,7 +824,7 @@ class Array(Data):
 class ContainerArray(Array):
     """An array that may contain other data containers (e.g., Structures, other arrays)."""
 
-    stype = NestedDataClassProperty(allow_none=True, default=None)
+    stype = NestedDataClassProperty(allow_none=True, default=None, category="General")
 
     def __init__(
         self,
@@ -875,8 +896,8 @@ class Stream(Data):
     """Stream (or stream array) data descriptor."""
 
     # Properties
-    offset = ListProperty(element_type=sp.Basic)
-    buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
+    offset = ListProperty(element_type=sp.Basic, category="Memory")
+    buffer_size = SymbolicProperty(category="Memory", desc="Size of internal buffer.", default=0)
 
     def __init__(
         self,
@@ -1056,11 +1077,12 @@ class Structure(Data):
 
     members = OrderedDictProperty(
         default=OrderedDict(),
+        category="General",
         desc="Dictionary of structure members",
         from_json=_arrays_from_json,
         to_json=_arrays_to_json,
     )
-    name = Property(dtype=str, desc="Structure type name")
+    name = Property(dtype=str, category="General", desc="Structure type name")
 
     def __init__(
         self,
