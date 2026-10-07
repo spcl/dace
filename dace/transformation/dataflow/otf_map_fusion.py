@@ -318,6 +318,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             graph.remove_edge(edge)
 
         # Phase 3: OTF - copy content of first map for each memlet of second according to matches
+        reduced_connectors = []
         for array in consume_memlets:
             first_memlet = produce_memlets[array]
             first_accesses = tuple(first_memlet.subset.ranges)
@@ -340,10 +341,10 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 # Add edges from temporary buffer to second map's content
                 for edge in consume_memlets[array][second_accesses]:
                     otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=None)
-                    # A nested SDFG connector follows the read into the per-iteration buffer
+                    # A nested SDFG connector follows the read into the per-iteration buffer once the state is whole
                     if isinstance(edge.dst, nds.NestedSDFG) and edge.dst_conn in edge.dst.sdfg.arrays:
                         if not edge.dst.sdfg.arrays[edge.dst_conn].is_equivalent(tmp_desc):
-                            dealias.reduce_connector(edge.dst.sdfg, edge.dst_conn, tmp_desc, offset=edge.data.subset)
+                            reduced_connectors.append((edge.dst.sdfg, edge.dst_conn, tmp_desc, edge.data.subset))
                     graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, otf_memlet)
 
                 # Step 3: Copy content of first map into second map
@@ -354,13 +355,16 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     # Connect new OTF nodes to tmp_access for write
                     for edge in graph.edges_between(node, first_map_exit):
                         otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=first_memlet.wcr)
-                        # A nested SDFG connector follows the write into the per-iteration buffer
+                        # A nested SDFG connector follows the write into the per-iteration buffer once the state is whole
                         if isinstance(edge.src, nds.NestedSDFG) and edge.src_conn in edge.src.sdfg.arrays:
                             if not edge.src.sdfg.arrays[edge.src_conn].is_equivalent(tmp_desc):
-                                dealias.reduce_connector(edge.src.sdfg,
-                                                         edge.src_conn,
-                                                         tmp_desc,
-                                                         offset=first_memlet.subset)
+                                offset = copy.deepcopy(first_memlet.subset)
+                                offset.replace({
+                                    symbolic.pystr_to_symbolic(str(param)):
+                                    symbolic.pystr_to_symbolic(str(value))
+                                    for param, value in mapping.items() if not isinstance(param, tuple)
+                                })
+                                reduced_connectors.append((edge.src.sdfg, edge.src_conn, tmp_desc, offset))
                         graph.add_edge(edge.src, edge.src_conn, tmp_access, None, otf_memlet)
                         graph.remove_edge(edge)
 
@@ -400,6 +404,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             obsolete_nodes = graph.all_nodes_between(first_map_entry,
                                                      first_map_exit) | {first_map_entry, first_map_exit}
             graph.remove_nodes_from(obsolete_nodes)
+
+        for nsdfg, connector, desc, offset in reduced_connectors:
+            dealias.reduce_connector(nsdfg, connector, desc, offset=offset)
 
     def _copy_first_map_contents(self, sdfg: SDFG, graph: SDFGState, first_map_entry: nodes.MapEntry,
                                  first_map_exit: nodes.MapExit):
