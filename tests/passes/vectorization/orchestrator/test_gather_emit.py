@@ -120,8 +120,6 @@ def tasklet_index_kernel(a: dace.float64[2 * N], idx: dace.int32[N], b: dace.flo
         b[i] = a[k]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="WidenAccesses neither fans out nor refuses an index a tasklet computes per lane")
 def test_gather_through_a_tasklet_computed_index_matches_reference() -> None:
     a, idx, b = np.arange(32.0), np.arange(16, dtype=np.int32)[::-1].copy(), np.zeros(16)
     sdfg = tasklet_index_kernel.to_sdfg(simplify=True)

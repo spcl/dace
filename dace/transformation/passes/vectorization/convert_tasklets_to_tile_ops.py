@@ -986,6 +986,15 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 for form in (f"{out_conn} = {t} if {cond} else {e}", f"{out_conn} = ({t} if {cond} else {e})"):
                     if body == form:
                         return IteMatch(out_conn, cond, t, e, False, False, False)
+        # Python ternary over a Symbol condition (``numpy.where`` on a scalar promoted to a symbol): both arms are
+        # connectors, the condition is an identifier that is not.
+        if n_in == 2:
+            from itertools import permutations
+            for t, e in permutations(in_conns, 2):
+                for pattern in (rf"{out_conn} = {t} if (\w+) else {e}", rf"{out_conn} = \({t} if (\w+) else {e}\)"):
+                    match = re.fullmatch(pattern, body)
+                    if match is not None and match.group(1) not in in_conns:
+                        return IteMatch(out_conn, match.group(1), t, e, False, False, True)
         # ITE(cond, t, e) function form: 3-in-conn and the 2-in-conn-with-symbol cases.
         rhs = body[len(f"{out_conn} = "):].strip()
         if rhs.startswith("(") and rhs.endswith(")"):

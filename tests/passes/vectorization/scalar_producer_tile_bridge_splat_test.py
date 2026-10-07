@@ -23,7 +23,7 @@ import pytest
 
 import dace
 from dace import data as dd
-from dace.libraries.tileops import TileGather
+from dace.libraries.tileops import TileBinop, TileGather
 from dace.libraries.tileops.dispatch import detect_host_isa
 from dace.sdfg.nodes import AccessNode
 from dace.transformation.interstate import LoopToMap
@@ -87,16 +87,22 @@ def count_nodes(sdfg: dace.SDFG, node_type) -> int:
 
 
 def test_the_invariant_scalar_reaches_its_tile_bridge_through_a_broadcast():
-    """Structure: a ``TileGather(src_kind='Scalar')`` splat stands between Scalar and bridge."""
+    """Structure: the Scalar reaches the tile through a broadcast -- a ``TileGather(src_kind='Scalar')`` splat,
+    or a ``TileBinop`` that takes it as a scalar operand -- never through a plain copy into the bridge."""
     sdfg = vectorized_invariant_scalar_into_lane_indexed_write('splat_structure')
 
     # The map really was tiled -- a refused kernel is restored un-tiled and would satisfy every
     # assertion below by having no tile chain at all.
     assert sdfg_masked_stores(sdfg)
     splats = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather) and n.src_kind == 'Scalar']
-    assert splats, 'the Scalar producer was wired to the tile bridge without a broadcast'
     for splat in splats:
         assert tuple(splat.widths) == (WIDTH, )
+    scalar_operands = [
+        n for n, state in sdfg.all_nodes_recursive() if isinstance(n, TileBinop) and any(
+            isinstance(e.src, AccessNode) and isinstance(state.sdfg.arrays[e.src.data], dd.Scalar)
+            for e in state.in_edges(n))
+    ]
+    assert splats or scalar_operands, 'the Scalar producer reaches the tile without a broadcast'
 
 
 def test_no_single_element_producer_claims_a_full_tile():
