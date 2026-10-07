@@ -18,9 +18,9 @@ def test_mpt():
 
     realC = np.transpose(A) @ np.transpose(B)
     rel_error = np.linalg.norm(C - realC) / np.linalg.norm(realC)
-    print('Relative_error:', rel_error)
+    print("Relative_error:", rel_error)
     assert rel_error < 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_mpt()

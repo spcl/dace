@@ -2,9 +2,9 @@
 import dace
 import numpy as np
 
-M = dace.symbol('M')
-N = dace.symbol('N')
-K = dace.symbol('K')
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -22,12 +22,12 @@ def sdfg_transpose(A: dace.float32[M, K], B: dace.float32[K, M]):
         B[j, i] = A[i, j]
 
 
-Qsize = dace.symbol('Qsize')
-numHeads = dace.symbol('numHeads')
-projQsize = dace.symbol('projQsize')
-seqLenQ = dace.symbol('seqLenQ')
-seqLenK = dace.symbol('seqLenK')
-batchSize = dace.symbol('batchSize')
+Qsize = dace.symbol("Qsize")
+numHeads = dace.symbol("numHeads")
+projQsize = dace.symbol("projQsize")
+seqLenQ = dace.symbol("seqLenQ")
+seqLenK = dace.symbol("seqLenK")
+batchSize = dace.symbol("batchSize")
 
 
 @dace.program
@@ -43,11 +43,9 @@ def attn_fwd(
 ):
 
     for b in dace.map[0:batchSize]:
-
         outs = dace.define_local([numHeads, Qsize, seqLenQ], dace.float32)
 
         for h in dace.map[0:numHeads]:
-
             q_bar = wq[h] @ q[b]  # projQsize x seqLenQ
             k_bar = wk[h] @ k[b]  # projQsize x seqLenK
             v_bar = wv[h] @ v[b]  # projQsize x seqLenK
@@ -73,5 +71,5 @@ def test_attn_simple():
     sdfg.compile()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_attn_simple()

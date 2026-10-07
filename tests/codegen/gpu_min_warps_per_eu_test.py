@@ -17,11 +17,13 @@ def test_min_warps_per_eu() -> None:
         if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device:
             mapentry = n
 
-    assert '__launch_bounds__(32)' in sdfg.generate_code()[1].code
+    assert "__launch_bounds__(32)" in sdfg.generate_code()[1].code
     mapentry.map.gpu_min_warps_per_eu = 4
-    assert '__launch_bounds__(32,4)' in sdfg.generate_code(
-    )[1].code and '__launch_bounds__(32)' not in sdfg.generate_code()[1].code
+    assert (
+        "__launch_bounds__(32,4)" in sdfg.generate_code()[1].code
+        and "__launch_bounds__(32)" not in sdfg.generate_code()[1].code
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_min_warps_per_eu()

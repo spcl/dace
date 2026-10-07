@@ -19,13 +19,14 @@ becomes unnecessary once the specialization of array and map bounds moves upstre
 Usage: put this directory on ``PYTHONPATH`` and pass ``-p pyfv3_legacy_nested_sdfgs`` to pytest. The
 patch happens at import, so no pytest hooks are needed.
 """
+
 # ndsl refuses to be imported once gt4py's configuration has been read, so it goes first
 import ndsl.dsl  # noqa: F401
 import gt4py.cartesian.backend.dace_backend as dace_backend
 
 from dace.sdfg import dealias
 
-_MARKER = '_dace_converts_legacy_nested_sdfgs'
+_MARKER = "_dace_converts_legacy_nested_sdfgs"
 
 
 def _inline_sdfgs_with_conversion(sdfg, *args, **kwargs):

@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implements the map interchange transformation. """
+"""Implements the map interchange transformation."""
 
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -10,9 +10,9 @@ from dace.sdfg.propagation import propagate_memlet
 
 
 class MapInterchange(transformation.SingleStateTransformation):
-    """ Implements the map-interchange transformation.
+    """Implements the map-interchange transformation.
 
-        Map-interchange takes two nested maps and interchanges their position.
+    Map-interchange takes two nested maps and interchanges their position.
     """
 
     outer_map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -51,7 +51,7 @@ class MapInterchange(transformation.SingleStateTransformation):
                 return False
             # Check that dynamic input range memlets are independent of
             # first map range
-            if e.dst_conn and not e.dst_conn.startswith('IN_'):
+            if e.dst_conn and not e.dst_conn.startswith("IN_"):
                 memlet_deps = set()
                 for s in e.data.subset:
                     memlet_deps |= set(map(str, symlist(s)))
@@ -83,14 +83,22 @@ class MapInterchange(transformation.SingleStateTransformation):
         outer_map_exit = graph.exit_node(outer_map_entry)
 
         # Switch connectors
-        outer_map_entry.in_connectors, inner_map_entry.in_connectors = \
-            inner_map_entry.in_connectors, outer_map_entry.in_connectors
-        outer_map_entry.out_connectors, inner_map_entry.out_connectors = \
-            inner_map_entry.out_connectors, outer_map_entry.out_connectors
-        outer_map_exit.in_connectors, inner_map_exit.in_connectors = \
-            inner_map_exit.in_connectors, outer_map_exit.in_connectors
-        outer_map_exit.out_connectors, inner_map_exit.out_connectors = \
-            inner_map_exit.out_connectors, outer_map_exit.out_connectors
+        outer_map_entry.in_connectors, inner_map_entry.in_connectors = (
+            inner_map_entry.in_connectors,
+            outer_map_entry.in_connectors,
+        )
+        outer_map_entry.out_connectors, inner_map_entry.out_connectors = (
+            inner_map_entry.out_connectors,
+            outer_map_entry.out_connectors,
+        )
+        outer_map_exit.in_connectors, inner_map_exit.in_connectors = (
+            inner_map_exit.in_connectors,
+            outer_map_exit.in_connectors,
+        )
+        outer_map_exit.out_connectors, inner_map_exit.out_connectors = (
+            inner_map_exit.out_connectors,
+            outer_map_exit.out_connectors,
+        )
 
         # Get edges between the map entries and exits.
         entry_edges = graph.edges_between(outer_map_entry, inner_map_entry)

@@ -56,7 +56,8 @@ class MapUnroll(transformation.SingleStateTransformation):
 
         # Check for local memories that need to be replicated
         local_memories = [
-            name for name in sdutil.local_transients(sdfg, subgraph, entry_node=map_entry, include_nested=True)
+            name
+            for name in sdutil.local_transients(sdfg, subgraph, entry_node=map_entry, include_nested=True)
             if not isinstance(sdfg.arrays[name], dt.Stream) and not isinstance(sdfg.arrays[name], dt.View)
         ]
 
@@ -99,7 +100,7 @@ class MapUnroll(transformation.SingleStateTransformation):
                     if node == map_entry:
                         # Fix the map bounds to only this iteration
                         unrolled_node.map.range = [(i, i, 1) for i in t]
-                    if (isinstance(node, nodes.AccessNode) and node.data in local_memories):
+                    if isinstance(node, nodes.AccessNode) and node.data in local_memories:
                         # If this is a local memory only used in this subgraph,
                         # we need to replicate it for each new subgraph
                         unrolled_name = node.data + suffix
@@ -118,11 +119,9 @@ class MapUnroll(transformation.SingleStateTransformation):
                     memlet.data = memlet.data + suffix
                 state.add_edge(src, src_conn, dst, dst_conn, memlet)
             # Eliminate the now trivial map
-            TrivialMapElimination.apply_to(sdfg,
-                                           verify=False,
-                                           annotate=False,
-                                           save=False,
-                                           map_entry=node_to_unrolled[map_entry])
+            TrivialMapElimination.apply_to(
+                sdfg, verify=False, annotate=False, save=False, map_entry=node_to_unrolled[map_entry]
+            )
 
         # Now we can delete the original subgraph. This implicitly also remove
         # memlets between nodes

@@ -10,13 +10,12 @@ def _make_sdfg(
     code: str,
     dtype=dace.float64,
 ) -> dace.SDFG:
-    """Generates an SDFG that writes an expression to an array.
-    """
+    """Generates an SDFG that writes an expression to an array."""
     sdfg = dace.SDFG(name=f"const_test_{str(uuid.uuid1()).replace('-', '_')}")
     state = sdfg.add_state(is_start_block=True)
     sdfg.add_array(
         "out",
-        shape=(10, ),
+        shape=(10,),
         dtype=dtype,
         transient=False,
     )
@@ -64,7 +63,7 @@ def test_constant_pi_simple():
 def test_constant_pi_add():
     _perform_test(code="-math.pi", expected=-math.pi)
     _perform_test(code="math.pi + math.pi", expected=2 * math.pi)
-    _perform_test(code="math.pi - math.pi", expected=0.)
+    _perform_test(code="math.pi - math.pi", expected=0.0)
 
 
 @pytest.mark.gpu

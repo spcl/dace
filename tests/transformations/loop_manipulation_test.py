@@ -39,8 +39,8 @@ def test_unroll():
     reg = regression(A, B)
 
     # HACK: Workaround to deal with bug in frontend (See PR #161)
-    if 'i' in sdfg.symbols:
-        del sdfg.symbols['i']
+    if "i" in sdfg.symbols:
+        del sdfg.symbols["i"]
 
     sdfg(A=A, B=B)
     assert np.allclose(B, reg)
@@ -57,8 +57,8 @@ def test_peeling_start():
     reg = regression(A, B)
 
     # HACK: Workaround to deal with bug in frontend (See PR #161)
-    if 'i' in sdfg.symbols:
-        del sdfg.symbols['i']
+    if "i" in sdfg.symbols:
+        del sdfg.symbols["i"]
 
     sdfg(A=A, B=B)
     assert np.allclose(B, reg)
@@ -75,36 +75,39 @@ def test_peeling_end():
     reg = regression(A, B)
 
     # HACK: Workaround to deal with bug in frontend (See PR #161)
-    if 'i' in sdfg.symbols:
-        del sdfg.symbols['i']
+    if "i" in sdfg.symbols:
+        del sdfg.symbols["i"]
 
     sdfg(A=A, B=B)
     assert np.allclose(B, reg)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_unroll()
     test_peeling_start()
     test_peeling_end()
 
 
-@pytest.mark.parametrize('start, condition, step, expected', [
-    (0, 'i < 10', 'i + 1', list(range(0, 10, 1))),
-    (0, 'i < 10', 'i + 3', list(range(0, 10, 3))),
-    (9, 'i > -1', 'i - 1', list(range(9, -1, -1))),
-    (9, 'i > -1', 'i - 3', list(range(9, -1, -3))),
-    (9, 'i >= 0', 'i - 1', list(range(9, -1, -1))),
-    (5, 'i <= 5', 'i + 1', [5]),
-])
+@pytest.mark.parametrize(
+    "start, condition, step, expected",
+    [
+        (0, "i < 10", "i + 1", list(range(0, 10, 1))),
+        (0, "i < 10", "i + 3", list(range(0, 10, 3))),
+        (9, "i > -1", "i - 1", list(range(9, -1, -1))),
+        (9, "i > -1", "i - 3", list(range(9, -1, -3))),
+        (9, "i >= 0", "i - 1", list(range(9, -1, -1))),
+        (5, "i <= 5", "i + 1", [5]),
+    ],
+)
 def test_unroll_covers_every_iteration(start, condition, step, expected):
     """Every iteration is unrolled, counting up or down, at any stride."""
-    sdfg = dace.SDFG(f'unroll_{start}_{step.replace(" ", "").replace("-", "m").replace("+", "p")}')
-    sdfg.add_array('A', [10], dace.float64)
-    loop = dace.sdfg.state.LoopRegion('l', condition, 'i', f'i = {start}', f'i = {step}')
+    sdfg = dace.SDFG(f"unroll_{start}_{step.replace(' ', '').replace('-', 'm').replace('+', 'p')}")
+    sdfg.add_array("A", [10], dace.float64)
+    loop = dace.sdfg.state.LoopRegion("l", condition, "i", f"i = {start}", f"i = {step}")
     sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('body', is_start_block=True)
-    tasklet = body.add_tasklet('write', {}, {'o'}, 'o = 1.0')
-    body.add_edge(tasklet, 'o', body.add_write('A'), None, dace.Memlet('A[i]'))
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("write", {}, {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("A"), None, dace.Memlet("A[i]"))
 
     assert sdfg.apply_transformations_repeated([LoopUnroll]) == 1
 

@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -45,6 +45,6 @@ def test_arraywcr():
     assert np.allclose(o, reference)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_arraywrite()
     test_arraywcr()

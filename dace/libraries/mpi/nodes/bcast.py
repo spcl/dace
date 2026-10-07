@@ -11,7 +11,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @dace.library.expansion
 class ExpandBcastMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -44,7 +43,7 @@ class ExpandBcastMPI(ExpandTransformation):
 
         init = ""
         comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
+        grid = input_descriptor_name(node, parent_state, "_grid")
         if grid:
             comm = "_grid"
         elif node.fcomm:
@@ -55,17 +54,18 @@ class ExpandBcastMPI(ExpandTransformation):
             {init}
             MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
             _outbuffer = _inbuffer;"""
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.node
 class Bcast(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandBcastMPI,
@@ -101,7 +101,7 @@ class Bcast(MPINode):
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_outbuffer':
+            if src_conn == "_outbuffer":
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
 

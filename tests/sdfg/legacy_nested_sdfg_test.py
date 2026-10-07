@@ -8,6 +8,7 @@ restates them to follow the nested SDFG contract -- the connector is the contain
 inside address it as the parent does -- including in the nested SDFGs further down that describe the
 same container. Inlining one without converting it first has to fail rather than lose the window.
 """
+
 import numpy as np
 import pytest
 
@@ -26,51 +27,52 @@ def _windowed_sdfg(symbolic_outer: bool = False) -> dace.SDFG:
     Builds ``B[1:14, 4:17] = 2 * A[3:16, 2:15]`` with the window taken by the connectors of a nested
     SDFG, whose body is a map over a multi-state nested SDFG that also describes the window.
     """
-    sdfg = dace.SDFG('inline_windowed_connector')
+    sdfg = dace.SDFG("inline_windowed_connector")
     if symbolic_outer:
         # The containers are described in symbols the nested SDFGs do not know yet
-        outer_size = dace.symbol('outer_size')
-        sdfg.add_array('A', (outer_size, outer_size), dace.float64)
-        sdfg.add_array('B', (outer_size, outer_size), dace.float64)
+        outer_size = dace.symbol("outer_size")
+        sdfg.add_array("A", (outer_size, outer_size), dace.float64)
+        sdfg.add_array("B", (outer_size, outer_size), dace.float64)
         strides = (outer_size, 1)
     else:
-        sdfg.add_array('A', (N, N), dace.float64)
-        sdfg.add_array('B', (N, N), dace.float64)
+        sdfg.add_array("A", (N, N), dace.float64)
+        sdfg.add_array("B", (N, N), dace.float64)
         strides = (N, 1)
 
-    child = dace.SDFG('child')
-    child.add_array('a', (M, M), dace.float64, strides=strides)
-    child.add_array('b', (M, M), dace.float64, strides=strides)
-    child.add_symbol('i', dace.int64)
-    child.add_symbol('j', dace.int64)
-    first = child.add_state('first')
-    second = child.add_state('second')
+    child = dace.SDFG("child")
+    child.add_array("a", (M, M), dace.float64, strides=strides)
+    child.add_array("b", (M, M), dace.float64, strides=strides)
+    child.add_symbol("i", dace.int64)
+    child.add_symbol("j", dace.int64)
+    first = child.add_state("first")
+    second = child.add_state("second")
     # The condition reads the window too, so meta accesses have to follow the window as well
-    child.add_edge(first, second, InterstateEdge(condition='a[i, j] > 0'))
-    tasklet = second.add_tasklet('double', {'inp'}, {'out'}, 'out = 2 * inp')
-    second.add_edge(second.add_read('a'), None, tasklet, 'inp', Memlet('a[i, j]'))
-    second.add_edge(tasklet, 'out', second.add_write('b'), None, Memlet('b[i, j]'))
+    child.add_edge(first, second, InterstateEdge(condition="a[i, j] > 0"))
+    tasklet = second.add_tasklet("double", {"inp"}, {"out"}, "out = 2 * inp")
+    second.add_edge(second.add_read("a"), None, tasklet, "inp", Memlet("a[i, j]"))
+    second.add_edge(tasklet, "out", second.add_write("b"), None, Memlet("b[i, j]"))
 
-    inner = dace.SDFG('inner')
-    inner.add_array('a', (M, M), dace.float64, strides=strides)
-    inner.add_array('b', (M, M), dace.float64, strides=strides)
-    istate = inner.add_state('body')
-    me, mx = istate.add_map('elements', dict(i=f'0:{M}', j=f'0:{M}'))
-    cnode = istate.add_nested_sdfg(child, {'a'}, {'b'}, {'i': 'i', 'j': 'j'})
-    istate.add_memlet_path(istate.add_read('a'), me, cnode, dst_conn='a', memlet=Memlet('a[i, j]'))
-    istate.add_memlet_path(cnode, mx, istate.add_write('b'), src_conn='b', memlet=Memlet('b[i, j]'))
+    inner = dace.SDFG("inner")
+    inner.add_array("a", (M, M), dace.float64, strides=strides)
+    inner.add_array("b", (M, M), dace.float64, strides=strides)
+    istate = inner.add_state("body")
+    me, mx = istate.add_map("elements", dict(i=f"0:{M}", j=f"0:{M}"))
+    cnode = istate.add_nested_sdfg(child, {"a"}, {"b"}, {"i": "i", "j": "j"})
+    istate.add_memlet_path(istate.add_read("a"), me, cnode, dst_conn="a", memlet=Memlet("a[i, j]"))
+    istate.add_memlet_path(cnode, mx, istate.add_write("b"), src_conn="b", memlet=Memlet("b[i, j]"))
 
-    state = sdfg.add_state('call')
-    nsdfg = state.add_nested_sdfg(inner, {'a'}, {'b'})
-    state.add_edge(state.add_read('A'), None, nsdfg, 'a', Memlet(f'A[3:{3 + M}, 2:{2 + M}]'))
-    state.add_edge(nsdfg, 'b', state.add_write('B'), None, Memlet(f'B[1:{1 + M}, 4:{4 + M}]'))
+    state = sdfg.add_state("call")
+    nsdfg = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_edge(state.add_read("A"), None, nsdfg, "a", Memlet(f"A[3:{3 + M}, 2:{2 + M}]"))
+    state.add_edge(nsdfg, "b", state.add_write("B"), None, Memlet(f"B[1:{1 + M}, 4:{4 + M}]"))
     return sdfg
 
 
 def _all_memlets(sdfg: dace.SDFG):
     """The memlets of the whole tree, as strings, to tell whether a conversion changed anything."""
     return sorted(
-        str(e.data) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.all_states() for e in state.edges())
+        str(e.data) for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.all_states() for e in state.edges()
+    )
 
 
 def _run_and_check(sdfg: dace.SDFG, **symbols):
@@ -78,7 +80,7 @@ def _run_and_check(sdfg: dace.SDFG, **symbols):
     B = np.zeros((N, N))
     sdfg(A=A, B=B, **symbols)
     expected = np.zeros((N, N))
-    expected[1:1 + M, 4:4 + M] = 2 * A[3:3 + M, 2:2 + M]
+    expected[1 : 1 + M, 4 : 4 + M] = 2 * A[3 : 3 + M, 2 : 2 + M]
     assert np.allclose(B, expected)
 
 
@@ -86,7 +88,7 @@ def test_inline_windowed_connector():
     sdfg = _windowed_sdfg()
     converted = dealias.convert_legacy_nested_sdfgs(sdfg)
     outer = next(n for n in sdfg.node(0).nodes() if isinstance(n, nodes.NestedSDFG))
-    assert {(node.sdfg.label, conn) for node, conn in converted} == {('inner', 'a'), ('inner', 'b')}
+    assert {(node.sdfg.label, conn) for node, conn in converted} == {("inner", "a"), ("inner", "b")}
     assert all(node is outer for node, _ in converted)
 
     # A converted tree follows the contract: converting it again is a no-op
@@ -100,18 +102,18 @@ def test_inline_windowed_connector():
     # The window is gone: what is left addresses the containers of the parent directly
     state = sdfg.node(0)
     child = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
-    for cname in ('a', 'b'):
+    for cname in ("a", "b"):
         assert child.sdfg.arrays[cname].shape == (N, N)
         assert child.sdfg.arrays[cname].strides == (N, 1)
     edges = {e.dst_conn: e.data for e in state.in_edges(child)}
-    assert edges['a'].data == 'A'
-    assert str(edges['a'].subset) == 'i + 3, j + 2'
-    inner_reads = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == 'a']
-    assert inner_reads and all(str(m.subset) == 'i + 3, j + 2' for m in inner_reads)
-    inner_writes = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == 'b']
-    assert inner_writes and all(str(m.subset) == 'i + 1, j + 4' for m in inner_writes)
+    assert edges["a"].data == "A"
+    assert str(edges["a"].subset) == "i + 3, j + 2"
+    inner_reads = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == "a"]
+    assert inner_reads and all(str(m.subset) == "i + 3, j + 2" for m in inner_reads)
+    inner_writes = [e.data for s in child.sdfg.all_states() for e in s.edges() if e.data.data == "b"]
+    assert inner_writes and all(str(m.subset) == "i + 1, j + 4" for m in inner_writes)
     condition = next(e.data.condition.as_string for e in child.sdfg.edges() if not e.data.is_unconditional())
-    assert condition.replace(' ', '').replace('(', '').replace(')', '') == 'a[i+3,j+2]>0'
+    assert condition.replace(" ", "").replace("(", "").replace(")", "") == "a[i+3,j+2]>0"
 
     sdfg.validate()
     _run_and_check(sdfg)
@@ -132,34 +134,36 @@ def test_inline_windowed_connector_symbolic_outer():
     assert sdfg.apply_transformations_repeated(InlineSDFG) == 1
     state = sdfg.node(0)
     child = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
-    assert str(child.sdfg.arrays['a'].shape[0]) == 'outer_size'
-    assert 'outer_size' in child.sdfg.symbols
-    assert str(child.symbol_mapping['outer_size']) == 'outer_size'
+    assert str(child.sdfg.arrays["a"].shape[0]) == "outer_size"
+    assert "outer_size" in child.sdfg.symbols
+    assert str(child.symbol_mapping["outer_size"]) == "outer_size"
     sdfg.validate()
     _run_and_check(sdfg, outer_size=N)
 
 
 def test_inline_squeezed_window():
     """A window taking a single element of a dimension, which the connector does not have."""
-    sdfg = dace.SDFG('inline_squeezed_window')
-    sdfg.add_array('A', (4, N, N), dace.float64)
-    sdfg.add_array('B', (N, N), dace.float64)
+    sdfg = dace.SDFG("inline_squeezed_window")
+    sdfg.add_array("A", (4, N, N), dace.float64)
+    sdfg.add_array("B", (N, N), dace.float64)
 
-    inner = dace.SDFG('inner')
-    inner.add_array('a', (M, M), dace.float64, strides=(N, 1))
-    inner.add_array('b', (M, M), dace.float64, strides=(N, 1))
-    istate = inner.add_state('body')
-    istate.add_mapped_tasklet('double',
-                              dict(i=f'0:{M}', j=f'0:{M}'),
-                              dict(inp=Memlet('a[i, j]')),
-                              'out = 2 * inp',
-                              dict(out=Memlet('b[i, j]')),
-                              external_edges=True)
+    inner = dace.SDFG("inner")
+    inner.add_array("a", (M, M), dace.float64, strides=(N, 1))
+    inner.add_array("b", (M, M), dace.float64, strides=(N, 1))
+    istate = inner.add_state("body")
+    istate.add_mapped_tasklet(
+        "double",
+        dict(i=f"0:{M}", j=f"0:{M}"),
+        dict(inp=Memlet("a[i, j]")),
+        "out = 2 * inp",
+        dict(out=Memlet("b[i, j]")),
+        external_edges=True,
+    )
 
-    state = sdfg.add_state('call')
-    nsdfg = state.add_nested_sdfg(inner, {'a'}, {'b'})
-    state.add_edge(state.add_read('A'), None, nsdfg, 'a', Memlet(f'A[2, 3:{3 + M}, 2:{2 + M}]'))
-    state.add_edge(nsdfg, 'b', state.add_write('B'), None, Memlet(f'B[1:{1 + M}, 4:{4 + M}]'))
+    state = sdfg.add_state("call")
+    nsdfg = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_edge(state.add_read("A"), None, nsdfg, "a", Memlet(f"A[2, 3:{3 + M}, 2:{2 + M}]"))
+    state.add_edge(nsdfg, "b", state.add_write("B"), None, Memlet(f"B[1:{1 + M}, 4:{4 + M}]"))
 
     assert len(dealias.convert_legacy_nested_sdfgs(sdfg)) == 2
     assert sdutil.inline_sdfgs(sdfg) == 1
@@ -170,7 +174,7 @@ def test_inline_squeezed_window():
     B = np.zeros((N, N))
     sdfg(A=A, B=B)
     expected = np.zeros((N, N))
-    expected[1:1 + M, 4:4 + M] = 2 * A[2, 3:3 + M, 2:2 + M]
+    expected[1 : 1 + M, 4 : 4 + M] = 2 * A[2, 3 : 3 + M, 2 : 2 + M]
     assert np.allclose(B, expected)
 
 
@@ -187,7 +191,7 @@ def test_convert_noop_on_conforming():
 
     @dace.program
     def double_window(A: dace.float64[N, N], B: dace.float64[N, N]):
-        B[1:1 + M, 4:4 + M] = 2 * A[3:3 + M, 2:2 + M]
+        B[1 : 1 + M, 4 : 4 + M] = 2 * A[3 : 3 + M, 2 : 2 + M]
 
     @dace.program
     def conforming(A: dace.float64[N, N], B: dace.float64[N, N]):
@@ -205,44 +209,61 @@ def test_convert_noop_on_conforming():
 
 def test_convert_symbolic_strides():
     """A wrapper in the shape gt4py builds: the window and the strides are given in symbols."""
-    sdfg = dace.SDFG('symbolic_window')
+    sdfg = dace.SDFG("symbolic_window")
     syms = {
         name: dace.symbol(name, dace.int64)
-        for name in ('__A_I_size', '__A_J_size', '__A_I_stride', '__A_J_stride', '__B_I_size', '__B_J_size',
-                     '__B_I_stride', '__B_J_stride', '__I', '__J')
+        for name in (
+            "__A_I_size",
+            "__A_J_size",
+            "__A_I_stride",
+            "__A_J_stride",
+            "__B_I_size",
+            "__B_J_size",
+            "__B_I_stride",
+            "__B_J_stride",
+            "__I",
+            "__J",
+        )
     }
     for name in syms:
         sdfg.add_symbol(name, dace.int64)
-    sdfg.add_array('A', (syms['__A_I_size'], syms['__A_J_size']),
-                   dace.float64,
-                   strides=(syms['__A_I_stride'], syms['__A_J_stride']))
-    sdfg.add_array('B', (syms['__B_I_size'], syms['__B_J_size']),
-                   dace.float64,
-                   strides=(syms['__B_I_stride'], syms['__B_J_stride']))
+    sdfg.add_array(
+        "A",
+        (syms["__A_I_size"], syms["__A_J_size"]),
+        dace.float64,
+        strides=(syms["__A_I_stride"], syms["__A_J_stride"]),
+    )
+    sdfg.add_array(
+        "B",
+        (syms["__B_I_size"], syms["__B_J_size"]),
+        dace.float64,
+        strides=(syms["__B_I_stride"], syms["__B_J_stride"]),
+    )
 
-    inner = dace.SDFG('wrapped')
-    for name in ('__I', '__J', '__A_I_stride', '__A_J_stride', '__B_I_stride', '__B_J_stride'):
+    inner = dace.SDFG("wrapped")
+    for name in ("__I", "__J", "__A_I_stride", "__A_J_stride", "__B_I_stride", "__B_J_stride"):
         inner.add_symbol(name, dace.int64)
-    inner.add_array('a', (syms['__I'], syms['__J']), dace.float64, strides=(syms['__A_I_stride'], syms['__A_J_stride']))
-    inner.add_array('b', (syms['__I'], syms['__J']), dace.float64, strides=(syms['__B_I_stride'], syms['__B_J_stride']))
-    istate = inner.add_state('body')
-    istate.add_mapped_tasklet('double',
-                              dict(i='0:__I', j='0:__J'),
-                              dict(inp=Memlet('a[i, j]')),
-                              'out = 2 * inp',
-                              dict(out=Memlet('b[i, j]')),
-                              external_edges=True)
+    inner.add_array("a", (syms["__I"], syms["__J"]), dace.float64, strides=(syms["__A_I_stride"], syms["__A_J_stride"]))
+    inner.add_array("b", (syms["__I"], syms["__J"]), dace.float64, strides=(syms["__B_I_stride"], syms["__B_J_stride"]))
+    istate = inner.add_state("body")
+    istate.add_mapped_tasklet(
+        "double",
+        dict(i="0:__I", j="0:__J"),
+        dict(inp=Memlet("a[i, j]")),
+        "out = 2 * inp",
+        dict(out=Memlet("b[i, j]")),
+        external_edges=True,
+    )
 
-    state = sdfg.add_state('call')
+    state = sdfg.add_state("call")
     symbol_mapping = {
-        name: name
-        for name in ('__I', '__J', '__A_I_stride', '__A_J_stride', '__B_I_stride', '__B_J_stride')
+        name: name for name in ("__I", "__J", "__A_I_stride", "__A_J_stride", "__B_I_stride", "__B_J_stride")
     }
-    nsdfg = state.add_nested_sdfg(inner, {'a'}, {'b'}, symbol_mapping)
-    state.add_edge(state.add_read('A'), None, nsdfg, 'a', Memlet('A[3:3 + __I, 2:2 + __J]'))
-    state.add_edge(nsdfg, 'b', state.add_write('B'), None, Memlet('B[1:1 + __I, 4:4 + __J]'))
+    nsdfg = state.add_nested_sdfg(inner, {"a"}, {"b"}, symbol_mapping)
+    state.add_edge(state.add_read("A"), None, nsdfg, "a", Memlet("A[3:3 + __I, 2:2 + __J]"))
+    state.add_edge(nsdfg, "b", state.add_write("B"), None, Memlet("B[1:1 + __I, 4:4 + __J]"))
 
-    assert {conn for _, conn in dealias.convert_legacy_nested_sdfgs(sdfg)} == {'a', 'b'}
+    assert {conn for _, conn in dealias.convert_legacy_nested_sdfgs(sdfg)} == {"a", "b"}
     sdutil.inline_sdfgs(sdfg)
     sdfg.validate()
 
@@ -252,24 +273,26 @@ def test_convert_symbolic_strides():
         if node is None:
             continue
         for desc in nested.arrays.values():
-            assert tuple(str(s) for s in desc.shape) != ('__I', '__J')
+            assert tuple(str(s) for s in desc.shape) != ("__I", "__J")
 
     A = np.random.rand(N, N) + 1.0
     B = np.zeros((N, N))
-    sdfg(A=A,
-         B=B,
-         __A_I_size=N,
-         __A_J_size=N,
-         __A_I_stride=N,
-         __A_J_stride=1,
-         __B_I_size=N,
-         __B_J_size=N,
-         __B_I_stride=N,
-         __B_J_stride=1,
-         __I=M,
-         __J=M)
+    sdfg(
+        A=A,
+        B=B,
+        __A_I_size=N,
+        __A_J_size=N,
+        __A_I_stride=N,
+        __A_J_stride=1,
+        __B_I_size=N,
+        __B_J_size=N,
+        __B_I_stride=N,
+        __B_J_stride=1,
+        __I=M,
+        __J=M,
+    )
     expected = np.zeros((N, N))
-    expected[1:1 + M, 4:4 + M] = 2 * A[3:3 + M, 2:2 + M]
+    expected[1 : 1 + M, 4 : 4 + M] = 2 * A[3 : 3 + M, 2 : 2 + M]
     assert np.allclose(B, expected)
 
 
@@ -278,20 +301,20 @@ def test_convert_window_under_shadowing_map_parameter():
     Converts a window written in the parameter of an outer map into a nested SDFG whose own map has a parameter of
     the same name, which must not capture the window's symbol once the memlets move in.
     """
-    sdfg = dace.SDFG('convert_shadowed_window')
-    sdfg.add_array('A', [12], dace.float64)
-    sdfg.add_array('B', [12], dace.float64)
+    sdfg = dace.SDFG("convert_shadowed_window")
+    sdfg.add_array("A", [12], dace.float64)
+    sdfg.add_array("B", [12], dace.float64)
     state = sdfg.add_state()
-    inner = dace.SDFG('inner')
-    inner.add_array('a', [4], dace.float64)
-    inner.add_array('b', [4], dace.float64)
-    inner.add_state().add_mapped_tasklet('inc', {'i': '0:4'}, {'v': Memlet('a[i]')},
-                                         'w = v + 1', {'w': Memlet('b[i]')},
-                                         external_edges=True)
-    me, mx = state.add_map('outer_map', {'i': '0:3'})
-    node = state.add_nested_sdfg(inner, {'a'}, {'b'})
-    state.add_memlet_path(state.add_read('A'), me, node, dst_conn='a', memlet=Memlet('A[4*i:4*i+4]'))
-    state.add_memlet_path(node, mx, state.add_write('B'), src_conn='b', memlet=Memlet('B[4*i:4*i+4]'))
+    inner = dace.SDFG("inner")
+    inner.add_array("a", [4], dace.float64)
+    inner.add_array("b", [4], dace.float64)
+    inner.add_state().add_mapped_tasklet(
+        "inc", {"i": "0:4"}, {"v": Memlet("a[i]")}, "w = v + 1", {"w": Memlet("b[i]")}, external_edges=True
+    )
+    me, mx = state.add_map("outer_map", {"i": "0:3"})
+    node = state.add_nested_sdfg(inner, {"a"}, {"b"})
+    state.add_memlet_path(state.add_read("A"), me, node, dst_conn="a", memlet=Memlet("A[4*i:4*i+4]"))
+    state.add_memlet_path(node, mx, state.add_write("B"), src_conn="b", memlet=Memlet("B[4*i:4*i+4]"))
 
     dealias.convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
@@ -307,19 +330,19 @@ def test_convert_rejects_different_read_and_write_windows():
     A connector read and written through different windows of its container cannot be the container, and picking
     one of the windows would silently move the accesses through the other.
     """
-    sdfg = dace.SDFG('convert_inout_windows')
-    sdfg.add_array('A', [8], dace.float64)
+    sdfg = dace.SDFG("convert_inout_windows")
+    sdfg.add_array("A", [8], dace.float64)
     state = sdfg.add_state()
-    inner = dace.SDFG('inner')
-    inner.add_array('a', [4], dace.float64)
-    inner.add_state().add_mapped_tasklet('body', {'i': '0:4'}, {'v': Memlet('a[i]')},
-                                         'w = 10 * v', {'w': Memlet('a[i]')},
-                                         external_edges=True)
-    node = state.add_nested_sdfg(inner, {'a'}, {'a'})
-    state.add_edge(state.add_read('A'), None, node, 'a', Memlet('A[0:4]'))
-    state.add_edge(node, 'a', state.add_write('A'), None, Memlet('A[1:5]'))
+    inner = dace.SDFG("inner")
+    inner.add_array("a", [4], dace.float64)
+    inner.add_state().add_mapped_tasklet(
+        "body", {"i": "0:4"}, {"v": Memlet("a[i]")}, "w = 10 * v", {"w": Memlet("a[i]")}, external_edges=True
+    )
+    node = state.add_nested_sdfg(inner, {"a"}, {"a"})
+    state.add_edge(state.add_read("A"), None, node, "a", Memlet("A[0:4]"))
+    state.add_edge(node, "a", state.add_write("A"), None, Memlet("A[1:5]"))
 
-    with pytest.raises(ValueError, match=r'read through A\[0:4\] and written through A\[1:5\]'):
+    with pytest.raises(ValueError, match=r"read through A\[0:4\] and written through A\[1:5\]"):
         dealias.convert_legacy_nested_sdfgs(sdfg)
 
 
@@ -328,21 +351,21 @@ def test_plain_window_replaces_symbols_at_once():
     A connector written in its own symbols is compared with the window in the parent's symbols, all replaced at
     once: with ``{M: N, N: M}``, the stride ``N * M`` is ``M * N`` in the parent, not a square.
     """
-    K, M, N = (dace.symbol(s) for s in 'KMN')
-    sdfg = dace.SDFG('plain_window_swap')
-    sdfg.add_array('A', [K, M, N], dace.float64)
+    K, M, N = (dace.symbol(s) for s in "KMN")
+    sdfg = dace.SDFG("plain_window_swap")
+    sdfg.add_array("A", [K, M, N], dace.float64)
     state = sdfg.add_state()
-    inner = dace.SDFG('inner')
-    for s in 'KMN':
+    inner = dace.SDFG("inner")
+    for s in "KMN":
         inner.add_symbol(s, dace.int64)
-    inner.add_array('a', [K - 1, N, M], dace.float64)
+    inner.add_array("a", [K - 1, N, M], dace.float64)
     inner.add_state()
-    node = state.add_nested_sdfg(inner, {'a'}, set(), {'K': 'K', 'M': 'N', 'N': 'M'})
-    edge = state.add_edge(state.add_read('A'), None, node, 'a', Memlet('A[1:K, 0:M, 0:N]'))
-    assert dealias._plain_window(edge.data, sdfg.arrays['A'], inner.arrays['a'], node)
+    node = state.add_nested_sdfg(inner, {"a"}, set(), {"K": "K", "M": "N", "N": "M"})
+    edge = state.add_edge(state.add_read("A"), None, node, "a", Memlet("A[1:K, 0:M, 0:N]"))
+    assert dealias._plain_window(edge.data, sdfg.arrays["A"], inner.arrays["a"], node)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_inline_windowed_connector()
     test_inline_windowed_connector_simplify()
     test_inline_windowed_connector_symbolic_outer()

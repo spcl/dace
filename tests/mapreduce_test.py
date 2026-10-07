@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace.transformation.dataflow import (MapReduceFusion, MapFusionVertical, MapWCRFusion)
+from dace.transformation.dataflow import MapReduceFusion, MapFusionVertical, MapWCRFusion
 
-W = dace.symbol('W')
-H = dace.symbol('H')
+W = dace.symbol("W")
+H = dace.symbol("H")
 
-M = dace.symbol('M')
-N = dace.symbol('N')
-K = dace.symbol('K')
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
 BINS = 256
 
 
@@ -145,7 +145,7 @@ def onetest(program):
     N = 20
     K = 5
 
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
+    print("Matrix multiplication %dx%dx%d" % (M, N, K))
 
     A = np.random.rand(M, K)
     B = np.random.rand(K, N)
@@ -166,7 +166,7 @@ def test_basic():
     W = 128
     H = 128
 
-    print('Map-Reduce Test %dx%d' % (W, H))
+    print("Map-Reduce Test %dx%d" % (W, H))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
@@ -190,7 +190,7 @@ def test_mmm():
     N = 20
     K = 5
 
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
+    print("Matrix multiplication %dx%dx%d" % (M, N, K))
 
     # Initialize arrays: Randomize A and B, zero C
     A = dace.ndarray([M, N], dtype=dace.float64)
@@ -221,7 +221,7 @@ def test_extradims():
     W = 128
     H = 128
 
-    print('Map-Reduce Test %dx%d' % (W, H))
+    print("Map-Reduce Test %dx%d" % (W, H))
 
     A = dace.ndarray([1, H, 1, W, 1], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
@@ -244,7 +244,7 @@ def test_permuted():
     N = 20
     K = 5
 
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
+    print("Matrix multiplication %dx%dx%d" % (M, N, K))
 
     # Initialize arrays: Randomize A and B, zero C
     A = dace.ndarray([M, N], dtype=dace.float64)
@@ -275,7 +275,7 @@ def test_histogram():
     W = 32
     H = 32
 
-    print('Histogram (dec) %dx%d' % (W, H))
+    print("Histogram (dec) %dx%d" % (W, H))
 
     A = np.random.randint(0, BINS, (H, W)).astype(np.uint8)
     hist = np.zeros([BINS], dtype=np.uint32)
