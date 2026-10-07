@@ -1205,7 +1205,7 @@ if TYPE_CHECKING:
     import numpy.typing as npt
     from typing_extensions import Self
 
-    # yapf: disable
+    # fmt: off
     # Type stub base: NDArray that accepts symbolic shape subscripts like [M, N].
     class _DaCeArray(npt.NDArray):
         def __class_getitem__(cls, item: object) -> type[Self]: ...
@@ -1232,7 +1232,7 @@ if TYPE_CHECKING:
     class string(_DaCeArray, npt.NDArray[numpy.str_]): ...
     class vector(_DaCeArray, npt.NDArray[numpy.void]): ...
     class MPI_Request(_DaCeArray, npt.NDArray[numpy.void]): ...
-    # yapf: enable
+    # fmt: on
 else:
     # Runtime definitions
     bool_ = typeclass(numpy.bool_, 'bool')
