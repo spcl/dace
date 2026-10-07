@@ -846,18 +846,16 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, "%s *" % nodedesc.dtype.ctype)
 
             # Allocate in each OpenMP thread
-            aligned = ""
+            allocation = f"new {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}]"
             if _use_aligned_operator_new(nodedesc):
                 align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                aligned = f"(std::align_val_t({align_value}))"
+                allocation = f"dace::aligned_new_array<{nodedesc.dtype.ctype}>({cpp.sym2cpp(arrsize)}, {align_value})"
 
             allocation_stream.write(
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {aligned}{ctype} [{arrsize}];""".format(
-                    aligned=aligned, ctype=nodedesc.dtype.ctype, name=alloc_name, arrsize=cpp.sym2cpp(arrsize)
-                ),
+                    {name} = {allocation};""".format(name=alloc_name, allocation=allocation),
                 cfg,
                 state_id,
                 node,
@@ -918,14 +916,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
-                # Aligned pairing + trivial-destructibility guard as above.
                 if _use_aligned_operator_new(nodedesc):
                     align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                    delete_stmt = (
-                        f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                        f'"aligned heap deallocation skips destructors"); '
-                        f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));"
-                    )
+                    delete_stmt = f"dace::aligned_delete_array({alloc_name}, {align_value});"
                 else:
                     delete_stmt = f"delete[] {alloc_name};"
             else:
@@ -2070,31 +2063,23 @@ class CPUCodeGen(TargetCodeGenerator):
         nodedesc: Optional[data.Data] = None,
         data_name: Optional[str] = None,
     ) -> str:
-        """C++ statement allocating a CPU heap array, with aligned ``new[]`` when the standard and the descriptor
-        allow it (paired with the ``delete[]`` in heap_free_stmt). ``alloc_name`` is the assignment target: either a
+        """C++ statement allocating a CPU heap array, with ``dace::aligned_new_array`` when the descriptor asks for
+        alignment (paired with heap_free_stmt). ``alloc_name`` is the assignment target: either a
         plain pointer name (the classic split form) or a full declarator (see fused_heap_declarator), in which case
         the emitted statement is a definition. The trailing ``sdfg``/``data_name`` are unused here; the readable
         generator overrides this to route the count through an ``<array>_size`` helper."""
-        aligned = ""
         if nodedesc is not None and _use_aligned_operator_new(nodedesc):
             align_value = 64 if alignment == 0 else alignment
-            aligned = f"(std::align_val_t({align_value}))"
-        return f"{alloc_name} = new {aligned} {ctype} [{arrsize}];\n"
+            return f"{alloc_name} = dace::aligned_new_array<{ctype}>({arrsize}, {align_value});\n"
+        return f"{alloc_name} = new {ctype} [{arrsize}];\n"
 
     def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[data.Data] = None) -> str:
         """C++ statement freeing a CPU heap array (paired with heap_alloc_stmt)."""
         if not is_array:
             return f"delete {alloc_name};\n"
-        # Memory from the aligned operator new[] must be released by the aligned operator delete[]. The direct
-        # operator call skips destructors and relies on the new-expression emitting no array cookie - both only hold
-        # for trivially destructible element types.
         if nodedesc is not None and _use_aligned_operator_new(nodedesc):
             align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-            return (
-                f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                f'"aligned heap deallocation skips destructors");\n'
-                f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));\n"
-            )
+            return f"dace::aligned_delete_array({alloc_name}, {align_value});\n"
         return f"delete[] {alloc_name};\n"
 
     def rewrite_cpp_tasklet_body(self, node, sdfg, state_dfg):

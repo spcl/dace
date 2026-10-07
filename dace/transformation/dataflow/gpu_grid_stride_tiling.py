@@ -32,9 +32,9 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
 
     # Properties
 
-    new_dim_prefix = Property(dtype=str, default="tile", desc="Prefix for new dimension name")
-    max_grid_dim = SymbolicProperty(default=65535, desc="Maximum grid dimension")
-    block_dim = Property(default=128, desc="Block dimension")
+    new_dim_prefix = Property(dtype=str, default="tile", category="Parameters", desc="Prefix for new dimension name")
+    max_grid_dim = SymbolicProperty(default=65535, category="Scheduling", desc="Maximum grid dimension")
+    block_dim = Property(default=128, category="Scheduling", desc="Block dimension")
 
     @classmethod
     def expressions(cls):

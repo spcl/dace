@@ -562,28 +562,41 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
-    transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
+    transA = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose A before multiplying")
+    transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")
     alpha = properties.Property(
-        allow_none=False, default=1, desc="A scalar which will be multiplied with A @ B before adding C"
+        allow_none=False,
+        default=1,
+        category="Semantics",
+        desc="A scalar which will be multiplied with A @ B before adding C",
     )
     beta = properties.Property(
-        allow_none=False, default=0, desc="A scalar which will be multiplied with C before adding C"
+        allow_none=False,
+        default=0,
+        category="Semantics",
+        desc="A scalar which will be multiplied with C before adding C",
     )
-    cin = properties.Property(dtype=bool, default=True, desc="Whether to have a _c in connector when beta != 0")
+    cin = properties.Property(
+        dtype=bool, default=True, category="Semantics", desc="Whether to have a _c in connector when beta != 0"
+    )
     algorithm = properties.Property(
         dtype=str,
         allow_none=True,
         default=None,
+        category="Code Generation",
         desc="If applicable, chooses the vendor-provided implementation (algorithm) for the multiplication",
     )
     accumulator_type = properties.TypeClassProperty(
-        default=None, allow_none=True, desc="Accumulator or intermediate storage type used in multiplication"
+        default=None,
+        allow_none=True,
+        category="Semantics",
+        desc="Accumulator or intermediate storage type used in multiplication",
     )
     compute_type = properties.Property(
         default=None,
         dtype=str,
         allow_none=True,
+        category="Code Generation",
         desc="If applicable, overrides computation type (CUBLAS-specific, see ``cublasComputeType_t``)",
     )
 

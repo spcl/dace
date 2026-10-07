@@ -34,7 +34,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     array = transformation.PatternNode(nds.AccessNode)
     second_map_entry = transformation.PatternNode(nds.EntryNode)
 
-    identity = SymbolicProperty(desc="Identity value to set", default=None, allow_none=True)
+    identity = SymbolicProperty(category="Parameters", desc="Identity value to set", default=None, allow_none=True)
 
     @classmethod
     def expressions(cls):

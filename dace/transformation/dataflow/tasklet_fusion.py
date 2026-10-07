@@ -141,7 +141,11 @@ class TaskletFusion(pm.SingleStateTransformation):
     t2 = pm.PatternNode(nodes.Tasklet)
 
     new_name = Property(
-        dtype=str, default=None, allow_none=True, desc="New name to give tasklet. If None, fuses tasklet names"
+        dtype=str,
+        default=None,
+        allow_none=True,
+        category="Parameters",
+        desc="New name to give tasklet. If None, fuses tasklet names",
     )
 
     @classmethod

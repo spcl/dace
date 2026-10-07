@@ -732,8 +732,10 @@ class ExpandTransformation(PatternTransformation):
         node = state.node(self.subgraph[type(self)._match_node])
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
+            # Connector names only: a type inferred for the library node (a scalar for a one-element
+            # memlet) no longer holds once the connector stands for the whole container it is connected to
             expansion = state.add_nested_sdfg(
-                expansion, node.in_connectors, node.out_connectors, name=node.name, debuginfo=node.debuginfo
+                expansion, set(node.in_connectors), set(node.out_connectors), name=node.name, debuginfo=node.debuginfo
             )
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
@@ -808,9 +810,11 @@ class SubgraphTransformation(TransformationBase):
     class docstring for more information.
     """
 
-    cfg_id = Property(dtype=int, desc="ID of CFG to transform")
-    state_id = Property(dtype=int, desc="ID of state to transform subgraph within, or -1 to transform the SDFG")
-    subgraph = SetProperty(element_type=int, desc="Subgraph in transformation instance")
+    cfg_id = Property(dtype=int, category="(Debug)", desc="ID of CFG to transform")
+    state_id = Property(
+        dtype=int, category="(Debug)", desc="ID of state to transform subgraph within, or -1 to transform the SDFG"
+    )
+    subgraph = SetProperty(element_type=int, category="(Debug)", desc="Subgraph in transformation instance")
 
     def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], cfg_id: int = None, state_id: int = None):
         """

@@ -14,6 +14,7 @@ class MapScoringEnumerator(Enumerator):
     """
 
     mode = Property(
+        category="Parameters",
         desc="Data type the Iterator should return. Choice between Subgraph and List of Map Entries.",
         default="map_entries",
         choices=["subgraph", "map_entries"],
