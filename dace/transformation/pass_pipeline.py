@@ -310,11 +310,15 @@ class ControlFlowRegionPass(Pass):
     apply_to_conditionals = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Whether or not to apply to conditional blocks. If false, do "
         + "not apply to conditional blocks, but only their children.",
     )
     top_down = properties.Property(
-        dtype=bool, default=False, desc="Whether or not to apply top down (i.e., parents before children)"
+        dtype=bool,
+        default=False,
+        category="Parameters",
+        desc="Whether or not to apply top down (i.e., parents before children)",
     )
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:

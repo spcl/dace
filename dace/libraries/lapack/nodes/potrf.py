@@ -106,8 +106,8 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
-    lower = dace.properties.Property(dtype=bool, default=True)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
+    lower = dace.properties.Property(dtype=bool, default=True, category="Semantics")
 
     def __init__(self, name, lower=True, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_res"}, **kwargs)
