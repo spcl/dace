@@ -6,8 +6,14 @@ from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
 
 from dace.properties import CodeBlock
-from dace.sdfg.state import (ConditionalBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion, NamedRegion,
-                             ReturnBlock)
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowRegion,
+    FunctionCallRegion,
+    LoopRegion,
+    NamedRegion,
+    ReturnBlock,
+)
 
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -48,7 +54,7 @@ def test_for_in_map_in_for():
 
 
 def test_libnode():
-    M, N, K = (dace.symbol(s) for s in 'MNK')
+    M, N, K = (dace.symbol(s) for s in "MNK")
 
     @dace.program
     def matmul_lib(a: dace.float64[M, K], b: dace.float64[K, N]):
@@ -58,8 +64,10 @@ def test_libnode():
     stree = as_schedule_tree(sdfg)
     assert len(stree.children) == 1
     assert isinstance(stree.children[0], tn.LibraryCall)
-    assert (stree.children[0].as_string() ==
-            '__return[0:M, 0:N] = library MatMul[alpha=1, beta=0](a[0:M, 0:K], b[0:K, 0:N])')
+    assert (
+        stree.children[0].as_string()
+        == "__return[0:M, 0:N] = library MatMul[alpha=1, beta=0](a[0:M, 0:K], b[0:K, 0:N])"
+    )
 
 
 def test_nesting():
@@ -85,7 +93,7 @@ def test_nesting():
 
     # Despite two levels of nesting, immediate children are the 4 for loops
     assert len(stree.children) == 4
-    offsets = ['', '5', '10', '15']
+    offsets = ["", "5", "10", "15"]
     for fornode, offset in zip(stree.children, offsets):
         assert isinstance(fornode, tn.LoopScope)
         assert len(fornode.children) == 1  # map
@@ -107,7 +115,7 @@ def test_nesting_view():
     def nest1(a):
         for i in range(5):
             subset = a[:, i, :]
-            nest2(subset.reshape((40, )))
+            nest2(subset.reshape((40,)))
 
     @dace.program
     def main(a: dace.float64[20, 10]):
@@ -139,23 +147,23 @@ def test_nesting_nview():
 
 
 def test_irreducible_sub_sdfg():
-    sdfg = dace.SDFG('irreducible')
+    sdfg = dace.SDFG("irreducible")
     # Add a simple chain
     s = sdfg.add_state_after(sdfg.add_state_after(sdfg.add_state()))
     # Add an irreducible CFG
     s1 = sdfg.add_state()
     s2 = sdfg.add_state()
 
-    sdfg.add_edge(s, s1, dace.InterstateEdge('a < b'))
+    sdfg.add_edge(s, s1, dace.InterstateEdge("a < b"))
     # sdfg.add_edge(s, s2, dace.InterstateEdge('a >= b'))
-    sdfg.add_edge(s1, s2, dace.InterstateEdge('b > 9'))
-    sdfg.add_edge(s2, s1, dace.InterstateEdge('b < 19'))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge("b > 9"))
+    sdfg.add_edge(s2, s1, dace.InterstateEdge("b < 19"))
     e = sdfg.add_state()
-    sdfg.add_edge(s1, e, dace.InterstateEdge('a < 0'))
-    sdfg.add_edge(s2, e, dace.InterstateEdge('b < 0'))
+    sdfg.add_edge(s1, e, dace.InterstateEdge("a < 0"))
+    sdfg.add_edge(s2, e, dace.InterstateEdge("b < 0"))
 
     # Add a loop following general block
-    sdfg.add_loop_state_machine(e, sdfg.add_state(), None, 'i', '0', 'i < 10', 'i + 1')
+    sdfg.add_loop_state_machine(e, sdfg.add_state(), None, "i", "0", "i < 10", "i + 1")
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
@@ -166,7 +174,7 @@ def test_irreducible_sub_sdfg():
 
 
 def test_irreducible_in_loops():
-    sdfg = dace.SDFG('irreducible')
+    sdfg = dace.SDFG("irreducible")
     # Add a simple chain of two for loops with goto from second to first's body
     s1 = sdfg.add_state_after(sdfg.add_state_after(sdfg.add_state()))
     s2 = sdfg.add_state()
@@ -175,16 +183,16 @@ def test_irreducible_in_loops():
     # Add a loop
     l1 = sdfg.add_state()
     l2 = sdfg.add_state_after(l1)
-    sdfg.add_loop_state_machine(s1, l1, s2, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l2)
+    sdfg.add_loop_state_machine(s1, l1, s2, "i", "0", "i < 10", "i + 1", loop_end_state=l2)
 
     l3 = sdfg.add_state()
     l4 = sdfg.add_state_after(l3)
-    sdfg.add_loop_state_machine(s2, l3, e, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l4)
+    sdfg.add_loop_state_machine(s2, l3, e, "i", "0", "i < 10", "i + 1", loop_end_state=l4)
     # Irreducible part
-    sdfg.add_edge(l3, l1, dace.InterstateEdge('i < 5'))
+    sdfg.add_edge(l3, l1, dace.InterstateEdge("i < 5"))
 
     # Avoiding undefined behavior
-    sdfg.edges_between(l3, l4)[0].data.condition.as_string = 'i >= 5'
+    sdfg.edges_between(l3, l4)[0].data.condition.as_string = "i >= 5"
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
@@ -194,52 +202,52 @@ def test_irreducible_in_loops():
 
 
 def test_reference():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_symbol('n', dace.int32)
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_array('B', [20], dace.float64)
-    sdfg.add_array('C', [20], dace.float64)
-    sdfg.add_reference('ref', [20], dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_symbol("n", dace.int32)
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
+    sdfg.add_array("C", [20], dace.float64)
+    sdfg.add_reference("ref", [20], dace.float64)
 
     init = sdfg.add_state()
     s1 = sdfg.add_state()
     s2 = sdfg.add_state()
     end = sdfg.add_state()
-    sdfg.add_edge(init, s1, dace.InterstateEdge('n > 0'))
-    sdfg.add_edge(init, s2, dace.InterstateEdge('n <= 0'))
+    sdfg.add_edge(init, s1, dace.InterstateEdge("n > 0"))
+    sdfg.add_edge(init, s2, dace.InterstateEdge("n <= 0"))
     sdfg.add_edge(s1, end, dace.InterstateEdge())
     sdfg.add_edge(s2, end, dace.InterstateEdge())
 
-    s1.add_edge(s1.add_access('A'), None, s1.add_access('ref'), 'set', dace.Memlet('A[0:20]'))
-    s2.add_edge(s2.add_access('B'), None, s2.add_access('ref'), 'set', dace.Memlet('B[0:20]'))
-    end.add_nedge(end.add_access('ref'), end.add_access('C'), dace.Memlet('ref[0:20]'))
+    s1.add_edge(s1.add_access("A"), None, s1.add_access("ref"), "set", dace.Memlet("A[0:20]"))
+    s2.add_edge(s2.add_access("B"), None, s2.add_access("ref"), "set", dace.Memlet("B[0:20]"))
+    end.add_nedge(end.add_access("ref"), end.add_access("C"), dace.Memlet("ref[0:20]"))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]
     assert [type(n) for n in nodes] == [tn.IfScope, tn.RefSetNode, tn.ElseScope, tn.RefSetNode, tn.CopyNode]
-    assert nodes[1].as_string() == 'ref = refset to A[0:20]'
-    assert nodes[3].as_string() == 'ref = refset to B[0:20]'
+    assert nodes[1].as_string() == "ref = refset to A[0:20]"
+    assert nodes[3].as_string() == "ref = refset to B[0:20]"
 
 
 def test_code_to_code():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_scalar('scal', dace.int32, transient=True)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_scalar("scal", dace.int32, transient=True)
     state = sdfg.add_state()
-    t1 = state.add_tasklet('a', {}, {'out'}, 'out = 5')
-    t2 = state.add_tasklet('b', {'inp'}, {}, 'print(inp)', side_effects=True)
-    state.add_edge(t1, 'out', t2, 'inp', dace.Memlet('scal'))
+    t1 = state.add_tasklet("a", {}, {"out"}, "out = 5")
+    t2 = state.add_tasklet("b", {"inp"}, {}, "print(inp)", side_effects=True)
+    state.add_edge(t1, "out", t2, "inp", dace.Memlet("scal"))
 
     stree = as_schedule_tree(sdfg)
     assert len(stree.children) == 2
     assert all(isinstance(c, tn.TaskletNode) for c in stree.children)
-    assert stree.children[1].as_string().startswith('tasklet(scal')
+    assert stree.children[1].as_string().startswith("tasklet(scal")
 
 
 def test_dyn_map_range():
     H = dace.symbol()
-    nnz = dace.symbol('nnz')
+    nnz = dace.symbol("nnz")
     W = dace.symbol()
 
     @dace.program
@@ -247,7 +255,7 @@ def test_dyn_map_range():
         b = np.zeros([H], dtype=np.float32)
 
         for i in dace.map[0:H]:
-            for j in dace.map[A_row[i]:A_row[i + 1]]:
+            for j in dace.map[A_row[i] : A_row[i + 1]]:
                 b[i] += A_val[j] * x[A_col[j]]
 
         return b
@@ -264,23 +272,23 @@ def test_dyn_map_range():
 
 
 def test_multiview():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [20, 20], dace.float64)
-    sdfg.add_array('B', [20, 20], dace.float64)
-    sdfg.add_view('Av', [400], dace.float64)
-    sdfg.add_view('Avv', [10, 40], dace.float64)
-    sdfg.add_view('Bv', [400], dace.float64)
-    sdfg.add_view('Bvv', [10, 40], dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20, 20], dace.float64)
+    sdfg.add_array("B", [20, 20], dace.float64)
+    sdfg.add_view("Av", [400], dace.float64)
+    sdfg.add_view("Avv", [10, 40], dace.float64)
+    sdfg.add_view("Bv", [400], dace.float64)
+    sdfg.add_view("Bvv", [10, 40], dace.float64)
     state = sdfg.add_state()
-    av = state.add_access('Av')
-    bv = state.add_access('Bv')
-    bvv = state.add_access('Bvv')
-    avv = state.add_access('Avv')
-    state.add_edge(state.add_read('A'), None, av, None, dace.Memlet('A[0:20, 0:20]'))
-    state.add_edge(av, None, avv, 'views', dace.Memlet('Av[0:400]'))
-    state.add_edge(avv, None, bvv, None, dace.Memlet('Avv[0:10, 0:40]'))
-    state.add_edge(bvv, 'views', bv, None, dace.Memlet('Bv[0:400]'))
-    state.add_edge(bv, 'views', state.add_write('B'), None, dace.Memlet('Bv[0:400]'))
+    av = state.add_access("Av")
+    bv = state.add_access("Bv")
+    bvv = state.add_access("Bvv")
+    avv = state.add_access("Avv")
+    state.add_edge(state.add_read("A"), None, av, None, dace.Memlet("A[0:20, 0:20]"))
+    state.add_edge(av, None, avv, "views", dace.Memlet("Av[0:400]"))
+    state.add_edge(avv, None, bvv, None, dace.Memlet("Avv[0:10, 0:40]"))
+    state.add_edge(bvv, "views", bv, None, dace.Memlet("Bv[0:400]"))
+    state.add_edge(bv, "views", state.add_write("B"), None, dace.Memlet("Bv[0:400]"))
 
     stree = as_schedule_tree(sdfg)
     assert [type(n) for n in stree.children] == [tn.ViewNode, tn.ViewNode, tn.ViewNode, tn.ViewNode, tn.CopyNode]
@@ -291,16 +299,16 @@ def _returning_sdfg(name: str) -> dace.SDFG:
     Creates an SDFG that returns if ``N > 5`` and otherwise writes to ``A[0]``.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_array('A', [1], dace.float64)
-    block = ConditionalBlock('maybe_return')
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [1], dace.float64)
+    block = ConditionalBlock("maybe_return")
     sdfg.add_node(block, is_start_block=True)
-    branch = ControlFlowRegion('return_branch', sdfg=sdfg, parent=block)
-    branch.add_node(ReturnBlock('return'), is_start_block=True)
-    block.add_branch(CodeBlock('N > 5'), branch)
-    state = sdfg.add_state_after(block, 'write')
-    tasklet = state.add_tasklet('write', {}, {'out'}, 'out = 1')
-    state.add_edge(tasklet, 'out', state.add_write('A'), None, dace.Memlet('A[0]'))
+    branch = ControlFlowRegion("return_branch", sdfg=sdfg, parent=block)
+    branch.add_node(ReturnBlock("return"), is_start_block=True)
+    block.add_branch(CodeBlock("N > 5"), branch)
+    state = sdfg.add_state_after(block, "write")
+    tasklet = state.add_tasklet("write", {}, {"out"}, "out = 1")
+    state.add_edge(tasklet, "out", state.add_write("A"), None, dace.Memlet("A[0]"))
     return sdfg
 
 
@@ -309,13 +317,13 @@ def test_nested_sdfg_return_labels():
     Exits of nested SDFGs jump to a unique label at the end of each flattened nested SDFG, whereas exits of the
     top-level SDFG remain exit gotos.
     """
-    sdfg = _returning_sdfg('tester')
-    sdfg.add_array('B', [1], dace.float64)
+    sdfg = _returning_sdfg("tester")
+    sdfg.add_array("B", [1], dace.float64)
     previous = sdfg.sink_nodes()[0]
     for i in range(2):
-        state = sdfg.add_state_after(previous, f'call_{i}')
-        nsdfg = state.add_nested_sdfg(_returning_sdfg(f'nested_{i}'), {}, {'A'}, symbol_mapping={'N': 'N'})
-        state.add_edge(nsdfg, 'A', state.add_write('B'), None, dace.Memlet('B[0]'))
+        state = sdfg.add_state_after(previous, f"call_{i}")
+        nsdfg = state.add_nested_sdfg(_returning_sdfg(f"nested_{i}"), {}, {"A"}, symbol_mapping={"N": "N"})
+        state.add_edge(nsdfg, "A", state.add_write("B"), None, dace.Memlet("B[0]"))
         previous = state
 
     stree = as_schedule_tree(sdfg)
@@ -335,65 +343,65 @@ def test_gblock_labels():
     """
     Every block in a general block is labeled, even if no goto jumps to it, and the start block comes first.
     """
-    sdfg = dace.SDFG('tester')
-    sdfg.add_symbol('N', dace.int64)
-    other = sdfg.add_state('other')
-    start = sdfg.add_state('start', is_start_block=True)
-    loop = LoopRegion('loop', 'i < 3', 'i', 'i = 0', 'i = i + 1')
+    sdfg = dace.SDFG("tester")
+    sdfg.add_symbol("N", dace.int64)
+    other = sdfg.add_state("other")
+    start = sdfg.add_state("start", is_start_block=True)
+    loop = LoopRegion("loop", "i < 3", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop)
-    loop.add_state('body', is_start_block=True)
-    sdfg.add_edge(start, other, dace.InterstateEdge('N > 0'))
-    sdfg.add_edge(start, loop, dace.InterstateEdge('N <= 0'))
+    loop.add_state("body", is_start_block=True)
+    sdfg.add_edge(start, other, dace.InterstateEdge("N > 0"))
+    sdfg.add_edge(start, loop, dace.InterstateEdge("N <= 0"))
 
     stree = as_schedule_tree(sdfg)
     assert len(stree.children) == 1 and isinstance(stree.children[0], tn.GBlock)
     labels = [child.name for child in stree.children[0].children if isinstance(child, tn.StateLabel)]
-    assert labels == ['start', 'other', 'loop']
+    assert labels == ["start", "other", "loop"]
     assert isinstance(stree.children[0].children[0], tn.StateLabel)
 
     gotos = {n.target for n in stree.preorder_traversal() if isinstance(n, tn.GotoNode)}
-    assert gotos == {'other', 'loop'}
+    assert gotos == {"other", "loop"}
 
 
 def test_consume_stream_input():
     """
     The consumed stream of a consume scope is given as a dynamic scope input.
     """
-    sdfg = dace.SDFG('tester')
-    sdfg.add_stream('S', dace.int32, transient=True)
-    sdfg.add_array('A', [1], dace.int32)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_stream("S", dace.int32, transient=True)
+    sdfg.add_array("A", [1], dace.int32)
     state = sdfg.add_state()
-    entry, exit_node = state.add_consume('cons', ('p', '1'))
-    tasklet = state.add_tasklet('pop', {'inp'}, {'out'}, 'out = inp')
-    state.add_edge(state.add_read('S'), None, entry, 'IN_stream', dace.Memlet('S[0]'))
-    state.add_edge(entry, 'OUT_stream', tasklet, 'inp', dace.Memlet('S[0]'))
-    state.add_memlet_path(tasklet, exit_node, state.add_write('A'), src_conn='out', memlet=dace.Memlet('A[0]'))
+    entry, exit_node = state.add_consume("cons", ("p", "1"))
+    tasklet = state.add_tasklet("pop", {"inp"}, {"out"}, "out = inp")
+    state.add_edge(state.add_read("S"), None, entry, "IN_stream", dace.Memlet("S[0]"))
+    state.add_edge(entry, "OUT_stream", tasklet, "inp", dace.Memlet("S[0]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_write("A"), src_conn="out", memlet=dace.Memlet("A[0]"))
 
     stree = as_schedule_tree(sdfg)
     assert [type(n) for n in stree.children] == [tn.DynScopeCopyNode, tn.ConsumeScope]
-    assert stree.children[0].target == 'IN_stream'
-    assert stree.children[0].memlet.data == 'S'
+    assert stree.children[0].target == "IN_stream"
+    assert stree.children[0].memlet.data == "S"
 
 
 def test_named_regions():
     """
     Named regions become named region scopes, whereas function call regions are flattened.
     """
-    sdfg = dace.SDFG('tester')
-    named = NamedRegion('named')
-    call = FunctionCallRegion('call')
+    sdfg = dace.SDFG("tester")
+    named = NamedRegion("named")
+    call = FunctionCallRegion("call")
     sdfg.add_node(named, is_start_block=True)
     sdfg.add_node(call)
     sdfg.add_edge(named, call, dace.InterstateEdge())
-    named.add_state('named_state', is_start_block=True)
-    call.add_state('call_state', is_start_block=True)
+    named.add_state("named_state", is_start_block=True)
+    call.add_state("call_state", is_start_block=True)
 
     stree = as_schedule_tree(sdfg)
     assert [type(n) for n in stree.children] == [tn.NamedRegionScope]
-    assert stree.children[0].label == 'named'
+    assert stree.children[0].label == "named"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_for_in_map_in_for()
     test_libnode()
     test_nesting()

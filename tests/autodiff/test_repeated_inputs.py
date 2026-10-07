@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reverse-mode differentiation of tasklets that read the same array through several connectors (e.g., ``x * x``)."""
+
 import numpy as np
 
 import dace
@@ -22,7 +23,7 @@ def test_square_through_two_connectors():
         loss[0] = np.sum(y)
 
     sdfg = square_sum.to_sdfg(simplify=True)
-    add_backward_pass(sdfg, outputs=['loss'], inputs=['x'])
+    add_backward_pass(sdfg, outputs=["loss"], inputs=["x"])
     x = np.random.rand(N)
     gradient = np.zeros(N)
     sdfg(x=x.copy(), loss=np.zeros(1), gradient_x=gradient, gradient_loss=np.ones(1))
@@ -38,13 +39,13 @@ def test_intermediate_squared():
         loss[0] = np.sum(y * y)
 
     sdfg = squared_intermediate.to_sdfg(simplify=True)
-    add_backward_pass(sdfg, outputs=['loss'], inputs=['x'])
+    add_backward_pass(sdfg, outputs=["loss"], inputs=["x"])
     x = np.random.rand(N)
     gradient = np.zeros(N)
     sdfg(x=x.copy(), loss=np.zeros(1), gradient_x=gradient, gradient_loss=np.ones(1))
     np.testing.assert_allclose(gradient, 2 * np.sin(x) * np.cos(x))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_square_through_two_connectors()
     test_intermediate_squared()

@@ -3,16 +3,17 @@
 Closures, guards, and structured arguments of custom SDFG-convertible objects: arrays that a convertible only reports
 after conversion, guards that invalidate a program's cache, and list/dict arguments.
 """
+
 import numpy as np
 
 import dace
 from dace.frontend.python.common import SDFGConvertible
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 #: Global array that a convertible reads without the program referring to it
-HIDDEN = np.full((5, ), 3.0)
+HIDDEN = np.full((5,), 3.0)
 
 
 class _StructuredSum(SDFGConvertible):
@@ -31,7 +32,7 @@ class _StructuredSum(SDFGConvertible):
         return structured_sum.to_sdfg()
 
     def __sdfg_signature__(self):
-        return ['xs', 'd'], []
+        return ["xs", "d"], []
 
     def __sdfg_closure__(self, reevaluate=None):
         return {}
@@ -54,10 +55,10 @@ class _HiddenGlobal(SDFGConvertible):
         return add_hidden.to_sdfg()
 
     def __sdfg_signature__(self):
-        return ['x'], []
+        return ["x"], []
 
     def __sdfg_closure__(self, reevaluate=None):
-        return {'hidden': HIDDEN}
+        return {"hidden": HIDDEN}
 
 
 class _Guarded(SDFGConvertible):
@@ -78,13 +79,13 @@ class _Guarded(SDFGConvertible):
         return scale.to_sdfg()
 
     def __sdfg_signature__(self):
-        return ['x'], []
+        return ["x"], []
 
     def __sdfg_closure__(self, reevaluate=None):
         return {}
 
     def __sdfg_guards__(self):
-        return {'__test_guarded_factor': lambda: self.factor}
+        return {"__test_guarded_factor": lambda: self.factor}
 
 
 def test_structured_arguments_are_descriptors():
@@ -93,13 +94,13 @@ def test_structured_arguments_are_descriptors():
 
     @dace.program
     def program(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-        return summer([a, b], {'w': c})
+        return summer([a, b], {"w": c})
 
     a, b, c = np.random.rand(7), np.random.rand(7), np.random.rand(7)
     result = program(a, b, c)
     xs, d = summer.received
     assert all(isinstance(x, dace.data.Array) for x in xs)
-    assert list(d.keys()) == ['w'] and isinstance(d['w'], dace.data.Array)
+    assert list(d.keys()) == ["w"] and isinstance(d["w"], dace.data.Array)
     assert np.allclose(result, a + b * c)
 
 
@@ -112,7 +113,7 @@ def test_structured_arguments_with_global_array():
 
     @dace.program
     def program(a, b):
-        return summer((a, b), {'w': WEIGHTS})
+        return summer((a, b), {"w": WEIGHTS})
 
     a, b = np.random.rand(6), np.random.rand(6)
     assert np.allclose(program(a, b), a + b * WEIGHTS)
@@ -134,13 +135,13 @@ def test_closure_array_reported_after_conversion():
     try:
         x = np.random.rand(5)
         assert np.allclose(program(x), x + 15.0)
-        HIDDEN = np.full((5, ), -1.0)  # Same descriptor: re-evaluated, not parsed again
+        HIDDEN = np.full((5,), -1.0)  # Same descriptor: re-evaluated, not parsed again
         assert np.allclose(program(x), x - 5.0)
         assert adder.conversions == 1
-        HIDDEN = np.full((3, ), 2.0)  # New shape
+        HIDDEN = np.full((3,), 2.0)  # New shape
         assert np.allclose(program(x), x + 6.0)
         assert adder.conversions == 2
-        HIDDEN = np.full((4, ), 0.5, dtype=np.float32)  # New dtype
+        HIDDEN = np.full((4,), 0.5, dtype=np.float32)  # New dtype
         assert np.allclose(program(x), x + 2.0)
         assert adder.conversions == 3
     finally:
@@ -164,7 +165,7 @@ def test_guards_invalidate_program_cache():
     assert guarded.conversions == 2
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_structured_arguments_are_descriptors()
     test_structured_arguments_with_global_array()
     test_closure_array_reported_after_conversion()

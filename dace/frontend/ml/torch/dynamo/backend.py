@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The ``dace`` TorchDynamo backend."""
+
 import collections
 import contextlib
 import dataclasses
@@ -30,7 +31,7 @@ from .sources import GraphDescription, describe_graph
 
 #: Dynamo settings for tracing programs that DaCe compiles: ``.item()`` stays in the graph as a data-dependent symbol
 #: (assigned from data in the SDFG) instead of breaking the graph
-CAPTURE_CONFIG = {'capture_scalar_outputs': True}
+CAPTURE_CONFIG = {"capture_scalar_outputs": True}
 
 
 @dataclasses.dataclass
@@ -68,10 +69,10 @@ class DaceBackend:
     def __init__(self, **options):
         self.options = DaceBackendOptions(**options)
         # Configuration defaults for options not given explicitly
-        for key in ('simplify', 'onnx_fallback'):
+        for key in ("simplify", "onnx_fallback"):
             if key not in options:
                 try:
-                    setattr(self.options, key, Config.get_bool('frontend', 'torch_dynamo', key))
+                    setattr(self.options, key, Config.get_bool("frontend", "torch_dynamo", key))
                 except (KeyError, TypeError, ValueError):  # pragma: no cover - missing schema entry
                     pass
         self._decomp_table: Optional[Dict] = None
@@ -113,39 +114,43 @@ class DaceBackend:
             return self._compile_with_dace_autodiff(gm, example_inputs, description)
         # AOTAutograd may compile the backward graph lazily (on the first backward call), after other graphs.
         # Attention is traced with the math kernel, so that its backward consists of operators the frontend lowers.
-        compiler = aot_autograd(fw_compiler=functools.partial(self._compile_forward, description=description),
-                                bw_compiler=functools.partial(self._compile_backward, description=description),
-                                partition_fn=self._partition,
-                                decompositions=self.decomposition_table)
+        compiler = aot_autograd(
+            fw_compiler=functools.partial(self._compile_forward, description=description),
+            bw_compiler=functools.partial(self._compile_backward, description=description),
+            partition_fn=self._partition,
+            decompositions=self.decomposition_table,
+        )
         with sdpa_kernel(SDPBackend.MATH):
             return compiler(gm, example_inputs)
 
     # ------------------------------------------------------------------ compilers
-    def _graph_name(self, gm: torch.fx.GraphModule, suffix: str = '') -> str:
-        base = self.options.sdfg_name or 'dace_dynamo'
+    def _graph_name(self, gm: torch.fx.GraphModule, suffix: str = "") -> str:
+        base = self.options.sdfg_name or "dace_dynamo"
         digest = hashlib.sha1(gm.code.encode()).hexdigest()[:8]
-        name = f'{base}_{suffix}_{digest}' if suffix else f'{base}_{digest}'
+        name = f"{base}_{suffix}_{digest}" if suffix else f"{base}_{digest}"
         n = self._name_counter.get(name, 0)
         self._name_counter[name] = n + 1
-        return name if n == 0 else f'{name}_{n}'
+        return name if n == 0 else f"{name}_{n}"
 
-    def _partition(self, joint: torch.fx.GraphModule, joint_inputs: Any,
-                   **kwargs) -> Tuple[torch.fx.GraphModule, torch.fx.GraphModule]:
+    def _partition(
+        self, joint: torch.fx.GraphModule, joint_inputs: Any, **kwargs
+    ) -> Tuple[torch.fx.GraphModule, torch.fx.GraphModule]:
         """AOTAutograd's partition function: partitions the joint graph and records it for joint compilation."""
         forward, backward = (self.options.partitioner or default_partition)(joint, joint_inputs, **kwargs)
         if self.options.joint:
-            plan = jt.plan_from_partition(joint, forward, backward, kwargs['num_fwd_outputs'])
+            plan = jt.plan_from_partition(joint, forward, backward, kwargs["num_fwd_outputs"])
             if plan is None:
-                warnings.warn('The partitioned training graph cannot be compiled jointly; compiling the forward and '
-                              'backward graphs separately')
+                warnings.warn(
+                    "The partitioned training graph cannot be compiled jointly; compiling the forward and "
+                    "backward graphs separately"
+                )
             else:
                 self._joint_plans[forward.code].append(plan)
         return forward, backward
 
-    def _compile_forward(self,
-                         gm: torch.fx.GraphModule,
-                         example_inputs: List[Any],
-                         description: Optional[GraphDescription] = None) -> Callable:
+    def _compile_forward(
+        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: Optional[GraphDescription] = None
+    ) -> Callable:
         description = description or self.last_description
         input_names = description.input_names() if len(description.inputs) == len(example_inputs) else None
         plans = self._joint_plans.get(gm.code)
@@ -153,36 +158,50 @@ class DaceBackend:
             try:
                 return self._compile_joint(plans.popleft(), self._graph_name(gm), description.symbol_names, input_names)
             except UnsupportedOpError as ex:
-                warnings.warn(f'Compiling the forward and backward graphs separately: {ex}')
+                warnings.warn(f"Compiling the forward and backward graphs separately: {ex}")
         return self._compile_graph(gm, example_inputs, self._graph_name(gm), description.symbol_names, input_names)
 
-    def _compile_backward(self,
-                          gm: torch.fx.GraphModule,
-                          example_inputs: List[Any],
-                          description: Optional[GraphDescription] = None) -> Callable:
+    def _compile_backward(
+        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: Optional[GraphDescription] = None
+    ) -> Callable:
         compiled = self._joint_backward.get(gm.code)
         if compiled:  # The backward phase of a joint SDFG
             return compiled.popleft()
         # The inputs of a backward graph are saved values and output gradients, which have no user-facing names
         description = description or self.last_description
-        return self._compile_graph(gm, example_inputs, self._graph_name(gm, 'backward'), description.symbol_names, None)
+        return self._compile_graph(gm, example_inputs, self._graph_name(gm, "backward"), description.symbol_names, None)
 
-    def _compile_joint(self, plan: jt.JointPlan, name: str, symbol_names: Dict[str, str],
-                       input_names: Optional[List[Optional[str]]]) -> Callable:
+    def _compile_joint(
+        self, plan: jt.JointPlan, name: str, symbol_names: Dict[str, str], input_names: Optional[List[Optional[str]]]
+    ) -> Callable:
         """Compiles a training graph into one SDFG; returns its forward phase and keeps its backward phase."""
         if self.options.print_ops:
             _print_op_histogram(plan.joint)
         result = GraphImporter(self.options).import_joint(plan, name, symbol_names, input_names)
         csdfg = self._compile_sdfg(result.sdfg)
         self.last_result = result
-        backward = CompiledGraph(csdfg, result.backward.inputs, result.backward.outputs,
-                                 _phase_arguments(result.sdfg, result.backward, result.forward))
+        backward = CompiledGraph(
+            csdfg,
+            result.backward.inputs,
+            result.backward.outputs,
+            _phase_arguments(result.sdfg, result.backward, result.forward),
+        )
         self._joint_backward[plan.backward.code].append(backward)
-        return CompiledGraph(csdfg, result.forward.inputs, result.forward.outputs,
-                             _phase_arguments(result.sdfg, result.forward, result.backward))
+        return CompiledGraph(
+            csdfg,
+            result.forward.inputs,
+            result.forward.outputs,
+            _phase_arguments(result.sdfg, result.forward, result.backward),
+        )
 
-    def _compile_graph(self, gm: torch.fx.GraphModule, example_inputs: List[Any], name: str,
-                       symbol_names: Dict[str, str], input_names: Optional[List[Optional[str]]]) -> Callable:
+    def _compile_graph(
+        self,
+        gm: torch.fx.GraphModule,
+        example_inputs: List[Any],
+        name: str,
+        symbol_names: Dict[str, str],
+        input_names: Optional[List[Optional[str]]],
+    ) -> Callable:
         if self.options.print_ops:
             _print_op_histogram(gm)
         importer = GraphImporter(self.options)
@@ -191,8 +210,9 @@ class DaceBackend:
         self.last_result = result
         return CompiledGraph(csdfg, result.inputs, result.outputs)
 
-    def _compile_with_dace_autodiff(self, gm: torch.fx.GraphModule, example_inputs: List[Any],
-                                    description: GraphDescription) -> Callable:
+    def _compile_with_dace_autodiff(
+        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: GraphDescription
+    ) -> Callable:
         """
         Compiles a training graph into a forward and a backward SDFG with DaCe's automatic differentiation (instead of
         AOTAutograd's backward graph), and returns a function that records them for PyTorch's autograd.
@@ -209,25 +229,25 @@ class DaceBackend:
         aten_gm, aten_inputs = graphs[0]
         input_names = description.input_names() if len(description.inputs) == len(aten_inputs) else None
         name = self._graph_name(aten_gm)
-        result = GraphImporter(self.options).import_graph(aten_gm,
-                                                          aten_inputs,
-                                                          name,
-                                                          symbol_names=description.symbol_names,
-                                                          input_names=input_names)
+        result = GraphImporter(self.options).import_graph(
+            aten_gm, aten_inputs, name, symbol_names=description.symbol_names, input_names=input_names
+        )
         self.last_result = result
-        if any(spec.kind != 'tensor' for spec in result.outputs):
-            raise UnsupportedOpError('autodiff', 'the graph returns values other than new tensors')
+        if any(spec.kind != "tensor" for spec in result.outputs):
+            raise UnsupportedOpError("autodiff", "the graph returns values other than new tensors")
         outputs = [spec.name for spec in result.outputs]
         differentiated = [
-            spec.name for spec in result.inputs if spec.kind == 'tensor'
-            and isinstance(example_inputs[spec.position], torch.Tensor) and example_inputs[spec.position].requires_grad
+            spec.name
+            for spec in result.inputs
+            if spec.kind == "tensor"
+            and isinstance(example_inputs[spec.position], torch.Tensor)
+            and example_inputs[spec.position].requires_grad
         ]
         # One SDFG with a forward and a backward phase; the forward phase records what the backward phase reads,
         # including the decisions of the captured control flow, on a tape
-        two_phase = make_two_phase_backward_pass(result.sdfg,
-                                                 outputs=outputs,
-                                                 inputs=differentiated,
-                                                 phase=jt.PHASE_SYMBOL)
+        two_phase = make_two_phase_backward_pass(
+            result.sdfg, outputs=outputs, inputs=differentiated, phase=jt.PHASE_SYMBOL
+        )
         compiled = CompiledTwoPhase(self._compile_sdfg(two_phase.sdfg), two_phase, outputs, differentiated)
         return DifferentiableGraph(compiled, result.inputs, result.outputs)
 
@@ -235,9 +255,10 @@ class DaceBackend:
         self.last_sdfg = sdfg
         if self.options.save_sdfg:
             os.makedirs(self.options.save_sdfg, exist_ok=True)
-            sdfg.save(os.path.join(self.options.save_sdfg, sdfg.name + '.sdfgz'))
+            sdfg.save(os.path.join(self.options.save_sdfg, sdfg.name + ".sdfgz"))
         if self.options.auto_optimize:
             from dace.transformation.auto import auto_optimize as aopt  # Deferred: imports the transformation library
+
             aopt.auto_optimize(sdfg, sdfg_device(sdfg))
         csdfg = sdfg.compile()
         self.compile_count += 1
@@ -246,7 +267,7 @@ class DaceBackend:
 
 def _has_captured_control_flow(gm: torch.fx.GraphModule) -> bool:
     # By name: the operator is only registered once control-flow capture (``cfg``) is imported
-    return any(node.op == 'call_function' and str(node.target) == 'dace.cfg.default' for node in gm.graph.nodes)
+    return any(node.op == "call_function" and str(node.target) == "dace.cfg.default" for node in gm.graph.nodes)
 
 
 def _requires_gradients(example_inputs: List[Any]) -> bool:
@@ -258,10 +279,10 @@ def _phase_arguments(sdfg, interface: PhaseInterface, other: PhaseInterface) -> 
     The arguments of a joint SDFG that one phase does not get from its caller: the phase itself, ``None`` for the
     arrays of the other phase, and a placeholder value for the symbols only the other phase defines (and uses).
     """
-    given = {spec.name
-             for spec in interface.inputs} | {spec.name
-                                              for spec in interface.outputs if spec.kind == 'tensor'}
-    other_symbols = {spec.name for spec in other.inputs if spec.kind == 'sym'}
+    given = {spec.name for spec in interface.inputs} | {
+        spec.name for spec in interface.outputs if spec.kind == "tensor"
+    }
+    other_symbols = {spec.name for spec in other.inputs if spec.kind == "sym"}
     arguments: Dict[str, Any] = {jt.PHASE_SYMBOL: interface.phase}
     for name, desc in sdfg.arglist().items():
         if name in given or name in arguments:
@@ -283,11 +304,11 @@ def sdfg_device(sdfg):
 def _print_op_histogram(gm: torch.fx.GraphModule) -> None:
     hist = Counter()
     for node in gm.graph.nodes:
-        if node.op == 'call_function':
+        if node.op == "call_function":
             hist[str(node.target)] += 1
-    print('Operator histogram:')
+    print("Operator histogram:")
     for op, count in sorted(hist.items()):
-        print(f'  {count:5d}  {op}')
+        print(f"  {count:5d}  {op}")
 
 
 #: Default backend instance, registered with Dynamo under the name ``'dace'``.
@@ -295,6 +316,7 @@ dace_backend = DaceBackend()
 
 try:
     from torch._dynamo import register_backend as _register_backend
-    _register_backend(compiler_fn=dace_backend, name='dace')
+
+    _register_backend(compiler_fn=dace_backend, name="dace")
 except Exception:  # pragma: no cover - registration is best-effort (e.g., already registered via entry point)
     pass

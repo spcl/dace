@@ -21,18 +21,20 @@ Named dimensions are marked with ``torch._dynamo.mark_dynamic`` (an error is rai
 constrains them to be equal (for instance by using both in one operation); otherwise the second one is suffixed and a
 warning is emitted, because ``torch.compile`` cannot impose the equality from the outside (``torch.export`` can).
 """
+
 import dataclasses
 import inspect
 from typing import Any, Callable, List, Optional
 
 import torch
 
-ALL = 'all'
+ALL = "all"
 
 
 @dataclasses.dataclass
 class DimSpec:
     """One symbolic dimension requested by the user."""
+
     name: Optional[str] = None  #: DaCe symbol name (``None``: keep Dynamo's name)
     min: Optional[int] = None
     max: Optional[int] = None
@@ -41,22 +43,26 @@ class DimSpec:
 
 def _is_export_dim(entry: Any) -> bool:
     from torch.export.dynamic_shapes import Dim
+
     return isinstance(entry, Dim)
 
 
 def _is_derived_dim(entry: Any) -> bool:
     from torch.export.dynamic_shapes import _DerivedDim
+
     return isinstance(entry, _DerivedDim)
 
 
 def _is_static_dim(entry: Any) -> bool:
     from torch.export.dynamic_shapes import _StaticDim
+
     return isinstance(entry, _StaticDim)
 
 
 def _dim_hint_type(entry: Any) -> Optional[str]:
     """Returns 'AUTO', 'DYNAMIC' or 'STATIC' for ``torch.export.Dim.AUTO`` etc., ``None`` otherwise."""
     from torch.export.dynamic_shapes import _DimHint
+
     if isinstance(entry, _DimHint):
         return entry.type.name
     return None
@@ -78,8 +84,8 @@ def parse_dim(entry: Any) -> Optional[DimSpec]:
         # Derived dims (e.g. 2*batch) have a root but no name of their own: keep them anonymous
         if _is_derived_dim(entry):
             return DimSpec()
-        mn = getattr(entry, 'min', None)
-        mx = getattr(entry, 'max', None)
+        mn = getattr(entry, "min", None)
+        mx = getattr(entry, "max", None)
         # torch uses 0/2 and sys.maxsize-like sentinels for unbounded dims; pass only explicit bounds
         if mn is not None and mn <= 0:
             mn = None
@@ -87,11 +93,11 @@ def parse_dim(entry: Any) -> Optional[DimSpec]:
             mx = None
         return DimSpec(name=entry.__name__, min=mn, max=mx)
     hint = _dim_hint_type(entry)
-    if hint == 'STATIC':
+    if hint == "STATIC":
         return None
-    if hint in ('AUTO', 'DYNAMIC'):
-        return DimSpec(min=getattr(entry, 'min', None), max=getattr(entry, 'max', None), strict=(hint == 'DYNAMIC'))
-    raise TypeError(f'Unsupported dynamic_shapes entry {entry!r}')
+    if hint in ("AUTO", "DYNAMIC"):
+        return DimSpec(min=getattr(entry, "min", None), max=getattr(entry, "max", None), strict=(hint == "DYNAMIC"))
+    raise TypeError(f"Unsupported dynamic_shapes entry {entry!r}")
 
 
 def normalize(spec: Any, signature: inspect.Signature) -> Any:
@@ -110,14 +116,16 @@ def normalize(spec: Any, signature: inspect.Signature) -> Any:
         names = {p.name for p in params}
         unknown = set(spec) - names
         if unknown:
-            raise ValueError(f'dynamic_shapes refers to unknown argument(s) {sorted(unknown)}; '
-                             f'available: {sorted(names)}')
+            raise ValueError(
+                f"dynamic_shapes refers to unknown argument(s) {sorted(unknown)}; available: {sorted(names)}"
+            )
         return dict(spec)
     if isinstance(spec, (list, tuple)):
         positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
         if len(spec) > len(positional):
-            raise ValueError(f'dynamic_shapes has {len(spec)} entries but the function takes {len(positional)} '
-                             'positional arguments')
+            raise ValueError(
+                f"dynamic_shapes has {len(spec)} entries but the function takes {len(positional)} positional arguments"
+            )
         return {p.name: s for p, s in zip(positional, spec)}
     raise TypeError(f'dynamic_shapes must be "all", a dict, or a sequence, not {type(spec).__name__}')
 
@@ -151,11 +159,11 @@ def dim_specs(spec: Any, ndim: int) -> List[Optional[DimSpec]]:
         return [parse_dim(spec.get(i)) for i in range(ndim)]
     if isinstance(spec, (list, tuple)):
         if len(spec) != ndim:
-            raise ValueError(f'dynamic_shapes entry has {len(spec)} dimensions, tensor has {ndim}')
+            raise ValueError(f"dynamic_shapes entry has {len(spec)} dimensions, tensor has {ndim}")
         return [parse_dim(s) for s in spec]
     if isinstance(spec, str) or _is_export_dim(spec) or _dim_hint_type(spec) is not None:
-        raise TypeError('A tensor entry of dynamic_shapes must be a dict {dim: name} or a per-dimension sequence')
-    raise TypeError(f'Unsupported dynamic_shapes entry {spec!r}')
+        raise TypeError("A tensor entry of dynamic_shapes must be a dict {dim: name} or a per-dimension sequence")
+    raise TypeError(f"Unsupported dynamic_shapes entry {spec!r}")
 
 
 # ---------------------------------------------------------------------------------------------- marking arguments

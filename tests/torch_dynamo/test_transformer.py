@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Views, reductions, normalization/softmax decompositions, attention, and a transformer encoder block."""
+
 import math
 
 import pytest
@@ -14,14 +15,16 @@ from dace.frontend.ml.torch.dynamo import DaceBackend  # noqa: E402
 
 
 def _check(backend, fn, inputs_per_shape, expected_compiles=1, rtol=1e-4, atol=1e-4, **compile_kwargs):
-    compile_kwargs.setdefault('dynamic', True)
+    compile_kwargs.setdefault("dynamic", True)
     compiled = torch.compile(fn, backend=backend, **compile_kwargs)
     with torch.no_grad():
         for inputs in inputs_per_shape:
             ref = fn(*inputs)
             out = compiled(*inputs)
             torch.testing.assert_close(out, ref, rtol=rtol, atol=atol)
-    assert backend.compile_count == expected_compiles, f'expected {expected_compiles} compilation(s), got {backend.compile_count}'
+    assert backend.compile_count == expected_compiles, (
+        f"expected {expected_compiles} compilation(s), got {backend.compile_count}"
+    )
     return compiled
 
 
@@ -35,7 +38,7 @@ def test_views_and_slices(backend):
         d = torch.cat([x, x * 2], dim=1)
         return b.sum() + c.sum() + d.sum() + x.permute(2, 0, 1)[0].sum() + x[:, ::2].sum()
 
-    _check(backend, f, [(torch.randn(4, 6, 5), ), (torch.randn(3, 8, 5), )])
+    _check(backend, f, [(torch.randn(4, 6, 5),), (torch.randn(3, 8, 5),)])
 
 
 @pytest.mark.torch
@@ -45,7 +48,7 @@ def test_softmax_layernorm(backend):
     def f(x):
         return F.softmax(ln(x), dim=-1) + F.log_softmax(x, dim=1)
 
-    _check(backend, f, [(torch.randn(4, 16), ), (torch.randn(9, 16), )])
+    _check(backend, f, [(torch.randn(4, 16),), (torch.randn(9, 16),)])
 
 
 @pytest.mark.torch
@@ -69,7 +72,6 @@ def test_scaled_dot_product_attention(backend):
 
 
 class EncoderBlock(nn.Module):
-
     def __init__(self, d_model=32, heads=4, d_ff=64):
         super().__init__()
         self.heads = heads
@@ -98,15 +100,23 @@ class EncoderBlock(nn.Module):
 def test_transformer_block(backend):
     torch.manual_seed(0)
     model = EncoderBlock().eval()
-    _check(backend,
-           model, [(torch.randn(2, 5, 32), ), (torch.randn(3, 9, 32), ), (torch.randn(4, 4, 32), )],
-           rtol=1e-3,
-           atol=1e-4)
+    _check(
+        backend,
+        model,
+        [(torch.randn(2, 5, 32),), (torch.randn(3, 9, 32),), (torch.randn(4, 4, 32),)],
+        rtol=1e-3,
+        atol=1e-4,
+    )
 
 
-if __name__ == '__main__':
-    for test in (test_views_and_slices, test_softmax_layernorm, test_bmm_and_broadcast_matmul,
-                 test_scaled_dot_product_attention, test_transformer_block):
+if __name__ == "__main__":
+    for test in (
+        test_views_and_slices,
+        test_softmax_layernorm,
+        test_bmm_and_broadcast_matmul,
+        test_scaled_dot_product_attention,
+        test_transformer_block,
+    ):
         torch._dynamo.reset()
         test(DaceBackend())
-        print(test.__name__, 'ok')
+        print(test.__name__, "ok")

@@ -18,7 +18,7 @@ import torch.nn as nn
 import dace
 import dace.ml
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 torch.manual_seed(0)
 model = nn.Sequential(nn.Linear(8, 8), nn.Tanh())  # Applied repeatedly: a tiny recurrent refinement
@@ -44,11 +44,11 @@ def make_batch(size: int):
     return x, y
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--steps', type=int, default=200)
-    parser.add_argument('--refinements', type=int, default=2)
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument("--steps", type=int, default=200)
+    parser.add_argument("--refinements", type=int, default=2)
+    parser.add_argument("--lr", type=float, default=0.01)
     args = parser.parse_args()
 
     step_fn = dace.ml.training_step(loss_program)
@@ -60,6 +60,6 @@ if __name__ == '__main__':
         loss = step_fn(x, y, args.refinements)  # Loss and gradients in one call
         optimizer.step()
         if step % 50 == 0 or step == args.steps - 1:
-            print(f'step {step:4d}  loss {loss.item():.4f}')
+            print(f"step {step:4d}  loss {loss.item():.4f}")
 
-    print(f'SDFGs compiled: {step_fn.compile_count}')
+    print(f"SDFGs compiled: {step_fn.compile_count}")

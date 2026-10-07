@@ -6,6 +6,7 @@ EXPERIMENTAL: capture of data-dependent Python control flow for the ``dace`` Tor
 on tensor data, captures the rest of the frame as a control-flow graph of traced blocks (instead of graph-breaking) and
 passes it to the DaCe importer through the opaque operator ``dace::cfg``.
 """
+
 from .blocks import ControlFlowBackend
 
-__all__ = ['ControlFlowBackend']
+__all__ = ["ControlFlowBackend"]

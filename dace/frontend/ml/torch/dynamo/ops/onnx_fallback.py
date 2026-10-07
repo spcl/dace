@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lazy fallback to ``dace.libraries.onnx`` pure expansions for operators without a native lowering."""
+
 from typing import Callable, Optional
 
 

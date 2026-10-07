@@ -5,6 +5,7 @@ Capture of data-dependent Python control flow as a control-flow graph of traced 
 The tests are semantic (outputs match eager PyTorch for inputs that take different paths), so they hold for every
 bytecode layout CPython 3.10-3.14 produces for the same Python code.
 """
+
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -23,10 +24,10 @@ def _check(fn, inputs, expect_capture=True, expected_compiles=1, **options):
     compiled = torch.compile(fn, backend=backend, dynamic=True)
     with torch.no_grad():
         for args in inputs:
-            args = args if isinstance(args, tuple) else (args, )
+            args = args if isinstance(args, tuple) else (args,)
             torch.testing.assert_close(compiled(*args), fn(*args), rtol=1e-5, atol=1e-5)
     if expect_capture:
-        assert 'cfg' in backend.kinds(), backend.events
+        assert "cfg" in backend.kinds(), backend.events
         assert backend.compile_count == expected_compiles, backend.events
     return backend
 
@@ -57,7 +58,7 @@ def test_if_without_else_and_elif():
             y = y - 4
         return y
 
-    _check(f, [torch.full((3, ), 0.9), torch.full((4, ), 0.3), torch.full((2, ), 0.0), torch.rand(5)])
+    _check(f, [torch.full((3,), 0.9), torch.full((4,), 0.3), torch.full((2,), 0.0), torch.rand(5)])
 
 
 @pytest.mark.torch
@@ -74,7 +75,7 @@ def test_while_with_break_and_continue():
             y = y + 1
         return y
 
-    _check(f, [torch.rand(4), torch.full((3, ), 20.0), torch.full((2, ), 0.1), torch.full((5, ), 1000.0)])
+    _check(f, [torch.rand(4), torch.full((3,), 20.0), torch.full((2,), 0.1), torch.full((5,), 1000.0)])
 
 
 @pytest.mark.torch
@@ -91,7 +92,7 @@ def test_while_else():
             y = y + 0.5
         return y
 
-    _check(f, [torch.rand(3), torch.full((2, ), 14.0), torch.full((4, ), 100.0)])
+    _check(f, [torch.rand(3), torch.full((2,), 14.0), torch.full((4,), 100.0)])
 
 
 @pytest.mark.torch
@@ -108,7 +109,7 @@ def test_nested_loops_and_early_return():
             y = y + z
         return y
 
-    _check(f, [torch.rand(3) + 0.5, torch.full((2, ), 9.5), torch.full((4, ), 300.0)])
+    _check(f, [torch.rand(3) + 0.5, torch.full((2,), 9.5), torch.full((4,), 300.0)])
 
 
 @pytest.mark.torch
@@ -132,8 +133,8 @@ def test_sequential_ifs_are_linear():
         return y
 
     backend = _check(f, [torch.randn(4) for _ in range(6)])
-    blocks = int(next(detail for kind, _, detail in backend.events if kind == 'cfg').split()[0])
-    assert blocks <= 4 * 6, f'{blocks} blocks for 6 sequential conditionals'
+    blocks = int(next(detail for kind, _, detail in backend.events if kind == "cfg").split()[0])
+    assert blocks <= 4 * 6, f"{blocks} blocks for 6 sequential conditionals"
 
 
 class _Gated(nn.Module):
@@ -224,13 +225,14 @@ def test_while_true_break():
                 break
         return acc + 1
 
-    _check(f, [torch.rand(3), torch.full((2, ), 60.0)])
+    _check(f, [torch.rand(3), torch.full((2,), 60.0)])
 
 
 @pytest.mark.torch
 def test_stock_backend_unaffected():
     """The handlers are only active for ControlFlowBackend: the stock DaceBackend still graph-breaks."""
     from dace.frontend.ml.torch.dynamo import DaceBackend
+
     ControlFlowBackend()  # Installs the handlers
 
     def f(x):
@@ -239,7 +241,7 @@ def test_stock_backend_unaffected():
         return x - 1
 
     compiled = torch.compile(f, backend=DaceBackend(), dynamic=True, fullgraph=True)
-    with pytest.raises(Exception, match='Data-dependent branching'):
+    with pytest.raises(Exception, match="Data-dependent branching"):
         compiled(torch.rand(3, 4))
 
 
@@ -292,7 +294,7 @@ def test_for_else():
             y = y - 100
         return y
 
-    _check(f, [torch.rand(3), torch.full((2, ), 20.0)])
+    _check(f, [torch.rand(3), torch.full((2,), 20.0)])
 
 
 @pytest.mark.torch
@@ -354,7 +356,6 @@ def test_nested_loops_with_while():
 
 
 class _Stack(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.layers = nn.ModuleList([nn.Linear(4, 4) for _ in range(3)])
@@ -389,7 +390,7 @@ def test_match_on_bool_of_tensor_falls_back():
                 return x - 1
 
     backend = _check(f, [torch.rand(3), -torch.rand(3)], expect_capture=False)
-    assert 'cfg' not in backend.kinds()
+    assert "cfg" not in backend.kinds()
 
 
 @pytest.mark.torch
@@ -405,7 +406,7 @@ def test_symbolic_branches_opt_in():
 
     inputs = [torch.randn(6, 2), torch.randn(3, 2), torch.randn(8, 2)]
     backend = _check(f, inputs, expect_capture=False)
-    assert 'cfg' not in backend.kinds() and backend.compile_count == 2
+    assert "cfg" not in backend.kinds() and backend.compile_count == 2
     _check(f, inputs, symbolic_branches=True)
 
 
@@ -454,7 +455,6 @@ def test_branch_on_item():
 
 
 class _Branching(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.fc = nn.Linear(4, 4)
@@ -494,7 +494,7 @@ def test_training_through_captured_branch():
             torch.testing.assert_close(p.grad, expected, rtol=1e-4, atol=1e-5, msg=name)
         model.zero_grad()
         reference.zero_grad()
-    assert 'cfg' in backend.kinds() and backend.compile_count == 1
+    assert "cfg" in backend.kinds() and backend.compile_count == 1
 
 
 @pytest.mark.torch
@@ -519,7 +519,6 @@ def test_training_interleaved_calls_keep_their_branches():
 
 
 class _Recurrent(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.fc = nn.Linear(3, 3)
@@ -551,10 +550,10 @@ def test_training_through_captured_loop():
             torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-4, atol=1e-5, msg=name)
         model.zero_grad()
         reference.zero_grad()
-    assert 'cfg' in backend.kinds() and backend.compile_count == 1
+    assert "cfg" in backend.kinds() and backend.compile_count == 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_if_else()
     test_if_without_else_and_elif()
     test_while_with_break_and_continue()

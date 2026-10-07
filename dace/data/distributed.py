@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" A module that contains type definitions for distributed SDFGs. """
+"""A module that contains type definitions for distributed SDFGs."""
+
 import copy
 from numbers import Integral
 from typing import Sequence, Set, Union
@@ -27,10 +28,10 @@ class DistributedDescriptor(Data):
         return type(self) is type(other) and self == other
 
     def as_arg(self, with_types=True, for_call=False, name=None):
-        raise TypeError(f'{type(self).__name__} descriptors are not SDFG call arguments')
+        raise TypeError(f"{type(self).__name__} descriptors are not SDFG call arguments")
 
     def as_python_arg(self, with_types=True, for_call=False, name=None):
-        raise TypeError(f'{type(self).__name__} descriptors are not Python call arguments')
+        raise TypeError(f"{type(self).__name__} descriptors are not Python call arguments")
 
     # A communicator descriptor allocates nothing.
     @property
@@ -82,31 +83,38 @@ class ProcessGrid(DistributedDescriptor):
 
     name = Property(dtype=str, desc="The process-grid's name.")
     is_subgrid = Property(dtype=bool, default=False, desc="If true, spawns sub-grids out of the parent process-grid.")
-    parent_grid = Property(dtype=str,
-                           allow_none=True,
-                           default=None,
-                           desc="Name of the parent process-grid "
-                           "(mandatory if `is_subgrid` is true, otherwise ignored).")
-    color = ListProperty(int,
-                         allow_none=True,
-                         default=None,
-                         desc="The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is "
-                         "dropped (mandatory if `is_subgrid` is true, otherwise ignored).")
-    exact_grid = SymbolicProperty(allow_none=True,
-                                  default=None,
-                                  desc="If set then, out of all the sub-grids created, only the one that contains the "
-                                  "rank with id `exact_grid` will be utilized for collective communication "
-                                  "(optional if `is_subgrid` is true, otherwise ignored).")
+    parent_grid = Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Name of the parent process-grid (mandatory if `is_subgrid` is true, otherwise ignored).",
+    )
+    color = ListProperty(
+        int,
+        allow_none=True,
+        default=None,
+        desc="The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is "
+        "dropped (mandatory if `is_subgrid` is true, otherwise ignored).",
+    )
+    exact_grid = SymbolicProperty(
+        allow_none=True,
+        default=None,
+        desc="If set then, out of all the sub-grids created, only the one that contains the "
+        "rank with id `exact_grid` will be utilized for collective communication "
+        "(optional if `is_subgrid` is true, otherwise ignored).",
+    )
     root = SymbolicProperty(default=0, desc="The root rank for collective communication.")
 
-    def __init__(self,
-                 name: str,
-                 is_subgrid: bool,
-                 shape: ShapeType = None,
-                 parent_grid: str = None,
-                 color: Sequence[Union[Integral, bool]] = None,
-                 exact_grid: RankType = None,
-                 root: RankType = 0):
+    def __init__(
+        self,
+        name: str,
+        is_subgrid: bool,
+        shape: ShapeType = None,
+        parent_grid: str = None,
+        color: Sequence[Union[Integral, bool]] = None,
+        exact_grid: RankType = None,
+        root: RankType = 0,
+    ):
         self.name = name
         self.is_subgrid = is_subgrid
         if is_subgrid:
@@ -123,12 +131,19 @@ class ProcessGrid(DistributedDescriptor):
             self.exact_grid = None
             shape = shape or []
         self.root = root
-        super().__init__(dtypes.opaque('MPI_Comm'), shape, True, dtypes.StorageType.Default, None,
-                         dtypes.AllocationLifetime.Persistent, None)
+        super().__init__(
+            dtypes.opaque("MPI_Comm"),
+            shape,
+            True,
+            dtypes.StorageType.Default,
+            None,
+            dtypes.AllocationLifetime.Persistent,
+            None,
+        )
 
     def validate(self):
-        """ Validate the correctness of this object.
-            Raises an exception on error. """
+        """Validate the correctness of this object.
+        Raises an exception on error."""
         self._validate()
 
     # Validation of this class is in a separate function, so that this
@@ -137,12 +152,13 @@ class ProcessGrid(DistributedDescriptor):
     def _validate(self):
         if self.is_subgrid:
             if not self.parent_grid or len(self.parent_grid) == 0:
-                raise ValueError('Sub-grid misses its corresponding parent process-grid')
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
-               for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values or symbols')
+                raise ValueError("Sub-grid misses its corresponding parent process-grid")
+        if any(
+            not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape
+        ):
+            raise TypeError("Shape must be a list or tuple of integer values or symbols")
         if self.color and any(c < 0 or c > 1 for c in self.color):
-            raise ValueError('Color must have only logical true (1) or false (0) values.')
+            raise ValueError("Color must have only logical true (1) or false (0) values.")
         return True
 
     def to_json(self):
@@ -153,9 +169,9 @@ class ProcessGrid(DistributedDescriptor):
     @classmethod
     def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = cls('tmp', False, [])
+        ret = cls("tmp", False, [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
-        ret.dtype = dtypes.opaque('MPI_Comm')
+        ret.dtype = dtypes.opaque("MPI_Comm")
         ret.transient = True
         ret.lifetime = dtypes.AllocationLifetime.Persistent
         # Check validity now
@@ -163,19 +179,19 @@ class ProcessGrid(DistributedDescriptor):
         return ret
 
     def init_code(self):
-        """ Outputs MPI allocation/initialization code for the process-grid.
-            It is assumed that the following variables exist in the SDFG program's state:
-            - MPI_Comm {self.name}
-            - MPI_Group {self.name}_group
-            - int {self.name}_rank
-            - int {self.name}_size
-            - int* {self.name}_dims
-            - int* {self.name}_remain
-            - int* {self.name}_coords
-            - bool {self.name})_valid
+        """Outputs MPI allocation/initialization code for the process-grid.
+        It is assumed that the following variables exist in the SDFG program's state:
+        - MPI_Comm {self.name}
+        - MPI_Group {self.name}_group
+        - int {self.name}_rank
+        - int {self.name}_size
+        - int* {self.name}_dims
+        - int* {self.name}_remain
+        - int* {self.name}_coords
+        - bool {self.name})_valid
 
-            These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
-            more details, check the DaCe MPI library in `dace/libraries/mpi`).
+        These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
+        more details, check the DaCe MPI library in `dace/libraries/mpi`).
 
         """
         if self.is_subgrid:
@@ -185,7 +201,7 @@ class ProcessGrid(DistributedDescriptor):
             tmp += f"""
                 __state->{self.name}_valid = false;
                 if (__state->{self.parent_grid}_valid) {{
-                    int {self.name}_remain[{len(self.color)}] = {{{', '.join(['1' if c else '0' for c in self.color])}}};
+                    int {self.name}_remain[{len(self.color)}] = {{{", ".join(["1" if c else "0" for c in self.color])}}};
                     MPI_Cart_sub(__state->{self.parent_grid}, {self.name}_remain, &__state->{self.name});
                     MPI_Comm_group(__state->{self.name}, &__state->{self.name}_group);
                     MPI_Comm_rank(__state->{self.name}, &__state->{self.name}_rank);
@@ -229,7 +245,7 @@ class ProcessGrid(DistributedDescriptor):
             return tmp
 
     def exit_code(self):
-        """ Outputs MPI deallocation code for the process-grid. """
+        """Outputs MPI deallocation code for the process-grid."""
         return f"""
             if (__state->{self.name}_valid) {{
                 MPI_Group_free(&__state->{self.name}_group);
@@ -257,55 +273,58 @@ class SubArray(DistributedDescriptor):
 
     name = Property(dtype=str, desc="The type's name.")
     subshape = ShapeProperty(default=[], desc="The sub-array's shape.")
-    pgrid = Property(dtype=str,
-                     allow_none=True,
-                     default=None,
-                     desc="Name of the process-grid where the data are distributed.")
-    correspondence = ListProperty(int,
-                                  allow_none=True,
-                                  default=None,
-                                  desc="Correspondence of the array's indices to the process grid's "
-                                  "indices.")
+    pgrid = Property(
+        dtype=str, allow_none=True, default=None, desc="Name of the process-grid where the data are distributed."
+    )
+    correspondence = ListProperty(
+        int, allow_none=True, default=None, desc="Correspondence of the array's indices to the process grid's indices."
+    )
 
-    def __init__(self,
-                 name: str,
-                 dtype: dtypes.typeclass,
-                 shape: ShapeType,
-                 subshape: ShapeType,
-                 pgrid: str = None,
-                 correspondence: Sequence[Integral] = None):
+    def __init__(
+        self,
+        name: str,
+        dtype: dtypes.typeclass,
+        shape: ShapeType,
+        subshape: ShapeType,
+        pgrid: str = None,
+        correspondence: Sequence[Integral] = None,
+    ):
         self.name = name
         self.subshape = subshape
         self.pgrid = pgrid
         self.correspondence = correspondence or list(range(len(shape)))
-        super().__init__(dtype, shape, True, dtypes.StorageType.Default, None, dtypes.AllocationLifetime.Persistent,
-                         None)
+        super().__init__(
+            dtype, shape, True, dtypes.StorageType.Default, None, dtypes.AllocationLifetime.Persistent, None
+        )
 
     @property
     def state_field_dtype(self):
-        return dtypes.opaque('MPI_Datatype')
+        return dtypes.opaque("MPI_Datatype")
 
     def validate(self):
-        """ Validate the correctness of this object.
-            Raises an exception on error. """
+        """Validate the correctness of this object.
+        Raises an exception on error."""
         self._validate()
 
     # Validation of this class is in a separate function, so that this
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
-               for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values or symbols')
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
-               for s in self.subshape):
-            raise TypeError('Sub-shape must be a list or tuple of integer values or symbols')
+        if any(
+            not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape
+        ):
+            raise TypeError("Shape must be a list or tuple of integer values or symbols")
+        if any(
+            not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+            for s in self.subshape
+        ):
+            raise TypeError("Sub-shape must be a list or tuple of integer values or symbols")
         if any(not isinstance(i, Integral) for i in self.correspondence):
-            raise TypeError('Correspondence must be a list or tuple of integer values')
+            raise TypeError("Correspondence must be a list or tuple of integer values")
         if len(self.shape) != len(self.subshape):
-            raise ValueError('The dimensionality of the shape and sub-shape must match')
+            raise ValueError("The dimensionality of the shape and sub-shape must match")
         if len(self.correspondence) != len(self.shape):
-            raise ValueError('The dimensionality of the shape and correspondence list must match')
+            raise ValueError("The dimensionality of the shape and correspondence list must match")
         return True
 
     def to_json(self):
@@ -316,7 +335,7 @@ class SubArray(DistributedDescriptor):
     @classmethod
     def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = cls('tmp', dtypes.int8, [], [], 'tmp', [])
+        ret = cls("tmp", dtypes.int8, [], [], "tmp", [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
         ret.transient = True
         ret.lifetime = dtypes.AllocationLifetime.Persistent
@@ -331,22 +350,23 @@ class SubArray(DistributedDescriptor):
         return result
 
     def init_code(self):
-        """ Outputs MPI allocation/initialization code for the sub-array MPI datatype ONLY if the process-grid is set.
-            It is assumed that the following variables exist in the SDFG program's state:
-            - MPI_Datatype {self.name}
-            - int* {self.name}_counts
-            - int* {self.name}_displs
+        """Outputs MPI allocation/initialization code for the sub-array MPI datatype ONLY if the process-grid is set.
+        It is assumed that the following variables exist in the SDFG program's state:
+        - MPI_Datatype {self.name}
+        - int* {self.name}_counts
+        - int* {self.name}_displs
 
-            These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
-            more details, check the DaCe MPI library in `dace/libraries/mpi`).
+        These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
+        more details, check the DaCe MPI library in `dace/libraries/mpi`).
         """
         from dace.libraries.mpi import utils
+
         if self.pgrid:
             return f"""
                 if (__state->{self.pgrid}_valid) {{
-                    int sizes[{len(self.shape)}] = {{{', '.join([str(s) for s in self.shape])}}};
-                    int subsizes[{len(self.shape)}] = {{{', '.join([str(s) for s in self.subshape])}}};
-                    int corr[{len(self.shape)}] = {{{', '.join([str(i) for i in self.correspondence])}}};
+                    int sizes[{len(self.shape)}] = {{{", ".join([str(s) for s in self.shape])}}};
+                    int subsizes[{len(self.shape)}] = {{{", ".join([str(s) for s in self.subshape])}}};
+                    int corr[{len(self.shape)}] = {{{", ".join([str(i) for i in self.correspondence])}}};
 
                     int basic_stride = subsizes[{len(self.shape)} - 1];
 
@@ -365,7 +385,7 @@ class SubArray(DistributedDescriptor):
                     }}
 
                     MPI_Datatype type;
-                    int origin[{len(self.shape)}] = {{{','.join(['0'] * len(self.shape))}}};
+                    int origin[{len(self.shape)}] = {{{",".join(["0"] * len(self.shape))}}};
                     MPI_Type_create_subarray({len(self.shape)}, sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(self.dtype.base_type)}, &type);
                     MPI_Type_create_resized(type, 0, basic_stride*sizeof({self.dtype.ctype}), &__state->{self.name});
                     MPI_Type_commit(&__state->{self.name});
@@ -396,7 +416,7 @@ class SubArray(DistributedDescriptor):
             return ""
 
     def exit_code(self):
-        """ Outputs MPI deallocation code for the sub-array MPI datatype ONLY if the process-grid is set. """
+        """Outputs MPI deallocation code for the sub-array MPI datatype ONLY if the process-grid is set."""
         if self.pgrid:
             return f"""
                 if (__state->{self.pgrid}_valid) {{
@@ -426,16 +446,23 @@ class RedistrArray(DistributedDescriptor):
         self.name = name
         self.array_a = array_a
         self.array_b = array_b
-        super().__init__(dtypes.opaque('dace::comm::RedistrArray'), [], True, dtypes.StorageType.Default, None,
-                         dtypes.AllocationLifetime.Persistent, None)
+        super().__init__(
+            dtypes.opaque("dace::comm::RedistrArray"),
+            [],
+            True,
+            dtypes.StorageType.Default,
+            None,
+            dtypes.AllocationLifetime.Persistent,
+            None,
+        )
 
     @property
     def state_field_dtype(self):
-        return dtypes.opaque('MPI_Datatype')
+        return dtypes.opaque("MPI_Datatype")
 
     def validate(self):
-        """ Validate the correctness of this object.
-            Raises an exception on error. """
+        """Validate the correctness of this object.
+        Raises an exception on error."""
         self._validate()
 
     # Validation of this class is in a separate function, so that this
@@ -452,9 +479,9 @@ class RedistrArray(DistributedDescriptor):
     @classmethod
     def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = cls('tmp', 'tmp', 'tmp')
+        ret = cls("tmp", "tmp", "tmp")
         serialize.set_properties_from_json(ret, json_obj, context=context)
-        ret.dtype = dtypes.opaque('dace::comm::RedistrArray')
+        ret.dtype = dtypes.opaque("dace::comm::RedistrArray")
         ret.transient = True
         ret.lifetime = dtypes.AllocationLifetime.Persistent
         # Check validity now
@@ -462,26 +489,27 @@ class RedistrArray(DistributedDescriptor):
         return ret
 
     def init_code(self, sdfg):
-        """ Outputs MPI allocation/initialization code for the redistribution.
-            It is assumed that the following variables exist in the SDFG program's state:
-            - MPI_Datatype {self.name}
-            - int {self.name}_sends
-            - MPI_Datatype* {self.name}_send_types
-            - int* {self.name}_dst_ranks
-            - int {self.name}_recvs
-            - MPI_Datatype* {self.name}_recv_types
-            - int* {self.name}_src_ranks
-            - int {self.name}_self_copies
-            - int* {self.name}_self_src
-            - int* {self.name}_self_dst
-            - int* {self.name}_self_size
+        """Outputs MPI allocation/initialization code for the redistribution.
+        It is assumed that the following variables exist in the SDFG program's state:
+        - MPI_Datatype {self.name}
+        - int {self.name}_sends
+        - MPI_Datatype* {self.name}_send_types
+        - int* {self.name}_dst_ranks
+        - int {self.name}_recvs
+        - MPI_Datatype* {self.name}_recv_types
+        - int* {self.name}_src_ranks
+        - int {self.name}_self_copies
+        - int* {self.name}_self_src
+        - int* {self.name}_self_dst
+        - int* {self.name}_self_size
 
-            These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
-            more details, check the DaCe MPI library in `dace/libraries/mpi`).
+        These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
+        more details, check the DaCe MPI library in `dace/libraries/mpi`).
         """
         array_a = sdfg.subarrays[self.array_a]
         array_b = sdfg.subarrays[self.array_b]
         from dace.libraries.mpi import utils
+
         tmp = f"""{{
             __state->{self.name}_sends = 0;
             __state->{self.name}_recvs = 0;
@@ -525,7 +553,7 @@ class RedistrArray(DistributedDescriptor):
                 int pgrid_coords[{len(pgrid_a.shape)}];
             """
         tmp += f"""
-            int sizes[{len(array_b.subshape)}] = {{{', '.join([str(s) for s in array_b.subshape])}}};
+            int sizes[{len(array_b.subshape)}] = {{{", ".join([str(s) for s in array_b.subshape])}}};
             int subsizes[{len(array_b.subshape)}];
             int origin[{len(array_b.subshape)}];
         """
@@ -560,7 +588,9 @@ class RedistrArray(DistributedDescriptor):
                     tmp += f"pgrid_coords[{i}] = pgrid_exact_coords[{i}];\n"
             tmp += f"int cart_rank = dace::comm::cart_rank({len(pgrid_a.shape)}, __state->{pgrid_a.name}_dims, pgrid_coords);\n"
         else:
-            tmp += f"int cart_rank = dace::comm::cart_rank({len(grid_a.shape)}, __state->{grid_a.name}_dims, pcoords);\n"
+            tmp += (
+                f"int cart_rank = dace::comm::cart_rank({len(grid_a.shape)}, __state->{grid_a.name}_dims, pcoords);\n"
+            )
         tmp += f"if (myrank == cart_rank) {{ // self-copy"
         for i in range(len(array_b.shape)):
             tmp += f"""
@@ -594,7 +624,7 @@ class RedistrArray(DistributedDescriptor):
                 int pgrid_coords[{len(pgrid_b.shape)}];
             """
         tmp += f"""
-            int sizes[{len(array_a.subshape)}] = {{{', '.join([str(s) for s in array_a.subshape])}}};
+            int sizes[{len(array_a.subshape)}] = {{{", ".join([str(s) for s in array_a.subshape])}}};
             int subsizes[{len(array_a.subshape)}];
             int origin[{len(array_a.subshape)}];
         """
@@ -634,7 +664,9 @@ class RedistrArray(DistributedDescriptor):
                     tmp += f"pgrid_coords[{i}] = pgrid_exact_coords[{i}];\n"
             tmp += f"int cart_rank = dace::comm::cart_rank({len(pgrid_b.shape)}, __state->{pgrid_b.name}_dims, pgrid_coords);\n"
         else:
-            tmp += f"int cart_rank = dace::comm::cart_rank({len(grid_b.shape)}, __state->{grid_b.name}_dims, pcoords);\n"
+            tmp += (
+                f"int cart_rank = dace::comm::cart_rank({len(grid_b.shape)}, __state->{grid_b.name}_dims, pcoords);\n"
+            )
         tmp += f"""
             if (myrank != cart_rank) {{ // not self-copy
                 MPI_Type_create_subarray({len(array_a.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_a.dtype.base_type)}, &__state->{self.name}_send_types[__state->{self.name}_sends]);
@@ -651,7 +683,7 @@ class RedistrArray(DistributedDescriptor):
         return tmp
 
     def exit_code(self, sdfg):
-        """ Outputs MPI deallocation code for the redistribution. """
+        """Outputs MPI deallocation code for the redistribution."""
         array_a = sdfg.subarrays[self.array_a]
         return f"""
             if (__state->{array_a.pgrid}_valid) {{

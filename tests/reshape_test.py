@@ -7,7 +7,7 @@ import dace.library
 
 
 def test_unsqueeze():
-    """ Tests for an issue in unsqueeze not allowing reshape. """
+    """Tests for an issue in unsqueeze not allowing reshape."""
 
     @dace.program
     def callee(A: dace.float64[60, 2]):
@@ -28,5 +28,5 @@ def test_unsqueeze():
     assert np.allclose(A, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_unsqueeze()

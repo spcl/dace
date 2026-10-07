@@ -3,6 +3,7 @@
 Training through torch.compile: AOTAutograd's training graphs are compiled with DaCe, either jointly (one SDFG with a
 forward and a backward phase, the default) or as separate forward and backward SDFGs.
 """
+
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -13,7 +14,7 @@ import torch.nn as nn  # noqa: E402
 from dace.frontend.ml.torch.dynamo import DaceBackend  # noqa: E402
 
 
-@pytest.fixture(params=[True, False], ids=['joint', 'separate'])
+@pytest.fixture(params=[True, False], ids=["joint", "separate"])
 def backend(request):
     return DaceBackend(joint=request.param)
 
@@ -42,29 +43,40 @@ def _check_gradients(backend, make_model, make_input, sizes):
             torch.testing.assert_close(p.grad, p_ref.grad, rtol=1e-4, atol=1e-5, msg=name)
         model.zero_grad()
         reference.zero_grad()
-    assert backend.compile_count == _compiles(backend), f'expected {_compiles(backend)} compilations'
+    assert backend.compile_count == _compiles(backend), f"expected {_compiles(backend)} compilations"
 
 
 @pytest.mark.torch
 def test_mlp_training(backend):
-    _check_gradients(backend, lambda: nn.Sequential(nn.Linear(8, 16), nn.ReLU(), nn.Linear(16, 4)),
-                     lambda n: torch.randn(n, 8), (5, 9))
+    _check_gradients(
+        backend,
+        lambda: nn.Sequential(nn.Linear(8, 16), nn.ReLU(), nn.Linear(16, 4)),
+        lambda n: torch.randn(n, 8),
+        (5, 9),
+    )
 
 
 @pytest.mark.torch
 def test_tanh_sigmoid_training(backend):
-    _check_gradients(backend, lambda: nn.Sequential(nn.Linear(6, 12), nn.Tanh(), nn.Linear(12, 3), nn.Sigmoid()),
-                     lambda n: torch.randn(n, 6), (4, 7))
+    _check_gradients(
+        backend,
+        lambda: nn.Sequential(nn.Linear(6, 12), nn.Tanh(), nn.Linear(12, 3), nn.Sigmoid()),
+        lambda n: torch.randn(n, 6),
+        (4, 7),
+    )
 
 
 @pytest.mark.torch
 def test_layernorm_softmax_training(backend):
-    _check_gradients(backend, lambda: nn.Sequential(nn.LayerNorm(8), nn.Linear(8, 8), nn.Softmax(-1)),
-                     lambda n: torch.randn(n, 8), (3, 6))
+    _check_gradients(
+        backend,
+        lambda: nn.Sequential(nn.LayerNorm(8), nn.Linear(8, 8), nn.Softmax(-1)),
+        lambda n: torch.randn(n, 8),
+        (3, 6),
+    )
 
 
 class _TinyTransformer(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.norm = nn.LayerNorm(16)
@@ -78,7 +90,6 @@ class _TinyTransformer(nn.Module):
 
 
 class _Embedding(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.embedding = nn.Embedding(10, 6)
@@ -91,9 +102,18 @@ class _Embedding(nn.Module):
 @pytest.mark.torch
 def test_cnn_training(backend):
     _check_gradients(
-        backend, lambda: nn.Sequential(nn.Conv2d(3, 4, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-                                       nn.Conv2d(4, 2, 3, stride=2, groups=2), nn.Flatten(), nn.Linear(2, 3)),
-        lambda n: torch.randn(n, 3, 8, 8), (2, 3))
+        backend,
+        lambda: nn.Sequential(
+            nn.Conv2d(3, 4, 3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(4, 2, 3, stride=2, groups=2),
+            nn.Flatten(),
+            nn.Linear(2, 3),
+        ),
+        lambda n: torch.randn(n, 3, 8, 8),
+        (2, 3),
+    )
 
 
 @pytest.mark.torch
@@ -119,9 +139,15 @@ def test_embedding_training(backend):
     assert backend.compile_count == _compiles(backend)
 
 
-if __name__ == '__main__':
-    for test in (test_mlp_training, test_tanh_sigmoid_training, test_layernorm_softmax_training, test_cnn_training,
-                 test_transformer_training, test_embedding_training):
+if __name__ == "__main__":
+    for test in (
+        test_mlp_training,
+        test_tanh_sigmoid_training,
+        test_layernorm_softmax_training,
+        test_cnn_training,
+        test_transformer_training,
+        test_embedding_training,
+    ):
         for joint in (True, False):
             torch._dynamo.reset()
             test(DaceBackend(joint=joint))

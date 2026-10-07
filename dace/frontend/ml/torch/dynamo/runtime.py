@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Runtime wrapper: calls a compiled SDFG with torch tensors and SymInt arguments supplied by AOTAutograd."""
+
 from typing import Any, Dict, List, Optional
 
 import sympy
@@ -29,11 +30,13 @@ class CompiledGraph:
     the SDFG as arguments.
     """
 
-    def __init__(self,
-                 csdfg: CompiledSDFG,
-                 inputs: List[Any],
-                 outputs: List[Any],
-                 fixed_arguments: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        csdfg: CompiledSDFG,
+        inputs: List[Any],
+        outputs: List[Any],
+        fixed_arguments: Optional[Dict[str, Any]] = None,
+    ):
         """
         :param csdfg: The compiled SDFG.
         :param inputs: How the placeholders map to containers and symbols (``InputSpec`` list of the importer).
@@ -58,9 +61,9 @@ class CompiledGraph:
         kwargs: Dict[str, Any] = dict(self.fixed_arguments)
         symvals: Dict[str, int] = {}
         for spec in self.inputs:
-            if spec.kind == 'sym':
+            if spec.kind == "sym":
                 symvals[spec.name] = int(args[spec.position])
-            elif spec.kind == 'tensor':
+            elif spec.kind == "tensor":
                 t = args[spec.position]
                 if t.requires_grad:
                     t = t.detach()
@@ -71,7 +74,7 @@ class CompiledGraph:
         results: List[Any] = []
         scalars: List[Any] = []  #: (index, buffer) of outputs only known after the call
         for out in self.outputs:
-            if out.kind == 'tensor':
+            if out.kind == "tensor":
                 shape = [_evaluate(s, symvals) for s in out.tshape]
                 strides = [_evaluate(s, symvals) for s in out.tstrides]
                 if len(shape) == 0:
@@ -82,17 +85,17 @@ class CompiledGraph:
                 t = torch.empty_strided(shape, strides, dtype=out.torch_dtype, device=out.device)
                 kwargs[out.name] = t
                 results.append(t)
-            elif out.kind == 'input':
+            elif out.kind == "input":
                 t = args[out.position]
                 results.append(t)
-            elif out.kind == 'sym':
+            elif out.kind == "sym":
                 results.append(_evaluate(out.expr, symvals))
-            elif out.kind == 'scalar':
+            elif out.kind == "scalar":
                 buf = torch.empty(1, dtype=out.torch_dtype, device=out.device)
                 kwargs[out.name] = buf
                 scalars.append((len(results), buf))
                 results.append(None)
-            elif out.kind == 'const':
+            elif out.kind == "const":
                 results.append(out.value)
             else:
                 results.append(None)
@@ -122,9 +125,9 @@ class DifferentiableGraph:
         call: Dict[str, Any] = {}
         tensors: Dict[str, torch.Tensor] = {}
         for spec in self.inputs:
-            if spec.kind == 'sym':
+            if spec.kind == "sym":
                 call[spec.name] = int(args[spec.position])
-            elif spec.kind == 'tensor':
+            elif spec.kind == "tensor":
                 tensor = args[spec.position]
                 tensors[spec.name] = tensor
                 tensor = tensor.detach()

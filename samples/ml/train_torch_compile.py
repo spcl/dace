@@ -30,10 +30,10 @@ def make_batch(size: int):
     return x, y
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--steps', type=int, default=200)
-    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument("--steps", type=int, default=200)
+    parser.add_argument("--lr", type=float, default=0.01)
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -49,6 +49,6 @@ if __name__ == '__main__':
         loss.backward()  # Runs the backward phase of the SDFG
         optimizer.step()
         if step % 50 == 0 or step == args.steps - 1:
-            print(f'step {step:4d}  loss {loss.item():.4f}')
+            print(f"step {step:4d}  loss {loss.item():.4f}")
 
-    print(f'SDFGs compiled: {backend.compile_count}')
+    print(f"SDFGs compiled: {backend.compile_count}")

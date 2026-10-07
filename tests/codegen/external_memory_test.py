@@ -2,14 +2,15 @@
 """
 Tests external memory allocation.
 """
+
 import dace
 import numpy as np
 import pytest
 
 
-@pytest.mark.parametrize('symbolic', (False, True))
+@pytest.mark.parametrize("symbolic", (False, True))
 def test_external_mem(symbolic):
-    N = dace.symbol('N') if symbolic else 20
+    N = dace.symbol("N") if symbolic else 20
 
     @dace.program
     def tester(a: dace.float64[N]):
@@ -24,10 +25,10 @@ def test_external_mem(symbolic):
     # Test that there is no allocation
     code = sdfg.generate_code()[0].clean_code
     # No heap allocation in either form (plain or C++ >= 17 aligned).
-    assert 'new double' not in code
-    assert 'new (std::align_val_t(64)) double' not in code
-    assert 'delete[]' not in code
-    assert 'set_external_memory' in code
+    assert "new double" not in code
+    assert "new (std::align_val_t(64)) double" not in code
+    assert "delete[]" not in code
+    assert "set_external_memory" in code
 
     a = np.random.rand(20)
 
@@ -55,7 +56,7 @@ def test_external_mem(symbolic):
 
 
 def test_external_twobuffers():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(a: dace.float64[N]):
@@ -116,17 +117,23 @@ def test_external_memory_detection_with_gpu_arrays():
         #  comes FIRST, before the external-lifetime arrays - the order the
         #  broken scan dropped.
         crafted = dace.SDFG(sdfg.name)
-        crafted.add_array('gpu_scratch', [2], dace.float64, storage=gpu_storage, transient=True)
-        crafted.add_array('ws_heap', [2],
-                          dace.float64,
-                          storage=dace.StorageType.CPU_Heap,
-                          transient=True,
-                          lifetime=dace.AllocationLifetime.External)
-        crafted.add_array('ws_pinned', [2],
-                          dace.float64,
-                          storage=dace.StorageType.CPU_Pinned,
-                          transient=True,
-                          lifetime=dace.AllocationLifetime.External)
+        crafted.add_array("gpu_scratch", [2], dace.float64, storage=gpu_storage, transient=True)
+        crafted.add_array(
+            "ws_heap",
+            [2],
+            dace.float64,
+            storage=dace.StorageType.CPU_Heap,
+            transient=True,
+            lifetime=dace.AllocationLifetime.External,
+        )
+        crafted.add_array(
+            "ws_pinned",
+            [2],
+            dace.float64,
+            storage=dace.StorageType.CPU_Pinned,
+            transient=True,
+            lifetime=dace.AllocationLifetime.External,
+        )
         crafted.add_state()
         # A separate DLL handle over the same binary keeps the probes'
         #  unloading independent (dlopen reference-counts the library).
@@ -147,7 +154,7 @@ def test_external_memory_detection_with_gpu_arrays():
     assert not probe.has_gpu_code  # No GPU_Global array, no GPU-scheduled node.
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_external_mem(False)
     test_external_mem(True)
     test_external_twobuffers()

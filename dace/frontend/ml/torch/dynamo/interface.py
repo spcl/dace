@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """User-facing entry point: ``dace.ml.compile``."""
+
 import functools
 import inspect
 from typing import Any, Callable, Optional
@@ -10,20 +11,22 @@ from .backend import CAPTURE_CONFIG, DaceBackend
 from . import shapes
 
 
-def compile(model: Optional[Any] = None,
-            *,
-            dynamic: Optional[bool] = True,
-            dynamic_shapes: Any = None,
-            fullgraph: bool = False,
-            sdfg_name: Optional[str] = None,
-            simplify: bool = True,
-            auto_optimize: bool = False,
-            onnx_fallback: bool = True,
-            extra_decompositions=None,
-            native_ops=None,
-            save_sdfg: Optional[str] = None,
-            verbose: bool = False,
-            **torch_compile_kwargs) -> Callable:
+def compile(
+    model: Optional[Any] = None,
+    *,
+    dynamic: Optional[bool] = True,
+    dynamic_shapes: Any = None,
+    fullgraph: bool = False,
+    sdfg_name: Optional[str] = None,
+    simplify: bool = True,
+    auto_optimize: bool = False,
+    onnx_fallback: bool = True,
+    extra_decompositions=None,
+    native_ops=None,
+    save_sdfg: Optional[str] = None,
+    verbose: bool = False,
+    **torch_compile_kwargs,
+) -> Callable:
     """
     Compiles a ``torch.nn.Module`` or function with DaCe through TorchDynamo.
 
@@ -63,21 +66,23 @@ def compile(model: Optional[Any] = None,
     :param torch_compile_kwargs: Additional keyword arguments for ``torch.compile``.
     :return: The compiled callable. The backend instance is available as ``compiled._dace_backend``.
     """
-    options = dict(sdfg_name=sdfg_name,
-                   simplify=simplify,
-                   auto_optimize=auto_optimize,
-                   onnx_fallback=onnx_fallback,
-                   extra_decompositions=extra_decompositions,
-                   native_ops=native_ops,
-                   save_sdfg=save_sdfg,
-                   verbose=verbose)
+    options = dict(
+        sdfg_name=sdfg_name,
+        simplify=simplify,
+        auto_optimize=auto_optimize,
+        onnx_fallback=onnx_fallback,
+        extra_decompositions=extra_decompositions,
+        native_ops=native_ops,
+        save_sdfg=save_sdfg,
+        verbose=verbose,
+    )
 
     def _compile(m):
         target = m.forward if isinstance(m, torch.nn.Module) else m
         signature = inspect.signature(target)
         spec = shapes.normalize(dynamic_shapes, signature)
         if spec is not None and dynamic is False:
-            raise ValueError('dynamic_shapes requires dynamic=True (or None)')
+            raise ValueError("dynamic_shapes requires dynamic=True (or None)")
         backend = DaceBackend(dynamic_shapes=spec, signature=signature, **options)
         compiled = torch.compile(m, backend=backend, dynamic=dynamic, fullgraph=fullgraph, **torch_compile_kwargs)
         compiled = shapes.install_marking(_with_capture_config(compiled), m, spec)

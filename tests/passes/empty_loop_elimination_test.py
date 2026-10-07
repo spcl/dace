@@ -54,7 +54,7 @@ def test_negative():
 
 def test_symbolic_loop():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(a: dace.float64[20]):
@@ -205,7 +205,7 @@ def test_partially_nested_empty_loops():
 
 def test_empty_loop_with_symbolic_bounds():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(a: dace.float64[20], N: dace.int32):
@@ -229,7 +229,7 @@ def test_empty_loop_with_symbolic_bounds():
     assert len(loop_nodes) == 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_regular_loop()
     test_negative()
     test_symbolic_loop()

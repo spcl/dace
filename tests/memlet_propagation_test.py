@@ -15,7 +15,7 @@ def test_conditional():
                 out[i] = in1[i]
 
     inp = np.random.rand(10)
-    outp = np.zeros((10, ))
+    outp = np.zeros((10,))
     conditional(inp, outp)
     expected = inp.copy()
     expected[1:] = inp[0:-1]
@@ -37,7 +37,7 @@ def test_conditional_nested():
         conditional(in1, out)
 
     inp = np.random.rand(10)
-    outp = np.zeros((10, ))
+    outp = np.zeros((10,))
     nconditional(inp, outp)
     expected = inp.copy()
     expected[1:] = inp[0:-1]
@@ -55,9 +55,9 @@ def test_runtime_conditional():
                 out[i] = in1[i]
 
     inp = np.random.rand(10)
-    mask = np.ones((10, ))
+    mask = np.ones((10,))
     mask[0] = 0
-    outp = np.zeros((10, ))
+    outp = np.zeros((10,))
     rconditional(inp, outp, mask)
     expected = inp.copy()
     expected[1:] = inp[0:-1]
@@ -65,8 +65,8 @@ def test_runtime_conditional():
 
 
 def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
-    N = dace.symbol('N')
-    M = dace.symbol('M')
+    N = dace.symbol("N")
+    M = dace.symbol("M")
 
     @dace.program
     def sparse(A: dace.float32[M, N], ind: dace.int32[M, N]):
@@ -78,32 +78,32 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
 
     # Verify all memlet subsets and volumes in the main state of the program, i.e. around the NSDFG.
     map_state = sdfg.states()[1]
-    i = dace.symbol('i')
-    j = dace.symbol('j')
+    i = dace.symbol("i")
+    j = dace.symbol("j")
 
     outer_in = map_state.edges()[0].data
     if outer_in.volume != M * N:
-        raise RuntimeError('Expected a volume of M*N on the outer input memlet')
+        raise RuntimeError("Expected a volume of M*N on the outer input memlet")
     if outer_in.subset[0] != (0, M - 1, 1) or outer_in.subset[1] != (0, N - 1, 1):
-        raise RuntimeError('Expected subset of outer in memlet to be [0:M, 0:N], found ' + str(outer_in.subset))
+        raise RuntimeError("Expected subset of outer in memlet to be [0:M, 0:N], found " + str(outer_in.subset))
 
     inner_in = map_state.edges()[1].data
     if inner_in.volume != 1:
-        raise RuntimeError('Expected a volume of 1 on the inner input memlet')
+        raise RuntimeError("Expected a volume of 1 on the inner input memlet")
     if inner_in.subset[0] != (i, i, 1) or inner_in.subset[1] != (j, j, 1):
-        raise RuntimeError('Expected subset of inner in memlet to be [i, j], found ' + str(inner_in.subset))
+        raise RuntimeError("Expected subset of inner in memlet to be [i, j], found " + str(inner_in.subset))
 
     inner_out = map_state.edges()[2].data
     if inner_out.volume != 1:
-        raise RuntimeError('Expected a volume of 1 on the inner output memlet')
+        raise RuntimeError("Expected a volume of 1 on the inner output memlet")
     if inner_out.subset[0] != (0, i, 1) or inner_out.subset[1] != (0, N - 1, 1):
-        raise RuntimeError('Expected subset of inner out memlet to be [0:i+1, 0:N], found ' + str(inner_out.subset))
+        raise RuntimeError("Expected subset of inner out memlet to be [0:i+1, 0:N], found " + str(inner_out.subset))
 
     outer_out = map_state.edges()[3].data
     if outer_out.volume != M * N:
-        raise RuntimeError('Expected a volume of M*N on the outer output memlet')
+        raise RuntimeError("Expected a volume of M*N on the outer output memlet")
     if outer_out.subset[0] != (0, M - 1, 1) or outer_out.subset[1] != (0, N - 1, 1):
-        raise RuntimeError('Expected subset of outer out memlet to be [0:M, 0:N], found ' + str(outer_out.subset))
+        raise RuntimeError("Expected subset of outer out memlet to be [0:M, 0:N], found " + str(outer_out.subset))
 
 
 def test_strided_write_keeps_the_multiplier():
@@ -115,7 +115,7 @@ def test_strided_write_keeps_the_multiplier():
     an access it was never meant to cover, and returning the map range verbatim drops the
     multiplier -- an under-approximated write set, which is unsound.
     """
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def strided_write(A: dace.float64[2 * N], C: dace.float64[2 * N]):
@@ -129,8 +129,13 @@ def test_strided_write_keeps_the_multiplier():
     propagate_memlets_sdfg(sdfg)
 
     state = next(s for s in sdfg.states() if any(isinstance(n, dace.sdfg.nodes.MapExit) for n in s.nodes()))
-    out = next(e.data for e in state.edges() if isinstance(e.src, dace.sdfg.nodes.MapExit)
-               and isinstance(e.dst, dace.sdfg.nodes.AccessNode) and e.dst.data == 'C')
+    out = next(
+        e.data
+        for e in state.edges()
+        if isinstance(e.src, dace.sdfg.nodes.MapExit)
+        and isinstance(e.dst, dace.sdfg.nodes.AccessNode)
+        and e.dst.data == "C"
+    )
 
     assert out.subset.ranges == [(0, 2 * N - 2, 2)], out.subset
     assert out.subset.num_elements() == N, out.subset.num_elements()
@@ -145,24 +150,24 @@ def test_typed_parameter_symbol():
     access. Through a range bounded by scope-local symbols (dynamic map inputs), that access was then
     propagated to the map range itself, leaking the scope-local bounds into the outer memlet.
     """
-    N = dace.symbol('N')
-    i = dace.symbol('i')
-    j = dace.symbol('j', dace.int64)
-    b, e = dace.symbol('b'), dace.symbol('e')
+    N = dace.symbol("N")
+    i = dace.symbol("i")
+    j = dace.symbol("j", dace.int64)
+    b, e = dace.symbol("b"), dace.symbol("e")
     arr = dace.data.Array(dace.float64, [N, N])
-    memlet = dace.Memlet(data='A', subset=dace.subsets.Range([(i, i, 1), (j, j, 1)]))
+    memlet = dace.Memlet(data="A", subset=dace.subsets.Range([(i, i, 1), (j, j, 1)]))
 
     # Scope-local range: only ``i`` and ``N`` are defined outside, so the dimension over ``j`` is overapproximated
-    local = propagate_subset([memlet], arr, ['j'], dace.subsets.Range([(b, e - 1, 1)]), defined_variables={i, N})
+    local = propagate_subset([memlet], arr, ["j"], dace.subsets.Range([(b, e - 1, 1)]), defined_variables={i, N})
     assert local.subset == dace.subsets.Range([(i, i, 1), (0, N - 1, 1)]), local.subset
 
     # Defined range: the typed ``j`` is still the parameter and is propagated exactly
-    defined = propagate_subset([memlet], arr, ['j'], dace.subsets.Range([(0, N - 1, 1)]), defined_variables={i, N})
+    defined = propagate_subset([memlet], arr, ["j"], dace.subsets.Range([(0, N - 1, 1)]), defined_variables={i, N})
     assert defined.subset == dace.subsets.Range([(i, i, 1), (0, N - 1, 1)]), defined.subset
-    assert 'j' not in defined.subset.free_symbols
+    assert "j" not in defined.subset.free_symbols
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()

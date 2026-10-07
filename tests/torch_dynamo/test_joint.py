@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Joint compilation of training graphs: one SDFG with a forward and a backward phase."""
+
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -55,7 +56,7 @@ def test_one_sdfg_with_two_phases():
     assert jt.PHASE_SYMBOL in phases[0].condition.as_string
     # Containers only one phase uses (primals that are not saved, tangents, gradients) are optional arguments
     arguments = result.sdfg.arglist()
-    tangents = [spec.name for spec in result.backward.inputs if spec.name.startswith('tangents')]
+    tangents = [spec.name for spec in result.backward.inputs if spec.name.startswith("tangents")]
     assert tangents and all(arguments[t].optional for t in tangents)
 
 
@@ -138,12 +139,14 @@ def _trace_plan(model, x, partition):
 
     def partition_fn(joint, joint_inputs, **kwargs):
         forward, backward = partition(joint, joint_inputs, **kwargs)
-        plans.append(jt.plan_from_partition(joint, forward, backward, kwargs['num_fwd_outputs']))
+        plans.append(jt.plan_from_partition(joint, forward, backward, kwargs["num_fwd_outputs"]))
         return forward, backward
 
-    backend = aot_autograd(fw_compiler=lambda gm, _: make_boxed_func(gm.forward),
-                           bw_compiler=lambda gm, _: make_boxed_func(gm.forward),
-                           partition_fn=partition_fn)
+    backend = aot_autograd(
+        fw_compiler=lambda gm, _: make_boxed_func(gm.forward),
+        bw_compiler=lambda gm, _: make_boxed_func(gm.forward),
+        partition_fn=partition_fn,
+    )
     torch.compile(model, backend=backend, dynamic=True)(x).sum().backward()
     return plans[0]
 
@@ -155,15 +158,15 @@ def test_plan_phases():
 
     plan = _trace_plan(model, x, default_partition)
     forward, backward = plan.forward_nodes(), plan.backward_nodes()
-    tangents = {n for n in plan.joint.graph.nodes if n.name.startswith('tangents')}
+    tangents = {n for n in plan.joint.graph.nodes if n.name.startswith("tangents")}
     assert not forward & tangents
     # Without recomputation, the backward phase computes no operator the forward phase computes
-    assert not {n for n in forward & backward if n.op == 'call_function'}
+    assert not {n for n in forward & backward if n.op == "call_function"}
     assert not backward & {plan.nodes()[name] for name in plan.saved}
 
     recomputing = _trace_plan(model, x, min_cut_rematerialization_partition)
     shared = recomputing.forward_nodes() & recomputing.backward_nodes()
-    assert {n for n in shared if n.op == 'call_function'}, 'expected recomputed operators'
+    assert {n for n in shared if n.op == "call_function"}, "expected recomputed operators"
 
 
 @pytest.mark.torch
@@ -172,14 +175,20 @@ def test_plan_rejects_foreign_operators():
     torch.manual_seed(0)
     plan = _trace_plan(_mlp(), torch.randn(5, 6), default_partition)
     backward = torch.fx.GraphModule(plan.backward, plan.backward.graph)
-    operator = next(n for n in backward.graph.nodes if n.op == 'call_function')
-    operator.name = 'foreign_operator'
+    operator = next(n for n in backward.graph.nodes if n.op == "call_function")
+    operator.name = "foreign_operator"
     assert jt.plan_from_partition(plan.joint, plan.forward, backward, plan.num_fwd_outputs) is None
 
 
-if __name__ == '__main__':
-    for test in (test_one_sdfg_with_two_phases, test_interleaved_calls, test_recomputing_partitioner,
-                 test_buffer_mutation, test_inference_is_not_joint, test_plan_phases,
-                 test_plan_rejects_foreign_operators):
+if __name__ == "__main__":
+    for test in (
+        test_one_sdfg_with_two_phases,
+        test_interleaved_calls,
+        test_recomputing_partitioner,
+        test_buffer_mutation,
+        test_inference_is_not_joint,
+        test_plan_phases,
+        test_plan_rejects_foreign_operators,
+    ):
         torch._dynamo.reset()
         test()

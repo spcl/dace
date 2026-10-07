@@ -7,6 +7,7 @@ Dynamo identifies every graph input and every guarded value by a ``Source`` (e.g
 relative to the compiled callable (arguments, parameters, buffers, module attributes, globals, tensor sizes) and
 collects the guards and symbol assumptions of a compilation.
 """
+
 import dataclasses
 import inspect
 import warnings
@@ -24,18 +25,19 @@ from .context import sanitize_name
 from .symbols import SymbolTable, UnsupportedSymbolicExpression
 
 #: Containers of ``torch.nn.Module`` attributes that appear in Dynamo sources (``self._modules['fc1']``)
-_MODULE_CONTAINERS = {'_modules': None, '_parameters': 'parameter', '_buffers': 'buffer'}
-_TENSOR_PROPERTY_KINDS = ('size', 'stride', 'storage_offset')
+_MODULE_CONTAINERS = {"_modules": None, "_parameters": "parameter", "_buffers": "buffer"}
+_TENSOR_PROPERTY_KINDS = ("size", "stride", "storage_offset")
 _TENSOR_PROPERTIES = {
-    dsource.TensorProperty.SIZE: 'size',
-    dsource.TensorProperty.STRIDE: 'stride',
-    dsource.TensorProperty.STORAGE_OFFSET: 'storage_offset'
+    dsource.TensorProperty.SIZE: "size",
+    dsource.TensorProperty.STRIDE: "stride",
+    dsource.TensorProperty.STORAGE_OFFSET: "storage_offset",
 }
 
 
 @dataclasses.dataclass(frozen=True)
 class SourceRef:
     """Where a graph input or a guarded value comes from, in terms of the captured callable."""
+
     #: ``'argument'``, ``'parameter'``, ``'buffer'``, ``'attribute'`` (of the module), ``'global'``, ``'size'``,
     #: ``'stride'``, ``'storage_offset'`` (of a tensor given by the other fields), or ``'unknown'``
     kind: str
@@ -54,7 +56,7 @@ class SourceRef:
     @property
     def qualname(self) -> str:
         """Dotted name relative to the callable, e.g. ``fc1.weight`` for a parameter or ``x`` for an argument."""
-        return '.'.join(([self.root] if self.root else []) + [str(p) for p in self.path])
+        return ".".join(([self.root] if self.root else []) + [str(p) for p in self.path])
 
     def evaluate(self, owner: Any, arguments: Dict[str, Any], global_vars: Dict[str, Any]) -> Any:
         """
@@ -64,21 +66,21 @@ class SourceRef:
         :param arguments: Arguments of the call by name.
         :param global_vars: Globals of the captured function.
         """
-        if self.kind == 'unknown':
-            raise ValueError(f'Cannot evaluate the Dynamo source {self.text}')
+        if self.kind == "unknown":
+            raise ValueError(f"Cannot evaluate the Dynamo source {self.text}")
         if self.root is None:
             value = owner
-        elif self.kind == 'global' or (self.kind in _TENSOR_PROPERTY_KINDS and self.root not in arguments):
+        elif self.kind == "global" or (self.kind in _TENSOR_PROPERTY_KINDS and self.root not in arguments):
             value = global_vars[self.root]
         else:
             value = arguments[self.root]
-        for accessor in (self.raw_path if self.raw_path is not None else self.path):
+        for accessor in self.raw_path if self.raw_path is not None else self.path:
             value = value[accessor] if isinstance(value, (dict, list, tuple)) else getattr(value, accessor)
-        if self.kind == 'size':
+        if self.kind == "size":
             return value.size(self.dim)
-        if self.kind == 'stride':
+        if self.kind == "stride":
             return value.stride(self.dim)
-        if self.kind == 'storage_offset':
+        if self.kind == "storage_offset":
             return value.storage_offset()
         return value
 
@@ -86,6 +88,7 @@ class SourceRef:
 @dataclasses.dataclass(frozen=True)
 class CapturedGuard:
     """An assumption Dynamo made while tracing; the graph is only valid while it holds."""
+
     kind: str  #: Dynamo's guard type, e.g. ``'TENSOR_MATCH'``, ``'CONSTANT_MATCH'``, ``'TYPE_MATCH'``, ``'GRAD_MODE'``
     source: Optional[SourceRef]  #: The guarded value, or ``None`` for global state (grad mode, default device, ...)
 
@@ -93,6 +96,7 @@ class CapturedGuard:
 @dataclasses.dataclass
 class GraphDescription:
     """What the backend knows about a Dynamo-level graph before AOTAutograd lowers it to ATen."""
+
     inputs: List[SourceRef]  #: Source of each placeholder, in placeholder order
     symbol_names: Dict[str, str]  #: Dynamo symbol name -> DaCe symbol name
     guards: List[CapturedGuard]
@@ -108,9 +112,9 @@ class GraphDescription:
 
 def input_name(ref: SourceRef) -> Optional[str]:
     """The container name of a graph input from ``ref``, or ``None`` if it is not a container (e.g., a size)."""
-    if ref.kind == 'argument':
+    if ref.kind == "argument":
         return sanitize_name(structured_argument_name(ref.root, ref.path))
-    if ref.kind in ('parameter', 'buffer', 'attribute', 'global'):
+    if ref.kind in ("parameter", "buffer", "attribute", "global"):
         return sanitize_name(ref.qualname)
     return None
 
@@ -131,7 +135,7 @@ class SourceResolver:
         self.has_signature = signature is not None
 
     def resolve(self, source) -> SourceRef:
-        text = source.name if source is not None else ''
+        text = source.name if source is not None else ""
         accessors: List[Any] = []
         prop: Optional[Tuple[str, Optional[int]]] = None
         while True:
@@ -144,7 +148,7 @@ class SourceResolver:
                 source = source.base
             elif isinstance(source, (dsource.GetItemSource, dsource.DictGetItemSource)):
                 if not isinstance(source.index, (int, str)):
-                    return SourceRef('unknown', None, (), text)
+                    return SourceRef("unknown", None, (), text)
                 accessors.append(source.index)
                 source = source.base
             elif isinstance(source, dsource.AttrSource):
@@ -153,20 +157,21 @@ class SourceResolver:
             elif isinstance(source, ChainedSource):  # Wrappers such as NNModuleSource or FloatTensorSource
                 source = source.base
             else:
-                return SourceRef('unknown', None, (), text)
+                return SourceRef("unknown", None, (), text)
 
-    def _classify(self, root: str, path: Tuple[Any, ...], prop: Optional[Tuple[str, Optional[int]]], text: str,
-                  is_global: bool) -> SourceRef:
-        kind = 'global'
+    def _classify(
+        self, root: str, path: Tuple[Any, ...], prop: Optional[Tuple[str, Optional[int]]], text: str, is_global: bool
+    ) -> SourceRef:
+        kind = "global"
         if not is_global:
             root, path = self._unwrap(root, path)
             module_relative = any(p in _MODULE_CONTAINERS for p in path if isinstance(p, str))
             if root is None:
-                return SourceRef('unknown', None, (), text)
+                return SourceRef("unknown", None, (), text)
             if root in self.parameter_names or (not self.has_signature and not module_relative):
-                kind = 'argument'
+                kind = "argument"
             else:  # The module itself (``self`` of ``forward``)
-                kind, root, raw_path = 'attribute', None, path
+                kind, root, raw_path = "attribute", None, path
                 stripped = []
                 for p in path:
                     if isinstance(p, str) and p in _MODULE_CONTAINERS:
@@ -181,9 +186,9 @@ class SourceResolver:
         return SourceRef(kind, root, path, text)
 
     def _unwrap(self, local: str, path: Tuple[Any, ...]) -> Tuple[Optional[str], Tuple[Any, ...]]:
-        if local == 'args' and 'args' not in self.parameter_names and path and isinstance(path[0], int):
+        if local == "args" and "args" not in self.parameter_names and path and isinstance(path[0], int):
             return (self.positional_names[path[0]] if path[0] < len(self.positional_names) else None), path[1:]
-        if local == 'kwargs' and 'kwargs' not in self.parameter_names and path and isinstance(path[0], str):
+        if local == "kwargs" and "kwargs" not in self.parameter_names and path and isinstance(path[0], str):
             return path[0], path[1:]
         return local, path
 
@@ -200,11 +205,11 @@ def describe_graph(gm: torch.fx.GraphModule, signature: Optional[inspect.Signatu
     resolver = SourceResolver(signature)
     inputs = []
     for node in gm.graph.nodes:
-        if node.op != 'placeholder':
+        if node.op != "placeholder":
             continue
-        grapharg = node.meta.get('grapharg')
+        grapharg = node.meta.get("grapharg")
         source = grapharg.source if grapharg is not None else None
-        inputs.append(resolver.resolve(source) if source is not None else SourceRef('unknown', None, (), node.name))
+        inputs.append(resolver.resolve(source) if source is not None else SourceRef("unknown", None, (), node.name))
 
     guards = []
     context = TracingContext.try_get()
@@ -217,7 +222,7 @@ def describe_graph(gm: torch.fx.GraphModule, signature: Optional[inspect.Signatu
             seen.add(key)
             source = resolver.resolve(guard.originating_source) if guard.name else None
             guards.append(CapturedGuard(key[0], source))
-    guards.sort(key=lambda g: (g.kind, g.source.text if g.source else ''))
+    guards.sort(key=lambda g: (g.kind, g.source.text if g.source else ""))
     return GraphDescription(inputs, symbol_names_for_graph(gm, spec, signature), guards)
 
 
@@ -256,10 +261,10 @@ def _bound(value) -> Optional[int]:
 
 # ---------------------------------------------------------------------------------------------- naming symbols
 def _default_name(local: str, path: Sequence[Any], dim: Optional[int]) -> str:
-    name = local + ''.join(f'_{p}' for p in path)
+    name = local + "".join(f"_{p}" for p in path)
     if dim is not None:
-        name = f'{name}_dim{dim}'
-    return ''.join(c if c.isalnum() or c == '_' else '_' for c in name)
+        name = f"{name}_dim{dim}"
+    return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
 
 
 def _bare_symbol(size: Any):
@@ -270,9 +275,9 @@ def _bare_symbol(size: Any):
     return None
 
 
-def symbol_names_for_graph(gm: torch.fx.GraphModule,
-                           spec: Any,
-                           signature: Optional[inspect.Signature] = None) -> Dict[str, str]:
+def symbol_names_for_graph(
+    gm: torch.fx.GraphModule, spec: Any, signature: Optional[inspect.Signature] = None
+) -> Dict[str, str]:
     """
     Maps Dynamo shape symbols (``s77``) to user-facing names, using the placeholders' sources of a Dynamo-level graph.
 
@@ -295,28 +300,29 @@ def symbol_names_for_graph(gm: torch.fx.GraphModule,
             base, n = name, 1
             while name in used:
                 n += 1
-                name = f'{base}_{n}'
+                name = f"{base}_{n}"
             warnings.warn(
                 f'dynamic_shapes names several dimensions "{base}" but the program does not constrain them to '
-                f'be equal; the extra one is called "{name}" (use torch._check(a == b) to tie them)')
+                f'be equal; the extra one is called "{name}" (use torch._check(a == b) to tie them)'
+            )
         names[sym_name] = name
         used[name] = sym_name
 
     for node in gm.graph.nodes:
-        if node.op != 'placeholder':
+        if node.op != "placeholder":
             continue
-        grapharg = node.meta.get('grapharg')
+        grapharg = node.meta.get("grapharg")
         if grapharg is None or grapharg.source is None:
             continue
         ref = resolver.resolve(grapharg.source)
-        if ref.kind != 'argument':
+        if ref.kind != "argument":
             continue
         entry = shapes.spec_for_argument(spec, ref.root)
         for key in ref.path:
             entry = shapes.spec_at(entry, key)
         if entry is None:
             continue
-        value = node.meta.get('example_value')
+        value = node.meta.get("example_value")
         if isinstance(value, torch.Tensor):
             for i, ds in enumerate(shapes.dim_specs(entry, value.dim())):
                 sym = _bare_symbol(value.shape[i])

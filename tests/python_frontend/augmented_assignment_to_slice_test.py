@@ -6,8 +6,8 @@ import numpy as np
 
 def test_augmented_assignment_to_indirect_access():
 
-    N = dace.symbol('N')
-    M = dace.symbol('M')
+    N = dace.symbol("N")
+    M = dace.symbol("M")
 
     @dace.program
     def _test_prog(A: dace.int32[M], ind: dace.int32[N], B: dace.int32[N]):
@@ -19,8 +19,8 @@ def test_augmented_assignment_to_indirect_access():
 
 def test_augmented_assignment_to_indirect_access_regression():
 
-    N = dace.symbol('N')
-    M = dace.symbol('M')
+    N = dace.symbol("N")
+    M = dace.symbol("M")
 
     @dace.program
     def _test_prog(A: dace.int32[M], ind: dace.int32[N], B: dace.int32[N]):
@@ -45,8 +45,8 @@ def test_augmented_multidim_indirect_assignment():
     Tests multi-dimensional indirect augmented assignment for broadcasting
     and other potential issues.
     """
-    N = dace.symbol('N')
-    M = dace.symbol('M')
+    N = dace.symbol("N")
+    M = dace.symbol("M")
 
     @dace.program
     def _test_prog(A: dace.int32[20, M, 6], ind: dace.int32[M, N], B: dace.int32[N]):
@@ -68,7 +68,7 @@ def test_augmented_multidim_indirect_assignment():
     assert np.allclose(A, A_copy)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_augmented_assignment_to_indirect_access()
     test_augmented_assignment_to_indirect_access_regression()
     test_augmented_multidim_indirect_assignment()

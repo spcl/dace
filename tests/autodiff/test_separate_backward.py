@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Separate forward and backward SDFGs (``make_backward_pass``): the forward pass returns what the backward reads."""
+
 import numpy as np
 import pytest
 
 import dace
 from dace.autodiff import add_backward_pass, make_backward_pass
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _run(backward_pass, arguments, output_gradients, symbols):
@@ -26,16 +27,18 @@ def _run(backward_pass, arguments, output_gradients, symbols):
     forwarded = allocate(backward_pass.forward, [name for name in backward_pass.forwarded if name not in arguments])
     forwarded.update({name: arguments[name] for name in backward_pass.forwarded if name in arguments})
     forward_args = {name: value for name, value in arguments.items() if name in backward_pass.forward.arglist()}
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         backward_pass.forward(**{**forward_args, **forwarded}, **symbols)
         gradients = allocate(backward_pass.backward, backward_pass.input_gradients.values())
         backward_args = {backward_pass.forwarded[name]: value for name, value in forwarded.items()}
         backward_args.update({backward_pass.output_gradients[name]: value for name, value in output_gradients.items()})
-        backward_args.update({
-            name: value
-            for name, value in arguments.items()
-            if name in backward_pass.backward.arglist() and name not in backward_args
-        })
+        backward_args.update(
+            {
+                name: value
+                for name, value in arguments.items()
+                if name in backward_pass.backward.arglist() and name not in backward_args
+            }
+        )
         backward_pass.backward(**backward_args, **gradients, **symbols)
     return {name: gradients[gradient] for name, gradient in backward_pass.input_gradients.items()}
 
@@ -73,16 +76,20 @@ def test_forwarded_transient_view_and_scalar():
         c = np.tanh(a[1:, :]) * b * np.sum(b)
         return np.sum(c * c)
 
-    backward_pass = make_backward_pass(program.to_sdfg(simplify=True), outputs=['__return'], inputs=['A', 'B'])
+    backward_pass = make_backward_pass(program.to_sdfg(simplify=True), outputs=["__return"], inputs=["A", "B"])
     assert set(backward_pass.forwarded) <= set(backward_pass.forward.arglist())
     # Every argument of the backward SDFG is forwarded, a gradient, or an input of the program
-    provided = set(backward_pass.forwarded.values()) | set(backward_pass.input_gradients.values()) | set(
-        backward_pass.output_gradients.values()) | {'A', 'B', 'N'}
+    provided = (
+        set(backward_pass.forwarded.values())
+        | set(backward_pass.input_gradients.values())
+        | set(backward_pass.output_gradients.values())
+        | {"A", "B", "N"}
+    )
     assert set(backward_pass.backward.arglist()) <= provided
 
-    gradients = _run(backward_pass, {'A': A.copy(), 'B': B.copy()}, {'__return': np.ones(1)}, {'N': rows})
-    np.testing.assert_allclose(gradients['A'], _numerical_gradient(lambda a: reference(a, B), A), rtol=1e-5, atol=1e-7)
-    np.testing.assert_allclose(gradients['B'], _numerical_gradient(lambda b: reference(A, b), B), rtol=1e-5, atol=1e-7)
+    gradients = _run(backward_pass, {"A": A.copy(), "B": B.copy()}, {"__return": np.ones(1)}, {"N": rows})
+    np.testing.assert_allclose(gradients["A"], _numerical_gradient(lambda a: reference(a, B), A), rtol=1e-5, atol=1e-7)
+    np.testing.assert_allclose(gradients["B"], _numerical_gradient(lambda b: reference(A, b), B), rtol=1e-5, atol=1e-7)
 
 
 @pytest.mark.autodiff
@@ -95,10 +102,10 @@ def test_add_backward_pass_separate_sdfgs():
         return np.sum(T * T)
 
     sdfg = program.to_sdfg(simplify=True)
-    backward = add_backward_pass(sdfg, outputs=['__return'], inputs=['A'], separate_sdfgs=True)
+    backward = add_backward_pass(sdfg, outputs=["__return"], inputs=["A"], separate_sdfgs=True)
     for name, desc in backward.arglist().items():
-        if not name.startswith('gradient_') and name in sdfg.arrays:
-            assert not sdfg.arrays[name].transient, f'the backward pass reads {name}, which the forward pass hides'
+        if not name.startswith("gradient_") and name in sdfg.arrays:
+            assert not sdfg.arrays[name].transient, f"the backward pass reads {name}, which the forward pass hides"
 
 
 @pytest.mark.autodiff
@@ -121,29 +128,27 @@ def test_recompute_forward_with_two_outputs():
         t = np.tanh(a)
         return np.sum(t * 2 * G0) + np.sum((np.exp(a) + t) * G1)
 
-    backward_pass = make_backward_pass(program.to_sdfg(simplify=True),
-                                       outputs=['__return_0', '__return_1'],
-                                       inputs=['A'],
-                                       recompute_forward=True)
+    backward_pass = make_backward_pass(
+        program.to_sdfg(simplify=True), outputs=["__return_0", "__return_1"], inputs=["A"], recompute_forward=True
+    )
     assert backward_pass.forwarded == {}
-    assert set(backward_pass.output_gradients) == {'__return_0', '__return_1'}
+    assert set(backward_pass.output_gradients) == {"__return_0", "__return_1"}
     gradients = {name: np.zeros((rows, 3)) for name in backward_pass.input_gradients.values()}
     arguments = {
-        'A': A.copy(),
-        backward_pass.output_gradients['__return_0']: G0.copy(),
-        backward_pass.output_gradients['__return_1']: G1.copy()
+        "A": A.copy(),
+        backward_pass.output_gradients["__return_0"]: G0.copy(),
+        backward_pass.output_gradients["__return_1"]: G1.copy(),
     }
     for name, desc in backward_pass.backward.arglist().items():  # Outputs of the recomputed forward pass
-        if name not in arguments and name not in gradients and name != 'N':
-            arguments[name] = np.zeros(tuple(int(dace.symbolic.evaluate(s, {'N': rows})) for s in desc.shape))
+        if name not in arguments and name not in gradients and name != "N":
+            arguments[name] = np.zeros(tuple(int(dace.symbolic.evaluate(s, {"N": rows})) for s in desc.shape))
     backward_pass.backward(**arguments, **gradients, N=rows)
-    np.testing.assert_allclose(gradients[backward_pass.input_gradients['A']],
-                               _numerical_gradient(reference, A),
-                               rtol=1e-5,
-                               atol=1e-7)
+    np.testing.assert_allclose(
+        gradients[backward_pass.input_gradients["A"]], _numerical_gradient(reference, A), rtol=1e-5, atol=1e-7
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_forwarded_transient_view_and_scalar()
     test_add_backward_pass_separate_sdfgs()
     test_recompute_forward_with_two_outputs()

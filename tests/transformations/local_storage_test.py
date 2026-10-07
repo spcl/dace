@@ -7,7 +7,7 @@ from dace.transformation.dataflow.local_storage import InLocalStorage
 
 import dace.transformation.helpers as xfh
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -46,15 +46,13 @@ def test_in_local_storage_explicit():
 
     outer_map_entry, inner_map_entry = find_map_entries(sdfg)
 
-    InLocalStorage.apply_to(sdfg=sdfg,
-                            node_a=outer_map_entry,
-                            node_b=inner_map_entry,
-                            options={
-                                "array": "A",
-                                "create_array": True,
-                                "prefix": "loc_"
-                            },
-                            save=True)
+    InLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=outer_map_entry,
+        node_b=inner_map_entry,
+        options={"array": "A", "create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -91,14 +89,13 @@ def test_in_local_storage_implicit():
 
     outer_map_entry, inner_map_entry = find_map_entries(sdfg)
 
-    InLocalStorage.apply_to(sdfg=sdfg,
-                            node_a=outer_map_entry,
-                            node_b=inner_map_entry,
-                            options={
-                                "create_array": True,
-                                "prefix": "loc_"
-                            },
-                            save=True)
+    InLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=outer_map_entry,
+        node_b=inner_map_entry,
+        options={"create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -137,15 +134,13 @@ def test_out_local_storage_explicit():
     outer_map_exit = sdfg.start_state.exit_node(outer_map_entry)
     inner_map_exit = sdfg.start_state.exit_node(inner_map_entry)
 
-    OutLocalStorage.apply_to(sdfg=sdfg,
-                             node_a=inner_map_exit,
-                             node_b=outer_map_exit,
-                             options={
-                                 "array": "B",
-                                 "create_array": True,
-                                 "prefix": "loc_"
-                             },
-                             save=True)
+    OutLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=inner_map_exit,
+        node_b=outer_map_exit,
+        options={"array": "B", "create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -184,14 +179,13 @@ def test_out_local_storage_implicit():
     outer_map_exit = sdfg.start_state.exit_node(outer_map_entry)
     inner_map_exit = sdfg.start_state.exit_node(inner_map_entry)
 
-    OutLocalStorage.apply_to(sdfg=sdfg,
-                             node_a=inner_map_exit,
-                             node_b=outer_map_exit,
-                             options={
-                                 "create_array": True,
-                                 "prefix": "loc_"
-                             },
-                             save=True)
+    OutLocalStorage.apply_to(
+        sdfg=sdfg,
+        node_a=inner_map_exit,
+        node_b=outer_map_exit,
+        options={"create_array": True, "prefix": "loc_"},
+        save=True,
+    )
 
     # Finding relevant node
     local_storage_node = None
@@ -231,10 +225,9 @@ def arange():
 
 
 class LocalStorageTests(unittest.TestCase):
-
     def test_even(self):
         sdfg = arange.to_sdfg()
-        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [8]}, {}])
+        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{"tile_sizes": [8]}, {}])
         self.assertEqual(applied, 2)
         self.assertTrue(np.array_equal(sdfg(N=16), np.arange(16, dtype=np.int32)))
 
@@ -243,7 +236,7 @@ class LocalStorageTests(unittest.TestCase):
         # it's not filled over
         output = np.ones(20, np.int32)
         sdfg = arange.to_sdfg()
-        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{'tile_sizes': [5]}, {}])
+        applied = sdfg.apply_transformations([MapTiling, OutLocalStorage], options=[{"tile_sizes": [5]}, {}])
         self.assertEqual(applied, 2)
         dace.propagate_memlets_sdfg(sdfg)
         sdfg(N=16, __return=output)
@@ -251,7 +244,7 @@ class LocalStorageTests(unittest.TestCase):
         self.assertTrue(np.array_equal(output[16:], np.ones(4, np.int32)))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_in_local_storage_explicit()
     test_in_local_storage_implicit()
     test_out_local_storage_explicit()

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Reverse-mode differentiation of loops: while loops that count, loop-carried gradients, and loops under branches."""
+
 import numpy as np
 import pytest
 
@@ -7,7 +8,7 @@ import dace
 from dace.autodiff import add_backward_pass
 from dace.autodiff.base_abc import AutoDiffException
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 ROWS = 5
 
 
@@ -31,7 +32,7 @@ def _numerical_gradient(f, x, eps=1e-6):
 def _check(program, reference, rows: int = ROWS):
     """Differentiates ``out[0]`` of ``program`` with respect to ``A`` and compares with numerical gradients."""
     sdfg = program.to_sdfg(simplify=True)
-    add_backward_pass(sdfg, outputs=['out'], inputs=['A'])
+    add_backward_pass(sdfg, outputs=["out"], inputs=["A"])
     a = np.random.rand(rows, 3)
     gradient = np.zeros_like(a)
     sdfg(A=a.copy(), out=np.zeros(1), gradient_A=gradient, gradient_out=np.ones(1), N=rows)
@@ -51,7 +52,7 @@ def test_counting_while_loop():
             i += 1
         out[0] = np.sum(y * y)
 
-    _check(counting_while, lambda a: np.sum(_recurrence(a)**2))
+    _check(counting_while, lambda a: np.sum(_recurrence(a) ** 2))
 
 
 @pytest.mark.autodiff
@@ -70,7 +71,7 @@ def test_array_overwritten_in_every_iteration():
             last[:] = y
         out[0] = np.sum(last * last)
 
-    _check(overwritten, lambda a: np.sum(_recurrence(a)**2))
+    _check(overwritten, lambda a: np.sum(_recurrence(a) ** 2))
 
 
 @pytest.mark.autodiff
@@ -93,7 +94,7 @@ def test_loop_carried_copies_in_separate_states():
                 last[:] = following
         out[0] = np.sum(last * last)
 
-    _check(carried, lambda a: np.sum(_recurrence(a)**2))
+    _check(carried, lambda a: np.sum(_recurrence(a) ** 2))
 
 
 @pytest.mark.autodiff
@@ -110,34 +111,34 @@ def test_loop_under_a_branch():
             y[:] = A[0] * 3
         out[0] = np.sum(y * y)
 
-    _check(branch, lambda a: np.sum(_recurrence(a, start=1)**2))
-    _check(branch, lambda a: np.sum((a[0] * 3)**2), rows=2)
+    _check(branch, lambda a: np.sum(_recurrence(a, start=1) ** 2))
+    _check(branch, lambda a: np.sum((a[0] * 3) ** 2), rows=2)
 
 
 @pytest.mark.autodiff
 def test_loop_that_is_not_a_loop_region_is_rejected():
     """A cycle with two exits (a ``break``) stays unstructured, which the backward pass cannot reverse."""
-    sdfg = dace.SDFG('two_exits')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('out', [1], dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
-    guard = sdfg.add_state('guard')
-    body = sdfg.add_state('body')
-    tasklet = body.add_tasklet('accumulate', {'a', 'o'}, {'r'}, 'r = o + a * a')
-    body.add_edge(body.add_read('A'), None, tasklet, 'a', dace.Memlet('A[i]'))
-    body.add_edge(body.add_read('out'), None, tasklet, 'o', dace.Memlet('out[0]'))
-    body.add_edge(tasklet, 'r', body.add_write('out'), None, dace.Memlet('out[0]'))
-    after = sdfg.add_state('after')
-    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '0'}))
-    sdfg.add_edge(guard, body, dace.InterstateEdge('i < N'))
-    sdfg.add_edge(guard, after, dace.InterstateEdge('i >= N'))
-    sdfg.add_edge(body, guard, dace.InterstateEdge('i < 3', assignments={'i': 'i + 1'}))
-    sdfg.add_edge(body, after, dace.InterstateEdge('i >= 3'))
-    with pytest.raises(AutoDiffException, match='not a loop region'):
-        add_backward_pass(sdfg, outputs=['out'], inputs=['A'])
+    sdfg = dace.SDFG("two_exits")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    guard = sdfg.add_state("guard")
+    body = sdfg.add_state("body")
+    tasklet = body.add_tasklet("accumulate", {"a", "o"}, {"r"}, "r = o + a * a")
+    body.add_edge(body.add_read("A"), None, tasklet, "a", dace.Memlet("A[i]"))
+    body.add_edge(body.add_read("out"), None, tasklet, "o", dace.Memlet("out[0]"))
+    body.add_edge(tasklet, "r", body.add_write("out"), None, dace.Memlet("out[0]"))
+    after = sdfg.add_state("after")
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={"i": "0"}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge("i < N"))
+    sdfg.add_edge(guard, after, dace.InterstateEdge("i >= N"))
+    sdfg.add_edge(body, guard, dace.InterstateEdge("i < 3", assignments={"i": "i + 1"}))
+    sdfg.add_edge(body, after, dace.InterstateEdge("i >= 3"))
+    with pytest.raises(AutoDiffException, match="not a loop region"):
+        add_backward_pass(sdfg, outputs=["out"], inputs=["A"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_counting_while_loop()
     test_array_overwritten_in_every_iteration()
     test_loop_carried_copies_in_separate_states()

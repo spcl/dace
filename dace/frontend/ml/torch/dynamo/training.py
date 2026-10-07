@@ -12,6 +12,7 @@ Training ``@dace.program`` s that use ``torch.nn.Module`` s with DaCe's automati
 Either way the usual ``torch.optim`` optimizers apply. Parameters are closure arrays of the program, read by
 reference: an optimizer updating them in place is seen by the next call without recompiling.
 """
+
 import dataclasses
 import inspect
 import warnings
@@ -20,8 +21,14 @@ from typing import Any, Dict, List, Set, Tuple
 import torch
 
 from dace import data, symbolic
-from dace.autodiff import (BACKWARD_PHASE, FORWARD_PHASE, BackwardPass, TwoPhaseBackwardPass, add_backward_pass,
-                           make_backward_pass)
+from dace.autodiff import (
+    BACKWARD_PHASE,
+    FORWARD_PHASE,
+    BackwardPass,
+    TwoPhaseBackwardPass,
+    add_backward_pass,
+    make_backward_pass,
+)
 from dace.codegen.compiled_sdfg import CompiledSDFG
 from dace.data import create_datadescriptor
 from dace.frontend.python.parser import DaceProgram, infer_symbols_from_datadescriptor
@@ -29,12 +36,12 @@ from dace.frontend.python.parser import DaceProgram, infer_symbols_from_datadesc
 from .dtypes import to_torch_dtype
 
 #: Name of the container a program's return value is written to
-_RETURN = '__return'
+_RETURN = "__return"
 
 
 def _gradient_name(name: str) -> str:
     """The container ``add_backward_pass`` uses for the gradient of ``name``."""
-    return f'gradient_{name}'
+    return f"gradient_{name}"
 
 
 @dataclasses.dataclass
@@ -61,8 +68,9 @@ class _ProgramCompiler:
     def _key(self, arguments: Dict[str, Any]) -> Tuple:
         """Argument types and the names of the closure parameters and arguments that require gradients."""
         values = {**self.program.__sdfg_closure__(), **arguments}
-        differentiated = tuple(name for name, value in values.items()
-                               if isinstance(value, torch.Tensor) and value.requires_grad)
+        differentiated = tuple(
+            name for name, value in values.items() if isinstance(value, torch.Tensor) and value.requires_grad
+        )
         return tuple(self._argument_type(name, value) for name, value in arguments.items()), differentiated
 
     def _argument_type(self, name: str, value: Any) -> str:
@@ -81,7 +89,7 @@ class _ProgramCompiler:
         key = self._key(arguments)
         differentiated = list(key[1])
         if not differentiated:
-            raise ValueError(f'{self.program.name} uses no parameters or arguments that require gradients')
+            raise ValueError(f"{self.program.name} uses no parameters or arguments that require gradients")
         return sdfg, key, differentiated
 
     def _call_arguments(self, sdfg, arguments: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -89,10 +97,10 @@ class _ProgramCompiler:
         objects = {**arguments, **self.program.__sdfg_closure__()}
         call = {name: _detached(value) for name, value in objects.items()}
         call.update(
-            infer_symbols_from_datadescriptor(sdfg, {
-                name: create_datadescriptor(value)
-                for name, value in call.items() if name in sdfg.arrays
-            }))
+            infer_symbols_from_datadescriptor(
+                sdfg, {name: create_datadescriptor(value) for name, value in call.items() if name in sdfg.arrays}
+            )
+        )
         return call, objects
 
 
@@ -117,14 +125,13 @@ class TrainingStep(_ProgramCompiler):
         gradients = {}
         for name in compiled.differentiated:
             target = objects[name]
-            gradients[name] = call[_gradient_name(name)] = torch.zeros_like(target,
-                                                                            memory_format=torch.contiguous_format)
+            gradients[name] = call[_gradient_name(name)] = torch.zeros_like(
+                target, memory_format=torch.contiguous_format
+            )
         # The compiled SDFG reuses its return array on the next call: copy the loss
         loss = torch.tensor(
-            compiled.csdfg(**{
-                name: value
-                for name, value in call.items() if name in compiled.arguments
-            }))
+            compiled.csdfg(**{name: value for name, value in call.items() if name in compiled.arguments})
+        )
 
         for name, gradient in gradients.items():
             target = objects[name]
@@ -141,11 +148,11 @@ class TrainingStep(_ProgramCompiler):
 
         sdfg, key, differentiated = self._parse(args, kwargs, arguments)
         if _RETURN not in sdfg.arrays or sdfg.arrays[_RETURN].total_size != 1:
-            raise ValueError(f'{self.program.name} must return the loss as a scalar to be trained')
+            raise ValueError(f"{self.program.name} must return the loss as a scalar to be trained")
         add_backward_pass(sdfg, outputs=[_RETURN], inputs=differentiated)
         missing = [name for name in differentiated + [_RETURN] if _gradient_name(name) not in sdfg.arrays]
         if missing:
-            raise ValueError(f'Automatic differentiation of {self.program.name} produced no gradient for {missing}')
+            raise ValueError(f"Automatic differentiation of {self.program.name} produced no gradient for {missing}")
         compiled = _Compiled(sdfg.compile(), differentiated, set(sdfg.arglist()))
         self.compile_count += 1
         self._compiled[key] = compiled
@@ -175,6 +182,7 @@ def training_step(program: DaceProgram) -> TrainingStep:
 @dataclasses.dataclass
 class SDFGPair:
     """Compiled forward and backward SDFGs (see :func:`dace.autodiff.make_backward_pass`)."""
+
     forward: CompiledSDFG
     backward: CompiledSDFG
     backward_pass: BackwardPass
@@ -208,7 +216,7 @@ class DifferentiableProgram(_ProgramCompiler):
         sdfg, key, differentiated = self._parse(args, kwargs, arguments)
         outputs = sorted(name for name, desc in sdfg.arrays.items() if name.startswith(_RETURN) and not desc.transient)
         if not outputs:
-            raise ValueError(f'{self.program.name} returns nothing to differentiate')
+            raise ValueError(f"{self.program.name} returns nothing to differentiate")
         pair = compile_pair(make_backward_pass(sdfg, outputs=outputs, inputs=differentiated), outputs, differentiated)
         self.compile_count += 2
         self._compiled[key] = pair
@@ -217,8 +225,15 @@ class DifferentiableProgram(_ProgramCompiler):
 
 def compile_pair(backward_pass: BackwardPass, outputs: List[str], differentiated: List[str]) -> SDFGPair:
     """Compiles the forward and backward SDFGs of ``backward_pass``."""
-    return SDFGPair(backward_pass.forward.compile(), backward_pass.backward.compile(), backward_pass, outputs,
-                    differentiated, set(backward_pass.forward.arglist()), set(backward_pass.backward.arglist()))
+    return SDFGPair(
+        backward_pass.forward.compile(),
+        backward_pass.backward.compile(),
+        backward_pass,
+        outputs,
+        differentiated,
+        set(backward_pass.forward.arglist()),
+        set(backward_pass.backward.arglist()),
+    )
 
 
 class SDFGPairFunction(torch.autograd.Function):
@@ -241,7 +256,7 @@ class SDFGPairFunction(torch.autograd.Function):
         outputs = {name: _allocate(sdfg.arrays[name], symbols) for name in pair.outputs}
         arguments = {name: value for name, value in call.items() if name in pair.forward_arguments}
         with warnings.catch_warnings():  # Return arrays are passed as arguments, so that torch allocates them
-            warnings.filterwarnings('ignore', message='Return value .* is passed as a regular argument')
+            warnings.filterwarnings("ignore", message="Return value .* is passed as a regular argument")
             pair.forward(**{**arguments, **forwarded, **outputs})
         ctx.pair, ctx.call, ctx.forwarded = pair, call, forwarded
         ctx.shapes = [(t.shape, t.dtype) for t in differentiated]
@@ -257,18 +272,19 @@ class SDFGPairFunction(torch.autograd.Function):
         for name, gradient in zip(pair.outputs, output_gradients):
             if name in backward_pass.output_gradients:
                 desc = sdfg.arrays[backward_pass.output_gradients[name]]
-                arguments[backward_pass.output_gradients[name]] = (gradient.contiguous() if gradient is not None else
-                                                                   torch.zeros(_shape(desc, symbols),
-                                                                               dtype=to_torch_dtype(desc.dtype)))
+                arguments[backward_pass.output_gradients[name]] = (
+                    gradient.contiguous()
+                    if gradient is not None
+                    else torch.zeros(_shape(desc, symbols), dtype=to_torch_dtype(desc.dtype))
+                )
         gradients = {}
         for name, (shape, dtype) in zip(pair.differentiated, ctx.shapes):
             gradient = backward_pass.input_gradients.get(name)
             if gradient is not None:
                 gradients[name] = arguments[gradient] = torch.zeros(shape, dtype=dtype)
-        arguments.update({
-            name: value
-            for name, value in call.items() if name in pair.backward_arguments and name not in arguments
-        })
+        arguments.update(
+            {name: value for name, value in call.items() if name in pair.backward_arguments and name not in arguments}
+        )
         for name in pair.backward_arguments - set(arguments) - set(sdfg.symbols):
             # Containers the backward SDFG writes but nobody reads (e.g., outputs of a recomputed forward pass)
             if isinstance(sdfg.arrays.get(name), data.Array):
@@ -280,6 +296,7 @@ class SDFGPairFunction(torch.autograd.Function):
 @dataclasses.dataclass
 class CompiledTwoPhase:
     """A compiled SDFG with a forward and a backward phase (see :func:`dace.autodiff.make_two_phase_backward_pass`)."""
+
     csdfg: CompiledSDFG
     two_phase: TwoPhaseBackwardPass
     outputs: List[str]  #: Return containers
@@ -320,8 +337,11 @@ class TwoPhaseFunction(torch.autograd.Function):
             cotangent = two_phase.output_gradients.get(name)
             if cotangent is not None:
                 desc = sdfg.arrays[cotangent]
-                given[cotangent] = (gradient.contiguous() if gradient is not None else torch.zeros(
-                    _shape(desc, ctx.symbols), dtype=to_torch_dtype(desc.dtype)))
+                given[cotangent] = (
+                    gradient.contiguous()
+                    if gradient is not None
+                    else torch.zeros(_shape(desc, ctx.symbols), dtype=to_torch_dtype(desc.dtype))
+                )
         gradients = {}
         for name, (shape, dtype) in zip(compiled.differentiated, ctx.shapes):
             gradient = two_phase.input_gradients.get(name)
@@ -344,7 +364,7 @@ def _call_phase(compiled: CompiledTwoPhase, phase: int, used: Set[str], given: D
         else:
             arguments[name] = given.get(name, 0)
     with warnings.catch_warnings():  # Return arrays are passed as arguments, so that torch allocates them
-        warnings.filterwarnings('ignore', message='Return value .* is passed as a regular argument')
+        warnings.filterwarnings("ignore", message="Return value .* is passed as a regular argument")
         compiled.csdfg(**arguments)
 
 

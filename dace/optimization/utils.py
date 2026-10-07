@@ -28,9 +28,9 @@ def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
 
     try:
-        with dace.config.set_temporary('debugprint', value=True):
-            with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
-                with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+        with dace.config.set_temporary("debugprint", value=True):
+            with dace.config.set_temporary("instrumentation", "report_each_invocation", value=False):
+                with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
                     csdfg = sdfg.compile()
 
                     for _ in range(repetitions):
@@ -54,33 +54,34 @@ def partition(it, size):
 
 
 def get_world_rank():
-    if 'MV2_COMM_WORLD_RANK' in os.environ:
-        return int(os.environ['MV2_COMM_WORLD_RANK'])
-    elif 'OMPI_COMM_WORLD_RANK' in os.environ:
-        return int(os.environ['OMPI_COMM_WORLD_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
-        return int(os.environ['SLURM_PROCID'])
+    if "MV2_COMM_WORLD_RANK" in os.environ:
+        return int(os.environ["MV2_COMM_WORLD_RANK"])
+    elif "OMPI_COMM_WORLD_RANK" in os.environ:
+        return int(os.environ["OMPI_COMM_WORLD_RANK"])
+    elif "SLURM_PROCID" in os.environ:
+        return int(os.environ["SLURM_PROCID"])
     else:
-        print('Cannot get world rank, running in sequential mode')
+        print("Cannot get world rank, running in sequential mode")
         return 0
 
 
 def get_world_size():
-    if 'MV2_COMM_WORLD_SIZE' in os.environ:
-        return int(os.environ['MV2_COMM_WORLD_SIZE'])
-    elif 'OMPI_COMM_WORLD_SIZE' in os.environ:
-        return int(os.environ['OMPI_COMM_WORLD_SIZE'])
-    elif 'SLURM_NTASKS' in os.environ:
-        return int(os.environ['SLURM_NTASKS'])
+    if "MV2_COMM_WORLD_SIZE" in os.environ:
+        return int(os.environ["MV2_COMM_WORLD_SIZE"])
+    elif "OMPI_COMM_WORLD_SIZE" in os.environ:
+        return int(os.environ["OMPI_COMM_WORLD_SIZE"])
+    elif "SLURM_NTASKS" in os.environ:
+        return int(os.environ["SLURM_NTASKS"])
     else:
-        print('Cannot get world size, running in sequential mode')
+        print("Cannot get world size, running in sequential mode")
         return 1
 
 
 import traceback
 
 import multiprocessing as mp
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     mp.set_start_method("spawn")
 
 
@@ -135,9 +136,9 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
         if not name in arguments:
             del cutout.arrays[name]
 
-    with dace.config.set_temporary('debugprint', value=False):
-        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
-            with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("debugprint", value=False):
+        with dace.config.set_temporary("instrumentation", "report_each_invocation", value=False):
+            with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
                 cutout.build_folder = "/dev/shm"
                 csdfg = cutout.compile()
                 for _ in range(repetitions):
@@ -151,7 +152,6 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
 
 
 class MeasureProcess(mp.Process):
-
     def __init__(self, *args, **kwargs):
         mp.Process.__init__(self, *args, **kwargs)
         self._pconn, self._cconn = mp.Pipe()

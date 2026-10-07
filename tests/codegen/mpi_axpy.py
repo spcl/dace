@@ -6,7 +6,7 @@ import numpy as np
 from mpi4py import MPI
 from dace.transformation.dataflow import MPITransformMap
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -34,15 +34,15 @@ if __name__ == "__main__":
     ranks = comm.Get_size()
 
     if rank == 0:
-        print('Scalar-vector multiplication %d (MPI, ranks = %d)' % (N, ranks))
+        print("Scalar-vector multiplication %d (MPI, ranks = %d)" % (N, ranks))
     else:
-        dace.Config.set('debugprint', value=False)
+        dace.Config.set("debugprint", value=False)
 
     # Initialize arrays: Randomize A and X, zero Y
     a = dace.float64(np.random.rand())
     x = np.random.rand(N).astype(np.float64)
     y = np.random.rand(N).astype(np.float64)
-    regression = (a * x + y)
+    regression = a * x + y
 
     sdfg = axpy.to_sdfg()
 
@@ -52,19 +52,19 @@ if __name__ == "__main__":
     # Compile MPI program once
     if ranks == 1:
         csdfg = sdfg.compile()
-        print('Compiled, exiting')
+        print("Compiled, exiting")
         exit(0)
     else:
         # Use cached compiled file
-        dace.Config.set('compiler', 'use_cache', value=True)
+        dace.Config.set("compiler", "use_cache", value=True)
         csdfg = sdfg.compile()
 
     csdfg(A=a, X=x, Y=y, N=N)
 
     # Get range handled by this rank
     partition = N // ranks
-    reg = regression[partition * rank:partition * (rank + 1)]
-    res = y[partition * rank:partition * (rank + 1)]
+    reg = regression[partition * rank : partition * (rank + 1)]
+    res = y[partition * rank : partition * (rank + 1)]
 
     diff = np.linalg.norm(reg - res)
     print("== Rank %d == Difference:" % rank, diff)

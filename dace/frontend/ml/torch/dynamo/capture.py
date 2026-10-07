@@ -8,6 +8,7 @@ used inside a ``@dace.program``). The ``dace`` ``torch.compile`` backend describ
 (:func:`.sources.describe_graph`), so its SDFG arguments are named after the arguments, parameters, and buffers they
 come from.
 """
+
 import dataclasses
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -27,6 +28,7 @@ from .sources import CapturedGuard, GraphDescription, SourceRef, shape_assumptio
 @dataclasses.dataclass
 class CapturedProgram:
     """The result of :func:`capture`."""
+
     graph: torch.fx.GraphModule  #: Functional ATen graph (AOTAutograd forward graph, inference)
     example_inputs: List[Any]  #: Fake inputs of ``graph`` in placeholder order
     inputs: List[SourceRef]  #: Source of each placeholder of ``graph``
@@ -44,7 +46,7 @@ class CapturedProgram:
     def input_names(self) -> List[Optional[str]]:
         return GraphDescription(self.inputs, self.symbol_names, self.guards).input_names()
 
-    def compile(self, name: str = 'captured') -> Callable[..., List[Any]]:
+    def compile(self, name: str = "captured") -> Callable[..., List[Any]]:
         """
         Compiles the graph and returns a function with the signature of the captured callable that returns the flat
         list of graph outputs. No guards are checked: the caller must respect :attr:`guards`.
@@ -67,15 +69,17 @@ class CapturedProgram:
                               ``@dace.program``.
         """
         importer = GraphImporter(self.options)
-        self.import_result = importer.import_graph(self.graph,
-                                                   self.example_inputs,
-                                                   name,
-                                                   symbol_names=self.symbol_names,
-                                                   input_names=self.input_names(),
-                                                   return_arrays=return_arrays)
+        self.import_result = importer.import_graph(
+            self.graph,
+            self.example_inputs,
+            name,
+            symbol_names=self.symbol_names,
+            input_names=self.input_names(),
+            return_arrays=return_arrays,
+        )
         return self.import_result
 
-    def to_sdfg(self, name: str = 'captured') -> SDFG:
+    def to_sdfg(self, name: str = "captured") -> SDFG:
         return self.import_graph(name).sdfg
 
     def bind(self, *args, **kwargs) -> List[Any]:
@@ -100,37 +104,48 @@ class _CaptureComplete(Exception):
     """Raised by the capturing backend once the graph is captured, so that nothing is executed."""
 
     def __init__(self, program: CapturedProgram):
-        super().__init__('graph captured')
+        super().__init__("graph captured")
         self.program = program
 
 
 class _CaptureBackend(DaceBackend):
     """A ``DaceBackend`` that stops after AOTAutograd produced the forward graph and returns it instead."""
 
-    def _compile_forward(self,
-                         gm: torch.fx.GraphModule,
-                         example_inputs: List[Any],
-                         description: Optional[GraphDescription] = None) -> Callable:
+    def _compile_forward(
+        self, gm: torch.fx.GraphModule, example_inputs: List[Any], description: Optional[GraphDescription] = None
+    ) -> Callable:
         description = description or self.last_description
         inputs = description.inputs
         if len(inputs) != len(example_inputs):
             # AOTAutograd changed the inputs (e.g., deduplicated aliased arguments): sources are not positional
-            inputs = [SourceRef('unknown', None, (), node.name) for node in gm.graph.nodes if node.op == 'placeholder']
+            inputs = [SourceRef("unknown", None, (), node.name) for node in gm.graph.nodes if node.op == "placeholder"]
         relations, ranges = shape_assumptions(description.symbol_names)
         raise _CaptureComplete(
-            CapturedProgram(gm, list(example_inputs), inputs, description.symbol_names, description.guards, relations,
-                            ranges, self.last_dynamo_graph, self.options))
+            CapturedProgram(
+                gm,
+                list(example_inputs),
+                inputs,
+                description.symbol_names,
+                description.guards,
+                relations,
+                ranges,
+                self.last_dynamo_graph,
+                self.options,
+            )
+        )
 
 
-def capture(fn: Callable,
-            *args,
-            dynamic: Optional[bool] = True,
-            dynamic_shapes: Any = None,
-            extra_decompositions: Optional[Sequence] = None,
-            native_ops: Optional[Sequence] = None,
-            simplify: bool = True,
-            specialize_float: bool = False,
-            **kwargs) -> CapturedProgram:
+def capture(
+    fn: Callable,
+    *args,
+    dynamic: Optional[bool] = True,
+    dynamic_shapes: Any = None,
+    extra_decompositions: Optional[Sequence] = None,
+    native_ops: Optional[Sequence] = None,
+    simplify: bool = True,
+    specialize_float: bool = False,
+    **kwargs,
+) -> CapturedProgram:
     """
     Captures the functional ATen graph of ``fn(*args, **kwargs)`` (a ``torch.nn.Module`` or function) as TorchDynamo
     and AOTAutograd produce it with the DaCe decomposition table, without compiling or executing it.
@@ -155,12 +170,14 @@ def capture(fn: Callable,
     signature = inspect.signature(target)
     spec = shapes.normalize(dynamic_shapes, signature)
     if spec is not None and dynamic is False:
-        raise ValueError('dynamic_shapes requires dynamic=True (or None)')
-    backend = _CaptureBackend(dynamic_shapes=spec,
-                              signature=signature,
-                              extra_decompositions=extra_decompositions,
-                              native_ops=native_ops,
-                              simplify=simplify)
+        raise ValueError("dynamic_shapes requires dynamic=True (or None)")
+    backend = _CaptureBackend(
+        dynamic_shapes=spec,
+        signature=signature,
+        extra_decompositions=extra_decompositions,
+        native_ops=native_ops,
+        simplify=simplify,
+    )
     compiled = torch.compile(fn, backend=backend, dynamic=dynamic, fullgraph=True)
     if spec is not None:
         shapes.mark_arguments(signature.bind(*args, **kwargs), spec)
@@ -175,4 +192,4 @@ def capture(fn: Callable,
             program.global_vars = target.__globals__
             return program
         raise
-    raise RuntimeError('TorchDynamo did not compile the callable (it may have been skipped); nothing was captured')
+    raise RuntimeError("TorchDynamo did not compile the callable (it may have been skipped); nothing was captured")

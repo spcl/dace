@@ -216,7 +216,7 @@ def parse_assumptions(assumptions, array_symbols):
     # TODO (later): Analyze size of shapes more, such that e.g. shape N + 1 --> We can assume N > -1.
     # For now we only extract assumptions out of shapes if shape consists of only a single symbol.
     for sym in array_symbols:
-        assumptions.append(f'{sym.name}>0')
+        assumptions.append(f"{sym.name}>0")
 
     if assumptions is None:
         return {}, [({}, {})]
@@ -224,16 +224,16 @@ def parse_assumptions(assumptions, array_symbols):
     # Gather assumptions, keeping only the strongest ones for each symbol.
     condensed_assumptions: Dict[str, Assumptions] = {}
     for a in assumptions:
-        if '==' in a:
-            lhs, rhs = a.split('==')
+        if "==" in a:
+            lhs, rhs = a.split("==")
             if lhs not in condensed_assumptions:
                 condensed_assumptions[lhs] = Assumptions()
             try:
                 condensed_assumptions[lhs].add_equal(int(rhs))
             except ValueError:
                 condensed_assumptions[lhs].add_equal(symbol(rhs))
-        elif '>' in a:
-            lhs, rhs = a.split('>')
+        elif ">" in a:
+            lhs, rhs = a.split(">")
             if lhs not in condensed_assumptions:
                 condensed_assumptions[lhs] = Assumptions()
             try:
@@ -244,8 +244,8 @@ def parse_assumptions(assumptions, array_symbols):
                 if rhs not in condensed_assumptions:
                     condensed_assumptions[rhs] = Assumptions()
                 condensed_assumptions[rhs].add_lesser(symbol(lhs))
-        elif '<' in a:
-            lhs, rhs = a.split('<')
+        elif "<" in a:
+            lhs, rhs = a.split("<")
             if lhs not in condensed_assumptions:
                 condensed_assumptions[lhs] = Assumptions()
             try:
@@ -276,12 +276,12 @@ def parse_assumptions(assumptions, array_symbols):
     for sym, assum in condensed_assumptions.items():
         i = 0
         for g in assum.greater:
-            replacement_symbol = symbol(f'_p_{sym}', nonnegative=True)
+            replacement_symbol = symbol(f"_p_{sym}", nonnegative=True)
             all_subs[i][0].update({symbol(sym): replacement_symbol + g})
             all_subs[i][1].update({replacement_symbol: symbol(sym) - g})
             i += 1
         for l in assum.lesser:
-            replacement_symbol = symbol(f'_n_{sym}', negative=True)
+            replacement_symbol = symbol(f"_n_{sym}", negative=True)
             all_subs[i][0].update({symbol(sym): replacement_symbol + l})
             all_subs[i][1].update({replacement_symbol: symbol(sym) - l})
             i += 1

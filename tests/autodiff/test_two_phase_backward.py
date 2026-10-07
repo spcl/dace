@@ -3,13 +3,14 @@
 One SDFG with a forward and a backward phase (``make_two_phase_backward_pass``): the forward phase records a tape of
 what the backward phase reads, which the caller keeps between the two calls.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.autodiff import BACKWARD_PHASE, FORWARD_PHASE, make_two_phase_backward_pass
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _numerical_gradient(f, x, eps=1e-6):
@@ -25,7 +26,7 @@ def _numerical_gradient(f, x, eps=1e-6):
 def _check(program, reference, rows: int, sign: float = 1):
     """Runs both phases on ``A`` (``rows`` x 3), and compares the gradient of ``A`` with numerical gradients."""
     a = np.random.rand(rows, 3) * sign
-    return _check_gradients(program, reference, {'A': a}, {'N': rows})
+    return _check_gradients(program, reference, {"A": a}, {"N": rows})
 
 
 def _check_gradients(program, reference, inputs, symbols):
@@ -33,7 +34,7 @@ def _check_gradients(program, reference, inputs, symbols):
     Runs both phases, giving each only the arguments it uses, and compares the output (``out``) with
     ``reference(**inputs)`` and the gradients of all inputs with numerical gradients.
     """
-    two_phase = make_two_phase_backward_pass(program.to_sdfg(simplify=True), outputs=['out'], inputs=list(inputs))
+    two_phase = make_two_phase_backward_pass(program.to_sdfg(simplify=True), outputs=["out"], inputs=list(inputs))
     sdfg = two_phase.sdfg
 
     def allocate(name):
@@ -48,13 +49,13 @@ def _check_gradients(program, reference, inputs, symbols):
     compiled = sdfg.compile()
     expected = reference(**inputs)
     cotangent = np.random.rand(*expected.shape)
-    given = {**{name: value.copy() for name, value in inputs.items()}, 'out': np.zeros_like(expected), **symbols}
+    given = {**{name: value.copy() for name, value in inputs.items()}, "out": np.zeros_like(expected), **symbols}
     given.update({name: allocate(name) for name in two_phase.tape})
     call(FORWARD_PHASE, two_phase.forward_arguments, given)
-    np.testing.assert_allclose(given['out'], expected)
+    np.testing.assert_allclose(given["out"], expected)
 
     gradients = {name: np.zeros_like(value) for name, value in inputs.items()}
-    given.update({two_phase.output_gradients['out']: cotangent})
+    given.update({two_phase.output_gradients["out"]: cotangent})
     given.update({two_phase.input_gradients[name]: gradient for name, gradient in gradients.items()})
     call(BACKWARD_PHASE, two_phase.backward_arguments, given)
     for name, value in inputs.items():
@@ -84,7 +85,7 @@ def test_loop():
         return y * y
 
     two_phase = _check(loop, reference, rows=6)
-    assert 'A' not in two_phase.backward_arguments  # The backward phase reads the stored values instead
+    assert "A" not in two_phase.backward_arguments  # The backward phase reads the stored values instead
     assert all(name in two_phase.forward_arguments and name in two_phase.backward_arguments for name in two_phase.tape)
 
 
@@ -106,11 +107,11 @@ def test_branch_on_data():
 
     for sign in (1, -1):  # Both branches
         two_phase = _check(branch, reference, rows=4, sign=sign)
-        assert any(name.startswith('tape_') for name in two_phase.tape)
+        assert any(name.startswith("tape_") for name in two_phase.tape)
 
 
 @pytest.mark.autodiff
-@pytest.mark.parametrize('scale, expected_trips', [(0.1, 0), (0.9, None), (3.0, 6)])
+@pytest.mark.parametrize("scale, expected_trips", [(0.1, 0), (0.9, None), (3.0, 6)])
 def test_loop_with_data_dependent_exit(scale, expected_trips):
     """
     ``while k < N and s > 1``: a for loop bounded by ``N`` that may exit earlier, depending on data. The forward phase
@@ -141,10 +142,10 @@ def test_loop_with_data_dependent_exit(scale, expected_trips):
     b = np.full((rows, 3), 3.0) if expected_trips == rows else np.random.rand(rows, 3) * 0.1
     trips = run(a, b)[1]
     assert trips == expected_trips if expected_trips is not None else 0 < trips < rows
-    _check_gradients(damped, lambda A, B: run(A, B)[0], {'A': a, 'B': b}, {'N': rows})
+    _check_gradients(damped, lambda A, B: run(A, B)[0], {"A": a, "B": b}, {"N": rows})
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_loop()
     test_branch_on_data()
     test_loop_with_data_dependent_exit(0.9, None)

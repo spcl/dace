@@ -18,12 +18,12 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     In a condition that is a conjunction (``i < n and <condition>``), the comparison of the iteration variable bounds
     it: the loop may end earlier.
     """
-    if loop.loop_variable is None or loop.loop_variable == '':
+    if loop.loop_variable is None or loop.loop_variable == "":
         return None
-    a = sympy.Wild('a')
+    a = sympy.Wild("a")
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
     itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
-    for term in (condition.args if isinstance(condition, (sympy.And, symbolic.AND)) else (condition, )):
+    for term in condition.args if isinstance(condition, (sympy.And, symbolic.AND)) else (condition,):
         match = term.match(itersym < a)
         if match:
             return match[a] - 1

@@ -12,19 +12,21 @@ forward phase computes everything the forward outputs and the saved values need 
 phase computes the gradients from the saved values and the tangents (recomputing anything else it needs). The calling
 conventions of the two phases follow AOTAutograd's partitioned graphs, which the runtime calls.
 """
+
 import dataclasses
 from typing import Dict, List, Optional, Sequence, Set
 
 import torch.fx
 
 #: Name of the SDFG symbol that selects the phase of a joint SDFG
-PHASE_SYMBOL = 'aot_phase'
+PHASE_SYMBOL = "aot_phase"
 FORWARD, BACKWARD = 0, 1
 
 
 @dataclasses.dataclass
 class JointPlan:
     """A training graph to compile into one SDFG."""
+
     joint: torch.fx.GraphModule  #: The joint graph (placeholders: primals, then tangents)
     forward: torch.fx.GraphModule  #: The partitioned forward graph (defines the forward calling convention)
     backward: torch.fx.GraphModule  #: The partitioned backward graph (defines the backward calling convention)
@@ -44,12 +46,13 @@ class JointPlan:
         """The joint nodes the backward phase computes: ancestors of the gradients, up to (excluding) saved values."""
         nodes = self.nodes()
         stop = {nodes[n] for n in self.saved}
-        roots = [r for r in flat_outputs(self.joint)[self.num_fwd_outputs:] if isinstance(r, torch.fx.Node)]
+        roots = [r for r in flat_outputs(self.joint)[self.num_fwd_outputs :] if isinstance(r, torch.fx.Node)]
         return _ancestors(roots, stop)
 
 
-def plan_from_partition(joint: torch.fx.GraphModule, forward: torch.fx.GraphModule, backward: torch.fx.GraphModule,
-                        num_fwd_outputs: int) -> Optional[JointPlan]:
+def plan_from_partition(
+    joint: torch.fx.GraphModule, forward: torch.fx.GraphModule, backward: torch.fx.GraphModule, num_fwd_outputs: int
+) -> Optional[JointPlan]:
     """
     Builds the plan of a partitioned joint graph, or returns ``None`` if the partitioned graphs cannot be expressed
     in terms of the joint graph (e.g., the partitioner introduced operators of its own).
@@ -57,27 +60,27 @@ def plan_from_partition(joint: torch.fx.GraphModule, forward: torch.fx.GraphModu
     names = {n.name for n in joint.graph.nodes}
     for gm in (forward, backward):
         for node in gm.graph.nodes:
-            if node.op in ('placeholder', 'call_function') and node.name not in names:
+            if node.op in ("placeholder", "call_function") and node.name not in names:
                 return None
-    saved = [n.name for n in backward.graph.nodes if n.op == 'placeholder' and not _is_tangent(n)]
+    saved = [n.name for n in backward.graph.nodes if n.op == "placeholder" and not _is_tangent(n)]
     # Every saved value is a primal or returned by the forward graph
-    available = set(_output_names(forward)) | {n.name for n in joint.graph.nodes if n.op == 'placeholder'}
+    available = set(_output_names(forward)) | {n.name for n in joint.graph.nodes if n.op == "placeholder"}
     if any(name not in available for name in saved):
         return None
     return JointPlan(joint, forward, backward, num_fwd_outputs, saved)
 
 
 def placeholder_names(gm: torch.fx.GraphModule) -> List[str]:
-    return [n.name for n in gm.graph.nodes if n.op == 'placeholder']
+    return [n.name for n in gm.graph.nodes if n.op == "placeholder"]
 
 
 def _is_tangent(node: torch.fx.Node) -> bool:
-    return node.op == 'placeholder' and node.name.startswith('tangents')
+    return node.op == "placeholder" and node.name.startswith("tangents")
 
 
 def flat_outputs(gm: torch.fx.GraphModule) -> List:
     """The values (nodes or constants) a graph returns."""
-    output = next(n for n in gm.graph.nodes if n.op == 'output')
+    output = next(n for n in gm.graph.nodes if n.op == "output")
     values = output.args[0]
     return list(values) if isinstance(values, (list, tuple)) else [values]
 

@@ -2,6 +2,7 @@
 """
 A set of built-in hooks.
 """
+
 from contextlib import contextmanager
 import fnmatch
 import os
@@ -71,16 +72,17 @@ def profile(
 
     if len(profiler.times) > 1:
         # More than one profile saves locally to the cwd
-        filename = f'report-{profiler.report.name}.json'
+        filename = f"report-{profiler.report.name}.json"
     else:
-        filename = os.path.join(profiler.times[0][0].build_folder, 'perf', f'report-{profiler.report.name}.json')
+        filename = os.path.join(profiler.times[0][0].build_folder, "perf", f"report-{profiler.report.name}.json")
 
     profiler.report.filepath = filename
     profiler.report.save(filename)
 
 
-def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
-                          with_attr: bool = True) -> Callable[[Any], bool]:
+def _make_filter_function(
+    filter: Optional[Union[str, Callable[[Any], bool]]], with_attr: bool = True
+) -> Callable[[Any], bool]:
     """
     Internal helper that makes a filtering function.
 
@@ -96,8 +98,9 @@ def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
     if isinstance(filter, str):
         # If a string was given, construct predicate based on wildcard name matching
         if with_attr:
-            filter_func = lambda elem: fnmatch.fnmatch(elem.name, filter) if hasattr(elem, 'name') else fnmatch.fnmatch(
-                elem.label, filter)
+            filter_func = lambda elem: (
+                fnmatch.fnmatch(elem.name, filter) if hasattr(elem, "name") else fnmatch.fnmatch(elem.label, filter)
+            )
         else:
             filter_func = lambda elem: fnmatch.fnmatch(elem, filter)
     elif callable(filter):
@@ -107,12 +110,14 @@ def _make_filter_function(filter: Optional[Union[str, Callable[[Any], bool]]],
 
 
 @contextmanager
-def instrument(itype: 'InstrumentationType',
-               filter: Optional[Union[str, Callable[[Any], bool]]],
-               annotate_maps: bool = True,
-               annotate_tasklets: bool = False,
-               annotate_states: bool = False,
-               annotate_sdfgs: bool = False):
+def instrument(
+    itype: "InstrumentationType",
+    filter: Optional[Union[str, Callable[[Any], bool]]],
+    annotate_maps: bool = True,
+    annotate_tasklets: bool = False,
+    annotate_states: bool = False,
+    annotate_sdfgs: bool = False,
+):
     """
     Context manager that instruments every called DaCe program. Depending on the given instrumentation
     type and parameters, annotates the given elements on the SDFG. Filtering is possible with strings
@@ -149,7 +154,6 @@ def instrument(itype: 'InstrumentationType',
     filter_func = _make_filter_function(filter)
 
     class Instrumenter:
-
         def __init__(self):
             self.reports: List[InstrumentationReport] = []
 
@@ -160,7 +164,7 @@ def instrument(itype: 'InstrumentationType',
             return self.reports[-1]
 
         @contextmanager
-        def __call__(self, sdfg: 'SDFG'):
+        def __call__(self, sdfg: "SDFG"):
             # Instrument SDFG
             if annotate_sdfgs:
                 for sd in sdfg.all_sdfgs_recursive():
@@ -192,10 +196,12 @@ def instrument(itype: 'InstrumentationType',
 
 
 @contextmanager
-def instrument_data(ditype: 'DataInstrumentationType',
-                    filter: Optional[Union[str, Callable[[Any], bool]]],
-                    restore_from: Optional[Union[str, 'InstrumentedDataReport']] = None,
-                    verbose: bool = False):
+def instrument_data(
+    ditype: "DataInstrumentationType",
+    filter: Optional[Union[str, Callable[[Any], bool]]],
+    restore_from: Optional[Union[str, "InstrumentedDataReport"]] = None,
+    verbose: bool = False,
+):
     """
     Context manager that instruments (serializes/deserializes) the data of every called DaCe program.
     This can be used for reproducible runs and debugging. Depending on the given data instrumentation
@@ -245,9 +251,8 @@ def instrument_data(ditype: 'DataInstrumentationType',
     filter_func = _make_filter_function(filter, with_attr=False)
 
     class DataInstrumenter:
-
         @contextmanager
-        def __call__(self, sdfg: 'SDFG'):
+        def __call__(self, sdfg: "SDFG"):
             for n, _ in sdfg.all_nodes_recursive():
                 if isinstance(n, AccessNode) and filter_func(n.data):
                     n.instrument = ditype
@@ -261,24 +266,23 @@ def instrument_data(ditype: 'DataInstrumentationType',
             if ditype == DataInstrumentationType.Save:
                 reports_after_execution = sdfg.available_data_reports()
                 if len(dreports) == len(reports_after_execution):
-                    print('No data instrumentation reports created. All data containers may have been filtered out.')
+                    print("No data instrumentation reports created. All data containers may have been filtered out.")
                 elif verbose:
                     last_report = sorted(reports_after_execution)[-1]
-                    folder = os.path.join(sdfg.build_folder, 'data', str(last_report))
-                    print('Instrumented data report created at', folder)
+                    folder = os.path.join(sdfg.build_folder, "data", str(last_report))
+                    print("Instrumented data report created at", folder)
 
     instrumenter = DataInstrumenter()
 
     if ditype == DataInstrumentationType.Restore:
         # Restore data into compiled SDFG
         class DataRestoreHook:
-
             @contextmanager
-            def __call__(self, csdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+            def __call__(self, csdfg: "CompiledSDFG", args: Tuple[Any, ...]):
                 # Restore data from requested data report
-                set_report = csdfg.get_exported_function('__dace_set_instrumented_data_report')
+                set_report = csdfg.get_exported_function("__dace_set_instrumented_data_report")
                 if set_report is None:
-                    print('Data instrumentation restores not found. All data containers may have been filtered out.')
+                    print("Data instrumentation restores not found. All data containers may have been filtered out.")
                     yield
                     return
 
@@ -288,11 +292,11 @@ def instrument_data(ditype: 'DataInstrumentationType',
                     folder = restore_from.folder
                 else:  # Use latest
                     timestamp = sorted(csdfg.sdfg.available_data_reports())[-1]
-                    folder = os.path.join(csdfg.sdfg.build_folder, 'data', str(timestamp))
+                    folder = os.path.join(csdfg.sdfg.build_folder, "data", str(timestamp))
                     if verbose:
-                        print('Loading instrumented data report from', folder)
+                        print("Loading instrumented data report from", folder)
 
-                set_report(csdfg._libhandle, ctypes.c_char_p(os.path.abspath(folder).encode('utf-8')))
+                set_report(csdfg._libhandle, ctypes.c_char_p(os.path.abspath(folder).encode("utf-8")))
                 yield
 
         with on_compiled_sdfg_call(context_manager=DataRestoreHook()):
@@ -303,7 +307,7 @@ def instrument_data(ditype: 'DataInstrumentationType',
             yield instrumenter
 
 
-def cli_optimize_on_call(sdfg: 'SDFG'):
+def cli_optimize_on_call(sdfg: "SDFG"):
     """
     Calls a command-line interface for interactive SDFG transformations
     on every DaCe program call.
@@ -312,5 +316,6 @@ def cli_optimize_on_call(sdfg: 'SDFG'):
     """
 
     from dace.transformation.optimizer import SDFGOptimizer
+
     opt = SDFGOptimizer(sdfg)
     return opt.optimize()

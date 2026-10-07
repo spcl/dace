@@ -18,14 +18,14 @@ from dace import dtypes
 
 def _make_sdfg(name: str) -> dace.SDFG:
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array("A", [16], dace.float64)
     state = sdfg.add_state()
     state.add_mapped_tasklet(
-        'work',
-        map_ranges={'i': '0:16'},
-        inputs={'__in': dace.Memlet('A[i]')},
-        outputs={'__out': dace.Memlet('A[i]')},
-        code='__out = __in + 1.0',
+        "work",
+        map_ranges={"i": "0:16"},
+        inputs={"__in": dace.Memlet("A[i]")},
+        outputs={"__out": dace.Memlet("A[i]")},
+        code="__out = __in + 1.0",
         external_edges=True,
     )
     return sdfg
@@ -35,7 +35,7 @@ def test_is_instrumented_distinguishes_enum_kinds():
     # AccessNodes carry a DataInstrumentationType whose No_Instrumentation is
     # a DIFFERENT enum member than InstrumentationType's: a cross-enum
     # comparison made every SDFG with an access node count as instrumented.
-    sdfg = _make_sdfg('instr_probe')
+    sdfg = _make_sdfg("instr_probe")
     assert not sdfg.is_instrumented()
 
     sdfg.instrument = dtypes.InstrumentationType.Timer
@@ -62,20 +62,22 @@ def test_perf_folder_created_exactly_when_instrumented(tmp_path):
     # function that owns the decision.
     from dace.codegen import codegen, compiler
 
-    for folder_mode in ('development', 'production'):
+    for folder_mode in ("development", "production"):
         for instrumented in (False, True):
-            sdfg = _make_sdfg(f'perfdir_{folder_mode}_{int(instrumented)}')
+            sdfg = _make_sdfg(f"perfdir_{folder_mode}_{int(instrumented)}")
             if instrumented:
                 sdfg.instrument = dtypes.InstrumentationType.Timer
             objects = codegen.generate_code(sdfg)
             out = str(tmp_path / sdfg.name)
             should_folder_exists = instrumented or folder_mode == "development"
             compiler.generate_program_folder(sdfg, objects, out, folder_mode=folder_mode)
-            assert os.path.isdir(os.path.join(out, 'perf')) == should_folder_exists, \
-                f'perf/ existence mismatch for folder_mode={folder_mode}, instrumented={instrumented}'
+            assert os.path.isdir(os.path.join(out, "perf")) == should_folder_exists, (
+                f"perf/ existence mismatch for folder_mode={folder_mode}, instrumented={instrumented}"
+            )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_is_instrumented_distinguishes_enum_kinds()
     import tempfile, pathlib
+
     test_perf_folder_created_exactly_when_instrumented(pathlib.Path(tempfile.mkdtemp()))

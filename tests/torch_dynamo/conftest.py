@@ -22,5 +22,5 @@ def backend():
 
 
 def compile_with(backend, fn, **kwargs):
-    kwargs.setdefault('dynamic', True)
+    kwargs.setdefault("dynamic", True)
     return torch.compile(fn, backend=backend, **kwargs)

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """torch.nn.Module objects used inside @dace.program, converted through the TorchDynamo capture."""
+
 import numpy as np
 import pytest
 
@@ -12,7 +13,7 @@ import dace  # noqa: E402
 from dace.autodiff import add_backward_pass  # noqa: E402
 from dace.frontend.ml.torch.dynamo import convertible  # noqa: E402
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: A global tensor read inside a module's forward (not visible to the program itself)
 OFFSETS = torch.linspace(0, 1, 4)
@@ -24,31 +25,28 @@ class _Scaled(nn.Module):
     def __init__(self):
         super().__init__()
         self.fc = nn.Linear(4, 4)
-        self.register_buffer('shift', torch.linspace(-1, 1, 4))
+        self.register_buffer("shift", torch.linspace(-1, 1, 4))
         self.factor = 2
-        self.mode = 'add'
+        self.mode = "add"
 
     def forward(self, x):
         y = self.fc(x) * self.factor
-        if self.mode == 'add':
+        if self.mode == "add":
             return y + self.shift
         return y - self.shift
 
 
 class _TwoOutputs(nn.Module):
-
     def forward(self, x, n: int):
         return torch.sin(x) + n, x.sum(dim=1)
 
 
 class _ListDict(nn.Module):
-
     def forward(self, xs, d):
-        return xs[0] + xs[1] * d['w']
+        return xs[0] + xs[1] * d["w"]
 
 
 class _UsesGlobal(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.mask = torch.tensor([1.0, 0.0, 1.0, 0.0])  # A plain tensor attribute (not a parameter or buffer)
@@ -83,9 +81,9 @@ def test_module_symbolic_sizes_compile_once():
         x = _rand(n, 4)
         np.testing.assert_allclose(prog(x), _eager(model, x) * 2, rtol=1e-5, atol=1e-5)
         program = convertible.as_sdfg_convertible(model).program
-        assert captured is None or program is captured, 'the module was captured again for another size'
+        assert captured is None or program is captured, "the module was captured again for another size"
         captured = program
-    assert 'N' in captured.symbol_names.values()
+    assert "N" in captured.symbol_names.values()
 
 
 @pytest.mark.torch
@@ -117,11 +115,11 @@ def test_guards_reparse_on_module_state_change():
     x = _rand(5, 4)
     np.testing.assert_allclose(prog(x), _eager(model, x), rtol=1e-5, atol=1e-5)
     first = convertible.as_sdfg_convertible(model).program
-    assert any(g.source is not None and g.source.qualname == 'mode' for g in first.guards)
+    assert any(g.source is not None and g.source.qualname == "mode" for g in first.guards)
 
     model.factor = 3  # Attribute values are constants of the captured graph, guarded by Dynamo
     np.testing.assert_allclose(prog(x), _eager(model, x), rtol=1e-5, atol=1e-5)
-    model.mode = 'sub'
+    model.mode = "sub"
     np.testing.assert_allclose(prog(x), _eager(model, x), rtol=1e-5, atol=1e-5)
     assert convertible.as_sdfg_convertible(model).program is not first
 
@@ -162,7 +160,7 @@ def test_list_and_dict_arguments():
 
     @dace.program
     def prog(a: dace.float32[N, 6], b: dace.float32[N, 6]):
-        return module([a, b], {'w': weights})
+        return module([a, b], {"w": weights})
 
     a, b = _rand(3, 6), _rand(3, 6)
     np.testing.assert_allclose(prog(a, b), a + b * weights, rtol=1e-5, atol=1e-6)
@@ -182,7 +180,7 @@ def test_global_and_attribute_tensors():
     try:
         x = _rand(5, 4)
         np.testing.assert_allclose(prog(x), _eager(module, x), rtol=1e-5, atol=1e-6)
-        OFFSETS = torch.full((4, ), 10.0)
+        OFFSETS = torch.full((4,), 10.0)
         module.mask = torch.tensor([0.0, 2.0, 0.0, 2.0])
         np.testing.assert_allclose(prog(x), _eager(module, x), rtol=1e-5, atol=1e-6)
     finally:
@@ -204,14 +202,13 @@ def _dace_gradients(model, x):
     sdfg = loss_program.to_sdfg(simplify=True)
     closure = loss_program.__sdfg_closure__()
     parameters = {name: value for name, value in closure.items() if isinstance(value, torch.nn.Parameter)}
-    add_backward_pass(sdfg, outputs=['loss'], inputs=['x'] + list(parameters))
+    add_backward_pass(sdfg, outputs=["loss"], inputs=["x"] + list(parameters))
 
     arguments = {name: value.detach().numpy().copy() for name, value in parameters.items()}
     gradients = {
-        name: np.zeros(desc.shape, np.float32)
-        for name, desc in sdfg.arglist().items() if name.startswith('gradient_')
+        name: np.zeros(desc.shape, np.float32) for name, desc in sdfg.arglist().items() if name.startswith("gradient_")
     }
-    gradients['gradient_loss'][:] = 1
+    gradients["gradient_loss"][:] = 1
     loss = np.zeros(1, np.float32)
     sdfg(x=x.copy(), loss=loss, **arguments, **gradients)
 
@@ -219,13 +216,11 @@ def _dace_gradients(model, x):
     reference = model(x_torch).square().sum()
     reference.backward()
     np.testing.assert_allclose(loss[0], reference.item(), rtol=1e-4)
-    np.testing.assert_allclose(gradients['gradient_x'], x_torch.grad.numpy(), rtol=1e-4, atol=1e-5)
+    np.testing.assert_allclose(gradients["gradient_x"], x_torch.grad.numpy(), rtol=1e-4, atol=1e-5)
     for name, value in parameters.items():
-        np.testing.assert_allclose(gradients[f'gradient_{name}'],
-                                   value.grad.numpy(),
-                                   rtol=1e-4,
-                                   atol=1e-5,
-                                   err_msg=name)
+        np.testing.assert_allclose(
+            gradients[f"gradient_{name}"], value.grad.numpy(), rtol=1e-4, atol=1e-5, err_msg=name
+        )
 
 
 @pytest.mark.torch
@@ -241,7 +236,7 @@ def test_dace_autodiff_layernorm_softmax():
     _dace_gradients(nn.Sequential(nn.LayerNorm(6), nn.Linear(6, 6), nn.Softmax(-1)), _rand(4, 6))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_module_symbolic_sizes_compile_once()
     test_parameters_by_reference()
     test_guards_reparse_on_module_state_change()

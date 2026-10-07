@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Turns while loops that step a counter by a constant into for loops (with an init and an update statement)."""
+
 import ast
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -7,7 +8,7 @@ import sympy
 
 from dace import SDFG, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg.state import (AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock)
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 
 _DIRECTIONS = {
@@ -38,7 +39,7 @@ class WhileToForLoop(ppl.Pass):
     other terms (e.g., on data).
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.InterstateEdges | ppl.Modifies.States
@@ -63,8 +64,14 @@ class WhileToForLoop(ppl.Pass):
         :param loop: The loop to convert.
         :return: True if the loop was converted.
         """
-        if (loop.init_statement is not None or loop.update_statement is not None or loop.loop_variable or loop.inverted
-                or loop.has_continue or loop.has_break):
+        if (
+            loop.init_statement is not None
+            or loop.update_statement is not None
+            or loop.loop_variable
+            or loop.inverted
+            or loop.has_continue
+            or loop.has_break
+        ):
             return False
         if any(isinstance(block, ReturnBlock) for block in loop.all_control_flow_blocks()):
             return False
@@ -89,11 +96,11 @@ class WhileToForLoop(ppl.Pass):
         else:
             return False
         step_edge, step, after, start = step
-        others = conjuncts[:index] + conjuncts[index + 1:]
+        others = conjuncts[:index] + conjuncts[index + 1 :]
         counter_symbol = symbolic.symbol(counter)
 
         # The blocks after the step read the stepped counter
-        stepped = f'({counter} + {symbolic.symstr(step)})'
+        stepped = f"({counter} + {symbolic.symstr(step)})"
         replacement = {counter: stepped}
         symbolic_replacement = {counter_symbol: counter_symbol + step}
         for edge in loop.edges():
@@ -104,13 +111,14 @@ class WhileToForLoop(ppl.Pass):
         del step_edge.data.assignments[counter]
 
         end = bound if strict else bound + sign
-        operator = '<' if sign > 0 else '>'
-        update = f'{counter} + {symbolic.symstr(step)}' if sign > 0 else f'{counter} - {symbolic.symstr(-step)}'
+        operator = "<" if sign > 0 else ">"
+        update = f"{counter} + {symbolic.symstr(step)}" if sign > 0 else f"{counter} - {symbolic.symstr(-step)}"
         loop.loop_variable = counter
-        loop.init_statement = CodeBlock(f'{counter} = {symbolic.symstr(start)}')
-        loop.loop_condition = CodeBlock(' and '.join([f'{counter} {operator} {symbolic.symstr(end)}'] +
-                                                     [f'({term})' for term in others]))
-        loop.update_statement = CodeBlock(f'{counter} = {update}')
+        loop.init_statement = CodeBlock(f"{counter} = {symbolic.symstr(start)}")
+        loop.loop_condition = CodeBlock(
+            " and ".join([f"{counter} {operator} {symbolic.symstr(end)}"] + [f"({term})" for term in others])
+        )
+        loop.update_statement = CodeBlock(f"{counter} = {update}")
         return True
 
 
@@ -126,8 +134,10 @@ def _step(loop: LoopRegion, counter: str, sign: int, variant: Set[Any]) -> Optio
     if len(steps) != 1 or steps[0] not in loop.edges():
         return None
     if any(
-            isinstance(region, LoopRegion) and region.loop_variable == counter
-            for region in loop.all_control_flow_regions() if region is not loop):
+        isinstance(region, LoopRegion) and region.loop_variable == counter
+        for region in loop.all_control_flow_regions()
+        if region is not loop
+    ):
         return None
     step_edge = steps[0]
     step = symbolic.pystr_to_symbolic(step_edge.data.assignments[counter]) - symbolic.symbol(counter)
@@ -147,7 +157,7 @@ def _step(loop: LoopRegion, counter: str, sign: int, variant: Set[Any]) -> Optio
 def condition_terms(condition: str) -> List[str]:
     """The terms of a condition that is a conjunction (``a and b and c``), or the condition itself."""
     try:
-        tree = ast.parse(condition, mode='eval').body
+        tree = ast.parse(condition, mode="eval").body
     except SyntaxError:
         return [condition]
     terms = []

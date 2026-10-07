@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Regression tests for runtime/lowering corner cases of the TorchDynamo frontend."""
+
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
@@ -39,8 +40,8 @@ def test_rank0_inputs_and_outputs(backend):
     assert backend.compile_count == 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for test in (test_bool_fill_constant, test_rank0_inputs_and_outputs):
         torch._dynamo.reset()
         test(DaceBackend())
-        print(test.__name__, 'ok')
+        print(test.__name__, "ok")

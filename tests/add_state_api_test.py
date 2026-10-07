@@ -46,6 +46,6 @@ def test_state_after():
     assert np.allclose(A, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_state_before()
     test_state_after()

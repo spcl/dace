@@ -4,6 +4,7 @@ Training a ``@dace.program`` that uses modules with DaCe's automatic differentia
 loss and the gradients (``dace.ml.training_step``), or as a differentiable function with a forward and a backward SDFG
 (``dace.ml.differentiable``).
 """
+
 import numpy as np
 import pytest
 
@@ -15,7 +16,7 @@ import torch.nn as nn  # noqa: E402
 import dace  # noqa: E402
 import dace.ml  # noqa: E402
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _models(make_model):
@@ -129,7 +130,7 @@ def test_loss_must_be_scalar():
     def not_a_loss(x: dace.float32[N, 2]):
         return model(x)
 
-    with pytest.raises(ValueError, match='scalar'):
+    with pytest.raises(ValueError, match="scalar"):
         dace.ml.training_step(not_a_loss)(torch.randn(3, 2))
 
 
@@ -209,7 +210,7 @@ def test_differentiable_training_loop():
     assert forward.compile_count == 2
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_sgd_steps_compile_once()
     test_argument_gradient_and_accumulation()
     test_frozen_parameters()

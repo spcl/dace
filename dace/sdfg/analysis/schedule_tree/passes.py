@@ -15,7 +15,6 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
     """
 
     class FindGotos(tn.ScheduleNodeVisitor):
-
         def __init__(self):
             self.gotos: Set[str] = set()
 
@@ -24,7 +23,6 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
                 self.gotos.add(node.target)
 
     class RemoveLabels(tn.ScheduleNodeTransformer):
-
         def __init__(self, labels_to_keep: Set[str]) -> None:
             self.labels_to_keep = labels_to_keep
             self.labels_seen = set()
@@ -51,7 +49,6 @@ def remove_empty_scopes(stree: tn.ScheduleTreeScope):
     """
 
     class RemoveEmptyScopes(tn.ScheduleNodeTransformer):
-
         def visit_scope(self, node: tn.ScheduleTreeScope):
             if len(node.children) == 0:
                 return None
@@ -90,8 +87,9 @@ def _may_fall_through(nodes: List[tn.ScheduleTreeNode], label: Optional[str]) ->
         if isinstance(node, tn.IfScope):
             end = _conditional_chain_end(nodes, index)
             chain = nodes[index:end]
-            if isinstance(chain[-1],
-                          tn.ElseScope) and not any(_may_fall_through(branch.children, label) for branch in chain):
+            if isinstance(chain[-1], tn.ElseScope) and not any(
+                _may_fall_through(branch.children, label) for branch in chain
+            ):
                 return False
             index = end
             continue
@@ -100,8 +98,10 @@ def _may_fall_through(nodes: List[tn.ScheduleTreeNode], label: Optional[str]) ->
 
 
 def _eliminate_gotos(
-        nodes: List[tn.ScheduleTreeNode], label: Optional[str],
-        updates: List[Tuple[tn.ScheduleTreeScope, List[tn.ScheduleTreeNode]]]) -> Optional[List[tn.ScheduleTreeNode]]:
+    nodes: List[tn.ScheduleTreeNode],
+    label: Optional[str],
+    updates: List[Tuple[tn.ScheduleTreeScope, List[tn.ScheduleTreeNode]]],
+) -> Optional[List[tn.ScheduleTreeNode]]:
     """
     Returns a version of the given nodes, which are followed by the given label, without gotos to that label.
 

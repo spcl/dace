@@ -9,7 +9,7 @@ from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
-@pytest.mark.parametrize('lowered_returns', [False, True])
+@pytest.mark.parametrize("lowered_returns", [False, True])
 def test_dataflow_if_check(lowered_returns: bool):
 
     @dace.program
@@ -32,7 +32,7 @@ def test_dataflow_if_check(lowered_returns: bool):
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
 
-    A = np.zeros((10, ), np.int32)
+    A = np.zeros((10,), np.int32)
     A[4] = 10
     A[5] = 100
     assert sdfg(A, 0)[0] == 0
@@ -41,7 +41,7 @@ def test_dataflow_if_check(lowered_returns: bool):
     assert sdfg(A, 6)[0] == 0
 
 
-@pytest.mark.parametrize('lowered_returns', [False, True])
+@pytest.mark.parametrize("lowered_returns", [False, True])
 def test_nested_if_chain(lowered_returns: bool):
 
     @dace.program
@@ -79,7 +79,7 @@ def test_nested_if_chain(lowered_returns: bool):
     assert nested_if_chain(15)[0] == 4
 
 
-@pytest.mark.parametrize('lowered_returns', [False, True])
+@pytest.mark.parametrize("lowered_returns", [False, True])
 def test_elif_chain(lowered_returns: bool):
 
     @dace.program
@@ -114,52 +114,52 @@ def test_elif_chain(lowered_returns: bool):
     assert elif_chain(15)[0] == 4
 
 
-@pytest.mark.parametrize('simplify', [False, True])
+@pytest.mark.parametrize("simplify", [False, True])
 def test_unstructured_control_flow_sibling_loops(simplify: bool):
-    sdfg = dace.SDFG('unstructured_control_flow_sibling_loops')
+    sdfg = dace.SDFG("unstructured_control_flow_sibling_loops")
 
-    sdfg.add_array('A', (10, ), dace.int32)
-    sdfg.add_array('B', (10, ), dace.int32)
+    sdfg.add_array("A", (10,), dace.int32)
+    sdfg.add_array("B", (10,), dace.int32)
 
-    init_state = sdfg.add_state('init', is_start_block=True)
+    init_state = sdfg.add_state("init", is_start_block=True)
 
     # Add a first loop
-    l1_before = sdfg.add_state_after(init_state, 'l1_before')
-    l1_guard = sdfg.add_state('l1_guard')
-    l1_body1 = sdfg.add_state('l1_body1')
-    l1_body2 = sdfg.add_state('l1_body2')
-    l1_exit = sdfg.add_state('l1_exit')
-    sdfg.add_edge(l1_before, l1_guard, dace.InterstateEdge(assignments={'i': '0'}))
-    sdfg.add_edge(l1_guard, l1_body1, dace.InterstateEdge('i < 10'))
-    sdfg.add_edge(l1_guard, l1_exit, dace.InterstateEdge('i >= 10'))
-    sdfg.add_edge(l1_body2, l1_guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    l1_before = sdfg.add_state_after(init_state, "l1_before")
+    l1_guard = sdfg.add_state("l1_guard")
+    l1_body1 = sdfg.add_state("l1_body1")
+    l1_body2 = sdfg.add_state("l1_body2")
+    l1_exit = sdfg.add_state("l1_exit")
+    sdfg.add_edge(l1_before, l1_guard, dace.InterstateEdge(assignments={"i": "0"}))
+    sdfg.add_edge(l1_guard, l1_body1, dace.InterstateEdge("i < 10"))
+    sdfg.add_edge(l1_guard, l1_exit, dace.InterstateEdge("i >= 10"))
+    sdfg.add_edge(l1_body2, l1_guard, dace.InterstateEdge(assignments={"i": "i + 1"}))
 
     # Add a second loop
-    l2_before = sdfg.add_state_after(l1_exit, 'l2_before')
-    l2_guard = sdfg.add_state('l2_guard')
-    l2_body1 = sdfg.add_state('l2_body1')
-    l2_body2 = sdfg.add_state_after(l2_body1, 'l2_body2')
-    l2_exit = sdfg.add_state('l2_exit')
-    sdfg.add_edge(l2_before, l2_guard, dace.InterstateEdge(assignments={'j': '0'}))
-    sdfg.add_edge(l2_guard, l2_body1, dace.InterstateEdge('j < 10'))
-    sdfg.add_edge(l2_guard, l2_exit, dace.InterstateEdge('j >= 10'))
-    sdfg.add_edge(l2_body2, l2_guard, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+    l2_before = sdfg.add_state_after(l1_exit, "l2_before")
+    l2_guard = sdfg.add_state("l2_guard")
+    l2_body1 = sdfg.add_state("l2_body1")
+    l2_body2 = sdfg.add_state_after(l2_body1, "l2_body2")
+    l2_exit = sdfg.add_state("l2_exit")
+    sdfg.add_edge(l2_before, l2_guard, dace.InterstateEdge(assignments={"j": "0"}))
+    sdfg.add_edge(l2_guard, l2_body1, dace.InterstateEdge("j < 10"))
+    sdfg.add_edge(l2_guard, l2_exit, dace.InterstateEdge("j >= 10"))
+    sdfg.add_edge(l2_body2, l2_guard, dace.InterstateEdge(assignments={"j": "j + 1"}))
 
-    exit_state = sdfg.add_state_after(l2_exit, 'exit')
+    exit_state = sdfg.add_state_after(l2_exit, "exit")
 
     # Add an edge from the body of the first loop to the body of the second loop - this is the unstructured control flow.
     # The loop continues otherwise, such that exactly one of the transitions is taken.
-    sdfg.add_edge(l1_body1, l2_body1, dace.InterstateEdge(condition='A[i] == 1', assignments={'j': '3'}))
-    sdfg.add_edge(l1_body1, l1_body2, dace.InterstateEdge(condition='A[i] != 1'))
+    sdfg.add_edge(l1_body1, l2_body1, dace.InterstateEdge(condition="A[i] == 1", assignments={"j": "3"}))
+    sdfg.add_edge(l1_body1, l1_body2, dace.InterstateEdge(condition="A[i] != 1"))
 
     # Add some computation
-    a1 = l1_body2.add_access('A')
-    t1 = l1_body2.add_tasklet('t1', {}, {'o1'}, 'o1 = 1')
-    l1_body2.add_edge(t1, 'o1', a1, None, dace.Memlet('A[i]'))
+    a1 = l1_body2.add_access("A")
+    t1 = l1_body2.add_tasklet("t1", {}, {"o1"}, "o1 = 1")
+    l1_body2.add_edge(t1, "o1", a1, None, dace.Memlet("A[i]"))
 
-    a2 = l2_body2.add_access('B')
-    t2 = l2_body2.add_tasklet('t2', {}, {'o1'}, 'o1 = 1')
-    l2_body2.add_edge(t2, 'o1', a2, None, dace.Memlet('B[j]'))
+    a2 = l2_body2.add_access("B")
+    t2 = l2_body2.add_tasklet("t2", {}, {"o1"}, "o1 = 1")
+    l2_body2.add_edge(t2, "o1", a2, None, dace.Memlet("B[j]"))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
@@ -173,21 +173,22 @@ def test_unstructured_control_flow_sibling_loops(simplify: bool):
     unstructured_nodes = set(unstructured_region.nodes())
     assert exit_state in top_level_nodes
     assert init_state in top_level_nodes
-    assert all(n in unstructured_nodes
-               for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit])
+    assert all(
+        n in unstructured_nodes for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit]
+    )
 
     if simplify:
         # Simplification must not repeatedly inline and raise the unstructured region again
         sdfg.simplify()
         assert any(isinstance(block, UnstructuredControlFlow) for block in sdfg.all_control_flow_blocks())
 
-    A_test = np.zeros((10, ), np.int32)
-    B_test = np.zeros((10, ), np.int32)
+    A_test = np.zeros((10,), np.int32)
+    B_test = np.zeros((10,), np.int32)
     A_test[3] = 1  # This will trigger the jump from the first loop to the second loop
 
-    A_valid = np.zeros((10, ), np.int32)
+    A_valid = np.zeros((10,), np.int32)
     A_valid[:4] = 1
-    B_valid = np.zeros((10, ), np.int32)
+    B_valid = np.zeros((10,), np.int32)
     B_valid[3:] = 1
 
     sdfg(A=A_test, B=B_test)
@@ -201,28 +202,28 @@ def test_simplify_irreducible_loops():
     Simplification raises irreducible control flow into an unstructured region and must not inline it again, which
     previously made simplification alternate between raising and inlining forever.
     """
-    sdfg = dace.SDFG('simplify_irreducible_loops')
-    start = sdfg.add_state('start', is_start_block=True)
+    sdfg = dace.SDFG("simplify_irreducible_loops")
+    start = sdfg.add_state("start", is_start_block=True)
     s1 = sdfg.add_state_after(sdfg.add_state_after(start))
-    s2 = sdfg.add_state('s2')
-    end = sdfg.add_state('end')
+    s2 = sdfg.add_state("s2")
+    end = sdfg.add_state("end")
 
     # Two loops in sequence, with a jump from the body of the second loop into the body of the first
-    l1 = sdfg.add_state('l1')
-    l2 = sdfg.add_state_after(l1, 'l2')
-    sdfg.add_loop_state_machine(s1, l1, s2, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l2)
-    l3 = sdfg.add_state('l3')
-    l4 = sdfg.add_state_after(l3, 'l4')
-    sdfg.add_loop_state_machine(s2, l3, end, 'i', '0', 'i < 10', 'i + 1', loop_end_state=l4)
-    sdfg.add_edge(l3, l1, dace.InterstateEdge('i < 5'))
-    sdfg.edges_between(l3, l4)[0].data.condition.as_string = 'i >= 5'
+    l1 = sdfg.add_state("l1")
+    l2 = sdfg.add_state_after(l1, "l2")
+    sdfg.add_loop_state_machine(s1, l1, s2, "i", "0", "i < 10", "i + 1", loop_end_state=l2)
+    l3 = sdfg.add_state("l3")
+    l4 = sdfg.add_state_after(l3, "l4")
+    sdfg.add_loop_state_machine(s2, l3, end, "i", "0", "i < 10", "i + 1", loop_end_state=l4)
+    sdfg.add_edge(l3, l1, dace.InterstateEdge("i < 5"))
+    sdfg.edges_between(l3, l4)[0].data.condition.as_string = "i >= 5"
 
     sdfg.simplify()
     sdfg.validate()
     assert any(isinstance(block, UnstructuredControlFlow) for block in sdfg.all_control_flow_blocks(recursive=True))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
     test_nested_if_chain(False)

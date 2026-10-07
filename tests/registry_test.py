@@ -19,7 +19,6 @@ class ExtensibleEnumeration(attr_enum.ExtensibleAttributeEnum):
 
 
 class RegistryTests(unittest.TestCase):
-
     def test_class_registry(self):
         ExtensibleClass.register(Extension)
         self.assertTrue(Extension in ExtensibleClass.extensions())
@@ -58,10 +57,10 @@ class RegistryTests(unittest.TestCase):
                 pass
 
     def test_enum_registry(self):
-        ExtensibleEnumeration.register('c')
+        ExtensibleEnumeration.register("c")
         self.assertTrue(ExtensibleEnumeration.c in ExtensibleEnumeration)
         self.assertEqual(ExtensibleEnumeration.c.value, 3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

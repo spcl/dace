@@ -6,6 +6,7 @@ Dynamo represents dynamic sizes and strides as sympy expressions over backed sym
 uses sympy, so the translation mostly re-roots the expression on DaCe ``symbol`` objects (minted exactly once per
 name) and rewrites the handful of torch-specific sympy functions (``FloorDiv``, ``CeilDiv``, ``PythonMod``, ...).
 """
+
 from typing import Dict, Iterable, Optional, Tuple, Union
 
 import sympy
@@ -24,9 +25,26 @@ class UnsupportedSymbolicExpression(NotImplementedError):
 _SYM_TYPES = (torch.SymInt, torch.SymBool, torch.SymFloat)
 
 # sympy node types that are rebuilt verbatim over DaCe symbols
-_PASSTHROUGH = (sympy.Add, sympy.Mul, sympy.Pow, sympy.Max, sympy.Min, sympy.Abs, sympy.Eq, sympy.Ne, sympy.Lt,
-                sympy.Le, sympy.Gt, sympy.Ge, sympy.And, sympy.Or, sympy.Not, sympy.Piecewise, sympy.floor,
-                sympy.ceiling)
+_PASSTHROUGH = (
+    sympy.Add,
+    sympy.Mul,
+    sympy.Pow,
+    sympy.Max,
+    sympy.Min,
+    sympy.Abs,
+    sympy.Eq,
+    sympy.Ne,
+    sympy.Lt,
+    sympy.Le,
+    sympy.Gt,
+    sympy.Ge,
+    sympy.And,
+    sympy.Or,
+    sympy.Not,
+    sympy.Piecewise,
+    sympy.floor,
+    sympy.ceiling,
+)
 
 
 class SymbolTable:
@@ -58,7 +76,7 @@ class SymbolTable:
         """
         if name not in self.symbols:
             # ``nonnegative=False`` would assume a negative value: leave the sign unknown instead
-            assumptions = {'nonnegative': True} if nonnegative else {}
+            assumptions = {"nonnegative": True} if nonnegative else {}
             self.symbols[name] = symbolic.symbol(self.names.get(name, name), dtype, **assumptions)
         return self.symbols[name]
 
@@ -91,42 +109,42 @@ class SymbolTable:
         if isinstance(expr, sympy.Basic):
             name = type(expr).__name__
             args = [self._as_sympy(self.to_dace(a)) for a in expr.args]
-            if name == 'Max':  # torch.utils._sympy.functions.Max (distinct from sympy.Max)
+            if name == "Max":  # torch.utils._sympy.functions.Max (distinct from sympy.Max)
                 return sympy.Max(*args)
-            if name == 'Min':
+            if name == "Min":
                 return sympy.Min(*args)
-            if name == 'FloorDiv':
+            if name == "FloorDiv":
                 return symbolic.int_floor(*args)
-            if name == 'CeilDiv':
+            if name == "CeilDiv":
                 return symbolic.int_ceil(*args)
-            if name in ('Mod', 'PythonMod'):
+            if name in ("Mod", "PythonMod"):
                 return sympy.Mod(*args)
-            if name == 'ModularIndexing':
+            if name == "ModularIndexing":
                 x, d, m = args
                 return sympy.Mod(symbolic.int_floor(x, d), m)
-            if name == 'Identity':
+            if name == "Identity":
                 return args[0]
-            if name in ('IntTrueDiv', 'FloatTrueDiv'):
+            if name in ("IntTrueDiv", "FloatTrueDiv"):
                 # True division yielding a float: keep a float factor so generated code does not use integer division
                 return sympy.Float(1.0) * args[0] / args[1]
-            if name in ('ToFloat', 'TruncToFloat'):
+            if name in ("ToFloat", "TruncToFloat"):
                 return sympy.Float(1.0) * args[0]
-            if name in ('TruncToInt', 'FloorToInt'):
+            if name in ("TruncToInt", "FloorToInt"):
                 return sympy.floor(args[0])
-            if name == 'CeilToInt':
+            if name == "CeilToInt":
                 return sympy.ceiling(args[0])
-            if name == 'RoundToInt':
+            if name == "RoundToInt":
                 return sympy.floor(args[0] + sympy.Rational(1, 2))
-            if name in ('PowByNatural', 'FloatPow'):
-                return args[0]**args[1]
-            if name.startswith('OpaqueUnaryFn_'):
-                fn = getattr(sympy, name[len('OpaqueUnaryFn_'):], None)
+            if name in ("PowByNatural", "FloatPow"):
+                return args[0] ** args[1]
+            if name.startswith("OpaqueUnaryFn_"):
+                fn = getattr(sympy, name[len("OpaqueUnaryFn_") :], None)
                 if fn is not None:
                     return fn(args[0])
-            if name == 'IsNonOverlappingAndDenseIndicator':
-                raise UnsupportedSymbolicExpression(f'Unsupported layout predicate in shape expression: {expr}')
-            raise UnsupportedSymbolicExpression(f'Unsupported symbolic function {name} in expression {expr}')
-        raise UnsupportedSymbolicExpression(f'Cannot translate {type(expr).__name__}: {expr!r}')
+            if name == "IsNonOverlappingAndDenseIndicator":
+                raise UnsupportedSymbolicExpression(f"Unsupported layout predicate in shape expression: {expr}")
+            raise UnsupportedSymbolicExpression(f"Unsupported symbolic function {name} in expression {expr}")
+        raise UnsupportedSymbolicExpression(f"Cannot translate {type(expr).__name__}: {expr!r}")
 
     @staticmethod
     def _as_sympy(v: SymExpr) -> sympy.Basic:

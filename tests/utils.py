@@ -8,14 +8,14 @@ import numpy as np
 
 
 def get_data_file(url, directory_name=None) -> str:
-    """ Get a data file from ``url``, cache it locally and return the local file path to it.
+    """Get a data file from ``url``, cache it locally and return the local file path to it.
 
-        :param url: the url to download from.
-        :param directory_name: an optional relative directory path where the file will be downloaded to.
-        :return: the path of the downloaded file.
+    :param url: the url to download from.
+    :param directory_name: an optional relative directory path where the file will be downloaded to.
+    :return: the path of the downloaded file.
     """
 
-    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')
+    data_directory = pathlib.Path(dace.__file__).parent.parent / "tests" / "data"
 
     if directory_name is not None:
         data_directory /= directory_name
@@ -33,17 +33,17 @@ def get_data_file(url, directory_name=None) -> str:
 def tensors_close(name, expected, result, rtol=1e-5, atol=1e-5):
 
     def to_numpy(x):
-        if hasattr(x, 'detach'):
+        if hasattr(x, "detach"):
             x = x.detach()
-        if hasattr(x, 'cpu'):
+        if hasattr(x, "cpu"):
             x = x.cpu()
-        if hasattr(x, 'numpy'):
+        if hasattr(x, "numpy"):
             x = x.numpy()
         return x
 
     expected = to_numpy(expected)
     result = to_numpy(result)
-    np.testing.assert_allclose(result, expected, rtol=rtol, atol=atol, err_msg=f'{name} not close')
+    np.testing.assert_allclose(result, expected, rtol=rtol, atol=atol, err_msg=f"{name} not close")
 
 
 def torch_tensors_close(name, torch_v, dace_v, rtol=1e-5, atol=1e-4):
@@ -55,4 +55,4 @@ def torch_tensors_close(name, torch_v, dace_v, rtol=1e-5, atol=1e-4):
 
     torch_v = torch_v.detach().cpu().numpy()
     dace_v = dace_v.detach().cpu().numpy()
-    np.testing.assert_allclose(dace_v, torch_v, rtol=rtol, atol=atol, err_msg=f'{name} not close')
+    np.testing.assert_allclose(dace_v, torch_v, rtol=rtol, atol=atol, err_msg=f"{name} not close")

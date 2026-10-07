@@ -6,6 +6,7 @@ that split it into blocks, the value-stack depth at every instruction, and live 
 Successors are normalized (:meth:`CodeInfo.resolve`) by following unconditional jumps and no-ops, so that the
 different layouts CPython 3.10-3.14 emit for the same Python control flow yield the same graph.
 """
+
 import dis
 import sys
 import types
@@ -15,17 +16,17 @@ from torch._dynamo import bytecode_analysis
 from torch._dynamo import bytecode_transformation as bt
 
 #: Unconditional jumps (all versions)
-UNCONDITIONAL_JUMPS = frozenset(('JUMP_FORWARD', 'JUMP_BACKWARD', 'JUMP_ABSOLUTE', 'JUMP_BACKWARD_NO_INTERRUPT'))
+UNCONDITIONAL_JUMPS = frozenset(("JUMP_FORWARD", "JUMP_BACKWARD", "JUMP_ABSOLUTE", "JUMP_BACKWARD_NO_INTERRUPT"))
 #: Instructions without effect that may sit between a jump and its target
-NO_OPS = frozenset(('NOP', 'NOT_TAKEN'))
+NO_OPS = frozenset(("NOP", "NOT_TAKEN"))
 #: Conditional jumps on the truth value of the top of the stack, mapped to "jumps when true"
 JUMP_ON_TRUTH = {
-    'POP_JUMP_IF_FALSE': False,
-    'POP_JUMP_IF_TRUE': True,
-    'POP_JUMP_FORWARD_IF_FALSE': False,
-    'POP_JUMP_BACKWARD_IF_FALSE': False,
-    'POP_JUMP_FORWARD_IF_TRUE': True,
-    'POP_JUMP_BACKWARD_IF_TRUE': True,
+    "POP_JUMP_IF_FALSE": False,
+    "POP_JUMP_IF_TRUE": True,
+    "POP_JUMP_FORWARD_IF_FALSE": False,
+    "POP_JUMP_BACKWARD_IF_FALSE": False,
+    "POP_JUMP_FORWARD_IF_TRUE": True,
+    "POP_JUMP_BACKWARD_IF_TRUE": True,
 }
 
 
@@ -102,7 +103,7 @@ class CodeInfo:
         result = {self.resolve(e) for e in entries}
         for i in self.region(entries):
             inst = self.instructions[i]
-            if inst.opname == 'FOR_ITER':
+            if inst.opname == "FOR_ITER":
                 result.add(i)
                 result.add(self.for_iter_exit(i))
             elif inst.target is not None and inst.opcode in bytecode_analysis.JUMP_OPCODES:
@@ -118,11 +119,11 @@ class CodeInfo:
         which CPython skips on exhaustion.
         """
         i = self.indexof[self.instructions[index].target]
-        if self.instructions[i].opname == 'END_FOR':
+        if self.instructions[i].opname == "END_FOR":
             i += 1
-            if sys.version_info[:2] == (3, 13) and self.instructions[i].opname == 'POP_TOP':
+            if sys.version_info[:2] == (3, 13) and self.instructions[i].opname == "POP_TOP":
                 i += 1
-        if self.instructions[i].opname == 'POP_ITER':
+        if self.instructions[i].opname == "POP_ITER":
             i += 1
         return self.resolve(i)
 
@@ -178,15 +179,16 @@ class CodeInfo:
     def loops_containing(self, index: int) -> List[int]:
         """The ``FOR_ITER`` instructions of the for loops whose body contains ``index``."""
         return [
-            i for i, inst in enumerate(self.instructions) if inst.opname == 'FOR_ITER' and index in self.loop_body(i)
+            i for i, inst in enumerate(self.instructions) if inst.opname == "FOR_ITER" and index in self.loop_body(i)
         ]
 
     def stored_names(self, indices: Set[int]) -> Set[str]:
         """Local variables assigned by the instructions."""
         return {
             self.instructions[i].argval
-            for i in indices if self.instructions[i].opname in (
-                'STORE_FAST', 'STORE_FAST_STORE_FAST') and isinstance(self.instructions[i].argval, str)
+            for i in indices
+            if self.instructions[i].opname in ("STORE_FAST", "STORE_FAST_STORE_FAST")
+            and isinstance(self.instructions[i].argval, str)
         }
 
     def stack_depths(self) -> Dict[int, int]:
@@ -214,7 +216,7 @@ class CodeInfo:
             for s in self.successors[i]:
                 jump = inst.target is not None and s == self.indexof[inst.target] and s != i + 1
                 depth = depths[i] + bytecode_analysis.stack_effect(inst.opcode, inst.arg, jump=jump)
-                if inst.opname == 'GET_ITER' and iterators[i] == depths[i] - 1:
+                if inst.opname == "GET_ITER" and iterators[i] == depths[i] - 1:
                     count = iterators[i] + 1
                 else:
                     count = min(iterators[i], depth)
@@ -227,7 +229,7 @@ class CodeInfo:
     def has_exception_handlers(self, indices: Set[int]) -> bool:
         """Whether any of the instructions is covered by an exception handler (``try``, ``with``) on 3.11+."""
         if sys.version_info < (3, 11):
-            return any(self.instructions[i].opname in ('SETUP_FINALLY', 'SETUP_WITH') for i in indices)
+            return any(self.instructions[i].opname in ("SETUP_FINALLY", "SETUP_WITH") for i in indices)
         return any(self.instructions[i].exn_tab_entry is not None for i in indices)
 
     def livevars(self, index: int) -> Set[str]:
@@ -244,11 +246,11 @@ class CodeInfo:
         for i, inst in enumerate(self.instructions):
             reads, writes = set(), set()
             if inst.opcode in dis.haslocal:
-                names = inst.argval if isinstance(inst.argval, tuple) else (inst.argval, )
-                if inst.opname.startswith('STORE_FAST_LOAD_FAST'):  # Store the first, then load the second
+                names = inst.argval if isinstance(inst.argval, tuple) else (inst.argval,)
+                if inst.opname.startswith("STORE_FAST_LOAD_FAST"):  # Store the first, then load the second
                     writes.add(names[0])
                     reads.update(n for n in names[1:] if n != names[0])
-                elif 'STORE' in inst.opname:
+                elif "STORE" in inst.opname:
                     writes.update(names)
                 else:  # LOAD_FAST*, DELETE_FAST
                     reads.update(names)

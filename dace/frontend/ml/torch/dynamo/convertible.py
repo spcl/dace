@@ -12,6 +12,7 @@ call site and nested as an SDFG:
 * Dynamo's guards on the module (its ``training`` flag, attribute values, submodule types, ...) and on global state
   become part of the program's cache key (``SDFGConvertible.__sdfg_guards__``): a change parses the program again.
 """
+
 import inspect
 import itertools
 import warnings
@@ -34,39 +35,39 @@ from .sources import CapturedGuard, SourceRef
 from .symbols import free_symbol_names
 
 #: One adapter per module, so that the Python frontend sees the same object at every use
-_ADAPTERS: 'weakref.WeakKeyDictionary[torch.nn.Module, ModuleConvertible]' = weakref.WeakKeyDictionary()
+_ADAPTERS: "weakref.WeakKeyDictionary[torch.nn.Module, ModuleConvertible]" = weakref.WeakKeyDictionary()
 
 #: Guards on a value, as the projection of the value that the guard compares
 _GUARD_PROJECTIONS: Dict[str, Callable[[Any], Any]] = {
-    'TYPE_MATCH': type,
-    'ID_MATCH': id,
-    'MODULE_MATCH': id,
-    'BUILTIN_MATCH': id,
-    'FUNCTION_MATCH': id,
-    'CLOSURE_MATCH': id,
-    'CONSTANT_MATCH': lambda value: value,
-    'EQUALS_MATCH': lambda value: value,
-    'EMPTY_NN_MODULE_HOOKS_DICT': len,
-    'DICT_LENGTH': len,
-    'SEQUENCE_LENGTH': len,
-    'LIST_LENGTH': len,
+    "TYPE_MATCH": type,
+    "ID_MATCH": id,
+    "MODULE_MATCH": id,
+    "BUILTIN_MATCH": id,
+    "FUNCTION_MATCH": id,
+    "CLOSURE_MATCH": id,
+    "CONSTANT_MATCH": lambda value: value,
+    "EQUALS_MATCH": lambda value: value,
+    "EMPTY_NN_MODULE_HOOKS_DICT": len,
+    "DICT_LENGTH": len,
+    "SEQUENCE_LENGTH": len,
+    "LIST_LENGTH": len,
 }
 
 #: Guards on global state that change the captured graph
 _GLOBAL_STATE_GUARDS: Dict[str, Callable[[], Any]] = {
-    'DEFAULT_DEVICE': lambda: str(torch.get_default_device()),
-    'DETERMINISTIC_ALGORITHMS': torch.are_deterministic_algorithms_enabled,
+    "DEFAULT_DEVICE": lambda: str(torch.get_default_device()),
+    "DETERMINISTIC_ALGORITHMS": torch.are_deterministic_algorithms_enabled,
 }
 
 #: Guards that need no runtime check: descriptors of arguments and closure arrays are part of the cache key already,
 #: and the captured graph is an inference graph regardless of the grad mode
-_IMPLIED_GUARDS = {'TENSOR_MATCH', 'GRAD_MODE', 'SHAPE_ENV'}
+_IMPLIED_GUARDS = {"TENSOR_MATCH", "GRAD_MODE", "SHAPE_ENV"}
 
 #: Graph inputs that a module conversion can provide
-_SUPPORTED_INPUTS = ('argument', 'parameter', 'buffer', 'attribute', 'global', 'size', 'stride', 'storage_offset')
+_SUPPORTED_INPUTS = ("argument", "parameter", "buffer", "attribute", "global", "size", "stride", "storage_offset")
 
 
-def as_sdfg_convertible(module: torch.nn.Module) -> 'ModuleConvertible':
+def as_sdfg_convertible(module: torch.nn.Module) -> "ModuleConvertible":
     """Returns the (unique) SDFG-convertible adapter of ``module``."""
     adapter = _ADAPTERS.get(module)
     if adapter is None:
@@ -95,15 +96,18 @@ class ModuleConvertible(SDFGConvertible):
         variadic = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
         return [p.name for p in self.signature.parameters.values() if p.kind not in variadic], []
 
-    def closure_resolver(self,
-                         constant_args: Dict[str, Any],
-                         given_args: Set[str],
-                         parent_closure: Optional[SDFGClosure] = None) -> SDFGClosure:
+    def closure_resolver(
+        self, constant_args: Dict[str, Any], given_args: Set[str], parent_closure: Optional[SDFGClosure] = None
+    ) -> SDFGClosure:
         # Parameters and buffers are known before capturing: they are the closure arrays of the program
         closure = SDFGClosure()
         for qualname, tensor in self._state_tensors():
-            closure.closure_arrays[sanitize_name(qualname)] = (qualname, data.create_datadescriptor(tensor),
-                                                               _state_getter(self.module, qualname), False)
+            closure.closure_arrays[sanitize_name(qualname)] = (
+                qualname,
+                data.create_datadescriptor(tensor),
+                _state_getter(self.module, qualname),
+                False,
+            )
         return closure
 
     def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -122,8 +126,10 @@ class ModuleConvertible(SDFGConvertible):
 
         for ref in program.inputs:
             if ref.kind not in _SUPPORTED_INPUTS:
-                raise NotImplementedError(f'{type(self.module).__name__}: graph input {ref.text} ({ref.kind}) cannot '
-                                          'be passed from a @dace.program yet')
+                raise NotImplementedError(
+                    f"{type(self.module).__name__}: graph input {ref.text} ({ref.kind}) cannot "
+                    "be passed from a @dace.program yet"
+                )
         result = program.import_graph(self.name, return_arrays=True)
 
         # Closure arrays under their container names in the SDFG. Parameters and buffers were declared to the program
@@ -131,14 +137,14 @@ class ModuleConvertible(SDFGConvertible):
         self._closure = {}
         for spec in result.inputs:
             ref = program.inputs[spec.position]
-            if spec.kind != 'tensor':
+            if spec.kind != "tensor":
                 continue
-            if ref.kind in ('parameter', 'buffer'):
+            if ref.kind in ("parameter", "buffer"):
                 self._closure[spec.name] = _state_getter(self.module, ref.qualname)
-            elif ref.kind in ('attribute', 'global'):
+            elif ref.kind in ("attribute", "global"):
                 self._closure[spec.name] = _source_evaluator(ref, _identity, self.module, program.global_vars)
 
-        self._guards, self.unchecked_guards = guard_evaluators(program, self.module, f'__torch_{id(self.module):x}')
+        self._guards, self.unchecked_guards = guard_evaluators(program, self.module, f"__torch_{id(self.module):x}")
         _warn_on_symbolic_assumptions(program, type(self.module).__name__)
         self.program = program
         return result.sdfg
@@ -153,7 +159,7 @@ def _state_getter(module: torch.nn.Module, qualname: str) -> Callable[[], torch.
     Returns a function that looks up a parameter or buffer by name at call time. It returns the tensor object itself:
     the Python frontend matches closure arrays by identity.
     """
-    owner_name, _, attr = qualname.rpartition('.')
+    owner_name, _, attr = qualname.rpartition(".")
 
     def get() -> torch.Tensor:
         owner = module.get_submodule(owner_name) if owner_name else module
@@ -210,14 +216,15 @@ def _leaves(value: Any) -> Iterator[Any]:
         yield value
 
 
-def _example(value: Any, name: str, path: Tuple[Any, ...], hints: Dict[str, int],
-             candidates: Iterator[int]) -> Tuple[Any, Any]:
+def _example(
+    value: Any, name: str, path: Tuple[Any, ...], hints: Dict[str, int], candidates: Iterator[int]
+) -> Tuple[Any, Any]:
     """Example value and ``dynamic_shapes`` entry of one (possibly structured) argument; see :func:`example_arguments`."""
     if isinstance(value, dict):
-        pairs = {k: _example(v, name, path + (k, ), hints, candidates) for k, v in value.items()}
+        pairs = {k: _example(v, name, path + (k,), hints, candidates) for k, v in value.items()}
         return {k: e for k, (e, _) in pairs.items()}, {k: s for k, (_, s) in pairs.items()}
     if isinstance(value, (list, tuple)):
-        pairs = [_example(v, name, path + (k, ), hints, candidates) for k, v in enumerate(value)]
+        pairs = [_example(v, name, path + (k,), hints, candidates) for k, v in enumerate(value)]
         return type(value)(e for e, _ in pairs), [s for _, s in pairs]
 
     element = structured_argument_name(name, path)
@@ -228,8 +235,9 @@ def _example(value: Any, name: str, path: Tuple[Any, ...], hints: Dict[str, int]
         return torch.zeros((), dtype=to_torch_dtype(value.dtype)), None
     if isinstance(value, data.Array):
         dims = {
-            k: DimSpec(name=str(size) if isinstance(size, sympy.Symbol) else f'{element}_dim{k}', strict=False)
-            for k, size in enumerate(value.shape) if symbolic.issymbolic(size)
+            k: DimSpec(name=str(size) if isinstance(size, sympy.Symbol) else f"{element}_dim{k}", strict=False)
+            for k, size in enumerate(value.shape)
+            if symbolic.issymbolic(size)
         }
         return _example_tensor(value, hints), dims
     if symbolic.issymbolic(value):
@@ -242,13 +250,14 @@ def _example(value: Any, name: str, path: Tuple[Any, ...], hints: Dict[str, int]
 def _example_tensor(desc: data.Array, hints: Dict[str, int]) -> torch.Tensor:
     shape = [int(symbolic.evaluate(s, hints)) if symbolic.issymbolic(s) else int(s) for s in desc.shape]
     strides = [int(symbolic.evaluate(s, hints)) if symbolic.issymbolic(s) else int(s) for s in desc.strides]
-    device = 'cuda' if desc.storage == dtypes.StorageType.GPU_Global else 'cpu'
+    device = "cuda" if desc.storage == dtypes.StorageType.GPU_Global else "cpu"
     return torch.empty_strided(shape, strides, dtype=to_torch_dtype(desc.dtype), device=device)
 
 
 # ---------------------------------------------------------------------------------------------- guards
-def guard_evaluators(program: CapturedProgram, module: torch.nn.Module,
-                     prefix: str) -> Tuple[Dict[str, Callable[[], Any]], List[CapturedGuard]]:
+def guard_evaluators(
+    program: CapturedProgram, module: torch.nn.Module, prefix: str
+) -> Tuple[Dict[str, Callable[[], Any]], List[CapturedGuard]]:
     """
     Translates the guards of a capture into evaluators for a ``@dace.program`` cache key.
 
@@ -261,18 +270,18 @@ def guard_evaluators(program: CapturedProgram, module: torch.nn.Module,
     evaluators: Dict[str, Callable[[], Any]] = {}
     unchecked: List[CapturedGuard] = []
     for index, guard in enumerate(program.guards):
-        if guard.kind in _IMPLIED_GUARDS or (guard.source is not None and guard.source.kind == 'argument'):
+        if guard.kind in _IMPLIED_GUARDS or (guard.source is not None and guard.source.kind == "argument"):
             continue
         if guard.source is None:
             evaluator = _GLOBAL_STATE_GUARDS.get(guard.kind)
-        elif guard.kind in _GUARD_PROJECTIONS and guard.source.kind != 'unknown':
+        elif guard.kind in _GUARD_PROJECTIONS and guard.source.kind != "unknown":
             evaluator = _source_evaluator(guard.source, _GUARD_PROJECTIONS[guard.kind], module, program.global_vars)
         else:
             evaluator = None
         if evaluator is None:
             unchecked.append(guard)
         else:
-            evaluators[f'{prefix}_guard_{index}'] = evaluator
+            evaluators[f"{prefix}_guard_{index}"] = evaluator
     return evaluators, unchecked
 
 
@@ -280,14 +289,15 @@ def _identity(value: Any) -> Any:
     return value
 
 
-def _source_evaluator(ref: SourceRef, projection: Callable[[Any], Any], module: torch.nn.Module,
-                      global_vars: Dict[str, Any]) -> Callable[[], Any]:
+def _source_evaluator(
+    ref: SourceRef, projection: Callable[[Any], Any], module: torch.nn.Module, global_vars: Dict[str, Any]
+) -> Callable[[], Any]:
 
     def evaluate() -> Any:
         try:
             return projection(ref.evaluate(module, {}, global_vars))
         except (AttributeError, KeyError, IndexError, TypeError) as ex:
-            return ('<unavailable>', type(ex).__name__)  # A changed structure invalidates the cache entry, too
+            return ("<unavailable>", type(ex).__name__)  # A changed structure invalidates the cache entry, too
 
     return evaluate
 
@@ -297,4 +307,4 @@ def _warn_on_symbolic_assumptions(program: CapturedProgram, what: str) -> None:
     user_symbols = set(program.symbol_names.values())
     for relation in program.shape_guards:
         if isinstance(relation, sympy.Basic) and free_symbol_names(relation) & user_symbols:
-            warnings.warn(f'{what}: the captured graph assumes {relation}; results are only valid when it holds')
+            warnings.warn(f"{what}: the captured graph assumes {relation}; results are only valid when it holds")

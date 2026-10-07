@@ -6,6 +6,7 @@ A lowering has the signature ``lower(ctx: LoweringContext, node: torch.fx.Node, 
 ``args``/``kwargs`` are the FX arguments with nodes replaced by their :mod:`context` values. The FX node gives access
 to ``node.meta['val']`` (FakeTensor/SymInt) which is the authoritative source for output shapes, strides, and dtypes.
 """
+
 from typing import Any, Callable, Dict, Optional
 
 _LOWERINGS: Dict[Any, Callable] = {}
@@ -24,7 +25,7 @@ def register_lowering(*targets):
 
 def lookup(target) -> Optional[Callable]:
     fn = _LOWERINGS.get(target)
-    if fn is None and hasattr(target, 'overloadpacket'):
+    if fn is None and hasattr(target, "overloadpacket"):
         fn = _LOWERINGS.get(target.overloadpacket)
     return fn
 
@@ -39,10 +40,11 @@ def resolve(*names):
     skipping names that do not exist in the installed torch version.
     """
     import torch
+
     result = []
     for name in names:
-        obj = torch if name.startswith('torch.') else torch.ops
-        parts = name.split('.')[1:] if name.startswith('torch.') else name.split('.')
+        obj = torch if name.startswith("torch.") else torch.ops
+        parts = name.split(".")[1:] if name.startswith("torch.") else name.split(".")
         try:
             for part in parts:
                 obj = getattr(obj, part)

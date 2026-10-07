@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Data-dependent scalars (``.item()``): symbols the SDFG assigns from data."""
+
 import numpy as np
 import pytest
 
@@ -11,10 +12,10 @@ import torch.nn as nn  # noqa: E402
 import dace  # noqa: E402
 import dace.ml  # noqa: E402
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 # Inputs with different sizes and different data-dependent values (including an empty selection)
-INPUTS = [torch.randn(6), torch.randn(9), torch.full((5, ), -1.0), torch.tensor([3., -1, 2, 5, -2, 1])]
+INPUTS = [torch.randn(6), torch.randn(9), torch.full((5,), -1.0), torch.tensor([3.0, -1, 2, 5, -2, 1])]
 
 
 def _check(fn, inputs=INPUTS):
@@ -80,14 +81,13 @@ def test_return_item():
 def test_data_dependent_output_shape_is_reported():
 
     def f(x):
-        return x[:(x > 0).sum().item()] * 2
+        return x[: (x > 0).sum().item()] * 2
 
-    with pytest.raises(Exception, match='data-dependent output shapes'):
+    with pytest.raises(Exception, match="data-dependent output shapes"):
         _check(f)
 
 
 class _Scaled(nn.Module):
-
     def __init__(self):
         super().__init__()
         self.fc = nn.Linear(4, 4)
@@ -112,7 +112,7 @@ def test_item_in_program_module():
             np.testing.assert_allclose(program(x.numpy().copy()), model(x).numpy(), rtol=1e-5, atol=1e-5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_item_in_arithmetic()
     test_slice_with_data_dependent_bound()
     test_negative_data_dependent_slice_end()

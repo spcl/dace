@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lowerings for symbolic-integer (SymInt) arithmetic, tuple indexing, and size queries."""
+
 import builtins
 import math
 import operator
@@ -19,7 +20,7 @@ _SYM_TYPES = (torch.SymInt, torch.SymBool, torch.SymFloat)
 
 def value_from_meta(ctx, node):
     """Returns a SymValue/ConstValue from ``node.meta['val']`` when it is a symbolic or constant scalar."""
-    val = node.meta.get('val', None) if node is not None else None
+    val = node.meta.get("val", None) if node is not None else None
     if isinstance(val, _SYM_TYPES):
         return SymValue(ctx.symtab.to_dace(val))
     if isinstance(val, (bool, int, float)):
@@ -31,7 +32,7 @@ def _unwrap_tensor_shape(v: TensorValue):
     return v.tshape
 
 
-@register_lowering(*resolve('aten.sym_size.int', 'aten.sym_size.default', 'aten.sym_size'))
+@register_lowering(*resolve("aten.sym_size.int", "aten.sym_size.default", "aten.sym_size"))
 def lower_sym_size(ctx, node, tensor, dim=None):
     v = value_from_meta(ctx, node)
     if v is not None:
@@ -41,7 +42,7 @@ def lower_sym_size(ctx, node, tensor, dim=None):
     return SymValue(tensor.tshape[as_sym(dim)])
 
 
-@register_lowering(*resolve('aten.sym_stride.int', 'aten.sym_stride.default', 'aten.sym_stride'))
+@register_lowering(*resolve("aten.sym_stride.int", "aten.sym_stride.default", "aten.sym_stride"))
 def lower_sym_stride(ctx, node, tensor, dim=None):
     v = value_from_meta(ctx, node)
     if v is not None:
@@ -51,7 +52,7 @@ def lower_sym_stride(ctx, node, tensor, dim=None):
     return SymValue(tensor.tstrides[as_sym(dim)])
 
 
-@register_lowering(*resolve('aten.sym_numel.default', 'aten.sym_numel'))
+@register_lowering(*resolve("aten.sym_numel.default", "aten.sym_numel"))
 def lower_sym_numel(ctx, node, tensor):
     v = value_from_meta(ctx, node)
     if v is not None:
@@ -62,28 +63,28 @@ def lower_sym_numel(ctx, node, tensor):
     return SymValue(numel)
 
 
-@register_lowering(*resolve('aten.sym_storage_offset.default', 'aten.sym_storage_offset'))
+@register_lowering(*resolve("aten.sym_storage_offset.default", "aten.sym_storage_offset"))
 def lower_sym_storage_offset(ctx, node, tensor):
     # The torch-level offset (from the FakeTensor), not 0: containers start at the tensor's first element, and
     # ``as_strided`` subtracts the base's torch-level offset to get an offset relative to the container
     v = value_from_meta(ctx, node)
     if v is None:
-        raise UnsupportedOpError(node.target, 'storage offset without FakeTensor metadata')
+        raise UnsupportedOpError(node.target, "storage offset without FakeTensor metadata")
     return v
 
 
-@register_lowering(*resolve('aten._local_scalar_dense.default'))
+@register_lowering(*resolve("aten._local_scalar_dense.default"))
 def lower_local_scalar_dense(ctx, node, tensor):
     """
     ``.item()``: Dynamo's unbacked symbol (e.g., ``u0``) becomes an SDFG symbol assigned from the tensor's element on
     an interstate edge, so that later shapes, indices, and control flow can use the data-dependent value.
     """
-    val = node.meta.get('val', None)
+    val = node.meta.get("val", None)
     unbacked = ctx.unassigned_unbacked(val)
     if unbacked is None:
         constant = value_from_meta(ctx, node)
         if constant is None:
-            raise UnsupportedOpError(node.target, f'unexpected value {val!r}')
+            raise UnsupportedOpError(node.target, f"unexpected value {val!r}")
         return constant
     if isinstance(val, torch.SymFloat):
         dtype = dtypes.float64
@@ -94,15 +95,18 @@ def lower_local_scalar_dense(ctx, node, tensor):
     value_range = val.node.shape_env.var_to_range.get(unbacked)
     nonnegative = value_range is not None and bool(value_range.lower >= 0)
     if tensor.is_view:  # Interstate edges read containers, not views
-        element = ctx.add_array('item', (), tensor.torch_dtype, transient=True, device=tensor.device)
+        element = ctx.add_array("item", (), tensor.torch_dtype, transient=True, device=tensor.device)
         ctx.emit_copy(tensor, element)
         tensor = element
-    read = f'{tensor.name}[{", ".join(["0"] * len(tensor.desc.shape))}]'
+    read = f"{tensor.name}[{', '.join(['0'] * len(tensor.desc.shape))}]"
     return SymValue(ctx.assign_symbol(unbacked, read, dtype, nonnegative))
 
 
-@register_lowering(*resolve('aten._assert_scalar.default', 'aten.sym_constrain_range.default',
-                            'aten.sym_constrain_range_for_size.default'))
+@register_lowering(
+    *resolve(
+        "aten._assert_scalar.default", "aten.sym_constrain_range.default", "aten.sym_constrain_range_for_size.default"
+    )
+)
 def lower_runtime_assertion(ctx, node, *args, **kwargs):
     """Runtime checks of the value ranges Dynamo assumed for unbacked symbols; not checked in the SDFG."""
     return ConstValue(None)
@@ -142,7 +146,7 @@ _UNARY = {
     builtins.float: lambda a: sympy.Float(1.0) * a,
     builtins.int: lambda a: sympy.floor(a),
 }
-for _name, _fn in (('sym_sqrt', sympy.sqrt), ('sym_log2', lambda a: sympy.log(a, 2))):
+for _name, _fn in (("sym_sqrt", sympy.sqrt), ("sym_log2", lambda a: sympy.log(a, 2))):
     if hasattr(torch, _name):
         _UNARY[getattr(torch, _name)] = _fn
 
@@ -174,7 +178,7 @@ def lower_symbolic_arith(ctx, node, *args):
     if target in (builtins.max, builtins.min) and len(args) == 1 and _is_seq(args[0]):
         fn = sympy.Max if target is builtins.max else sympy.Min
         return SymValue(fn(*[as_sym(a) for a in _items(args[0])]))
-    raise UnsupportedOpError(target, f'symbolic arithmetic with arguments {args}')
+    raise UnsupportedOpError(target, f"symbolic arithmetic with arguments {args}")
 
 
 @register_lowering(operator.getitem)
@@ -185,15 +189,15 @@ def lower_getitem(ctx, node, seq, idx):
     elif isinstance(seq, (list, tuple)):
         items = list(seq)
     elif isinstance(seq, TensorValue):
-        raise UnsupportedOpError(operator.getitem, 'tensor indexing with getitem should have been decomposed')
+        raise UnsupportedOpError(operator.getitem, "tensor indexing with getitem should have been decomposed")
     else:
-        raise UnsupportedOpError(operator.getitem, f'indexing into {type(seq).__name__}')
+        raise UnsupportedOpError(operator.getitem, f"indexing into {type(seq).__name__}")
     if isinstance(idx, slice):
         return TupleValue(items[idx])
     return items[int(idx)]
 
 
-@register_lowering(*resolve('torch.sym_ite'))
+@register_lowering(*resolve("torch.sym_ite"))
 def lower_sym_ite(ctx, node, cond, a, b):
     v = value_from_meta(ctx, node)
     if v is not None:

@@ -359,7 +359,6 @@ def test_fortran_frontend_any_array_comparison_2d_subset_offset():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_any_array()
     test_fortran_frontend_any_array_dim()
     test_fortran_frontend_any_array_comparison()

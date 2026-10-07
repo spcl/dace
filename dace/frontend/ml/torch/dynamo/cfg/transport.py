@@ -4,6 +4,7 @@ Transport of captured control flow through Dynamo and AOTAutograd: an opaque cus
 for a whole control-flow graph of traced blocks. AOTAutograd only needs its output metadata (the fake implementation);
 the DaCe importer looks the graph up by id and lowers it to schedule-tree control flow.
 """
+
 import dataclasses
 import itertools
 from typing import Any, Dict, List, Optional
@@ -11,12 +12,13 @@ from typing import Any, Dict, List, Optional
 import torch
 
 #: Kinds of block exits
-GOTO, BRANCH, RETURN = 'goto', 'branch', 'return'
+GOTO, BRANCH, RETURN = "goto", "branch", "return"
 
 
 @dataclasses.dataclass
 class Binding:
     """Where a block input comes from: an operator input (``tensor``/``sym`` by index) or a constant."""
+
     kind: str  #: ``'tensor'``, ``'sym'``
     index: int
 
@@ -24,6 +26,7 @@ class Binding:
 @dataclasses.dataclass
 class BlockRecord:
     """One traced block (one specialization of a block start)."""
+
     id: int
     start: int  #: Instruction index (leader) where the block starts
     graph: torch.fx.Graph  #: Torch-level graph traced by Dynamo
@@ -45,13 +48,14 @@ class CfgRecord:
     A captured control-flow graph: an entry (a branch, or a goto into a loop) into traced blocks, returning flat
     tensors.
     """
+
     id: int
     blocks: List[BlockRecord]
     entry_predicate: Optional[Binding]  #: Operator input holding the entry predicate (``None``: goto)
     entry_successors: Dict[Any, int]  #: Entry block ids by predicate value (``None`` for a goto)
     entry_bindings: Dict[str, Binding]  #: Operator inputs of the CFG variables live at the entry
     output_examples: List[Any]  #: Example (fake) values of the flat outputs
-    code_name: str = ''
+    code_name: str = ""
     entry_constants: Dict[str, Any] = dataclasses.field(default_factory=dict)  #: Python integers for symbolic inputs
     #: The entry predicate as an expression over symbols (e.g., a comparison of sizes), instead of an operator input
     entry_condition: Any = None
@@ -75,10 +79,10 @@ def lookup(cfg_id: int) -> CfgRecord:
     return _REGISTRY[cfg_id]
 
 
-@torch.library.custom_op('dace::cfg', mutates_args=())
+@torch.library.custom_op("dace::cfg", mutates_args=())
 def cfg(cfg_id: int, tensors: List[torch.Tensor], symints: List[int]) -> List[torch.Tensor]:
     """A captured control-flow graph (see :mod:`.transport`). It only exists in graphs compiled by DaCe."""
-    raise RuntimeError('dace::cfg only runs as part of a graph compiled with the DaCe backend')
+    raise RuntimeError("dace::cfg only runs as part of a graph compiled with the DaCe backend")
 
 
 @cfg.register_fake

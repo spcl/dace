@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Mapping between ``torch.dtype`` and DaCe typeclasses."""
+
 from typing import Dict
 
 import torch
@@ -26,8 +27,13 @@ TORCH_TO_DACE: Dict[torch.dtype, dtypes.typeclass] = {
     torch.complex64: dace.complex64,
     torch.complex128: dace.complex128,
 }
-for _tname, _dname in (('float8_e4m3fn', 'float8_e4m3fn'), ('float8_e5m2', 'float8_e5m2'), ('uint16', 'uint16'),
-                       ('uint32', 'uint32'), ('uint64', 'uint64')):
+for _tname, _dname in (
+    ("float8_e4m3fn", "float8_e4m3fn"),
+    ("float8_e5m2", "float8_e5m2"),
+    ("uint16", "uint16"),
+    ("uint32", "uint32"),
+    ("uint64", "uint64"),
+):
     if hasattr(torch, _tname) and hasattr(dace, _dname):
         TORCH_TO_DACE[getattr(torch, _tname)] = getattr(dace, _dname)
 
@@ -38,18 +44,18 @@ def to_dace_dtype(dtype: torch.dtype) -> dtypes.typeclass:
     try:
         return TORCH_TO_DACE[dtype]
     except KeyError:
-        raise UnsupportedDtypeError(f'torch dtype {dtype} has no DaCe equivalent')
+        raise UnsupportedDtypeError(f"torch dtype {dtype} has no DaCe equivalent")
 
 
 def to_torch_dtype(dtype: dtypes.typeclass) -> torch.dtype:
     try:
         return DACE_TO_TORCH[dtype]
     except KeyError:
-        raise UnsupportedDtypeError(f'DaCe dtype {dtype} has no torch equivalent')
+        raise UnsupportedDtypeError(f"DaCe dtype {dtype} has no torch equivalent")
 
 
 def is_floating(dtype: dtypes.typeclass) -> bool:
-    return dtype in (dace.float16, dace.bfloat16, dace.float32, dace.float64) or dtype.type.__name__.startswith('float')
+    return dtype in (dace.float16, dace.bfloat16, dace.float32, dace.float64) or dtype.type.__name__.startswith("float")
 
 
 def is_boolean(dtype: dtypes.typeclass) -> bool:
