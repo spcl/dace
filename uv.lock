@@ -716,7 +716,6 @@ dev = [
     { name = "sphinx-autodoc-typehints", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "sphinx-autodoc-typehints", version = "3.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sphinx-rtd-theme" },
-    { name = "yapf" },
 ]
 docs = [
     { name = "jinja2" },
@@ -727,7 +726,6 @@ docs = [
 ]
 linting = [
     { name = "pre-commit" },
-    { name = "yapf" },
 ]
 ml-testing = [
     { name = "absl-py" },
@@ -814,17 +812,13 @@ dev = [
     { name = "scipy" },
     { name = "sphinx-autodoc-typehints" },
     { name = "sphinx-rtd-theme", specifier = ">=0.5.1" },
-    { name = "yapf", specifier = "==0.43.0" },
 ]
 docs = [
     { name = "jinja2", specifier = "<3.2.0" },
     { name = "sphinx-autodoc-typehints" },
     { name = "sphinx-rtd-theme", specifier = ">=0.5.1" },
 ]
-linting = [
-    { name = "pre-commit", specifier = "==4.1.0" },
-    { name = "yapf", specifier = "==0.43.0" },
-]
+linting = [{ name = "pre-commit", specifier = "==4.1.0" }]
 ml-testing = [
     { name = "absl-py" },
     { name = "click" },
@@ -3965,17 +3959,4 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d0/20/50ed6bdf27dec98b568a8ae25dc599f35baa3d9709f9e83fd1edb56b9a90/wheel-0.48.0.tar.gz", hash = "sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322", size = 66471, upload-time = "2026-08-11T22:02:27.327Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl", hash = "sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab", size = 33320, upload-time = "2026-08-11T22:02:26.1Z" },
-]
-
-[[package]]
-name = "yapf"
-version = "0.43.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "platformdirs" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/23/97/b6f296d1e9cc1ec25c7604178b48532fa5901f721bcf1b8d8148b13e5588/yapf-0.43.0.tar.gz", hash = "sha256:00d3aa24bfedff9420b2e0d5d9f5ab6d9d4268e72afbf59bb3fa542781d5218e", size = 254907, upload-time = "2024-11-14T00:11:41.584Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/81/6acd6601f61e31cfb8729d3da6d5df966f80f374b78eff83760714487338/yapf-0.43.0-py3-none-any.whl", hash = "sha256:224faffbc39c428cb095818cf6ef5511fdab6f7430a10783fdfb292ccf2852ca", size = 256158, upload-time = "2024-11-14T00:11:39.37Z" },
 ]
