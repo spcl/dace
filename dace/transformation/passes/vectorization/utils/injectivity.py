@@ -13,7 +13,7 @@ from dace import subsets, symbolic
 from dace.sdfg.narrowing import as_basic, as_expr
 
 
-def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) -> bool:
+def write_subset_is_injective(write_subset: subsets.Range, params: list[str], nonzero: frozenset = frozenset()) -> bool:
     """Write at ``write_subset`` hits a DISTINCT element per distinct tuple of the enclosing ``params``
     -> conflict-free.
 
@@ -21,12 +21,13 @@ def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) ->
     numeric constant and no other param in it: two iterations that differ in any param then differ in
     that dim. A loop-varying multi-element dim may overlap between iterations and refuses; a dim over
     several params (``i*N+j``) decides nothing on its own. A reduction (``c == 0``, or a param in no
-    dim) is NOT injective; a symbolic stride (``c`` not provably nonzero) is left to the guarded
-    parallelization passes. Symbols match by name, so an ``int64`` iterator and its untyped spelling
-    are one parameter.
+    dim) is NOT injective; a symbolic stride ``c`` counts only when every factor of it is a nonzero
+    number or a name in ``nonzero`` (see :func:`guarded_nonzero_symbols`). Symbols match by name, so an
+    ``int64`` iterator and its untyped spelling are one parameter.
 
     :param write_subset: the written range.
     :param params: enclosing iteration parameters.
+    :param nonzero: names known nonzero where the write runs.
     :returns: ``True`` only when the write is provably injective.
     """
     if not params:
@@ -48,9 +49,44 @@ def write_subset_is_injective(write_subset: subsets.Range, params: list[str]) ->
         if len(varying) != 1:
             continue
         slope = sympy.diff(begin, loop_syms[varying[0]])
-        if slope.is_number and slope != 0:
+        if all((f.is_number and f != 0) or (f.is_Symbol and str(f) in nonzero) for f in sympy.Mul.make_args(slope)):
             covered.add(varying[0])
     return covered == set(params)
+
+
+def guarded_nonzero_symbols(block) -> frozenset:
+    """The names an enclosing ``if`` branch of ``block`` asserts nonzero (``s != 0`` conjuncts of its condition).
+
+    ``ParallelizeUnderConstraint`` lifts a symbolic-stride loop to a map only under ``inc != 0``; inside that
+    branch the stride is nonzero, which the injectivity proof otherwise cannot know. A name the branch
+    reassigns on an interstate edge does not keep the guard's value and is left out.
+
+    :param block: a state or region, searched upward within its SDFG.
+    :returns: the guarded names.
+    """
+    from dace.sdfg.state import ConditionalBlock
+    names = set()
+    while block is not None:
+        parent = block.parent_graph
+        if isinstance(parent, ConditionalBlock):
+            for condition, region in parent.branches:
+                if region is not block or condition is None:
+                    continue
+                expr = symbolic.pystr_to_symbolic(condition.as_string)
+                for term in (expr.args if isinstance(expr, sympy.And) else (expr, )):
+                    if isinstance(term, sympy.Ne):
+                        lhs, rhs = term.args
+                        side = lhs if rhs == 0 else rhs if lhs == 0 else None
+                        if side is not None and side.is_Symbol:
+                            names.add(str(side))
+                reassigned = {
+                    name
+                    for edge in region.all_interstate_edges(recursive=True)
+                    for name in edge.data.assignments
+                }
+                names -= reassigned
+        block = parent
+    return frozenset(names)
 
 
 def equalized_range(write_subset: subsets.Range) -> subsets.Range:

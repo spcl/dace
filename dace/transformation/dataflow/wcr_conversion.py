@@ -1138,8 +1138,8 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # Injective over the enclosing map(s): distinct lane -> distinct element (not a reduction).
         params = _enclosing_map_params(graph, self.tasklet)
         # Avoid import loop: the vectorization package imports this module.
-        from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
-        if not write_subset_is_injective(sub, params):
+        from dace.transformation.passes.vectorization.utils.injectivity import guarded_nonzero_symbols, write_subset_is_injective
+        if not write_subset_is_injective(sub, params, guarded_nonzero_symbols(graph)):
             return False
         # Parent-map guard (mirrors the scalar-revert path): across a nested-SDFG boundary the
         # PARENT's enclosing maps are invisible to ``_enclosing_map_params``. If an outer map's
@@ -1193,8 +1193,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             return False
         # Injective over the enclosing map: distinct iteration -> distinct element, no reduction.
         # Avoid import loop: the vectorization package imports this module.
-        from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
-        if not write_subset_is_injective(write, _enclosing_map_params(graph, self.nested)):
+        from dace.transformation.passes.vectorization.utils.injectivity import guarded_nonzero_symbols, write_subset_is_injective
+        if not write_subset_is_injective(write, _enclosing_map_params(graph, self.nested),
+                                         guarded_nonzero_symbols(graph)):
             return False
         # The RMW must already be materialised inside: the body reads back exactly what it writes,
         # so the written value already equals ``dest <op> incoming`` and a plain store is equivalent.
@@ -1269,8 +1270,8 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
         # (lifted to Reduce libnode / OMP-reduction elsewhere); symbolic stride → guarded passes.
         params = _enclosing_map_params(graph, edge.src)
         # Avoid import loop: the vectorization package imports this module.
-        from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
-        if params and not write_subset_is_injective(edge.data.subset, params):
+        from dace.transformation.passes.vectorization.utils.injectivity import guarded_nonzero_symbols, write_subset_is_injective
+        if params and not write_subset_is_injective(edge.data.subset, params, guarded_nonzero_symbols(graph)):
             return False
 
         # Nested-SDFG guard: inside a NestedSDFG the enclosing maps of the PARENT are invisible to
