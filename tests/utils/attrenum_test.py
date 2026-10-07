@@ -204,7 +204,7 @@ def test_pickling():
 
     for member in (
         StorageType.Register,
-        StorageType.Register(dynamic=True),
+        StorageType.Register(force=True),
         StorageType.GPU_Shared(dynamic=False),
         StorageType.CPU_Heap,
     ):
