@@ -8,7 +8,7 @@ import numpy as np
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
-from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs, keeps_absolute_index
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
@@ -758,3 +758,12 @@ def test_a_copy_out_after_folded_connectors_sees_the_map_result():
     sdfg(lf=lf, rf=rf, seed=seed, snap=snap)
     want = (lf[:-1] + seed) * 2.0 + 1.0
     assert np.allclose(snap, want, rtol=0, atol=1e-14), f"max|diff|={np.abs(snap - want).max():.3e}"
+
+
+def test_an_absolute_index_is_recognized_across_iterator_dtypes():
+    """A subscript reparsed from an interstate assignment names the map iterator as an int32 symbol, the
+    window offset as the map's int64 one. Taken as relative, the offset is added a second time and every
+    linearized read doubles (``A[2*i]``)."""
+    reparsed = dace.symbol("i", dtype=dace.int32)
+    offset = dace.symbol("i", dtype=dace.int64)
+    assert keeps_absolute_index(reparsed, offset, (1,), 0)
