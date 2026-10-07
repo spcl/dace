@@ -5,7 +5,8 @@ import pytest
 
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import move_small_transients_to_stack, reuse_transients
+from dace.sdfg.analysis.schedule_tree.passes import (hoist_condition_reads, move_small_transients_to_stack,
+                                                     reuse_transients)
 
 NI, NJ, NK = 4, 4, 8
 
@@ -136,6 +137,28 @@ def test_reuse_smaller_plane_in_larger_slot():
     assert tuple(slot.shape) == (NI, NJ, 1)
 
 
+def _guarded_read(plane: str, target: str) -> tn.ForScope:
+    """``if <plane>[i, j, 0] > 1: <target> = <plane> + 1`` over a plane."""
+    guard = tn.IfScope(condition=dace.properties.CodeBlock(f'{plane}[i, j, 0] > 1'),
+                       children=[_tasklet('b = x + 1', {'x': f'{plane}[i, j, 0]'}, {'b': f'{target}[i, j, k]'})])
+    inner = dace.sdfg.state.LoopRegion(f'g{plane}_i', f'i < {NI}', 'i', 'i = 0', 'i = i + 1')
+    outer = dace.sdfg.state.LoopRegion(f'g{plane}_j', f'j < {NJ}', 'j', 'j = 0', 'j = j + 1')
+    return tn.ForScope(loop=outer, children=[tn.ForScope(loop=inner, children=[guard])])
+
+
+def test_reuse_plane_read_in_condition():
+    """A plane read in a condition shares memory once the condition reads it through a memlet."""
+    make = lambda: _tree([_write('P', 'A'), _guarded_read('P', 'B'), _write('Q', 'C'), _read('Q', 'D')])
+    assert reuse_transients(make()) == 0
+
+    def hoisted():
+        stree = make()
+        assert hoist_condition_reads(stree) == 1
+        return stree
+
+    _check(hoisted, shared=2)
+
+
 def test_move_small_transients_to_stack():
     stree = _tree([_write('P', 'A'), _read('P', 'B'), _write('Q', 'C'), _read('Q', 'D')])
     plane = NI * NJ * 8
@@ -196,6 +219,13 @@ def test_move_to_stack_respects_limits():
     assert move_small_transients_to_stack(stree, max_array_bytes=NI * NJ * 8 - 1) == 0
 
 
+def test_move_to_stack_planes_by_default():
+    """Planes of a few thousand elements (here 31 x 31 doubles, 7688 bytes) go to the stack by default."""
+    stree = _tree([_write('P', 'A'), _read('P', 'B')], shapes={'P': (31, 31, 1)})
+    assert move_small_transients_to_stack(stree) == 1
+    assert stree.containers['P'].storage == dace.StorageType.Register
+
+
 if __name__ == '__main__':
     test_reuse_consecutive_planes()
     test_reuse_not_overlapping_lives()
@@ -206,7 +236,9 @@ if __name__ == '__main__':
     test_reuse_plane_written_in_both_branches()
     test_reuse_not_plane_written_in_one_branch()
     test_reuse_smaller_plane_in_larger_slot()
+    test_reuse_plane_read_in_condition()
     test_move_small_transients_to_stack()
     test_move_to_stack_not_read_before_written()
     test_move_to_stack_zero_initialized()
     test_move_to_stack_respects_limits()
+    test_move_to_stack_planes_by_default()

@@ -425,8 +425,8 @@ def reuse_transients(stree: tn.ScheduleTreeScope, trust_reads: bool = False) -> 
 
 
 def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
-                                   max_array_bytes: int = 4096,
-                                   max_total_bytes: int = 128 * 1024,
+                                   max_array_bytes: int = 16 * 1024,
+                                   max_total_bytes: int = 512 * 1024,
                                    zero_read_before_written: bool = False) -> int:
     """
     Allocate small transient arrays of constant size on the stack (``StorageType.Register``) rather than on the heap,
@@ -444,7 +444,7 @@ def move_small_transients_to_stack(stree: tn.ScheduleTreeScope,
     call independent of the previous ones but may change results where such values reach outputs.
 
     :param stree: The schedule tree to transform in place.
-    :param max_array_bytes: Only move arrays of at most this many bytes.
+    :param max_array_bytes: Only move arrays of at most this many bytes (by default, planes of up to 2048 doubles).
     :param max_total_bytes: Move arrays of at most this many bytes in total.
     :param zero_read_before_written: Also move arrays that may be read before being written, zero-initialized.
     :return: The number of arrays moved.
