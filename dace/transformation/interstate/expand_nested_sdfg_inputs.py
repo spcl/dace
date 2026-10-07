@@ -168,8 +168,9 @@ def keeps_absolute_index(
     """True if inner begin ``lo`` of axis ``dim`` is an absolute in-place access (``lo == offset``).
     A constant ``lo`` inside the inner extent is relative even when it equals the window start
     (``A[4, 1:3]`` written at inner ``[0, 1]``)."""
-    lo_expr = sympy.sympify(lo)
-    if as_expr(lo_expr) - as_expr(sympy.sympify(offset)) != 0:
+    # A subscript reparsed from text and a map-range offset name one iterator with different dtypes
+    lo_expr, offset_expr = symbolic.equalize_symbols_across(sympy.sympify(lo), sympy.sympify(offset))
+    if as_expr(lo_expr) - as_expr(offset_expr) != 0:
         return False
     in_extent = (
         lo_expr.is_Integer
