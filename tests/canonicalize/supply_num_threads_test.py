@@ -9,6 +9,7 @@ when something reads it, never in the signature) plus the hazards that make it s
 must be read where no parallel region is open, and a symbol the parent maps but the child never
 declares fails validation.
 """
+import re
 import numpy as np
 import pytest
 
@@ -75,7 +76,7 @@ def test_frame_code_defines_it_before_the_first_allocation():
     entry, so the definition has to be above it."""
     code = generated(per_thread_sdfg('nt_before_alloc'))
     decl = code.index(f'{DTYPE.ctype} {symbolic.NUM_THREADS_SYMBOL} = omp_get_max_threads()')
-    alloc = code.index(f'double[{symbolic.NUM_THREADS_SYMBOL}]')
+    alloc = re.search(rf'(?:double\[|dace::aligned_new_array<double>\(){symbolic.NUM_THREADS_SYMBOL}\b', code).start()
     assert decl < alloc, code
 
 

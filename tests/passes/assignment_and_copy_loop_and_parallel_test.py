@@ -186,7 +186,7 @@ def test_small_copy_selects_serial_no_pragma():
     assert ln.implementation == 'MemcpyCPU'
     code = _generated_code(sdfg)
     assert "#pragma omp parallel for" not in code
-    assert "memcpy" in code
+    assert "dace::CopyImpl<" in code
 
     src = np.arange(SMALL_ELEMS, dtype=np.float64)
     dst = np.zeros(SMALL_ELEMS, dtype=np.float64)

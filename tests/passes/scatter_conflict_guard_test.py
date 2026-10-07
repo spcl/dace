@@ -6,6 +6,7 @@ abort-detection test that runs the SDFG with a duplicate index and verifies the
 program traps. Permutation-index runs are expected to terminate cleanly with the
 correct numerical result (the scatter Map executes after the guard).
 """
+import re
 import copy
 import os
 import pathlib
@@ -334,7 +335,7 @@ def test_generated_guard_has_no_raw_new_and_no_include_in_the_program_body():
 
     assert not _lines_inside_a_function(code, '#include'), _lines_inside_a_function(code, '#include')
     init = _function_body(code, f'__dace_init_{sdfg.name}(')
-    assert '__0__scatter_guard_owner_ip = new' in init, init
+    assert re.search(r'__0__scatter_guard_owner_ip = (?:new\b|dace::aligned_new_array<)', init), init
 
 
 def test_runtime_or_reduce_pass_carries_simd():
