@@ -207,6 +207,30 @@ def referenced_arrays(expr) -> Set[str]:
     return names
 
 
+def array_sourced_symbols(sdfg: SDFG) -> Set[str]:
+    """Symbols an interstate edge binds from a data container, directly or through another such symbol.
+
+    Their values come from runtime data, so the nonnegative assumption made for symbols does not hold.
+    """
+    bindings = {
+        lhs: symbolic.pystr_to_symbolic(rhs)
+        for e in sdfg.all_interstate_edges()
+        for lhs, rhs in e.data.assignments.items()
+    }
+    sourced: Set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for lhs, rhs in bindings.items():
+            if lhs in sourced or not isinstance(rhs, sympy.Basic):
+                continue
+            reads = referenced_arrays(rhs) | {s.name for s in rhs.free_symbols}
+            if reads & (sourced | sdfg.arrays.keys()):
+                sourced.add(lhs)
+                changed = True
+    return sourced
+
+
 def written_data(loop: LoopRegion) -> Set[str]:
     """Every data container written anywhere in ``loop``'s body."""
     written: Set[str] = set()
@@ -434,6 +458,15 @@ class BreakAntiDependence(ppl.Pass):
             # WAR (while refusing the algebraically equivalent ``M - K``), emitting an
             # unsatisfiable runtime ``> 0`` guard that traps and, once DCE'd, silently
             # corrupts the result.
+            if sdfg is not None and loop is not None:
+                offset_names = {s.name for s in as_basic(carried_offset).free_symbols}
+                # ``a[i + y]`` with ``y := arr[i]`` bound in the body: renamable iff every element of ``arr`` is positive
+                if as_basic(carried_offset).is_Symbol:
+                    arr = self._indirection_array(loop, str(carried_offset), str(isym), sdfg)
+                    if arr is not None:
+                        return ("WAR_indirected", arr)
+                if offset_names & array_sourced_symbols(sdfg):
+                    return ("complex", None)  # an offset read from data has no sign to assume
             if _provably_nonnegative_under_nonneg_symbols(carried_offset):
                 return ("WAR_symbolic", carried_offset)
             if _provably_nonpositive_under_nonneg_symbols(carried_offset):
@@ -733,7 +766,13 @@ class BreakAntiDependence(ppl.Pass):
         y_name = y_node.id
 
         # 5. Walk back ``y_name`` to find ``arr[isym]``.
-        y_def = self._walk_back_symbol_def(loop, y_name)
+        return self._indirection_array(loop, y_name, isym_name, sdfg)
+
+    def _indirection_array(self, loop: LoopRegion, sym_name: str, isym_name: str, sdfg: SDFG) -> Optional[str]:
+        """The array ``arr`` if the loop binds ``sym_name := arr[isym]`` on an interstate edge, else ``None``."""
+        import ast
+
+        y_def = self._walk_back_symbol_def(loop, sym_name)
         if y_def is None:
             return None
         try:
@@ -743,21 +782,14 @@ class BreakAntiDependence(ppl.Pass):
         if not y_tree.body or not isinstance(y_tree.body[0], ast.Expr):
             return None
         sub = y_tree.body[0].value
-        if not isinstance(sub, ast.Subscript):
-            return None
-        if not isinstance(sub.value, ast.Name):
+        if not isinstance(sub, ast.Subscript) or not isinstance(sub.value, ast.Name):
             return None
         arr_name = sub.value.id
         if arr_name not in sdfg.arrays:
             return None
-        # The subscript must be exactly ``isym``.
-        idx_part = sub.slice
-        if isinstance(idx_part, ast.Index):  # py < 3.9 compatibility
-            idx_part = idx_part.value
-        if not (isinstance(idx_part, ast.Name) and idx_part.id == isym_name):
+        # The subscript must be exactly ``isym``
+        if not (isinstance(sub.slice, ast.Name) and sub.slice.id == isym_name):
             return None
-
-        # All checks passed.
         return arr_name
 
     @staticmethod
