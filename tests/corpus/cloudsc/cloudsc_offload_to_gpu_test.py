@@ -13,6 +13,7 @@ hide a bug.
 import pytest
 
 import dace
+from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace import data, dtypes
 from dace.codegen.codegen import generate_code
 from dace.config import Config
@@ -240,6 +241,8 @@ def test_nested_sdfg_under_block_map_is_offloaded():
     bentry.add_out_connector("OUT_a")
     bexit.add_in_connector("IN_b")
     bexit.add_out_connector("OUT_b")
+    # The fixture binds each block's window; the nested SDFG contract binds the whole container
+    convert_legacy_nested_sdfgs(sdfg)
 
     offload_cloudsc_to_gpu(sdfg)
     schedules = map_schedules(sdfg)

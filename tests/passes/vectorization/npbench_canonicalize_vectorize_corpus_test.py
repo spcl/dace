@@ -47,7 +47,6 @@ UNTILED_KERNELS = frozenset(
         "crc16",
         "mandelbrot2",
         "resnet",
-        "stockham_fft",
     }
 )
 
