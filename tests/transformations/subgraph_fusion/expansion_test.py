@@ -4,12 +4,13 @@ import numpy as np
 
 from util import expand_maps
 
-N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
+N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 
 
 @dace.program
-def expansion1(A: dace.float64[M, N, O], B: dace.float64[M, N, O], C: dace.float64[M, N, O], out1: dace.float64[M, N,
-                                                                                                                O]):
+def expansion1(
+    A: dace.float64[M, N, O], B: dace.float64[M, N, O], C: dace.float64[M, N, O], out1: dace.float64[M, N, O]
+):
 
     tmp1 = np.ndarray([M, N, O], dtype=dace.float64)
     tmp2 = np.ndarray([M, N, O], dtype=dace.float64)
@@ -62,26 +63,26 @@ def test_expansion2():
     sdfg = expansion2.to_sdfg()
     graph = sdfg.nodes()[0]
     kwargs = {
-        'A': np.random.rand(60, 50).astype(np.float64),
-        'B': np.random.rand(60, 70).astype(np.float64),
-        'out1': np.ndarray((60, 50), dtype=np.float64),
-        'out2': np.ndarray((60, 70), dtype=np.float64),
-        'N': 50,
-        'M': 60,
-        'O': 70
+        "A": np.random.rand(60, 50).astype(np.float64),
+        "B": np.random.rand(60, 70).astype(np.float64),
+        "out1": np.ndarray((60, 50), dtype=np.float64),
+        "out2": np.ndarray((60, 70), dtype=np.float64),
+        "N": 50,
+        "M": 60,
+        "O": 70,
     }
 
     run(sdfg, graph, kwargs)
-    out1 = kwargs['out1'].copy()
-    out2 = kwargs['out2'].copy()
+    out1 = kwargs["out1"].copy()
+    out2 = kwargs["out2"].copy()
 
-    kwargs['out1'].fill(0)
-    kwargs['out2'].fill(0)
+    kwargs["out1"].fill(0)
+    kwargs["out2"].fill(0)
 
     expand_maps(sdfg, graph)
     run(sdfg, graph, kwargs)
-    out3 = kwargs['out1'].copy()
-    out4 = kwargs['out2'].copy()
+    out3 = kwargs["out1"].copy()
+    out4 = kwargs["out2"].copy()
     assert np.linalg.norm(out1) > 0.01
     assert np.allclose(out1, out3)
     assert np.allclose(out2, out4)
@@ -91,20 +92,20 @@ def test_expansion1():
     sdfg = expansion1.to_sdfg()
     graph = sdfg.nodes()[0]
     kwargs = {
-        'A': np.random.rand(60, 50, 70).astype(np.float64),
-        'B': np.random.rand(60, 50, 70).astype(np.float64),
-        'C': np.random.rand(60, 50, 70).astype(np.float64),
-        'out1': np.ndarray((60, 50, 70), dtype=np.float64),
-        'N': 50,
-        'M': 60,
-        'O': 70
+        "A": np.random.rand(60, 50, 70).astype(np.float64),
+        "B": np.random.rand(60, 50, 70).astype(np.float64),
+        "C": np.random.rand(60, 50, 70).astype(np.float64),
+        "out1": np.ndarray((60, 50, 70), dtype=np.float64),
+        "N": 50,
+        "M": 60,
+        "O": 70,
     }
     run(sdfg, graph, kwargs)
-    out1 = kwargs['out1'].copy()
-    kwargs['out1'].fill(0)
+    out1 = kwargs["out1"].copy()
+    kwargs["out1"].fill(0)
     expand_maps(sdfg, graph)
     run(sdfg, graph, kwargs)
-    out2 = kwargs['out1'].copy()
+    out2 = kwargs["out1"].copy()
 
     assert np.linalg.norm(out1) > 0.01
     assert np.allclose(out1, out2)

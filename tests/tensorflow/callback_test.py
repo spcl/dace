@@ -35,6 +35,6 @@ def test_callback():
         assert np.linalg.norm(output_dace - output_tf) < 1e-8
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if find_spec("tensorflow"):
         test_callback()

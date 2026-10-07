@@ -48,7 +48,7 @@ class TransformationRepoManager:
         # Get default path for external transformations, eval $HOME if present
         base_path_home_unevaluated_str = dace.config.Config.get("external_transformations_path")
         home_str = str(Path.home())
-        base_path_str = base_path_home_unevaluated_str.replace('$HOME', home_str)
+        base_path_str = base_path_home_unevaluated_str.replace("$HOME", home_str)
         base_path = Path(base_path_str)
         self.module_root_path = Path(dace.__file__).resolve().parent.parent
         if not base_path.is_absolute():
@@ -68,7 +68,7 @@ class TransformationRepoManager:
         if not base_init_file.exists():
             base_init_file.touch()
         if not self.registry_file.exists():
-            with open(self.registry_file, 'w') as f:
+            with open(self.registry_file, "w") as f:
                 json.dump({}, f, indent=2)
 
     def __init__(self):
@@ -89,7 +89,7 @@ class TransformationRepoManager:
         """
         self._set_path()
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError) as e:
             print(f"Warning: Could not load registry file: {e}")
@@ -105,7 +105,7 @@ class TransformationRepoManager:
         self._set_path()
         reg_file = self.registry_file
         try:
-            with open(reg_file, 'w') as f:
+            with open(reg_file, "w") as f:
                 json.dump(registry, f, indent=2)
         except IOError as e:
             print(f"Error: Could not save registry file: {e}")
@@ -127,15 +127,15 @@ class TransformationRepoManager:
         self._set_path()
         parsed = urlparse(url)
         if parsed.path:
-            path = parsed.path.strip('/')
-            if path.endswith('.git'):
+            path = parsed.path.strip("/")
+            if path.endswith(".git"):
                 path = path[:-4]
             return os.path.basename(path)
 
         # Handle SSH format
-        if '@' in url and ':' in url:
-            path = url.split(':')[-1]
-            if path.endswith('.git'):
+        if "@" in url and ":" in url:
+            path = url.split(":")[-1]
+            if path.endswith(".git"):
                 path = path[:-4]
             return os.path.basename(path)
 
@@ -157,13 +157,13 @@ class TransformationRepoManager:
             # Remove existing directory if it exists
             if target_path.exists():
                 import shutil
+
                 shutil.rmtree(target_path)
 
             # Clone the repository
-            result = subprocess.run(['git', 'clone', url, str(target_path)],
-                                    capture_output=True,
-                                    text=True,
-                                    check=False)
+            result = subprocess.run(
+                ["git", "clone", url, str(target_path)], capture_output=True, text=True, check=False
+            )
 
             if result.returncode != 0:
                 print(f"Error cloning repository: {result.stderr}")
@@ -216,7 +216,7 @@ class TransformationRepoManager:
 
         # Add to registry
         registry[name] = {
-            'url': url,
+            "url": url,
         }
 
         self._save_registry(registry)
@@ -244,6 +244,7 @@ class TransformationRepoManager:
         target_path = self.external_path / name
         if target_path.exists():
             import shutil
+
             shutil.rmtree(target_path)
             print(f"Removed directory: {target_path}")
 
@@ -305,7 +306,7 @@ class TransformationRepoManager:
 
         success = True
         for name, info in registry.items():
-            self.add_repository(url=info['url'], name=name, force=force)
+            self.add_repository(url=info["url"], name=name, force=force)
 
         if success:
             print("All repositories loaded successfully.")
@@ -326,9 +327,10 @@ def main():
     transformation repositories. All repositories and the registry file will be managed
     under this directory.
     """
-    parser = argparse.ArgumentParser(description="Manage DaCe transformation repositories",
-                                     formatter_class=argparse.RawDescriptionHelpFormatter,
-                                     epilog="""
+    parser = argparse.ArgumentParser(
+        description="Manage DaCe transformation repositories",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
 Examples:
   %(prog)s add https://github.com/user/my-transformations.git
   %(prog)s add https://github.com/user/repo.git --name custom-name
@@ -343,24 +345,25 @@ Examples:
                 },
                 <...>
             }
-        """)
+        """,
+    )
 
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Add command
-    add_parser = subparsers.add_parser('add', help='Add and clone a transformation repository')
-    add_parser.add_argument('url', help='Git URL of the repository')
-    add_parser.add_argument('--name', help='Custom name for the repository')
-    add_parser.add_argument('--force', action='store_true', help='Overwrite existing repository')
+    add_parser = subparsers.add_parser("add", help="Add and clone a transformation repository")
+    add_parser.add_argument("url", help="Git URL of the repository")
+    add_parser.add_argument("--name", help="Custom name for the repository")
+    add_parser.add_argument("--force", action="store_true", help="Overwrite existing repository")
 
-    remove_parser = subparsers.add_parser('remove', help='Remove a transformation repository')
-    remove_parser.add_argument('name', help='Name of the repository to remove')
+    remove_parser = subparsers.add_parser("remove", help="Remove a transformation repository")
+    remove_parser.add_argument("name", help="Name of the repository to remove")
 
-    list_parser = subparsers.add_parser('list', help='List all registered repositories')
+    list_parser = subparsers.add_parser("list", help="List all registered repositories")
 
-    load_from_json = subparsers.add_parser('load-from-file', help='Load repositories from json file')
-    load_from_json.add_argument('filepath', help='Filepath of the JSON file containing repositories')
-    load_from_json.add_argument('--force', action='store_true', help='Overwrite existing repositories')
+    load_from_json = subparsers.add_parser("load-from-file", help="Load repositories from json file")
+    load_from_json.add_argument("filepath", help="Filepath of the JSON file containing repositories")
+    load_from_json.add_argument("--force", action="store_true", help="Overwrite existing repositories")
 
     args = parser.parse_args()
 
@@ -372,21 +375,21 @@ Examples:
     manager = TransformationRepoManager()
 
     # Execute command
-    if args.command == 'add':
+    if args.command == "add":
         success = manager.add_repository(args.url, args.name, args.force)
         sys.exit(0 if success else 1)
 
-    elif args.command == 'remove':
+    elif args.command == "remove":
         success = manager.remove_repository(args.name)
         sys.exit(0 if success else 1)
 
-    elif args.command == 'list':
+    elif args.command == "list":
         manager.list_repositories()
 
-    elif args.command == 'load-from-file':
+    elif args.command == "load-from-file":
         success = manager.load_all_repositories(args.filepath, args.force)
         sys.exit(0 if success else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

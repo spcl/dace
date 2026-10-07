@@ -8,7 +8,7 @@ import dace.sdfg.analysis.vector_inference as vector_inference
 import pytest
 from dace.transformation.dataflow import MergeSourceSinkArrays
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def find_tasklet_by_connector(sdfg: SDFG, name: str):
@@ -26,7 +26,7 @@ def find_map_entry(sdfg: SDFG):
         if isinstance(node, nodes.MapEntry):
             return node
 
-    raise NodeNotFoundError(f'Could not find map entry')
+    raise NodeNotFoundError(f"Could not find map entry")
 
 
 def vectorize(sdfg: SDFG) -> vector_inference.VectorInferenceGraph:
@@ -34,8 +34,10 @@ def vectorize(sdfg: SDFG) -> vector_inference.VectorInferenceGraph:
 
 
 def is_vector_connector(inf: vector_inference.VectorInferenceGraph, conn: str, is_in: bool):
-    return inf.get_constraint((find_tasklet_by_connector(inf.sdfg,
-                                                         conn), conn, is_in)) == vector_inference.InferenceNode.Vector
+    return (
+        inf.get_constraint((find_tasklet_by_connector(inf.sdfg, conn), conn, is_in))
+        == vector_inference.InferenceNode.Vector
+    )
 
 
 def has_vector_accessnode(inf: vector_inference.VectorInferenceGraph):
@@ -57,8 +59,8 @@ def test_simple():
 
     sdfg = program.to_sdfg(simplify=True)
     inf = vectorize(sdfg)
-    assert is_vector_connector(inf, 'a', True)
-    assert is_vector_connector(inf, 'b', False)
+    assert is_vector_connector(inf, "a", True)
+    assert is_vector_connector(inf, "b", False)
 
 
 def test_always_scalar_output():
@@ -74,10 +76,10 @@ def test_always_scalar_output():
     sdfg = program.to_sdfg(simplify=True)
     inf = vectorize(sdfg)
 
-    assert is_vector_connector(inf, 'a', True)
+    assert is_vector_connector(inf, "a", True)
     # Even though b is always a scalar (according to code inference), the output still must be a vector
     # because the memlet contains the loop param (becomes a broadcast in the Tasklet)
-    assert is_vector_connector(inf, 'b', False)
+    assert is_vector_connector(inf, "b", False)
 
 
 def test_scalar_accessnode_vector():
@@ -98,10 +100,10 @@ def test_scalar_accessnode_vector():
     sdfg = program.to_sdfg(simplify=True)
     inf = vectorize(sdfg)
 
-    assert is_vector_connector(inf, 'a', True)
-    assert is_vector_connector(inf, 'x_out', False)
-    assert is_vector_connector(inf, 'x_in', True)
-    assert is_vector_connector(inf, 'b', False)
+    assert is_vector_connector(inf, "a", True)
+    assert is_vector_connector(inf, "x_out", False)
+    assert is_vector_connector(inf, "x_in", True)
+    assert is_vector_connector(inf, "b", False)
 
     assert has_vector_accessnode(inf)
 
@@ -126,10 +128,10 @@ def test_scalar_accessnode_scalar():
 
     # Except for b every connector is scalar
     # (b is vector because of Memlet containing loop param)
-    assert not is_vector_connector(inf, 'a', True)
-    assert not is_vector_connector(inf, 'x_out', False)
-    assert not is_vector_connector(inf, 'x_in', True)
-    assert is_vector_connector(inf, 'b', False)
+    assert not is_vector_connector(inf, "a", True)
+    assert not is_vector_connector(inf, "x_out", False)
+    assert not is_vector_connector(inf, "x_in", True)
+    assert is_vector_connector(inf, "b", False)
 
     assert not has_vector_accessnode(inf)
 
@@ -154,10 +156,10 @@ def test_array_accessnode_scalar():
 
     # Again except for b every connector is scalar
     # (b is vector because of Memlet containing loop param)
-    assert not is_vector_connector(inf, 'a', True)
-    assert not is_vector_connector(inf, 'x_out', False)
-    assert not is_vector_connector(inf, 'x_in', True)
-    assert is_vector_connector(inf, 'b', False)
+    assert not is_vector_connector(inf, "a", True)
+    assert not is_vector_connector(inf, "x_out", False)
+    assert not is_vector_connector(inf, "x_in", True)
+    assert is_vector_connector(inf, "b", False)
 
 
 def test_array_accessnode_violation():
@@ -206,12 +208,12 @@ def test_array_accessnode_complicated():
     sdfg = program.to_sdfg(simplify=True)
     inf = vectorize(sdfg)
 
-    assert not is_vector_connector(inf, 'a', True)
-    assert is_vector_connector(inf, 'x_out', False)
-    assert not is_vector_connector(inf, 'y_out', False)
-    assert not is_vector_connector(inf, 'x_in', True)
-    assert not is_vector_connector(inf, 'y_in', True)
-    assert is_vector_connector(inf, 'b', False)
+    assert not is_vector_connector(inf, "a", True)
+    assert is_vector_connector(inf, "x_out", False)
+    assert not is_vector_connector(inf, "y_out", False)
+    assert not is_vector_connector(inf, "x_in", True)
+    assert not is_vector_connector(inf, "y_in", True)
+    assert is_vector_connector(inf, "b", False)
 
     assert not has_vector_accessnode(inf)
 
@@ -240,12 +242,12 @@ def test_multi_input():
     sdfg.simplify()
     inf = vectorize(sdfg)
 
-    assert is_vector_connector(inf, 'a', True)
-    assert is_vector_connector(inf, 'x_out', False)
-    assert is_vector_connector(inf, 'x_in', True)
-    assert is_vector_connector(inf, 'y_in', True)
-    assert is_vector_connector(inf, 'z_in', True)
-    assert is_vector_connector(inf, 'b', False)
+    assert is_vector_connector(inf, "a", True)
+    assert is_vector_connector(inf, "x_out", False)
+    assert is_vector_connector(inf, "x_in", True)
+    assert is_vector_connector(inf, "y_in", True)
+    assert is_vector_connector(inf, "z_in", True)
+    assert is_vector_connector(inf, "b", False)
 
     assert has_vector_accessnode(inf)
 
@@ -273,7 +275,7 @@ def test_multi_input_violation():
     sdfg.apply_transformations_repeated(MergeSourceSinkArrays)
     sdfg.simplify()
     inf = vector_inference.VectorInferenceGraph(sdfg, sdfg.start_state, find_map_entry(sdfg), -1)
-    inf.set_constraint((find_tasklet_by_connector(sdfg, 'z_in'), 'z_in', True), vector_inference.InferenceNode.Scalar)
+    inf.set_constraint((find_tasklet_by_connector(sdfg, "z_in"), "z_in", True), vector_inference.InferenceNode.Scalar)
 
     # It has to fail because the access node will be inferred as vector
     # (since someone writes a vector into it)
@@ -281,7 +283,7 @@ def test_multi_input_violation():
         inf.infer()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_simple()
     test_always_scalar_output()
     test_scalar_accessnode_vector()

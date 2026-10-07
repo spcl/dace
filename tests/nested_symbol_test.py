@@ -5,7 +5,7 @@ import pytest
 
 from dace.sdfg import dealias
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -33,7 +33,7 @@ def test_nested_symbol():
 
 
 def test_nested_symbol_dynamic():
-    if not dace.Config.get_bool('optimizer', 'automatic_simplification'):
+    if not dace.Config.get_bool("optimizer", "automatic_simplification"):
         pytest.skip(reason="Test disabled (missing allocation lifetime support)")
         return
 
@@ -46,7 +46,7 @@ def test_nested_symbol_dynamic():
 
 
 def test_scal2sym():
-    N = dace.symbol('N', dace.float64)
+    N = dace.symbol("N", dace.float64)
 
     @dace.program
     def symarg(A: dace.float64[20]):
@@ -66,7 +66,7 @@ def test_scal2sym():
 
 
 def test_arr2sym():
-    N = dace.symbol('N', dace.float64)
+    N = dace.symbol("N", dace.float64)
 
     @dace.program
     def symarg(A: dace.float64[20]):
@@ -85,47 +85,65 @@ def test_arr2sym():
 
 
 def test_nested_symbol_in_args():
-    inner = dace.SDFG('inner')
-    state = inner.add_state('inner_state')
-    inner.add_symbol('rdt', stype=float)
-    inner.add_datadesc('field', dace.float64[10])
-    state.add_mapped_tasklet('tasklet',
-                             map_ranges={'i': "0:10"},
-                             inputs={},
-                             outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
-                             code="field_out = rdt",
-                             external_edges=True)
-    inner.arg_names = ['field', 'rdt']
+    inner = dace.SDFG("inner")
+    state = inner.add_state("inner_state")
+    inner.add_symbol("rdt", stype=float)
+    inner.add_datadesc("field", dace.float64[10])
+    state.add_mapped_tasklet(
+        "tasklet",
+        map_ranges={"i": "0:10"},
+        inputs={},
+        outputs={"field_out": dace.Memlet.simple("field", subset_str="i")},
+        code="field_out = rdt",
+        external_edges=True,
+    )
+    inner.arg_names = ["field", "rdt"]
 
     @dace.program
     def funct(field, dt):
         rdt = 1.0 / dt
         inner(field, rdt)
 
-    sdfg = funct.to_sdfg(np.random.randn(10, ), 1.0, simplify=False)
-    sdfg(np.random.randn(10, ), 1.0)
+    sdfg = funct.to_sdfg(
+        np.random.randn(
+            10,
+        ),
+        1.0,
+        simplify=False,
+    )
+    sdfg(
+        np.random.randn(
+            10,
+        ),
+        1.0,
+    )
 
 
 def test_nested_symbol_as_constant():
-    inner = dace.SDFG('inner')
-    state = inner.add_state('inner_state')
-    inner.add_symbol('rdt', stype=float)
-    inner.add_datadesc('field', dace.float64[10])
+    inner = dace.SDFG("inner")
+    state = inner.add_state("inner_state")
+    inner.add_symbol("rdt", stype=float)
+    inner.add_datadesc("field", dace.float64[10])
     tasklet, map_entry, map_exit = state.add_mapped_tasklet(
-        'tasklet',
-        map_ranges={'i': "0:10"},
+        "tasklet",
+        map_ranges={"i": "0:10"},
         inputs={},
-        outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
+        outputs={"field_out": dace.Memlet.simple("field", subset_str="i")},
         code="field_out = rdt",
-        external_edges=True)
-    inner.arg_names = ['field', 'rdt']
+        external_edges=True,
+    )
+    inner.arg_names = ["field", "rdt"]
     rdt = 1e30
 
     @dace.program
     def funct(field):
         inner(field, rdt)
 
-    funct(np.random.randn(10, ))
+    funct(
+        np.random.randn(
+            10,
+        )
+    )
 
 
 @pytest.mark.parametrize("in_symbol_mapping", [True, False])
@@ -141,42 +159,42 @@ def test_nested_symbol_collision(in_symbol_mapping, global_symbol):
     when accessing array elements like B[i] where 'i' should refer to the outer symbol.
     """
     # Create outer SDFG
-    sdfg = dace.SDFG('test_symbol_collision')
-    sdfg.add_array('B', [43], dace.float64)
+    sdfg = dace.SDFG("test_symbol_collision")
+    sdfg.add_array("B", [43], dace.float64)
 
-    state = sdfg.add_state('outer_state')
+    state = sdfg.add_state("outer_state")
 
     # Create map with Sequential schedule using 'i' as iterator
-    map_entry, map_exit = state.add_map('outer_map', dict(i='0:10'), schedule=dace.ScheduleType.Sequential)
+    map_entry, map_exit = state.add_map("outer_map", dict(i="0:10"), schedule=dace.ScheduleType.Sequential)
 
     # Create nested SDFG
-    nsdfg = dace.SDFG('nested')
+    nsdfg = dace.SDFG("nested")
     if global_symbol:
-        nsdfg.add_symbol('i', stype=dace.int32)  # Different 'i' symbol
-    nsdfg.add_scalar('b', dace.float64, transient=False)
+        nsdfg.add_symbol("i", stype=dace.int32)  # Different 'i' symbol
+    nsdfg.add_scalar("b", dace.float64, transient=False)
 
-    nstate = nsdfg.add_state('nested_state')
+    nstate = nsdfg.add_state("nested_state")
 
     # Add tasklet that uses the nested 'i' symbol
-    tasklet = nstate.add_tasklet('set_i', {}, {'out'}, 'out = i')
-    b_access = nstate.add_access('b')
-    nstate.add_edge(tasklet, 'out', b_access, None, dace.Memlet.simple('b', '0'))
+    tasklet = nstate.add_tasklet("set_i", {}, {"out"}, "out = i")
+    b_access = nstate.add_access("b")
+    nstate.add_edge(tasklet, "out", b_access, None, dace.Memlet.simple("b", "0"))
 
     # Add nested SDFG to outer state
     if in_symbol_mapping:
         # Set the nested 'i' symbol to a fixed value
-        nested_node = state.add_nested_sdfg(nsdfg, {}, {'b'}, symbol_mapping={'i': 42})
+        nested_node = state.add_nested_sdfg(nsdfg, {}, {"b"}, symbol_mapping={"i": 42})
     else:
         # Set i internally via inter-state edge
         init_state = nsdfg.add_state(is_start_block=True)
-        nsdfg.add_edge(init_state, nstate, dace.InterstateEdge(assignments={'i': 42}))
-        nested_node = state.add_nested_sdfg(nsdfg, {}, {'b'})
+        nsdfg.add_edge(init_state, nstate, dace.InterstateEdge(assignments={"i": 42}))
+        nested_node = state.add_nested_sdfg(nsdfg, {}, {"b"})
 
     # Connect map to nested SDFG
-    B = state.add_write('B')
+    B = state.add_write("B")
 
     state.add_memlet_path(map_entry, nested_node, dst_conn=None, memlet=dace.Memlet())
-    state.add_memlet_path(nested_node, map_exit, B, src_conn='b', memlet=dace.Memlet.simple('B', 'i'))
+    state.add_memlet_path(nested_node, map_exit, B, src_conn="b", memlet=dace.Memlet.simple("B", "i"))
 
     # Integrate the nested SDFG into the outer SDFG
     dealias.integrate_nested_sdfg(nsdfg)
@@ -204,34 +222,34 @@ def test_nested_symbol_collision_map():
     when accessing array elements like B[i] where 'i' should refer to the outer symbol.
     """
     # Create outer SDFG
-    sdfg = dace.SDFG('test_symbol_collision')
-    sdfg.add_array('B', [43], dace.float64)
+    sdfg = dace.SDFG("test_symbol_collision")
+    sdfg.add_array("B", [43], dace.float64)
 
-    state = sdfg.add_state('outer_state')
+    state = sdfg.add_state("outer_state")
 
     # Create map with Sequential schedule using 'i' as iterator
-    map_entry, map_exit = state.add_map('outer_map', dict(i='0:10'), schedule=dace.ScheduleType.Sequential)
+    map_entry, map_exit = state.add_map("outer_map", dict(i="0:10"), schedule=dace.ScheduleType.Sequential)
 
     # Create nested SDFG
-    nsdfg = dace.SDFG('nested')
-    nsdfg.add_scalar('b', dace.float64, transient=False)
+    nsdfg = dace.SDFG("nested")
+    nsdfg.add_scalar("b", dace.float64, transient=False)
 
-    nstate = nsdfg.add_state('nested_state')
+    nstate = nsdfg.add_state("nested_state")
 
     # Add tasklet that uses the nested 'i' symbol
-    imap_entry, imap_exit = nstate.add_map('inner_map', dict(i='42:43'), schedule=dace.ScheduleType.Sequential)
-    tasklet = nstate.add_tasklet('set_i', {}, {'out'}, 'out = i')
-    b_access = nstate.add_access('b')
+    imap_entry, imap_exit = nstate.add_map("inner_map", dict(i="42:43"), schedule=dace.ScheduleType.Sequential)
+    tasklet = nstate.add_tasklet("set_i", {}, {"out"}, "out = i")
+    b_access = nstate.add_access("b")
     nstate.add_nedge(imap_entry, tasklet, dace.Memlet())
-    nstate.add_memlet_path(tasklet, imap_exit, b_access, src_conn='out', memlet=dace.Memlet.simple('b', '0'))
+    nstate.add_memlet_path(tasklet, imap_exit, b_access, src_conn="out", memlet=dace.Memlet.simple("b", "0"))
 
-    nested_node = state.add_nested_sdfg(nsdfg, {}, {'b'})
+    nested_node = state.add_nested_sdfg(nsdfg, {}, {"b"})
 
     # Connect map to nested SDFG
-    B = state.add_write('B')
+    B = state.add_write("B")
 
     state.add_memlet_path(map_entry, nested_node, dst_conn=None, memlet=dace.Memlet())
-    state.add_memlet_path(nested_node, map_exit, B, src_conn='b', memlet=dace.Memlet.simple('B', 'i'))
+    state.add_memlet_path(nested_node, map_exit, B, src_conn="b", memlet=dace.Memlet.simple("B", "i"))
 
     # Integrate the nested SDFG into the outer SDFG
     dealias.integrate_nested_sdfg(nsdfg)
@@ -248,7 +266,7 @@ def test_nested_symbol_collision_map():
     assert np.allclose(B_val[0:10], 42), f"Expected all 42s, got {B_val}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_symbol()
     test_nested_symbol_dynamic()
     test_scal2sym()

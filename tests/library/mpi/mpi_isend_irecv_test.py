@@ -45,30 +45,25 @@ def make_sdfg(dtype):
     wait_node = mpi.nodes.wait.Wait("wait")
 
     state.add_memlet_path(x, send_node, dst_conn="_buffer", memlet=Memlet.simple(x, "0:n", num_accesses=n))
-    state.add_memlet_path(send_node,
-                          send_req,
-                          src_conn="_request",
-                          memlet=Memlet.simple(send_req, "0:1", num_accesses=1))
+    state.add_memlet_path(
+        send_node, send_req, src_conn="_request", memlet=Memlet.simple(send_req, "0:1", num_accesses=1)
+    )
     state.add_memlet_path(dest, send_node, dst_conn="_dest", memlet=Memlet.simple(dest, "0:1", num_accesses=1))
     state.add_memlet_path(tag, send_node, dst_conn="_tag", memlet=Memlet.simple(tag, "0:1", num_accesses=1))
     state.add_memlet_path(recv_node, y, src_conn="_buffer", memlet=Memlet.simple(y, "0:n", num_accesses=n))
-    state.add_memlet_path(recv_node,
-                          recv_req,
-                          src_conn="_request",
-                          memlet=Memlet.simple(recv_req, "0:1", num_accesses=1))
-    state.add_memlet_path(recv_req,
-                          wait_node,
-                          dst_conn="_request",
-                          memlet=Memlet.simple(recv_req, "0:1", num_accesses=1))
+    state.add_memlet_path(
+        recv_node, recv_req, src_conn="_request", memlet=Memlet.simple(recv_req, "0:1", num_accesses=1)
+    )
+    state.add_memlet_path(
+        recv_req, wait_node, dst_conn="_request", memlet=Memlet.simple(recv_req, "0:1", num_accesses=1)
+    )
 
-    state.add_memlet_path(wait_node,
-                          stat_tag,
-                          src_conn="_stat_tag",
-                          memlet=Memlet.simple(stat_tag, "0:1", num_accesses=1))
-    state.add_memlet_path(wait_node,
-                          stat_source,
-                          src_conn="_stat_source",
-                          memlet=Memlet.simple(stat_source, "0:1", num_accesses=1))
+    state.add_memlet_path(
+        wait_node, stat_tag, src_conn="_stat_tag", memlet=Memlet.simple(stat_tag, "0:1", num_accesses=1)
+    )
+    state.add_memlet_path(
+        wait_node, stat_source, src_conn="_stat_source", memlet=Memlet.simple(stat_source, "0:1", num_accesses=1)
+    )
 
     state.add_memlet_path(src, recv_node, dst_conn="_src", memlet=Memlet.simple(src, "0:1", num_accesses=1))
     state.add_memlet_path(tag, recv_node, dst_conn="_tag", memlet=Memlet.simple(tag, "0:1", num_accesses=1))
@@ -80,6 +75,7 @@ def make_sdfg(dtype):
 
 def _test_mpi(info, sdfg, dtype):
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()
@@ -116,6 +112,7 @@ def test_mpi():
 @pytest.mark.mpi
 def test_isend_irecv():
     from mpi4py import MPI
+
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
@@ -124,10 +121,10 @@ def test_isend_irecv():
     def mpi4py_isend_irecv(rank: dace.int32, size: dace.int32):
         src = (rank - 1) % size
         dst = (rank + 1) % size
-        req = np.empty((2, ), dtype=MPI.Request)
-        sbuf = np.full((1, ), rank, dtype=np.int32)
+        req = np.empty((2,), dtype=MPI.Request)
+        sbuf = np.full((1,), rank, dtype=np.int32)
         req[0] = commworld.Isend(sbuf, dst, tag=0)
-        rbuf = np.empty((1, ), dtype=np.int32)
+        rbuf = np.empty((1,), dtype=np.int32)
         req[1] = commworld.Irecv(rbuf, src, tag=0)
         MPI.Request.Waitall(req)
         return rbuf
@@ -140,7 +137,7 @@ def test_isend_irecv():
     val = func(rank=rank, size=size)
     ref = mpi4py_isend_irecv.f(rank, size)
 
-    assert (val[0] == ref[0])
+    assert val[0] == ref[0]
 
 
 ###############################################################################

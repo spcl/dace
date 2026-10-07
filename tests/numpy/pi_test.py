@@ -39,7 +39,7 @@ def test_piarray_numpy():
     assert np.allclose(a, np.array([math.pi] * 20))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_pi_tasklet()
     test_pi_numpy()
     test_piarray_numpy()

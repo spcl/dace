@@ -22,13 +22,15 @@ class FuseStates(ppl.Pass):
     Fuses all possible states of an SDFG (and all sub-SDFGs).
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race condition checks.')
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+    permissive = properties.Property(dtype=bool, default=False, desc="If True, ignores some race condition checks.")
+    progress = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        desc="Whether to print progress, or None for default (print after 5 seconds).",
+    )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
@@ -48,7 +50,7 @@ class FuseStates(ppl.Pass):
         return fused or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Fused {pass_retval} states.'
+        return f"Fused {pass_retval} states."
 
 
 @dataclass(unsafe_hash=True)
@@ -59,14 +61,16 @@ class InlineSDFGs(ppl.Pass):
     Inlines all possible nested SDFGs (and sub-SDFGs).
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
-    multistate = properties.Property(dtype=bool, default=True, desc='If True, include multi-state inlining.')
+    permissive = properties.Property(dtype=bool, default=False, desc="If True, ignores some checks on inlining.")
+    progress = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        desc="Whether to print progress, or None for default (print after 5 seconds).",
+    )
+    multistate = properties.Property(dtype=bool, default=True, desc="If True, include multi-state inlining.")
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -86,7 +90,7 @@ class InlineSDFGs(ppl.Pass):
         return inlined or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Inlined {pass_retval} SDFGs.'
+        return f"Inlined {pass_retval} SDFGs."
 
 
 @dataclass(unsafe_hash=True)
@@ -97,23 +101,25 @@ class InlineControlFlowRegions(ppl.Pass):
     Inlines all control flow regions.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+    progress = properties.Property(
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        desc="Whether to print progress, or None for default (print after 5 seconds).",
+    )
 
-    no_inline_loops = properties.Property(dtype=bool, default=True, desc='Whether to prevent inlining loops.')
-    no_inline_conditional = properties.Property(dtype=bool,
-                                                default=True,
-                                                desc='Whether to prevent inlining conditional blocks.')
-    no_inline_function_call_regions = properties.Property(dtype=bool,
-                                                          default=True,
-                                                          desc='Whether to prevent inlining function call regions.')
-    no_inline_named_regions = properties.Property(dtype=bool,
-                                                  default=True,
-                                                  desc='Whether to prevent inlining named control flow regions.')
+    no_inline_loops = properties.Property(dtype=bool, default=True, desc="Whether to prevent inlining loops.")
+    no_inline_conditional = properties.Property(
+        dtype=bool, default=True, desc="Whether to prevent inlining conditional blocks."
+    )
+    no_inline_function_call_regions = properties.Property(
+        dtype=bool, default=True, desc="Whether to prevent inlining function call regions."
+    )
+    no_inline_named_regions = properties.Property(
+        dtype=bool, default=True, desc="Whether to prevent inlining named control flow regions."
+    )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -154,7 +160,7 @@ class InlineControlFlowRegions(ppl.Pass):
         return None
 
     def report(self, pass_retval: int) -> str:
-        return f'Inlined {pass_retval} regions.'
+        return f"Inlined {pass_retval} regions."
 
 
 @dataclass(unsafe_hash=True)
@@ -165,7 +171,7 @@ class FixNestedSDFGReferences(ppl.Pass):
     Fixes nested SDFG references to parent state/SDFG/node
     """
 
-    CATEGORY: str = 'Cleanup'
+    CATEGORY: str = "Cleanup"
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.NestedSDFGs)
@@ -195,4 +201,4 @@ class FixNestedSDFGReferences(ppl.Pass):
         return modified or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Fixed {pass_retval} nested SDFG references.'
+        return f"Fixed {pass_retval} nested SDFG references."

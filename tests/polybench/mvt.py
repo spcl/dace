@@ -2,23 +2,29 @@
 import dace
 import polybench
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    N: 40,
-}, {
-    N: 120,
-}, {
-    N: 400,
-}, {
-    N: 2000,
-}, {
-    N: 4000,
-}]
+sizes = [
+    {
+        N: 40,
+    },
+    {
+        N: 120,
+    },
+    {
+        N: 400,
+    },
+    {
+        N: 2000,
+    },
+    {
+        N: 4000,
+    },
+]
 
 args = [([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([N, N], datatype)]
 
@@ -48,5 +54,5 @@ def mvt(x1: datatype[N], x2: datatype[N], y_1: datatype[N], y_2: datatype[N], A:
         out2 = in_A2 * iny2
 
 
-if __name__ == '__main__':
-    polybench.main(sizes, args, [(0, 'x1'), (1, 'x2')], init_array, mvt)
+if __name__ == "__main__":
+    polybench.main(sizes, args, [(0, "x1"), (1, "x2")], init_array, mvt)

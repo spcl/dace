@@ -3,9 +3,9 @@ import numpy as np
 import dace
 import polybench
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -55,5 +55,5 @@ def lu(A: datatype[N, N]):
                 out = -i_in * j_in
 
 
-if __name__ == '__main__':
-    polybench.main(sizes, args, [(0, 'A')], init_array, lu)
+if __name__ == "__main__":
+    polybench.main(sizes, args, [(0, "A")], init_array, lu)

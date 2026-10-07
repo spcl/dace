@@ -1,13 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains test cases for the work depth analysis. """
+"""Contains test cases for the work depth analysis."""
+
 from typing import Dict, List, Tuple
 
 import pytest
 import dace
 from dace.symbolic import pystr_to_symbolic, simplify, SymbolicType
 from dace.frontend.python.parser import DaceProgram
-from dace.sdfg.performance_evaluation.work_depth import (analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par,
-                                                         parse_assumptions, count_arithmetic_ops_code, count_depth_code)
+from dace.sdfg.performance_evaluation.work_depth import (
+    analyze_sdfg,
+    get_tasklet_work_depth,
+    get_tasklet_avg_par,
+    parse_assumptions,
+    count_arithmetic_ops_code,
+    count_depth_code,
+)
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumptions
 import sympy as sp
@@ -19,9 +26,9 @@ from dace.transformation.dataflow import MapExpansion
 
 from pytest import raises
 
-N = dace.symbol('N')
-M = dace.symbol('M')
-K = dace.symbol('K')
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -101,8 +108,17 @@ def max_of_positive_symbol(x: dace.float64[N]):
 
 
 @dace.program
-def multiple_array_sizes(x: dace.int64[N], y: dace.int64[N], z: dace.int64[N], x2: dace.int64[M], y2: dace.int64[M],
-                         z2: dace.int64[M], x3: dace.int64[K], y3: dace.int64[K], z3: dace.int64[K]):
+def multiple_array_sizes(
+    x: dace.int64[N],
+    y: dace.int64[N],
+    z: dace.int64[N],
+    x2: dace.int64[M],
+    y2: dace.int64[M],
+    z2: dace.int64[M],
+    x3: dace.int64[K],
+    y3: dace.int64[K],
+    z3: dace.int64[K],
+):
     if x[0] > 0:
         z[:] = 2 * x + y  # work 2*N, depth 2
     elif x[1] > 0:
@@ -161,9 +177,9 @@ def sequntial_ifs(x: dace.float64[N + 1], y: dace.float64[M + 1]):  # --> cannot
         for i in range(M):  # M work, M depth
             y[i + 1] += y[i]
     if M > N:
-        y[:N + 1] += x[:]  # N+1 work, 1 depth
+        y[: N + 1] += x[:]  # N+1 work, 1 depth
     else:
-        x[:M + 1] += y[:]  # M+1 work, 1 depth
+        x[: M + 1] += y[:]  # M+1 work, 1 depth
     # -->   Work:  Max(N+1, M) + Max(N+1, M+1)
     #       Depth: Max(1, M) + 1
 
@@ -194,55 +210,70 @@ def loop_var_dependent_work(x: dace.float64[N], y: dace.float64[N], z: dace.floa
         z[i - 1] = np.dot(x[:i], y[:i])
 
 
-#(sdfg, (expected_work, expected_depth))
+# (sdfg, (expected_work, expected_depth))
 work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[SymbolicType, SymbolicType]]] = {
-    'single_map': (single_map, (N, 1)),
-    'single_for_loop': (single_for_loop, (N, N)),
-    'if_else': (if_else, (1000, 100)),
-    'if_else_sym': (if_else_sym, (sp.Max(K, N), sp.Max(1, K))),
-    'nested_sdfg': (nested_sdfg, (2 * N, N + 1)),
-    'nested_maps': (nested_maps, (M * N, 1)),
-    'nested_for_loops': (nested_for_loops, (K * N, K * N)),
-    'nested_if_else': (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
-    'max_of_positive_symbols': (max_of_positive_symbol, (3 * N**2, 3 * N)),
-    'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
-    'unbounded_while_do': (unbounded_while_do, (dace.symbol('num_execs_0_0', nonnegative=True) * N,
-                                                dace.symbol('num_execs_0_0', nonnegative=True))),
+    "single_map": (single_map, (N, 1)),
+    "single_for_loop": (single_for_loop, (N, N)),
+    "if_else": (if_else, (1000, 100)),
+    "if_else_sym": (if_else_sym, (sp.Max(K, N), sp.Max(1, K))),
+    "nested_sdfg": (nested_sdfg, (2 * N, N + 1)),
+    "nested_maps": (nested_maps, (M * N, 1)),
+    "nested_for_loops": (nested_for_loops, (K * N, K * N)),
+    "nested_if_else": (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
+    "max_of_positive_symbols": (max_of_positive_symbol, (3 * N**2, 3 * N)),
+    "multiple_array_sizes": (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
+    "unbounded_while_do": (
+        unbounded_while_do,
+        (dace.symbol("num_execs_0_0", nonnegative=True) * N, dace.symbol("num_execs_0_0", nonnegative=True)),
+    ),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    'unbounded_nonnegify': (unbounded_nonnegify, (2 * dace.symbol('num_execs_0_0', nonnegative=True) * N,
-                                                  2 * dace.symbol('num_execs_0_0', nonnegative=True))),
-    'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
-    'reduction_library_node': (reduction_library_node, (456, sp.log(456) / sp.log(2))),
-    'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.log(sp.Max(1, N)) / sp.log(2))),
-    'gemm_library_node': (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200) / sp.log(2))),
-    'gemm_library_node_symbolic':
-    (gemm_library_node_symbolic, (2 * M * K * N, sp.Max(1,
-                                                        sp.log(sp.Max(1, K)) / sp.log(2)))),
-    'loop_var_dependent_work':
-    (loop_var_dependent_work, (N**2, N + sp.Sum(sp.log(dace.symbol("_p_i", nonnegative=True) + 1),
-                                                (dace.symbol("_p_i", nonnegative=True), 0, N - 1)) / sp.log(2)))
+    "unbounded_nonnegify": (
+        unbounded_nonnegify,
+        (2 * dace.symbol("num_execs_0_0", nonnegative=True) * N, 2 * dace.symbol("num_execs_0_0", nonnegative=True)),
+    ),
+    "sequential_ifs": (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
+    "reduction_library_node": (reduction_library_node, (456, sp.log(456) / sp.log(2))),
+    "reduction_library_node_symbolic": (reduction_library_node_symbolic, (N, sp.log(sp.Max(1, N)) / sp.log(2))),
+    "gemm_library_node": (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200) / sp.log(2))),
+    "gemm_library_node_symbolic": (
+        gemm_library_node_symbolic,
+        (2 * M * K * N, sp.Max(1, sp.log(sp.Max(1, K)) / sp.log(2))),
+    ),
+    "loop_var_dependent_work": (
+        loop_var_dependent_work,
+        (
+            N**2,
+            N
+            + sp.Sum(
+                sp.log(dace.symbol("_p_i", nonnegative=True) + 1), (dace.symbol("_p_i", nonnegative=True), 0, N - 1)
+            )
+            / sp.log(2),
+        ),
+    ),
 }
 
 
 def assert_symbolically_equal(res: sp.Expr, correct: sp.Expr) -> None:
-    """ Assert that an analysis result is exactly the expected value, whatever shape sympy left it in. """
+    """Assert that an analysis result is exactly the expected value, whatever shape sympy left it in."""
     # sympy.simplify is not idempotent on logs of composite integers (log(456)/log(2) and
     # 3 + log(57)/log(2) map to each other), so the shape of a result depends on how many times the
     # traversal simplified it, which in turn depends on the SDFG's state count. Compare values.
     assert res.expand() == correct.expand() or simplify(res - correct) == 0
 
 
-@pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
+@pytest.mark.parametrize("test_name", list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
-    if (dace.Config.get_bool('optimizer', 'automatic_simplification') == False
-            and test_name in ['unbounded_while_do', 'unbounded_nonnegify']):
-        pytest.skip('Malformed loop when not simplifying')
+    if dace.Config.get_bool("optimizer", "automatic_simplification") == False and test_name in [
+        "unbounded_while_do",
+        "unbounded_nonnegify",
+    ]:
+        pytest.skip("Malformed loop when not simplifying")
     test, correct = work_depth_test_cases[test_name]
     w_d_map: Dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
-    if 'nested_sdfg' in test.name:
+    if "nested_sdfg" in test.name:
         sdfg.apply_transformations(NestSDFG)
-    if 'nested_maps' in test.name:
+    if "nested_maps" in test.name:
         sdfg.apply_transformations(MapExpansion)
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
@@ -252,38 +283,41 @@ def test_work_depth(test_name):
     assert_symbolically_equal(res[1], correct[1])
 
 
-#(sdfg, expected_avg_par)
+# (sdfg, expected_avg_par)
 tests_cases_avg_par = {
-    'single_map': (single_map, N),
-    'single_for_loop': (single_for_loop, 1),
-    'if_else': (if_else, 1),
-    'nested_sdfg': (nested_sdfg, 2 * N / (N + 1)),
-    'nested_maps': (nested_maps, N * M),
-    'nested_for_loops': (nested_for_loops, 1),
-    'max_of_positive_symbol': (max_of_positive_symbol, N),
-    'unbounded_while_do': (unbounded_while_do, N),
-    'unbounded_nonnegify': (unbounded_nonnegify, N),
-    'reduction_library_node': (reduction_library_node, 456 / (sp.log(456) / sp.log(2))),
-    'reduction_library_node_symbolic': (reduction_library_node_symbolic, N * sp.log(2) / sp.log(sp.Max(1, N))),
-    'gemm_library_node': (gemm_library_node, 2 * 456 * 200 * 111 / (sp.log(200) / sp.log(2))),
-    'gemm_library_node_symbolic':
-    (gemm_library_node_symbolic, 2 * K * M * N / sp.Max(1,
-                                                        sp.log(sp.Max(1, K)) / sp.log(2))),
+    "single_map": (single_map, N),
+    "single_for_loop": (single_for_loop, 1),
+    "if_else": (if_else, 1),
+    "nested_sdfg": (nested_sdfg, 2 * N / (N + 1)),
+    "nested_maps": (nested_maps, N * M),
+    "nested_for_loops": (nested_for_loops, 1),
+    "max_of_positive_symbol": (max_of_positive_symbol, N),
+    "unbounded_while_do": (unbounded_while_do, N),
+    "unbounded_nonnegify": (unbounded_nonnegify, N),
+    "reduction_library_node": (reduction_library_node, 456 / (sp.log(456) / sp.log(2))),
+    "reduction_library_node_symbolic": (reduction_library_node_symbolic, N * sp.log(2) / sp.log(sp.Max(1, N))),
+    "gemm_library_node": (gemm_library_node, 2 * 456 * 200 * 111 / (sp.log(200) / sp.log(2))),
+    "gemm_library_node_symbolic": (
+        gemm_library_node_symbolic,
+        2 * K * M * N / sp.Max(1, sp.log(sp.Max(1, K)) / sp.log(2)),
+    ),
 }
 
 
-@pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
+@pytest.mark.parametrize("test_name", list(tests_cases_avg_par.keys()))
 def test_avg_par(test_name: str):
-    if (dace.Config.get_bool('optimizer', 'automatic_simplification') == False
-            and test_name in ['unbounded_while_do', 'unbounded_nonnegify']):
-        pytest.skip('Malformed loop when not simplifying')
+    if dace.Config.get_bool("optimizer", "automatic_simplification") == False and test_name in [
+        "unbounded_while_do",
+        "unbounded_nonnegify",
+    ]:
+        pytest.skip("Malformed loop when not simplifying")
 
     test, correct = tests_cases_avg_par[test_name]
     w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
     sdfg = test.to_sdfg()
-    if 'nested_sdfg' in test_name:
+    if "nested_sdfg" in test_name:
         sdfg.apply_transformations(NestSDFG)
-    if 'nested_maps' in test_name:
+    if "nested_maps" in test_name:
         sdfg.apply_transformations(MapExpansion)
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
@@ -292,53 +326,60 @@ def test_avg_par(test_name: str):
     assert_symbolically_equal(res, correct)
 
 
-@pytest.mark.parametrize('prog', [break_for_loop, break_while_loop, early_return])
+@pytest.mark.parametrize("prog", [break_for_loop, break_while_loop, early_return])
 def test_work_depth_bails_on_nonlocal_exit(prog: DaceProgram):
-    """ ``break`` / ``continue`` / ``return`` are not supported (non-local exits are not modeled);
-    the analysis must warn and produce a zero (work, depth) result rather than a wrong one. """
+    """``break`` / ``continue`` / ``return`` are not supported (non-local exits are not modeled);
+    the analysis must warn and produce a zero (work, depth) result rather than a wrong one."""
     sdfg = prog.to_sdfg()
     w_d_map: Dict[str, sp.Expr] = {}
-    with pytest.warns(UserWarning, match='structured control flow'):
+    with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     assert w_d_map[get_uuid(sdfg)] == (0, 0)
 
 
 def test_work_depth_bails_on_unstructured_control_flow():
-    """ Inlined control flow (LoopRegions / ConditionalBlocks flattened to a legacy state machine)
-    is not supported; the analysis must warn and produce a zero (work, depth) result. """
+    """Inlined control flow (LoopRegions / ConditionalBlocks flattened to a legacy state machine)
+    is not supported; the analysis must warn and produce a zero (work, depth) result."""
     sdfg = single_for_loop.to_sdfg()
     inline_control_flow_regions(sdfg)
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_explicit_control_flow = False
     w_d_map: Dict[str, sp.Expr] = {}
-    with pytest.warns(UserWarning, match='structured control flow'):
+    with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     assert w_d_map[get_uuid(sdfg)] == (0, 0)
 
 
-x, y, z, a = dace.symbol('x'), dace.symbol('y'), dace.symbol('z'), dace.symbol('a')
+x, y, z, a = dace.symbol("x"), dace.symbol("y"), dace.symbol("z"), dace.symbol("a")
 
 # (expr, assumptions, result)
 assumptions_tests = [
-    (sp.Max(x, y), ['x>y'], x), (sp.Max(x, y, z), ['x>y'], sp.Max(x, z)), (sp.Max(x, y), ['x==y'], y),
-    (sp.Max(x, 11) + sp.Max(x, 3), ['x<11'], 11 + sp.Max(x, 3)), (sp.Max(x, 11) + sp.Max(x, 3), ['x<11',
-                                                                                                 'x>3'], 11 + x),
-    (sp.Max(x, 11), ['x>5', 'x>3', 'x>11'], x), (sp.Max(x, 11), ['x==y', 'x>11'], y),
-    (sp.Max(x, 11) + sp.Max(a, 5), ['a==b', 'b==c', 'c==x', 'a<11', 'c>7'], x + 11),
-    (sp.Max(x, 11) + sp.Max(a, 5), ['a==b', 'b==c', 'c==x', 'b==7'], 18), (sp.Max(x, y), ['y>x', 'y==1000'], 1000),
-    (sp.Max(x, y), ['y<x', 'y==1000'], x)
+    (sp.Max(x, y), ["x>y"], x),
+    (sp.Max(x, y, z), ["x>y"], sp.Max(x, z)),
+    (sp.Max(x, y), ["x==y"], y),
+    (sp.Max(x, 11) + sp.Max(x, 3), ["x<11"], 11 + sp.Max(x, 3)),
+    (sp.Max(x, 11) + sp.Max(x, 3), ["x<11", "x>3"], 11 + x),
+    (sp.Max(x, 11), ["x>5", "x>3", "x>11"], x),
+    (sp.Max(x, 11), ["x==y", "x>11"], y),
+    (sp.Max(x, 11) + sp.Max(a, 5), ["a==b", "b==c", "c==x", "a<11", "c>7"], x + 11),
+    (sp.Max(x, 11) + sp.Max(a, 5), ["a==b", "b==c", "c==x", "b==7"], 18),
+    (sp.Max(x, y), ["y>x", "y==1000"], 1000),
+    (sp.Max(x, y), ["y<x", "y==1000"], x),
     # This test is not working yet and is here as an example of what can still be improved in the assumption system.
     # Further details in the TODO in the parse_assumptions method.
     # (sp.Max(M, N), ['N>0', 'N<5', 'M>5'], M)
 ]
 
 # These assumptions should trigger the ContradictingAssumptions exception.
-tests_for_exception = [['x>10', 'x<9'], ['x==y', 'x>10', 'y<9'],
-                       ['a==b', 'b==c', 'c==d', 'd==e', 'e==f', 'x==y', 'y==z', 'z>b', 'x==5', 'd==100'],
-                       ['x==5', 'x<4']]
+tests_for_exception = [
+    ["x>10", "x<9"],
+    ["x==y", "x>10", "y<9"],
+    ["a==b", "b==c", "c==d", "d==e", "e==f", "x==y", "y==z", "z>b", "x==5", "d==100"],
+    ["x==5", "x<4"],
+]
 
 
-@pytest.mark.parametrize('expr,assums,res', assumptions_tests)
+@pytest.mark.parametrize("expr,assums,res", assumptions_tests)
 def test_assumption_system(expr: sp.Expr, assums: List[str], res: sp.Expr):
     equality_subs, all_subs = parse_assumptions(assums, set())
     expr = expr.subs(equality_subs[0])
@@ -349,7 +390,7 @@ def test_assumption_system(expr: sp.Expr, assums: List[str], res: sp.Expr):
     assert expr == res
 
 
-@pytest.mark.parametrize('assumptions', tests_for_exception)
+@pytest.mark.parametrize("assumptions", tests_for_exception)
 def test_assumption_system_contradictions(assumptions):
     # check that the Exception gets raised.
     with raises(ContradictingAssumptions):
@@ -475,7 +516,7 @@ x += 3
     assert count_depth_code(code14) == 4, "Depth should be 4"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for test_name in work_depth_test_cases.keys():
         test_work_depth(test_name)
 

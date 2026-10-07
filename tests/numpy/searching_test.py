@@ -13,7 +13,7 @@ def test_numpy_where():
 
     for _ in range(10):
         A = np.random.randn(N)
-        assert (np.allclose(numpy_where(A), np.where(A > 0.5, A, 0.0)))
+        assert np.allclose(numpy_where(A), np.where(A > 0.5, A, 0.0))
 
 
 def test_numpy_select():
@@ -26,7 +26,7 @@ def test_numpy_select():
         A = np.random.randn(N)
         B = np.random.randn(N)
         C = np.random.randn(N)
-        assert (np.allclose(numpy_where(A, B, C), np.select([A > 0.5, B > 0.5, C > 0.5], [A, B, C], 0.0)))
+        assert np.allclose(numpy_where(A, B, C), np.select([A > 0.5, B > 0.5, C > 0.5], [A, B, C], 0.0))
 
 
 if __name__ == "__main__":

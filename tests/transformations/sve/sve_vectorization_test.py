@@ -4,7 +4,7 @@ from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 from dace import SDFG
 import dace.dtypes as dtypes
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def find_connector_by_name(sdfg: SDFG, name: str):
@@ -38,7 +38,7 @@ def test_irregular_stride():
 
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
-        for i in dace.map[0:N * N]:
+        for i in dace.map[0 : N * N]:
             with dace.tasklet:
                 a << A[i * i]
                 b >> B[i * i]
@@ -109,9 +109,9 @@ def test_first_level_vectorization():
     sdfg.apply_transformations(SVEVectorization)
 
     # i is constant in the vectorized map
-    assert not isinstance(find_connector_by_name(sdfg, 'a_scal'), dtypes.vector)
+    assert not isinstance(find_connector_by_name(sdfg, "a_scal"), dtypes.vector)
     # j is the innermost param
-    assert isinstance(find_connector_by_name(sdfg, 'a_vec'), dtypes.vector)
+    assert isinstance(find_connector_by_name(sdfg, "a_vec"), dtypes.vector)
 
 
 def test_stream_push():

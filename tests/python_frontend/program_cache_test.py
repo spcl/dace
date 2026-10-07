@@ -69,7 +69,7 @@ def test_cache_argument_names():
     assert np.allclose(a, rega) and np.allclose(c, regc)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cache_same_args()
     test_cache_different_args()
     test_cache_return_values()

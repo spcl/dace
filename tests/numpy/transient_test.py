@@ -2,7 +2,7 @@
 import numpy as np
 import dace
 
-M, N, K = (dace.symbol(name) for name in ['M', 'N', 'K'])
+M, N, K = (dace.symbol(name) for name in ["M", "N", "K"])
 
 
 @dace.program
@@ -32,9 +32,9 @@ def test():
     ttest(A, B)
 
     diff = np.linalg.norm(B - realB) / (M * K * N)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff <= 1e-5
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()
