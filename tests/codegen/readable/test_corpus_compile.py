@@ -34,7 +34,7 @@ from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.validation import InvalidSDFGError
 from dace.symbolic import evaluate
 from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
-                                             use_implementation, without_fma_contraction)
+                                             use_implementation, without_fma_contraction, without_simd)
 
 #: Small square extent bound to every free symbol -- keeps the compile+run fast while
 #: still non-trivial (a non-power-of-two catches naive stride assumptions).
@@ -179,7 +179,7 @@ def build_and_run(family, name, implementation, target):
     ``target`` and returning ``{name: ndarray}``."""
 
     def run():
-        with use_implementation(implementation), without_fma_contraction():
+        with use_implementation(implementation), without_fma_contraction(), without_simd():
             sdfg = load_program(family, name).to_sdfg(simplify=True)
             sdfg.name = f"{sdfg.name}_{implementation}_{target}"
             symbols = {symbol: SYMBOL_SIZE for symbol in map(str, sdfg.free_symbols)}

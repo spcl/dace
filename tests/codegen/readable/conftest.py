@@ -89,6 +89,12 @@ def without_fma_contraction():
     return set_temporary(*CPU_ARGS_KEY, value=f"{Config.get(*CPU_ARGS_KEY)} -ffp-contract=off")
 
 
+def without_simd():
+    """Builds without OpenMP ``simd`` clauses: the generators place them on different loops, and a vectorized
+    reduction reassociates its sum."""
+    return set_temporary('compiler', 'cpu', 'simd_maps', value=False)
+
+
 def to_host(value):
     """Return a host numpy array for ``value`` (handles cupy device arrays)."""
     if type(value).__module__.split(".")[0] == "cupy":
