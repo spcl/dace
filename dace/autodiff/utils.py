@@ -999,3 +999,125 @@ def get_stride_sign(loop: LoopRegion) -> int:
     raise AutoDiffException(
         f"Expected the loop region {loop.label} to have a regular update statement. Instead got: {update_statement}"
     )
+
+
+def strided_extent(shape, strides):
+    """The number of elements a strided array spans."""
+    return sum((size - 1) * stride for size, stride in zip(shape, strides)) + 1
+
+
+def reconstruct_view(sdfg: SDFG, target: SDFGState, name: str) -> nodes.AccessNode:
+    """Adds the view ``name`` (and the views it views) to ``target``, as defined in another state of ``sdfg``."""
+    for state in sdfg.states():
+        if state is target:
+            continue
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            edge = utils.get_view_edge(state, node)
+            if edge is None:
+                continue
+            viewed = edge.src if edge.dst is node else edge.dst
+            if isinstance(sdfg.arrays[viewed.data], dt.View):
+                source = reconstruct_view(sdfg, target, viewed.data)
+            else:
+                source = target.add_read(viewed.data)
+            view = target.add_access(name)
+            view.add_in_connector("views")
+            target.add_edge(source, None, view, "views", copy.deepcopy(edge.data))
+            return view
+    raise AutoDiffException(f"Cannot find the definition of view {name}")
+
+
+def view_as_array(desc: dt.View, transient: bool) -> dt.Array:
+    """An array with the shape and layout (strides) of the given view."""
+    return dt.Array(
+        desc.dtype,
+        desc.shape,
+        storage=desc.storage,
+        strides=desc.strides,
+        total_size=strided_extent(desc.shape, desc.strides),
+        transient=transient,
+    )
+
+
+def copy_view_at_exit(sdfg: SDFG, name: str) -> str:
+    """
+    Copies the view ``name`` into a new non-transient array with its layout, in a state appended to ``sdfg``.
+
+    Views only exist in the states that define them, so their values are passed on to the backward pass through such
+    a copy.
+
+    :param sdfg: The SDFG that defines the view.
+    :param name: The name of the view.
+    :return: The name of the copy.
+    """
+    desc = sdfg.arrays[name]
+    sinks = sdfg.sink_nodes()
+    if len(sinks) != 1:
+        raise AutoDiffException(f"Cannot forward view {name} from an SDFG with several sink blocks")
+    state = sdfg.add_state_after(sinks[0], label=f"forward_{name}")
+    copy_name = sdfg.add_datadesc(f"{name}_forwarded", view_as_array(desc, transient=False), find_new_name=True)
+    subset = ", ".join(f"0:{s}" for s in desc.shape) or "0"
+    state.add_nedge(
+        reconstruct_view(sdfg, state, name),
+        state.add_write(copy_name),
+        dace.Memlet(data=name, subset=subset, other_subset=subset),
+    )
+    return copy_name
+
+
+def view_definition(sdfg: SDFG, name: str) -> Optional[Tuple[nd.AccessNode, dgraph.MultiConnectorEdge]]:
+    """Returns an access node of the view ``name`` in ``sdfg`` together with the edge that defines it, if any."""
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            if node.data == name:
+                edge = utils.get_view_edge(state, node)
+                if edge is not None:
+                    return node, edge
+    return None
+
+
+def viewed_input(nsdfg_node: nd.NestedSDFG, name: str) -> Optional[str]:
+    """
+    Returns the read-only input of a nested SDFG that the view ``name`` inside it views, if there is one (e.g., the
+    view a library node expansion makes of an input connector).
+    """
+    if not isinstance(nsdfg_node.sdfg.arrays.get(name), dt.View):
+        return None
+    definition = view_definition(nsdfg_node.sdfg, name)
+    if definition is None:
+        return None
+    node, edge = definition
+    viewed = edge.src if edge.dst is node else edge.dst
+    if viewed.data in nsdfg_node.in_connectors and viewed.data not in nsdfg_node.out_connectors:
+        return viewed.data
+    return None
+
+
+def redefine_view(forward: SDFG, backward: SDFG, name: str) -> None:
+    """
+    Defines the view ``name`` wherever ``backward`` reads it, the way ``forward`` defines it, so that the backward
+    SDFG takes the data the view views instead.
+
+    :param forward: The SDFG that defines the view.
+    :param backward: The SDFG that reads the view.
+    :param name: The name of the view.
+    """
+    node, edge = view_definition(forward, name)
+    viewed = (edge.src if edge.dst is node else edge.dst).data
+    if viewed not in backward.arrays:
+        desc = copy.deepcopy(forward.arrays[viewed])
+        desc.transient = False
+        backward.add_datadesc(viewed, desc)
+    backward.arrays[name].transient = True
+    for state in backward.all_states():
+        for view in state.data_nodes():
+            if view.data != name or utils.get_view_edge(state, view) is not None:
+                continue
+            if state.in_degree(view) > 0:
+                raise AutoDiffException(f"The backward pass writes the forward view {name}")
+            view.add_in_connector("views")
+            memlet = copy.deepcopy(edge.data)
+            memlet.data = viewed
+            state.add_edge(state.add_read(viewed), None, view, "views", memlet)

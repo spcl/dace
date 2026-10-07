@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from typing import List, Tuple, Set, Dict, Union, Optional, Sequence
 import sympy as sp
@@ -9,7 +9,7 @@ from dace.properties import CodeBlock
 import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
 from dace import dtypes, data as dt, symbolic
-from dace.sdfg import SDFG, SDFGState, state as dstate, utils as dace_utils
+from dace.sdfg import dealias, SDFG, SDFGState, state as dstate, utils as dace_utils
 from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
 
@@ -265,6 +265,9 @@ class BackwardPassGenerator:
 
         # Forward required data by the backward pass according to a user defined strategy
         self.data_forwarding_manager.forward_data_to_backward_pass()
+
+        # The reversed nested SDFG's connectors describe the forward node's narrowed descriptors; restate them
+        self._integrate_reversed_nested_sdfgs()
 
         # In some cases (accessnode -> accessnode), the descriptors for the gradients of the function outputs are not
         # added yet. Add them now.
@@ -916,6 +919,32 @@ class BackwardPassGenerator:
             self.array_grad_map[forward_name] = self.backward_sdfg._find_new_name("gradient_" + forward_name)
 
         return self.array_grad_map[forward_name]
+
+    @staticmethod
+    def _accumulates_through_view(forward_state: SDFGState, edge) -> bool:
+        """
+        Returns whether ``edge`` writes a view into the data it views, and everything written into the view in this
+        state is accumulated (e.g., the view a library node expansion makes of an output connector). The data is then
+        accumulated into, not overwritten.
+        """
+        view = edge.src
+        if edge.src_conn != "views" or not isinstance(view, nodes.AccessNode):
+            return False
+        if not isinstance(forward_state.sdfg.arrays[view.data], dt.View):
+            return False
+        writes = forward_state.in_edges(view)
+        return len(writes) > 0 and all(e.data.wcr is not None for e in writes)
+
+    def _integrate_reversed_nested_sdfgs(self) -> None:
+        """
+        Brings every nested SDFG the backward pass created onto the descriptors it is connected to.
+
+        :note: This function operates in-place on the backward SDFG.
+        """
+        for state in self.backward_sdfg.all_states():
+            for node in list(state.nodes()):
+                if isinstance(node, nodes.NestedSDFG):
+                    dealias.integrate_nested_sdfg(node.sdfg)
 
     def _add_gradient_data_descriptor(self, data_name: str) -> dt.Array:
         """Add the data descriptor for the gradient for `data_name`.
@@ -1678,7 +1707,7 @@ class BackwardPassGenerator:
 
                         # Check if the node doesn't have a WCR
                         # If it does, this is not an overwrite and the gradients should not be cleared
-                        has_wcr = edge.data.wcr is not None
+                        has_wcr = edge.data.wcr is not None or self._accumulates_through_view(forward_state, edge)
 
                         # Check if the edge is dynamic, this means not all values are overwritten
                         # We will skip zeroing out the gradient in this case

@@ -1,7 +1,8 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
+import functools
 import warnings
 from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
@@ -42,6 +43,22 @@ def _coerce_symbolic_property_value(value):
     return pystr_to_symbolic(value, simplify=False)
 
 
+@functools.lru_cache(maxsize=16384)
+def _normalize_python_code(code: str) -> str:
+    """
+    Parses and unparses Python code that was already unparsed from an AST (e.g., ``CodeBlock.as_string``). The second
+    unparsing roundtrip avoids issues in AST parsing/unparsing of negative numbers, i.e., "(-1)" becomes "(- 1)".
+    The result only depends on the string, so it is cached.
+    """
+    return unparse(ast.parse(code))
+
+
+@functools.lru_cache(maxsize=None)
+def _predates_symbolic_serialization(version: str) -> bool:
+    """Whether an SDFG file of the given DaCe version stores symbolic expressions in the old string format."""
+    return parse_version(version) < parse_version("2.0.0a4")
+
+
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     """
     A backwards compatibility deserializer for symbolic properties. If the version of the
@@ -51,7 +68,7 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+    if version is None or _predates_symbolic_serialization(version):
         return pystr_to_symbolic(value, simplify=False)
     return symbolic.deserialize_symbolic(value)
 
@@ -74,7 +91,25 @@ class PropertyError(Exception):
 
 class Property(Generic[T]):
     """Class implementing properties of DaCe objects that conform to strong
-    typing, and allow conversion to and from strings to be edited."""
+    typing, and allow conversion to and from strings to be edited.
+
+    The ``category`` argument groups properties in viewers and editors. Categories are chosen by the
+    semantics of the property, so the same concept gets the same category everywhere (IR nodes, data
+    descriptors, library nodes, transformations, and passes). The vocabulary is:
+
+    * ``General``: identity and miscellanea (labels, names, connectors, data references, types, shapes).
+    * ``Semantics``: what an element computes or moves (code, subsets, ranges, conditions, math parameters).
+    * ``Memory``: storage, layout, and allocation (storage type, lifetime, strides, alignment, transience).
+    * ``Scheduling``: parallelism and hardware mapping (schedules, block sizes, OpenMP, unrolling).
+    * ``Code Generation``: affects only emitted/compiled code (implementations, extra code, build settings).
+    * ``Frontend``: populated by frontends (debug information, argument names, callback mappings).
+    * ``Instrumentation``: instrumentation types and conditions.
+    * ``Analysis``: facts filled in by analyses (execution counts, ranges, volumes, conditions).
+    * ``Parameters``: main knobs of transformations and passes (tile sizes, names, modes).
+    * ``Applicability``: where and how strictly a transformation or pass applies (filters, safety checks).
+    * ``Diagnostics``: user-facing validation and verbosity options.
+    * ``(Debug)``: internal bookkeeping (e.g., GUIDs, IDs, histories); hidden by viewers.
+    """
 
     #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
     attr_name: Optional[str] = None
@@ -191,7 +226,7 @@ class Property(Generic[T]):
             raise RuntimeError("Attribute name not set")
         return getattr(obj, name)
 
-    def __set__(self, obj, val):
+    def __set__(self, obj, val: T):
         # If custom setter is specified, use it
         if self.setter:
             return self.setter(obj, val)
@@ -254,7 +289,7 @@ class Property(Generic[T]):
         self._setter = val
 
     @property
-    def dtype(self):
+    def dtype(self) -> type[T]:
         return self._dtype
 
     @property
@@ -491,7 +526,7 @@ class OrderedDictProperty(Property):
 class ListProperty(Property[List[T]]):
     """Property type for lists."""
 
-    def __init__(self, element_type: T, *args, **kwargs):
+    def __init__(self, element_type: type[T], *args, **kwargs):
         """
         Create a List property with a uniform element type.
 
@@ -798,10 +833,10 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
             return None
 
 
-class RangeProperty(Property):
+class RangeProperty(Property[dace.subsets.Range]):
     """Custom Property type for `dace.subsets.Range` members."""
 
-    def __set__(self, obj, value):
+    def __set__(self, obj, value: Union[dace.subsets.Range, List[int]]):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
         super(RangeProperty, self).__set__(obj, value)
@@ -1081,7 +1116,10 @@ class CodeBlock(object):
             self.code = code
 
     def __eq__(self, other):
-        if isinstance(other, str) or other is None:
+        if other is None:
+            # Only code that is None has no string representation
+            return self.code is None
+        if isinstance(other, str):
             return self.as_string == other
         elif isinstance(other, CodeBlock):
             return self.as_string == other.as_string and self.language == other.language
@@ -1092,7 +1130,7 @@ class CodeBlock(object):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if self.language == dace.dtypes.Language.Python and self.code is not None:
-            code = unparse(ast.parse(self.as_string))
+            code = _normalize_python_code(self.as_string)
         else:
             code = self.as_string
 
@@ -1148,7 +1186,7 @@ class CodeProperty(Property):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
         if obj.language == dace.dtypes.Language.Python and obj.code is not None:
-            code = unparse(ast.parse(obj.as_string))
+            code = _normalize_python_code(obj.as_string)
         else:
             code = obj.as_string
 

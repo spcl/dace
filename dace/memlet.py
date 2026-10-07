@@ -36,22 +36,30 @@ class Memlet(object):
     # Properties
     volume = SymbolicProperty(
         default=0,
+        category="Analysis",
         desc="The exact number of elements moved "
         "using this memlet, or the maximum number "
         "if dynamic=True (with 0 as unbounded)",
     )
     dynamic = Property(
-        default=False, dtype=bool, desc="Is the number of elements moved determined at runtime (e.g., data dependent)"
+        default=False,
+        dtype=bool,
+        category="Semantics",
+        desc="Is the number of elements moved determined at runtime (e.g., data dependent)",
     )
-    subset = SubsetProperty(allow_none=True, desc="Subset of elements to move from the data attached to this edge.")
+    subset = SubsetProperty(
+        allow_none=True, category="Semantics", desc="Subset of elements to move from the data attached to this edge."
+    )
     other_subset = SubsetProperty(
         allow_none=True,
+        category="Semantics",
         desc="Subset of elements after reindexing to the data not attached "
         "to this edge (e.g., for offsets and reshaping).",
     )
-    data = DataProperty(desc="Data descriptor attached to this memlet")
+    data = DataProperty(category="General", desc="Data descriptor attached to this memlet")
     wcr = LambdaProperty(
         allow_none=True,
+        category="Semantics",
         desc="If set, defines a write-conflict resolution "
         "lambda function. The syntax of the lambda function "
         "receives two elements: `current` value and `new` "
@@ -59,15 +67,18 @@ class Memlet(object):
     )
 
     # Code generation and validation hints
-    debuginfo = DebugInfoProperty(desc="Line information to track source and generated code", allow_none=True)
+    debuginfo = DebugInfoProperty(
+        category="Frontend", desc="Line information to track source and generated code", allow_none=True
+    )
     wcr_nonatomic = Property(
         dtype=bool,
         default=False,
+        category="Code Generation",
         desc="If True, always generates non-conflicting (non-atomic) writes in resulting code",
     )
-    allow_oob = Property(dtype=bool, default=False, desc="Bypass out-of-bounds validation")
+    allow_oob = Property(dtype=bool, default=False, category="Semantics", desc="Bypass out-of-bounds validation")
 
-    guid = Property(dtype=str, allow_none=False)
+    guid = Property(dtype=str, allow_none=False, category="(Debug)")
 
     def __init__(
         self,

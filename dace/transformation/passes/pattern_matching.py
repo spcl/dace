@@ -29,24 +29,35 @@ class PatternMatchAndApply(ppl.Pass):
     CATEGORY: str = "Helper"
 
     transformations = properties.ListProperty(
-        element_type=xf.PatternTransformation, default=[], desc="The list of transformations to apply"
+        element_type=xf.PatternTransformation,
+        default=[],
+        category="Parameters",
+        desc="The list of transformations to apply",
     )
 
     permissive = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.",
     )
     validate = properties.Property(
-        dtype=bool, default=True, desc="If True, validates the SDFG after all transformations have been applied."
+        dtype=bool,
+        default=True,
+        category="Diagnostics",
+        desc="If True, validates the SDFG after all transformations have been applied.",
     )
     validate_all = properties.Property(
-        dtype=bool, default=False, desc="If True, validates the SDFG after each transformation applies."
+        dtype=bool,
+        default=False,
+        category="Diagnostics",
+        desc="If True, validates the SDFG after each transformation applies.",
     )
     states = properties.ListProperty(
         element_type=SDFGState,
         default=None,
         allow_none=True,
+        category="Applicability",
         desc="If not None, only applies transformations to the given states.",
     )
 
@@ -54,12 +65,14 @@ class PatternMatchAndApply(ppl.Pass):
         dtype=bool,
         default=None,
         allow_none=True,
+        category="Diagnostics",
         desc="Whether to show debug prints (or None to use configuration file).",
     )
     progress = properties.Property(
         dtype=bool,
         default=None,
         allow_none=True,
+        category="Diagnostics",
         desc="Whether to show progress printouts (or None to use configuration file).",
     )
 
@@ -166,7 +179,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     CATEGORY: str = "Helper"
 
     order_by_transformation = properties.Property(
-        dtype=bool, default=False, desc="Whether or not to order by transformation."
+        dtype=bool, default=False, category="Parameters", desc="Whether or not to order by transformation."
     )
 
     def __init__(
@@ -533,6 +546,13 @@ def get_transformation_metadata(
 
 def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
     """Match based on the VF2 algorithm for general SI."""
+    # A subgraph isomorphism maps pattern nodes (and hence edges) injectively, so a graph with fewer nodes or edges
+    # than the pattern cannot match. Checking this first avoids setting up the matcher for, e.g., small regions.
+    if (
+        digraph.number_of_nodes() < nxpattern.number_of_nodes()
+        or digraph.number_of_edges() < nxpattern.number_of_edges()
+    ):
+        return
     graph_matcher = iso.DiGraphMatcher(digraph, nxpattern, node_match=node_pred, edge_match=edge_pred)
     yield from graph_matcher.subgraph_isomorphisms_iter()
 

@@ -13,15 +13,10 @@ import dataclasses
 
 from collections import OrderedDict
 from numbers import Integral
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import sympy as sp
-
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike = Any
 
 from dace import dtypes, serialize, symbolic
 from dace.properties import (
@@ -38,6 +33,14 @@ from dace.properties import (
     make_properties,
 )
 from dace.utils import prod
+
+SymbolMapping = Dict[Union[str, sp.Basic], Any]
+
+
+def _restate(expr: Any, replacements: Optional[Dict[str, sp.Basic]]) -> Any:
+    """Replaces symbols in a (possibly non-symbolic) descriptor property value, for ``is_equivalent``."""
+    return symbolic.replace_symbols(expr, replacements)
+
 
 # Backward compatibility alias
 _prod = prod
@@ -68,15 +71,22 @@ class Data:
                 if isinstance(v, Data):
                     v.transient = value
 
-    dtype = TypeClassProperty(default=dtypes.int32)
-    shape = ShapeProperty(default=[])
-    transient = Property(dtype=bool, default=False, setter=_transient_setter)
-    storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
-    lifetime = EnumProperty(
-        dtype=dtypes.AllocationLifetime, desc="Data allocation span", default=dtypes.AllocationLifetime.Scope
+    dtype = TypeClassProperty(default=dtypes.int32, category="General")
+    shape = ShapeProperty(default=[], category="General")
+    transient = Property(dtype=bool, default=False, setter=_transient_setter, category="Memory")
+    storage = EnumProperty(
+        dtype=dtypes.StorageType, category="Memory", desc="Storage location", default=dtypes.StorageType.Default
     )
-    location = DictProperty(key_type=str, value_type=str, desc="Full storage location identifier (e.g., rank, GPU ID)")
-    debuginfo = DebugInfoProperty(allow_none=True)
+    lifetime = EnumProperty(
+        dtype=dtypes.AllocationLifetime,
+        category="Memory",
+        desc="Data allocation span",
+        default=dtypes.AllocationLifetime.Scope,
+    )
+    location = DictProperty(
+        key_type=str, value_type=str, category="Memory", desc="Full storage location identifier (e.g., rank, GPU ID)"
+    )
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     def __init__(self, dtype, shape, transient, storage, location, lifetime, debuginfo):
         self.dtype = dtype
@@ -120,8 +130,16 @@ class Data:
     def toplevel(self):
         return self.lifetime is not dtypes.AllocationLifetime.Scope
 
-    def is_equivalent(self, other):
-        """Check for equivalence (shape and type) of two data descriptors."""
+    def is_equivalent(self, other: "Data", symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+        """
+        Check for equivalence (shape and type) of two data descriptors.
+
+        :param other: The other data descriptor to compare against.
+        :param symbol_mapping: A mapping from the symbols of this descriptor to expressions (e.g., the symbol mapping of
+                               a nested SDFG node). If given, this descriptor is compared as if its symbols were
+                               replaced, all at once, by their mapped expressions. See ``symbolic.symbol_replacements``.
+        :return: True if the two descriptors are equivalent.
+        """
         raise NotImplementedError
 
     def __eq__(self, other):
@@ -265,7 +283,7 @@ class Data:
 class Scalar(Data):
     """Data descriptor of a scalar value."""
 
-    allow_conflicts = Property(dtype=bool, default=False)
+    allow_conflicts = Property(dtype=bool, default=False, category="Code Generation")
 
     def __init__(
         self,
@@ -335,7 +353,12 @@ class Scalar(Data):
     def may_alias(self) -> bool:
         return False
 
-    def is_equivalent(self, other):
+    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+        # A scalar has no symbols to map
+        # Special case: array of size 1
+        if isinstance(other, Array) and other.shape == (1,) and other.dtype == self.dtype:
+            return True
+
         if not isinstance(other, Scalar):
             return False
         if self.dtype != other.dtype:
@@ -439,6 +462,7 @@ class Array(Data):
     allow_conflicts = Property(
         dtype=bool,
         default=False,
+        category="Code Generation",
         desc="If enabled, allows more than one "
         "memlet to write to the same memory location without conflict "
         "resolution.",
@@ -446,29 +470,42 @@ class Array(Data):
 
     strides = ShapeProperty(
         # element_type=symbolic.pystr_to_symbolic,
-        desc="For each dimension, the number of elements to skip in order to obtain the next element in that dimension."
+        category="Memory",
+        desc="For each dimension, the number of elements to "
+        "skip in order to obtain the next element in "
+        "that dimension.",
     )
 
-    total_size = SymbolicProperty(default=0, desc="The total allocated size of the array. Can be used for padding.")
+    total_size = SymbolicProperty(
+        default=0, category="Memory", desc="The total allocated size of the array. Can be used for padding."
+    )
 
-    offset = ShapeProperty(desc="Initial offset to translate all indices by.")
+    offset = ShapeProperty(category="Memory", desc="Initial offset to translate all indices by.")
 
     may_alias = Property(
-        dtype=bool, default=False, desc="This pointer may alias with other pointers in the same function"
+        dtype=bool,
+        default=False,
+        category="Memory",
+        desc="This pointer may alias with other pointers in the same function",
     )
 
-    alignment = Property(dtype=int, default=0, desc="Allocation alignment hint in bytes.")
+    alignment = Property(dtype=int, default=0, category="Memory", desc="Allocation alignment hint in bytes.")
 
-    start_offset = Property(dtype=int, default=0, desc="Allocation offset elements for manual alignment (pre-padding)")
+    start_offset = Property(
+        dtype=int, default=0, category="Memory", desc="Allocation offset elements for manual alignment (pre-padding)"
+    )
     optional = Property(
         dtype=bool,
         default=None,
         allow_none=True,
+        category="General",
         desc="Specifies whether this array may have a value of None. "
         "If False, the array must not be None. If option is not set, "
         "it is inferred by other properties and the OptionalArrayInference pass.",
     )
-    pool = Property(dtype=bool, default=False, desc="Hint to the allocator that using a memory pool is preferred")
+    pool = Property(
+        dtype=bool, default=False, category="Memory", desc="Hint to the allocator that using a memory pool is preferred"
+    )
 
     def __init__(
         self,
@@ -633,7 +670,14 @@ class Array(Data):
         return True
 
     # Checks for equivalent shape and type
-    def is_equivalent(self, other):
+    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+        replacements = symbolic.symbol_replacements(symbol_mapping)
+        shape = tuple(_restate(s, replacements) for s in self.shape)
+
+        # Special case: Scalar
+        if isinstance(other, Scalar) and shape == (1,) and self.dtype == other.dtype:
+            return True
+
         if not isinstance(other, Array):
             return False
 
@@ -642,14 +686,20 @@ class Array(Data):
             return False
 
         # Test dimensionality
-        if len(self.shape) != len(other.shape):
+        if len(shape) != len(other.shape):
             return False
 
         # Test shape
-        for dim, otherdim in zip(self.shape, other.shape):
+        for dim, otherdim in zip(shape, other.shape):
             # Any other case (constant vs. constant), check for equality
             if otherdim != dim:
                 return False
+
+        # Test strides
+        for stride, otherstride in zip(self.strides, other.strides):
+            if otherstride != _restate(stride, replacements):
+                return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
@@ -774,7 +824,7 @@ class Array(Data):
 class ContainerArray(Array):
     """An array that may contain other data containers (e.g., Structures, other arrays)."""
 
-    stype = NestedDataClassProperty(allow_none=True, default=None)
+    stype = NestedDataClassProperty(allow_none=True, default=None, category="General")
 
     def __init__(
         self,
@@ -846,8 +896,8 @@ class Stream(Data):
     """Stream (or stream array) data descriptor."""
 
     # Properties
-    offset = ListProperty(element_type=sp.Basic)
-    buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
+    offset = ListProperty(element_type=sp.Basic, category="Memory")
+    buffer_size = SymbolicProperty(category="Memory", desc="Size of internal buffer.", default=0)
 
     def __init__(
         self,
@@ -928,7 +978,7 @@ class Stream(Data):
         )
 
     # Checks for equivalent shape and type
-    def is_equivalent(self, other):
+    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
         if not isinstance(other, type(self)):
             return False
 
@@ -941,9 +991,15 @@ class Stream(Data):
             return False
 
         # Test shape
+        replacements = symbolic.symbol_replacements(symbol_mapping)
         for dim, otherdim in zip(self.shape, other.shape):
-            if dim != otherdim:
+            if _restate(dim, replacements) != otherdim:
                 return False
+
+        # Test buffer size
+        if _restate(self.buffer_size, replacements) != other.buffer_size:
+            return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
@@ -1021,11 +1077,12 @@ class Structure(Data):
 
     members = OrderedDictProperty(
         default=OrderedDict(),
+        category="General",
         desc="Dictionary of structure members",
         from_json=_arrays_from_json,
         to_json=_arrays_to_json,
     )
-    name = Property(dtype=str, desc="Structure type name")
+    name = Property(dtype=str, category="General", desc="Structure type name")
 
     def __init__(
         self,
@@ -1166,6 +1223,29 @@ class Structure(Data):
     @property
     def optional(self) -> bool:
         return False
+
+    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+        """
+        Checks whether two structures describe the same data.
+
+        Two structures are equivalent when they have the same member names and each pair of
+        members is itself equivalent. The structure type name is deliberately not compared: it
+        names the generated C type, not the data, and the same layout reached through different
+        declarations still describes the same memory.
+
+        :param other: The other data descriptor to compare against.
+        :param symbol_mapping: A mapping from the symbols of this descriptor to expressions (e.g., the symbol mapping of
+                               a nested SDFG node). If given, this descriptor is compared as if its symbols were
+                               replaced, all at once, by their mapped expressions. See ``symbolic.symbol_replacements``.
+        :return: True if the two descriptors are equivalent.
+        """
+        if not isinstance(other, Structure):
+            return False
+        if self.members.keys() != other.members.keys():
+            return False
+        # Convert the mapping once rather than in every member
+        replacements = symbolic.symbol_replacements(symbol_mapping)
+        return all(v.is_equivalent(other.members[k], replacements) for k, v in self.members.items())
 
     def keys(self):
         result = self.members.keys()

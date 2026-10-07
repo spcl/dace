@@ -79,12 +79,13 @@ def replace_dict(
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
-        if isinstance(new_name, str)
-        else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
+            if isinstance(new_name, str)
+            else new_name
+            for symname, new_name in repl.items()
+        }
 
     # Replace AccessNode with tasklet with constant value
     sdfg = subgraph.sdfg
@@ -110,9 +111,8 @@ def replace_dict(
                             outputs={f"{node.data}_value"},
                             code=f"{node.data}_value = {symrepl[node_data_symbolic]}",
                         )
-                        access_node_name, _ = sdfg.add_transient(
-                            f"{node.data}", [1], dtypes.typeclass(type(symrepl[node_data_symbolic])), find_new_name=True
-                        )
+                        # Type the container like the scalar it replaces, so connectors below keep matching
+                        access_node_name, _ = sdfg.add_transient(f"{node.data}", [1], desc.dtype, find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(
                             tasklet, f"{node.data}_value", tmp_an, None, Memlet.simple(access_node_name, "0")
@@ -262,12 +262,13 @@ def replace_properties_dict(
     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
     sdfg: Optional["dace.SDFG"] = None,
 ):
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
-        if isinstance(new_name, str)
-        else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
+            if isinstance(new_name, str)
+            else new_name
+            for symname, new_name in repl.items()
+        }
 
     for propclass, propval in node.properties():
         if propval is None:

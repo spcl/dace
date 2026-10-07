@@ -15,7 +15,7 @@ from typing import List, Tuple, TYPE_CHECKING
 # DaCe imports
 import dace
 import dace.sdfg.nodes as nodes
-from dace import dtypes
+from dace import data as dt, dtypes
 from dace.data import Reference, Structure
 from dace.sdfg import SDFGState
 from dace.data import find_new_name
@@ -66,7 +66,23 @@ class DaceNodeBackwardImplementations:
                 #    from the output to there
                 # 3) add a read node to the backward state, and an edge into it
 
+                # A view the nested SDFG makes of one of its inputs is defined the same way in the backward SDFG,
+                # which then takes that input like any other
+                viewed = ad_utils.viewed_input(node, name)
+                if viewed is not None:
+                    ad_utils.redefine_view(node.sdfg, reverse_nsdfg, name)
+                    inputs.add(viewed)
+                    continue
+
                 desc = node.sdfg.arrays[name]
+                # Any other view only exists in the states that define it: forward a copy with its layout at the end
+                # of the nested SDFG, which the backward SDFG takes as a plain array
+                connector = name
+                if isinstance(desc, dt.View):
+                    connector = ad_utils.copy_view_at_exit(node.sdfg, name)
+                    desc = ad_utils.view_as_array(desc, transient=True)
+                    if isinstance(reverse_nsdfg.arrays.get(name), dt.View):
+                        reverse_nsdfg.arrays[name] = ad_utils.view_as_array(reverse_nsdfg.arrays[name], transient=False)
 
                 # if the original view node is in the in-connector, no need to connect it, continue
                 # if forwarded_name in node.in_connectors:
@@ -88,11 +104,11 @@ class DaceNodeBackwardImplementations:
                     self.bwd_engine.backward_sdfg.add_datadesc(new_name, to_add)
 
                 # (2)
-                node.sdfg.arrays[name].transient = False
-                added = node.add_out_connector(name, force=True)
+                node.sdfg.arrays[connector].transient = False
+                added = node.add_out_connector(connector, force=True)
                 assert added
                 write = forward_state.add_write(new_name)
-                forward_state.add_edge(node, name, write, None, self.bwd_engine.sdfg.make_array_memlet(new_name))
+                forward_state.add_edge(node, connector, write, None, self.bwd_engine.sdfg.make_array_memlet(new_name))
 
                 # (3)
                 read = backward_state.add_read(new_name)

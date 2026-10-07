@@ -22,19 +22,33 @@ class MapTiling(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    prefix = Property(dtype=str, default="tile", desc="Prefix for new range symbols")
-    tile_sizes = ShapeProperty(dtype=tuple, default=(128, 128, 128), desc="Tile size per dimension")
-
-    strides = ShapeProperty(
-        dtype=tuple, default=tuple(), desc="Tile stride (enables overlapping tiles). If empty, matches tile"
+    prefix = Property(dtype=str, default="tile", category="Parameters", desc="Prefix for new range symbols")
+    tile_sizes = ShapeProperty(
+        dtype=tuple, default=(128, 128, 128), category="Parameters", desc="Tile size per dimension"
     )
 
-    tile_offset = ShapeProperty(dtype=tuple, default=None, desc="Negative Stride offset per dimension", allow_none=True)
+    strides = ShapeProperty(
+        dtype=tuple,
+        default=tuple(),
+        category="Parameters",
+        desc="Tile stride (enables overlapping tiles). If empty, matches tile",
+    )
 
-    divides_evenly = Property(dtype=bool, default=False, desc="Tile size divides dimension length evenly")
-    tile_trivial = Property(dtype=bool, default=False, desc="Tiles even if tile_size is 1")
+    tile_offset = ShapeProperty(
+        dtype=tuple, default=None, category="Parameters", desc="Negative Stride offset per dimension", allow_none=True
+    )
 
-    skew = Property(dtype=bool, default=False, desc="If True, offsets inner tile back such that it starts with zero")
+    divides_evenly = Property(
+        dtype=bool, default=False, category="Applicability", desc="Tile size divides dimension length evenly"
+    )
+    tile_trivial = Property(dtype=bool, default=False, category="Parameters", desc="Tiles even if tile_size is 1")
+
+    skew = Property(
+        dtype=bool,
+        default=False,
+        category="Parameters",
+        desc="If True, offsets inner tile back such that it starts with zero",
+    )
 
     @staticmethod
     def annotates_memlets():

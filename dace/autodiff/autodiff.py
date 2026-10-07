@@ -10,7 +10,6 @@ from dace.autodiff.base_abc import AutoDiffException
 from dace.libraries.standard import Reduce
 
 from dace.sdfg import SDFG, SDFGState, nodes
-from dace.sdfg import utils as sdutils
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.state import ControlFlowBlock, LoopRegion
 from dace.transformation.passes.while_to_for_loop import WhileToForLoop
@@ -532,11 +531,13 @@ def _forward_data(forward: SDFG, backward: SDFG, backward_inputs: Dict[str, dt.D
                 desc.dtype,
                 storage=desc.storage,
                 strides=strides,
-                total_size=_extent(shape, strides) if strides else None,
+                total_size=ad_utils.strided_extent(shape, strides) if strides else None,
                 transient=False,
                 find_new_name=True,
             )
-            source = _reconstruct_view(forward, state, name) if isinstance(desc, dt.View) else state.add_read(name)
+            source = (
+                ad_utils.reconstruct_view(forward, state, name) if isinstance(desc, dt.View) else state.add_read(name)
+            )
             state.add_nedge(
                 source,
                 state.add_write(out_name),
@@ -554,7 +555,7 @@ def _forward_data(forward: SDFG, backward: SDFG, backward_inputs: Dict[str, dt.D
                     bwd_desc.shape,
                     storage=bwd_desc.storage,
                     strides=bwd_desc.strides,
-                    total_size=_extent(bwd_desc.shape, bwd_desc.strides),
+                    total_size=ad_utils.strided_extent(bwd_desc.shape, bwd_desc.strides),
                 )
                 forwarded[out_name] = name
             else:  # A scalar: copy into it at the start of the backward pass
@@ -564,31 +565,3 @@ def _forward_data(forward: SDFG, backward: SDFG, backward_inputs: Dict[str, dt.D
                 start.add_nedge(start.add_read(in_name), start.add_write(name), Memlet(f"{in_name}[0]"))
                 forwarded[out_name] = in_name
     return forwarded
-
-
-def _extent(shape, strides):
-    """The number of elements a strided array spans."""
-    return sum((size - 1) * stride for size, stride in zip(shape, strides)) + 1
-
-
-def _reconstruct_view(sdfg: SDFG, target: SDFGState, name: str) -> nodes.AccessNode:
-    """Adds the view ``name`` (and the views it views) to ``target``, as defined in another state of ``sdfg``."""
-    for state in sdfg.states():
-        if state is target:
-            continue
-        for node in state.data_nodes():
-            if node.data != name:
-                continue
-            edge = sdutils.get_view_edge(state, node)
-            if edge is None:
-                continue
-            viewed = edge.src if edge.dst is node else edge.dst
-            if isinstance(sdfg.arrays[viewed.data], dt.View):
-                source = _reconstruct_view(sdfg, target, viewed.data)
-            else:
-                source = target.add_read(viewed.data)
-            view = target.add_access(name)
-            view.add_in_connector("views")
-            target.add_edge(source, None, view, "views", copy.deepcopy(edge.data))
-            return view
-    raise AutoDiffException(f"Cannot find the definition of view {name}")

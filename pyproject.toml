@@ -21,7 +21,7 @@ ml-testing = [
     "ipykernel",
     "nbconvert",
     "pytest-timeout",
-    "transformers==5.10.1",
+    "transformers==5.17.0",
     "jax<=0.6.2",
     "efficientnet_pytorch",
 ]
@@ -57,7 +57,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy",
-    "networkx>=2.5,<=3.5",
+    "networkx>=2.5",
     "astunparse",
     "sympy>=1.9",
     "pyyaml",

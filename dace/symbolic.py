@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections.abc
 import contextlib
 from collections import Counter
 from functools import lru_cache, cache
@@ -8,7 +9,21 @@ import threading
 import pickle
 import re
 import types
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING, List
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    Iterator,
+    Mapping,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    TYPE_CHECKING,
+    List,
+)
 import numpy
 
 import sympy.abc
@@ -21,22 +36,45 @@ from dace import dtypes
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
 
+class _ScalarSymbolDTypes(collections.abc.Mapping):
+    """
+    A read-only view of a mapping from symbol names to dtypes that only contains the concrete scalar dtypes (see
+    ``_SymbolDTypeContext._is_scalar_symbol_dtype``). The filter is applied on lookup, so creating the view does not
+    copy the mapping, which must not change while the view is in use.
+    """
+
+    __slots__ = ("_authority",)
+
+    def __init__(self, authority: Mapping[str, "dtypes.typeclass"]) -> None:
+        self._authority = authority
+
+    def __getitem__(self, name: str) -> "dtypes.typeclass":
+        dtype = self._authority[name]
+        if not _SymbolDTypeContext._is_scalar_symbol_dtype(dtype):
+            raise KeyError(name)
+        return dtype
+
+    def __iter__(self) -> Iterator[str]:
+        return (n for n, dt in self._authority.items() if _SymbolDTypeContext._is_scalar_symbol_dtype(dt))
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
 class _SymbolDTypeContext(threading.local):
     def __init__(self):
 
         # The lowest level in the stack is reserved for "no stack active".
-        self.ctx_stack: List[types.MappingProxyType[str, "dtypes.typeclass"]] = [types.MappingProxyType({})]
+        self.ctx_stack: List[Mapping[str, "dtypes.typeclass"]] = [types.MappingProxyType({})]
 
-    def push(self, authority: Dict[str, "dtypes.typeclass"]) -> types.MappingProxyType[str, "dtypes.typeclass"]:
+    def push(self, authority: Mapping[str, "dtypes.typeclass"]) -> Mapping[str, "dtypes.typeclass"]:
         """
-        Adds a new level of authoritative dtype to the context.
+        Adds a new level of authoritative dtype to the context. Only concrete scalar dtypes are considered.
 
-        :param authority: Mapping from symbol name to its authoritative dtype.
+        :param authority: Mapping from symbol name to its authoritative dtype, which must not change while this
+                          level is active.
         """
-        new_stack_level = types.MappingProxyType(
-            {n: dt for n, dt in authority.items() if self._is_scalar_symbol_dtype(dt)}
-        )
-        self.ctx_stack.append(new_stack_level)
+        self.ctx_stack.append(_ScalarSymbolDTypes(authority))
         return self.ctx_stack[-1]
 
     def pop(self) -> "_SymbolDTypeContext":
@@ -46,7 +84,7 @@ class _SymbolDTypeContext(threading.local):
         self.ctx_stack.pop()
         return self
 
-    def get(self) -> types.MappingProxyType:
+    def get(self) -> Mapping[str, "dtypes.typeclass"]:
         """Get the current active set of authoritative dtype."""
         if len(self.ctx_stack) == 0:
             raise IndexError("Symbol type stack is empty.")
@@ -639,16 +677,28 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     return f"dace.{expr.dtype.to_string()}({value})"
 
 
+@lru_cache(maxsize=None, typed=True)
+def _default_assumptions_of_type(dtype: "dtypes.typeclass") -> Dict[str, Any]:
+    """
+    Returns the assumptions of a symbol of the given type created without explicit assumptions. They only depend on
+    the type (not on the name), so they are computed once per type. The result must not be modified.
+    """
+    return symbol("x", dtype=dtype).assumptions0
+
+
 def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
-    return symbol(expr.name, dtype=expr.dtype).assumptions0
+    return _default_assumptions_of_type(expr.dtype)
 
 
+@lru_cache(maxsize=16384, typed=True)
 def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> Dict[str, Any]:
+    # Cached: the result only depends on the assumptions of the symbol (part of its equality) and on ``dtype``.
+    # The returned dictionary must not be modified.
     kwargs = {}
     if dtype != DEFAULT_SYMBOL_TYPE:
         kwargs["dtype"] = f"dace.{dtype.to_string()}"
 
-    default_assumptions = _symbol_default_assumptions(symbol(expr.name, dtype=dtype))
+    default_assumptions = _default_assumptions_of_type(dtype)
     for key, value in sorted(expr.assumptions0.items()):
         if key == "commutative" or key.startswith("extended_"):
             continue
@@ -959,6 +1009,7 @@ def swalk(expr, enter_functions=False):
 _builtin_userfunctions = {
     "int_floor",
     "int_ceil",
+    "ipow",
     "abs",
     "Abs",
     "min",
@@ -1169,6 +1220,32 @@ class int_ceil(sympy.Function):
 
     def _eval_is_integer(self):
         return True
+
+
+class ipow(sympy.Function):
+    """Integer power ``base ** exp`` with a non-negative integer exponent, lowered
+    to ``dace::math::ipow`` (repeated multiply, exact integer) -- valid where
+    ``dace::math::pow`` (libm ``double``) is not: an array size, subscript or loop
+    bound.  ``RelaxIntegerPowers`` mints these from ``Pow``."""
+
+    @classmethod
+    def eval(cls, base, exp):
+        # A negative constant is a reciprocal, which is a ``Pow``, not an ``ipow``; an exponent of unknown
+        # sign is the caller's to prove
+        if exp.is_Number and exp.is_negative:
+            raise ValueError(f"ipow exponent must be non-negative, got {exp}")
+        if base.is_Number and exp.is_Number:
+            return base**exp
+
+    def _eval_is_integer(self):
+        base, exp = self.args
+        if base.is_integer and exp.is_integer:
+            return True
+
+    def _eval_is_positive(self):
+        base, _exp = self.args
+        if base.is_positive:
+            return True
 
 
 class OR(sympy.Function):
@@ -1986,6 +2063,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         "Le": sympy.Le,
         "int_floor": int_floor,
         "int_ceil": int_ceil,
+        "ipow": ipow,
         "IfExpr": IfExpr,
         "Mod": sympy.Mod,
         "Attr": Attr,
@@ -2263,6 +2341,10 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return "*".join(parts) if parts else "1"
 
 
+# SymPy integer types that ``DaceSympySerializer`` prints as their value
+_PLAIN_INTEGER_TYPES = (sympy.Integer, type(sympy.S.One), type(sympy.S.Zero), type(sympy.S.NegativeOne))
+
+
 def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.number]) -> str:
     if isinstance(expr, SymExpr):
         return f"SymExpr({serialize_symbolic(expr.expr)}, {serialize_symbolic(expr.approx)})"
@@ -2275,8 +2357,26 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
     if isinstance(expr, float):
         return sympy.printing.str.sstr(expr)
     if isinstance(expr, sympy.Basic):
-        return DaceSympySerializer().doprint(expr)
+        # Fast paths for the most common expressions (integers and lone symbols), printed as the serializer would
+        expr_type = type(expr)
+        if expr_type in _PLAIN_INTEGER_TYPES:
+            return str(expr.p)
+        if expr_type is symbol or expr_type is sympy.Symbol:
+            return DaceSympySerializer()._print_Symbol(expr)
+        # SymPy equality ignores the dtypes of DaCe symbols, which are printed, so they are part of the key
+        scope_dtypes = _SERIALIZATION_SYMBOL_DTYPES.get()
+        symbol_dtypes = frozenset((s.name, scope_dtypes.get(s.name, s.dtype)) for s in expr.atoms(symbol))
+        return _serialize_sympy_expression(expr, symbol_dtypes)
     return str(expr)
+
+
+@lru_cache(maxsize=16384)
+def _serialize_sympy_expression(expr: sympy.Basic, symbol_dtypes: FrozenSet[Tuple[str, "dtypes.typeclass"]]) -> str:
+    """
+    Serializes a SymPy expression. The result only depends on the expression and on the dtypes its DaCe symbols are
+    serialized with (``symbol_dtypes``, which the caller computes from the current scope), so it is cached.
+    """
+    return DaceSympySerializer().doprint(expr)
 
 
 def serialize_symbolic(expr):
@@ -2362,6 +2462,7 @@ _PYSTR2SYM_locals = {
     "int_floor": int_floor,
     "__int_floor": __int_floor,
     "int_ceil": int_ceil,
+    "ipow": ipow,
     "IfExpr": IfExpr,
     "Mod": sympy.Mod,
     "Attr": Attr,
@@ -2373,6 +2474,50 @@ _PYSTR2SYM_locals = {
 # _clash1 enables all one-letter variables like N as symbols
 # _clash also allows pi, beta, zeta and other common greek letters
 _PYSTR2SYM_locals.update(_sympy_clash)
+
+
+def symbol_replacements(
+    symbol_mapping: Optional[Dict[Union[str, sympy.Basic], Any]],
+) -> Optional[Dict[str, sympy.Basic]]:
+    """
+    Converts a symbol mapping (e.g., the ``symbol_mapping`` of a nested SDFG node) into a dictionary that
+    ``replace_symbols`` replaces all at once. For example, ``{'N': 'M', 'M': 'N'}`` swaps the two symbols rather than
+    replacing both with one of them. Identity entries (e.g., ``{'N': 'N'}``) are left out.
+
+    The dictionary is keyed by symbol name: a mapping names its symbols, which have a type of their own that is part
+    of their identity (e.g., ``symbol('N')`` is not ``symbol('N', dtype=dace.int64)``).
+
+    :param symbol_mapping: A mapping from symbol names or symbols to expressions, or None.
+    :return: The replacement dictionary, or None if the mapping replaces nothing.
+    """
+    if not symbol_mapping:
+        return None
+    result = {}
+    for key, value in symbol_mapping.items():
+        key = str(key)
+        value = value if isinstance(value, sympy.Basic) else pystr_to_symbolic(value)
+        # Most entries map a symbol to itself; comparing names avoids a structural SymPy comparison
+        if isinstance(value, sympy.Symbol) and value.name == key:
+            continue
+        result[key] = value
+    return result or None
+
+
+def replace_symbols(expr: Any, replacements: Optional[Dict[str, sympy.Basic]]) -> Any:
+    """
+    Replaces the symbols of an expression named in ``replacements`` (see ``symbol_replacements``), all at once and
+    whatever their types.
+
+    :param expr: The expression, or a non-symbolic value, which is returned as is.
+    :param replacements: Expressions to replace the symbols with, by symbol name, or None.
+    :return: The expression with the symbols replaced.
+    """
+    if not replacements or not isinstance(expr, sympy.Basic):
+        return expr
+    found = {
+        s: replacements[s.name] for s in expr.free_symbols if isinstance(s, sympy.Symbol) and s.name in replacements
+    }
+    return expr.xreplace(found) if found else expr
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
@@ -2507,6 +2652,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if base == "int_floor" and as_operator:
             op = "/" if self.cpp_mode else "//"
             return "((%s) %s (%s))" % (self._print(expr.args[0]), op, self._print(expr.args[1]))
+        if str(expr.func) == "ipow" and self.cpp_mode:
+            return "dace::math::ipow(%s, %s)" % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == "IfExpr":
             cond, tval, fval = (self._print(a) for a in expr.args)
             if self.cpp_mode:
@@ -2664,6 +2811,7 @@ def safe_replace(
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
     repl = {}
     invrepl = {}
+    symbolic_repl = {}
     for k, v in mapping.items():
         # Degenerate
         if str(k) == str(v):
@@ -2690,8 +2838,28 @@ def safe_replace(
             pass
 
         # Otherwise, symbolic replacement
-        repl[k] = f"__dacesym_{k}"
-        invrepl[f"__dacesym_{k}"] = v
+        symbolic_repl[str(k)] = v
+
+    # Two-step replacement is only needed when replaced keys (including ones mapped to constants) appear in the
+    # symbolic values (e.g., {M: N, N: M} or {M: N, N: 5}), as the callback may replace sequentially
+    if symbolic_repl:
+        keys = set(symbolic_repl.keys()) | {str(k) for k in repl.keys()}
+        overlap = False
+        for v in symbolic_repl.values():
+            try:
+                vsyms = {str(s) for s in pystr_to_symbolic(v).free_symbols}
+            except (TypeError, ValueError, AttributeError, sympy.SympifyError):
+                overlap = True  # Cannot analyze, be safe
+                break
+            if keys & vsyms:
+                overlap = True
+                break
+        if overlap:
+            for k, v in symbolic_repl.items():
+                repl[k] = f"__dacesym_{k}"
+                invrepl[f"__dacesym_{k}"] = v
+        else:
+            repl.update(symbolic_repl)
 
     if len(repl) == 0:
         return

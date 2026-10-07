@@ -1,8 +1,8 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace import nodes, Memlet
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
+from dace.sdfg import dealias, SDFG, SDFGState, InterstateEdge
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
 from dace.sdfg.state import AbstractControlFlowRegion
@@ -43,12 +43,14 @@ class GPUPersistentKernel(SubgraphTransformation):
     """
 
     validate = Property(
+        category="Diagnostics",
         desc="Validate the sdfg and the nested sdfg",
         dtype=bool,
         default=False,
     )
 
     include_in_assignment = Property(
+        category="Parameters",
         desc="Wether to include global variable assignments of the edge going "
         "into the kernel inside the kernel or have it happen on the "
         "outside. If the assignment is needed in the kernel, it needs to "
@@ -58,6 +60,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     )
 
     kernel_prefix = Property(
+        category="Parameters",
         desc="Name of the kernel. If no value is given the kerenl will be "
         "refrenced as `kernel`, if a value is given the kernel will be "
         "named `<kernel_prefix>_kernel`. This is useful if multiple "
@@ -315,6 +318,8 @@ class GPUPersistentKernel(SubgraphTransformation):
         p = RemoveUnusedSymbols()
         p.symbols = new_symbols
         p.apply_pass(sdfg, {})
+
+        dealias.integrate_nested_sdfg(kernel_sdfg)
 
         # Transformation is done
         if self.validate:

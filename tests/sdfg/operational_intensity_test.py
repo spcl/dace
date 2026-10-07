@@ -122,7 +122,8 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], SymbolicType]
     "sequential_maps": (sequential_maps, 1024, 3 * 8, {"N": 29}, 87 / (90 * 8)),
     # smaller cache --> only two arrays fit --> x loaded twice now
     "sequential_maps_small": (sequential_maps, 6, 3 * 8, {"N": 7}, 21 / (13 * 3 * 8)),
-    "nested_reuse": (nested_reuse, 1024, 64, {"N": 1024}, 2048 / (3 * 1024 * 8 + 128)),
+    # The three arrays are compulsory misses; ``result`` is stored once, costing a single cache line
+    "nested_reuse": (nested_reuse, 1024, 64, {"N": 1024}, 2048 / (3 * 1024 * 8 + 64)),
     "mmm": (mmm, 20, 16, {"N": 24}, (2 * 24**3) / ((36 * 24**2 + 24 * 12) * 16)),
     "tiled_mmm": (tiled_mmm, 20, 16, {"N": 24, "TILE_SIZE": 4}, (2 * 24**3) / (16 * 24 * 6**3)),
     "tiled_mmm_32": (tiled_mmm_32, 10, 16, {"N": 24, "TILE_SIZE": 4}, (2 * 24**3) / (16 * 12 * 6**3)),

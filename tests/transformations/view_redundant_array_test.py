@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
 
 import numpy as np
@@ -255,6 +255,40 @@ def test_transient_removal_uneven_flow_through_map():
     np.testing.assert_allclose(Yout[:, 4], Xin[:, 4])
 
 
+@pytest.mark.parametrize("identity", [True, False])
+def test_identity_view_written_by_library_node(identity: bool):
+    """
+    A view that is the whole container it views only renames the data the memlets refer to, so it can be removed
+    even when a library node writes it. A view that reinterprets the container cannot.
+    """
+    sdfg = dace.SDFG(f"identity_view_libnode_{identity}")
+    sdfg.add_array("X", [4, 3, 5], dace.float64)
+    sdfg.add_array("B", [4, 3], dace.float64)
+    if identity:
+        sdfg.add_view("V", [4, 3], dace.float64)
+    else:
+        sdfg.add_view("V", [12], dace.float64)
+    state = sdfg.add_state()
+    reduce = state.add_reduce("lambda a, b: a + b", axes=[2], identity=0)
+    view = state.add_access("V")
+    state.add_edge(state.add_read("X"), None, reduce, None, dace.Memlet("X[0:4, 1, 0:5]"))
+    state.add_edge(reduce, None, view, None, dace.Memlet("V[0:4, 1]" if identity else "V[4:8]"))
+    state.add_edge(view, "views", state.add_write("B"), None, dace.Memlet("B[0:4, 0:3]"))
+    sdfg.validate()
+
+    assert (RemoveSliceView.can_be_applied_to(sdfg, view=view) is True) == identity
+    if not identity:
+        return
+    RemoveSliceView.apply_to(sdfg, view=view)
+    assert not any(isinstance(n.desc(sdfg), data.View) for n in state.data_nodes())
+    sdfg.validate()
+
+    X = np.random.rand(4, 3, 5)
+    B = np.zeros((4, 3))
+    sdfg(X=X, B=B)
+    assert np.allclose(B[:, 1], X[:, 1, :].sum(axis=1))
+
+
 if __name__ == "__main__":
     test_redundant_array_removal()
     test_redundant_array_1_into_2_dims("O", False)
@@ -267,3 +301,5 @@ if __name__ == "__main__":
     test_redundant_array_2_into_1_dim("T", True)
     test_unsqueeze_view_removal()
     test_view_offset_removal()
+    test_identity_view_written_by_library_node(True)
+    test_identity_view_written_by_library_node(False)

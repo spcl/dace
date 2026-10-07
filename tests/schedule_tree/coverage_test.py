@@ -243,19 +243,6 @@ def _view() -> tn.ScheduleTreeRoot:
     return sdfg.as_schedule_tree()
 
 
-def _nview() -> tn.ScheduleTreeRoot:
-    inner = dace.SDFG("inner")
-    inner.add_array("X", [40], dace.float64)
-    _write_tasklet(inner.add_state(), "1", "X[0]")
-
-    sdfg = dace.SDFG("nview")
-    sdfg.add_array("A", [4, 5, 10], dace.float64)
-    state = sdfg.add_state()
-    nsdfg = state.add_nested_sdfg(inner, {}, {"X"})
-    state.add_edge(nsdfg, "X", state.add_write("A"), None, dace.Memlet("A[0:4, 1, 0:10]"))
-    return sdfg.as_schedule_tree()
-
-
 def _reference_set() -> tn.ScheduleTreeRoot:
     sdfg = dace.SDFG("reference_set")
     sdfg.add_array("A", [20], dace.float64)
@@ -313,8 +300,6 @@ FACTORIES: dict[type[tn.ScheduleTreeNode], Callable[[], tn.ScheduleTreeRoot]] = 
     tn.CopyNode: _copy,
     tn.DynScopeCopyNode: _dynamic_scope_copy,
     tn.ViewNode: _view,
-    tn.NView: _nview,
-    tn.NViewEnd: _nview,
     tn.RefSetNode: _reference_set,
     tn.StateBoundaryNode: _state_boundary,
     tn.NamedRegionScope: _named_region,
