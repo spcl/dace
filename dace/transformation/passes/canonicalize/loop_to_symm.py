@@ -71,6 +71,7 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.optionals import required
 from dace.sdfg.narrowing import as_expr
+from dace.sdfg.propagation import propagate_subset
 
 #: Stand-ins for the two slice indices while a body state's value expression is resolved:
 #: the row inside the ``C[0:i, j]`` scatter, and the column inside the ``C[i, 0:N]`` finalize.
@@ -253,15 +254,22 @@ def classify_read(array: str, subset: subsets.Range, match: SymmMatch, p_row: st
 
 
 def classify_leaf(state: SDFGState, sdfg: SDFG, read: ArrayRead, temp_name: Optional[str], match: SymmMatch, p_row: str,
-                  p_col: str) -> Optional[sympy.Expr]:
+                  p_col: str, top: Optional[SDFG]) -> Optional[sympy.Expr]:
     """Role of one ``StateValueResolver`` leaf read, climbing out through Map/NestedSDFG
     boundaries (``sdutil.trace_nested_access``) to the real array read, or None if it
-    resolves to none of the known symm operands (the caller then refuses the match)."""
+    resolves to none of the known symm operands (the caller then refuses the match).
+
+    ``top`` is the body of a whole-container (No-View) NestedSDFG: the boundary memlets there are hulls, so the
+    read is propagated out of each scope up to ``top`` instead.
+    """
     if temp_name is not None and read.array == temp_name:
         return TEMP_ROLE
     node = next((n for n in state.data_nodes() if n.data == read.array), None)
     if node is None:
         return None
+    if top is not None:
+        outer = read_in_body_coordinates(state, sdfg, read, top)
+        return None if outer is None else classify_read(*outer, match, p_row, p_col)
     try:
         trace = sdutil.trace_nested_access(node, state, sdfg)
     except Exception:
@@ -274,8 +282,42 @@ def classify_leaf(state: SDFGState, sdfg: SDFG, read: ArrayRead, temp_name: Opti
     return classify_read(outer_memlet.data, outer_memlet.subset, match, p_row, p_col)
 
 
-def resolve_role_expr(sink: Sink, temp_name: Optional[str], match: SymmMatch, p_row: str, p_col: str,
-                      allow_wcr: bool) -> Optional[sympy.Basic]:
+def read_in_body_coordinates(state: SDFGState, sdfg: SDFG, read: ArrayRead,
+                             top: SDFG) -> Optional[Tuple[str, subsets.Subset]]:
+    """``read`` as ``(container, subset)`` of ``top``, propagated out of every scope up to ``top``.
+
+    Every NestedSDFG between the read and ``top`` must bind whole containers in its parent's coordinates.
+    """
+    point = subsets.Range.from_indices(list(read.index))
+    reads = [
+        e for e in state.edges()
+        if isinstance(e.dst, nodes.CodeNode) and e.data is not None and e.data.data == read.array and (
+            e.data.src_subset or e.data.subset) == point
+    ]
+    if len(reads) != 1:
+        return None
+    name, subset, anchor = read.array, point, reads[0].dst
+    while True:
+        scope = state.scope_dict()
+        entry = scope[anchor]
+        while entry is not None:
+            subset = propagate_subset([mm.Memlet(data=name, subset=subset)], sdfg.arrays[name], entry.map.params,
+                                      entry.map.range).subset
+            entry = scope[entry]
+        if sdfg is top:
+            return name, subset
+        nested = sdfg.parent_nsdfg_node
+        state = sdfg.parent
+        if nested is None or state is None or not binds_whole_containers(state, nested):
+            return None
+        name = next((e.data.data for e in state.in_edges(nested) if e.dst_conn == name and e.data.data), None)
+        if name is None:
+            return None
+        sdfg, anchor = state.sdfg, nested
+
+
+def resolve_role_expr(sink: Sink, temp_name: Optional[str], match: SymmMatch, p_row: str, p_col: str, allow_wcr: bool,
+                      top: Optional[SDFG]) -> Optional[sympy.Basic]:
     """``sink``'s defining value with every leaf read substituted by its canonical role
     symbol, or None if the value or any leaf cannot be resolved exactly."""
     state, sdfg, node = sink
@@ -286,7 +328,7 @@ def resolve_role_expr(sink: Sink, temp_name: Optional[str], match: SymmMatch, p_
         return None
     substitutions = {}
     for sym, read in resolver.leaves.items():
-        role = classify_leaf(state, sdfg, read, temp_name, match, p_row, p_col)
+        role = classify_leaf(state, sdfg, read, temp_name, match, p_row, p_col, top)
         if role is None:
             return None
         substitutions[sym] = role
@@ -298,27 +340,44 @@ def arithmetic_matches(state: SDFGState, nsdfg: nodes.NestedSDFG, match: SymmMat
     with the symm structure -- not just reads/writes it on the right subsets. Any
     deviation (sign, missing/extra factor, wrong reduction, swapped operand) refuses.
     """
-    c_tri_conn = c_pt_conn = c_tri_wcr = None
-    for e in state.out_edges(nsdfg):
-        if e.data is None or e.data.data != match.c:
-            continue
-        if e.data.wcr is not None:
-            c_tri_conn, c_tri_wcr = e.src_conn, e.data.wcr
-        else:
-            c_pt_conn = e.src_conn
-    if c_tri_conn is None or c_pt_conn is None or not wcr_is_sum(c_tri_wcr):
-        return False
+    inner = nsdfg.sdfg
+    top = inner if binds_whole_containers(state, nsdfg) else None
+    if top is not None:
+        # One connector carries both writes of ``C``: the slice-WCR state and the point-write state.
+        conn = next((e.src_conn for e in state.out_edges(nsdfg) if e.data is not None and e.data.data == match.c), None)
+        if conn is None:
+            return False
+        wcr_state = wcr_sum_write_state(inner, conn)
+        plain_states = [
+            st for st in inner.states() if any(e.data is not None and not e.data.is_empty() and e.data.wcr is None
+                                               for dn in st.data_nodes() if dn.data == conn for e in st.in_edges(dn))
+        ]
+        if wcr_state is None or len(plain_states) != 1:
+            return False
+        wcr_sink = resolve_producer(wcr_state, inner, conn)
+        final_sink = resolve_producer(plain_states[0], inner, conn)
+    else:
+        c_tri_conn = c_pt_conn = c_tri_wcr = None
+        for e in state.out_edges(nsdfg):
+            if e.data is None or e.data.data != match.c:
+                continue
+            if e.data.wcr is not None:
+                c_tri_conn, c_tri_wcr = e.src_conn, e.data.wcr
+            else:
+                c_pt_conn = e.src_conn
+        if c_tri_conn is None or c_pt_conn is None or not wcr_is_sum(c_tri_wcr):
+            return False
+        wcr_sink = find_producer(inner, c_tri_conn)
+        final_sink = find_producer(inner, c_pt_conn)
 
-    temp = find_temp_accumulator(nsdfg.sdfg)
-    wcr_sink = find_producer(nsdfg.sdfg, c_tri_conn)
-    final_sink = find_producer(nsdfg.sdfg, c_pt_conn)
+    temp = find_temp_accumulator(inner)
     if temp is None or wcr_sink is None or final_sink is None:
         return False
     temp_name, temp_sink = temp
 
-    c_term = resolve_role_expr(wcr_sink, temp_name, match, p_row, p_col, allow_wcr=True)
-    t_term = resolve_role_expr(temp_sink, temp_name, match, p_row, p_col, allow_wcr=True)
-    f_term = resolve_role_expr(final_sink, temp_name, match, p_row, p_col, allow_wcr=False)
+    c_term = resolve_role_expr(wcr_sink, temp_name, match, p_row, p_col, allow_wcr=True, top=top)
+    t_term = resolve_role_expr(temp_sink, temp_name, match, p_row, p_col, allow_wcr=True, top=top)
+    f_term = resolve_role_expr(final_sink, temp_name, match, p_row, p_col, allow_wcr=False, top=top)
     if c_term is None or t_term is None or f_term is None:
         return False
     return (expressions_equal(c_term, ALPHA_ROLE * A_TRI_ROLE * B_PT_ROLE)
@@ -378,15 +437,11 @@ class LoopToSymm(ppl.Pass):
         if not isinstance(nsdfg, nodes.NestedSDFG):
             return None
 
-        # Group the NestedSDFG's boundary memlets (in map-parameter terms) by array.
-        ins: Dict[str, List[subsets.Subset]] = {}
-        for e in state.in_edges(nsdfg):
-            if e.data is not None and e.data.data is not None:
-                ins.setdefault(e.data.data, []).append(e.data.subset)
-        outs: Dict[str, List] = {}
-        for e in state.out_edges(nsdfg):
-            if e.data is not None and e.data.data is not None:
-                outs.setdefault(e.data.data, []).append((e.data.subset, e.data.wcr))
+        # Group the NestedSDFG's accesses (in map-parameter terms) by array.
+        accesses = boundary_accesses(state, nsdfg)
+        if accesses is None:
+            return None
+        ins, outs = accesses
 
         # Output ``C``: exactly one array, written by a triangular slice-WCR
         # ``C[0:p_row, p_col]`` and a point-write ``C[p_row, p_col]``.
@@ -527,6 +582,101 @@ class LoopToSymm(ppl.Pass):
         for an in boundary:
             if an in state.nodes() and state.degree(an) == 0:
                 state.remove_node(an)
+
+
+Reads = Dict[str, List[subsets.Subset]]
+Writes = Dict[str, List[Tuple[subsets.Subset, Optional[str]]]]
+
+
+def binds_whole_containers(state: SDFGState, nsdfg: nodes.NestedSDFG) -> bool:
+    """Whether every connector of ``nsdfg`` binds its whole outer container in the outer coordinates.
+
+    That is the No-View binding: the boundary memlet is only the propagated hull of the accesses, and the
+    body indexes the container with the same symbols as the parent.
+    """
+    if any(str(k) != str(v) for k, v in nsdfg.symbol_mapping.items()):
+        return False
+    for e in [*state.in_edges(nsdfg), *state.out_edges(nsdfg)]:
+        conn = e.dst_conn if e.dst is nsdfg else e.src_conn
+        if e.data is None or e.data.data is None or conn is None:
+            continue
+        outer = state.sdfg.arrays[e.data.data]
+        if tuple(nsdfg.sdfg.arrays[conn].shape) != tuple(outer.shape):
+            return False
+    return True
+
+
+def body_accesses(inner: SDFG) -> Optional[Tuple[Reads, Writes]]:
+    """Every read and write of ``inner``'s non-transient containers, propagated out of the maps around it.
+
+    Accesses of a whole-container nested SDFG are collected from its body; ``None`` for a container copied
+    from one access node to another, whose access is not a single read or write.
+    """
+    reads: Reads = {}
+    writes: Writes = {}
+    for st in inner.states():
+        scope = st.scope_dict()
+        for e in st.edges():
+            name = e.data.data if e.data is not None else None
+            if name is None or e.data.is_empty() or inner.arrays[name].transient:
+                continue
+            src_code = isinstance(e.src, nodes.CodeNode)
+            dst_code = isinstance(e.dst, nodes.CodeNode)
+            if not src_code and not dst_code:
+                if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
+                    return None
+                continue
+            code = e.dst if dst_code else e.src
+            if isinstance(code, nodes.NestedSDFG) and binds_whole_containers(st, code):
+                nested = body_accesses(code.sdfg)
+                if nested is None:
+                    return None
+                conn = e.dst_conn if dst_code else e.src_conn
+                found = ([(s, None) for s in nested[0].get(conn, [])] if dst_code else nested[1].get(conn, []))
+            else:
+                found = [(e.data.dst_subset if src_code and e.data.dst_subset is not None else e.data.subset,
+                          e.data.wcr)]
+            for subset, wcr in found:
+                entry = scope[code]
+                while entry is not None:
+                    subset = propagate_subset([mm.Memlet(data=name, subset=subset)], inner.arrays[name],
+                                              entry.map.params, entry.map.range).subset
+                    entry = scope[entry]
+                if dst_code:
+                    reads.setdefault(name, []).append(subset)
+                else:
+                    writes.setdefault(name, []).append((subset, wcr))
+    return reads, writes
+
+
+def boundary_accesses(state: SDFGState, nsdfg: nodes.NestedSDFG) -> Optional[Tuple[Reads, Writes]]:
+    """The reads and writes ``nsdfg`` makes of each outer container, in the parent's coordinates.
+
+    A connector bound to a slice carries its access on the boundary memlet; a whole-container (No-View)
+    connector carries only the hull there, so the accesses are read from the body instead.
+    """
+    if not binds_whole_containers(state, nsdfg):
+        ins: Reads = {}
+        for e in state.in_edges(nsdfg):
+            if e.data is not None and e.data.data is not None:
+                ins.setdefault(e.data.data, []).append(e.data.subset)
+        outs: Writes = {}
+        for e in state.out_edges(nsdfg):
+            if e.data is not None and e.data.data is not None:
+                outs.setdefault(e.data.data, []).append((e.data.subset, e.data.wcr))
+        return ins, outs
+    body = body_accesses(nsdfg.sdfg)
+    if body is None:
+        return None
+    outer_of = {e.dst_conn: e.data.data for e in state.in_edges(nsdfg) if e.data is not None and e.data.data}
+    outer_of.update({e.src_conn: e.data.data for e in state.out_edges(nsdfg) if e.data is not None and e.data.data})
+    return ({
+        outer_of[k]: v
+        for k, v in body[0].items() if k in outer_of
+    }, {
+        outer_of[k]: v
+        for k, v in body[1].items() if k in outer_of
+    })
 
 
 def _boundary_in(sdfg: SDFG, nsdfg: nodes.NestedSDFG) -> List[MultiConnectorEdge[mm.Memlet]]:
