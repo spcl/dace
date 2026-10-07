@@ -1823,7 +1823,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     else:
                         authority_by_node[child] = authority
 
-            _open_scope(None, dict(self.sdfg.symbols))
+            _open_scope(None, self.sdfg.symbols)  # read-only: a copy per state is quadratic in large SDFGs
         except (RuntimeError, ValueError, KeyError):
             authority_by_node = {}
 
