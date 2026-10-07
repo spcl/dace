@@ -1,3 +1,6 @@
+line-length = 120
+target-version = "py310"
+
 [lint]
 # F821 (undefined name) catches a class of bug that is invisible until import time: a class or
 # helper introduced without its import. F401 alone does not see it.
@@ -14,3 +17,6 @@ select = ["F401", "F821"]
 "dace/frontend/**" = ["F821"]
 "dace/autodiff/**" = ["F821"]
 "dace/external/**" = ["F821"]
+
+[format]
+exclude = ["*.ipynb"]
