@@ -475,7 +475,7 @@ class AssertNoNestedSDFGWCR(ppl.Pass):
         return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
-        violation = no_wcr_inside_nested_sdfgs(sdfg)
+        violation = no_wcr_inside_nested_sdfgs(sdfg, allow_boundary_duplicates=True)
         if violation is not None:
             raise VectorizeUnsupported(f"unresolved WCR inside the body NSDFG before tiling: {violation}")
         return None

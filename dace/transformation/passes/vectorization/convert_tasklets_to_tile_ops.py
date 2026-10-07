@@ -1248,8 +1248,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(val_edge.src, val_edge.src_conn, reduce_node, "_src",
                              dace.Memlet.from_memlet(val_edge.data))
         dst_memlet = dace.Memlet.from_memlet(out_edge.data)
-        # The dropped read-back is what accumulated across tiles; a No-View body writes the element plainly (its WCR
-        # sits on the boundary edge), so the write carries the reduction itself.
+        # The dropped read-back is what accumulated across tiles; a No-View body writes a whole-container connector's
+        # element in place (its WCR sits on the boundary edge, which a pointer never applies), so the write carries
+        # the reduction itself.
         read = acc_in_edge.data
         staged = acc_in_edge.src
         if isinstance(staged, AccessNode) and inner_state.in_degree(staged) == 1:
@@ -1259,7 +1260,9 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 read = dace.Memlet(data=copy_edge.src.data,
                                    subset=copy_edge.data.get_src_subset(copy_edge, inner_state))
         reads_back = read.data == out_edge.data.data and read.subset == out_edge.data.subset
-        if dst_memlet.wcr is None and reads_back:
+        # A single-element accumulator leaves the body by value, and the boundary WCR accumulates it there.
+        in_place = dace.symbolic.equal(inner_state.sdfg.arrays[out_edge.data.data].total_size, 1) is not True
+        if dst_memlet.wcr is None and reads_back and in_place:
             dst_memlet.wcr = _REDUCE_OP_WCR[op]
         inner_state.add_edge(reduce_node, "_dst", out_edge.dst, out_edge.dst_conn, dst_memlet)
         acc_src = acc_in_edge.src

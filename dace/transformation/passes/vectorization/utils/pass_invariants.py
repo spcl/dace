@@ -431,7 +431,16 @@ def _is_lifted_reduction_wcr(sdfg: SDFG, state: SDFGState, edge: MultiConnectorE
     return syms <= _iteration_symbols_in_scope(sdfg, state)
 
 
-def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState) -> str | None:
+def boundary_carries_same_wcr(sd: SDFG, edge) -> bool:
+    """Whether ``sd``'s node writes the container ``edge`` accumulates into through a boundary edge with the same
+    WCR: the No-View duplicate of a reduction the parent already performs."""
+    node, parent = sd.parent_nsdfg_node, sd.parent
+    if node is None or parent is None or not isinstance(edge.dst, AccessNode):
+        return False
+    return any(out.data.wcr == edge.data.wcr for out in parent.out_edges_by_connector(node, edge.dst.data))
+
+
+def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState, allow_boundary_duplicates: bool = False) -> str | None:
     """No edge INSIDE any nested SDFG may carry a write-conflict resolution.
 
     **Multi-dim vectorization precondition.** Tile emitters lower the body NSDFG assuming every
@@ -448,6 +457,11 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState) -> str | None:
     lifted-boundary chain :func:`_is_lifted_reduction_wcr` accepts at top level is accepted here --
     nesting does not change how the tiler folds it, and forbidding it merely refuses kernels the
     top-level form vectorizes.
+
+    ``allow_boundary_duplicates`` admits the No-View form of the boundary reduction: the frontend puts the
+    reduction's WCR on the inner write as well as on the node's boundary edge for that container. The
+    vectorizer's entry guard admits it because nesting inlines and lowers such a body; the post-nesting guard
+    does not, so a duplicate the nesting could not resolve still refuses.
     """
     for sd, state in _iter_states(scope):
         if sd.parent_nsdfg_node is None:
@@ -456,6 +470,8 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState) -> str | None:
             if edge.data is None or edge.data.wcr is None:
                 continue
             if _is_lifted_reduction_wcr(sd, state, edge):
+                continue
+            if allow_boundary_duplicates and boundary_carries_same_wcr(sd, edge):
                 continue
             return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                     f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "

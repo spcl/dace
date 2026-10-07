@@ -204,8 +204,13 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
                     if any(isinstance(inner, dace.nodes.NestedSDFG) for inner, _ in node.sdfg.all_nodes_recursive()):
                         self.expand_body_boundary(g, node)
                     node.sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
-                    flattened += node.sdfg.apply_transformations_repeated(
+                    inlined = node.sdfg.apply_transformations_repeated(
                         [InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False) or 0
+                    # A body phase 2 did not nest (the map already held one NSDFG) or one that just inlined an inner
+                    # body carries the No-View duplicate of its boundary reduction, which phase 2 never lowered.
+                    is_tail = n.map.label.endswith(SCALAR_TAIL_MARKER) or n.map.label.endswith(TILE_K1_TAIL_MARKER)
+                    lower_reduction_wcr_in_body(node.sdfg, tiled=not is_tail)
+                    flattened += inlined
 
         assert_invariant(no_memlet_dim_mismatch(sdfg), "NestInnermostMapBodyIntoNSDFG",
                          "memlet subset and other_subset have matching dimensionality")

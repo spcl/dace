@@ -82,12 +82,16 @@ def scan_recurrence(a: dace.float64[N]):
 
 
 def _wcr_targets(sdfg: dace.SDFG):
-    """(#WCR edges into a multi-element Array, #WCR edges into a Scalar) across all states."""
+    """(#WCR paths into a multi-element Array, #WCR paths into a Scalar) across all states.
+
+    A path is counted once whichever of its edges carry the WCR (the frontend puts it on all of them)."""
     arr_elem, scalar = 0, 0
     for st in sdfg.states():
-        for e in st.edges():
-            if e.data is None or e.data.wcr is None:
-                continue
+        ends = {
+            id(st.memlet_path(e)[-1]): st.memlet_path(e)[-1]
+            for e in st.edges() if e.data is not None and e.data.wcr
+        }
+        for e in ends.values():
             desc = sdfg.arrays.get(e.data.data)
             if desc is None:
                 continue
