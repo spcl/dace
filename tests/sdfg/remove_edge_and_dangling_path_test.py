@@ -6,8 +6,8 @@ def test_remove_edge_global_scope():
     sdfg = dace.SDFG("simple_edge_remover_test")
     state = sdfg.add_state()
 
-    sdfg.add_array("a", shape=(1, ), dtype=dace.float64, transient=False)
-    sdfg.add_array("b", shape=(1, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("a", shape=(1,), dtype=dace.float64, transient=False)
+    sdfg.add_array("b", shape=(1,), dtype=dace.float64, transient=False)
 
     tlet = state.add_tasklet(
         "comp",
@@ -127,5 +127,5 @@ def test_remove_edge_nested_scope():
     assert state.number_of_nodes() == 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_remove_edge_global_scope()

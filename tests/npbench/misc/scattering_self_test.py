@@ -7,15 +7,19 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (dc.symbol(s, dc.int64)
-                                       for s in ('NA', 'NB', 'Nkz', 'NE', 'Nqz', 'Nw', 'Norb', 'N3D'))
+NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (
+    dc.symbol(s, dc.int64) for s in ("NA", "NB", "Nkz", "NE", "Nqz", "Nw", "Norb", "N3D")
+)
 
 
 @dc.program
-def scattering_self_energies_kernel(neigh_idx: dc.int32[NA, NB], dH: dc.complex128[NA, NB, N3D, Norb, Norb],
-                                    G: dc.complex128[Nkz, NE, NA, Norb, Norb],
-                                    D: dc.complex128[Nqz, Nw, NA, NB, N3D, N3D], Sigma: dc.complex128[Nkz, NE, NA, Norb,
-                                                                                                      Norb]):
+def scattering_self_energies_kernel(
+    neigh_idx: dc.int32[NA, NB],
+    dH: dc.complex128[NA, NB, N3D, Norb, Norb],
+    G: dc.complex128[Nkz, NE, NA, Norb, Norb],
+    D: dc.complex128[Nqz, Nw, NA, NB, N3D, N3D],
+    Sigma: dc.complex128[Nkz, NE, NA, Norb, Norb],
+):
 
     for k in range(Nkz):
         for E in range(NE):
@@ -35,11 +39,12 @@ def scattering_self_energies_kernel(neigh_idx: dc.int32[NA, NB], dH: dc.complex1
 
 
 def rng_complex(shape, rng):
-    return (rng.random(shape) + rng.random(shape) * 1j)
+    return rng.random(shape) + rng.random(shape) * 1j
 
 
 def initialize(Nkz, NE, Nqz, Nw, N3D, NA, NB, Norb):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
     neigh_idx = np.ndarray([NA, NB], dtype=np.int32)
@@ -73,10 +78,10 @@ def ground_truth(neigh_idx, dH, G, D, Sigma):
 
 
 def run_scattering_self_test(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs scattering_self for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench small size)
     Nkz, NE, Nqz, Nw, N3D, NA, NB, Norb = 2, 4, 2, 2, 2, 6, 2, 3
@@ -89,7 +94,7 @@ def run_scattering_self_test(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(neigh_idx, dH, G, D, Sigma, Nkz=Nkz, NE=NE, Nqz=Nqz, N3D=N3D, NA=NA, NB=NB, Norb=Norb, Nw=Nw)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and validate
     ground_truth(neigh_idx, dH, G, D, Sigma_ref)
@@ -107,9 +112,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

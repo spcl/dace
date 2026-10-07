@@ -33,9 +33,9 @@ end subroutine real_kind_selector_test_function
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0] == 42)
-    assert (a[1] == 12.5)
-    assert (a[2] == 42)
+    assert a[0] == 42
+    assert a[1] == 12.5
+    assert a[2] == 42
 
 
 def test_fortran_frontend_if1():
@@ -72,7 +72,7 @@ def test_fortran_frontend_if1():
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 0] == 2)
+    assert d[0, 0, 0] == 2
 
 
 def test_fortran_frontend_loop1():
@@ -157,8 +157,8 @@ end subroutine function_statement1_test_function
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 0] == 5.1)
-    assert (d[0, 0, 1] == 5.1)
+    assert d[0, 0, 0] == 5.1
+    assert d[0, 0, 1] == 5.1
 
 
 def test_fortran_frontend_pow1():
@@ -189,7 +189,7 @@ def test_fortran_frontend_pow1():
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 1] == 400)
+    assert d[0, 0, 1] == 400
 
 
 def test_fortran_frontend_pow2():
@@ -221,7 +221,7 @@ def test_fortran_frontend_pow2():
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 1] == 8000)
+    assert d[0, 0, 1] == 8000
 
 
 def test_fortran_frontend_sign1():
@@ -249,7 +249,7 @@ def test_fortran_frontend_sign1():
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
-    assert (d[0, 0, 1] == -4.8)
+    assert d[0, 0, 1] == -4.8
 
 
 if __name__ == "__main__":

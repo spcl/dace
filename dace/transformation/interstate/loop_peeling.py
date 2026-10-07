@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop peeling transformation """
+"""Loop peeling transformation"""
 
 import sympy as sp
 from typing import List, Optional
@@ -24,7 +24,7 @@ class LoopPeeling(LoopUnroll):
     begin = Property(
         dtype=bool,
         default=True,
-        desc='If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.',
+        desc="If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.",
     )
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -37,29 +37,29 @@ class LoopPeeling(LoopUnroll):
         itersym = pystr_to_symbolic(var)
         # Find condition by matching expressions
         end: Optional[sp.Expr] = None
-        a = sp.Wild('a')
-        op = ''
+        a = sp.Wild("a")
+        op = ""
         match = condition.match(itersym < a)
         if match:
-            op = '<'
+            op = "<"
             end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym <= a)
             if match:
-                op = '<='
+                op = "<="
                 end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym > a)
             if match:
-                op = '>'
+                op = ">"
                 end = match[a] - self.count * step
         if end is None:
             match = condition.match(itersym >= a)
             if match:
-                op = '>='
+                op = ">="
                 end = match[a] - self.count * step
         if len(op) == 0:
-            raise ValueError('Cannot match loop condition for peeling')
+            raise ValueError("Cannot match loop condition for peeling")
 
         res = str(itersym) + op + str(end)
         return res
@@ -91,7 +91,7 @@ class LoopPeeling(LoopUnroll):
                 graph.add_edge(peeled_iterations[-1], self.loop, sd.InterstateEdge())
 
                 new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
-                self.loop.init_statement = CodeBlock(f'{self.loop.loop_variable} = {new_start}')
+                self.loop.init_statement = CodeBlock(f"{self.loop.loop_variable} = {new_start}")
         else:
             # Create states for loop subgraph
             peeled_iterations: List[ControlFlowRegion] = []

@@ -13,6 +13,6 @@
 #     with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
 #         type_statement()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # test_type_statement()
     pass

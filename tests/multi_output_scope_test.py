@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-W = dace.symbol('W')
+W = dace.symbol("W")
 
 
 @dace.program

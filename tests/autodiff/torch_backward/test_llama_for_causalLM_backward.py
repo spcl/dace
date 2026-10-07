@@ -2,8 +2,9 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("transformers",
-                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
+)
 import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, LlamaConfig
@@ -12,7 +13,6 @@ from tests.utils import torch_tensors_close
 
 
 class LlamaWrapper(nn.Module):
-
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -32,7 +32,7 @@ class LlamaWrapper(nn.Module):
 
         # Create causal mask for attention
         causal_mask = torch.triu(torch.ones((seq_length, seq_length), device=input_ids.device), diagonal=1)
-        causal_mask = causal_mask.masked_fill(causal_mask == 1, float('-inf'))
+        causal_mask = causal_mask.masked_fill(causal_mask == 1, float("-inf"))
         causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
 
         # Forward through each layer
@@ -95,7 +95,7 @@ def test_llama_model_backward():
 
     # Check gradients of the parameters
     for (name, dace_param), (pt_name, pt_param) in zip(wrapped_model.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
+        assert "model." + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
         torch_tensors_close(name, pt_param.grad, dace_param.grad)
 
 

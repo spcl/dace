@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" A module that contains various DaCe type definitions. """
+"""A module that contains various DaCe type definitions."""
+
 import builtins
 import ctypes
 import json
@@ -30,7 +31,7 @@ class DeviceType(ExtensibleAttributeEnum):
 
 @undefined_safe_enum
 class StorageType(ExtensibleAttributeEnum):
-    """ Available data storage types in the SDFG. """
+    """Available data storage types in the SDFG."""
 
     Default = auto()  #: Scope-default storage location
     Register = auto()  #: Local data on registers, stack, or equivalent memory
@@ -47,6 +48,7 @@ class StorageType(ExtensibleAttributeEnum):
         ``StorageType.GPU_Shared`` is a template that compares equal to every instance, so it can be used as before;
         instantiate it to choose how the memory is allocated, e.g., ``StorageType.GPU_Shared(dynamic=True)``.
         """
+
         #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
         #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
         dynamic: Optional[bool] = None
@@ -66,14 +68,15 @@ def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
              the case for the bare template).
     """
     if storage != StorageType.GPU_Shared:
-        raise ValueError(f'Expected a GPU_Shared storage type, got {storage}')
+        raise ValueError(f"Expected a GPU_Shared storage type, got {storage}")
     if storage._is_template:
         return None
     return storage.dynamic
 
 
 class OMPScheduleType(Enum):
-    """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
+    """Available OpenMP shedule types for Maps with CPU-Multicore schedule."""
+
     Default = auto()  #: OpenMP library default
     Static = auto()  #: Static schedule
     Dynamic = auto()  #: Dynamic schedule
@@ -82,7 +85,8 @@ class OMPScheduleType(Enum):
 
 @undefined_safe_enum
 class ScheduleType(ExtensibleAttributeEnum):
-    """ Available map schedule types in the SDFG. """
+    """Available map schedule types in the SDFG."""
+
     Default = auto()  #: Scope-default parallel schedule
     Sequential = auto()  #: Sequential code (single-thread)
     MPI = auto()  #: MPI processes
@@ -120,7 +124,7 @@ GPU_STORAGES = [
 
 
 class ReductionType(Enum):
-    """ Reduction types natively supported by the SDFG compiler. """
+    """Reduction types natively supported by the SDFG compiler."""
 
     Custom = auto()  #: Defined by an arbitrary lambda function
     Min = auto()  #: Minimum value
@@ -143,7 +147,7 @@ class ReductionType(Enum):
 
 
 class AllocationLifetime(Enum):
-    """ Options for allocation span (when to allocate/deallocate) of data. """
+    """Options for allocation span (when to allocate/deallocate) of data."""
 
     Scope = auto()  #: Allocated/Deallocated on innermost scope start/end
     State = auto()  #: Allocated throughout the containing state
@@ -155,7 +159,7 @@ class AllocationLifetime(Enum):
 
 @undefined_safe_enum
 class Language(ExtensibleAttributeEnum):
-    """ Available programming languages for SDFG tasklets. """
+    """Available programming languages for SDFG tasklets."""
 
     Python = auto()
     CPP = auto()
@@ -166,7 +170,7 @@ class Language(ExtensibleAttributeEnum):
 
 @undefined_safe_enum
 class InstrumentationType(ExtensibleAttributeEnum):
-    """ Types of instrumentation providers. """
+    """Types of instrumentation providers."""
 
     No_Instrumentation = auto()
     Timer = auto()
@@ -179,7 +183,7 @@ class InstrumentationType(ExtensibleAttributeEnum):
 
 @undefined_safe_enum
 class DataInstrumentationType(ExtensibleAttributeEnum):
-    """ Types of data container instrumentation providers. """
+    """Types of data container instrumentation providers."""
 
     No_Instrumentation = auto()
     Save = auto()
@@ -187,7 +191,7 @@ class DataInstrumentationType(ExtensibleAttributeEnum):
 
 
 class TilingType(Enum):
-    """ Available tiling types in a `StripMining` transformation. """
+    """Available tiling types in a `StripMining` transformation."""
 
     Normal = auto()
     CeilRange = auto()
@@ -207,7 +211,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM
+    ScheduleType.Snitch: StorageType.Snitch_TCDM,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -224,7 +228,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -325,26 +329,18 @@ _BYTES = {
 
 #: Width of Python's scalar types, per ``compiler.default_data_types``.
 _DEFAULT_DATA_TYPES = {
-    'python': {
-        int: numpy.int64,
-        float: numpy.float64,
-        complex: numpy.complex128
-    },
-    'c': {
-        int: numpy.int32,
-        float: numpy.float32,
-        complex: numpy.complex64
-    },
+    "python": {int: numpy.int64, float: numpy.float64, complex: numpy.complex128},
+    "c": {int: numpy.int32, float: numpy.float32, complex: numpy.complex64},
 }
 
 
 class typeclass(object):
-    """ An extension of types that enables their use in DaCe.
+    """An extension of types that enables their use in DaCe.
 
-        These types are defined for three reasons:
-            1. Controlling DaCe types
-            2. Enabling declaration syntax: `dace.float32[M,N]`
-            3. Enabling extensions such as `dace.struct` and `dace.vector`
+    These types are defined for three reasons:
+        1. Controlling DaCe types
+        2. Enabling declaration syntax: `dace.float32[M,N]`
+        3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
 
     def __init__(self, wrapped_type, typename=None):
@@ -360,7 +356,7 @@ class typeclass(object):
 
         # Only Python's scalar types consult the configuration; every other type paid the lookup.
         if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
-            config_data_types = Config.get('compiler', 'default_data_types')
+            config_data_types = Config.get("compiler", "default_data_types")
             widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
             if widths is None:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
@@ -368,8 +364,8 @@ class typeclass(object):
         elif wrapped_type is builtins.bool:
             # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
             wrapped_type = numpy.bool_
-        elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
-            typename = 'bool'
+        elif getattr(wrapped_type, "__name__", "") == "bool_" and typename is None:
+            typename = "bool"
         elif wrapped_type is type(None):
             wrapped_type = None
         elif wrapped_type is Float:
@@ -388,11 +384,11 @@ class typeclass(object):
         return hash((self.type, self.ctype))
 
     def to_string(self):
-        """ A Numpy-like string-representation of the underlying data type. """
+        """A Numpy-like string-representation of the underlying data type."""
         return self.typename or self.type.__name__
 
     def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
+        """Returns the ctypes version of the typeclass."""
         return _FFI_CTYPES[self.type]
 
     def as_numpy_dtype(self):
@@ -419,22 +415,22 @@ class typeclass(object):
         return self.type(*args, **kwargs)
 
     def __eq__(self, other):
-        return other is not None and self.ctype == getattr(other, 'ctype', False)
+        return other is not None and self.ctype == getattr(other, "ctype", False)
 
     def __ne__(self, other):
-        return other is not None and self.ctype != getattr(other, 'ctype', False)
+        return other is not None and self.ctype != getattr(other, "ctype", False)
 
     def __getitem__(self, s):
-        """ This is syntactic sugar that allows us to define an array type
-            with the following syntax: ``dace.uint32[N,M]``
+        """This is syntactic sugar that allows us to define an array type
+        with the following syntax: ``dace.uint32[N,M]``
 
-            :return: A ``data.Array`` data descriptor.
+        :return: A ``data.Array`` data descriptor.
         """
         from dace import data
 
         if isinstance(s, list) or isinstance(s, tuple):
             return data.Array(self, tuple(s))
-        return data.Array(self, (s, ))
+        return data.Array(self, (s,))
 
     def __repr__(self):
         return self.ctype
@@ -448,7 +444,7 @@ class typeclass(object):
         return 1
 
     def as_arg(self, name):
-        return self.ctype + ' ' + name
+        return self.ctype + " " + name
 
 
 def max_value(dtype: typeclass):
@@ -519,8 +515,9 @@ def result_type_of(lhs, *rhs):
 
     # Extract the type if symbolic or data
     from dace.data import Data
-    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
+
+    lhs = lhs.dtype if (type(lhs).__name__ == "symbol" or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == "symbol" or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -580,7 +577,7 @@ def result_type_of(lhs, *rhs):
 
 
 class opaque(typeclass):
-    """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+    """A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request."""
 
     def __init__(self, typename):
         self.type = typename
@@ -589,23 +586,23 @@ class opaque(typeclass):
         self.dtype = self
 
     def to_json(self):
-        return {'type': 'opaque', 'ctype': self.ctype}
+        return {"type": "opaque", "ctype": self.ctype}
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != 'opaque':
+        if json_obj["type"] != "opaque":
             raise TypeError("Invalid type for opaque object")
 
         try:
-            typeclass = json_to_typeclass(json_obj['ctype'], context)
+            typeclass = json_to_typeclass(json_obj["ctype"], context)
             return typeclass()
         except KeyError:
-            typeclass = json_obj['ctype']
+            typeclass = json_obj["ctype"]
 
         return opaque(typeclass)
 
     def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
+        """Returns the ctypes version of the typeclass."""
         return self
 
     def as_numpy_dtype(self):
@@ -613,10 +610,10 @@ class opaque(typeclass):
 
 
 class pointer(typeclass):
-    """ A data type for a pointer to an existing typeclass.
+    """A data type for a pointer to an existing typeclass.
 
-        Example use:
-            `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
+    Example use:
+        `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`."""
 
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
@@ -627,20 +624,20 @@ class pointer(typeclass):
         self.dtype = self
 
     def to_json(self):
-        return {'type': 'pointer', 'dtype': self._typeclass.to_json()}
+        return {"type": "pointer", "dtype": self._typeclass.to_json()}
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != 'pointer':
+        if json_obj["type"] != "pointer":
             raise TypeError("Invalid type for pointer")
 
-        if json_obj['dtype'] is None:
+        if json_obj["dtype"] is None:
             return pointer(typeclass(None))
 
-        return pointer(json_to_typeclass(json_obj['dtype'], context))
+        return pointer(json_to_typeclass(json_obj["dtype"], context))
 
     def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
+        """Returns the ctypes version of the typeclass."""
         if isinstance(self._typeclass, struct):
             return ctypes.POINTER(self._typeclass.as_ctypes())
         return ctypes.POINTER(_FFI_CTYPES[self.type])
@@ -668,12 +665,13 @@ class vector(typeclass):
         self.dtype = self
 
     def to_json(self):
-        return {'type': 'vector', 'dtype': self.vtype.to_json(), 'elements': str(self.veclen)}
+        return {"type": "vector", "dtype": self.vtype.to_json(), "elements": str(self.veclen)}
 
     @staticmethod
     def from_json(json_obj, context=None):
         from dace.symbolic import pystr_to_symbolic
-        return vector(json_to_typeclass(json_obj['dtype'], context), pystr_to_symbolic(json_obj['elements']))
+
+        return vector(json_to_typeclass(json_obj["dtype"], context), pystr_to_symbolic(json_obj["elements"]))
 
     @property
     def ctype(self):
@@ -684,7 +682,7 @@ class vector(typeclass):
         return self.ctype
 
     def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
+        """Returns the ctypes version of the typeclass."""
         return _FFI_CTYPES[self.type] * self.veclen
 
     def as_numpy_dtype(self):
@@ -717,7 +715,7 @@ class stringtype(pointer):
         return str(*args, **kwargs)
 
     def to_json(self):
-        return {'type': 'string'}
+        return {"type": "string"}
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -725,10 +723,11 @@ class stringtype(pointer):
 
 
 class struct(typeclass):
-    """ A data type for a struct of existing typeclasses.
+    """A data type for a struct of existing typeclasses.
 
-        Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
+    Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+
     STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
 
     def __init__(self, name, **fields_and_types):
@@ -757,22 +756,22 @@ class struct(typeclass):
 
     def to_json(self):
         return {
-            'type': 'struct',
-            'name': self.name,
-            'data': [(k, v.to_json()) for k, v in self._data.items()],
-            'length': [(k, v) for k, v in self._length.items()],
-            'bytes': self.bytes
+            "type": "struct",
+            "name": self.name,
+            "data": [(k, v.to_json()) for k, v in self._data.items()],
+            "length": [(k, v) for k, v in self._length.items()],
+            "bytes": self.bytes,
         }
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != "struct":
+        if json_obj["type"] != "struct":
             raise TypeError("Invalid type for struct")
 
-        ret = struct(json_obj['name'])
-        ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
-        ret._length = {k: v for k, v in json_obj['length']}
-        ret.bytes = json_obj['bytes']
+        ret = struct(json_obj["name"])
+        ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj["data"]}
+        ret._length = {k: v for k, v in json_obj["length"]}
+        ret.bytes = json_obj["bytes"]
 
         return ret
 
@@ -802,8 +801,8 @@ class struct(typeclass):
                 self.bytes += v.bytes
 
     def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
-        self_as_json = json.dumps(self.to_json(), sort_keys=True, separators=(',', ':'))
+        """Returns the ctypes version of the typeclass."""
+        self_as_json = json.dumps(self.to_json(), sort_keys=True, separators=(",", ":"))
         if self_as_json in struct.STRUCT_CTYPES:
             return struct.STRUCT_CTYPES[self_as_json]
         # Populate the ctype fields for the struct class.
@@ -819,7 +818,7 @@ class struct(typeclass):
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
         # Create new struct class.
-        struct_class = type(self.name or "NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
+        struct_class = type(self.name or "NewStructClass", (ctypes.Structure,), {"_fields_": fields})
         # NOTE: Each call to `type` returns a different class, so we need to cache it to ensure uniqueness.
         struct.STRUCT_CTYPES[self_as_json] = struct_class
 
@@ -836,7 +835,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ="\n".join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
         )
 
 
@@ -848,7 +847,7 @@ class pyobject(opaque):
     """
 
     def __init__(self):
-        super().__init__('pyobject')
+        super().__init__("pyobject")
         self.bytes = ctypes.sizeof(ctypes.c_void_p)
         self.type = numpy.object_
 
@@ -883,17 +882,19 @@ class compiletime:
 
     @staticmethod
     def __descriptor__():
-        raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
+        raise ValueError("All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.")
 
 
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
+
     return numpy.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 
 def ptrtocupy(ptr, inner_ctype, shape):
     import cupy as cp
+
     umem = cp.cuda.UnownedMemory(ptr, 0, None)
     return cp.ndarray(shape=shape, dtype=inner_ctype, memptr=cp.cuda.MemoryPointer(umem, 0))
 
@@ -905,6 +906,7 @@ class callback(typeclass):
 
     def __init__(self, return_types, *variadic_args):
         from dace import data
+
         if return_types is None:
             return_types = []
         elif not isinstance(return_types, (list, tuple, set)):
@@ -918,7 +920,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Data):
                 pass
             elif isinstance(arg, str):
-                arg = json_to_typeclass(arg, {'version': __version__})
+                arg = json_to_typeclass(arg, {"version": __version__})
             else:
                 raise TypeError("Cannot resolve type from: {}".format(arg))
             self.input_types.append(arg)
@@ -927,7 +929,7 @@ class callback(typeclass):
         self.ctype = self
 
     def as_ctypes(self):
-        """ Returns the ctypes version of the typeclass. """
+        """Returns the ctypes version of the typeclass."""
         from dace import data
 
         return_ctype = self.cfunc_return_type().as_ctypes() if len(self.return_types) > 0 else None
@@ -958,9 +960,10 @@ class callback(typeclass):
         used within a `dace.tasklet` explicitly.
         """
         from dace import data
+
         if len(self.return_types) == 0 or self.return_types == [None]:
             return True
-        return (len(self.return_types) == 1 and isinstance(self.return_types[0], (typeclass, data.Scalar)))
+        return len(self.return_types) == 1 and isinstance(self.return_types[0], (typeclass, data.Scalar))
 
     def cfunc_return_type(self) -> typeclass:
         """
@@ -1001,16 +1004,16 @@ class callback(typeclass):
                     input_type_cstring.append(pointer(arg.dtype).ctype)
 
         retval = self.cfunc_return_type()
-        return f'{retval} (*{name})({", ".join(input_type_cstring)})'
+        return f"{retval} (*{name})({', '.join(input_type_cstring)})"
 
     def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
         from dace import data, symbolic
 
         def _string_converter(a: str, *args):
-            tmp = ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8')
+            tmp = ctypes.cast(a, ctypes.c_char_p).value.decode("utf-8")
             if tmp.startswith(chr(0xFFFF)):
-                return bytes(tmp[1:], 'utf-8')
+                return bytes(tmp[1:], "utf-8")
             return tmp
 
         def _pyobject_converter(arg: data.Data, a: int, *args):
@@ -1057,7 +1060,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
-                ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+                ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode("utf-8"))
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_void_p, []))
@@ -1076,8 +1079,9 @@ class callback(typeclass):
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 
-        def trampoline(orig_function, indices, data_types_and_sizes, ret_indices, ret_data_types_and_sizes,
-                       *other_inputs):
+        def trampoline(
+            orig_function, indices, data_types_and_sizes, ret_indices, ret_data_types_and_sizes, *other_inputs
+        ):
             last_input = len(other_inputs)
             if ret_indices:
                 last_input = ret_indices[0]
@@ -1134,23 +1138,25 @@ class callback(typeclass):
     def to_json(self):
         if self.return_types:
             return {
-                'type': 'callback',
-                'arguments': [i.to_json() for i in self.input_types],
-                'returntypes': [r.to_json() for r in self.return_types]
+                "type": "callback",
+                "arguments": [i.to_json() for i in self.input_types],
+                "returntypes": [r.to_json() for r in self.return_types],
             }
-        return {'type': 'callback', 'arguments': [i.to_json() for i in self.input_types], 'returntypes': []}
+        return {"type": "callback", "arguments": [i.to_json() for i in self.input_types], "returntypes": []}
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != "callback":
+        if json_obj["type"] != "callback":
             raise TypeError("Invalid type for callback")
 
-        rettypes = json_obj['returntypes']
+        rettypes = json_obj["returntypes"]
 
         import dace.serialize  # Avoid import loop
 
-        return callback([json_to_typeclass(rettype, context) if rettype else None for rettype in rettypes],
-                        *(dace.serialize.from_json(arg, context) for arg in json_obj['arguments']))
+        return callback(
+            [json_to_typeclass(rettype, context) if rettype else None for rettype in rettypes],
+            *(dace.serialize.from_json(arg, context) for arg in json_obj["arguments"]),
+        )
 
     def __str__(self):
         return "dace.callback"
@@ -1197,8 +1203,8 @@ _CONSTANT_TYPES = [
 
 
 def isconstant(var):
-    """ Returns True if a variable is designated a constant (i.e., that can be
-        directly generated in code).
+    """Returns True if a variable is designated a constant (i.e., that can be
+    directly generated in code).
     """
     return type(var) in _CONSTANT_TYPES
 
@@ -1238,7 +1244,7 @@ if TYPE_CHECKING:
     # fmt: on
 else:
     # Runtime definitions
-    bool_ = typeclass(numpy.bool_, 'bool')
+    bool_ = typeclass(numpy.bool_, "bool")
     int8 = typeclass(numpy.int8)
     int16 = typeclass(numpy.int16)
     int32 = typeclass(numpy.int32)
@@ -1262,7 +1268,7 @@ else:
     complex64 = typeclass(numpy.complex64)
     complex128 = typeclass(numpy.complex128)
     string = stringtype()
-    MPI_Request = opaque('MPI_Request')
+    MPI_Request = opaque("MPI_Request")
 
 _bool = bool
 
@@ -1294,7 +1300,7 @@ def dtype_to_typeclass(dtype=None):
         numpy.complex128: complex128,
         # FIXME
         numpy.longlong: int64,
-        numpy.ulonglong: uint64
+        numpy.ulonglong: uint64,
     }
     if dtype is None:
         return DTYPE_TO_TYPECLASS
@@ -1327,24 +1333,24 @@ TYPECLASS_TO_STRING = {
     float32: "dace::float32",
     float64: "dace::float64",
     complex64: "dace::complex64",
-    complex128: "dace::complex128"
+    complex128: "dace::complex128",
 }
 
 TYPECLASS_TO_LITERAL_SUFFIX = {
-    int8: 'i8',
-    int16: 'i16',
-    int32: 'i32',
-    int64: 'i64',
-    uint8: 'u8',
-    uint16: 'u16',
-    uint32: 'u32',
-    uint64: 'u64',
-    float16: 'f16',
-    bfloat16: 'bf16',
-    float8_e4m3fn: 'e4m3fn',
-    float8_e5m2: 'e5m2',
-    float32: 'f32',
-    float64: 'f64',
+    int8: "i8",
+    int16: "i16",
+    int32: "i32",
+    int64: "i64",
+    uint8: "u8",
+    uint16: "u16",
+    uint32: "u32",
+    uint64: "u64",
+    float16: "f16",
+    bfloat16: "bf16",
+    float8_e4m3fn: "e4m3fn",
+    float8_e5m2: "e5m2",
+    float32: "f32",
+    float64: "f64",
 }
 
 LITERAL_SUFFIX_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_LITERAL_SUFFIX.items()}
@@ -1357,15 +1363,34 @@ CTYPE_TO_TYPECLASS = {
 }
 
 TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
-    float32: 'f',
-    uint32: 'U',
-    int64: 'LL',
-    uint64: 'ULL',
+    float32: "f",
+    uint32: "U",
+    int64: "LL",
+    uint64: "ULL",
 }
 
 TYPECLASS_STRINGS = [
-    "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
-    "uint64", "float16", "bfloat16", "float8_e4m3fn", "float8_e5m2", "float32", "float64", "complex64", "complex128"
+    "int",
+    "float",
+    "complex",
+    "bool",
+    "bool_",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float16",
+    "bfloat16",
+    "float8_e4m3fn",
+    "float8_e5m2",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
 ]
 
 INTEGER_TYPES = [bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64]
@@ -1387,12 +1412,12 @@ def cpp_typed_literal(value, dtype):
     :return: C++ literal string such as ``'1ULL'`` or ``'1.5f'``, or
              ``None`` if the dtype should be emitted via an explicit cast.
     """
-    suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype, '')
+    suffix = TYPECLASS_TO_CPP_LITERAL_SUFFIX.get(dtype, "")
     if not suffix:
         return None
     if dtype == float32:
-        return f'{float(value)}{suffix}'
-    return f'{int(value)}{suffix}'
+        return f"{float(value)}{suffix}"
+    return f"{int(value)}{suffix}"
 
 
 #######################################################
@@ -1408,13 +1433,13 @@ _ALLOWED_MODULES = {
 
 
 def ismodule(var):
-    """ Returns True if a given object is a module. """
+    """Returns True if a given object is a module."""
     return inspect.ismodule(var)
 
 
 def ismoduleallowed(var):
-    """ Helper function to determine the source module of an object, and
-        whether it is allowed in DaCe programs. """
+    """Helper function to determine the source module of an object, and
+    whether it is allowed in DaCe programs."""
     mod = inspect.getmodule(var)
     try:
         for m in _ALLOWED_MODULES:
@@ -1426,8 +1451,8 @@ def ismoduleallowed(var):
 
 
 def ismodule_and_allowed(var):
-    """ Returns True if a given object is a module and is one of the allowed
-        modules in DaCe programs. """
+    """Returns True if a given object is a module and is one of the allowed
+    modules in DaCe programs."""
     if inspect.ismodule(var):
         if var.__name__ in _ALLOWED_MODULES:
             return True
@@ -1435,9 +1460,9 @@ def ismodule_and_allowed(var):
 
 
 def isallowed(var, allow_recursive=False):
-    """ Returns True if a given object is allowed in a DaCe program.
+    """Returns True if a given object is allowed in a DaCe program.
 
-        :param allow_recursive: whether to allow dicts or lists containing constants.
+    :param allow_recursive: whether to allow dicts or lists containing constants.
     """
     from dace.symbolic import issymbolic
 
@@ -1449,8 +1474,8 @@ def isallowed(var, allow_recursive=False):
 
 
 class DebugInfo:
-    """ Source code location identifier of a node/edge in an SDFG. Used for
-        IDE and debugging purposes. """
+    """Source code location identifier of a node/edge in an SDFG. Used for
+    IDE and debugging purposes."""
 
     def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None, file_index=None):
         self.start_line = start_line
@@ -1468,28 +1493,34 @@ class DebugInfo:
     # The data structure is a property on its own (pointing to a range of code),
     # so it is serialized as a dictionary directly.
     def to_json(self):
-        result = {'type': 'DebugInfo'}
+        result = {"type": "DebugInfo"}
         if self.start_line is not None:
-            result['start_line'] = self.start_line
+            result["start_line"] = self.start_line
         if self.end_line is not None and self.end_line != self.start_line:
-            result['end_line'] = self.end_line
+            result["end_line"] = self.end_line
         if self.start_column:
-            result['start_column'] = self.start_column
+            result["start_column"] = self.start_column
         if self.end_column and self.end_column != self.start_column:
-            result['end_column'] = self.end_column
+            result["end_column"] = self.end_column
         if self.file_index is not None:
-            result['file_index'] = self.file_index
+            result["file_index"] = self.file_index
         elif self.filename:
-            result['filename'] = self.filename
+            result["filename"] = self.filename
 
         return result
 
     @staticmethod
     def from_json(json_obj: dict[str, int | str], context=None):
-        return DebugInfo(json_obj.get('start_line'), json_obj.get('start_column', 0), json_obj.get('end_line', -1),
-                         json_obj.get('end_column', 0), json_obj.get('filename'), json_obj.get('file_index'))
+        return DebugInfo(
+            json_obj.get("start_line"),
+            json_obj.get("start_column", 0),
+            json_obj.get("end_line", -1),
+            json_obj.get("end_column", 0),
+            json_obj.get("filename"),
+            json_obj.get("file_index"),
+        )
 
-    def __deepcopy__(self, memo) -> 'DebugInfo':
+    def __deepcopy__(self, memo) -> "DebugInfo":
         """Performs a `deepcopy` of `self`.
 
         Because all members of `self` are immutable this function is essentially a shallow copy.
@@ -1507,6 +1538,7 @@ def json_to_typeclass(obj, context=None):
     # TODO: this does two different things at the same time. Should be split
     # into two separate functions.
     from dace.serialize import get_serializer
+
     if isinstance(obj, str):
         return get_serializer(obj)
     elif isinstance(obj, dict) and "type" in obj:
@@ -1516,15 +1548,20 @@ def json_to_typeclass(obj, context=None):
 
 
 def paramdec(dec):
-    """ Parameterized decorator meta-decorator. Enables using `@decorator`,
-        `@decorator()`, and `@decorator(...)` with the same function. """
+    """Parameterized decorator meta-decorator. Enables using `@decorator`,
+    `@decorator()`, and `@decorator(...)` with the same function."""
 
     @wraps(dec)
     def layer(*args, **kwargs):
         from dace import data
+
         # Allows the use of @decorator, @decorator(), and @decorator(...)
-        if (len(kwargs) == 0 and len(args) == 1 and callable(args[0])
-                and not isinstance(args[0], (typeclass, data.Data))):
+        if (
+            len(kwargs) == 0
+            and len(args) == 1
+            and callable(args[0])
+            and not isinstance(args[0], (typeclass, data.Data))
+        ):
             return dec(*args, **kwargs)
 
         @wraps(dec)
@@ -1540,19 +1577,19 @@ def paramdec(dec):
 
 
 def deduplicate(iterable):
-    """ Removes duplicates in the passed iterable. """
+    """Removes duplicates in the passed iterable."""
     return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
 
 
-namere = re.compile(r'^[a-zA-Z_][a-zA-Z_0-9]*$')
+namere = re.compile(r"^[a-zA-Z_][a-zA-Z_0-9]*$")
 
 
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
         return False
-    if name in {'True', 'False', 'None'}:
+    if name in {"True", "False", "None"}:
         return False
-    tokens = name.split('.')
+    tokens = name.split(".")
     for token in tokens:
         if namere.match(token) is None:
             return False
@@ -1567,15 +1604,18 @@ def can_access(schedule: ScheduleType, storage: StorageType):
         return True
 
     if schedule in [
-            ScheduleType.GPU_Device,
-            ScheduleType.GPU_Persistent,
-            ScheduleType.GPU_ThreadBlock,
-            ScheduleType.GPU_ThreadBlock_Dynamic,
+        ScheduleType.GPU_Device,
+        ScheduleType.GPU_Persistent,
+        ScheduleType.GPU_ThreadBlock,
+        ScheduleType.GPU_ThreadBlock_Dynamic,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
-            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal
+            StorageType.Default,
+            StorageType.CPU_Heap,
+            StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal,
         ]
     elif schedule == ScheduleType.Sequential:
         raise ValueError("Not well defined")
@@ -1613,8 +1653,10 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic,
+            ScheduleType.GPU_Persistent,
         ]
 
     # The rest (Registers) can be allocated everywhere
@@ -1635,7 +1677,7 @@ def is_array(obj: Any) -> bool:
     if isinstance(obj, type):
         return False
     try:
-        if hasattr(obj, '__cuda_array_interface__'):
+        if hasattr(obj, "__cuda_array_interface__"):
             return True
     except (KeyError, RuntimeError):
         # In PyTorch, accessing this attribute throws a runtime error for
@@ -1643,14 +1685,14 @@ def is_array(obj: Any) -> bool:
         return True
     if isinstance(obj, ctypes.Array):
         return True
-    if hasattr(obj, '__array_interface__'):
-        return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple
-    if hasattr(obj, 'data_ptr'):
+    if hasattr(obj, "__array_interface__"):
+        return len(obj.__array_interface__["shape"]) > 0  # NumPy scalars contain an empty shape tuple
+    if hasattr(obj, "data_ptr"):
         try:
-            return hasattr(obj, 'shape') and len(obj.shape) > 0
+            return hasattr(obj, "shape") and len(obj.shape) > 0
         except TypeError:  # PyTorch scalar objects define an attribute called shape that cannot be used
             return False
-    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+    if hasattr(obj, "data") and hasattr(obj.data, "ptr"):  # CuPy special case with HIP
         return True
     return False
 
@@ -1666,7 +1708,7 @@ def is_gpu_array(obj: Any) -> bool:
     :return: True iff the object implements the CUDA array interface.
     """
     try:
-        if hasattr(obj, '__cuda_array_interface__'):
+        if hasattr(obj, "__cuda_array_interface__"):
             return True
     except (KeyError, RuntimeError):
         # In PyTorch, accessing this attribute throws a runtime error for
@@ -1674,8 +1716,12 @@ def is_gpu_array(obj: Any) -> bool:
         return False
 
     try:
-        if hasattr(obj, 'data') and hasattr(obj.data, 'ptr') and hasattr(obj, 'device') and getattr(
-                obj.device, 'id', -1) >= 0:  # CuPy special case with HIP
+        if (
+            hasattr(obj, "data")
+            and hasattr(obj.data, "ptr")
+            and hasattr(obj, "device")
+            and getattr(obj.device, "id", -1) >= 0
+        ):  # CuPy special case with HIP
             return True
     except (ValueError, TypeError):
         # numpy arrays of extension dtypes (ml_dtypes bf16/fp8) raise when building a
@@ -1696,18 +1742,18 @@ def array_interface_ptr(array: Any, storage: StorageType) -> int:
                        it is a host or device pointer (e.g. GPU).
     :return: A pointer to the base location of the allocated buffer.
     """
-    if hasattr(array, 'data_ptr'):
+    if hasattr(array, "data_ptr"):
         return array.data_ptr()
     if isinstance(array, ctypes.Array):
         return ctypes.addressof(array)
 
     if storage == StorageType.GPU_Global:
         try:
-            return array.__cuda_array_interface__['data'][0]
+            return array.__cuda_array_interface__["data"][0]
         except AttributeError:
             # Special case for CuPy with HIP
-            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
+            if hasattr(array, "data") and hasattr(array.data, "ptr"):
                 return array.data.ptr
             raise
 
-    return array.__array_interface__['data'][0]
+    return array.__array_interface__["data"][0]

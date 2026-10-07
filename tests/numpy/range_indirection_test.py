@@ -3,7 +3,7 @@ import dace
 import numpy as np
 
 # Declaration of symbolic variables
-M, N = (dace.symbol(name) for name in ['M', 'N'])
+M, N = (dace.symbol(name) for name in ["M", "N"])
 
 
 @dace.program
@@ -18,7 +18,7 @@ def test():
     M = 100
     N = 100
 
-    x = np.ndarray((M, ), dtype=np.int32)
+    x = np.ndarray((M,), dtype=np.int32)
     for i in range(M):
         x[i] = M - 1 - i
     A = np.ndarray((M, N), dtype=np.float64)
@@ -36,5 +36,5 @@ def test():
     assert rel_norm < 1e-12
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()

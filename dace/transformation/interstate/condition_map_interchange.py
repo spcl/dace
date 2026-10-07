@@ -38,10 +38,16 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         # Each state in the branch is either empty or only contains maps
         for state in branch.states():
             for node in state.nodes():
-                if (not isinstance(node, (MapEntry, MapExit)) and state.entry_node(node) is None and any([
-                        not isinstance(n, (MapEntry, MapExit)) for n in set(state.successors(node))
-                        | set(state.predecessors(node))
-                ])):
+                if (
+                    not isinstance(node, (MapEntry, MapExit))
+                    and state.entry_node(node) is None
+                    and any(
+                        [
+                            not isinstance(n, (MapEntry, MapExit))
+                            for n in set(state.successors(node)) | set(state.predecessors(node))
+                        ]
+                    )
+                ):
                     return False
 
         return True
@@ -145,8 +151,11 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     # An other subset of a different rank no longer refers to this edge's other end
                     result = copy.deepcopy(memlet)
                     desc = state.sdfg.arrays.get(result.data, None)
-                    if (result.other_subset is not None and desc is not None
-                            and result.other_subset.dims() != len(desc.shape)):
+                    if (
+                        result.other_subset is not None
+                        and desc is not None
+                        and result.other_subset.dims() != len(desc.shape)
+                    ):
                         result.other_subset = None
                     return result
 
