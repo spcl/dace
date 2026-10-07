@@ -1470,6 +1470,14 @@ class LoopToMap(xf.MultiStateTransformation):
                     if _writes_may_overlap(reps[x], reps[y], itersym, step, start, end, varying) and not permissive:
                         return refuse(f"writes {reps[x].subset} and {reps[y].subset} to {data} "
                                       "may overlap across iterations")
+            # WCR writes combine with each other in any order, but not with a plain write: ``A[N-1] += 1`` on
+            # one iteration and ``A[i] = ...`` on iteration N-1 race once the loop is a map.
+            accumulated = {str(m.subset): m for m in mmlts if m.wcr is not None}
+            for acc in accumulated.values():
+                for plain in reps:
+                    if _writes_may_overlap(acc, plain, itersym, step, start, end, varying) and not permissive:
+                        return refuse(f"accumulated write {acc.subset} and plain write {plain.subset} to {data} "
+                                      "may overlap across iterations")
 
         # After looping over relevant writes, consider reads that may overlap
         for state in loop_states:
