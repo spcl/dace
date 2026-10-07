@@ -14,6 +14,7 @@ Map: the step-``S`` loop is normalized to step 1, the ``S`` lanes are merged ont
 lane 0, and ``LoopToMap`` lifts the result. The structural tests below assert
 that end state directly.
 """
+
 import numpy as np
 import pytest
 
@@ -24,7 +25,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.reroll_unrolled_loops import RerollUnrolledLoops
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -80,17 +81,17 @@ def test_unrolled_dense_becomes_map():
     n = 16
     sdfg = unrolled_dense.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) >= 1, 'expected the re-rolled loop to parallelize into a map'
+    assert _nmaps(sdfg) >= 1, "expected the re-rolled loop to parallelize into a map"
 
 
 def test_unrolled_indirect_becomes_map():
     n = 16
     sdfg = unrolled_indirect.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) >= 1, 'expected the re-rolled gather loop to parallelize into a map'
+    assert _nmaps(sdfg) >= 1, "expected the re-rolled gather loop to parallelize into a map"
 
 
-M = dace.symbol('M')
+M = dace.symbol("M")
 
 
 @dace.program
@@ -125,7 +126,7 @@ def test_unrolled_unit_step2_value_and_map():
         exp[i] = b[i] * 2.0
         exp[i + 1] = b[i + 1] * 2.0
     assert np.allclose(got, exp)
-    assert _nmaps(sdfg) >= 1, 'step-2 / offset-spacing-1 unroll should re-roll to a step-1 map'
+    assert _nmaps(sdfg) >= 1, "step-2 / offset-spacing-1 unroll should re-roll to a step-1 map"
 
 
 def test_unrolled_strided_value_and_map():
@@ -143,7 +144,7 @@ def test_unrolled_strided_value_and_map():
         exp[i] = b[i] * 3.0
         exp[i + 2] = b[i + 2] * 3.0
     assert np.allclose(got, exp)
-    assert _nmaps(sdfg) >= 1, 'step-2 / offset-spacing-2 unroll should re-roll to a step-2 map'
+    assert _nmaps(sdfg) >= 1, "step-2 / offset-spacing-2 unroll should re-roll to a step-2 map"
 
 
 @dace.program
@@ -156,12 +157,13 @@ def unrolled_dot_product(a: dace.float64[N], b: dace.float64[N], c: dace.float64
     ``LoopToReduce`` / ``LoopToMap`` can parallelize."""
     dot = 0.0
     for i in range(0, N - 4, 5):
-        dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
-                     a[i + 4] * b[i + 4])
+        dot = dot + (
+            a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] + a[i + 4] * b[i + 4]
+        )
     c[0] = dot
 
 
-@pytest.mark.parametrize('n', [25, 27])
+@pytest.mark.parametrize("n", [25, 27])
 def test_unrolled_dot_product_covers_exactly_the_source_positions(n):
     """``n=25`` is a whole number of 5-lane groups; ``n=27`` is not, so ``range(0, 23, 5)`` stops at
     20 and positions 25, 26 are never visited. The re-rolled step-1 loop must cover the same set --
@@ -177,21 +179,24 @@ def test_unrolled_dot_product_covers_exactly_the_source_positions(n):
     ref = 0.0
     for i in range(0, n - 4, 5):
         ref += sum(a[i + k] * b[i + k] for k in range(5))
-    assert np.isclose(c[0], ref), f'got {c[0]} expected {ref} (the re-roll changed which positions contribute)'
+    assert np.isclose(c[0], ref), f"got {c[0]} expected {ref} (the re-roll changed which positions contribute)"
 
 
 def test_unrolled_dot_product_becomes_map_or_reduce():
     """After re-roll, the body is a single-lane dot accumulator; canonicalize
     should turn the loop into either a parallel reduction map or a ``Reduce``."""
     from dace.sdfg.state import LoopRegion
+
     sdfg = unrolled_dot_product.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     n_maps = _nmaps(sdfg)
-    n_reduces = sum(1 for n, _ in sdfg.all_nodes_recursive()
-                    if isinstance(n, nodes.LibraryNode) and 'Reduce' in type(n).__name__)
+    n_reduces = sum(
+        1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode) and "Reduce" in type(n).__name__
+    )
     n_loops = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
     assert (n_maps + n_reduces) >= 1 and n_loops == 0, (
-        f'expected a map or reduce, got maps={n_maps}, reduces={n_reduces}, loops={n_loops}')
+        f"expected a map or reduce, got maps={n_maps}, reduces={n_reduces}, loops={n_loops}"
+    )
 
 
 # Manual-unroll variants with an explicit remainder loop (the unrolled main
@@ -303,7 +308,7 @@ def test_unroll_body_plus_remainder_value_and_map():
     got = np.zeros(n)
     sdfg(a=got, b=b.copy(), N=n)
     assert np.allclose(got, b * b)
-    assert _nmaps(sdfg) >= 1, 'the re-rolled unrolled body must parallelize into a map'
+    assert _nmaps(sdfg) >= 1, "the re-rolled unrolled body must parallelize into a map"
 
 
 def test_unroll_partial_5_then_12_value_and_map():
@@ -317,7 +322,7 @@ def test_unroll_partial_5_then_12_value_and_map():
     got = np.zeros(n)
     sdfg(a=got, b=b.copy(), s=s, N=n)
     assert np.allclose(got, b * s)
-    assert _nmaps(sdfg) >= 1, 'the re-rolled unrolled body must parallelize into a map'
+    assert _nmaps(sdfg) >= 1, "the re-rolled unrolled body must parallelize into a map"
 
 
 def test_unroll_prime_17_uniform_value_and_map():
@@ -330,12 +335,13 @@ def test_unroll_prime_17_uniform_value_and_map():
     got = np.zeros(n)
     sdfg(a=got, b=b.copy(), c=c.copy(), N=n)
     assert np.allclose(got, b + c)
-    assert _nmaps(sdfg) >= 1, 'the re-rolled unrolled body must parallelize into a map'
+    assert _nmaps(sdfg) >= 1, "the re-rolled unrolled body must parallelize into a map"
 
 
 def _nreduces(sdfg):
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, nodes.LibraryNode) and 'Reduce' in type(n).__name__)
+    return sum(
+        1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode) and "Reduce" in type(n).__name__
+    )
 
 
 def test_unroll_reduction_11_accs_value_and_reduce():
@@ -353,8 +359,8 @@ def test_unroll_reduction_11_accs_value_and_reduce():
     sdfg.validate()
     out = np.zeros(1)
     sdfg(a=a.copy(), out=out, N=n)
-    assert np.isclose(out[0], np.sum(a)), f'got {out[0]} expected {np.sum(a)}'
-    assert (_nmaps(sdfg) + _nreduces(sdfg)) >= 1, 'the multi-accumulator unrolled reduction must lift to a map/reduce'
+    assert np.isclose(out[0], np.sum(a)), f"got {out[0]} expected {np.sum(a)}"
+    assert (_nmaps(sdfg) + _nreduces(sdfg)) >= 1, "the multi-accumulator unrolled reduction must lift to a map/reduce"
 
 
 # rerolled reductions reach an OpenMP reduction clause, and the unsound folds are refused
@@ -371,7 +377,7 @@ _RTOL = 1e-12
 
 
 def _has_reduction_clause(sdfg):
-    return any('reduction(' in c.clean_code for c in sdfg.generate_code())
+    return any("reduction(" in c.clean_code for c in sdfg.generate_code())
 
 
 @dace.program
@@ -436,7 +442,7 @@ def test_dot_chain_reduction_reaches_a_reduction_clause():
     c = np.zeros(2)
     sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
     assert np.allclose(c[0], float(np.dot(a, b)), rtol=_RTOL, atol=0)
-    assert _has_reduction_clause(sdfg) or _nreduces(sdfg) >= 1, 'the rerolled chain stayed a serial accumulator'
+    assert _has_reduction_clause(sdfg) or _nreduces(sdfg) >= 1, "the rerolled chain stayed a serial accumulator"
 
 
 def test_partial_accumulator_reduction_reaches_a_reduction_clause():
@@ -450,7 +456,7 @@ def test_partial_accumulator_reduction_reaches_a_reduction_clause():
     c = np.zeros(1)
     sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
     assert np.allclose(c[0], float(np.dot(a[:250], b[:250])), rtol=_RTOL, atol=0)
-    assert _has_reduction_clause(sdfg) or _nreduces(sdfg) >= 1, 'the partial accumulators stayed serial'
+    assert _has_reduction_clause(sdfg) or _nreduces(sdfg) >= 1, "the partial accumulators stayed serial"
 
 
 def test_partial_accumulator_max_reduction_is_rerolled():
@@ -481,8 +487,9 @@ def test_partial_accumulators_read_out_separately_are_not_rerolled():
     sdfg.validate()
     c = np.zeros(2)
     sdfg(a=a.copy(), c=c, N=n)
-    assert np.allclose(c, [np.sum(a[0::2]), np.sum(a[1::2])], rtol=_RTOL,
-                       atol=0), (f'lane accumulators were folded into one: {c}')
+    assert np.allclose(c, [np.sum(a[0::2]), np.sum(a[1::2])], rtol=_RTOL, atol=0), (
+        f"lane accumulators were folded into one: {c}"
+    )
 
 
 def test_partial_accumulators_combined_with_another_op_are_not_rerolled():
@@ -498,13 +505,15 @@ def test_partial_accumulators_combined_with_another_op_are_not_rerolled():
     sdfg.validate()
     c = np.zeros(1)
     sdfg(a=a.copy(), c=c, N=n)
-    assert np.allclose(c[0], (1.0 + np.sum(a[0::2])) * (1.0 + np.sum(a[1::2])), rtol=_RTOL,
-                       atol=0), (f'a non-fold combine was treated as a reduction: {c[0]}')
+    assert np.allclose(c[0], (1.0 + np.sum(a[0::2])) * (1.0 + np.sum(a[1::2])), rtol=_RTOL, atol=0), (
+        f"a non-fold combine was treated as a reduction: {c[0]}"
+    )
 
 
 @dace.program
-def unrolled_lanes_read_different_arrays(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N],
-                                         c: dace.float64[N]):
+def unrolled_lanes_read_different_arrays(
+    a: dace.float64[N], b: dace.float64[N], d: dace.float64[N], c: dace.float64[N]
+):
     for i in range(0, N, 2):
         c[i] = a[i] * b[i]
         c[i + 1] = a[i + 1] * d[i + 1]
@@ -536,7 +545,7 @@ def test_lanes_differing_only_by_array_are_not_rerolled():
     sdfg.validate()
     got = np.zeros(n)
     sdfg(a=a, b=b, d=d, c=got, N=n)
-    assert np.allclose(got, expected), f'odd lane took the wrong source array: {got} != {expected}'
+    assert np.allclose(got, expected), f"odd lane took the wrong source array: {got} != {expected}"
 
 
 def test_lanes_writing_different_arrays_are_not_rerolled():
@@ -557,7 +566,7 @@ def test_lanes_writing_different_arrays_are_not_rerolled():
     got_c, got_e = np.zeros(n), np.zeros(n)
     sdfg(a=a, c=got_c, e=got_e, N=n)
     assert np.allclose(got_c, exp_c)
-    assert np.allclose(got_e, exp_e), f'the second lane\'s destination was dropped: {got_e} != {exp_e}'
+    assert np.allclose(got_e, exp_e), f"the second lane's destination was dropped: {got_e} != {exp_e}"
 
 
 # Read-ahead lane chains (TSVC ``s116``): lane ``k`` STORES at ``i + k`` and
@@ -616,8 +625,11 @@ def _reroll_only(program):
 
 def _loop_steps(sdfg):
     return sorted(
-        str(loop_analysis.get_loop_stride(r)) for sd in sdfg.all_sdfgs_recursive()
-        for r in sd.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+        str(loop_analysis.get_loop_stride(r))
+        for sd in sdfg.all_sdfgs_recursive()
+        for r in sd.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion)
+    )
 
 
 def _read_ahead_ref(a0, n, step, lanes, read_at):
@@ -630,16 +642,15 @@ def _read_ahead_ref(a0, n, step, lanes, read_at):
 
 def test_read_ahead_chain_rerolls_to_one_lane():
     count, sdfg = _reroll_only(read_ahead_chain)
-    assert count == 1, 'the s116 read-ahead chain must re-roll'
-    assert _loop_steps(sdfg) == ['1'], 'the step-4 chain must become a step-1 loop'
+    assert count == 1, "the s116 read-ahead chain must re-roll"
+    assert _loop_steps(sdfg) == ["1"], "the step-4 chain must become a step-1 loop"
     # One lane left: one multiply, storing at the loop variable and reading one position ahead.
-    muls = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and '*' in n.code.as_string]
-    assert len(muls) == 1, f'expected the 4 lanes to collapse to 1 multiply, got {len(muls)}'
+    muls = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and "*" in n.code.as_string]
+    assert len(muls) == 1, f"expected the 4 lanes to collapse to 1 multiply, got {len(muls)}"
     subsets = sorted(
-        {str(e.data.subset)
-         for st in sdfg.states()
-         for e in st.edges() if e.data is not None and e.data.data == 'a'})
-    assert subsets == ['i', 'i + 1'], f'the surviving lane must touch only i and i + 1, got {subsets}'
+        {str(e.data.subset) for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.data == "a"}
+    )
+    assert subsets == ["i", "i + 1"], f"the surviving lane must touch only i and i + 1, got {subsets}"
 
 
 def test_read_ahead_chain_value_and_map():
@@ -652,14 +663,14 @@ def test_read_ahead_chain_value_and_map():
     got = a0.copy()
     sdfg(a=got, N=n)
     assert np.allclose(got, _read_ahead_ref(a0, n, 4, (0, 1, 2, 3), (1, 2, 3, 4)))
-    assert _nmaps(sdfg) >= 1, 'the re-rolled read-ahead chain must reach a map'
+    assert _nmaps(sdfg) >= 1, "the re-rolled read-ahead chain must reach a map"
 
 
 def test_read_ahead_descending_is_refused():
     # Lane 3 runs first, so lane 2 reads the value lane 3 just stored -- the ascending re-rolled
     # loop would read the pre-store value instead.
     count, _ = _reroll_only(read_ahead_descending)
-    assert count is None, 'a descending lane chain must not re-roll'
+    assert count is None, "a descending lane chain must not re-roll"
 
 
 def test_read_ahead_descending_value_preserving():
@@ -682,14 +693,14 @@ def test_read_ahead_uneven_relative_offset_is_refused():
     # Lane 1 reads two positions ahead while every other lane reads one: the lanes are not copies
     # of each other, so no single-position body reproduces them.
     count, _ = _reroll_only(read_ahead_uneven)
-    assert count is None, 'lanes that disagree on their relative offsets must not re-roll'
+    assert count is None, "lanes that disagree on their relative offsets must not re-roll"
 
 
 def test_read_ahead_gap_is_refused():
     # 4 lanes of spacing 1 under a step of 8: positions i+4..i+7 are never stored, and a step-1
     # loop would store them.
     count, _ = _reroll_only(read_ahead_gap)
-    assert count is None, 'a chain that does not cover its step must not re-roll'
+    assert count is None, "a chain that does not cover its step must not re-roll"
 
 
 def test_read_ahead_gap_value_preserving():
@@ -704,5 +715,5 @@ def test_read_ahead_gap_value_preserving():
     assert np.allclose(got, _read_ahead_ref(a0, n, 8, (0, 1, 2, 3), (1, 2, 3, 4)))
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

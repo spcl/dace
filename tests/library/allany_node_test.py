@@ -15,6 +15,7 @@ Covered (both nodes):
     ``sequential`` (short-circuit ``break`` loop) -- both numeric, plus
     the ``sequential`` dim-wise fall-back-to-reduction contract.
 """
+
 import numpy as np
 import pytest
 
@@ -22,16 +23,9 @@ import dace
 from dace.libraries.standard.nodes import AllNode, AnyNode
 
 
-def _build_allany_sdfg(tag,
-                       op,
-                       mask_shape,
-                       mask_dtype,
-                       dim,
-                       out_shape,
-                       out_dtype,
-                       *,
-                       implementation="reduction",
-                       mask_subset=None):
+def _build_allany_sdfg(
+    tag, op, mask_shape, mask_dtype, dim, out_shape, out_dtype, *, implementation="reduction", mask_subset=None
+):
     """One-state SDFG wiring an ``All`` / ``Any`` node from a mask access into an
     output access.  ``mask_subset`` (list of ``(lo, hi)`` per dim, 0-based
     inclusive-exclusive) restricts the input edge to a section."""
@@ -68,7 +62,8 @@ def _build_allany_sdfg(tag,
         ("any", [0, 0, 0, 0, 0], 0),  # every element false
         ("any", [0, 0, 1, 0, 0], 1),  # one true -> true
         ("any", [1, 1, 1, 1, 1], 1),
-    ])
+    ],
+)
 def test_reduction_whole_array_1d(op, mask, expected):
     n = len(mask)
     sdfg = _build_allany_sdfg(f"red_{op}_{expected}", op, [n], dace.int32, -1, None, dace.int32)
@@ -173,18 +168,15 @@ def test_default_implementation_is_reduction():
         ("any", [0, 0, 0, 0, 0], 0),
         ("any", [1, 0, 0, 0, 0], 1),  # decides early (index 0) -> break
         ("any", [0, 0, 0, 0, 1], 1),
-    ])
+    ],
+)
 def test_sequential_short_circuit(op, mask, expected):
     """The ``sequential`` expansion stops at the first deciding element
     (``break``) but returns the same logical result as ``reduction``."""
     n = len(mask)
-    sdfg = _build_allany_sdfg(f"seq_{op}_{expected}",
-                              op, [n],
-                              dace.int32,
-                              -1,
-                              None,
-                              dace.int32,
-                              implementation="sequential")
+    sdfg = _build_allany_sdfg(
+        f"seq_{op}_{expected}", op, [n], dace.int32, -1, None, dace.int32, implementation="sequential"
+    )
     out = np.zeros(1, dtype=np.bool_)
     sdfg(mask=np.array(mask, dtype=np.int32), out=out)
     assert int(out[0]) == expected

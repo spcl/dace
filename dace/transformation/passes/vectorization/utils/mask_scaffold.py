@@ -9,6 +9,7 @@ DOMINATES every (possibly branch-local) consumer, and (2) thread the bound
 symbols the producer references into the body NestedSDFG. These two helpers
 capture that shared structure so the two passes do not drift apart.
 """
+
 from collections.abc import Callable, Iterable
 
 import dace
@@ -52,8 +53,14 @@ def prepend_dominating_init_state(sdfg: SDFG, label: str, build_producer: Callab
     return init_state
 
 
-def thread_symbols_into_nsdfg(inner_sdfg: SDFG, nsdfg_node: NestedSDFG, symbol_names: Iterable[str], parent_sdfg: SDFG,
-                              parent_state: SDFGState, resolver: scopes.ScopedSymbolResolver) -> None:
+def thread_symbols_into_nsdfg(
+    inner_sdfg: SDFG,
+    nsdfg_node: NestedSDFG,
+    symbol_names: Iterable[str],
+    parent_sdfg: SDFG,
+    parent_state: SDFGState,
+    resolver: scopes.ScopedSymbolResolver,
+) -> None:
     """Make each name in ``symbol_names`` visible inside ``inner_sdfg``.
 
     A bound symbol the mask producer references (a loop bound such as ``kfdia``)
@@ -80,7 +87,8 @@ def thread_symbols_into_nsdfg(inner_sdfg: SDFG, nsdfg_node: NestedSDFG, symbol_n
     """
     for sname in symbol_names:
         if sname not in inner_sdfg.symbols:
-            inner_sdfg.add_symbol(sname, resolver.resolve_dtype(sname, parent_sdfg, state=parent_state,
-                                                                node=nsdfg_node))
+            inner_sdfg.add_symbol(
+                sname, resolver.resolve_dtype(sname, parent_sdfg, state=parent_state, node=nsdfg_node)
+            )
         if sname not in nsdfg_node.symbol_mapping:
             nsdfg_node.symbol_mapping[sname] = dace.symbolic.pystr_to_symbolic(sname)

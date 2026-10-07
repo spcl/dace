@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileIota``: a per-lane affine or indirect fill of an integer tile."""
+
 from collections.abc import Sequence
 
 import dace
@@ -40,12 +41,14 @@ class TileIota(TileOp):
         "outer array.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, ...],
-                 expr: str,
-                 extra_inputs: Sequence[str] = (),
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        expr: str,
+        extra_inputs: Sequence[str] = (),
+        location: str | None = None,
+    ):
         if not 1 <= len(widths) <= 3:
             raise ValueError(f"TileIota: widths length {len(widths)} not in {{1, 2, 3}}")
         if not expr:

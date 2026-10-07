@@ -15,6 +15,7 @@ seen as the single 2-D space they are before a diagonal exists to find.
 The tests below pin both halves: what the planner accepts and refuses (structure), and that a
 committed fusion computes the same values (execution).
 """
+
 import copy
 import os
 
@@ -30,7 +31,7 @@ import pytest
 import dace
 from dace import symbolic
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
+from dace.transformation.passes.canonicalize.fuse_consecutive_loops import commit_guarded_fusion, plan_guarded_fusion
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -43,7 +44,7 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
     assert_tree_consistent(sdfg)
 
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -86,10 +87,12 @@ def computation_beside_the_chain(A: dace.float64[N], B: dace.float64[N]):
 def outer_loop(sdfg: dace.SDFG, var: str) -> LoopRegion:
     """The one ``LoopRegion`` whose iterator is ``var``."""
     found = [
-        c for sd in sdfg.all_sdfgs_recursive() for c in sd.all_control_flow_regions()
+        c
+        for sd in sdfg.all_sdfgs_recursive()
+        for c in sd.all_control_flow_regions()
         if isinstance(c, LoopRegion) and c.loop_variable == var
     ]
-    assert len(found) == 1, f'expected exactly one {var} loop, got {len(found)}'
+    assert len(found) == 1, f"expected exactly one {var} loop, got {len(found)}"
     return found[0]
 
 
@@ -121,30 +124,33 @@ def test_plan_reads_lu_siblings_as_one_range_with_their_ranges_as_guards():
     FIRST of those that makes lu analysable: it is what tells the dependence engine that the
     ``A[j, j]`` read happens only where ``j < i``, hence at a strictly earlier iteration."""
     sdfg = lu_factorization.to_sdfg(simplify=True)
-    plan = plan_guarded_fusion(outer_loop(sdfg, 'i'))
+    plan = plan_guarded_fusion(outer_loop(sdfg, "i"))
 
     assert plan is not None
-    assert plan.var == 'j'
+    assert plan.var == "j"
     assert len(plan.loops) == 2
     assert symbolic.simplify(plan.lo) == 0
-    assert symbolic.simplify(plan.hi - (symbolic.symbol('N') - 1)) == 0
+    assert symbolic.simplify(plan.hi - (symbolic.symbol("N") - 1)) == 0
 
-    j, i, n = symbolic.symbol('j'), symbolic.symbol('i'), symbolic.symbol('N')
+    j, i, n = symbolic.symbol("j"), symbolic.symbol("i"), symbolic.symbol("N")
     assert [symbolic.simplify(g) for g in plan.guards[0]] == [j, symbolic.simplify(i - j - 1)]
     assert [symbolic.simplify(g) for g in plan.guards[1]] == [symbolic.simplify(j - i), symbolic.simplify(n - j - 1)]
 
 
-@pytest.mark.parametrize('program, why', [
-    (disjoint_but_not_adjacent, 'a hole between the two ranges'),
-    (computation_beside_the_chain, 'a store beside the chain'),
-])
+@pytest.mark.parametrize(
+    "program, why",
+    [
+        (disjoint_but_not_adjacent, "a hole between the two ranges"),
+        (computation_beside_the_chain, "a store beside the chain"),
+    ],
+)
 def test_planner_refuses_what_would_not_concatenate(program, why):
     """Both refusals are load-bearing, and for different reasons: a hole means the fused sweep
     would run iterations neither sibling ever ran, and a store beside the chain would move from
     once-per-``i`` to once-per-``j``. Neither is caught downstream -- the skew only ever asks
     whether a schedule is legal, never whether the nest it was handed is the original one."""
     sdfg = program.to_sdfg(simplify=True)
-    assert plan_guarded_fusion(outer_loop(sdfg, 'i')) is None, f'must refuse {why}'
+    assert plan_guarded_fusion(outer_loop(sdfg, "i")) is None, f"must refuse {why}"
 
 
 def test_planner_does_not_mutate_on_refusal():
@@ -152,7 +158,7 @@ def test_planner_does_not_mutate_on_refusal():
     on every two-level nest it meets, and most of those never fuse."""
     sdfg = computation_beside_the_chain.to_sdfg(simplify=True)
     before = sdfg.to_json()
-    assert plan_guarded_fusion(outer_loop(sdfg, 'i')) is None
+    assert plan_guarded_fusion(outer_loop(sdfg, "i")) is None
     assert sdfg.to_json() == before
 
 
@@ -162,20 +168,20 @@ def test_commit_leaves_one_loop_over_the_union_with_a_total_partition():
     union, so a trailing condition would leave the final iteration able to fall through and
     silently skip the row update."""
     sdfg = lu_factorization.to_sdfg(simplify=True)
-    outer = outer_loop(sdfg, 'i')
+    outer = outer_loop(sdfg, "i")
     merged = commit_guarded_fusion(plan_guarded_fusion(outer), outer)
     assert_cfg_list_matches_reset(sdfg)
 
     assert [b for b in outer.nodes() if isinstance(b, LoopRegion)] == [merged]
-    assert merged.loop_variable == 'j'
-    assert symbolic.pystr_to_symbolic(merged.init_statement.as_string.split('=', 1)[1]) == 0
+    assert merged.loop_variable == "j"
+    assert symbolic.pystr_to_symbolic(merged.init_statement.as_string.split("=", 1)[1]) == 0
 
     selectors = [b for b in merged.nodes() if isinstance(b, ConditionalBlock)]
     assert len(selectors) == 1
     conditions = [c for c, _ in selectors[0].branches]
     assert len(conditions) == 2
     assert conditions[0] is not None
-    assert conditions[-1] is None, 'the final sub-range must be the else, or an iteration can fall through'
+    assert conditions[-1] is None, "the final sub-range must be the else, or an iteration can fall through"
 
     sdfg.validate()
 
@@ -185,7 +191,7 @@ def test_commit_preserves_lu_values():
     iterator renamed onto a symbol that already meant something. Running the fused graph against
     a sequential reference can."""
     sdfg = lu_factorization.to_sdfg(simplify=True)
-    outer = outer_loop(sdfg, 'i')
+    outer = outer_loop(sdfg, "i")
     commit_guarded_fusion(plan_guarded_fusion(outer), outer)
 
     m = 8
@@ -194,8 +200,8 @@ def test_commit_preserves_lu_values():
     got = a.copy()
     sdfg(A=got, N=m)
 
-    assert np.allclose(got, expected), 'guarded fusion must not change what lu computes'
+    assert np.allclose(got, expected), "guarded fusion must not change what lu computes"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

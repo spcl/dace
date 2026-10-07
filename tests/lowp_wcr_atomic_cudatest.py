@@ -9,6 +9,7 @@ that dropped or clobbered the neighbouring half shows up as a wrong slot or a ch
 Inputs keep every partial result exactly representable (sum), or make the result independent of
 order anyway (max, min, product of +-1), so the expected value is bit-exact whatever the order.
 """
+
 import ml_dtypes
 import numpy as np
 import pytest
@@ -62,12 +63,14 @@ def build_sdfg(op: str, dtype, n: int) -> dace.SDFG:
     sdfg.add_array("A", [n], dtype)
     sdfg.add_array("out", [SLOTS + 1], dtype)
     state = sdfg.add_state()
-    state.add_mapped_tasklet("update",
-                             dict(i=f"0:{n}"),
-                             dict(a=dace.Memlet("A[i]")),
-                             "o = a",
-                             dict(o=dace.Memlet(f"out[i % {SLOTS}]", wcr=WCR[op])),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "update",
+        dict(i=f"0:{n}"),
+        dict(a=dace.Memlet("A[i]")),
+        "o = a",
+        dict(o=dace.Memlet(f"out[i % {SLOTS}]", wcr=WCR[op])),
+        external_edges=True,
+    )
     sdfg.apply_gpu_transformations()
     return sdfg
 
@@ -84,8 +87,9 @@ def test_contended_atomic_is_exact_and_spares_neighbour(op, dtype_name):
     out = init.copy()
     sdfg(A=a, out=out)
     exp = expected_values(op, a, init)
-    assert np.array_equal(out.view(np.uint16), exp.view(np.uint16)), \
+    assert np.array_equal(out.view(np.uint16), exp.view(np.uint16)), (
         f"{op}/{dtype_name}: got {out.astype(np.float64)}, expected {exp.astype(np.float64)}"
+    )
 
 
 if __name__ == "__main__":

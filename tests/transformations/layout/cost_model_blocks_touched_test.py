@@ -5,6 +5,7 @@ The invariant these pin: the metric must SEE a layout change. A contiguous-inner
 less than a strided one (Permute), and a contiguous tile must cost less than a scattered one even
 when the reuse is on a non-innermost loop (Block/AoSoA). The second is the one the old
 innermost-only fraction could not express."""
+
 import itertools
 
 import dace
@@ -148,8 +149,8 @@ def test_formula_ranks_layouts_the_same_as_the_brute_force_oracle():
         ((16, 16), (1, 16)),  # 2D col-major
         ((8, 8, 4, 4), (128, 16, 4, 1)),  # 4D contiguous tile
         ((8, 8, 4, 4), (128, 16, 64, 1)),  # 4D scattered tile
-        ((32, ), (1, )),  # 1D contiguous
-        ((32, ), (3, )),  # 1D strided
+        ((32,), (1,)),  # 1D contiguous
+        ((32,), (3,)),  # 1D strided
     ]
     block = 8
     brute = [_brute_force_avg_blocks(e, s, block) for e, s in cases]

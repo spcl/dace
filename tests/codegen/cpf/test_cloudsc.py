@@ -27,6 +27,7 @@ pragma on SDFGs whose maps exist.
 Marked ``integration``: building CloudSC is minutes and the rendered translation unit is large. It
 is NOT skipped -- on a box with a compiler it is expected to run and pass.
 """
+
 import contextlib
 import copy
 import ctypes
@@ -40,8 +41,13 @@ from dace import data as dt
 from dace.codegen.cpf import render
 
 from tests.codegen.cpf.conftest import assert_standalone, call_standalone, compile_standalone
-from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
-                                                            generate_cloudsc_inputs, make_sequential)
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (
+    IEEE_CPU_ARGS,
+    build_cloudsc_sdfg,
+    compare_outputs,
+    generate_cloudsc_inputs,
+    make_sequential,
+)
 
 #: Machine precision. Both sides are sequential IEEE builds of the same computation, so they agree
 #: bit-for-bit; this is the CloudSC harness's own established criterion, not a tolerance chosen to
@@ -52,18 +58,18 @@ RTOL = ATOL = 1e-15
 #: compiles under :data:`IEEE_CPU_ARGS`; without ``-ffp-contract=off`` the host compiler is free to
 #: fuse a multiply-add here and not there, and the two sides would differ by an ulp for a reason
 #: that has nothing to do with CPF.
-IEEE_FLAGS = ('-fno-fast-math', '-ffp-contract=off')
+IEEE_FLAGS = ("-fno-fast-math", "-ffp-contract=off")
 
 
 @contextlib.contextmanager
 def ieee_build():
     """Compile the reference SDFG with deterministic IEEE flags, restoring the prior setting."""
-    saved = dace.Config.get('compiler', 'cpu', 'args')
+    saved = dace.Config.get("compiler", "cpu", "args")
     try:
-        dace.Config.set('compiler', 'cpu', 'args', value=IEEE_CPU_ARGS)
+        dace.Config.set("compiler", "cpu", "args", value=IEEE_CPU_ARGS)
         yield
     finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=saved)
+        dace.Config.set("compiler", "cpu", "args", value=saved)
 
 
 def entry_arguments(sdfg: dace.SDFG, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -85,8 +91,10 @@ def entry_arguments(sdfg: dace.SDFG, values: Dict[str, Any]) -> Dict[str, Any]:
             value = np.array([value], dtype=desc.dtype.as_numpy_dtype())
             values[name] = value  # the caller compares this buffer afterwards, so keep the widened one
         arguments[name] = value
-    assert not missing, (f'the CloudSC input generator produced no value for {missing}, which the CPF entry '
-                         'point takes; it would run on uninitialized memory')
+    assert not missing, (
+        f"the CloudSC input generator produced no value for {missing}, which the CPF entry "
+        "point takes; it would run on uninitialized memory"
+    )
     return arguments
 
 
@@ -105,21 +113,21 @@ def test_cloudsc_renders_standalone_and_reproduces_the_sdfg():
         reference(**reference_values)
 
     rendering = render(copy.deepcopy(reference), validate=False)
-    assert_standalone(rendering.code, 'cloudsc')
+    assert_standalone(rendering.code, "cloudsc")
     assert 'extern "C" void %s(' % reference.name in rendering.code
 
-    library = ctypes.CDLL(compile_standalone(rendering.code, 'cloudsc', extra_flags=IEEE_FLAGS))
+    library = ctypes.CDLL(compile_standalone(rendering.code, "cloudsc", extra_flags=IEEE_FLAGS))
     cpf_values = copy.deepcopy(pristine)
     call_standalone(library, rendering.sdfg, entry_arguments(rendering.sdfg, cpf_values))
 
     report = compare_outputs(reference_values, cpf_values, rtol=RTOL, atol=ATOL)
-    assert report, 'nothing was compared -- the two runs share no array, so this asserts nothing'
+    assert report, "nothing was compared -- the two runs share no array, so this asserts nothing"
     mismatched = {name: (abs_err, rel_err) for name, (abs_err, rel_err, ok) in report.items() if not ok}
-    assert not mismatched, (
-        'CPF output diverges from the SDFG on ' +
-        ', '.join(f'{name} (abs={abs_err:.3e} rel={rel_err:.3e})'
-                  for name, (abs_err, rel_err) in sorted(mismatched.items(), key=lambda kv: -kv[1][1])[:5]))
+    assert not mismatched, "CPF output diverges from the SDFG on " + ", ".join(
+        f"{name} (abs={abs_err:.3e} rel={rel_err:.3e})"
+        for name, (abs_err, rel_err) in sorted(mismatched.items(), key=lambda kv: -kv[1][1])[:5]
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '-m', 'integration'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "-m", "integration"])

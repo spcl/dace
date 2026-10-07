@@ -8,6 +8,7 @@ int, double -> float, int narrowing) raises ``NotImplementedError`` at expansion
 Covers both the ``pure`` (implicit C++ conversion) and ``scalar`` backend (an
 explicit per-lane cast into the output-dtype buffer) lowerings.
 """
+
 import numpy as np
 import pytest
 
@@ -21,7 +22,7 @@ def _build(a_dt, b_dt, c_dt, impl, name):
     :param impl: Expansion implementation to stamp before lowering
         (``"pure"`` or ``"scalar"``).
     """
-    widths = (8, )
+    widths = (8,)
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", widths, a_dt)
     sdfg.add_array("B", widths, b_dt)
@@ -65,8 +66,8 @@ def test_tile_binop_widening_promotes(impl, a_dt, b_dt, c_dt, na, nb, nc):
     tag = f"{impl}_{a_dt.to_string()}_{b_dt.to_string()}"
     sdfg = _build(a_dt, b_dt, c_dt, impl, f"promote_{tag}")
     rng = np.random.default_rng(seed=hash(tag) & 0xFFFF)
-    A = (rng.integers(1, 9, size=8).astype(na) if np.issubdtype(na, np.integer) else rng.random(8).astype(na))
-    B = (rng.integers(1, 9, size=8).astype(nb) if np.issubdtype(nb, np.integer) else rng.random(8).astype(nb))
+    A = rng.integers(1, 9, size=8).astype(na) if np.issubdtype(na, np.integer) else rng.random(8).astype(na)
+    B = rng.integers(1, 9, size=8).astype(nb) if np.issubdtype(nb, np.integer) else rng.random(8).astype(nb)
     C = np.zeros(8, dtype=nc)
     sdfg(A=A, B=B, C=C)
     ref = (A.astype(nc) + B.astype(nc)).astype(nc)

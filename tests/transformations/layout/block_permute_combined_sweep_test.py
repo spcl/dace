@@ -21,6 +21,7 @@ so each case exercises packing AND recovery.
 The invariant asserted here is CORRECTNESS: every combined layout reproduces the elementwise oracle
 to floating-point tolerance. Blocking uses divisible extents so every tile is perfect.
 """
+
 import numpy
 import pytest
 
@@ -174,8 +175,13 @@ def case_id(case) -> str:
 def test_block_permute_combined(case):
     ndim, order, blocked_dim, factor, perm = case
     got, oracle = run_combined(ndim, order, blocked_dim, factor, perm)
-    assert numpy.allclose(got, oracle), "combined %s d%d f%d perm %s max err %s" % (order, blocked_dim, factor, perm,
-                                                                                    numpy.max(numpy.abs(got - oracle)))
+    assert numpy.allclose(got, oracle), "combined %s d%d f%d perm %s max err %s" % (
+        order,
+        blocked_dim,
+        factor,
+        perm,
+        numpy.max(numpy.abs(got - oracle)),
+    )
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ masked-reduction shape, and the numerics are bit-exact with the sequential
 reference. Only a guard read that cannot be expressed as a memlet subset (an
 indirection ``a[b[i]]``) is still refused.
 """
+
 import numpy as np
 import pytest
 
@@ -26,19 +27,21 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _has_conditional_block(sdfg) -> bool:
     return any(
-        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
+        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions()
+    )
 
 
 def _mask_tasklet(sdfg):
     """The spliced-in mask tasklet -- the one whose body is a ternary."""
     masks = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nd.Tasklet) and 'if ' in n.code.as_string and 'else' in n.code.as_string
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.Tasklet) and "if " in n.code.as_string and "else" in n.code.as_string
     ]
     assert len(masks) == 1, f"expected exactly one mask tasklet, got {len(masks)}"
     return masks[0]
@@ -69,13 +72,13 @@ def test_guarded_sum_of_squares_lifts_and_is_bit_exact():
     # The guard's array read is a REAL input of the mask tasklet, not an unbound
     # name -- this is exactly what the old miscompile got wrong.
     mask = _mask_tasklet(sdfg)
-    assert '__addend' in mask.in_connectors
-    guard_conns = sorted(c for c in mask.in_connectors if c.startswith('__guard'))
-    assert guard_conns == ['__guard0'], f"expected one wired guard input, got {sorted(mask.in_connectors)}"
-    assert '__guard0' in mask.code.as_string, "the folded cond must read the WIRED connector"
+    assert "__addend" in mask.in_connectors
+    guard_conns = sorted(c for c in mask.in_connectors if c.startswith("__guard"))
+    assert guard_conns == ["__guard0"], f"expected one wired guard input, got {sorted(mask.in_connectors)}"
+    assert "__guard0" in mask.code.as_string, "the folded cond must read the WIRED connector"
 
     a = np.array([1.0, -2.0, 3.0, -4.0, 5.0])
-    expected = float(np.sum(a[a > 0.0]**2))  # 1 + 9 + 25 = 35
+    expected = float(np.sum(a[a > 0.0] ** 2))  # 1 + 9 + 25 = 35
     b = np.zeros(1)
     sdfg(a=a.copy(), b=b, N=a.size)
     assert b[0] == expected, f"got {b[0]}, expected {expected}"
@@ -147,8 +150,9 @@ def test_guard_reads_a_different_element_than_the_addend_lifts():
     input."""
 
     @dace.program
-    def kernel_guard_reads_a_different_element_than_the_addend_lifts(a: dace.float64[N], b: dace.float64[N],
-                                                                     out: dace.float64[1]):
+    def kernel_guard_reads_a_different_element_than_the_addend_lifts(
+        a: dace.float64[N], b: dace.float64[N], out: dace.float64[1]
+    ):
         s = 0.0
         for i in range(N):
             if b[i] > 0.0:
@@ -199,9 +203,9 @@ def test_lifts_through_the_full_canonicalize_pipeline():
     assert not any(isinstance(r, LoopRegion) and r.loop_variable for r in sdfg.all_control_flow_regions())
     assert any(isinstance(n, nd.MapEntry) for n, _ in sdfg.all_nodes_recursive())
 
-    finalize_for_target(sdfg, 'cpu')
+    finalize_for_target(sdfg, "cpu")
     code = "\n".join(c.clean_code for c in sdfg.generate_code())
-    assert 'reduce_atomic' not in code, "the guarded per-thread atomic must be gone -- that is the point of the lift"
+    assert "reduce_atomic" not in code, "the guarded per-thread atomic must be gone -- that is the point of the lift"
 
     # The lifted reduction is a TREE reduction, so it may sum in a different order
     # than the sequential reference. Use integer-valued float64 inputs: every summand
@@ -233,40 +237,40 @@ def _build_iedge_symbol_guard_sdfg() -> dace.SDFG:
     ``sdfg.symbols``. The python frontend cannot express this shape (it registers its
     gather symbols globally), but the Fortran frontend and hand-built IR do.
     """
-    sdfg = dace.SDFG('iedge_symbol_guard')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('out', [1], dace.float64)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    sdfg.add_scalar('prod', dace.float64, transient=True)
+    sdfg = dace.SDFG("iedge_symbol_guard")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    sdfg.add_scalar("prod", dace.float64, transient=True)
 
-    init = sdfg.add_state('init', is_start_block=True)
-    zero = init.add_tasklet('zero', {}, {'__out'}, '__out = 0.0')
-    init.add_edge(zero, '__out', init.add_write('s'), None, dace.Memlet('s[0]'))
+    init = sdfg.add_state("init", is_start_block=True)
+    zero = init.add_tasklet("zero", {}, {"__out"}, "__out = 0.0")
+    init.add_edge(zero, "__out", init.add_write("s"), None, dace.Memlet("s[0]"))
 
-    loop = LoopRegion('L', 'i < N - 1', 'i', 'i = 0', 'i = i + 1')
+    loop = LoopRegion("L", "i < N - 1", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'off': '1'}))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"off": "1"}))
 
-    cb = ConditionalBlock('cb')
+    cb = ConditionalBlock("cb")
     loop.add_node(cb, is_start_block=True)
-    branch = ControlFlowRegion('br', sdfg=sdfg)
-    cb.add_branch(CodeBlock('a[i + off] > 0.0'), branch)
+    branch = ControlFlowRegion("br", sdfg=sdfg)
+    cb.add_branch(CodeBlock("a[i + off] > 0.0"), branch)
 
-    body = branch.add_state('body', is_start_block=True)
-    mul = body.add_tasklet('mul', {'__x'}, {'__p'}, '__p = __x * __x')
-    body.add_edge(body.add_read('a'), None, mul, '__x', dace.Memlet('a[i]'))
-    prod_an = body.add_access('prod')
-    body.add_edge(mul, '__p', prod_an, None, dace.Memlet('prod[0]'))
-    upd = body.add_tasklet('upd', {'__lhs', '__rhs'}, {'__out'}, '__out = (__lhs + __rhs)')
-    body.add_edge(body.add_read('s'), None, upd, '__lhs', dace.Memlet('s[0]'))
-    body.add_edge(prod_an, None, upd, '__rhs', dace.Memlet('prod[0]'))
-    body.add_edge(upd, '__out', body.add_write('s'), None, dace.Memlet('s[0]'))
+    body = branch.add_state("body", is_start_block=True)
+    mul = body.add_tasklet("mul", {"__x"}, {"__p"}, "__p = __x * __x")
+    body.add_edge(body.add_read("a"), None, mul, "__x", dace.Memlet("a[i]"))
+    prod_an = body.add_access("prod")
+    body.add_edge(mul, "__p", prod_an, None, dace.Memlet("prod[0]"))
+    upd = body.add_tasklet("upd", {"__lhs", "__rhs"}, {"__out"}, "__out = (__lhs + __rhs)")
+    body.add_edge(body.add_read("s"), None, upd, "__lhs", dace.Memlet("s[0]"))
+    body.add_edge(prod_an, None, upd, "__rhs", dace.Memlet("prod[0]"))
+    body.add_edge(upd, "__out", body.add_write("s"), None, dace.Memlet("s[0]"))
 
-    fin = sdfg.add_state('fin')
+    fin = sdfg.add_state("fin")
     sdfg.add_edge(loop, fin, dace.InterstateEdge())
-    store = fin.add_tasklet('store', {'__i'}, {'__o'}, '__o = __i')
-    fin.add_edge(fin.add_read('s'), None, store, '__i', dace.Memlet('s[0]'))
-    fin.add_edge(store, '__o', fin.add_write('out'), None, dace.Memlet('out[0]'))
+    store = fin.add_tasklet("store", {"__i"}, {"__o"}, "__o = __i")
+    fin.add_edge(fin.add_read("s"), None, store, "__i", dace.Memlet("s[0]"))
+    fin.add_edge(store, "__o", fin.add_write("out"), None, dace.Memlet("out[0]"))
     sdfg.validate()
     return sdfg
 
@@ -282,7 +286,7 @@ def test_guard_symbol_bound_by_an_interstate_edge_lifts():
     per-passing-thread atomic in place.
     """
     sdfg = _build_iedge_symbol_guard_sdfg()
-    assert 'off' not in sdfg.symbols, "premise: the guard's symbol is NOT a global SDFG symbol"
+    assert "off" not in sdfg.symbols, "premise: the guard's symbol is NOT a global SDFG symbol"
 
     res = LoopToConditionalReduce().apply_pass(sdfg, {})
     assert res == 1, "an interstate-edge-bound guard symbol is defined at the guard -- must LIFT, not refuse"
@@ -291,10 +295,10 @@ def test_guard_symbol_bound_by_an_interstate_edge_lifts():
 
     # ``a[i + off]`` is wired as a real mask input, with the iedge symbol kept in the subset.
     mask = _mask_tasklet(sdfg)
-    assert '__guard0' in mask.in_connectors, f"expected the guard read wired, got {sorted(mask.in_connectors)}"
-    guard_edges = [e for st in sdfg.states() for e in st.edges() if e.dst is mask and e.dst_conn == '__guard0']
+    assert "__guard0" in mask.in_connectors, f"expected the guard read wired, got {sorted(mask.in_connectors)}"
+    guard_edges = [e for st in sdfg.states() for e in st.edges() if e.dst is mask and e.dst_conn == "__guard0"]
     assert len(guard_edges) == 1
-    assert 'off' in str(guard_edges[0].data.subset), f"iedge symbol lost from the subset: {guard_edges[0].data}"
+    assert "off" in str(guard_edges[0].data.subset), f"iedge symbol lost from the subset: {guard_edges[0].data}"
 
     # Integer-valued float64 inputs: every summand and partial sum is exactly
     # representable, so the reference holds bit-exactly under ANY reduction order.
@@ -342,5 +346,5 @@ def test_refuses_indirect_guard_read():
     assert b[0] == ref, f"got {b[0]!r}, expected {ref!r}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

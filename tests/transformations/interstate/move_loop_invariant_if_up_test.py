@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the redesigned ``MoveLoopInvariantIfUp`` -- the inverse of
-    ``MoveIfIntoLoop``. It hoists a loop-invariant guarding ConditionalBlock
-    out of its loop, applied to a fixpoint so an innermost invariant guard
-    sifts all the way up; the interstate-edge symbol-assignment chain the
-    condition depends on is hoisted with it; emptied boundary states are
-    cleaned. Each test checks structure (guard moved above the loop / no-op)
-    AND end-to-end numerics vs a pure-numpy oracle for the guard taken and
-    not-taken.
+"""Tests for the redesigned ``MoveLoopInvariantIfUp`` -- the inverse of
+``MoveIfIntoLoop``. It hoists a loop-invariant guarding ConditionalBlock
+out of its loop, applied to a fixpoint so an innermost invariant guard
+sifts all the way up; the interstate-edge symbol-assignment chain the
+condition depends on is hoisted with it; emptied boundary states are
+cleaned. Each test checks structure (guard moved above the loop / no-op)
+AND end-to-end numerics vs a pure-numpy oracle for the guard taken and
+not-taken.
 """
+
 import copy
 
 import numpy as np
@@ -17,8 +18,8 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _loops(sdfg):
@@ -143,8 +144,9 @@ def test_innermost_guard_sifts_all_the_way_up_and_e2e():
         assert applied is not None and applied >= 2, f"must hoist out of both loops, got {applied}"
         sdfg.validate()
         # No ConditionalBlock left inside any loop: the guard is at the top.
-        assert not [cb for cb in _conds(sdfg) if any(isinstance(p, LoopRegion) for p in _ancestors(sdfg, cb))
-                    ], "guard did not sift past every enclosing loop"
+        assert not [cb for cb in _conds(sdfg) if any(isinstance(p, LoopRegion) for p in _ancestors(sdfg, cb))], (
+            "guard did not sift past every enclosing loop"
+        )
         out = np.full((n, m), 7.0)
         sdfg(a=a.copy(), b=out, active=np.array([av], np.int32), N=n, M=m)
         assert np.allclose(out, a + 1.0 if av > 0 else 7.0), f"mismatch active={av}"
@@ -155,7 +157,7 @@ def _ancestors(sdfg, block):
     out, g = [], block.parent_graph
     while g is not None and g is not sdfg:
         out.append(g)
-        g = getattr(g, 'parent_graph', None)
+        g = getattr(g, "parent_graph", None)
     return out
 
 
@@ -203,8 +205,9 @@ def test_data_and_loopvar_guard_not_hoisted_and_e2e():
     a = rng.random(n)
     sdfg = data_and_loopvar_guard.to_sdfg(simplify=True)
     base = copy.deepcopy(sdfg)
-    assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None, \
+    assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is None, (
         "a guard reading a[k] (loop-variable-indexed data) must NOT hoist"
+    )
     sdfg.validate()
     out, ref = np.full(n, 5.0), np.full(n, 5.0)
     sdfg(a=a.copy(), b=out, N=n)
@@ -227,26 +230,27 @@ def test_empty_boundary_states_cleaned_and_e2e():
     from dace.sdfg.state import ControlFlowRegion
     from dace.sdfg.sdfg import InterstateEdge
     from dace.properties import CodeBlock
-    n = 11
-    sdfg = dace.SDFG('elc')
-    sdfg.add_array('a', [n], dace.float64)
-    sdfg.add_array('b', [n], dace.float64)
-    sdfg.add_symbol('active', dace.int32)
 
-    loop = LoopRegion('L', 'k < %d' % n, 'k', 'k = 0', 'k = k + 1')
+    n = 11
+    sdfg = dace.SDFG("elc")
+    sdfg.add_array("a", [n], dace.float64)
+    sdfg.add_array("b", [n], dace.float64)
+    sdfg.add_symbol("active", dace.int32)
+
+    loop = LoopRegion("L", "k < %d" % n, "k", "k = 0", "k = k + 1")
     sdfg.add_node(loop, is_start_block=True)
-    e1 = loop.add_state('e1', is_start_block=True)  # empty boundary state
-    cb = ConditionalBlock('g')
-    br = ControlFlowRegion('br', sdfg=sdfg)
-    bs = br.add_state('bs', is_start_block=True)
-    r = bs.add_read('a')
-    w = bs.add_write('b')
-    t = bs.add_tasklet('inc', {'x'}, {'y'}, 'y = x + 1.0')
-    bs.add_edge(r, None, t, 'x', dace.Memlet('a[k]'))
-    bs.add_edge(t, 'y', w, None, dace.Memlet('b[k]'))
-    cb.add_branch(CodeBlock('active > 0'), br)
+    e1 = loop.add_state("e1", is_start_block=True)  # empty boundary state
+    cb = ConditionalBlock("g")
+    br = ControlFlowRegion("br", sdfg=sdfg)
+    bs = br.add_state("bs", is_start_block=True)
+    r = bs.add_read("a")
+    w = bs.add_write("b")
+    t = bs.add_tasklet("inc", {"x"}, {"y"}, "y = x + 1.0")
+    bs.add_edge(r, None, t, "x", dace.Memlet("a[k]"))
+    bs.add_edge(t, "y", w, None, dace.Memlet("b[k]"))
+    cb.add_branch(CodeBlock("active > 0"), br)
     loop.add_node(cb)
-    e2 = loop.add_state('e2')  # empty boundary state
+    e2 = loop.add_state("e2")  # empty boundary state
     loop.add_edge(e1, cb, InterstateEdge())
     loop.add_edge(cb, e2, InterstateEdge())
 
@@ -285,13 +289,15 @@ def test_mixed_map_loop_guard_hoisted_out_of_loop_and_e2e():
     a = rng.random((n, m))
     for av in (1, 0):
         sdfg = mixed_map_loop.to_sdfg(simplify=True)
-        assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is not None, \
+        assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is not None, (
             "the invariant guard must hoist out of the inner loop even inside a map"
+        )
         sdfg.validate()
         # A map is still present and the guard now wraps a loop (hoisted out
         # of the inner loop, not dropped).
-        assert any(isinstance(n_, dace.sdfg.nodes.MapEntry) for n_, _ in sdfg.all_nodes_recursive()), \
+        assert any(isinstance(n_, dace.sdfg.nodes.MapEntry) for n_, _ in sdfg.all_nodes_recursive()), (
             "the outer map must survive"
+        )
         assert _guard_wraps_a_loop(sdfg), "guard must wrap the inner loop after hoisting"
         out = np.full((n, m), 8.0)
         sdfg(a=a.copy(), b=out, active=np.array([av], np.int32), N=n, M=m)
@@ -352,16 +358,18 @@ def test_outer_index_data_guard_partial_then_full_hoist_modes():
     assert MoveLoopInvariantIfUp().apply_pass(sdfg, {}) is not None, "must hoist out of the j-loop"
     sdfg.validate()
     assert _guard_wraps_a_loop(sdfg), "guard must wrap the (inner) j-loop"
-    assert any(isinstance(p, LoopRegion) for cb in _conds(sdfg) for p in _ancestors(sdfg, cb)), \
+    assert any(isinstance(p, LoopRegion) for cb in _conds(sdfg) for p in _ancestors(sdfg, cb)), (
         "the guard must remain stalled inside the i-loop (cannot clear g[i])"
+    )
     out = np.full((n, m), 6.0)
     sdfg(a=a.copy(), b=out, g=g.copy(), N=n, M=m)
     assert np.allclose(out, exp), "default partial-hoist not value-preserving"
 
     # require_full_hoist: cannot clear the i-loop -> do nothing at all.
     sdfg2 = outer_index_guard.to_sdfg(simplify=True)
-    assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg2, {}) is None, \
+    assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg2, {}) is None, (
         "all-or-nothing mode must refuse a guard that cannot clear every enclosing loop"
+    )
     sdfg2.validate()
     out2 = np.full((n, m), 6.0)
     sdfg2(a=a.copy(), b=out2, g=g.copy(), N=n, M=m)
@@ -379,8 +387,9 @@ def test_inner_index_data_guard_not_movable():
     exp = _nest_oracle(a, mask, n, m)
     for full in (False, True):
         sdfg = inner_index_guard.to_sdfg(simplify=True)
-        assert MoveLoopInvariantIfUp(require_full_hoist=full).apply_pass(sdfg, {}) is None, \
+        assert MoveLoopInvariantIfUp(require_full_hoist=full).apply_pass(sdfg, {}) is None, (
             f"inner-index guard must not move (require_full_hoist={full})"
+        )
         sdfg.validate()
         out = np.full((n, m), 6.0)
         sdfg(a=a.copy(), b=out, g=g.copy(), N=n, M=m)
@@ -398,18 +407,20 @@ def test_scalar_guard_sifts_all_the_way_up_both_modes():
         for cv in (0.9, 0.1):
             sdfg = scalar_guard_nest.to_sdfg(simplify=True)
             applied = MoveLoopInvariantIfUp(require_full_hoist=full).apply_pass(sdfg, {})
-            assert applied is not None and applied >= 2, \
+            assert applied is not None and applied >= 2, (
                 f"scalar guard must clear both loops (full={full}), got {applied}"
+            )
             sdfg.validate()
-            assert not [cb for cb in _conds(sdfg) if any(isinstance(p, LoopRegion) for p in _ancestors(sdfg, cb))], \
+            assert not [cb for cb in _conds(sdfg) if any(isinstance(p, LoopRegion) for p in _ancestors(sdfg, cb))], (
                 "scalar guard must end up above every loop"
+            )
             out = np.full((n, m), 6.0)
             sdfg(a=a.copy(), b=out, c=np.array([cv], np.float64), N=n, M=m)
             exp = a + 1.0 if cv > 0.5 else np.full((n, m), 6.0)
             assert np.allclose(out, exp), f"mismatch full={full} c={cv}"
 
 
-K = dace.symbol('K')
+K = dace.symbol("K")
 
 
 @dace.program
@@ -446,13 +457,13 @@ def test_hoist_moves_the_guard_out_of_the_loop_it_is_given_only():
     n, m = 6, 5
     a = rng.random((n, m))
     sdfg = nested_invariant_guard.to_sdfg(simplify=True)
-    (outer, ) = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
-    (inner, ) = [lp for lp in _loops(sdfg) if lp is not outer]
+    (outer,) = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
+    (inner,) = [lp for lp in _loops(sdfg) if lp is not outer]
 
     assert MoveLoopInvariantIfUp.hoist(inner)
 
     sdfg.validate()
-    (cond, ) = _conds(sdfg)
+    (cond,) = _conds(sdfg)
     assert cond.parent_graph is outer
     assert [type(b) for b in cond.branches[0][1].nodes()] == [LoopRegion]
     for av in (1, 0):
@@ -463,14 +474,14 @@ def test_hoist_moves_the_guard_out_of_the_loop_it_is_given_only():
 
 def test_hoist_refuses_a_guard_that_reads_the_loop_variable():
     sdfg = loopvar_guard.to_sdfg(simplify=True)
-    (loop, ) = _loops(sdfg)
+    (loop,) = _loops(sdfg)
     before = sdfg.to_json()
 
     assert not MoveLoopInvariantIfUp.hoist(loop)
     assert sdfg.to_json() == before
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_invariant_symbolic_guard_hoisted_and_e2e()
     test_invariant_data_guard_hoisted_and_e2e()
     test_loopvar_dependent_guard_not_hoisted_and_e2e()

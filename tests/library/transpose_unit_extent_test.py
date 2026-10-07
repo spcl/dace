@@ -12,6 +12,7 @@ here states the leading dimension as the operand's own extent, so a COLUMN of a 
 the wrong memory and answers plausible wrong numbers instead of failing (npbench ``nbody``, whose
 ``pos[:, 0:1]`` is an ``(N, 1)`` view of an ``(N, 3)`` array).
 """
+
 import numpy as np
 import pytest
 
@@ -83,22 +84,24 @@ def test_a_one_element_operand_never_reaches_a_blas_call(implementation):
     expansion -- including the ones this machine cannot build. Expanding to an SDFG rather than a
     CPP tasklet is what says the interception happened."""
     from dace.sdfg.nodes import NestedSDFG
+
     sdfg = build((1, 1), implementation)
     sdfg.expand_library_nodes()
-    assert any(
-        isinstance(n, NestedSDFG)
-        for n, _ in sdfg.all_nodes_recursive()), (f"{implementation} emitted a library call for a one-element operand")
+    assert any(isinstance(n, NestedSDFG) for n, _ in sdfg.all_nodes_recursive()), (
+        f"{implementation} emitted a library call for a one-element operand"
+    )
 
 
 @pytest.mark.parametrize("implementation", ["MKL", "OpenBLAS", "cuBLAS"])
 def test_a_genuine_matrix_still_reaches_the_blas_call(implementation):
     """...and the interception must not swallow the matrices the node exists for."""
     from dace.sdfg.nodes import Tasklet
+
     sdfg = build((4, 3), implementation)
     sdfg.expand_library_nodes()
     assert any(
-        isinstance(n, Tasklet) and n.language == dace.dtypes.Language.CPP
-        for n, _ in sdfg.all_nodes_recursive()), (f"{implementation} lost its library call")
+        isinstance(n, Tasklet) and n.language == dace.dtypes.Language.CPP for n, _ in sdfg.all_nodes_recursive()
+    ), f"{implementation} lost its library call"
 
 
 @pytest.mark.parametrize("implementation", ["MKL", "OpenBLAS", "cuBLAS"])
@@ -107,17 +110,19 @@ def test_a_strided_operand_never_reaches_a_blas_call(implementation):
     a wider array walks the wrong memory and answers plausible wrong numbers rather than failing.
     Expanding to an SDFG rather than a CPP tasklet is what says the interception happened."""
     from dace.sdfg.nodes import NestedSDFG
+
     sdfg = build_strided(implementation)
     sdfg.expand_library_nodes()
-    assert any(
-        isinstance(n, NestedSDFG)
-        for n, _ in sdfg.all_nodes_recursive()), (f"{implementation} emitted a library call for a strided operand")
+    assert any(isinstance(n, NestedSDFG) for n, _ in sdfg.all_nodes_recursive()), (
+        f"{implementation} emitted a library call for a strided operand"
+    )
 
 
 @pytest.mark.parametrize("implementation", ["pure", "OpenBLAS"])
 def test_a_strided_operand_transposes_correctly(implementation):
-    assert implementation != "OpenBLAS" or blas_environments.openblas.OpenBLAS.is_installed(
-    ), "OpenBLAS is not installed"
+    assert implementation != "OpenBLAS" or blas_environments.openblas.OpenBLAS.is_installed(), (
+        "OpenBLAS is not installed"
+    )
     sdfg = build_strided(implementation)
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -130,7 +135,10 @@ def test_a_strided_operand_transposes_correctly(implementation):
 def expansion_maps(sdfg):
     """Every map the expansion built, including the ones inside the nested SDFG it returns."""
     return [
-        node.map for nested in sdfg.all_sdfgs_recursive() for state in nested.states() for node in state.nodes()
+        node.map
+        for nested in sdfg.all_sdfgs_recursive()
+        for state in nested.states()
+        for node in state.nodes()
         if isinstance(node, dace.nodes.MapEntry)
     ]
 
@@ -147,18 +155,20 @@ def test_a_device_resident_operand_expands_to_a_device_map():
 
     maps = expansion_maps(sdfg)
     assert maps, "the element-wise expansion should have built a map"
-    assert all(m.schedule == dace.ScheduleType.GPU_Device for m in maps), \
+    assert all(m.schedule == dace.ScheduleType.GPU_Device for m in maps), (
         f"device-resident operands need a device schedule, got {[m.schedule for m in maps]}"
+    )
 
     # Non-vacuity: the same expansion on host data must NOT be forced onto the device.
     host = build((4, 3), "pure")
     host.expand_library_nodes()
     host_maps = expansion_maps(host)
-    assert all(m.schedule == dace.ScheduleType.Default for m in host_maps), \
+    assert all(m.schedule == dace.ScheduleType.Default for m in host_maps), (
         f"host operands must keep the default schedule, got {[m.schedule for m in host_maps]}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for s in SHAPES:
         test_transpose_pure_handles_a_unit_extent(s)
     for impl in ("MKL", "OpenBLAS", "cuBLAS"):

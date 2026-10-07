@@ -6,6 +6,7 @@ mapped-tasklet expansion, plus cBLAS-backed OpenBLAS / MKL expansions
 and a cuBLAS expansion. The ``_x`` connector is both input and output
 (in-place), matching the cBLAS / cuBLAS in-place signature.
 """
+
 import copy
 from typing import List, TYPE_CHECKING
 import warnings
@@ -19,6 +20,7 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -59,7 +61,6 @@ class ExpandScalPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandScalOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -70,7 +71,7 @@ class ExpandScalOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandScalPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         prefix = func.lower()
@@ -92,17 +93,14 @@ class ExpandScalOpenBLAS(ExpandTransformation):
             cblas_{prefix}scal({n}, ({dtype.ctype})({a}), _res, {stride_res});
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandScalMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -112,7 +110,6 @@ class ExpandScalMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandScalGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -124,7 +121,7 @@ class ExpandScalGPUBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandScalPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         n = n or node.n or sz
@@ -132,17 +129,17 @@ class ExpandScalGPUBLAS(ExpandTransformation):
 
         code = cls.environments[0].handle_setup_code(node)
         code += gpu_dialect.host_scalar_mode(
-            cls.dialect, f"""
+            cls.dialect,
+            f"""
         {dtype.ctype} __alpha = {dtype.ctype}({a});
-        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _x, {stride_x}, _res, {stride_res});
-        {cls.dialect.func(func, 'scal')}({cls.dialect.handle}, {n}, &__alpha, _res, {stride_res});
-        """)
+        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _x, {stride_x}, _res, {stride_res});
+        {cls.dialect.func(func, "scal")}({cls.dialect.handle}, {n}, &__alpha, _res, {stride_res});
+        """,
+        )
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
@@ -208,9 +205,9 @@ class Scal(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.scal')
-@oprepo.replaces('dace.libraries.blas.Scal')
-def scal_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, result=None):
+@oprepo.replaces("dace.libraries.blas.scal")
+@oprepo.replaces("dace.libraries.blas.Scal")
+def scal_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, a, x, result=None):
     """Build a :class:`Scal` library node and wire it into ``state``.
 
     :param a: Scalar multiplier.
@@ -220,8 +217,8 @@ def scal_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, resul
     result = result if result is not None else x
     x_in = state.add_read(x)
     res_out = state.add_write(result)
-    libnode = Scal('scal', a=a, n=sdfg.arrays[x].shape[0])
+    libnode = Scal("scal", a=a, n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(libnode, '_res', res_out, None, mm.Memlet(result))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(libnode, "_res", res_out, None, mm.Memlet(result))
     return []

@@ -8,6 +8,7 @@ assertion below (a ``Scan`` node is actually in the graph) is the one that pins 
 loop-lowered scan would satisfy the numeric ones just as well and hand the GPU backend the shape
 only the CPU wants.
 """
+
 import numpy as np
 import pytest
 
@@ -131,7 +132,7 @@ def test_an_axis_less_scan_over_a_matrix_is_refused():
         prog_an_axis_less_scan_over_a_matrix_is_refused.to_sdfg()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cumsum_1d()
     test_cumprod_1d()
     test_cumsum_last_axis()

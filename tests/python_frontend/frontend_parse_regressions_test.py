@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Regression tests for crashes in the Python frontend parse path. """
+"""Regression tests for crashes in the Python frontend parse path."""
+
 import numpy as np
 import pytest
 
 import dace
 from dace.frontend.python.common import DaceSyntaxError
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 @dace.program
@@ -34,9 +35,9 @@ def symbolic_ifexp(x: dace.float64[10]):
 
 
 def test_symbolic_equality_in_boolop():
-    """ A boolean operation over symbolic equalities used to raise ``TypeError: 'Equality' object is not
-        iterable`` while preprocessing, because the equality rewriter returned a sympy object where the AST
-        transformer contract requires an AST node. """
+    """A boolean operation over symbolic equalities used to raise ``TypeError: 'Equality' object is not
+    iterable`` while preprocessing, because the equality rewriter returned a sympy object where the AST
+    transformer contract requires an AST node."""
     for n, expected in ((0, 1.0), (1, 1.0), (5, 2.0)):
         x = np.zeros(10, dtype=np.float64)
         symbolic_or(x, N=n)
@@ -72,9 +73,9 @@ def symbolic_index_list(x: dace.float64[10], out: dace.float64[2]):
 
 
 def test_computed_index():
-    """ Indexing with a computed index used to raise ``AttributeError: 'str' object has no attribute
-        '_fields'``: the name returned by the replacement was mistaken for a list literal, i.e., for
-        advanced indexing. """
+    """Indexing with a computed index used to raise ``AttributeError: 'str' object has no attribute
+    '_fields'``: the name returned by the replacement was mistaken for a list literal, i.e., for
+    advanced indexing."""
     p = np.arange(10, dtype=np.float64) * 1.5
     cols = np.array([4, 0, 9, 2, 7], dtype=np.int64)
     out = np.zeros(5, dtype=np.float64)
@@ -85,7 +86,7 @@ def test_computed_index():
 
 
 def test_literal_index_list():
-    """ A list literal index with plain numbers keeps working as advanced indexing. """
+    """A list literal index with plain numbers keeps working as advanced indexing."""
     x = np.arange(10, dtype=np.float64)
     out = np.zeros(3, dtype=np.float64)
 
@@ -95,14 +96,14 @@ def test_literal_index_list():
 
 
 def test_symbolic_index_list():
-    """ A list literal index with a symbolic element cannot be turned into a constant index array. It used
-        to raise ``AttributeError: 'symbol' object has no attribute '_fields'`` from CPython's ast module,
-        and now names the offending element and the source line. """
-    with pytest.raises(DaceSyntaxError, match='is not an integer known at parse time'):
+    """A list literal index with a symbolic element cannot be turned into a constant index array. It used
+    to raise ``AttributeError: 'symbol' object has no attribute '_fields'`` from CPython's ast module,
+    and now names the offending element and the source line."""
+    with pytest.raises(DaceSyntaxError, match="is not an integer known at parse time"):
         symbolic_index_list.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symbolic_equality_in_boolop()
     test_computed_index()
     test_literal_index_list()

@@ -26,7 +26,6 @@ class ExpandPotrfPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandPotrfOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -41,17 +40,14 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
         n = n or node.n
         uplo = "'L'" if node.lower else "'U'"
         code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, {cast}_xin, {stride_x});"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandPotrfMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -78,7 +74,7 @@ class ExpandPotrfGPUSolver(ExpandTransformation):
         veclen = desc_x.dtype.veclen
 
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
-        func = func + 'potrf'
+        func = func + "potrf"
 
         n = n or node.n
         if veclen != 1:
@@ -87,13 +83,11 @@ class ExpandPotrfGPUSolver(ExpandTransformation):
 
         code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, uplo, rows_x, stride_x)
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dace.int32) if c == "_res" else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
 
         return tasklet
@@ -145,22 +139,21 @@ class ExpandPotrfRocSolver(ExpandPotrfGPUSolver):
 
 @dace.library.node
 class Potrf(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "OpenBLAS": ExpandPotrfOpenBLAS,
         "MKL": ExpandPotrfMKL,
         "cuSolverDn": ExpandPotrfCuSolverDn,
-        "rocSOLVER": ExpandPotrfRocSolver
+        "rocSOLVER": ExpandPotrfRocSolver,
     }
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
-    lower = dace.properties.Property(dtype=bool, default=True, category='Semantics')
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
+    lower = dace.properties.Property(dtype=bool, default=True, category="Semantics")
 
     def __init__(self, name, lower=True, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(('_xout', '_res')), **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs=OrderedSet(("_xout", "_res")), **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):

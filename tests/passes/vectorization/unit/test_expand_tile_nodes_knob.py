@@ -24,7 +24,8 @@ from dace.libraries.tileops import TileBinop, TileGather, TileMaskGen, TileReduc
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim, )
+    VectorizeCPUMultiDim,
+)
 
 TILE_LIB_NODE_TYPES = (
     TileBinop,
@@ -61,7 +62,8 @@ def _vectorize(sdfg: dace.SDFG, *, expand_tile_nodes: bool) -> None:
             remainder_strategy=RemainderStrategy.FULL_MASK,
             branch_mode=BranchMode.MERGE,
             expand_tile_nodes=expand_tile_nodes,
-        )).apply_pass(sdfg, {})
+        )
+    ).apply_pass(sdfg, {})
 
 
 def test_expand_tile_nodes_true_leaves_no_tile_lib_nodes():
@@ -72,8 +74,9 @@ def test_expand_tile_nodes_true_leaves_no_tile_lib_nodes():
     sdfg.validate()
     _vectorize(sdfg, expand_tile_nodes=True)
     sdfg.validate()
-    assert _count_tile_lib_nodes(sdfg) == 0, (f"with expand_tile_nodes=True every Tile* lib node must be lowered; "
-                                              f"found {_count_tile_lib_nodes(sdfg)}")
+    assert _count_tile_lib_nodes(sdfg) == 0, (
+        f"with expand_tile_nodes=True every Tile* lib node must be lowered; found {_count_tile_lib_nodes(sdfg)}"
+    )
 
 
 def test_expand_tile_nodes_false_preserves_tile_lib_nodes():
@@ -85,14 +88,14 @@ def test_expand_tile_nodes_false_preserves_tile_lib_nodes():
     _vectorize(sdfg, expand_tile_nodes=False)
     sdfg.validate()
     n_tile = _count_tile_lib_nodes(sdfg)
-    assert n_tile > 0, (f"with expand_tile_nodes=False at least one Tile* lib node must "
-                        f"survive; found {n_tile}")
+    assert n_tile > 0, f"with expand_tile_nodes=False at least one Tile* lib node must survive; found {n_tile}"
 
     # Explicit expansion by the caller still works and reduces the count to 0.
     sdfg.expand_library_nodes()
     sdfg.validate()
-    assert _count_tile_lib_nodes(sdfg) == 0, ("manual sdfg.expand_library_nodes() after deferred return must "
-                                              "lower every Tile* lib node")
+    assert _count_tile_lib_nodes(sdfg) == 0, (
+        "manual sdfg.expand_library_nodes() after deferred return must lower every Tile* lib node"
+    )
 
 
 if __name__ == "__main__":

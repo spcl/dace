@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Maps that only LAUNCH work stay on the host; their bodies become the kernels.
 ICON's shape: an ``nblks`` map over one nested SDFG of ``nproma``/``nlev`` maps."""
+
 from typing import Dict, Optional
 
 from dace.ordered import OrderedSet
@@ -158,11 +159,13 @@ def body_has_more_threads(entry: nodes.MapEntry, scope_children: dict) -> bool:
     return max(inside) >= outside
 
 
-def is_taskloop_map(state: SDFGState,
-                    entry: nodes.MapEntry,
-                    scope_children: dict,
-                    launch_only: bool = True,
-                    overrides: Optional[Dict[str, bool]] = None) -> bool:
+def is_taskloop_map(
+    state: SDFGState,
+    entry: nodes.MapEntry,
+    scope_children: dict,
+    launch_only: bool = True,
+    overrides: Optional[Dict[str, bool]] = None,
+) -> bool:
     """``entry`` launches work rather than doing it, so it belongs on the host.
 
     ``overrides`` is the caller's answer for a map, by label, and it is final in BOTH directions: a
@@ -204,7 +207,8 @@ def taskloop_maps(sdfg: SDFG, launch_only: bool = True, overrides: Optional[Dict
         for state in nested.states():
             scope_children = state.scope_children()
             for node in state.nodes():
-                if isinstance(node, nodes.MapEntry) and is_taskloop_map(state, node, scope_children, launch_only,
-                                                                        overrides):
+                if isinstance(node, nodes.MapEntry) and is_taskloop_map(
+                    state, node, scope_children, launch_only, overrides
+                ):
                     found.add(node)
     return found

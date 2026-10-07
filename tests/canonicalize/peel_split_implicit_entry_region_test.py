@@ -13,14 +13,15 @@ The loop here is the SECOND block of its enclosing loop body (a ``c[j] = 0.0`` s
 the body region's entry is that state, implicit and unpinned -- the shape a Fortran-frontend nest hits
 constantly. Splitting must neither ask an unanswerable question nor disturb the entry.
 """
+
 import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
 
-M = dace.symbol('M', nonnegative=True)
-N = dace.symbol('N', nonnegative=True)
+M = dace.symbol("M", nonnegative=True)
+N = dace.symbol("N", nonnegative=True)
 
 
 @dace.program
@@ -48,7 +49,7 @@ def _loops(sdfg):
 
 
 def _inner_loop(sdfg) -> LoopRegion:
-    inner = [loop for loop in _loops(sdfg) if loop.loop_variable == 'i']
+    inner = [loop for loop in _loops(sdfg) if loop.loop_variable == "i"]
     assert len(inner) == 1
     return inner[0]
 
@@ -60,8 +61,8 @@ def test_the_split_target_sits_in_a_region_whose_entry_is_implicit():
     parent = _inner_loop(sdfg).parent_graph
     # Read directly: ``start_block`` answers from the single source block either way, so the
     # unpinned state -- the thing that makes the entry underivable mid-surgery -- is only visible here.
-    assert parent._start_block is None, 'expected an unpinned (implicit) region entry'
-    assert parent.start_block is not _inner_loop(sdfg), 'the split target must not be the region entry'
+    assert parent._start_block is None, "expected an unpinned (implicit) region entry"
+    assert parent.start_block is not _inner_loop(sdfg), "the split target must not be the region entry"
 
 
 def test_split_at_keeps_the_region_entry_and_does_not_ask_an_ambiguous_question():
@@ -72,10 +73,10 @@ def test_split_at_keeps_the_region_entry_and_does_not_ask_an_ambiguous_question(
     entry_before = parent.start_block
     peel = BestEffortLoopPeeling(peel_limit=4)
     found = peel._best_split_for(loop, sdfg)
-    assert found is not None, 'expected an index-set split point for the guarded inner loop'
+    assert found is not None, "expected an index-set split point for the guarded inner loop"
     x, middle_singleton, _guarded = found
     assert peel._split_loop_at(sdfg, loop, x, middle_singleton=middle_singleton)
-    assert parent.start_block is entry_before, 'the split must not move the region entry'
+    assert parent.start_block is entry_before, "the split must not move the region entry"
     sdfg.validate()
 
 
@@ -84,8 +85,8 @@ def test_apply_pass_splits_the_nested_loop():
     sdfg = guarded_inner.to_sdfg(simplify=True)
     BestEffortLoopPeeling(peel_limit=4).apply_pass(sdfg, {})
     sdfg.validate()
-    inner = [loop for loop in _loops(sdfg) if loop.loop_variable == 'i']
-    assert len(inner) > 1, f'the inner loop must be split into segments, got {[l.label for l in inner]}'
+    inner = [loop for loop in _loops(sdfg) if loop.loop_variable == "i"]
+    assert len(inner) > 1, f"the inner loop must be split into segments, got {[l.label for l in inner]}"
 
 
 def test_split_form_is_bit_exact_against_the_sequential_reference():
@@ -101,13 +102,13 @@ def test_split_form_is_bit_exact_against_the_sequential_reference():
 
     got_a, got_c = a0.copy(), np.zeros(m)
     sdfg.compile()(a=got_a, b=b.copy(), c=got_c, M=m, N=n)
-    assert np.array_equal(got_a, ref_a), 'split form must match the sequential meaning'
-    assert np.array_equal(got_c, ref_c), 'split form must match the sequential meaning'
+    assert np.array_equal(got_a, ref_a), "split form must match the sequential meaning"
+    assert np.array_equal(got_c, ref_c), "split form must match the sequential meaning"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_split_target_sits_in_a_region_whose_entry_is_implicit()
     test_split_at_keeps_the_region_entry_and_does_not_ask_an_ambiguous_question()
     test_apply_pass_splits_the_nested_loop()
     test_split_form_is_bit_exact_against_the_sequential_reference()
-    print('OK')
+    print("OK")

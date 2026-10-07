@@ -7,6 +7,7 @@ block as one phase and does NOT recurse -- a ``LoopRegion``/``ConditionalBlock``
 happens only at phase boundaries), so any MPI op in a phase communicates in that phase's one layout.
 Sub-phasing (splitting a loop into several layout phases) is a deferred TODO.
 """
+
 from dataclasses import dataclass
 from typing import List
 
@@ -17,6 +18,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock
 @dataclass
 class Phase:
     """One top-level control-flow block treated as an opaque layout phase."""
+
     block: ControlFlowBlock
     index: int
 

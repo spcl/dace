@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Applies a chosen global layout assignment (one layout trajectory per array) across the line graph, inserting LayoutChange conversions at segment boundaries. v1 handles Permute trajectories only."""
+
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -10,14 +11,19 @@ from dace.libraries.layout import add_layout_change
 from dace.libraries.layout.algebra import Permute, simplify_ops
 from dace.sdfg import nodes
 from dace.transformation.layout.line_graph import KernelState, check_kernel_per_state, loop_spans
-from dace.transformation.layout.permute_dimensions import (note_copy_side, retranspose_copies,
-                                                           rewrite_state_for_permute, spanned_dims)
+from dace.transformation.layout.permute_dimensions import (
+    note_copy_side,
+    retranspose_copies,
+    rewrite_state_for_permute,
+    spanned_dims,
+)
 from dace.sdfg.narrowing import as_basic
 
 
 @dataclass(frozen=True)
 class Layout:
     """One layout in a trajectory: a stable tag plus the op sequence from packed-C identity."""
+
     tag: str
     ops: Tuple = ()
 
@@ -34,8 +40,10 @@ def composed_permutation(ops, ndim: int) -> List[int]:
     perm = list(range(ndim))
     for op in ops:
         if not isinstance(op, Permute):
-            raise NotImplementedError(f"apply_assignment: v1 applies Permute trajectories only, got "
-                                      f"{type(op).__name__} (blocked trajectories are deferred)")
+            raise NotImplementedError(
+                f"apply_assignment: v1 applies Permute trajectories only, got "
+                f"{type(op).__name__} (blocked trajectories are deferred)"
+            )
         if len(op.perm) != ndim:
             raise ValueError(f"apply_assignment: Permute{op.perm} does not match rank {ndim}")
         perm = [perm[op.perm[i]] for i in range(ndim)]
@@ -48,9 +56,11 @@ def segments_of(trajectory: List[Layout]) -> List[Tuple[int, int, Layout]]:
     ops_of: Dict[str, Tuple] = {}
     for layout in trajectory:
         if ops_of.setdefault(layout.tag, layout.ops) != layout.ops:
-            raise ValueError(f"segments_of: layout tag '{layout.tag}' is used for two different op "
-                             f"sequences ({ops_of[layout.tag]} and {layout.ops}); a tag must identify its "
-                             f"ops, otherwise the segment grouping silently drops one of them")
+            raise ValueError(
+                f"segments_of: layout tag '{layout.tag}' is used for two different op "
+                f"sequences ({ops_of[layout.tag]} and {layout.ops}); a tag must identify its "
+                f"ops, otherwise the segment grouping silently drops one of them"
+            )
     segments = []
     start = 0
     for k in range(1, len(trajectory) + 1):
@@ -77,8 +87,11 @@ def covers_dimension(begin, end, step, extent) -> bool:
     # `end` is reparsed from a memlet/loop string while `extent` carries the descriptor's declared
     # assumptions, so the same name arrives as two sympy instances that never cancel.
     hi, size = dace.symbolic.equalize_symbols_across(end, extent)
-    return (dace.symbolic.simplify(begin) == 0 and dace.symbolic.simplify(step - 1) == 0
-            and dace.symbolic.simplify(hi - (size - 1)) == 0)
+    return (
+        dace.symbolic.simplify(begin) == 0
+        and dace.symbolic.simplify(step - 1) == 0
+        and dace.symbolic.simplify(hi - (size - 1)) == 0
+    )
 
 
 def covers_full_array(memlet, desc) -> bool:
@@ -109,8 +122,13 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
     for leaf in state.memlet_tree(edges_in[0]).leaves():
         memlet = leaf.data
         # `dynamic` means the write is conditional, so it proves nothing about coverage
-        if (memlet is None or memlet.wcr is not None or memlet.dynamic
-                or not isinstance(memlet.subset, dace.subsets.Range) or len(memlet.subset.ranges) != len(desc.shape)):
+        if (
+            memlet is None
+            or memlet.wcr is not None
+            or memlet.dynamic
+            or not isinstance(memlet.subset, dace.subsets.Range)
+            or len(memlet.subset.ranges) != len(desc.shape)
+        ):
             continue
         used = set()
         proven = True
@@ -127,8 +145,11 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
             used.add(param)
             range_begin, range_end, range_step = param_ranges[param]
             hi, size = dace.symbolic.equalize_symbols_across(range_end, desc.shape[d])
-            if (dace.symbolic.simplify(range_begin) != 0 or dace.symbolic.simplify(range_step - 1) != 0
-                    or dace.symbolic.simplify(hi - (size - 1)) != 0):
+            if (
+                dace.symbolic.simplify(range_begin) != 0
+                or dace.symbolic.simplify(range_step - 1) != 0
+                or dace.symbolic.simplify(hi - (size - 1)) != 0
+            ):
                 proven = False
                 break
         if proven and not used:
@@ -136,7 +157,8 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
             # true only if the map body actually runs. An empty map writes nothing.
             proven = all(
                 as_basic(dace.symbolic.simplify(end - begin)).is_nonnegative is True
-                for begin, end, _ in exit_node.map.range.ranges)
+                for begin, end, _ in exit_node.map.range.ranges
+            )
         if proven:
             return True
     return False
@@ -148,21 +170,25 @@ def refuse_interstate_references(sdfg: SDFG, arrays) -> None:
         text = "; ".join([f"{k} = {v}" for k, v in edge.data.assignments.items()] + [edge.data.condition.as_string])
         for array in arrays:
             if re.search(rf"\b{re.escape(array)}\b", text):
-                raise NotImplementedError(f"apply_assignment: interstate edge references array "
-                                          f"'{array}' ({text!r}); the v1 segment rewrite does not "
-                                          f"cover interstate edges")
+                raise NotImplementedError(
+                    f"apply_assignment: interstate edge references array "
+                    f"'{array}' ({text!r}); the v1 segment rewrite does not "
+                    f"cover interstate edges"
+                )
 
 
 @dataclass
 class AppliedAssignment:
     """What the application did: per array its segment names, plus the inserted conversion states."""
+
     segment_names: Dict[str, List[str]]
     boundary_states: List[dace.SDFGState]
     exit_state: Optional[dace.SDFGState]
 
 
-def apply_region_layout(sdfg: SDFG, kernels: List[KernelState], region_layouts: Dict[str, Layout],
-                        region: Tuple[int, int]) -> AppliedAssignment:
+def apply_region_layout(
+    sdfg: SDFG, kernels: List[KernelState], region_layouts: Dict[str, Layout], region: Tuple[int, int]
+) -> AppliedAssignment:
     """Apply a layout to arrays ONLY within a top-level region, restoring the original layout at its end.
 
     A region is a contiguous line ``[start, end)`` of top-level kernels. Each array in ``region_layouts``
@@ -182,8 +208,10 @@ def apply_region_layout(sdfg: SDFG, kernels: List[KernelState], region_layouts: 
         raise ValueError(f"apply_region_layout: region [{start}, {end}) out of range for {n} kernels")
     for s, e in loop_spans(kernels):
         if s < start < e or s < end < e:
-            raise ValueError(f"apply_region_layout: region [{start}, {end}) splits loop span [{s}, {e}); "
-                             f"a region must contain whole loops so the relayout lands at the top level")
+            raise ValueError(
+                f"apply_region_layout: region [{start}, {end}) splits loop span [{s}, {e}); "
+                f"a region must contain whole loops so the relayout lands at the top level"
+            )
     assignment = {
         array: [IDENTITY_LAYOUT] * start + [layout] * (end - start) + [IDENTITY_LAYOUT] * (n - end)
         for array, layout in region_layouts.items()
@@ -199,8 +227,9 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         if array not in sdfg.arrays:
             raise ValueError(f"apply_assignment: unknown array '{array}'")
         if len(trajectory) != len(kernels):
-            raise ValueError(f"apply_assignment: trajectory for '{array}' has {len(trajectory)} "
-                             f"entries for {len(kernels)} kernels")
+            raise ValueError(
+                f"apply_assignment: trajectory for '{array}' has {len(trajectory)} entries for {len(kernels)} kernels"
+            )
 
     # Body-uniform guard: a loop span must carry one layout (its back-edge would otherwise feed the wrong
     # layout into the next iteration -- a silent miscompile). Refuse loudly instead of applying an unsound plan.
@@ -212,7 +241,8 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                 raise NotImplementedError(
                     f"apply_assignment: array '{array}' changes layout {span_tags} inside the loop body "
                     f"spanning kernels [{start},{end}); the body-uniform model needs one layout per loop span "
-                    f"-- solve with per_array_dp(..., locked_before=locked_transitions(kernels)).")
+                    f"-- solve with per_array_dp(..., locked_before=locked_transitions(kernels))."
+                )
 
     # Plan first (liveness reads pre-rewrite state), then rewrite, then insert conversions.
     # boundary_changes[kernel_index] = {in_name: (out_name, delta_ops)}
@@ -229,8 +259,11 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
 
         # A read-only array keeps its original buffer valid throughout: clones derive from it and identity
         # segments alias it, so no restore transpose is needed. Only a written array advances live_name.
-        read_only = not any(node.data == array and kernels[k].state.in_degree(node) > 0 for k in range(len(kernels))
-                            for node in kernels[k].state.data_nodes())
+        read_only = not any(
+            node.data == array and kernels[k].state.in_degree(node) > 0
+            for k in range(len(kernels))
+            for node in kernels[k].state.data_nodes()
+        )
 
         # Walk segments carrying the LIVE holder: untouched stay unmaterialized, aliasing segments
         # skip conversion, others materialize a holder and chain entry conversion from it.
@@ -251,13 +284,15 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                 ops = list(seg_layout.ops)
                 if not seg_layout.is_identity:
                     perm = composed_permutation(ops, ndim)
-                    sdfg.add_array(name=name,
-                                   shape=[desc.shape[perm[i]] for i in range(ndim)],
-                                   dtype=desc.dtype,
-                                   storage=desc.storage,
-                                   transient=True,
-                                   lifetime=desc.lifetime,
-                                   find_new_name=False)
+                    sdfg.add_array(
+                        name=name,
+                        shape=[desc.shape[perm[i]] for i in range(ndim)],
+                        dtype=desc.dtype,
+                        storage=desc.storage,
+                        transient=True,
+                        lifetime=desc.lifetime,
+                        find_new_name=False,
+                    )
                 # Entry conversion skipped only on proof the first touch fully produces the array before any read.
                 first_touch = kernels[touched[0]].state
                 if reads_before_write(first_touch, array) or not writes_cover_array(first_touch, array):
@@ -272,9 +307,14 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                     rewrites.append((k, array, name, perm))
         segment_names[array] = [holder_name for holder_name, _ in holders]
 
-        last_write = max((k.index for k in kernels if any(node.data == array and k.state.in_degree(node) > 0
-                                                          for node in k.state.data_nodes())),
-                         default=None)
+        last_write = max(
+            (
+                k.index
+                for k in kernels
+                if any(node.data == array and k.state.in_degree(node) > 0 for node in k.state.data_nodes())
+            ),
+            default=None,
+        )
 
         # Exit conversion needed iff the last write landed in a clone and no later entry restored the original.
         if last_write is not None and not desc.transient:
@@ -293,17 +333,20 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 # A spanning edge would hand the nested SDFG a stale dimension order; refuse (unit-element edges are fine).
-                carried = sorted({
-                    e.data.data
-                    for e in state.all_edges(node)
-                    if e.data is not None and e.data.data in arrays_here and spanned_dims(e.data) > 0
-                })
+                carried = sorted(
+                    {
+                        e.data.data
+                        for e in state.all_edges(node)
+                        if e.data is not None and e.data.data in arrays_here and spanned_dims(e.data) > 0
+                    }
+                )
                 if carried:
                     raise NotImplementedError(
                         f"apply_assignment: kernel state '{state.label}' passes reassigned "
                         f"array(s) {carried} into a NestedSDFG through a spanning memlet; the v1 "
                         f"segment rewrite does not recurse into nested SDFGs (deferred) -- expand "
-                        f"the nest first or drop the array from the assignment.")
+                        f"the nest first or drop the array from the assignment."
+                    )
         # A copy with one relaid operand becomes transposing (PermuteDimensions converts it to TensorTranspose).
         # Sides merge across this state's rewrites so a copy with both operands reassigned sees both.
         sides: Dict = {}
@@ -321,14 +364,14 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         loop = kernels[kernel_index].loop
         if loop is None:
             target = kernels[kernel_index].state
-            boundary = sdfg.add_state_before(target,
-                                             label=f"relayout_before_{target.label}",
-                                             is_start_block=(sdfg.start_block is target))
+            boundary = sdfg.add_state_before(
+                target, label=f"relayout_before_{target.label}", is_start_block=(sdfg.start_block is target)
+            )
         else:
             parent = loop.parent_graph
-            boundary = parent.add_state_before(loop,
-                                               label=f"relayout_before_{loop.label}",
-                                               is_start_block=(parent.start_block is loop))
+            boundary = parent.add_state_before(
+                loop, label=f"relayout_before_{loop.label}", is_start_block=(parent.start_block is loop)
+            )
         for in_name in sorted(boundary_changes[kernel_index]):
             out_name, delta = boundary_changes[kernel_index][in_name]
             add_layout_change(sdfg, boundary, in_name, out_name, delta, create_output=False)

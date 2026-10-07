@@ -31,6 +31,7 @@ into a per-distinct-subset scalar fan-out:
 body disqualifies the whole Map -- the read / write classifier would have
 to descend into opaque dataflow that the per-subset rewrite does not model.
 """
+
 import copy
 from typing import Any, List, Type, Union
 
@@ -42,10 +43,12 @@ from dace.memlet import Memlet
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                            no_duplicate_connector_edges,
-                                                                            no_isolated_access_nodes,
-                                                                            no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (
+    assert_invariant,
+    no_duplicate_connector_edges,
+    no_isolated_access_nodes,
+    no_memlet_dim_mismatch,
+)
 
 #: Storage type used for the staged scalars (kept in registers, never spilled).
 _STAGED_SCALAR_STORAGE = dtypes.StorageType.Register
@@ -104,7 +107,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         return str(s).strip()
 
     @staticmethod
-    def _enclosing_map_chain(state: 'dace.SDFGState', node: dace.nodes.Node) -> list[dace.nodes.MapEntry]:
+    def _enclosing_map_chain(state: "dace.SDFGState", node: dace.nodes.Node) -> list[dace.nodes.MapEntry]:
         # Walk every enclosing ``MapEntry`` from innermost to outermost.
         chain: list[dace.nodes.MapEntry] = []
         cur = state.entry_node(node)
@@ -123,7 +126,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             return False
         return True
 
-    def _eligible_map_bodies(self, state: 'dace.SDFGState') -> dict[dace.nodes.MapEntry, list[dace.nodes.Node]]:
+    def _eligible_map_bodies(self, state: "dace.SDFGState") -> dict[dace.nodes.MapEntry, list[dace.nodes.Node]]:
         # Build ``MapEntry -> body-node-list`` for every Map whose body is composed only of tasklets and access nodes.
         eligible: dict[dace.nodes.MapEntry, list[dace.nodes.Node]] = {}
         for entry in state.nodes():
@@ -154,8 +157,9 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         return True
 
     @classmethod
-    def _downstream_same_subset_write(cls, state: 'dace.SDFGState', bridge: dace.nodes.AccessNode, array_name: str,
-                                      subset_key: str) -> bool:
+    def _downstream_same_subset_write(
+        cls, state: "dace.SDFGState", bridge: dace.nodes.AccessNode, array_name: str, subset_key: str
+    ) -> bool:
         # True iff a LATER access node of ``array_name`` in this state rewrites ``subset_key``.
         seen = {bridge}
         stack = [e.dst for e in state.out_edges(bridge)]
@@ -164,16 +168,22 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             if node in seen or isinstance(node, dace.nodes.ExitNode):
                 continue
             seen.add(node)
-            if isinstance(node, dace.nodes.AccessNode) and node.data == array_name and any(
+            if (
+                isinstance(node, dace.nodes.AccessNode)
+                and node.data == array_name
+                and any(
                     not (isinstance(e.src, dace.nodes.AccessNode) and e.src.data == array_name)
                     and cls._subset_key(cls._array_side_subset(e, array_name)) == subset_key
-                    for e in state.in_edges(node)):
+                    for e in state.in_edges(node)
+                )
+            ):
                 return True
             stack.extend(e.dst for e in state.out_edges(node))
         return False
 
-    def _find_outer_drain(self, state: 'dace.SDFGState', bridge: dace.nodes.AccessNode,
-                          outermost_exit: dace.nodes.MapExit | None) -> dace.nodes.AccessNode | None:
+    def _find_outer_drain(
+        self, state: "dace.SDFGState", bridge: dace.nodes.AccessNode, outermost_exit: dace.nodes.MapExit | None
+    ) -> dace.nodes.AccessNode | None:
         # Locate the outer ``AccessNode`` the bridge currently drains into.
         array_name = bridge.data
         if outermost_exit is not None:
@@ -187,9 +197,13 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             return n
         return None
 
-    def _find_outer_source(self, state: 'dace.SDFGState', bridge: dace.nodes.AccessNode,
-                           outermost_entry: dace.nodes.MapEntry | None,
-                           outer_drain: dace.nodes.AccessNode | None) -> dace.nodes.AccessNode:
+    def _find_outer_source(
+        self,
+        state: "dace.SDFGState",
+        bridge: dace.nodes.AccessNode,
+        outermost_entry: dace.nodes.MapEntry | None,
+        outer_drain: dace.nodes.AccessNode | None,
+    ) -> dace.nodes.AccessNode:
         # Locate the outer ``AccessNode`` to source read-only subsets from.
         array_name = bridge.data
         if outermost_entry is not None:
@@ -210,7 +224,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         return f"stage_{array_name}_{tag}"
 
     @staticmethod
-    def _read_in_other_state(state: 'dace.SDFGState', array_name: str) -> bool:
+    def _read_in_other_state(state: "dace.SDFGState", array_name: str) -> bool:
         # Whether ``array_name`` is read by a tasklet in a body state other than ``state``.
         for other in state.sdfg.states():
             if other is state:
@@ -224,7 +238,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
 
     # Collection
     def _collect_occurrences(
-        self, state: 'dace.SDFGState'
+        self, state: "dace.SDFGState"
     ) -> list[tuple[dace.nodes.AccessNode, list[MultiConnectorEdge[Memlet]], list[MultiConnectorEdge[Memlet]]]]:
         # Enumerate every stageable bridge in ``state``.
         sdfg = state.sdfg
@@ -250,12 +264,18 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             # the body filter on producer / consumer tasklets is ``None ==
             # None`` instead of matching a real entry node.
             producers = [
-                e for e in state.in_edges(node) if isinstance(e.src, dace.nodes.Tasklet)
-                and body_owner.get(e.src) is owning_entry and self._carries_data_read(e, node.data)
+                e
+                for e in state.in_edges(node)
+                if isinstance(e.src, dace.nodes.Tasklet)
+                and body_owner.get(e.src) is owning_entry
+                and self._carries_data_read(e, node.data)
             ]
             consumers = [
-                e for e in state.out_edges(node) if isinstance(e.dst, dace.nodes.Tasklet)
-                and body_owner.get(e.dst) is owning_entry and self._carries_data_read(e, node.data)
+                e
+                for e in state.out_edges(node)
+                if isinstance(e.dst, dace.nodes.Tasklet)
+                and body_owner.get(e.dst) is owning_entry
+                and self._carries_data_read(e, node.data)
             ]
             # A write is required, a consumer is not. Stage a pure-writer bridge only at a real serialization
             # point: in a top-level Map body, >= 2 distinct write subsets (cloudsc ``zsolqa``); in an
@@ -277,8 +297,14 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         return occurrences
 
     # Rewrite
-    def _apply_multi(self, sdfg: SDFG, state: 'dace.SDFGState', bridge: dace.nodes.AccessNode,
-                     producers: list[MultiConnectorEdge[Memlet]], consumers: list[MultiConnectorEdge[Memlet]]) -> bool:
+    def _apply_multi(
+        self,
+        sdfg: SDFG,
+        state: "dace.SDFGState",
+        bridge: dace.nodes.AccessNode,
+        producers: list[MultiConnectorEdge[Memlet]],
+        consumers: list[MultiConnectorEdge[Memlet]],
+    ) -> bool:
         # Replace the bridge with one scalar per distinct subset plus dep edges.
         array_name = bridge.data
         dtype = sdfg.arrays[array_name].dtype
@@ -322,11 +348,13 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         scalar_nodes: dict[str, dace.nodes.AccessNode] = {}
         for idx, k in enumerate(sorted(write_keys | read_keys)):
             tag = "rmw" if k in shared_keys else ("w" if k in write_keys else "r")
-            name, _ = sdfg.add_scalar(self._scalar_basename(array_name, f"{tag}{idx}"),
-                                      dtype,
-                                      storage=_STAGED_SCALAR_STORAGE,
-                                      transient=True,
-                                      find_new_name=True)
+            name, _ = sdfg.add_scalar(
+                self._scalar_basename(array_name, f"{tag}{idx}"),
+                dtype,
+                storage=_STAGED_SCALAR_STORAGE,
+                transient=True,
+                find_new_name=True,
+            )
             scalar_nodes[k] = state.add_access(name)
 
         # Apply all mutations at once so no stranded node confuses the scope walker. Edges are added
@@ -366,26 +394,31 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             # writer of the same element. Inert for the distinct-subset fan-out (zsolqa), where no
             # write subset is ever rewritten downstream.
             for k in sorted(write_keys - superseded_keys):
-                self._add_scoped_path(state,
-                                      src=scalar_nodes[k],
-                                      scope_nodes=exits,
-                                      dst=outer_drain,
-                                      array_name=array_name,
-                                      subset=writes_by_key[k]["subset"])
+                self._add_scoped_path(
+                    state,
+                    src=scalar_nodes[k],
+                    scope_nodes=exits,
+                    dst=outer_drain,
+                    array_name=array_name,
+                    subset=writes_by_key[k]["subset"],
+                )
 
             for k in sorted(read_only_keys):
-                self._add_scoped_path(state,
-                                      src=outer_source,
-                                      scope_nodes=list(reversed(entries)),
-                                      dst=scalar_nodes[k],
-                                      array_name=array_name,
-                                      subset=reads_by_key[k]["subset"])
+                self._add_scoped_path(
+                    state,
+                    src=outer_source,
+                    scope_nodes=list(reversed(entries)),
+                    dst=scalar_nodes[k],
+                    array_name=array_name,
+                    subset=reads_by_key[k]["subset"],
+                )
         elif bridge_is_out_connector:
             # Out-connector path: one ``scalar -> bridge`` edge per write key, except subsets a later AN
             # rewrites: in an RMW chain (cloudsc_four ``zqlhs``) only the final hop publishes, or partial sums race.
             for k in sorted(write_keys - superseded_keys):
-                state.add_edge(scalar_nodes[k], None, bridge, None,
-                               Memlet(data=array_name, subset=writes_by_key[k]["subset"]))
+                state.add_edge(
+                    scalar_nodes[k], None, bridge, None, Memlet(data=array_name, subset=writes_by_key[k]["subset"])
+                )
             # A bridge whose every write is superseded published nothing, so the keep-alive below
             # must not spare it -- it is now an ordinary detached bridge and has to be dropped like
             # any other (an isolated access node fails ``no_isolated_access_nodes``).
@@ -395,8 +428,9 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             # A read-only subset still needs a source; in the flat case read it back from the bridge, as the
             # original edge did (else TSVC s353 read uninitialized storage).
             for k in sorted(read_only_keys):
-                state.add_edge(bridge, None, scalar_nodes[k], None,
-                               Memlet(data=array_name, subset=reads_by_key[k]["subset"]))
+                state.add_edge(
+                    bridge, None, scalar_nodes[k], None, Memlet(data=array_name, subset=reads_by_key[k]["subset"])
+                )
 
         # W x R cross-product dep edges (empty memlets) -- enforce
         # all-writes-before-all-reads ordering for cross-subset hops.
@@ -410,8 +444,12 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         # final sink for the staged writes -- the NSDFG's outer view
         # reads from it. Otherwise drop the bridge if it has been left
         # disconnected by the producer / consumer redirects.
-        if (not bridge_is_out_connector and bridge in state.nodes() and state.in_degree(bridge) == 0
-                and state.out_degree(bridge) == 0):
+        if (
+            not bridge_is_out_connector
+            and bridge in state.nodes()
+            and state.in_degree(bridge) == 0
+            and state.out_degree(bridge) == 0
+        ):
             state.remove_node(bridge)
         # The bridge's source purge may have left a now-isolated outer
         # input access node for the same array (it only fed the bridge's
@@ -425,9 +463,15 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         return True
 
     @staticmethod
-    def _add_scoped_path(state: 'dace.SDFGState', *, src: dace.nodes.AccessNode,
-                         scope_nodes: list[dace.nodes.EntryNode | dace.nodes.ExitNode], dst: dace.nodes.AccessNode,
-                         array_name: str, subset: subsets.Subset) -> None:
+    def _add_scoped_path(
+        state: "dace.SDFGState",
+        *,
+        src: dace.nodes.AccessNode,
+        scope_nodes: list[dace.nodes.EntryNode | dace.nodes.ExitNode],
+        dst: dace.nodes.AccessNode,
+        array_name: str,
+        subset: subsets.Subset,
+    ) -> None:
         # Add a memlet chain ``src -> scope_0 -> ... -> scope_N -> dst``.
         # Reserve a single ``base`` per scope so its IN_/OUT_ pair matches.
         scope_bases = [n.next_connector(array_name) for n in scope_nodes]
@@ -442,25 +486,38 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             state.add_edge(u, src_conn, v, dst_conn, mem)
 
     @staticmethod
-    def _purge_bridge_scope_edges(state: 'dace.SDFGState', bridge: dace.nodes.AccessNode,
-                                  scope_node: dace.nodes.EntryNode | dace.nodes.ExitNode | None, array_name: str, *,
-                                  direction: str) -> None:
+    def _purge_bridge_scope_edges(
+        state: "dace.SDFGState",
+        bridge: dace.nodes.AccessNode,
+        scope_node: dace.nodes.EntryNode | dace.nodes.ExitNode | None,
+        array_name: str,
+        *,
+        direction: str,
+    ) -> None:
         # Strip the bridge's redundant ``bridge <-> scope_node`` edges and their orphaned connectors after the new paths
         # are in place.
         if direction == "drain":
             edges = [
-                e for e in state.out_edges(bridge) if isinstance(e.dst, dace.nodes.MapExit) and e.dst is scope_node
-                and e.data is not None and e.data.data == array_name
+                e
+                for e in state.out_edges(bridge)
+                if isinstance(e.dst, dace.nodes.MapExit)
+                and e.dst is scope_node
+                and e.data is not None
+                and e.data.data == array_name
             ]
         else:
             edges = [
-                e for e in state.in_edges(bridge) if isinstance(e.src, dace.nodes.MapEntry) and e.src is scope_node
-                and e.data is not None and e.data.data == array_name
+                e
+                for e in state.in_edges(bridge)
+                if isinstance(e.src, dace.nodes.MapEntry)
+                and e.src is scope_node
+                and e.data is not None
+                and e.data.data == array_name
             ]
         for edge in edges:
             if direction == "drain":
                 in_conn, prefix = edge.dst_conn, "IN_"
-                out_conn = "OUT_" + in_conn[len("IN_"):] if in_conn and in_conn.startswith("IN_") else None
+                out_conn = "OUT_" + in_conn[len("IN_") :] if in_conn and in_conn.startswith("IN_") else None
                 state.remove_edge(edge)
                 if in_conn and in_conn in scope_node.in_connectors:
                     scope_node.remove_in_connector(in_conn)
@@ -471,7 +528,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                     scope_node.remove_out_connector(out_conn)
             else:
                 out_conn = edge.src_conn
-                in_conn = "IN_" + out_conn[len("OUT_"):] if out_conn and out_conn.startswith("OUT_") else None
+                in_conn = "IN_" + out_conn[len("OUT_") :] if out_conn and out_conn.startswith("OUT_") else None
                 state.remove_edge(edge)
                 if out_conn and out_conn in scope_node.out_connectors:
                     scope_node.remove_out_connector(out_conn)
@@ -502,10 +559,19 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         :returns: Number of bridges rewritten, or ``None`` when nothing changed.
         """
         count = self._apply(sdfg)
-        assert_invariant(no_memlet_dim_mismatch(sdfg), "StageGlobalArrayThroughScalars",
-                         "memlet subset and other_subset have matching dimensionality")
-        assert_invariant(no_duplicate_connector_edges(sdfg), "StageGlobalArrayThroughScalars",
-                         "every connector has <=1 edge per direction")
-        assert_invariant(no_isolated_access_nodes(sdfg), "StageGlobalArrayThroughScalars",
-                         "no AccessNode left isolated after staging")
+        assert_invariant(
+            no_memlet_dim_mismatch(sdfg),
+            "StageGlobalArrayThroughScalars",
+            "memlet subset and other_subset have matching dimensionality",
+        )
+        assert_invariant(
+            no_duplicate_connector_edges(sdfg),
+            "StageGlobalArrayThroughScalars",
+            "every connector has <=1 edge per direction",
+        )
+        assert_invariant(
+            no_isolated_access_nodes(sdfg),
+            "StageGlobalArrayThroughScalars",
+            "no AccessNode left isolated after staging",
+        )
         return count if count > 0 else None

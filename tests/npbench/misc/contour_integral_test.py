@@ -14,12 +14,13 @@ def relerror(val, ref):
     return np.linalg.norm(val - ref) / np.linalg.norm(ref)
 
 
-NR, NM, slab_per_bc = (dace.symbol(s, dtype=dace.int64) for s in ('NR', 'NM', 'slab_per_bc'))
+NR, NM, slab_per_bc = (dace.symbol(s, dtype=dace.int64) for s in ("NR", "NM", "slab_per_bc"))
 
 
 @dace.program
-def dace_contour_integral(Ham: dace.complex128[slab_per_bc + 1, NR, NR], int_pts: dace.complex128[32],
-                          Y: dace.complex128[NR, NM]):
+def dace_contour_integral(
+    Ham: dace.complex128[slab_per_bc + 1, NR, NR], int_pts: dace.complex128[32], Y: dace.complex128[NR, NM]
+):
     P0 = np.zeros((NR, NM), dtype=np.complex128)
     P1 = np.zeros((NR, NM), dtype=np.complex128)
     for idx in range(32):
@@ -57,23 +58,24 @@ def numpy_contour_integral(NR, NM, slab_per_bc, Ham, int_pts, Y):
 
 
 def rng_complex(shape, rng):
-    return (rng.random(shape) + rng.random(shape) * 1j)
+    return rng.random(shape) + rng.random(shape) * 1j
 
 
 def initialize(NR, NM, slab_per_bc, num_int_pts):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     Ham = rng_complex((slab_per_bc + 1, NR, NR), rng)
-    int_pts = rng_complex((num_int_pts, ), rng)
+    int_pts = rng_complex((num_int_pts,), rng)
     Y = rng_complex((NR, NM), rng)
     return Ham, int_pts, Y
 
 
 def run_contour_integral(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs contour-integral for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench S size)
     NR, NM, slab_per_bc, num_int_pts = (50, 150, 2, 32)
@@ -85,12 +87,12 @@ def run_contour_integral(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         val0, val1 = sdfg(Ham=Ham, int_pts=int_pts, Y=Y, NR=NR, NM=NM, slab_per_bc=slab_per_bc)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and Validate result
     ref0, ref1 = numpy_contour_integral(NR, NM, slab_per_bc, Ham, int_pts, Y)
-    assert (np.allclose(val0, ref0) or relerror(val0, ref0) < 1e-10)
-    assert (np.allclose(val1, ref1) or relerror(val1, ref1) < 1e-10)
+    assert np.allclose(val0, ref0) or relerror(val0, ref0) < 1e-10
+    assert np.allclose(val1, ref1) or relerror(val1, ref1) < 1e-10
     return sdfg
 
 
@@ -99,15 +101,14 @@ def test_cpu():
 
 
 @pytest.mark.gpu
-@pytest.mark.skip('Incorrect outputs due to auto-optimize')
+@pytest.mark.skip("Incorrect outputs due to auto-optimize")
 def test_gpu():
     run_contour_integral(dace.dtypes.DeviceType.GPU)
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

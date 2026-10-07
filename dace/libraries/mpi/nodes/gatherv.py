@@ -9,6 +9,7 @@ C ABI mandates plain ``int``).  Datatypes are inferred per buffer and the
 communicator is resolved from an optional ``_comm`` / ``_grid`` input connector,
 else the default world.
 """
+
 from dace import data, dtypes, library
 from dace.libraries.mpi import utils
 from dace.sdfg import nodes
@@ -22,7 +23,6 @@ from dace.optionals import required
 
 @library.expansion
 class ExpandGathervMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -46,18 +46,19 @@ class ExpandGathervMPI(ExpandTransformation):
                         _outbuffer, _recvcounts, _displs, {out_mpi_dtype_str},
                         _root, {comm});
             """
-        tasklet = nodes.Tasklet(node.name,
-                                expanded_input_connectors(node, parent_state),
-                                node.out_connectors,
-                                code,
-                                language=dtypes.Language.CPP,
-                                side_effects=True)
+        tasklet = nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
         return tasklet
 
 
 @library.node
 class Gatherv(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandGathervMPI,
@@ -65,11 +66,13 @@ class Gatherv(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs=OrderedSet(('_inbuffer', '_recvcounts', '_displs', '_root')),
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs=OrderedSet(("_inbuffer", "_recvcounts", "_displs", "_root")),
+            outputs={"_outbuffer"},
+            **kwargs,
+        )
 
     def validate(self, sdfg, state):
         """
@@ -101,7 +104,7 @@ class Gatherv(MPINode):
 
         in_count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
+            if dst_conn == "_inbuffer":
                 dims = [symstr(e) for e in data.subset.size_exact()]
                 in_count_str = "*".join(dims)
 

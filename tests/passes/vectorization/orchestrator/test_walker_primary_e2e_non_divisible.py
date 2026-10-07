@@ -9,11 +9,12 @@ Per the walker pipeline's ``GenerateTileIterationMask`` placement (inside the bo
 NSDFG, design 7.4): the mask is computed per outer-tile-iteration as
 ``mask[l] = (ii + l < N)`` and consumed by every masked lib node.
 """
+
 import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from tests.passes.vectorization.tile_assertions import assert_tiled
 from dace.transformation.passes.vectorization.enums import ISA
@@ -22,9 +23,9 @@ from dace.transformation.passes.vectorization.enums import ISA
 def _build_k1_axpy(N):
     """``B[i] = A[i] * 2.0 + C[i]`` -- K=1, varying N."""
     sdfg = dace.SDFG("k1_axpy_nd")
-    sdfg.add_array("A", (N, ), dace.float64, transient=False)
-    sdfg.add_array("B", (N, ), dace.float64, transient=False)
-    sdfg.add_array("C", (N, ), dace.float64, transient=False)
+    sdfg.add_array("A", (N,), dace.float64, transient=False)
+    sdfg.add_array("B", (N,), dace.float64, transient=False)
+    sdfg.add_array("C", (N,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": f"0:{N}"})
     a = state.add_access("A")
@@ -68,7 +69,7 @@ def test_k1_axpy_non_divisible_matches_reference(N):
     ref.name = f"k1_axpy_nd_ref_{N}"
     vec = _build_k1_axpy(N)
     vec.name = f"k1_axpy_nd_vec_{N}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     ref.compile()(A=a.copy(), C=c.copy(), B=b_ref)
     vec.compile()(A=a.copy(), C=c.copy(), B=b_vec)

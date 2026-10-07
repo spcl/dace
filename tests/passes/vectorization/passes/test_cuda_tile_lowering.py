@@ -7,6 +7,7 @@ No GPU / nvcc is required: these assert the *lowering selection* and the
 GPU path shares ~90% of its pipeline with the CPU one, so the lowering is the
 part that needs dedicated coverage.
 """
+
 import os
 
 import pytest
@@ -61,6 +62,7 @@ def test_cuda_header_has_half2_intrinsics():
 def wired_binop(op, widths):
     """A ``TileBinop`` of two fp16 tiles in a state, with the arrays its selection reads the dtypes of."""
     from dace.libraries.tileops.nodes.tile_binop import TileBinop
+
     sdfg = dace.SDFG("cuda_selection_binop")
     state = sdfg.add_state()
     node = TileBinop("t", op=op, widths=widths)
@@ -77,7 +79,7 @@ def wired_binop(op, widths):
 
 @pytest.mark.parametrize("op", ["+", "-", "*", "/"])
 def test_binop_selects_cuda_for_fp16_tile(op):
-    node, state = wired_binop(op, (2, ))
+    node, state = wired_binop(op, (2,))
     assert dispatch.select_tile_implementation(node, state) == "cuda"
 
 
@@ -100,6 +102,7 @@ def test_reduce_kge2_falls_back_to_pure_under_cuda():
     # K>=2 always lowers to 'pure' regardless of ISA (matches the binop rule); the
     # cuda ``tile_reduce`` intrinsic is a K==1 horizontal fold.
     from dace.libraries.tileops.nodes.tile_reduce import TileReduce
+
     n = TileReduce("t", op="+", widths=(2, 2))
     st = dace.SDFG("cuda_selection_reduce").add_state()
     st.add_node(n)
@@ -110,18 +113,20 @@ def test_reduce_kge2_falls_back_to_pure_under_cuda():
 def _reduce_sdfg(dtype, W, op="+", axis=None, mask=False):
     """A minimal SDFG holding one ``TileReduce`` (Register tiles), for expansion tests."""
     from dace.libraries.tileops.nodes.tile_reduce import TileReduce
-    shape = (W, ) if axis is None else (2, W)
-    dst_shape = (1, ) if axis is None else (2, )
+
+    shape = (W,) if axis is None else (2, W)
+    dst_shape = (1,) if axis is None else (2,)
     sdfg = dace.SDFG(f"tr_{dtype.to_string()}_{W}")
     sdfg.add_array("src", shape, dtype, storage=dace.StorageType.Register, transient=True)
     sdfg.add_array("dst", dst_shape, dtype, storage=dace.StorageType.Register, transient=True)
     st = sdfg.add_state()
-    widths = (W, ) if axis is None else (2, W)
+    widths = (W,) if axis is None else (2, W)
     n = TileReduce("tr", widths=widths, op=op, axis=axis, has_mask=mask)
     s, d = st.add_access("src"), st.add_access("dst")
     st.add_edge(s, None, n, "_src", dace.Memlet.from_array("src", sdfg.arrays["src"]))
-    st.add_edge(n, "_dst", d, None,
-                dace.Memlet("dst[0]") if axis is None else dace.Memlet.from_array("dst", sdfg.arrays["dst"]))
+    st.add_edge(
+        n, "_dst", d, None, dace.Memlet("dst[0]") if axis is None else dace.Memlet.from_array("dst", sdfg.arrays["dst"])
+    )
     if mask:
         sdfg.add_array("msk", shape, dace.bool_, storage=dace.StorageType.Register, transient=True)
         m = st.add_access("msk")
@@ -133,6 +138,7 @@ def test_reduce_cuda_emits_intrinsic_for_full_k1():
     # A full (axis=None), unmasked, K=1 fp16 reduce lowers to the tile_reduce intrinsic
     # (the fp16 template picks the composed half2 fold at compile).
     from dace.libraries.tileops.nodes.tile_reduce import ExpandTileReduceCUDA
+
     sdfg, st, n = _reduce_sdfg(dace.float16, 4, "+")
     code = ExpandTileReduceCUDA.expansion(n, st, sdfg).code.as_string
     assert "dace::tileops::tile_reduce<dace::float16, 4, '+'>(_src)" in code
@@ -152,9 +158,10 @@ def test_reduce_cuda_selects_pure_for_masked_and_axis():
 def test_cuda_requires_even_width():
     # half2 packs 2 lanes, so the innermost tile width must be a multiple of 2.
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import _validate_knobs
-    _validate_knobs((2, ), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")  # ok
+
+    _validate_knobs((2,), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")  # ok
     with pytest.raises(NotImplementedError, match="half2"):
-        _validate_knobs((1, ), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")
+        _validate_knobs((1,), ISA.CUDA, RemainderStrategy.SCALAR_POSTAMBLE, "tile_k1")
 
 
 if __name__ == "__main__":

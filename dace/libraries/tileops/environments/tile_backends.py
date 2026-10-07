@@ -5,6 +5,7 @@ An ISA expansion of a tile node declares its backend's environment, so expanding
 The backends expose the same ``dace::tileops`` signatures and differ in the instructions behind them; a backend is
 selected only for a target that supports it, so its compile flag is safe to add.
 """
+
 import dace.library
 from typing import Dict, List
 
@@ -32,7 +33,7 @@ class TileOpsHeaderOnly:
 class TileOpsScalar(TileOpsHeaderOnly):
     """The portable scalar backend: the reference every other backend is checked against."""
 
-    headers = {'frame': ["dace/tile_ops/scalar.h"]}
+    headers = {"frame": ["dace/tile_ops/scalar.h"]}
 
 
 @dace.library.environment
@@ -40,7 +41,7 @@ class TileOpsAVX512(TileOpsHeaderOnly):
     """AVX-512; ``-mavx512f`` enables the ``_mm512`` paths."""
 
     cmake_compile_flags = ["-mavx512f"]
-    headers = {'frame': ["dace/tile_ops/avx512.h"]}
+    headers = {"frame": ["dace/tile_ops/avx512.h"]}
 
 
 @dace.library.environment
@@ -48,14 +49,14 @@ class TileOpsAVX2(TileOpsHeaderOnly):
     """AVX2; the header refuses to compile without ``-mavx2``."""
 
     cmake_compile_flags = ["-mavx2"]
-    headers = {'frame': ["dace/tile_ops/avx2.h"]}
+    headers = {"frame": ["dace/tile_ops/avx2.h"]}
 
 
 @dace.library.environment
 class TileOpsNeon(TileOpsHeaderOnly):
     """AArch64 Advanced SIMD, which is baseline there and needs no flag."""
 
-    headers = {'frame': ["dace/tile_ops/arm_neon.h"]}
+    headers = {"frame": ["dace/tile_ops/arm_neon.h"]}
 
 
 @dace.library.environment
@@ -63,7 +64,7 @@ class TileOpsSVE(TileOpsHeaderOnly):
     """ARM SVE, which AArch64 does not enable by default."""
 
     cmake_compile_flags = ["-march=armv8-a+sve"]
-    headers = {'frame': ["dace/tile_ops/arm_sve.h"]}
+    headers = {"frame": ["dace/tile_ops/arm_sve.h"]}
 
 
 @dace.library.environment
@@ -75,4 +76,4 @@ class TileOpsCUDA(TileOpsHeaderOnly):
     ``__CUDACC__`` guard keeps the device bodies out of the host frame.
     """
 
-    headers = {'frame': ["dace/tile_ops/cuda.h"], 'cuda': ["dace/tile_ops/cuda.h"]}
+    headers = {"frame": ["dace/tile_ops/cuda.h"], "cuda": ["dace/tile_ops/cuda.h"]}

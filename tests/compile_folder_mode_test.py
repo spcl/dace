@@ -25,7 +25,7 @@ def _make_test_sdfg() -> dace.SDFG:
     for name in "abc":
         sdfg.add_array(
             name,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -65,7 +65,7 @@ def _load_and_run_sdfg(build_folder, sdfg):
 
 def test_development_folder_mode():
     with dace.config.temporary_config() as Config:
-        Config.set('compiler', 'build_folder_mode', value="development")
+        Config.set("compiler", "build_folder_mode", value="development")
         sdfg = _make_test_sdfg()
         build_folder = pathlib.Path(sdfg.build_folder)
         assert not build_folder.exists()
@@ -109,7 +109,7 @@ def test_development_folder_mode():
 
 def test_production_folder_mode():
     with dace.config.temporary_config() as Config:
-        Config.set('compiler', 'build_folder_mode', value="production")
+        Config.set("compiler", "build_folder_mode", value="production")
         sdfg = _make_test_sdfg()
         build_folder = pathlib.Path(sdfg.build_folder)
         assert not build_folder.exists()
@@ -145,8 +145,9 @@ def test_production_folder_mode():
     version_file.unlink()
     assert not version_file.exists()
 
-    with pytest.raises(NotADirectoryError,
-                       match=re.escape(f'``{build_folder}`` does not appear to be a valid old-style build folder.')):
+    with pytest.raises(
+        NotADirectoryError, match=re.escape(f"``{build_folder}`` does not appear to be a valid old-style build folder.")
+    ):
         sdfg_compiler.get_folder_mode(build_folder)
 
     assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
@@ -157,7 +158,7 @@ def _test_build_with_scheme_one_and_then_switch_impl(
     version2: str,
 ) -> None:
     with dace.config.temporary_config() as conf:
-        conf.set('compiler', 'build_folder_mode', value=version1)
+        conf.set("compiler", "build_folder_mode", value=version1)
 
         sdfg = _make_test_sdfg()
         build_folder = pathlib.Path(sdfg.build_folder).resolve()
@@ -170,10 +171,10 @@ def _test_build_with_scheme_one_and_then_switch_impl(
     assert lib1_path.exists()
 
     with dace.config.temporary_config() as conf:
-        conf.set('compiler', 'build_folder_mode', value=version1)
+        conf.set("compiler", "build_folder_mode", value=version1)
 
         # This is for ensuring that the code is actually regenerated.
-        conf.set('compiler', 'use_cache', value=False)
+        conf.set("compiler", "use_cache", value=False)
         sdfg._recompile = True
         sdfg.regenerate_code = True
 
@@ -256,7 +257,7 @@ def _test_get_binary_name_detects_folder_mode_switch_impl(
         # The configuration keeps naming `version1`; after the switch only the
         #  `FOLDER_MODE` file knows about `version2`, so `get_binary_name()` must
         #  take the mode from the folder and not from the configuration.
-        conf.set('compiler', 'build_folder_mode', value=version1)
+        conf.set("compiler", "build_folder_mode", value=version1)
 
         sdfg_compiler.generate_program_folder(None, [], str(build_folder), folder_mode=version1)
         assert sdfg_compiler.get_folder_mode(build_folder) == version1
@@ -297,13 +298,14 @@ def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path):
         (build_folder / sub_folder).mkdir()
 
     assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
-    with pytest.raises(NotADirectoryError,
-                       match=re.escape(f'The old-style folder ``{build_folder}`` is inconsistent.')):
+    with pytest.raises(
+        NotADirectoryError, match=re.escape(f"The old-style folder ``{build_folder}`` is inconsistent.")
+    ):
         sdfg_compiler.get_folder_mode(build_folder)
 
     for folder_mode in ["development", "production"]:
         with dace.config.temporary_config() as conf:
-            conf.set('compiler', 'build_folder_mode', value=folder_mode)
+            conf.set("compiler", "build_folder_mode", value=folder_mode)
             lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name="some_sdfg", lib_extension="so")
         assert lib_path == _expected_binary_path(build_folder, "some_sdfg", folder_mode, "so")
 
@@ -320,7 +322,7 @@ def test_get_folder_mode_probes_unrecognized_folder_mode_file(tmp_path):
 
         for folder_mode in ["development", "production"]:
             with dace.config.temporary_config() as conf:
-                conf.set('compiler', 'build_folder_mode', value=folder_mode)
+                conf.set("compiler", "build_folder_mode", value=folder_mode)
                 lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name="some_sdfg", lib_extension="so")
             assert lib_path == _expected_binary_path(build_folder, "some_sdfg", folder_mode, "so")
 
@@ -359,7 +361,7 @@ def test_already_loaded_and_comple_again():
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_development_folder_mode()
     test_production_folder_mode()
     test_already_loaded_and_comple_again()

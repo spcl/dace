@@ -5,6 +5,7 @@
 alone, ``c[0, i] = z`` and ``c[1, i] = z`` looked like one copy and the second write was dropped: CloudSC's
 ``zconvsink[ncldql] = zmfdn; zconvsink[ncldqi] = zmfdn`` lost the ice entry.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -24,7 +25,7 @@ LENGTH = 16
 def one_value_copied_into_two_elements() -> dace.SDFG:
     body = dace.SDFG("copy_into_two_elements_body")
     body.add_symbol("i", dace.int64)
-    body.add_array("X", (LENGTH, ), dace.float64)
+    body.add_array("X", (LENGTH,), dace.float64)
     body.add_array("C", (2, LENGTH), dace.float64)
     body.add_scalar("Z", dace.float64, transient=True)
     state = body.add_state("convective_sink")
@@ -38,7 +39,7 @@ def one_value_copied_into_two_elements() -> dace.SDFG:
         state.add_edge(store, "_out", state.add_access("C"), None, Memlet(f"C[{element}, i]"))
 
     sdfg = dace.SDFG("bypass_dedup_distinct_elements")
-    sdfg.add_array("X", (LENGTH, ), dace.float64)
+    sdfg.add_array("X", (LENGTH,), dace.float64)
     sdfg.add_array("C", (2, LENGTH), dace.float64)
     outer = sdfg.add_state("outer")
     map_entry, map_exit = outer.add_map("per_column", {"i": f"0:{LENGTH}"}, schedule=dace.ScheduleType.CPU_Multicore)
@@ -57,8 +58,13 @@ def one_value_copied_into_two_elements() -> dace.SDFG:
 
 def written_elements(body: dace.SDFG) -> list[str]:
     return sorted(
-        str(edge.data.subset) for state in body.states() for node in state.data_nodes() if node.data == "C"
-        for edge in state.in_edges(node) if isinstance(edge.src, nodes.Tasklet))
+        str(edge.data.subset)
+        for state in body.states()
+        for node in state.data_nodes()
+        if node.data == "C"
+        for edge in state.in_edges(node)
+        if isinstance(edge.src, nodes.Tasklet)
+    )
 
 
 def test_copies_of_one_value_into_two_elements_both_stay_written():

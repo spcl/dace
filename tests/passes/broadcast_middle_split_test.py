@@ -23,7 +23,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _loops(sdfg):
@@ -158,5 +158,5 @@ def test_broadcast_split_applied_directly_by_peeling():
     assert np.allclose(got, ref), "the direct peel-split must preserve the value"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

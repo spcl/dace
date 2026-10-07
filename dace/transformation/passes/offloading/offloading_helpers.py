@@ -18,8 +18,9 @@ def remove_empty_return_entries(entries: List[Tuple[ControlFlowRegion, SDFGState
     for region, entry in entries:
         successors = list(region.out_edges(entry))
         # Copies follow the entry on a plain edge; any other shape stays as it is.
-        plain = len(successors) <= 1 and all(edge.data.is_unconditional() and not edge.data.assignments
-                                             for edge in successors)
+        plain = len(successors) <= 1 and all(
+            edge.data.is_unconditional() and not edge.data.assignments for edge in successors
+        )
         if entry.number_of_nodes() > 0 or not plain:
             continue
         for edge in list(region.in_edges(entry)):
@@ -36,7 +37,7 @@ def separate_early_returns(sdfg: SDFG) -> List[Tuple[ControlFlowRegion, SDFGStat
     entries: List[Tuple[ControlFlowRegion, SDFGState]] = []
     for region in list(sdfg.all_control_flow_regions()):
         for block in [block for block in region.nodes() if isinstance(block, ReturnBlock)]:
-            entry = region.add_state_before(block, 'return_entry', is_start_block=block is region.start_block)
+            entry = region.add_state_before(block, "return_entry", is_start_block=block is region.start_block)
             entries.append((region, entry))
     return entries
 
@@ -46,8 +47,11 @@ def link_early_returns(IR: OffloadingIRNode) -> None:
     entries: List[OffloadingIRNode] = []
 
     def collect(node: OffloadingIRNode) -> None:
-        if node.type == OffloadingIRNode.STATE and isinstance(node.block, SDFGState) and any(
-                isinstance(edge.dst, ReturnBlock) for edge in node.block.parent_graph.out_edges(node.block)):
+        if (
+            node.type == OffloadingIRNode.STATE
+            and isinstance(node.block, SDFGState)
+            and any(isinstance(edge.dst, ReturnBlock) for edge in node.block.parent_graph.out_edges(node.block))
+        ):
             entries.append(node)
 
     traverse_IR(IR, collect)
@@ -62,8 +66,8 @@ def link_early_returns(IR: OffloadingIRNode) -> None:
 # Checking Common Conditions
 
 #: Connectors the Python frontend wires to ``__pystate`` around a callback, to block reordering.
-PYSTATE_CONNECTORS = frozenset({'__istate', '__ostate'})
-PYSTATE = '__pystate'
+PYSTATE_CONNECTORS = frozenset({"__istate", "__ostate"})
+PYSTATE = "__pystate"
 
 
 def callback_symbol_names(sdfg: SDFG) -> OrderedSet:
@@ -93,15 +97,17 @@ def is_callback_tasklet(node: nodes.Node, sdfg: SDFG, callback_names: Optional[O
     names = callback_symbol_names(sdfg) if callback_names is None else callback_names
     if not names:
         return False
-    code = node.code.as_string or ''
+    code = node.code.as_string or ""
     return any(name in code for name in names)
 
 
-def scope_holds_callback(state: SDFGState,
-                         entry: Optional[nodes.MapEntry],
-                         scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
-                         sdfg: SDFG,
-                         callback_names: Optional[OrderedSet] = None) -> bool:
+def scope_holds_callback(
+    state: SDFGState,
+    entry: Optional[nodes.MapEntry],
+    scope_children: Dict[Optional[nodes.Node], List[nodes.Node]],
+    sdfg: SDFG,
+    callback_names: Optional[OrderedSet] = None,
+) -> bool:
     """``entry``'s scope contains a callback, at any depth, so the scope is host code."""
     names = callback_symbol_names(sdfg) if callback_names is None else callback_names
     for node in scope_children.get(entry, ()):
@@ -196,7 +202,7 @@ def traverse_IR(IR: OffloadingIRNode, method):
         stack.extend(reversed(node.next))
 
 
-def traverse_same_level(IR: OffloadingIRNode, method):  #DFS
+def traverse_same_level(IR: OffloadingIRNode, method):  # DFS
     queue = IR.next.copy()
     while queue:
         curr = queue.pop()
@@ -212,7 +218,7 @@ def traverse_same_level(IR: OffloadingIRNode, method):  #DFS
             break
 
         else:
-            raise ValueError(f'unhandled IR node type {OffloadingIRNode.get_type_as_str(curr.type)}')
+            raise ValueError(f"unhandled IR node type {OffloadingIRNode.get_type_as_str(curr.type)}")
 
 
 def has_GPU_schedule(node):
@@ -224,7 +230,7 @@ def get_schedule(node):
         return node.map.schedule
     if isinstance(node, nodes.LibraryNode):
         return node.schedule
-    raise TypeError(f'node {node} of type {type(node).__name__} carries no schedule')
+    raise TypeError(f"node {node} of type {type(node).__name__} carries no schedule")
 
 
 def is_array_stored_on_GPU(sdfg, array_name):
@@ -232,8 +238,11 @@ def is_array_stored_on_GPU(sdfg, array_name):
     if storage in GPU_RESIDENT_STORAGES:
         return True
     elif storage in {
-            dtypes.StorageType.Default, dtypes.StorageType.Register, dtypes.StorageType.CPU_Heap,
-            dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
+        dtypes.StorageType.Default,
+        dtypes.StorageType.Register,
+        dtypes.StorageType.CPU_Heap,
+        dtypes.StorageType.CPU_Pinned,
+        dtypes.StorageType.CPU_ThreadLocal,
     }:
         return False
     else:
@@ -272,10 +281,9 @@ def register_kernel_local_transients(sdfg: SDFG) -> None:
             nested.arrays[name].storage = dtypes.StorageType.Register
 
 
-def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
-                                           state: SDFGState,
-                                           node: nodes.Node,
-                                           include_scalars: bool = False) -> OrderedSet[str]:
+def get_data_used_by_incoming_access_nodes(
+    sdfg: SDFG, state: SDFGState, node: nodes.Node, include_scalars: bool = False
+) -> OrderedSet[str]:
 
     def recursion(node: nodes.Node, visited_set: OrderedSet[nodes.Node]):
         # the visited set is necessary for edge cases, e.g. an access node A whose predecessor B is a view node
@@ -310,12 +318,14 @@ def get_data_used_by_incoming_access_nodes(sdfg: SDFG,
     return recursion(node, OrderedSet())
 
 
-def get_data_used_by_outgoing_access_nodes(sdfg: SDFG,
-                                           state: SDFGState,
-                                           node: nodes.Node,
-                                           include_scalars: bool = False,
-                                           ordering: bool = True,
-                                           through_copies: bool = True) -> OrderedSet[str]:
+def get_data_used_by_outgoing_access_nodes(
+    sdfg: SDFG,
+    state: SDFGState,
+    node: nodes.Node,
+    include_scalars: bool = False,
+    ordering: bool = True,
+    through_copies: bool = True,
+) -> OrderedSet[str]:
     """Data of the access nodes downstream of ``node``; ``ordering`` follows empty memlets too.
 
     Placement follows them, and relies on it (tsvc_2_5 ``reduce_inner_carry`` keeps its taskloop's

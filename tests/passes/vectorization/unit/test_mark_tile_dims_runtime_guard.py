@@ -17,6 +17,7 @@ masking -- or, under ``scalar_postamble``, by the scalar remainder loop. So:
    results (no trap) for BOTH the masking path (``full_mask``) and the scalar
    remainder path (``scalar_postamble``).
 """
+
 import numpy as np
 import pytest
 
@@ -39,19 +40,19 @@ def _build_inner_map_sdfg(name: str, trip):
     sdfg = dace.SDFG(name)
     if isinstance(trip, int):
         ub = trip - 1
-        sdfg.add_array('a', [trip], dtype=dace.float64, transient=False)
+        sdfg.add_array("a", [trip], dtype=dace.float64, transient=False)
     else:
         N = trip
         ub = N - 1
         sdfg.add_symbol(str(N), dace.int64)
-        sdfg.add_array('a', [N], dtype=dace.float64, transient=False)
-    state = sdfg.add_state('main', is_start_block=True)
+        sdfg.add_array("a", [N], dtype=dace.float64, transient=False)
+    state = sdfg.add_state("main", is_start_block=True)
     state.add_mapped_tasklet(
-        name='kern',
-        map_ranges={'i': dace.subsets.Range([(0, ub, 1)])},
+        name="kern",
+        map_ranges={"i": dace.subsets.Range([(0, ub, 1)])},
         inputs={},
-        code='_out = 0.0',
-        outputs={'_out': dace.memlet.Memlet('a[i]')},
+        code="_out = 0.0",
+        outputs={"_out": dace.memlet.Memlet("a[i]")},
         external_edges=True,
     )
     return sdfg
@@ -64,22 +65,22 @@ def _guard_states(sdfg):
 def test_mark_tile_dims_no_guard_for_symbolic_trip():
     """Symbolic trip ``N``: a spec is recorded and NO ``std::abort`` guard
     state is planted -- the mask/remainder handles ``trip < W`` at runtime."""
-    N = dace.symbol('N')
-    sdfg = _build_inner_map_sdfg('symbolic_trip', N)
-    res = MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
+    N = dace.symbol("N")
+    sdfg = _build_inner_map_sdfg("symbolic_trip", N)
+    res = MarkTileDims(widths=(8,)).apply_pass(sdfg, {})
     assert res is not None, "MarkTileDims should classify the symbolic-trip map"
-    assert not _guard_states(sdfg), 'no runtime trip guard must be planted for a symbolic trip'
+    assert not _guard_states(sdfg), "no runtime trip guard must be planted for a symbolic trip"
     # And no tasklet anywhere calls std::abort.
     for s in sdfg.states():
         for n in s.nodes():
             if isinstance(n, dace.nodes.Tasklet):
-                assert 'std::abort' not in n.code.as_string
+                assert "std::abort" not in n.code.as_string
 
 
 def test_mark_tile_dims_no_guard_for_static_trip_at_or_above_width():
     """Static trip == W: classified, no guard."""
-    sdfg = _build_inner_map_sdfg('static_trip_eq_w', 8)
-    res = MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
+    sdfg = _build_inner_map_sdfg("static_trip_eq_w", 8)
+    res = MarkTileDims(widths=(8,)).apply_pass(sdfg, {})
     assert res is not None
     assert not _guard_states(sdfg)
 
@@ -93,17 +94,18 @@ def test_mark_tile_dims_specs_static_trip_below_width_for_masked_tail():
     ``None``; the masked-tail model removed that skip -- a trip-4 / W-8 kernel
     vectorises correctly via the masked tail rather than dropping to sequential
     codegen."""
-    sdfg = _build_inner_map_sdfg('static_trip_below_w', 4)
-    res = MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
+    sdfg = _build_inner_map_sdfg("static_trip_below_w", 4)
+    res = MarkTileDims(widths=(8,)).apply_pass(sdfg, {})
     assert res is not None, "static trip < W must be spec'd (masked-tail), not soft-skipped"
     specs = list(res.values())
     assert len(specs) == 1, f"expected one spec for the single inner map, got {len(specs)}"
-    assert specs[0].iter_vars == ('i', ) and specs[0].widths == (8, )
+    assert specs[0].iter_vars == ("i",) and specs[0].widths == (8,)
     assert not _guard_states(sdfg)
 
 
-@pytest.mark.parametrize("strat,isa", [(RemainderStrategy.FULL_MASK, HOST_ISA),
-                                       (RemainderStrategy.SCALAR_POSTAMBLE, ISA.SCALAR)])
+@pytest.mark.parametrize(
+    "strat,isa", [(RemainderStrategy.FULL_MASK, HOST_ISA), (RemainderStrategy.SCALAR_POSTAMBLE, ISA.SCALAR)]
+)
 @pytest.mark.parametrize("n", [3, 5, 7])
 def test_symbolic_trip_below_width_runs_correctly(strat, isa, n):
     """A symbolic-trip kernel run with ``N < W`` produces correct results -- the
@@ -113,7 +115,7 @@ def test_symbolic_trip_below_width_runs_correctly(strat, isa, n):
     This is the contract that lets the runtime ``trip >= W`` guard be removed:
     masking / scalar remainder are correct for a short trip, so the guard was
     pure (harmful) defensiveness."""
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
@@ -122,8 +124,8 @@ def test_symbolic_trip_below_width_runs_correctly(strat, isa, n):
 
     sdfg = k.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=strat,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(widths=(8,), target_isa=isa, remainder_strategy=strat, branch_mode=BranchMode.MERGE)
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(n)
     b = rng.standard_normal(n)
@@ -134,5 +136,5 @@ def test_symbolic_trip_below_width_runs_correctly(strat, isa, n):
     assert np.allclose(a, ref), f"{strat}/N={n}: max|d|={np.max(np.abs(a - ref)):.3e}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

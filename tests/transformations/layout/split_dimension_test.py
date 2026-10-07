@@ -28,7 +28,7 @@ def tadd(A: dace.float64[N, N, N], B: dace.float64[N, N, N], C: dace.float64[N, 
 @dace.program
 def tadd_blocked(A: dace.float64[N, N, N], B: dace.float64[N, N, N], C: dace.float64[N, N, N]):
     for i, j, k in dace.map[0:N, 0:N:8, 0:N:8] @ dace.ScheduleType.Sequential:
-        for jj, kk in dace.map[j:j + 8:1, k:k + 8:1] @ dace.ScheduleType.Sequential:
+        for jj, kk in dace.map[j : j + 8 : 1, k : k + 8 : 1] @ dace.ScheduleType.Sequential:
             C[i, jj, kk] = 0.5 * (A[i, jj, kk] + B[i, jj, kk])
 
 
@@ -38,11 +38,11 @@ def _add_interstate_access(sdfg: dace.SDFG, arr_name: str, arr: dace.data.Array)
     state = next(iter(sdfg.states()))
     parent_graph = state.parent_graph
     sdfg.add_symbol("X", stype=numpy.float64)
-    second_state = parent_graph.add_state_after(state,
-                                                is_start_block=False,
-                                                assignments={"X": f"{arr_name}[{access_str}]"})
-    sdfg.add_array("sc1", dtype=dace.float64, transient=False, shape=(1, ))
-    sdfg.add_array("sc2", dtype=dace.float64, transient=False, shape=(1, ))
+    second_state = parent_graph.add_state_after(
+        state, is_start_block=False, assignments={"X": f"{arr_name}[{access_str}]"}
+    )
+    sdfg.add_array("sc1", dtype=dace.float64, transient=False, shape=(1,))
+    sdfg.add_array("sc2", dtype=dace.float64, transient=False, shape=(1,))
     t1 = second_state.add_tasklet(name="read_from_sym", inputs=set(), outputs={"_out"}, code="_out = X")
     t1.add_out_connector("_out")
     second_state.add_edge(t1, "_out", second_state.add_access("sc1"), None, dace.memlet.Memlet(expr="sc1[0]"))
@@ -51,8 +51,9 @@ def _add_interstate_access(sdfg: dace.SDFG, arr_name: str, arr: dace.data.Array)
     t2.add_in_connector("_in")
     t2.add_out_connector("_out")
 
-    second_state.add_edge(second_state.add_access(arr_name), None, t2, "_in",
-                          dace.memlet.Memlet(expr=f"{arr_name}[{access_str}]"))
+    second_state.add_edge(
+        second_state.add_access(arr_name), None, t2, "_in", dace.memlet.Memlet(expr=f"{arr_name}[{access_str}]")
+    )
     second_state.add_edge(t2, "_out", second_state.add_access("sc2"), None, dace.memlet.Memlet(expr=f"sc2[0]"))
 
 
@@ -225,10 +226,10 @@ def test_matrix_dim_split_with_interstate_access():
 
 if __name__ == "__main__":
     # Basic tests
-    #test_vector_dim_split_with_block_size()
-    #test_matrix_dim_split_with_block_size()
-    #test_tensor_dim_split_with_block_size()
+    # test_vector_dim_split_with_block_size()
+    # test_matrix_dim_split_with_block_size()
+    # test_tensor_dim_split_with_block_size()
     # Blocked shape tests (For the perfect match optimization)
-    #test_tensor_blocked_dim_split_with_block_size()
+    # test_tensor_blocked_dim_split_with_block_size()
     # Interstate edge tests
     test_matrix_dim_split_with_interstate_access()

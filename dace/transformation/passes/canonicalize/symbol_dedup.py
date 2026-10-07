@@ -21,6 +21,7 @@ every point one is read, the other has an identical reaching definition). All
 uses of the dropped symbol are rewritten to the surviving keeper via DaCe's
 symbol-replacement machinery, keeping the transform value-preserving (bit-exact).
 """
+
 from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
@@ -46,7 +47,7 @@ class SymbolDedup(ppl.Pass):
     and the symbol itself -- preserves values exactly.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         # Renames symbols (Symbols), rewrites interstate edges + memlets (Edges),
@@ -73,7 +74,7 @@ class SymbolDedup(ppl.Pass):
         return merged if merged else None
 
     def report(self, pass_retval: Optional[int]) -> str:
-        return f'Deduplicated {pass_retval or 0} interstate-edge symbol(s).'
+        return f"Deduplicated {pass_retval or 0} interstate-edge symbol(s)."
 
     def _normalize_rhs(self, rhs: object) -> str:
         """Normalize an assignment RHS so equal-but-differently-formatted

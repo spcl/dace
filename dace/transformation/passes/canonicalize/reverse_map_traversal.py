@@ -29,6 +29,7 @@ Direction, then order: this runs before
 belongs innermost by scoring unit coefficients. Orienting first means it scores the coefficients
 the emitted code will actually use.
 """
+
 from typing import Any, Dict, List, Optional
 
 import sympy
@@ -67,8 +68,10 @@ def access_coefficients(state: SDFGState, entry: nodes.MapEntry, param: str) -> 
                         continue
                     coeff = as_expr(expr).coeff(as_expr(sym), 1)
                     # Affine iff removing the linear term leaves the parameter behind entirely.
-                    if sym in required(coeff).free_symbols or sym in as_basic(
-                            symbolic.simplify(expr - coeff * sym)).free_symbols:
+                    if (
+                        sym in required(coeff).free_symbols
+                        or sym in as_basic(symbolic.simplify(expr - coeff * sym)).free_symbols
+                    ):
                         return None
                     if required(coeff).is_negative:
                         signs.append(-1)
@@ -96,7 +99,7 @@ def reverse_descending_maps(sdfg: SDFG) -> Optional[int]:
                     signs = access_coefficients(state, entry, param)
                     if not signs or any(required(s) > 0 for s in signs):
                         continue
-                    state.scope_subgraph(entry).replace(param, f'({begin} + {end} - {param})')
+                    state.scope_subgraph(entry).replace(param, f"({begin} + {end} - {param})")
                     flipped += 1
     return flipped or None
 
@@ -109,7 +112,7 @@ class ReverseMapTraversal(ppl.Pass):
     a given thread touches first.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets | ppl.Modifies.Tasklets

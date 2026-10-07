@@ -1,29 +1,30 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Regressions for the apply_assignment liveness planner (adversarial-review findings, 2026-07-17):
 
-  * a segment whose FIRST kernel does not touch the array must still get its entry conversion when
-    a LATER kernel of the segment reads live-in data (first-touch scan, not kernels[start]);
-  * an untouched segment must not break the conversion chain -- the value keeps living in the last
-    MATERIALIZED holder, and a later same-layout segment ALIASES onto it with no conversion;
-  * a PARTIAL first write must not suppress the entry conversion (only a proven full-coverage
-    write may -- ``writes_cover_array``);
-  * a WCR accumulation reads-modifies its destination, so it counts as a live-in read;
-  * a copy with one relaid operand becomes transposing and must be converted to a TensorTranspose
-    (the shared PermuteDimensions bookkeeping), never left as a silently-transposing plain copy;
-  * a NestedSDFG receiving a reassigned array through a spanning memlet is refused loudly.
+* a segment whose FIRST kernel does not touch the array must still get its entry conversion when
+  a LATER kernel of the segment reads live-in data (first-touch scan, not kernels[start]);
+* an untouched segment must not break the conversion chain -- the value keeps living in the last
+  MATERIALIZED holder, and a later same-layout segment ALIASES onto it with no conversion;
+* a PARTIAL first write must not suppress the entry conversion (only a proven full-coverage
+  write may -- ``writes_cover_array``);
+* a WCR accumulation reads-modifies its destination, so it counts as a live-in read;
+* a copy with one relaid operand becomes transposing and must be converted to a TensorTranspose
+  (the shared PermuteDimensions bookkeeping), never left as a silently-transposing plain copy;
+* a NestedSDFG receiving a reassigned array through a spanning memlet is refused loudly.
 """
+
 import numpy
 import pytest
 
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.libraries.layout.algebra import Permute
-from dace.transformation.layout.apply_assignment import (IDENTITY_LAYOUT, Layout, apply_assignment, writes_cover_array)
+from dace.transformation.layout.apply_assignment import IDENTITY_LAYOUT, Layout, apply_assignment, writes_cover_array
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
 
 N = dace.symbol("N")
-CM = Layout("perm10", (Permute((1, 0)), ))
+CM = Layout("perm10", (Permute((1, 0)),))
 ID = IDENTITY_LAYOUT
 
 
@@ -31,9 +32,9 @@ ID = IDENTITY_LAYOUT
 def gap3(A: dace.float64[N, N], X: dace.float64[N, N], C: dace.float64[N, N - 1], D: dace.float64[N, N - 1]):
     for i, j in dace.map[0:N, 0:N]:
         X[i, j] = A[i, j] * 2.0
-    for i, j in dace.map[0:N, 0:N - 1]:
+    for i, j in dace.map[0:N, 0 : N - 1]:
         C[i, j] = A[j, i] + A[i, j]
-    for i, j in dace.map[0:N, 0:N - 1]:
+    for i, j in dace.map[0:N, 0 : N - 1]:
         D[i, j] = X[j, i] + C[i, N - 2 - j]
 
 
@@ -125,8 +126,8 @@ def test_gap_segment_gets_entry_conversion(n=48):
     arrays = run(sdfg, n, seed=41, names=["A", "X", "C", "D"])
     a = arrays["A"]
     x = 2.0 * a
-    c = a.T[:, :n - 1] + a[:, :n - 1]
-    d = x.T[:n, :n - 1] + c[:, ::-1]
+    c = a.T[:, : n - 1] + a[:, : n - 1]
+    d = x.T[:n, : n - 1] + c[:, ::-1]
     assert numpy.allclose(arrays["X"], x)
     assert numpy.allclose(arrays["D"], d)
 
@@ -182,7 +183,7 @@ def build_nested_kernel():
     """A hand-built kernel whose map body is a NestedSDFG taking a SPANNING row of X (the
     frontend/prepare pipeline currently cannot produce this shape end to end, so the refusal is
     exercised structurally)."""
-    inner = dace.SDFG('inner_build_nested_kernel')
+    inner = dace.SDFG("inner_build_nested_kernel")
     inner.add_array("xrow", [N], dace.float64)
     inner.add_array("yrow", [N], dace.float64)
     istate = inner.add_state("body", is_start_block=True)
@@ -191,7 +192,7 @@ def build_nested_kernel():
     istate.add_memlet_path(istate.add_access("xrow"), ime, tasklet, dst_conn="a", memlet=dace.Memlet("xrow[j]"))
     istate.add_memlet_path(tasklet, imx, istate.add_access("yrow"), src_conn="b", memlet=dace.Memlet("yrow[j]"))
 
-    outer = dace.SDFG('outer_build_nested_kernel')
+    outer = dace.SDFG("outer_build_nested_kernel")
     outer.add_array("X", [N, N], dace.float64)
     outer.add_array("Y", [N, N], dace.float64)
     state = outer.add_state("k", is_start_block=True)
@@ -254,7 +255,7 @@ def test_readonly_array_returns_to_identity_without_touching_the_caller_buffer(n
     assertion is the last one: a restore would write a transpose back into the caller's input."""
     sdfg, kernels = split(readonly3)
     assert len(kernels) == 3
-    P = Layout("perm10", (Permute((1, 0)), ))
+    P = Layout("perm10", (Permute((1, 0)),))
     applied = apply_assignment(sdfg, kernels, {"A": [P, ID, P]})
     assert applied.segment_names["A"] == ["A__seg0_perm10", "A", "A__seg2_perm10"]
     assert len(applied.boundary_states) == 2  # two entries; the identity segment costs nothing
@@ -280,7 +281,7 @@ def test_same_tag_different_ops_is_refused():
     the priced one -- with no error and a still-valid SDFG."""
     from dace.transformation.layout.apply_assignment import segments_of
 
-    collide = [Layout("t", (Permute((1, 0)), )), Layout("t", ())]
+    collide = [Layout("t", (Permute((1, 0)),)), Layout("t", ())]
     with pytest.raises(ValueError, match="two different op"):
         segments_of(collide)
     sdfg, kernels = split(copy3)
@@ -289,7 +290,7 @@ def test_same_tag_different_ops_is_refused():
     assert segments_of([CM, CM]) == [(0, 2, CM)]  # the honest same-tag case still groups
 
 
-P201 = Layout("perm201", (Permute((2, 0, 1)), ))
+P201 = Layout("perm201", (Permute((2, 0, 1)),))
 
 
 def test_rank3_relaid_copy_picks_the_right_permutation_direction(n=8):

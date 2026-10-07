@@ -14,6 +14,7 @@ The libnode's expansion emits a runtime ``s > 0`` ``std::abort()`` check before
 the scan starts; the negative/zero-stride case is exercised via subprocess to
 avoid killing the test runner.
 """
+
 import os
 import subprocess
 import sys
@@ -26,24 +27,24 @@ import pytest
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.codegen.codegen import generate_code
-from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME)
+from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME
 
 
 def _build_scan_sdfg(n: int, stride: int, op: ScanOp, implementation: str) -> dace.SDFG:
     """Build a single-state SDFG that scans ``arr_in[0:N]`` into ``arr_out[0:N]``
     with the given stride and op."""
-    sdfg = dace.SDFG(f'strided_scan_{op.value}_{implementation}_n{n}_s{stride}')
-    sdfg.add_array('arr_in', [n], dace.float64)
-    sdfg.add_array('arr_out', [n], dace.float64)
-    state = sdfg.add_state('scan')
-    a_in = state.add_read('arr_in')
-    a_out = state.add_write('arr_out')
-    node = Scan('Scan', op=op, exclusive=False)
+    sdfg = dace.SDFG(f"strided_scan_{op.value}_{implementation}_n{n}_s{stride}")
+    sdfg.add_array("arr_in", [n], dace.float64)
+    sdfg.add_array("arr_out", [n], dace.float64)
+    state = sdfg.add_state("scan")
+    a_in = state.add_read("arr_in")
+    a_out = state.add_write("arr_out")
+    node = Scan("Scan", op=op, exclusive=False)
     node.stride = stride
     node.implementation = implementation
     state.add_node(node)
-    state.add_edge(a_in, None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'arr_in[0:{n}]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, a_out, None, dace.Memlet(f'arr_out[0:{n}]'))
+    state.add_edge(a_in, None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"arr_in[0:{n}]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, a_out, None, dace.Memlet(f"arr_out[0:{n}]"))
     sdfg.validate()
     return sdfg
 
@@ -66,7 +67,7 @@ def _residue_class_scan_oracle(arr_in: np.ndarray, stride: int, op: ScanOp) -> n
         binop = max
         ident = None
     else:
-        raise AssertionError(f'Unknown op: {op}')
+        raise AssertionError(f"Unknown op: {op}")
     for k in range(stride):
         first = True
         acc = ident
@@ -80,10 +81,10 @@ def _residue_class_scan_oracle(arr_in: np.ndarray, stride: int, op: ScanOp) -> n
     return out
 
 
-@pytest.mark.parametrize('stride', [1, 2, 3, 4, 5])
-@pytest.mark.parametrize('n', [16, 33])
-@pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
-@pytest.mark.parametrize('implementation', ['CPU', 'Auto', 'pure'])
+@pytest.mark.parametrize("stride", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("n", [16, 33])
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.PRODUCT, ScanOp.MIN, ScanOp.MAX])
+@pytest.mark.parametrize("implementation", ["CPU", "Auto", "pure"])
 def test_strided_scan_matches_residue_class_oracle(stride: int, n: int, op: ScanOp, implementation: str):
     """For each stride, dtype, and implementation, the libnode-produced output equals
     the per-residue-class sequential scan."""
@@ -98,8 +99,9 @@ def test_strided_scan_matches_residue_class_oracle(stride: int, n: int, op: Scan
     sdfg = _build_scan_sdfg(n, stride, op, implementation)
     sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     expected = _residue_class_scan_oracle(arr_in, stride, op)
-    assert np.allclose(arr_out, expected), (f'stride={stride} n={n} op={op.value} impl={implementation}: '
-                                            f'max abs diff {np.max(np.abs(arr_out - expected))}')
+    assert np.allclose(arr_out, expected), (
+        f"stride={stride} n={n} op={op.value} impl={implementation}: max abs diff {np.max(np.abs(arr_out - expected))}"
+    )
 
 
 def test_strided_scan_stride_2_explicit():
@@ -107,13 +109,13 @@ def test_strided_scan_stride_2_explicit():
     independent cumsum subsequences."""
     n, s = 8, 2
     arr_in = np.arange(1.0, n + 1.0)  # [1, 2, 3, 4, 5, 6, 7, 8]
-    sdfg = _build_scan_sdfg(n, s, ScanOp.SUM, 'pure')
+    sdfg = _build_scan_sdfg(n, s, ScanOp.SUM, "pure")
     arr_out = np.zeros(n)
     sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     # Even residue: cumsum([1, 3, 5, 7]) = [1, 4, 9, 16]
     # Odd  residue: cumsum([2, 4, 6, 8]) = [2, 6, 12, 20]
     expected = np.array([1.0, 2.0, 4.0, 6.0, 9.0, 12.0, 16.0, 20.0])
-    assert np.allclose(arr_out, expected), f'got {arr_out}, expected {expected}'
+    assert np.allclose(arr_out, expected), f"got {arr_out}, expected {expected}"
 
 
 def test_strided_scan_stride_one_matches_contiguous():
@@ -123,7 +125,7 @@ def test_strided_scan_stride_one_matches_contiguous():
     rng = np.random.default_rng(0)
     arr_in = rng.uniform(-1.0, 1.0, size=n)
     arr_out = np.zeros(n)
-    sdfg = _build_scan_sdfg(n, 1, ScanOp.SUM, 'CPU')
+    sdfg = _build_scan_sdfg(n, 1, ScanOp.SUM, "CPU")
     sdfg(arr_in=arr_in.copy(), arr_out=arr_out)
     assert np.allclose(arr_out, np.cumsum(arr_in))
 
@@ -159,36 +161,39 @@ _NEGATIVE_STRIDE_SCRIPT = textwrap.dedent("""
 """).format(repo=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-@pytest.mark.parametrize('implementation', ['Auto', 'pure'])
+@pytest.mark.parametrize("implementation", ["Auto", "pure"])
 def test_negative_stride_aborts_at_runtime(implementation):
     """A non-positive stride must abort the program before the scan runs. Spawned in
     a subprocess so the abort doesn't kill the test runner."""
-    script = _NEGATIVE_STRIDE_SCRIPT.replace('{implementation!r}', repr(implementation))
-    proc = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120)
-    assert 'UNEXPECTEDLY_SURVIVED' not in proc.stdout, (
-        f'Negative stride failed to abort. stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}')
-    assert proc.returncode != 0, (f'Expected non-zero exit on abort; got returncode={proc.returncode}. '
-                                  f'stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}')
+    script = _NEGATIVE_STRIDE_SCRIPT.replace("{implementation!r}", repr(implementation))
+    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120)
+    assert "UNEXPECTEDLY_SURVIVED" not in proc.stdout, (
+        f"Negative stride failed to abort. stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}"
+    )
+    assert proc.returncode != 0, (
+        f"Expected non-zero exit on abort; got returncode={proc.returncode}. "
+        f"stdout={proc.stdout!r} stderr={proc.stderr[-400:]!r}"
+    )
 
 
-if __name__ == '__main__':
-    sys.exit(pytest.main([__file__, '-v']))
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-v"]))
 
 
 def _scan_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
     """``rows`` independent length-``n`` scans, one per iteration of a parallel Map."""
-    sdfg = dace.SDFG('scan_inside_parallel_map')
-    sdfg.add_array('arr_in', [rows, n], dace.float64)
-    sdfg.add_array('arr_out', [rows, n], dace.float64)
-    state = sdfg.add_state('scan_map')
-    me, mx = state.add_map('rows', {'r': f'0:{rows}'}, schedule=dace.dtypes.ScheduleType.CPU_Multicore)
-    a_in = state.add_read('arr_in')
-    a_out = state.add_write('arr_out')
-    node = Scan('Scan', op=ScanOp.SUM, exclusive=False)
-    node.implementation = 'CPU'
+    sdfg = dace.SDFG("scan_inside_parallel_map")
+    sdfg.add_array("arr_in", [rows, n], dace.float64)
+    sdfg.add_array("arr_out", [rows, n], dace.float64)
+    state = sdfg.add_state("scan_map")
+    me, mx = state.add_map("rows", {"r": f"0:{rows}"}, schedule=dace.dtypes.ScheduleType.CPU_Multicore)
+    a_in = state.add_read("arr_in")
+    a_out = state.add_write("arr_out")
+    node = Scan("Scan", op=ScanOp.SUM, exclusive=False)
+    node.implementation = "CPU"
     state.add_node(node)
-    state.add_memlet_path(a_in, me, node, dst_conn=INPUT_CONNECTOR_NAME, memlet=dace.Memlet(f'arr_in[r, 0:{n}]'))
-    state.add_memlet_path(node, mx, a_out, src_conn=OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet(f'arr_out[r, 0:{n}]'))
+    state.add_memlet_path(a_in, me, node, dst_conn=INPUT_CONNECTOR_NAME, memlet=dace.Memlet(f"arr_in[r, 0:{n}]"))
+    state.add_memlet_path(node, mx, a_out, src_conn=OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet(f"arr_out[r, 0:{n}]"))
     sdfg.validate()
     return sdfg
 
@@ -204,13 +209,15 @@ def test_scan_in_parallel_map_lowers_to_sequential_form():
     PRESENT here rather than absent: it is the sequential lowering.
     """
     sdfg = _scan_in_map_sdfg(n=64, rows=4)
-    code = ''.join(o.clean_code for o in sdfg.generate_code())
-    body = code[code.index('#pragma omp parallel for'):] if '#pragma omp parallel for' in code else code
-    assert '#pragma omp parallel' not in body[len('#pragma omp parallel for'):], \
-        'a nested OpenMP region was emitted inside the parallel Map'
-    assert '::dace::scan::inclusive_' not in code, 'parallel scan entry point called inside a parallel Map'
-    assert '::dace::scan::detail::scan_incl_' in code, \
-        'the sequential shape should call the header single-block simd inscan'
+    code = "".join(o.clean_code for o in sdfg.generate_code())
+    body = code[code.index("#pragma omp parallel for") :] if "#pragma omp parallel for" in code else code
+    assert "#pragma omp parallel" not in body[len("#pragma omp parallel for") :], (
+        "a nested OpenMP region was emitted inside the parallel Map"
+    )
+    assert "::dace::scan::inclusive_" not in code, "parallel scan entry point called inside a parallel Map"
+    assert "::dace::scan::detail::scan_incl_" in code, (
+        "the sequential shape should call the header single-block simd inscan"
+    )
 
 
 def test_scan_in_parallel_map_is_numerically_correct():
@@ -246,17 +253,17 @@ def test_parallel_entry_point_called_inside_a_team_is_correct():
         }
     """)
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    include = os.path.join(root, 'dace', 'runtime', 'include')
+    include = os.path.join(root, "dace", "runtime", "include")
     with tempfile.TemporaryDirectory() as tmp:
-        cpp, exe = os.path.join(tmp, 'p.cpp'), os.path.join(tmp, 'p')
-        with open(cpp, 'w') as fh:
+        cpp, exe = os.path.join(tmp, "p.cpp"), os.path.join(tmp, "p")
+        with open(cpp, "w") as fh:
             fh.write(src)
-        build = subprocess.run(['g++', '-std=c++20', '-O2', '-fopenmp', '-I', include, '-o', exe, cpp],
-                               capture_output=True,
-                               text=True)
-        assert build.returncode == 0, f'probe did not build: {build.stderr[-300:]}'
+        build = subprocess.run(
+            ["g++", "-std=c++20", "-O2", "-fopenmp", "-I", include, "-o", exe, cpp], capture_output=True, text=True
+        )
+        assert build.returncode == 0, f"probe did not build: {build.stderr[-300:]}"
         run = subprocess.run([exe], capture_output=True, text=True, timeout=120)
-    assert run.stdout.strip() == 'OK', f'nested direct call gave wrong values: {run.stdout!r}'
+    assert run.stdout.strip() == "OK", f"nested direct call gave wrong values: {run.stdout!r}"
 
 
 def _scan_in_nested_sdfg_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
@@ -267,32 +274,28 @@ def _scan_in_nested_sdfg_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
     state returns ``None`` -- the Map lives in the OUTER SDFG, one nested-SDFG boundary away --
     so a scope walk that only looks at the immediately enclosing state misses it.
     """
-    inner = dace.SDFG('scan_row_inner')
-    inner.add_array('ri', [n], dace.float64)
-    inner.add_array('ro', [n], dace.float64)
+    inner = dace.SDFG("scan_row_inner")
+    inner.add_array("ri", [n], dace.float64)
+    inner.add_array("ro", [n], dace.float64)
     ist = inner.add_state()
-    node = Scan('Scan', op=ScanOp.SUM, exclusive=False)
-    node.implementation = 'CPU'
+    node = Scan("Scan", op=ScanOp.SUM, exclusive=False)
+    node.implementation = "CPU"
     ist.add_node(node)
-    ist.add_edge(ist.add_read('ri'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'ri[0:{n}]'))
-    ist.add_edge(node, OUTPUT_CONNECTOR_NAME, ist.add_write('ro'), None, dace.Memlet(f'ro[0:{n}]'))
+    ist.add_edge(ist.add_read("ri"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"ri[0:{n}]"))
+    ist.add_edge(node, OUTPUT_CONNECTOR_NAME, ist.add_write("ro"), None, dace.Memlet(f"ro[0:{n}]"))
 
-    sdfg = dace.SDFG('scan_in_nested_sdfg_in_map')
-    sdfg.add_array('arr_in', [rows, n], dace.float64)
-    sdfg.add_array('arr_out', [rows, n], dace.float64)
-    state = sdfg.add_state('rows')
-    entry, exit_ = state.add_map('rows', {'r': f'0:{rows}'}, schedule=dace.dtypes.ScheduleType.CPU_Multicore)
-    nested = state.add_nested_sdfg(inner, {'ri'}, {'ro'})
-    state.add_memlet_path(state.add_read('arr_in'),
-                          entry,
-                          nested,
-                          dst_conn='ri',
-                          memlet=dace.Memlet(f'arr_in[r, 0:{n}]'))
-    state.add_memlet_path(nested,
-                          exit_,
-                          state.add_write('arr_out'),
-                          src_conn='ro',
-                          memlet=dace.Memlet(f'arr_out[r, 0:{n}]'))
+    sdfg = dace.SDFG("scan_in_nested_sdfg_in_map")
+    sdfg.add_array("arr_in", [rows, n], dace.float64)
+    sdfg.add_array("arr_out", [rows, n], dace.float64)
+    state = sdfg.add_state("rows")
+    entry, exit_ = state.add_map("rows", {"r": f"0:{rows}"}, schedule=dace.dtypes.ScheduleType.CPU_Multicore)
+    nested = state.add_nested_sdfg(inner, {"ri"}, {"ro"})
+    state.add_memlet_path(
+        state.add_read("arr_in"), entry, nested, dst_conn="ri", memlet=dace.Memlet(f"arr_in[r, 0:{n}]")
+    )
+    state.add_memlet_path(
+        nested, exit_, state.add_write("arr_out"), src_conn="ro", memlet=dace.Memlet(f"arr_out[r, 0:{n}]")
+    )
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
@@ -306,14 +309,17 @@ def test_scan_in_nested_sdfg_inside_parallel_map_lowers_to_sequential_form():
     expected to be there.
     """
     sdfg = _scan_in_nested_sdfg_in_map_sdfg(n=64, rows=4)
-    code = ''.join(o.clean_code for o in sdfg.generate_code())
-    body = code[code.index('#pragma omp parallel for'):] if '#pragma omp parallel for' in code else code
-    assert '#pragma omp parallel' not in body[len('#pragma omp parallel for'):], \
-        'a nested OpenMP region was emitted inside the parallel Map'
-    assert '::dace::scan::inclusive_' not in code, (
-        'parallel scan entry point called inside a NestedSDFG in a parallel Map')
-    assert '::dace::scan::detail::scan_incl_' in code, \
-        'the sequential shape should call the header single-block simd inscan'
+    code = "".join(o.clean_code for o in sdfg.generate_code())
+    body = code[code.index("#pragma omp parallel for") :] if "#pragma omp parallel for" in code else code
+    assert "#pragma omp parallel" not in body[len("#pragma omp parallel for") :], (
+        "a nested OpenMP region was emitted inside the parallel Map"
+    )
+    assert "::dace::scan::inclusive_" not in code, (
+        "parallel scan entry point called inside a NestedSDFG in a parallel Map"
+    )
+    assert "::dace::scan::detail::scan_incl_" in code, (
+        "the sequential shape should call the header single-block simd inscan"
+    )
 
 
 def test_scan_in_nested_sdfg_inside_parallel_map_is_numerically_correct():
@@ -328,16 +334,16 @@ def test_scan_in_nested_sdfg_inside_parallel_map_is_numerically_correct():
 
 def gpu_strided_scan(stride: int, op: ScanOp, dtype=dace.float64) -> dace.SDFG:
     """Single strided ``Scan`` over device-global memory, lowered by the ``CUDA`` key."""
-    sdfg = dace.SDFG(f'strided_gpu_{op.value}_s{stride}')
-    sdfg.add_array('A', [64], dtype, storage=dace.StorageType.GPU_Global)
-    sdfg.add_array('B', [64], dtype, storage=dace.StorageType.GPU_Global)
+    sdfg = dace.SDFG(f"strided_gpu_{op.value}_s{stride}")
+    sdfg.add_array("A", [64], dtype, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [64], dtype, storage=dace.StorageType.GPU_Global)
     state = sdfg.add_state()
-    node = Scan('scan', op=op)
+    node = Scan("scan", op=op)
     node.stride = stride
-    node.implementation = 'CUDA'
+    node.implementation = "CUDA"
     state.add_node(node)
-    state.add_edge(state.add_read('A'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet('A[0:64]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('B'), None, dace.Memlet('B[0:64]'))
+    state.add_edge(state.add_read("A"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("A[0:64]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("B"), None, dace.Memlet("B[0:64]"))
     sdfg.validate()
     return sdfg
 
@@ -345,14 +351,15 @@ def gpu_strided_scan(stride: int, op: ScanOp, dtype=dace.float64) -> dace.SDFG:
 def test_the_gpu_key_is_cuda_for_every_stride():
     """There is ONE GPU implementation name. A caller asking for the device must not also have to
     know the stride, and the fast-library priority lists only ever name ``CUDA``."""
-    assert 'CUDA_strided' not in Scan('scan').implementations, (
-        'the strided GPU lowering is reachable under its own key again; auto_optimize and '
-        'canonicalize only ever ask for CUDA, so a strided scan would refuse instead of lowering')
-    assert 'CUDA' in Scan('scan').implementations
+    assert "CUDA_strided" not in Scan("scan").implementations, (
+        "the strided GPU lowering is reachable under its own key again; auto_optimize and "
+        "canonicalize only ever ask for CUDA, so a strided scan would refuse instead of lowering"
+    )
+    assert "CUDA" in Scan("scan").implementations
 
 
-@pytest.mark.parametrize('backend', ['cuda', 'hip'])
-@pytest.mark.parametrize('stride', [1, 8])
+@pytest.mark.parametrize("backend", ["cuda", "hip"])
+@pytest.mark.parametrize("stride", [1, 8])
 def test_the_strided_launch_lands_in_the_cuda_translation_unit(backend: str, stride: int):
     """The kernel launch is nvcc/hipcc-only syntax, so it cannot sit in the host ``.cpp``.
 
@@ -360,40 +367,43 @@ def test_the_strided_launch_lands_in_the_cuda_translation_unit(backend: str, str
     old ``ScanStrided`` environment and consumed nowhere in codegen, so the wrappers it named were
     never compiled and ``Scan`` could not link on either backend.
     """
-    with dace.config.set_temporary('compiler', 'cuda', 'backend', value=backend):
+    with dace.config.set_temporary("compiler", "cuda", "backend", value=backend):
         codes = generate_code(gpu_strided_scan(stride, ScanOp.SUM))
-    cuda = '\n'.join(c.code for c in codes if c.title == 'CUDA')
-    host = '\n'.join(c.code for c in codes if c.title != 'CUDA')
-    wanted = 'strided_inclusive_sum' if stride != 1 else 'DeviceScan::InclusiveScan'
-    assert wanted in cuda, f'{wanted} is not in the CUDA translation unit under the {backend} backend'
-    assert wanted not in host, f'{wanted} leaked into the host translation unit'
-    assert '__dace_scan' in host, 'the host tasklet does not call the emitted wrapper'
+    cuda = "\n".join(c.code for c in codes if c.title == "CUDA")
+    host = "\n".join(c.code for c in codes if c.title != "CUDA")
+    wanted = "strided_inclusive_sum" if stride != 1 else "DeviceScan::InclusiveScan"
+    assert wanted in cuda, f"{wanted} is not in the CUDA translation unit under the {backend} backend"
+    assert wanted not in host, f"{wanted} leaked into the host translation unit"
+    assert "__dace_scan" in host, "the host tasklet does not call the emitted wrapper"
 
 
-@pytest.mark.parametrize('dtype', [dace.float32, dace.int32, dace.int16])
+@pytest.mark.parametrize("dtype", [dace.float32, dace.int32, dace.int16])
 def test_the_strided_lowering_is_not_limited_to_a_fixed_dtype_set(dtype):
     """The wrapper is templated where it is emitted, so there is no pre-instantiated dtype list.
 
     ``int16`` in particular was outside the old ``f64 / f32 / i64 / i32`` set and raised.
     """
     codes = generate_code(gpu_strided_scan(4, ScanOp.MAX, dtype))
-    cuda = '\n'.join(c.code for c in codes if c.title == 'CUDA')
-    assert f'strided_inclusive_max<{dtype.ctype}>' in cuda
+    cuda = "\n".join(c.code for c in codes if c.title == "CUDA")
+    assert f"strided_inclusive_max<{dtype.ctype}>" in cuda
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('op,operator_macro,oracle', [
-    (ScanOp.PRODUCT, 'DACE_CUB_MUL_OP', np.cumprod),
-    (ScanOp.MIN, 'DACE_CUB_MIN_OP', np.minimum.accumulate),
-    (ScanOp.MAX, 'DACE_CUB_MAX_OP', np.maximum.accumulate),
-],
-                         ids=['product', 'min', 'max'])
+@pytest.mark.parametrize(
+    "op,operator_macro,oracle",
+    [
+        (ScanOp.PRODUCT, "DACE_CUB_MUL_OP", np.cumprod),
+        (ScanOp.MIN, "DACE_CUB_MIN_OP", np.minimum.accumulate),
+        (ScanOp.MAX, "DACE_CUB_MAX_OP", np.maximum.accumulate),
+    ],
+    ids=["product", "min", "max"],
+)
 def test_a_contiguous_gpu_scan_compiles_and_matches_numpy(op: ScanOp, operator_macro: str, oracle):
     import cupy
 
     codes = generate_code(gpu_strided_scan(1, op))
-    cuda = '\n'.join(c.code for c in codes if c.title == 'CUDA')
-    assert 'DeviceScan::InclusiveScan' in cuda and operator_macro in cuda
+    cuda = "\n".join(c.code for c in codes if c.title == "CUDA")
+    assert "DeviceScan::InclusiveScan" in cuda and operator_macro in cuda
 
     host = np.random.default_rng(20260914).uniform(0.95, 1.05, size=64)
     device_out = cupy.zeros(64, dtype=np.float64)
@@ -401,22 +411,22 @@ def test_a_contiguous_gpu_scan_compiles_and_matches_numpy(op: ScanOp, operator_m
     np.testing.assert_allclose(cupy.asnumpy(device_out), oracle(host), rtol=1e-12)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'Auto', 'CPU'])
+@pytest.mark.parametrize("implementation", ["pure", "Auto", "CPU"])
 def test_a_symbolic_stride_survives_a_json_round_trip_of_the_scan(implementation: str):
     """An untyped stride property saved a symbol as the text ``symbol($K, ...)``, which no expansion could parse:
     a reloaded SDFG (the CPF canonical cache) failed with SyntaxError on scan_strided_sym and versioned_distance_update."""
     n = 16
-    sdfg = dace.SDFG(f'symbolic_stride_round_trip_{implementation}')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_array('arr_in', [n], dace.float64)
-    sdfg.add_array('arr_out', [n], dace.float64)
-    state = sdfg.add_state('scan')
-    node = Scan('Scan', op=ScanOp.SUM, exclusive=False)
-    node.stride = dace.symbol('K', dtype=dace.int64)
+    sdfg = dace.SDFG(f"symbolic_stride_round_trip_{implementation}")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("arr_in", [n], dace.float64)
+    sdfg.add_array("arr_out", [n], dace.float64)
+    state = sdfg.add_state("scan")
+    node = Scan("Scan", op=ScanOp.SUM, exclusive=False)
+    node.stride = dace.symbol("K", dtype=dace.int64)
     node.implementation = implementation
     state.add_node(node)
-    state.add_edge(state.add_read('arr_in'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'arr_in[0:{n}]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('arr_out'), None, dace.Memlet(f'arr_out[0:{n}]'))
+    state.add_edge(state.add_read("arr_in"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"arr_in[0:{n}]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("arr_out"), None, dace.Memlet(f"arr_out[0:{n}]"))
 
     loaded = dace.SDFG.from_json(sdfg.to_json())
     loaded.expand_library_nodes()

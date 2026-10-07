@@ -9,6 +9,7 @@ dim adds 0 (legal); a NON-sum reduction (max/min/product) over a padded dim is r
 PadZeroFill requires PadDimensions' result (the pre-pad shapes) so it zeroes only dead cells; run without it,
 or against a shape that was never grown, it is a hard error rather than a silent wipe of live data.
 """
+
 import numpy as np
 import pytest
 import dace

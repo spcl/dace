@@ -10,6 +10,7 @@ removed and left the region with no answer at all.
 The index is derived state that any removal invalidates, so ``remove_node`` re-resolves it around
 the removal; that is what the behavioural cases below pin.
 """
+
 import dace
 from dace.sdfg.state import ControlFlowRegion
 import pytest
@@ -17,8 +18,8 @@ import pytest
 
 def _sdfg_with_explicit_start(n: int = 4) -> dace.SDFG:
     """``n`` chained states whose start block is set explicitly via ``is_start_block``."""
-    sdfg = dace.SDFG(f'start_block_repr_{n}')
-    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(n)]
+    sdfg = dace.SDFG(f"start_block_repr_{n}")
+    states = [sdfg.add_state(f"s{i}", is_start_block=(i == 0)) for i in range(n)]
     for a, b in zip(states, states[1:]):
         sdfg.add_edge(a, b, dace.InterstateEdge())
     return sdfg
@@ -65,10 +66,10 @@ def test_removing_the_start_block_repins_to_the_new_entry():
 
 def _ambiguous_sdfg() -> dace.SDFG:
     """Two source nodes, so ``start_block`` cannot infer and must consult ``_start_block``."""
-    sdfg = dace.SDFG('start_block_repr_ambiguous')
-    a = sdfg.add_state('a')
-    b = sdfg.add_state('b')
-    tail = sdfg.add_state('tail')
+    sdfg = dace.SDFG("start_block_repr_ambiguous")
+    a = sdfg.add_state("a")
+    b = sdfg.add_state("b")
+    tail = sdfg.add_state("tail")
     sdfg.add_edge(a, tail, dace.InterstateEdge())
     sdfg.add_edge(b, tail, dace.InterstateEdge())
     return sdfg
@@ -89,12 +90,12 @@ def test_the_setter_takes_an_index_and_survives_an_earlier_removal():
 
 def test_remove_node_on_a_region_with_an_explicit_start():
     """The shape the canonicalize cleanup band hits: a region inside an SDFG losing a child."""
-    sdfg = dace.SDFG('start_block_repr_region')
-    outer = sdfg.add_state('outer', is_start_block=True)
-    region = ControlFlowRegion('inner', sdfg=sdfg)
+    sdfg = dace.SDFG("start_block_repr_region")
+    outer = sdfg.add_state("outer", is_start_block=True)
+    region = ControlFlowRegion("inner", sdfg=sdfg)
     sdfg.add_node(region)
     sdfg.add_edge(outer, region, dace.InterstateEdge())
-    inner = [region.add_state(f'r{i}', is_start_block=(i == 0)) for i in range(3)]
+    inner = [region.add_state(f"r{i}", is_start_block=(i == 0)) for i in range(3)]
     for a, b in zip(inner, inner[1:]):
         region.add_edge(a, b, dace.InterstateEdge())
 
@@ -123,8 +124,8 @@ def test_a_pinned_ambiguous_region_round_trips():
     sdfg.start_block = sdfg.node_id(sdfg.node(1))
     restored = dace.SDFG.from_json(sdfg.to_json())
     assert isinstance(restored._start_block, int)
-    assert restored.start_block.label == 'b'
+    assert restored.start_block.label == "b"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

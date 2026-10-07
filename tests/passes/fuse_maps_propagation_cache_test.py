@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """FuseMaps propagates the inside of a nested SDFG once per change, not once per fusion of its scope."""
+
 import copy
 import json
 from typing import Any, List, Tuple
@@ -17,20 +18,25 @@ CHAIN_LENGTH = 5
 
 
 def add_one_nested_sdfg(index: int, width: int) -> dace.SDFG:
-    inner = dace.SDFG(f'add_one_{index}')
+    inner = dace.SDFG(f"add_one_{index}")
     state = inner.add_state(is_start_block=True)
     if width == 1:
-        inner.add_scalar('x', dace.float64)
-        inner.add_scalar('y', dace.float64)
-        tasklet = state.add_tasklet('add', {'a': None}, {'b': None}, 'b = a + 1.0')
-        state.add_edge(state.add_access('x'), None, tasklet, 'a', dace.Memlet('x[0]'))
-        state.add_edge(tasklet, 'b', state.add_access('y'), None, dace.Memlet('y[0]'))
+        inner.add_scalar("x", dace.float64)
+        inner.add_scalar("y", dace.float64)
+        tasklet = state.add_tasklet("add", {"a": None}, {"b": None}, "b = a + 1.0")
+        state.add_edge(state.add_access("x"), None, tasklet, "a", dace.Memlet("x[0]"))
+        state.add_edge(tasklet, "b", state.add_access("y"), None, dace.Memlet("y[0]"))
         return inner
-    inner.add_array('x', (width, ), dace.float64)
-    inner.add_array('y', (width, ), dace.float64)
-    state.add_mapped_tasklet('add', {'j': f'0:{width}'}, {'a': dace.Memlet('x[j]')},
-                             'b = a + 1.0', {'b': dace.Memlet('y[j]')},
-                             external_edges=True)
+    inner.add_array("x", (width,), dace.float64)
+    inner.add_array("y", (width,), dace.float64)
+    state.add_mapped_tasklet(
+        "add",
+        {"j": f"0:{width}"},
+        {"a": dace.Memlet("x[j]")},
+        "b = a + 1.0",
+        {"b": dace.Memlet("y[j]")},
+        external_edges=True,
+    )
     return inner
 
 
@@ -39,20 +45,20 @@ def map_chain_with_nested_sdfgs(width: int = 1) -> dace.SDFG:
 
     ``width`` 1 passes one scalar per iteration; wider passes a row, whose inner strides the fusion rewrites.
     """
-    sdfg = dace.SDFG(f'map_chain_with_nested_sdfgs_{width}')
-    names = [f'arr_{k}' for k in range(CHAIN_LENGTH + 1)]
-    shape = (20, ) if width == 1 else (20, width)
+    sdfg = dace.SDFG(f"map_chain_with_nested_sdfgs_{width}")
+    names = [f"arr_{k}" for k in range(CHAIN_LENGTH + 1)]
+    shape = (20,) if width == 1 else (20, width)
     for k, name in enumerate(names):
         sdfg.add_array(name, shape, dace.float64, transient=0 < k < CHAIN_LENGTH)
     state = sdfg.add_state(is_start_block=True)
     source = state.add_access(names[0])
     for k in range(1, CHAIN_LENGTH + 1):
-        row = f'i{k}' if width == 1 else f'i{k}, 0:{width}'
-        entry, exit_node = state.add_map(f'map_{k}', {f'i{k}': '0:20'})
-        nsdfg = state.add_nested_sdfg(add_one_nested_sdfg(k, width), {'x': None}, {'y': None})
+        row = f"i{k}" if width == 1 else f"i{k}, 0:{width}"
+        entry, exit_node = state.add_map(f"map_{k}", {f"i{k}": "0:20"})
+        nsdfg = state.add_nested_sdfg(add_one_nested_sdfg(k, width), {"x": None}, {"y": None})
         target = state.add_access(names[k])
-        state.add_memlet_path(source, entry, nsdfg, dst_conn='x', memlet=dace.Memlet(f'{names[k - 1]}[{row}]'))
-        state.add_memlet_path(nsdfg, exit_node, target, src_conn='y', memlet=dace.Memlet(f'{names[k]}[{row}]'))
+        state.add_memlet_path(source, entry, nsdfg, dst_conn="x", memlet=dace.Memlet(f"{names[k - 1]}[{row}]"))
+        state.add_memlet_path(nsdfg, exit_node, target, src_conn="y", memlet=dace.Memlet(f"{names[k]}[{row}]"))
         source = target
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
@@ -65,7 +71,7 @@ def count_maps(sdfg: dace.SDFG) -> int:
 
 def without_identity(obj: Any) -> Any:
     if isinstance(obj, dict):
-        return {k: without_identity(v) for k, v in obj.items() if k not in ('guid', 'hash', 'debuginfo')}
+        return {k: without_identity(v) for k, v in obj.items() if k not in ("guid", "hash", "debuginfo")}
     if isinstance(obj, list):
         return [without_identity(v) for v in obj]
     return obj
@@ -89,35 +95,36 @@ def map_chain_with_side_inputs(inner_map: bool = False) -> dace.SDFG:
 
     ``inner_map`` wraps each body in a second, inner Map, so propagation walks two scope levels.
     """
-    sdfg = dace.SDFG(f'map_chain_with_side_inputs_{int(inner_map)}')
-    names = [f'arr_{k}' for k in range(CHAIN_LENGTH + 1)]
+    sdfg = dace.SDFG(f"map_chain_with_side_inputs_{int(inner_map)}")
+    names = [f"arr_{k}" for k in range(CHAIN_LENGTH + 1)]
     for k, name in enumerate(names):
         sdfg.add_array(name, (20, 4), dace.float64, transient=0 < k < CHAIN_LENGTH)
     for k in range(1, CHAIN_LENGTH + 1):
-        sdfg.add_array(f'side_{k}', (20, 4), dace.float64)
+        sdfg.add_array(f"side_{k}", (20, 4), dace.float64)
     state = sdfg.add_state(is_start_block=True)
     source = state.add_access(names[0])
     for k in range(1, CHAIN_LENGTH + 1):
         target = state.add_access(names[k])
-        side = state.add_access(f'side_{k}')
-        tasklet = state.add_tasklet(f'add_{k}', {'a': None, 'b': None}, {'c': None}, 'c = a + b')
-        entries = [state.add_map(f'map_{k}', {f'i{k}': '0:20'})]
+        side = state.add_access(f"side_{k}")
+        tasklet = state.add_tasklet(f"add_{k}", {"a": None, "b": None}, {"c": None}, "c = a + b")
+        entries = [state.add_map(f"map_{k}", {f"i{k}": "0:20"})]
         if inner_map:
-            entries.append(state.add_map(f'inner_{k}', {f'j{k}': '0:4'}))
-        column = f'j{k}' if inner_map else '0'
-        inputs = [(source, 'a', names[k - 1]), (side, 'b', f'side_{k}')]
+            entries.append(state.add_map(f"inner_{k}", {f"j{k}": "0:4"}))
+        column = f"j{k}" if inner_map else "0"
+        inputs = [(source, "a", names[k - 1]), (side, "b", f"side_{k}")]
         for node, conn, name in inputs:
             path = [node] + [entry for entry, _ in entries] + [tasklet]
-            state.add_memlet_path(*path, dst_conn=conn, memlet=dace.Memlet(f'{name}[i{k}, {column}]'))
+            state.add_memlet_path(*path, dst_conn=conn, memlet=dace.Memlet(f"{name}[i{k}, {column}]"))
         path = [tasklet] + [exit_node for _, exit_node in reversed(entries)] + [target]
-        state.add_memlet_path(*path, src_conn='c', memlet=dace.Memlet(f'{names[k]}[i{k}, {column}]'))
+        state.add_memlet_path(*path, src_conn="c", memlet=dace.Memlet(f"{names[k]}[i{k}, {column}]"))
         source = target
     sdfg.validate()
     return sdfg
 
 
-def fuse_counting_propagations(sdfg: dace.SDFG, monkeypatch: pytest.MonkeyPatch,
-                               use_cache: bool) -> Tuple[List[dace.SDFG], int]:
+def fuse_counting_propagations(
+    sdfg: dace.SDFG, monkeypatch: pytest.MonkeyPatch, use_cache: bool
+) -> Tuple[List[dace.SDFG], int]:
     """Run FuseMaps; the nested SDFGs whose inside it propagated, and how many memlets it propagated."""
     propagated: List[dace.SDFG] = []
     memlets = [0]
@@ -137,19 +144,19 @@ def fuse_counting_propagations(sdfg: dace.SDFG, monkeypatch: pytest.MonkeyPatch,
         original_scope_propagation(outer, state, map_entry, None, None)
 
     with monkeypatch.context() as patch:
-        patch.setattr(propagation, 'propagate_memlets_sdfg', counting_sdfg_propagation)
-        patch.setattr(propagation, 'propagate_memlet', counting_memlet_propagation)
+        patch.setattr(propagation, "propagate_memlets_sdfg", counting_sdfg_propagation)
+        patch.setattr(propagation, "propagate_memlet", counting_memlet_propagation)
         if not use_cache:
-            patch.setattr(mfhelper, 'propagate_fused_map_scope', uncached_scope_propagation)
+            patch.setattr(mfhelper, "propagate_fused_map_scope", uncached_scope_propagation)
         FuseMaps(validate=True, strict_dataflow=False).apply_pass(sdfg, {})
     return propagated, memlets[0]
 
 
 FIXTURES = {
-    'nested_scalar': lambda: map_chain_with_nested_sdfgs(1),
-    'nested_row': lambda: map_chain_with_nested_sdfgs(4),
-    'side_inputs': lambda: map_chain_with_side_inputs(False),
-    'side_inputs_inner_map': lambda: map_chain_with_side_inputs(True),
+    "nested_scalar": lambda: map_chain_with_nested_sdfgs(1),
+    "nested_row": lambda: map_chain_with_nested_sdfgs(4),
+    "side_inputs": lambda: map_chain_with_side_inputs(False),
+    "side_inputs_inner_map": lambda: map_chain_with_side_inputs(True),
 }
 
 
@@ -172,7 +179,7 @@ def test_fuse_maps_without_the_cache_repropagates_nested_sdfgs_per_fusion(monkey
     assert len(propagated) > CHAIN_LENGTH
 
 
-@pytest.mark.parametrize('fixture', sorted(FIXTURES))
+@pytest.mark.parametrize("fixture", sorted(FIXTURES))
 def test_fuse_maps_with_the_cache_builds_the_same_sdfg_as_without(monkeypatch: pytest.MonkeyPatch, fixture: str):
     cached = FIXTURES[fixture]()
     uncached = copy.deepcopy(cached)
@@ -183,7 +190,7 @@ def test_fuse_maps_with_the_cache_builds_the_same_sdfg_as_without(monkeypatch: p
     assert serialized(cached) == serialized(uncached)
 
 
-@pytest.mark.parametrize('inner_map', [False, True])
+@pytest.mark.parametrize("inner_map", [False, True])
 def test_fuse_maps_propagates_only_the_connectors_a_fusion_changed(monkeypatch: pytest.MonkeyPatch, inner_map: bool):
     cached = map_chain_with_side_inputs(inner_map)
     uncached = copy.deepcopy(cached)
@@ -195,7 +202,7 @@ def test_fuse_maps_propagates_only_the_connectors_a_fusion_changed(monkeypatch: 
     assert cached_memlets < uncached_memlets
 
 
-@pytest.mark.parametrize('fixture', sorted(FIXTURES))
+@pytest.mark.parametrize("fixture", sorted(FIXTURES))
 def test_fuse_maps_leaves_the_cfg_list_a_reset_would_build(fixture: str):
     sdfg = FIXTURES[fixture]()
 
@@ -206,33 +213,33 @@ def test_fuse_maps_leaves_the_cfg_list_a_reset_would_build(fixture: str):
     assert kept == cfg_tree_snapshot(sdfg)
 
 
-@pytest.mark.parametrize('width', [1, 4])
+@pytest.mark.parametrize("width", [1, 4])
 def test_fused_chain_with_nested_sdfgs_computes_the_chain(width: int):
     sdfg = map_chain_with_nested_sdfgs(width)
-    shape = (20, ) if width == 1 else (20, width)
+    shape = (20,) if width == 1 else (20, width)
     source = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
     result = np.zeros(shape)
 
     FuseMaps(validate=True, strict_dataflow=False).apply_pass(sdfg, {})
-    sdfg(arr_0=source, **{f'arr_{CHAIN_LENGTH}': result})
+    sdfg(arr_0=source, **{f"arr_{CHAIN_LENGTH}": result})
 
     assert np.allclose(result, source + CHAIN_LENGTH)
 
 
-@pytest.mark.parametrize('inner_map', [False, True])
+@pytest.mark.parametrize("inner_map", [False, True])
 def test_fused_chain_with_side_inputs_computes_the_chain(inner_map: bool):
     sdfg = map_chain_with_side_inputs(inner_map)
     rng = np.random.default_rng(0)
-    arrays = {f'side_{k}': rng.random((20, 4)) for k in range(1, CHAIN_LENGTH + 1)}
-    arrays['arr_0'] = rng.random((20, 4))
-    arrays[f'arr_{CHAIN_LENGTH}'] = np.zeros((20, 4))
+    arrays = {f"side_{k}": rng.random((20, 4)) for k in range(1, CHAIN_LENGTH + 1)}
+    arrays["arr_0"] = rng.random((20, 4))
+    arrays[f"arr_{CHAIN_LENGTH}"] = np.zeros((20, 4))
 
     FuseMaps(validate=True, strict_dataflow=False).apply_pass(sdfg, {})
     sdfg(**arrays)
 
-    expected = arrays['arr_0'] + sum(arrays[f'side_{k}'] for k in range(1, CHAIN_LENGTH + 1))
+    expected = arrays["arr_0"] + sum(arrays[f"side_{k}"] for k in range(1, CHAIN_LENGTH + 1))
     columns = slice(None) if inner_map else slice(0, 1)
-    assert np.allclose(arrays[f'arr_{CHAIN_LENGTH}'][:, columns], expected[:, columns])
+    assert np.allclose(arrays[f"arr_{CHAIN_LENGTH}"][:, columns], expected[:, columns])
 
 
 def test_forget_propagated_drops_the_sdfg_and_every_enclosing_sdfg_only():

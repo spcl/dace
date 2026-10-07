@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the PromoteConstantTransients pass. """
+"""Tests the PromoteConstantTransients pass."""
 
 import numpy as np
 
@@ -22,181 +22,189 @@ def _map_entries(state):
 
 def test_scalar_constant_single_write():
     """A scalar written once by ``a = 0`` then read becomes a SDFG constant."""
-    sdfg = dace.SDFG('scalar_const')
-    sdfg.add_scalar('a', dace.int32, transient=True)
-    sdfg.add_array('B', [1], dace.int32)
+    sdfg = dace.SDFG("scalar_const")
+    sdfg.add_scalar("a", dace.int32, transient=True)
+    sdfg.add_array("B", [1], dace.int32)
 
-    s1 = sdfg.add_state('init')
-    init_t = s1.add_tasklet('init', {}, {'out'}, 'out = 0')
-    a_write = s1.add_write('a')
-    s1.add_edge(init_t, 'out', a_write, None, dace.Memlet('a[0]'))
+    s1 = sdfg.add_state("init")
+    init_t = s1.add_tasklet("init", {}, {"out"}, "out = 0")
+    a_write = s1.add_write("a")
+    s1.add_edge(init_t, "out", a_write, None, dace.Memlet("a[0]"))
 
-    s2 = sdfg.add_state('use')
-    a_read = s2.add_read('a')
-    use_t = s2.add_tasklet('use', {'inp'}, {'out'}, 'out = inp + 1')
-    b_write = s2.add_write('B')
-    s2.add_edge(a_read, None, use_t, 'inp', dace.Memlet('a[0]'))
-    s2.add_edge(use_t, 'out', b_write, None, dace.Memlet('B[0]'))
+    s2 = sdfg.add_state("use")
+    a_read = s2.add_read("a")
+    use_t = s2.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
+    b_write = s2.add_write("B")
+    s2.add_edge(a_read, None, use_t, "inp", dace.Memlet("a[0]"))
+    s2.add_edge(use_t, "out", b_write, None, dace.Memlet("B[0]"))
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'a' in kinds
-    assert 'a' in sdfg.constants
-    assert int(sdfg.constants['a']) == 0
+    assert "a" in kinds
+    assert "a" in sdfg.constants
+    assert int(sdfg.constants["a"]) == 0
     assert _tasklets(s1) == []
-    assert [n for n in s1.data_nodes() if n.data == 'a'] == []
-    assert any(n.data == 'a' for n in s2.data_nodes())
+    assert [n for n in s1.data_nodes() if n.data == "a"] == []
+    assert any(n.data == "a" for n in s2.data_nodes())
 
 
 def test_array_full_constant_write():
     """An array fully written by a constant map then read becomes a SDFG constant."""
-    sdfg = dace.SDFG('array_full')
-    sdfg.add_array('A', [10], dace.float64, transient=True)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("array_full")
+    sdfg.add_array("A", [10], dace.float64, transient=True)
+    sdfg.add_array("B", [10], dace.float64)
 
-    s1 = sdfg.add_state('init')
-    s1.add_mapped_tasklet('init', dict(i='0:10'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s1 = sdfg.add_state("init")
+    s1.add_mapped_tasklet("init", dict(i="0:10"), {}, "out = 3.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
 
-    s2 = sdfg.add_state('use')
-    s2.add_mapped_tasklet('use',
-                          dict(i='0:10'),
-                          dict(inp=dace.Memlet('A[i]')),
-                          'out = inp * 2.0',
-                          dict(out=dace.Memlet('B[i]')),
-                          external_edges=True)
+    s2 = sdfg.add_state("use")
+    s2.add_mapped_tasklet(
+        "use",
+        dict(i="0:10"),
+        dict(inp=dace.Memlet("A[i]")),
+        "out = inp * 2.0",
+        dict(out=dace.Memlet("B[i]")),
+        external_edges=True,
+    )
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'A' in kinds
-    assert 'A' in sdfg.constants
-    assert np.array_equal(sdfg.constants['A'], np.full(10, 3.0))
+    assert "A" in kinds
+    assert "A" in sdfg.constants
+    assert np.array_equal(sdfg.constants["A"], np.full(10, 3.0))
     assert _tasklets(s1) == []
-    assert [n for n in s1.data_nodes() if n.data == 'A'] == []
+    assert [n for n in s1.data_nodes() if n.data == "A"] == []
 
 
 def test_device_storage_array_is_not_promoted_to_a_host_constant():
     """A constant lives at host file scope, which a GPU kernel cannot read, so a GPU_Global fill keeps its writes."""
-    sdfg = dace.SDFG('array_full_gpu_global')
-    sdfg.add_array('A', [10], dace.float64, transient=True, storage=dace.StorageType.GPU_Global)
-    sdfg.add_array('B', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg = dace.SDFG("array_full_gpu_global")
+    sdfg.add_array("A", [10], dace.float64, transient=True, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [10], dace.float64, storage=dace.StorageType.GPU_Global)
 
-    s1 = sdfg.add_state('init')
-    s1.add_mapped_tasklet('init', dict(i='0:10'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s1 = sdfg.add_state("init")
+    s1.add_mapped_tasklet("init", dict(i="0:10"), {}, "out = 3.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
 
-    s2 = sdfg.add_state('use')
-    s2.add_mapped_tasklet('use',
-                          dict(i='0:10'),
-                          dict(inp=dace.Memlet('A[i]')),
-                          'out = inp * 2.0',
-                          dict(out=dace.Memlet('B[i]')),
-                          external_edges=True)
+    s2 = sdfg.add_state("use")
+    s2.add_mapped_tasklet(
+        "use",
+        dict(i="0:10"),
+        dict(inp=dace.Memlet("A[i]")),
+        "out = inp * 2.0",
+        dict(out=dace.Memlet("B[i]")),
+        external_edges=True,
+    )
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
 
-    assert 'A' not in (res or {}).get(sdfg.cfg_id, {})
-    assert 'A' not in sdfg.constants
+    assert "A" not in (res or {}).get(sdfg.cfg_id, {})
+    assert "A" not in sdfg.constants
     assert len(_tasklets(s1)) == 1
-    assert [n.data for n in s1.data_nodes()] == ['A']
+    assert [n.data for n in s1.data_nodes()] == ["A"]
 
 
 def test_array_partial_constant_write():
     """A partially written array (indices 1..8) is zero-filled elsewhere."""
-    sdfg = dace.SDFG('array_partial')
-    sdfg.add_array('A', [10], dace.float64, transient=True)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("array_partial")
+    sdfg.add_array("A", [10], dace.float64, transient=True)
+    sdfg.add_array("B", [10], dace.float64)
 
-    s1 = sdfg.add_state('init')
-    s1.add_mapped_tasklet('init', dict(i='1:9'), {}, 'out = 5.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s1 = sdfg.add_state("init")
+    s1.add_mapped_tasklet("init", dict(i="1:9"), {}, "out = 5.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
 
-    s2 = sdfg.add_state('use')
-    s2.add_mapped_tasklet('use',
-                          dict(i='0:10'),
-                          dict(inp=dace.Memlet('A[i]')),
-                          'out = inp',
-                          dict(out=dace.Memlet('B[i]')),
-                          external_edges=True)
+    s2 = sdfg.add_state("use")
+    s2.add_mapped_tasklet(
+        "use",
+        dict(i="0:10"),
+        dict(inp=dace.Memlet("A[i]")),
+        "out = inp",
+        dict(out=dace.Memlet("B[i]")),
+        external_edges=True,
+    )
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'A' in kinds
-    assert 'A' in sdfg.constants
+    assert "A" in kinds
+    assert "A" in sdfg.constants
     expected = np.zeros(10, dtype=np.float64)
     expected[1:9] = 5.0
-    assert np.array_equal(sdfg.constants['A'], expected)
+    assert np.array_equal(sdfg.constants["A"], expected)
     assert expected[0] == 0.0 and expected[9] == 0.0
 
 
 def test_scalar_runtime_single_write_not_promoted():
     """A scalar written from runtime data is not a literal, so it keeps its write."""
-    sdfg = dace.SDFG('scalar_runtime')
-    sdfg.add_array('src', [1], dace.int32)
-    sdfg.add_scalar('a', dace.int32, transient=True)
-    sdfg.add_array('B', [1], dace.int32)
+    sdfg = dace.SDFG("scalar_runtime")
+    sdfg.add_array("src", [1], dace.int32)
+    sdfg.add_scalar("a", dace.int32, transient=True)
+    sdfg.add_array("B", [1], dace.int32)
 
-    s = sdfg.add_state('main')
-    src_read = s.add_read('src')
-    init_t = s.add_tasklet('init', {'inp'}, {'out'}, 'out = inp')
-    a_node = s.add_access('a')
-    s.add_edge(src_read, None, init_t, 'inp', dace.Memlet('src[0]'))
-    s.add_edge(init_t, 'out', a_node, None, dace.Memlet('a[0]'))
-    use_t = s.add_tasklet('use', {'inp'}, {'out'}, 'out = inp + 1')
-    b_write = s.add_write('B')
-    s.add_edge(a_node, None, use_t, 'inp', dace.Memlet('a[0]'))
-    s.add_edge(use_t, 'out', b_write, None, dace.Memlet('B[0]'))
+    s = sdfg.add_state("main")
+    src_read = s.add_read("src")
+    init_t = s.add_tasklet("init", {"inp"}, {"out"}, "out = inp")
+    a_node = s.add_access("a")
+    s.add_edge(src_read, None, init_t, "inp", dace.Memlet("src[0]"))
+    s.add_edge(init_t, "out", a_node, None, dace.Memlet("a[0]"))
+    use_t = s.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
+    b_write = s.add_write("B")
+    s.add_edge(a_node, None, use_t, "inp", dace.Memlet("a[0]"))
+    s.add_edge(use_t, "out", b_write, None, dace.Memlet("B[0]"))
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'a' not in kinds
-    assert 'a' not in sdfg.constants
+    assert "a" not in kinds
+    assert "a" not in sdfg.constants
     assert len(_tasklets(s)) == 2
-    assert any(n.data == 'a' for n in s.data_nodes())
+    assert any(n.data == "a" for n in s.data_nodes())
 
 
 def test_opaque_transient_written_a_literal_is_not_promoted():
     """An opaque type (e.g. ``MPI_Request``) has no numpy value, so its literal write stays a write."""
-    sdfg = dace.SDFG('opaque_literal')
-    sdfg.add_array('req', [1], dace.opaque('MPI_Request'), transient=True)
-    s = sdfg.add_state('main')
-    init_t = s.add_tasklet('init', {}, {'out'}, 'out = 0')
-    s.add_edge(init_t, 'out', s.add_access('req'), None, dace.Memlet('req[0]'))
+    sdfg = dace.SDFG("opaque_literal")
+    sdfg.add_array("req", [1], dace.opaque("MPI_Request"), transient=True)
+    s = sdfg.add_state("main")
+    init_t = s.add_tasklet("init", {}, {"out"}, "out = 0")
+    s.add_edge(init_t, "out", s.add_access("req"), None, dace.Memlet("req[0]"))
 
     _run(sdfg)
 
-    assert 'req' not in sdfg.constants
+    assert "req" not in sdfg.constants
     assert len(_tasklets(s)) == 1
 
 
 def test_array_double_write_not_marked():
     """An array written in two states is not marked."""
-    sdfg = dace.SDFG('array_double')
-    sdfg.add_array('A', [10], dace.float64, transient=True)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("array_double")
+    sdfg.add_array("A", [10], dace.float64, transient=True)
+    sdfg.add_array("B", [10], dace.float64)
 
-    s1 = sdfg.add_state('init1')
-    s1.add_mapped_tasklet('w1', dict(i='0:10'), {}, 'out = 1.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s1 = sdfg.add_state("init1")
+    s1.add_mapped_tasklet("w1", dict(i="0:10"), {}, "out = 1.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
 
-    s2 = sdfg.add_state('init2')
-    s2.add_mapped_tasklet('w2', dict(i='0:10'), {}, 'out = 2.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s2 = sdfg.add_state("init2")
+    s2.add_mapped_tasklet("w2", dict(i="0:10"), {}, "out = 2.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
 
-    s3 = sdfg.add_state('use')
-    s3.add_mapped_tasklet('use',
-                          dict(i='0:10'),
-                          dict(inp=dace.Memlet('A[i]')),
-                          'out = inp',
-                          dict(out=dace.Memlet('B[i]')),
-                          external_edges=True)
+    s3 = sdfg.add_state("use")
+    s3.add_mapped_tasklet(
+        "use",
+        dict(i="0:10"),
+        dict(inp=dace.Memlet("A[i]")),
+        "out = inp",
+        dict(out=dace.Memlet("B[i]")),
+        external_edges=True,
+    )
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
     sdfg.add_edge(s2, s3, dace.InterstateEdge())
@@ -204,8 +212,8 @@ def test_array_double_write_not_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'A' not in kinds
-    assert 'A' not in sdfg.constants
+    assert "A" not in kinds
+    assert "A" not in sdfg.constants
     assert _tasklets(s1) != []
     assert _tasklets(s2) != []
     assert _map_entries(s1) != []
@@ -213,58 +221,58 @@ def test_array_double_write_not_marked():
 
 def test_interstate_edge_read_not_marked():
     """A scalar read on an interstate edge is a live use and must not be promoted, even if written once."""
-    sdfg = dace.SDFG('iedge_read')
-    sdfg.add_scalar('a', dace.int32, transient=True)
-    sdfg.add_array('B', [1], dace.int32)
+    sdfg = dace.SDFG("iedge_read")
+    sdfg.add_scalar("a", dace.int32, transient=True)
+    sdfg.add_array("B", [1], dace.int32)
 
-    s1 = sdfg.add_state('init')
-    init_t = s1.add_tasklet('init', {}, {'out'}, 'out = 5')
-    a_write = s1.add_write('a')
-    s1.add_edge(init_t, 'out', a_write, None, dace.Memlet('a[0]'))
+    s1 = sdfg.add_state("init")
+    init_t = s1.add_tasklet("init", {}, {"out"}, "out = 5")
+    a_write = s1.add_write("a")
+    s1.add_edge(init_t, "out", a_write, None, dace.Memlet("a[0]"))
 
-    s2 = sdfg.add_state('mid')
+    s2 = sdfg.add_state("mid")
     # Otherwise identical to the plain scalar-constant case -- the iedge read is the sole disqualifier.
-    s3 = sdfg.add_state('use')
-    a_read = s3.add_read('a')
-    use_t = s3.add_tasklet('use', {'inp'}, {'out'}, 'out = inp + 1')
-    b_write = s3.add_write('B')
-    s3.add_edge(a_read, None, use_t, 'inp', dace.Memlet('a[0]'))
-    s3.add_edge(use_t, 'out', b_write, None, dace.Memlet('B[0]'))
+    s3 = sdfg.add_state("use")
+    a_read = s3.add_read("a")
+    use_t = s3.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
+    b_write = s3.add_write("B")
+    s3.add_edge(a_read, None, use_t, "inp", dace.Memlet("a[0]"))
+    s3.add_edge(use_t, "out", b_write, None, dace.Memlet("B[0]"))
 
     # The scalar 'a' is read in the interstate-edge assignment RHS -> a live use with no access node.
-    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'k': 'a'}))
-    sdfg.add_edge(s2, s3, dace.InterstateEdge(condition='k < 10'))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"k": "a"}))
+    sdfg.add_edge(s2, s3, dace.InterstateEdge(condition="k < 10"))
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'a' not in kinds
-    assert 'a' not in sdfg.constants
+    assert "a" not in kinds
+    assert "a" not in sdfg.constants
     assert len(_tasklets(s1)) == 1
-    assert any(n.data == 'a' for n in s1.data_nodes())
+    assert any(n.data == "a" for n in s1.data_nodes())
 
 
 def test_same_state_separable_marked():
     """Init and read in the SAME state are fine when the read comes from the write node (init precedes read)."""
-    sdfg = dace.SDFG('same_state_sep')
-    sdfg.add_scalar('a', dace.int32, transient=True)
-    sdfg.add_array('B', [1], dace.int32)
+    sdfg = dace.SDFG("same_state_sep")
+    sdfg.add_scalar("a", dace.int32, transient=True)
+    sdfg.add_array("B", [1], dace.int32)
 
-    s = sdfg.add_state('main')
-    init_t = s.add_tasklet('init', {}, {'out'}, 'out = 4')
-    a_node = s.add_access('a')
-    s.add_edge(init_t, 'out', a_node, None, dace.Memlet('a[0]'))
-    use_t = s.add_tasklet('use', {'inp'}, {'out'}, 'out = inp + 1')
-    b_write = s.add_write('B')
-    s.add_edge(a_node, None, use_t, 'inp', dace.Memlet('a[0]'))
-    s.add_edge(use_t, 'out', b_write, None, dace.Memlet('B[0]'))
+    s = sdfg.add_state("main")
+    init_t = s.add_tasklet("init", {}, {"out"}, "out = 4")
+    a_node = s.add_access("a")
+    s.add_edge(init_t, "out", a_node, None, dace.Memlet("a[0]"))
+    use_t = s.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
+    b_write = s.add_write("B")
+    s.add_edge(a_node, None, use_t, "inp", dace.Memlet("a[0]"))
+    s.add_edge(use_t, "out", b_write, None, dace.Memlet("B[0]"))
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'a' in kinds
-    assert 'a' in sdfg.constants
-    assert int(sdfg.constants['a']) == 4
+    assert "a" in kinds
+    assert "a" in sdfg.constants
+    assert int(sdfg.constants["a"]) == 4
     assert init_t not in s.nodes()
     assert a_node in s.nodes()
     assert use_t in s.nodes()
@@ -272,27 +280,27 @@ def test_same_state_separable_marked():
 
 def test_same_state_unordered_write_is_promoted():
     """A read not ordered after the only write reads either garbage or the literal, so the literal is valid."""
-    sdfg = dace.SDFG('same_state_nonsep')
-    sdfg.add_scalar('a', dace.int32, transient=True)
-    sdfg.add_array('B', [1], dace.int32)
+    sdfg = dace.SDFG("same_state_nonsep")
+    sdfg.add_scalar("a", dace.int32, transient=True)
+    sdfg.add_array("B", [1], dace.int32)
 
-    s = sdfg.add_state('main')
+    s = sdfg.add_state("main")
     # A read access node disconnected from the write -> the scheduler could read before the write.
-    a_read = s.add_read('a')
-    use_t = s.add_tasklet('use', {'inp'}, {'out'}, 'out = inp + 1')
-    b_write = s.add_write('B')
-    s.add_edge(a_read, None, use_t, 'inp', dace.Memlet('a[0]'))
-    s.add_edge(use_t, 'out', b_write, None, dace.Memlet('B[0]'))
+    a_read = s.add_read("a")
+    use_t = s.add_tasklet("use", {"inp"}, {"out"}, "out = inp + 1")
+    b_write = s.add_write("B")
+    s.add_edge(a_read, None, use_t, "inp", dace.Memlet("a[0]"))
+    s.add_edge(use_t, "out", b_write, None, dace.Memlet("B[0]"))
     # The single write, in its own disconnected subgraph.
-    init_t = s.add_tasklet('init', {}, {'out'}, 'out = 4')
-    a_write = s.add_access('a')
-    s.add_edge(init_t, 'out', a_write, None, dace.Memlet('a[0]'))
+    init_t = s.add_tasklet("init", {}, {"out"}, "out = 4")
+    a_write = s.add_access("a")
+    s.add_edge(init_t, "out", a_write, None, dace.Memlet("a[0]"))
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'a' in kinds
-    assert int(sdfg.constants['a']) == 4
+    assert "a" in kinds
+    assert int(sdfg.constants["a"]) == 4
     assert init_t not in s.nodes()
     assert a_write not in s.nodes()
     assert a_read in s.nodes()
@@ -300,152 +308,156 @@ def test_same_state_unordered_write_is_promoted():
 
 def test_nested_sdfg_no_crash_and_marks():
     """A transient inside a NestedSDFG is handled per-SDFG without cfg_id indexing hazards (no KeyError)."""
-    nsdfg = dace.SDFG('inner_nested_sdfg_no_crash_and_marks')
-    nsdfg.add_array('a_in', [10], dace.float64)
-    nsdfg.add_array('a_out', [10], dace.float64)
-    nsdfg.add_array('t', [10], dace.float64, transient=True)
+    nsdfg = dace.SDFG("inner_nested_sdfg_no_crash_and_marks")
+    nsdfg.add_array("a_in", [10], dace.float64)
+    nsdfg.add_array("a_out", [10], dace.float64)
+    nsdfg.add_array("t", [10], dace.float64, transient=True)
 
-    ns1 = nsdfg.add_state('ns1')
-    ns1.add_mapped_tasklet('init', dict(i='0:10'), {}, 'out = 2.0', dict(out=dace.Memlet('t[i]')), external_edges=True)
-    ns2 = nsdfg.add_state('ns2')
-    ns2.add_mapped_tasklet('use',
-                           dict(i='0:10'),
-                           dict(x=dace.Memlet('t[i]'), y=dace.Memlet('a_in[i]')),
-                           'out = x + y',
-                           dict(out=dace.Memlet('a_out[i]')),
-                           external_edges=True)
+    ns1 = nsdfg.add_state("ns1")
+    ns1.add_mapped_tasklet("init", dict(i="0:10"), {}, "out = 2.0", dict(out=dace.Memlet("t[i]")), external_edges=True)
+    ns2 = nsdfg.add_state("ns2")
+    ns2.add_mapped_tasklet(
+        "use",
+        dict(i="0:10"),
+        dict(x=dace.Memlet("t[i]"), y=dace.Memlet("a_in[i]")),
+        "out = x + y",
+        dict(out=dace.Memlet("a_out[i]")),
+        external_edges=True,
+    )
     nsdfg.add_edge(ns1, ns2, dace.InterstateEdge())
 
-    sdfg = dace.SDFG('outer_nested_sdfg_no_crash_and_marks')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_array('B', [10], dace.float64)
-    state = sdfg.add_state('main')
-    nsdfg_node = state.add_nested_sdfg(nsdfg, {'a_in'}, {'a_out'})
-    a_read = state.add_read('A')
-    b_write = state.add_write('B')
-    state.add_edge(a_read, None, nsdfg_node, 'a_in', dace.Memlet('A[0:10]'))
-    state.add_edge(nsdfg_node, 'a_out', b_write, None, dace.Memlet('B[0:10]'))
+    sdfg = dace.SDFG("outer_nested_sdfg_no_crash_and_marks")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
+    state = sdfg.add_state("main")
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {"a_in"}, {"a_out"})
+    a_read = state.add_read("A")
+    b_write = state.add_write("B")
+    state.add_edge(a_read, None, nsdfg_node, "a_in", dace.Memlet("A[0:10]"))
+    state.add_edge(nsdfg_node, "a_out", b_write, None, dace.Memlet("B[0:10]"))
 
     # Must not raise (this shape previously KeyErrored in ScalarWriteShadowScopes).
     res = _run(sdfg)
 
     # The transient lives in the nested SDFG, so its classification is keyed by ``nsdfg.cfg_id``.
     kinds = (res or {}).get(nsdfg.cfg_id, {})
-    assert 't' in kinds
-    assert 't' in nsdfg.constants
-    assert np.array_equal(nsdfg.constants['t'], np.full(10, 2.0))
+    assert "t" in kinds
+    assert "t" in nsdfg.constants
+    assert np.array_equal(nsdfg.constants["t"], np.full(10, 2.0))
     assert _tasklets(ns1) == []
 
 
 def _read_array_in_state(state, name, length):
     """Adds a full read of ``name`` (via a copy map into a fresh output) in ``state``."""
-    state.add_mapped_tasklet('read_' + name,
-                             dict(i=f'0:{length}'),
-                             dict(inp=dace.Memlet(f'{name}[i]')),
-                             'out = inp',
-                             dict(out=dace.Memlet('OUT[i]')),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "read_" + name,
+        dict(i=f"0:{length}"),
+        dict(inp=dace.Memlet(f"{name}[i]")),
+        "out = inp",
+        dict(out=dace.Memlet("OUT[i]")),
+        external_edges=True,
+    )
 
 
 def test_multiwrite_elementwise_one_state_marked():
     """arr[0..3]=0,1,2,3 by four constant tasklets into one access node, then read -> constexpr [0,1,2,3]."""
-    sdfg = dace.SDFG('mw_one_state')
-    sdfg.add_array('arr', [4], dace.int32, transient=True)
-    sdfg.add_array('OUT', [4], dace.int32)
+    sdfg = dace.SDFG("mw_one_state")
+    sdfg.add_array("arr", [4], dace.int32, transient=True)
+    sdfg.add_array("OUT", [4], dace.int32)
 
-    s1 = sdfg.add_state('init')
-    arr_node = s1.add_access('arr')
+    s1 = sdfg.add_state("init")
+    arr_node = s1.add_access("arr")
     for k in range(4):
-        t = s1.add_tasklet(f'init{k}', {}, {'out'}, f'out = {k}')
-        s1.add_edge(t, 'out', arr_node, None, dace.Memlet(f'arr[{k}]'))
+        t = s1.add_tasklet(f"init{k}", {}, {"out"}, f"out = {k}")
+        s1.add_edge(t, "out", arr_node, None, dace.Memlet(f"arr[{k}]"))
 
-    s2 = sdfg.add_state('use')
-    _read_array_in_state(s2, 'arr', 4)
+    s2 = sdfg.add_state("use")
+    _read_array_in_state(s2, "arr", 4)
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'arr' in kinds
-    assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
+    assert "arr" in kinds
+    assert np.array_equal(sdfg.constants["arr"], np.array([0, 1, 2, 3], dtype=np.int32))
     assert _tasklets(s1) == []
-    assert [n for n in s1.data_nodes() if n.data == 'arr'] == []
+    assert [n for n in s1.data_nodes() if n.data == "arr"] == []
 
 
 def test_multiwrite_elementwise_spread_states_marked():
     """The four element writes spread across four consecutive states, then read -> marked."""
-    sdfg = dace.SDFG('mw_spread')
-    sdfg.add_array('arr', [4], dace.int32, transient=True)
-    sdfg.add_array('OUT', [4], dace.int32)
+    sdfg = dace.SDFG("mw_spread")
+    sdfg.add_array("arr", [4], dace.int32, transient=True)
+    sdfg.add_array("OUT", [4], dace.int32)
 
     prev = None
     init_states = []
     for k in range(4):
-        sk = sdfg.add_state(f'init{k}')
-        node = sk.add_access('arr')
-        t = sk.add_tasklet(f'init{k}', {}, {'out'}, f'out = {k}')
-        sk.add_edge(t, 'out', node, None, dace.Memlet(f'arr[{k}]'))
+        sk = sdfg.add_state(f"init{k}")
+        node = sk.add_access("arr")
+        t = sk.add_tasklet(f"init{k}", {}, {"out"}, f"out = {k}")
+        sk.add_edge(t, "out", node, None, dace.Memlet(f"arr[{k}]"))
         init_states.append(sk)
         if prev is not None:
             sdfg.add_edge(prev, sk, dace.InterstateEdge())
         prev = sk
 
-    s_read = sdfg.add_state('use')
-    _read_array_in_state(s_read, 'arr', 4)
+    s_read = sdfg.add_state("use")
+    _read_array_in_state(s_read, "arr", 4)
     sdfg.add_edge(prev, s_read, dace.InterstateEdge())
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'arr' in kinds
-    assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
+    assert "arr" in kinds
+    assert np.array_equal(sdfg.constants["arr"], np.array([0, 1, 2, 3], dtype=np.int32))
     for sk in init_states:
         assert _tasklets(sk) == []
 
 
 def test_multiwrite_different_access_nodes_marked():
     """The four element writes go through four distinct access nodes of arr in one state -> marked."""
-    sdfg = dace.SDFG('mw_diff_nodes')
-    sdfg.add_array('arr', [4], dace.int32, transient=True)
-    sdfg.add_array('OUT', [4], dace.int32)
+    sdfg = dace.SDFG("mw_diff_nodes")
+    sdfg.add_array("arr", [4], dace.int32, transient=True)
+    sdfg.add_array("OUT", [4], dace.int32)
 
-    s1 = sdfg.add_state('init')
+    s1 = sdfg.add_state("init")
     for k in range(4):
-        node = s1.add_access('arr')
-        t = s1.add_tasklet(f'init{k}', {}, {'out'}, f'out = {k}')
-        s1.add_edge(t, 'out', node, None, dace.Memlet(f'arr[{k}]'))
+        node = s1.add_access("arr")
+        t = s1.add_tasklet(f"init{k}", {}, {"out"}, f"out = {k}")
+        s1.add_edge(t, "out", node, None, dace.Memlet(f"arr[{k}]"))
 
-    s2 = sdfg.add_state('use')
-    _read_array_in_state(s2, 'arr', 4)
+    s2 = sdfg.add_state("use")
+    _read_array_in_state(s2, "arr", 4)
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'arr' in kinds
-    assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
+    assert "arr" in kinds
+    assert np.array_equal(sdfg.constants["arr"], np.array([0, 1, 2, 3], dtype=np.int32))
     assert _tasklets(s1) == []
-    assert [n for n in s1.data_nodes() if n.data == 'arr'] == []
+    assert [n for n in s1.data_nodes() if n.data == "arr"] == []
 
 
 def test_multiwrite_read_before_write_is_promoted():
     """A read before arr[1] is written sees garbage there, so the promoted literal is a valid value."""
-    sdfg = dace.SDFG('mw_interleaved')
-    sdfg.add_array('arr', [4], dace.int32, transient=True)
-    sdfg.add_array('OUT', [4], dace.int32)
+    sdfg = dace.SDFG("mw_interleaved")
+    sdfg.add_array("arr", [4], dace.int32, transient=True)
+    sdfg.add_array("OUT", [4], dace.int32)
 
-    s0 = sdfg.add_state('w0')
-    n0 = s0.add_access('arr')
-    t0 = s0.add_tasklet('w0', {}, {'out'}, 'out = 0')
-    s0.add_edge(t0, 'out', n0, None, dace.Memlet('arr[0]'))
+    s0 = sdfg.add_state("w0")
+    n0 = s0.add_access("arr")
+    t0 = s0.add_tasklet("w0", {}, {"out"}, "out = 0")
+    s0.add_edge(t0, "out", n0, None, dace.Memlet("arr[0]"))
 
-    s1 = sdfg.add_state('read')
-    _read_array_in_state(s1, 'arr', 4)
+    s1 = sdfg.add_state("read")
+    _read_array_in_state(s1, "arr", 4)
 
-    s2 = sdfg.add_state('w1')
-    n2 = s2.add_access('arr')
-    t2 = s2.add_tasklet('w1', {}, {'out'}, 'out = 1')
-    s2.add_edge(t2, 'out', n2, None, dace.Memlet('arr[1]'))
+    s2 = sdfg.add_state("w1")
+    n2 = s2.add_access("arr")
+    t2 = s2.add_tasklet("w1", {}, {"out"}, "out = 1")
+    s2.add_edge(t2, "out", n2, None, dace.Memlet("arr[1]"))
 
     sdfg.add_edge(s0, s1, dace.InterstateEdge())
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
@@ -453,54 +465,54 @@ def test_multiwrite_read_before_write_is_promoted():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'arr' in kinds
-    assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 0, 0], dtype=np.int32))
+    assert "arr" in kinds
+    assert np.array_equal(sdfg.constants["arr"], np.array([0, 1, 0, 0], dtype=np.int32))
     assert t0 not in s0.nodes()
     assert t2 not in s2.nodes()
 
 
 def test_multiwrite_partial_elementwise_marked():
     """Only arr[1] and arr[2] written (shape 4) -> constexpr with zeros at 0 and 3."""
-    sdfg = dace.SDFG('mw_partial')
-    sdfg.add_array('arr', [4], dace.int32, transient=True)
-    sdfg.add_array('OUT', [4], dace.int32)
+    sdfg = dace.SDFG("mw_partial")
+    sdfg.add_array("arr", [4], dace.int32, transient=True)
+    sdfg.add_array("OUT", [4], dace.int32)
 
-    s1 = sdfg.add_state('init')
-    arr_node = s1.add_access('arr')
+    s1 = sdfg.add_state("init")
+    arr_node = s1.add_access("arr")
     for k, val in ((1, 7), (2, 8)):
-        t = s1.add_tasklet(f'init{k}', {}, {'out'}, f'out = {val}')
-        s1.add_edge(t, 'out', arr_node, None, dace.Memlet(f'arr[{k}]'))
+        t = s1.add_tasklet(f"init{k}", {}, {"out"}, f"out = {val}")
+        s1.add_edge(t, "out", arr_node, None, dace.Memlet(f"arr[{k}]"))
 
-    s2 = sdfg.add_state('use')
-    _read_array_in_state(s2, 'arr', 4)
+    s2 = sdfg.add_state("use")
+    _read_array_in_state(s2, "arr", 4)
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'arr' in kinds
-    assert np.array_equal(sdfg.constants['arr'], np.array([0, 7, 8, 0], dtype=np.int32))
+    assert "arr" in kinds
+    assert np.array_equal(sdfg.constants["arr"], np.array([0, 7, 8, 0], dtype=np.int32))
     assert _tasklets(s1) == []
 
 
 def test_multiwrite_overlapping_not_marked():
     """Two writes to the same element (arr[0]) conflict -> not marked."""
-    sdfg = dace.SDFG('mw_overlap')
-    sdfg.add_array('arr', [4], dace.int32, transient=True)
-    sdfg.add_array('OUT', [4], dace.int32)
+    sdfg = dace.SDFG("mw_overlap")
+    sdfg.add_array("arr", [4], dace.int32, transient=True)
+    sdfg.add_array("OUT", [4], dace.int32)
 
-    s1 = sdfg.add_state('w0')
-    n1 = s1.add_access('arr')
-    t1 = s1.add_tasklet('w0', {}, {'out'}, 'out = 1')
-    s1.add_edge(t1, 'out', n1, None, dace.Memlet('arr[0]'))
+    s1 = sdfg.add_state("w0")
+    n1 = s1.add_access("arr")
+    t1 = s1.add_tasklet("w0", {}, {"out"}, "out = 1")
+    s1.add_edge(t1, "out", n1, None, dace.Memlet("arr[0]"))
 
-    s2 = sdfg.add_state('w1')
-    n2 = s2.add_access('arr')
-    t2 = s2.add_tasklet('w1', {}, {'out'}, 'out = 2')
-    s2.add_edge(t2, 'out', n2, None, dace.Memlet('arr[0]'))
+    s2 = sdfg.add_state("w1")
+    n2 = s2.add_access("arr")
+    t2 = s2.add_tasklet("w1", {}, {"out"}, "out = 2")
+    s2.add_edge(t2, "out", n2, None, dace.Memlet("arr[0]"))
 
-    s3 = sdfg.add_state('use')
-    _read_array_in_state(s3, 'arr', 4)
+    s3 = sdfg.add_state("use")
+    _read_array_in_state(s3, "arr", 4)
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
     sdfg.add_edge(s2, s3, dace.InterstateEdge())
@@ -508,80 +520,79 @@ def test_multiwrite_overlapping_not_marked():
     res = _run(sdfg)
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'arr' not in kinds
-    assert 'arr' not in sdfg.constants
+    assert "arr" not in kinds
+    assert "arr" not in sdfg.constants
     assert t1 in s1.nodes()
     assert t2 in s2.nodes()
 
 
 def test_idempotency():
     """Running the pass twice leaves the SDFG in a stable state."""
-    sdfg = dace.SDFG('idempotent_idempotency')
-    sdfg.add_array('A', [10], dace.float64, transient=True)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("idempotent_idempotency")
+    sdfg.add_array("A", [10], dace.float64, transient=True)
+    sdfg.add_array("B", [10], dace.float64)
 
-    s1 = sdfg.add_state('init')
-    s1.add_mapped_tasklet('init', dict(i='0:10'), {}, 'out = 7.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s1 = sdfg.add_state("init")
+    s1.add_mapped_tasklet("init", dict(i="0:10"), {}, "out = 7.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
 
-    s2 = sdfg.add_state('use')
-    s2.add_mapped_tasklet('use',
-                          dict(i='0:10'),
-                          dict(inp=dace.Memlet('A[i]')),
-                          'out = inp',
-                          dict(out=dace.Memlet('B[i]')),
-                          external_edges=True)
+    s2 = sdfg.add_state("use")
+    s2.add_mapped_tasklet(
+        "use",
+        dict(i="0:10"),
+        dict(inp=dace.Memlet("A[i]")),
+        "out = inp",
+        dict(out=dace.Memlet("B[i]")),
+        external_edges=True,
+    )
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'A' in kinds
-    assert 'A' in sdfg.constants
-    first_value = np.copy(sdfg.constants['A'])
+    assert "A" in kinds
+    assert "A" in sdfg.constants
+    first_value = np.copy(sdfg.constants["A"])
     num_nodes_s1 = len(s1.nodes())
 
     # Second run marks nothing (already an SDFG constant): return value is None, 'A' absent from classification.
     second_result = _run(sdfg)
-    assert 'A' not in (second_result or {}).get(sdfg.cfg_id, {})
-    assert 'A' in sdfg.constants
-    assert np.array_equal(sdfg.constants['A'], first_value)
+    assert "A" not in (second_result or {}).get(sdfg.cfg_id, {})
+    assert "A" in sdfg.constants
+    assert np.array_equal(sdfg.constants["A"], first_value)
     assert len(s1.nodes()) == num_nodes_s1
 
 
 def test_fill_writing_two_arrays_is_not_promoted():
     """A fill tasklet with two outputs is not a single literal store, so neither array it writes is promoted."""
-    sdfg = dace.SDFG('two_output_fill')
-    sdfg.add_array('X', [8], dace.float64, transient=True)
-    sdfg.add_array('Z', [4], dace.float64, transient=True)
-    sdfg.add_array('BX', [8], dace.float64)
-    sdfg.add_array('BZ', [4], dace.float64)
+    sdfg = dace.SDFG("two_output_fill")
+    sdfg.add_array("X", [8], dace.float64, transient=True)
+    sdfg.add_array("Z", [4], dace.float64, transient=True)
+    sdfg.add_array("BX", [8], dace.float64)
+    sdfg.add_array("BZ", [4], dace.float64)
 
-    s1 = sdfg.add_state('fill')
+    s1 = sdfg.add_state("fill")
     # Disjoint halves of X, so the two fills do not overlap (an overlap is declined outright).
-    s1.add_mapped_tasklet('fill_x', dict(i='0:4'), {}, 'ox = 1.0', dict(ox=dace.Memlet('X[i]')), external_edges=True)
-    s1.add_mapped_tasklet('fill_xz',
-                          dict(i='0:4'), {},
-                          'ox = 2.0\noz = 3.0',
-                          dict(ox=dace.Memlet('X[i + 4]'), oz=dace.Memlet('Z[i]')),
-                          external_edges=True)
+    s1.add_mapped_tasklet("fill_x", dict(i="0:4"), {}, "ox = 1.0", dict(ox=dace.Memlet("X[i]")), external_edges=True)
+    s1.add_mapped_tasklet(
+        "fill_xz",
+        dict(i="0:4"),
+        {},
+        "ox = 2.0\noz = 3.0",
+        dict(ox=dace.Memlet("X[i + 4]"), oz=dace.Memlet("Z[i]")),
+        external_edges=True,
+    )
 
-    s2 = sdfg.add_state('rewrite_z')
-    t = s2.add_tasklet('z0', {}, {'o'}, 'o = 9.0')
-    s2.add_edge(t, 'o', s2.add_access('Z'), None, dace.Memlet('Z[0]'))
+    s2 = sdfg.add_state("rewrite_z")
+    t = s2.add_tasklet("z0", {}, {"o"}, "o = 9.0")
+    s2.add_edge(t, "o", s2.add_access("Z"), None, dace.Memlet("Z[0]"))
 
-    s3 = sdfg.add_state('use')
-    s3.add_mapped_tasklet('ux',
-                          dict(i='0:8'),
-                          dict(inp=dace.Memlet('X[i]')),
-                          'o = inp',
-                          dict(o=dace.Memlet('BX[i]')),
-                          external_edges=True)
-    s3.add_mapped_tasklet('uz',
-                          dict(i='0:4'),
-                          dict(inp=dace.Memlet('Z[i]')),
-                          'o = inp',
-                          dict(o=dace.Memlet('BZ[i]')),
-                          external_edges=True)
+    s3 = sdfg.add_state("use")
+    s3.add_mapped_tasklet(
+        "ux", dict(i="0:8"), dict(inp=dace.Memlet("X[i]")), "o = inp", dict(o=dace.Memlet("BX[i]")), external_edges=True
+    )
+    s3.add_mapped_tasklet(
+        "uz", dict(i="0:4"), dict(inp=dace.Memlet("Z[i]")), "o = inp", dict(o=dace.Memlet("BZ[i]")), external_edges=True
+    )
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
     sdfg.add_edge(s2, s3, dace.InterstateEdge())
     sdfg.validate()
@@ -589,35 +600,33 @@ def test_fill_writing_two_arrays_is_not_promoted():
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
 
-    assert 'X' not in kinds and 'Z' not in kinds, kinds
+    assert "X" not in kinds and "Z" not in kinds, kinds
     assert len(_map_entries(s1)) == 2
     sdfg.validate()
 
 
 def test_symbol_valued_fill_is_not_promoted():
     """A value computed from a symbol is not a literal."""
-    sdfg = dace.SDFG('sym_fill')
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    sdfg.add_array('B', [1], dace.float64)
+    sdfg = dace.SDFG("sym_fill")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
 
-    s1 = sdfg.add_state('init')
-    s1.add_mapped_tasklet('fill',
-                          dict(i='0:1'), {},
-                          'out = N * 2.0',
-                          dict(out=dace.Memlet('s[0]')),
-                          external_edges=True)
-    s2 = sdfg.add_state('use')
-    r = s2.add_read('s')
-    t = s2.add_tasklet('use', {'inp'}, {'o'}, 'o = inp + 1.0')
-    s2.add_edge(r, None, t, 'inp', dace.Memlet('s[0]'))
-    s2.add_edge(t, 'o', s2.add_write('B'), None, dace.Memlet('B[0]'))
+    s1 = sdfg.add_state("init")
+    s1.add_mapped_tasklet(
+        "fill", dict(i="0:1"), {}, "out = N * 2.0", dict(out=dace.Memlet("s[0]")), external_edges=True
+    )
+    s2 = sdfg.add_state("use")
+    r = s2.add_read("s")
+    t = s2.add_tasklet("use", {"inp"}, {"o"}, "o = inp + 1.0")
+    s2.add_edge(r, None, t, "inp", dace.Memlet("s[0]"))
+    s2.add_edge(t, "o", s2.add_write("B"), None, dace.Memlet("B[0]"))
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
     sdfg.validate()
 
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 's' not in kinds, kinds
+    assert "s" not in kinds, kinds
     assert _map_entries(s1) != []
     sdfg.validate()
 
@@ -629,30 +638,32 @@ def _same_state_fill_sdfg(name):
     the case under test existed at all; the shape is the point, so it is spelled out here.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [8], dace.float64, transient=True)
-    sdfg.add_array('B', [8], dace.float64)
-    state = sdfg.add_state('fill_and_use')
-    state.add_mapped_tasklet('fill', dict(i='0:8'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
-    filled = next(n for n in state.data_nodes() if n.data == 'A')
-    state.add_mapped_tasklet('use',
-                             dict(i='0:8'),
-                             dict(inp=dace.Memlet('A[i]')),
-                             'out = inp * 2',
-                             dict(out=dace.Memlet('B[i]')),
-                             external_edges=True,
-                             input_nodes={'A': filled})
+    sdfg.add_array("A", [8], dace.float64, transient=True)
+    sdfg.add_array("B", [8], dace.float64)
+    state = sdfg.add_state("fill_and_use")
+    state.add_mapped_tasklet("fill", dict(i="0:8"), {}, "out = 3.0", dict(out=dace.Memlet("A[i]")), external_edges=True)
+    filled = next(n for n in state.data_nodes() if n.data == "A")
+    state.add_mapped_tasklet(
+        "use",
+        dict(i="0:8"),
+        dict(inp=dace.Memlet("A[i]")),
+        "out = inp * 2",
+        dict(out=dace.Memlet("B[i]")),
+        external_edges=True,
+        input_nodes={"A": filled},
+    )
     sdfg.validate()
     return sdfg
 
 
 def test_same_state_constant_fill_is_promoted():
     """A uniform constant fill is promoted even when its consumer shares the state."""
-    sdfg = _same_state_fill_sdfg('same_state_fill')
+    sdfg = _same_state_fill_sdfg("same_state_fill")
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'A' in kinds, kinds
-    assert 'A' in sdfg.constants
-    assert np.array_equal(sdfg.constants['A'], np.full(8, 3.0))
+    assert "A" in kinds, kinds
+    assert "A" in sdfg.constants
+    assert np.array_equal(sdfg.constants["A"], np.full(8, 3.0))
     sdfg.validate()
 
 
@@ -662,7 +673,7 @@ def test_same_state_constant_fill_is_promoted():
 @dace.program
 def gpu_constfill(A: dace.float64[8]):
     """A constant fill of a transient; after ``apply_gpu_transformations`` it is GPU_Device-scheduled."""
-    w = np.zeros((8, ), dtype=np.float64)
+    w = np.zeros((8,), dtype=np.float64)
     for i in dace.map[0:8]:
         w[i] = 2.0
     for i in dace.map[0:8]:
@@ -672,7 +683,7 @@ def gpu_constfill(A: dace.float64[8]):
 @dace.program
 def gpu_refill(A: dace.float64[8]):
     """Same, but ``w`` is written a second time, so it is not promoted."""
-    w = np.zeros((8, ), dtype=np.float64)
+    w = np.zeros((8,), dtype=np.float64)
     for i in dace.map[0:8]:
         w[i] = 2.0
     for i in dace.map[0:8]:
@@ -710,57 +721,58 @@ def test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_
     old code only recognised a ``MapEntry`` anchor and silently dropped this one, leaking the
     consumer out of the map scope (``scope_dict()`` -> ``None``) even though the edge itself stays
     syntactically valid."""
-    sdfg = dace.SDFG('sibling_anchor')
-    sdfg.add_array('src', [10], dace.float64)
-    sdfg.add_scalar('elem', dace.float64, transient=True)
-    sdfg.add_scalar('cond', dace.float64, transient=True)
-    sdfg.add_scalar('mid', dace.float64, transient=True)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("sibling_anchor")
+    sdfg.add_array("src", [10], dace.float64)
+    sdfg.add_scalar("elem", dace.float64, transient=True)
+    sdfg.add_scalar("cond", dace.float64, transient=True)
+    sdfg.add_scalar("mid", dace.float64, transient=True)
+    sdfg.add_array("B", [10], dace.float64)
 
-    s = sdfg.add_state('main')
-    me, mx = s.add_map('m', dict(i='0:10'))
+    s = sdfg.add_state("main")
+    me, mx = s.add_map("m", dict(i="0:10"))
 
-    src_r = s.add_read('src')
-    stage_t = s.add_tasklet('stage', {'inp'}, {'out'}, 'out = inp')
-    elem_n = s.add_access('elem')
-    s.add_memlet_path(src_r, me, stage_t, memlet=dace.Memlet('src[i]'), dst_conn='inp')
-    s.add_edge(stage_t, 'out', elem_n, None, dace.Memlet('elem[0]'))
+    src_r = s.add_read("src")
+    stage_t = s.add_tasklet("stage", {"inp"}, {"out"}, "out = inp")
+    elem_n = s.add_access("elem")
+    s.add_memlet_path(src_r, me, stage_t, memlet=dace.Memlet("src[i]"), dst_conn="inp")
+    s.add_edge(stage_t, "out", elem_n, None, dace.Memlet("elem[0]"))
 
     # A properly-scoped sibling computation, analogous to a lifted branch condition.
-    cond_t = s.add_tasklet('cond_calc', {'e'}, {'o'}, 'o = e')
-    cond_n = s.add_access('cond')
-    s.add_edge(elem_n, None, cond_t, 'e', dace.Memlet('elem[0]'))
-    s.add_edge(cond_t, 'o', cond_n, None, dace.Memlet('cond[0]'))
+    cond_t = s.add_tasklet("cond_calc", {"e"}, {"o"}, "o = e")
+    cond_n = s.add_access("cond")
+    s.add_edge(elem_n, None, cond_t, "e", dace.Memlet("elem[0]"))
+    s.add_edge(cond_t, "o", cond_n, None, dace.Memlet("cond[0]"))
 
     # Zero-input constant tasklet, anchored via the SIBLING access node 'elem' (not the map entry).
-    const_t = s.add_tasklet('const_assign', {}, {'out'}, 'out = 3.0')
-    mid_n = s.add_access('mid')
+    const_t = s.add_tasklet("const_assign", {}, {"out"}, "out = 3.0")
+    mid_n = s.add_access("mid")
     s.add_nedge(elem_n, const_t, dace.Memlet())
-    s.add_edge(const_t, 'out', mid_n, None, dace.Memlet('mid[0]'))
+    s.add_edge(const_t, "out", mid_n, None, dace.Memlet("mid[0]"))
 
     # Consumer combining both -- analogous to the ITE tasklet reading cond AND the fold target.
-    combine_t = s.add_tasklet('combine', {'c', 'm'}, {'out'}, 'out = c + m')
-    b_w = s.add_access('B')
-    s.add_edge(cond_n, None, combine_t, 'c', dace.Memlet('cond[0]'))
-    s.add_edge(mid_n, None, combine_t, 'm', dace.Memlet('mid[0]'))
-    s.add_memlet_path(combine_t, mx, b_w, memlet=dace.Memlet('B[i]'), src_conn='out')
+    combine_t = s.add_tasklet("combine", {"c", "m"}, {"out"}, "out = c + m")
+    b_w = s.add_access("B")
+    s.add_edge(cond_n, None, combine_t, "c", dace.Memlet("cond[0]"))
+    s.add_edge(mid_n, None, combine_t, "m", dace.Memlet("mid[0]"))
+    s.add_memlet_path(combine_t, mx, b_w, memlet=dace.Memlet("B[i]"), src_conn="out")
 
     sdfg.validate()
 
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
-    assert 'mid' in kinds, kinds
-    assert 'mid' in sdfg.constants and float(sdfg.constants['mid']) == 3.0
-    assert mid_n in s.nodes(), 'mid access node must survive -- combine_t still reads it'
+    assert "mid" in kinds, kinds
+    assert "mid" in sdfg.constants and float(sdfg.constants["mid"]) == 3.0
+    assert mid_n in s.nodes(), "mid access node must survive -- combine_t still reads it"
 
     scope = s.scope_dict()
     assert scope.get(mid_n) is me, (
-        f'mid access node leaked out of the map scope (scope={scope.get(mid_n)!r}, expected {me!r})')
+        f"mid access node leaked out of the map scope (scope={scope.get(mid_n)!r}, expected {me!r})"
+    )
 
     sdfg.validate()
 
 
-def _fill_map_inside_an_outer_map_sdfg(name: str = 'held_fill') -> dace.SDFG:
+def _fill_map_inside_an_outer_map_sdfg(name: str = "held_fill") -> dace.SDFG:
     """A constant fill map whose entry is held by an ENCLOSING map's ordering edge.
 
     This is what inlining a nested SDFG into a map scope leaves behind, and
@@ -768,26 +780,26 @@ def _fill_map_inside_an_outer_map_sdfg(name: str = 'held_fill') -> dace.SDFG:
     promotion takes its write, while the entry never does.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('B', [8, 4], dace.float64)
-    sdfg.add_array('t', [8], dace.float64, transient=True)
-    state = sdfg.add_state('block')
+    sdfg.add_array("B", [8, 4], dace.float64)
+    sdfg.add_array("t", [8], dace.float64, transient=True)
+    state = sdfg.add_state("block")
 
-    outer_me, outer_mx = state.add_map('outer', {'jb': '0:4'})
-    fill_me, fill_mx = state.add_map('fill', {'k': '0:8'})
-    seed = state.add_tasklet('set', {}, {'o'}, 'o = 1.0')
-    t_acc = state.add_access('t')
-    b_write = state.add_write('B')
+    outer_me, outer_mx = state.add_map("outer", {"jb": "0:4"})
+    fill_me, fill_mx = state.add_map("fill", {"k": "0:8"})
+    seed = state.add_tasklet("set", {}, {"o"}, "o = 1.0")
+    t_acc = state.add_access("t")
+    b_write = state.add_write("B")
 
     state.add_nedge(outer_me, fill_me, dace.Memlet())
     state.add_nedge(fill_me, seed, dace.Memlet())
-    state.add_edge(seed, 'o', fill_mx, 'IN_t', dace.Memlet('t[k]'))
-    fill_mx.add_in_connector('IN_t')
-    fill_mx.add_out_connector('OUT_t')
-    state.add_edge(fill_mx, 'OUT_t', t_acc, None, dace.Memlet('t[0:8]'))
-    state.add_edge(t_acc, None, outer_mx, 'IN_B', dace.Memlet(data='t', subset='0:8', other_subset='0:8, jb'))
-    outer_mx.add_in_connector('IN_B')
-    outer_mx.add_out_connector('OUT_B')
-    state.add_edge(outer_mx, 'OUT_B', b_write, None, dace.Memlet('B[0:8, 0:4]'))
+    state.add_edge(seed, "o", fill_mx, "IN_t", dace.Memlet("t[k]"))
+    fill_mx.add_in_connector("IN_t")
+    fill_mx.add_out_connector("OUT_t")
+    state.add_edge(fill_mx, "OUT_t", t_acc, None, dace.Memlet("t[0:8]"))
+    state.add_edge(t_acc, None, outer_mx, "IN_B", dace.Memlet(data="t", subset="0:8", other_subset="0:8, jb"))
+    outer_mx.add_in_connector("IN_B")
+    outer_mx.add_out_connector("OUT_B")
+    state.add_edge(outer_mx, "OUT_B", b_write, None, dace.Memlet("B[0:8, 0:4]"))
     sdfg.validate()
     return sdfg
 
@@ -807,34 +819,34 @@ def test_promoting_a_held_fill_removes_both_ends_of_its_scope():
     state = sdfg.states()[0]
     entries = {n.map for n in state.nodes() if isinstance(n, nd.MapEntry)}
     exits = {n.map for n in state.nodes() if isinstance(n, nd.MapExit)}
-    assert entries == exits, f'unpaired scope ends: {sorted(m.label for m in entries ^ exits)}'
+    assert entries == exits, f"unpaired scope ends: {sorted(m.label for m in entries ^ exits)}"
 
     out = np.zeros((8, 4), dtype=np.float64)
     sdfg(B=out)
-    assert np.array_equal(out, np.ones((8, 4))), f'got {out}'
+    assert np.array_equal(out, np.ones((8, 4))), f"got {out}"
 
 
 def test_data_bound_to_a_reference_is_not_promoted():
     """A reference writes its target under another name, so the target's literal writes are not all of them."""
-    sdfg = dace.SDFG('ref_target')
-    sdfg.add_array('A', [4], dace.float64, transient=True)
-    sdfg.add_reference('R', [4], dace.float64)
-    sdfg.add_array('B', [4], dace.float64)
-    state = sdfg.add_state('main')
-    init = state.add_tasklet('init', {}, {'o'}, 'o = 1.0')
-    a_node = state.add_access('A')
-    state.add_edge(init, 'o', a_node, None, dace.Memlet('A[0]'))
-    state.add_edge(a_node, None, state.add_access('R'), 'set', dace.Memlet('A[0:4]'))
-    use = sdfg.add_state_after(state, 'use')
-    use.add_nedge(use.add_read('A'), use.add_write('B'), dace.Memlet('A[0:4]'))
+    sdfg = dace.SDFG("ref_target")
+    sdfg.add_array("A", [4], dace.float64, transient=True)
+    sdfg.add_reference("R", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    state = sdfg.add_state("main")
+    init = state.add_tasklet("init", {}, {"o"}, "o = 1.0")
+    a_node = state.add_access("A")
+    state.add_edge(init, "o", a_node, None, dace.Memlet("A[0]"))
+    state.add_edge(a_node, None, state.add_access("R"), "set", dace.Memlet("A[0:4]"))
+    use = sdfg.add_state_after(state, "use")
+    use.add_nedge(use.add_read("A"), use.add_write("B"), dace.Memlet("A[0:4]"))
 
     res = _run(sdfg)
-    assert 'A' not in (res or {}).get(sdfg.cfg_id, {})
-    assert 'A' not in sdfg.constants
+    assert "A" not in (res or {}).get(sdfg.cfg_id, {})
+    assert "A" not in sdfg.constants
     assert init in state.nodes()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_scalar_constant_single_write()
     test_array_full_constant_write()
     test_device_storage_array_is_not_promoted_to_a_host_constant()

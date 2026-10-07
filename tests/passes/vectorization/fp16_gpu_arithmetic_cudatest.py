@@ -27,6 +27,7 @@ tile path performs is visible as a difference, and none is permitted here.
 GPU-executing bodies run in a fresh interpreter (see ``_run_isolated``) so a device fault cannot
 take the pytest parent with it.
 """
+
 import os
 import re
 import subprocess
@@ -81,8 +82,9 @@ def _vectorized(program, name: str = None, width: int = 2) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(width, ),
-                                 remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(width,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(
+        sdfg, {}
+    )
     if name:
         sdfg.name = name
     return sdfg
@@ -112,11 +114,14 @@ def _inputs(n: int, seed: int):
 
 
 # Structural: the width-2 fp16 path is the one that runs (no GPU device needed)
-@pytest.mark.parametrize("program,expected", [
-    (_scale_add16, {"tile_load", "tile_store"}),
-    (_select16, {"tile_load"}),
-    (_sqrt16, {"tile_load", "tile_store"}),
-])
+@pytest.mark.parametrize(
+    "program,expected",
+    [
+        (_scale_add16, {"tile_load", "tile_store"}),
+        (_select16, {"tile_load"}),
+        (_sqrt16, {"tile_load", "tile_store"}),
+    ],
+)
 def test_kernel_takes_the_fp16_tile_path(program, expected):
     """Each kernel must reach the fp16 tile ops. Asserted per kernel rather than once, because a
     kernel that silently stays scalar makes its numeric body a test of nothing.
@@ -141,7 +146,7 @@ def test_masked_select_store_stays_per_element():
     sdfg.specialize({"N": 1024})
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     ops = _fp16_tile_ops(_device_code(sdfg))
     assert "tile_load" in ops, f"the select kernel stopped widening its loads too: {sorted(ops)}"
     assert "tile_store" not in ops, f"a masked fp16 store was widened: {sorted(ops)}"
@@ -153,8 +158,9 @@ def test_mixed_dtype_kernel_keeps_one_dtype_per_tile_op():
     tasklet. What must NOT appear is an fp16 tile op fed a bare ``double``."""
     code = _device_code(_vectorized(_mixed16))
     assert _fp16_tile_ops(code), "the mixed-dtype kernel never reached the fp16 tile path"
-    assert "dace.float16(" not in code and "dace.float64(" not in code, \
+    assert "dace.float16(" not in code and "dace.float64(" not in code, (
         "a Python cast call was embedded verbatim into device code"
+    )
 
 
 def test_no_python_syntax_reaches_device_code():
@@ -194,8 +200,9 @@ def _body_mixed():
         expected = (x.astype(np.float64) * 2.0 + z).astype(np.float16)
         out = np.zeros(n, dtype=np.float16)
         csr(x=x.copy(), z=z.copy(), out=out, N=n)
-        assert np.array_equal(out.view(np.uint16), expected.view(np.uint16)), \
+        assert np.array_equal(out.view(np.uint16), expected.view(np.uint16)), (
             f"N={n}: mixed fp16/fp64 result not bit-exact vs the numpy promotion"
+        )
 
 
 def _body_select():
@@ -216,7 +223,7 @@ def _body_sqrt():
     numpy by an ulp on a general input cannot hide a lowering bug behind rounding."""
     csr = _vectorized(_sqrt16, name="fp16_sqrt_numeric").compile()
     for n in EXTENTS:
-        x = (np.arange(n) % 32).astype(np.float16)**2
+        x = (np.arange(n) % 32).astype(np.float16) ** 2
         expected = np.sqrt(x.astype(np.float32)).astype(np.float16)
         out = np.zeros(n, dtype=np.float16)
         csr(x=x.copy(), out=out, N=n)
@@ -237,13 +244,16 @@ def _body_sum():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("body", [
-    "_body_scale_add",
-    "_body_mixed",
-    "_body_select",
-    "_body_sqrt",
-    "_body_sum",
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "_body_scale_add",
+        "_body_mixed",
+        "_body_select",
+        "_body_sqrt",
+        "_body_sum",
+    ],
+)
 def test_fp16_kernel_is_bit_exact(body):
     assert _run_isolated(body) == 0
 

@@ -22,6 +22,7 @@ the AVX min/max operand order (NaN and signed zero went the wrong way) and the
 AVX-512 one-shot horizontal reduce (a different association than the pairwise
 tree every other backend uses).
 """
+
 import os
 import platform
 import shutil
@@ -89,12 +90,19 @@ def test_tile_ops_backend_header_compiles(isa: str) -> None:
         pytest.skip(f"compiler {cxx!r} not found")
 
     cmd = [
-        cxx, f"-std=c++{CPP_STANDARD}", "-fsyntax-only", "-I", DACE_INCLUDE, *isa_flags,
-        f"-DTILE_OPS_BACKEND_HEADER=<{header}>", DRIVER
+        cxx,
+        f"-std=c++{CPP_STANDARD}",
+        "-fsyntax-only",
+        "-I",
+        DACE_INCLUDE,
+        *isa_flags,
+        f"-DTILE_OPS_BACKEND_HEADER=<{header}>",
+        DRIVER,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
-    assert proc.returncode == 0, (f"{isa} backend header {header} failed to compile with "
-                                  f"{cxx} {' '.join(isa_flags)}:\n{proc.stderr}")
+    assert proc.returncode == 0, (
+        f"{isa} backend header {header} failed to compile with {cxx} {' '.join(isa_flags)}:\n{proc.stderr}"
+    )
 
 
 def _build_and_run(tmpdir: str, isa: str) -> str:
@@ -109,12 +117,22 @@ def _build_and_run(tmpdir: str, isa: str) -> str:
         pytest.skip(f"compiler {cxx!r} not found")
 
     binary = os.path.join(tmpdir, f"tile_ops_numeric_{isa}")
-    build = subprocess.run([
-        cxx, f"-std=c++{CPP_STANDARD}", "-O2", "-I", DACE_INCLUDE, *isa_flags, f"-DTILE_OPS_BACKEND_HEADER=<{header}>",
-        NUMERIC_DRIVER, "-o", binary
-    ],
-                           capture_output=True,
-                           text=True)
+    build = subprocess.run(
+        [
+            cxx,
+            f"-std=c++{CPP_STANDARD}",
+            "-O2",
+            "-I",
+            DACE_INCLUDE,
+            *isa_flags,
+            f"-DTILE_OPS_BACKEND_HEADER=<{header}>",
+            NUMERIC_DRIVER,
+            "-o",
+            binary,
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert build.returncode == 0, f"{isa} numeric driver failed to build:\n{build.stderr}"
 
     run = subprocess.run([binary], capture_output=True, text=True)
@@ -146,8 +164,9 @@ def test_tile_ops_backend_matches_scalar_bit_for_bit(isa: str) -> None:
     assert ref_rows.keys() == isa_rows.keys(), "backend dumps cover different cases"
     mismatched = [k for k, v in ref_rows.items() if isa_rows[k] != v]
     detail = "\n".join(f"  {k}\n    scalar {ref_rows[k]}\n    {isa:<6} {isa_rows[k]}" for k in mismatched[:12])
-    assert not mismatched, (f"{isa} differs from the scalar reference in {len(mismatched)} of "
-                            f"{len(ref_rows)} cases:\n{detail}")
+    assert not mismatched, (
+        f"{isa} differs from the scalar reference in {len(mismatched)} of {len(ref_rows)} cases:\n{detail}"
+    )
 
 
 if __name__ == "__main__":

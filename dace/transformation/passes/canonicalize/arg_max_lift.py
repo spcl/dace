@@ -156,6 +156,7 @@ rewrites a break loop, so it reaches this pass as a sequential
 :class:`~dace.sdfg.state.LoopRegion` and stays one: no Reduce/ArgReduce this pass emits could
 lift it correctly, so the refusal costs no parallelism ArgMaxLift could have delivered.
 """
+
 import ast
 import copy
 import re
@@ -186,13 +187,14 @@ CMP_AST_TO_RTYPE: Dict[Type[ast.cmpop], dtypes.ReductionType] = {
 }
 
 #: ``(start, end, conditional block, guard, true branch)`` of a unit-stride, break-free guarded loop.
-LoopSkeleton = Tuple[symbolic.SymbolicType, symbolic.SymbolicType, ConditionalBlock, properties.CodeBlock,
-                     ControlFlowRegion]
+LoopSkeleton = Tuple[
+    symbolic.SymbolicType, symbolic.SymbolicType, ConditionalBlock, properties.CodeBlock, ControlFlowRegion
+]
 
 #: A comparison operator class, as ``ast`` parses ``gather OP carrier``.
 CompareOp = Type[ast.cmpop]
 
-BlockT = TypeVar('BlockT', bound=ControlFlowBlock)
+BlockT = TypeVar("BlockT", bound=ControlFlowBlock)
 
 
 class _Match(NamedTuple):
@@ -201,6 +203,7 @@ class _Match(NamedTuple):
     unary gather transform, the affine gather ``a[gather_base + gather_coeff*i]`` (s318: ``c = inc``)
     and ``last_wins`` (non-strict guard under ``tie_break='infer'``: reduce over the reversed gather).
     """
+
     op: dtypes.ReductionType
     loop: LoopRegion
     parent: ControlFlowRegion
@@ -224,6 +227,7 @@ class _Match2D(NamedTuple):
     ``aa`` whose index ``m`` decomposes to ``m // ncols`` / ``m % ncols``. ``last_wins`` as in
     :class:`_Match`, always applicable here.
     """
+
     op: dtypes.ReductionType
     outer_loop: LoopRegion
     inner_loop: LoopRegion
@@ -256,6 +260,7 @@ class MatchPredIndex(NamedTuple):
     :param iter_start: Loop start expression.
     :param iter_end: Loop INCLUSIVE end expression.
     """
+
     loop: LoopRegion
     parent: ControlFlowRegion
     idx_carrier: str
@@ -287,7 +292,7 @@ class GuardReadWiring(ast.NodeTransformer):
     def connector(self, key: str, array: str, subset: subsets.Range) -> ast.Name:
         entry = self.reads.get(key)
         if entry is None:
-            entry = (f'__guard{len(self.reads)}', mm.Memlet(data=array, subset=subset))
+            entry = (f"__guard{len(self.reads)}", mm.Memlet(data=array, subset=subset))
             self.reads[key] = entry
         return ast.Name(id=entry[0], ctx=ast.Load())
 
@@ -314,7 +319,7 @@ class GuardReadWiring(ast.NodeTransformer):
         if pos is None:
             self.refused = True
             return node
-        return ast.copy_location(self.connector(f'{array}[{pos}]', array, subsets.Range([(pos, pos, 1)])), node)
+        return ast.copy_location(self.connector(f"{array}[{pos}]", array, subsets.Range([(pos, pos, 1)])), node)
 
     def position(self, idx_str: str) -> Optional[Any]:
         """The single array position a guard read touches -- affine in the loop
@@ -345,7 +350,7 @@ class GuardReadWiring(ast.NodeTransformer):
         if node.id not in self.sdfg.arrays:
             return node
         desc = self.sdfg.arrays[node.id]
-        if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1, ))):
+        if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1,))):
             self.refused = True
             return node
         return ast.copy_location(self.connector(node.id, node.id, subsets.Range([(0, 0, 1)])), node)
@@ -372,14 +377,20 @@ def strip_identity(expr: ast.AST) -> ast.AST:
     """
     while isinstance(expr, ast.BinOp):
         right, left = expr.right, expr.left
-        if (isinstance(right, ast.Constant) and isinstance(right.value,
-                                                           (int, float)) and not isinstance(right.value, bool)
-                and any(isinstance(expr.op, op) and right.value == v for op, v in IDENTITY_RHS)):
+        if (
+            isinstance(right, ast.Constant)
+            and isinstance(right.value, (int, float))
+            and not isinstance(right.value, bool)
+            and any(isinstance(expr.op, op) and right.value == v for op, v in IDENTITY_RHS)
+        ):
             expr = left
             continue
-        if (isinstance(left, ast.Constant) and isinstance(left.value,
-                                                          (int, float)) and not isinstance(left.value, bool)
-                and any(isinstance(expr.op, op) and left.value == v for op, v in IDENTITY_LHS)):
+        if (
+            isinstance(left, ast.Constant)
+            and isinstance(left.value, (int, float))
+            and not isinstance(left.value, bool)
+            and any(isinstance(expr.op, op) and left.value == v for op, v in IDENTITY_LHS)
+        ):
             expr = right
             continue
         return expr
@@ -401,18 +412,19 @@ def neutral_extreme(numeric_type: type, op: dtypes.ReductionType) -> int | float
 class ArgMaxLift(ppl.Pass):
     """Lift TSVC-style argmax/argmin loops to :class:`Reduce` libnodes."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     tie_break = properties.Property(
         dtype=str,
-        default='infer',
-        choices=['infer', 'first', 'last'],
+        default="infer",
+        choices=["infer", "first", "last"],
         desc="Which of several equal extremes the tracked index refers to. 'infer' (default) derives it from the "
         "guard's strictness -- strict (> / <) keeps the FIRST occurrence, non-strict (>= / <=) the LAST -- "
         "reproducing the sequential loop. 'first' / 'last' pin the rule explicitly. Only meaningful when an "
-        "index is tracked: the extreme VALUE is the same either way.")
+        "index is tracked: the extreme VALUE is the same either way.",
+    )
 
-    def __init__(self, tie_break: str = 'infer') -> None:
+    def __init__(self, tie_break: str = "infer") -> None:
         super().__init__()
         self.tie_break = tie_break
 
@@ -430,9 +442,9 @@ class ArgMaxLift(ppl.Pass):
         """
         if not has_index:
             return False
-        if self.tie_break == 'first':
+        if self.tie_break == "first":
             return False
-        if self.tie_break == 'last':
+        if self.tie_break == "last":
             return True
         return op_ast in (ast.GtE, ast.LtE)
 
@@ -574,7 +586,7 @@ class ArgMaxLift(ppl.Pass):
         #  (b) inlined -- the comparison sits directly in the condition
         #      ``(g OP c)`` (current canonicalize output for TSVC s314/s316).
         inline_gather = None
-        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cond_expr_str):
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cond_expr_str):
             op_ast, gather_sym_name, carrier_name, transform = self._resolve_tmp_iedge(loop, cond_block, cond_expr_str)
         else:
             op_ast, gather_sym_name, carrier_name, transform = self._parse_comparison(cond_expr_str)
@@ -622,7 +634,7 @@ class ArgMaxLift(ppl.Pass):
             return None
 
         idx_carrier_name = None
-        if carrier_kind in ('scalar', 'length_one_array'):
+        if carrier_kind in ("scalar", "length_one_array"):
             # Data-carrier path: the in-loop write lives on AccessNode chains;
             # the true-branch's iedges must NOT carry assignments (any iedge
             # assignment is an extra write -- e.g. TSVC s315's ``index = i``).
@@ -635,8 +647,9 @@ class ArgMaxLift(ppl.Pass):
             true_state = self._extract_singleton_state(true_branch)
             if true_state is None:
                 return None
-            if not self._true_state_writes_carrier_from_array(true_state, loop, carrier_name, input_array, gather_base,
-                                                              gather_coeff):
+            if not self._true_state_writes_carrier_from_array(
+                true_state, loop, carrier_name, input_array, gather_base, gather_coeff
+            ):
                 return None
         else:
             # Symbol-carrier path: the in-loop write is an iedge assignment
@@ -647,14 +660,16 @@ class ArgMaxLift(ppl.Pass):
             # must match the one the comparison used. The true-branch states must
             # be empty -- any tasklet / AccessNode work would be a separate side
             # effect the rewrite cannot preserve.
-            ok, idx_carrier_name = self._symbol_true_branch_writes_carrier(true_branch,
-                                                                           loop,
-                                                                           carrier_name,
-                                                                           input_array,
-                                                                           gather_sym_name,
-                                                                           gather_base,
-                                                                           gather_coeff,
-                                                                           transform=transform)
+            ok, idx_carrier_name = self._symbol_true_branch_writes_carrier(
+                true_branch,
+                loop,
+                carrier_name,
+                input_array,
+                gather_sym_name,
+                gather_base,
+                gather_coeff,
+                transform=transform,
+            )
             if not ok:
                 return None
             # An index carrier must itself be a symbol (bound back via iedge).
@@ -665,7 +680,7 @@ class ArgMaxLift(ppl.Pass):
             # ArgReduce reads the strided slice directly. Every other
             # symbol-carrier shape (value-only / index-only / transform-only)
             # assumes the unit stride ``arr[b + i]``.
-            has_transform_and_index = (transform is not None and idx_carrier_name is not None)
+            has_transform_and_index = transform is not None and idx_carrier_name is not None
             if not unit_coeff and not has_transform_and_index:
                 return None
             # A SHIFTED gather is folded into the emitted slice by the plain
@@ -685,8 +700,9 @@ class ArgMaxLift(ppl.Pass):
             # value-only path by extending the emitted slice down to it. Neither is implied by
             # the match, so verify it; a seed that reads elsewhere would reduce over
             # a set missing the real seed and holding an element never gathered.
-            if folds_base and not self._verify_affine_seed(loop, sdfg, carrier_name, idx_carrier_name, input_array,
-                                                           gather_base, gather_coeff, start, transform):
+            if folds_base and not self._verify_affine_seed(
+                loop, sdfg, carrier_name, idx_carrier_name, input_array, gather_base, gather_coeff, start, transform
+            ):
                 return None
 
         # Tie-break semantics (``tie_break``; 'infer' reads it off the guard's
@@ -784,7 +800,7 @@ class ArgMaxLift(ppl.Pass):
             return None
         cond_codeblock, true_branch = non_else[0]
         cond_expr_str = cond_codeblock.as_string.strip()
-        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cond_expr_str):
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", cond_expr_str):
             op_ast, gather_sym, carrier_name, transform = self._resolve_tmp_iedge(inner_loop, cond_block, cond_expr_str)
         else:
             op_ast, gather_sym, carrier_name, transform = self._parse_comparison(cond_expr_str)
@@ -819,8 +835,9 @@ class ArgMaxLift(ppl.Pass):
             return None
         # The bounds are reparsed from loop CodeBlocks while the shape carries the declared
         # assumptions, so the same name arrives as two sympy instances that never cancel.
-        o_end, i_end, dim0, dim1 = symbolic.equalize_symbols_across(o_range[1], i_range[1], desc.shape[0],
-                                                                    desc.shape[1])
+        o_end, i_end, dim0, dim1 = symbolic.equalize_symbols_across(
+            o_range[1], i_range[1], desc.shape[0], desc.shape[1]
+        )
         if symbolic.simplify(o_end - (dim0 - 1)) != 0:
             return None
         if symbolic.simplify(i_end - (dim1 - 1)) != 0:
@@ -828,22 +845,24 @@ class ArgMaxLift(ppl.Pass):
         full = subsets.Range([(0, desc.shape[0] - 1, 1), (0, desc.shape[1] - 1, 1)])
         if not full.is_contiguous_subset(desc):
             return None
-        return _Match2D(op=op,
-                        outer_loop=outer_loop,
-                        inner_loop=inner_loop,
-                        parent=outer_loop.parent_graph,
-                        carrier_name=carrier_name,
-                        x_idx_name=x_idx_name,
-                        y_idx_name=y_idx_name,
-                        input_array=array,
-                        ncols=desc.shape[1],
-                        last_wins=last_wins)
+        return _Match2D(
+            op=op,
+            outer_loop=outer_loop,
+            inner_loop=inner_loop,
+            parent=outer_loop.parent_graph,
+            carrier_name=carrier_name,
+            x_idx_name=x_idx_name,
+            y_idx_name=y_idx_name,
+            input_array=array,
+            ncols=desc.shape[1],
+            last_wins=last_wins,
+        )
 
     def _parse_2d_gather(self, rhs_str: str, outer_var: str, inner_var: str) -> Optional[str]:
         """Return the array name iff ``rhs_str`` is exactly ``arr[outer_var,
         inner_var]`` (a 2-D point access, outer index in dim 0, inner in dim 1)."""
         try:
-            tree = ast.parse(str(rhs_str), mode='eval').body
+            tree = ast.parse(str(rhs_str), mode="eval").body
         except SyntaxError:
             return None
         if not isinstance(tree, ast.Subscript) or not isinstance(tree.value, ast.Name):
@@ -858,8 +877,9 @@ class ArgMaxLift(ppl.Pass):
             return None
         return tree.value.id
 
-    def _resolve_gather_2d(self, inner_loop: LoopRegion, gather_sym: str, outer_var: str, inner_var: str,
-                           sdfg: SDFG) -> Optional[str]:
+    def _resolve_gather_2d(
+        self, inner_loop: LoopRegion, gather_sym: str, outer_var: str, inner_var: str, sdfg: SDFG
+    ) -> Optional[str]:
         """Find an iedge binding ``gather_sym := arr[outer_var, inner_var]`` in the
         inner loop and return ``arr`` (validated against ``sdfg.arrays``)."""
         for e in inner_loop.all_interstate_edges():
@@ -871,8 +891,16 @@ class ArgMaxLift(ppl.Pass):
                 return arr
         return None
 
-    def _match_2d_true_branch(self, true_branch: ControlFlowBlock, carrier: str, gather_sym: str, array: str,
-                              outer_var: str, inner_var: str, sdfg: SDFG) -> Optional[Tuple[str, str]]:
+    def _match_2d_true_branch(
+        self,
+        true_branch: ControlFlowBlock,
+        carrier: str,
+        gather_sym: str,
+        array: str,
+        outer_var: str,
+        inner_var: str,
+        sdfg: SDFG,
+    ) -> Optional[Tuple[str, str]]:
         """Verify the true-branch binds exactly ``carrier := arr[i, j]`` (or
         ``:= gather_sym``), ``x := outer_var`` and ``y := inner_var`` via iedges,
         with empty states and no other writes. Returns ``(x_name, y_name)`` or
@@ -917,19 +945,18 @@ class ArgMaxLift(ppl.Pass):
         position is mapped back with ``mflat = total - 1 - idx``.
         """
         from dace.libraries.standard.nodes import ArgReduce
+
         desc = sdfg.arrays[m.input_array]
-        val_buf, _ = sdfg.add_scalar(f'_argmax2d_val_{m.outer_loop.label}',
-                                     desc.dtype,
-                                     transient=True,
-                                     find_new_name=True)
-        idx_buf, _ = sdfg.add_scalar(f'_argmax2d_idx_{m.outer_loop.label}',
-                                     dtypes.int64,
-                                     transient=True,
-                                     find_new_name=True)
+        val_buf, _ = sdfg.add_scalar(
+            f"_argmax2d_val_{m.outer_loop.label}", desc.dtype, transient=True, find_new_name=True
+        )
+        idx_buf, _ = sdfg.add_scalar(
+            f"_argmax2d_idx_{m.outer_loop.label}", dtypes.int64, transient=True, find_new_name=True
+        )
 
         nrows, ncols_sym = desc.shape[0], desc.shape[1]
         total = symbolic.simplify(nrows * ncols_sym)
-        argmax_state = m.parent.add_state(m.outer_loop.label + '_argreduce2d')
+        argmax_state = m.parent.add_state(m.outer_loop.label + "_argreduce2d")
         entry_state = argmax_state
         rev_buf = None
         if m.last_wins:
@@ -937,29 +964,25 @@ class ArgMaxLift(ppl.Pass):
             # whose forward flat position is exactly ``total-1 - (_i*ncols+_j)``.
             # The map is a pure gather (a bijection on the flat index), so the
             # materialisation stays fully parallel.
-            rev_buf, _ = sdfg.add_array(f'_argmax2d_rev_{m.outer_loop.label}', [total],
-                                        desc.dtype,
-                                        transient=True,
-                                        find_new_name=True)
-            mat_state = m.parent.add_state(m.outer_loop.label + '_argreduce2d_rev')
+            rev_buf, _ = sdfg.add_array(
+                f"_argmax2d_rev_{m.outer_loop.label}", [total], desc.dtype, transient=True, find_new_name=True
+            )
+            mat_state = m.parent.add_state(m.outer_loop.label + "_argreduce2d_rev")
             # Symbolic bounds and subsets, never a rendered string: ``sym2cpp`` spells a symbolic
             # extent as C++ (``dace::math::ipow(R, K)``), and the range parser splits on ':', so
             # the qualified name comes back as bogus tokens.
-            row_sym, col_sym = symbolic.symbol('_i'), symbolic.symbol('_j')
+            row_sym, col_sym = symbolic.symbol("_i"), symbolic.symbol("_j")
             rev_i = symbolic.simplify(nrows - 1) - row_sym
             rev_j = symbolic.simplify(ncols_sym - 1) - col_sym
             flat = row_sym * ncols_sym + col_sym
             mat_state.add_mapped_tasklet(
-                name='reverse_gather2d',
-                map_ranges={
-                    '_i': (0, nrows - 1, 1),
-                    '_j': (0, ncols_sym - 1, 1)
-                },
+                name="reverse_gather2d",
+                map_ranges={"_i": (0, nrows - 1, 1), "_j": (0, ncols_sym - 1, 1)},
                 inputs={
-                    '__in': mm.Memlet(data=m.input_array, subset=subsets.Range([(rev_i, rev_i, 1), (rev_j, rev_j, 1)]))
+                    "__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(rev_i, rev_i, 1), (rev_j, rev_j, 1)]))
                 },
-                code='__out = __in',
-                outputs={'__out': mm.Memlet(data=rev_buf, subset=subsets.Range([(flat, flat, 1)]))},
+                code="__out = __in",
+                outputs={"__out": mm.Memlet(data=rev_buf, subset=subsets.Range([(flat, flat, 1)]))},
                 external_edges=True,
             )
             entry_state = mat_state
@@ -969,8 +992,9 @@ class ArgMaxLift(ppl.Pass):
             new_assigns = dict(ie.data.assignments or {})
             for k in (m.carrier_name, m.x_idx_name, m.y_idx_name):
                 new_assigns.pop(k, None)
-            m.parent.add_edge(ie.src, entry_state,
-                              dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns))
+            m.parent.add_edge(
+                ie.src, entry_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+            )
             m.parent.remove_edge(ie)
         if m.last_wins:
             m.parent.add_edge(entry_state, argmax_state, dace.InterstateEdge())
@@ -978,16 +1002,19 @@ class ArgMaxLift(ppl.Pass):
         ncols = symbolic.symstr(m.ncols)
         # Forward flat position of the winner: the reduce's own index when the scan
         # ran forward, mirrored through the array when it ran over the reversed copy.
-        flat = idx_buf if not m.last_wins else f'(({symbolic.symstr(symbolic.simplify(total - 1))}) - {idx_buf})'
-        bind_state = m.parent.add_state(m.outer_loop.label + '_argreduce2d_bind')
+        flat = idx_buf if not m.last_wins else f"(({symbolic.symstr(symbolic.simplify(total - 1))}) - {idx_buf})"
+        bind_state = m.parent.add_state(m.outer_loop.label + "_argreduce2d_bind")
         m.parent.add_edge(
-            argmax_state, bind_state,
+            argmax_state,
+            bind_state,
             dace.InterstateEdge(
                 assignments={
                     m.carrier_name: val_buf,
-                    m.x_idx_name: f'int_floor({flat}, {ncols})',
-                    m.y_idx_name: f'({flat} % ({ncols}))',
-                }))
+                    m.x_idx_name: f"int_floor({flat}, {ncols})",
+                    m.y_idx_name: f"({flat} % ({ncols}))",
+                }
+            ),
+        )
         for oe in list(m.parent.out_edges(m.outer_loop)):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
             m.parent.remove_edge(oe)
@@ -995,19 +1022,20 @@ class ArgMaxLift(ppl.Pass):
 
         wv = argmax_state.add_write(val_buf)
         wi = argmax_state.add_write(idx_buf)
-        op = 'max' if m.op == dtypes.ReductionType.Max else 'min'
-        node = ArgReduce(name=f'{m.outer_loop.label}_argreduce2d', op=op)
+        op = "max" if m.op == dtypes.ReductionType.Max else "min"
+        node = ArgReduce(name=f"{m.outer_loop.label}_argreduce2d", op=op)
         argmax_state.add_node(node)
         if m.last_wins:
             read = argmax_state.add_read(required(rev_buf))
             in_memlet = mm.Memlet(data=rev_buf, subset=subsets.Range([(0, symbolic.simplify(total - 1), 1)]))
         else:
             read = argmax_state.add_read(m.input_array)
-            in_memlet = mm.Memlet(data=m.input_array,
-                                  subset=subsets.Range([(0, desc.shape[0] - 1, 1), (0, desc.shape[1] - 1, 1)]))
-        argmax_state.add_edge(read, None, node, '_in', in_memlet)
-        argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
-        argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
+            in_memlet = mm.Memlet(
+                data=m.input_array, subset=subsets.Range([(0, desc.shape[0] - 1, 1), (0, desc.shape[1] - 1, 1)])
+            )
+        argmax_state.add_edge(read, None, node, "_in", in_memlet)
+        argmax_state.add_edge(node, "_out_val", wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
+        argmax_state.add_edge(node, "_out_idx", wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
 
     def _branch_has_content(self, branch: ControlFlowBlock) -> bool:
         if not isinstance(branch, ControlFlowRegion):
@@ -1019,8 +1047,9 @@ class ArgMaxLift(ppl.Pass):
                 return True
         return False
 
-    def _parse_compare_node(self,
-                            tree: ast.expr) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
+    def _parse_compare_node(
+        self, tree: ast.expr
+    ) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
         """Extract ``(op_cls, gather_name, carrier_name, transform)`` from a
         :class:`ast.Compare` node ``gather OP carrier`` (or ``f(gather) OP
         carrier``). The gather side may carry a recognised unary transform
@@ -1050,7 +1079,7 @@ class ArgMaxLift(ppl.Pass):
         ``(op_cls, (array, base, coeff), carrier_name, transform)`` or ``None``.
         """
         try:
-            tree = ast.parse(expr_str, mode='eval').body
+            tree = ast.parse(expr_str, mode="eval").body
         except SyntaxError:
             return None
         if not (isinstance(tree, ast.Compare) and len(tree.ops) == 1 and len(tree.comparators) == 1):
@@ -1062,8 +1091,13 @@ class ArgMaxLift(ppl.Pass):
         if carrier is None:
             return None
         left, transform = tree.left, None
-        if (isinstance(left, ast.Call) and isinstance(left.func, ast.Name) and left.func.id in self.SUPPORTED_TRANSFORMS
-                and len(left.args) == 1 and not left.keywords):
+        if (
+            isinstance(left, ast.Call)
+            and isinstance(left.func, ast.Name)
+            and left.func.id in self.SUPPORTED_TRANSFORMS
+            and len(left.args) == 1
+            and not left.keywords
+        ):
             transform, left = left.func.id, left.args[0]
         if not (isinstance(left, ast.Subscript) and isinstance(left.value, ast.Name)):
             return None
@@ -1081,8 +1115,9 @@ class ArgMaxLift(ppl.Pass):
         base, coeff = aff
         return op_cls, (array, base, coeff), carrier, transform
 
-    def _resolve_tmp_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock,
-                           tmp_sym: str) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
+    def _resolve_tmp_iedge(
+        self, loop: LoopRegion, cond_block: ConditionalBlock, tmp_sym: str
+    ) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
         """Walk in-edges of ``cond_block`` looking for one whose assignment binds
         ``tmp_sym`` to a comparison ``[f](g) OP c``. Returns ``(ast_op_cls,
         g_name, c_name, transform)`` or ``(None, None, None, None)``."""
@@ -1092,7 +1127,7 @@ class ArgMaxLift(ppl.Pass):
             if rhs is None:
                 continue
             try:
-                tree = ast.parse(str(rhs), mode='eval').body
+                tree = ast.parse(str(rhs), mode="eval").body
             except SyntaxError:
                 continue
             res = self._parse_compare_node(tree)
@@ -1100,8 +1135,9 @@ class ArgMaxLift(ppl.Pass):
                 return res
         return None, None, None, None
 
-    def _parse_comparison(self,
-                          expr_str: str) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
+    def _parse_comparison(
+        self, expr_str: str
+    ) -> Tuple[Optional[CompareOp], Optional[str], Optional[str], Optional[str]]:
         """Parse a comparison ``[f](g) OP c`` inlined directly in the condition.
 
         Mirrors :meth:`_resolve_tmp_iedge` but on the condition string itself
@@ -1109,13 +1145,14 @@ class ArgMaxLift(ppl.Pass):
         transform)`` or ``(None, None, None, None)``.
         """
         try:
-            tree = ast.parse(expr_str, mode='eval').body
+            tree = ast.parse(expr_str, mode="eval").body
         except SyntaxError:
             return None, None, None, None
         return self._parse_compare_node(tree)
 
-    def _resolve_gather_iedge(self, loop: LoopRegion, cond_block: ConditionalBlock, gather_sym: str, loop_var: str,
-                              sdfg: SDFG) -> Optional[Tuple[str, Any, Any]]:
+    def _resolve_gather_iedge(
+        self, loop: LoopRegion, cond_block: ConditionalBlock, gather_sym: str, loop_var: str, sdfg: SDFG
+    ) -> Optional[Tuple[str, Any, Any]]:
         """Walk back two levels to find an iedge binding ``gather_sym = arr[idx]``
         where ``idx`` is an AFFINE function of the loop variable ``b + c*i``.
 
@@ -1132,7 +1169,7 @@ class ArgMaxLift(ppl.Pass):
             if rhs is None:
                 continue
             try:
-                tree = ast.parse(str(rhs), mode='eval').body
+                tree = ast.parse(str(rhs), mode="eval").body
             except SyntaxError:
                 continue
             if not isinstance(tree, ast.Subscript):
@@ -1160,8 +1197,9 @@ class ArgMaxLift(ppl.Pass):
         return None
 
     @staticmethod
-    def _affine_index_in_loop_var(idx_str: str, loop_var: str,
-                                  loop: LoopRegion) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+    def _affine_index_in_loop_var(
+        idx_str: str, loop_var: str, loop: LoopRegion
+    ) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
         """Decompose a gather index ``idx_str`` as ``base + coeff*loop_var``.
 
         Returns ``(base, coeff)`` (sympy exprs) iff ``idx_str`` is affine and
@@ -1211,7 +1249,7 @@ class ArgMaxLift(ppl.Pass):
     #: Recognised unary gather transforms ``f(g)`` -> the Python builtin name.
     #: Adding one here is not enough for the transform+index shape: that rewrite hands the name to
     #: ``ArgReduce.transform``, whose own set is what decides how it is spelled in C++.
-    SUPPORTED_TRANSFORMS: Dict[str, None] = dict.fromkeys(['abs'])
+    SUPPORTED_TRANSFORMS: Dict[str, None] = dict.fromkeys(["abs"])
 
     def _extract_transform(self, node: ast.AST) -> Tuple[Optional[str], Optional[str]]:
         """Return ``(transform, name)`` for a possibly-transformed operand.
@@ -1221,8 +1259,13 @@ class ArgMaxLift(ppl.Pass):
         """
         if isinstance(node, ast.Name):
             return None, node.id
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in self.SUPPORTED_TRANSFORMS
-                and len(node.args) == 1 and not node.keywords):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in self.SUPPORTED_TRANSFORMS
+            and len(node.args) == 1
+            and not node.keywords
+        ):
             inner = self._extract_name(node.args[0])
             if inner is not None:
                 return node.func.id, inner
@@ -1236,8 +1279,9 @@ class ArgMaxLift(ppl.Pass):
             return None
         return content_states[0]
 
-    def _true_state_writes_carrier_from_array(self, state: SDFGState, loop: LoopRegion, carrier: str, array: str,
-                                              gather_base: Any, gather_coeff: Any) -> bool:
+    def _true_state_writes_carrier_from_array(
+        self, state: SDFGState, loop: LoopRegion, carrier: str, array: str, gather_base: Any, gather_coeff: Any
+    ) -> bool:
         """Check the true-branch state has the shape ``arr -> arr_index_AN ->
         assign_tasklet -> carrier_AN`` writing ``carrier = arr[gather_base +
         gather_coeff*loop_var]`` -- the SAME element the comparison gathered."""
@@ -1316,18 +1360,26 @@ class ArgMaxLift(ppl.Pass):
         desc = sdfg.arrays.get(name)
         if desc is not None:
             if isinstance(desc, data.Scalar):
-                return 'scalar', subsets.Range([(0, 0, 1)])
-            if isinstance(desc, data.Array) and tuple(desc.shape) == (1, ):
-                return 'length_one_array', subsets.Range([(0, 0, 1)])
+                return "scalar", subsets.Range([(0, 0, 1)])
+            if isinstance(desc, data.Array) and tuple(desc.shape) == (1,):
+                return "length_one_array", subsets.Range([(0, 0, 1)])
             return None, None
         # Symbol carrier: present in ``sdfg.symbols`` but not in ``sdfg.arrays``.
         if name in sdfg.symbols:
-            return 'symbol', None
+            return "symbol", None
         return None, None
 
-    def _rhs_is_value_write(self, rhs_str: str, gather_sym: Optional[str], array: str, loop_var: str, loop: LoopRegion,
-                            gather_base: symbolic.SymbolicType, gather_coeff: symbolic.SymbolicType,
-                            transform: Optional[str]) -> bool:
+    def _rhs_is_value_write(
+        self,
+        rhs_str: str,
+        gather_sym: Optional[str],
+        array: str,
+        loop_var: str,
+        loop: LoopRegion,
+        gather_base: symbolic.SymbolicType,
+        gather_coeff: symbolic.SymbolicType,
+        transform: Optional[str],
+    ) -> bool:
         """True iff ``rhs_str`` is the value-carrier write under ``transform``:
         ``[f](gather_sym)`` or ``[f](array[idx])``, where ``f`` is the recognised
         transform (``None`` -> no wrapping call allowed) and ``idx`` decomposes
@@ -1341,13 +1393,18 @@ class ArgMaxLift(ppl.Pass):
         the one compared.
         """
         try:
-            tree: ast.AST = ast.parse(rhs_str, mode='eval').body
+            tree: ast.AST = ast.parse(rhs_str, mode="eval").body
         except SyntaxError:
             return False
         tree = strip_identity(tree)
         if transform is not None:
-            if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name) and tree.func.id == transform
-                    and len(tree.args) == 1 and not tree.keywords):
+            if not (
+                isinstance(tree, ast.Call)
+                and isinstance(tree.func, ast.Name)
+                and tree.func.id == transform
+                and len(tree.args) == 1
+                and not tree.keywords
+            ):
                 return False
             tree = tree.args[0]
         elif isinstance(tree, ast.Call):
@@ -1369,15 +1426,17 @@ class ArgMaxLift(ppl.Pass):
         base, coeff = aff
         return bool(symbolic.simplify(base - gather_base) == 0 and symbolic.simplify(coeff - gather_coeff) == 0)
 
-    def _symbol_true_branch_writes_carrier(self,
-                                           true_branch: ControlFlowBlock,
-                                           loop: LoopRegion,
-                                           carrier: str,
-                                           array: str,
-                                           gather_sym: Optional[str],
-                                           gather_base: symbolic.SymbolicType,
-                                           gather_coeff: symbolic.SymbolicType,
-                                           transform: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    def _symbol_true_branch_writes_carrier(
+        self,
+        true_branch: ControlFlowBlock,
+        loop: LoopRegion,
+        carrier: str,
+        array: str,
+        gather_sym: Optional[str],
+        gather_base: symbolic.SymbolicType,
+        gather_coeff: symbolic.SymbolicType,
+        transform: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
         """For the symbol-carrier case, verify the true-branch binds the value
         carrier (``carrier := [f](array[gather_base + gather_coeff*loop_var])``
         or ``carrier := [f](gather_sym)``, with the same gather transform ``f``
@@ -1401,8 +1460,9 @@ class ArgMaxLift(ppl.Pass):
             for lhs, rhs in assigns.items():
                 rhs_str = str(rhs).strip()
                 if lhs == carrier:
-                    if not self._rhs_is_value_write(rhs_str, gather_sym, array, loop_var, loop, gather_base,
-                                                    gather_coeff, transform):
+                    if not self._rhs_is_value_write(
+                        rhs_str, gather_sym, array, loop_var, loop, gather_base, gather_coeff, transform
+                    ):
                         return False, None
                     carrier_write_seen = True
                 elif rhs_str == loop_var and idx_carrier is None:
@@ -1464,8 +1524,18 @@ class ArgMaxLift(ppl.Pass):
         except TypeError:
             return None
 
-    def _verify_affine_seed(self, loop: LoopRegion, sdfg: SDFG, value_carrier: str, idx_carrier: Optional[str],
-                            array: str, base: Any, coeff: Any, start: Any, transform: Optional[str]) -> bool:
+    def _verify_affine_seed(
+        self,
+        loop: LoopRegion,
+        sdfg: SDFG,
+        value_carrier: str,
+        idx_carrier: Optional[str],
+        array: str,
+        base: Any,
+        coeff: Any,
+        start: Any,
+        transform: Optional[str],
+    ) -> bool:
         """Check the pre-loop seed is ``value_carrier := [f](array[base + coeff*(start-1)])`` and, with
         an index carrier, ``idx_carrier := start-1``.
 
@@ -1525,18 +1595,24 @@ class ArgMaxLift(ppl.Pass):
             return False
         return True
 
-    def _seed_gather_position(self, rhs_str: str, array: str, transform: Optional[str],
-                              preloop: Dict[str, str]) -> Optional[str]:
+    def _seed_gather_position(
+        self, rhs_str: str, array: str, transform: Optional[str], preloop: Dict[str, str]
+    ) -> Optional[str]:
         """If ``rhs_str`` is ``[f](array[P])`` -- or ``[f](g)`` where ``g`` is a
         pre-loop symbol bound to ``array[P]`` -- return the index string ``P``;
         else ``None``."""
         try:
-            tree = ast.parse(rhs_str, mode='eval').body
+            tree = ast.parse(rhs_str, mode="eval").body
         except SyntaxError:
             return None
         if transform is not None:
-            if not (isinstance(tree, ast.Call) and isinstance(tree.func, ast.Name) and tree.func.id == transform
-                    and len(tree.args) == 1 and not tree.keywords):
+            if not (
+                isinstance(tree, ast.Call)
+                and isinstance(tree.func, ast.Name)
+                and tree.func.id == transform
+                and len(tree.args) == 1
+                and not tree.keywords
+            ):
                 return None
             tree = tree.args[0]
         elif isinstance(tree, ast.Call):
@@ -1544,7 +1620,7 @@ class ArgMaxLift(ppl.Pass):
         # Follow one level of gather-symbol indirection (``g`` bound to ``a[P]``).
         if isinstance(tree, ast.Name) and tree.id in preloop:
             try:
-                tree = ast.parse(preloop[tree.id], mode='eval').body
+                tree = ast.parse(preloop[tree.id], mode="eval").body
             except SyntaxError:
                 return None
         if not (isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id == array):
@@ -1581,8 +1657,10 @@ class ArgMaxLift(ppl.Pass):
     def _gather_range(self, m: _Match, iter_lo: Any, iter_hi: Any) -> Tuple[Any, Any]:
         """Inclusive ARRAY-POSITION bounds of the gather ``arr[gather_base +
         gather_coeff*i]`` over the iterations ``iter_lo .. iter_hi``."""
-        return (symbolic.simplify(m.gather_base + m.gather_coeff * iter_lo),
-                symbolic.simplify(m.gather_base + m.gather_coeff * iter_hi))
+        return (
+            symbolic.simplify(m.gather_base + m.gather_coeff * iter_lo),
+            symbolic.simplify(m.gather_base + m.gather_coeff * iter_hi),
+        )
 
     def _rewrite(self, m: _Match, sdfg: SDFG) -> None:
         """Replace the loop with a :class:`Reduce` (value-only) or
@@ -1597,36 +1675,35 @@ class ArgMaxLift(ppl.Pass):
         end = symbolic.simplify(m.iter_end)
 
         # Allocate the output container per carrier kind.
-        if m.carrier_kind == 'symbol':
+        if m.carrier_kind == "symbol":
             # Fresh transient scalar -> Reduce output -> iedge bind to the symbol.
             output_dtype = sdfg.symbols[m.carrier_name]
-            out_name, _ = sdfg.add_scalar(f'_arg_max_buf_{m.loop.label}',
-                                          output_dtype,
-                                          transient=True,
-                                          find_new_name=True)
+            out_name, _ = sdfg.add_scalar(
+                f"_arg_max_buf_{m.loop.label}", output_dtype, transient=True, find_new_name=True
+            )
             output_subset = subsets.Range([(0, 0, 1)])
         else:
             out_name = m.carrier_name
             output_subset = required(m.carrier_subset)
 
         # Reduce-state replaces the loop.
-        reduce_state = m.parent.add_state(m.loop.label + '_argmax')
+        reduce_state = m.parent.add_state(m.loop.label + "_argmax")
         # Re-route inbound edges. For symbol carriers, drop any pre-loop iedge
         # assignment that binds the carrier symbol -- the reduce subsumes it.
         for ie in list(m.parent.in_edges(m.loop)):
             new_assigns = dict(ie.data.assignments or {})
-            if m.carrier_kind == 'symbol' and m.carrier_name in new_assigns:
+            if m.carrier_kind == "symbol" and m.carrier_name in new_assigns:
                 del new_assigns[m.carrier_name]
             new_iedge = dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
             m.parent.add_edge(ie.src, reduce_state, new_iedge)
             m.parent.remove_edge(ie)
 
-        if m.carrier_kind == 'symbol':
+        if m.carrier_kind == "symbol":
             # Insert a bind state AFTER the reduce so the carrier symbol gets
             # re-materialised from the transient scalar before any downstream
             # state references it. Scalars are bare names (no subscript) in
             # iedge assignment RHS expressions.
-            bind_state = m.parent.add_state(m.loop.label + '_argmax_bind')
+            bind_state = m.parent.add_state(m.loop.label + "_argmax_bind")
             m.parent.add_edge(reduce_state, bind_state, dace.InterstateEdge(assignments={m.carrier_name: out_name}))
             for oe in list(m.parent.out_edges(m.loop)):
                 m.parent.add_edge(bind_state, oe.dst, oe.data)
@@ -1648,7 +1725,7 @@ class ArgMaxLift(ppl.Pass):
         # into the running reduction (WCR-Max). For symbol carriers we have
         # to include the seed position explicitly in the input slice because
         # the dropped pre-loop iedge no longer materialises the seed.
-        wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
+        wcr_str = "lambda a, b: max(a, b)" if m.op == dtypes.ReductionType.Max else "lambda a, b: min(a, b)"
         # Identity (accumulator seed) for the reduction.
         #  * symbol carrier -> the Reduce writes a FRESH transient with no
         #    pre-seeded value (and the input slice already covers the original
@@ -1660,14 +1737,14 @@ class ArgMaxLift(ppl.Pass):
         #    Min (finite extremes, so codegen stays a plain numeric literal).
         #  * scalar / length-1 carrier -> keep ``identity=None``: it WCR-folds
         #    into the pre-loop ``x = a[start]`` seed already in the carrier AN.
-        if m.carrier_kind == 'symbol':
+        if m.carrier_kind == "symbol":
             numeric_type = sdfg.arrays[m.input_array].dtype.type
             identity = neutral_extreme(numeric_type, m.op)
         else:
             identity = None
-        node = Reduce(name=f'{m.loop.label}_argmax_reduce', wcr=wcr_str, axes=[0], identity=identity)
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
+        node = Reduce(name=f"{m.loop.label}_argmax_reduce", wcr=wcr_str, axes=[0], identity=identity)
+        node.add_in_connector("_in")
+        node.add_out_connector("_out")
         reduce_state.add_node(node)
         # The slice is in ARRAY-POSITION space, so a SHIFTED gather (``a[i + 1]``)
         # reduces over exactly the elements its unshifted form would. A symbol
@@ -1675,12 +1752,12 @@ class ArgMaxLift(ppl.Pass):
         # no longer materialises the seed (TSVC s314 seeds from ``a[0]`` at
         # ``start = 1``); a scalar / length-1 carrier keeps the seed in its
         # AccessNode, so it starts at ``start``. Unit stride is gated in ``_match``.
-        iter_lo = self._seed_iteration(m, start) if m.carrier_kind == 'symbol' else start
+        iter_lo = self._seed_iteration(m, start) if m.carrier_kind == "symbol" else start
         pos_lo, pos_hi = self._gather_range(m, iter_lo, end)
         input_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, 1)]))
-        reduce_state.add_edge(read, None, node, '_in', input_memlet)
+        reduce_state.add_edge(read, None, node, "_in", input_memlet)
         output_memlet = mm.Memlet(data=out_name, subset=output_subset)
-        reduce_state.add_edge(node, '_out', write, None, output_memlet)
+        reduce_state.add_edge(node, "_out", write, None, output_memlet)
 
     def _rewrite_with_index(self, m: _Match, sdfg: SDFG) -> None:
         """Replace an argmax/argmin-with-index loop (TSVC s315) with a two-output ``ArgReduce``.
@@ -1691,19 +1768,20 @@ class ArgMaxLift(ppl.Pass):
         ``idx_carrier := end - idx_buf``.
         """
         from dace.libraries.standard.nodes import ArgReduce
+
         start = symbolic.simplify(m.iter_start)
         end = symbolic.simplify(m.iter_end)
         arr_dtype = sdfg.arrays[m.input_array].dtype
 
-        val_buf, _ = sdfg.add_scalar(f'_argmax_val_{m.loop.label}', arr_dtype, transient=True, find_new_name=True)
-        idx_buf, _ = sdfg.add_scalar(f'_argmax_idx_{m.loop.label}', dtypes.int64, transient=True, find_new_name=True)
+        val_buf, _ = sdfg.add_scalar(f"_argmax_val_{m.loop.label}", arr_dtype, transient=True, find_new_name=True)
+        idx_buf, _ = sdfg.add_scalar(f"_argmax_idx_{m.loop.label}", dtypes.int64, transient=True, find_new_name=True)
 
         # Include the seed ``a[start-1]`` in the slice. This path is gated to the
         # unit ``a[i]`` gather, so the position and the iteration coincide.
         slice_lo = self._seed_iteration(m, start)
         lo_is_zero = bool(symbolic.simplify(slice_lo) == 0)
 
-        argmax_state = m.parent.add_state(m.loop.label + '_argreduce')
+        argmax_state = m.parent.add_state(m.loop.label + "_argreduce")
         entry_state = argmax_state
         rev_buf = None
         if m.last_wins:
@@ -1711,18 +1789,17 @@ class ArgMaxLift(ppl.Pass):
             # 0:n. This path only ever sees the unit gather (a[i]), so the array
             # position and the iteration index coincide.
             n_elems = symbolic.simplify(end + 1 - slice_lo)
-            rev_buf, _ = sdfg.add_array(f'_argmax_rev_{m.loop.label}', [n_elems],
-                                        arr_dtype,
-                                        transient=True,
-                                        find_new_name=True)
-            mat_state = m.parent.add_state(m.loop.label + '_argreduce_rev')
-            rev = end - symbolic.symbol('_j')
+            rev_buf, _ = sdfg.add_array(
+                f"_argmax_rev_{m.loop.label}", [n_elems], arr_dtype, transient=True, find_new_name=True
+            )
+            mat_state = m.parent.add_state(m.loop.label + "_argreduce_rev")
+            rev = end - symbolic.symbol("_j")
             mat_state.add_mapped_tasklet(
-                name='reverse_gather',
-                map_ranges={'_j': (0, n_elems - 1, 1)},
-                inputs={'__in': mm.Memlet(data=m.input_array, subset=subsets.Range([(rev, rev, 1)]))},
-                code='__out = __in',
-                outputs={'__out': mm.Memlet(data=rev_buf, subset='_j')},
+                name="reverse_gather",
+                map_ranges={"_j": (0, n_elems - 1, 1)},
+                inputs={"__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(rev, rev, 1)]))},
+                code="__out = __in",
+                outputs={"__out": mm.Memlet(data=rev_buf, subset="_j")},
                 external_edges=True,
             )
             entry_state = mat_state
@@ -1732,8 +1809,9 @@ class ArgMaxLift(ppl.Pass):
             new_assigns = dict(ie.data.assignments or {})
             new_assigns.pop(m.carrier_name, None)
             new_assigns.pop(required(m.idx_carrier_name), None)
-            m.parent.add_edge(ie.src, entry_state,
-                              dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns))
+            m.parent.add_edge(
+                ie.src, entry_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+            )
             m.parent.remove_edge(ie)
         if m.last_wins:
             m.parent.add_edge(entry_state, argmax_state, dace.InterstateEdge())
@@ -1743,16 +1821,15 @@ class ArgMaxLift(ppl.Pass):
         # slice-local one: forward -> add the slice base; reversed -> mirror it
         # through the slice's top end.
         if m.last_wins:
-            idx_rhs = f'(({symbolic.symstr(end)}) - {idx_buf})'
+            idx_rhs = f"(({symbolic.symstr(end)}) - {idx_buf})"
         else:
-            idx_rhs = idx_buf if lo_is_zero else f'({symbolic.symstr(slice_lo)} + {idx_buf})'
-        bind_state = m.parent.add_state(m.loop.label + '_argreduce_bind')
+            idx_rhs = idx_buf if lo_is_zero else f"({symbolic.symstr(slice_lo)} + {idx_buf})"
+        bind_state = m.parent.add_state(m.loop.label + "_argreduce_bind")
         m.parent.add_edge(
-            argmax_state, bind_state,
-            dace.InterstateEdge(assignments={
-                m.carrier_name: val_buf,
-                required(m.idx_carrier_name): idx_rhs
-            }))
+            argmax_state,
+            bind_state,
+            dace.InterstateEdge(assignments={m.carrier_name: val_buf, required(m.idx_carrier_name): idx_rhs}),
+        )
         for oe in list(m.parent.out_edges(m.loop)):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
             m.parent.remove_edge(oe)
@@ -1760,8 +1837,8 @@ class ArgMaxLift(ppl.Pass):
 
         wv = argmax_state.add_write(val_buf)
         wi = argmax_state.add_write(idx_buf)
-        op = 'max' if m.op == dtypes.ReductionType.Max else 'min'
-        node = ArgReduce(name=f'{m.loop.label}_argreduce', op=op)
+        op = "max" if m.op == dtypes.ReductionType.Max else "min"
+        node = ArgReduce(name=f"{m.loop.label}_argreduce", op=op)
         argmax_state.add_node(node)
         if m.last_wins:
             read = argmax_state.add_read(required(rev_buf))
@@ -1769,9 +1846,9 @@ class ArgMaxLift(ppl.Pass):
         else:
             read = argmax_state.add_read(m.input_array)
             in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(slice_lo, end, 1)]))
-        argmax_state.add_edge(read, None, node, '_in', in_memlet)
-        argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
-        argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
+        argmax_state.add_edge(read, None, node, "_in", in_memlet)
+        argmax_state.add_edge(node, "_out_val", wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
+        argmax_state.add_edge(node, "_out_idx", wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
 
     def _rewrite_with_transform(self, m: _Match, sdfg: SDFG) -> None:
         """Replace a transformed value-only reduction (TSVC s3113,
@@ -1793,37 +1870,38 @@ class ArgMaxLift(ppl.Pass):
         slice_lo = self._seed_iteration(m, start)
         n_elems = symbolic.simplify(end + 1 - slice_lo)
 
-        buf, _ = sdfg.add_array(f'_argf_buf_{m.loop.label}', [n_elems], arr_dtype, transient=True, find_new_name=True)
+        buf, _ = sdfg.add_array(f"_argf_buf_{m.loop.label}", [n_elems], arr_dtype, transient=True, find_new_name=True)
 
         # Materialisation state: buf[_j] = f(input_array[slice_lo + _j]).
-        mat_state = m.parent.add_state(m.loop.label + '_argf')
-        gather = slice_lo + symbolic.symbol('_j')
+        mat_state = m.parent.add_state(m.loop.label + "_argf")
+        gather = slice_lo + symbolic.symbol("_j")
         mat_state.add_mapped_tasklet(
-            name='transform_gather',
-            map_ranges={'_j': (0, n_elems - 1, 1)},
-            inputs={'__in': mm.Memlet(data=m.input_array, subset=subsets.Range([(gather, gather, 1)]))},
-            code=f'__out = {m.transform}(__in)',
-            outputs={'__out': mm.Memlet(data=buf, subset='_j')},
+            name="transform_gather",
+            map_ranges={"_j": (0, n_elems - 1, 1)},
+            inputs={"__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(gather, gather, 1)]))},
+            code=f"__out = {m.transform}(__in)",
+            outputs={"__out": mm.Memlet(data=buf, subset="_j")},
             external_edges=True,
         )
 
         # Reduce over the (contiguous) buffer.
         out_dtype = sdfg.symbols[m.carrier_name]
-        out_name, _ = sdfg.add_scalar(f'_argf_val_{m.loop.label}', out_dtype, transient=True, find_new_name=True)
-        reduce_state = m.parent.add_state(m.loop.label + '_argf_reduce')
+        out_name, _ = sdfg.add_scalar(f"_argf_val_{m.loop.label}", out_dtype, transient=True, find_new_name=True)
+        reduce_state = m.parent.add_state(m.loop.label + "_argf_reduce")
 
         # Re-route inbound edges to the materialise state, dropping the pre-loop
         # carrier seed (the reduce over buf subsumes it).
         for ie in list(m.parent.in_edges(m.loop)):
             new_assigns = dict(ie.data.assignments or {})
             new_assigns.pop(m.carrier_name, None)
-            m.parent.add_edge(ie.src, mat_state,
-                              dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns))
+            m.parent.add_edge(
+                ie.src, mat_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+            )
             m.parent.remove_edge(ie)
         m.parent.add_edge(mat_state, reduce_state, dace.InterstateEdge())
 
         # Bind state: carrier := reduced value.
-        bind_state = m.parent.add_state(m.loop.label + '_argf_bind')
+        bind_state = m.parent.add_state(m.loop.label + "_argf_bind")
         m.parent.add_edge(reduce_state, bind_state, dace.InterstateEdge(assignments={m.carrier_name: out_name}))
         for oe in list(m.parent.out_edges(m.loop)):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
@@ -1832,15 +1910,16 @@ class ArgMaxLift(ppl.Pass):
 
         read = reduce_state.add_read(buf)
         write = reduce_state.add_write(out_name)
-        wcr_str = 'lambda a, b: max(a, b)' if m.op == dtypes.ReductionType.Max else 'lambda a, b: min(a, b)'
+        wcr_str = "lambda a, b: max(a, b)" if m.op == dtypes.ReductionType.Max else "lambda a, b: min(a, b)"
         identity = neutral_extreme(arr_dtype.type, m.op)
-        node = Reduce(name=f'{m.loop.label}_argf_reduce', wcr=wcr_str, axes=[0], identity=identity)
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
+        node = Reduce(name=f"{m.loop.label}_argf_reduce", wcr=wcr_str, axes=[0], identity=identity)
+        node.add_in_connector("_in")
+        node.add_out_connector("_out")
         reduce_state.add_node(node)
-        reduce_state.add_edge(read, None, node, '_in',
-                              mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)])))
-        reduce_state.add_edge(node, '_out', write, None, mm.Memlet(data=out_name, subset=subsets.Range([(0, 0, 1)])))
+        reduce_state.add_edge(
+            read, None, node, "_in", mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)]))
+        )
+        reduce_state.add_edge(node, "_out", write, None, mm.Memlet(data=out_name, subset=subsets.Range([(0, 0, 1)])))
 
     def _rewrite_with_transform_and_index(self, m: _Match, sdfg: SDFG) -> None:
         """Replace a transformed argmax/argmin with index over an affine gather (TSVC s318,
@@ -1850,6 +1929,7 @@ class ArgMaxLift(ppl.Pass):
         a materialized reversed gather and ``index := end - idx_buf``.
         """
         from dace.libraries.standard.nodes import ArgReduce
+
         start = symbolic.simplify(m.iter_start)
         end = symbolic.simplify(m.iter_end)
         arr_dtype = sdfg.arrays[m.input_array].dtype
@@ -1863,29 +1943,28 @@ class ArgMaxLift(ppl.Pass):
         # Array position of ``buf[j]``: pos(i) = base + coeff*i, i = iter_lo + j.
         pos_lo, pos_hi = self._gather_range(m, iter_lo, end)
 
-        val_buf, _ = sdfg.add_scalar(f'_argfi_val_{m.loop.label}', arr_dtype, transient=True, find_new_name=True)
-        idx_buf, _ = sdfg.add_scalar(f'_argfi_idx_{m.loop.label}', dtypes.int64, transient=True, find_new_name=True)
+        val_buf, _ = sdfg.add_scalar(f"_argfi_val_{m.loop.label}", arr_dtype, transient=True, find_new_name=True)
+        idx_buf, _ = sdfg.add_scalar(f"_argfi_idx_{m.loop.label}", dtypes.int64, transient=True, find_new_name=True)
 
         # Forward scan reads the gather in place. Only the reversed order needs a materialised
         # copy: ``buf[_j]`` holds iteration ``end - _j`` (position ``pos_hi - coeff*_j``), which
         # covers exactly the same positions in the opposite direction, and a memlet range cannot
         # be walked downward.
-        argmax_state = m.parent.add_state(m.loop.label + '_argfi_reduce')
+        argmax_state = m.parent.add_state(m.loop.label + "_argfi_reduce")
         entry_state = argmax_state
         buf = None
         if m.last_wins:
-            buf, _ = sdfg.add_array(f'_argfi_buf_{m.loop.label}', [n_elems],
-                                    arr_dtype,
-                                    transient=True,
-                                    find_new_name=True)
-            mat_state = m.parent.add_state(m.loop.label + '_argfi')
-            in_idx = pos_hi - coeff * symbolic.symbol('_j')
+            buf, _ = sdfg.add_array(
+                f"_argfi_buf_{m.loop.label}", [n_elems], arr_dtype, transient=True, find_new_name=True
+            )
+            mat_state = m.parent.add_state(m.loop.label + "_argfi")
+            in_idx = pos_hi - coeff * symbolic.symbol("_j")
             mat_state.add_mapped_tasklet(
-                name='transform_gather_idx',
-                map_ranges={'_j': (0, n_elems - 1, 1)},
-                inputs={'__in': mm.Memlet(data=m.input_array, subset=subsets.Range([(in_idx, in_idx, 1)]))},
-                code=f'__out = {m.transform}(__in)',
-                outputs={'__out': mm.Memlet(data=buf, subset='_j')},
+                name="transform_gather_idx",
+                map_ranges={"_j": (0, n_elems - 1, 1)},
+                inputs={"__in": mm.Memlet(data=m.input_array, subset=subsets.Range([(in_idx, in_idx, 1)]))},
+                code=f"__out = {m.transform}(__in)",
+                outputs={"__out": mm.Memlet(data=buf, subset="_j")},
                 external_edges=True,
             )
             entry_state = mat_state
@@ -1896,8 +1975,9 @@ class ArgMaxLift(ppl.Pass):
             new_assigns = dict(ie.data.assignments or {})
             new_assigns.pop(m.carrier_name, None)
             new_assigns.pop(required(m.idx_carrier_name), None)
-            m.parent.add_edge(ie.src, entry_state,
-                              dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns))
+            m.parent.add_edge(
+                ie.src, entry_state, dace.InterstateEdge(condition=ie.data.condition, assignments=new_assigns)
+            )
             m.parent.remove_edge(ie)
         if m.last_wins:
             m.parent.add_edge(entry_state, argmax_state, dace.InterstateEdge())
@@ -1907,16 +1987,15 @@ class ArgMaxLift(ppl.Pass):
         # The reversed buffer mirrors it instead: iteration ``end - idx_buf``.
         lo_is_zero = bool(symbolic.simplify(iter_lo) == 0)
         if m.last_wins:
-            idx_rhs = f'(({symbolic.symstr(end)}) - {idx_buf})'
+            idx_rhs = f"(({symbolic.symstr(end)}) - {idx_buf})"
         else:
-            idx_rhs = idx_buf if lo_is_zero else f'({symbolic.symstr(iter_lo)} + {idx_buf})'
-        bind_state = m.parent.add_state(m.loop.label + '_argfi_bind')
+            idx_rhs = idx_buf if lo_is_zero else f"({symbolic.symstr(iter_lo)} + {idx_buf})"
+        bind_state = m.parent.add_state(m.loop.label + "_argfi_bind")
         m.parent.add_edge(
-            argmax_state, bind_state,
-            dace.InterstateEdge(assignments={
-                m.carrier_name: val_buf,
-                required(m.idx_carrier_name): idx_rhs
-            }))
+            argmax_state,
+            bind_state,
+            dace.InterstateEdge(assignments={m.carrier_name: val_buf, required(m.idx_carrier_name): idx_rhs}),
+        )
         for oe in list(m.parent.out_edges(m.loop)):
             m.parent.add_edge(bind_state, oe.dst, oe.data)
             m.parent.remove_edge(oe)
@@ -1924,30 +2003,29 @@ class ArgMaxLift(ppl.Pass):
 
         wv = argmax_state.add_write(val_buf)
         wi = argmax_state.add_write(idx_buf)
-        op = 'max' if m.op == dtypes.ReductionType.Max else 'min'
+        op = "max" if m.op == dtypes.ReductionType.Max else "min"
         if m.last_wins:
             read = argmax_state.add_read(required(buf))
             in_memlet = mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)]))
             # The transform is already applied while materialising the reversed copy.
-            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op)
+            node = ArgReduce(name=f"{m.loop.label}_argfi_argreduce", op=op)
         else:
             read = argmax_state.add_read(m.input_array)
             # ``volume`` is stated rather than left to the subset: a subset counts itself as
             # ``ceiling((hi - lo + 1) / step)``, which a symbolic stride (s318's ``inc``) leaves
             # unresolved. The iteration count is known here exactly.
             in_memlet = mm.Memlet(data=m.input_array, subset=subsets.Range([(pos_lo, pos_hi, coeff)]), volume=n_elems)
-            node = ArgReduce(name=f'{m.loop.label}_argfi_argreduce', op=op, transform=m.transform)
+            node = ArgReduce(name=f"{m.loop.label}_argfi_argreduce", op=op, transform=m.transform)
         argmax_state.add_node(node)
-        argmax_state.add_edge(read, None, node, '_in', in_memlet)
-        argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
-        argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
+        argmax_state.add_edge(read, None, node, "_in", in_memlet)
+        argmax_state.add_edge(node, "_out_val", wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
+        argmax_state.add_edge(node, "_out_idx", wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
 
     # predicate index (TSVC s331)
 
-    def match_predicate_index(self,
-                              loop: LoopRegion,
-                              sdfg: SDFG,
-                              skeleton: Optional[LoopSkeleton] = None) -> Optional[MatchPredIndex]:
+    def match_predicate_index(
+        self, loop: LoopRegion, sdfg: SDFG, skeleton: Optional[LoopSkeleton] = None
+    ) -> Optional[MatchPredIndex]:
         """Match ``for i: if pred(a[i]): j = i`` -- a position tracked with NO value
         carrier, i.e. ``j = max{i : pred}`` seeded from the pre-loop value of ``j``.
 
@@ -1985,14 +2063,16 @@ class ArgMaxLift(ppl.Pass):
         seed = self.predicate_seed(loop, idx_carrier, bindings, start)
         if seed is None:
             return None
-        return MatchPredIndex(loop=loop,
-                              parent=loop.parent_graph,
-                              idx_carrier=idx_carrier,
-                              seed=seed,
-                              guard_code=guard_code,
-                              guard_inputs=guard_inputs,
-                              iter_start=start,
-                              iter_end=end)
+        return MatchPredIndex(
+            loop=loop,
+            parent=loop.parent_graph,
+            idx_carrier=idx_carrier,
+            seed=seed,
+            guard_code=guard_code,
+            guard_inputs=guard_inputs,
+            iter_start=start,
+            iter_end=end,
+        )
 
     def true_branch_writes_index_only(self, true_branch: ControlFlowBlock, loop_var: str) -> Optional[str]:
         """The one index carrier the true branch writes (``idx := loop_var``), or
@@ -2014,8 +2094,9 @@ class ArgMaxLift(ppl.Pass):
                 return None  # nested control flow / tasklet work is out of scope
         return idx_carrier
 
-    def wire_guard(self, guard_str: str, bindings: Dict[str, str], idx_carrier: str, loop: LoopRegion,
-                   sdfg: SDFG) -> Optional[Tuple[str, List[Tuple[str, mm.Memlet]]]]:
+    def wire_guard(
+        self, guard_str: str, bindings: Dict[str, str], idx_carrier: str, loop: LoopRegion, sdfg: SDFG
+    ) -> Optional[Tuple[str, List[Tuple[str, mm.Memlet]]]]:
         """Turn the branch guard into mask-tasklet code plus the data inputs it reads.
 
         The pre-guard bindings are substituted to a fixed point, then
@@ -2027,7 +2108,7 @@ class ArgMaxLift(ppl.Pass):
         is a find-FIRST search, not a max over positions.
         """
         try:
-            tree = ast.parse(guard_str, mode='eval').body
+            tree = ast.parse(guard_str, mode="eval").body
         except SyntaxError:
             return None
         # One round per binding suffices for an acyclic chain; the bound stops a
@@ -2107,34 +2188,36 @@ class ArgMaxLift(ppl.Pass):
         produces, which codegen lowers to a parallel reduction; the bind state
         re-materialises the carrier symbol from the private scalar.
         """
-        priv, _ = sdfg.add_scalar(f'_pred_index_{m.loop.label}',
-                                  sdfg.symbols[m.idx_carrier],
-                                  transient=True,
-                                  find_new_name=True)
+        priv, _ = sdfg.add_scalar(
+            f"_pred_index_{m.loop.label}", sdfg.symbols[m.idx_carrier], transient=True, find_new_name=True
+        )
         seed_str = symbolic.symstr(m.seed)
         priv_subset = subsets.Range([(0, 0, 1)])
 
-        init_state = m.parent.add_state(m.loop.label + '_predidx_init')
-        seed_tasklet = init_state.add_tasklet('pred_index_seed', {}, dict.fromkeys(['__out']), f'__out = {seed_str}')
-        init_state.add_edge(seed_tasklet, '__out', init_state.add_write(priv), None,
-                            mm.Memlet(data=priv, subset=copy.deepcopy(priv_subset)))
+        init_state = m.parent.add_state(m.loop.label + "_predidx_init")
+        seed_tasklet = init_state.add_tasklet("pred_index_seed", {}, dict.fromkeys(["__out"]), f"__out = {seed_str}")
+        init_state.add_edge(
+            seed_tasklet,
+            "__out",
+            init_state.add_write(priv),
+            None,
+            mm.Memlet(data=priv, subset=copy.deepcopy(priv_subset)),
+        )
 
         # The mask's false value IS the seed, so a non-matching iteration folds to the
         # fold's identity and an all-false range leaves the seeded scalar untouched.
         ivar = m.loop.loop_variable
-        map_state = m.parent.add_state(m.loop.label + '_predidx')
+        map_state = m.parent.add_state(m.loop.label + "_predidx")
         map_state.add_mapped_tasklet(
-            name='pred_index',
+            name="pred_index",
             map_ranges={ivar: subsets.Range([(symbolic.simplify(m.iter_start), symbolic.simplify(m.iter_end), 1)])},
-            inputs={
-                conn: copy.deepcopy(memlet)
-                for conn, memlet in m.guard_inputs
-            },
-            code=f'__out = ({ivar} if ({m.guard_code}) else ({seed_str}))',
-            outputs={'__out': mm.Memlet(data=priv, subset=copy.deepcopy(priv_subset), wcr='lambda a, b: max(a, b)')},
-            external_edges=True)
+            inputs={conn: copy.deepcopy(memlet) for conn, memlet in m.guard_inputs},
+            code=f"__out = ({ivar} if ({m.guard_code}) else ({seed_str}))",
+            outputs={"__out": mm.Memlet(data=priv, subset=copy.deepcopy(priv_subset), wcr="lambda a, b: max(a, b)")},
+            external_edges=True,
+        )
 
-        bind_state = m.parent.add_state(m.loop.label + '_predidx_bind')
+        bind_state = m.parent.add_state(m.loop.label + "_predidx_bind")
         for ie in list(m.parent.in_edges(m.loop)):
             m.parent.add_edge(ie.src, init_state, ie.data)
             m.parent.remove_edge(ie)
@@ -2146,4 +2229,4 @@ class ArgMaxLift(ppl.Pass):
         m.parent.remove_node(m.loop)
 
 
-__all__ = ['ArgMaxLift']
+__all__ = ["ArgMaxLift"]

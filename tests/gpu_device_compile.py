@@ -4,6 +4,7 @@
 Tests that check what a device compiler accepts, or what it emits, go through here so they hold on CUDA
 and HIP alike; the backend comes from ``dace.codegen.common.get_gpu_backend``.
 """
+
 import subprocess
 from pathlib import Path
 from typing import NamedTuple
@@ -25,6 +26,7 @@ PACKED_HALF_FMA = {"cuda": "fma.rn.f16x2", "hip": "v_pk_fma_f16"}
 
 class DeviceBuild(NamedTuple):
     """The compiler run and the file it was asked to write."""
+
     result: subprocess.CompletedProcess
     output: Path
 

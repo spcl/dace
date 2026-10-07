@@ -67,7 +67,7 @@ def test_data_gather_with_elementwise_input_matches_reference(n):
     vec.name = f"dgb_vec{n}"
     # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
     canonicalize(vec, validate=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
 
     ref.compile()(a=a_ref, b=b.copy(), e=e.copy(), idx=idx.copy(), N=n)
@@ -90,7 +90,7 @@ def test_structured_int_floor_replication_matches_reference(n):
     ref.simplify()
     vec = copy.deepcopy(ref)
     vec.name = f"sk_vec{n}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
     ref.compile()(b=b.copy(), c=c.copy(), out=ro, N=n)
     vec.compile()(b=b.copy(), c=c.copy(), out=vo, N=n)
@@ -106,9 +106,8 @@ def half_group_offset_kernel(a: dace.float64[N], b: dace.float64[N]):
 def test_floor_division_index_off_the_group_boundary_is_gathered() -> None:
     a, b = np.arange(16.0), np.zeros(16)
     sdfg = half_group_offset_kernel.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
-    assert {tuple(n.gather_dims)
-            for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)} == {(0, )}
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    assert {tuple(n.gather_dims) for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)} == {(0,)}
     sdfg(a=a, b=b, N=16)
     np.testing.assert_array_equal(b, [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8])
 
@@ -123,7 +122,7 @@ def tasklet_index_kernel(a: dace.float64[2 * N], idx: dace.int32[N], b: dace.flo
 def test_gather_through_a_tasklet_computed_index_matches_reference() -> None:
     a, idx, b = np.arange(32.0), np.arange(16, dtype=np.int32)[::-1].copy(), np.zeros(16)
     sdfg = tasklet_index_kernel.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg(a=a, idx=idx, b=b, N=16)
     np.testing.assert_array_equal(b, 2 * idx)
 
@@ -149,7 +148,7 @@ def test_diagonal_gather_numerically_matches_reference(n):
 
     ref = _prepped(f"ref{n}")
     vec = _prepped(f"vec{n}")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
     assert_tiled(vec, ref)
 
     ref.compile()(aa=ref_aa, bb=bb.copy(), cc=cc.copy(), N=n)

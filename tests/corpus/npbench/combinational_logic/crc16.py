@@ -1,5 +1,6 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``crc16`` (combinational_logic) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace
 import dace as dc
@@ -7,14 +8,14 @@ import dace as dc
 dc_float = dc.float64
 dc_complex_float = dc.complex128
 
-SIZES = {'N': 1600}
-PAPER_SIZES = {'N': 1000000}
-INPUT_ARGS = ('N', )
-ARRAY_ARGS = ('data', 'crc')
+SIZES = {"N": 1600}
+PAPER_SIZES = {"N": 1000000}
+INPUT_ARGS = ("N",)
+ARRAY_ARGS = ("data", "crc")
 SCALARS = {}
-OUTPUT_ARGS = ('crc', )
+OUTPUT_ARGS = ("crc",)
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 # CRC-16 polynomial constant (npbench port: this was a module constant upstream, not
 # a kernel argument -- as a parameter named ``poly`` it both lacked a value source and
@@ -24,8 +25,9 @@ poly = 0x8408
 
 def initialize(N, datatype=np.uint8):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    data = rng.integers(0, 256, size=(N, ), dtype=np.uint8)
+    data = rng.integers(0, 256, size=(N,), dtype=np.uint8)
     crc = np.zeros(1, np.int64)
     return (data, crc)
 
@@ -72,14 +74,16 @@ def kernel(data: dace.uint8[N], crc: dace.int64[1]):
     crc[0] = c & 65535
 
 
-CORPUS = dict(name='crc16',
-              dwarf='combinational_logic',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="crc16",
+    dwarf="combinational_logic",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

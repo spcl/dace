@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" The pure Dot expansion initializes a result in device memory on the device. """
+"""The pure Dot expansion initializes a result in device memory on the device."""
+
 import dace
 import dace.libraries.blas as blas
 
@@ -15,7 +16,7 @@ def test_pure_dot_initializes_device_result_on_device():
     sdfg = dot.to_sdfg()
     sdfg.apply_gpu_transformations()
     previous = blas.default_implementation
-    blas.default_implementation = 'pure'
+    blas.default_implementation = "pure"
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -23,5 +24,5 @@ def test_pure_dot_initializes_device_result_on_device():
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_pure_dot_initializes_device_result_on_device()

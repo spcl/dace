@@ -5,7 +5,7 @@ from dace.libraries.pblas.environments.thread_level import MPI_THREAD_LEVEL_GUAR
 
 @dace.library.environment
 class ScaLAPACKOpenMPI:
-    """ An environment for the reference ScaLAPACK library using OpenMPI. """
+    """An environment for the reference ScaLAPACK library using OpenMPI."""
 
     cmake_minimum_version = None
     # mpi.h is not on the default include path (it lives under the OpenMPI package
@@ -15,18 +15,23 @@ class ScaLAPACKOpenMPI:
     cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
     cmake_link_flags = ["-lscalapack-openmpi"]
     cmake_includes = []
-    cmake_libraries = ['libscalapack-openmpi.so']
+    cmake_libraries = ["libscalapack-openmpi.so"]
     cmake_files = []
 
     headers = ["mpi.h", "cstdio", "../include/scalapack.h", "../include/blacs_grid.h"]
     state_fields = [
-        "int __scalapack_rank, __scalapack_size;", "int __int_zero = 0, __int_one = 1;",
-        "std::vector<DaceBlacsGrid<int>> __scalapack_grids;"
+        "int __scalapack_rank, __scalapack_size;",
+        "int __int_zero = 0, __int_one = 1;",
+        "std::vector<DaceBlacsGrid<int>> __scalapack_grids;",
     ]
-    init_code = """
-    """ + MPI_THREAD_LEVEL_GUARD + """
+    init_code = (
+        """
+    """
+        + MPI_THREAD_LEVEL_GUARD
+        + """
     Cblacs_pinfo(&__state->__scalapack_rank, &__state->__scalapack_size);
     """
+    )
     finalize_code = """
     // Cblacs_gridexit frees the grid communicator; illegal once MPI is finalized.
     int __scalapack_mpi_finalized = 0;

@@ -8,6 +8,7 @@ anyway -- its WAR-carrier guard skips any candidate whose destination is read an
 in the same state, which every in-place stencil sweep is -- so the buffer used to reach
 codegen as a heap allocation plus a full-size copy loop per timestep.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -27,34 +28,42 @@ from dace.transformation.dataflow.redundant_array import RedundantArray
 from dace.transformation.passes.canonicalize import pipeline as canon_pipeline
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
 def _heat3d(TSTEPS: dace.int64, A: dace.float64[N, N, N], B: dace.float64[N, N, N]):
     """The npbench/polybench formulation, verbatim -- see ``tests/corpus/polybench/stencils/heat_3d.py``."""
     for _ in range(1, TSTEPS):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def _heat3d_numpy(tsteps: int, A: np.ndarray, B: np.ndarray) -> None:
     """Independent oracle: plain numpy, same operand order, updated in place."""
     for _ in range(1, tsteps):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def _cleanup_stage() -> PatternMatchAndApplyRepeated:
@@ -82,27 +91,40 @@ def _canonicalize(sdfg: dace.SDFG, with_cleanup: bool) -> dace.SDFG:
 
 def _heap_buffers(sdfg: dace.SDFG) -> List[Tuple[str, str]]:
     """Transients that are a real allocation, not a register (total size 1)."""
-    return sorted((name, str(desc.shape)) for nested in sdfg.all_sdfgs_recursive()
-                  for name, desc in nested.arrays.items() if desc.transient and desc.total_size != 1)
+    return sorted(
+        (name, str(desc.shape))
+        for nested in sdfg.all_sdfgs_recursive()
+        for name, desc in nested.arrays.items()
+        if desc.transient and desc.total_size != 1
+    )
 
 
 def _bulk_copies(sdfg: dace.SDFG) -> int:
     """AccessNode -> AccessNode edges: a container-to-container copy loop at codegen."""
-    return sum(1 for nested in sdfg.all_sdfgs_recursive() for state in nested.states() for e in state.edges()
-               if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode))
+    return sum(
+        1
+        for nested in sdfg.all_sdfgs_recursive()
+        for state in nested.states()
+        for e in state.edges()
+        if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+    )
 
 
 def _shape(sdfg: dace.SDFG) -> Tuple[List[Tuple[str, str]], List[Tuple[str, str, str, str, str]]]:
     """Everything the cleanup could legally touch, for an exact no-op comparison."""
     arrays = sorted((nested.label, name) for nested in sdfg.all_sdfgs_recursive() for name in nested.arrays)
-    edges = sorted((nested.label, state.label, str(e.src), str(e.dst), str(e.data))
-                   for nested in sdfg.all_sdfgs_recursive() for state in nested.states() for e in state.edges())
+    edges = sorted(
+        (nested.label, state.label, str(e.src), str(e.dst), str(e.data))
+        for nested in sdfg.all_sdfgs_recursive()
+        for state in nested.states()
+        for e in state.edges()
+    )
     return arrays, edges
 
 
 def test_the_stage_is_wired_in_once_after_the_terminal_fuse():
     labels = [label for label, unit in canon_pipeline._build_stages() if _is_cleanup_stage(unit)]
-    assert labels == ['end'], labels
+    assert labels == ["end"], labels
 
 
 def test_heat3d_loses_the_copy_out_buffer():
@@ -130,12 +152,12 @@ def test_heat3d_is_bit_exact():
     stage AND against an independent numpy oracle."""
     size, tsteps = 24, 5
     rng = np.random.default_rng(4711)
-    base_a, base_b = rng.random((size, ) * 3), rng.random((size, ) * 3)
+    base_a, base_b = rng.random((size,) * 3), rng.random((size,) * 3)
 
     results = []
     for with_cleanup in (False, True):
         sdfg = _canonicalize(_heat3d.to_sdfg(simplify=True), with_cleanup)
-        sdfg.name = 'heat3d_rra_cleanup' if with_cleanup else 'heat3d_rra_reference'
+        sdfg.name = "heat3d_rra_cleanup" if with_cleanup else "heat3d_rra_reference"
         a, b = base_a.copy(), base_b.copy()
         sdfg.compile()(TSTEPS=tsteps, A=a, B=b, N=size)
         results.append((a, b))
@@ -143,14 +165,16 @@ def test_heat3d_is_bit_exact():
     oracle_a, oracle_b = base_a.copy(), base_b.copy()
     _heat3d_numpy(tsteps, oracle_a, oracle_b)
 
-    for i, name in ((0, 'A'), (1, 'B')):
-        assert np.array_equal(results[1][i].view(np.uint64), results[0][i].view(np.uint64)), \
-            'vs the same pipeline without the stage: ' + name
-        assert np.array_equal(results[1][i].view(np.uint64), (oracle_a, oracle_b)[i].view(np.uint64)), \
-            'vs numpy oracle: ' + name
+    for i, name in ((0, "A"), (1, "B")):
+        assert np.array_equal(results[1][i].view(np.uint64), results[0][i].view(np.uint64)), (
+            "vs the same pipeline without the stage: " + name
+        )
+        assert np.array_equal(results[1][i].view(np.uint64), (oracle_a, oracle_b)[i].view(np.uint64)), (
+            "vs numpy oracle: " + name
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_stage_is_wired_in_once_after_the_terminal_fuse()
     test_heat3d_loses_the_copy_out_buffer()
     test_the_stage_is_idempotent()

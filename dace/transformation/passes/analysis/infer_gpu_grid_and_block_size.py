@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Analysis pass that infers CUDA grid and block dimensions for GPU device maps."""
+
 import warnings
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -18,8 +19,9 @@ class InferGPUGridAndBlockSize:
     Without a thread-block map the kernel spans threads: its block is ``gpu_block_size`` or the default.
     """
 
-    def infer(self, sdfg: SDFG,
-              kernels_with_added_tb_maps: Set[nodes.MapEntry]) -> Dict[nodes.MapEntry, Tuple[List, List]]:
+    def infer(
+        self, sdfg: SDFG, kernels_with_added_tb_maps: Set[nodes.MapEntry]
+    ) -> Dict[nodes.MapEntry, Tuple[List, List]]:
         """Map each ``GPU_Device`` entry to ``(grid, block)``; ``kernels_with_added_tb_maps`` read ``gpu_block_size``.
 
         :raises ValueError: Explicit and inferred block sizes conflict.
@@ -50,16 +52,20 @@ class InferGPUGridAndBlockSize:
         gpu_block_size = kernel_map_entry.map.gpu_block_size
 
         if gpu_block_size is None:
-            raise ValueError("Expected 'gpu_block_size' to be set. This kernel map entry should have been processed "
-                             "by the AddThreadBlockMap transformation.")
+            raise ValueError(
+                "Expected 'gpu_block_size' to be set. This kernel map entry should have been processed "
+                "by the AddThreadBlockMap transformation."
+            )
 
         return gpu_block_size
 
     def infer_gpu_block_size(self, state: SDFGState, kernel_map_entry: nodes.MapEntry) -> Optional[List]:
         """The block size over the nested ``GPU_ThreadBlock`` maps (a set ``gpu_block_size`` must match), or ``None``."""
-        threadblock_maps = [(tb_map, sym_map)
-                            for tb_map, sym_map in gpu_scope_maps_recursive(state.scope_subgraph(kernel_map_entry))
-                            if tb_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
+        threadblock_maps = [
+            (tb_map, sym_map)
+            for tb_map, sym_map in gpu_scope_maps_recursive(state.scope_subgraph(kernel_map_entry))
+            if tb_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+        ]
 
         if not threadblock_maps:
             return None
@@ -86,19 +92,23 @@ class InferGPUGridAndBlockSize:
             kernel_map_label = kernel_map_entry.map.label
 
             if kernel_map_entry.map.gpu_block_size is not None:
-                raise ValueError('Both the ``gpu_block_size`` property and internal thread-block '
-                                 'maps were defined with conflicting sizes for kernel '
-                                 f'"{kernel_map_label}" (sizes detected: {detected_block_sizes}). '
-                                 'Use ``gpu_block_size`` only if you do not need access to individual '
-                                 'thread-block threads, or explicit block-level synchronization (e.g., '
-                                 '``__syncthreads``). Otherwise, use internal maps with the ``GPU_Threadblock`` or '
-                                 '``GPU_ThreadBlock_Dynamic`` schedules. For more information, see '
-                                 'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+                raise ValueError(
+                    "Both the ``gpu_block_size`` property and internal thread-block "
+                    "maps were defined with conflicting sizes for kernel "
+                    f'"{kernel_map_label}" (sizes detected: {detected_block_sizes}). '
+                    "Use ``gpu_block_size`` only if you do not need access to individual "
+                    "thread-block threads, or explicit block-level synchronization (e.g., "
+                    "``__syncthreads``). Otherwise, use internal maps with the ``GPU_Threadblock`` or "
+                    "``GPU_ThreadBlock_Dynamic`` schedules. For more information, see "
+                    "https://spcldace.readthedocs.io/en/latest/optimization/gpu.html"
+                )
 
             else:
-                warnings.warn('Multiple thread-block maps with different sizes detected for '
-                              f'kernel "{kernel_map_label}": {detected_block_sizes}. '
-                              f'Over-approximating to block size {block_size}.\n'
-                              'If this was not the intent, try tiling one of the thread-block maps to match.')
+                warnings.warn(
+                    "Multiple thread-block maps with different sizes detected for "
+                    f'kernel "{kernel_map_label}": {detected_block_sizes}. '
+                    f"Over-approximating to block size {block_size}.\n"
+                    "If this was not the intent, try tiling one of the thread-block maps to match."
+                )
 
         return block_size

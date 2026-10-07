@@ -15,14 +15,17 @@ Covers the three pass extensions made for in-place ``a[i] = a[i] + b[i]``:
 
 Plus an e2e in-place RMW through the tile-node vectorizer.
 """
+
 import numpy as np
 
 import dace
 from dace.memlet import Memlet
 from dace.transformation.dataflow import WCRToAugAssign
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.utils.pass_invariants import (no_wcr_in_map_body,
-                                                                            no_wcr_inside_nested_sdfgs)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (
+    no_wcr_in_map_body,
+    no_wcr_inside_nested_sdfgs,
+)
 from tests.passes.vectorization.helpers.harness import run_vectorization_test, N
 
 
@@ -39,10 +42,10 @@ def _all_edges_wcr_free(sdfg: dace.SDFG) -> bool:
 def _outer_with_body_nsdfg():
     """``(outer, body, body_state)`` -- a body NSDFG to host fixtures (the
     bypass pass is body-NSDFG-scoped)."""
-    outer = dace.SDFG('outer_outer_with_body_nsdfg')
-    outer.add_array("X", (1, ), dace.float64)
+    outer = dace.SDFG("outer_outer_with_body_nsdfg")
+    outer.add_array("X", (1,), dace.float64)
     ostate = outer.add_state("o")
-    body = dace.SDFG('body_outer_with_body_nsdfg')
+    body = dace.SDFG("body_outer_with_body_nsdfg")
     bstate = body.add_state("b")
     ostate.add_nested_sdfg(body, set(), set(), {})
     return outer, body, bstate
@@ -56,8 +59,8 @@ def test_wcr_to_augassign_an_to_an_copy():
     lowers an in-place ``a += b`` to) converts to an explicit ``A = P + A``
     read-modify-write tasklet, leaving no WCR -- and computing the right value."""
     sdfg = dace.SDFG("an_an_wcr")
-    sdfg.add_array("A", (1, ), dace.float64)
-    sdfg.add_array("P", (1, ), dace.float64)
+    sdfg.add_array("A", (1,), dace.float64)
+    sdfg.add_array("P", (1,), dace.float64)
     state = sdfg.add_state()
     p = state.add_access("P")
     a = state.add_access("A")
@@ -88,9 +91,9 @@ def test_bypass_carries_wcr_across_trivial_assign():
     WCR onto the spliced ``B -> A`` edge, not drop it (dropping degrades the
     reduction to ``A = B``)."""
     outer, body, state = _outer_with_body_nsdfg()
-    body.add_array("B", (1, ), dace.float64)
-    body.add_array("WP", (1, ), dace.float64, transient=True)
-    body.add_array("A", (1, ), dace.float64)
+    body.add_array("B", (1,), dace.float64)
+    body.add_array("WP", (1,), dace.float64, transient=True)
+    body.add_array("A", (1,), dace.float64)
 
     b = state.add_access("B")
     wp = state.add_access("WP")
@@ -125,7 +128,7 @@ def _map_with_optional_body_wcr(body_wcr: bool):
     ``body_wcr=False`` is that allowed form: the WCR lives only on the ``MapExit -> AccessNode``
     boundary into a length-1 accumulator ``s`` -- lifted out of the body, not a body edge."""
     sdfg = dace.SDFG("redmap")
-    sdfg.add_array("A", (8, ), dace.float64)
+    sdfg.add_array("A", (8,), dace.float64)
     state = sdfg.add_state()
     a = state.add_access("A")
     me, mx = state.add_map("m", dict(i="0:8"))
@@ -133,7 +136,7 @@ def _map_with_optional_body_wcr(body_wcr: bool):
     state.add_memlet_path(a, me, t, dst_conn="_a", memlet=Memlet("A[i]"))
     if body_wcr:
         # In-body WCR into a full-array sink (per-element scatter): flagged.
-        sdfg.add_array("B", (8, ), dace.float64)
+        sdfg.add_array("B", (8,), dace.float64)
         sink = state.add_access("B")
         mx.add_in_connector("IN_B")
         mx.add_out_connector("OUT_B")
@@ -143,7 +146,7 @@ def _map_with_optional_body_wcr(body_wcr: bool):
         state.add_edge(mx, "OUT_B", sink, None, Memlet("B[i]"))
     else:
         # Allowed scalar reduction: WCR only on the MapExit -> AN boundary into a len-1 sink.
-        sdfg.add_array("s", (1, ), dace.float64)
+        sdfg.add_array("s", (1,), dace.float64)
         sink = state.add_access("s")
         mx.add_in_connector("IN_s")
         mx.add_out_connector("OUT_s")
@@ -174,8 +177,8 @@ def test_no_wcr_inside_nested_sdfgs_detects_inner_wcr():
     """A WCR on an edge INSIDE a body NSDFG is flagged (the tile emitters would
     silently drop it)."""
     outer, body, state = _outer_with_body_nsdfg()
-    body.add_array("P", (1, ), dace.float64, transient=True)
-    body.add_array("A", (1, ), dace.float64)
+    body.add_array("P", (1,), dace.float64, transient=True)
+    body.add_array("A", (1,), dace.float64)
     p = state.add_access("P")
     a = state.add_access("A")
     m = Memlet("A[0]")
@@ -190,17 +193,17 @@ def test_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out():
     That edge is OUTSIDE the nested SDFG, so the checker must not flag it (and
     the WCR-free body must pass)."""
     outer = dace.SDFG("outer_red")
-    outer.add_array("A", (8, ), dace.float64)
-    outer.add_array("s", (1, ), dace.float64)
+    outer.add_array("A", (8,), dace.float64)
+    outer.add_array("s", (1,), dace.float64)
     ostate = outer.add_state("o")
     a = ostate.add_access("A")
     s = ostate.add_access("s")
     me, mx = ostate.add_map("m", dict(i="0:8"))
 
     # Body NSDFG: reads a tile element, writes a scalar out connector. NO WCR inside.
-    body = dace.SDFG('body_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out')
-    body.add_array("_in", (1, ), dace.float64)
-    body.add_array("_out", (1, ), dace.float64)
+    body = dace.SDFG("body_no_wcr_inside_nested_sdfgs_allows_scalar_reduction_out")
+    body.add_array("_in", (1,), dace.float64)
+    body.add_array("_out", (1,), dace.float64)
     bstate = body.add_state("b")
     bi = bstate.add_access("_in")
     bo = bstate.add_access("_out")
@@ -236,18 +239,17 @@ def _run_inplace_rmw(config: str):
     (bypass-WCR-carry + WCRToAugAssign) on the given vectorizer."""
     rng = np.random.default_rng(42)
     Nv = 16
-    a = rng.random((Nv, ))
-    b = rng.random((Nv, ))
-    run_vectorization_test(dace_func=inplace_rmw,
-                           arrays={
-                               "a": a,
-                               "b": b
-                           },
-                           params={"N": Nv},
-                           vector_width=8,
-                           sdfg_name=f"inplace_rmw_{config}",
-                           vectorize_config=config,
-                           remainder_strategy="scalar")
+    a = rng.random((Nv,))
+    b = rng.random((Nv,))
+    run_vectorization_test(
+        dace_func=inplace_rmw,
+        arrays={"a": a, "b": b},
+        params={"N": Nv},
+        vector_width=8,
+        sdfg_name=f"inplace_rmw_{config}",
+        vectorize_config=config,
+        remainder_strategy="scalar",
+    )
 
 
 def test_inplace_rmw_e2e_tile_nodes():

@@ -9,6 +9,7 @@ but ``ControlFlowBlock.__deepcopy__`` keeps ``_sdfg`` only when the owner is alr
 on the copy then dies with ``'NoneType' object has no attribute 'arrays'`` (polybench lu /
 gramschmidt, whose WCR bodies take the refusal path).
 """
+
 import copy
 
 import dace
@@ -23,13 +24,13 @@ N = 8
 def _nested_loop_sdfg(name: str) -> dace.SDFG:
     """``for j in [0, N): A[j] = A[j] * 2`` -- a state nested inside a LoopRegion."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [N], dace.float64)
-    loop = LoopRegion('sweep', f'j < {N}', 'j', 'j = 0', 'j = j + 1', sdfg=sdfg)
+    sdfg.add_array("A", [N], dace.float64)
+    loop = LoopRegion("sweep", f"j < {N}", "j", "j = 0", "j = j + 1", sdfg=sdfg)
     sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('body', is_start_block=True)
-    t = body.add_tasklet('scale', {'cur'}, {'out'}, 'out = cur * 2')
-    body.add_edge(body.add_access('A'), None, t, 'cur', dace.Memlet('A[j]'))
-    body.add_edge(t, 'out', body.add_access('A'), None, dace.Memlet('A[j]'))
+    body = loop.add_state("body", is_start_block=True)
+    t = body.add_tasklet("scale", {"cur"}, {"out"}, "out = cur * 2")
+    body.add_edge(body.add_access("A"), None, t, "cur", dace.Memlet("A[j]"))
+    body.add_edge(t, "out", body.add_access("A"), None, dace.Memlet("A[j]"))
     return sdfg
 
 
@@ -39,30 +40,30 @@ def _states_with_no_owner(sdfg: dace.SDFG):
 
 def test_nested_states_are_repointed_at_the_target():
     """Every block, at every nesting level, must own-point at ``target`` -- not at ``source``."""
-    target = _nested_loop_sdfg('target')
-    source = _nested_loop_sdfg('source')
+    target = _nested_loop_sdfg("target")
+    source = _nested_loop_sdfg("source")
     restore_sdfg_in_place(target, source)
 
     for sub in target.all_sdfgs_recursive():
         for state in sub.states():
-            assert state.sdfg is sub, f'{state.label} points at {state.sdfg} instead of {sub}'
+            assert state.sdfg is sub, f"{state.label} points at {state.sdfg} instead of {sub}"
     # An SDFG's own ``_sdfg`` is itself, so it must NOT be adopted from the snapshot: a target owned
     # by the throwaway makes every ascent that stops at ``parent_graph is parent_graph.sdfg`` walk
     # past the top and off the end (get_parent_map_and_loop_scopes).
-    assert target.sdfg is target, 'the target must own itself, not the snapshot'
-    assert target.name == 'source', 'the restore must adopt the snapshot contents'
+    assert target.sdfg is target, "the target must own itself, not the snapshot"
+    assert target.name == "source", "the restore must adopt the snapshot contents"
 
 
 def test_restored_sdfg_survives_a_deep_copy():
     """The regression itself: the stale owner only shows up one ``deepcopy`` later."""
-    target = _nested_loop_sdfg('target')
-    restore_sdfg_in_place(target, _nested_loop_sdfg('source'))
+    target = _nested_loop_sdfg("target")
+    restore_sdfg_in_place(target, _nested_loop_sdfg("source"))
 
     assert _states_with_no_owner(target) == []
     assert _states_with_no_owner(copy.deepcopy(target)) == []
 
 
-@pytest.mark.parametrize('name', ['lu', 'gramschmidt'])
+@pytest.mark.parametrize("name", ["lu", "gramschmidt"])
 def test_refused_kernels_finalize(name):
     """End-to-end: the polybench kernels that take the WCR refusal path finalize and are correct.
 
@@ -70,13 +71,13 @@ def test_refused_kernels_finalize(name):
     """
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
-    base, checker = mp.CORPORA['poly'][1](name)
+    base, checker = mp.CORPORA["poly"][1](name)
     sd = copy.deepcopy(base)
-    mp.apply_config(sd, 'canon+vec', mp.cpu_params(4))
-    fin = finalize_for_target(copy.deepcopy(sd), 'cpu')
-    fin.name = f'{name}_restore_test'
-    assert bool(checker(fin)), f'{name} must be value-correct after the refusal'
+    mp.apply_config(sd, "canon+vec", mp.cpu_params(4))
+    fin = finalize_for_target(copy.deepcopy(sd), "cpu")
+    fin.name = f"{name}_restore_test"
+    assert bool(checker(fin)), f"{name} must be value-correct after the refusal"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

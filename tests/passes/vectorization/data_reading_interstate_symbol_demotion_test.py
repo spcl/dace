@@ -13,65 +13,68 @@ tileable and none of them was tiled.
 operands. The tests below pin the two halves that make it safe: the data-reading symbol IS demoted,
 and a symbol carrying graph structure is NOT.
 """
+
 import dace
 from dace import nodes
 from dace.transformation.passes.vectorization.demote_data_reading_interstate_symbols import (
-    DemoteDataReadingInterstateSymbols, data_reading_assigned_symbols)
+    DemoteDataReadingInterstateSymbols,
+    data_reading_assigned_symbols,
+)
 
 N = 16
 
 
 def indexed_read_sdfg() -> dace.SDFG:
     """``elem = b[3]`` on an interstate edge, then a state that uses ``elem`` in a tasklet."""
-    sdfg = dace.SDFG('indexed_interstate_read')
-    sdfg.add_array('b', (N, ), dace.float64)
-    sdfg.add_array('out', (N, ), dace.float64)
-    sdfg.add_symbol('elem', dace.float64)
+    sdfg = dace.SDFG("indexed_interstate_read")
+    sdfg.add_array("b", (N,), dace.float64)
+    sdfg.add_array("out", (N,), dace.float64)
+    sdfg.add_symbol("elem", dace.float64)
 
-    entry = sdfg.add_state('entry', is_start_block=True)
-    use = sdfg.add_state('use')
-    sdfg.add_edge(entry, use, dace.InterstateEdge(assignments={'elem': 'b[3]'}))
+    entry = sdfg.add_state("entry", is_start_block=True)
+    use = sdfg.add_state("use")
+    sdfg.add_edge(entry, use, dace.InterstateEdge(assignments={"elem": "b[3]"}))
 
-    tasklet = use.add_tasklet('scale', {'_in'}, {'_out'}, '_out = _in * elem')
-    use.add_edge(use.add_access('b'), None, tasklet, '_in', dace.Memlet('b[0]'))
-    use.add_edge(tasklet, '_out', use.add_access('out'), None, dace.Memlet('out[0]'))
+    tasklet = use.add_tasklet("scale", {"_in"}, {"_out"}, "_out = _in * elem")
+    use.add_edge(use.add_access("b"), None, tasklet, "_in", dace.Memlet("b[0]"))
+    use.add_edge(tasklet, "_out", use.add_access("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
 def loop_bound_sdfg() -> dace.SDFG:
     """The control: ``n`` is assigned a plain expression and BOUNDS a loop -- structure, not data."""
-    sdfg = dace.SDFG('loop_bound_symbol')
-    sdfg.add_array('out', (N, ), dace.float64)
-    sdfg.add_symbol('n', dace.int64)
+    sdfg = dace.SDFG("loop_bound_symbol")
+    sdfg.add_array("out", (N,), dace.float64)
+    sdfg.add_symbol("n", dace.int64)
 
-    entry = sdfg.add_state('entry', is_start_block=True)
-    loop = dace.sdfg.state.LoopRegion('walk', 'i < n', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    loop = dace.sdfg.state.LoopRegion("walk", "i < n", "i", "i = 0", "i = i + 1", sdfg=sdfg)
     sdfg.add_node(loop)
-    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={'n': '4'}))
-    body = loop.add_state('body', is_start_block=True)
-    tasklet = body.add_tasklet('one', {}, {'_out'}, '_out = 1.0')
-    body.add_edge(tasklet, '_out', body.add_access('out'), None, dace.Memlet('out[i]'))
+    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={"n": "4"}))
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("one", {}, {"_out"}, "_out = 1.0")
+    body.add_edge(tasklet, "_out", body.add_access("out"), None, dace.Memlet("out[i]"))
     return sdfg
 
 
 def chained_index_read_sdfg() -> dace.SDFG:
     """``j = c[0]`` then ``x = b[j]``, with the ``x`` edge inserted first so the pass visits ``x`` before ``j``."""
-    sdfg = dace.SDFG('chained_index_read')
-    sdfg.add_array('b', (N, ), dace.float64)
-    sdfg.add_array('c', (N, ), dace.int64)
-    sdfg.add_array('out', (N, ), dace.float64)
-    sdfg.add_symbol('j', dace.int64)
-    sdfg.add_symbol('x', dace.float64)
+    sdfg = dace.SDFG("chained_index_read")
+    sdfg.add_array("b", (N,), dace.float64)
+    sdfg.add_array("c", (N,), dace.int64)
+    sdfg.add_array("out", (N,), dace.float64)
+    sdfg.add_symbol("j", dace.int64)
+    sdfg.add_symbol("x", dace.float64)
 
-    entry = sdfg.add_state('entry', is_start_block=True)
-    bind = sdfg.add_state('bind')
-    use = sdfg.add_state('use')
-    sdfg.add_edge(bind, use, dace.InterstateEdge(assignments={'x': 'b[j]'}))
-    sdfg.add_edge(entry, bind, dace.InterstateEdge(assignments={'j': 'c[0]'}))
+    entry = sdfg.add_state("entry", is_start_block=True)
+    bind = sdfg.add_state("bind")
+    use = sdfg.add_state("use")
+    sdfg.add_edge(bind, use, dace.InterstateEdge(assignments={"x": "b[j]"}))
+    sdfg.add_edge(entry, bind, dace.InterstateEdge(assignments={"j": "c[0]"}))
 
-    tasklet = use.add_tasklet('scale', dict.fromkeys(['_in']), dict.fromkeys(['_out']), '_out = _in * x')
-    use.add_edge(use.add_access('b'), None, tasklet, '_in', dace.Memlet('b[0]'))
-    use.add_edge(tasklet, '_out', use.add_access('out'), None, dace.Memlet('out[0]'))
+    tasklet = use.add_tasklet("scale", dict.fromkeys(["_in"]), dict.fromkeys(["_out"]), "_out = _in * x")
+    use.add_edge(use.add_access("b"), None, tasklet, "_in", dace.Memlet("b[0]"))
+    use.add_edge(tasklet, "_out", use.add_access("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
@@ -80,17 +83,17 @@ def test_an_index_a_demotion_turns_into_a_memlet_subset_stays_a_symbol():
     sdfg = chained_index_read_sdfg()
     assert DemoteDataReadingInterstateSymbols().apply_pass(sdfg, {}) == 1
 
-    assert 'x' in sdfg.arrays and 'x' not in sdfg.symbols, 'the read of b[j] was not demoted'
-    assert 'j' in sdfg.symbols and 'j' not in sdfg.arrays, 'j indexes a memlet now and must stay a symbol'
+    assert "x" in sdfg.arrays and "x" not in sdfg.symbols, "the read of b[j] was not demoted"
+    assert "j" in sdfg.symbols and "j" not in sdfg.arrays, "j indexes a memlet now and must stay a symbol"
     sdfg.validate()
 
 
 def test_an_indexed_read_is_recognised_as_one():
-    assert 'elem' in data_reading_assigned_symbols(indexed_read_sdfg())
+    assert "elem" in data_reading_assigned_symbols(indexed_read_sdfg())
 
 
 def test_a_plain_expression_is_not_a_read():
-    assert 'n' not in data_reading_assigned_symbols(loop_bound_sdfg())
+    assert "n" not in data_reading_assigned_symbols(loop_bound_sdfg())
 
 
 def test_the_read_becomes_a_scalar_and_a_tasklet():
@@ -98,18 +101,20 @@ def test_the_read_becomes_a_scalar_and_a_tasklet():
     sdfg = indexed_read_sdfg()
     assert DemoteDataReadingInterstateSymbols().apply_pass(sdfg, {}) == 1
 
-    assert 'elem' not in sdfg.symbols, 'the demoted name is still a symbol'
-    assert 'elem' in sdfg.arrays, 'no scalar took the symbol\'s place'
-    assert sdfg.arrays['elem'].storage == dace.dtypes.StorageType.Register
-    assert sdfg.arrays['elem'].dtype == dace.float64, 'the scalar must keep the symbol\'s own dtype'
+    assert "elem" not in sdfg.symbols, "the demoted name is still a symbol"
+    assert "elem" in sdfg.arrays, "no scalar took the symbol's place"
+    assert sdfg.arrays["elem"].storage == dace.dtypes.StorageType.Register
+    assert sdfg.arrays["elem"].dtype == dace.float64, "the scalar must keep the symbol's own dtype"
 
     # The assignment is gone from every edge, and some state now reads ``b`` into ``elem``.
-    assert not any('elem' in e.data.assignments for e in sdfg.all_interstate_edges())
+    assert not any("elem" in e.data.assignments for e in sdfg.all_interstate_edges())
     writes_elem = [
-        state.label for state in sdfg.states() for n in state.nodes()
-        if isinstance(n, nodes.AccessNode) and n.data == 'elem' and state.in_degree(n) > 0
+        state.label
+        for state in sdfg.states()
+        for n in state.nodes()
+        if isinstance(n, nodes.AccessNode) and n.data == "elem" and state.in_degree(n) > 0
     ]
-    assert writes_elem, 'nothing writes the scalar the assignment was demoted into'
+    assert writes_elem, "nothing writes the scalar the assignment was demoted into"
     sdfg.validate()
 
 
@@ -117,7 +122,7 @@ def test_a_structural_symbol_is_left_alone():
     """A loop bound stays a symbol: demoting it would rewrite control flow, not a read."""
     sdfg = loop_bound_sdfg()
     assert DemoteDataReadingInterstateSymbols().apply_pass(sdfg, {}) is None
-    assert 'n' in sdfg.symbols
+    assert "n" in sdfg.symbols
     sdfg.validate()
 
 
@@ -134,6 +139,6 @@ def test_the_demoted_read_still_computes_the_same_value():
     before = run(indexed_read_sdfg())
     demoted = indexed_read_sdfg()
     DemoteDataReadingInterstateSymbols().apply_pass(demoted, {})
-    demoted.name = 'indexed_interstate_read_demoted'
+    demoted.name = "indexed_interstate_read_demoted"
     assert np.allclose(run(demoted), before)
-    assert before[0] == 1.0 * 4.0, 'the fixture stopped computing b[0] * b[3]'
+    assert before[0] == 1.0 * 4.0, "the fixture stopped computing b[0] * b[3]"

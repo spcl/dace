@@ -11,6 +11,7 @@ integer: a non-negative integer constant, an integer-valued float literal, or a
 symbolic integer proven ``>= 0`` by interval analysis over the enclosing iterator
 ranges (``K - i - 1`` with ``for i in range(K)``.
 """
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
 
@@ -30,7 +31,7 @@ Ranges = Dict[str, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]
 POW = symbolic_engine.Pow
 
 #: Build modes tried when rebuilding a node, in order: evaluating first, then unevaluated.
-BUILD_MODES = ({}, {'evaluate': False})
+BUILD_MODES = ({}, {"evaluate": False})
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,10 +40,11 @@ class SignFacts:
 
     Kept by name, so that a same-named symbol that lost its assumptions in a reparse is still covered.
     """
+
     by_name: Mapping[str, FrozenSet[str]] = field(default_factory=dict)
 
     @staticmethod
-    def of_sdfg(sdfg: SDFG) -> 'SignFacts':
+    def of_sdfg(sdfg: SDFG) -> "SignFacts":
         """Integrality from each SDFG's declared symbol dtypes, sign off the symbol objects stored in array
         descriptors (recursively -- a size symbol may appear only in a nested SDFG's shapes)."""
         facts: Dict[str, OrderedSet] = {}
@@ -53,24 +55,24 @@ class SignFacts:
                 # ``.type`` is an instance rather than a scalar class).
                 if isinstance(dtype.type, type) and issubclass(dtype.type, numpy.integer):
                     declared = facts.setdefault(name, OrderedSet())
-                    declared.add('integer')
+                    declared.add("integer")
                     # An unsigned dtype is a sign fact sympy's assumptions do not carry
                     if issubclass(dtype.type, numpy.unsignedinteger):
-                        declared.add('nonnegative')
+                        declared.add("nonnegative")
             for desc in g.arrays.values():
                 if not isinstance(desc, data.Array):
                     continue
                 for sym in desc.free_symbols:
                     declared = facts.setdefault(sym.name, OrderedSet())
                     if sym.is_integer:
-                        declared.add('integer')
+                        declared.add("integer")
                     if sym.is_positive:
-                        declared.add('positive')
+                        declared.add("positive")
                     elif sym.is_nonnegative:
-                        declared.add('nonnegative')
+                        declared.add("nonnegative")
         return SignFacts({name: frozenset(declared) for name, declared in facts.items()})
 
-    def widened_by(self, inherited: 'SignFacts') -> 'SignFacts':
+    def widened_by(self, inherited: "SignFacts") -> "SignFacts":
         """These facts plus ``inherited`` -- a name known in both keeps every fact either states."""
         if not inherited.by_name:
             return self
@@ -79,7 +81,7 @@ class SignFacts:
             merged[name] = merged.get(name, frozenset()) | declared
         return SignFacts(merged)
 
-    def mapped_into(self, nsdfg: nodes.NestedSDFG) -> 'SignFacts':
+    def mapped_into(self, nsdfg: nodes.NestedSDFG) -> "SignFacts":
         """What these facts prove about each symbol mapped into ``nsdfg``.
 
         A nested SDFG a library expansion mints declares symbol dtypes only -- the sign registry stays
@@ -93,12 +95,12 @@ class SignFacts:
             if not isinstance(value, symbolic.SymbolicBasic):
                 continue
             proven = OrderedSet()
-            if symbolic.ask('integer', value, self.by_name) is True:
-                proven.add('integer')
-            if symbolic.ask('positive', value, self.by_name) is True:
-                proven.add('positive')
-            elif symbolic.ask('nonnegative', value, self.by_name) is True:
-                proven.add('nonnegative')
+            if symbolic.ask("integer", value, self.by_name) is True:
+                proven.add("integer")
+            if symbolic.ask("positive", value, self.by_name) is True:
+                proven.add("positive")
+            elif symbolic.ask("nonnegative", value, self.by_name) is True:
+                proven.add("nonnegative")
             if proven:
                 inner[str(name)] = frozenset(proven)
         return SignFacts(inner)
@@ -157,8 +159,8 @@ def affine_coeff(exp, sym):
 
 
 def ordered_range(
-        begin: symbolic.SymbolicType, end: symbolic.SymbolicType,
-        step: Optional[symbolic.SymbolicType]) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+    begin: symbolic.SymbolicType, end: symbolic.SymbolicType, step: Optional[symbolic.SymbolicType]
+) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
     """Inclusive ``(low, high)`` for an iterator ``begin..end`` stepping by ``step``.
 
     Direction needs the *provable* sign of ``step``. Unknown sign (``0:K:s``) -> which end is
@@ -196,7 +198,7 @@ def proven_nonnegative(exp: symbolic.SymbolicType, ranges: Ranges, facts: SignFa
         low, high = ranges[sym.name]
         corners[sym] = high if coeff.is_negative else low
     residual = exp.subs(corners) if corners else exp
-    return symbolic.ask('nonnegative', residual, facts.by_name) is True
+    return symbolic.ask("nonnegative", residual, facts.by_name) is True
 
 
 def relaxed_exponent(exp: symbolic.SymbolicType, ranges: Ranges, facts: SignFacts) -> Optional[symbolic.SymbolicType]:
@@ -212,7 +214,7 @@ def relaxed_exponent(exp: symbolic.SymbolicType, ranges: Ranges, facts: SignFact
         else:
             return None
         return symbolic_engine.Integer(value) if value >= 0 else None  # negative -> reciprocal
-    if symbolic.ask('integer', exp, facts.by_name) is not True:
+    if symbolic.ask("integer", exp, facts.by_name) is not True:
         return None
     return exp if proven_nonnegative(exp, ranges, facts) else None
 
@@ -246,6 +248,7 @@ def nested_ranges(nsdfg: nodes.NestedSDFG, ranges: Ranges) -> Ranges:
 class PowerRelaxer:
     """One walk over an SDFG tree that rewrites every provable ``Pow`` in sizes, subscripts, bounds, conditions,
     interstate assignments and symbol mappings."""
+
     relaxed: int = 0
 
     def relax(self, expr, ranges: Ranges, facts: SignFacts):
@@ -261,7 +264,7 @@ class PowerRelaxer:
             self.relaxed += 1
             # `apply_head`, not the `ipow` class: calling it directly would sympify a native operand
             # and pull the whole expression back onto the sympy island.
-            return symbolic.apply_head('ipow', base, result if result.is_number else exp)
+            return symbolic.apply_head("ipow", base, result if result.is_number else exp)
 
         relaxed = map_pows(core, to_ipow)
         return expr if relaxed is core else relaxed
@@ -280,7 +283,7 @@ class PowerRelaxer:
         """Relax provable ``Pow`` in a Python-expression string; return the rewritten
         text, or ``None`` if unparseable or unchanged. Powers carry Python ``**``, so a
         string without ``**`` needs no work."""
-        if not text or '**' not in text:
+        if not text or "**" not in text:
             return None
         try:
             expr = symbolic.pystr_to_symbolic(text)
@@ -375,7 +378,7 @@ class PowerRelaxer:
                     self.relax_subset(node.map.range, live, facts)
                     inner = dict(live)
                     for conn in node.in_connectors:
-                        if not conn.startswith('IN_'):
+                        if not conn.startswith("IN_"):
                             inner.pop(conn, None)
                     for param, rng in zip(node.map.params, node.map.range.ranges):
                         prng = ordered_range(rng[0], rng[1], rng[2])  # (begin, end, step)
@@ -410,7 +413,7 @@ class RelaxIntegerPowers(ppl.Pass):
     """Lower non-negative-integer ``Pow`` to ``ipow`` across the SDFG's size,
     subscript and bound expressions."""
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes

@@ -12,6 +12,7 @@ because the cheap fix (never privatize) would cost the pipeline most of its para
 per-iteration scratch value, an exhaustive if/else that writes on every branch, and the CloudSC
 shape where one inner loop fills a scratch row and the next reads it back.
 """
+
 import numpy as np
 import pytest
 
@@ -19,8 +20,8 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.interstate.loop_to_map import LoopToMap
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def n_maps(sdfg: dace.SDFG) -> int:
@@ -55,7 +56,7 @@ def exhaustive_branches(A: dace.float64[N], B: dace.float64[N]):
 @dace.program
 def scratch_row_refilled(A: dace.float64[N, M], B: dace.float64[N, M]):
     for i in range(N):
-        row = np.ndarray((M, ), dtype=np.float64)
+        row = np.ndarray((M,), dtype=np.float64)
         for j in range(M):
             row[j] = A[i, j] * 3.0
         for j in range(M):
@@ -123,6 +124,7 @@ def test_scratch_filled_by_inner_loop_still_maps():
     assert np.allclose(b, a * 3.0 + 1.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__]))

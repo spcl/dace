@@ -17,6 +17,7 @@ always-true: the pinned sequential fallback is dropped and the loop is UNCONDITI
 The two guard-preserving companions (a free ``K`` split point, an out-of-range one) live in
 ``strengthen2_parallelization_prep_test.py``; this file pins the newly-CLOSED case.
 """
+
 import numpy as np
 
 import dace
@@ -25,7 +26,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
 
-LEN_1D = dace.symbol('LEN_1D', nonnegative=True)
+LEN_1D = dace.symbol("LEN_1D", nonnegative=True)
 
 
 @dace.program
@@ -77,17 +78,17 @@ def test_split_range_relations_are_discharged_under_the_large_trip_assumption():
     loop = loops[0]
     peel = BestEffortLoopPeeling(peel_limit=4)
     found = peel._best_split_for(loop, sdfg)
-    assert found is not None, 'expected an index-set split point for the back-conflict loop'
+    assert found is not None, "expected an index-set split point for the back-conflict loop"
     x, middle_singleton, _guarded = found
     # An `i == end` / `i == end - 1` equality guard is one iteration wide, so this is the
     # carve-a-singleton family, not the two-way range-guard split (715dfeb83).
-    assert middle_singleton is True, 'back-conflict split must carve the single conflicting iteration'
+    assert middle_singleton is True, "back-conflict split must carve the single conflicting iteration"
     # The split point is the second-to-last iteration: x == end - 1 (compared against the loop's
     # own bound symbols so the assumption-tagged copies cancel).
     end = loop_analysis.get_loop_end(loop)
-    assert dace.symbolic.simplify(x - (end - 1)) == 0, f'split point should be end - 1, got {x}'
+    assert dace.symbolic.simplify(x - (end - 1)) == 0, f"split point should be end - 1, got {x}"
     relations = peel._split_range_relations(loop, x)
-    assert relations == frozenset(), f'both membership sides must be provable, got guard {relations}'
+    assert relations == frozenset(), f"both membership sides must be provable, got guard {relations}"
 
 
 def test_back_peel_split_drops_the_pinned_sequential_fallback():
@@ -97,7 +98,7 @@ def test_back_peel_split_drops_the_pinned_sequential_fallback():
     assert len(_loops(sdfg)) == 1
     BestEffortLoopPeeling(peel_limit=4).apply_pass(sdfg, {})
     sdfg.validate()
-    assert _guarded_fallback_loops(sdfg) == 0, 'the pinned sequential fallback must be dropped'
+    assert _guarded_fallback_loops(sdfg) == 0, "the pinned sequential fallback must be dropped"
     # No pinned-sequential loop should survive (the split has no fallback branch at all).
     assert not any(r.pinned_sequential for r in _loops(sdfg))
 
@@ -116,11 +117,11 @@ def test_back_peel_split_is_bit_exact_against_the_sequential_reference():
 
     got = a0.copy()
     sdfg.compile()(a=got, b=b.copy(), LEN_1D=n)
-    assert np.array_equal(got, ref), 'split form must match the sequential meaning bit-exactly'
+    assert np.array_equal(got, ref), "split form must match the sequential meaning bit-exactly"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_split_range_relations_are_discharged_under_the_large_trip_assumption()
     test_back_peel_split_drops_the_pinned_sequential_fallback()
     test_back_peel_split_is_bit_exact_against_the_sequential_reference()
-    print('OK')
+    print("OK")

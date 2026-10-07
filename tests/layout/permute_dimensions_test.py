@@ -35,10 +35,12 @@ def indirect_stencil(
     ieidx: dace.int32[3, nblks_c, nproma],
     ieblk: dace.int32[3, nblks_c, nproma],
 ):
-    for jb, jk, jc in dace.map[0:nblks_c, 0:nlev, 1:nproma - 1]:
-        B[jb, jk, jc] = (e_bln_c_s[jb, 0, jc] * A[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]] +
-                         e_bln_c_s[jb, 1, jc] * A[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]] +
-                         e_bln_c_s[jb, 2, jc] * A[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]])
+    for jb, jk, jc in dace.map[0:nblks_c, 0:nlev, 1 : nproma - 1]:
+        B[jb, jk, jc] = (
+            e_bln_c_s[jb, 0, jc] * A[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]]
+            + e_bln_c_s[jb, 1, jc] * A[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]]
+            + e_bln_c_s[jb, 2, jc] * A[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]]
+        )
 
 
 # Data generation
@@ -84,9 +86,11 @@ def reference(A, e_bln_c_s, ieidx, ieblk):
     for jb in range(N_blks):
         for jk in range(N_lev):
             for jc in range(1, N_proma - 1):
-                B[jb, jk, jc] = (e_bln_c_s[jb, 0, jc] * A[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]] +
-                                 e_bln_c_s[jb, 1, jc] * A[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]] +
-                                 e_bln_c_s[jb, 2, jc] * A[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]])
+                B[jb, jk, jc] = (
+                    e_bln_c_s[jb, 0, jc] * A[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]]
+                    + e_bln_c_s[jb, 1, jc] * A[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]]
+                    + e_bln_c_s[jb, 2, jc] * A[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]]
+                )
     return B
 
 
@@ -119,14 +123,10 @@ def test_permute_on_safe_indices(input_data):
 
     sdfg2 = copy.deepcopy(sdfg)
 
-    PermuteDimensions(permute_map={
-        "A": [0, 2, 1],
-        "B": [0, 2, 1],
-        "e_bln_c_s": [0, 2, 1],
-        "ieidx": [1, 2, 0],
-        "ieblk": [1, 2, 0]
-    },
-                      add_permute_maps=True).apply_pass(sdfg2, {})
+    PermuteDimensions(
+        permute_map={"A": [0, 2, 1], "B": [0, 2, 1], "e_bln_c_s": [0, 2, 1], "ieidx": [1, 2, 0], "ieblk": [1, 2, 0]},
+        add_permute_maps=True,
+    ).apply_pass(sdfg2, {})
 
     sdfg2.validate()
 
@@ -145,9 +145,11 @@ def interp_ekinh(
 ):
     for jb in range(nblk):
         for jk, jc in dace.map[0:nlev, 0:nproma]:
-            z_ekinh[jb, jk, jc] = (e_bln_c_s[jb, 0, jc] * z_kin_hor_e[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]] +
-                                   e_bln_c_s[jb, 1, jc] * z_kin_hor_e[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]] +
-                                   e_bln_c_s[jb, 2, jc] * z_kin_hor_e[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]])
+            z_ekinh[jb, jk, jc] = (
+                e_bln_c_s[jb, 0, jc] * z_kin_hor_e[ieblk[0, jb, jc], jk, ieidx[0, jb, jc]]
+                + e_bln_c_s[jb, 1, jc] * z_kin_hor_e[ieblk[1, jb, jc], jk, ieidx[1, jb, jc]]
+                + e_bln_c_s[jb, 2, jc] * z_kin_hor_e[ieblk[2, jb, jc], jk, ieidx[2, jb, jc]]
+            )
 
 
 @pytest.mark.parametrize("seed", [42, 123, 7])
@@ -173,14 +175,16 @@ def test_interp_ekinh(seed):
     )
 
     sdfg = copy.deepcopy(interp_ekinh.to_sdfg())
-    PermuteDimensions(permute_map={
-        "z_kin_hor_e": [0, 2, 1],
-        "e_bln_c_s": [0, 2, 1],
-        "ieidx": [1, 2, 0],
-        "ieblk": [1, 2, 0],
-        "z_ekinh": [0, 2, 1],
-    },
-                      add_permute_maps=True).apply_pass(sdfg, {})
+    PermuteDimensions(
+        permute_map={
+            "z_kin_hor_e": [0, 2, 1],
+            "e_bln_c_s": [0, 2, 1],
+            "ieidx": [1, 2, 0],
+            "ieblk": [1, 2, 0],
+            "z_ekinh": [0, 2, 1],
+        },
+        add_permute_maps=True,
+    ).apply_pass(sdfg, {})
 
     sdfg(
         z_kin_hor_e=z_kin_hor_e,

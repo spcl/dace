@@ -17,6 +17,7 @@ These tests pin the contracts the passes will rely on:
   (matches :class:`IfExpr`'s behaviour).
 - The header on disk is well-formed and has the expected template signature.
 """
+
 import os
 import re
 
@@ -111,9 +112,9 @@ def test_ite_compiled_in_sdfg_matches_python_reference():
     compile, run, and compare against the plain-Python ternary for every
     combination of ``c`` and a small set of operand values."""
     sdfg = dace.SDFG("ite_e2e")
-    sdfg.add_array("a", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("b", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("out", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("b", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("out", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
 
     state = sdfg.add_state("s", is_start_block=True)
@@ -130,7 +131,7 @@ def test_ite_compiled_in_sdfg_matches_python_reference():
         for av, bv in ((3.0, -1.0), (0.0, 9.5), (-7.25, 4.5)):
             a = np.array([av], dtype=np.float64)
             b = np.array([bv], dtype=np.float64)
-            out = np.zeros((1, ), dtype=np.float64)
+            out = np.zeros((1,), dtype=np.float64)
             csdfg(a=a, b=b, out=out, c=cv)
             expected = av if cv else bv
             np.testing.assert_allclose(out, np.array([expected]), err_msg=f"c={cv} a={av} b={bv} got={out[0]}")

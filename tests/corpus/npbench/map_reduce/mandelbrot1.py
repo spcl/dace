@@ -1,5 +1,6 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``mandelbrot1`` (map_reduce) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace as dc
 
@@ -15,36 +16,36 @@ np_complex = np.complex128
 # over the uppercase symbols ``XN``/``YN``. Provide both (equal) so name-resolution
 # works for the reference, ``initialize`` and the SDFG symbol binding alike.
 SIZES = {
-    'xmin': -1.75,
-    'xmax': 0.25,
-    'xn': 125,
-    'XN': 125,
-    'ymin': -1.0,
-    'ymax': 1.0,
-    'yn': 125,
-    'YN': 125,
-    'maxiter': 60,
-    'horizon': 2.0
+    "xmin": -1.75,
+    "xmax": 0.25,
+    "xn": 125,
+    "XN": 125,
+    "ymin": -1.0,
+    "ymax": 1.0,
+    "yn": 125,
+    "YN": 125,
+    "maxiter": 60,
+    "horizon": 2.0,
 }
 # xn/yn are not in the upstream paper row (it only carries XN/YN); mirror them like SIZES does.
 PAPER_SIZES = {
-    'xmin': -2.25,
-    'xmax': 0.75,
-    'xn': 1000,
-    'XN': 1000,
-    'ymin': -1.25,
-    'ymax': 1.25,
-    'yn': 1000,
-    'YN': 1000,
-    'maxiter': 200,
-    'horizon': 2.0
+    "xmin": -2.25,
+    "xmax": 0.75,
+    "xn": 1000,
+    "XN": 1000,
+    "ymin": -1.25,
+    "ymax": 1.25,
+    "yn": 1000,
+    "YN": 1000,
+    "maxiter": 200,
+    "horizon": 2.0,
 }
-INPUT_ARGS = ('XN', 'YN')
-ARRAY_ARGS = ('Z_out', 'N_out')
+INPUT_ARGS = ("XN", "YN")
+ARRAY_ARGS = ("Z_out", "N_out")
 SCALARS = {}
-OUTPUT_ARGS = ('Z_out', 'N_out')
+OUTPUT_ARGS = ("Z_out", "N_out")
 
-XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'N'])
+XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ["XN", "YN", "N"])
 
 
 def initialize(XN, YN):
@@ -63,7 +64,7 @@ def reference(xmin, xmax, ymin, ymax, xn, yn, maxiter, horizon, Z_out, N_out):
     for n in range(maxiter):
         I = np.less(abs(Z), horizon)
         N[I] = n
-        Z[I] = Z[I]**2 + C[I]
+        Z[I] = Z[I] ** 2 + C[I]
     N[N == maxiter - 1] = 0
     Z_out[:] = Z
     N_out[:] = N
@@ -77,10 +78,18 @@ def linspace(start: dc_float, stop: dc_float, X: dc_float[N]):
 
 
 @dc.program
-def kernel(xmin: dc_float, xmax: dc_float, ymin: dc_float, ymax: dc_float, maxiter: dc.int64, horizon: dc_float,
-           Z_out: dc_complex_float[YN, XN], N_out: dc.int64[YN, XN]):
-    X = np.ndarray((XN, ), dtype=dc_float)
-    Y = np.ndarray((YN, ), dtype=dc_float)
+def kernel(
+    xmin: dc_float,
+    xmax: dc_float,
+    ymin: dc_float,
+    ymax: dc_float,
+    maxiter: dc.int64,
+    horizon: dc_float,
+    Z_out: dc_complex_float[YN, XN],
+    N_out: dc.int64[YN, XN],
+):
+    X = np.ndarray((XN,), dtype=dc_float)
+    Y = np.ndarray((YN,), dtype=dc_float)
     linspace(xmin, xmax, X)
     linspace(ymin, ymax, Y)
     C = np.ndarray((YN, XN), dtype=dc_complex_float)
@@ -93,20 +102,22 @@ def kernel(xmin: dc_float, xmax: dc_float, ymin: dc_float, ymax: dc_float, maxit
         Nc[I] = n
         for j, k in dc.map[0:YN, 0:XN]:
             if I[j, k]:
-                Z[j, k] = Z[j, k]**2 + C[j, k]
+                Z[j, k] = Z[j, k] ** 2 + C[j, k]
     Nc[Nc == maxiter - 1] = 0
     Z_out[:] = Z
     N_out[:] = Nc
 
 
-CORPUS = dict(name='mandelbrot1',
-              dwarf='map_reduce',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="mandelbrot1",
+    dwarf="map_reduce",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

@@ -11,7 +11,7 @@ from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -27,7 +27,7 @@ def elementwise_and_reduction(A: dace.float64[N], B: dace.float64[N], C: dace.fl
 
 
 def generated_code(sdfg: SDFG) -> str:
-    return '\n'.join(o.clean_code for o in copy.deepcopy(sdfg).generate_code())
+    return "\n".join(o.clean_code for o in copy.deepcopy(sdfg).generate_code())
 
 
 def with_sections_requested(sdfg: SDFG) -> SDFG:
@@ -46,28 +46,52 @@ def test_duplicate_codegen():
     sdfg = dace.SDFG("dup")
     state = sdfg.add_state()
 
-    c_task = state.add_tasklet("c_task", inputs={"c"}, outputs={"d"}, code='d = c')
+    c_task = state.add_tasklet("c_task", inputs={"c"}, outputs={"d"}, code="d = c")
     e_task = state.add_tasklet("e_task", inputs={"a", "d"}, outputs={"e"}, code="e = a + d")
     f_task = state.add_tasklet("f_task", inputs={"b", "d"}, outputs={"f"}, code="f = b + d")
 
-    _, A_arr = sdfg.add_array("A", [
-        1,
-    ], dace.float32)
-    _, B_arr = sdfg.add_array("B", [
-        1,
-    ], dace.float32)
-    _, C_arr = sdfg.add_array("C", [
-        1,
-    ], dace.float32)
-    _, D_arr = sdfg.add_array("D", [
-        1,
-    ], dace.float32)
-    _, E_arr = sdfg.add_array("E", [
-        1,
-    ], dace.float32)
-    _, F_arr = sdfg.add_array("F", [
-        1,
-    ], dace.float32)
+    _, A_arr = sdfg.add_array(
+        "A",
+        [
+            1,
+        ],
+        dace.float32,
+    )
+    _, B_arr = sdfg.add_array(
+        "B",
+        [
+            1,
+        ],
+        dace.float32,
+    )
+    _, C_arr = sdfg.add_array(
+        "C",
+        [
+            1,
+        ],
+        dace.float32,
+    )
+    _, D_arr = sdfg.add_array(
+        "D",
+        [
+            1,
+        ],
+        dace.float32,
+    )
+    _, E_arr = sdfg.add_array(
+        "E",
+        [
+            1,
+        ],
+        dace.float32,
+    )
+    _, F_arr = sdfg.add_array(
+        "F",
+        [
+            1,
+        ],
+        dace.float32,
+    )
     A = state.add_read("A")
     B = state.add_read("B")
     C = state.add_read("C")
@@ -103,20 +127,20 @@ def test_cpu_target_honours_openmp_sections():
     """A plain CPU SDFG that asks for ``#pragma omp parallel sections`` gets them: the knob is
     live for every CPU target, not a Snitch-only no-op."""
     sdfg = two_concurrent_components.to_sdfg(simplify=True)
-    assert [st for st in sdfg.states() if len(concurrent_subgraphs(st)) > 1], 'fixture has no components to wrap'
+    assert [st for st in sdfg.states() if len(concurrent_subgraphs(st)) > 1], "fixture has no components to wrap"
 
     code = generated_code(with_sections_requested(sdfg))
-    assert '#pragma omp parallel sections' in code
-    assert '#pragma omp section' in code
+    assert "#pragma omp parallel sections" in code
+    assert "#pragma omp section" in code
     # Gated: an SDFG that does not ask for it gets the components emitted back to back.
     off = copy.deepcopy(sdfg)
     for sd in off.all_sdfgs_recursive():
         sd.openmp_sections = False
     off_code = generated_code(off)
-    assert 'omp parallel sections' not in off_code
+    assert "omp parallel sections" not in off_code
     # Either way the parallelism has to still be there, in the maps -- one per component.
-    assert code.count('#pragma omp parallel for') == 2
-    assert off_code.count('#pragma omp parallel for') == 2
+    assert code.count("#pragma omp parallel for") == 2
+    assert off_code.count("#pragma omp parallel for") == 2
 
     rng = np.random.default_rng(1234)
     A, B = rng.random(64), rng.random(64)
@@ -131,16 +155,16 @@ def test_canonicalize_opts_out_of_omp_sections():
     """Canonicalized output never takes the construct, even with the knob flipped globally AND
     on the input SDFG: the parallelism lives in the maps, and a map inside a section re-enters
     OpenMP at nesting level 2, where the default OMP_MAX_ACTIVE_LEVELS=1 gives it a team of one."""
-    with dace.config.set_temporary('compiler', 'cpu', 'openmp_sections', value=True):
+    with dace.config.set_temporary("compiler", "cpu", "openmp_sections", value=True):
         sdfg = elementwise_and_reduction.to_sdfg(simplify=True)
         sdfg.openmp_sections = True
         canonicalize(sdfg)
 
         assert not any(sd.openmp_sections for sd in sdfg.all_sdfgs_recursive())
-        assert 'omp parallel sections' not in generated_code(sdfg)
+        assert "omp parallel sections" not in generated_code(sdfg)
         # Not vacuous: the SAME canonicalized SDFG does emit the construct if the knob is
         # forced back on, so the opt-out is what keeps it out -- not the shape of the output.
-        assert '#pragma omp parallel sections' in generated_code(with_sections_requested(sdfg))
+        assert "#pragma omp parallel sections" in generated_code(with_sections_requested(sdfg))
 
         rng = np.random.default_rng(1234)
         A, B = rng.random(64), rng.random(64)
@@ -152,19 +176,19 @@ def test_canonicalize_opts_out_of_omp_sections():
 
 def test_vectorize_opts_out_of_omp_sections():
     """Same enforcement at the vectorizer's own entry, which may run without canonicalize."""
-    with dace.config.set_temporary('compiler', 'cpu', 'openmp_sections', value=True):
+    with dace.config.set_temporary("compiler", "cpu", "openmp_sections", value=True):
         sdfg = two_concurrent_components.to_sdfg(simplify=True)
         sdfg.openmp_sections = True
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
         assert not any(sd.openmp_sections for sd in sdfg.all_sdfgs_recursive())
-        assert 'omp parallel sections' not in generated_code(sdfg)
+        assert "omp parallel sections" not in generated_code(sdfg)
         # Not vacuous: the vectorizer moves the concurrent components into the nested map-body
         # SDFGs (top level keeps one tile-main and one remainder scope), so the state with
         # components to wrap is found recursively -- forcing the knob back on over the whole
         # tree does emit the construct.
         assert [st for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if len(concurrent_subgraphs(st)) > 1]
-        assert '#pragma omp parallel sections' in generated_code(with_sections_requested(sdfg))
+        assert "#pragma omp parallel sections" in generated_code(with_sections_requested(sdfg))
 
         rng = np.random.default_rng(1234)
         A, B = rng.random(64), rng.random(64)

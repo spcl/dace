@@ -35,7 +35,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 # Kernels
@@ -103,11 +103,11 @@ def _canon():
     return lambda s: canonicalize(s, validate=True)
 
 
-CANON = [pytest.param(_canon(), id='full')]
+CANON = [pytest.param(_canon(), id="full")]
 
 
 # Item 1 (independent) + Item 2 (hoist-out merge)
-@pytest.mark.parametrize('canon', CANON)
+@pytest.mark.parametrize("canon", CANON)
 def test_guarded_independent_hoists_and_merges(canon):
     n = 16
     sdfg = guarded_independent.to_sdfg(simplify=False)
@@ -130,7 +130,7 @@ def test_guarded_independent_hoists_and_merges(canon):
         assert np.allclose(c, c_ref), f"c mismatch cond={cond}"
 
 
-@pytest.mark.parametrize('canon', CANON)
+@pytest.mark.parametrize("canon", CANON)
 def test_guarded_index_dependent_merges_in_map(canon):
     n = 16
     sdfg = guarded_index_dependent.to_sdfg(simplify=False)
@@ -153,7 +153,7 @@ def test_guarded_index_dependent_merges_in_map(canon):
 
 
 # Item 1 (data-dependent but splittable)
-@pytest.mark.parametrize('canon', CANON)
+@pytest.mark.parametrize("canon", CANON)
 def test_guarded_forward_read_war_splits_and_merges(canon):
     n = 16
     sdfg = guarded_forward_read_war.to_sdfg(simplify=False)

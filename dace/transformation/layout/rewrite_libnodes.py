@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Library-node rewrites that expose an operand's layout to the layout passes: reorders einsum subscripts and rewrites ``Gemm``/``CopyLibraryNode`` into ``TensorDot``/``TensorTranspose`` so a layout change reaches node semantics, not just memlets."""
+
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
@@ -11,8 +12,8 @@ from dace.transformation import pass_pipeline as ppl
 
 def transform_einsum(einsum_str: str, operand_index: int, perm: Tuple[int, ...]) -> str:
     """Permute one einsum operand's subscripts by ``perm`` (``new[i] = old[perm[i]]``); ``operand_index`` follows sorted input-connector order."""
-    lhs, sep, rhs = einsum_str.partition('->')
-    groups = [t.strip() for t in lhs.split(',')]
+    lhs, sep, rhs = einsum_str.partition("->")
+    groups = [t.strip() for t in lhs.split(",")]
     if operand_index < 0 or operand_index >= len(groups):
         raise ValueError(f"transform_einsum: operand_index {operand_index} out of range for '{einsum_str}'")
     g = groups[operand_index]
@@ -20,8 +21,8 @@ def transform_einsum(einsum_str: str, operand_index: int, perm: Tuple[int, ...])
         raise ValueError(f"transform_einsum: perm {perm} does not match operand '{g}' rank {len(g)}")
     if sorted(perm) != list(range(len(g))):
         raise ValueError(f"transform_einsum: perm {perm} is not a permutation")
-    groups[operand_index] = ''.join(g[perm[i]] for i in range(len(perm)))
-    out = ','.join(groups)
+    groups[operand_index] = "".join(g[perm[i]] for i in range(len(perm)))
+    out = ",".join(groups)
     return f"{out}{sep}{rhs}" if sep else out
 
 
@@ -79,12 +80,14 @@ def flip_operand_transpose(node, connector: str) -> None:
         if connector != "_a":
             raise NotImplementedError(
                 f"flip_operand_transpose: Symm operand '{connector}' is a general matrix with no transpose flag; "
-                f"its transpose cannot be absorbed.")
+                f"its transpose cannot be absorbed."
+            )
         node.uplo = toggle(node.uplo, "L", "U")
     elif isinstance(node, Syr2k):
         raise NotImplementedError(
             "flip_operand_transpose: Syr2k shares one 'trans' flag across both operands; a per-operand transpose "
-            "cannot be absorbed soundly (permuting both would double-flip). Permute its operands as a physical copy.")
+            "cannot be absorbed soundly (permuting both would double-flip). Permute its operands as a physical copy."
+        )
     else:
         raise NotImplementedError(f"flip_operand_transpose: no transpose-flag rule for {type(node).__name__}.")
 
@@ -147,8 +150,13 @@ class GemmToTensorDot(ppl.Pass):
         return False
 
     def _is_eligible(self, node: nd.LibraryNode) -> bool:
-        return (symbolic.equal_valued(1, node.alpha) and symbolic.equal_valued(0, node.beta) and not node.alpha_input
-                and not node.beta_input and "_cin" not in node.in_connectors)
+        return (
+            symbolic.equal_valued(1, node.alpha)
+            and symbolic.equal_valued(0, node.beta)
+            and not node.alpha_input
+            and not node.beta_input
+            and "_cin" not in node.in_connectors
+        )
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         from dace.libraries.blas.nodes.gemm import Gemm
@@ -196,8 +204,13 @@ class SyrkToTensorDot(ppl.Pass):
         return False
 
     def _is_eligible(self, node) -> bool:
-        return (symbolic.equal_valued(1, node.alpha) and symbolic.equal_valued(0, node.beta) and not node.alpha_input
-                and not node.beta_input and "_cin" not in node.in_connectors)
+        return (
+            symbolic.equal_valued(1, node.alpha)
+            and symbolic.equal_valued(0, node.beta)
+            and not node.alpha_input
+            and not node.beta_input
+            and "_cin" not in node.in_connectors
+        )
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         from dace.libraries.blas.nodes.syrk import Syrk
@@ -237,8 +250,9 @@ def copy_permutation_axes(in_sizes: List, out_sizes: List):
 
     if len(in_sizes) != len(out_sizes) or all(same(a, b) for a, b in zip(in_sizes, out_sizes)):
         return None  # same order or rank change -> left to the copy node
-    if sorted(str(dace.symbolic.simplify(s))
-              for s in in_sizes) != sorted(str(dace.symbolic.simplify(s)) for s in out_sizes):
+    if sorted(str(dace.symbolic.simplify(s)) for s in in_sizes) != sorted(
+        str(dace.symbolic.simplify(s)) for s in out_sizes
+    ):
         return None  # different extents -> reshape, not transpose
 
     axes, used = [], [False] * len(in_sizes)
@@ -248,7 +262,8 @@ def copy_permutation_axes(in_sizes: List, out_sizes: List):
             raise NotImplementedError(
                 "RewriteCopyForLayout: ambiguous copy permutation (a repeated dim size); the "
                 "permutation is not recoverable from the operand shapes alone. Drive the conversion "
-                "from the permute pass, which knows the applied permutation.")
+                "from the permute pass, which knows the applied permutation."
+            )
         axes.append(matches[0])
         used[matches[0]] = True
     return axes

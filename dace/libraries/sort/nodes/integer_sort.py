@@ -23,6 +23,7 @@ Implementations:
 The output buffer must have the same shape and dtype as the input buffer; both must
 be 1-D contiguous integer arrays.
 """
+
 from typing import Tuple
 
 import dace
@@ -39,8 +40,9 @@ INPUT_CONNECTOR_NAME = "_keys_in"
 OUTPUT_CONNECTOR_NAME = "_keys_out"
 
 
-def _validate_inputs_and_outputs(node: "IntegerSort", state: dace.SDFGState,
-                                 sdfg: dace.SDFG) -> Tuple[dace.data.Array, dace.data.Array, str, str]:
+def _validate_inputs_and_outputs(
+    node: "IntegerSort", state: dace.SDFGState, sdfg: dace.SDFG
+) -> Tuple[dace.data.Array, dace.data.Array, str, str]:
     """Resolve and validate the in/out edges; return ``(in_desc, out_desc, in_name, out_name)``.
 
     :param node: The IntegerSort node being expanded.
@@ -52,15 +54,18 @@ def _validate_inputs_and_outputs(node: "IntegerSort", state: dace.SDFGState,
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     out_edges = [e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME]
     if len(in_edges) != 1 or len(out_edges) != 1:
-        raise ValueError(f"IntegerSort node {node.label} expects exactly one ``{INPUT_CONNECTOR_NAME}`` "
-                         f"in-edge and one ``{OUTPUT_CONNECTOR_NAME}`` out-edge.")
+        raise ValueError(
+            f"IntegerSort node {node.label} expects exactly one ``{INPUT_CONNECTOR_NAME}`` "
+            f"in-edge and one ``{OUTPUT_CONNECTOR_NAME}`` out-edge."
+        )
     in_name = in_edges[0].data.data
     out_name = out_edges[0].data.data
     in_desc = sdfg.arrays[required(in_name)]
     out_desc = sdfg.arrays[required(out_name)]
     if not isinstance(in_desc, dace.data.Array) or not isinstance(out_desc, dace.data.Array):
-        raise ValueError(f"IntegerSort requires Array inputs/outputs; got {type(in_desc).__name__} -> "
-                         f"{type(out_desc).__name__}.")
+        raise ValueError(
+            f"IntegerSort requires Array inputs/outputs; got {type(in_desc).__name__} -> {type(out_desc).__name__}."
+        )
     if in_desc.dtype != out_desc.dtype:
         raise ValueError(f"IntegerSort input/output dtype mismatch: {in_desc.dtype} vs {out_desc.dtype}.")
     if not _helpers.is_integer_dtype(in_desc.dtype):
@@ -78,9 +83,10 @@ def _is_length_one(node: "IntegerSort", state: dace.SDFGState) -> bool:
     """``True`` if the input subset is statically a single element. Sorts of length 1
     degenerate to a copy: the sole element is trivially "sorted"."""
     from dace import symbolic as _sym
+
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     n = _sym.simplify(required(in_edges[0].data.subset).num_elements())
-    return getattr(n, 'is_Integer', False) and int(as_expr(n)) == 1
+    return getattr(n, "is_Integer", False) and int(as_expr(n)) == 1
 
 
 def _degenerate_single_element_tasklet(node: "IntegerSort") -> nodes.Tasklet:
@@ -108,8 +114,10 @@ class ExpandISOCpp(ExpandTransformation):
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node)
         n_expr = _resolve_length(node, state, sdfg)
-        code = (f"std::copy({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), {OUTPUT_CONNECTOR_NAME});\n"
-                f"std::sort(std::execution::par_unseq, {OUTPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME} + ({n_expr}));")
+        code = (
+            f"std::copy({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), {OUTPUT_CONNECTOR_NAME});\n"
+            f"std::sort(std::execution::par_unseq, {OUTPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME} + ({n_expr}));"
+        )
         return nodes.Tasklet(
             node.name,
             inputs={INPUT_CONNECTOR_NAME},
@@ -136,8 +144,10 @@ class ExpandCPU(ExpandTransformation):
         # output range. The copy keeps the input array untouched (which matters because the
         # libnode contract is "produce a sorted copy"; some callers may read ``_keys_in``
         # elsewhere in the SDFG).
-        code = (f"std::copy({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), {OUTPUT_CONNECTOR_NAME});\n"
-                f"::ska_sort({OUTPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME} + ({n_expr}));")
+        code = (
+            f"std::copy({INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), {OUTPUT_CONNECTOR_NAME});\n"
+            f"::ska_sort({OUTPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME} + ({n_expr}));"
+        )
         return nodes.Tasklet(
             node.name,
             inputs={INPUT_CONNECTOR_NAME},
@@ -178,27 +188,30 @@ class ExpandCUDA(ExpandTransformation):
         # The CUB call goes into the CUDA translation unit behind a wrapper, the same shape the
         # Scan libnode uses: this tasklet is at host schedule, and the host compiler gets only the
         # scratch header -- hipCUB in particular does not parse under g++.
-        wrapper = f'__dace_isort_{global_code_id(sdfg, state, node)}'
-        params = f'const {in_dtype}* __ks_in, {in_dtype}* __ks_out, long long __ks_n, gpuStream_t __ks_stream'
-        prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
-        args = f'__ks_in, __ks_out, __ks_n, {bit_args}, __ks_stream'
-        sdfg.append_global_code(prototype + '\n')
+        wrapper = f"__dace_isort_{global_code_id(sdfg, state, node)}"
+        params = f"const {in_dtype}* __ks_in, {in_dtype}* __ks_out, long long __ks_n, gpuStream_t __ks_stream"
+        prototype = f"DACE_EXPORTED gpuError_t {wrapper}({params});"
+        args = f"__ks_in, __ks_out, __ks_n, {bit_args}, __ks_stream"
+        sdfg.append_global_code(prototype + "\n")
         sdfg.append_global_code(
-            f'{prototype}\n'
-            f'gpuError_t {wrapper}({params}) {{\n'
-            f'    size_t _ks_needed = 0;\n'
-            f'    gpuError_t _ks_status = ::gpucub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, {args});\n'
-            f'    if (_ks_status != gpuSuccess) return _ks_status;\n'
-            f'    void* _ks_scratch = ::dace::cub::get_scratch<::dace::cub::SortTag>('
-            f'_ks_needed, __ks_stream, &_ks_status);\n'
+            f"{prototype}\n"
+            f"gpuError_t {wrapper}({params}) {{\n"
+            f"    size_t _ks_needed = 0;\n"
+            f"    gpuError_t _ks_status = ::gpucub::DeviceRadixSort::SortKeys(nullptr, _ks_needed, {args});\n"
+            f"    if (_ks_status != gpuSuccess) return _ks_status;\n"
+            f"    void* _ks_scratch = ::dace::cub::get_scratch<::dace::cub::SortTag>("
+            f"_ks_needed, __ks_stream, &_ks_status);\n"
             # A null workspace makes CUB report the size and return, leaving the keys UNSORTED.
-            f'    if (_ks_scratch == nullptr) return _ks_status != gpuSuccess ? _ks_status : '
-            f'gpuErrorMemoryAllocation;\n'
-            f'    return ::gpucub::DeviceRadixSort::SortKeys(_ks_scratch, _ks_needed, {args});\n'
-            f'}}\n',
-            'cuda')
-        code = (f"DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, "
-                f"({n_expr}), __dace_current_stream));")
+            f"    if (_ks_scratch == nullptr) return _ks_status != gpuSuccess ? _ks_status : "
+            f"gpuErrorMemoryAllocation;\n"
+            f"    return ::gpucub::DeviceRadixSort::SortKeys(_ks_scratch, _ks_needed, {args});\n"
+            f"}}\n",
+            "cuda",
+        )
+        code = (
+            f"DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, "
+            f"({n_expr}), __dace_current_stream));"
+        )
         return nodes.Tasklet(
             node.name,
             inputs={INPUT_CONNECTOR_NAME},
@@ -232,9 +245,9 @@ class IntegerSort(nodes.LibraryNode):
     OUTPUT_CONNECTOR_NAME = OUTPUT_CONNECTOR_NAME
 
     implementations = {"CPU": ExpandCPU, "CUDA": ExpandCUDA, "isocpp": ExpandISOCpp}
-    default_implementation = 'CPU'
+    default_implementation = "CPU"
 
-    def __init__(self, name: str = 'IntegerSort', *args, **kwargs):
+    def __init__(self, name: str = "IntegerSort", *args, **kwargs):
         super().__init__(name, *args, inputs={INPUT_CONNECTOR_NAME}, outputs={OUTPUT_CONNECTOR_NAME}, **kwargs)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState):

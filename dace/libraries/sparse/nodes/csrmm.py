@@ -6,7 +6,7 @@ import dace.library
 from dace import SDFG, SDFGState
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import to_blastype, check_access, to_cublas_computetype
 from dace.libraries.sparse import environments
 from dace.libraries.sparse import sparse_dialect
 import numpy as np
@@ -36,14 +36,16 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
-def _get_csrmm_operands(node,
-                        state,
-                        sdfg,
-                        name_lhs_rows="_a_rows",
-                        name_lhs_cols="_a_cols",
-                        name_lhs_vals="_a_vals",
-                        name_rhs="_b",
-                        name_out="_c"):
+def _get_csrmm_operands(
+    node,
+    state,
+    sdfg,
+    name_lhs_rows="_a_rows",
+    name_lhs_cols="_a_cols",
+    name_lhs_vals="_a_vals",
+    name_rhs="_b",
+    name_out="_c",
+):
     """Returns the CSRMM input edges, arrays, and shape."""
 
     result = {}
@@ -71,8 +73,7 @@ def _get_csrmm_operands(node,
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError("Matrix multiplication connector "
-                             "\"{}\" not found.".format(name))
+            raise ValueError('Matrix multiplication connector "{}" not found.'.format(name))
     return result
 
 
@@ -97,29 +98,30 @@ class ExpandCSRMMPure(ExpandTransformation):
             ndesc.transient = False
             nsdfg.add_datadesc(name, ndesc)
 
-        array_a_vals = nsdfg.arrays['_a_vals']
-        array_a_rows = nsdfg.arrays['_a_rows']
-        array_a_cols = nsdfg.arrays['_a_cols']
-        array_b = nsdfg.arrays['_b']
-        array_c = nsdfg.arrays['_c']
+        array_a_vals = nsdfg.arrays["_a_vals"]
+        array_a_rows = nsdfg.arrays["_a_rows"]
+        array_a_cols = nsdfg.arrays["_a_cols"]
+        array_b = nsdfg.arrays["_b"]
+        array_c = nsdfg.arrays["_c"]
 
-        a_val_node = nstate.add_access('_a_vals')
-        a_row_node = nstate.add_access('_a_rows')
-        a_col_node = nstate.add_access('_a_cols')
-        b_node = nstate.add_access('_b')
-        c_node = nstate.add_access('_c')
+        a_val_node = nstate.add_access("_a_vals")
+        a_row_node = nstate.add_access("_a_rows")
+        a_col_node = nstate.add_access("_a_cols")
+        b_node = nstate.add_access("_b")
+        c_node = nstate.add_access("_c")
 
         if node.beta == 0.0:
-            shape_c = operands['_c'][1].shape
+            shape_c = operands["_c"][1].shape
 
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
-                'csrmm_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(shape_c)
-                }, {},
-                'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
-                external_edges=True)
+                "csrmm_init",
+                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(shape_c)},
+                {},
+                "out = 0",
+                {"out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(shape_c))]))},
+                external_edges=True,
+            )
         elif node.beta == 1.0:
             # Simplify computation
             edges = state.in_edges_by_connector(node, "_cin")
@@ -133,21 +135,21 @@ class ExpandCSRMMPure(ExpandTransformation):
         else:
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
 
-            cdesc = operands['_c'][1]
+            cdesc = operands["_c"][1]
             cin_desc = dc(cdesc)
-            nsdfg.add_datadesc('_cin', cin_desc)
+            nsdfg.add_datadesc("_cin", cin_desc)
 
             init_state.add_mapped_tasklet(
-                'csrmm_init', {
-                    '_o%d' % i: '0:%s' % symstr(d)
-                    for i, d in enumerate(cdesc.shape)
-                }, {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
-                f'_out = {node.beta} * _in',
-                {'_out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
-                external_edges=True)
+                "csrmm_init",
+                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(cdesc.shape)},
+                {"_in": dace.Memlet.simple("_cin", ",".join(["_o%d" % i for i in range(len(cdesc.shape))]))},
+                f"_out = {node.beta} * _in",
+                {"_out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(cdesc.shape))]))},
+                external_edges=True,
+            )
 
         # Multiplication map
-        outer_map_entry, outer_map_exit = nstate.add_map("spmm_1", dict(i='0:' + str(array_a_rows.shape[0] - 1)))
+        outer_map_entry, outer_map_exit = nstate.add_map("spmm_1", dict(i="0:" + str(array_a_rows.shape[0] - 1)))
         outer_map_entry.add_in_connector("IN__a_vals")
         outer_map_entry.add_in_connector("IN__a_cols")
         outer_map_entry.add_in_connector("IN__a_rows")
@@ -168,26 +170,39 @@ class ExpandCSRMMPure(ExpandTransformation):
         inner_map_entry, inner_map_exit = nstate.add_map("spmm_2", dict(j="__map_19_b0:__map_19_e1"))
         inner_map_entry.add_in_connector("__map_19_b0")
         inner_map_entry.add_in_connector("__map_19_e1")
-        nstate.add_edge(outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_b0",
-                        mm.Memlet("_a_rows[i]", data="_a_rows"))
-        nstate.add_edge(outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_e1",
-                        mm.Memlet("_a_rows[i + 1]", data="_a_rows"))
+        nstate.add_edge(
+            outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_b0", mm.Memlet("_a_rows[i]", data="_a_rows")
+        )
+        nstate.add_edge(
+            outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_e1", mm.Memlet("_a_rows[i + 1]", data="_a_rows")
+        )
 
         inner_map_entry.add_in_connector("IN_tmp_a_vals")
-        nstate.add_edge(outer_map_entry, "OUT__a_vals", inner_map_entry, "IN_tmp_a_vals",
-                        mm.Memlet.from_array("_a_vals", array_a_vals))
+        nstate.add_edge(
+            outer_map_entry,
+            "OUT__a_vals",
+            inner_map_entry,
+            "IN_tmp_a_vals",
+            mm.Memlet.from_array("_a_vals", array_a_vals),
+        )
 
         inner_map_entry.add_in_connector("IN_tmp_a_cols")
-        nstate.add_edge(outer_map_entry, "OUT__a_cols", inner_map_entry, "IN_tmp_a_cols",
-                        mm.Memlet.from_array("_a_cols", array_a_cols))
+        nstate.add_edge(
+            outer_map_entry,
+            "OUT__a_cols",
+            inner_map_entry,
+            "IN_tmp_a_cols",
+            mm.Memlet.from_array("_a_cols", array_a_cols),
+        )
 
         inner_map_entry.add_in_connector("IN_tmp_b")
         nstate.add_edge(outer_map_entry, "OUT__b", inner_map_entry, "IN_tmp_b", mm.Memlet.from_array("_b", array_b))
 
         inner_map_exit.add_out_connector("OUT__c_1")
         outer_map_exit.add_in_connector("IN__c")
-        nstate.add_edge(inner_map_exit, "OUT__c_1", outer_map_exit, "IN__c",
-                        mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]"))
+        nstate.add_edge(
+            inner_map_exit, "OUT__c_1", outer_map_exit, "IN__c", mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]")
+        )
 
         inner_map_entry.add_out_connector("OUT_tmp_a_vals")
         inner_map_entry.add_out_connector("OUT_tmp_a_cols")
@@ -202,44 +217,60 @@ class ExpandCSRMMPure(ExpandTransformation):
 
         k_map_entry, k_map_exit = nstate.add_map("spmm_3", dict(k=f"0:{str(B_cols)}"))
         k_map_entry.add_in_connector("IN_tmp_a_vals_1")
-        nstate.add_edge(inner_map_entry, "OUT_tmp_a_vals", k_map_entry, "IN_tmp_a_vals_1",
-                        mm.Memlet.simple("_a_vals", "j"))
+        nstate.add_edge(
+            inner_map_entry, "OUT_tmp_a_vals", k_map_entry, "IN_tmp_a_vals_1", mm.Memlet.simple("_a_vals", "j")
+        )
 
         k_map_entry.add_in_connector("IN_tmp_a_cols_1")
-        nstate.add_edge(inner_map_entry, "OUT_tmp_a_cols", k_map_entry, "IN_tmp_a_cols_1",
-                        mm.Memlet.simple("_a_cols", "j"))
+        nstate.add_edge(
+            inner_map_entry, "OUT_tmp_a_cols", k_map_entry, "IN_tmp_a_cols_1", mm.Memlet.simple("_a_cols", "j")
+        )
 
         k_map_entry.add_in_connector("IN_tmp_b_1")
         nstate.add_edge(inner_map_entry, "OUT_tmp_b", k_map_entry, "IN_tmp_b_1", mm.Memlet.from_array("_b", array_b))
 
         k_map_exit.add_out_connector("OUT__c_1")
         inner_map_exit.add_in_connector("IN__c_1")
-        nstate.add_edge(k_map_exit, "OUT__c_1", inner_map_exit, "IN__c_1",
-                        mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]"))
+        nstate.add_edge(
+            k_map_exit, "OUT__c_1", inner_map_exit, "IN__c_1", mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]")
+        )
 
         k_map_entry.add_out_connector("OUT_tmp_a_cols_1")
         k_map_entry.add_out_connector("OUT_tmp_a_vals_1")
         k_map_entry.add_out_connector("OUT_tmp_b_1")
 
-        tasklet_ind = nstate.add_tasklet("Indirection",
-                                         inputs=OrderedSet(('__ind_b', 'index_a_cols_0')),
-                                         outputs={'lookup': None},
-                                         code="lookup = __ind_b[index_a_cols_0]")
+        tasklet_ind = nstate.add_tasklet(
+            "Indirection",
+            inputs=OrderedSet(("__ind_b", "index_a_cols_0")),
+            outputs={"lookup": None},
+            code="lookup = __ind_b[index_a_cols_0]",
+        )
         nsdfg.add_scalar("_b_value", dtype=array_b.dtype, transient=True)
-        nstate.add_edge(k_map_entry, "OUT_tmp_a_cols_1", tasklet_ind, "index_a_cols_0",
-                        mm.Memlet.simple("_a_cols", "j"))
-        nstate.add_edge(k_map_entry, "OUT_tmp_b_1", tasklet_ind, "__ind_b",
-                        mm.Memlet.simple("_b", f"k, 0:{B_rows}" if node.transB else f"0:{B_rows}, k"))
+        nstate.add_edge(
+            k_map_entry, "OUT_tmp_a_cols_1", tasklet_ind, "index_a_cols_0", mm.Memlet.simple("_a_cols", "j")
+        )
+        nstate.add_edge(
+            k_map_entry,
+            "OUT_tmp_b_1",
+            tasklet_ind,
+            "__ind_b",
+            mm.Memlet.simple("_b", f"k, 0:{B_rows}" if node.transB else f"0:{B_rows}, k"),
+        )
 
-        tasklet_mult = nstate.add_tasklet("spmm",
-                                          OrderedSet(('__a', '__b')), {"__o": None},
-                                          code=f"__o = {node.alpha} * (__a * __b)")
+        tasklet_mult = nstate.add_tasklet(
+            "spmm", OrderedSet(("__a", "__b")), {"__o": None}, code=f"__o = {node.alpha} * (__a * __b)"
+        )
         nstate.add_edge(k_map_entry, "OUT_tmp_a_vals_1", tasklet_mult, "__a", mm.Memlet.simple("_a_vals", "j"))
         nstate.add_edge(tasklet_ind, "lookup", tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
 
         k_map_exit.add_in_connector("IN__c_1")
-        nstate.add_edge(tasklet_mult, "__o", k_map_exit, "IN__c_1",
-                        mm.Memlet.simple("_c", subset_str="i, k", wcr_str="lambda x, y: (x + y)"))
+        nstate.add_edge(
+            tasklet_mult,
+            "__o",
+            k_map_exit,
+            "IN__c_1",
+            mm.Memlet.simple("_c", subset_str="i, k", wcr_str="lambda x, y: (x + y)"),
+        )
 
         nsdfg.validate()
         propagate_memlets_sdfg(nsdfg)
@@ -258,21 +289,21 @@ class ExpandCSRMMMKL(ExpandTransformation):
 
         node.validate(sdfg, state)
         operands = _get_csrmm_operands(node, state, sdfg)
-        arows = operands['_a_rows'][1]
-        acols = operands['_a_cols'][1]
-        avals = operands['_a_vals'][1]
-        bdesc = operands['_b'][1]
+        arows = operands["_a_rows"][1]
+        acols = operands["_a_cols"][1]
+        avals = operands["_a_vals"][1]
+        bdesc = operands["_b"][1]
 
         dtype = avals.dtype.base_type
         func = f"mkl_sparse_{to_blastype(dtype.type).lower()}"
-        alpha = f'{dtype.ctype}({node.alpha})'
-        beta = f'{dtype.ctype}({node.beta})'
+        alpha = f"{dtype.ctype}({node.alpha})"
+        beta = f"{dtype.ctype}({node.beta})"
 
         # Deal with complex input constants
         if isinstance(node.alpha, complex):
-            alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+            alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
         if isinstance(node.beta, complex):
-            beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            beta = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
 
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
 
@@ -280,31 +311,31 @@ class ExpandCSRMMMKL(ExpandTransformation):
 
         opt = {}
 
-        opt['func'] = func
+        opt["func"] = func
 
-        opt['opA'] = 'SPARSE_OPERATION_NON_TRANSPOSE'
+        opt["opA"] = "SPARSE_OPERATION_NON_TRANSPOSE"
 
-        opt['layout'] = 'SPARSE_LAYOUT_ROW_MAJOR'
+        opt["layout"] = "SPARSE_LAYOUT_ROW_MAJOR"
 
-        code = ''
+        code = ""
         if dtype in (dace.complex64, dace.complex128):
-            code = f'''
+            code = f"""
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
-            '''
-            opt['alpha'] = '&alpha'
-            opt['beta'] = '&beta'
+            """
+            opt["alpha"] = "&alpha"
+            opt["beta"] = "&beta"
         else:
-            opt['alpha'] = alpha
-            opt['beta'] = beta
+            opt["alpha"] = alpha
+            opt["beta"] = beta
 
-        opt['nrows'] = cdesc.shape[0]
-        opt['ncols'] = cdesc.shape[1]
-        opt['arows'] = cdesc.shape[0]
-        opt['acols'] = bdesc.shape[0]
+        opt["nrows"] = cdesc.shape[0]
+        opt["ncols"] = cdesc.shape[1]
+        opt["arows"] = cdesc.shape[0]
+        opt["acols"] = bdesc.shape[0]
 
-        opt['ldb'] = opt['ncols']
-        opt['ldc'] = opt['ncols']
+        opt["ldb"] = opt["ncols"]
+        opt["ldc"] = opt["ncols"]
 
         code += """
             sparse_matrix_t __csrA;
@@ -329,7 +360,6 @@ class ExpandCSRMMMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCSRMMGPUSparse(ExpandTransformation):
-
     environments = [environments.cuSPARSE]
 
     @classmethod
@@ -338,99 +368,101 @@ class ExpandCSRMMGPUSparse(ExpandTransformation):
         node.validate(sdfg, state)
 
         operands = _get_csrmm_operands(node, state, sdfg)
-        arows = operands['_a_rows'][1]
-        acols = operands['_a_cols'][1]
-        avals = operands['_a_vals'][1]
-        bdesc = operands['_b'][1]
+        arows = operands["_a_rows"][1]
+        acols = operands["_a_cols"][1]
+        avals = operands["_a_vals"][1]
+        bdesc = operands["_b"][1]
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
 
         # If buffers are not on the GPU, copy them
-        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
-                         for desc in (arows, acols, avals, bdesc, cdesc))
+        needs_copy = any(
+            desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
+            for desc in (arows, acols, avals, bdesc, cdesc)
+        )
 
         dtype = avals.dtype.base_type
         func = f"{d.prefix}SpMM"
         if dtype == dace.float16:
-            cdtype = '__half'
-            factort = 'Half'
+            cdtype = "__half"
+            factort = "Half"
         elif dtype == dace.float32:
-            cdtype = 'float'
-            factort = 'Float'
+            cdtype = "float"
+            factort = "Float"
         elif dtype == dace.float64:
-            cdtype = 'double'
-            factort = 'Double'
+            cdtype = "double"
+            factort = "Double"
         elif dtype == dace.complex64:
-            cdtype = 'cuComplex'
-            factort = 'Complex64'
+            cdtype = "cuComplex"
+            factort = "Complex64"
         elif dtype == dace.complex128:
-            cdtype = 'cuDoubleComplex'
-            factort = 'Complex128'
+            cdtype = "cuDoubleComplex"
+            factort = "Complex128"
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
         call_prefix = cls.environments[0].handle_setup_code(node)
-        call_suffix = ''
+        call_suffix = ""
 
         # Deal with complex input constants
         if isinstance(node.alpha, complex):
-            alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+            alpha = f"{dtype.ctype}({node.alpha.real}, {node.alpha.imag})"
         else:
-            alpha = f'{dtype.ctype}({node.alpha})'
+            alpha = f"{dtype.ctype}({node.alpha})"
         if isinstance(node.beta, complex):
-            beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            beta = f"{dtype.ctype}({node.beta.real}, {node.beta.imag})"
         else:
-            beta = f'{dtype.ctype}({node.beta})'
+            beta = f"{dtype.ctype}({node.beta})"
 
         # Set pointer mode to host
-        call_prefix += f'''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_HOST);
+        call_prefix += f"""{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_HOST);
         {dtype.ctype} alpha = {alpha};
         {dtype.ctype} beta = {beta};
-        '''
-        call_suffix += f'''{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_DEVICE);'''
-        alpha = f'({cdtype} *)&alpha'
-        beta = f'({cdtype} *)&beta'
+        """
+        call_suffix += f"""{d.prefix}SetPointerMode({d.handle}, {d.upper}_POINTER_MODE_DEVICE);"""
+        alpha = f"({cdtype} *)&alpha"
+        beta = f"({cdtype} *)&beta"
 
         # Set up options for code formatting
         # opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
 
-        opt = {'d': d}
+        opt = {"d": d}
 
-        opt['arr_prefix'] = arr_prefix = ''
+        opt["arr_prefix"] = arr_prefix = ""
         if needs_copy:
-            opt['arr_prefix'] = arr_prefix = '_conn'
+            opt["arr_prefix"] = arr_prefix = "_conn"
 
-        opt['func'] = func
+        opt["func"] = func
 
-        opt['opA'] = f'{d.upper}_OPERATION_NON_TRANSPOSE'
+        opt["opA"] = f"{d.upper}_OPERATION_NON_TRANSPOSE"
 
         if node.transB:
-            opt['opB'] = f'{d.upper}_OPERATION_TRANSPOSE'
+            opt["opB"] = f"{d.upper}_OPERATION_TRANSPOSE"
         else:
-            opt['opB'] = f'{d.upper}_OPERATION_NON_TRANSPOSE'
+            opt["opB"] = f"{d.upper}_OPERATION_NON_TRANSPOSE"
 
-        opt['layout'] = f'{d.upper}_ORDER_ROW'
+        opt["layout"] = f"{d.upper}_ORDER_ROW"
 
-        opt['compute'] = f'{d.datatype_prefix}_R_{to_cublas_computetype(dtype)}'
-        opt['handle'] = f'{d.handle}'
+        opt["compute"] = f"{d.datatype_prefix}_R_{to_cublas_computetype(dtype)}"
+        opt["handle"] = f"{d.handle}"
 
-        opt['alpha'] = alpha
-        opt['beta'] = beta
+        opt["alpha"] = alpha
+        opt["beta"] = beta
 
-        opt['nrows'] = cdesc.shape[0]
-        opt['ncols'] = cdesc.shape[1]
-        opt['ldc'] = opt['ncols']
+        opt["nrows"] = cdesc.shape[0]
+        opt["ncols"] = cdesc.shape[1]
+        opt["ldc"] = opt["ncols"]
 
-        opt['brows'] = bdesc.shape[0]
-        opt['bcols'] = bdesc.shape[1]
-        opt['ldb'] = opt['bcols']
+        opt["brows"] = bdesc.shape[0]
+        opt["bcols"] = bdesc.shape[1]
+        opt["ldb"] = opt["bcols"]
 
-        opt['arows'] = cdesc.shape[0]
+        opt["arows"] = cdesc.shape[0]
         if node.transB:
-            opt['acols'] = bdesc.shape[1]
+            opt["acols"] = bdesc.shape[1]
         else:
-            opt['acols'] = bdesc.shape[0]
+            opt["acols"] = bdesc.shape[0]
 
-        opt['annz'] = avals.shape[0]
+        opt["annz"] = avals.shape[0]
 
         call = """
             {d.prefix}SpMatDescr_t matA;
@@ -471,7 +503,7 @@ class ExpandCSRMMGPUSparse(ExpandTransformation):
             gpuFree(dBuffer);
         """.format_map(opt)
 
-        code = (call_prefix + call + call_suffix)
+        code = call_prefix + call + call_suffix
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             node.in_connectors,
@@ -490,8 +522,8 @@ class ExpandCSRMMGPUSparse(ExpandTransformation):
                 ppl.Pipeline([OffloadToAccelerator()]).apply_pass(nsdfg, {})
                 return nsdfg
 
-            nsdfg = dace.SDFG('nested_gemm')
-            copies = [('_a_rows', arows), ('_a_cols', acols), ('_a_vals', avals), ('_b', bdesc), ('_c', cdesc)]
+            nsdfg = dace.SDFG("nested_gemm")
+            copies = [("_a_rows", arows), ("_a_cols", acols), ("_a_vals", avals), ("_b", bdesc), ("_c", cdesc)]
             for name, desc in copies:
                 if isinstance(desc, dt.View):
                     dcopy = desc.as_array()
@@ -503,35 +535,35 @@ class ExpandCSRMMGPUSparse(ExpandTransformation):
                 nsdfg.add_datadesc(name, dcopy)
                 dcopy_gpu.transient = True
                 dcopy_gpu.storage = dace.StorageType.GPU_Global
-                nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
+                nsdfg.add_datadesc(name + "_gpu", dcopy_gpu)
             nstate = nsdfg.add_state()
-            ar = nstate.add_read('_a_rows')
-            gar = nstate.add_access('_a_rows_gpu')
-            ac = nstate.add_read('_a_cols')
-            gac = nstate.add_access('_a_cols_gpu')
-            av = nstate.add_read('_a_vals')
-            gav = nstate.add_access('_a_vals_gpu')
-            b = nstate.add_read('_b')
-            gb = nstate.add_access('_b_gpu')
-            c = nstate.add_write('_c')
-            gc = nstate.add_access('_c_gpu')
+            ar = nstate.add_read("_a_rows")
+            gar = nstate.add_access("_a_rows_gpu")
+            ac = nstate.add_read("_a_cols")
+            gac = nstate.add_access("_a_cols_gpu")
+            av = nstate.add_read("_a_vals")
+            gav = nstate.add_access("_a_vals_gpu")
+            b = nstate.add_read("_b")
+            gb = nstate.add_access("_b_gpu")
+            c = nstate.add_write("_c")
+            gc = nstate.add_access("_c_gpu")
 
             # Reset code and connectors
             tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
             tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
 
             nstate.add_node(tasklet)
-            nstate.add_nedge(ar, gar, dace.Memlet.from_array('_a_rows', arows))
-            nstate.add_nedge(ac, gac, dace.Memlet.from_array('_a_cols', acols))
-            nstate.add_nedge(av, gav, dace.Memlet.from_array('_a_vals', avals))
-            nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
+            nstate.add_nedge(ar, gar, dace.Memlet.from_array("_a_rows", arows))
+            nstate.add_nedge(ac, gac, dace.Memlet.from_array("_a_cols", acols))
+            nstate.add_nedge(av, gav, dace.Memlet.from_array("_a_vals", avals))
+            nstate.add_nedge(b, gb, dace.Memlet.from_array("_b", bdesc))
 
-            nstate.add_edge(gar, None, tasklet, '_conn_a_rows', dace.Memlet.from_array('_a_rows_gpu', arows))
-            nstate.add_edge(gac, None, tasklet, '_conn_a_cols', dace.Memlet.from_array('_a_cols_gpu', arows))
-            nstate.add_edge(gav, None, tasklet, '_conn_a_vals', dace.Memlet.from_array('_a_vals_gpu', arows))
-            nstate.add_edge(gb, None, tasklet, '_conn_b', dace.Memlet.from_array('_b_gpu', bdesc))
-            nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
-            nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
+            nstate.add_edge(gar, None, tasklet, "_conn_a_rows", dace.Memlet.from_array("_a_rows_gpu", arows))
+            nstate.add_edge(gac, None, tasklet, "_conn_a_cols", dace.Memlet.from_array("_a_cols_gpu", arows))
+            nstate.add_edge(gav, None, tasklet, "_conn_a_vals", dace.Memlet.from_array("_a_vals_gpu", arows))
+            nstate.add_edge(gb, None, tasklet, "_conn_b", dace.Memlet.from_array("_b_gpu", bdesc))
+            nstate.add_edge(tasklet, "_conn_c", gc, None, dace.Memlet.from_array("_c_gpu", cdesc))
+            nstate.add_nedge(gc, c, dace.Memlet.from_array("_c", cdesc))
 
             return nsdfg
         # End of copy to GPU
@@ -563,7 +595,7 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandCSRMMPure,
         "MKL": ExpandCSRMMMKL,
         "cuSPARSE": ExpandCSRMMCuSPARSE,
-        "hipSPARSE": ExpandCSRMMHipSPARSE
+        "hipSPARSE": ExpandCSRMMHipSPARSE,
     }
     # The ``sparse`` library has no config-schema entry, so an unset node resolved to nothing and
     # raised "No implementation or default implementation specified" at codegen. ``pure`` is the
@@ -572,22 +604,30 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     transB = properties.Property(dtype=bool, category="Semantics", desc="Whether to transpose B before multiplying")
-    alpha = properties.Property(allow_none=False,
-                                default=1,
-                                category="Semantics",
-                                desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = properties.Property(allow_none=False,
-                               default=0,
-                               category="Semantics",
-                               desc="A scalar which will be multiplied with C before adding C")
+    alpha = properties.Property(
+        allow_none=False,
+        default=1,
+        category="Semantics",
+        desc="A scalar which will be multiplied with A @ B before adding C",
+    )
+    beta = properties.Property(
+        allow_none=False,
+        default=0,
+        category="Semantics",
+        desc="A scalar which will be multiplied with C before adding C",
+    )
 
     def __init__(self, name, location=None, transB=False, alpha=1, beta=0):
-        super().__init__(name,
-                         location=location,
-                         inputs=(OrderedSet(
-                             ('_a_rows', '_a_cols', '_a_vals', '_b', '_cin')) if beta != 0 else OrderedSet(
-                                 ('_a_rows', '_a_cols', '_a_vals', '_b'))),
-                         outputs={"_c"})
+        super().__init__(
+            name,
+            location=location,
+            inputs=(
+                OrderedSet(("_a_rows", "_a_cols", "_a_vals", "_b", "_cin"))
+                if beta != 0
+                else OrderedSet(("_a_rows", "_a_cols", "_a_vals", "_b"))
+            ),
+            outputs={"_c"},
+        )
         self.transB = transB
         self.alpha = alpha
         self.beta = beta
@@ -598,23 +638,23 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected 4 or 5 inputs to CSRMM")
         size4 = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
-            if dst_conn == '_a_rows':
+            if dst_conn == "_a_rows":
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size0 = subset.size()
-            if dst_conn == '_a_cols':
+            if dst_conn == "_a_cols":
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size1 = subset.size()
-            if dst_conn == '_a_vals':
+            if dst_conn == "_a_vals":
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size2 = subset.size()
-            if dst_conn == '_b':
+            if dst_conn == "_b":
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size3 = subset.size()
-            if dst_conn == '_cin':
+            if dst_conn == "_cin":
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size4 = subset.size()
@@ -643,5 +683,4 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
         if len(size5) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size5) == 2 and list(size5) != [A_rows, B_cols]:
-            raise ValueError("Output to matrix-matrix product must agree in the m and n "
-                             "dimensions")
+            raise ValueError("Output to matrix-matrix product must agree in the m and n dimensions")

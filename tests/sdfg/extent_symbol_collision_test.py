@@ -6,23 +6,24 @@ scalar of that name already owns it. The raise names WHICH descriptor collided a
 declare the name as a ``dace.symbol``. The Python frontend reads such a scalar into a symbol
 instead, see ``tests/size_scalar_shape_promotion_test.py``.
 """
+
 import pytest
 
 import dace
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def test_extent_naming_a_descriptor_names_both_sides():
-    sdfg = dace.SDFG('extent_symbol_collision')
-    sdfg.add_scalar('M', dace.int64)
+    sdfg = dace.SDFG("extent_symbol_collision")
+    sdfg.add_scalar("M", dace.int64)
     with pytest.raises(FileExistsError) as info:
-        sdfg.add_array('a', (N, dace.symbol('M', dtype=dace.int64)), dace.float64)
+        sdfg.add_array("a", (N, dace.symbol("M", dtype=dace.int64)), dace.float64)
     message = str(info.value)
-    assert 'M' in message
+    assert "M" in message
     assert '"a"' in message, message
-    assert 'dace.symbol' in message, message
+    assert "dace.symbol" in message, message
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -11,18 +11,24 @@ from dace.library import change_default
 from dace.libraries import blas
 
 MKL_AND_CUBLAS = [
-    pytest.param("cuBLAS",
-                 marks=[
-                     pytest.mark.gpu,
-                     pytest.mark.skipif(not blas.environments.cuBLAS.is_installed(),
-                                        reason='cuBLAS not installed on this machine')
-                 ]),
-    pytest.param("MKL",
-                 marks=[
-                     pytest.mark.mkl,
-                     pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(),
-                                        reason='Intel MKL not installed on this machine')
-                 ]),
+    pytest.param(
+        "cuBLAS",
+        marks=[
+            pytest.mark.gpu,
+            pytest.mark.skipif(
+                not blas.environments.cuBLAS.is_installed(), reason="cuBLAS not installed on this machine"
+            ),
+        ],
+    ),
+    pytest.param(
+        "MKL",
+        marks=[
+            pytest.mark.mkl,
+            pytest.mark.skipif(
+                not blas.environments.IntelMKL.is_installed(), reason="Intel MKL not installed on this machine"
+            ),
+        ],
+    ),
 ]
 
 
@@ -40,7 +46,7 @@ def test_change_default():
 def assert_used_environment(sdfg, impl):
     implementation_to_env = {
         "MKL": blas.environments.IntelMKL.full_class_path(),
-        "cuBLAS": blas.environments.cuBLAS.full_class_path()
+        "cuBLAS": blas.environments.cuBLAS.full_class_path(),
     }
     all_tasklets = (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     environments = {env for n in all_tasklets for env in n.environments}
@@ -49,7 +55,7 @@ def assert_used_environment(sdfg, impl):
 
 
 @pytest.mark.mkl
-@pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(), reason='Intel MKL not installed on this machine')
+@pytest.mark.skipif(not blas.environments.IntelMKL.is_installed(), reason="Intel MKL not installed on this machine")
 def test_gemm_fails_storage_mkl():
 
     with change_default(blas, "MKL"):
@@ -156,21 +162,21 @@ def test_einsum_coefficients_survive_a_json_round_trip_of_the_expanded_gemm():
     from dace.libraries.blas.nodes.gemm import Gemm
 
     n = 4
-    sdfg = dace.SDFG('einsum_coefficient_round_trip')
-    for name in ('a', 'b', 'c'):
+    sdfg = dace.SDFG("einsum_coefficient_round_trip")
+    for name in ("a", "b", "c"):
         sdfg.add_array(name, [n, n], dace.float64)
     state = sdfg.add_state()
-    node = Einsum('einsum')
-    node.einsum_str = 'ij,jk->ik'
+    node = Einsum("einsum")
+    node.einsum_str = "ij,jk->ik"
     node.alpha = 2.0
     node.beta = 0.0
-    node.add_in_connector('a')
-    node.add_in_connector('b')
-    node.add_out_connector('c')
+    node.add_in_connector("a")
+    node.add_in_connector("b")
+    node.add_out_connector("c")
     state.add_node(node)
-    for name in ('a', 'b'):
+    for name in ("a", "b"):
         state.add_edge(state.add_read(name), None, node, name, dace.Memlet.from_array(name, sdfg.arrays[name]))
-    state.add_edge(node, 'c', state.add_write('c'), None, dace.Memlet.from_array('c', sdfg.arrays['c']))
+    state.add_edge(node, "c", state.add_write("c"), None, dace.Memlet.from_array("c", sdfg.arrays["c"]))
     sdfg.expand_library_nodes(recursive=True, predicate=lambda lib: not isinstance(lib, Gemm))
     assert any(isinstance(lib, Gemm) for lib, _ in sdfg.all_nodes_recursive())
 
@@ -183,10 +189,13 @@ def test_einsum_coefficients_survive_a_json_round_trip_of_the_expanded_gemm():
     assert np.allclose(c, 2.0 * (a @ b)), c
 
 
-@pytest.mark.parametrize('subscripts, shapes', [
-    ('ij,kj->ikj', ((3, 5), (4, 5))),
-    ('jb,kb->jkb', ((3, 5), (4, 5))),
-])
+@pytest.mark.parametrize(
+    "subscripts, shapes",
+    [
+        ("ij,kj->ikj", ((3, 5), (4, 5))),
+        ("jb,kb->jkb", ((3, 5), (4, 5))),
+    ],
+)
 def test_a_batch_index_after_a_matrix_index_compiles_and_computes(subscripts, shapes):
     """A batch index after a matrix index leaves no unit-stride matrix dimension, so the batched GEMM
     lowering raised at compile ("sCM or sCN should be 1"): warpx_field_gather's lifted ``ij,kj->ikj``

@@ -5,6 +5,7 @@
 path; the ``EmitCtx`` / ``_generate_code`` helpers pick per-template C++ from an
 operator classification, falling back to a scalar lane loop.
 """
+
 import ast
 from dataclasses import dataclass
 
@@ -20,7 +21,7 @@ from dace.sdfg.narrowing import as_expr
 LANE_ID_MATERIALISER_PREFIX = "lane_id_mat_"
 
 
-def is_python_tasklet(node: 'dace.nodes.Tasklet') -> bool:
+def is_python_tasklet(node: "dace.nodes.Tasklet") -> bool:
     """Whether ``node``'s body is a Python expression, i.e. whether parsing it is even defined.
 
     Every pass that reads ``code.as_string`` as an expression raises on a non-Python body rather
@@ -30,7 +31,7 @@ def is_python_tasklet(node: 'dace.nodes.Tasklet') -> bool:
     return node.language == dace.dtypes.Language.Python
 
 
-def stripped_tasklet_body(node: 'dace.nodes.Tasklet') -> str:
+def stripped_tasklet_body(node: "dace.nodes.Tasklet") -> str:
     """``node``'s code with surrounding whitespace and trailing ``;`` removed."""
     return node.code.as_string.strip().rstrip(";").strip()
 
@@ -46,7 +47,7 @@ def single_assignment(code: str) -> ast.Assign | None:
     return tree.body[0]
 
 
-def is_vectorizable_tasklet(state: 'dace.SDFGState', node: 'dace.nodes.Tasklet') -> bool:
+def is_vectorizable_tasklet(state: "dace.SDFGState", node: "dace.nodes.Tasklet") -> bool:
     """Whether the vectorizer may rewrite ``node`` INTO LANES.
 
     Adds the scope condition to :func:`is_python_tasklet`: a TOP-LEVEL tasklet -- one with no
@@ -87,11 +88,13 @@ def lane_loop_code(widths: tuple[int, ...], rhs: str) -> str:
     return "\n".join(code_lines)
 
 
-def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
-                                   expr: str,
-                                   iter_vars: tuple[str, ...],
-                                   widths: tuple[int, ...],
-                                   name_hint: str = "_sym_tile") -> "dace.nodes.AccessNode":
+def materialise_lane_id_index_tile(
+    inner_state: "dace.SDFGState",
+    expr: str,
+    iter_vars: tuple[str, ...],
+    widths: tuple[int, ...],
+    name_hint: str = "_sym_tile",
+) -> "dace.nodes.AccessNode":
     """Mint a per-lane int64 tile = ``expr`` evaluated at ``(iter_var_k -> iter_var_k + __l_k)``
     for each tile dim ``k`` -- i.e. the function is EXPANDED INSIDE per lane, not widened as if
     contiguous.
@@ -112,6 +115,7 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
     """
     from dace import dtypes, symbolic
     from dace.codegen.common import sym2cpp
+
     sdfg = inner_state.sdfg
     widths = tuple(int(w) for w in widths)
     # Substitute each tile iter-var ``v -> (v + __l<k>)`` INSIDE the (possibly non-affine)
@@ -123,17 +127,21 @@ def materialise_lane_id_index_tile(inner_state: 'dace.SDFGState',
     # int64 by the never-narrow index rule -- this tile IS an index tile, and the gather that
     # consumes it must not see a narrowed offset. The C++ cast below reads the descriptor rather
     # than repeating the spelling, so the two can never disagree.
-    arr_name, index_desc = sdfg.add_array(name_hint,
-                                          shape=widths,
-                                          dtype=dace.int64,
-                                          transient=True,
-                                          storage=dtypes.StorageType.Register,
-                                          find_new_name=True)
-    tasklet = inner_state.add_tasklet(name=f"{LANE_ID_MATERIALISER_PREFIX}{arr_name}",
-                                      inputs=set(),
-                                      outputs={"_out"},
-                                      code=lane_loop_code(widths, f"({index_desc.dtype.ctype})({body_expr})"),
-                                      language=dtypes.Language.CPP)
+    arr_name, index_desc = sdfg.add_array(
+        name_hint,
+        shape=widths,
+        dtype=dace.int64,
+        transient=True,
+        storage=dtypes.StorageType.Register,
+        find_new_name=True,
+    )
+    tasklet = inner_state.add_tasklet(
+        name=f"{LANE_ID_MATERIALISER_PREFIX}{arr_name}",
+        inputs=set(),
+        outputs={"_out"},
+        code=lane_loop_code(widths, f"({index_desc.dtype.ctype})({body_expr})"),
+        language=dtypes.Language.CPP,
+    )
     out_an = inner_state.add_access(arr_name)
     out_subset = ", ".join(f"0:{w}" for w in widths)
     inner_state.add_edge(tasklet, "_out", out_an, None, Memlet(f"{arr_name}[{out_subset}]"))
@@ -213,6 +221,7 @@ class EmitCtx:
     set, the emitter routes to the ``op + "_masked"`` template + passes
     ``mask=<name>``, else uses the unsuffixed template.
     """
+
     state: dace.SDFGState
     node: dace.nodes.Tasklet
     templates: dict[str, str]
@@ -239,8 +248,15 @@ def _template_key(ctx: EmitCtx, base_op: str) -> str:
     return base_op
 
 
-def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: int | float | str | None,
-                   const2_: int | float | str | None, lhs_: str, op_: str) -> str:
+def _generate_code(
+    ctx: EmitCtx,
+    rhs1_: str | None,
+    rhs2_: str | None,
+    const1_: int | float | str | None,
+    const2_: int | float | str | None,
+    lhs_: str,
+    op_: str,
+) -> str:
     """Generate the vectorized C++ code string for one tasklet.
 
     Uses the matching template (array-array, array-scalar, constant variants,
@@ -288,13 +304,9 @@ def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: 
                 if constant is None:
                     # Single array or repeated array case
                     key = _template_key(ctx, op_)
-                    return templates[key].format(rhs1=rhs,
-                                                 rhs2=rhs,
-                                                 lhs=lhs_,
-                                                 op=op_,
-                                                 vector_width=vw,
-                                                 dtype=dtype_,
-                                                 mask=mask_arg)
+                    return templates[key].format(
+                        rhs1=rhs, rhs2=rhs, lhs=lhs_, op=op_, vector_width=vw, dtype=dtype_, mask=mask_arg
+                    )
                 else:
                     # Single array + constant
                     cop_ = None
@@ -308,24 +320,22 @@ def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: 
                     # constant version may not be in templates
                     if cop_ in templates:
                         key = _template_key(ctx, cop_)
-                        return templates[key].format(rhs1=rhs,
-                                                     constant=_roundtrip_constant(constant),
-                                                     lhs=lhs_,
-                                                     op=op_,
-                                                     vector_width=vw,
-                                                     dtype=dtype_,
-                                                     mask=mask_arg)
+                        return templates[key].format(
+                            rhs1=rhs,
+                            constant=_roundtrip_constant(constant),
+                            lhs=lhs_,
+                            op=op_,
+                            vector_width=vw,
+                            dtype=dtype_,
+                            mask=mask_arg,
+                        )
 
             else:
                 # Two arrays
                 key = _template_key(ctx, op_)
-                return templates[key].format(rhs1=rhs1_,
-                                             rhs2=rhs2_,
-                                             lhs=lhs_,
-                                             op=op_,
-                                             vector_width=vw,
-                                             dtype=dtype_,
-                                             mask=mask_arg)
+                return templates[key].format(
+                    rhs1=rhs1_, rhs2=rhs2_, lhs=lhs_, op=op_, vector_width=vw, dtype=dtype_, mask=mask_arg
+                )
 
     # Tasklet bodies must be free of Python ``if ... else ...``: canonicalize
     # passes needing a ternary emit ``ITE(c, t, e)`` (``dace.symbolic`` alias of
@@ -335,9 +345,11 @@ def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: 
     # the arms + miscompile, so refuse loudly.
     code_str = (ctx.node.code.as_string or "").strip()
     if " if " in code_str and " else " in code_str:
-        raise NotImplementedError(f"vectorization: tasklet {ctx.node.label!r} carries a Python ternary "
-                                  f"({code_str!r}); producers must emit ``ITE(c, t, e)`` instead so the "
-                                  f"vectorizer can lower it as a ``TERNARY_ARRAY``.")
+        raise NotImplementedError(
+            f"vectorization: tasklet {ctx.node.label!r} carries a Python ternary "
+            f"({code_str!r}); producers must emit ``ITE(c, t, e)`` instead so the "
+            f"vectorizer can lower it as a ``TERNARY_ARRAY``."
+        )
 
     # Fallback: unsupported operator (or op with no ``_masked`` template). When
     # ``ctx.mask_connector`` set, the per-lane write MUST be iter-mask-gated: the
@@ -358,7 +370,8 @@ def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: 
     if rhs_left is None or rhs_right is None:
         if op_ not in UNARY_OPERATORS and op_ in BINARY_OPERATORS:
             raise Exception(
-                f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op_}")
+                f"Invalid operand configuration for fallback vectorization. {rhs_left}, {rhs_right}, {lhs_expr}, {op_}"
+            )
 
     if rhs_left is None or rhs_right is None:
         rhs = rhs_left if rhs_left is not None else rhs_right
@@ -400,8 +413,9 @@ def _generate_code(ctx: EmitCtx, rhs1_: str | None, rhs2_: str | None, const1_: 
     return "\n".join(code_lines)
 
 
-def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str,
-                                      vector_map_param: str) -> bool:
+def _connector_reads_invariant_scalar(
+    state: dace.SDFGState, node: dace.nodes.Tasklet, conn: str, vector_map_param: str
+) -> bool:
     """Whether input connector ``conn`` reads a lane-invariant value.
 
     A subset NOT mentioning the vectorized map param is constant across the W
@@ -498,13 +512,15 @@ def _connector_reads_invariant_scalar(state: dace.SDFGState, node: dace.nodes.Ta
             outer_desc = parent_state.sdfg.arrays.get(outer_ie.data.data)
             if outer_desc is not None and outer_desc.transient:
                 try:
-                    if (int(as_expr(required(outer_sub).num_elements())) > 1 and
-                            dace.symbolic.simplify(required(outer_sub).num_elements() - outer_desc.total_size) == 0):
+                    if (
+                        int(as_expr(required(outer_sub).num_elements())) > 1
+                        and dace.symbolic.simplify(required(outer_sub).num_elements() - outer_desc.total_size) == 0
+                    ):
                         return False
                 except (TypeError, ValueError):
                     pass
             # ALL dims' begins must be lane-invariant for a clean broadcast.
-            for (b, _e, _s) in required(outer_sub):
+            for b, _e, _s in required(outer_sub):
                 if vector_map_param in {str(s) for s in b.free_symbols}:
                     return False
             return True
@@ -538,8 +554,11 @@ def _scalar_operand_expr(state: dace.SDFGState, node: dace.nodes.Tasklet, conn: 
         # by-value scalar (TSVC s176: ``double __in2 = c[0];``). Subscripting it
         # would be invalid C++.
         try:
-            shape_is_one = (isinstance(desc, dace.data.Array) and len(desc.shape) == 1
-                            and bool(dace.symbolic.simplify(desc.shape[0] - 1) == 0))
+            shape_is_one = (
+                isinstance(desc, dace.data.Array)
+                and len(desc.shape) == 1
+                and bool(dace.symbolic.simplify(desc.shape[0] - 1) == 0)
+            )
             ne_is_one = int(as_expr(required(ie.data.subset).num_elements())) == 1
         except (TypeError, ValueError):
             shape_is_one = False

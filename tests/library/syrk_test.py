@@ -12,6 +12,7 @@ together here. ``alpha`` / ``beta`` are covered both as compile-time properties 
 runtime scalar connectors (``_alpha`` / ``_beta``); the vendor path is exercised on the
 CPU (OpenBLAS / MKL) and, with device-resident operands, on the GPU (cuBLAS).
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -61,11 +62,10 @@ def device_wrap(sdfg, state, mats):
         dev = name + "_dev"
         sdfg.add_datadesc(
             dev,
-            dace.data.Array(desc.dtype,
-                            desc.shape,
-                            storage=dace.StorageType.GPU_Global,
-                            transient=True,
-                            strides=desc.strides))
+            dace.data.Array(
+                desc.dtype, desc.shape, storage=dace.StorageType.GPU_Global, transient=True, strides=desc.strides
+            ),
+        )
         for n in state.data_nodes():
             if n.data == name:
                 n.data = dev
@@ -98,8 +98,14 @@ def sdfg_name(kind, dtype, alpha, beta, uplo, trans, impl, alpha_rt, beta_rt, va
         return str(value).replace(".", "p").replace("-", "m")
 
     parts = [
-        kind, uplo, trans, impl, f"a{part(alpha)}", f"b{part(beta)}", f"rt{int(alpha_rt)}{int(beta_rt)}",
-        dtype.to_string()
+        kind,
+        uplo,
+        trans,
+        impl,
+        f"a{part(alpha)}",
+        f"b{part(beta)}",
+        f"rt{int(alpha_rt)}{int(beta_rt)}",
+        dtype.to_string(),
     ]
     if variant:
         parts.append(variant)
@@ -124,13 +130,15 @@ def make_sdfg(kind, dtype, n, k, alpha, beta, uplo, trans, impl, alpha_rt=False,
 
     state = sdfg.add_state()
     cls = Syrk if kind == "syrk" else Syr2k
-    node = cls(kind,
-               uplo=uplo,
-               trans=trans,
-               alpha=1 if alpha_rt else alpha,
-               beta=1 if beta_rt else beta,
-               alpha_input=alpha_rt,
-               beta_input=beta_rt)
+    node = cls(
+        kind,
+        uplo=uplo,
+        trans=trans,
+        alpha=1 if alpha_rt else alpha,
+        beta=1 if beta_rt else beta,
+        alpha_input=alpha_rt,
+        beta_input=beta_rt,
+    )
     node.implementation = impl
     if gpu:
         # Device operands + host coefficient scalars leave the node schedule ambiguous to
@@ -164,18 +172,9 @@ def run(kind, impl, dtype, npdtype, tol, uplo, trans, alpha, beta, alpha_rt=Fals
     A, B, C = make_operands(kind, n, k, trans, npdtype, seed)
     ref = reference(kind, A, B, C, npdtype(alpha), npdtype(beta), uplo, trans)
 
-    sdfg = make_sdfg(kind,
-                     dtype,
-                     n,
-                     k,
-                     alpha,
-                     beta,
-                     uplo,
-                     trans,
-                     impl,
-                     alpha_rt=alpha_rt,
-                     beta_rt=beta_rt,
-                     variant=variant)
+    sdfg = make_sdfg(
+        kind, dtype, n, k, alpha, beta, uplo, trans, impl, alpha_rt=alpha_rt, beta_rt=beta_rt, variant=variant
+    )
     Cwork = C.copy()
     kwargs = dict(A=A.copy(), C=Cwork)
     if kind == "syr2k":
@@ -229,8 +228,9 @@ def test_opposite_triangle_untouched(kind, impl, uplo):
     if kind == "syr2k":
         kwargs["B"] = B.copy()
     sdfg(**kwargs)
-    assert np.array_equal(Cwork[other], np.full(len(other[0]), UNTOUCHED)), \
+    assert np.array_equal(Cwork[other], np.full(len(other[0]), UNTOUCHED)), (
         "the non-referenced triangle of C was modified"
+    )
 
 
 def test_syrk_validate_accepts_reparsed_symbol_instances():

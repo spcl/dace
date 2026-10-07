@@ -15,6 +15,7 @@ addend below the fp32 epsilon of its partner vanishes entirely, and an integer p
 to the nearest even. The scalar backend (``tile_ops/scalar.h``) has always computed in ``T``, so
 these also pin the two backends to the same answer.
 """
+
 import numpy as np
 import pytest
 
@@ -38,7 +39,7 @@ def vectorized(program, **symbols) -> dace.SDFG:
         sdfg.specialize(symbols)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -67,8 +68,10 @@ def test_a_double_tile_keeps_the_bits_float_would_have_dropped():
     vectorized(add_then_scale)(a=a, b=b, c=c)
 
     reference = (a + b) * a
-    assert np.array_equal(c, reference), (f'the double tile answered {c[0]!r}, not {reference[0]!r}; '
-                                          f'{"a float32 compute type" if c[0] == 1.0 else "some other narrowing"}')
+    assert np.array_equal(c, reference), (
+        f"the double tile answered {c[0]!r}, not {reference[0]!r}; "
+        f"{'a float32 compute type' if c[0] == 1.0 else 'some other narrowing'}"
+    )
 
 
 @pytest.mark.gpu
@@ -81,8 +84,9 @@ def test_a_double_division_is_not_a_float_division():
 
     vectorized(divide_doubles)(a=a, b=b, c=c)
 
-    assert np.allclose(c, a / b, rtol=1e-15, atol=0.0), \
-        f'max relative error {np.max(np.abs(c - a / b) / np.abs(a / b)):.3e} against the fp64 quotient'
+    assert np.allclose(c, a / b, rtol=1e-15, atol=0.0), (
+        f"max relative error {np.max(np.abs(c - a / b) / np.abs(a / b)):.3e} against the fp64 quotient"
+    )
 
 
 @pytest.mark.gpu
@@ -95,10 +99,10 @@ def test_an_int64_tile_survives_two_to_the_twenty_fourth():
 
     vectorized(add_int64)(a=a, b=b, c=c)
 
-    assert np.array_equal(c, a + b), f'{int((c != a + b).sum())} of {N} lanes differ from the integer sum'
+    assert np.array_equal(c, a + b), f"{int((c != a + b).sum())} of {N} lanes differ from the integer sum"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_double_tile_keeps_the_bits_float_would_have_dropped()
     test_a_double_division_is_not_a_float_division()
     test_an_int64_tile_survives_two_to_the_twenty_fourth()

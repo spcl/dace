@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Global layout assignment over the line graph: per-array Viterbi DP, brute-force oracle, per-op greedy baseline, and conflict report."""
+
 import itertools
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -11,6 +12,7 @@ from dace.optionals import required
 @dataclass
 class AssignmentCosts:
     """Pluggable cost table: per-array layouts, node/relayout costs, entry/exit conversion flags, and untrusted markers."""
+
     layouts: Dict[str, List[Layout]]
     node_cost: Dict[Tuple[str, int, str], float]
     relayout_cost: Dict[Tuple[str, str, str], float] = field(default_factory=dict)
@@ -24,20 +26,22 @@ class AssignmentCosts:
             if not layouts:
                 raise ValueError(f"AssignmentCosts: '{array}' has no candidate layouts")
             if not layouts[0].is_identity:
-                raise ValueError(f"AssignmentCosts: '{array}' must enumerate its identity/baseline "
-                                 f"layout FIRST (tie-break law); got '{layouts[0].tag}'")
+                raise ValueError(
+                    f"AssignmentCosts: '{array}' must enumerate its identity/baseline "
+                    f"layout FIRST (tie-break law); got '{layouts[0].tag}'"
+                )
             tags = [l.tag for l in layouts]
             if len(set(tags)) != len(tags):
                 raise ValueError(f"AssignmentCosts: duplicate layout tags for '{array}': {tags}")
             for k in range(n_kernels):
                 for layout in layouts:
                     if (array, k, layout.tag) not in self.node_cost:
-                        raise ValueError(f"AssignmentCosts: missing node cost ({array}, kernel {k}, "
-                                         f"'{layout.tag}')")
+                        raise ValueError(f"AssignmentCosts: missing node cost ({array}, kernel {k}, '{layout.tag}')")
             lw = self.last_write_kernel.get(array)
             if lw is not None and not 0 <= lw < n_kernels:
-                raise ValueError(f"AssignmentCosts: last_write_kernel[{array!r}] = {lw} out of "
-                                 f"range for {n_kernels} kernels")
+                raise ValueError(
+                    f"AssignmentCosts: last_write_kernel[{array!r}] = {lw} out of range for {n_kernels} kernels"
+                )
             if len(layouts) > 1:
                 if changes_allowed:
                     pairs = itertools.permutations(tags, 2)
@@ -50,13 +54,13 @@ class AssignmentCosts:
                         pairs += [(t, tags[0]) for t in tags[1:]]
                 for a, b in pairs:
                     if (array, a, b) not in self.relayout_cost:
-                        raise ValueError(f"AssignmentCosts: missing relayout cost ({array}, "
-                                         f"'{a}' -> '{b}')")
+                        raise ValueError(f"AssignmentCosts: missing relayout cost ({array}, '{a}' -> '{b}')")
 
 
 @dataclass
 class ArrayTrajectory:
     """One array's solved trajectory: layout tag per kernel and its total cost."""
+
     array: str
     tags: List[str]
     cost: float
@@ -77,7 +81,7 @@ def trajectory_cost(costs: AssignmentCosts, array: str, tags: List[str]) -> floa
     restored = lw is not None and tags[lw] == identity
     for k in range(len(tags) - 1):
         if tags[k] != tags[k + 1]:
-            exit_moved_here = (lw is not None and k >= lw and tags[k + 1] == identity and not restored)
+            exit_moved_here = lw is not None and k >= lw and tags[k + 1] == identity and not restored
             if not exit_moved_here:
                 total += costs.relayout_cost[(array, tags[k], tags[k + 1])]
         if lw is not None and k + 1 >= lw and tags[k + 1] == identity:
@@ -85,10 +89,9 @@ def trajectory_cost(costs: AssignmentCosts, array: str, tags: List[str]) -> floa
     return total
 
 
-def per_array_dp(costs: AssignmentCosts,
-                 n_kernels: int,
-                 allow_changes: bool = True,
-                 locked_before: Optional[Set[int]] = None) -> Dict[str, ArrayTrajectory]:
+def per_array_dp(
+    costs: AssignmentCosts, n_kernels: int, allow_changes: bool = True, locked_before: Optional[Set[int]] = None
+) -> Dict[str, ArrayTrajectory]:
     """Viterbi DP: cheapest per-array layout trajectory under `trajectory_cost`; ties resolve to the
     earlier-enumerated layout. ``locked_before`` holds kernel indices ``k`` whose transition from ``k-1``
     may not change layout (loop-span internal transitions, body-uniform); the layout at such ``k`` is forced
@@ -117,7 +120,7 @@ def per_array_dp(costs: AssignmentCosts,
         dp: List[List[Optional[Tuple[float, Tuple[int, ...]]]]] = [[None, None] for _ in tags]
         for j in range(len(tags)):
             flag = lw == 0 and tags[j] == identity
-            dp[j][flag] = (node(0, j), (j, ))
+            dp[j][flag] = (node(0, j), (j,))
         for k in range(1, n_kernels):
             new_dp: List[List[Optional[Tuple[float, Tuple[int, ...]]]]] = [[None, None] for _ in tags]
             for j in range(len(tags)):
@@ -129,12 +132,12 @@ def per_array_dp(costs: AssignmentCosts,
                         if i != j:
                             if not allow_changes or k in locked_before:
                                 continue
-                            exit_moved_here = (lw is not None and k - 1 >= lw and tags[j] == identity and not flag)
+                            exit_moved_here = lw is not None and k - 1 >= lw and tags[j] == identity and not flag
                             edge = 0.0 if exit_moved_here else costs.relayout_cost[(array, tags[i], tags[j])]
                         else:
                             edge = 0.0
                         new_flag = flag or new_flag_base
-                        candidate = (required(dp[i][flag])[0] + edge, required(dp[i][flag])[1] + (j, ))
+                        candidate = (required(dp[i][flag])[0] + edge, required(dp[i][flag])[1] + (j,))
                         if new_dp[j][new_flag] is None or candidate < new_dp[j][new_flag]:  # strict <
                             new_dp[j][new_flag] = candidate
                 for flag in (False, True):  # node cost is common to every path into (j, flag)
@@ -146,11 +149,13 @@ def per_array_dp(costs: AssignmentCosts,
     return solution
 
 
-def brute_force_trajectories(costs: AssignmentCosts,
-                             n_kernels: int,
-                             allow_changes: bool = True,
-                             cap: int = 1_000_000,
-                             locked_before: Optional[Set[int]] = None) -> Dict[str, ArrayTrajectory]:
+def brute_force_trajectories(
+    costs: AssignmentCosts,
+    n_kernels: int,
+    allow_changes: bool = True,
+    cap: int = 1_000_000,
+    locked_before: Optional[Set[int]] = None,
+) -> Dict[str, ArrayTrajectory]:
     """Enumeration oracle: every trajectory per array, raising if the space exceeds `cap`. ``locked_before``
     (see :func:`per_array_dp`) filters out trajectories that change layout across a locked transition, so this
     stays a valid oracle for the body-uniform DP."""
@@ -159,12 +164,15 @@ def brute_force_trajectories(costs: AssignmentCosts,
     solution: Dict[str, ArrayTrajectory] = {}
     for array, layouts in costs.layouts.items():
         tags = [l.tag for l in layouts]
-        space = len(tags)**n_kernels if allow_changes else len(tags)
+        space = len(tags) ** n_kernels if allow_changes else len(tags)
         if space > cap:
-            raise ValueError(f"brute_force_trajectories: {space} trajectories for '{array}' exceed "
-                             f"the cap ({cap}); raise it explicitly or use the DP")
-        candidates = (itertools.product(tags, repeat=n_kernels) if allow_changes else
-                      ((tag, ) * n_kernels for tag in tags))
+            raise ValueError(
+                f"brute_force_trajectories: {space} trajectories for '{array}' exceed "
+                f"the cap ({cap}); raise it explicitly or use the DP"
+            )
+        candidates = (
+            itertools.product(tags, repeat=n_kernels) if allow_changes else ((tag,) * n_kernels for tag in tags)
+        )
         best: Optional[ArrayTrajectory] = None
         for trajectory in candidates:
             if any(trajectory[k] != trajectory[k - 1] for k in locked_before):
@@ -176,9 +184,9 @@ def brute_force_trajectories(costs: AssignmentCosts,
     return solution
 
 
-def greedy_assignment(costs: AssignmentCosts,
-                      n_kernels: int,
-                      locked_before: Optional[Set[int]] = None) -> Dict[str, ArrayTrajectory]:
+def greedy_assignment(
+    costs: AssignmentCosts, n_kernels: int, locked_before: Optional[Set[int]] = None
+) -> Dict[str, ArrayTrajectory]:
     """Greedy baseline: each kernel picks its lowest node-cost layout, paying whatever boundary conversions
     that implies. Kernels welded by a ``locked_before`` transition (a loop body, see :func:`per_array_dp`) must
     share ONE layout, so such a run picks the layout with the lowest summed node cost -- that keeps the
@@ -207,6 +215,7 @@ def greedy_assignment(costs: AssignmentCosts,
 @dataclass
 class ConflictRow:
     """One array's conflict-report row: per-kernel preferences, chosen trajectory, cost triad, and untrusted (contended) flag."""
+
     array: str
     per_kernel_preference: List[str]
     conflicting: bool
@@ -217,9 +226,9 @@ class ConflictRow:
     untrusted: bool = False
 
 
-def conflict_report(costs: AssignmentCosts,
-                    n_kernels: int,
-                    locked_before: Optional[Set[int]] = None) -> List[ConflictRow]:
+def conflict_report(
+    costs: AssignmentCosts, n_kernels: int, locked_before: Optional[Set[int]] = None
+) -> List[ConflictRow]:
     """Per-array report: per-kernel preferences, whether they disagree, and the greedy/global/single cost triad.
 
     ``locked_before`` (see :func:`per_array_dp`) MUST be passed for a looped SDFG -- pass
@@ -234,14 +243,17 @@ def conflict_report(costs: AssignmentCosts,
         preferences = greedy[array].tags
         chosen = dp[array].tags
         rows.append(
-            ConflictRow(array=array,
-                        per_kernel_preference=preferences,
-                        conflicting=len(set(preferences)) > 1,
-                        chosen=chosen,
-                        greedy_cost=greedy[array].cost,
-                        global_cost=dp[array].cost,
-                        single_layout_cost=single[array].cost,
-                        untrusted=any((array, k, tag) in costs.untrusted for k, tag in enumerate(chosen))))
+            ConflictRow(
+                array=array,
+                per_kernel_preference=preferences,
+                conflicting=len(set(preferences)) > 1,
+                chosen=chosen,
+                greedy_cost=greedy[array].cost,
+                global_cost=dp[array].cost,
+                single_layout_cost=single[array].cost,
+                untrusted=any((array, k, tag) in costs.untrusted for k, tag in enumerate(chosen)),
+            )
+        )
     return rows
 
 
@@ -251,14 +263,17 @@ def format_conflict_report(rows: List[ConflictRow]) -> str:
         f"{'greedy':>12} {'global':>12} {'single':>12}  trust"
     ]
     for r in rows:
-        lines.append(f"{r.array:<10} {str(r.conflicting):<8} {'/'.join(r.per_kernel_preference):<28} "
-                     f"{'/'.join(r.chosen):<28} {r.greedy_cost:>12.4g} {r.global_cost:>12.4g} "
-                     f"{r.single_layout_cost:>12.4g}  {'CONTENDED' if r.untrusted else 'ok'}")
+        lines.append(
+            f"{r.array:<10} {str(r.conflicting):<8} {'/'.join(r.per_kernel_preference):<28} "
+            f"{'/'.join(r.chosen):<28} {r.greedy_cost:>12.4g} {r.global_cost:>12.4g} "
+            f"{r.single_layout_cost:>12.4g}  {'CONTENDED' if r.untrusted else 'ok'}"
+        )
     return "\n".join(lines)
 
 
-def to_assignment(trajectories: Dict[str, ArrayTrajectory], layouts: Dict[str,
-                                                                          List[Layout]]) -> Dict[str, List[Layout]]:
+def to_assignment(
+    trajectories: Dict[str, ArrayTrajectory], layouts: Dict[str, List[Layout]]
+) -> Dict[str, List[Layout]]:
     """Convert trajectories to `apply_assignment` input; drops arrays whose trajectory is all-identity."""
     by_tag = {array: {l.tag: l for l in ls} for array, ls in layouts.items()}
     assignment = {}

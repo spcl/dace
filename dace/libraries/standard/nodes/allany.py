@@ -37,6 +37,7 @@ Expansions (shared by both nodes):
 Same result either way; the choice is a cost-model trade-off (early exit
 vs parallelisability).
 """
+
 import dace
 from dace import library, nodes, properties
 from dace.transformation.transformation import ExpandTransformation
@@ -51,12 +52,10 @@ def _validate_edges(node, sdfg, state):
     edges -- one edge per connector, dtype taken at the boundary."""
     in_edges = [ie for ie in state.in_edges(node) if ie.dst_conn == _INPUT_CONNECTOR_NAME]
     if len(in_edges) != 1:
-        raise ValueError(f"{type(node).__name__} expects exactly one "
-                         f"``{_INPUT_CONNECTOR_NAME}`` input edge.")
+        raise ValueError(f"{type(node).__name__} expects exactly one ``{_INPUT_CONNECTOR_NAME}`` input edge.")
     out_edges = [oe for oe in state.out_edges(node) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
     if len(out_edges) != 1:
-        raise ValueError(f"{type(node).__name__} expects exactly one "
-                         f"``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
+        raise ValueError(f"{type(node).__name__} expects exactly one ``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
     ie, oe = in_edges[0], out_edges[0]
     return sdfg.arrays[ie.data.data], ie.data.subset, sdfg.arrays[oe.data.data], oe.data.subset
 
@@ -85,7 +84,7 @@ def _descriptors(node, parent_sdfg, parent_state):
     mask, mask_subset, out, out_subset = _validate_edges(node, parent_sdfg, parent_state)
     # int_floor, never `//`: `(e + 1 - b) // s` over a symbolic subset is a sum numerator.
     mask_shape = [dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in mask_subset]
-    out_shape = ([dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in out_subset] if out_subset.dims() else [1])
+    out_shape = [dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in out_subset] if out_subset.dims() else [1]
     axis = _fortran_dim_to_axis(node.dim, len(mask_shape))
     mask_desc = dace.data.Array(mask.dtype, mask_shape, storage=mask.storage)
     out_desc = dace.data.Array(dace.bool_, out_shape, storage=out.storage)
@@ -148,9 +147,11 @@ def _sequential_sdfg(node, parent_state, parent_sdfg, is_all):
     """Whole-array short-circuit via the Python frontend's ``break``."""
     mask_desc, out_desc, mask_shape, axis = _descriptors(node, parent_sdfg, parent_state)
     if axis is not None or len(mask_shape) != 1:
-        raise NotImplementedError(f"{type(node).__name__} 'sequential' (short-circuit) handles "
-                                  "only a rank-1 whole-array reduce; use 'reduction' for "
-                                  "dim-wise / multi-rank.")
+        raise NotImplementedError(
+            f"{type(node).__name__} 'sequential' (short-circuit) handles "
+            "only a rank-1 whole-array reduce; use 'reduction' for "
+            "dim-wise / multi-rank."
+        )
     n = mask_shape[0]
     if is_all:
 

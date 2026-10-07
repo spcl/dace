@@ -13,6 +13,7 @@ exposed the exact ``cov[i, i:M]``. Both halves have to hold for the loop to lift
 must be rebuilt (``PropagateMemlets``), and the mirrored ragged writes must then be certified
 disjoint -- so the assertion here is on the pipeline, not on either piece.
 """
+
 import numpy as np
 
 import dace
@@ -25,10 +26,10 @@ from dace.transformation.passes.propagate_memlets import PropagateMemlets
 #: ``z3-solver`` is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
 #: LoopToMap and the canonicalize parallelization band query the oracle), so an absent solver is a
 #: broken install, not a reason to report green.
-assert smt_dependence.has_z3(), 'z3-solver is a required dependency but the SMT oracle is unavailable'
+assert smt_dependence.has_z3(), "z3-solver is a required dependency but the SMT oracle is unavailable"
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 @dace.program
@@ -50,7 +51,8 @@ def scope_summaries(sdfg: dace.SDFG):
     return {
         (st.label, st.edge_id(e)): str(e.data.subset)
         for st in sdfg.states()
-        for e in st.edges() if isinstance(e.src, nodes.MapExit)
+        for e in st.edges()
+        if isinstance(e.src, nodes.MapExit)
     }
 
 
@@ -92,7 +94,7 @@ def test_propagating_is_value_preserving():
     assert np.allclose(got, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_mirrored_column_loop_parallelizes()
     test_canonicalize_leaves_the_scope_summaries_at_a_fixpoint()
     test_propagating_is_value_preserving()

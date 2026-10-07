@@ -25,7 +25,8 @@ from dace.transformation.passes.vectorization.utils.tile_dims import (
     classify_tile_access,
 )
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim, )
+    VectorizeCPUMultiDim,
+)
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -78,8 +79,9 @@ def test_classify_tile_access_indirect_returns_gather():
     here.)"""
     from dace import subsets
     from dace.symbolic import pystr_to_symbolic
+
     indirect = subsets.Range([(pystr_to_symbolic("idx[i]"), pystr_to_symbolic("idx[i]"), 1)])
-    cls = classify_tile_access(indirect, array_strides=(1, ), tile_iter_vars=("i", ))
+    cls = classify_tile_access(indirect, array_strides=(1,), tile_iter_vars=("i",))
     assert cls.kind == TileAccessKind.GATHER
 
 
@@ -103,7 +105,7 @@ def test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(n):
     vec = _build_1d_indirect_stencil()
     vec.name = f"ind1d_vec{n}"
     canonicalize(vec, validate=True)  # the tiler's input contract
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec, {})
 
     ref.compile()(a=a_ref, b=b.copy(), idx=idx.copy(), N=n)
     vec.compile()(a=a_vec, b=b.copy(), idx=idx.copy(), N=n)
@@ -118,12 +120,13 @@ def test_1d_indirect_stencil_emits_tilegather():
     that happens to compute the same values."""
     sdfg = _build_1d_indirect_stencil()
     canonicalize(sdfg, validate=True)  # the tiler's input contract
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     loads = [node for node, node_state in sdfg.all_nodes_recursive() if isinstance(node, TileGather)]
     gathers = [node for node in loads if tuple(node.gather_dims)]
     assert gathers, f"expected a TileGather (gather) for the 1D data gather, got {[n.label for n in loads]}"
-    assert all(tuple(node.gather_dims) == (0, ) for node in gathers), \
+    assert all(tuple(node.gather_dims) == (0,) for node in gathers), (
         f"the only gathered dim is the single data dim: {[tuple(n.gather_dims) for n in gathers]}"
+    )
     assert sdfg_masked_loads(sdfg), "the gather reads its lane indices through a masked load of its own"
 
 
@@ -162,15 +165,17 @@ def test_vectorize_cpu_multi_dim_tiles_the_spmv_row_reduction_on_k_only():
     the innermost ``k`` is tiled and its lanes fold into ``y[i]``; ``i`` stays a scalar dim."""
     sdfg = _build_spmv()
     canonicalize(sdfg, validate=True)  # the tiler's input contract
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR,
-                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(4, 8), target_isa=ISA.SCALAR, expand_tile_nodes=False)).apply_pass(
+        sdfg, {}
+    )
 
     steps = [
-        tuple(str(step) for _, _, step in node.map.range) for node, _ in sdfg.all_nodes_recursive()
-        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ['i', 'k']
+        tuple(str(step) for _, _, step in node.map.range)
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.MapEntry) and node.map.params == ["i", "k"]
     ]
-    assert ('1', '8') in steps
-    assert all(i_step == '1' for i_step, _ in steps)
+    assert ("1", "8") in steps
+    assert all(i_step == "1" for i_step, _ in steps)
     assert any(isinstance(node, TileReduce) for node, _ in sdfg.all_nodes_recursive())
 
     sdfg.expand_library_nodes()
@@ -184,7 +189,7 @@ def test_vectorize_cpu_multi_dim_tiles_the_spmv_row_reduction_on_k_only():
     np.testing.assert_allclose(y, A @ x[col], rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     """Element-wise sum reduction ``s += a[i]`` uses WCR; the orchestrator's
     ``NormalizeWCRSource`` pre-pass + ``EmitTileOps`` reduction emission now
@@ -194,8 +199,8 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     contract was the inverse refusal."""
     N = dace.symbol("N")
     sdfg = dace.SDFG(f"reduce_{'x'.join(str(w) for w in widths)}")
-    sdfg.add_array("a", (N, ) if len(widths) == 1 else (N, N), dace.float64)
-    sdfg.add_array("s", (1, ), dace.float64)
+    sdfg.add_array("a", (N,) if len(widths) == 1 else (N, N), dace.float64)
+    sdfg.add_array("s", (1,), dace.float64)
     state = sdfg.add_state("main")
     if len(widths) == 1:
         state.add_mapped_tasklet(
@@ -209,10 +214,7 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     else:
         state.add_mapped_tasklet(
             "sum2",
-            {
-                "i": "0:N",
-                "j": "0:N"
-            },
+            {"i": "0:N", "j": "0:N"},
             {"_a": dace.Memlet("a[i, j]")},
             "_s = _a",
             {"_s": dace.Memlet("s[0]", wcr="lambda a, b: a + b")},
@@ -221,8 +223,9 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     canonicalize(sdfg, validate=True)  # the tiler's input contract
     VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
-    assert any(isinstance(node, TileReduce) for node, _ in sdfg.all_nodes_recursive()), \
+    assert any(isinstance(node, TileReduce) for node, _ in sdfg.all_nodes_recursive()), (
         "the WCR fold must lower to a TileReduce, not stay a scalar accumulation"
+    )
     rng = np.random.default_rng(seed=len(widths))
     n = 37  # divides no width: the masked tail carries part of the sum
     a = rng.random(n if len(widths) == 1 else (n, n))
@@ -231,7 +234,7 @@ def test_reduction_with_wcr_lowers_to_tile_reduce(widths):
     np.testing.assert_allclose(total[0], a.sum(), rtol=1e-12, atol=1e-12)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_classify_tile_access_indirect_returns_gather()
     test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(16)
     test_vectorize_cpu_multi_dim_1d_indirect_stencil_matches_reference(17)
@@ -241,5 +244,5 @@ if __name__ == '__main__':
     test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(8, 24)
     test_vectorize_cpu_multi_dim_2d_indirect_stencil_matches_reference(12, 17)
     test_vectorize_cpu_multi_dim_tiles_the_spmv_row_reduction_on_k_only()
-    test_reduction_with_wcr_lowers_to_tile_reduce((8, ))
+    test_reduction_with_wcr_lowers_to_tile_reduce((8,))
     test_reduction_with_wcr_lowers_to_tile_reduce((4, 8))

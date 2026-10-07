@@ -8,52 +8,52 @@ from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, Control
 
 
 def test_read_write_set():
-    sdfg = dace.SDFG('graph')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_array('B', [10], dace.float64)
-    sdfg.add_array('C', [10], dace.float64)
-    state = sdfg.add_state('state')
-    task1 = state.add_tasklet('work1', {'A'}, {'B'}, 'B = A + 1')
-    task2 = state.add_tasklet('work2', {'B'}, {'C'}, 'C = B + 1')
-    read_a = state.add_access('A')
-    rw_b = state.add_access('B')
-    write_c = state.add_access('C')
-    state.add_memlet_path(read_a, task1, dst_conn='A', memlet=dace.Memlet('A[2]'))
-    state.add_memlet_path(task1, rw_b, src_conn='B', memlet=dace.Memlet('B[2]'))
-    state.add_memlet_path(rw_b, task2, dst_conn='B', memlet=dace.Memlet('B[2]'))
-    state.add_memlet_path(task2, write_c, src_conn='C', memlet=dace.Memlet('C[2]'))
+    sdfg = dace.SDFG("graph")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
+    sdfg.add_array("C", [10], dace.float64)
+    state = sdfg.add_state("state")
+    task1 = state.add_tasklet("work1", {"A"}, {"B"}, "B = A + 1")
+    task2 = state.add_tasklet("work2", {"B"}, {"C"}, "C = B + 1")
+    read_a = state.add_access("A")
+    rw_b = state.add_access("B")
+    write_c = state.add_access("C")
+    state.add_memlet_path(read_a, task1, dst_conn="A", memlet=dace.Memlet("A[2]"))
+    state.add_memlet_path(task1, rw_b, src_conn="B", memlet=dace.Memlet("B[2]"))
+    state.add_memlet_path(rw_b, task2, dst_conn="B", memlet=dace.Memlet("B[2]"))
+    state.add_memlet_path(task2, write_c, src_conn="C", memlet=dace.Memlet("C[2]"))
 
     read_set, write_set = state.read_and_write_sets()
-    assert {'B', 'A'} == read_set
-    assert {'C', 'B'} == write_set
+    assert {"B", "A"} == read_set
+    assert {"C", "B"} == write_set
 
 
 def test_read_write_set_y_formation():
-    sdfg = dace.SDFG('graph')
-    state = sdfg.add_state('state')
-    sdfg.add_array('A', [2], dace.float64)
-    sdfg.add_array('B', [2], dace.float64)
-    sdfg.add_array('C', [2], dace.float64)
-    task1 = state.add_tasklet('work1', {'A'}, {'B'}, 'B = A + 1')
-    task2 = state.add_tasklet('work2', {'B'}, {'C'}, 'C += B + 1')
-    task3 = state.add_tasklet('work3', {'A'}, {'B'}, 'B = A + 2')
-    read_a = state.add_access('A')
-    rw_b = state.add_access('B')
-    write_c = state.add_access('C')
-    state.add_memlet_path(read_a, task1, dst_conn='A', memlet=dace.Memlet(data='A', subset='0'))
-    state.add_memlet_path(read_a, task3, dst_conn='A', memlet=dace.Memlet(data='A', subset='1'))
-    state.add_memlet_path(task1, rw_b, src_conn='B', memlet=dace.Memlet(data='B', subset='0'))
-    state.add_memlet_path(task3, rw_b, src_conn='B', memlet=dace.Memlet(data='B', subset='0'))
-    state.add_memlet_path(rw_b, task2, dst_conn='B', memlet=dace.Memlet(data='B', subset='0'))
-    state.add_memlet_path(task2, write_c, src_conn='C', memlet=dace.Memlet(data='C', subset='0'))
+    sdfg = dace.SDFG("graph")
+    state = sdfg.add_state("state")
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [2], dace.float64)
+    sdfg.add_array("C", [2], dace.float64)
+    task1 = state.add_tasklet("work1", {"A"}, {"B"}, "B = A + 1")
+    task2 = state.add_tasklet("work2", {"B"}, {"C"}, "C += B + 1")
+    task3 = state.add_tasklet("work3", {"A"}, {"B"}, "B = A + 2")
+    read_a = state.add_access("A")
+    rw_b = state.add_access("B")
+    write_c = state.add_access("C")
+    state.add_memlet_path(read_a, task1, dst_conn="A", memlet=dace.Memlet(data="A", subset="0"))
+    state.add_memlet_path(read_a, task3, dst_conn="A", memlet=dace.Memlet(data="A", subset="1"))
+    state.add_memlet_path(task1, rw_b, src_conn="B", memlet=dace.Memlet(data="B", subset="0"))
+    state.add_memlet_path(task3, rw_b, src_conn="B", memlet=dace.Memlet(data="B", subset="0"))
+    state.add_memlet_path(rw_b, task2, dst_conn="B", memlet=dace.Memlet(data="B", subset="0"))
+    state.add_memlet_path(task2, write_c, src_conn="C", memlet=dace.Memlet(data="C", subset="0"))
 
     read_set, write_set = state.read_and_write_sets()
-    assert {'B', 'A'} == read_set
-    assert {'C', 'B'} == write_set
+    assert {"B", "A"} == read_set
+    assert {"C", "B"} == write_set
 
 
 def test_deepcopy_state():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def double_loop(arr: dace.float32[N]):
@@ -68,12 +68,12 @@ def test_deepcopy_state():
 
 
 def test_read_and_write_set_filter():
-    sdfg = dace.SDFG('graph')
-    state = sdfg.add_state('state')
-    sdfg.add_array('A', [2, 2], dace.float64)
-    sdfg.add_scalar('B', dace.float64)
-    sdfg.add_array('C', [2, 2], dace.float64)
-    A, B, C = (state.add_access(name) for name in ('A', 'B', 'C'))
+    sdfg = dace.SDFG("graph")
+    state = sdfg.add_state("state")
+    sdfg.add_array("A", [2, 2], dace.float64)
+    sdfg.add_scalar("B", dace.float64)
+    sdfg.add_array("C", [2, 2], dace.float64)
+    A, B, C = (state.add_access(name) for name in ("A", "B", "C"))
 
     state.add_nedge(
         A,
@@ -103,8 +103,9 @@ def test_read_and_write_set_filter():
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -116,11 +117,11 @@ def test_read_and_write_set_filter():
 
 
 def test_read_and_write_set_selection():
-    sdfg = dace.SDFG('graph')
-    state = sdfg.add_state('state')
-    sdfg.add_array('A', [2, 2], dace.float64)
-    sdfg.add_scalar('B', dace.float64)
-    A, B = (state.add_access(name) for name in ('A', 'B'))
+    sdfg = dace.SDFG("graph")
+    state = sdfg.add_state("state")
+    sdfg.add_array("A", [2, 2], dace.float64)
+    sdfg.add_scalar("B", dace.float64)
+    A, B = (state.add_access(name) for name in ("A", "B"))
 
     state.add_nedge(
         A,
@@ -138,8 +139,9 @@ def test_read_and_write_set_selection():
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -151,7 +153,7 @@ def test_read_and_write_set_selection():
 
 
 def test_read_and_write_set_names():
-    sdfg = dace.SDFG('test_read_and_write_set_names')
+    sdfg = dace.SDFG("test_read_and_write_set_names")
     state = sdfg.add_state(is_start_block=True)
 
     # The arrays use different symbols for their sizes, but they are known to be the
@@ -185,8 +187,9 @@ def test_read_and_write_set_names():
     read_set, write_set = state._read_and_write_sets()
 
     for expected_sets, computed_sets in [(expected_read_set, read_set), (expected_write_set, write_set)]:
-        assert expected_sets.keys() == computed_sets.keys(
-        ), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        assert expected_sets.keys() == computed_sets.keys(), (
+            f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        )
         for access_data in expected_sets.keys():
             for exp in expected_sets[access_data]:
                 found_match = False
@@ -207,10 +210,7 @@ def test_add_mapped_tasklet():
 
     tsklt, me, mx = state.add_mapped_tasklet(
         "test_map",
-        map_ranges={
-            "i": "0:10",
-            "j": "0:10"
-        },
+        map_ranges={"i": "0:10", "j": "0:10"},
         inputs={"__in": dace.Memlet("A[i, j]")},
         code="__out = math.sin(__in)",
         outputs={"__out": dace.Memlet("B[j, i]")},
@@ -228,7 +228,7 @@ def _make_find_upstream_and_downstream_node_test_sdfg():
     state = sdfg.add_state()
 
     for name in "ab":
-        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=True)
+        sdfg.add_array(name, shape=(10,), dtype=dace.float64, transient=True)
     a, b = (state.add_access(name) for name in "ab")
 
     tlet, me, mx = state.add_mapped_tasklet(
@@ -298,11 +298,11 @@ def _make_ambiguous_start_region():
     The two blocks are unconnected, so `source_nodes()` is ambiguous and the explicitly
     set start block is the only thing that disambiguates it.
     """
-    sdfg = dace.SDFG('cfg_start_block')
-    cfg = ControlFlowRegion('cfg', sdfg)
+    sdfg = dace.SDFG("cfg_start_block")
+    cfg = ControlFlowRegion("cfg", sdfg)
     sdfg.add_node(cfg, is_start_block=True)
-    other = cfg.add_state('other')
-    start = cfg.add_state('start', is_start_block=True)
+    other = cfg.add_state("other")
+    start = cfg.add_state("start", is_start_block=True)
     assert cfg.start_block is start
     return cfg, other, start
 
@@ -316,7 +316,7 @@ def test_start_block_survives_removal_of_another_block():
     # The index used to be left at 1 while only one block remained, which put a stale,
     # out-of-range `start_block` into the serialized SDFG and changed its hash.
     assert cfg._start_block is None or cfg._start_block < cfg.number_of_nodes()
-    serialized_start = cfg.to_json(parent=cfg.parent_graph).get('start_block')
+    serialized_start = cfg.to_json(parent=cfg.parent_graph).get("start_block")
     assert serialized_start is None or serialized_start < cfg.number_of_nodes()
 
 
@@ -331,22 +331,22 @@ def test_start_block_repinned_when_start_block_removed():
     assert cfg.node(cfg._start_block) is other
 
 
-@pytest.mark.parametrize('cls', [SDFGState, BreakBlock, ContinueBlock, ReturnBlock])
+@pytest.mark.parametrize("cls", [SDFGState, BreakBlock, ContinueBlock, ReturnBlock])
 def test_every_control_flow_block_answers_the_meta_access_queries(cls):
     """Callers dispatch on ControlFlowBlock -- offload_to_accelerator guards on exactly that
     isinstance and then calls replace_meta_accesses -- so the query has to be answerable by every
     block, not only by the two regions that have meta accesses. It was declared on
     AbstractControlFlowRegion, which BreakBlock is not: tsvc ext_break_capture lost its whole GPU
     column to `'BreakBlock' object has no attribute 'replace_meta_accesses'`."""
-    block = cls('b')
+    block = cls("b")
 
     assert isinstance(block, ControlFlowBlock)
     assert block.get_meta_codeblocks() == []
     assert block.get_meta_read_memlets() == []
-    assert block.replace_meta_accesses({'a': 'a_gpu'}) is None
+    assert block.replace_meta_accesses({"a": "a_gpu"}) is None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_read_and_write_set_selection()
     test_read_and_write_set_filter()
     test_read_write_set()

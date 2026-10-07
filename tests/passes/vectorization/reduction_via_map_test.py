@@ -15,6 +15,7 @@ to a WCR reduction (a ``-> map_exit`` WCR). The vectorizer normalizes that WCR
 
 Both are run at K=1 SCALAR and the host's native SIMD ISA against the numpy reference.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -32,7 +33,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
 HOST_ISA = detect_host_isa()
@@ -59,24 +60,25 @@ def masked_reduce(data: dace.float64[N], mask: dace.int64[N], res: dace.float64[
 
 def _run(prog, kwargs, ref, isa):
     from dace.libraries.tileops import TileReduce
+
     sdfg = prog.to_sdfg(simplify=True)
     # The vectorizer's input contract: canonical form (it parallelizes nothing itself).
     canonicalize(sdfg, validate=True)
-    cfg = VectorizeConfig(widths=(8, ),
-                          target_isa=isa,
-                          remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
-                          expand_tile_nodes=False)
+    cfg = VectorizeConfig(
+        widths=(8,), target_isa=isa, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE, expand_tile_nodes=False
+    )
     VectorizeCPUMultiDim(cfg).apply_pass(sdfg, {})
     # The scalar accumulation must have been LOWERED to a horizontal TileReduce -- i.e. actually
     # vectorized, not silently refused (a refuse would leave a plain per-lane scalar reduction and
     # still run bit-exact, hiding a no-op). Assert the tile fold is present before expanding.
-    assert any(isinstance(n, TileReduce) for n, _ in sdfg.all_nodes_recursive()), \
+    assert any(isinstance(n, TileReduce) for n, _ in sdfg.all_nodes_recursive()), (
         f"{prog.name}/{isa}: no TileReduce -- reduction was not vectorized (silent refuse?)"
+    )
     sdfg.expand_library_nodes()
     sdfg.validate()
     work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in kwargs.items()}
     sdfg(**work)
-    assert np.allclose(work['res'][0], ref, rtol=1e-9, atol=1e-12), f"{prog.name}/{isa}: {work['res'][0]} != {ref}"
+    assert np.allclose(work["res"][0], ref, rtol=1e-9, atol=1e-12), f"{prog.name}/{isa}: {work['res'][0]} != {ref}"
 
 
 @pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
@@ -106,5 +108,5 @@ def test_masked_reduce_via_map(isa):
     _run(masked_reduce, dict(data=data, mask=mask, res=np.zeros(1), N=n), ref, isa)
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-q', '-p', 'no:cacheprovider']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))

@@ -16,6 +16,7 @@ The test file exercises both contributors that ``symbols_defined_at`` walks:
   ``MapEntry``'s ``Map`` parameters AND any non-pass-through input connector
   that supplies a dynamic Map range or a scope-local parameter)
 """
+
 from unittest import mock
 
 import dace
@@ -25,108 +26,108 @@ import pytest
 from dace.sdfg import nodes, propagation
 from dace.sdfg.state import LoopRegion, SDFGState, SymbolResolver
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def test_global_sdfg_symbol_visible():
     """Global ``SDFG.symbols`` entries reach every node."""
-    sdfg = dace.SDFG('g')
-    sdfg.add_symbol('K', dace.int32)
-    sdfg.add_array('A', [10], dace.float64)
-    s = sdfg.add_state('s')
-    t = s.add_tasklet('t', {}, {'o'}, 'o = K')
-    w = s.add_write('A')
-    s.add_edge(t, 'o', w, None, dace.Memlet('A[0]'))
+    sdfg = dace.SDFG("g")
+    sdfg.add_symbol("K", dace.int32)
+    sdfg.add_array("A", [10], dace.float64)
+    s = sdfg.add_state("s")
+    t = s.add_tasklet("t", {}, {"o"}, "o = K")
+    w = s.add_write("A")
+    s.add_edge(t, "o", w, None, dace.Memlet("A[0]"))
 
     syms = s.symbols_defined_at(t)
-    assert 'K' in syms
+    assert "K" in syms
 
 
 def test_enclosing_loop_region_var_visible_at_state_node():
     """The loop variable of an enclosing ``LoopRegion`` is reported as defined."""
-    sdfg = dace.SDFG('one_loop')
-    sdfg.add_array('A', [N], dace.float64)
-    loop = LoopRegion('L', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    sdfg = dace.SDFG("one_loop")
+    sdfg.add_array("A", [N], dace.float64)
+    loop = LoopRegion("L", "i < N", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop)
-    s = loop.add_state('s', is_start_block=True)
-    t = s.add_tasklet('t', {}, {'o'}, 'o = i')
-    w = s.add_write('A')
-    s.add_edge(t, 'o', w, None, dace.Memlet('A[i]'))
+    s = loop.add_state("s", is_start_block=True)
+    t = s.add_tasklet("t", {}, {"o"}, "o = i")
+    w = s.add_write("A")
+    s.add_edge(t, "o", w, None, dace.Memlet("A[i]"))
 
     syms = s.symbols_defined_at(t)
-    assert 'i' in syms, 'enclosing LoopRegion loop variable must be visible'
+    assert "i" in syms, "enclosing LoopRegion loop variable must be visible"
 
 
 def test_triple_nested_loop_regions_all_visible():
     """Every enclosing loop variable up the parent-region chain is visible."""
-    sdfg = dace.SDFG('triple')
-    sdfg.add_array('A', [10], dace.float64)
-    L1 = LoopRegion('L1', 'a < 10', 'a', 'a = 0', 'a = a + 1')
+    sdfg = dace.SDFG("triple")
+    sdfg.add_array("A", [10], dace.float64)
+    L1 = LoopRegion("L1", "a < 10", "a", "a = 0", "a = a + 1")
     sdfg.add_node(L1)
-    L2 = LoopRegion('L2', 'b < 10', 'b', 'b = 0', 'b = b + 1')
+    L2 = LoopRegion("L2", "b < 10", "b", "b = 0", "b = b + 1")
     L1.add_node(L2)
-    L3 = LoopRegion('L3', 'c < 10', 'c', 'c = 0', 'c = c + 1')
+    L3 = LoopRegion("L3", "c < 10", "c", "c = 0", "c = c + 1")
     L2.add_node(L3)
-    s = L3.add_state('s', is_start_block=True)
-    t = s.add_tasklet('t', {}, {'o'}, 'o = a + b + c')
-    w = s.add_write('A')
-    s.add_edge(t, 'o', w, None, dace.Memlet('A[a]'))
+    s = L3.add_state("s", is_start_block=True)
+    t = s.add_tasklet("t", {}, {"o"}, "o = a + b + c")
+    w = s.add_write("A")
+    s.add_edge(t, "o", w, None, dace.Memlet("A[a]"))
 
     syms = s.symbols_defined_at(t)
-    assert {'a', 'b', 'c'} <= set(syms), f'all enclosing loop vars must be visible; got {sorted(syms)}'
+    assert {"a", "b", "c"} <= set(syms), f"all enclosing loop vars must be visible; got {sorted(syms)}"
 
 
 def test_map_iteration_var_visible_inside_scope():
     """The ``MapEntry``'s map parameter is visible at every node inside the scope."""
-    sdfg = dace.SDFG('m')
-    sdfg.add_array('A', [10], dace.float64)
-    s = sdfg.add_state('s')
-    me, mx = s.add_map('m', {'i': '0:10'})
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    A_r = s.add_read('A')
-    A_w = s.add_write('A')
-    t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
-    s.add_edge(A_r, None, me, 'IN_A', dace.Memlet('A[0:10]'))
-    s.add_edge(me, 'OUT_A', t, 'a', dace.Memlet('A[i]'))
-    mx.add_in_connector('IN_A')
-    mx.add_out_connector('OUT_A')
-    s.add_edge(t, 'o', mx, 'IN_A', dace.Memlet('A[i]'))
-    s.add_edge(mx, 'OUT_A', A_w, None, dace.Memlet('A[0:10]'))
+    sdfg = dace.SDFG("m")
+    sdfg.add_array("A", [10], dace.float64)
+    s = sdfg.add_state("s")
+    me, mx = s.add_map("m", {"i": "0:10"})
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    A_r = s.add_read("A")
+    A_w = s.add_write("A")
+    t = s.add_tasklet("t", {"a"}, {"o"}, "o = a")
+    s.add_edge(A_r, None, me, "IN_A", dace.Memlet("A[0:10]"))
+    s.add_edge(me, "OUT_A", t, "a", dace.Memlet("A[i]"))
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    s.add_edge(t, "o", mx, "IN_A", dace.Memlet("A[i]"))
+    s.add_edge(mx, "OUT_A", A_w, None, dace.Memlet("A[0:10]"))
 
     syms = s.symbols_defined_at(t)
-    assert 'i' in syms, 'Map iteration variable must be visible inside the scope'
+    assert "i" in syms, "Map iteration variable must be visible inside the scope"
 
 
 def test_nested_map_iteration_vars_both_visible():
     """Both outer and inner ``Map`` parameters are visible at the innermost node."""
-    sdfg = dace.SDFG('nested_m')
-    sdfg.add_array('A', [10, 10], dace.float64)
-    s = sdfg.add_state('s')
+    sdfg = dace.SDFG("nested_m")
+    sdfg.add_array("A", [10, 10], dace.float64)
+    s = sdfg.add_state("s")
 
-    me_o, mx_o = s.add_map('mo', {'i': '0:10'})
-    me_i, mx_i = s.add_map('mi', {'j': '0:10'})
-    me_o.add_in_connector('IN_A')
-    me_o.add_out_connector('OUT_A')
-    me_i.add_in_connector('IN_A')
-    me_i.add_out_connector('OUT_A')
-    A_r = s.add_read('A')
-    A_w = s.add_write('A')
-    t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
+    me_o, mx_o = s.add_map("mo", {"i": "0:10"})
+    me_i, mx_i = s.add_map("mi", {"j": "0:10"})
+    me_o.add_in_connector("IN_A")
+    me_o.add_out_connector("OUT_A")
+    me_i.add_in_connector("IN_A")
+    me_i.add_out_connector("OUT_A")
+    A_r = s.add_read("A")
+    A_w = s.add_write("A")
+    t = s.add_tasklet("t", {"a"}, {"o"}, "o = a")
 
-    s.add_edge(A_r, None, me_o, 'IN_A', dace.Memlet('A[0:10, 0:10]'))
-    s.add_edge(me_o, 'OUT_A', me_i, 'IN_A', dace.Memlet('A[i, 0:10]'))
-    s.add_edge(me_i, 'OUT_A', t, 'a', dace.Memlet('A[i, j]'))
-    mx_o.add_in_connector('IN_A')
-    mx_o.add_out_connector('OUT_A')
-    mx_i.add_in_connector('IN_A')
-    mx_i.add_out_connector('OUT_A')
-    s.add_edge(t, 'o', mx_i, 'IN_A', dace.Memlet('A[i, j]'))
-    s.add_edge(mx_i, 'OUT_A', mx_o, 'IN_A', dace.Memlet('A[i, 0:10]'))
-    s.add_edge(mx_o, 'OUT_A', A_w, None, dace.Memlet('A[0:10, 0:10]'))
+    s.add_edge(A_r, None, me_o, "IN_A", dace.Memlet("A[0:10, 0:10]"))
+    s.add_edge(me_o, "OUT_A", me_i, "IN_A", dace.Memlet("A[i, 0:10]"))
+    s.add_edge(me_i, "OUT_A", t, "a", dace.Memlet("A[i, j]"))
+    mx_o.add_in_connector("IN_A")
+    mx_o.add_out_connector("OUT_A")
+    mx_i.add_in_connector("IN_A")
+    mx_i.add_out_connector("OUT_A")
+    s.add_edge(t, "o", mx_i, "IN_A", dace.Memlet("A[i, j]"))
+    s.add_edge(mx_i, "OUT_A", mx_o, "IN_A", dace.Memlet("A[i, 0:10]"))
+    s.add_edge(mx_o, "OUT_A", A_w, None, dace.Memlet("A[0:10, 0:10]"))
 
     syms = s.symbols_defined_at(t)
-    assert {'i', 'j'} <= set(syms), f'both enclosing Map iter vars must be visible; got {sorted(syms)}'
+    assert {"i", "j"} <= set(syms), f"both enclosing Map iter vars must be visible; got {sorted(syms)}"
 
 
 def test_dynamic_non_passthrough_map_connector_visible():
@@ -135,35 +136,37 @@ def test_dynamic_non_passthrough_map_connector_visible():
     Its name must be reported as defined for nodes inside the scope so memlets
     written in terms of that parameter survive ``NSDFG``-boundary propagation
     without being widened to the array extent."""
-    sdfg = dace.SDFG('dyn')
-    sdfg.add_array('A', [100], dace.int32)
-    sdfg.add_array('N_arr', [1], dace.int32)
-    sdfg.add_array('out', [100], dace.int32)
-    s = sdfg.add_state('s')
+    sdfg = dace.SDFG("dyn")
+    sdfg.add_array("A", [100], dace.int32)
+    sdfg.add_array("N_arr", [1], dace.int32)
+    sdfg.add_array("out", [100], dace.int32)
+    s = sdfg.add_state("s")
 
     # Map range parameterized by a dynamic input connector ``N_arr_val``.
-    me, mx = s.add_map('m', {'i': '0:N_arr_val'})
-    me.add_in_connector('N_arr_val')
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    N_read = s.add_read('N_arr')
-    s.add_edge(N_read, None, me, 'N_arr_val', dace.Memlet('N_arr[0]'))
-    A_read = s.add_read('A')
-    s.add_edge(A_read, None, me, 'IN_A', dace.Memlet('A[0:100]'))
+    me, mx = s.add_map("m", {"i": "0:N_arr_val"})
+    me.add_in_connector("N_arr_val")
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    N_read = s.add_read("N_arr")
+    s.add_edge(N_read, None, me, "N_arr_val", dace.Memlet("N_arr[0]"))
+    A_read = s.add_read("A")
+    s.add_edge(A_read, None, me, "IN_A", dace.Memlet("A[0:100]"))
 
-    t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
-    s.add_edge(me, 'OUT_A', t, 'a', dace.Memlet('A[i]'))
-    mx.add_in_connector('IN_o')
-    mx.add_out_connector('OUT_o')
-    s.add_edge(t, 'o', mx, 'IN_o', dace.Memlet('out[i]'))
-    out_w = s.add_write('out')
-    s.add_edge(mx, 'OUT_o', out_w, None, dace.Memlet('out[0:100]'))
+    t = s.add_tasklet("t", {"a"}, {"o"}, "o = a")
+    s.add_edge(me, "OUT_A", t, "a", dace.Memlet("A[i]"))
+    mx.add_in_connector("IN_o")
+    mx.add_out_connector("OUT_o")
+    s.add_edge(t, "o", mx, "IN_o", dace.Memlet("out[i]"))
+    out_w = s.add_write("out")
+    s.add_edge(mx, "OUT_o", out_w, None, dace.Memlet("out[0:100]"))
 
     syms = s.symbols_defined_at(t)
-    assert 'i' in syms, 'Map iter var must be visible'
-    assert 'N_arr_val' in syms, ('non-pass-through Map in-connector must be reported as defined inside the scope; '
-                                 'without this, memlets that reference the dynamic-range parameter would widen '
-                                 'to the array extent when propagated outward.')
+    assert "i" in syms, "Map iter var must be visible"
+    assert "N_arr_val" in syms, (
+        "non-pass-through Map in-connector must be reported as defined inside the scope; "
+        "without this, memlets that reference the dynamic-range parameter would widen "
+        "to the array extent when propagated outward."
+    )
 
 
 def test_loop_region_and_map_combined_visible():
@@ -171,27 +174,27 @@ def test_loop_region_and_map_combined_visible():
     node inside the Map sees BOTH the LoopRegion's loop variable and the
     Map's iter variable. This is the cloudsc-style stack -- outer scan loop
     over levels, inner Map over columns."""
-    sdfg = dace.SDFG('stack')
-    sdfg.add_array('A', [10, 20], dace.float64)
-    loop = LoopRegion('lk', 'jk < 10', 'jk', 'jk = 0', 'jk = jk + 1')
+    sdfg = dace.SDFG("stack")
+    sdfg.add_array("A", [10, 20], dace.float64)
+    loop = LoopRegion("lk", "jk < 10", "jk", "jk = 0", "jk = jk + 1")
     sdfg.add_node(loop)
-    s = loop.add_state('s', is_start_block=True)
-    me, mx = s.add_map('m', {'jl': '0:20'})
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    t = s.add_tasklet('t', {'a'}, {'o'}, 'o = a')
-    A_r = s.add_read('A')
-    A_w = s.add_write('A')
-    s.add_edge(A_r, None, me, 'IN_A', dace.Memlet('A[0:10, 0:20]'))
-    s.add_edge(me, 'OUT_A', t, 'a', dace.Memlet('A[jk, jl]'))
-    mx.add_in_connector('IN_A')
-    mx.add_out_connector('OUT_A')
-    s.add_edge(t, 'o', mx, 'IN_A', dace.Memlet('A[jk, jl]'))
-    s.add_edge(mx, 'OUT_A', A_w, None, dace.Memlet('A[0:10, 0:20]'))
+    s = loop.add_state("s", is_start_block=True)
+    me, mx = s.add_map("m", {"jl": "0:20"})
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    t = s.add_tasklet("t", {"a"}, {"o"}, "o = a")
+    A_r = s.add_read("A")
+    A_w = s.add_write("A")
+    s.add_edge(A_r, None, me, "IN_A", dace.Memlet("A[0:10, 0:20]"))
+    s.add_edge(me, "OUT_A", t, "a", dace.Memlet("A[jk, jl]"))
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    s.add_edge(t, "o", mx, "IN_A", dace.Memlet("A[jk, jl]"))
+    s.add_edge(mx, "OUT_A", A_w, None, dace.Memlet("A[0:10, 0:20]"))
 
     syms = s.symbols_defined_at(t)
-    assert 'jk' in syms, 'enclosing LoopRegion loop variable visible across Map scope'
-    assert 'jl' in syms, 'Map iter variable visible inside its own scope'
+    assert "jk" in syms, "enclosing LoopRegion loop variable visible across Map scope"
+    assert "jl" in syms, "Map iter variable visible inside its own scope"
 
 
 def test_nsdfg_inside_map_inside_loop_region_propagation_endpoint():
@@ -201,59 +204,59 @@ def test_nsdfg_inside_map_inside_loop_region_propagation_endpoint():
     of the form ``arr[jk, ...]`` inside the nested SDFG widens to the array
     extent on propagation out -- the cloudsc ``for_1133`` failure mode.
     """
-    sdfg = dace.SDFG('cloudsc_shape')
-    sdfg.add_symbol('K', dace.int32)
-    sdfg.add_array('A', [10, 20], dace.float64)
+    sdfg = dace.SDFG("cloudsc_shape")
+    sdfg.add_symbol("K", dace.int32)
+    sdfg.add_array("A", [10, 20], dace.float64)
 
-    loop = LoopRegion('lk', 'jk < K', 'jk', 'jk = 0', 'jk = jk + 1')
+    loop = LoopRegion("lk", "jk < K", "jk", "jk = 0", "jk = jk + 1")
     sdfg.add_node(loop)
-    s = loop.add_state('s', is_start_block=True)
-    me, mx = s.add_map('m', {'jl': '0:20'})
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    mx.add_in_connector('IN_A')
-    mx.add_out_connector('OUT_A')
+    s = loop.add_state("s", is_start_block=True)
+    me, mx = s.add_map("m", {"jl": "0:20"})
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
 
-    inner = dace.SDFG('inner')
-    inner.add_symbol('jk', dace.int32)
-    inner.add_symbol('jl', dace.int32)
-    inner.add_array('A', [10, 20], dace.float64)
-    si = inner.add_state('si')
-    t_inner = si.add_tasklet('t', {'a'}, {'o'}, 'o = a')
-    A_ri = si.add_read('A')
-    A_wi = si.add_write('A')
-    si.add_edge(A_ri, None, t_inner, 'a', dace.Memlet('A[jk, jl]'))
-    si.add_edge(t_inner, 'o', A_wi, None, dace.Memlet('A[jk, jl]'))
+    inner = dace.SDFG("inner")
+    inner.add_symbol("jk", dace.int32)
+    inner.add_symbol("jl", dace.int32)
+    inner.add_array("A", [10, 20], dace.float64)
+    si = inner.add_state("si")
+    t_inner = si.add_tasklet("t", {"a"}, {"o"}, "o = a")
+    A_ri = si.add_read("A")
+    A_wi = si.add_write("A")
+    si.add_edge(A_ri, None, t_inner, "a", dace.Memlet("A[jk, jl]"))
+    si.add_edge(t_inner, "o", A_wi, None, dace.Memlet("A[jk, jl]"))
 
-    nsdfg = s.add_nested_sdfg(inner, inputs={'A'}, outputs={'A'}, symbol_mapping={'jk': 'jk', 'jl': 'jl'})
-    A_r = s.add_read('A')
-    A_w = s.add_write('A')
-    s.add_edge(A_r, None, me, 'IN_A', dace.Memlet('A[0:10, 0:20]'))
-    s.add_edge(me, 'OUT_A', nsdfg, 'A', dace.Memlet('A[0:10, 0:20]'))
-    s.add_edge(nsdfg, 'A', mx, 'IN_A', dace.Memlet('A[0:10, 0:20]'))
-    s.add_edge(mx, 'OUT_A', A_w, None, dace.Memlet('A[0:10, 0:20]'))
+    nsdfg = s.add_nested_sdfg(inner, inputs={"A"}, outputs={"A"}, symbol_mapping={"jk": "jk", "jl": "jl"})
+    A_r = s.add_read("A")
+    A_w = s.add_write("A")
+    s.add_edge(A_r, None, me, "IN_A", dace.Memlet("A[0:10, 0:20]"))
+    s.add_edge(me, "OUT_A", nsdfg, "A", dace.Memlet("A[0:10, 0:20]"))
+    s.add_edge(nsdfg, "A", mx, "IN_A", dace.Memlet("A[0:10, 0:20]"))
+    s.add_edge(mx, "OUT_A", A_w, None, dace.Memlet("A[0:10, 0:20]"))
 
     syms = s.symbols_defined_at(nsdfg)
-    assert 'jk' in syms, 'enclosing LoopRegion var jk must be defined at the NSDFG node'
-    assert 'jl' in syms, 'enclosing Map iter var jl must be defined at the NSDFG node'
-    assert 'K' in syms, 'SDFG-global symbol K must be defined'
+    assert "jk" in syms, "enclosing LoopRegion var jk must be defined at the NSDFG node"
+    assert "jl" in syms, "enclosing Map iter var jl must be defined at the NSDFG node"
+    assert "K" in syms, "SDFG-global symbol K must be defined"
 
 
 def test_outside_any_scope_is_empty_of_local_scope_symbols():
     """At a state node that sits OUTSIDE any Map scope and outside any
     LoopRegion, no scope-local symbols are reported (only SDFG-global ones)."""
-    sdfg = dace.SDFG('flat')
-    sdfg.add_symbol('K', dace.int32)
-    sdfg.add_array('A', [10], dace.float64)
-    s = sdfg.add_state('s')
-    t = s.add_tasklet('t', {}, {'o'}, 'o = K')
-    w = s.add_write('A')
-    s.add_edge(t, 'o', w, None, dace.Memlet('A[0]'))
+    sdfg = dace.SDFG("flat")
+    sdfg.add_symbol("K", dace.int32)
+    sdfg.add_array("A", [10], dace.float64)
+    s = sdfg.add_state("s")
+    t = s.add_tasklet("t", {}, {"o"}, "o = K")
+    w = s.add_write("A")
+    s.add_edge(t, "o", w, None, dace.Memlet("A[0]"))
 
     syms = s.symbols_defined_at(t)
-    assert 'K' in syms
+    assert "K" in syms
     # No scope-local names from a hypothetical outer scope.
-    assert 'i' not in syms and 'j' not in syms
+    assert "i" not in syms and "j" not in syms
 
 
 def test_a_held_scope_table_gives_the_symbols_deriving_it_gives():
@@ -261,15 +264,15 @@ def test_a_held_scope_table_gives_the_symbols_deriving_it_gives():
     answer exactly what it answers when it derives the table, and must leave the table unchanged."""
     from dace.sdfg.state import sdfg_scope_symbols
 
-    sdfg = dace.SDFG('held_table')
-    sdfg.add_symbol('K', dace.int32)
-    sdfg.add_array('A', [N, N], dace.float64)
-    state = sdfg.add_state('s')
-    me, mx = state.add_map('m', dict(i='0:N', j='0:K'))
-    t = state.add_tasklet('t', {}, {'o'}, 'o = i + j')
-    w = state.add_write('A')
+    sdfg = dace.SDFG("held_table")
+    sdfg.add_symbol("K", dace.int32)
+    sdfg.add_array("A", [N, N], dace.float64)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("m", dict(i="0:N", j="0:K"))
+    t = state.add_tasklet("t", {}, {"o"}, "o = i + j")
+    w = state.add_write("A")
     state.add_nedge(me, t, dace.Memlet())
-    state.add_memlet_path(t, mx, w, src_conn='o', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(t, mx, w, src_conn="o", memlet=dace.Memlet("A[i, j]"))
 
     table = sdfg_scope_symbols(sdfg)
     before = dict(table)
@@ -283,21 +286,18 @@ def test_memlet_propagation_builds_the_sdfg_scope_table_once_per_sdfg(monkeypatc
     from dace.sdfg import state as state_module
     from dace.sdfg.propagation import propagate_memlets_sdfg
 
-    sdfg = dace.SDFG('one_table')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    state = sdfg.add_state('s')
-    for name in ('m0', 'm1', 'm2'):
-        state.add_mapped_tasklet(name,
-                                 dict(i='0:N'),
-                                 dict(a=dace.Memlet('A[i]')),
-                                 'b = a',
-                                 dict(b=dace.Memlet('B[i]')),
-                                 external_edges=True)
+    sdfg = dace.SDFG("one_table")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    state = sdfg.add_state("s")
+    for name in ("m0", "m1", "m2"):
+        state.add_mapped_tasklet(
+            name, dict(i="0:N"), dict(a=dace.Memlet("A[i]")), "b = a", dict(b=dace.Memlet("B[i]")), external_edges=True
+        )
 
     calls = []
     original = state_module.sdfg_scope_symbols
-    monkeypatch.setattr(state_module, 'sdfg_scope_symbols', lambda graph: calls.append(graph) or original(graph))
+    monkeypatch.setattr(state_module, "sdfg_scope_symbols", lambda graph: calls.append(graph) or original(graph))
     propagate_memlets_sdfg(sdfg)
     assert len(calls) == 1, len(calls)
 
@@ -311,10 +311,7 @@ def make_sdfg(name: str, nested: bool = False) -> dace.SDFG:
     state = sdfg.add_state(is_start_block=True)
     state.add_mapped_tasklet(
         "comp",
-        map_ranges={
-            "__i": "0:N",
-            "__j": "0:10"
-        },
+        map_ranges={"__i": "0:N", "__j": "0:10"},
         inputs={"__in": dace.Memlet("a[__i, __j]")},
         outputs={"__out": dace.Memlet("b[__i, __j]")},
         code="__out = __in + 1.0",
@@ -354,10 +351,9 @@ def test_propagation_resolves_the_state_symbols_once_per_state():
     states = [state for nested in sdfg.all_sdfgs_recursive() for state in nested.states()]
     assert sum(len(state.edges()) for state in states) > len(states)
 
-    with mock.patch.object(SDFGState,
-                           "symbols_defined_at_state",
-                           autospec=True,
-                           side_effect=SDFGState.symbols_defined_at_state) as spy:
+    with mock.patch.object(
+        SDFGState, "symbols_defined_at_state", autospec=True, side_effect=SDFGState.symbols_defined_at_state
+    ) as spy:
         propagation.propagate_memlets_sdfg(sdfg)
 
     assert spy.call_count <= len(states)
@@ -389,7 +385,7 @@ def make_sdfg_with_loop_region(name: str) -> tuple[dace.SDFG, SDFGState, SDFGSta
     sdfg = dace.SDFG(name)
     N = dace.symbol("N")
     for array in "abc":
-        sdfg.add_array(array, shape=(N, ), dtype=dace.float64, transient=False)
+        sdfg.add_array(array, shape=(N,), dtype=dace.float64, transient=False)
     top_level = sdfg.add_state("top_level", is_start_block=True)
     top_level.add_mapped_tasklet(
         "top_level_comp",
@@ -450,7 +446,7 @@ def test_declared_symbol_types_win_over_descriptor_instances():
     """A shape given as a string builds its symbols with the default dtype; the SDFG's declaration decides."""
     sdfg = dace.SDFG("declared_symbol_types")
     sdfg.add_symbol("N", dace.int64)
-    sdfg.add_array("a", shape=("N", ), dtype=dace.float64)
+    sdfg.add_array("a", shape=("N",), dtype=dace.float64)
     state = sdfg.add_state()
     me, _ = state.add_map("m", {"i": "0:N"})
 

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Vectorization prep passes rewriting Python tasklet bodies: power expansion, cast removal,
 math-prefix stripping, modulo renaming."""
+
 import dace
 from typing import Any, Dict, List, Type, Union
 from collections.abc import Callable
@@ -15,9 +16,10 @@ from dace.transformation.helpers import CodeBlock
 
 
 def _rewrite_python_tasklet_bodies(
-        sdfg: SDFG,
-        rewrite: Callable[[str], str],
-        filter_node: Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool] | None = None) -> int:
+    sdfg: SDFG,
+    rewrite: Callable[[str], str],
+    filter_node: Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool] | None = None,
+) -> int:
     rewritten = 0
     for node, graph in sdfg.all_nodes_recursive():
         if not isinstance(node, dace.sdfg.nodes.Tasklet):
@@ -48,8 +50,12 @@ class PowerOperatorExpander(ast.NodeTransformer):
         func = call_node.func
         if isinstance(func, ast.Name) and func.id == "pow":
             return True
-        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "math"
-                and func.attr == "pow"):
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "math"
+            and func.attr == "pow"
+        ):
             return True
         return False
 
@@ -68,9 +74,11 @@ class PowerOperatorExpander(ast.NodeTransformer):
                 if n > 1:
                     new_node = ast.copy_location(left, left)
                     for _ in range(n - 1):
-                        new_node = ast.BinOp(left=ast.copy_location(new_node, left),
-                                             op=ast.Mult(),
-                                             right=ast.copy_location(ast.fix_missing_locations(left), left))
+                        new_node = ast.BinOp(
+                            left=ast.copy_location(new_node, left),
+                            op=ast.Mult(),
+                            right=ast.copy_location(ast.fix_missing_locations(left), left),
+                        )
                     return ast.copy_location(new_node, loc)
                 # n in {0, 1}: keep as BinOp Pow, caller decides.
                 return ast.copy_location(ast.BinOp(left=left, op=ast.Pow(), right=right), loc)
@@ -112,8 +120,11 @@ class DaceCastRemover(ast.NodeTransformer):
         """
         self.generic_visit(node)
         if isinstance(node.func, ast.Attribute):
-            if (isinstance(node.func.value, ast.Name) and node.func.value.id == 'dace'
-                    and self._is_cast_name(node.func.attr)):
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "dace"
+                and self._is_cast_name(node.func.attr)
+            ):
                 if node.args:
                     return node.args[0]
                 else:
@@ -212,8 +223,12 @@ class PowerExponentCastStripper(ast.NodeTransformer):
         if not (isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords):
             return node
         func = node.func
-        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "dace" \
-                and self._is_float_cast(func.attr):
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "dace"
+            and self._is_float_cast(func.attr)
+        ):
             return node.args[0]
         if isinstance(func, ast.Name) and self._is_float_cast(func.id):
             return node.args[0]
@@ -228,8 +243,9 @@ class PowerExponentCastStripper(ast.NodeTransformer):
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         func = node.func
-        is_pow = (isinstance(func, ast.Name) and func.id in ("pow", "ipow")) or \
-                 (isinstance(func, ast.Attribute) and func.attr == "pow")
+        is_pow = (isinstance(func, ast.Name) and func.id in ("pow", "ipow")) or (
+            isinstance(func, ast.Attribute) and func.attr == "pow"
+        )
         if is_pow and len(node.args) == 2:
             node.args[1] = self._unwrap_float_cast(node.args[1])
         return node
@@ -246,8 +262,8 @@ def _strip_power_exponent_cast(src: str) -> str:
 
 
 #: Floored modulo spellings, renamed to ``py_mod``; C's, renamed to ``c_mod``. A ``%`` in Python code floors.
-FLOORED_MODULO_NAMES = frozenset({'Mod', 'PyMod', 'FtnModulo', 'ftn_modulo'})
-C_MODULO_NAMES = frozenset({'CMod', 'FtnMod', 'ftn_mod'})
+FLOORED_MODULO_NAMES = frozenset({"Mod", "PyMod", "FtnModulo", "ftn_modulo"})
+C_MODULO_NAMES = frozenset({"CMod", "FtnMod", "ftn_mod"})
 
 
 class ModuloToPyModExpander(ast.NodeTransformer):
@@ -266,14 +282,16 @@ class ModuloToPyModExpander(ast.NodeTransformer):
         self.generic_visit(node)
         if isinstance(node.func, ast.Name) and node.func.id in FLOORED_MODULO_NAMES | C_MODULO_NAMES:
             node.func = ast.copy_location(
-                ast.Name(id="py_mod" if node.func.id in FLOORED_MODULO_NAMES else "c_mod", ctx=ast.Load()), node.func)
+                ast.Name(id="py_mod" if node.func.id in FLOORED_MODULO_NAMES else "c_mod", ctx=ast.Load()), node.func
+            )
             self.renamed = True
         return node
 
     def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
         self.generic_visit(node)
-        if not isinstance(node.op, ast.Mod) or (isinstance(node.left, ast.Constant)
-                                                and isinstance(node.left.value, str)):
+        if not isinstance(node.op, ast.Mod) or (
+            isinstance(node.left, ast.Constant) and isinstance(node.left.value, str)
+        ):
             return node
         self.renamed = True
         return self.call("py_mod", [node.left, node.right], node)
@@ -283,14 +301,15 @@ class ModuloToPyModExpander(ast.NodeTransformer):
         if not isinstance(node.op, ast.Mod):
             return node
         self.renamed = True
-        current = ast.copy_location(ast.parse(ast.unparse(node.target), mode='eval').body, node.target)
+        current = ast.copy_location(ast.parse(ast.unparse(node.target), mode="eval").body, node.target)
         return ast.copy_location(
-            ast.Assign(targets=[node.target], value=self.call("py_mod", [current, node.value], node)), node)
+            ast.Assign(targets=[node.target], value=self.call("py_mod", [current, node.value], node)), node
+        )
 
 
 def _rewrite_modulo(src: str) -> str:
     # Rename modulos to ``py_mod`` and ``c_mod`` in a Python source string; ``src`` itself when none.
-    if '%' not in src and not any(name in src for name in FLOORED_MODULO_NAMES | C_MODULO_NAMES):
+    if "%" not in src and not any(name in src for name in FLOORED_MODULO_NAMES | C_MODULO_NAMES):
         return src
     expander = ModuloToPyModExpander()
     tree = expander.visit(ast.parse(src))
@@ -323,14 +342,18 @@ def _subset_has_mod(subset: dace.subsets.Subset | None) -> bool:
 def _rewrite_subset_modulo(subset: dace.subsets.Subset) -> dace.subsets.Subset:
     # Return a copy of ``subset`` with every ``Mod`` rewritten to ``py_mod``.
     if isinstance(subset, dace.subsets.Range):
-        return dace.subsets.Range([(_subs_py_mod_symbolic(b), _subs_py_mod_symbolic(e), _subs_py_mod_symbolic(s))
-                                   for b, e, s in subset.ranges])
+        return dace.subsets.Range(
+            [
+                (_subs_py_mod_symbolic(b), _subs_py_mod_symbolic(e), _subs_py_mod_symbolic(s))
+                for b, e, s in subset.ranges
+            ]
+        )
     return subset
 
 
 class _BodyRewritePass(ppl.Pass):
     # Base for vectorization preprocessing passes that rewrite Python tasklet bodies in place.
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
@@ -382,7 +405,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
     tasklets, loop and branch conditions, subsets, map ranges and interstate edges."""
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges | ppl.Modifies.Scopes)
+        return ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges | ppl.Modifies.Scopes
 
     def _rewrite(self, src: str) -> str:
         # Retained so the pass still composes as a plain body rewrite if reused.
@@ -481,7 +504,7 @@ class RewriteModuloToPyMod(_BodyRewritePass):
 class RemoveMathCall(ppl.Pass):
     """Pass that strips the ``math.`` prefix from the RHS of assignment tasklets."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets

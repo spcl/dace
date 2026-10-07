@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``MaskedCopyLibraryNode`` loads and stores a tile under a mask, and refuses what it cannot copy."""
+
 import numpy as np
 import pytest
 
@@ -16,16 +17,20 @@ MASKS = {
 }
 #: ``(shape of the array, window of it, shape of the tile, step of the window along the tile's last dim)``
 WINDOWS = {
-    "contiguous": ((24, ), "5:13", (8, ), 1),
-    "strided": ((40, ), "3:35:4", (8, ), 4),
-    "row_of_a_matrix": ((6, 20), "3, 4:12", (8, ), 1),
+    "contiguous": ((24,), "5:13", (8,), 1),
+    "strided": ((40,), "3:35:4", (8,), 4),
+    "row_of_a_matrix": ((6, 20), "3, 4:12", (8,), 1),
     "matrix_window": ((6, 20), "1:5, 2:10", (4, 8), 1),
 }
 LANES = 8
 IMPLEMENTATIONS = ["pure", "scalar", ISA_TO_IMPL[detect_host_isa()]]
 #: The header backends move one lane dim, so a 2-D tile is the pure loop whichever implementation is asked for.
-CASES = [(window, implementation) for window in WINDOWS for implementation in IMPLEMENTATIONS
-         if implementation == "pure" or len(WINDOWS[window][2]) == 1]
+CASES = [
+    (window, implementation)
+    for window in WINDOWS
+    for implementation in IMPLEMENTATIONS
+    if implementation == "pure" or len(WINDOWS[window][2]) == 1
+]
 
 
 def tile_subset(shape):
@@ -41,7 +46,8 @@ def lane_mask(mask, shape):
 def window_slices(window):
     return tuple(
         slice(*(int(bound) if bound else None for bound in part.split(":"))) if ":" in part else int(part)
-        for part in window.split(", "))
+        for part in window.split(", ")
+    )
 
 
 def masked_copy(name, shape, implementation):
@@ -94,8 +100,9 @@ def build_store(name, array_shape, window, shape, dtype, implementation):
 @pytest.mark.parametrize("window_name,implementation", CASES)
 def test_a_masked_load_fills_the_active_lanes_and_zeroes_the_others(window_name, implementation, dtype):
     array_shape, window, shape = WINDOWS[window_name][:3]
-    sdfg = build_load(f"{window_name}_{implementation}_{dtype.to_string()}", array_shape, window, shape, dtype,
-                      implementation)
+    sdfg = build_load(
+        f"{window_name}_{implementation}_{dtype.to_string()}", array_shape, window, shape, dtype, implementation
+    )
     compiled = sdfg.compile()
     data = (np.arange(np.prod(array_shape)).reshape(array_shape) + 1).astype(dtype.as_numpy_dtype())
     for mask_name, mask in MASKS.items():
@@ -110,8 +117,9 @@ def test_a_masked_load_fills_the_active_lanes_and_zeroes_the_others(window_name,
 @pytest.mark.parametrize("window_name,implementation", CASES)
 def test_a_masked_store_writes_the_active_lanes_and_leaves_the_others(window_name, implementation, dtype):
     array_shape, window, shape = WINDOWS[window_name][:3]
-    sdfg = build_store(f"{window_name}_{implementation}_{dtype.to_string()}", array_shape, window, shape, dtype,
-                       implementation)
+    sdfg = build_store(
+        f"{window_name}_{implementation}_{dtype.to_string()}", array_shape, window, shape, dtype, implementation
+    )
     compiled = sdfg.compile()
     tile = (np.arange(np.prod(shape)).reshape(shape) + 1000).astype(dtype.as_numpy_dtype())
     for mask_name, mask in MASKS.items():
@@ -157,18 +165,20 @@ def test_a_masked_load_equals_the_tile_load_it_replaces(window_name):
 
 def test_a_masked_load_reads_a_lane_only_where_the_mask_is_on():
     """The window may reach past the end of the array in a tail, so the read of an inactive lane is guarded."""
-    sdfg = build_load("guard", (24, ), "5:13", (8, ), dace.float64, "pure")
+    sdfg = build_load("guard", (24,), "5:13", (8,), dace.float64, "pure")
     sdfg.expand_library_nodes()
-    code = next(node for node, state in sdfg.all_nodes_recursive()
-                if isinstance(node, dace.nodes.Tasklet)).code.as_string
+    code = next(
+        node for node, state in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.Tasklet)
+    ).code.as_string
     assert "_mask[__l0] ? _cpy_in[(__l0 * (1))] : double(0)" in code, code
 
 
 def test_a_masked_load_selects_the_header_call_with_the_stride_of_its_window():
-    sdfg = build_load("header", (40, ), "3:35:4", (8, ), dace.float64, "scalar")
+    sdfg = build_load("header", (40,), "3:35:4", (8,), dace.float64, "scalar")
     sdfg.expand_library_nodes()
-    code = next(node for node, state in sdfg.all_nodes_recursive()
-                if isinstance(node, dace.nodes.Tasklet)).code.as_string
+    code = next(
+        node for node, state in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.Tasklet)
+    ).code.as_string
     assert "dace::tileops::tile_load<double, 8, true>(_cpy_out, _cpy_in, _mask, 4);" in code, code
 
 
@@ -178,11 +188,11 @@ def test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves(wi
     """The CUDA backend widens an fp16 access it can prove aligned: a window at element 0 to 16 bytes, one at element 4
     to 8, and one at element 3 to the 4-byte word below it with a shift of one."""
     sdfg = dace.SDFG(f"masked_align_{window.replace(':', '_')}_{int(masked)}")
-    sdfg.add_array("A", (1024, ), dace.float16, storage=Storage.GPU_Global)
-    sdfg.add_array("TILE", (8, ), dace.float16, storage=Storage.Register, transient=True)
-    sdfg.add_array("MASKT", (8, ), dace.bool_, storage=Storage.Register, transient=True)
+    sdfg.add_array("A", (1024,), dace.float16, storage=Storage.GPU_Global)
+    sdfg.add_array("TILE", (8,), dace.float16, storage=Storage.Register, transient=True)
+    sdfg.add_array("MASKT", (8,), dace.bool_, storage=Storage.Register, transient=True)
     state = sdfg.add_state()
-    copy = MaskedCopyLibraryNode("copy", widths=(8, ), has_mask=masked)
+    copy = MaskedCopyLibraryNode("copy", widths=(8,), has_mask=masked)
     state.add_node(copy)
     state.add_edge(state.add_access("A"), None, copy, INPUT_CONNECTOR_NAME, dace.Memlet(f"A[{window}]"))
     state.add_edge(copy, OUTPUT_CONNECTOR_NAME, state.add_access("TILE"), None, dace.Memlet("TILE[0:8]"))
@@ -192,12 +202,9 @@ def test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves(wi
     assert code.startswith(f"dace::tileops::tile_load<dace::float16, 8, {str(masked).lower()}, {alignment}>"), code
 
 
-def wired_copy(source_storage,
-               destination_storage,
-               source_transient,
-               destination_transient,
-               shape=(8, ),
-               dtype=dace.float64):
+def wired_copy(
+    source_storage, destination_storage, source_transient, destination_transient, shape=(8,), dtype=dace.float64
+):
     sdfg = dace.SDFG("masked_copy_storages")
     sdfg.add_array("S", shape, dtype, storage=source_storage, transient=source_transient)
     sdfg.add_array("D", shape, dtype, storage=destination_storage, transient=destination_transient)
@@ -215,24 +222,30 @@ def wired_copy(source_storage,
 Storage = dace.StorageType
 
 
-@pytest.mark.parametrize("source,destination", [
-    (Storage.GPU_Global, Storage.Register),
-    (Storage.GPU_Global, Storage.GPU_Shared),
-    (Storage.CPU_Heap, Storage.Register),
-    (Storage.Register, Storage.GPU_Global),
-    (Storage.GPU_Shared, Storage.GPU_Global),
-    (Storage.Register, Storage.CPU_Heap),
-])
+@pytest.mark.parametrize(
+    "source,destination",
+    [
+        (Storage.GPU_Global, Storage.Register),
+        (Storage.GPU_Global, Storage.GPU_Shared),
+        (Storage.CPU_Heap, Storage.Register),
+        (Storage.Register, Storage.GPU_Global),
+        (Storage.GPU_Shared, Storage.GPU_Global),
+        (Storage.Register, Storage.CPU_Heap),
+    ],
+)
 def test_the_storage_pairs_of_a_load_or_a_store_validate(source, destination):
     node, state, sdfg = wired_copy(source, destination, False, False)
     node.validate(sdfg, state)
 
 
-@pytest.mark.parametrize("source,destination", [
-    (Storage.CPU_Heap, Storage.CPU_Heap),
-    (Storage.GPU_Shared, Storage.Register),
-    (Storage.CPU_Pinned, Storage.Register),
-])
+@pytest.mark.parametrize(
+    "source,destination",
+    [
+        (Storage.CPU_Heap, Storage.CPU_Heap),
+        (Storage.GPU_Shared, Storage.Register),
+        (Storage.CPU_Pinned, Storage.Register),
+    ],
+)
 def test_any_other_storage_pair_is_refused(source, destination):
     node, state, sdfg = wired_copy(source, destination, False, False)
     with pytest.raises(NotImplementedError, match="no masked copy"):
@@ -241,9 +254,11 @@ def test_any_other_storage_pair_is_refused(source, destination):
 
 @pytest.mark.parametrize("storage", [Storage.Default, Storage.Register])
 @pytest.mark.parametrize("source_transient,destination_transient,loads", [(False, True, True), (True, False, False)])
-def test_a_copy_within_one_storage_reads_its_direction_off_the_transient_tile(storage, source_transient,
-                                                                              destination_transient, loads):
+def test_a_copy_within_one_storage_reads_its_direction_off_the_transient_tile(
+    storage, source_transient, destination_transient, loads
+):
     from dace.libraries.tileops.nodes.masked_copy import is_load
+
     node, state, sdfg = wired_copy(storage, storage, source_transient, destination_transient)
     node.validate(sdfg, state)
     assert is_load(sdfg.arrays["S"], sdfg.arrays["D"], "c") is loads
@@ -251,8 +266,9 @@ def test_a_copy_within_one_storage_reads_its_direction_off_the_transient_tile(st
 
 @pytest.mark.parametrize("storage", [Storage.Default, Storage.Register])
 @pytest.mark.parametrize("source_transient,destination_transient", [(False, False), (True, True)])
-def test_a_copy_within_one_storage_with_no_single_tile_is_refused_not_guessed(storage, source_transient,
-                                                                              destination_transient):
+def test_a_copy_within_one_storage_with_no_single_tile_is_refused_not_guessed(
+    storage, source_transient, destination_transient
+):
     node, state, sdfg = wired_copy(storage, storage, source_transient, destination_transient)
     with pytest.raises(NotImplementedError, match="does not say whether it loads or stores"):
         node.validate(sdfg, state)
@@ -260,9 +276,10 @@ def test_a_copy_within_one_storage_with_no_single_tile_is_refused_not_guessed(st
 
 def test_a_view_is_never_the_tile_of_a_copy():
     from dace.libraries.tileops.nodes.masked_copy import is_load
+
     sdfg = dace.SDFG("masked_copy_views")
-    sdfg.add_view("V", (8, ), dace.float64, storage=Storage.Register)
-    sdfg.add_array("T", (8, ), dace.float64, storage=Storage.Register, transient=True)
+    sdfg.add_view("V", (8,), dace.float64, storage=Storage.Register)
+    sdfg.add_array("T", (8,), dace.float64, storage=Storage.Register, transient=True)
     assert is_load(sdfg.arrays["V"], sdfg.arrays["T"], "c")
     assert not is_load(sdfg.arrays["T"], sdfg.arrays["V"], "c")
 
@@ -290,10 +307,12 @@ def test_the_mask_must_be_a_register_tile_of_the_widths():
 if __name__ == "__main__":
     for tile_dtype in (dace.float64, dace.int32):
         for tile_window, tile_implementation in CASES:
-            test_a_masked_load_fills_the_active_lanes_and_zeroes_the_others(tile_window, tile_implementation,
-                                                                            tile_dtype)
-            test_a_masked_store_writes_the_active_lanes_and_leaves_the_others(tile_window, tile_implementation,
-                                                                              tile_dtype)
+            test_a_masked_load_fills_the_active_lanes_and_zeroes_the_others(
+                tile_window, tile_implementation, tile_dtype
+            )
+            test_a_masked_store_writes_the_active_lanes_and_leaves_the_others(
+                tile_window, tile_implementation, tile_dtype
+            )
     for tile_window in ("contiguous", "strided"):
         test_a_masked_load_equals_the_tile_load_it_replaces(tile_window)
     test_a_masked_load_reads_a_lane_only_where_the_mask_is_on()
@@ -302,14 +321,20 @@ if __name__ == "__main__":
         test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves("0:8", "16", tile_masked)
         test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves("3:11", "4, 1", tile_masked)
         test_a_half_precision_tile_is_loaded_with_the_alignment_its_window_proves("4:12", "8", tile_masked)
-    for tile_source, tile_destination in ((Storage.GPU_Global, Storage.Register), (Storage.GPU_Global,
-                                                                                   Storage.GPU_Shared),
-                                          (Storage.CPU_Heap, Storage.Register), (Storage.Register, Storage.GPU_Global),
-                                          (Storage.GPU_Shared, Storage.GPU_Global), (Storage.Register,
-                                                                                     Storage.CPU_Heap)):
+    for tile_source, tile_destination in (
+        (Storage.GPU_Global, Storage.Register),
+        (Storage.GPU_Global, Storage.GPU_Shared),
+        (Storage.CPU_Heap, Storage.Register),
+        (Storage.Register, Storage.GPU_Global),
+        (Storage.GPU_Shared, Storage.GPU_Global),
+        (Storage.Register, Storage.CPU_Heap),
+    ):
         test_the_storage_pairs_of_a_load_or_a_store_validate(tile_source, tile_destination)
-    for tile_source, tile_destination in ((Storage.CPU_Heap, Storage.CPU_Heap), (Storage.GPU_Shared, Storage.Register),
-                                          (Storage.CPU_Pinned, Storage.Register)):
+    for tile_source, tile_destination in (
+        (Storage.CPU_Heap, Storage.CPU_Heap),
+        (Storage.GPU_Shared, Storage.Register),
+        (Storage.CPU_Pinned, Storage.Register),
+    ):
         test_any_other_storage_pair_is_refused(tile_source, tile_destination)
     for tile_storage in (Storage.Default, Storage.Register):
         test_a_copy_within_one_storage_reads_its_direction_off_the_transient_tile(tile_storage, False, True, True)

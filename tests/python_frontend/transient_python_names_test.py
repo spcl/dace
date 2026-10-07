@@ -4,45 +4,46 @@
 A reshape view is created under a generated name and renamed to the Python name it is bound to, so a
 chain of views is the program shape that exercises the renaming.
 """
+
 import numpy as np
 
 import dace
 from dace import SDFG
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
 def three_reshaped_views(x: dace.float64[N], out: dace.float64[N]):
     b0 = np.copy(x)
-    b1 = b0.reshape((N, ))
-    b2 = b1.reshape((N, ))
-    b3 = b2.reshape((N, ))
+    b1 = b0.reshape((N,))
+    b2 = b1.reshape((N,))
+    b3 = b2.reshape((N,))
     out[:] = b3
 
 
 @dace.program
 def twelve_reshaped_views(x: dace.float64[N], out: dace.float64[N]):
     b0 = np.copy(x)
-    b1 = b0.reshape((N, ))
-    b2 = b1.reshape((N, ))
-    b3 = b2.reshape((N, ))
-    b4 = b3.reshape((N, ))
-    b5 = b4.reshape((N, ))
-    b6 = b5.reshape((N, ))
-    b7 = b6.reshape((N, ))
-    b8 = b7.reshape((N, ))
-    b9 = b8.reshape((N, ))
-    b10 = b9.reshape((N, ))
-    b11 = b10.reshape((N, ))
-    b12 = b11.reshape((N, ))
+    b1 = b0.reshape((N,))
+    b2 = b1.reshape((N,))
+    b3 = b2.reshape((N,))
+    b4 = b3.reshape((N,))
+    b5 = b4.reshape((N,))
+    b6 = b5.reshape((N,))
+    b7 = b6.reshape((N,))
+    b8 = b7.reshape((N,))
+    b9 = b8.reshape((N,))
+    b10 = b9.reshape((N,))
+    b11 = b10.reshape((N,))
+    b12 = b11.reshape((N,))
     out[:] = b12
 
 
 def test_reshaped_views_carry_their_python_names_after_parsing():
     """A view bound to a Python name is renamed to that name; codegen and the CPF form read it."""
     sdfg = three_reshaped_views.to_sdfg(simplify=False)
-    assert {'b1', 'b2', 'b3'} <= set(sdfg.arrays), sorted(sdfg.arrays)
+    assert {"b1", "b2", "b3"} <= set(sdfg.arrays), sorted(sdfg.arrays)
 
 
 def test_naming_transients_walks_the_sdfg_once_however_many_there_are(monkeypatch):
@@ -55,7 +56,7 @@ def test_naming_transients_walks_the_sdfg_once_however_many_there_are(monkeypatc
         calls.append(self)
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(SDFG, 'replace_dict', counting)
+    monkeypatch.setattr(SDFG, "replace_dict", counting)
     three_reshaped_views.to_sdfg(simplify=False)
     few = len(calls)
     calls.clear()
@@ -80,6 +81,7 @@ def test_a_reduction_result_is_not_named_after_the_function_it_shadows():
     """``a.max()`` names its result after the method; a container called ``max`` would shadow the
     ``max(...)`` the elementwise maximum calls in the generated code."""
     from dace.frontend.python.newast import FORBIDDEN_ARRAY_NAMES
+
     sdfg = clipped_by_the_peak.to_sdfg(simplify=False)
     assert not FORBIDDEN_ARRAY_NAMES & set(sdfg.arrays), sorted(FORBIDDEN_ARRAY_NAMES & set(sdfg.arrays))
     a = np.random.default_rng(0).random(8)
@@ -88,7 +90,7 @@ def test_a_reduction_result_is_not_named_after_the_function_it_shadows():
     assert np.allclose(out, np.maximum(a, a.max() * 0.5))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_reshaped_views_carry_their_python_names_after_parsing()
     test_the_renamed_view_chain_computes_what_numpy_computes()
     test_a_reduction_result_is_not_named_after_the_function_it_shadows()

@@ -5,6 +5,7 @@ These classifiers inspect a lowered SDFG to count raw tasklets that still touch
 tile-shaped data (the K-dim "tile-only" invariant check). They live here rather
 than in the production pipeline because only the tests consume them.
 """
+
 from typing import Tuple
 
 import dace
@@ -39,12 +40,12 @@ def descriptor_is_tile_or_broadcast(desc, widths: Tuple[int, ...]) -> bool:
         try:
             is_w = bool(dace.symbolic.simplify(s - w) == 0)
         except Exception:  # noqa: BLE001 -- symbolic simplification may refuse
-            is_w = (s == w)
+            is_w = s == w
         is_one_marker = dace.symbolic.has_one_marker(s)
         try:
             is_lit_one = bool(dace.symbolic.simplify(s - 1) == 0)
         except Exception:  # noqa: BLE001
-            is_lit_one = (s == 1)
+            is_lit_one = s == 1
         if is_w:
             n_real += 1
         elif is_one_marker or is_lit_one:

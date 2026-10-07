@@ -9,6 +9,7 @@ DaCe's LAPACK / linalg library nodes (Cholesky -> Potrf, Solve -> Getrf+Getrs) r
 library) -- so once the OpenBLAS environment resolves that library + include dir, LAPACKE
 links with no separate reference-LAPACK/LAPACKE package. This guards that path.
 """
+
 import ctypes.util
 import os
 
@@ -30,7 +31,7 @@ def _openmp_runtime_loadable():
     and dlopening an OpenMP runtime there leaves it mapped for every later test in the interpreter
     -- which is how ScaLAPACK's pgemm started returning wrong numbers on the heterogeneous runner.
     """
-    for name in ('libomp.so', 'libgomp.so.1', 'libgomp.so'):
+    for name in ("libomp.so", "libgomp.so.1", "libgomp.so"):
         try:
             ctypes.CDLL(name)
             return True
@@ -42,34 +43,36 @@ def _openmp_runtime_loadable():
 @pytest.fixture
 def buildable():
     """Skip unless this machine can build and load a LAPACKE kernel."""
-    assert OpenBLAS.is_installed() and _openmp_runtime_loadable(
-    ), 'needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime'
+    assert OpenBLAS.is_installed() and _openmp_runtime_loadable(), (
+        "needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime"
+    )
 
 
 def test_lapacke_header_and_symbols_available():
     """When OpenBLAS is present, the LAPACKE header and symbols must be reachable -- otherwise
     a Cholesky/Solve kernel cannot compile (needs lapacke.h) or link (needs LAPACKE_*)."""
-    assert OpenBLAS.is_installed(), 'OpenBLAS (LAPACKE provider) not installed'
+    assert OpenBLAS.is_installed(), "OpenBLAS (LAPACKE provider) not installed"
 
     # lapacke.h must be reachable: it's in the env's declared headers, and in single-lib
     # (spack/conda) mode it lives off the default include path, so an include dir must resolve.
-    assert 'lapacke.h' in OpenBLAS.headers
-    if OpenBLAS._mode() == 'direct_link':
+    assert "lapacke.h" in OpenBLAS.headers
+    if OpenBLAS._mode() == "direct_link":
         incs = OpenBLAS.cmake_includes()
-        assert any(os.path.isfile(os.path.join(d, 'lapacke.h')) for d in incs), \
-            f'lapacke.h not found under resolved include dirs {incs}'
+        assert any(os.path.isfile(os.path.join(d, "lapacke.h")) for d in incs), (
+            f"lapacke.h not found under resolved include dirs {incs}"
+        )
 
     # The linked library must actually export the LAPACKE entry points the kernels use.
     libs = OpenBLAS.cmake_libraries()
-    assert libs, 'OpenBLAS reports installed but exposes no library to link'
+    assert libs, "OpenBLAS reports installed but exposes no library to link"
     abs_libs = [p for p in libs if os.path.isabs(p) and os.path.isfile(p)]
     if abs_libs:  # single-lib mode gives a concrete path; verify the symbols are really there
         loaded = ctypes.CDLL(abs_libs[0])
-        for sym in ('LAPACKE_dpotrf', 'LAPACKE_zgetrf', 'LAPACKE_zgetrs'):
-            assert hasattr(loaded, sym), f'{sym} missing from {abs_libs[0]} (LAPACKE not in this build)'
+        for sym in ("LAPACKE_dpotrf", "LAPACKE_zgetrf", "LAPACKE_zgetrs"):
+            assert hasattr(loaded, sym), f"{sym} missing from {abs_libs[0]} (LAPACKE not in this build)"
 
 
-@pytest.mark.usefixtures('buildable')
+@pytest.mark.usefixtures("buildable")
 def test_cholesky_compiles_and_links_lapacke():
     """cholesky2 path: np.linalg.cholesky -> Potrf -> LAPACKE_?potrf, end to end."""
 
@@ -83,7 +86,7 @@ def test_cholesky_compiles_and_links_lapacke():
     assert np.allclose(chol(A.copy()), np.linalg.cholesky(A), atol=1e-8)
 
 
-@pytest.mark.usefixtures('buildable')
+@pytest.mark.usefixtures("buildable")
 def test_complex_solve_compiles_and_links_lapacke():
     """contour_integral path: complex np.linalg.solve -> Getrf+Getrs -> LAPACKE_z{getrf,getrs}."""
 
@@ -97,5 +100,5 @@ def test_complex_solve_compiles_and_links_lapacke():
     assert np.allclose(solve(A.copy(), B.copy()), np.linalg.solve(A, B), atol=1e-8)
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-v']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-v"]))

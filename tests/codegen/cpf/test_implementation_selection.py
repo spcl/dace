@@ -10,6 +10,7 @@ environment-free spellings are the CUDA ones -- symbols a unit with no include p
 
 So the selection is an allowlist that has been checked, and these tests hold both edges of it.
 """
+
 import numpy as np
 import pytest
 
@@ -39,23 +40,26 @@ def prepared_sdfg():
 def test_a_small_constant_copy_renders_as_one_memcpy():
     sdfg = prepared_sdfg()
     copies = [(node, state) for node, state in sdfg.all_nodes_recursive() if isinstance(node, CopyLibraryNode)]
-    assert copies, 'the fixture is meant to carry copy library nodes for CPF to choose an expansion for'
+    assert copies, "the fixture is meant to carry copy library nodes for CPF to choose an expansion for"
     # Left at the node's default, so CPF's choice -- not the fixture's -- is what is under test.
     assert all(node.implementation is None for node, _ in copies)
-    assert all(select_copy_implementation(node, state) == 'MemcpyCPU' for node, state in copies)
+    assert all(select_copy_implementation(node, state) == "MemcpyCPU" for node, state in copies)
 
-    code = render(sdfg, language='c++').code
-    assert 'memcpy' in code
+    code = render(sdfg, language="c++").code
+    assert "memcpy" in code
     # The one branch of Auto that would name a runtime template. It needs a GPU_Shared endpoint,
     # which prepare() has already refused, so reaching it here would mean that guard had moved.
-    assert 'CopyND' not in code
+    assert "CopyND" not in code
 
 
-@pytest.mark.parametrize('elements', [
-    dace.symbol('N'),
-    dace.symbol('N') * dace.symbol('N'),
-    1 << 20,
-])
+@pytest.mark.parametrize(
+    "elements",
+    [
+        dace.symbol("N"),
+        dace.symbol("N") * dace.symbol("N"),
+        1 << 20,
+    ],
+)
 def test_a_large_or_unknown_copy_stays_a_parallel_map(elements):
     """The half that matters at benchmark sizes, and the reason Auto is preferred over a fixed name.
 
@@ -68,16 +72,16 @@ def test_a_large_or_unknown_copy_stays_a_parallel_map(elements):
 
 
 def test_a_small_constant_copy_is_the_only_one_that_takes_the_single_call():
-    threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
+    threshold = int(dace.Config.get("compiler", "cpu", "parallel_transfer_min_elements"))
     assert not is_parallel_cpu_transfer_size(threshold - 1)
     assert is_parallel_cpu_transfer_size(threshold)
 
 
-@pytest.mark.parametrize('implementation', ['CPU', 'vectorized', 'Auto', 'GPUAuto', 'CUDA', 'PBLAS'])
+@pytest.mark.parametrize("implementation", ["CPU", "vectorized", "Auto", "GPUAuto", "CUDA", "PBLAS"])
 def test_implementations_that_lower_onto_a_runtime_are_not_selectable(implementation):
     """Named one by one rather than filtered on ``environments``, which reports none for all of these."""
     assert implementation not in RENDERABLE_IMPLEMENTATIONS
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_small_constant_copy_renders_as_one_memcpy()

@@ -20,6 +20,7 @@ The fix emits a STRICT (``off >= 1``) guard for the split's mixed shape, so ``K 
 faults loudly instead of corrupting the result, while every valid ``K >= 1`` still
 snapshots-and-parallelizes bit-exactly.
 """
+
 import sys
 
 import numpy as np
@@ -30,8 +31,8 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.helpers.isolation import exit_code_of
 
-N = dace.symbol('N')
-K = dace.symbol('K')
+N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -60,11 +61,11 @@ def test_split_symbolic_forward_offset_valid_k_is_bit_exact_and_parallel():
 
     cand = _split_sym_forward.to_sdfg(simplify=True)
     canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
-    assert any('snap' in nm for nm in cand.arrays), 'the forward-read cone should snapshot A'
-    assert _nmaps(cand) >= 1, 'the symbolic-offset anti-dependence cone should parallelize'
+    assert any("snap" in nm for nm in cand.arrays), "the forward-read cone should snapshot A"
+    assert _nmaps(cand) >= 1, "the symbolic-offset anti-dependence cone should parallelize"
     Ac, Bc, Dc = A0.copy(), B0.copy(), np.zeros(n)
     cand.compile()(A=Ac, B=Bc, D=Dc, N=n, K=k)
-    assert np.allclose(Dr, Dc, equal_nan=True), 'K=3 snapshot must be value-preserving'
+    assert np.allclose(Dr, Dc, equal_nan=True), "K=3 snapshot must be value-preserving"
 
 
 def split_sym_forward_verdict(A0, B0, Dr, n, k) -> None:
@@ -111,10 +112,12 @@ def test_split_symbolic_forward_offset_zero_never_silently_miscompiles():
 
     if code < 0:
         return  # trapped by the strict positive-check guard -> sound (loud, not silent)
-    assert code != 7, ('SplitStatements silently miscompiled the K=0 same-iteration read: '
-                       'A[i+0] was redirected to the stale pre-loop snapshot instead of the '
-                       'just-written live value')
-    assert code in (0, 5), f'unexpected child exit code {code}'
+    assert code != 7, (
+        "SplitStatements silently miscompiled the K=0 same-iteration read: "
+        "A[i+0] was redirected to the stale pre-loop snapshot instead of the "
+        "just-written live value"
+    )
+    assert code in (0, 5), f"unexpected child exit code {code}"
 
 
 @dace.program
@@ -146,10 +149,11 @@ def test_split_mixed_read_kept_live_when_none_coexists_with_war():
     Ac, Bc, Ec, Dc = A0.copy(), B0.copy(), E0.copy(), np.zeros(n)
     cand.compile()(A=Ac, B=Bc, E=Ec, D=Dc, N=n)
 
-    assert np.allclose(Dr, Dc, equal_nan=True), ('the same-iteration read A[i+1] was redirected to the '
-                                                 'stale snapshot instead of the just-written live value')
-    assert np.allclose(Dc[1:n - 2], 2.0 * E0[1:n - 2]), 'D[i] must equal 2*E[i]'
+    assert np.allclose(Dr, Dc, equal_nan=True), (
+        "the same-iteration read A[i+1] was redirected to the stale snapshot instead of the just-written live value"
+    )
+    assert np.allclose(Dc[1 : n - 2], 2.0 * E0[1 : n - 2]), "D[i] must equal 2*E[i]"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

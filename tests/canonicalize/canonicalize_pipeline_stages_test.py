@@ -1,17 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Additional end-to-end unit tests for the full ``canonicalize`` pipeline,
-    targeting stage paths not covered by ``canonicalize_pipeline_test.py``:
-    accumulator reduction, perfect-loop-nesting fission, a partially-shared
-    transient (partial fission), a conditional with an ``else`` branch,
-    indirect scatter, and a guarded multi-statement stencil (MoveIfIntoMap
-    -> fission -> fuse -> conditional recombination).
+"""Additional end-to-end unit tests for the full ``canonicalize`` pipeline,
+targeting stage paths not covered by ``canonicalize_pipeline_test.py``:
+accumulator reduction, perfect-loop-nesting fission, a partially-shared
+transient (partial fission), a conditional with an ``else`` branch,
+indirect scatter, and a guarded multi-statement stencil (MoveIfIntoMap
+-> fission -> fuse -> conditional recombination).
 
-    Every test asserts the canonicalized SDFG validates, reaches the
-    structural form its stage is named for, and is numerically identical to a
-    deep-copied pre-canonicalization run. The structural half is what keeps a
-    ``canonicalize`` that returned immediately from passing: the reference run
-    is the same program, so numbers alone cannot tell the two apart.
+Every test asserts the canonicalized SDFG validates, reaches the
+structural form its stage is named for, and is numerically identical to a
+deep-copied pre-canonicalization run. The structural half is what keeps a
+``canonicalize`` that returned immediately from passing: the reference run
+is the same program, so numbers alone cannot tell the two apart.
 """
+
 import copy
 from typing import List
 
@@ -30,8 +31,8 @@ from dace.transformation.passes.canonicalize.pipeline import PropagateAndPrune
 from dace.transformation.passes.fuse_maps import FuseMaps
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def nmaps(sdfg) -> int:
@@ -97,48 +98,49 @@ def scatter(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], cc: dace
 
 
 @dace.program
-def guarded_two_stencils(a: dace.float64[N], b: dace.float64[N], cc: dace.float64[N], d: dace.float64[N],
-                         act: dace.int32[1]):
+def guarded_two_stencils(
+    a: dace.float64[N], b: dace.float64[N], cc: dace.float64[N], d: dace.float64[N], act: dace.int32[1]
+):
     if act[0] > 0:
-        for i in dace.map[1:N - 1]:
+        for i in dace.map[1 : N - 1]:
             b[i] = a[i - 1] + a[i] + a[i + 1]
             d[i] = cc[i - 1] + cc[i] + cc[i + 1]
 
 
 def copy_through_tasklet(state, read_subset):
-    tasklet = state.add_tasklet('copy', {'x': None}, {'y': None}, 'y = x')
-    state.add_edge(state.add_read('a'), None, tasklet, 'x', Memlet(f'a[{read_subset}]'))
-    state.add_edge(tasklet, 'y', state.add_write('b'), None, Memlet('b[0]'))
+    tasklet = state.add_tasklet("copy", {"x": None}, {"y": None}, "y = x")
+    state.add_edge(state.add_read("a"), None, tasklet, "x", Memlet(f"a[{read_subset}]"))
+    state.add_edge(tasklet, "y", state.add_write("b"), None, Memlet("b[0]"))
 
 
 def test_propagate_and_prune_leaves_a_graph_with_nothing_to_fold_and_reports_every_round():
-    sdfg = dace.SDFG('nothing_to_fold')
-    sdfg.add_array('a', [8], dace.float64)
-    sdfg.add_array('b', [8], dace.float64)
-    state = sdfg.add_state('copy', is_start_block=True)
-    copy_through_tasklet(state, '1')
+    sdfg = dace.SDFG("nothing_to_fold")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
+    state = sdfg.add_state("copy", is_start_block=True)
+    copy_through_tasklet(state, "1")
     before = sdfg.to_json()
 
     reported = PropagateAndPrune().apply_pass(sdfg, {})
 
     assert reported == PropagateAndPrune.ROUNDS
-    assert sdfg.to_json() == before, 'a round with nothing to fold mutated the SDFG'
+    assert sdfg.to_json() == before, "a round with nothing to fold mutated the SDFG"
 
 
 def test_propagate_and_prune_folds_a_constant_bound_symbol_into_the_memlet():
-    sdfg = dace.SDFG('fold_symbol')
-    sdfg.add_array('a', [8], dace.float64)
-    sdfg.add_array('b', [8], dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
-    use = sdfg.add_state('use')
-    sdfg.add_edge(init, use, dace.InterstateEdge(assignments={'k': '3'}))
-    copy_through_tasklet(use, 'k')
+    sdfg = dace.SDFG("fold_symbol")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    use = sdfg.add_state("use")
+    sdfg.add_edge(init, use, dace.InterstateEdge(assignments={"k": "3"}))
+    copy_through_tasklet(use, "k")
 
     PropagateAndPrune().apply_pass(sdfg, {})
 
     sdfg.validate()
-    reads = [e for s in sdfg.states() for e in s.edges() if e.data.data == 'a']
-    assert [str(e.data.subset) for e in reads] == ['3']
+    reads = [e for s in sdfg.states() for e in s.edges() if e.data.data == "a"]
+    assert [str(e.data.subset) for e in reads] == ["3"]
 
 
 def test_canonicalize_accumulator_reduction():
@@ -151,8 +153,8 @@ def test_canonicalize_accumulator_reduction():
 
     sdfg = accumulator.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert nreduces(sdfg) == 1, f'the accumulator must lift to a Reduce, got {nreduces(sdfg)}'
-    assert nloops(sdfg) == 0, 'the reduction loop must not survive the lift'
+    assert nreduces(sdfg) == 1, f"the accumulator must lift to a Reduce, got {nreduces(sdfg)}"
+    assert nloops(sdfg) == 0, "the reduction loop must not survive the lift"
     out = np.zeros(1)
     sdfg(a=a.copy(), s=out, N=n)
     assert np.allclose(out, ref) and np.allclose(out, a.sum())
@@ -168,7 +170,7 @@ def test_canonicalize_perfect_loop_nesting():
 
     sdfg = perfect_nest.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert nmaps(sdfg) == 1, f'the two j-nests must fuse into one map, got {nmaps(sdfg)}'
+    assert nmaps(sdfg) == 1, f"the two j-nests must fuse into one map, got {nmaps(sdfg)}"
     assert nloops(sdfg) == 0
     out_b, out_c = np.zeros((n, m)), np.zeros((n, m))
     sdfg(a=a.copy(), b=out_b, c=out_c, N=n, M=m)
@@ -186,14 +188,14 @@ def test_canonicalize_partially_shared_transient():
 
     sdfg = shared_transient.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert nmaps(sdfg) == 1, f'the shared transient must stay inside one map, got {nmaps(sdfg)}'
+    assert nmaps(sdfg) == 1, f"the shared transient must stay inside one map, got {nmaps(sdfg)}"
     out_b, out_d = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), b=out_b, d=out_d, cc=cc.copy(), N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d)
     assert np.allclose(out_b, a * 2.0 + 1.0) and np.allclose(out_d, cc * 3.0)
 
 
-@pytest.mark.parametrize('av', [1, 0])
+@pytest.mark.parametrize("av", [1, 0])
 def test_canonicalize_conditional_with_else(av):
     """Both arms of the guard parallelize: one map per branch under one top-level guard."""
     rng = np.random.default_rng(42)
@@ -204,8 +206,8 @@ def test_canonicalize_conditional_with_else(av):
 
     sdfg = cond_else.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert nmaps(sdfg) == 2, f'expected one map per branch, got {nmaps(sdfg)}'
-    assert ntop_conds(sdfg) == 1, 'the guard must survive as a single top-level ConditionalBlock'
+    assert nmaps(sdfg) == 2, f"expected one map per branch, got {nmaps(sdfg)}"
+    assert ntop_conds(sdfg) == 1, "the guard must survive as a single top-level ConditionalBlock"
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, act=np.array([av], np.int32), N=n)
     assert np.allclose(out, ref), f"mismatch act={av}"
@@ -226,11 +228,11 @@ def test_canonicalize_indirect_scatter():
     # ``b[idx[i]] = ...`` is an overwrite, not an accumulation, and ``idx`` is a runtime
     # argument: nothing proves it injective, so the map runs only when the guard finds no
     # collision, and the sequential loop stays as the fallback.
-    guards = [n for n, _ in sdfg.all_nodes_recursive() if type(n).__name__ == 'ScatterConflictCheck']
-    assert len(guards) == 1, f'an unproven-injective scatter needs exactly one runtime guard, got {len(guards)}'
-    assert nmaps(sdfg) == 1, f'the guarded branch must hold the one map, got {nmaps(sdfg)}'
-    assert nloops(sdfg) == 1, f'the sequential fallback must stay one loop, got {nloops(sdfg)}'
-    assert nwcr_edges(sdfg) == 0, 'an overwrite scatter must not acquire a WCR'
+    guards = [n for n, _ in sdfg.all_nodes_recursive() if type(n).__name__ == "ScatterConflictCheck"]
+    assert len(guards) == 1, f"an unproven-injective scatter needs exactly one runtime guard, got {len(guards)}"
+    assert nmaps(sdfg) == 1, f"the guarded branch must hold the one map, got {nmaps(sdfg)}"
+    assert nloops(sdfg) == 1, f"the sequential fallback must stay one loop, got {nloops(sdfg)}"
+    assert nwcr_edges(sdfg) == 0, "an overwrite scatter must not acquire a WCR"
     out_b, out_e = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), idx=idx.copy(), b=out_b, cc=cc.copy(), e=out_e, N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_e, ref_e)
@@ -240,31 +242,28 @@ def test_canonicalize_indirect_scatter():
     assert np.allclose(out_b, exp_b) and np.allclose(out_e, exp_e)
 
 
-@pytest.mark.parametrize('av', [1, 0])
+@pytest.mark.parametrize("av", [1, 0])
 def test_canonicalize_guarded_two_stencils(av):
     """Guard + two independent stencils fuse to one guarded map, values preserved."""
     rng = np.random.default_rng(42)
     n = 24
     a, cc = rng.random(n), rng.random(n)
     ref_b, ref_d = np.full(n, 5.0), np.full(n, 5.0)
-    copy.deepcopy(guarded_two_stencils.to_sdfg(simplify=True))(a=a.copy(),
-                                                               b=ref_b,
-                                                               cc=cc.copy(),
-                                                               d=ref_d,
-                                                               act=np.array([av], np.int32),
-                                                               N=n)
+    copy.deepcopy(guarded_two_stencils.to_sdfg(simplify=True))(
+        a=a.copy(), b=ref_b, cc=cc.copy(), d=ref_d, act=np.array([av], np.int32), N=n
+    )
 
     sdfg = guarded_two_stencils.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert nmaps(sdfg) == 1, f'the two stencils must fuse into one map, got {nmaps(sdfg)}'
-    assert ntop_conds(sdfg) == 1, 'the guard must survive as a single top-level ConditionalBlock'
+    assert nmaps(sdfg) == 1, f"the two stencils must fuse into one map, got {nmaps(sdfg)}"
+    assert ntop_conds(sdfg) == 1, "the guard must survive as a single top-level ConditionalBlock"
     out_b, out_d = np.full(n, 5.0), np.full(n, 5.0)
     sdfg(a=a.copy(), b=out_b, cc=cc.copy(), d=out_d, act=np.array([av], np.int32), N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d), f"mismatch act={av}"
     if av > 0:
         exp_b, exp_d = np.full(n, 5.0), np.full(n, 5.0)
-        exp_b[1:n - 1] = a[0:n - 2] + a[1:n - 1] + a[2:n]
-        exp_d[1:n - 1] = cc[0:n - 2] + cc[1:n - 1] + cc[2:n]
+        exp_b[1 : n - 1] = a[0 : n - 2] + a[1 : n - 1] + a[2:n]
+        exp_d[1 : n - 1] = cc[0 : n - 2] + cc[1 : n - 1] + cc[2:n]
         assert np.allclose(out_b, exp_b) and np.allclose(out_d, exp_d)
     else:
         assert np.allclose(out_b, 5.0) and np.allclose(out_d, 5.0)

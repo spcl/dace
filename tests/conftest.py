@@ -2,6 +2,7 @@
 """
 pytest configuration file.
 """
+
 import os
 
 # Disable hwloc's GL/X11 topology backend before anything imports ``mpi4py``.
@@ -92,6 +93,7 @@ def openmp_pool_may_outlive_fork() -> bool:
     if not any(marker in mapped for marker in OMP_RUNTIME_MARKERS):
         return False  # no OpenMP runtime loaded -> no pool to strand
     from dace.transformation.layout.isolation import pause_openmp_pools
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # the return value carries the same verdict as the warning
         return not pause_openmp_pools()
@@ -112,12 +114,14 @@ def guarded_fork() -> int:
     a parallel region), where the deadlock is real and no teardown can prevent it.
     """
     if openmp_pool_may_outlive_fork():
-        raise RuntimeError("os.fork() from a process whose OpenMP thread pool could not be torn down deadlocks the "
-                           "child: the child inherits libgomp's team barrier recording threads that fork did not "
-                           "carry over, so its first parallel region waits on them forever. omp_pause_resource_all "
-                           "refused or is missing -- a pre-OpenMP-5.0 runtime, or a fork from inside a parallel "
-                           "region. Run the kernel in a spawned child via tests.helpers.isolation instead, or pin "
-                           "OMP_NUM_THREADS=1 before dace is imported so no team is ever built.")
+        raise RuntimeError(
+            "os.fork() from a process whose OpenMP thread pool could not be torn down deadlocks the "
+            "child: the child inherits libgomp's team barrier recording threads that fork did not "
+            "carry over, so its first parallel region waits on them forever. omp_pause_resource_all "
+            "refused or is missing -- a pre-OpenMP-5.0 runtime, or a fork from inside a parallel "
+            "region. Run the kernel in a spawned child via tests.helpers.isolation instead, or pin "
+            "OMP_NUM_THREADS=1 before dace is imported so no team is ever built."
+        )
     return UNGUARDED_FORK()
 
 
@@ -129,7 +133,7 @@ os.fork = guarded_fork
 GLOBAL_RANDOM_SEED = 0
 
 
-@pytest.fixture(scope='session', autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def xdist_build_folder():
     """Give each xdist worker its own build directory, so same-named SDFGs do not race.
 
@@ -138,25 +142,27 @@ def xdist_build_folder():
     config (an exported ``DACE_default_build_folder`` is already folded into it at load). Serial runs
     are untouched.
     """
-    worker = os.environ.get('PYTEST_XDIST_WORKER')
+    worker = os.environ.get("PYTEST_XDIST_WORKER")
     if not worker:
         return
     from dace.config import Config
-    target = os.path.join(Config.get('default_build_folder'), worker)
-    Config.set('default_build_folder', value=target)
+
+    target = os.path.join(Config.get("default_build_folder"), worker)
+    Config.set("default_build_folder", value=target)
 
 
 @pytest.fixture(autouse=True)
 def seeded_global_rng():
     """Reseed NumPy's legacy global RNG before each test."""
     import numpy as np
+
     np.random.seed(GLOBAL_RANDOM_SEED)
 
 
 @pytest.hookimpl()
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     # If running MPI tests and a failure has been detected, terminate the process to notify MPI to stop the other ranks
-    if config.option.markexpr == 'mpi':
+    if config.option.markexpr == "mpi":
         if exitstatus in (pytest.ExitCode.TESTS_FAILED, pytest.ExitCode.INTERNAL_ERROR, pytest.ExitCode.INTERRUPTED):
             os._exit(1)
 
@@ -166,35 +172,39 @@ def pytest_generate_tests(metafunc):
     This method sets up the parametrizations for the custom fixtures
     """
     if "use_cpp_dispatcher" in metafunc.fixturenames:
-        metafunc.parametrize("use_cpp_dispatcher", [
-            pytest.param(True, id="use_cpp_dispatcher"),
-            pytest.param(False, id="no_use_cpp_dispatcher"),
-        ])
+        metafunc.parametrize(
+            "use_cpp_dispatcher",
+            [
+                pytest.param(True, id="use_cpp_dispatcher"),
+                pytest.param(False, id="no_use_cpp_dispatcher"),
+            ],
+        )
 
 
 def _active_cuda_impl():
     # Imported lazily so pytest collection works even if the dace package can't be imported.
     from dace.config import Config
-    return Config.get('compiler', 'cuda', 'implementation')
+
+    return Config.get("compiler", "cuda", "implementation")
 
 
 #: Directories owned by a dedicated workflow. Marked by path so the suites stay selectable
 #: without touching hundreds of files; general CI deselects them.
 _SUITE_DIRS = (
-    (os.path.join('tests', 'passes', 'vectorization'), 'vectorization'),
-    (os.path.join('tests', 'passes', 'canonicalize'), 'canonicalization'),
-    (os.path.join('tests', 'canonicalize'), 'canonicalization'),
+    (os.path.join("tests", "passes", "vectorization"), "vectorization"),
+    (os.path.join("tests", "passes", "canonicalize"), "canonicalization"),
+    (os.path.join("tests", "canonicalize"), "canonicalization"),
     # 892 combinatorial sweeps over layout permutations. Marked so the general selection skips them
     # and the dedicated `layout` job is the only thing that runs them.
-    (os.path.join('tests', 'transformations', 'layout'), 'layout'),
+    (os.path.join("tests", "transformations", "layout"), "layout"),
     # Needs a real MPI launcher (the heterogeneous runner runs these under ``mpirun -n 2``), so mark
     # the directory rather than rely on each file remembering the marker -- three did not.
-    (os.path.join('tests', 'library', 'mpi'), 'mpi'),
+    (os.path.join("tests", "library", "mpi"), "mpi"),
     # Before the plain-corpus entry: first match wins, and CloudSC is a whole-application
     # integration run (offload, pipeline, coalesce, checkpoint-resume), not a kernel corpus.
-    (os.path.join('tests', 'corpus', 'cloudsc'), 'integration'),
-    (os.path.join('tests', 'corpus'), 'corpus'),
-    (os.path.join('tests', 'npbench'), 'corpus'),
+    (os.path.join("tests", "corpus", "cloudsc"), "integration"),
+    (os.path.join("tests", "corpus"), "corpus"),
+    (os.path.join("tests", "npbench"), "corpus"),
 )
 
 #: Library-node and loop-to-libnode lift tests (loop2sym / loop2reduce / loop2scan / lift-einsum
@@ -203,54 +213,54 @@ _SUITE_DIRS = (
 #: still lands here. MPI library tests are NOT here -- ``tests/library/mpi`` is directory-marked
 #: ``mpi`` and runs under the heterogeneous runner's ``mpirun``.
 _LIBNODE_FILES = (
-    'allany_node_test.py',
-    'arg_reduce_test.py',
-    'argminmax_test.py',
-    'blas_environment_test.py',
-    'broadcast_test.py',
-    'copy_node_test.py',
-    'count_node_test.py',
-    'cshift_test.py',
-    'fft_axis_test.py',
-    'fft_fftw3_test.py',
-    'fft_interpolate_test.py',
-    'fft_pure_ndim_test.py',
-    'fill_node_test.py',
-    'fortran_io_test.py',
-    'gemm_runtime_coeff_test.py',
-    'integer_sort_test.py',
-    'lapacke_link_test.py',
-    'lift_einsum_matmul_test.py',
-    'loop_to_reduce_test.py',
-    'loop_to_scan_test.py',
-    'loop_to_symm_test.py',
-    'loop_to_symmetrize_test.py',
-    'matmul_batched_test.py',
-    'matmul_broadcast_test.py',
-    'matmul_test.py',
-    'matmul_trans_test.py',
-    'matmul_unit_dim_squeeze_test.py',
-    'merge_node_test.py',
-    'norm2_test.py',
-    'preexpanded_libnode_stream_test.py',
-    'scan_strided_test.py',
-    'scan_test.py',
-    'strengthen2_loop_to_scan_test.py',
-    'symm_test.py',
-    'syrk_test.py',
-    'tensordot_tblis_test.py',
-    'test_reduce_view_gpu.py',
+    "allany_node_test.py",
+    "arg_reduce_test.py",
+    "argminmax_test.py",
+    "blas_environment_test.py",
+    "broadcast_test.py",
+    "copy_node_test.py",
+    "count_node_test.py",
+    "cshift_test.py",
+    "fft_axis_test.py",
+    "fft_fftw3_test.py",
+    "fft_interpolate_test.py",
+    "fft_pure_ndim_test.py",
+    "fill_node_test.py",
+    "fortran_io_test.py",
+    "gemm_runtime_coeff_test.py",
+    "integer_sort_test.py",
+    "lapacke_link_test.py",
+    "lift_einsum_matmul_test.py",
+    "loop_to_reduce_test.py",
+    "loop_to_scan_test.py",
+    "loop_to_symm_test.py",
+    "loop_to_symmetrize_test.py",
+    "matmul_batched_test.py",
+    "matmul_broadcast_test.py",
+    "matmul_test.py",
+    "matmul_trans_test.py",
+    "matmul_unit_dim_squeeze_test.py",
+    "merge_node_test.py",
+    "norm2_test.py",
+    "preexpanded_libnode_stream_test.py",
+    "scan_strided_test.py",
+    "scan_test.py",
+    "strengthen2_loop_to_scan_test.py",
+    "symm_test.py",
+    "syrk_test.py",
+    "tensordot_tblis_test.py",
+    "test_reduce_view_gpu.py",
 )
 
 #: Corpus files living outside those directories. A corpus case compiles and RUNS a C++ program per
 #: kernel, so wall time tracks the kernel count -- general CI carried ~880 of them, which is why it
 #: takes as long as it does. Matched on the file name, since these sit among ordinary unit tests.
 _CORPUS_FILES = (
-    'tsvc_integration_test.py',
-    'parallelize_peeling_tsvc_test.py',
-    'native_corpus_test.py',
-    'test_corpus_compile.py',
-    'test_corpus_equivalence.py',
+    "tsvc_integration_test.py",
+    "parallelize_peeling_tsvc_test.py",
+    "native_corpus_test.py",
+    "test_corpus_compile.py",
+    "test_corpus_equivalence.py",
 )
 
 
@@ -258,12 +268,12 @@ def pytest_collection_modifyitems(config, items):
     """Mark the vectorization / canonicalization suites by path, then auto-skip tests marked
     old_gpu_codegen_only / new_gpu_codegen_only per ``compiler.cuda.implementation``."""
     for item in items:
-        path = str(getattr(item, 'fspath', ''))
+        path = str(getattr(item, "fspath", ""))
         name = os.path.basename(path)
         # File list beats directory: a loop-to-libnode lift test living under a suite directory
         # (loop_to_symm* under tests/passes/canonicalize) belongs to the libnode runner, not the
         # suite its directory would mark it into.
-        if name in _LIBNODE_FILES or os.path.join('tests', 'library', 'tileops') in path:
+        if name in _LIBNODE_FILES or os.path.join("tests", "library", "tileops") in path:
             item.add_marker(pytest.mark.loop2x_libnodes)
             continue
         for prefix, mark in _SUITE_DIRS:
@@ -280,7 +290,7 @@ def pytest_collection_modifyitems(config, items):
         return  # If dace config is unavailable, don't interfere with collection.
 
     for item in items:
-        if 'old_gpu_codegen_only' in item.keywords and impl != 'legacy':
-            item.add_marker(pytest.mark.skip(reason='Requires the legacy CUDA codegen'))
-        if 'new_gpu_codegen_only' in item.keywords and impl != 'experimental':
-            item.add_marker(pytest.mark.skip(reason='Requires the experimental CUDA codegen'))
+        if "old_gpu_codegen_only" in item.keywords and impl != "legacy":
+            item.add_marker(pytest.mark.skip(reason="Requires the legacy CUDA codegen"))
+        if "new_gpu_codegen_only" in item.keywords and impl != "experimental":
+            item.add_marker(pytest.mark.skip(reason="Requires the experimental CUDA codegen"))

@@ -5,6 +5,7 @@ TSVC ``s341`` / ``s342`` stream compaction builds its mask as ``__out = (b_index
 operand into an ``int8`` mask. ``TileBinop.validate`` checked the double against the int8 output as if
 ``>`` promoted it, called that narrowing, and the vectorizer refused both kernels whole.
 """
+
 import numpy as np
 import pytest
 
@@ -14,14 +15,15 @@ from dace.libraries.tileops import TileBinop
 WIDTH = 8
 
 
-def compare_against_zero(name: str, op: str, operand_dtype: dace.typeclass,
-                         out_dtype: dace.typeclass) -> tuple[dace.SDFG, dace.SDFGState, TileBinop]:
+def compare_against_zero(
+    name: str, op: str, operand_dtype: dace.typeclass, out_dtype: dace.typeclass
+) -> tuple[dace.SDFG, dace.SDFGState, TileBinop]:
     """``c = a <op> 0.0`` over one tile, with ``a`` and ``c`` typed by the caller."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array("a", (WIDTH, ), operand_dtype)
-    sdfg.add_array("c", (WIDTH, ), out_dtype)
+    sdfg.add_array("a", (WIDTH,), operand_dtype)
+    sdfg.add_array("c", (WIDTH,), out_dtype)
     state = sdfg.add_state(is_start_block=True)
-    node = TileBinop("cmp", widths=(WIDTH, ), op=op, kind_a="Tile", kind_b="Symbol", expr_b="0.0")
+    node = TileBinop("cmp", widths=(WIDTH,), op=op, kind_a="Tile", kind_b="Symbol", expr_b="0.0")
     state.add_node(node)
     state.add_edge(state.add_access("a"), None, node, "_a", dace.Memlet(f"a[0:{WIDTH}]"))
     state.add_edge(node, "_c", state.add_access("c"), None, dace.Memlet(f"c[0:{WIDTH}]"))

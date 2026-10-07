@@ -8,6 +8,7 @@ keeping the cast value. It must match only true cast names — a loose
 the divisor (TSVC s276's ``int_floor(LEN_1D, 2)`` lane condition became
 ``LEN_1D``).
 """
+
 import pytest
 
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
@@ -27,7 +28,8 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
         ("x = int_floor(LEN_1D, 2)", "x = int_floor(LEN_1D, 2)"),
         ("x = int_ceil(n, 4)", "x = int_ceil(n, 4)"),
         ("x = dace.int_floor(n, 2)", "x = dace.int_floor(n, 2)"),
-    ])
+    ],
+)
 def test_remove_int_casts_keeps_int_floor(src: str, expected: str):
     assert _remove_dace_int_casts(src).strip() == expected
 
@@ -40,6 +42,7 @@ def test_remove_int_casts_keeps_int_floor(src: str, expected: str):
         ("x = dace.float64(a)", "x = a"),
         # A hypothetical ``float...`` builtin keeps its arguments.
         ("x = floor(a)", "x = floor(a)"),
-    ])
+    ],
+)
 def test_remove_float_casts_keeps_non_cast_calls(src: str, expected: str):
     assert _remove_dace_float_casts(src).strip() == expected

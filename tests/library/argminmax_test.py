@@ -8,6 +8,7 @@ Covers:
 * tie-break direction toggle via ``back``
 * 0-based vs 1-based output via ``one_based``
 """
+
 import numpy as np
 import pytest
 
@@ -31,8 +32,8 @@ def _build_whole(node_cls, in_shape, dtype, *, one_based=True, back=False):
     state = sdfg.add_state()
     node = node_cls(node_cls.__name__.lower(), one_based=one_based, back=back, dim=None)
     state.add_node(node)
-    state.add_edge(state.add_read("v"), None, node, '_x', dace.Memlet.from_array("v", sdfg.arrays["v"]))
-    state.add_edge(node, '_idx', state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
+    state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(node, "_idx", state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
     sdfg.expand_library_nodes()
     return sdfg
 
@@ -45,8 +46,8 @@ def _build_dim(node_cls, in_shape, dim, dtype, *, one_based=True, back=False):
     state = sdfg.add_state()
     node = node_cls(node_cls.__name__.lower(), one_based=one_based, back=back, dim=dim)
     state.add_node(node)
-    state.add_edge(state.add_read("v"), None, node, '_x', dace.Memlet.from_array("v", sdfg.arrays["v"]))
-    state.add_edge(node, '_idx', state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
+    state.add_edge(state.add_read("v"), None, node, "_x", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(node, "_idx", state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
     sdfg.expand_library_nodes()
     return sdfg
 
@@ -120,7 +121,7 @@ def test_argmax_2d_dim1():
     rng = np.random.default_rng(3)
     x = rng.standard_normal((4, 6))
     sdfg = _build_dim(ArgMax, x.shape, 1, dace.float64)
-    idx = np.zeros((6, ), dtype=np.int32)
+    idx = np.zeros((6,), dtype=np.int32)
     sdfg(v=x, idx=idx)
     np.testing.assert_array_equal(idx, np.argmax(x, axis=0) + 1)
 
@@ -130,12 +131,12 @@ def test_argmin_2d_dim2():
     rng = np.random.default_rng(4)
     x = rng.standard_normal((5, 7))
     sdfg = _build_dim(ArgMin, x.shape, 2, dace.float64)
-    idx = np.zeros((5, ), dtype=np.int32)
+    idx = np.zeros((5,), dtype=np.int32)
     sdfg(v=x, idx=idx)
     np.testing.assert_array_equal(idx, np.argmin(x, axis=1) + 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_argmin_whole_array_one_based()
     test_argmax_whole_array_one_based()
     test_argmin_whole_array_zero_based()
@@ -143,10 +144,10 @@ if __name__ == '__main__':
     test_argmin_last_occurrence_back()
     test_argmax_2d_dim1()
     test_argmin_2d_dim2()
-    print('ArgMin / ArgMax library node tests PASS')
+    print("ArgMin / ArgMax library node tests PASS")
 
 
-@pytest.mark.parametrize('cls', [ArgMin, ArgMax])
+@pytest.mark.parametrize("cls", [ArgMin, ArgMax])
 def test_both_reduction_passes_go_through_reduce_nodes(cls):
     """Neither pass may accumulate through a WCR.
 
@@ -154,18 +155,18 @@ def test_both_reduction_passes_go_through_reduce_nodes(cls):
     the same address -- and this node does it TWICE, once for the winning value and once for its
     index. ``Reduce`` nodes own their per-target lowering instead and reach CUB's ``DeviceReduce``.
     """
-    sdfg = dace.SDFG(f'{cls.__name__}_lowering')
-    sdfg.add_array('x', [256], dace.float64)
-    sdfg.add_array('idx', [1], dace.int64)
+    sdfg = dace.SDFG(f"{cls.__name__}_lowering")
+    sdfg.add_array("x", [256], dace.float64)
+    sdfg.add_array("idx", [1], dace.int64)
     state = sdfg.add_state()
-    node = cls('argminmax')
+    node = cls("argminmax")
     state.add_node(node)
-    state.add_edge(state.add_read('x'), None, node, '_x', dace.Memlet.from_array('x', sdfg.arrays['x']))
-    state.add_edge(node, '_idx', state.add_write('idx'), None, dace.Memlet.from_array('idx', sdfg.arrays['idx']))
+    state.add_edge(state.add_read("x"), None, node, "_x", dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(node, "_idx", state.add_write("idx"), None, dace.Memlet.from_array("idx", sdfg.arrays["idx"]))
     # One level only: the Reduce nodes are what this asserts about.
     sdfg.expand_library_nodes(recursive=False)
 
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert len(reduces) == 2, f'expected a Reduce for the value and one for the index, got {reduces}'
+    assert len(reduces) == 2, f"expected a Reduce for the value and one for the index, got {reduces}"
     wcr = [e.data for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet) and e.data.wcr is not None]
-    assert not wcr, f'the expansion still accumulates through a WCR: {wcr}'
+    assert not wcr, f"the expansion still accumulates through a WCR: {wcr}"

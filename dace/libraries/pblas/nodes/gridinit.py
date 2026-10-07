@@ -14,6 +14,7 @@ in the graph, so nothing about the grid reaches ``__dace_init_``, where a symbol
 is frozen at the first call and every grid after the first would silently have
 been the first one.
 """
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -27,13 +28,15 @@ from dace.ordered import OrderedSet
 
 def grid_tasklet(node, parent_state, parent_sdfg, mkl: bool):
     node.validate(parent_sdfg, parent_state)
-    code = blacs_grid_code(mkl, resolve_comm(node, parent_state), '_prows', '_pcols') + '\n        _context = __ctxt;'
-    return dace.sdfg.nodes.Tasklet(node.name,
-                                   expanded_input_connectors(node, parent_state),
-                                   node.out_connectors,
-                                   code,
-                                   language=dtypes.Language.CPP,
-                                   side_effects=True)
+    code = blacs_grid_code(mkl, resolve_comm(node, parent_state), "_prows", "_pcols") + "\n        _context = __ctxt;"
+    return dace.sdfg.nodes.Tasklet(
+        node.name,
+        expanded_input_connectors(node, parent_state),
+        node.out_connectors,
+        code,
+        language=dtypes.Language.CPP,
+        side_effects=True,
+    )
 
 
 @dace.library.expansion
@@ -82,12 +85,12 @@ class BlacsGridInit(dace.sdfg.nodes.LibraryNode):
         "MKLMPICH": ExpandBlacsGridInitMKLMPICH,
         "MKLOpenMPI": ExpandBlacsGridInitMKLOpenMPI,
         "ReferenceMPICH": ExpandBlacsGridInitReferenceMPICH,
-        "ReferenceOpenMPI": ExpandBlacsGridInitReferenceOpenMPI
+        "ReferenceOpenMPI": ExpandBlacsGridInitReferenceOpenMPI,
     }
     default_implementation = None
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(('_prows', '_pcols')), outputs={"_context"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(("_prows", "_pcols")), outputs={"_context"}, **kwargs)
 
     def has_side_effects(self, sdfg) -> bool:
         return True

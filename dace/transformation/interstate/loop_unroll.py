@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop unroll transformation """
+"""Loop unroll transformation"""
 
 import ast
 import copy
@@ -43,21 +43,23 @@ def loop_local_view_names(loop: LoopRegion, sdfg: SDFG) -> OrderedSet:
 @make_properties
 @xf.explicit_cf_compatible
 class LoopUnroll(xf.MultiStateTransformation):
-    """ Unrolls a for-loop into multiple individual control flow regions """
+    """Unrolls a for-loop into multiple individual control flow regions"""
 
     loop = xf.PatternNode(LoopRegion)
 
     count = Property(
         dtype=int,
         default=0,
-        category='Parameters',
-        desc='Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)',
+        category="Parameters",
+        desc="Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)",
     )
 
-    inline_iterations = Property(dtype=bool,
-                                 default=True,
-                                 category='Parameters',
-                                 desc="Whether or not to inline individual iterations' CFGs after unrolling")
+    inline_iterations = Property(
+        dtype=bool,
+        default=True,
+        category="Parameters",
+        desc="Whether or not to inline individual iterations' CFGs after unrolling",
+    )
 
     @classmethod
     def expressions(cls):
@@ -100,7 +102,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             stride = symbolic.evaluate(stride, sdfg.constants)
             loop_diff = int(symbolic.evaluate(end - start, sdfg.constants))
         except TypeError:
-            raise TypeError('Loop difference and strides cannot be symbolic.')
+            raise TypeError("Loop difference and strides cannot be symbolic.")
 
         # ``get_loop_end`` reports the INCLUSIVE last value of the iterate, so the iterate offsets are
         # ``0, stride, 2*stride, ...`` up to and including ``loop_diff``. A Python ``range`` takes an
@@ -119,7 +121,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         # descending loop that does have iterations; a zero-trip loop instead gets its own start state
         # below.
         if len(offsets) > 0 and graph.start_block is self.loop:
-            pre_state = graph.add_state(self.loop.label + '_unroll_pre', is_start_block=True)
+            pre_state = graph.add_state(self.loop.label + "_unroll_pre", is_start_block=True)
             graph.add_edge(pre_state, self.loop, sd.InterstateEdge())
 
         # Create states for loop subgraph
@@ -172,14 +174,20 @@ class LoopUnroll(xf.MultiStateTransformation):
                     continue
                 it.inline()
 
-    def instantiate_loop_iteration(self,
-                                   graph: ControlFlowRegion,
-                                   loop: LoopRegion,
-                                   value: symbolic.SymbolicType,
-                                   index: int,
-                                   label_suffix: Optional[str] = None) -> ControlFlowRegion:
-        it_label = loop.label + '_' + loop.loop_variable + (label_suffix
-                                                            if label_suffix is not None else symbolic.symstr(value))
+    def instantiate_loop_iteration(
+        self,
+        graph: ControlFlowRegion,
+        loop: LoopRegion,
+        value: symbolic.SymbolicType,
+        index: int,
+        label_suffix: Optional[str] = None,
+    ) -> ControlFlowRegion:
+        it_label = (
+            loop.label
+            + "_"
+            + loop.loop_variable
+            + (label_suffix if label_suffix is not None else symbolic.symstr(value))
+        )
         if not dtypes.validate_name(it_label):
             # A concrete (non-symbolic) iterate value can still render into an invalid
             # identifier -- e.g. a negative int's ``str()`` contains a bare ``-``
@@ -188,7 +196,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             # always a small non-negative int, always identifier-safe; fall back to it
             # rather than trying to enumerate every character ``str(value)`` could ever
             # produce.
-            it_label = loop.label + '_' + loop.loop_variable + str(index)
+            it_label = loop.label + "_" + loop.loop_variable + str(index)
         # Assembled DETACHED and attached to ``graph`` once, at the end: adding a region to an attached
         # region rebuilds the whole tree's ``cfg_list``, once per region-typed body block. A detached
         # region rebuilds only its own subtree, and the final attach rebuilds the tree once.
@@ -258,9 +266,9 @@ class LoopUnroll(xf.MultiStateTransformation):
         for node in iteration_region.all_nodes_recursive():
             if isinstance(node, NestedSDFG):
                 if loop.loop_variable in node.symbol_mapping:
-                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
-                        loop.loop_variable: value_str
-                    }).visit(node.symbol_mapping[loop.loop_variable])
+                    node.symbol_mapping[loop.loop_variable] = ASTFindReplace({loop.loop_variable: value_str}).visit(
+                        node.symbol_mapping[loop.loop_variable]
+                    )
                 if loop.loop_variable in node.symbol_mapping:
                     del node.symbol_mapping[loop.loop_variable]
 

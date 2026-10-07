@@ -8,6 +8,7 @@ pipeline up to (but excluding) the terminal ``hoist_guards`` stage, applies the
 pass directly, and checks the structural contract plus value-preservation
 against the un-transformed reference.
 """
+
 import numpy as np
 import pytest
 
@@ -16,7 +17,7 @@ from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -49,7 +50,7 @@ def _collapsed_form(prog):
     fully-parallel nest is a collapsed map still carrying its guard inside."""
     sdfg = prog.to_sdfg(simplify=True)
     for label, factory in CANONICALIZE_STAGES:
-        if label == 'hoist_guards':
+        if label == "hoist_guards":
             break
         for unit in factory():
             unit.apply_pass(sdfg, {})
@@ -71,12 +72,12 @@ def test_hoists_invariant_if_else():
         sdfg = _collapsed_form(invariant_if_else)
         applied = MoveMapInvariantIfUp().apply_pass(sdfg, {})
         sdfg.validate()
-        assert applied == 1, f'expected one hoist, got {applied}'
-        assert len(_top_conds(sdfg)) == 1, 'guard not hoisted to a single top-level conditional'
+        assert applied == 1, f"expected one hoist, got {applied}"
+        assert len(_top_conds(sdfg)) == 1, "guard not hoisted to a single top-level conditional"
 
         got = np.zeros((n, n))
         sdfg(a=a, b=got, lim=np.int32(lim), N=n)
-        assert np.allclose(got, a * (2.0 if lim < n else 1.0)), f'lim={lim}'
+        assert np.allclose(got, a * (2.0 if lim < n else 1.0)), f"lim={lim}"
 
 
 def test_hoists_single_branch_guard():
@@ -90,13 +91,13 @@ def test_hoists_single_branch_guard():
         sdfg = _collapsed_form(invariant_single_branch)
         applied = MoveMapInvariantIfUp().apply_pass(sdfg, {})
         sdfg.validate()
-        assert applied == 1, f'expected one hoist, got {applied}'
+        assert applied == 1, f"expected one hoist, got {applied}"
         assert len(_top_conds(sdfg)) == 1
 
         got = np.full((n, n), -1.0)
         sdfg(a=a, b=got, lim=np.int32(lim), N=n)
         exp = a * 2.0 if lim < n else np.full((n, n), -1.0)
-        assert np.allclose(got, exp), f'lim={lim}'
+        assert np.allclose(got, exp), f"lim={lim}"
 
 
 def test_refuses_data_dependent_guard():
@@ -110,13 +111,13 @@ def test_refuses_data_dependent_guard():
     sdfg = _collapsed_form(data_dependent_mask)
     applied = MoveMapInvariantIfUp().apply_pass(sdfg, {})
     sdfg.validate()
-    assert applied is None, 'a data-dependent per-element mask must not be hoisted'
+    assert applied is None, "a data-dependent per-element mask must not be hoisted"
 
-    got = np.zeros((n, ))
+    got = np.zeros((n,))
     sdfg(a=a.copy(), b=got, thr=np.float64(thr), N=n)
     exp = np.where(a > thr, a * 2.0, 0.0)
     assert np.allclose(got, exp)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

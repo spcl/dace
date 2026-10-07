@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implements the map interchange transformation. """
+"""Implements the map interchange transformation."""
 
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -14,9 +14,9 @@ import sympy
 
 @make_properties
 class MapInterchange(transformation.SingleStateTransformation):
-    """ Implements the map-interchange transformation.
+    """Implements the map-interchange transformation.
 
-        Map-interchange takes two nested maps and interchanges their position.
+    Map-interchange takes two nested maps and interchanges their position.
     """
 
     outer_map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -25,12 +25,13 @@ class MapInterchange(transformation.SingleStateTransformation):
     transform_bounds = properties.Property(
         dtype=bool,
         default=False,
-        desc='Also interchange a NON-RECTANGULAR nest, by transforming the bounds. A plain swap is '
-        'only legal when the inner range does not mention the outer parameter, which refuses every '
-        'triangular / trapezoidal nest -- and those are exactly the nests whose traversal order is '
-        'worth fixing (TSVC s1232 keeps a stride-LEN_2D innermost loop because of it). Off by '
-        'default: the rewrite derives new bounds and, when the slope is symbolic, records a '
-        'runtime assumption, neither of which a caller asking for a plain swap expects.')
+        desc="Also interchange a NON-RECTANGULAR nest, by transforming the bounds. A plain swap is "
+        "only legal when the inner range does not mention the outer parameter, which refuses every "
+        "triangular / trapezoidal nest -- and those are exactly the nests whose traversal order is "
+        "worth fixing (TSVC s1232 keeps a stride-LEN_2D innermost loop because of it). Off by "
+        "default: the rewrite derives new bounds and, when the slope is symbolic, records a "
+        "runtime assumption, neither of which a caller asking for a plain swap expects.",
+    )
 
     def trapezoid(self):
         """``(param, lo, hi, slope, base)`` when the nest is trapezoidal and this rewrite handles it.
@@ -52,15 +53,15 @@ class MapInterchange(transformation.SingleStateTransformation):
         # The outer range must not lean on the inner parameter, and the inner END must not lean on
         # the outer one: this rewrite inverts a lower bound, nothing else.
         q = symbolic.resolve_symbol(inner.params[0], symbolic.symbols_in([plo, phi]))
-        if any(q in getattr(e, 'free_symbols', set()) for e in (plo, phi)):
+        if any(q in getattr(e, "free_symbols", set()) for e in (plo, phi)):
             return None
-        if p in getattr(qhi, 'free_symbols', set()):
+        if p in getattr(qhi, "free_symbols", set()):
             return None
         if not isinstance(qlo, sympy.Basic) or p not in qlo.free_symbols:
             return None
         slope = qlo.coeff(p, 1)
         base = symbolic.simplify(qlo - slope * p)
-        if p in getattr(slope, 'free_symbols', set()) or p in getattr(base, 'free_symbols', set()):
+        if p in getattr(slope, "free_symbols", set()) or p in getattr(base, "free_symbols", set()):
             return None  # not affine in the outer parameter
         if slope == 0 or slope.is_negative:
             # A zero slope is the rectangular case; a negative one inverts to a different bound
@@ -103,7 +104,7 @@ class MapInterchange(transformation.SingleStateTransformation):
                 return False
             # Check that dynamic input range memlets are independent of
             # first map range
-            if e.dst_conn and not e.dst_conn.startswith('IN_'):
+            if e.dst_conn and not e.dst_conn.startswith("IN_"):
                 memlet_deps = set()
                 for s in e.data.subset:
                     memlet_deps |= set(map(str, symlist(s)))
@@ -142,14 +143,22 @@ class MapInterchange(transformation.SingleStateTransformation):
         outer_map_exit = graph.exit_node(outer_map_entry)
 
         # Switch connectors
-        outer_map_entry.in_connectors, inner_map_entry.in_connectors = \
-            inner_map_entry.in_connectors, outer_map_entry.in_connectors
-        outer_map_entry.out_connectors, inner_map_entry.out_connectors = \
-            inner_map_entry.out_connectors, outer_map_entry.out_connectors
-        outer_map_exit.in_connectors, inner_map_exit.in_connectors = \
-            inner_map_exit.in_connectors, outer_map_exit.in_connectors
-        outer_map_exit.out_connectors, inner_map_exit.out_connectors = \
-            inner_map_exit.out_connectors, outer_map_exit.out_connectors
+        outer_map_entry.in_connectors, inner_map_entry.in_connectors = (
+            inner_map_entry.in_connectors,
+            outer_map_entry.in_connectors,
+        )
+        outer_map_entry.out_connectors, inner_map_entry.out_connectors = (
+            inner_map_entry.out_connectors,
+            outer_map_entry.out_connectors,
+        )
+        outer_map_exit.in_connectors, inner_map_exit.in_connectors = (
+            inner_map_exit.in_connectors,
+            outer_map_exit.in_connectors,
+        )
+        outer_map_exit.out_connectors, inner_map_exit.out_connectors = (
+            inner_map_exit.out_connectors,
+            outer_map_exit.out_connectors,
+        )
 
         # Get edges between the map entries and exits.
         entry_edges = graph.edges_between(outer_map_entry, inner_map_entry)

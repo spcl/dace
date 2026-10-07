@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Inverse of the GPU scalar promotion: a value living inside a kernel stays a ``Scalar``, not a ``double*``."""
+
 from typing import Any, Dict, Optional, Set
 
 from dace import data, dtypes, properties
@@ -16,12 +17,13 @@ def all_accesses_within_gpu_kernel(sdfg: SDFG, name: str) -> bool:
     """Whether ``name`` is accessed at least once, and only inside ``GPU_Device`` maps."""
     accesses = [(state, node) for state in sdfg.states() for node in state.data_nodes() if node.data == name]
     return bool(accesses) and all(
-        is_in_scope(sdfg, state, node, [dtypes.ScheduleType.GPU_Device]) for state, node in accesses)
+        is_in_scope(sdfg, state, node, [dtypes.ScheduleType.GPU_Device]) for state, node in accesses
+    )
 
 
 def kernel_internal_len1_array(sdfg: SDFG, name: str, desc: data.Data, device_function: bool) -> bool:
     """Whether ``name`` is a kernel-internal single value held in a length-1 array."""
-    if not (isinstance(desc, data.Array) and tuple(desc.shape) == (1, )):
+    if not (isinstance(desc, data.Array) and tuple(desc.shape) == (1,)):
         return False
     # GPU-resident memory stays addressable; a kernel output crosses the kernel boundary.
     if desc.storage in GPU_RESIDENT_STORAGES or written_by_gpu_map_exit(sdfg, name):
@@ -57,7 +59,8 @@ class DemoteKernelInternalArraysToScalars(ppl.Pass):
             device_function = is_inside_gpu_device_kernel(sub)
             names = {
                 name
-                for name, desc in sub.arrays.items() if kernel_internal_len1_array(sub, name, desc, device_function)
+                for name, desc in sub.arrays.items()
+                if kernel_internal_len1_array(sub, name, desc, device_function)
             }
             if not names:
                 continue

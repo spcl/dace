@@ -191,9 +191,11 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     if itervar_dep_syms.intersection(cond.get_free_symbols()):
                         return False
             elif isinstance(cfb, LoopRegion):
-                if (itervar_dep_syms.intersection(cfb.init_statement.get_free_symbols())
-                        or itervar_dep_syms.intersection(cfb.loop_condition.get_free_symbols())
-                        or itervar_dep_syms.intersection(cfb.update_statement.get_free_symbols())):
+                if (
+                    itervar_dep_syms.intersection(cfb.init_statement.get_free_symbols())
+                    or itervar_dep_syms.intersection(cfb.loop_condition.get_free_symbols())
+                    or itervar_dep_syms.intersection(cfb.update_statement.get_free_symbols())
+                ):
                     return False
 
         return True
@@ -208,9 +210,9 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         # leaves assignment keys and the loop's own ``loop_variable`` alone; the loop is removed below anyway,
         # and every reference in the body still gets the value. ``TrivialLoopElimination`` substitutes the
         # same way for the same reason.
-        self.loop.replace_dict({itervar: str(last_iteration)},
-                               symrepl={symbolic.symbol(itervar): last_iteration},
-                               replace_keys=False)
+        self.loop.replace_dict(
+            {itervar: str(last_iteration)}, symrepl={symbolic.symbol(itervar): last_iteration}, replace_keys=False
+        )
 
         # Reparent the loop's blocks into the parent graph. A loop body is its own name scope, so a label
         # that was unique inside the loop can already be taken in the destination -- rename on arrival.

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The CPU comparison against the legacy generator accepts a difference of 1 ULP per element and nothing more."""
+
 import numpy as np
 import pytest
 

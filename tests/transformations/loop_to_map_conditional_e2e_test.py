@@ -1,23 +1,24 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" End-to-end + structure tests for ``LoopToMap`` on sequential loop nests
-    that carry an ``if`` / ``if-else`` *inside the loop body*, modeled on the
-    cloudsc / ICON loopnest patterns:
+"""End-to-end + structure tests for ``LoopToMap`` on sequential loop nests
+that carry an ``if`` / ``if-else`` *inside the loop body*, modeled on the
+cloudsc / ICON loopnest patterns:
 
-    * ICON neighbour-gather (``icon_loopnest_1/4``): the horizontal dim is
-      gathered through a neighbour-index table
-      (``out[i, k] = c1*w[cidx[i,0], k] - c2*w[cidx[i,1], k]``) while the
-      level dim ``k`` is structured.
-    * cloudsc column physics (``cloudsc_autoconversion_snow`` etc.): a
-      per-column ``IF (qx > thresh) THEN ... ELSE ...`` threshold branch
-      inside the loop.
+* ICON neighbour-gather (``icon_loopnest_1/4``): the horizontal dim is
+  gathered through a neighbour-index table
+  (``out[i, k] = c1*w[cidx[i,0], k] - c2*w[cidx[i,1], k]``) while the
+  level dim ``k`` is structured.
+* cloudsc column physics (``cloudsc_autoconversion_snow`` etc.): a
+  per-column ``IF (qx > thresh) THEN ... ELSE ...`` threshold branch
+  inside the loop.
 
-    Each test builds a Python-frontend SDFG, runs the *pre-pass* SDFG (or a
-    pure-numpy oracle) for the reference, applies ``LoopToMap`` repeatedly,
-    validates, asserts the structural change (maps appear, ``LoopRegion`` s
-    gone) and asserts ``np.allclose`` against the reference for both the
-    condition-taken and not-taken data.  Only core transformations are used
-    (no canonicalization pipeline), so these run on ``main`` as-is.
+Each test builds a Python-frontend SDFG, runs the *pre-pass* SDFG (or a
+pure-numpy oracle) for the reference, applies ``LoopToMap`` repeatedly,
+validates, asserts the structural change (maps appear, ``LoopRegion`` s
+gone) and asserts ``np.allclose`` against the reference for both the
+condition-taken and not-taken data.  Only core transformations are used
+(no canonicalization pipeline), so these run on ``main`` as-is.
 """
+
 import copy
 
 import numpy as np
@@ -27,8 +28,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 
-N = dace.symbol('N')  # number of edges (structured horizontal index)
-L = dace.symbol('L')  # number of levels (structured vertical index)
+N = dace.symbol("N")  # number of edges (structured horizontal index)
+L = dace.symbol("L")  # number of levels (structured vertical index)
 
 
 def _n_maps(sdfg):
@@ -52,8 +53,9 @@ def _neighbours(n, seed):
 
 
 @dace.program
-def cond_invariant_gather(w: dace.float64[N, L], cidx: dace.int32[N, 2], out: dace.float64[N, L],
-                          active: dace.int32[1]):
+def cond_invariant_gather(
+    w: dace.float64[N, L], cidx: dace.int32[N, 2], out: dace.float64[N, L], active: dace.int32[1]
+):
     for i in range(N):
         for k in range(L):
             if active[0] > 0:
@@ -100,8 +102,9 @@ def test_loop_to_map_invariant_if_over_gather_parallelizes_and_e2e():
 
 
 @dace.program
-def cond_disjoint_outputs(w: dace.float64[N, L], cidx: dace.int32[N, 2], a: dace.float64[N, L], b: dace.float64[N, L],
-                          active: dace.int32[1]):
+def cond_disjoint_outputs(
+    w: dace.float64[N, L], cidx: dace.int32[N, 2], a: dace.float64[N, L], b: dace.float64[N, L], active: dace.int32[1]
+):
     for i in range(N):
         for k in range(L):
             if active[0] > 0:
@@ -149,8 +152,9 @@ def test_loop_to_map_if_else_disjoint_outputs_parallelizes_and_e2e():
 
 
 @dace.program
-def cond_same_output_threshold(w: dace.float64[N, L], cidx: dace.int32[N, 2], x: dace.float64[N, L],
-                               y: dace.float64[N, L], out: dace.float64[N, L]):
+def cond_same_output_threshold(
+    w: dace.float64[N, L], cidx: dace.int32[N, 2], x: dace.float64[N, L], y: dace.float64[N, L], out: dace.float64[N, L]
+):
     for i in range(N):
         for k in range(L):
             # cloudsc-style per-column threshold on a neighbour-gathered value
@@ -239,7 +243,7 @@ def test_loop_to_map_loopvar_dependent_if_parallelizes_and_e2e():
     assert np.allclose(out, exp), "vs numpy oracle mismatch"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_loop_to_map_invariant_if_over_gather_parallelizes_and_e2e()
     test_loop_to_map_if_else_disjoint_outputs_parallelizes_and_e2e()
     test_loop_to_map_if_else_same_output_threshold_parallelizes_and_e2e()

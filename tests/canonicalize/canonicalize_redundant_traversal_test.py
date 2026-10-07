@@ -58,6 +58,7 @@ traversal count is the thing that actually decides the wall clock here. Sizes ar
 every free symbol pinned to :data:`N`, so a pass over the whole array and a pass over one element
 per chunk are told apart by their trip count rather than by their name.
 """
+
 import os
 
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -181,8 +182,10 @@ def full_length_reads(sdfg: dace.SDFG) -> list[str]:
 def sequential_break_loops(sdfg: dace.SDFG) -> int:
     """Loop regions that still carry a ``break``, i.e. the shape no lowering claimed."""
     return sum(
-        1 for node, _ in sdfg.all_nodes_recursive()
-        if isinstance(node, LoopRegion) and any(isinstance(b, BreakBlock) for b, _ in node.all_nodes_recursive()))
+        1
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, LoopRegion) and any(isinstance(b, BreakBlock) for b, _ in node.all_nodes_recursive())
+    )
 
 
 def anti_dependence_buffers(sdfg: dace.SDFG) -> dict[str, int]:

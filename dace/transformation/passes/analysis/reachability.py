@@ -8,13 +8,14 @@ when a consumer needs more than ``in`` or ``len``. That layout replays the inser
 item-by-item construction on a snapshot of the graph taken when the analysis ran, so neither answer
 moves if the graph is edited afterwards.
 """
+
 import functools
 import itertools
 from typing import Callable, Dict, Iterable, Iterator, List, Optional
 
 from dace.ordered import OrderedSet
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import (AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState)
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.optionals import required
 
 Replay = Callable[[], Iterable[ControlFlowBlock]]
@@ -33,7 +34,7 @@ def bits_at(positions: Iterable[int]) -> int:
         if byte >= len(buffer):
             buffer.extend(bytes(byte + 1 - len(buffer)))
         buffer[byte] |= 1 << (position & 7)
-    return int.from_bytes(buffer, 'little')
+    return int.from_bytes(buffer, "little")
 
 
 class BlockNumbering:
@@ -43,7 +44,7 @@ class BlockNumbering:
     everything it contains is the span ``[positions[region], ends[region])``.
     """
 
-    __slots__ = ('positions', 'ends', 'states', 'order')
+    __slots__ = ("positions", "ends", "states", "order")
 
     def __init__(self, sdfg: SDFG) -> None:
         self.positions: Dict[ControlFlowBlock, int] = {}
@@ -71,7 +72,7 @@ class BlockNumbering:
 
     def blocks_at(self, bits: int) -> Iterator[ControlFlowBlock]:
         """The blocks whose positions are set in ``bits``, in position order."""
-        for index, byte in enumerate(bits.to_bytes((bits.bit_length() + 7) // 8, 'little')):
+        for index, byte in enumerate(bits.to_bytes((bits.bit_length() + 7) // 8, "little")):
             while byte:
                 low = byte & -byte
                 yield self.order[(index << 3) + low.bit_length() - 1]
@@ -98,7 +99,7 @@ class ReachSet(OrderedSet):
         super().__init__(initial)
 
     @classmethod
-    def deferred(cls, bits: int, numbering: BlockNumbering, replay: Replay) -> 'ReachSet':
+    def deferred(cls, bits: int, numbering: BlockNumbering, replay: Replay) -> "ReachSet":
         reach = cls()
         reach.bits = bits
         reach.numbering = numbering
@@ -150,8 +151,9 @@ class ReachSet(OrderedSet):
         return self.bits.bit_count()
 
 
-def breadth_first_order(successors: Dict[ControlFlowBlock, List[ControlFlowBlock]],
-                        source: ControlFlowBlock) -> Iterator[ControlFlowBlock]:
+def breadth_first_order(
+    successors: Dict[ControlFlowBlock, List[ControlFlowBlock]], source: ControlFlowBlock
+) -> Iterator[ControlFlowBlock]:
     """The blocks reachable from ``source`` over one or more edges, level by level.
 
     ``source`` itself is yielded only when a cycle leads back to it. Within a level, blocks come in
@@ -166,8 +168,9 @@ def breadth_first_order(successors: Dict[ControlFlowBlock, List[ControlFlowBlock
         yield from frontier
 
 
-def condensed_reach(nodes: List[ControlFlowBlock], successors: Dict[ControlFlowBlock, List[ControlFlowBlock]],
-                    numbering: BlockNumbering) -> Dict[ControlFlowBlock, int]:
+def condensed_reach(
+    nodes: List[ControlFlowBlock], successors: Dict[ControlFlowBlock, List[ControlFlowBlock]], numbering: BlockNumbering
+) -> Dict[ControlFlowBlock, int]:
     """For each node, the bitset of the blocks it reaches over one or more edges, regions expanded.
 
     Iterative Tarjan: a component is complete only after every component it reaches, so its bitset is
@@ -260,16 +263,18 @@ class BlockReachability:
                 self.numberings[region] = numbering
                 self.single_level[region] = self.single_level_sets(region, numbering)
 
-    def single_level_sets(self, region: AbstractControlFlowRegion,
-                          numbering: BlockNumbering) -> Dict[ControlFlowBlock, ReachSet]:
+    def single_level_sets(
+        self, region: AbstractControlFlowRegion, numbering: BlockNumbering
+    ) -> Dict[ControlFlowBlock, ReachSet]:
         successors = self.successors[region]
         reach = condensed_reach(list(successors), successors, numbering)
-        loop_blocks = bits_at(numbering.positions[block]
-                              for block in self.nodes[region]) if isinstance(region, LoopRegion) else 0
+        loop_blocks = (
+            bits_at(numbering.positions[block] for block in self.nodes[region]) if isinstance(region, LoopRegion) else 0
+        )
         return {
-            node:
-            ReachSet.deferred(reach[node] | loop_blocks, numbering,
-                              functools.partial(self.single_level_order, region, node))
+            node: ReachSet.deferred(
+                reach[node] | loop_blocks, numbering, functools.partial(self.single_level_order, region, node)
+            )
             for node in successors
         }
 
@@ -292,8 +297,9 @@ class BlockReachability:
             if isinstance(block, AbstractControlFlowRegion):
                 yield from self.regions_from(block)
 
-    def single_level_order(self, region: AbstractControlFlowRegion,
-                           node: ControlFlowBlock) -> Iterator[ControlFlowBlock]:
+    def single_level_order(
+        self, region: AbstractControlFlowRegion, node: ControlFlowBlock
+    ) -> Iterator[ControlFlowBlock]:
         for reached in breadth_first_order(self.successors[region], node):
             yield reached
             if isinstance(reached, AbstractControlFlowRegion):
@@ -318,8 +324,9 @@ class BlockReachability:
             bits |= self.closure(region)
         return ReachSet.deferred(bits, numbering, functools.partial(self.full_order, region, single, sdfg))
 
-    def full_order(self, region: AbstractControlFlowRegion, single: Iterable[ControlFlowBlock],
-                   sdfg: SDFG) -> Iterator[ControlFlowBlock]:
+    def full_order(
+        self, region: AbstractControlFlowRegion, single: Iterable[ControlFlowBlock], sdfg: SDFG
+    ) -> Iterator[ControlFlowBlock]:
         for reached in single:
             if isinstance(reached, AbstractControlFlowRegion):
                 yield from self.within(reached)

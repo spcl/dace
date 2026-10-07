@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -34,6 +34,7 @@ def trisolv(L: datatype[N, N], x: datatype[N], b: datatype[N]):
         x[i] = (b[i] - L[i, :i] @ x[:i]) / L[i, i]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(1, 'x')], init_array, trisolv)
+
+    polybench.main(sizes, args, [(1, "x")], init_array, trisolv)

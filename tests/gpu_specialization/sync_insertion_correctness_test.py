@@ -28,6 +28,7 @@ The patterns target the rules ``AutoGPUStreamScheduler`` claims to handle:
 
 Tests require a working GPU runtime -- marked ``gpu`` + ``new_gpu_codegen_only``.
 """
+
 import numpy as np
 import pytest
 
@@ -38,7 +39,7 @@ from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is
 
 pytestmark = [pytest.mark.gpu, pytest.mark.new_gpu_codegen_only]
 
-_N = dace.symbol('_N', dtype=dace.int64)
+_N = dace.symbol("_N", dtype=dace.int64)
 
 
 def _count_sync_tasklets(sdfg: dace.SDFG) -> int:
@@ -48,8 +49,13 @@ def _count_sync_tasklets(sdfg: dace.SDFG) -> int:
     against) instead of string-matching the tasklet code, so this stays correct if the
     backend prefix or code shape changes.
     """
-    return sum(1 for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for node in state.nodes()
-               if is_pipeline_sync_tasklet(node))
+    return sum(
+        1
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for state in nsdfg.states()
+        for node in state.nodes()
+        if is_pipeline_sync_tasklet(node)
+    )
 
 
 def _build_gpu_sdfg(program) -> dace.SDFG:
@@ -64,14 +70,16 @@ def _build_gpu_sdfg(program) -> dace.SDFG:
     return sdfg
 
 
-def _run_gpu_and_check(program,
-                       *,
-                       args: dict,
-                       symbols: dict,
-                       expected: dict,
-                       expected_sync_count: int,
-                       rtol: float = 1e-10,
-                       atol: float = 1e-12):
+def _run_gpu_and_check(
+    program,
+    *,
+    args: dict,
+    symbols: dict,
+    expected: dict,
+    expected_sync_count: int,
+    rtol: float = 1e-10,
+    atol: float = 1e-12,
+):
     """Build the GPU SDFG, assert the expected sync-tasklet count, run it, and compare
     its output arrays element-wise to a numpy reference.
 
@@ -85,8 +93,9 @@ def _run_gpu_and_check(program,
     """
     sdfg = _build_gpu_sdfg(program)
     got_sync_count = _count_sync_tasklets(sdfg)
-    assert got_sync_count == expected_sync_count, (f"Expected {expected_sync_count} sync tasklet(s); "
-                                                   f"got {got_sync_count}.")
+    assert got_sync_count == expected_sync_count, (
+        f"Expected {expected_sync_count} sync tasklet(s); got {got_sync_count}."
+    )
     sdfg(**args, **symbols)
     for name, want in expected.items():
         np.testing.assert_allclose(args[name], want, rtol=rtol, atol=atol, err_msg=f'arg "{name}" mismatch')
@@ -116,18 +125,20 @@ def test_three_state_cpu_gpu_cpu_chain_has_one_sync_and_matches_numpy():
     expected_B = A * expected_scale
     expected_C = expected_B + 1.0
 
-    _run_gpu_and_check(_three_state_cpu_gpu_cpu,
-                       args=dict(A=A, B=B, C=C),
-                       symbols=dict(_N=N),
-                       expected=dict(B=expected_B, C=expected_C),
-                       expected_sync_count=1,
-                       rtol=1e-12)
+    _run_gpu_and_check(
+        _three_state_cpu_gpu_cpu,
+        args=dict(A=A, B=B, C=C),
+        symbols=dict(_N=N),
+        expected=dict(B=expected_B, C=expected_C),
+        expected_sync_count=1,
+        rtol=1e-12,
+    )
 
 
 # Case 2: mixed-class single source state
 @dace.program
 def _mixed_class_single_state(A: dace.float64[_N], B: dace.float64[_N]):
-    scratch = np.zeros((_N, ), dtype=np.float64)
+    scratch = np.zeros((_N,), dtype=np.float64)
     for i in range(_N):
         scratch[i] = A[i] - 1.0
     for i in dace.map[0:_N]:
@@ -142,20 +153,22 @@ def test_mixed_class_single_state_has_one_sync_and_matches_numpy():
     A = np.array(np.linspace(2.0, 4.0, N, dtype=np.float64))
     B = np.zeros(N, dtype=np.float64)
     expected_B = (A - 1.0) * 2.0
-    _run_gpu_and_check(_mixed_class_single_state,
-                       args=dict(A=A, B=B),
-                       symbols=dict(_N=N),
-                       expected=dict(B=expected_B),
-                       expected_sync_count=1)
+    _run_gpu_and_check(
+        _mixed_class_single_state,
+        args=dict(A=A, B=B),
+        symbols=dict(_N=N),
+        expected=dict(B=expected_B),
+        expected_sync_count=1,
+    )
 
 
 # Case 3: two independent parallel components feeding one host reader
 @dace.program
 def _two_parallel_writers_one_host_reader(A: dace.float64[_N], B: dace.float64[_N], C: dace.float64[_N]):
-    X = np.empty((_N, ), dtype=np.float64)
+    X = np.empty((_N,), dtype=np.float64)
     for i in dace.map[0:_N]:
         X[i] = A[i] * 2.0
-    Y = np.empty((_N, ), dtype=np.float64)
+    Y = np.empty((_N,), dtype=np.float64)
     for i in dace.map[0:_N]:
         Y[i] = B[i] * 0.5
     for i in range(_N):
@@ -170,11 +183,13 @@ def test_two_independent_parallel_writers_one_host_reader_has_one_sync_and_match
     B = np.array(np.linspace(0.5, 1.5, N, dtype=np.float64))
     C = np.zeros(N, dtype=np.float64)
     expected_C = A * 2.0 + B * 0.5
-    _run_gpu_and_check(_two_parallel_writers_one_host_reader,
-                       args=dict(A=A, B=B, C=C),
-                       symbols=dict(_N=N),
-                       expected=dict(C=expected_C),
-                       expected_sync_count=1)
+    _run_gpu_and_check(
+        _two_parallel_writers_one_host_reader,
+        args=dict(A=A, B=B, C=C),
+        symbols=dict(_N=N),
+        expected=dict(C=expected_C),
+        expected_sync_count=1,
+    )
 
 
 # Case 4: parallel output consumed by host loop
@@ -195,21 +210,23 @@ def test_parallel_output_consumed_by_host_loop_has_one_sync_and_matches_numpy():
     C = np.zeros(N, dtype=np.float64)
     expected_B = A + 10.0
     expected_C = expected_B * 0.25
-    _run_gpu_and_check(_parallel_output_consumed_by_host_loop,
-                       args=dict(A=A, B=B, C=C),
-                       symbols=dict(_N=N),
-                       expected=dict(B=expected_B, C=expected_C),
-                       expected_sync_count=1)
+    _run_gpu_and_check(
+        _parallel_output_consumed_by_host_loop,
+        args=dict(A=A, B=B, C=C),
+        symbols=dict(_N=N),
+        expected=dict(B=expected_B, C=expected_C),
+        expected_sync_count=1,
+    )
 
 
 # Case 5: loop body alternating host init and parallel compute per iteration
 @dace.program
 def _per_iter_host_then_parallel_then_host(A: dace.float64[_N], B: dace.float64[_N]):
     for k in range(4):
-        scratch = np.empty((_N, ), dtype=np.float64)
+        scratch = np.empty((_N,), dtype=np.float64)
         for i in range(_N):
             scratch[i] = A[i] + np.float64(k)
-        gscratch = np.empty((_N, ), dtype=np.float64)
+        gscratch = np.empty((_N,), dtype=np.float64)
         for i in dace.map[0:_N]:
             gscratch[i] = scratch[i] * np.float64(k + 1)
         for i in range(_N):
@@ -224,14 +241,16 @@ def test_loop_body_alternating_host_parallel_has_one_sync_and_matches_numpy():
     A = np.array(np.linspace(0.0, 2.0, N, dtype=np.float64))
     B = np.zeros(N, dtype=np.float64)
     expected_B = sum((A + np.float64(k)) * np.float64(k + 1) for k in range(4))
-    _run_gpu_and_check(_per_iter_host_then_parallel_then_host,
-                       args=dict(A=A, B=B),
-                       symbols=dict(_N=N),
-                       expected=dict(B=expected_B),
-                       expected_sync_count=1)
+    _run_gpu_and_check(
+        _per_iter_host_then_parallel_then_host,
+        args=dict(A=A, B=B),
+        symbols=dict(_N=N),
+        expected=dict(B=expected_B),
+        expected_sync_count=1,
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_three_state_cpu_gpu_cpu_chain_has_one_sync_and_matches_numpy()
     test_mixed_class_single_state_has_one_sync_and_matches_numpy()
     test_two_independent_parallel_writers_one_host_reader_has_one_sync_and_matches_numpy()

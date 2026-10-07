@@ -13,6 +13,7 @@ machinery. Run AFTER if-condition mask lowering (flat single-level body states -
 walk complete), BEFORE tiling passes (widening sees direct subset). Pairs: ``SymbolPropagation``
 (folds ``__sym`` layer) before, ``RemoveUnusedSymbols`` (sweeps dead promotion symbols) after.
 """
+
 from typing import Any
 
 import sympy
@@ -20,7 +21,7 @@ import sympy
 import dace
 from dace import subsets, symbolic
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.utils.tile_access import (build_symbol_definition_map, propagate_subset)
+from dace.transformation.passes.vectorization.utils.tile_access import build_symbol_definition_map, propagate_subset
 
 
 def bound_names(bound: symbolic.SymbolicType, memo: dict[int | sympy.Basic, frozenset[str]]) -> frozenset[str]:

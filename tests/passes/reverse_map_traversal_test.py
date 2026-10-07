@@ -5,6 +5,7 @@
 needs. Once ``LoopToMap`` has made a Map of it the order is free, but the reversal stayed baked in
 the access -- an ascending parameter over descending addresses, which defeats the prefetcher.
 """
+
 import numpy as np
 
 import dace
@@ -12,11 +13,11 @@ from dace.codegen import codegen
 from dace.transformation.passes.canonicalize import pipeline as canon
 from dace.transformation.passes.canonicalize.reverse_map_traversal import reverse_descending_maps
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def emitted(sdfg: dace.SDFG) -> str:
-    return '\n'.join(o.clean_code for o in codegen.generate_code(sdfg) if o.language == 'cpp')
+    return "\n".join(o.clean_code for o in codegen.generate_code(sdfg) if o.language == "cpp")
 
 
 def test_a_reversed_stream_is_re_expressed_forwards():
@@ -30,8 +31,8 @@ def test_a_reversed_stream_is_re_expressed_forwards():
     sdfg = reverse_stream_a_reversed_stream_is_re_expressed_forwards.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     code = emitted(sdfg)
-    assert 'a_idx(_loop_it_0)' in code or 'a[_loop_it_0]' in code, f'access is still reversed:\n{code}'
-    assert 'N - _loop_it_0' not in code, f'a descending access survived:\n{code}'
+    assert "a_idx(_loop_it_0)" in code or "a[_loop_it_0]" in code, f"access is still reversed:\n{code}"
+    assert "N - _loop_it_0" not in code, f"a descending access survived:\n{code}"
 
 
 def test_the_result_is_unchanged():
@@ -61,7 +62,7 @@ def test_a_forward_map_is_left_alone():
 
     sdfg = forward_stream.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
-    assert reverse_descending_maps(sdfg) is None, 'an already-ascending map was flipped'
+    assert reverse_descending_maps(sdfg) is None, "an already-ascending map was flipped"
 
 
 def test_a_mixed_direction_map_is_left_alone():
@@ -73,10 +74,10 @@ def test_a_mixed_direction_map_is_left_alone():
             a[i] = b[N - 1 - i]
 
     sdfg = mixed.to_sdfg(simplify=False)
-    assert reverse_descending_maps(sdfg) is None, 'a map with both directions was flipped'
+    assert reverse_descending_maps(sdfg) is None, "a map with both directions was flipped"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_reversed_stream_is_re_expressed_forwards()
     test_the_result_is_unchanged()
     test_a_forward_map_is_left_alone()

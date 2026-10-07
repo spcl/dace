@@ -27,8 +27,8 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _nmaps(sdfg):
@@ -73,14 +73,20 @@ def test_dependent_same_index_splittable():
     """V depends on A at the SAME index (RAW per-iteration) -> two independent
     parallel statements after splitting; always value-preserving."""
     n = 48
-    ins = {'A': np.zeros(n), 'B': _rand(n, seed=1), 'C': _rand(n, seed=2), 'V': np.zeros(n)}
+    ins = {"A": np.zeros(n), "B": _rand(n, seed=1), "C": _rand(n, seed=2), "V": np.zeros(n)}
     cand = _canon_vs_raw(_dependent_same_index, ins, N=n)
     assert _nloops(cand) == 0 and _nmaps(cand) >= 1, "elementwise dependent statements should parallelize"
 
 
 @dace.program
-def _two_independent(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N], E: dace.float64[N],
-                     F: dace.float64[N]):
+def _two_independent(
+    A: dace.float64[N],
+    B: dace.float64[N],
+    C: dace.float64[N],
+    D: dace.float64[N],
+    E: dace.float64[N],
+    F: dace.float64[N],
+):
     for i in range(N):
         A[i] = B[i] + C[i]
         D[i] = E[i] * F[i]
@@ -88,7 +94,7 @@ def _two_independent(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
 
 def test_two_independent_statements():
     n = 40
-    ins = {k: (_rand(n, seed=ord(k)) if k not in 'AD' else np.zeros(n)) for k in 'ABCDEF'}
+    ins = {k: (_rand(n, seed=ord(k)) if k not in "AD" else np.zeros(n)) for k in "ABCDEF"}
     cand = _canon_vs_raw(_two_independent, ins, N=n)
     assert _nloops(cand) == 0 and _nmaps(cand) >= 1
 
@@ -103,7 +109,7 @@ def _chain_three(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], V: 
 
 def test_chain_three_statements():
     n = 33
-    ins = {'A': np.zeros(n), 'B': _rand(n, seed=3), 'C': _rand(n, seed=4), 'V': np.zeros(n), 'W': np.zeros(n)}
+    ins = {"A": np.zeros(n), "B": _rand(n, seed=3), "C": _rand(n, seed=4), "V": np.zeros(n), "W": np.zeros(n)}
     _canon_vs_raw(_chain_three, ins, N=n)
 
 
@@ -116,7 +122,7 @@ def _pass_through_write_read(A: dace.float64[N], B: dace.float64[N], C: dace.flo
 
 def test_pass_through_write_then_direct_read():
     n = 36
-    ins = {'A': np.zeros(n), 'B': _rand(n, seed=5), 'C': np.zeros(n)}
+    ins = {"A": np.zeros(n), "B": _rand(n, seed=5), "C": np.zeros(n)}
     _canon_vs_raw(_pass_through_write_read, ins, N=n)
 
 
@@ -134,7 +140,7 @@ def test_forward_read_antidependence_s1244():
     Splitting D into its own loop needs a snapshot of the original A; the hard
     requirement here is that the value is preserved however it is lowered."""
     n = 50
-    ins = {'A': _rand(n, seed=6), 'B': _rand(n, seed=7), 'D': np.zeros(n)}
+    ins = {"A": _rand(n, seed=6), "B": _rand(n, seed=7), "D": np.zeros(n)}
     _canon_vs_raw(_forward_read_antidep, ins, N=n)
 
 
@@ -147,11 +153,11 @@ def _cross_antidep(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D
 
 def test_cross_antidependence_s1213():
     n = 44
-    ins = {'A': _rand(n, seed=8), 'B': _rand(n, seed=9), 'C': _rand(n, seed=10), 'D': _rand(n, seed=11)}
+    ins = {"A": _rand(n, seed=8), "B": _rand(n, seed=9), "C": _rand(n, seed=10), "D": _rand(n, seed=11)}
     _canon_vs_raw(_cross_antidep, ins, N=n)
 
 
-K = dace.symbol('K')
+K = dace.symbol("K")
 
 
 @dace.program
@@ -167,7 +173,7 @@ def test_symbolic_forward_offset_antidependence():
     anti-dependence: SplitStatements snapshots ``A`` (guarding ``K >= 0``) and the
     value must be preserved for the concrete positive ``K``."""
     n, k = 50, 3
-    ins = {'A': _rand(n, seed=21), 'B': _rand(n, seed=22), 'D': np.zeros(n)}
+    ins = {"A": _rand(n, seed=21), "B": _rand(n, seed=22), "D": np.zeros(n)}
     cand = _canon_vs_raw(_sym_forward_antidep, ins, N=n, K=k)
     assert _nmaps(cand) >= 1, "the symbolic-offset anti-dependence should still parallelize a cone"
 
@@ -184,7 +190,7 @@ def test_recurrence_plus_read_of_original_value():
     statement reads A[i+1] before the recurrence overwrites it. B is separable
     (snapshot of original A) while the A recurrence stays sequential."""
     n = 40
-    ins = {'A': _rand(n, seed=12), 'Bout': np.zeros(n)}
+    ins = {"A": _rand(n, seed=12), "Bout": np.zeros(n)}
     _canon_vs_raw(_recurrence_then_read_original, ins, N=n)
 
 
@@ -202,7 +208,7 @@ def test_prefix_sum_stays_correct():
     not mis-parallelized. The pipeline lowers it to a Scan -- the desired
     semantic-op recognition -- which is value-exact."""
     n = 32
-    ins = {'A': _rand(n, seed=13), 'B': _rand(n, seed=14)}
+    ins = {"A": _rand(n, seed=13), "B": _rand(n, seed=14)}
     _canon_vs_raw(_prefix_sum, ins, N=n)
 
 
@@ -216,7 +222,7 @@ def _perfect_2d(A: dace.float64[N, M], B: dace.float64[N, M], C: dace.float64[N,
 
 def test_perfect_2d_nest_parallelizes():
     n, m = 12, 10
-    ins = {'A': np.zeros((n, m)), 'B': _rand(n, m, seed=15), 'C': _rand(n, m, seed=16)}
+    ins = {"A": np.zeros((n, m)), "B": _rand(n, m, seed=15), "C": _rand(n, m, seed=16)}
     cand = _canon_vs_raw(_perfect_2d, ins, N=n, M=m)
     assert _nloops(cand) == 0 and _nmaps(cand) >= 1
 
@@ -234,7 +240,7 @@ def test_imperfect_2d_sibling_inner_loops():
     """Two sibling inner loops under one outer loop -- an imperfect nest that
     needs fission to perfect-nest. Correctness is the invariant regardless."""
     n, m = 10, 8
-    ins = {'A': np.zeros((n, m)), 'B': _rand(n, m, seed=17), 'C': _rand(n, m, seed=18), 'D': np.zeros((n, m))}
+    ins = {"A": np.zeros((n, m)), "B": _rand(n, m, seed=17), "C": _rand(n, m, seed=18), "D": np.zeros((n, m))}
     _canon_vs_raw(_imperfect_2d_siblings, ins, N=n, M=m)
 
 
@@ -249,11 +255,11 @@ def test_inner_carried_outer_parallel_2d():
     """Inner axis carries a recurrence, outer axis is data-parallel: correctness
     always; ideally the outer i becomes a map with j a sequential/scan inner."""
     n, m = 12, 9
-    ins = {'A': _rand(n, m, seed=19), 'B': _rand(n, m, seed=20)}
+    ins = {"A": _rand(n, m, seed=19), "B": _rand(n, m, seed=20)}
     _canon_vs_raw(_inner_carried_2d, ins, N=n, M=m)
 
 
-LEN_2D = dace.symbol('LEN_2D')
+LEN_2D = dace.symbol("LEN_2D")
 
 
 @dace.program
@@ -268,9 +274,9 @@ def test_forward_read_anti_dependence_snapshots_and_stays_bit_exact():
     the loop and the read-ahead is redirected to the snapshot -- and the result stays
     value-preserving regardless of how the read window relates to the container size."""
     n, l2 = 500, 64  # flat has l2*l2 = 4096 >= n + 8, so flat[8 + i] stays in bounds
-    ins = {'a': _rand(n, seed=3), 'flat': _rand(l2 * l2, seed=4)}
+    ins = {"a": _rand(n, seed=3), "flat": _rand(l2 * l2, seed=4)}
     cand = _canon_vs_raw(_forward_read_big_array, ins, N=n, LEN_2D=l2)
-    assert any('snap' in nm for nm in cand.arrays), "forward-read anti-dependence should snapshot the array"
+    assert any("snap" in nm for nm in cand.arrays), "forward-read anti-dependence should snapshot the array"
 
 
 # The per-edge forward-read break -- one fixture per shape. These live with
@@ -280,9 +286,9 @@ def test_forward_read_anti_dependence_snapshots_and_stays_bit_exact():
 def _mixed_loop(name):
     """A ``for i in range(N - 1)`` loop with one (empty) body state."""
     sdfg = dace.SDFG(name)
-    loop = LoopRegion('loop', 'i < N - 1', 'i', 'i = 0', 'i = i + 1')
+    loop = LoopRegion("loop", "i < N - 1", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('body', is_start_block=True)
+    body = loop.add_state("body", is_start_block=True)
     return sdfg, loop, body
 
 
@@ -295,7 +301,7 @@ def _pre_state(sdfg, loop):
 
 
 def _split_snaps(sdfg):
-    return [nm for nm in sdfg.arrays if '_split_snap' in nm]
+    return [nm for nm in sdfg.arrays if "_split_snap" in nm]
 
 
 def test_forward_reads_mixed_forward_read_redirected_to_snapshot():
@@ -305,49 +311,49 @@ def test_forward_reads_mixed_forward_read_redirected_to_snapshot():
     Regression pin: the write node ``A`` carries both the write and the forward read, so a
     guard that skipped nodes with ``in_degree > 0`` would miss the anti-dependence entirely.
     """
-    sdfg, loop, body = _mixed_loop('split_mixed_s1244')
-    for nm in ('A', 'B', 'D'):
+    sdfg, loop, body = _mixed_loop("split_mixed_s1244")
+    for nm in ("A", "B", "D"):
         sdfg.add_array(nm, [N], dace.float64)
-    tw = body.add_tasklet('w', {'b'}, {'a'}, 'a = b + 1.0')
-    wA = body.add_access('A')
-    body.add_edge(body.add_read('B'), None, tw, 'b', dace.Memlet('B[i]'))
-    body.add_edge(tw, 'a', wA, None, dace.Memlet('A[i]'))
-    tr = body.add_tasklet('r', {'a0', 'a1'}, {'d'}, 'd = a0 + a1')
-    body.add_edge(wA, None, tr, 'a0', dace.Memlet('A[i]'))
-    body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + 1]'))
-    body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
+    tw = body.add_tasklet("w", {"b"}, {"a"}, "a = b + 1.0")
+    wA = body.add_access("A")
+    body.add_edge(body.add_read("B"), None, tw, "b", dace.Memlet("B[i]"))
+    body.add_edge(tw, "a", wA, None, dace.Memlet("A[i]"))
+    tr = body.add_tasklet("r", {"a0", "a1"}, {"d"}, "d = a0 + a1")
+    body.add_edge(wA, None, tr, "a0", dace.Memlet("A[i]"))
+    body.add_edge(wA, None, tr, "a1", dace.Memlet("A[i + 1]"))
+    body.add_edge(tr, "d", body.add_write("D"), None, dace.Memlet("D[i]"))
 
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
-    snap, = _split_snaps(sdfg)
+    (snap,) = _split_snaps(sdfg)
     assert sdfg.arrays[snap].transient
     pre = _pre_state(sdfg, loop)
     assert pre is not None and any(n.data == snap for n in pre.data_nodes())
-    assert next(e for e in body.in_edges(tr) if e.dst_conn == 'a1').src.data == snap
-    assert next(e for e in body.in_edges(tr) if e.dst_conn == 'a0').src.data == 'A'
+    assert next(e for e in body.in_edges(tr) if e.dst_conn == "a1").src.data == snap
+    assert next(e for e in body.in_edges(tr) if e.dst_conn == "a0").src.data == "A"
 
 
 def test_forward_reads_copy_forward_read_preserves_destination_subset():
     """``Bout[i] = a[i+1]`` is an access-node copy: redirecting its source to the snapshot
     must keep the destination subset ``Bout[i]``, or the sink is written at ``None``."""
-    sdfg, loop, body = _mixed_loop('split_mixed_copy')
-    for nm in ('A', 'Bout'):
+    sdfg, loop, body = _mixed_loop("split_mixed_copy")
+    for nm in ("A", "Bout"):
         sdfg.add_array(nm, [N], dace.float64)
-    rAb = body.add_read('A')
-    th = body.add_tasklet('h', {'x'}, {'y'}, 'y = x * 0.5')
-    wA = body.add_access('A')
-    body.add_edge(rAb, None, th, 'x', dace.Memlet('A[i - 1]'))
-    body.add_edge(th, 'y', wA, None, dace.Memlet('A[i]'))
-    wBout = body.add_write('Bout')
-    body.add_edge(wA, None, wBout, None, dace.Memlet(data='A', subset='i + 1', other_subset='i'))
+    rAb = body.add_read("A")
+    th = body.add_tasklet("h", {"x"}, {"y"}, "y = x * 0.5")
+    wA = body.add_access("A")
+    body.add_edge(rAb, None, th, "x", dace.Memlet("A[i - 1]"))
+    body.add_edge(th, "y", wA, None, dace.Memlet("A[i]"))
+    wBout = body.add_write("Bout")
+    body.add_edge(wA, None, wBout, None, dace.Memlet(data="A", subset="i + 1", other_subset="i"))
 
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
-    snap, = _split_snaps(sdfg)
+    (snap,) = _split_snaps(sdfg)
     in_e = next(e for e in body.in_edges(wBout) if e.data is not None)
     assert in_e.src.data == snap
     dst = in_e.data.get_dst_subset(in_e, body)
-    assert dst is not None and str(dst) in ('i', 'i:i + 1')
+    assert dst is not None and str(dst) in ("i", "i:i + 1")
     # The read-behind recurrence a[i-1] is RAW and stays on the live array.
-    assert next(e for e in body.out_edges(rAb) if e.data is not None).data.data == 'A'
+    assert next(e for e in body.out_edges(rAb) if e.data is not None).data.data == "A"
 
 
 def test_forward_reads_symbolic_forward_offset_snapshots_with_guard():
@@ -359,29 +365,29 @@ def test_forward_reads_symbolic_forward_offset_snapshots_with_guard():
     earlier in the SAME iteration, so ``K == 0`` makes ``A[i + K]`` alias that
     just-written value -- reading the stale pre-loop snapshot instead would be a silent
     miscompile, and the guard is what turns it into a loud runtime fault."""
-    sdfg, loop, body = _mixed_loop('split_mixed_symK')
-    for nm in ('A', 'B', 'D'):
+    sdfg, loop, body = _mixed_loop("split_mixed_symK")
+    for nm in ("A", "B", "D"):
         sdfg.add_array(nm, [N], dace.float64)
-    tw = body.add_tasklet('w', {'b'}, {'a'}, 'a = b + 1.0')
-    wA = body.add_access('A')
-    body.add_edge(body.add_read('B'), None, tw, 'b', dace.Memlet('B[i]'))
-    body.add_edge(tw, 'a', wA, None, dace.Memlet('A[i]'))
-    tr = body.add_tasklet('r', {'a0', 'a1'}, {'d'}, 'd = a0 + a1')
-    body.add_edge(wA, None, tr, 'a0', dace.Memlet('A[i]'))
-    body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + K]'))
-    body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
+    tw = body.add_tasklet("w", {"b"}, {"a"}, "a = b + 1.0")
+    wA = body.add_access("A")
+    body.add_edge(body.add_read("B"), None, tw, "b", dace.Memlet("B[i]"))
+    body.add_edge(tw, "a", wA, None, dace.Memlet("A[i]"))
+    tr = body.add_tasklet("r", {"a0", "a1"}, {"d"}, "d = a0 + a1")
+    body.add_edge(wA, None, tr, "a0", dace.Memlet("A[i]"))
+    body.add_edge(wA, None, tr, "a1", dace.Memlet("A[i + K]"))
+    body.add_edge(tr, "d", body.add_write("D"), None, dace.Memlet("D[i]"))
 
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
-    snap, = _split_snaps(sdfg)
-    assert next(e for e in body.in_edges(tr) if e.dst_conn == 'a1').src.data == snap
+    (snap,) = _split_snaps(sdfg)
+    assert next(e for e in body.in_edges(tr) if e.dst_conn == "a1").src.data == snap
     pre = _pre_state(sdfg, loop)
-    guards = [n for n in pre.nodes() if isinstance(n, nodes.Tasklet) and 'guard' in n.label]
+    guards = [n for n in pre.nodes() if isinstance(n, nodes.Tasklet) and "guard" in n.label]
     assert len(guards) == 1
     code = guards[0].code.as_string
     # ``K - 1 >= 0`` is exactly the strict ``K > 0`` for integer offsets; a bare ``K >= 0``
     # here would admit the aliasing K == 0 case.
-    assert 'K - 1' in code and '>= 0' in code, code
-    assert 'abort()' in code, code
+    assert "K - 1" in code and ">= 0" in code, code
+    assert "abort()" in code, code
     # The guard carries no connectors, so only ``side_effects`` keeps dead-code elimination
     # from pruning it -- pruning would silently restore the unsound assume-positive path.
     assert guards[0].side_effects
@@ -390,11 +396,11 @@ def test_forward_reads_symbolic_forward_offset_snapshots_with_guard():
 
 def test_forward_reads_symbolic_behind_offset_is_recurrence_noop():
     """``a[i - K]`` is a read-behind RAW recurrence, not an anti-dependence -> no snapshot."""
-    sdfg, _loop, body = _mixed_loop('split_mixed_symK_behind')
-    sdfg.add_array('A', [N], dace.float64)
-    th = body.add_tasklet('h', {'x'}, {'y'}, 'y = x * 0.5')
-    body.add_edge(body.add_read('A'), None, th, 'x', dace.Memlet('A[i - K]'))
-    body.add_edge(th, 'y', body.add_access('A'), None, dace.Memlet('A[i]'))
+    sdfg, _loop, body = _mixed_loop("split_mixed_symK_behind")
+    sdfg.add_array("A", [N], dace.float64)
+    th = body.add_tasklet("h", {"x"}, {"y"}, "y = x * 0.5")
+    body.add_edge(body.add_read("A"), None, th, "x", dace.Memlet("A[i - K]"))
+    body.add_edge(th, "y", body.add_access("A"), None, dace.Memlet("A[i]"))
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
     assert not _split_snaps(sdfg)
 
@@ -402,14 +408,14 @@ def test_forward_reads_symbolic_behind_offset_is_recurrence_noop():
 def test_forward_reads_same_index_only_is_noop():
     """``c[i] = a[i]`` (offset 0) reads the value a sibling just wrote this iteration;
     redirecting it to the stale snapshot would be a silent miscompile."""
-    sdfg, _loop, body = _mixed_loop('split_mixed_same')
-    for nm in ('A', 'B', 'C'):
+    sdfg, _loop, body = _mixed_loop("split_mixed_same")
+    for nm in ("A", "B", "C"):
         sdfg.add_array(nm, [N], dace.float64)
-    tw = body.add_tasklet('w', {'b'}, {'a'}, 'a = b + 1.0')
-    wA = body.add_access('A')
-    body.add_edge(body.add_read('B'), None, tw, 'b', dace.Memlet('B[i]'))
-    body.add_edge(tw, 'a', wA, None, dace.Memlet('A[i]'))
-    body.add_edge(wA, None, body.add_write('C'), None, dace.Memlet(data='A', subset='i', other_subset='i'))
+    tw = body.add_tasklet("w", {"b"}, {"a"}, "a = b + 1.0")
+    wA = body.add_access("A")
+    body.add_edge(body.add_read("B"), None, tw, "b", dace.Memlet("B[i]"))
+    body.add_edge(tw, "a", wA, None, dace.Memlet("A[i]"))
+    body.add_edge(wA, None, body.add_write("C"), None, dace.Memlet(data="A", subset="i", other_subset="i"))
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
     assert not _split_snaps(sdfg)
 
@@ -421,29 +427,29 @@ def test_forward_reads_reverse_stride_forward_read_is_not_snapshotted():
 
     def build(name):
         sdfg = dace.SDFG(name)
-        loop = LoopRegion('loop', 'i > 0', 'i', 'i = N - 2', 'i = i - 1')
+        loop = LoopRegion("loop", "i > 0", "i", "i = N - 2", "i = i - 1")
         sdfg.add_node(loop, is_start_block=True)
-        body = loop.add_state('body', is_start_block=True)
-        for nm in ('A', 'B', 'D'):
+        body = loop.add_state("body", is_start_block=True)
+        for nm in ("A", "B", "D"):
             sdfg.add_array(nm, [N], dace.float64)
-        tw = body.add_tasklet('w', {'b'}, {'a'}, 'a = b + 1.0')
-        wA = body.add_access('A')
-        body.add_edge(body.add_read('B'), None, tw, 'b', dace.Memlet('B[i]'))
-        body.add_edge(tw, 'a', wA, None, dace.Memlet('A[i]'))
-        tr = body.add_tasklet('r', {'a0', 'a1'}, {'d'}, 'd = a0 + a1')
-        body.add_edge(wA, None, tr, 'a0', dace.Memlet('A[i]'))
-        body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + 1]'))
-        body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
+        tw = body.add_tasklet("w", {"b"}, {"a"}, "a = b + 1.0")
+        wA = body.add_access("A")
+        body.add_edge(body.add_read("B"), None, tw, "b", dace.Memlet("B[i]"))
+        body.add_edge(tw, "a", wA, None, dace.Memlet("A[i]"))
+        tr = body.add_tasklet("r", {"a0", "a1"}, {"d"}, "d = a0 + a1")
+        body.add_edge(wA, None, tr, "a0", dace.Memlet("A[i]"))
+        body.add_edge(wA, None, tr, "a1", dace.Memlet("A[i + 1]"))
+        body.add_edge(tr, "d", body.add_write("D"), None, dace.Memlet("D[i]"))
         return sdfg
 
     n = 16
     a0, b0 = _rand(n, seed=31), _rand(n, seed=32)
-    ref = {'A': a0.copy(), 'B': b0.copy(), 'D': np.zeros(n)}
-    build('rev_stride_ref').compile()(**ref, N=n)
+    ref = {"A": a0.copy(), "B": b0.copy(), "D": np.zeros(n)}
+    build("rev_stride_ref").compile()(**ref, N=n)
 
-    cand_sdfg = build('rev_stride_cand')
+    cand_sdfg = build("rev_stride_cand")
     assert SplitStatements().apply_pass(cand_sdfg, {}) is None
-    got = {'A': a0.copy(), 'B': b0.copy(), 'D': np.zeros(n)}
+    got = {"A": a0.copy(), "B": b0.copy(), "D": np.zeros(n)}
     cand_sdfg.compile()(**got, N=n)
     for k in ref:
         assert np.allclose(ref[k], got[k]), f"reverse-stride split diverged on '{k}'"
@@ -451,15 +457,15 @@ def test_forward_reads_reverse_stride_forward_read_is_not_snapshotted():
 
 def test_forward_reads_transient_write_not_snapshotted():
     """Only non-transient (global) arrays are snapshot candidates."""
-    sdfg, _loop, body = _mixed_loop('split_mixed_transient')
-    sdfg.add_array('A', [N], dace.float64, transient=True)
-    sdfg.add_array('D', [N], dace.float64)
-    tw = body.add_tasklet('w', {}, {'a'}, 'a = 1.0')
-    wA = body.add_access('A')
-    body.add_edge(tw, 'a', wA, None, dace.Memlet('A[i]'))
-    tr = body.add_tasklet('r', {'a1'}, {'d'}, 'd = a1')
-    body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + 1]'))
-    body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
+    sdfg, _loop, body = _mixed_loop("split_mixed_transient")
+    sdfg.add_array("A", [N], dace.float64, transient=True)
+    sdfg.add_array("D", [N], dace.float64)
+    tw = body.add_tasklet("w", {}, {"a"}, "a = 1.0")
+    wA = body.add_access("A")
+    body.add_edge(tw, "a", wA, None, dace.Memlet("A[i]"))
+    tr = body.add_tasklet("r", {"a1"}, {"d"}, "d = a1")
+    body.add_edge(wA, None, tr, "a1", dace.Memlet("A[i + 1]"))
+    body.add_edge(tr, "d", body.add_write("D"), None, dace.Memlet("D[i]"))
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
     assert not _split_snaps(sdfg)
 
@@ -469,40 +475,42 @@ def test_forward_reads_transient_write_not_snapshotted():
 def _two_output_map(name, second_tasklet):
     """``for i: A[i] = B[i] + 1; C[i] = <second_tasklet>`` as one straight-line map."""
     sdfg = dace.SDFG(name)
-    for nm in ('A', 'B', 'C'):
+    for nm in ("A", "B", "C"):
         sdfg.add_array(nm, [N], dace.float64)
-    state = sdfg.add_state('main', is_start_block=True)
-    entry, xit = state.add_map('m', {'i': '0:N'})
-    rB = state.add_read('B')
-    t1 = state.add_tasklet('t1', {'b'}, {'a'}, 'a = b + 1.0')
-    state.add_memlet_path(rB, entry, t1, dst_conn='b', memlet=dace.Memlet('B[i]'))
-    state.add_memlet_path(t1, xit, state.add_write('A'), src_conn='a', memlet=dace.Memlet('A[i]'))
+    state = sdfg.add_state("main", is_start_block=True)
+    entry, xit = state.add_map("m", {"i": "0:N"})
+    rB = state.add_read("B")
+    t1 = state.add_tasklet("t1", {"b"}, {"a"}, "a = b + 1.0")
+    state.add_memlet_path(rB, entry, t1, dst_conn="b", memlet=dace.Memlet("B[i]"))
+    state.add_memlet_path(t1, xit, state.add_write("A"), src_conn="a", memlet=dace.Memlet("A[i]"))
     t2 = second_tasklet(state)
-    state.add_memlet_path(rB, entry, t2, dst_conn='b', memlet=dace.Memlet('B[i]'))
-    state.add_memlet_path(t2, xit, state.add_write('C'), src_conn='c', memlet=dace.Memlet('C[i]'))
+    state.add_memlet_path(rB, entry, t2, dst_conn="b", memlet=dace.Memlet("B[i]"))
+    state.add_memlet_path(t2, xit, state.add_write("C"), src_conn="c", memlet=dace.Memlet("C[i]"))
     return sdfg
 
 
 def test_split_maps_splits_a_transparent_two_output_map():
     """Baseline for the two guards below: an all-Python, effect-free body does split."""
-    sdfg = _two_output_map('split_map_plain', lambda st: st.add_tasklet('t2', {'b'}, {'c'}, 'c = b * 2.0'))
+    sdfg = _two_output_map("split_map_plain", lambda st: st.add_tasklet("t2", {"b"}, {"c"}, "c = b * 2.0"))
     assert SplitStatements(split_maps=True).apply_pass(sdfg, {}) == 1
 
 
 def test_split_maps_refuses_a_cpp_tasklet_body():
     """A non-Python tasklet is a black box -- the Python-AST side-effect scan has nothing to
     read, so ``has_side_effects`` answering False proves nothing and the body must not be cloned."""
-    sdfg = _two_output_map('split_map_cpp',
-                           lambda st: st.add_tasklet('t2', {'b'}, {'c'}, 'c = b * 2.0;', dace.Language.CPP))
+    sdfg = _two_output_map(
+        "split_map_cpp", lambda st: st.add_tasklet("t2", {"b"}, {"c"}, "c = b * 2.0;", dace.Language.CPP)
+    )
     assert SplitStatements(split_maps=True).apply_pass(sdfg, {}) is None
 
 
 def test_split_maps_refuses_a_side_effecting_body():
     """A declared side effect would run once per clone."""
-    sdfg = _two_output_map('split_map_sideeffect',
-                           lambda st: st.add_tasklet('t2', {'b'}, {'c'}, 'c = b * 2.0', side_effects=True))
+    sdfg = _two_output_map(
+        "split_map_sideeffect", lambda st: st.add_tasklet("t2", {"b"}, {"c"}, "c = b * 2.0", side_effects=True)
+    )
     assert SplitStatements(split_maps=True).apply_pass(sdfg, {}) is None
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

@@ -48,6 +48,7 @@ Transformation classes are imported lazily inside ``_stages``: importing them at
 cycle (this module is imported by ``dace.transformation.passes`` whose subpackages those
 transformations import).
 """
+
 from typing import Any, Dict, List, Optional
 
 from dace import properties
@@ -73,19 +74,21 @@ class ParallelizePipeline(ppl.Pass):
                                  so ``ShortLoopUnroll`` refuses it.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
-    validate = properties.Property(dtype=bool, default=False, desc='Validate the SDFG at the end.')
-    validate_all = properties.Property(dtype=bool, default=False, desc='Validate the SDFG after each stage.')
-    unroll_limit = properties.Property(dtype=int,
-                                       default=DEFAULT_UNROLL_LIMIT,
-                                       desc='See ShortLoopUnroll (0 disables).')
+    validate = properties.Property(dtype=bool, default=False, desc="Validate the SDFG at the end.")
+    validate_all = properties.Property(dtype=bool, default=False, desc="Validate the SDFG after each stage.")
+    unroll_limit = properties.Property(
+        dtype=int, default=DEFAULT_UNROLL_LIMIT, desc="See ShortLoopUnroll (0 disables)."
+    )
 
-    def __init__(self,
-                 validate: bool = False,
-                 validate_all: bool = False,
-                 unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-                 specialize_constants: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        validate: bool = False,
+        validate_all: bool = False,
+        unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+        specialize_constants: Optional[Dict[str, Any]] = None,
+    ):
         self.validate = validate
         self.validate_all = validate_all
         self.unroll_limit = unroll_limit
@@ -159,6 +162,7 @@ class ParallelizePipeline(ppl.Pass):
         """
         if self._specialize_constants:
             from dace.sdfg.utils import specialize_symbols
+
             specialize_symbols(sdfg, self._specialize_constants)
         stages = self._stages()
         for stage in stages:
@@ -170,11 +174,13 @@ class ParallelizePipeline(ppl.Pass):
         return len(stages)
 
 
-def parallelize(sdfg: SDFG,
-                validate: bool = True,
-                validate_all: bool = False,
-                unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-                specialize_constants: Optional[Dict[str, Any]] = None) -> SDFG:
+def parallelize(
+    sdfg: SDFG,
+    validate: bool = True,
+    validate_all: bool = False,
+    unroll_limit: int = DEFAULT_UNROLL_LIMIT,
+    specialize_constants: Optional[Dict[str, Any]] = None,
+) -> SDFG:
     """Parallelize ``sdfg``'s loops in place and return it.
 
     :param sdfg: The SDFG to parallelize.
@@ -184,8 +190,10 @@ def parallelize(sdfg: SDFG,
     :param specialize_constants: Symbol values to bake in first; see :class:`ParallelizePipeline`.
     :returns: The same ``sdfg`` instance, parallelized.
     """
-    ParallelizePipeline(validate=validate,
-                        validate_all=validate_all,
-                        unroll_limit=unroll_limit,
-                        specialize_constants=specialize_constants).apply_pass(sdfg, {})
+    ParallelizePipeline(
+        validate=validate,
+        validate_all=validate_all,
+        unroll_limit=unroll_limit,
+        specialize_constants=specialize_constants,
+    ).apply_pass(sdfg, {})
     return sdfg

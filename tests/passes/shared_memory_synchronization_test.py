@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared-memory write detection of :class:`DefaultSharedMemorySync`."""
+
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync, is_shared_memory_write
@@ -50,7 +51,7 @@ def test_is_shared_memory_write_predicate():
     assert is_shared_memory_write(t, state) is False  # not an AccessNode
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_writes_to_smem_inside_loopregion_detects_write()
     test_writes_to_smem_inside_loopregion_absent()
     test_is_shared_memory_write_predicate()

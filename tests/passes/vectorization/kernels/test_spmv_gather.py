@@ -20,6 +20,7 @@ not from the unvectorized DaCe SDFG, so the test pins absolute numerical
 correctness of the vectorized lowering -- a miscompiled gather or a dropped
 reduction chunk cannot hide behind a matching-but-wrong scalar path.
 """
+
 import numpy as np
 import pytest
 
@@ -64,11 +65,11 @@ def _spmv_numpy(A, x, col):
 # (``remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE``) -- masking the tail of a gather
 # would read out-of-range ``col`` indices, so the tail must be scalar.
 @pytest.mark.parametrize("n,nnz", [(16, 16), (16, 24), (24, 16), (17, 16), (16, 17), (17, 23)])
-@pytest.mark.parametrize("widths", [(8, ), (4, )])
+@pytest.mark.parametrize("widths", [(8,), (4,)])
 def test_spmv_matches_numpy(n, nnz, widths):
     rng = np.random.default_rng(seed=n * 1000 + nnz * 10 + sum(widths))
     A = rng.random((n, nnz))
-    x = rng.random((n, ))
+    x = rng.random((n,))
     col = rng.integers(0, n, size=nnz).astype(np.int32)
 
     y_ref = _spmv_numpy(A, x, col)
@@ -76,8 +77,8 @@ def test_spmv_matches_numpy(n, nnz, widths):
     vec = spmv.to_sdfg(simplify=True)
     vec.name = f"spmv_{n}_{nnz}_{'x'.join(map(str, widths))}"
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=widths, target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(vec, {})
+        VectorizeConfig(widths=widths, target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)
+    ).apply_pass(vec, {})
     vec.validate()
 
     y_vec = np.zeros(n)

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """hipFFT environment for the ROCm backend of the :mod:`dace.libraries.fft` library nodes."""
+
 import ctypes.util
 
 import dace.library
@@ -9,7 +10,6 @@ from typing import Dict, List
 
 @dace.library.environment
 class hipFFT:
-
     cmake_minimum_version = None
     cmake_packages: List[str] = []
     cmake_variables: Dict[str, str] = {}
@@ -19,7 +19,7 @@ class hipFFT:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': ["hipfft/hipfft.h", "hipfft/hipfftXt.h"], 'cuda': ["hipfft/hipfft.h", "hipfft/hipfftXt.h"]}
+    headers = {"frame": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"], "cuda": ["hipfft/hipfft.h", "hipfft/hipfftXt.h"]}
     state_fields: List[str] = []
     init_code = ""
     finalize_code = ""
@@ -32,4 +32,4 @@ class hipFFT:
 
     @staticmethod
     def is_installed():
-        return ctypes.util.find_library('hipfft') is not None
+        return ctypes.util.find_library("hipfft") is not None

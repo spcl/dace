@@ -47,6 +47,7 @@ Manual run::
     pytest tests/corpus/cloudsc/cloudsc_target_pipelines_test.py -v -s -m "integration and not gpu"
     pytest tests/corpus/cloudsc/cloudsc_target_pipelines_test.py -v -s -m "integration and gpu"
 """
+
 import contextlib
 import gc
 import os
@@ -62,23 +63,34 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from tests.corpus.cloudsc.generate_data_for_cloudsc import (CLOUDSC_CONSTANTS, IEEE_CPU_ARGS, build_cloudsc_sdfg,
-                                                            compare_outputs)
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (
+    CLOUDSC_CONSTANTS,
+    IEEE_CPU_ARGS,
+    build_cloudsc_sdfg,
+    compare_outputs,
+)
 from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
 from tests.corpus.cloudsc.reproduce import vectorize_gpu
-from tests.corpus.cloudsc.pipelines import (build_reference_outputs, generate_cuda_code, gpu_is_runnable,
-                                            is_device_scheduled, map_entries, omp_parallel_for_count, run_candidate,
-                                            strict_fp_device_build)
+from tests.corpus.cloudsc.pipelines import (
+    build_reference_outputs,
+    generate_cuda_code,
+    gpu_is_runnable,
+    is_device_scheduled,
+    map_entries,
+    omp_parallel_for_count,
+    run_candidate,
+    strict_fp_device_build,
+)
 
 #: CloudSC species PARAMETER constants (Fortran NCLV=5, NCLDQL=1..NCLDQV=5), baked in so the
 #: species / LU loops become constant-trip. Same set the sibling canonicalize test specializes with;
 #: klev / klon / kidia / kfdia stay symbolic.
-SPECIES_CONSTANTS = {'nclv': 5, 'ncldql': 1, 'ncldqi': 2, 'ncldqr': 3, 'ncldqs': 4, 'ncldqv': 5}
+SPECIES_CONSTANTS = {"nclv": 5, "ncldql": 1, "ncldqi": 2, "ncldqr": 3, "ncldqs": 4, "ncldqv": 5}
 
 #: Run-time configuration flags, baked in at the values the reference inputs carry. The
 #: ``yrecldp_nssopt`` if/elif chain has no ``else`` and the ``yrecldp_laericesed`` branch writes one
 #: ``zvqx`` species inside the column loop, so left symbolic they keep 6 column loops sequential.
-CONFIG_FLAGS = {name: int(CLOUDSC_CONSTANTS[name]) for name in ('yrecldp_nssopt', 'yrecldp_laericesed')}
+CONFIG_FLAGS = {name: int(CLOUDSC_CONSTANTS[name]) for name in ("yrecldp_nssopt", "yrecldp_laericesed")}
 
 #: Tolerance for every leg here, taken from the ``parallel`` arm of ``cloudsc_canonicalize_test``
 #: (``_ARMS['parallel']``): each leg runs its maps in parallel -- OpenMP on the host, one thread per
@@ -99,8 +111,9 @@ GPU_STORAGES = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
 def tile_nodes(sdfg: dace.SDFG):
     """Tile library nodes (``TileGather`` / ``TileBinop`` / ``TileScatter`` / ...) the vectorizer left."""
     return [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.LibraryNode) and type(n).__name__.startswith('Tile')
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.LibraryNode) and type(n).__name__.startswith("Tile")
     ]
 
 
@@ -108,15 +121,14 @@ def canonicalized(reference_file: str, target: str, out_path: str) -> str:
     """Canonicalize a fresh copy of the reference for ``target`` and persist it."""
     sdfg = dace.SDFG.from_file(reference_file)
     # The loop transforms log every refused loop; keep the test output readable.
-    with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
-        canonicalize(sdfg,
-                     validate=True,
-                     validate_all=False,
-                     target=target,
-                     specialize_constants={
-                         **SPECIES_CONSTANTS,
-                         **CONFIG_FLAGS
-                     })
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        canonicalize(
+            sdfg,
+            validate=True,
+            validate_all=False,
+            target=target,
+            specialize_constants={**SPECIES_CONSTANTS, **CONFIG_FLAGS},
+        )
     sdfg.validate()
     sdfg.save(out_path, compress=True)
     del sdfg
@@ -163,52 +175,51 @@ def run_on_device(sdfg: dace.SDFG, inputs, tag: str):
 def assert_matches(out, reference_out, leg: str) -> None:
     report = compare_outputs(out, reference_out, rtol=PARALLEL_TOL, atol=PARALLEL_TOL)
     worst = max(((ma, mr) for ma, mr, _ in report.values()), default=(0.0, 0.0))
-    print(f'{leg}: worst |abs|={worst[0]:.3e} |rel|={worst[1]:.3e} (tol={PARALLEL_TOL:.0e})')
+    print(f"{leg}: worst |abs|={worst[0]:.3e} |rel|={worst[1]:.3e} (tol={PARALLEL_TOL:.0e})")
     bad = {name: (ma, mr) for name, (ma, mr, ok) in report.items() if not ok}
-    assert not bad, (f'{leg}: outputs diverge from the un-transformed reference '
-                     f'(tol={PARALLEL_TOL:.0e}): {bad}')
+    assert not bad, f"{leg}: outputs diverge from the un-transformed reference (tol={PARALLEL_TOL:.0e}): {bad}"
 
 
 def require_gpu() -> None:
     """Skip only for a missing toolchain / device, decided by building and running a tiny GPU
     program (:func:`gpu_is_runnable`) rather than by sniffing for nvcc."""
     if not gpu_is_runnable():
-        pytest.skip('no usable GPU on this host (nvcc, driver or device missing)')
+        pytest.skip("no usable GPU on this host (nvcc, driver or device missing)")
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def reference_file(tmp_path_factory):
     """The un-transformed CloudSC SDFG, built once (the parse is minutes) and persisted."""
     ref = build_cloudsc_sdfg(simplify=False)
-    path = str(tmp_path_factory.mktemp('cloudsc') / 'cloudsc_nosimplify.sdfgz')
+    path = str(tmp_path_factory.mktemp("cloudsc") / "cloudsc_nosimplify.sdfgz")
     ref.save(path, compress=True)
     del ref
     gc.collect()
     return path
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def reference_bundle(reference_file):
     """Oracle: ``(inputs, reference_out)`` from the un-transformed SDFG run sequentially under IEEE.
     Shared by every leg -- it is the mathematical answer, independent of how a candidate is scheduled."""
     ref = dace.SDFG.from_file(reference_file)
-    bundle = build_reference_outputs(ref, regime='ieee', seed=0)
+    bundle = build_reference_outputs(ref, regime="ieee", seed=0)
     del ref
     gc.collect()
     return bundle
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def canonical_cpu_file(reference_file, tmp_path_factory):
     """CloudSC canonicalized for the CPU once; the baseline of three of the five legs."""
-    return canonicalized(reference_file, 'cpu', str(tmp_path_factory.mktemp('canon_cpu') / 'cloudsc_cpu.sdfgz'))
+    return canonicalized(reference_file, "cpu", str(tmp_path_factory.mktemp("canon_cpu") / "cloudsc_cpu.sdfgz"))
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def canonical_gpu_file(reference_file, tmp_path_factory):
     """CloudSC canonicalized for the GPU target preset. Still host-scheduled -- the device move is a
     separate step, which is what the ``canonicalize_gpu`` leg runs next."""
-    return canonicalized(reference_file, 'gpu', str(tmp_path_factory.mktemp('canon_gpu') / 'cloudsc_gpu.sdfgz'))
+    return canonicalized(reference_file, "gpu", str(tmp_path_factory.mktemp("canon_gpu") / "cloudsc_gpu.sdfgz"))
 
 
 @pytest.mark.integration
@@ -220,12 +231,12 @@ def test_canonicalize_cpu_is_numerically_correct(reference_bundle, canonical_cpu
 
     maps = map_entries(sdfg)
     pragmas = omp_parallel_for_count(sdfg)
-    print(f'canonicalize/cpu: maps={len(maps)} omp_parallel_for={pragmas}')
-    assert maps, 'canonicalization produced no Maps -- nothing was parallelized'
+    print(f"canonicalize/cpu: maps={len(maps)} omp_parallel_for={pragmas}")
+    assert maps, "canonicalization produced no Maps -- nothing was parallelized"
     assert pragmas > 0, 'no "#pragma omp parallel for" reached the generated code -- silently serial'
 
-    out = run_on_host(sdfg, inputs, 'canon_cpu')
-    assert_matches(out, reference_out, 'canonicalize/cpu')
+    out = run_on_host(sdfg, inputs, "canon_cpu")
+    assert_matches(out, reference_out, "canonicalize/cpu")
 
 
 @pytest.mark.integration
@@ -235,17 +246,17 @@ def test_vectorize_on_canonical_cpu_is_numerically_correct(reference_bundle, can
     inputs, reference_out = reference_bundle
     sdfg = dace.SDFG.from_file(canonical_cpu_file)
 
-    config = VectorizeConfig(widths=(VECTOR_WIDTH, ), target_isa=detect_host_isa(), validate=True)
-    with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
+    config = VectorizeConfig(widths=(VECTOR_WIDTH,), target_isa=detect_host_isa(), validate=True)
+    with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
         VectorizeCPUMultiDim(config).apply_pass(sdfg, {})
     sdfg.validate()
 
     tiles = tile_nodes(sdfg)
-    print(f'vectorize/cpu: isa={detect_host_isa()} width={VECTOR_WIDTH} tile_nodes={len(tiles)}')
-    assert tiles, 'the vectorizer left no tile ops -- the leg would compare the canonical graph to itself'
+    print(f"vectorize/cpu: isa={detect_host_isa()} width={VECTOR_WIDTH} tile_nodes={len(tiles)}")
+    assert tiles, "the vectorizer left no tile ops -- the leg would compare the canonical graph to itself"
 
-    out = run_on_host(sdfg, inputs, 'vectorize_cpu')
-    assert_matches(out, reference_out, 'vectorize/cpu')
+    out = run_on_host(sdfg, inputs, "vectorize_cpu")
+    assert_matches(out, reference_out, "vectorize/cpu")
 
 
 @pytest.mark.gpu
@@ -260,12 +271,12 @@ def test_canonicalize_gpu_is_numerically_correct(reference_bundle, canonical_gpu
     offload_cloudsc_to_gpu(sdfg)
     sdfg.validate()
 
-    assert is_device_scheduled(sdfg), 'nothing was scheduled onto the device -- this is a host run'
+    assert is_device_scheduled(sdfg), "nothing was scheduled onto the device -- this is a host run"
     kernels = generate_cuda_code(sdfg)
-    print(f'canonicalize/gpu: __global__ kernels={kernels} device_args={sorted(device_resident(sdfg))}')
+    print(f"canonicalize/gpu: __global__ kernels={kernels} device_args={sorted(device_resident(sdfg))}")
 
-    out = run_on_device(sdfg, inputs, 'canon_gpu')
-    assert_matches(out, reference_out, 'canonicalize/gpu')
+    out = run_on_device(sdfg, inputs, "canon_gpu")
+    assert_matches(out, reference_out, "canonicalize/gpu")
 
 
 @pytest.mark.gpu
@@ -279,15 +290,15 @@ def test_gpu_offload_of_canonical_cpu_is_numerically_correct(reference_bundle, c
     sdfg = dace.SDFG.from_file(canonical_cpu_file)
 
     offload_to_gpu(sdfg)
-    finalize_for_target(sdfg, 'gpu')
+    finalize_for_target(sdfg, "gpu")
     sdfg.validate()
 
-    assert is_device_scheduled(sdfg), 'nothing was scheduled onto the device -- this is a host run'
+    assert is_device_scheduled(sdfg), "nothing was scheduled onto the device -- this is a host run"
     kernels = generate_cuda_code(sdfg)
-    print(f'gpu_offload/canonical_cpu: __global__ kernels={kernels} device_args={sorted(device_resident(sdfg))}')
+    print(f"gpu_offload/canonical_cpu: __global__ kernels={kernels} device_args={sorted(device_resident(sdfg))}")
 
-    out = run_on_device(sdfg, inputs, 'offload_canon_cpu')
-    assert_matches(out, reference_out, 'gpu_offload/canonical_cpu')
+    out = run_on_device(sdfg, inputs, "offload_canon_cpu")
+    assert_matches(out, reference_out, "gpu_offload/canonical_cpu")
 
 
 @pytest.mark.gpu
@@ -304,13 +315,13 @@ def test_vectorize_on_canonical_gpu_is_numerically_correct(reference_bundle, can
     sdfg.validate()
 
     tiles = tile_nodes(sdfg)
-    assert tiles, 'the vectorizer left no tile ops -- the leg would compare the canonical graph to itself'
+    assert tiles, "the vectorizer left no tile ops -- the leg would compare the canonical graph to itself"
     kernels = generate_cuda_code(sdfg)
-    print(f'vectorize/gpu: tile_nodes={len(tiles)} __global__ kernels={kernels}')
+    print(f"vectorize/gpu: tile_nodes={len(tiles)} __global__ kernels={kernels}")
 
-    out = run_on_device(sdfg, inputs, 'vectorize_gpu')
-    assert_matches(out, reference_out, 'vectorize/gpu')
+    out = run_on_device(sdfg, inputs, "vectorize_gpu")
+    assert_matches(out, reference_out, "vectorize/gpu")
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '-s', '-m', 'integration'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "-s", "-m", "integration"])

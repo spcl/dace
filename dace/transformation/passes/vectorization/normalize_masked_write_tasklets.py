@@ -26,6 +26,7 @@ scalar / remainder-tail scope too (where the tile passes never run). It has to b
 rather than a function like ``ITE`` precisely because it has no else arm -- there is no value to
 return when the predicate is false.
 """
+
 import ast
 
 from typing import Any, List, Type, Union
@@ -35,6 +36,7 @@ from dace.sdfg import SDFG, SDFGState, nodes as nd
 from dace.sdfg.nodes import CodeBlock
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.utils.tasklets import single_assignment
+
 # The name is owned by the unparser that gives it meaning, so the producer here and the C++
 # lowering can never drift apart.
 from dace.codegen.cppunparse import CONDITIONAL_WRITE_FUNC
@@ -100,9 +102,13 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         # Mark every out-edge whose connector is written through ``IT`` as a DYNAMIC memlet.
         guarded = {
             node.targets[0].id
-            for node in ast.walk(ast.parse(tasklet.code.as_string)) if isinstance(node, ast.Assign)
-            and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Name) and node.value.func.id == CONDITIONAL_WRITE_FUNC
+            for node in ast.walk(ast.parse(tasklet.code.as_string))
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == CONDITIONAL_WRITE_FUNC
         }
         for edge in state.out_edges(tasklet):
             if edge.src_conn in guarded and edge.data is not None:
@@ -133,11 +139,13 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
         # A reader of the written element needs the old value on the lanes ``cond`` leaves unwritten.
         written = out_edges[0].dst
         if isinstance(written, nd.AccessNode) and any(
-                not e.data.is_empty() for e in state.out_edges(written) if not isinstance(e.dst, nd.MapExit)):
+            not e.data.is_empty() for e in state.out_edges(written) if not isinstance(e.dst, nd.MapExit)
+        ):
             return False
 
-        tasklet.code = CodeBlock(f"{out_conn} = {CONDITIONAL_WRITE_FUNC}({cond_src}, {value_src})",
-                                 language=dace.dtypes.Language.Python)
+        tasklet.code = CodeBlock(
+            f"{out_conn} = {CONDITIONAL_WRITE_FUNC}({cond_src}, {value_src})", language=dace.dtypes.Language.Python
+        )
         # Drop the WHOLE read path, not just the tasklet's edge: the read enters through the
         # enclosing map's ``IN_``/``OUT_`` connector pair, and removing only the inner edge would
         # strand them (a dangling out-connector the validator rejects). It also drops the tasklet's
@@ -169,7 +177,8 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
             return None
         # The else connector must feed ONLY this arm; otherwise dropping it changes the other use.
         others = [
-            n.id for n in ast.walk(ast.Module(body=[ast.Expr(cond), ast.Expr(value)], type_ignores=[]))
+            n.id
+            for n in ast.walk(ast.Module(body=[ast.Expr(cond), ast.Expr(value)], type_ignores=[]))
             if isinstance(n, ast.Name)
         ]
         if else_arm.id in others:
@@ -187,8 +196,9 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
             return False
         ifnode = body[0]
         if not all(
-                isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
-                for s in ifnode.body):
+            isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
+            for s in ifnode.body
+        ):
             return False
         out_conns = set(tasklet.out_connectors)
         if not any(s.targets[0].id in out_conns for s in ifnode.body):

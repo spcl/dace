@@ -2,13 +2,14 @@
 """The reusable extract -> evaluate -> best wrapper (nest_eval): every wrap-mode candidate of a
 fixture nest verifies against the pristine-copy reference, timing records median + spread metadata,
 and the identity-first tie-break law is enforced."""
+
 import numpy
 import pytest
 
 import dace
 from dace.transformation.layout import assignment_costs, nest_eval
 from dace.transformation.layout.externalize import nest_entries
-from dace.transformation.layout.nest_eval import (IDENTITY_TAG, default_permutation_candidates, evaluate_nest)
+from dace.transformation.layout.nest_eval import IDENTITY_TAG, default_permutation_candidates, evaluate_nest
 from dace.transformation.layout.prepare import prepare_for_layout
 from dace.transformation.layout.timing import compute_region_stats_timer
 
@@ -31,14 +32,16 @@ def test_conflict2_nests_evaluate_and_rank(n=48):
     chain = {"A": inputs["A"], **fixtures.conflict2_oracle(inputs["A"])}
 
     for state, entry in nests:
-        ev = evaluate_nest(state,
-                           entry,
-                           symbols={"N": n},
-                           provided=chain,
-                           reps=3,
-                           warmup=1,
-                           timer=compute_region_stats_timer,
-                           name=f"ev_c2_{entry.map.label}")
+        ev = evaluate_nest(
+            state,
+            entry,
+            symbols={"N": n},
+            provided=chain,
+            reps=3,
+            warmup=1,
+            timer=compute_region_stats_timer,
+            name=f"ev_c2_{entry.map.label}",
+        )
         assert all(r.correct for r in ev.results), [(r.name, r.error) for r in ev.results]
         names = [r.name for r in ev.results]
         # identity + one non-identity permutation per 2-D non-transient array of the nest
@@ -57,16 +60,15 @@ def test_provided_inputs_reach_the_reference(n=32):
     inputs = fixtures.make_inputs(n, seed=9)
     by_output = {}
     for state, entry in nests:
-        ev = evaluate_nest(state,
-                           entry,
-                           symbols={"N": n},
-                           provided={
-                               "A": inputs["A"],
-                               **fixtures.agree2_oracle(inputs["A"])
-                           },
-                           reps=2,
-                           warmup=1,
-                           name=f"ev_a2_{entry.map.label}")
+        ev = evaluate_nest(
+            state,
+            entry,
+            symbols={"N": n},
+            provided={"A": inputs["A"], **fixtures.agree2_oracle(inputs["A"])},
+            reps=2,
+            warmup=1,
+            name=f"ev_a2_{entry.map.label}",
+        )
         by_output.update({out: ev for out in ev.reference})
     assert numpy.allclose(by_output["B"].reference["B"], 2.0 * inputs["A"])
     ref = fixtures.agree2_oracle(inputs["A"])
@@ -79,20 +81,20 @@ def test_identity_must_come_first(n=16):
     _, nests = prepared_nests("conflict2")
     state, entry = nests[0]
     with pytest.raises(ValueError, match="tie-break"):
-        evaluate_nest(state,
-                      entry,
-                      symbols={"N": n},
-                      candidates={
-                          "permute_first": lambda sdfg: None,
-                          IDENTITY_TAG: lambda sdfg: None
-                      },
-                      name="ev_order_check")
+        evaluate_nest(
+            state,
+            entry,
+            symbols={"N": n},
+            candidates={"permute_first": lambda sdfg: None, IDENTITY_TAG: lambda sdfg: None},
+            name="ev_order_check",
+        )
 
 
 def test_default_candidates_identity_first():
     _, nests = prepared_nests("conflict2")
     state, entry = nests[0]
     from dace.transformation.layout.externalize import externalize_nest
+
     ext = externalize_nest(state, entry, name="ev_defaults_check")
     cands = default_permutation_candidates(ext)
     assert next(iter(cands)) == IDENTITY_TAG
@@ -139,7 +141,12 @@ def test_rank3_array_still_enumerates_every_permutation():
     sdfg = dace.SDFG("nest_eval_rank3")
     sdfg.add_array("X", [2, 2, 2], dace.float64)
     assert list(default_permutation_candidates(sdfg)) == [
-        IDENTITY_TAG, "permute_X_021", "permute_X_102", "permute_X_120", "permute_X_201", "permute_X_210"
+        IDENTITY_TAG,
+        "permute_X_021",
+        "permute_X_102",
+        "permute_X_120",
+        "permute_X_201",
+        "permute_X_210",
     ]
 
 
@@ -163,13 +170,9 @@ def test_pure_copy_nest_identity_is_timed(n=48):
     nests = [(state, entry) for state in sdfg.states() for entry in nest_entries(state)]
     assert len(nests) == 1
     state, entry = nests[0]
-    ev = evaluate_nest(state,
-                       entry,
-                       symbols={"N": n},
-                       reps=3,
-                       warmup=1,
-                       timer=compute_region_stats_timer,
-                       name="ev_transpose")
+    ev = evaluate_nest(
+        state, entry, symbols={"N": n}, reps=3, warmup=1, timer=compute_region_stats_timer, name="ev_transpose"
+    )
     assert all(r.correct for r in ev.results), [(r.name, r.error) for r in ev.results]
     assert all(r.time is not None for r in ev.results), [(r.name, r.time) for r in ev.results]
     assert ev.best() is not None

@@ -11,6 +11,7 @@ destination on half of all self-copies. ``Memlet.get_src_subset`` / ``Memlet.get
 only correct readers, and this file asserts that -- against the values the compiled program actually
 produces, not against the memlet's own bookkeeping.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -32,9 +33,9 @@ def build_self_copy(name: str, memlet: dace.Memlet):
     """``p`` (4x5) with a single ``AccessNode -> AccessNode`` edge on the SAME array carrying
     ``memlet``. Returns ``(sdfg, edge, state)``."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array('p', [4, 5], dace.float64)
-    state = sdfg.add_state('s')
-    edge = state.add_edge(state.add_access('p'), None, state.add_access('p'), None, memlet)
+    sdfg.add_array("p", [4, 5], dace.float64)
+    state = sdfg.add_state("s")
+    edge = state.add_edge(state.add_access("p"), None, state.add_access("p"), None, memlet)
     return sdfg, edge, state
 
 
@@ -44,7 +45,7 @@ def src_relative_self_copy(name: str):
     This is the orientation ``Memlet.try_initialize`` assigns by default when both endpoints name the
     same array, and the one the DaCe Python frontend emits.
     """
-    return build_self_copy(name, dace.Memlet(data='p', subset=f'0:4, {READ_COL}', other_subset=f'0:4, {WRITE_COL}'))
+    return build_self_copy(name, dace.Memlet(data="p", subset=f"0:4, {READ_COL}", other_subset=f"0:4, {WRITE_COL}"))
 
 
 def dst_relative_self_copy(name: str):
@@ -54,7 +55,7 @@ def dst_relative_self_copy(name: str):
     sets ``_is_data_src = False``. ``try_initialize`` preserves an already-set flag, so this survives
     being attached to a ``p -> p`` edge.
     """
-    return build_self_copy(name, dace.Memlet(f'[0:4, {READ_COL}] -> p[0:4, {WRITE_COL}]'))
+    return build_self_copy(name, dace.Memlet(f"[0:4, {READ_COL}] -> p[0:4, {WRITE_COL}]"))
 
 
 def run(sdfg: dace.SDFG) -> np.ndarray:
@@ -71,7 +72,7 @@ def expected() -> np.ndarray:
     return p
 
 
-@pytest.mark.parametrize('build', [src_relative_self_copy, dst_relative_self_copy])
+@pytest.mark.parametrize("build", [src_relative_self_copy, dst_relative_self_copy])
 def test_accessors_name_the_ends_a_name_test_cannot(build):
     """``get_src_subset`` / ``get_dst_subset`` return the read and written columns in BOTH
     orientations; the name-based selection ``subset if data == node.data else other_subset`` returns
@@ -79,25 +80,25 @@ def test_accessors_name_the_ends_a_name_test_cannot(build):
     sdfg, edge, state = build(sdfg_name_of(build))
     memlet = edge.data
 
-    assert str(memlet.get_src_subset(edge, state)) == f'0:4, {READ_COL}'
-    assert str(memlet.get_dst_subset(edge, state)) == f'0:4, {WRITE_COL}'
+    assert str(memlet.get_src_subset(edge, state)) == f"0:4, {READ_COL}"
+    assert str(memlet.get_dst_subset(edge, state)) == f"0:4, {WRITE_COL}"
 
     # What a name test would answer: both endpoints match ``memlet.data``, so both get ``subset``.
     assert edge.src.data == memlet.data and edge.dst.data == memlet.data
     name_based_src = memlet.subset if memlet.data == edge.src.data else memlet.other_subset
     name_based_dst = memlet.subset if memlet.data == edge.dst.data else memlet.other_subset
-    assert str(name_based_src) == str(name_based_dst), 'a name test cannot tell a self-copy\'s ends apart'
-    assert str(name_based_src) != str(memlet.get_dst_subset(edge, state)) or \
-        str(name_based_dst) != str(memlet.get_src_subset(edge, state)), \
-        'the name test must disagree with the accessors on at least one end'
+    assert str(name_based_src) == str(name_based_dst), "a name test cannot tell a self-copy's ends apart"
+    assert str(name_based_src) != str(memlet.get_dst_subset(edge, state)) or str(name_based_dst) != str(
+        memlet.get_src_subset(edge, state)
+    ), "the name test must disagree with the accessors on at least one end"
 
 
 def sdfg_name_of(build) -> str:
     """Distinct SDFG name per orientation (build folders must not collide)."""
-    return f'self_copy_{build.__name__}'
+    return f"self_copy_{build.__name__}"
 
 
-@pytest.mark.parametrize('build', [src_relative_self_copy, dst_relative_self_copy])
+@pytest.mark.parametrize("build", [src_relative_self_copy, dst_relative_self_copy])
 def test_compiled_copy_follows_the_accessors(build):
     """The generated code moves data in the direction ``get_src_subset`` / ``get_dst_subset`` name.
 
@@ -110,9 +111,10 @@ def test_compiled_copy_follows_the_accessors(build):
 
 def test_both_orientations_are_the_same_program():
     """The two spellings differ only in bookkeeping -- their compiled results must be identical."""
-    np.testing.assert_array_equal(run(src_relative_self_copy('self_copy_pair_src')[0]),
-                                  run(dst_relative_self_copy('self_copy_pair_dst')[0]))
+    np.testing.assert_array_equal(
+        run(src_relative_self_copy("self_copy_pair_src")[0]), run(dst_relative_self_copy("self_copy_pair_dst")[0])
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

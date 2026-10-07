@@ -20,7 +20,8 @@ class LiftEinsum(xf.SingleStateTransformation):
     Detects a tensor operation that can be represented by an Einstein-notation sum (einsum, e.g., matrix
     multiplication) and replaces the pattern with an ``Einsum`` library node.
     """
-    EINSUM_CHARS = 'ijklmnopqrstuvwxyzabcdefgh'
+
+    EINSUM_CHARS = "ijklmnopqrstuvwxyzabcdefgh"
 
     map_entry = xf.PatternNode(nodes.MapEntry)
     tasklet = xf.PatternNode(nodes.Tasklet)
@@ -28,12 +29,13 @@ class LiftEinsum(xf.SingleStateTransformation):
     contraction_only = properties.Property(
         dtype=bool,
         default=False,
-        desc='Only lift a genuine contraction (a summed index). Refuse a pure outer product '
-        '(``a[i]*b[j] -> i,j->ij``): it has no contracted axis, so it is elementwise dataflow, '
-        'and lifting it to a degenerate K=1 GEMM is no BLAS win -- and the tile vectorizer '
-        'mis-lowers that GEMM (unbound inner dims -> illegal DGEMM leading dimension). Left as a '
-        'map, an outer product tiles per-lane like any other broadcast. Used by the vectorizer; '
-        'off by default so the standalone lift still hoists outer products.')
+        desc="Only lift a genuine contraction (a summed index). Refuse a pure outer product "
+        "(``a[i]*b[j] -> i,j->ij``): it has no contracted axis, so it is elementwise dataflow, "
+        "and lifting it to a degenerate K=1 GEMM is no BLAS win -- and the tile vectorizer "
+        "mis-lowers that GEMM (unbound inner dims -> illegal DGEMM leading dimension). Left as a "
+        "map, an outer product tiles per-lane like any other broadcast. Used by the vectorizer; "
+        "off by default so the standalone lift still hoists outer products.",
+    )
 
     def __init__(self, contraction_only: bool = False):
         super().__init__()
@@ -48,7 +50,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         dimension whose lower bound is not 0 or whose step is not 1. Such a range
         does not span the full operand extent the einsum contraction assumes."""
         for rng in self.map_entry.map.range:
-            if str(rng[0]) != '0' or str(rng[2]) != '1':
+            if str(rng[0]) != "0" or str(rng[2]) != "1":
                 return True
         return False
 
@@ -100,17 +102,17 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             ind = set(str(rb) for rb, _, _ in memlet.subset.ndrange())
             unique_chars |= ind
-            if any(i != '0' and i not in self.map_entry.map.params for i in ind):
+            if any(i != "0" and i not in self.map_entry.map.params for i in ind):
                 return False
 
             # Keep track of input/output indices for WCR check
             if e.dst is self.tasklet:
                 input_chars |= ind
-                if not (ind - {'0'}):
+                if not (ind - {"0"}):
                     num_coeffs += 1
                 else:
                     num_tensor_inputs += 1
-                    tensor_input_chars.append(ind - {'0'})
+                    tensor_input_chars.append(ind - {"0"})
             else:
                 output_chars |= ind
 
@@ -136,7 +138,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         # degenerate 1x1-GEMM lowering entirely). Only a matrix einsum -- a free output index --
         # lifts. Matvec/matmul (``ij,j->i`` / ``ik,kj->ij``) have a free output index, so they
         # are unaffected.
-        if not (output_chars - {'0'}):
+        if not (output_chars - {"0"}):
             return False
 
         # Reject an ELEMENTWISE op: NO contracted index (every input index also appears in
@@ -147,7 +149,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         # matvec/matmul HAS a contracted index (``input_chars - output_chars`` non-empty,
         # so this guard is skipped) -- neither is caught. A genuine outer product
         # (``a[i]*b[j]`` -> ``i,j->ij``, no input matching the FULL output index) is preserved.
-        out_idx = output_chars - {'0'}
+        out_idx = output_chars - {"0"}
         if not (input_chars - output_chars) and any(ci == out_idx for ci in tensor_input_chars):
             return False
 
@@ -219,7 +221,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         map_exit = state.exit_node(self.map_entry)
 
         scope = state.scope_subgraph(self.map_entry)
-        einsum = blas.Einsum('einsum')
+        einsum = blas.Einsum("einsum")
 
         connector_product = 1  # product of TENSOR-operand connectors (for alpha)
 
@@ -237,9 +239,9 @@ class LiftEinsum(xf.SingleStateTransformation):
             if e.data.is_empty():
                 continue
             ind = set(str(rb) for rb, _, _ in e.data.subset.ndrange())
-            if not (ind - {'0'}):  # scalar coefficient: no map parameter
+            if not (ind - {"0"}):  # scalar coefficient: no map parameter
                 coeff_edges.append(e)
-                coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = '_alpha'
+                coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = "_alpha"
                 continue
             connectors[state.memlet_path(e)[-2].dst_conn] = e.dst_conn
             connector_product *= symbolic.symbol(e.dst_conn)
@@ -264,7 +266,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         # coefficient composes (the expansion multiplies property by connector).
         for e in coeff_edges:
             alpha = alpha.subs(symbolic.symbol(e.dst_conn), 1)
-            einsum.add_in_connector('_alpha', self.tasklet.in_connectors[e.dst_conn])
+            einsum.add_in_connector("_alpha", self.tasklet.in_connectors[e.dst_conn])
         einsum.alpha = alpha
 
         # Collect the einsum string. CRITICAL: the expansion feeds operands in
@@ -275,15 +277,15 @@ class LiftEinsum(xf.SingleStateTransformation):
         # where it manifested as a dimension mismatch / silently wrong result).
         param_mapping: Dict[str, str] = {}
         input_terms: Dict[str, str] = {}  # einsum in-connector -> index string
-        einsum_output = ''
-        for e in (in_edges + [out_edge]):
+        einsum_output = ""
+        for e in in_edges + [out_edge]:
             # Create parameter mapping
             ind = [str(rb) for rb, _, _ in e.data.subset.ndrange()]
-            expr = ''
+            expr = ""
             for i in ind:
-                if i != '0' and i not in param_mapping:
+                if i != "0" and i not in param_mapping:
                     param_mapping[i] = self.EINSUM_CHARS[len(param_mapping)]
-                expr += '' if i == '0' else param_mapping[i]
+                expr += "" if i == "0" else param_mapping[i]
             if e is out_edge:
                 einsum_output = expr
             else:
@@ -318,8 +320,11 @@ class LiftEinsum(xf.SingleStateTransformation):
             has_identity = isinstance(out_node, nodes.AccessNode) and out_node.setzero
             # Scoped to THIS sdfg (not all_sdfgs_recursive) so a same-named array in
             # an unrelated nested SDFG cannot false-positive a prior writer.
-            has_prior_writer = any(n.data == out_data and st.in_degree(n) > 0 and n is not out_node
-                                   for st in sdfg.states() for n in st.data_nodes())
+            has_prior_writer = any(
+                n.data == out_data and st.in_degree(n) > 0 and n is not out_node
+                for st in sdfg.states()
+                for n in st.data_nodes()
+            )
             if has_identity:
                 einsum.beta = 0.0
             elif has_prior_writer or not sdfg.arrays[out_data].transient:

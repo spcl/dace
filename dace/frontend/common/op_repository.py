@@ -37,7 +37,7 @@ class Replacements(object):
 
     @staticmethod
     def get(name: str):
-        """ Returns an implementation of a function. """
+        """Returns an implementation of a function."""
         if name not in Replacements._rep:
             return None
         return Replacements._rep[name]
@@ -52,7 +52,7 @@ class Replacements(object):
 
     @staticmethod
     def getop(class_or_name: Union[str, Type], optype: str, otherclass: Union[str, Type, None] = None):
-        """ Returns an implementation of an operator. """
+        """Returns an implementation of an operator."""
         all_op1_types = _get_all_bases(class_or_name)
         if otherclass is None:
             for classname in all_op1_types:
@@ -71,12 +71,12 @@ class Replacements(object):
 
     @staticmethod
     def get_ufunc(ufunc_method: Optional[str] = None):
-        """ Returns the implementation for NumPy universal functions. """
+        """Returns the implementation for NumPy universal functions."""
         if ufunc_method:
             if ufunc_method not in Replacements._ufunc_rep:
                 return None
             return Replacements._ufunc_rep[ufunc_method]
-        return Replacements._ufunc_rep['ufunc']
+        return Replacements._ufunc_rep["ufunc"]
 
     @staticmethod
     def get_method(class_or_name: Union[str, Type], method_name: str):
@@ -95,11 +95,11 @@ class Replacements(object):
 
 @paramdec
 def replaces(func: Callable[..., Tuple[str]], name: str):
-    """ Registers a replacement sub-SDFG generator for a function.
+    """Registers a replacement sub-SDFG generator for a function.
 
-        :param func: A function that receives an SDFG, SDFGState, and the original function
-                     arguments, returning a tuple of array names to connect to the outputs.
-        :param name: Full name (pydoc-compliant, including package) of function to replace.
+    :param func: A function that receives an SDFG, SDFGState, and the original function
+                 arguments, returning a tuple of array names to connect to the outputs.
+    :param name: Full name (pydoc-compliant, including package) of function to replace.
     """
     Replacements._rep[name] = func
     return func
@@ -107,17 +107,17 @@ def replaces(func: Callable[..., Tuple[str]], name: str):
 
 @paramdec
 def replaces_windows(func: Callable[..., Tuple[str]], name: str, outputs: Tuple[int, ...] = ()):
-    """ Registers a replacement for a function whose array slices it wires itself.
+    """Registers a replacement for a function whose array slices it wires itself.
 
-        An argument of the form ``A[i:i + 8]`` reaches the replacement as the pair ``(container, subset)`` instead of
-        a copy of the slice, where ``container`` is the data container of the SDFG the call is parsed into and
-        ``subset`` the range of it that the slice names. The arguments at the positions in ``outputs`` are written by
-        the replacement.
+    An argument of the form ``A[i:i + 8]`` reaches the replacement as the pair ``(container, subset)`` instead of
+    a copy of the slice, where ``container`` is the data container of the SDFG the call is parsed into and
+    ``subset`` the range of it that the slice names. The arguments at the positions in ``outputs`` are written by
+    the replacement.
 
-        :param func: A function that receives a ProgramVisitor, an SDFG, an SDFGState, and the original function
-                     arguments.
-        :param name: Full name (pydoc-compliant, including package) of function to replace.
-        :param outputs: Positions of the arguments the function writes.
+    :param func: A function that receives a ProgramVisitor, an SDFG, an SDFGState, and the original function
+                 arguments.
+    :param name: Full name (pydoc-compliant, including package) of function to replace.
+    :param outputs: Positions of the arguments the function writes.
     """
     Replacements._rep[name] = func
     Replacements.window_outputs_of[name] = tuple(outputs)
@@ -125,18 +125,17 @@ def replaces_windows(func: Callable[..., Tuple[str]], name: str, outputs: Tuple[
 
 
 @paramdec
-def replaces_operator(func: Callable[[Any, Any, str, str], Tuple[str]],
-                      classname: str,
-                      optype: str,
-                      otherclass: str = None):
-    """ Registers a replacement sub-SDFG generator for an operator.
+def replaces_operator(
+    func: Callable[[Any, Any, str, str], Tuple[str]], classname: str, optype: str, otherclass: str = None
+):
+    """Registers a replacement sub-SDFG generator for an operator.
 
-        :param func: A function that receives an SDFG, SDFGState, and the two operand array names,
-                     returning a tuple of array names to connect to the outputs.
-        :param classname: The name of the class to implement the operator for (extends dace.Data).
-        :param optype: The type (as string) of the operator to replace (extends ast.operator).
-        :param otherclass: Optional argument defining operators for a second class that
-                           differs from the first.
+    :param func: A function that receives an SDFG, SDFGState, and the two operand array names,
+                 returning a tuple of array names to connect to the outputs.
+    :param classname: The name of the class to implement the operator for (extends dace.Data).
+    :param optype: The type (as string) of the operator to replace (extends ast.operator).
+    :param otherclass: Optional argument defining operators for a second class that
+                       differs from the first.
     """
     if otherclass is None:
         otherclass = classname
@@ -146,15 +145,15 @@ def replaces_operator(func: Callable[[Any, Any, str, str], Tuple[str]],
 
 @paramdec
 def replaces_ufunc(func: Callable[..., Tuple[str]], name: str):
-    """ Registers a replacement sub-SDFG generator for NumPy universal functions
-        and methods.
+    """Registers a replacement sub-SDFG generator for NumPy universal functions
+    and methods.
 
-        :param func: A function that receives a ProgramVisitor, AST call node,
-                     SDFG, SDFGState, ufunc name, and the original function
-                     positional and keyword arguments, returning a tuple of
-                     array names to connect to the outputs.
-        :param name: 'ufunc' for NumPy ufunc or ufunc method name for replacing
-                     the NumPy ufunc methods.
+    :param func: A function that receives a ProgramVisitor, AST call node,
+                 SDFG, SDFGState, ufunc name, and the original function
+                 positional and keyword arguments, returning a tuple of
+                 array names to connect to the outputs.
+    :param name: 'ufunc' for NumPy ufunc or ufunc method name for replacing
+                 the NumPy ufunc methods.
     """
     Replacements._ufunc_rep[name] = func
     return func

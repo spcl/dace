@@ -10,21 +10,24 @@ import types
 
 import dace.properties
 from dace.sdfg.nodes import LibraryNode, full_class_path
-from dace.transformation.transformation import (PatternTransformation, ExpandTransformation)
+from dace.transformation.transformation import PatternTransformation, ExpandTransformation
 
 
 def register_implementation(implementation_name, expansion_cls, node_cls):
     """Associate a given library node expansion class with a library node
-       class. This is done automatically for expansions defined in a DaCe
-       library module, but this function can be used to add additional
-       expansions from an external context."""
+    class. This is done automatically for expansions defined in a DaCe
+    library module, but this function can be used to add additional
+    expansions from an external context."""
     if not issubclass(expansion_cls, ExpandTransformation):
         raise TypeError("Expected ExpandTransformation class, got: {}".format(type(node_cls).__name__))
     if not issubclass(node_cls, LibraryNode):
         raise TypeError("Expected LibraryNode class, got: {}".format(type(node_cls).__name__))
-    if (hasattr(expansion_cls, "_dace_library_node") and expansion_cls._dace_library_node != node_cls):
-        raise ValueError("Transformation {} is already registered with a "
-                         "different library node: {}".format(expansion_cls.__name__, expansion_cls._dace_library_node))
+    if hasattr(expansion_cls, "_dace_library_node") and expansion_cls._dace_library_node != node_cls:
+        raise ValueError(
+            "Transformation {} is already registered with a different library node: {}".format(
+                expansion_cls.__name__, expansion_cls._dace_library_node
+            )
+        )
     expansion_cls._dace_library_node = node_cls
     if implementation_name in node_cls.implementations:
         if node_cls.implementations[implementation_name] != expansion_cls:
@@ -42,20 +45,22 @@ def register_implementation(implementation_name, expansion_cls, node_cls):
 
 def register_node(node_cls, library):
     """Associate a given library node class with a DaCe library. This is done
-       automatically for library nodes defined in a DaCe library module,
-       but this function can be used to add additional node classes from an
-       external context."""
+    automatically for library nodes defined in a DaCe library module,
+    but this function can be used to add additional node classes from an
+    external context."""
     if not issubclass(node_cls, LibraryNode):
         raise TypeError("Expected LibraryNode class, got: {}".format(type(node_cls).__name__))
     if not isinstance(library, types.ModuleType):
         raise TypeError("Expected Python module, got: {}".format(type(library).__name__))
     if not hasattr(node_cls, "_dace_library_node"):
-        raise ValueError("Library node class {} must be decorated "
-                         "with @dace.library.node.".format(node_cls.__name__))
+        raise ValueError("Library node class {} must be decorated with @dace.library.node.".format(node_cls.__name__))
     # The name of the library the class itself was registered with; a subclass of a node of another library inherits it.
-    if ("_dace_library_name" in vars(node_cls) and node_cls._dace_library_name != library.__name__):
-        raise ValueError("Node class {} registered with multiple libraries: {} and {}".format(
-            node_cls.__name__, node_cls._dace_library_name, library.__name__))
+    if "_dace_library_name" in vars(node_cls) and node_cls._dace_library_name != library.__name__:
+        raise ValueError(
+            "Node class {} registered with multiple libraries: {} and {}".format(
+                node_cls.__name__, node_cls._dace_library_name, library.__name__
+            )
+        )
     if node_cls not in library._dace_library_nodes:
         library._dace_library_nodes.append(node_cls)
         node_cls._dace_library_name = library._dace_library_name
@@ -65,19 +70,20 @@ def register_node(node_cls, library):
 
 def register_transformation(transformation_cls, library):
     """Associate a given transformation with a DaCe library. This is done
-       automatically for transformations defined in a DaCe library module,
-       but this function can be used to add additional transformations from an
-       external context."""
+    automatically for transformations defined in a DaCe library module,
+    but this function can be used to add additional transformations from an
+    external context."""
 
     if not issubclass(transformation_cls, PatternTransformation):
         raise TypeError("Expected PatternTransformation, got: {}".format(transformation_cls.__name__))
     if not isinstance(library, types.ModuleType):
         raise TypeError("Expected Python module, got: {}".format(type(library).__name__))
-    if (hasattr(transformation_cls, "_dace_library_name")
-            and transformation_cls._dace_library_name != library.__name__):
-        raise ValueError("Transformation class {} registered with multiple "
-                         "libraries: {} and {}".format(transformation_cls.__name__,
-                                                       transformation_cls._dace_library_name, library.__name__))
+    if hasattr(transformation_cls, "_dace_library_name") and transformation_cls._dace_library_name != library.__name__:
+        raise ValueError(
+            "Transformation class {} registered with multiple libraries: {} and {}".format(
+                transformation_cls.__name__, transformation_cls._dace_library_name, library.__name__
+            )
+        )
     if transformation_cls not in library._dace_library_transformations:
         library._dace_library_transformations.append(transformation_cls)
         transformation_cls._dace_library_name = library.__name__
@@ -104,18 +110,18 @@ def register_library(module_name, name):
 
 
 #: A decorated class: the decorators return the class they were given, so its type is kept.
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 # Use to decorate DaCe library nodes
 def node(n: T) -> T:
     n = dace.properties.make_properties(n)
     if not issubclass(n, LibraryNode):
-        raise TypeError("Library node class \"" + n.__name__ + "\" must derive from dace.sdfg.nodes.LibraryNode")
+        raise TypeError('Library node class "' + n.__name__ + '" must derive from dace.sdfg.nodes.LibraryNode')
     if not hasattr(n, "implementations"):
-        raise ValueError("Library node class \"" + n.__name__ + "\" must define implementations.")
+        raise ValueError('Library node class "' + n.__name__ + '" must define implementations.')
     if not hasattr(n, "default_implementation"):
-        raise ValueError("Library node class \"" + n.__name__ + "\" must define default_implementation (can be None).")
+        raise ValueError('Library node class "' + n.__name__ + '" must define default_implementation (can be None).')
     # Remove and re-register each implementation
     implementations = n.implementations
     n.implementations = type(n.implementations)()
@@ -129,10 +135,9 @@ def node(n: T) -> T:
 def expansion(exp: T) -> T:
     exp = dace.properties.make_properties(exp)
     if not issubclass(exp, ExpandTransformation):
-        raise TypeError("Library node expansion \"" + exp.__name__ + "\" must derive from ExpandTransformation")
+        raise TypeError('Library node expansion "' + exp.__name__ + '" must derive from ExpandTransformation')
     if not hasattr(exp, "environments"):
-        raise ValueError("Library node expansion must define environments "
-                         "(can be an empty list).")
+        raise ValueError("Library node expansion must define environments (can be an empty list).")
     for dep in exp.environments:
         if not hasattr(dep, "_dace_library_environment"):
             raise ValueError(str(dep) + " is not a DaCe library environment.")
@@ -141,7 +146,7 @@ def expansion(exp: T) -> T:
 
 
 def register_expansion(library_node: LibraryNode, expansion_name: str):
-    """ Defines and registers an expansion. """
+    """Defines and registers an expansion."""
 
     def expander(exp: ExpandTransformation):
         result = expansion(exp)
@@ -155,12 +160,22 @@ def register_expansion(library_node: LibraryNode, expansion_name: str):
 def environment(env: T) -> T:
     env = dace.properties.make_properties(env)
     for field in [
-            "cmake_minimum_version", "cmake_packages", "cmake_variables", "cmake_includes", "cmake_libraries",
-            "cmake_compile_flags", "cmake_link_flags", "cmake_files", "headers", "state_fields", "init_code",
-            "finalize_code", "dependencies"
+        "cmake_minimum_version",
+        "cmake_packages",
+        "cmake_variables",
+        "cmake_includes",
+        "cmake_libraries",
+        "cmake_compile_flags",
+        "cmake_link_flags",
+        "cmake_files",
+        "headers",
+        "state_fields",
+        "init_code",
+        "finalize_code",
+        "dependencies",
     ]:
         if not hasattr(env, field):
-            raise ValueError("DaCe environment specification must implement the field \"" + field + "\".")
+            raise ValueError('DaCe environment specification must implement the field "' + field + '".')
     env._dace_library_environment = True
     # Retrieve which file this was called from
     caller_file = inspect.getmodule(env).__file__
@@ -171,11 +186,11 @@ def environment(env: T) -> T:
 
 
 def get_environments_and_dependencies(names: Set[str]) -> List:
-    """ Get the environment objects from names. Also resolve the dependencies.
+    """Get the environment objects from names. Also resolve the dependencies.
 
-        :names: set of environment names.
-        :return: a list of environment objects, ordered such that environments with dependencies appear after their
-                 dependencies.
+    :names: set of environment names.
+    :return: a list of environment objects, ordered such that environments with dependencies appear after their
+             dependencies.
     """
 
     # get all environments: add dependencies until no new dependencies are found
@@ -217,13 +232,15 @@ def reject_gpu_location(node) -> str:
     Returns the empty string, so an environment can prepend it to its handle setup: the handles
     live on the one device ``__dace_init_cuda`` selects, leaving nothing to emit.
     """
-    if node.location and 'gpu' in node.location:
-        raise ValueError(f'{type(node).__name__} "{node.label}" requests GPU {node.location["gpu"]!r} via '
-                         'location["gpu"], but DaCe uses one GPU per process: allocations and kernels run '
-                         'on the device selected in __dace_init_cuda. Remove the location and give the '
-                         'process its own GPU with CUDA_VISIBLE_DEVICES.')
+    if node.location and "gpu" in node.location:
+        raise ValueError(
+            f'{type(node).__name__} "{node.label}" requests GPU {node.location["gpu"]!r} via '
+            'location["gpu"], but DaCe uses one GPU per process: allocations and kernels run '
+            "on the device selected in __dace_init_cuda. Remove the location and give the "
+            "process its own GPU with CUDA_VISIBLE_DEVICES."
+        )
 
-    return ''
+    return ""
 
 
 # Mapping from string to library

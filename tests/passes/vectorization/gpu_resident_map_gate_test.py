@@ -12,6 +12,7 @@ tile an innermost map iff either
 Host-side map -> skipped. No nested SDFG needed: a parent GPU_Device map in the same
 state's scope tree already carries a sequential inner map onto the device.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -85,19 +86,19 @@ def test_mark_tile_dims_skips_host_map_under_gpu_gate():
     """With ``require_gpu_resident``, a host innermost map produces no tile spec;
     without the gate, the same map tiles normally."""
     sdfg, state, me = _single_map_sdfg(ScheduleType.Sequential)
-    assert MarkTileDims(widths=(2, ), require_gpu_resident=True).apply_pass(sdfg, {}) is None
-    specs = MarkTileDims(widths=(2, ), require_gpu_resident=False).apply_pass(sdfg, {})
+    assert MarkTileDims(widths=(2,), require_gpu_resident=True).apply_pass(sdfg, {}) is None
+    specs = MarkTileDims(widths=(2,), require_gpu_resident=False).apply_pass(sdfg, {})
     assert specs is not None and me in specs
 
 
 def test_mark_tile_dims_tiles_gpu_resident_maps():
     """The gate keeps a GPU_Device map and a Sequential-under-GPU inner map."""
     sdfg, state, me = _single_map_sdfg(ScheduleType.GPU_Device)
-    specs = MarkTileDims(widths=(2, ), require_gpu_resident=True).apply_pass(sdfg, {})
+    specs = MarkTileDims(widths=(2,), require_gpu_resident=True).apply_pass(sdfg, {})
     assert specs is not None and me in specs
 
     sdfg2, state, oe, ie = _nested_maps_sdfg(ScheduleType.GPU_Device, ScheduleType.Sequential)
-    specs2 = MarkTileDims(widths=(2, ), require_gpu_resident=True).apply_pass(sdfg2, {})
+    specs2 = MarkTileDims(widths=(2,), require_gpu_resident=True).apply_pass(sdfg2, {})
     assert specs2 is not None and ie in specs2  # inner sequential map, tiled (device-resident)
 
 

@@ -36,6 +36,7 @@ SDFG entry. It is marked ``side_effects = True`` so the terminal
 no data outputs (the same drop that silently removed scatter guards before they
 were marked side-effecting).
 """
+
 from typing import Any, Collection, Dict, List, Optional, Set
 
 import sympy
@@ -74,7 +75,8 @@ def names_still_plain(sdfg: SDFG, positive: Collection[str] = ()) -> Dict[str, N
     :returns: The symbol names seen without the assumption, membership-checked only.
     """
     return dict.fromkeys(
-        str(s) for s in sized_symbols(sdfg) if not (s.is_positive if s.name in positive else s.is_nonnegative))
+        str(s) for s in sized_symbols(sdfg) if not (s.is_positive if s.name in positive else s.is_nonnegative)
+    )
 
 
 def sized_symbols(sdfg: SDFG) -> List[sympy.Symbol]:
@@ -157,7 +159,7 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
             marked[g].add(name)
             if name not in plain:
                 continue
-            assumption = {'positive': True} if name in positive else {'nonnegative': True}
+            assumption = {"positive": True} if name in positive else {"nonnegative": True}
             repl[name] = symbolic.symbol(name, dtype=dtype, **assumption)
         if repl:
             g.replace_dict(repl)
@@ -172,7 +174,7 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
     WITHOUT the runtime guard state. Used where a later proof needs the assumption but the
     guard's start-block splice would be unsafe mid-pipeline (the vectorizer)."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges
@@ -186,13 +188,14 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
 
 #: Label of the guard state. NOT the idempotence marker -- state fusion absorbs the guard state
 #: into its successor, so re-running dedups on the emitted trap code instead.
-GUARD_STATE_LABEL = '_assume_nonneg_syms'
+GUARD_STATE_LABEL = "_assume_nonneg_syms"
 
 #: Symbols with these dtypes can be negative and so are worth guarding. Unsigned
 #: integer symbols are nonnegative by construction; float symbols are not part
 #: of the offset/size nonnegativity contract.
-SIGNED_INTEGER_DTYPES: Dict[dtypes.typeclass,
-                            None] = dict.fromkeys([dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64])
+SIGNED_INTEGER_DTYPES: Dict[dtypes.typeclass, None] = dict.fromkeys(
+    [dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64]
+)
 
 
 @xf.explicit_cf_compatible
@@ -207,7 +210,7 @@ class AssumeSymbolConstraints(ppl.Pass):
     as the new start block, making it the first thing the generated program does.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes
@@ -253,9 +256,7 @@ def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
     """
     args = sdfg.used_symbols(all_symbols=False)
     sized = sized_names(sdfg) | {
-        s.name
-        for relation in tracked_assumptions(sdfg)
-        for s in as_basic(relation).free_symbols
+        s.name for relation in tracked_assumptions(sdfg) for s in as_basic(relation).free_symbols
     }
     return sorted(s for s in args if sdfg.symbols.get(s) in SIGNED_INTEGER_DTYPES and s in sized)
 
@@ -347,7 +348,7 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     guard_state = sdfg.add_state_before(sdfg.start_block, GUARD_STATE_LABEL, is_start_block=True)
     for i, condition in enumerate(checks):
         # Side-effecting, so DeadDataflowElimination keeps the output-less guard.
-        tutil.add_abort_guard(guard_state, f'check_assumption_{i}', condition)
+        tutil.add_abort_guard(guard_state, f"check_assumption_{i}", condition)
         # ``ordered_side_effects`` is left at its default (ordered): the trap has to run BEFORE the
         # computation it guards, and it is only a separate block that keeps it there.
         # ``StateFusionExtended`` refuses to fuse a state carrying an ordered side effect -- the
@@ -363,10 +364,10 @@ AssumeSymbolsNonnegative = AssumeSymbolConstraints
 insert_symbol_nonnegative_guard = insert_assumption_guards
 
 __all__ = [
-    'AssumeSymbolConstraints',
-    'AssumeSymbolsNonnegative',
-    'insert_assumption_guards',
-    'insert_symbol_nonnegative_guard',
-    'is_assumption_guard_block',
-    'lead_with_assumption_guard',
+    "AssumeSymbolConstraints",
+    "AssumeSymbolsNonnegative",
+    "insert_assumption_guards",
+    "insert_symbol_nonnegative_guard",
+    "is_assumption_guard_block",
+    "lead_with_assumption_guard",
 ]

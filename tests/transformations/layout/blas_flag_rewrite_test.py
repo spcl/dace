@@ -17,6 +17,7 @@ free (``trans`` / ``uplo`` parameter). This is exercised through:
     contraction ``ik,jk->ij``. It writes the WHOLE symmetric ``C`` (not just the ``uplo`` triangle),
     so it is only valid for a fresh output.
 """
+
 import numpy
 import pytest
 
@@ -26,8 +27,7 @@ from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.linalg.nodes.tensordot import TensorDot
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.layout import PermuteDimensions
-from dace.transformation.layout.rewrite_libnodes import (FoldTransposeIntoMatMul, SyrkToTensorDot,
-                                                         flip_operand_transpose)
+from dace.transformation.layout.rewrite_libnodes import FoldTransposeIntoMatMul, SyrkToTensorDot, flip_operand_transpose
 
 M, N = dace.symbol("M"), dace.symbol("N")
 

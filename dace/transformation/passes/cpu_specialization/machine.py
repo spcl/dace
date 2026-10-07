@@ -21,6 +21,7 @@ That is the whole model. The absolute scale comes from one measurement (see
 :data:`REFERENCE_CORES`), and the topology comes from the machine through sysfs and ``sysconf``, so
 moving to another CPU rescales the thresholds instead of inheriting the development box's numbers.
 """
+
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -37,8 +38,8 @@ REFERENCE_CORES = 8
 REFERENCE_MIN_WORK_PER_REGION = 256
 REFERENCE_TRANSFER_MIN_ELEMENTS = 262144
 
-CPU_ROOT = Path('/sys/devices/system/cpu')
-NODE_ROOT = Path('/sys/devices/system/node')
+CPU_ROOT = Path("/sys/devices/system/cpu")
+NODE_ROOT = Path("/sys/devices/system/node")
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +56,7 @@ class CpuTopology:
     :ivar llc_bytes: last level cache, usually shared by the whole package.
     :ivar numa_nodes: NUMA domains; more than one means a first-touch policy decides bandwidth.
     """
+
     physical_cores: int
     logical_cores: int
     l1d_bytes: int
@@ -77,7 +79,7 @@ def read_size(path: Path) -> Optional[int]:
         raw = path.read_text().strip()
     except OSError:
         return None
-    scale = {'K': 1024, 'M': 1024**2, 'G': 1024**3}.get(raw[-1:].upper())
+    scale = {"K": 1024, "M": 1024**2, "G": 1024**3}.get(raw[-1:].upper())
     try:
         return int(raw[:-1]) * scale if scale else int(raw)
     except ValueError:
@@ -87,8 +89,8 @@ def read_size(path: Path) -> Optional[int]:
 def count_physical_cores() -> Optional[int]:
     """Distinct physical cores, by grouping the SMT siblings sysfs reports for each CPU."""
     groups = set()
-    for topo in sorted(CPU_ROOT.glob('cpu[0-9]*/topology')):
-        for name in ('core_cpus_list', 'thread_siblings_list'):
+    for topo in sorted(CPU_ROOT.glob("cpu[0-9]*/topology")):
+        for name in ("core_cpus_list", "thread_siblings_list"):
             try:
                 groups.add((topo / name).read_text().strip())
                 break
@@ -100,15 +102,15 @@ def count_physical_cores() -> Optional[int]:
 def cache_sizes() -> tuple:
     """``(l1d, l2, llc)`` in bytes from cpu0's cache indices; zeros for levels sysfs does not show."""
     l1d = l2 = llc = 0
-    for index in sorted(CPU_ROOT.glob('cpu0/cache/index[0-9]*')):
-        level, size = read_int(index / 'level'), read_size(index / 'size')
+    for index in sorted(CPU_ROOT.glob("cpu0/cache/index[0-9]*")):
+        level, size = read_int(index / "level"), read_size(index / "size")
         if level is None or not size:
             continue
         try:
-            kind = (index / 'type').read_text().strip()
+            kind = (index / "type").read_text().strip()
         except OSError:
-            kind = 'Unified'
-        if level == 1 and kind in ('Data', 'Unified'):
+            kind = "Unified"
+        if level == 1 and kind in ("Data", "Unified"):
             l1d = max(l1d, size)
         elif level == 2:
             l2 = max(l2, size)
@@ -128,13 +130,15 @@ def topology() -> CpuTopology:
     logical = os.cpu_count() or REFERENCE_CORES
     physical = count_physical_cores() or logical
     l1d, l2, llc = cache_sizes()
-    nodes = len(list(NODE_ROOT.glob('node[0-9]*'))) or 1
-    return CpuTopology(physical_cores=max(1, physical),
-                       logical_cores=max(1, logical),
-                       l1d_bytes=l1d or 32 * 1024,
-                       l2_bytes=l2 or 1024 * 1024,
-                       llc_bytes=llc or 16 * 1024**2,
-                       numa_nodes=nodes)
+    nodes = len(list(NODE_ROOT.glob("node[0-9]*"))) or 1
+    return CpuTopology(
+        physical_cores=max(1, physical),
+        logical_cores=max(1, logical),
+        l1d_bytes=l1d or 32 * 1024,
+        l2_bytes=l2 or 1024 * 1024,
+        llc_bytes=llc or 16 * 1024**2,
+        numa_nodes=nodes,
+    )
 
 
 def scale_for_team(reference: int, cores: Optional[int] = None) -> int:

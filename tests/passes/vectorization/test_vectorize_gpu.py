@@ -9,6 +9,7 @@ strided ``0:N:W`` GPU_Device map, no mask), (b) the emitted CUDA calls the
 available -- (c) the generated code compiles and the fp16 arithmetic lowers to
 native ``f16x2`` SIMD in the PTX.
 """
+
 import os
 import shutil
 
@@ -38,7 +39,7 @@ def _add16(A: dace.float16[N, N], B: dace.float16[N, N], C: dace.float16[N, N]):
 
 @dace.program
 def _jacobi2d16(A: dace.float16[N, N], B: dace.float16[N, N]):
-    for i, j in dace.map[1:N - 1, 1:N - 1]:
+    for i, j in dace.map[1 : N - 1, 1 : N - 1]:
         B[i, j] = dace.float16(0.2) * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i + 1, j] + A[i - 1, j])
 
 
@@ -61,14 +62,20 @@ def _vsum16(A: dace.float16[N], out: dace.float16[1]):
 @dace.program
 def _heat3d16(A: dace.float16[N, N, N], B: dace.float16[N, N, N]):
     for t in range(1, TSTEPS):
-        for i, j, k in dace.map[1:N - 1, 1:N - 1, 1:N - 1]:
-            B[i, j, k] = dace.float16(0.125) * (A[i + 1, j, k] - dace.float16(2.0) * A[i, j, k] + A[i - 1, j, k]) \
-                + dace.float16(0.125) * (A[i, j + 1, k] - dace.float16(2.0) * A[i, j, k] + A[i, j - 1, k]) \
-                + dace.float16(0.125) * (A[i, j, k + 1] - dace.float16(2.0) * A[i, j, k] + A[i, j, k - 1]) + A[i, j, k]
-        for i, j, k in dace.map[1:N - 1, 1:N - 1, 1:N - 1]:
-            A[i, j, k] = dace.float16(0.125) * (B[i + 1, j, k] - dace.float16(2.0) * B[i, j, k] + B[i - 1, j, k]) \
-                + dace.float16(0.125) * (B[i, j + 1, k] - dace.float16(2.0) * B[i, j, k] + B[i, j - 1, k]) \
-                + dace.float16(0.125) * (B[i, j, k + 1] - dace.float16(2.0) * B[i, j, k] + B[i, j, k - 1]) + B[i, j, k]
+        for i, j, k in dace.map[1 : N - 1, 1 : N - 1, 1 : N - 1]:
+            B[i, j, k] = (
+                dace.float16(0.125) * (A[i + 1, j, k] - dace.float16(2.0) * A[i, j, k] + A[i - 1, j, k])
+                + dace.float16(0.125) * (A[i, j + 1, k] - dace.float16(2.0) * A[i, j, k] + A[i, j - 1, k])
+                + dace.float16(0.125) * (A[i, j, k + 1] - dace.float16(2.0) * A[i, j, k] + A[i, j, k - 1])
+                + A[i, j, k]
+            )
+        for i, j, k in dace.map[1 : N - 1, 1 : N - 1, 1 : N - 1]:
+            A[i, j, k] = (
+                dace.float16(0.125) * (B[i + 1, j, k] - dace.float16(2.0) * B[i, j, k] + B[i - 1, j, k])
+                + dace.float16(0.125) * (B[i, j + 1, k] - dace.float16(2.0) * B[i, j, k] + B[i, j - 1, k])
+                + dace.float16(0.125) * (B[i, j, k + 1] - dace.float16(2.0) * B[i, j, k] + B[i, j, k - 1])
+                + B[i, j, k]
+            )
 
 
 @dace.program
@@ -100,15 +107,16 @@ def test_assume_even_single_strided_gpu_map_no_mask():
     no remainder split, no ``TileMaskGen`` (so no mismatched thread-block sizes on
     GPU). ``assume_even`` is opt-in: the GPU K=1 default is ``branched_masked_tail``."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=True)).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
     assert len(maps) == 1, f"assume_even must not split the map; got {len(maps)} maps"
     m = maps[0]
     assert m.map.schedule == ScheduleType.GPU_Device
     # innermost dim strided by the half2 width (2)
     assert str(m.map.range.ranges[-1][2]) == "2"
-    assert not any(isinstance(n, TileMaskGen) for n, _ in sdfg.all_nodes_recursive()), \
+    assert not any(isinstance(n, TileMaskGen) for n, _ in sdfg.all_nodes_recursive()), (
         "assume_even must generate no iteration mask"
+    )
 
 
 def test_deferred_tile_nodes_are_cuda_stamped():
@@ -117,7 +125,7 @@ def test_deferred_tile_nodes_are_cuda_stamped():
     ``CUDA`` ISA + ``cuda`` implementation, ready for a later
     ``expand_library_nodes()`` (or ``compile()``)."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     tiles = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)]
     assert tiles, "expected tile lib nodes to remain (deferred expansion)"
     for n in tiles:
@@ -130,7 +138,7 @@ def test_scalar_cast_constant_broadcasts():
     scalar cast feeding a binop -- vectorizes to one ``TileBinop`` per branch arm (the
     scalar is cast to the tile precision and broadcast into the tile), and compiles."""
     sdfg = _prep(_scale_const16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
     # ONE per branch arm: the K=1 remainder default is ``branched_masked_tail`` (640c9e8d9), whose
     # else-arm is a MASKED tile body rather than a scalar lane loop, so the multiply is a tile op in
@@ -150,14 +158,16 @@ def test_a_narrow_float_outside_numpy_s_hierarchy_still_vectorizes():
     including the ``-> bool`` a comparison's result IS. ``np.where(x > 0, ...)`` on a bfloat16
     array therefore died in validation, on the same path fp16 takes without complaint."""
     sdfg = _prep(where_bf16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
-    assert [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)], \
+    VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    assert [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TILE_NODE_TYPES)], (
         "the bfloat16 comparison did not reach the tile path at all"
+    )
     sdfg.expand_library_nodes()
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert "dace::tileops::tile_load<dace::bfloat16, 2" in cu
-    assert "dace::bfloat16" in cu and "dace::float16" not in cu, \
+    assert "dace::bfloat16" in cu and "dace::float16" not in cu, (
         "the bfloat16 tile must not be lowered through the float16 type"
+    )
 
 
 def test_gpu_half2_emits_tile_ops_in_device_tu():
@@ -165,7 +175,7 @@ def test_gpu_half2_emits_tile_ops_in_device_tu():
     ``dace::float16`` tiles of width 2, and pulls in the cuda.h header (the
     ``'cuda'`` env key), so the half2 intrinsics are in scope on device."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()  # default defers expansion; lower for codegen
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert "dace/tile_ops/cuda.h" in cu, "cuda.h not included in the device TU"
@@ -180,7 +190,7 @@ def test_gpu_half2_compiles(name, prog):
     """The half2 GPU vectorization of an elementwise / stencil fp16 kernel
     compiles end-to-end with nvcc (deferred expand -> compile)."""
     sdfg = _prep(prog)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
     shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
     sdfg.compile()  # raises CompilationError on failure
@@ -192,14 +202,15 @@ def test_the_device_file_defines_each_index_helper_once():
     (``function "s_idx" has already been defined``). Checked on the text, so no nvcc is needed."""
     import collections
     import re
+
     sdfg = _prep(_vsum16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=True)).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
-    with dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        device = [obj.clean_code for obj in sdfg.generate_code() if 'cuda' in obj.target.target_name]
-    assert device, 'no device file was generated'
-    helpers = collections.Counter(re.findall(r'constexpr int64_t (\w+_idx)\(', device[0]))
-    assert helpers, 'no index helper in the device file, so this asserts nothing'
+    with dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        device = [obj.clean_code for obj in sdfg.generate_code() if "cuda" in obj.target.target_name]
+    assert device, "no device file was generated"
+    helpers = collections.Counter(re.findall(r"constexpr int64_t (\w+_idx)\(", device[0]))
+    assert helpers, "no index helper in the device file, so this asserts nothing"
     assert all(count == 1 for count in helpers.values()), helpers
 
 
@@ -212,16 +223,22 @@ def test_gpu_reduction_uses_gpu_expansion():
     buffer form, dropped here). The map staying ``GPU_Device`` is what keeps the
     reduction on the device rather than a CPU horizontal fold; it compiles with nvcc."""
     from dace.sdfg.nodes import MapExit
+
     sdfg = _prep(_vsum16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=True)).apply_pass(sdfg, {})
     # The reduction stays a map-exit WCR (an in-edge to a MapExit carrying a CR).
-    wcr_exits = [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-                 if isinstance(n, MapExit) and any(e.data is not None and e.data.wcr is not None
-                                                   for e in st.in_edges(n))]
+    wcr_exits = [
+        (st, n)
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes()
+        if isinstance(n, MapExit) and any(e.data is not None and e.data.wcr is not None for e in st.in_edges(n))
+    ]
     assert wcr_exits, "expected the scalar sum to remain a map-exit WCR reduction"
     for st, mx in wcr_exits:
-        assert st.entry_node(mx).map.schedule == ScheduleType.GPU_Device, \
+        assert st.entry_node(mx).map.schedule == ScheduleType.GPU_Device, (
             "reduction map must be GPU-scheduled so codegen emits the GPU block-reduce, not a CPU fold"
+        )
     if HAS_NVCC:
         sdfg.expand_library_nodes()
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
@@ -234,9 +251,12 @@ def test_gpu_half2_lowers_to_native_f16x2():
     """The fp16 add tile lowers to a native ``f16x2`` SIMD instruction (two lanes
     per op), not the scalar float fallback -- verified in the generated PTX."""
     import subprocess
-    src = ("#include \"dace/dace.h\"\n#include \"dace/tile_ops/cuda.h\"\n"
-           "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b) {\n"
-           "  dace::tileops::tile_binop<dace::float16, 2, '+', false, false, false>(o, a, b, nullptr);\n}\n")
+
+    src = (
+        '#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n'
+        "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b) {\n"
+        "  dace::tileops::tile_binop<dace::float16, 2, '+', false, false, false>(o, a, b, nullptr);\n}\n"
+    )
     inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
     tmp = os.path.join(os.path.dirname(__file__), "_f16x2_probe.cu")
     ptx = tmp + ".ptx"
@@ -259,10 +279,13 @@ def test_gpu_half2_reduce_lowers_to_native_f16x2():
     CUDA has no "reduce half2 -> half" intrinsic, so cuda.h composes one; verify the
     composed fold uses the packed half2 add/max in the PTX (not the scalar fallback)."""
     import subprocess
-    src = ("#include \"dace/dace.h\"\n#include \"dace/tile_ops/cuda.h\"\n"
-           "__global__ void k(dace::float16* o, const dace::float16* a) {\n"
-           "  o[0] = dace::tileops::tile_reduce<dace::float16, 8, '+'>(a);\n"
-           "  o[1] = dace::tileops::tile_reduce<dace::float16, 8, 'M'>(a);\n}\n")
+
+    src = (
+        '#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n'
+        "__global__ void k(dace::float16* o, const dace::float16* a) {\n"
+        "  o[0] = dace::tileops::tile_reduce<dace::float16, 8, '+'>(a);\n"
+        "  o[1] = dace::tileops::tile_reduce<dace::float16, 8, 'M'>(a);\n}\n"
+    )
     inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
     tmp = os.path.join(os.path.dirname(__file__), "_f16x2_reduce_probe.cu")
     ptx = tmp + ".ptx"
@@ -288,10 +311,11 @@ def test_gpu_vectorize_width_gt2_numeric(width):
     (assume_even), numerically exact for a divisible extent."""
     import numpy as np
     import cupy
+
     sdfg = _prep(_add16)
     rng = np.random.default_rng(42)
     sdfg.name = f"add16_w{width}"
-    VectorizeGPU(VectorizeConfig(widths=(width, ), assume_even=True)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(width,), assume_even=True)).apply_pass(sdfg, {})
     maps = _inner_maps(sdfg)
     assert len(maps) == 1, f"assume_even keeps one map; got {len(maps)}"
     n = 8 * width  # a multiple of the width (assume_even)
@@ -311,9 +335,12 @@ def test_gpu_half2_wide_emits_width_over_2_f16x2(width):
     loops ``i += 2``, ``#pragma unroll``), NOT a per-lane scalar fallback -- verified in the PTX.
     Refutes the (former) "only width 2 uses the half2 intrinsic; 4/8 lower per-lane"."""
     import subprocess
-    src = ("#include \"dace/dace.h\"\n#include \"dace/tile_ops/cuda.h\"\n"
-           "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b) {\n"
-           f"  dace::tileops::tile_binop<dace::float16, {width}, '+', false, false, false>(o, a, b, nullptr);\n}}\n")
+
+    src = (
+        '#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n'
+        "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b) {\n"
+        f"  dace::tileops::tile_binop<dace::float16, {width}, '+', false, false, false>(o, a, b, nullptr);\n}}\n"
+    )
     inc = os.path.join(os.path.dirname(dace.__file__), "runtime", "include")
     tmp = os.path.join(os.path.dirname(__file__), f"_f16x2_w{width}_probe.cu")
     ptx = tmp + ".ptx"
@@ -337,6 +364,7 @@ def test_gpu_multidim_k2_runs():
     contiguous axis, K=1); still one strided map per axis (assume_even) and numerically exact."""
     import numpy as np
     import cupy
+
     rng = np.random.default_rng(42)
     sdfg = _prep(_add16)
     sdfg.name = "add16_k2"

@@ -9,6 +9,7 @@ Both make builds irreproducible.
 
 ``PYTHONHASHSEED`` can only be set before the interpreter starts, so each run is a subprocess.
 """
+
 import json
 import os
 import subprocess
@@ -23,10 +24,10 @@ import pytest
 #   s352/s4115 -- privatized accumulator came out as ``_priv_dot_1`` vs ``_priv_dot_0``.
 #   s118       -- ScalarFission allocated the peeled loop copies' transients in a permuted order.
 #   s471       -- final map count differed (2 vs 1) in a full-corpus run.
-KERNELS = ['s352_d_single', 's4115_d_single', 's118_d_single', 's471_d_single']
-SEEDS = ['1', '3']
+KERNELS = ["s352_d_single", "s4115_d_single", "s118_d_single", "s471_d_single"]
+SEEDS = ["1", "3"]
 
-_PROBE = r'''
+_PROBE = r"""
 import hashlib, json, os, sys
 os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
 from dace.sdfg import nodes as nd
@@ -46,7 +47,7 @@ for name in sys.argv[1].split(','):
     arrays = sorted(f'{k}:{v.shape}:{v.dtype}' for k, v in sd.arrays.items())
     out[name] = {'maps': maps, 'loops': loops, 'libs': libs, 'arrays': arrays}
 print('__RESULT__' + json.dumps(out))
-'''
+"""
 
 
 def _canonicalize_under(seed: str, tmp_path) -> dict:
@@ -54,22 +55,24 @@ def _canonicalize_under(seed: str, tmp_path) -> dict:
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     env = {
         **os.environ,
-        'PYTHONHASHSEED': seed,
-        'PYTHONPATH': root,
+        "PYTHONHASHSEED": seed,
+        "PYTHONPATH": root,
         # Per-seed build folder: a shared cache would hide a naming difference.
-        'DACE_default_build_folder': str(tmp_path / f'build_{seed}'),
-        'MPI4PY_RC_INITIALIZE': '0',
-        'OMP_NUM_THREADS': '1',
+        "DACE_default_build_folder": str(tmp_path / f"build_{seed}"),
+        "MPI4PY_RC_INITIALIZE": "0",
+        "OMP_NUM_THREADS": "1",
     }
-    proc = subprocess.run([sys.executable, '-c', _PROBE, ','.join(KERNELS)],
-                          cwd=root,
-                          env=env,
-                          capture_output=True,
-                          text=True,
-                          timeout=1800)
-    marker = [ln for ln in proc.stdout.splitlines() if ln.startswith('__RESULT__')]
-    assert marker, f'probe failed under PYTHONHASHSEED={seed}:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}'
-    return json.loads(marker[-1][len('__RESULT__'):])
+    proc = subprocess.run(
+        [sys.executable, "-c", _PROBE, ",".join(KERNELS)],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=1800,
+    )
+    marker = [ln for ln in proc.stdout.splitlines() if ln.startswith("__RESULT__")]
+    assert marker, f"probe failed under PYTHONHASHSEED={seed}:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
+    return json.loads(marker[-1][len("__RESULT__") :])
 
 
 @pytest.mark.integration
@@ -84,21 +87,23 @@ def test_canonicalize_is_deterministic_across_hash_seeds(tmp_path):
             other = results[seed][kernel]
             # Structure first: a map/loop-count difference means a transformation fired under one
             # seed and not the other -- a far worse bug than a naming difference.
-            assert other['maps'] == base['maps'], (f'{kernel}: map structure differs between '
-                                                   f'PYTHONHASHSEED={first} and {seed}')
-            assert other['loops'] == base['loops'], f'{kernel}: loop structure differs'
-            assert other['libs'] == base['libs'], f'{kernel}: library nodes differ'
-            assert other['arrays'] == base['arrays'], (f'{kernel}: array names differ (nondeterministic '
-                                                       f'find_new_name allocation order)')
+            assert other["maps"] == base["maps"], (
+                f"{kernel}: map structure differs between PYTHONHASHSEED={first} and {seed}"
+            )
+            assert other["loops"] == base["loops"], f"{kernel}: loop structure differs"
+            assert other["libs"] == base["libs"], f"{kernel}: library nodes differ"
+            assert other["arrays"] == base["arrays"], (
+                f"{kernel}: array names differ (nondeterministic find_new_name allocation order)"
+            )
 
 
 # Kernels whose canonical SDFG followed object addresses at a FIXED seed: poly/adi through the memset
 # lift visiting candidate maps in a set, poly/durbin through LoopToMap walking loop states in a set.
-HEAP_KERNELS = ['adi', 'durbin']
+HEAP_KERNELS = ["adi", "durbin"]
 # Throwaway objects allocated before the build, so each process lays the graph out at other addresses.
 BALLASTS = [0, 3001, 100003]
 
-HEAP_PROBE = r'''
+HEAP_PROBE = r"""
 import json, os, sys
 os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
 ballast = [object() for _ in range(int(sys.argv[1]))]
@@ -111,7 +116,7 @@ for name in sys.argv[2].split(','):
     canonicalize(sd)
     out[name] = sd.hash_sdfg()
 print('__RESULT__' + json.dumps(out))
-'''
+"""
 
 
 def canonical_hashes_under_ballast(ballast: int, tmp_path) -> dict:
@@ -119,22 +124,23 @@ def canonical_hashes_under_ballast(ballast: int, tmp_path) -> dict:
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     env = {
         **os.environ,
-        'PYTHONHASHSEED': '0',
-        'PYTHONPATH': root,
-        'DACE_default_build_folder': str(tmp_path / f'heap_{ballast}'),
-        'MPI4PY_RC_INITIALIZE': '0',
-        'OMP_NUM_THREADS': '1',
+        "PYTHONHASHSEED": "0",
+        "PYTHONPATH": root,
+        "DACE_default_build_folder": str(tmp_path / f"heap_{ballast}"),
+        "MPI4PY_RC_INITIALIZE": "0",
+        "OMP_NUM_THREADS": "1",
     }
     proc = subprocess.run(
-        [sys.executable, '-c', HEAP_PROBE, str(ballast), ','.join(HEAP_KERNELS)],
+        [sys.executable, "-c", HEAP_PROBE, str(ballast), ",".join(HEAP_KERNELS)],
         cwd=root,
         env=env,
         capture_output=True,
         text=True,
-        timeout=1800)
-    marker = [ln for ln in proc.stdout.splitlines() if ln.startswith('__RESULT__')]
-    assert marker, f'probe failed under ballast {ballast}:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}'
-    return json.loads(marker[-1][len('__RESULT__'):])
+        timeout=1800,
+    )
+    marker = [ln for ln in proc.stdout.splitlines() if ln.startswith("__RESULT__")]
+    assert marker, f"probe failed under ballast {ballast}:\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
+    return json.loads(marker[-1][len("__RESULT__") :])
 
 
 @pytest.mark.integration
@@ -144,12 +150,14 @@ def test_canonical_sdfg_does_not_follow_object_addresses(tmp_path):
     hashes = {ballast: canonical_hashes_under_ballast(ballast, tmp_path) for ballast in BALLASTS}
     for kernel in HEAP_KERNELS:
         per_ballast = {ballast: hashes[ballast][kernel] for ballast in BALLASTS}
-        assert len(set(
-            per_ballast.values())) == 1, f'{kernel}: canonical SDFG hash varies with heap layout {per_ballast}'
+        assert len(set(per_ballast.values())) == 1, (
+            f"{kernel}: canonical SDFG hash varies with heap layout {per_ballast}"
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import pathlib
-    test_canonicalize_is_deterministic_across_hash_seeds(pathlib.Path('/tmp/canon_det'))
-    test_canonical_sdfg_does_not_follow_object_addresses(pathlib.Path('/tmp/canon_det'))
-    print('OK')
+
+    test_canonicalize_is_deterministic_across_hash_seeds(pathlib.Path("/tmp/canon_det"))
+    test_canonical_sdfg_does_not_follow_object_addresses(pathlib.Path("/tmp/canon_det"))
+    print("OK")

@@ -25,6 +25,7 @@ parent. ``spawn`` pickles the callable by qualified name, so it must be importab
 -- a lambda or a closure cannot cross, which is the one API difference from the ``os.fork`` helpers
 this module replaces.
 """
+
 import multiprocessing as mp
 import sys
 from typing import Any, Callable, Dict, Sequence, Tuple
@@ -43,8 +44,9 @@ RTOL = 1e-12
 ATOL = 1e-12
 
 
-def own_arrays(kwargs: Dict[str, Any],
-               outputs: Sequence[Tuple[Any, Any]]) -> Tuple[Dict[str, Any], Sequence[Tuple[Any, Any]]]:
+def own_arrays(
+    kwargs: Dict[str, Any], outputs: Sequence[Tuple[Any, Any]]
+) -> Tuple[Dict[str, Any], Sequence[Tuple[Any, Any]]]:
     """Re-copy every unpickled array so it OWNS its buffer, sharing one copy per original.
 
     Unpickling hands back an ndarray whose ``base`` is the pickle buffer, and DaCe rejects any
@@ -86,16 +88,18 @@ def compare_in_child(sdfg: dace.SDFG, kwargs: Dict[str, Any], outputs: Sequence[
         if np.array_equal(buffer, reference) if exact else np.allclose(buffer, reference, rtol=RTOL, atol=ATOL):
             continue
         delta = np.nanmax(np.abs(np.asarray(buffer, dtype=np.float64) - np.asarray(reference, dtype=np.float64)))
-        print(f'output {index}: max|diff| = {delta:.3e}', file=sys.stderr)
+        print(f"output {index}: max|diff| = {delta:.3e}", file=sys.stderr)
         sys.exit(MISMATCH)
 
 
-def exit_code(sdfg: dace.SDFG,
-              kwargs: Dict[str, Any],
-              outputs: Sequence[Tuple[Any, Any]] = (),
-              *,
-              exact: bool = False,
-              timeout: float = 900.0) -> int:
+def exit_code(
+    sdfg: dace.SDFG,
+    kwargs: Dict[str, Any],
+    outputs: Sequence[Tuple[Any, Any]] = (),
+    *,
+    exact: bool = False,
+    timeout: float = 900.0,
+) -> int:
     """Exit code of a spawned child that compiled, called and checked ``sdfg``.
 
     Negative is a signal, ``-signal.SIGABRT`` for a kernel that trapped -- the verdict the runtime
@@ -111,26 +115,24 @@ def exit_code_of(target: Callable[..., Any], *args: Any, timeout: float = 900.0)
     child because it is the test's own -- ``target`` ends by calling :func:`sys.exit` with the code
     the caller will assert on.
     """
-    process = mp.get_context('spawn').Process(target=target, args=args)
+    process = mp.get_context("spawn").Process(target=target, args=args)
     process.start()
     process.join(timeout)
     if process.exitcode is None:
         process.kill()
         process.join()
-        raise AssertionError(f'isolated child did not finish within {timeout}s')
+        raise AssertionError(f"isolated child did not finish within {timeout}s")
     return process.exitcode
 
 
-def run_isolated(sdfg: dace.SDFG,
-                 kwargs: Dict[str, Any],
-                 outputs: Sequence[Tuple[Any, Any]] = (),
-                 *,
-                 exact: bool = False) -> None:
+def run_isolated(
+    sdfg: dace.SDFG, kwargs: Dict[str, Any], outputs: Sequence[Tuple[Any, Any]] = (), *, exact: bool = False
+) -> None:
     """Compile + call ``sdfg`` in a spawned child; assert every output matched its reference."""
     code = exit_code(sdfg, kwargs, outputs, exact=exact)
-    assert code >= 0, f'isolated kernel died on signal {-code}'
-    assert code != MISMATCH, 'isolated kernel ran, but an output did not match its reference'
-    assert code == 0, f'isolated kernel failed with exit code {code}'
+    assert code >= 0, f"isolated kernel died on signal {-code}"
+    assert code != MISMATCH, "isolated kernel ran, but an output did not match its reference"
+    assert code == 0, f"isolated kernel failed with exit code {code}"
 
 
 def send_result(connection: Any, target: Callable[..., Any], args: Tuple[Any, ...]) -> None:
@@ -157,7 +159,7 @@ def call_in_child(target: Callable[..., Any], *args: Any, timeout: float = 900.0
     NB the child mutates its own copies of any array in ``args``; only the returned value comes
     back. Anything the parent must inspect has to be part of that return value.
     """
-    context = mp.get_context('spawn')
+    context = mp.get_context("spawn")
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(target=send_result, args=(sender, target, args))
     process.start()
@@ -165,11 +167,11 @@ def call_in_child(target: Callable[..., Any], *args: Any, timeout: float = 900.0
     try:
         if not receiver.poll(timeout):
             process.kill()
-            raise AssertionError(f'isolated call did not finish within {timeout}s')
+            raise AssertionError(f"isolated call did not finish within {timeout}s")
         try:
             return receiver.recv()
         except EOFError:
-            raise AssertionError('isolated call died before producing a result') from None
+            raise AssertionError("isolated call died before producing a result") from None
     finally:
         receiver.close()
         process.join(timeout)

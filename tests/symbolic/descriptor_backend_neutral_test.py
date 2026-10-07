@@ -9,6 +9,7 @@ ways: `validate()` rejects a legal shape (loud), and `used_symbols` silently ret
 Both halves are asserted here whichever backend is active, so the sympy default path pins the
 neutral heads as equivalent to the sympy ones and the idxalg path pins the real cross-engine case.
 """
+
 import dace
 import sympy
 

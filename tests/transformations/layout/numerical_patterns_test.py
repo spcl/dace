@@ -5,6 +5,7 @@ Covers build_relayout (the algebra->SDFG lowering) against numpy references, and
 (Permute, Block, Pad, Zip, block-aware tiling) on elementwise / stencil / multi-array patterns in
 1D/2D/3D, each checked bit-exact.
 """
+
 import copy
 import itertools
 
@@ -57,7 +58,7 @@ def test_relayout_permute_3d(perm):
 def test_relayout_block_1d(factor):
     n = 64
     A = numpy.random.rand(n)
-    out = _relayout((n, ), [Block(0, factor)], A)
+    out = _relayout((n,), [Block(0, factor)], A)
     assert numpy.array_equal(out, A.reshape(n // factor, factor))
 
 
@@ -87,13 +88,16 @@ def test_relayout_permute_then_block():
     assert numpy.array_equal(out, ref)
 
 
-@pytest.mark.parametrize("shape,ops", [
-    ((64, ), [Block(0, 16), Unblock(0, 16)]),
-    ((6, 8), [Permute((1, 0)), Permute((1, 0))]),
-    ((4, 6, 8), [Permute((2, 0, 1)), Permute((1, 2, 0))]),
-    ((4, 6, 8), [Permute((2, 1, 0)), Permute((2, 1, 0))]),
-    ((64, ), [Block(0, 8), Block(0, 4), Unblock(0, 4), Unblock(0, 8)]),
-])
+@pytest.mark.parametrize(
+    "shape,ops",
+    [
+        ((64,), [Block(0, 16), Unblock(0, 16)]),
+        ((6, 8), [Permute((1, 0)), Permute((1, 0))]),
+        ((4, 6, 8), [Permute((2, 0, 1)), Permute((1, 2, 0))]),
+        ((4, 6, 8), [Permute((2, 1, 0)), Permute((2, 1, 0))]),
+        ((64,), [Block(0, 8), Block(0, 4), Unblock(0, 4), Unblock(0, 8)]),
+    ],
+)
 def test_relayout_identity_sequences_are_copies(shape, ops):
     A = numpy.random.rand(*shape)
     out = _relayout(shape, ops, A)
@@ -103,8 +107,8 @@ def test_relayout_identity_sequences_are_copies(shape, ops):
 def test_relayout_pad_grows_and_copies_live_region():
     n = 10
     A = numpy.random.rand(n)
-    out = _relayout((n, ), [PadOp(0, 6)], A)
-    assert out.shape == (n + 6, )
+    out = _relayout((n,), [PadOp(0, 6)], A)
+    assert out.shape == (n + 6,)
     assert numpy.array_equal(out[:n], A)
 
 
@@ -136,15 +140,9 @@ def ew3d(A: dace.float64[N, N, N], B: dace.float64[N, N, N], C: dace.float64[N, 
 @pytest.mark.parametrize("perm", [[0, 2, 1], [2, 1, 0], [1, 2, 0]])
 def test_permute_pass_elementwise_3d(perm):
     n = 6
-    _permute_pass_kernel_check(ew3d, {
-        "A": perm,
-        "B": perm,
-        "C": perm
-    }, {
-        "A": (n, n, n),
-        "B": (n, n, n),
-        "C": (n, n, n)
-    })
+    _permute_pass_kernel_check(
+        ew3d, {"A": perm, "B": perm, "C": perm}, {"A": (n, n, n), "B": (n, n, n), "C": (n, n, n)}
+    )
 
 
 # SplitDimensions (Block) pass ============================
@@ -159,10 +157,12 @@ def test_block_pass_matrix(fa, fb):
     original = madd2d.to_sdfg()
     sdfg = copy.deepcopy(original)
     sdfg.name = f"madd2d_blk_{fa}_{fb}"
-    SplitDimensions(split_map={
-        "A": ([True, False], [fa, 1]),
-        "B": ([False, True], [1, fb]),
-    }).apply_pass(sdfg, {})
+    SplitDimensions(
+        split_map={
+            "A": ([True, False], [fa, 1]),
+            "B": ([False, True], [1, fb]),
+        }
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     n = fa * fb * 2
     A = numpy.random.rand(n, n)
@@ -179,7 +179,7 @@ def test_block_pass_matrix(fa, fb):
 # PadDimensions pass ============================
 @dace.program
 def stencil1d(A: dace.float64[N], B: dace.float64[N]):
-    for i in dace.map[1:N - 1] @ dace.ScheduleType.Sequential:
+    for i in dace.map[1 : N - 1] @ dace.ScheduleType.Sequential:
         B[i] = 0.25 * A[i - 1] + 0.5 * A[i] + 0.25 * A[i + 1]
 
 
@@ -298,4 +298,5 @@ def test_block_aware_tiling_is_schedule_only(ti, tj):
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__, "-q"]))

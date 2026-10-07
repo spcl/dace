@@ -11,7 +11,6 @@ from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class Model(nn.Module):
-
     def __init__(self, new_shape):
         super(Model, self).__init__()
         self.new_shape = new_shape
@@ -32,11 +31,13 @@ def test_multiple_outputs(use_cpp_dispatcher: bool, device):
     torch_outputs = ptmodel(torch.clone(x))
 
     dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
-    dace_model = DaceModule(ptmodel,
-                            sdfg_name=f"test_multi_output_{dispatcher_suffix}_{device}",
-                            auto_optimize=False,
-                            compile_torch_extension=use_cpp_dispatcher,
-                            cuda=is_gpu(device))
+    dace_model = DaceModule(
+        ptmodel,
+        sdfg_name=f"test_multi_output_{dispatcher_suffix}_{device}",
+        auto_optimize=False,
+        compile_torch_extension=use_cpp_dispatcher,
+        cuda=is_gpu(device),
+    )
 
     with experimental_cuda():
         dace_outputs = dace_model(x)

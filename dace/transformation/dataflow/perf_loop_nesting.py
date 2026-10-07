@@ -80,6 +80,7 @@ map's symbols. Any body that violates the conditions is rejected, so
 forcing perfect nesting can never change results. Bare two-level perfect
 nests (no intervening nodes) keep their original fast path unchanged.
 """
+
 import copy as _copy
 from typing import Dict, List, Set, Tuple
 
@@ -164,6 +165,7 @@ class PerfLoopNesting(xf.SingleStateTransformation):
         # Inlined same-state form: delegate to MapFission (see can_be_applied).
         if not any(isinstance(n, nodes.NestedSDFG) for n in body):
             from dace.transformation.dataflow.map_fission import MapFission
+
             MapFission.apply_to(sdfg, map_entry=pe, verify=False, save=False)
             return
 
@@ -181,7 +183,7 @@ class PerfLoopNesting(xf.SingleStateTransformation):
             if isinstance(n, nodes.Tasklet) and inner_state.entry_node(n) is None and n not in sunk:
                 _wrap_tasklet_in_trivial_map(inner_state, n)
 
-        child_entries = _ordered_top_children(inner_state, (nodes.MapEntry, ))
+        child_entries = _ordered_top_children(inner_state, (nodes.MapEntry,))
         outer_in_by, outer_out_by = _outer_plumbing(graph, pe, px, orig_nsdfg)
 
         duplicates = []
@@ -345,8 +347,9 @@ def _children_data_independent(state: SDFGState, children: List[nodes.Node]) -> 
     return not _cross_child_conflicts(state, children)
 
 
-def _conflicts_are_materializable(state: SDFGState, children: List[nodes.Node], nsdfg: nodes.NestedSDFG,
-                                  conflicts: List[Tuple[int, int]]) -> bool:
+def _conflicts_are_materializable(
+    state: SDFGState, children: List[nodes.Node], nsdfg: nodes.NestedSDFG, conflicts: List[Tuple[int, int]]
+) -> bool:
     """Whether every conflicting value can cross the duplicate boundary.
 
     Each duplicate wraps its own pruned ``NestedSDFG``, so a container that is
@@ -375,8 +378,9 @@ def _conflicts_are_materializable(state: SDFGState, children: List[nodes.Node], 
     return True
 
 
-def _intervening_chain(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG,
-                       body: List[nodes.Node]) -> List[nodes.Node]:
+def _intervening_chain(
+    graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG, body: List[nodes.Node]
+) -> List[nodes.Node]:
     """Return the body nodes that form the intervening chain (everything that
     is neither the ``NestedSDFG`` nor a directly-wired ``AccessNode``).
 
@@ -396,8 +400,9 @@ def _intervening_chain(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, 
     return [n for n in body if n is not nsdfg and n is not px and n not in direct]
 
 
-def _intervening_chain_is_replicable(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG,
-                                     body: List[nodes.Node]) -> bool:
+def _intervening_chain_is_replicable(
+    graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, nsdfg: nodes.NestedSDFG, body: List[nodes.Node]
+) -> bool:
     """Validate that the intervening chain may be soundly sunk into the
     ``NestedSDFG`` and replicated per fissioned duplicate.
 
@@ -467,8 +472,9 @@ def _intervening_chain_is_replicable(graph: SDFGState, pe: nodes.MapEntry, px: n
     return feeds_nsdfg and t is not None
 
 
-def _sink_intervening_chain(graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.NestedSDFG,
-                            body: List[nodes.Node]) -> Set[nodes.Node]:
+def _sink_intervening_chain(
+    graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.NestedSDFG, body: List[nodes.Node]
+) -> Set[nodes.Node]:
     """Move the intervening chain from the parent scope into the
     ``NestedSDFG``'s single inner state.
 
@@ -519,7 +525,8 @@ def _sink_intervening_chain(graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.N
     # the inner array (the connector name), not the outer transient.
     for conn, src_conn in conn_to_srcconn.items():
         readers = [
-            a for a in inner_state.nodes()
+            a
+            for a in inner_state.nodes()
             if isinstance(a, nodes.AccessNode) and a.data == conn and inner_state.in_degree(a) == 0
         ]
         if not readers:
@@ -653,9 +660,16 @@ def _wrap_tasklet_in_trivial_map(state: SDFGState, t: nodes.Tasklet):
         state.add_nedge(t, mx, mm.Memlet())
 
 
-def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, orig_nsdfg: nodes.NestedSDFG,
-                     orig_inner_state: SDFGState, keep: Set[nodes.Node], outer_in_by: Dict[str, list],
-                     outer_out_by: Dict[str, list]) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+def _build_duplicate(
+    graph: SDFGState,
+    pe: nodes.MapEntry,
+    px: nodes.MapExit,
+    orig_nsdfg: nodes.NestedSDFG,
+    orig_inner_state: SDFGState,
+    keep: Set[nodes.Node],
+    outer_in_by: Dict[str, list],
+    outer_out_by: Dict[str, list],
+) -> Tuple[nodes.MapEntry, nodes.MapExit]:
     new_inner_sdfg = SDFG(orig_nsdfg.sdfg.name + "_pn")
     for name, desc in orig_nsdfg.sdfg.arrays.items():
         new_inner_sdfg.add_datadesc(name, _copy.deepcopy(desc))
@@ -706,21 +720,20 @@ def _build_duplicate(graph: SDFGState, pe: nodes.MapEntry, px: nodes.MapExit, or
     graph.add_node(new_pe)
     graph.add_node(new_px)
 
-    new_nsdfg = graph.add_nested_sdfg(new_inner_sdfg,
-                                      used_in,
-                                      used_out,
-                                      symbol_mapping=_copy.deepcopy(orig_nsdfg.symbol_mapping))
+    new_nsdfg = graph.add_nested_sdfg(
+        new_inner_sdfg, used_in, used_out, symbol_mapping=_copy.deepcopy(orig_nsdfg.symbol_mapping)
+    )
 
     for conn in used_in:
         new_pe.add_in_connector("IN_" + conn)
         new_pe.add_out_connector("OUT_" + conn)
-        for (outer_access, outer_memlet, inner_memlet) in outer_in_by.get(conn, []):
+        for outer_access, outer_memlet, inner_memlet in outer_in_by.get(conn, []):
             graph.add_edge(outer_access, None, new_pe, "IN_" + conn, _copy.deepcopy(outer_memlet))
             graph.add_edge(new_pe, "OUT_" + conn, new_nsdfg, conn, _copy.deepcopy(inner_memlet))
     for conn in used_out:
         new_px.add_in_connector("IN_" + conn)
         new_px.add_out_connector("OUT_" + conn)
-        for (outer_access, outer_memlet, inner_memlet) in outer_out_by.get(conn, []):
+        for outer_access, outer_memlet, inner_memlet in outer_out_by.get(conn, []):
             graph.add_edge(new_nsdfg, conn, new_px, "IN_" + conn, _copy.deepcopy(inner_memlet))
             graph.add_edge(new_px, "OUT_" + conn, outer_access, None, _copy.deepcopy(outer_memlet))
 

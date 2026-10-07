@@ -57,6 +57,7 @@ and runs BEFORE LoopToReduce / LoopToMap so the IV-eligible loop never gets
 mis-classified as a fold or a parallel map. The TSVC kernel ``s317``
 (``q[0] *= 0.99`` for ``LEN_1D//2`` iters) is the canonical hit.
 """
+
 import ast
 import copy
 from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple, Type
@@ -80,7 +81,7 @@ from dace.sdfg.narrowing import as_basic, as_expr, as_state
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
-SPLICEABLE_BUILTINS = dict.fromkeys(['True', 'False', 'None', 'abs', 'min', 'max', 'int', 'float'])
+SPLICEABLE_BUILTINS = dict.fromkeys(["True", "False", "None", "abs", "min", "max", "int", "float"])
 
 #: AST binop type -> closed-form template ``(init, c, n) -> str``.
 CLOSED_FORM: Dict[Type[ast.operator], Callable[[str, str, str], str]] = {
@@ -96,14 +97,20 @@ class _UnwrapTypecasts(ast.NodeTransformer):
     pattern matching; the codegen still emits the cast from the original tasklet
     body, only this pass's analysis treats it as a no-op.
     """
+
     TYPECAST_NAMES: Dict[str, None] = dict.fromkeys(dtypes.TYPECLASS_STRINGS)
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         # Match ``dace.<typeclass>(x)``: ``func`` is Attribute(value=Name('dace'), attr=typeclass)
-        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == 'dace' and node.func.attr in self.TYPECAST_NAMES and len(node.args) == 1
-                and not node.keywords):
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "dace"
+            and node.func.attr in self.TYPECAST_NAMES
+            and len(node.args) == 1
+            and not node.keywords
+        ):
             return node.args[0]
         return node
 
@@ -158,11 +165,13 @@ class InductionVariableSubstitution(ppl.Pass):
                 # (5) an IV incremented identically in every branch of a body
                 #     conditional -> hoist it out so (3) can then close it (s124).
                 region = node.parent_graph
-                if (_try_substitute(region, node, sdfg, sdfg_free_symbols)
-                        or try_substitute_use_site_iv(region, node, sdfg, sdfg_free_symbols)
-                        or _try_substitute_iedge_iv(region, node, sdfg, sdfg_free_symbols)
-                        or _try_substitute_derived_symbol(region, node, sdfg, sdfg_free_symbols)
-                        or _hoist_branch_uniform_iv(region, node, sdfg, sdfg_free_symbols)):
+                if (
+                    _try_substitute(region, node, sdfg, sdfg_free_symbols)
+                    or try_substitute_use_site_iv(region, node, sdfg, sdfg_free_symbols)
+                    or _try_substitute_iedge_iv(region, node, sdfg, sdfg_free_symbols)
+                    or _try_substitute_derived_symbol(region, node, sdfg, sdfg_free_symbols)
+                    or _hoist_branch_uniform_iv(region, node, sdfg, sdfg_free_symbols)
+                ):
                     count += 1
                     progressed = True
                     break  # SDFG mutated -> restart the scan on fresh node list
@@ -210,8 +219,9 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
     return True
 
 
-def step_is_loop_invariant(step_names: Iterable[object], loop: LoopRegion, sdfg: SDFG,
-                           sdfg_free_symbols: Set[str]) -> bool:
+def step_is_loop_invariant(
+    step_names: Iterable[object], loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
+) -> bool:
     """Whether a candidate IV STEP, built from ``step_names``, is loop-invariant.
 
     THIS is the test that separates an induction variable from a REDUCTION, and it is the only
@@ -248,18 +258,21 @@ class TaskletIV(NamedTuple):
     ``init + c*N`` / ``init * c**N`` keeps ``c`` as a name and is materialised in
     the post-loop tasklet by the codegen's symbol-binding path.
     """
+
     accum: str  #: container the update eventually writes (after any staging transients)
     subset: str  #: the single-element, loop-invariant accumulator slot
     op_type: Type[ast.operator]  #: ``ast.Add`` / ``ast.Mult``
     const_val: Any  #: numeric literal, or a source string over loop-invariant symbols
     in_edge: MultiConnectorEdge[
-        mm.Memlet]  #: the carried read edge into the tasklet (``in_edge.dst`` is the tasklet itself)
+        mm.Memlet
+    ]  #: the carried read edge into the tasklet (``in_edge.dst`` is the tasklet itself)
     write_edge: MultiConnectorEdge[mm.Memlet]  #: the tasklet's update write edge
     reads_accum: bool  #: the carried read traces back to ``accum[subset]`` (a true recurrence)
 
 
-def _extract_iv(loop: LoopRegion, sdfg: SDFG,
-                sdfg_free_symbols: Set[str]) -> Optional[Tuple[str, str, type, object, object]]:
+def _extract_iv(
+    loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
+) -> Optional[Tuple[str, str, type, object, object]]:
     """Pattern-match a SINGLE-tasklet loop body. Returns
     ``(accum_name, accum_subset_str, ast.BinOp_type, const_val, trip_count)`` or ``None``.
     """
@@ -298,8 +311,9 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG,
     return iv.accum, iv.subset, iv.op_type, iv.const_val, trip_count
 
 
-def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegion, sdfg: SDFG,
-                       sdfg_free_symbols: Set[str]) -> Optional[TaskletIV]:
+def extract_tasklet_iv(
+    tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
+) -> Optional[TaskletIV]:
     """Match ONE tasklet against the ``__out = __in OP const`` IV shape, ignoring its siblings.
 
     Split out of :func:`_extract_iv` so a MULTI-tasklet body (where the IV is one statement
@@ -350,7 +364,7 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
         const_val = other.value
     else:
         for sub in ast.walk(other):
-            if not isinstance(sub, ast.Name) or sub.id == 'dace' or sub.id in SPLICEABLE_BUILTINS:
+            if not isinstance(sub, ast.Name) or sub.id == "dace" or sub.id in SPLICEABLE_BUILTINS:
                 continue  # a dtype-cast root, not an operand
             # Every remaining name must be a loop-invariant symbol. A CONNECTOR name reaches here
             # and fails, which is what refuses the reduction shape ``sum = sum + a[i]``.
@@ -365,8 +379,8 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     out_edges = value_edges(state.out_edges(tasklet))
     if len(in_edges) != 1 or len(out_edges) != 1:
         return None
-    (in_edge, ) = in_edges
-    (write_edge, ) = out_edges
+    (in_edge,) = in_edges
+    (write_edge,) = out_edges
     # A WCR store is ``acc = wcr(acc, rhs)``, not ``acc = rhs``, so it is not the recurrence the
     # closed form below solves.
     if in_edge.data.wcr is not None or write_edge.data.wcr is not None:
@@ -414,12 +428,14 @@ def extract_tasklet_iv(tasklet: nodes.Tasklet, state: SDFGState, loop: LoopRegio
     return TaskletIV(final_accum, str(final_subset), type(rhs.op), const_val, in_edge, write_edge, reads_accum)
 
 
-def closed_form_state(parent: ControlFlowRegion,
-                      label: str,
-                      accum_name: str,
-                      accum_subset: str,
-                      closed_form: str,
-                      is_start_block: bool = False) -> SDFGState:
+def closed_form_state(
+    parent: ControlFlowRegion,
+    label: str,
+    accum_name: str,
+    accum_subset: str,
+    closed_form: str,
+    is_start_block: bool = False,
+) -> SDFGState:
     """A fresh state whose single tasklet writes ``closed_form`` back to ``accum_name[accum_subset]``.
 
     The closed-form RHS reads the seed via the tasklet's ``__in`` connector, NOT via a bare
@@ -432,15 +448,17 @@ def closed_form_state(parent: ControlFlowRegion,
     # add_tasklet turns a connector set into the in/out-connector dict verbatim -- a plain set
     # literal's hash order would become the emitted connector declaration order. Single-element
     # here so it can't actually reorder, but dict.fromkeys matches the pattern used elsewhere.
-    tasklet = new_state.add_tasklet(label + "_tlt", dict.fromkeys(['__in']), dict.fromkeys(['__out']),
-                                    f"__out = {closed_form}")
+    tasklet = new_state.add_tasklet(
+        label + "_tlt", dict.fromkeys(["__in"]), dict.fromkeys(["__out"]), f"__out = {closed_form}"
+    )
     new_state.add_edge(accum_r, None, tasklet, "__in", mm.Memlet(data=accum_name, subset=accum_subset))
     new_state.add_edge(tasklet, "__out", accum_w, None, mm.Memlet(data=accum_name, subset=accum_subset))
     return new_state
 
 
-def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, accum_name: str, accum_subset: str,
-                                   closed_form: str, sdfg: SDFG) -> None:
+def _replace_loop_with_closed_form(
+    parent: ControlFlowRegion, loop: LoopRegion, accum_name: str, accum_subset: str, closed_form: str, sdfg: SDFG
+) -> None:
     """Swap ``loop`` for a state whose tasklet writes the closed form back to ``accum_name[accum_subset]``."""
     was_start = parent.start_block is loop
     in_edges = list(parent.in_edges(loop))
@@ -482,7 +500,7 @@ class ReplaceConnectorWithClosedForm(ast.NodeTransformer):
     def visit_Name(self, node: ast.Name) -> ast.AST:
         if node.id != self.conn or not isinstance(node.ctx, ast.Load):
             return node
-        return ast.parse(self.closed_form, mode='eval').body
+        return ast.parse(self.closed_form, mode="eval").body
 
 
 def splice_closed_form(tasklet: nodes.Tasklet, conn: str, closed_form: str) -> None:
@@ -494,17 +512,21 @@ def splice_closed_form(tasklet: nodes.Tasklet, conn: str, closed_form: str) -> N
 
 class UseSitePlan(NamedTuple):
     """The validated rewrite for one data-accumulator IV inside a multi-statement body."""
+
     pre_node: nodes.AccessNode  #: accumulator version holding the value on entry to the iteration
     post_node: nodes.AccessNode  #: accumulator version the IV update writes
     chain: List[nodes.AccessNode]  #: staging transients between the IV tasklet and ``post_node``
-    pre_reads: List[MultiConnectorEdge[
-        mm.Memlet]]  #: edges whose consumer reads the PRE-update value (``t`` updates applied)
-    post_reads: List[MultiConnectorEdge[
-        mm.Memlet]]  #: edges whose consumer reads the POST-update value (``t + 1`` applied)
+    pre_reads: List[
+        MultiConnectorEdge[mm.Memlet]
+    ]  #: edges whose consumer reads the PRE-update value (``t`` updates applied)
+    post_reads: List[
+        MultiConnectorEdge[mm.Memlet]
+    ]  #: edges whose consumer reads the POST-update value (``t + 1`` applied)
 
 
-def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet,
-                               iv: TaskletIV) -> Optional[UseSitePlan]:
+def plan_use_site_substitution(
+    state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, iv: TaskletIV
+) -> Optional[UseSitePlan]:
     """Validate that ``iv``'s recurrence can be expanded at its use sites, and enumerate them.
 
     Refuses -- WITHOUT touching the state -- unless the accumulator slot is written EXACTLY ONCE
@@ -535,7 +557,7 @@ def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Task
     versions = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == iv.accum]
     if [n for n in versions if data_in_edges(state, n)] != [post_node]:
         return None  # a second write to the slot -> the value a read sees is no longer this recurrence
-    (write_in, ) = data_in_edges(state, post_node)
+    (write_in,) = data_in_edges(state, post_node)
     if write_in.data.wcr is not None:  # an accumulation into the slot, not this recurrence's store
         return None
     written = write_in.data.subset if write_in.data.data == iv.accum else write_in.data.dst_subset
@@ -574,8 +596,9 @@ def plan_use_site_substitution(state: SDFGState, sdfg: SDFG, tasklet: nodes.Task
     return UseSitePlan(pre_node, post_node, chain, pre_reads, post_reads)
 
 
-def try_substitute_use_site_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
-                               sdfg_free_symbols: Set[str]) -> bool:
+def try_substitute_use_site_iv(
+    parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
+) -> bool:
     """Expand a DATA accumulator's closed form at every use site, then delete the recurrence.
 
     :func:`_try_substitute` collapses a loop whose ONLY statement is ``acc = acc OP c``. When the
@@ -643,9 +666,16 @@ def try_substitute_use_site_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg
     return False
 
 
-def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, state: SDFGState, iv: TaskletIV,
-                                plan: UseSitePlan, start: symbolic.SymbolicType, end: symbolic.SymbolicType,
-                                stride: symbolic.SymbolicType) -> None:
+def apply_use_site_substitution(
+    parent: ControlFlowRegion,
+    loop: LoopRegion,
+    state: SDFGState,
+    iv: TaskletIV,
+    plan: UseSitePlan,
+    start: symbolic.SymbolicType,
+    end: symbolic.SymbolicType,
+    stride: symbolic.SymbolicType,
+) -> None:
     """Commit the rewrite :func:`plan_use_site_substitution` validated."""
 
     t = trip_index(loop, start, stride)
@@ -673,7 +703,7 @@ def apply_use_site_substitution(parent: ControlFlowRegion, loop: LoopRegion, sta
     # The loop no longer updates the accumulator; materialise the value it used to leave behind.
     trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
     closed = CLOSED_FORM[iv.op_type]("__in", iv.const_val, symbolic.symstr(trip_count))
-    iv_post = closed_form_state(parent, loop.label + '_iv_use_post', iv.accum, iv.subset, closed)
+    iv_post = closed_form_state(parent, loop.label + "_iv_use_post", iv.accum, iv.subset, closed)
     for oe in list(parent.out_edges(loop)):
         parent.add_edge(iv_post, oe.dst, oe.data)
         parent.remove_edge(oe)
@@ -698,8 +728,9 @@ def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -
     return any(sym_name in (e.data.assignments or {}) for region in inner for e in region.edges())
 
 
-def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
-                             sdfg_free_symbols: Set[str]) -> bool:
+def _hoist_branch_uniform_iv(
+    parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
+) -> bool:
     """Hoist an increment every branch of a body ``ConditionalBlock`` performs identically onto one
     iedge, before the conditional for post-increment reads and after it for pre-increment reads.
 
@@ -713,13 +744,15 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             continue  # no else branch -> a path skips the increment -> unsound to hoist
 
         def branch_increments(
-                br: ControlFlowRegion) -> Dict[str, List[Tuple[Edge[InterstateEdge], symbolic.SymbolicType]]]:
+            br: ControlFlowRegion,
+        ) -> Dict[str, List[Tuple[Edge[InterstateEdge], symbolic.SymbolicType]]]:
             incs: Dict[str, List[Tuple[Edge[InterstateEdge], symbolic.SymbolicType]]] = {}
             for e in br.edges():
                 for lhs, rhs in (e.data.assignments or {}).items():
                     try:
                         delta = symbolic.simplify(
-                            as_expr(symbolic.pystr_to_symbolic(rhs)) - as_expr(symbolic.pystr_to_symbolic(lhs)))
+                            as_expr(symbolic.pystr_to_symbolic(rhs)) - as_expr(symbolic.pystr_to_symbolic(lhs))
+                        )
                     except Exception:
                         continue
                     if as_basic(delta).is_number:
@@ -744,19 +777,20 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
                 continue  # branches disagree on the step
             step = next(iter(steps))
             branch_edges = dict.fromkeys(id(p[sym][0][0]) for p in per)
-            if any(sym in (e2.data.assignments or {}) and id(e2) not in branch_edges
-                   for e2 in loop.all_interstate_edges()):
+            if any(
+                sym in (e2.data.assignments or {}) and id(e2) not in branch_edges for e2 in loop.all_interstate_edges()
+            ):
                 continue  # sym also written outside the per-branch increments (incl. nested) -> not clean
             # The hoisted increment's side follows the in-branch uses: 'after' (increment then
             # read, s124) hoists BEFORE the conditional, 'before' (read then increment) hoists
             # AFTER it. Branches not reading ``sym`` do not vote (none reading -> 'after');
             # disagreement or a branch straddling its own increment (``None``) refuses.
             sides = dict.fromkeys(_consistent_use_side(br, p[sym][0][0], sym) for br, p in zip(branches, per))
-            sides.pop('unused', None)
+            sides.pop("unused", None)
             if not sides:
-                side = 'after'
-            elif len(sides) == 1 and next(iter(sides)) in ('after', 'before'):
-                (side, ) = sides
+                side = "after"
+            elif len(sides) == 1 and next(iter(sides)) in ("after", "before"):
+                (side,) = sides
             else:
                 continue
             # Strip the increment from each branch, then plant one iedge on the side the
@@ -769,9 +803,9 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             # Ask BEFORE adding the hoist state: the fresh state is a second, isolated source
             # node, which makes ``start_block`` ambiguous until it is wired in below.
             was_start = loop.start_block is cb
-            hoist = loop.add_state(cb.label + '_iv_hoist')
+            hoist = loop.add_state(cb.label + "_iv_hoist")
             new_rhs = symbolic.symstr(symbolic.pystr_to_symbolic(sym) + step)
-            if side == 'after':
+            if side == "after":
                 for ie in list(loop.in_edges(cb)):
                     loop.add_edge(ie.src, hoist, ie.data)
                     loop.remove_edge(ie)
@@ -824,14 +858,15 @@ def _consistent_use_side(loop: LoopRegion, iv_edge: Edge[InterstateEdge], sym_na
     if saw_before and saw_after:
         return None  # straddles the increment -> per-block offsets needed (unsupported)
     if saw_before:
-        return 'before'
+        return "before"
     if saw_after:
-        return 'after'
-    return 'unused'  # no body use -> either offset reproduces the (absent) reads
+        return "after"
+    return "unused"  # no body use -> either offset reproduces the (absent) reads
 
 
-def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion,
-                          sym_name: str) -> Optional[symbolic.SymbolicType]:
+def _preloop_symbol_value(
+    parent: ControlFlowRegion, loop: LoopRegion, sym_name: str
+) -> Optional[symbolic.SymbolicType]:
     """The value ``sym_name`` holds on ENTRY to ``loop``, or ``None`` if it is not
     locally provable.
 
@@ -855,14 +890,15 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion,
             return None
     if len(vals) != 1:
         return None
-    (val, ) = vals
+    (val,) = vals
     if loop.loop_variable in (str(s) for s in as_basic(val).free_symbols):
         return None  # references the loop variable, which is undefined before the loop
     return val
 
 
-def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
-                                   sdfg_free_symbols: Set[str]) -> bool:
+def _try_substitute_derived_symbol(
+    parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
+) -> bool:
     """Inline a symbol defined purely by a loop-variable expression (``sym := f(i)``, no self-reference).
 
     Second half of the fixpoint: after an IV substitution ``k := j + 1`` becomes ``k := 2*i`` (s128).
@@ -874,9 +910,9 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
         return False
     loop_var = loop.loop_variable
     for e in loop.edges():
-        if e.data.condition.as_string not in ('1', 'True', '(1)') or len(e.data.assignments) != 1:
+        if e.data.condition.as_string not in ("1", "True", "(1)") or len(e.data.assignments) != 1:
             continue
-        ((sym, rhs), ) = e.data.assignments.items()
+        ((sym, rhs),) = e.data.assignments.items()
         if sym == loop_var or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
             continue
         try:
@@ -900,9 +936,9 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
         if any(oe is not e and sym in (oe.data.assignments or {}) for oe in loop.all_interstate_edges()):
             continue  # sym written elsewhere (incl. a NESTED loop, s141) -> not a clean single definition
         side = _consistent_use_side(loop, e, sym)
-        if side in ('after', 'unused'):
+        if side in ("after", "unused"):
             body_expr = rhs_expr  # uses (if any) follow the definition -> this iteration's value
-        elif side == 'before':
+        elif side == "before":
             # Every use precedes the definition, so it reads what the PREVIOUS iteration
             # wrote: ``f(loop_var - stride)``. That holds for iterations 2..N; iteration 1
             # instead reads the value ``sym`` carried INTO the loop, so the lagged form is
@@ -913,7 +949,7 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
                 continue
             # The lagged form also assumes the definition runs on EVERY iteration; a
             # condition on any body top-level edge could skip it and stale the value.
-            if any(oe.data.condition.as_string not in ('1', 'True', '(1)') for oe in loop.edges()):
+            if any(oe.data.condition.as_string not in ("1", "True", "(1)") for oe in loop.edges()):
                 continue
             entry = _preloop_symbol_value(parent, loop, sym)
             if entry is None:
@@ -932,7 +968,7 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
         end = loop_analysis.get_loop_end(loop)
         if end is not None:
             post_val = symbolic.symstr(rhs_expr.subs(symbolic.pystr_to_symbolic(loop_var), end))
-            dsym_post = parent.add_state(loop.label + '_dsym_post')
+            dsym_post = parent.add_state(loop.label + "_dsym_post")
             for oe in list(parent.out_edges(loop)):
                 parent.add_edge(dsym_post, oe.dst, oe.data)
                 parent.remove_edge(oe)
@@ -962,8 +998,12 @@ def staged_iedge_rhs(rhs: str, src_state: SDFGState, sdfg: SDFG) -> Optional[sym
         return None
     in_edge = src_state.in_edges(writes[0])[0]
     tasklet = in_edge.src
-    if (not isinstance(tasklet, nodes.Tasklet) or src_state.in_degree(tasklet) > 0 or src_state.out_degree(tasklet) != 1
-            or tasklet.has_side_effects(sdfg)):
+    if (
+        not isinstance(tasklet, nodes.Tasklet)
+        or src_state.in_degree(tasklet) > 0
+        or src_state.out_degree(tasklet) != 1
+        or tasklet.has_side_effects(sdfg)
+    ):
         return None
     code = tasklet.code
     if code.language is not dtypes.Language.Python or len(code.code) != 1:
@@ -982,8 +1022,9 @@ def staged_iedge_rhs(rhs: str, src_state: SDFGState, sdfg: SDFG) -> Optional[sym
         return None
 
 
-def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
-                             sdfg_free_symbols: Set[str]) -> bool:
+def _try_substitute_iedge_iv(
+    parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
+) -> bool:
     """Substitute an interstate-edge IV ``sym := sym +/- step`` in the loop body by its closed form.
 
     Keeps the loop (unlike :func:`_try_substitute`) and removes only the carried dependence on
@@ -1006,7 +1047,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     #    non-trivial condition.
     iv_candidate = None  # (edge, sym_name, step_sympy)
     for e in loop.edges():
-        if e.data.condition.as_string not in ('1', 'True', '(1)'):
+        if e.data.condition.as_string not in ("1", "True", "(1)"):
             return False
         if not e.data.assignments:
             continue
@@ -1014,7 +1055,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             # An IV iedge here carries only the IV; other assignments would
             # need separate handling.
             continue
-        ((lhs, rhs), ) = e.data.assignments.items()
+        ((lhs, rhs),) = e.data.assignments.items()
         try:
             staged = staged_iedge_rhs(rhs, e.src, sdfg)
             rhs_expr = symbolic.pystr_to_symbolic(rhs) if staged is None else staged
@@ -1029,7 +1070,8 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
         # discriminator (see ``step_is_loop_invariant``). A varying step has no closed form.
         if not as_basic(diff).is_number:
             if not as_basic(diff).free_symbols or not step_is_loop_invariant(
-                    as_basic(diff).free_symbols, loop, sdfg, sdfg_free_symbols):
+                as_basic(diff).free_symbols, loop, sdfg, sdfg_free_symbols
+            ):
                 continue
         # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:
@@ -1068,11 +1110,17 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     sym_sym = symbolic.pystr_to_symbolic(sym_name)
     norm_iter = trip_index(loop, start, stride)
 
-    src_is_empty_start = (iv_edge.src is loop.start_block and isinstance(iv_edge.src, SDFGState)
-                          and not iv_edge.src.nodes())
+    src_is_empty_start = (
+        iv_edge.src is loop.start_block and isinstance(iv_edge.src, SDFGState) and not iv_edge.src.nodes()
+    )
     sinks = [b for b in loop.nodes() if loop.out_degree(b) == 0]
-    dst_is_unique_empty_sink = (isinstance(iv_edge.dst, SDFGState) and not iv_edge.dst.nodes() and len(sinks) == 1
-                                and sinks[0] is iv_edge.dst and loop.in_degree(iv_edge.dst) == 1)
+    dst_is_unique_empty_sink = (
+        isinstance(iv_edge.dst, SDFGState)
+        and not iv_edge.dst.nodes()
+        and len(sinks) == 1
+        and sinks[0] is iv_edge.dst
+        and loop.in_degree(iv_edge.dst) == 1
+    )
 
     if src_is_empty_start:
         body_offset = norm_iter + 1  # update-at-top: body is post-increment
@@ -1081,11 +1129,11 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     else:
         # Between content blocks: substitutable iff every use is on one side (s128).
         side = _consistent_use_side(loop, iv_edge, sym_name)
-        if side == 'before':
+        if side == "before":
             body_offset = norm_iter
-        elif side == 'after':
+        elif side == "after":
             body_offset = norm_iter + 1
-        elif side == 'unused':
+        elif side == "unused":
             # No body reads: any offset works; only the post-loop value matters.
             body_offset = norm_iter
         else:
@@ -1108,14 +1156,17 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     # Two-level counter (s126): if the lone unconditional exit edge only assigns ``sym``, compose
     # into it instead; a second ``sym`` iedge would fail step 1's uniqueness gate one level up.
     exit_edges = list(parent.out_edges(loop))
-    if (len(exit_edges) == 1 and exit_edges[0].data.is_unconditional() and list(
-        (exit_edges[0].data.assignments or {}).keys()) == [sym_name]):
+    if (
+        len(exit_edges) == 1
+        and exit_edges[0].data.is_unconditional()
+        and list((exit_edges[0].data.assignments or {}).keys()) == [sym_name]
+    ):
         exit_data = exit_edges[0].data
         composed = symbolic.pystr_to_symbolic(exit_data.assignments[sym_name]).subs(sym_sym, post_loop_expr)
         exit_data.assignments[sym_name] = symbolic.symstr(symbolic.simplify(composed))
         return True
 
-    iv_post = parent.add_state(loop.label + '_iv_post')
+    iv_post = parent.add_state(loop.label + "_iv_post")
     existing_out = list(parent.out_edges(loop))
     for oe in existing_out:
         parent.add_edge(iv_post, oe.dst, oe.data)
@@ -1159,15 +1210,17 @@ ROTATION_CHASE_LIMIT = 4
 
 class RematInput(NamedTuple):
     """One input connector of a cloned producer: a shifted read, or another clone."""
+
     conn: str  #: connector on the producer this input feeds
     container: str | None  #: array to read, when the value comes straight from memory
     subset: subsets.Subset | None  #: the element to read, ALREADY shifted back by one stride
-    source: 'RematSource | None'  #: producer to clone instead, when the body writes the container
+    source: "RematSource | None"  #: producer to clone instead, when the body writes the container
     moved: bool  #: whether the shift actually changed the subset
 
 
 class RematSource(NamedTuple):
     """A pure producer tasklet to re-evaluate at ``i - stride`` in place of the carried read."""
+
     producer: nodes.Tasklet  #: tasklet that computed the value the update stored
     out_conn: str  #: its single output connector
     inputs: list[RematInput]  #: one entry per input connector, in producer edge order
@@ -1177,6 +1230,7 @@ class RematSource(NamedTuple):
 
 class RotationPlan(NamedTuple):
     """The validated rewrite for one loop-carried rotation (delay-line) scalar."""
+
     accum: str  #: the carried scalar container
     src_data: str | None  #: array the rotated value comes from (``None`` when rematerializing)
     src_subset: subsets.Subset | None  #: the element to read, ALREADY shifted back by one stride
@@ -1222,7 +1276,7 @@ def rotation_body_chain(loop: LoopRegion) -> Optional[List[SDFGState]]:
     if len(loop.edges()) != len(blocks) - 1:
         return None
     for e in loop.edges():
-        if e.data.assignments or e.data.condition.as_string not in ('1', 'True', '(1)'):
+        if e.data.assignments or e.data.condition.as_string not in ("1", "True", "(1)"):
             return None
     if any(loop.in_degree(b) > 1 or loop.out_degree(b) > 1 for b in blocks):
         return None
@@ -1267,7 +1321,7 @@ def _read_after_loop(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, co
     for blk in sdutil.dfs_conditional(sdfg, sources=[loop]):
         if blk is loop:
             continue
-        for st in ([blk] if isinstance(blk, SDFGState) else list(blk.states())):
+        for st in [blk] if isinstance(blk, SDFGState) else list(blk.states()):
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode) and n.data == container and value_edges(st.out_edges(n)):
                     return True
@@ -1276,8 +1330,12 @@ def _read_after_loop(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, co
 
 def _body_nodes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGState, nodes.AccessNode]]:
     """Every access node for ``container`` in the body, as ``(chain index, state, node)``."""
-    return [(si, st, n) for si, st in enumerate(chain) for n in st.nodes()
-            if isinstance(n, nodes.AccessNode) and n.data == container]
+    return [
+        (si, st, n)
+        for si, st in enumerate(chain)
+        for n in st.nodes()
+        if isinstance(n, nodes.AccessNode) and n.data == container
+    ]
 
 
 def _body_writes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGState, nodes.AccessNode, Any]]:
@@ -1304,7 +1362,7 @@ def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop
     if tasklet.has_side_effects(sdfg):
         return False
     try:
-        tree = ast.parse((tasklet.code.as_string or '').strip())
+        tree = ast.parse((tasklet.code.as_string or "").strip())
     except SyntaxError:
         return False
     if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
@@ -1322,8 +1380,8 @@ def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop
 
 
 def staged_write(
-        sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node: nodes.AccessNode,
-        reader_sub: subsets.Subset) -> Optional[Tuple[int, SDFGState, nodes.AccessNode, MultiConnectorEdge[mm.Memlet]]]:
+    sdfg: SDFG, chain: List[SDFGState], reader_si: int, reader_node: nodes.AccessNode, reader_sub: subsets.Subset
+) -> Optional[Tuple[int, SDFGState, nodes.AccessNode, MultiConnectorEdge[mm.Memlet]]]:
     """The body write whose value the read of ``reader_node[reader_sub]`` provably sees.
 
     Returns ``(chain index, state, node, edge)`` for that write, or ``None`` when the read cannot be
@@ -1350,9 +1408,16 @@ def staged_write(
     return ssi, sstate, snode, sedge
 
 
-def remat_source(sdfg: SDFG, chain: List[SDFGState], loop_var: symbolic.SymbolicType, stride: symbolic.SymbolicType,
-                 reader_si: int, reader_node: nodes.AccessNode, reader_sub: subsets.Subset,
-                 depth: int) -> RematSource | None:
+def remat_source(
+    sdfg: SDFG,
+    chain: List[SDFGState],
+    loop_var: symbolic.SymbolicType,
+    stride: symbolic.SymbolicType,
+    reader_si: int,
+    reader_node: nodes.AccessNode,
+    reader_sub: subsets.Subset,
+    depth: int,
+) -> RematSource | None:
     """The clone chain that recomputes, at ``i - stride``, the value read at ``reader_node``.
 
     Recursive over the producer's own inputs: one the body writes is recomputed in turn rather than
@@ -1403,9 +1468,15 @@ def remat_shifts(source: RematSource) -> int:
     return sum(int(inp.moved) + (remat_shifts(inp.source) if inp.source is not None else 0) for inp in source.inputs)
 
 
-def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, loop_var: symbolic.SymbolicType,
-                              stride: symbolic.SymbolicType, wsi: int,
-                              write_edge: MultiConnectorEdge[mm.Memlet]) -> RematSource | None:
+def rematerializable_producer(
+    sdfg: SDFG,
+    chain: list[SDFGState],
+    accum: str,
+    loop_var: symbolic.SymbolicType,
+    stride: symbolic.SymbolicType,
+    wsi: int,
+    write_edge: MultiConnectorEdge[mm.Memlet],
+) -> RematSource | None:
     """The producer whose re-evaluation at ``i - stride`` equals the value ``write_edge`` stores.
 
     Disjoint from the shifted-read chase in :func:`plan_rotation` by construction: this requires the
@@ -1435,8 +1506,14 @@ def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, lo
     return source._replace(stage=stage if dies else None)
 
 
-def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain: List[SDFGState], accum: str,
-                  stride: symbolic.SymbolicType) -> Optional[RotationPlan]:
+def plan_rotation(
+    parent: ControlFlowRegion,
+    loop: LoopRegion,
+    sdfg: SDFG,
+    chain: List[SDFGState],
+    accum: str,
+    stride: symbolic.SymbolicType,
+) -> Optional[RotationPlan]:
     """Validate that ``accum`` is a delay line and enumerate the rewrite. Mutates nothing.
 
     Every ``return None`` below is one of the discriminators listed at the top of this section.
@@ -1589,9 +1666,9 @@ def shift_rotation_reads(plan: RotationPlan) -> None:
         new_src = st.add_access(src_data)
         for e in list(st.out_edges(n)):
             if isinstance(e.dst, nodes.AccessNode):
-                memlet = mm.Memlet(data=src_data,
-                                   subset=copy.deepcopy(src_subset),
-                                   other_subset=copy.deepcopy(_subset_at(e, e.dst)))
+                memlet = mm.Memlet(
+                    data=src_data, subset=copy.deepcopy(src_subset), other_subset=copy.deepcopy(_subset_at(e, e.dst))
+                )
             else:
                 memlet = mm.Memlet(data=src_data, subset=copy.deepcopy(src_subset))
             st.remove_edge(e)
@@ -1611,20 +1688,30 @@ def emit_remat_clone(sdfg: SDFG, st: SDFGState, source: RematSource, hint: str) 
     """
 
     producer = source.producer
-    clone = nodes.Tasklet(f'{producer.label}_remat', copy.deepcopy(producer.in_connectors),
-                          copy.deepcopy(producer.out_connectors), producer.code.as_string, producer.code.language)
+    clone = nodes.Tasklet(
+        f"{producer.label}_remat",
+        copy.deepcopy(producer.in_connectors),
+        copy.deepcopy(producer.out_connectors),
+        producer.code.as_string,
+        producer.code.language,
+    )
     st.add_node(clone)
     for inp in source.inputs:
         if inp.source is None:
             assert inp.container is not None and inp.subset is not None  # the matcher fills one or the other
-            st.add_edge(st.add_access(inp.container), None, clone, inp.conn,
-                        mm.Memlet(data=inp.container, subset=copy.deepcopy(inp.subset)))
+            st.add_edge(
+                st.add_access(inp.container),
+                None,
+                clone,
+                inp.conn,
+                mm.Memlet(data=inp.container, subset=copy.deepcopy(inp.subset)),
+            )
         else:
             nested = emit_remat_clone(sdfg, st, inp.source, hint)
-            st.add_edge(nested, None, clone, inp.conn, mm.Memlet(data=nested.data, subset='0'))
-    name, _ = sdfg.add_scalar(f'{hint}_remat', source.dtype, transient=True, find_new_name=True)
+            st.add_edge(nested, None, clone, inp.conn, mm.Memlet(data=nested.data, subset="0"))
+    name, _ = sdfg.add_scalar(f"{hint}_remat", source.dtype, transient=True, find_new_name=True)
     value = st.add_access(name)
-    st.add_edge(clone, source.out_conn, value, None, mm.Memlet(data=name, subset='0'))
+    st.add_edge(clone, source.out_conn, value, None, mm.Memlet(data=name, subset="0"))
     return value
 
 
@@ -1642,9 +1729,9 @@ def rematerialize_rotation_reads(sdfg: SDFG, plan: RotationPlan) -> None:
         value = emit_remat_clone(sdfg, st, remat, plan.accum)
         for e in list(st.out_edges(n)):
             if isinstance(e.dst, nodes.AccessNode):
-                memlet = mm.Memlet(data=value.data, subset='0', other_subset=copy.deepcopy(_subset_at(e, e.dst)))
+                memlet = mm.Memlet(data=value.data, subset="0", other_subset=copy.deepcopy(_subset_at(e, e.dst)))
             else:
-                memlet = mm.Memlet(data=value.data, subset='0')
+                memlet = mm.Memlet(data=value.data, subset="0")
             st.remove_edge(e)
             st.add_edge(value, None, e.dst, e.dst_conn, memlet)
         st.remove_node(n)
@@ -1697,14 +1784,14 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
         # ``LoopPeeling`` names the peeled iteration after the loop, so a second peel on the same
         # loop -- which a two-stage delay line needs -- would mint a duplicate block label. Rename
         # the remainder first, exactly as ``BestEffortLoopPeeling`` does for its front/back pair.
-        peel_prefix = f'{loop.label}_{loop.loop_variable}'
+        peel_prefix = f"{loop.label}_{loop.loop_variable}"
         if any(b.label.startswith(peel_prefix) for b in loop.sdfg.all_control_flow_blocks()):
             loop.label = _unique_block_label(loop.sdfg, loop.label)
         # Order matters: the update is dead everywhere once the reads are closed, so it goes before
         # the peel CLONES the body; the reads shift only in the loop, which the peel has narrowed
         # to the iterations where the shifted read is in range.
         delete_rotation_update(chain, plan)
-        LoopPeeling().apply_to(sdfg=loop.sdfg, loop=loop, verify=False, options={'count': 1, 'begin': True})
+        LoopPeeling().apply_to(sdfg=loop.sdfg, loop=loop, verify=False, options={"count": 1, "begin": True})
         if plan.remat is None:
             shift_rotation_reads(plan)
         else:
@@ -1725,13 +1812,15 @@ class LoopCarriedRotationSubstitution(ppl.Pass):
     being rewritten as one.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
-    peel_limit = properties.Property(dtype=int,
-                                     default=4,
-                                     desc='Iterations this pass may peel off one loop, which also bounds the delay '
-                                     'depth a rotation may have (0 disables the pass). Peeling is what makes the '
-                                     'shifted read valid on the first iteration.')
+    peel_limit = properties.Property(
+        dtype=int,
+        default=4,
+        desc="Iterations this pass may peel off one loop, which also bounds the delay "
+        "depth a rotation may have (0 disables the pass). Peeling is what makes the "
+        "shifted read valid on the first iteration.",
+    )
 
     def __init__(self, peel_limit: int = 4) -> None:
         super().__init__()

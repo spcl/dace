@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Theoretical peak memory bandwidth of the host DRAM (via dmidecode --type 17, summed over populated devices) and the GPU (CUDA device properties)."""
+
 import re
 from dataclasses import dataclass
 from typing import List, Optional
@@ -11,6 +12,7 @@ MT_PER_S = 1e6
 @dataclass(frozen=True)
 class MemoryDevice:
     """One populated memory device (a DIMM, or a soldered LPDDR package) from a dmidecode dump."""
+
     size_bytes: int
     speed_mtps: float
     data_width_bits: int
@@ -24,6 +26,7 @@ class MemoryDevice:
 @dataclass(frozen=True)
 class DramSpec:
     """The host DRAM configuration, as read from a dmidecode dump."""
+
     devices: List[MemoryDevice]
 
     @property
@@ -85,10 +88,13 @@ def parse_dmidecode_memory(text: str) -> DramSpec:
         if speed is None or width is None:
             continue  # unusable entry: no rate or no width to multiply
         devices.append(
-            MemoryDevice(size_bytes=size,
-                         speed_mtps=speed,
-                         data_width_bits=width,
-                         memory_type=(_field(block, "Type") or "unknown")))
+            MemoryDevice(
+                size_bytes=size,
+                speed_mtps=speed,
+                data_width_bits=width,
+                memory_type=(_field(block, "Type") or "unknown"),
+            )
+        )
     return DramSpec(devices=devices)
 
 

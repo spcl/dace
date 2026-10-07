@@ -10,6 +10,7 @@ have no such native GPU overload (kept as-is), and ``bfloat16`` has no native
 ``dace::math::exp`` either (kept as-is); only the ``exp(dace::float16)`` fallback needed
 excluding under ``__CUDACC__``.
 """
+
 import re
 
 import numpy as np
@@ -36,8 +37,9 @@ def test_the_dace_header_compiles_for_float16_device_code(tmp_path):
     fallback in dace/math.h must not also define ``dace::math::exp`` for the SAME type as the
     native GPU one in dace/cuda/halfvec.cuh, or nvcc refuses every fp16 CUDA kernel as ambiguous."""
     result = device_compile(FP16_KERNEL_SRC, tmp_path).result
-    assert AMBIGUOUS_CALL[get_gpu_backend()] not in result.stderr, \
+    assert AMBIGUOUS_CALL[get_gpu_backend()] not in result.stderr, (
         f"dace::math::exp(half) / exp(dace::float16) ambiguity regressed:\n{result.stderr}"
+    )
     assert result.returncode == 0, f"dace/dace.h failed to compile for CUDA float16:\n{result.stderr}"
 
 
@@ -81,38 +83,44 @@ def test_generated_float16_sqrt_is_qualified_and_compiles(tmp_path):
     the argument list" (matching ``test_a_naked_sqrt_of_float16_is_ambiguous_on_the_device`` above).
     Asserts BOTH the generated source text (the call must be qualified, not bare -- a structural
     check, not just "it compiled") and that the generated CUDA translation unit actually builds."""
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def sqrt_kernel(x: dace.float16[N], y: dace.float16[N]):
         y[:] = np.sqrt(x)
 
     sdfg = sqrt_kernel.to_sdfg(simplify=True)
-    sdfg.specialize({'N': 256})
+    sdfg.specialize({"N": 256})
     sdfg.apply_gpu_transformations()
     code_objects = sdfg.generate_code()
-    cuda_objects = [co for co in code_objects if co.name.endswith('_cuda')]
+    cuda_objects = [co for co in code_objects if co.name.endswith("_cuda")]
     assert len(cuda_objects) == 1, f"expected exactly one CUDA code object, got: {[co.name for co in code_objects]}"
     cuda_code = cuda_objects[0].clean_code
 
     # Structural: the emitted call must be the qualified library function, and no bare/ADL-only
     # ``sqrt(`` call (which would re-hit the ambiguity) may remain.
-    assert 'dace::math::sqrt(' in cuda_code, \
+    assert "dace::math::sqrt(" in cuda_code, (
         f"expected a qualified dace::math::sqrt(...) call in generated CUDA:\n{cuda_code}"
-    assert re.search(r'(?<!math::)\bsqrt\(', cuda_code) is None, \
+    )
+    assert re.search(r"(?<!math::)\bsqrt\(", cuda_code) is None, (
         f"a bare, unqualified sqrt(...) call remains in generated CUDA:\n{cuda_code}"
+    )
 
     result = device_compile(cuda_code, tmp_path).result
-    assert AMBIGUOUS_CALL[get_gpu_backend()] not in result.stderr, \
+    assert AMBIGUOUS_CALL[get_gpu_backend()] not in result.stderr, (
         f"generated np.sqrt(float16[N]) CUDA kernel regressed the sqrt ambiguity:\n{result.stderr}"
+    )
     assert result.returncode == 0, f"generated np.sqrt(float16[N]) CUDA kernel failed to compile:\n{result.stderr}"
 
 
 if __name__ == "__main__":
     import tempfile
     from pathlib import Path
-    for test in (test_the_dace_header_compiles_for_float16_device_code,
-                 test_a_naked_sqrt_of_float16_is_ambiguous_on_the_device,
-                 test_generated_float16_sqrt_is_qualified_and_compiles):
+
+    for test in (
+        test_the_dace_header_compiles_for_float16_device_code,
+        test_a_naked_sqrt_of_float16_is_ambiguous_on_the_device,
+        test_generated_float16_sqrt_is_qualified_and_compiles,
+    ):
         with tempfile.TemporaryDirectory() as d:
             test(Path(d))

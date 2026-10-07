@@ -35,6 +35,7 @@ for Efficient General SpMV on Modern Processors with Wide SIMD Units," SIAM J. S
 sparse symmetric matrices," ACM 1969 (vertex ordering); SC26 layout-algebra paper SS IV (sparse
 gather isolation: Pad width, Block rows, Permute ELL<->SELL).
 """
+
 import numpy
 import dace
 
@@ -143,11 +144,11 @@ def candidates():
 def pack_ell(arr, shape, nr, fill):
     """Lay the logical ``[NR, W]`` ELL matrix ``arr`` out into a candidate descriptor ``shape``:
 
-      * ``[NR, W]``        -- identity, plain copy.
-      * ``[NR, W + p]``    -- Pad: live columns first, ``p`` trailing ``fill`` lanes (never read).
-      * ``[W, NR]``        -- Permute (column-major SELL slab): transpose.
-      * ``[NR/T, W, T]``   -- Block (row axis tiled, tile grouped last): reshape ``[NR/T, T, W]`` then
-                              swap the tile axis to the end (mirrors k02.pack_a).
+    * ``[NR, W]``        -- identity, plain copy.
+    * ``[NR, W + p]``    -- Pad: live columns first, ``p`` trailing ``fill`` lanes (never read).
+    * ``[W, NR]``        -- Permute (column-major SELL slab): transpose.
+    * ``[NR/T, W, T]``   -- Block (row axis tiled, tile grouped last): reshape ``[NR/T, T, W]`` then
+                            swap the tile axis to the end (mirrors k02.pack_a).
     """
     if len(shape) == 2:
         if shape[0] == nr:  # row-major, possibly width-padded

@@ -7,6 +7,7 @@ granularity, giving ONE array ``P`` of shape ``[N/V, F, V]`` -- particle ``i``, 
 ``P[i//V, f, i%V]``. The kernels are run bit-exact against a numpy SoA oracle, with the input packed
 into the AoSoA array and the output unpacked back to per-field vectors.
 """
+
 import numpy
 import dace
 

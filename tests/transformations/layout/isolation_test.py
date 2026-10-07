@@ -3,6 +3,7 @@
 generated code must be a non-viable candidate, not a dead campaign -- and the OpenMP pool the
 parent's parallel kernels spun up must be torn down before the fork, or the child deadlocks on its
 first parallel region (libgomp, gcc's default, installs no pthread_atfork handler)."""
+
 import ctypes
 import time
 
@@ -11,8 +12,13 @@ import pytest
 
 import dace
 from dace.transformation.layout.brute_force import best, sweep
-from dace.transformation.layout.isolation import (OMP_PAUSE_MODES, OMP_RUNTIME_SONAMES, pause_openmp_pools,
-                                                  run_isolated, set_openmp_thread_count)
+from dace.transformation.layout.isolation import (
+    OMP_PAUSE_MODES,
+    OMP_RUNTIME_SONAMES,
+    pause_openmp_pools,
+    run_isolated,
+    set_openmp_thread_count,
+)
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.timing import compute_region_stats_timer
 
@@ -63,6 +69,7 @@ def omp_probe():
     then pin it. Forked so the parent's own thread count is left where the root conftest put it."""
     import ctypes
     import os
+
     for soname in OMP_RUNTIME_SONAMES:
         try:
             lib = ctypes.CDLL(soname)  # a plain load, not RTLD_NOLOAD: bring one up if none is
@@ -99,8 +106,9 @@ def test_set_openmp_thread_count_pins_a_runtime_that_already_read_the_environmen
     out = run_isolated(omp_probe)
     assert "error" not in out, out
     assert out["runtime"] is not None, "no OpenMP runtime on this machine, so there is no thread count to pin"
-    assert out["ignored"] == 4, (f"{out['runtime']}: expected the environment write to be ignored and the "
-                                 f"count to stay 4, got {out['ignored']}")
+    assert out["ignored"] == 4, (
+        f"{out['runtime']}: expected the environment write to be ignored and the count to stay 4, got {out['ignored']}"
+    )
     assert out["pinned"] is True, f"{out['runtime']}: set_openmp_thread_count reported the pin did not take"
     assert out["after"] == 1, f"{out['runtime']}: still at {out['after']} threads after the pin"
     assert out["env"] == "1", "the environment must also be set, for a runtime dlopened afterwards"

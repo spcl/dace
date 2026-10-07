@@ -17,20 +17,21 @@ default. PBLAS reads two of them:
 ``__dace_init_``: a symbol an initializer consumes is frozen at the first call,
 so a program whose grid came from there could only ever have one grid.
 """
+
 from typing import Any
 
 from dace.libraries.mpi.nodes.node import input_descriptor_name
 
 #: (integer type, state-field prefix) of each environment family.
-MKL_SPELLING = ('MKL_INT', '__mkl_scalapack')
-REF_SPELLING = ('int', '__scalapack')
+MKL_SPELLING = ("MKL_INT", "__mkl_scalapack")
+REF_SPELLING = ("int", "__scalapack")
 
 
 def resolve_comm(node: Any, state: Any) -> str:
     """The communicator a PBLAS node builds its BLACS grid on."""
-    if input_descriptor_name(node, state, '_comm'):
-        return '_comm'
-    return 'MPI_COMM_WORLD'
+    if input_descriptor_name(node, state, "_comm"):
+        return "_comm"
+    return "MPI_COMM_WORLD"
 
 
 def blacs_grid_code(mkl: bool, comm: str, prows: str, pcols: str) -> str:
@@ -60,14 +61,14 @@ def scalapack_grid_code(node: Any, state: Any, mkl: bool) -> str:
     ``__nprow`` x ``__npcol`` shape of that grid and the node's ``__myprow`` /
     ``__mypcol`` position in it."""
     itype, _ = MKL_SPELLING if mkl else REF_SPELLING
-    if input_descriptor_name(node, state, '_context'):
-        head = f'{itype} __ctxt = _context;'
+    if input_descriptor_name(node, state, "_context"):
+        head = f"{itype} __ctxt = _context;"
     else:
-        head = blacs_grid_code(mkl, resolve_comm(node, state), 'Py', 'Px')
+        head = blacs_grid_code(mkl, resolve_comm(node, state), "Py", "Px")
     if mkl:
-        gridinfo = 'blacs_gridinfo(&__ctxt, &__nprow, &__npcol, &__myprow, &__mypcol);'
+        gridinfo = "blacs_gridinfo(&__ctxt, &__nprow, &__npcol, &__myprow, &__mypcol);"
     else:
-        gridinfo = 'Cblacs_gridinfo(__ctxt, &__nprow, &__npcol, &__myprow, &__mypcol);'
+        gridinfo = "Cblacs_gridinfo(__ctxt, &__nprow, &__npcol, &__myprow, &__mypcol);"
     return f"""
         {head}
         {itype} __nprow, __npcol, __myprow, __mypcol;

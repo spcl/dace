@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Iteration-domain helpers shared by the fusion passes: exact trip counts and unit-step alignment."""
+
 import copy
 from typing import Any, Optional, Sequence, Tuple
 
@@ -55,7 +56,8 @@ def same_trip_count(first: Any, second: Any) -> bool:
 def equal_trip_counts(first: Sequence[RangeTriple], second: Sequence[RangeTriple]) -> bool:
     """Whether two ranges have the same number of dimensions and the same trip count in each."""
     return len(first) == len(second) and all(
-        same_trip_count(exact_trip_count(*a), exact_trip_count(*b)) for a, b in zip(first, second))
+        same_trip_count(exact_trip_count(*a), exact_trip_count(*b)) for a, b in zip(first, second)
+    )
 
 
 def loop_trip_count(loop: LoopRegion) -> Optional[Any]:
@@ -90,6 +92,7 @@ def align_maps_to_unit_step(state: SDFGState, first: nodes.MapEntry, second: nod
         return False
     # Deferred: the canonicalize package imports the fusion passes that import this module.
     from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
+
     trips = [exact_trip_count(*rng) for rng in first.map.range.ranges]
     normalizer = NormalizeLoopsAndMaps()
     normalizer._normalize_map(state, first)

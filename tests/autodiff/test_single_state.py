@@ -57,14 +57,14 @@ def _pin_reduce_to_pure(sdfg):
     what these tests already do for ONNX ops via ``donnx.default_implementation = "pure"``.
     """
     from dace.libraries.standard.nodes import Reduce
+
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, Reduce):
-                node.implementation = 'pure'
+                node.implementation = "pure"
 
 
 class SDFGBackwardRunner:
-
     def __init__(self, sdfg, target, simplify=True):
         if simplify:
             sdfg.simplify()
@@ -78,8 +78,7 @@ class SDFGBackwardRunner:
             for node in state.nodes():
                 if isinstance(node, nd.AccessNode):
                     arr = node.desc(sdfg)
-                    if (arr.dtype in [dace.float32, dace.float64] and not arr.transient
-                            and node.data not in seen_names):
+                    if arr.dtype in [dace.float32, dace.float64] and not arr.transient and node.data not in seen_names:
                         required_grads.append(node)
                         seen_names.add(node.data)
 
@@ -93,15 +92,16 @@ class SDFGBackwardRunner:
 
         for name, arr in self.sdfg.arrays.items():
             # Skip gradient target, dunder names, inputs, and transients
-            if (name == gradient_target or name.startswith("__") or name in inputs or arr.transient):
+            if name == gradient_target or name.startswith("__") or name in inputs or arr.transient:
                 continue
 
             dtype = getattr(np, arr.dtype.to_string())
             intermediate_arrs[name] = np.zeros(arr.shape, dtype=dtype)
 
         inputs.update(intermediate_arrs)
-        inputs["gradient_" + self.target] = np.ones((1, ),
-                                                    dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string()))
+        inputs["gradient_" + self.target] = np.ones(
+            (1,), dtype=getattr(np, self.sdfg.arrays[self.target].dtype.to_string())
+        )
 
         if is_gpu(device):
             # Isolate the GPU build folder from the CPU variant, lower the (already
@@ -621,10 +621,12 @@ def test_reshape_on_memlet_path():
 
 
 @pytest.mark.autodiff
-@run_correctness(xfail_gpu="dace.elementwise + StateFusion produces an '_elementwise__map' that "
-                 "violates the MapEntry/MapExit IN_/OUT_ connector pairing invariant, so GPU "
-                 "thread-block tiling (StripMining, sdfg/state.py:432) raises StopIteration. "
-                 "Pre-existing: this variant failed on the base branch too (different error).")
+@run_correctness(
+    xfail_gpu="dace.elementwise + StateFusion produces an '_elementwise__map' that "
+    "violates the MapEntry/MapExit IN_/OUT_ connector pairing invariant, so GPU "
+    "thread-block tiling (StripMining, sdfg/state.py:432) raises StopIteration. "
+    "Pre-existing: this variant failed on the base branch too (different error)."
+)
 def test_reshape_reuse_in_same_state():
     old_default = donnx.default_implementation
     donnx.default_implementation = "pure"
@@ -658,7 +660,9 @@ def test_reshape_reuse_in_same_state():
     return (
         SDFGBackwardRunner(sdfg, "__return", simplify=False),
         torch_func,
-        dict(inp=np.random.rand(9).astype(np.float64), ),
+        dict(
+            inp=np.random.rand(9).astype(np.float64),
+        ),
     )
 
 

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """LogP/LogGP cost analysis of an SDFG loop nest: time = max(total_bytes * G, total_messages * L / concurrency); see loggp.nest_memory_time."""
+
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List
 
@@ -8,25 +9,29 @@ import sympy as sp
 
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
 from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
-from dace.transformation.layout.cost_model.loggp import (LogGP, bandwidth_delay_product, nest_memory_time, regime)
+from dace.transformation.layout.cost_model.loggp import LogGP, bandwidth_delay_product, nest_memory_time, regime
 from dace.sdfg.narrowing import as_expr
 
 # LOCAL (free-for-now) storage: registers + GPU shared memory.
 LOCAL_STORAGE: FrozenSet[dace.dtypes.StorageType] = frozenset(
-    {dace.dtypes.StorageType.Register, dace.dtypes.StorageType.GPU_Shared})
+    {dace.dtypes.StorageType.Register, dace.dtypes.StorageType.GPU_Shared}
+)
 
 # Schedules whose iterations run concurrently (nest exposes MLP).
-PARALLEL_SCHEDULES: FrozenSet[dace.dtypes.ScheduleType] = frozenset({
-    dace.dtypes.ScheduleType.CPU_Multicore,
-    dace.dtypes.ScheduleType.GPU_Device,
-    dace.dtypes.ScheduleType.GPU_ThreadBlock,
-    dace.dtypes.ScheduleType.Default,
-})
+PARALLEL_SCHEDULES: FrozenSet[dace.dtypes.ScheduleType] = frozenset(
+    {
+        dace.dtypes.ScheduleType.CPU_Multicore,
+        dace.dtypes.ScheduleType.GPU_Device,
+        dace.dtypes.ScheduleType.GPU_ThreadBlock,
+        dace.dtypes.ScheduleType.Default,
+    }
+)
 
 
 @dataclass(frozen=True)
 class ArrayLogP:
     """The LogP cost a single array contributes per iteration of the nest."""
+
     array: str
     is_local: bool  # free: skipped in latency/bandwidth sums
     messages_per_iter: sp.Basic  # new blocks at REQUEST granularity (line): latency events
@@ -38,6 +43,7 @@ class ArrayLogP:
 @dataclass(frozen=True)
 class NestCounts:
     """TIER-0 result: structural block counts of one nest, no measured parameters."""
+
     total_iters: sp.Basic
     arrays: Dict[str, ArrayLogP]
     line_bytes: int
@@ -58,6 +64,7 @@ class NestCounts:
 @dataclass(frozen=True)
 class LoopNestLogP:
     """The LogP cost of one loop nest, in terms of the measured parameters ``p``."""
+
     total_iters: sp.Basic
     arrays: Dict[str, ArrayLogP]
     p: LogGP
@@ -88,13 +95,19 @@ class LoopNestLogP:
 
     def latency_per_iter(self) -> sp.Basic:
         """Latency per iteration at C=1: full L per message, global arrays only."""
-        return sp.Add(*[as_expr(a.messages_per_iter) * self.p.L
-                        for a in self._globals()]) if self._globals() else sp.Integer(0)
+        return (
+            sp.Add(*[as_expr(a.messages_per_iter) * self.p.L for a in self._globals()])
+            if self._globals()
+            else sp.Integer(0)
+        )
 
     def bandwidth_per_iter(self) -> sp.Basic:
         """Bandwidth term per iteration: the bytes that cross the channels times the per-byte gap."""
-        return sp.Add(*[as_expr(a.bytes_moved_per_iter) * self.p.G
-                        for a in self._globals()]) if self._globals() else sp.Integer(0)
+        return (
+            sp.Add(*[as_expr(a.bytes_moved_per_iter) * self.p.G for a in self._globals()])
+            if self._globals()
+            else sp.Integer(0)
+        )
 
     def time_per_iter(self) -> sp.Basic:
         """Serialised per-iteration cost L*messages + G*bytes; diagnostic ceiling, not a predictor."""
@@ -181,34 +194,40 @@ def dynamic_memlet_arrays(state: dace.SDFGState, map_entry: dace.nodes.MapEntry)
     return frozenset(names)
 
 
-def analyze_loop_nest(state: dace.SDFGState,
-                      map_entry: dace.nodes.MapEntry,
-                      p: LogGP,
-                      block_bytes: int = None,
-                      local_arrays: FrozenSet[str] = frozenset(),
-                      concurrency: float = None,
-                      n_cores: int = None,
-                      replayed_counts: Dict[str, tuple] = None) -> LoopNestLogP:
+def analyze_loop_nest(
+    state: dace.SDFGState,
+    map_entry: dace.nodes.MapEntry,
+    p: LogGP,
+    block_bytes: int = None,
+    local_arrays: FrozenSet[str] = frozenset(),
+    concurrency: float = None,
+    n_cores: int = None,
+    replayed_counts: Dict[str, tuple] = None,
+) -> LoopNestLogP:
     """LogP cost of the perfectly-nested map scope at ``map_entry``; ``replayed_counts`` required for arrays behind a dynamic memlet."""
     if concurrency is None:
         concurrency = exposed_concurrency(state, map_entry, p, n_cores)
     line_bytes = block_bytes if block_bytes is not None else p.line_bytes
     sector_bytes = block_bytes if block_bytes is not None else p.sector_bytes
-    counts = count_loop_nest(state,
-                             map_entry,
-                             line_bytes=line_bytes,
-                             sector_bytes=sector_bytes,
-                             local_arrays=local_arrays,
-                             replayed_counts=replayed_counts)
+    counts = count_loop_nest(
+        state,
+        map_entry,
+        line_bytes=line_bytes,
+        sector_bytes=sector_bytes,
+        local_arrays=local_arrays,
+        replayed_counts=replayed_counts,
+    )
     return LoopNestLogP(total_iters=counts.total_iters, arrays=counts.arrays, p=p, concurrency=concurrency)
 
 
-def count_loop_nest(state: dace.SDFGState,
-                    map_entry: dace.nodes.MapEntry,
-                    line_bytes: int = 64,
-                    sector_bytes: int = None,
-                    local_arrays: FrozenSet[str] = frozenset(),
-                    replayed_counts: Dict[str, tuple] = None) -> NestCounts:
+def count_loop_nest(
+    state: dace.SDFGState,
+    map_entry: dace.nodes.MapEntry,
+    line_bytes: int = 64,
+    sector_bytes: int = None,
+    local_arrays: FrozenSet[str] = frozenset(),
+    replayed_counts: Dict[str, tuple] = None,
+) -> NestCounts:
     """TIER-0 structural block counts of the nest, no LogGP parameters; requires ``replayed_counts`` for dynamic memlets."""
     sdfg = state.sdfg
     if sector_bytes is None:
@@ -219,9 +238,13 @@ def count_loop_nest(state: dace.SDFGState,
     total_iters = sp.Integer(1)
     for nest in loop_ranges:
         for begin, end, step in nest.values():
-            total_iters *= dace.symbolic.int_floor(
-                as_expr(dace.symbolic.pystr_to_symbolic(end)) - as_expr(dace.symbolic.pystr_to_symbolic(begin)),
-                dace.symbolic.pystr_to_symbolic(step)) + 1
+            total_iters *= (
+                dace.symbolic.int_floor(
+                    as_expr(dace.symbolic.pystr_to_symbolic(end)) - as_expr(dace.symbolic.pystr_to_symbolic(begin)),
+                    dace.symbolic.pystr_to_symbolic(step),
+                )
+                + 1
+            )
 
     dynamic = dynamic_memlet_arrays(state, map_entry)
     written = written_arrays(state, map_entry)
@@ -243,10 +266,12 @@ def count_loop_nest(state: dace.SDFGState,
             messages, sectors = map(sp.sympify, replayed_counts[name])
         elif name in dynamic:
             # dynamic memlet subset is whole-array; scoring it would mis-price a gather as one read
-            raise ValueError(f"array {name!r} is accessed through a dynamic (data-dependent) memlet; its block "
-                             f"counts are not statically derivable. Replay the materialized index array with "
-                             f"blocks_touched.replayed_blocks_touched and pass the chosen bound via "
-                             f"replayed_counts={{'{name}': (messages_per_iter, sectors_per_iter)}}.")
+            raise ValueError(
+                f"array {name!r} is accessed through a dynamic (data-dependent) memlet; its block "
+                f"counts are not statically derivable. Replay the materialized index array with "
+                f"blocks_touched.replayed_blocks_touched and pass the chosen bound via "
+                f"replayed_counts={{'{name}': (messages_per_iter, sectors_per_iter)}}."
+            )
         else:
             # element wider than granularity spans multiple blocks; multiply span back in
             line_elems = max(1, line_bytes // dtype_bytes)
@@ -255,8 +280,10 @@ def count_loop_nest(state: dace.SDFGState,
             sector_span = max(1, -(-dtype_bytes // sector_bytes))
             messages = average_blocks_touched(state, loop_ranges, {name: subset}, line_elems).get(name)
             if messages is None:
-                raise ValueError(f"array {name!r}: blocks_touched cannot reduce its access subset "
-                                 f"{subset}; refusing to silently drop its cost from the nest")
+                raise ValueError(
+                    f"array {name!r}: blocks_touched cannot reduce its access subset "
+                    f"{subset}; refusing to silently drop its cost from the nest"
+                )
             messages = as_expr(messages) * line_span
             if sector_elems == line_elems and sector_span == line_span:
                 sectors = messages
@@ -270,10 +297,9 @@ def count_loop_nest(state: dace.SDFGState,
         bytes_moved = sectors * sector_bytes * write_factor
         arrays[name] = ArrayLogP(name, False, messages, sectors, bytes_moved)
 
-    return NestCounts(total_iters=sp.simplify(total_iters),
-                      arrays=arrays,
-                      line_bytes=line_bytes,
-                      sector_bytes=sector_bytes)
+    return NestCounts(
+        total_iters=sp.simplify(total_iters), arrays=arrays, line_bytes=line_bytes, sector_bytes=sector_bytes
+    )
 
 
 def sign_of(expr: sp.Basic) -> str:

@@ -7,6 +7,7 @@ parameter: the nested SDFG carries it in ``symbol_mapping``. Fusion has to keep 
 while it renames the producer's parameters and replicates the body inside the consumer, and it has
 to decline outright when the producer's write does not pin the parameter down at all.
 """
+
 import numpy as np
 
 import dace
@@ -15,7 +16,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.finalize import recompute_fuse_for_gpu
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def scaling_body(name: str, param: str, whole_range: bool) -> dace.SDFG:
@@ -29,35 +30,33 @@ def scaling_body(name: str, param: str, whole_range: bool) -> dace.SDFG:
     body = dace.SDFG(name)
     body.add_symbol(param, dace.int64)
     shape = [N] if whole_range else [1]
-    body.add_array('src', shape, dace.float64)
-    body.add_array('dst', shape, dace.float64)
-    state = body.add_state('single_state_body')
-    tasklet = state.add_tasklet(name, {'inp'}, {'res'}, f'res = inp * ({param} + 1)')
-    index = param if whole_range else '0'
-    state.add_edge(state.add_access('src'), None, tasklet, 'inp', Memlet(f'src[{index}]'))
-    state.add_edge(tasklet, 'res', state.add_access('dst'), None, Memlet(f'dst[{index}]'))
+    body.add_array("src", shape, dace.float64)
+    body.add_array("dst", shape, dace.float64)
+    state = body.add_state("single_state_body")
+    tasklet = state.add_tasklet(name, {"inp"}, {"res"}, f"res = inp * ({param} + 1)")
+    index = param if whole_range else "0"
+    state.add_edge(state.add_access("src"), None, tasklet, "inp", Memlet(f"src[{index}]"))
+    state.add_edge(tasklet, "res", state.add_access("dst"), None, Memlet(f"dst[{index}]"))
     return body
 
 
 def producer_consumer_sdfg(whole_range: bool) -> dace.SDFG:
     """``t = a * (i + 1)`` then ``out = t * (j + 1)``, both map bodies nested SDFGs."""
-    sdfg = dace.SDFG(f'nested_producer_{"whole" if whole_range else "element"}')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('out', [N], dace.float64)
-    sdfg.add_transient('t', [N], dace.float64)
-    state = sdfg.add_state('state')
-    a_node, t_node, out_node = (state.add_access(name) for name in ('a', 't', 'out'))
+    sdfg = dace.SDFG(f"nested_producer_{'whole' if whole_range else 'element'}")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("t", [N], dace.float64)
+    state = sdfg.add_state("state")
+    a_node, t_node, out_node = (state.add_access(name) for name in ("a", "t", "out"))
 
-    for param, src, dst, src_node, dst_node in (('i', 'a', 't', a_node, t_node), ('j', 't', 'out', t_node, out_node)):
-        entry, exit_node = state.add_map(f'{dst}_map', {param: f'0:{N}'})
-        body = state.add_nested_sdfg(scaling_body(f'{dst}_body', param, whole_range), {'src'}, {'dst'},
-                                     symbol_mapping={
-                                         param: param,
-                                         'N': N
-                                     })
-        subset = f'0:{N}' if whole_range else param
-        state.add_memlet_path(src_node, entry, body, dst_conn='src', memlet=Memlet(f'{src}[{subset}]'))
-        state.add_memlet_path(body, exit_node, dst_node, src_conn='dst', memlet=Memlet(f'{dst}[{subset}]'))
+    for param, src, dst, src_node, dst_node in (("i", "a", "t", a_node, t_node), ("j", "t", "out", t_node, out_node)):
+        entry, exit_node = state.add_map(f"{dst}_map", {param: f"0:{N}"})
+        body = state.add_nested_sdfg(
+            scaling_body(f"{dst}_body", param, whole_range), {"src"}, {"dst"}, symbol_mapping={param: param, "N": N}
+        )
+        subset = f"0:{N}" if whole_range else param
+        state.add_memlet_path(src_node, entry, body, dst_conn="src", memlet=Memlet(f"{src}[{subset}]"))
+        state.add_memlet_path(body, exit_node, dst_node, src_conn="dst", memlet=Memlet(f"{dst}[{subset}]"))
 
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
@@ -69,13 +68,14 @@ def assert_symbols_bound(sdfg: dace.SDFG) -> None:
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             missing = [s for s in node.sdfg.free_symbols if s not in node.symbol_mapping]
-            assert not missing, f'nested SDFG {node.label} reads unbound {missing}'
+            assert not missing, f"nested SDFG {node.label} reads unbound {missing}"
 
 
 def materializes_intermediate(sdfg: dace.SDFG) -> bool:
     """Whether ``t`` is still written to memory (the descriptor outlives the fusion either way)."""
     return any(
-        isinstance(node, nodes.AccessNode) and node.data == 't' for state in sdfg.states() for node in state.nodes())
+        isinstance(node, nodes.AccessNode) and node.data == "t" for state in sdfg.states() for node in state.nodes()
+    )
 
 
 def run(sdfg: dace.SDFG, n: int = 24) -> None:
@@ -84,7 +84,7 @@ def run(sdfg: dace.SDFG, n: int = 24) -> None:
     a = rng.random(n)
     out = np.zeros(n)
     sdfg(a=a, out=out, N=n)
-    assert np.allclose(out, a * (np.arange(n) + 1.0)**2)
+    assert np.allclose(out, a * (np.arange(n) + 1.0) ** 2)
 
 
 def test_element_wise_nested_producer_is_fused():
@@ -114,6 +114,6 @@ def test_whole_range_nested_producer_is_not_fused():
     run(sdfg)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_element_wise_nested_producer_is_fused()
     test_whole_range_nested_producer_is_not_fused()

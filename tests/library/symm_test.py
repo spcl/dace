@@ -9,6 +9,7 @@ reference builds the full symmetric matrix and compares against dense numpy.
 scalar connectors (``_alpha`` / ``_beta``); the vendor path is exercised on the CPU
 (OpenBLAS / MKL) and, with device-resident operands, on the GPU (cuBLAS).
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -51,11 +52,10 @@ def _device_wrap(sdfg, state, mats):
         dev = name + "_dev"
         sdfg.add_datadesc(
             dev,
-            dace.data.Array(desc.dtype,
-                            desc.shape,
-                            storage=dace.StorageType.GPU_Global,
-                            transient=True,
-                            strides=desc.strides))
+            dace.data.Array(
+                desc.dtype, desc.shape, storage=dace.StorageType.GPU_Global, transient=True, strides=desc.strides
+            ),
+        )
         for n in state.data_nodes():
             if n.data == name:
                 n.data = dev
@@ -91,13 +91,15 @@ def _make_sdfg(dtype, m, n, alpha, beta, side, uplo, impl, alpha_rt=False, beta_
     if beta_rt:
         sdfg.add_array("beta", [1], dtype)
     state = sdfg.add_state()
-    node = Symm("symm",
-                side=side,
-                uplo=uplo,
-                alpha=1 if alpha_rt else alpha,
-                beta=1 if beta_rt else beta,
-                alpha_input=alpha_rt,
-                beta_input=beta_rt)
+    node = Symm(
+        "symm",
+        side=side,
+        uplo=uplo,
+        alpha=1 if alpha_rt else alpha,
+        beta=1 if beta_rt else beta,
+        alpha_input=alpha_rt,
+        beta_input=beta_rt,
+    )
     node.implementation = impl
     if gpu:
         # Device operands + host coefficient scalars leave the node schedule ambiguous
@@ -129,7 +131,7 @@ _IMPLS = ["pure", "OpenBLAS", pytest.param("MKL", marks=pytest.mark.mkl), pytest
 def test_symm(impl, side, uplo, alpha, beta):
     m, n = 12, 9
     rng = np.random.default_rng(0)
-    A = np.ascontiguousarray(rng.random((m if side == "L" else n, ) * 2))
+    A = np.ascontiguousarray(rng.random((m if side == "L" else n,) * 2))
     B = rng.random((m, n))
     C = rng.random((m, n))
     ref = _reference(A, B, C, alpha, beta, side, uplo)
@@ -150,7 +152,7 @@ def test_symm_runtime_coeffs(impl, side, uplo, beta_input):
     m, n = 12, 9
     alpha, beta = 1.5, (1.2 if beta_input else 0.0)
     rng = np.random.default_rng(1)
-    A = np.ascontiguousarray(rng.random((m if side == "L" else n, ) * 2))
+    A = np.ascontiguousarray(rng.random((m if side == "L" else n,) * 2))
     B = rng.random((m, n))
     C = rng.random((m, n))
     ref = _reference(A, B, C, alpha, beta, side, uplo)

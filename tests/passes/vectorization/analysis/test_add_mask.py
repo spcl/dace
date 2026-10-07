@@ -8,6 +8,7 @@ intentionally no typeclass tag or descriptor flag — passes detect masks from
 the graph topology around them, not from a property on the descriptor. These
 tests pin that representation.
 """
+
 import dace
 import pytest
 
@@ -18,7 +19,7 @@ def test_add_mask_creates_bool_register_transient_with_correct_shape():
     assert name in sdfg.arrays
     arr = sdfg.arrays[name]
     assert isinstance(arr, dace.data.Array)
-    assert tuple(arr.shape) == (8, )
+    assert tuple(arr.shape) == (8,)
     assert arr.dtype == dace.bool_
     assert arr.storage == dace.dtypes.StorageType.Register
     assert arr.transient is True
@@ -26,11 +27,11 @@ def test_add_mask_creates_bool_register_transient_with_correct_shape():
 
 def test_add_mask_avoids_collisions_via_find_new_name():
     sdfg = dace.SDFG("m_add_mask_avoids_collisions_via_find_new_name")
-    sdfg.add_array("_mask", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("_mask", shape=(1,), dtype=dace.float64)
     name = dace.data.add_mask(sdfg, "_mask", vector_width=4)
     assert name != "_mask"
     assert sdfg.arrays[name].dtype == dace.bool_
-    assert tuple(sdfg.arrays[name].shape) == (4, )
+    assert tuple(sdfg.arrays[name].shape) == (4,)
     assert sdfg.arrays["_mask"].dtype == dace.float64
 
 
@@ -61,4 +62,4 @@ def test_add_mask_can_be_allocated_multiple_times_independently():
     assert len({a, b, c}) == 3
     for n in (a, b, c):
         assert sdfg.arrays[n].dtype == dace.bool_
-        assert tuple(sdfg.arrays[n].shape) == (8, )
+        assert tuple(sdfg.arrays[n].shape) == (8,)

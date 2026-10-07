@@ -4,6 +4,7 @@
 libstdc++ runs them on TBB when TBB is installed, and then the program must link it; without TBB it
 falls back to a serial backend that needs no library.
 """
+
 import ctypes.util
 
 import dace.library
@@ -18,12 +19,12 @@ class ParallelSTL:
     cmake_packages: List[str] = []
     cmake_variables: Dict[str, str] = {}
     cmake_includes: List[str] = []
-    cmake_libraries = ['tbb'] if ctypes.util.find_library('tbb') else []
+    cmake_libraries = ["tbb"] if ctypes.util.find_library("tbb") else []
     cmake_compile_flags: List[str] = []
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': ['algorithm', 'execution']}
+    headers = {"frame": ["algorithm", "execution"]}
     state_fields: List[str] = []
     init_code = ""
     finalize_code = ""

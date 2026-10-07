@@ -13,6 +13,7 @@ SDFG's contents and its owner's descriptors of names that state uses. An applica
 rewrites ``T`` (any state split off it is new) and thereby the contents of ``T``'s SDFG, which is what the
 state holding that SDFG's own node reads; refusals on ``T`` and its ancestors are dropped.
 """
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
@@ -44,6 +45,7 @@ def ancestor_blocks(state: SDFGState) -> List[Any]:
 @dataclass(slots=True)
 class Walk:
     """One fixpoint's probes and the refusals still known to hold."""
+
     probes: List[Probe]
     #: States whose every candidate was refused, with their nested SDFG nodes in node order.
     clean_states: Dict[SDFGState, List[nodes.NestedSDFG]] = field(default_factory=dict)
@@ -90,25 +92,32 @@ class Walk:
             self.clean_states.pop(block, None)
 
 
-def accepts(xform: transformation.SingleStateTransformation, pattern_node: transformation.PatternNode[nodes.NestedSDFG],
-            state: SDFGState, node: nodes.NestedSDFG) -> bool:
+def accepts(
+    xform: transformation.SingleStateTransformation,
+    pattern_node: transformation.PatternNode[nodes.NestedSDFG],
+    state: SDFGState,
+    node: nodes.NestedSDFG,
+) -> bool:
     owner = state.sdfg
     # Bound by node OBJECT: ``PatternNode.__get__`` returns a non-int as-is, so no node index is resolved.
     xform.setup_match(owner, 0, -1, {pattern_node: node}, 0, override=True)
     try:
         return xform.can_be_applied(state, 0, owner, permissive=False)
     except Exception as exception:
-        if Config.get_bool('optimizer', 'match_exception'):
+        if Config.get_bool("optimizer", "match_exception"):
             raise
-        print(f'WARNING: {type(xform).__name__}::can_be_applied triggered a '
-              f'{type(exception).__name__} exception: {exception}')
+        print(
+            f"WARNING: {type(xform).__name__}::can_be_applied triggered a "
+            f"{type(exception).__name__} exception: {exception}"
+        )
         return False
 
 
 @transformation.explicit_cf_compatible
 class PruneAndInlineNestedSDFGs(ppl.Pass):
     """Apply ``PruneConnectors`` and ``InlineSDFG`` at every nested SDFG they accept, to a fixpoint."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return PruneConnectors().modifies() | InlineSDFG().modifies()

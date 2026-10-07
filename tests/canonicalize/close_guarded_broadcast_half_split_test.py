@@ -30,6 +30,7 @@ than on the empty-loop case being overlooked.
 Companion of ``close_guarded_back_peel_split_test.py`` (the affine-in-trip back-peel split); the
 guard-PRESERVING cases live in ``strengthen2_parallelization_prep_test.py``.
 """
+
 import numpy as np
 import pytest
 
@@ -39,7 +40,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling
 
-LEN_1D = dace.symbol('LEN_1D', nonnegative=True)
+LEN_1D = dace.symbol("LEN_1D", nonnegative=True)
 
 
 @dace.program
@@ -78,8 +79,8 @@ def _guarded_fallback_loops(sdfg) -> int:
 def test_provably_nonneg_symbolic_discharges_the_floor_membership_sides():
     """Both sides of the ``x = int_floor(N, 2)`` membership hold for every ``N >= 0``."""
     peel = BestEffortLoopPeeling(peel_limit=4)
-    n = dace.symbolic.pystr_to_symbolic('LEN_1D')
-    x = dace.symbolic.pystr_to_symbolic('int_floor(LEN_1D, 2)')
+    n = dace.symbolic.pystr_to_symbolic("LEN_1D")
+    x = dace.symbolic.pystr_to_symbolic("int_floor(LEN_1D, 2)")
     # after side: start <= x, i.e. int_floor(N, 2) - 0 >= 0.
     assert peel._provably_nonneg_symbolic(x) is True
     # before side against the TRUE bound: x <= end + 1, i.e. (N-1) + 1 - int_floor(N, 2) >= 0.
@@ -89,8 +90,8 @@ def test_provably_nonneg_symbolic_discharges_the_floor_membership_sides():
 def test_provably_nonneg_symbolic_rejects_the_over_strict_bound_and_false_claims():
     """Soundness: the prover must NOT prove things that are false for some nonnegative ``N``."""
     peel = BestEffortLoopPeeling(peel_limit=4)
-    n = dace.symbolic.pystr_to_symbolic('LEN_1D')
-    x = dace.symbolic.pystr_to_symbolic('int_floor(LEN_1D, 2)')
+    n = dace.symbolic.pystr_to_symbolic("LEN_1D")
+    x = dace.symbolic.pystr_to_symbolic("int_floor(LEN_1D, 2)")
     # The STRICTER (historical) bound ``x <= end`` is genuinely false at N == 0 (0 <= -1), so it
     # must stay unproven -- this is what forces the closure onto the correct ``x <= end + 1``.
     assert peel._provably_nonneg_symbolic((n - 1) - x) is False
@@ -99,7 +100,7 @@ def test_provably_nonneg_symbolic_rejects_the_over_strict_bound_and_false_claims
     assert peel._provably_nonneg_symbolic(n - 5) is False
     assert peel._provably_nonneg_symbolic(x - (n - 1)) is False
     # A free (unbounded-above) offset must not be provable either.
-    k = dace.symbolic.pystr_to_symbolic('KOFF')
+    k = dace.symbolic.pystr_to_symbolic("KOFF")
     assert peel._provably_nonneg_symbolic(n - k) is False
 
 
@@ -111,20 +112,22 @@ def test_split_range_relations_are_fully_discharged():
     loop = loops[0]
     peel = BestEffortLoopPeeling(peel_limit=4)
     found = peel._best_split_for(loop, sdfg)
-    assert found is not None, 'expected an index-set split point for the broadcast-conflict loop'
+    assert found is not None, "expected an index-set split point for the broadcast-conflict loop"
     x, middle_singleton, _guarded = found
     # A broadcast conflict is one iteration wide, so this is the carve-a-singleton family, not the
     # two-way range-guard split (715dfeb83).
-    assert middle_singleton is True, 'broadcast-conflict split must carve the single conflicting iteration'
+    assert middle_singleton is True, "broadcast-conflict split must carve the single conflicting iteration"
     # The split point is the broadcast index itself, int_floor(LEN_1D, 2).
-    assert dace.symbolic.simplify(x - dace.symbolic.pystr_to_symbolic('int_floor(LEN_1D, 2)')) == 0, \
-        f'split point should be int_floor(LEN_1D, 2), got {x}'
+    assert dace.symbolic.simplify(x - dace.symbolic.pystr_to_symbolic("int_floor(LEN_1D, 2)")) == 0, (
+        f"split point should be int_floor(LEN_1D, 2), got {x}"
+    )
     # Compared through the same untagged parse path as ``x`` above, so the assumption-tagged
     # symbol copies cancel (the module-level ``LEN_1D`` carries ``nonnegative=True``).
     end = loop_analysis.get_loop_end(loop)
-    assert dace.symbolic.simplify(end - dace.symbolic.pystr_to_symbolic('LEN_1D - 1')) == 0, \
-        f'loop end should be LEN_1D - 1, got {end}'
-    assert peel._split_range_relations(loop, x) == frozenset(), 'both membership sides must be provable'
+    assert dace.symbolic.simplify(end - dace.symbolic.pystr_to_symbolic("LEN_1D - 1")) == 0, (
+        f"loop end should be LEN_1D - 1, got {end}"
+    )
+    assert peel._split_range_relations(loop, x) == frozenset(), "both membership sides must be provable"
 
 
 def test_broadcast_split_drops_the_pinned_sequential_fallback():
@@ -133,11 +136,11 @@ def test_broadcast_split_drops_the_pinned_sequential_fallback():
     assert len(_loops(sdfg)) == 1
     BestEffortLoopPeeling(peel_limit=4).apply_pass(sdfg, {})
     sdfg.validate()
-    assert _guarded_fallback_loops(sdfg) == 0, 'the pinned sequential fallback must be dropped'
-    assert not any(r.pinned_sequential for r in _loops(sdfg)), 'no pinned-sequential loop may survive'
+    assert _guarded_fallback_loops(sdfg) == 0, "the pinned sequential fallback must be dropped"
+    assert not any(r.pinned_sequential for r in _loops(sdfg)), "no pinned-sequential loop may survive"
 
 
-@pytest.mark.parametrize('n', [0, 1, 2, 3, 5, 128])
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 5, 128])
 def test_broadcast_split_is_bit_exact_including_the_edge_trip_counts(n):
     """The unconditionally-split form reproduces the sequential result BIT-EXACTLY.
 
@@ -157,14 +160,14 @@ def test_broadcast_split_is_bit_exact_including_the_edge_trip_counts(n):
 
     got = a0.copy()
     sdfg.compile()(a=got, b=b.copy(), LEN_1D=n)
-    assert np.array_equal(got, ref), f'split form must match the sequential meaning bit-exactly at n={n}'
+    assert np.array_equal(got, ref), f"split form must match the sequential meaning bit-exactly at n={n}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_provably_nonneg_symbolic_discharges_the_floor_membership_sides()
     test_provably_nonneg_symbolic_rejects_the_over_strict_bound_and_false_claims()
     test_split_range_relations_are_fully_discharged()
     test_broadcast_split_drops_the_pinned_sequential_fallback()
     for _n in [0, 1, 2, 3, 5, 128]:
         test_broadcast_split_is_bit_exact_including_the_edge_trip_counts(_n)
-    print('OK')
+    print("OK")

@@ -30,6 +30,7 @@ map, or an inner range that depends on the outer parameters is refused, leaving 
 untouched. The inner map's last parameter must be the one that indexes the unit-stride
 dimension of the device-memory accesses in its body, and no outer parameter may index it.
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -66,8 +67,9 @@ def unit_stride_param(state: SDFGState, sdfg: SDFG, outer: nodes.MapEntry, inner
     return found[0] if len(found) == 1 else None
 
 
-def exits_adjacent(state: SDFGState, outer_exit: nodes.MapExit, inner_exit: nodes.MapExit,
-                   prologue: List[nodes.Node]) -> bool:
+def exits_adjacent(
+    state: SDFGState, outer_exit: nodes.MapExit, inner_exit: nodes.MapExit, prologue: List[nodes.Node]
+) -> bool:
     if any(e.dst is not outer_exit or e.data.wcr is not None for e in state.out_edges(inner_exit)):
         return False
     return all(e.src is inner_exit or (e.src in prologue and e.data.is_empty()) for e in state.in_edges(outer_exit))
@@ -80,7 +82,8 @@ def forwards(state: SDFGState, node: nodes.Node, outer: nodes.MapEntry, inner: n
     ends_ok = state.in_edges(node)[0].src is outer and all(e.dst is inner for e in state.out_edges(node))
     return ends_ok and all(
         not e.data.is_empty() and e.data.data == node.data and e.data.other_subset is None and e.data.wcr is None
-        for e in edges)
+        for e in edges
+    )
 
 
 def written_in_scope(state: SDFGState, outer: nodes.MapEntry) -> OrderedSet:
@@ -108,20 +111,28 @@ def sinkable_node(sdfg: SDFG, node: nodes.Node, members: List[nodes.Node]) -> bo
     if not isinstance(node, nodes.AccessNode):
         return False
     desc = node.desc(sdfg)
-    return (desc.transient and desc.total_size == 1 and desc.storage in SINKABLE_STORAGE
-            and private_to(sdfg, node.data, members))
+    return (
+        desc.transient
+        and desc.total_size == 1
+        and desc.storage in SINKABLE_STORAGE
+        and private_to(sdfg, node.data, members)
+    )
 
 
-def sink_edges_legal(state: SDFGState, node: nodes.Node, members: List[nodes.Node], ends: Tuple[nodes.Node, ...],
-                     written: OrderedSet) -> bool:
+def sink_edges_legal(
+    state: SDFGState, node: nodes.Node, members: List[nodes.Node], ends: Tuple[nodes.Node, ...], written: OrderedSet
+) -> bool:
     outer, inner, outer_exit = ends
     for edge in state.in_edges(node):
         if edge.data.wcr is not None or (edge.src is not outer and edge.src not in members):
             return False
         if edge.src is not outer or edge.data.is_empty():
             continue
-        if edge.data.data in written or not isinstance(node, nodes.Tasklet) or required(
-                edge.data.subset).num_elements() != 1:
+        if (
+            edge.data.data in written
+            or not isinstance(node, nodes.Tasklet)
+            or required(edge.data.subset).num_elements() != 1
+        ):
             return False
     for edge in state.out_edges(node):
         if edge.data.wcr is not None:
@@ -136,8 +147,9 @@ def sink_edges_legal(state: SDFGState, node: nodes.Node, members: List[nodes.Nod
     return True
 
 
-def sink_plan(state: SDFGState, sdfg: SDFG, ends: Tuple[nodes.Node, ...],
-              prologue: List[nodes.Node]) -> Optional[Tuple[List[nodes.Node], List[nodes.Node]]]:
+def sink_plan(
+    state: SDFGState, sdfg: SDFG, ends: Tuple[nodes.Node, ...], prologue: List[nodes.Node]
+) -> Optional[Tuple[List[nodes.Node], List[nodes.Node]]]:
     outer, inner, _ = ends
     forwarded = [n for n in prologue if forwards(state, n, outer, inner)]
     sunk = [n for n in prologue if n not in forwarded]
@@ -166,21 +178,21 @@ def sink_node(state: SDFGState, node: nodes.Node, ends: Tuple[nodes.Node, ...], 
             redirect_edge(state, edge, new_src=inner)
             continue
         conn = inner.next_connector()
-        inner.add_in_connector('IN_' + conn)
-        inner.add_out_connector('OUT_' + conn)
-        state.add_edge(outer, edge.src_conn, inner, 'IN_' + conn, copy.deepcopy(edge.data))
-        redirect_edge(state, edge, new_src=inner, new_src_conn='OUT_' + conn)
+        inner.add_in_connector("IN_" + conn)
+        inner.add_out_connector("OUT_" + conn)
+        state.add_edge(outer, edge.src_conn, inner, "IN_" + conn, copy.deepcopy(edge.data))
+        redirect_edge(state, edge, new_src=inner, new_src_conn="OUT_" + conn)
     for edge in list(state.out_edges(node)):
         if edge.dst is outer_exit:
             redirect_edge(state, edge, new_dst=inner_exit)
         elif edge.dst is inner:
             if not edge.data.is_empty():
-                conn = edge.dst_conn[len('IN_'):]
-                for use in list(state.out_edges_by_connector(inner, 'OUT_' + conn)):
+                conn = edge.dst_conn[len("IN_") :]
+                for use in list(state.out_edges_by_connector(inner, "OUT_" + conn)):
                     state.add_edge(node, edge.src_conn, use.dst, use.dst_conn, copy.deepcopy(use.data))
                     state.remove_edge(use)
                 inner.remove_in_connector(edge.dst_conn)
-                inner.remove_out_connector('OUT_' + conn)
+                inner.remove_out_connector("OUT_" + conn)
             state.remove_edge(edge)
 
 
@@ -189,7 +201,7 @@ class ContiguousAxisToThreads(ppl.Pass):
     """Collapse ``GPU_Device map k { per-k work; map l }`` into ``GPU_Device map [k, l]`` when ``l``
     indexes the unit-stride dimension, sinking the per-k work into the lanes."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -207,7 +219,7 @@ class ContiguousAxisToThreads(ppl.Pass):
             return False
         outer_exit, inner_exit = state.exit_node(outer), state.exit_node(inner)
         prologue = [c for c in children if c not in (inner, inner_exit, outer_exit)]
-        if any(not c.startswith('IN_') for c in inner.in_connectors):
+        if any(not c.startswith("IN_") for c in inner.in_connectors):
             return False
         if any(OrderedSet(map(str, symbolic.symlist(rng))) & OrderedSet(outer.map.params) for rng in inner.map.range):
             return False
@@ -229,16 +241,16 @@ class ContiguousAxisToThreads(ppl.Pass):
                 state.add_edge(inner, None, node, None, Memlet())
             if state.out_degree(node) == 0:
                 state.add_edge(node, None, inner_exit, None, Memlet())
-        collapse.setup_match(sdfg,
-                             state.parent_graph.cfg_id,
-                             state.block_id, {
-                                 MapCollapse.outer_map_entry: outer,
-                                 MapCollapse.inner_map_entry: inner
-                             },
-                             0,
-                             override=True)
+        collapse.setup_match(
+            sdfg,
+            state.parent_graph.cfg_id,
+            state.block_id,
+            {MapCollapse.outer_map_entry: outer, MapCollapse.inner_map_entry: inner},
+            0,
+            override=True,
+        )
         if not collapse.can_be_applied(state, 0, sdfg, permissive=True):
-            raise RuntimeError(f'{outer.map.label}: MapCollapse refused a nest this pass made perfect')
+            raise RuntimeError(f"{outer.map.label}: MapCollapse refused a nest this pass made perfect")
         collapse.apply(state, sdfg)
         return True
 
@@ -255,7 +267,10 @@ class ContiguousAxisToThreads(ppl.Pass):
             for state in sd.states():
                 scope = state.scope_dict()
                 kernels = [
-                    n for n in state.nodes() if isinstance(n, nodes.MapEntry) and scope[n] is None
+                    n
+                    for n in state.nodes()
+                    if isinstance(n, nodes.MapEntry)
+                    and scope[n] is None
                     and n.map.schedule == dtypes.ScheduleType.GPU_Device
                 ]
                 collapsed += sum(self.promote(state, sd, k, collapse) for k in kernels)

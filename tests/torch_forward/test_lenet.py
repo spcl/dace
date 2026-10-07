@@ -15,7 +15,6 @@ from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class LeNet(nn.Module):
-
     def __init__(self):
         super(LeNet, self).__init__()
         self.conv1 = nn.Conv2d(1, 6, (3, 3))
@@ -48,10 +47,12 @@ def test_lenet(use_cpp_dispatcher: bool, device):
     dace_net = LeNet()
     dace_net.load_state_dict(net.state_dict())
     dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
-    dace_net = DaceModule(dace_net,
-                          sdfg_name=f"test_lenet_{dispatcher_suffix}_{device}",
-                          compile_torch_extension=use_cpp_dispatcher,
-                          cuda=is_gpu(device))
+    dace_net = DaceModule(
+        dace_net,
+        sdfg_name=f"test_lenet_{dispatcher_suffix}_{device}",
+        compile_torch_extension=use_cpp_dispatcher,
+        cuda=is_gpu(device),
+    )
 
     torch_output = net(torch.clone(input))
     with experimental_cuda():

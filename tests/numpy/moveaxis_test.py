@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``numpy.moveaxis``, which lowers as the axis permutation it is."""
+
 import numpy as np
 import dace
 from common import compare_numpy_output
 
 from dace.sdfg.nodes import LibraryNode
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 @compare_numpy_output()
@@ -56,7 +57,7 @@ def test_moveaxis_lowers_to_a_library_node():
     """
     sdfg = hpsi.to_sdfg(simplify=False)
     sdfg.validate()
-    assert library_nodes(sdfg) == {'TensorDot': 3, 'TensorTranspose': 2}
+    assert library_nodes(sdfg) == {"TensorDot": 3, "TensorTranspose": 2}
 
 
 def test_moveaxis_separable_laplacian():
@@ -76,7 +77,7 @@ def test_moveaxis_separable_laplacian():
     assert np.allclose(result, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_moveaxis_single()
     test_moveaxis_negative()
     test_moveaxis_multiple()

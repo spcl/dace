@@ -17,6 +17,7 @@ Coverage:
 * NEGATIVE: a plain scalar / length-1 accumulator (already widenable), a ``min`` RMW (not a WCR),
   and a cross-iteration recurrence are all left untouched -- value-preserving.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -88,8 +89,7 @@ def _wcr_targets(sdfg: dace.SDFG):
     arr_elem, scalar = 0, 0
     for st in sdfg.states():
         ends = {
-            id(st.memlet_path(e)[-1]): st.memlet_path(e)[-1]
-            for e in st.edges() if e.data is not None and e.data.wcr
+            id(st.memlet_path(e)[-1]): st.memlet_path(e)[-1] for e in st.edges() if e.data is not None and e.data.wcr
         }
         for e in ends.values():
             desc = sdfg.arrays.get(e.data.data)
@@ -184,10 +184,13 @@ def _vectorize(prog, name):
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.name = name
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     for sym in {str(x) for x in sdfg.free_symbols}:
         if sym not in sdfg.symbols:

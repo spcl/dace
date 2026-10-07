@@ -8,6 +8,7 @@ clean ``"0.1"``, and rewrite ``"2"`` to ``"2.0"``. ``_is_number`` must still
 recognise every numeric form (including infinity) so a constant is never
 mistaken for a symbol.
 """
+
 import pytest
 
 from dace.transformation.passes.vectorization.utils.tasklets import (
@@ -17,28 +18,32 @@ from dace.transformation.passes.vectorization.utils.tasklets import (
 
 
 @pytest.mark.parametrize(
-    "s", ["0.1", "2", "2.0", "5.5", "-1e30", "1e-5", "Infinity", "-Infinity", "inf", "oo", "-oo", "~0", "0", None])
+    "s", ["0.1", "2", "2.0", "5.5", "-1e30", "1e-5", "Infinity", "-Infinity", "inf", "oo", "-oo", "~0", "0", None]
+)
 def test_roundtrip_constant_is_verbatim(s):
     """Every input is returned exactly as given (no float mangling)."""
     assert _roundtrip_constant(s) is s
 
 
-@pytest.mark.parametrize("s,expected", [
-    ("0.1", True),
-    ("2", True),
-    ("-1e30", True),
-    ("inf", True),
-    ("Infinity", True),
-    ("-inf", True),
-    ("oo", True),
-    ("-oo", True),
-    ("+oo", True),
-    (2, True),
-    (2.5, True),
-    ("x", False),
-    ("a1", False),
-    ("idx_index", False),
-    (None, False),
-])
+@pytest.mark.parametrize(
+    "s,expected",
+    [
+        ("0.1", True),
+        ("2", True),
+        ("-1e30", True),
+        ("inf", True),
+        ("Infinity", True),
+        ("-inf", True),
+        ("oo", True),
+        ("-oo", True),
+        ("+oo", True),
+        (2, True),
+        (2.5, True),
+        ("x", False),
+        ("a1", False),
+        ("idx_index", False),
+        (None, False),
+    ],
+)
 def test_is_number_recognises_numeric_and_infinity(s, expected):
     assert _is_number(s) is expected

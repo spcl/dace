@@ -12,11 +12,12 @@ Each test:
    compile, run on the same input -> vectorized output.
 3. Assert ``rtol=1e-12`` numerical equivalence.
 """
+
 import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from tests.passes.vectorization.tile_assertions import assert_tiled
 from dace.transformation.passes.vectorization.enums import ISA

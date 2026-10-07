@@ -13,6 +13,7 @@ Source contracts:
   SDFG built once, reused across stride values.
 * Each kernel pairs with a numpy oracle in ``reference_python``.
 """
+
 from math import sqrt, exp
 from typing import Dict, Optional
 
@@ -49,7 +50,7 @@ def ext_strided_load_ssym(src: dace.float64[SSYM * LEN_1D], dst: dace.float64[LE
     Contiguity unprovable (``SSYM`` unknown) -> auto-vectorizers scalarize
     unless they emit a runtime stride check + gather intrinsic.
     """
-    for i, in dace.map[0:LEN_1D:1]:
+    for (i,) in dace.map[0:LEN_1D:1]:
         dst[i] = src[i * SSYM] * scale
 
 
@@ -57,7 +58,7 @@ def ext_strided_load_ssym(src: dace.float64[SSYM * LEN_1D], dst: dace.float64[LE
 def ext_strided_load_2(src: dace.float64[2 * LEN_1D], dst: dace.float64[LEN_1D], scale: dace.float64):
     """``dst[i] = src[i * 2] * scale`` -- constant-stride sibling of
     ``ext_strided_load_ssym``. Vectorizes via ``vpcompressd``-style gathers."""
-    for i, in dace.map[0:LEN_1D:1]:
+    for (i,) in dace.map[0:LEN_1D:1]:
         dst[i] = src[i * 2] * scale
 
 
@@ -68,14 +69,14 @@ def ext_strided_load_2(src: dace.float64[2 * LEN_1D], dst: dace.float64[LEN_1D],
 def ext_strided_store_ssym(src: dace.float64[LEN_1D], dst: dace.float64[SSYM * LEN_1D], scale: dace.float64):
     """``dst[i * SSYM] = src[i] * scale``. Scatter potentially non-permutation
     (depends on ``SSYM``); safe lift needs a runtime guard for distinct writes."""
-    for i, in dace.map[0:LEN_1D:1]:
+    for (i,) in dace.map[0:LEN_1D:1]:
         dst[i * SSYM] = src[i] * scale
 
 
 @dace.program
 def ext_strided_store_2(src: dace.float64[LEN_1D], dst: dace.float64[2 * LEN_1D], scale: dace.float64):
     """``dst[i * 2] = src[i] * scale`` -- constant-stride sibling."""
-    for i, in dace.map[0:LEN_1D:1]:
+    for (i,) in dace.map[0:LEN_1D:1]:
         dst[i * 2] = src[i] * scale
 
 
@@ -85,17 +86,18 @@ def ext_strided_store_2(src: dace.float64[LEN_1D], dst: dace.float64[2 * LEN_1D]
 @dace.program
 def ext_gather_load(src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: dace.float64[LEN_1D], scale: dace.float64):
     """``dst[i] = src[idx[i]] * scale``. Data-dependent read; needs a gather intrinsic."""
-    for i, in dace.map[0:LEN_1D:1]:
+    for (i,) in dace.map[0:LEN_1D:1]:
         dst[i] = src[idx[i]] * scale
 
 
 @dace.program
-def ext_scatter_store(src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: dace.float64[LEN_1D],
-                      scale: dace.float64):
+def ext_scatter_store(
+    src: dace.float64[LEN_1D], idx: dace.int64[LEN_1D], dst: dace.float64[LEN_1D], scale: dace.float64
+):
     """``dst[idx[i]] = src[i] * scale``. Safe lift needs an ``idx`` permutation
     proof; ScatterToGuardedMaps emits a sort+dup-count check, fires only when
     runtime indices are distinct."""
-    for i, in dace.map[0:LEN_1D:1]:
+    for (i,) in dace.map[0:LEN_1D:1]:
         dst[idx[i]] = src[i] * scale
 
 
@@ -226,8 +228,13 @@ def vas_ssym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int64[LE
 
 
 @dace.program
-def fission_indep_2body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
-                        y: dace.float64[LEN_1D], z: dace.float64[LEN_1D]):
+def fission_indep_2body(
+    a: dace.float64[LEN_1D],
+    b: dace.float64[LEN_1D],
+    x: dace.float64[LEN_1D],
+    y: dace.float64[LEN_1D],
+    z: dace.float64[LEN_1D],
+):
     """Two independent writes sharing three reads. Fused or fissioned both
     correct; fission gives each body its own vector loop under reuse pressure."""
     for i in range(LEN_1D):
@@ -236,8 +243,9 @@ def fission_indep_2body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dac
 
 
 @dace.program
-def fission_dep_then_indep(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
-                           y: dace.float64[LEN_1D]):
+def fission_dep_then_indep(
+    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D], y: dace.float64[LEN_1D]
+):
     """Body A carries a unit-offset dependence (prefix-sum on ``a``), body B
     independent. LoopFission must fire so B vectorizes while A stays scalar
     (or lifts to a Scan)."""
@@ -248,8 +256,13 @@ def fission_dep_then_indep(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: 
 
 
 @dace.program
-def fission_dep_const_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
-                             y: dace.float64[LEN_1D], z: dace.float64[LEN_1D]):
+def fission_dep_const_offset(
+    a: dace.float64[LEN_1D],
+    b: dace.float64[LEN_1D],
+    x: dace.float64[LEN_1D],
+    y: dace.float64[LEN_1D],
+    z: dace.float64[LEN_1D],
+):
     """Body A carries a constant-offset (stride 2) dependence on ``a``, body B
     independent. After fission B vectorizes; A needs offset-2 software
     pipelining or stays scalar."""
@@ -261,8 +274,13 @@ def fission_dep_const_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x
 
 
 @dace.program
-def fission_dep_sym_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
-                           y: dace.float64[LEN_1D], z: dace.float64[LEN_1D]):
+def fission_dep_sym_offset(
+    a: dace.float64[LEN_1D],
+    b: dace.float64[LEN_1D],
+    x: dace.float64[LEN_1D],
+    y: dace.float64[LEN_1D],
+    z: dace.float64[LEN_1D],
+):
     """As :func:`fission_dep_const_offset` but offset is runtime symbol ``K``.
     Caller initializes ``a[0..K-1]``."""
     for i in range(K, LEN_1D):
@@ -378,9 +396,12 @@ def heat3d_tiled_const(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.float64[
                 for k in range(kk, kk + 8):
                     for j in range(jj, jj + 8):
                         for i in range(ii, ii + 8):
-                            b[k, j, i] = 0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + \
-                                         0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + \
-                                         0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + a[k, j, i]
+                            b[k, j, i] = (
+                                0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i])
+                                + 0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i])
+                                + 0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1])
+                                + a[k, j, i]
+                            )
 
 
 @dace.program
@@ -393,9 +414,12 @@ def heat3d_tiled_sym(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.float64[LE
                 for k in range(kk, kk + T):
                     for j in range(jj, jj + T):
                         for i in range(ii, ii + T):
-                            b[k, j, i] = 0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + \
-                                         0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + \
-                                         0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + a[k, j, i]
+                            b[k, j, i] = (
+                                0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i])
+                                + 0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i])
+                                + 0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1])
+                                + a[k, j, i]
+                            )
 
 
 @dace.program
@@ -412,10 +436,12 @@ def heat3d_double_tiled_const(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.f
                             for k in range(kkk, kkk + 4):
                                 for j in range(jjj, jjj + 4):
                                     for i in range(iii, iii + 4):
-                                        b[k, j, i] = 0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + \
-                                                     0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + \
-                                                     0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + \
-                                                     a[k, j, i]
+                                        b[k, j, i] = (
+                                            0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i])
+                                            + 0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i])
+                                            + 0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1])
+                                            + a[k, j, i]
+                                        )
 
 
 @dace.program
@@ -430,18 +456,21 @@ def heat3d_double_tiled_sym(a: dace.float64[LEN_3D, LEN_3D, LEN_3D], b: dace.flo
                             for k in range(kkk, kkk + T2):
                                 for j in range(jjj, jjj + T2):
                                     for i in range(iii, iii + T2):
-                                        b[k, j, i] = 0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + \
-                                                     0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + \
-                                                     0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + \
-                                                     a[k, j, i]
+                                        b[k, j, i] = (
+                                            0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i])
+                                            + 0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i])
+                                            + 0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1])
+                                            + a[k, j, i]
+                                        )
 
 
 #  %K  ECRAD-style clamped reduction
 
 
 @dace.program
-def ecrad_clamped_reduction(x: dace.float64[LEN_1D], y: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
-                            out: dace.float64[LEN_1D]):
+def ecrad_clamped_reduction(
+    x: dace.float64[LEN_1D], y: dace.float64[LEN_1D], d: dace.float64[LEN_1D], out: dace.float64[LEN_1D]
+):
     """ECRAD-shaped per-element clamped transmittance:
     ``out[i] = clamp(exp(-sqrt(max(x*x + y*y, 1e-12)) * d), 0, 1)``.
     Two ``max``/``min`` clamps + ``exp`` + ``sqrt`` stress the
@@ -567,8 +596,9 @@ def wavefront2d(a: dace.float64[LEN_2D, LEN_2D]):
 
 
 @dace.program
-def ext_break_find_first(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D],
-                         d: dace.float64[LEN_1D]):
+def ext_break_find_first(
+    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D]
+):
     """TSVC ``s481``: guard before body. ``if d[i] < 0: break`` then
     ``a[i] = a[i] + b[i] * c[i]``. Break bound data-dependent on ``d``; lift
     needs a find-first ``min`` reduction over ``{i : d[i] < 0}`` before the body
@@ -763,8 +793,9 @@ def scan_strided_sym(a: dace.float64[LEN_1D], x: dace.float64[LEN_1D]):
 
 
 @dace.program
-def scan_multi_carry(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
-                     y: dace.float64[LEN_1D]):
+def scan_multi_carry(
+    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D], y: dace.float64[LEN_1D]
+):
     """Two distinct unit-stride recurrences in one loop body: an additive
     scan on ``a`` and a multiplicative scan on ``b``. ``LoopToScan`` must
     emit two Scan libnodes with different operators (Add and Mul) from the
@@ -846,8 +877,13 @@ def reroll_gather(a: dace.float64[LEN_R7], b: dace.float64[LEN_R7], ip: dace.int
 
 
 @dace.program
-def thomas_solve(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
-                 x: dace.float64[LEN_1D]):
+def thomas_solve(
+    a: dace.float64[LEN_1D],
+    b: dace.float64[LEN_1D],
+    c: dace.float64[LEN_1D],
+    d: dace.float64[LEN_1D],
+    x: dace.float64[LEN_1D],
+):
     """Tridiagonal Thomas algorithm: a forward elimination sweep followed
     by a backward substitution sweep on the same axis -- two sequential
     recurrences, the second descending and reading the first's results.
@@ -895,8 +931,9 @@ def config_select_branch(out_a: dace.float64[LEN_1D], out_b: dace.float64[LEN_1D
 
 
 @dace.program
-def move_if_data_dep_nest(out: dace.float64[LEN_2D, LEN_2D], src: dace.float64[LEN_2D, LEN_2D],
-                          cond: dace.float64[LEN_2D]):
+def move_if_data_dep_nest(
+    out: dace.float64[LEN_2D, LEN_2D], src: dace.float64[LEN_2D, LEN_2D], cond: dace.float64[LEN_2D]
+):
     """A DATA-DEPENDENT guard ``cond[i]`` sits in the MIDDLE of a 2D loop
     nest, between the outer ``i`` loop and the inner ``j`` loop, gating the
     whole inner sweep of row ``i``. As written the inner loop is
@@ -914,8 +951,12 @@ def move_if_data_dep_nest(out: dace.float64[LEN_2D, LEN_2D], src: dace.float64[L
 
 
 @dace.program
-def fuse_move_ifs(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D], src: dace.float64[LEN_2D, LEN_2D],
-                  cond: dace.float64[LEN_2D]):
+def fuse_move_ifs(
+    a: dace.float64[LEN_2D, LEN_2D],
+    b: dace.float64[LEN_2D, LEN_2D],
+    src: dace.float64[LEN_2D, LEN_2D],
+    cond: dace.float64[LEN_2D],
+):
     """Follow-up to :func:`move_if_data_dep_nest`: two loop nests whose
     guards block fusion. The first nest has a data-dependent guard
     ``cond[i]`` in the middle (``for i: if cond[i] > 0: for j: ...``); the
@@ -955,9 +996,9 @@ def fuse_stencil_through_transient(out: dace.float64[LEN_1D], a: dace.float64[LE
     read window) before it can collapse them and drop ``tmp``. Interior
     only; caller pre-fills the boundary cells of ``out``."""
     tmp = np.empty(LEN_1D, dtype=np.float64)
-    for i in dace.map[1:LEN_1D - 1]:
+    for i in dace.map[1 : LEN_1D - 1]:
         tmp[i] = a[i - 1] + a[i] + a[i + 1]
-    for i in dace.map[1:LEN_1D - 2]:
+    for i in dace.map[1 : LEN_1D - 2]:
         out[i] = tmp[i] * tmp[i + 1]
 
 
@@ -1008,9 +1049,13 @@ def loop_to_map_overlap_seq(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 
 @dace.program
-def loop_to_map_threshold_gather(out: dace.float64[LEN_2D, LEN_2D], x: dace.float64[LEN_2D, LEN_2D],
-                                 y: dace.float64[LEN_2D, LEN_2D], w: dace.float64[LEN_2D,
-                                                                                  LEN_2D], idx: dace.int64[LEN_2D]):
+def loop_to_map_threshold_gather(
+    out: dace.float64[LEN_2D, LEN_2D],
+    x: dace.float64[LEN_2D, LEN_2D],
+    y: dace.float64[LEN_2D, LEN_2D],
+    w: dace.float64[LEN_2D, LEN_2D],
+    idx: dace.int64[LEN_2D],
+):
     """cloudsc-style column physics: for each ``(i, k)`` a threshold on
     GATHERED data ``w[idx[i], k]`` selects which elementwise update writes
     ``out[i, k]``. Every ``(i, k)`` owns a distinct output cell, so
@@ -1025,8 +1070,13 @@ def loop_to_map_threshold_gather(out: dace.float64[LEN_2D, LEN_2D], x: dace.floa
 
 
 @dace.program
-def fission_gather_2body(b: dace.float64[LEN_1D], e: dace.float64[LEN_1D], a: dace.float64[LEN_1D],
-                         c: dace.float64[LEN_1D], idx: dace.int64[LEN_1D]):
+def fission_gather_2body(
+    b: dace.float64[LEN_1D],
+    e: dace.float64[LEN_1D],
+    a: dace.float64[LEN_1D],
+    c: dace.float64[LEN_1D],
+    idx: dace.int64[LEN_1D],
+):
     """Two independent gathers sharing one index table: ``b[i] = a[idx[i]]``
     and ``e[i] = c[idx[i]]``. The shared ``idx`` read normally blocks
     ``MapFission``; the canonicalize path replicates the index read per
@@ -1038,8 +1088,13 @@ def fission_gather_2body(b: dace.float64[LEN_1D], e: dace.float64[LEN_1D], a: da
 
 
 @dace.program
-def fission_scatter_2body(b: dace.float64[LEN_1D], e: dace.float64[LEN_1D], a: dace.float64[LEN_1D],
-                          c: dace.float64[LEN_1D], idx: dace.int64[LEN_1D]):
+def fission_scatter_2body(
+    b: dace.float64[LEN_1D],
+    e: dace.float64[LEN_1D],
+    a: dace.float64[LEN_1D],
+    c: dace.float64[LEN_1D],
+    idx: dace.int64[LEN_1D],
+):
     """Two independent scatters sharing a permutation index:
     ``b[idx[i]] = a[i]*2`` and ``e[idx[i]] = c[i]+1``. Disjoint because
     ``idx`` is a permutation, so after fission each scatter is its own
@@ -1263,6 +1318,7 @@ def make_inputs(program, seed: int = 1234, sizes: Optional[Dict[str, int]] = Non
     :returns: ``(arrays, scalars)`` keyed by parameter name.
     """
     import inspect
+
     sizes = sizes if sizes is not None else SIZES
     rng = np.random.default_rng(seed)
     arrays, scalars = {}, {}
@@ -1287,16 +1343,16 @@ def make_inputs(program, seed: int = 1234, sizes: Optional[Dict[str, int]] = Non
 def _place_break_at_middle(name: str, arrays: Dict[str, np.ndarray], sizes: Dict[str, int]) -> None:
     """Rewrite the break-predicate array in place so the exit fires at ``LEN_1D // 2``."""
     mid = sizes["LEN_1D"] // 2
-    if name == 'ext_break_find_first':  # break on d[i] < 0.0
-        d = arrays['d']
+    if name == "ext_break_find_first":  # break on d[i] < 0.0
+        d = arrays["d"]
         d[:mid] = np.abs(d[:mid])
         d[mid] = -abs(d[mid]) - 1.0
-    elif name == 'ext_break_post_body':  # break on c[i] > b[i]
-        b, c = arrays['b'], arrays['c']
+    elif name == "ext_break_post_body":  # break on c[i] > b[i]
+        b, c = arrays["b"], arrays["c"]
         c[:mid] = np.minimum(c[:mid], b[:mid])
         c[mid] = b[mid] + 1.0
-    elif name == 'ext_break_capture':  # break on a[i] > KFIND
-        a = arrays['a']
-        kfind = sizes['KFIND']
+    elif name == "ext_break_capture":  # break on a[i] > KFIND
+        a = arrays["a"]
+        kfind = sizes["KFIND"]
         a[:mid] = kfind - np.abs(a[:mid]) - 1.0
         a[mid] = kfind + abs(a[mid]) + 1.0

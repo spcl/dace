@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Promotes transients that only ever store literals to SDFG constants. """
+"""Promotes transients that only ever store literals to SDFG constants."""
+
 import ast
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -19,9 +20,9 @@ Write = Tuple[SDFGState, MultiConnectorEdge]
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class PromoteConstantTransients(ppl.Pass):
-    """ Turns a host transient into an SDFG constant (emitted as ``constexpr``) when every write stores a literal
+    """Turns a host transient into an SDFG constant (emitted as ``constexpr``) when every write stores a literal
     to a constant subset and no two writes overlap. A write is a data-free tasklet or a map filling one literal.
-    Reading an element before its only write is undefined, so the literal is a valid value for every read. """
+    Reading an element before its only write is undefined, so the literal is a valid value for every read."""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -30,7 +31,7 @@ class PromoteConstantTransients(ppl.Pass):
         return False
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Set[str]]]:
-        """ :return: ``{cfg_id: promoted names}``, or ``None`` if nothing was promoted. """
+        """:return: ``{cfg_id: promoted names}``, or ``None`` if nothing was promoted."""
         result: Dict[int, Set[str]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             writes: Dict[str, List[Write]] = {}
@@ -38,9 +39,10 @@ class PromoteConstantTransients(ppl.Pass):
             for state in sdfg.states():
                 for node in state.data_nodes():
                     writes.setdefault(node.data, []).extend(
-                        (state, e) for e in state.in_edges(node) if not e.data.is_empty())
+                        (state, e) for e in state.in_edges(node) if not e.data.is_empty()
+                    )
                     # A reference to the data writes it through another name.
-                    if any(e.dst_conn == 'set' for e in state.out_edges(node)):
+                    if any(e.dst_conn == "set" for e in state.out_edges(node)):
                         skip.add(node.data)
             for name, desc in list(sdfg.arrays.items()):
                 if name in skip or name in sdfg.constants_prop or not is_candidate(desc):
@@ -56,10 +58,14 @@ class PromoteConstantTransients(ppl.Pass):
 
 
 def is_candidate(desc: dt.Data) -> bool:
-    """ A scope-lifetime host transient scalar or array of constant shape. """
-    return (type(desc) in (dt.Scalar, dt.Array) and desc.transient and desc.lifetime == dtypes.AllocationLifetime.Scope
-            and dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, desc.storage)
-            and all(to_int(d) is not None for d in desc.shape))
+    """A scope-lifetime host transient scalar or array of constant shape."""
+    return (
+        type(desc) in (dt.Scalar, dt.Array)
+        and desc.transient
+        and desc.lifetime == dtypes.AllocationLifetime.Scope
+        and dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, desc.storage)
+        and all(to_int(d) is not None for d in desc.shape)
+    )
 
 
 def to_int(dim) -> Optional[int]:
@@ -70,7 +76,7 @@ def to_int(dim) -> Optional[int]:
 
 
 def symbolic_reads(sdfg: SDFG) -> Set[str]:
-    """ Data names read by interstate edges or control-flow conditions, which access nodes do not show. """
+    """Data names read by interstate edges or control-flow conditions, which access nodes do not show."""
     names = set(sdfg.arrays.keys())
     refs = set()
     for edge in sdfg.all_interstate_edges():
@@ -81,14 +87,14 @@ def symbolic_reads(sdfg: SDFG) -> Set[str]:
 
 
 def literal_written(state: SDFGState, edge: MultiConnectorEdge) -> Optional[Any]:
-    """ The literal a write edge stores: from a data-free tasklet, or through a map exit holding only one. """
+    """The literal a write edge stores: from a data-free tasklet, or through a map exit holding only one."""
     if edge.data.wcr is not None:
         return None
     src, conn = edge.src, edge.src_conn
     if isinstance(src, nd.MapExit):
-        if state.out_degree(src) != 1 or not conn or not conn.startswith('OUT_'):
+        if state.out_degree(src) != 1 or not conn or not conn.startswith("OUT_"):
             return None
-        inner = [e for e in state.in_edges(src) if e.dst_conn == 'IN_' + conn[4:]]
+        inner = [e for e in state.in_edges(src) if e.dst_conn == "IN_" + conn[4:]]
         body = state.scope_subgraph(state.entry_node(src), include_entry=False, include_exit=False).nodes()
         if len(inner) != 1 or inner[0].data.wcr is not None or list(body) != [inner[0].src]:
             return None
@@ -110,7 +116,7 @@ def literal_written(state: SDFGState, edge: MultiConnectorEdge) -> Optional[Any]
 
 
 def constant_value(desc: dt.Data, writes: List[Write]) -> Optional[Any]:
-    """ The initializer if every write stores a literal to a disjoint constant subset, else ``None``. """
+    """The initializer if every write stores a literal to a disjoint constant subset, else ``None``."""
     # Only a plain scalar type has a numpy value (not e.g. an opaque ``MPI_Request``).
     if not writes or type(desc.dtype) is not dtypes.typeclass:
         return None
@@ -137,7 +143,7 @@ def constant_value(desc: dt.Data, writes: List[Write]) -> Optional[Any]:
 
 
 def remove_write(state: SDFGState, edge: MultiConnectorEdge):
-    """ Removes a promoted write and its producer. The access node keeps the producer's ordering anchors. """
+    """Removes a promoted write and its producer. The access node keeps the producer's ordering anchors."""
     node = edge.dst
     producer = edge.src
     if isinstance(producer, nd.MapExit):

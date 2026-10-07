@@ -69,7 +69,7 @@ def _build(reverse: bool) -> dace.SDFG:
 
 @pytest.mark.parametrize("reverse", [True, False])
 def test_mapped_dependency_edge(reverse):
-    """ Tests dependency edges in a map scope """
+    """Tests dependency edges in a map scope"""
     sdfg = _build(reverse)
 
     a = np.random.randint(0, 100, 2).astype(np.int32)
@@ -83,8 +83,9 @@ def test_mapped_dependency_edge(reverse):
     else:
         expected = a_before
     # Ignoring the edge leaves the two chains staging the original values, i.e. a plain swap.
-    assert np.array_equal(a, expected) and np.array_equal(b, expected), \
+    assert np.array_equal(a, expected) and np.array_equal(b, expected), (
         f"reverse={reverse}: expected both arrays to hold {expected}, got A={a}, B={b}"
+    )
 
 
 if __name__ == "__main__":

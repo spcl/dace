@@ -8,6 +8,7 @@ which run in that order over the same bodies. The splat is a ``TileGather`` and 
 purpose: ``map_body_has_foreign_language_tasklet`` would disqualify the whole map from every later
 tile pass, while the vectorizer's own tile ops stay transparent to that gate.
 """
+
 from dace import data as dd, symbolic
 from dace.libraries.tileops import TileGather
 from dace.memlet import Memlet
@@ -38,8 +39,17 @@ def is_scalar_or_len1_source(state: SDFGState, edge: Edge[Memlet]) -> bool:
     return False
 
 
-def splat_scalar_to_tile(state: SDFGState, name: str, src_node: Node, src_conn: str | None, src_memlet: Memlet,
-                         dst_node: Node, dst_conn: str | None, dst_data: str, widths: tuple[int, ...]) -> TileGather:
+def splat_scalar_to_tile(
+    state: SDFGState,
+    name: str,
+    src_node: Node,
+    src_conn: str | None,
+    src_memlet: Memlet,
+    dst_node: Node,
+    dst_conn: str | None,
+    dst_data: str,
+    widths: tuple[int, ...],
+) -> TileGather:
     """Wire a ``TileGather(src_kind='Scalar')`` splatting one source element into every lane.
 
     :param state: State to build in.

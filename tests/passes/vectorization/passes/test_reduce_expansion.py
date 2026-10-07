@@ -11,16 +11,19 @@ no silent fallback). These tests pin the registration, the
 numerically-correct expand+compile for the two supported schedules,
 and the loud raises.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace import dtypes
+
 # Importing the vectorization package registers the implementation.
 import dace.transformation.passes.vectorization  # noqa: F401
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.passes.vectorization.reduce_expansion import (
-    ExpandReduceVectorized, )
+    ExpandReduceVectorized,
+)
 
 N = dace.symbol("N")
 
@@ -40,16 +43,19 @@ def _sum_sdfg(schedule):
     rnode.implementation = "vectorized"
     rnode.schedule = schedule
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:N]"))
-    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0]"))
+    st.add_edge(st.add_read("A"), None, rnode, "_in", dace.Memlet("A[0:N]"))
+    st.add_edge(rnode, "_out", st.add_write("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
-@pytest.mark.parametrize("schedule", [
-    dtypes.ScheduleType.Sequential,
-    dtypes.ScheduleType.Default,
-    dtypes.ScheduleType.CPU_Multicore,
-])
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        dtypes.ScheduleType.Sequential,
+        dtypes.ScheduleType.Default,
+        dtypes.ScheduleType.CPU_Multicore,
+    ],
+)
 def test_vectorized_reduce_expands_and_is_numerically_correct(schedule):
     rng = np.random.default_rng(42)
     sdfg = _sum_sdfg(schedule)
@@ -79,8 +85,8 @@ def test_unsupported_reduction_operator_raises():
     rnode.implementation = "vectorized"
     rnode.schedule = dtypes.ScheduleType.Sequential
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:N]"))
-    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0]"))
+    st.add_edge(st.add_read("A"), None, rnode, "_in", dace.Memlet("A[0:N]"))
+    st.add_edge(rnode, "_out", st.add_write("out"), None, dace.Memlet("out[0]"))
     with pytest.raises(NotImplementedError, match="no associative"):
         ExpandReduceVectorized.expansion(rnode, st, sdfg)
 
@@ -91,6 +97,7 @@ def _reduce_sdfg(wcr, identity, dtype, schedule=dtypes.ScheduleType.Sequential, 
     # Hash the raw wcr (a regex sanitiser would collapse + * & | ^ all to
     # '_', aliasing distinct operators into the same .dacecache dir).
     import hashlib
+
     h = hashlib.md5(f"{tag}|{wcr}|{dtype.ctype}|{schedule.name}".encode()).hexdigest()[:10]
     sdfg = dace.SDFG(f"vr_{tag}_{h}")
     sdfg.add_array("A", [N], dtype)
@@ -100,8 +107,8 @@ def _reduce_sdfg(wcr, identity, dtype, schedule=dtypes.ScheduleType.Sequential, 
     rnode.implementation = "vectorized"
     rnode.schedule = schedule
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:N]"))
-    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0]"))
+    st.add_edge(st.add_read("A"), None, rnode, "_in", dace.Memlet("A[0:N]"))
+    st.add_edge(rnode, "_out", st.add_write("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
@@ -159,8 +166,9 @@ def test_1d_full_reduction_takes_vectorized_path():
     sdfg = _reduce_sdfg("lambda a, b: a + b", 0.0, dace.float64, tag="path1d")
     sdfg.expand_library_nodes()
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
-    assert any("horizontal_reduce_add" in c for c in codes), \
+    assert any("horizontal_reduce_add" in c for c in codes), (
         "1-D full reduction must use the vectorized horizontal_reduce kernel"
+    )
 
 
 def test_2d_partial_reduction_falls_back_to_pure():
@@ -174,12 +182,13 @@ def test_2d_partial_reduction_falls_back_to_pure():
     rnode.implementation = "vectorized"
     rnode.schedule = dtypes.ScheduleType.Sequential
     st.add_node(rnode)
-    st.add_edge(st.add_read("A"), None, rnode, '_in', dace.Memlet("A[0:M, 0:N]"))
-    st.add_edge(rnode, '_out', st.add_write("out"), None, dace.Memlet("out[0:M]"))
+    st.add_edge(st.add_read("A"), None, rnode, "_in", dace.Memlet("A[0:M, 0:N]"))
+    st.add_edge(rnode, "_out", st.add_write("out"), None, dace.Memlet("out[0:M]"))
     sdfg.expand_library_nodes()
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
-    assert not any("horizontal_reduce" in c for c in codes), \
+    assert not any("horizontal_reduce" in c for c in codes), (
         "partial 2-D reduction must fall back to ExpandReducePure (no horizontal_reduce)"
+    )
     a = rng.random((5, 9)).astype(np.float64)
     out = np.zeros(5, dtype=np.float64)
     sdfg(A=a, out=out, M=5, N=9)

@@ -5,6 +5,7 @@ Rank r sends its buffer (full of ``r``) to rank ``r+1`` and receives from rank `
 the received buffer must be full of ``(r-1) mod size``. Marked ``mpi`` -- run under ``mpirun -n 2 ...
 --with-mpi``.
 """
+
 import dace
 from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
@@ -44,6 +45,7 @@ def make_sdfg(dtype):
 
 def _test_mpi(info, sdfg, dtype):
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     commsize = comm.Get_size()

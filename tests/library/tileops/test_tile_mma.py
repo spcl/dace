@@ -13,6 +13,7 @@ Tests cover:
 * Connector wiring with and without ``_c`` input (``beta == 0`` skips the in
   connector).
 """
+
 import dace
 import numpy as np
 import pytest
@@ -77,12 +78,15 @@ def test_connectors_include_cin_when_beta_nonzero():
     assert "_c" in node.out_connectors
 
 
-@pytest.mark.parametrize("alpha, beta", [
-    (1, 0),
-    (1, 1),
-    (2, 0),
-    (2, 3),
-])
+@pytest.mark.parametrize(
+    "alpha, beta",
+    [
+        (1, 0),
+        (1, 1),
+        (2, 0),
+        (2, 3),
+    ],
+)
 def test_pure_expansion_matches_numpy(alpha, beta):
     """Pure expansion produces bit-equivalent output to ``alpha * A @ B + beta * C``."""
     M, K_inner, N = 4, 8, 4

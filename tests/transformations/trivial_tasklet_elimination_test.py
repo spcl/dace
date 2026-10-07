@@ -10,7 +10,7 @@ def test_trivial_tasklet():
     ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet")
     sdfg.add_symbol("s", ty_)
-    sdfg.add_array("v", (N, ), ty_)
+    sdfg.add_array("v", (N,), ty_)
     st = sdfg.add_state()
 
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty_, transient=True)
@@ -52,7 +52,7 @@ def test_trivial_tasklet_with_map():
     ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet_with_map")
     sdfg.add_symbol("s", ty_)
-    sdfg.add_array("v", (N, ), ty_)
+    sdfg.add_array("v", (N,), ty_)
     st = sdfg.add_state()
 
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty_, transient=True)
@@ -98,7 +98,7 @@ def test_trivial_tasklet_with_implicit_cast():
     ty64_ = dace.int64
     sdfg = dace.SDFG("trivial_tasklet_with_implicit_cast")
     sdfg.add_symbol("s", ty32_)
-    sdfg.add_array("v", (N, ), ty32_)
+    sdfg.add_array("v", (N,), ty32_)
     st = sdfg.add_state()
 
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty32_, transient=True)
@@ -131,7 +131,7 @@ def _direct_copy_sdfg(name: str, in_ty, out_ty):
     """AccessNode -> copy tasklet -> AccessNode, with no enclosing map (expr_index 0)."""
     sdfg = dace.SDFG(name)
     sdfg.add_symbol("s", in_ty)
-    sdfg.add_array("v", (N, ), out_ty)
+    sdfg.add_array("v", (N,), out_ty)
     st = sdfg.add_state()
 
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), in_ty, transient=True)
@@ -184,37 +184,40 @@ def test_trivial_tasklet_map_source_preserves_offset_subset():
     still validates and runs at this point, but a later re-lowering that reads
     ``.subset`` (e.g. ``MapToForLoop``) then drops the offset (``[0]``).
     """
-    sym_n = dace.symbol('N')
-    sdfg = dace.SDFG('tte_map_offset')
-    sdfg.add_array('a', (sym_n, ), dace.float64)
-    sdfg.add_array('b', (sym_n, ), dace.float64)
-    sdfg.add_scalar('a_idx', dace.float64, transient=True)
+    sym_n = dace.symbol("N")
+    sdfg = dace.SDFG("tte_map_offset")
+    sdfg.add_array("a", (sym_n,), dace.float64)
+    sdfg.add_array("b", (sym_n,), dace.float64)
+    sdfg.add_scalar("a_idx", dace.float64, transient=True)
     st = sdfg.add_state()
-    a, b, aidx = st.add_access('a'), st.add_access('b'), st.add_access('a_idx')
-    me, mx = st.add_map('m', dict(i='0:N-1'))
-    copy_tasklet = st.add_tasklet('copy', {'inp'}, {'out'}, 'out = inp')
-    mult = st.add_tasklet('mult', {'inp'}, {'out'}, 'out = inp * 2.0')
-    st.add_memlet_path(a, me, copy_tasklet, dst_conn='inp', memlet=dace.Memlet('a[i + 1]'))
-    st.add_edge(copy_tasklet, 'out', aidx, None, dace.Memlet('a_idx[0]'))
-    st.add_edge(aidx, None, mult, 'inp', dace.Memlet('a_idx[0]'))
-    st.add_memlet_path(mult, mx, b, src_conn='out', memlet=dace.Memlet('b[i]'))
+    a, b, aidx = st.add_access("a"), st.add_access("b"), st.add_access("a_idx")
+    me, mx = st.add_map("m", dict(i="0:N-1"))
+    copy_tasklet = st.add_tasklet("copy", {"inp"}, {"out"}, "out = inp")
+    mult = st.add_tasklet("mult", {"inp"}, {"out"}, "out = inp * 2.0")
+    st.add_memlet_path(a, me, copy_tasklet, dst_conn="inp", memlet=dace.Memlet("a[i + 1]"))
+    st.add_edge(copy_tasklet, "out", aidx, None, dace.Memlet("a_idx[0]"))
+    st.add_edge(aidx, None, mult, "inp", dace.Memlet("a_idx[0]"))
+    st.add_memlet_path(mult, mx, b, src_conn="out", memlet=dace.Memlet("b[i]"))
     sdfg.validate()
 
     assert sdfg.apply_transformations_repeated(TrivialTaskletElimination) == 1
 
     surviving = [
-        e for st in sdfg.states() for e in st.edges()
-        if isinstance(e.src, nodes.MapEntry) and isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'a_idx'
+        e
+        for st in sdfg.states()
+        for e in st.edges()
+        if isinstance(e.src, nodes.MapEntry) and isinstance(e.dst, nodes.AccessNode) and e.dst.data == "a_idx"
     ]
     assert len(surviving) == 1
     memlet = surviving[0].data
     # The edge leaves OUT_a, so it must describe ``a`` and keep the offset.
-    assert memlet.data == 'a', f"surviving edge must describe the read data 'a', got {memlet.data!r}"
-    assert 'i' in {str(s) for s in memlet.subset.free_symbols}, \
+    assert memlet.data == "a", f"surviving edge must describe the read data 'a', got {memlet.data!r}"
+    assert "i" in {str(s) for s in memlet.subset.free_symbols}, (
         f"per-iteration offset lost from the subset: {memlet.subset}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_trivial_tasklet()
     test_trivial_tasklet_with_map()
     test_trivial_tasklet_with_implicit_cast()

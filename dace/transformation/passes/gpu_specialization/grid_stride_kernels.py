@@ -38,6 +38,7 @@ rewrite that pays it.
 Runs after ``AddThreadBlockMaps``, which is what creates the ``(GPU_Device, GPU_ThreadBlock)`` pair
 the tiling matches, and which supplies the block extent this pass keeps rather than re-chooses.
 """
+
 from dace.transformation.passes.iteration_domain import loop_trip_count
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -67,19 +68,21 @@ LAUNCH_HINT_FLOOR = 1000
 LAUNCH_LATENCY_US = 4
 
 #: The hint's opening words, matched to keep a re-run from recording the same finding twice.
-PERSISTENT_KERNEL_LEAD = 'one kernel launch per trip of an enclosing sequential loop'
+PERSISTENT_KERNEL_LEAD = "one kernel launch per trip of an enclosing sequential loop"
 
-PERSISTENT_KERNEL = (PERSISTENT_KERNEL_LEAD + ': {launches} launches per call, each '
-                     'filling {blocks} blocks of {threads} threads and ending in a device-wide barrier.\n'
-                     'Alternative: one persistent kernel that holds the grid across the whole loop and replaces each '
-                     'launch boundary with a grid-wide barrier.\n'
-                     'GPU: the persistent form is the one that removes this cost -- at ~{latency} us per launch the '
-                     'launches alone are ~{cost} us. MEASURED on this shape at the sizes it ships with: 39 to 90 '
-                     'blocks per launch on a 304-CU MI300A, so each launch underfills the device as well as paying '
-                     'for itself.\n'
-                     'Not taken here: a grid-wide barrier needs a cooperative launch and a grid sized to what the '
-                     'device can hold resident, neither of which this pass establishes. Recorded, not decided.\n'
-                     'Both are correct. Measure before choosing.')
+PERSISTENT_KERNEL = (
+    PERSISTENT_KERNEL_LEAD + ": {launches} launches per call, each "
+    "filling {blocks} blocks of {threads} threads and ending in a device-wide barrier.\n"
+    "Alternative: one persistent kernel that holds the grid across the whole loop and replaces each "
+    "launch boundary with a grid-wide barrier.\n"
+    "GPU: the persistent form is the one that removes this cost -- at ~{latency} us per launch the "
+    "launches alone are ~{cost} us. MEASURED on this shape at the sizes it ships with: 39 to 90 "
+    "blocks per launch on a 304-CU MI300A, so each launch underfills the device as well as paying "
+    "for itself.\n"
+    "Not taken here: a grid-wide barrier needs a cooperative launch and a grid sized to what the "
+    "device can hold resident, neither of which this pass establishes. Recorded, not decided.\n"
+    "Both are correct. Measure before choosing."
+)
 
 
 def record(carrier: Any, hint: str) -> None:
@@ -88,15 +91,16 @@ def record(carrier: Any, hint: str) -> None:
     Appended rather than assigned because a carrier usually already says what KIND of scope it is
     (``AnnotateLoopKinds``), and that is a different fact from this one, not a stale version of it.
     """
-    existing = carrier.specialization_hint or ''
+    existing = carrier.specialization_hint or ""
     if hint in existing:
         return
-    carrier.specialization_hint = f'{existing}\n{hint}' if existing else hint
+    carrier.specialization_hint = f"{existing}\n{hint}" if existing else hint
 
 
 def enclosing_loops(sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> List[LoopRegion]:
     """The sequential loops that re-enter ``entry``, outermost last."""
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
     return [s for s in get_parent_map_and_loop_scopes(sdfg, entry, state) if isinstance(s, LoopRegion)]
 
 
@@ -177,7 +181,7 @@ def grid_is_known_small(entry: nodes.MapEntry) -> bool:
 class GridStrideKernels(ppl.Pass):
     """Grid-stride the oversized kernels; hint the launch-bound ones."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Scopes
@@ -194,8 +198,11 @@ class GridStrideKernels(ppl.Pass):
         """
         # Collected first: the tiling rewires scopes, and iterating a graph being rewritten skips
         # nodes.
-        kernels = [(n, s) for n, s in sdfg.all_nodes_recursive()
-                   if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device]
+        kernels = [
+            (n, s)
+            for n, s in sdfg.all_nodes_recursive()
+            if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+        ]
         strided = hinted = 0
         for entry, state in kernels:
             # Hint first: the tiling rewrites ``entry`` into a sequential map under a fresh device
@@ -220,6 +227,7 @@ class GridStrideKernels(ppl.Pass):
         if enclosing_loops(sdfg, state, entry):
             return 0
         from dace.transformation.dataflow.gpu_grid_stride_tiling import GPUGridStridedTiling
+
         # The block width in THREADS, which is what the tiling means by ``block_dim``: it emits a
         # thread-block map of ``(0, block_dim - 1, 1)``. Strip-mining a map of step ``s`` by ``t``
         # threads leaves the outer stepping ``s * t``, so the outer step alone over-reports the
@@ -230,8 +238,8 @@ class GridStrideKernels(ppl.Pass):
         block_dim = block_threads(entry, inner)
         if block_dim is None:
             return 0
-        where = {'outer_map_entry': entry, 'inner_map_entry': inner}
-        options = {'max_grid_dim': DEVICE_GRID_BLOCKS, 'block_dim': block_dim}
+        where = {"outer_map_entry": entry, "inner_map_entry": inner}
+        options = {"max_grid_dim": DEVICE_GRID_BLOCKS, "block_dim": block_dim}
         # ``state.sdfg``, not the root: ``apply_to`` locates the state by scanning the SDFG it is
         # handed, and a kernel inside a nested SDFG (a lifted Reduce, say) is not in the root's
         # states -- it raised StopIteration on two of llr-focus40 before this was the owning SDFG.
@@ -244,7 +252,7 @@ class GridStrideKernels(ppl.Pass):
     def hint_persistent(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry) -> int:
         """Record the persistent-kernel rewrite ``entry`` would want. ``1`` iff recorded."""
         loops = enclosing_loops(sdfg, state, entry)
-        if not loops or PERSISTENT_KERNEL_LEAD in (entry.specialization_hint or ''):
+        if not loops or PERSISTENT_KERNEL_LEAD in (entry.specialization_hint or ""):
             return 0
         launches: Any = 1
         for loop in loops:
@@ -259,9 +267,10 @@ class GridStrideKernels(ppl.Pass):
         hint = PERSISTENT_KERNEL.format(
             launches=launches,
             blocks=symbolic.simplify(entry.map.range.num_elements()),
-            threads=symbolic.simplify(inner.map.range.num_elements()) if inner is not None else 'block-sized',
+            threads=symbolic.simplify(inner.map.range.num_elements()) if inner is not None else "block-sized",
             latency=LAUNCH_LATENCY_US,
-            cost=symbolic.simplify(launches * LAUNCH_LATENCY_US))
+            cost=symbolic.simplify(launches * LAUNCH_LATENCY_US),
+        )
         record(entry, hint)
         # Also on the innermost enclosing loop, because that is where a reader meets it: the CUDA
         # target renders no map hints, so a hint left only on the kernel map is invisible in the
@@ -271,4 +280,4 @@ class GridStrideKernels(ppl.Pass):
 
     def report(self, pass_retval: Tuple[int, int]) -> str:
         strided, hinted = pass_retval
-        return f'Grid-strided {strided} kernel(s); hinted {hinted} launch-bound kernel(s)'
+        return f"Grid-strided {strided} kernel(s); hinted {hinted} launch-bound kernel(s)"

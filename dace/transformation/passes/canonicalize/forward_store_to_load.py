@@ -31,6 +31,7 @@ this state never wrote -- and is refused. Anything the pass cannot see through i
 a second access node for the array in the state, a view, a ``may_alias`` descriptor, a WCR or
 dynamic memlet, or a producer/consumer in another scope.
 """
+
 import copy
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
@@ -57,13 +58,13 @@ def in_same_scope(state: SDFGState, node: nodes.Node, other: nodes.Node) -> bool
     return state.entry_node(node) is state.entry_node(other)
 
 
-def loop_body_states(sdfg: SDFG) -> 'OrderedDict[SDFGState, List[str]]':
+def loop_body_states(sdfg: SDFG) -> "OrderedDict[SDFGState, List[str]]":
     """Every state inside a loop, mapped to the iteration variables of the loops enclosing it.
 
     Built by descent from the ``LoopRegion`` s rather than by ascent from the states, so it needs
     no control-flow parent bookkeeping and keeps the pipeline's insertion order.
     """
-    found: 'OrderedDict[SDFGState, List[str]]' = OrderedDict()
+    found: "OrderedDict[SDFGState, List[str]]" = OrderedDict()
     for region in sdfg.all_control_flow_regions(recursive=True):
         if not isinstance(region, LoopRegion) or not region.loop_variable:
             continue
@@ -72,8 +73,9 @@ def loop_body_states(sdfg: SDFG) -> 'OrderedDict[SDFGState, List[str]]':
     return found
 
 
-def forwardable_store(state: SDFGState, node: nodes.AccessNode,
-                      loop_variables: List[str]) -> Optional[Tuple[Any, List[Any], subsets.Range]]:
+def forwardable_store(
+    state: SDFGState, node: nodes.AccessNode, loop_variables: List[str]
+) -> Optional[Tuple[Any, List[Any], subsets.Range]]:
     """Match a store on ``node`` that the same state reads back at the same element.
 
     :param state: The state holding the candidate access node.
@@ -119,11 +121,12 @@ def forwardable_store(state: SDFGState, node: nodes.AccessNode,
     return write, out_edges, write_subset
 
 
-def forward_one(state: SDFGState, node: nodes.AccessNode, write: Any, reads: List[Any],
-                write_subset: subsets.Range) -> None:
+def forward_one(
+    state: SDFGState, node: nodes.AccessNode, write: Any, reads: List[Any], write_subset: subsets.Range
+) -> None:
     """Route the stored value through a fresh transient and feed the same-iteration reads from it."""
     sdfg = state.sdfg
-    name, _ = sdfg.add_scalar(f'{node.data}_fwd', sdfg.arrays[node.data].dtype, transient=True, find_new_name=True)
+    name, _ = sdfg.add_scalar(f"{node.data}_fwd", sdfg.arrays[node.data].dtype, transient=True, find_new_name=True)
     forwarded = state.add_access(name)
     src, src_conn = write.src, write.src_conn
     # Where the stored value CAME from is preserved verbatim (a tasklet connector carries no
@@ -131,8 +134,9 @@ def forward_one(state: SDFGState, node: nodes.AccessNode, write: Any, reads: Lis
     origin = copy.deepcopy(write.data.get_src_subset(write, state)) if isinstance(src, nodes.AccessNode) else None
     state.remove_edge(write)
     state.add_edge(src, src_conn, forwarded, None, Memlet(data=name, subset=point(), other_subset=origin))
-    state.add_edge(forwarded, None, node, None,
-                   Memlet(data=node.data, subset=copy.deepcopy(write_subset), other_subset=point()))
+    state.add_edge(
+        forwarded, None, node, None, Memlet(data=node.data, subset=copy.deepcopy(write_subset), other_subset=point())
+    )
     for read in reads:
         dst, dst_conn = read.dst, read.dst_conn
         # Where the read LANDED is the reader's business and is preserved verbatim; only where it
@@ -150,7 +154,7 @@ class ForwardStoreToLoad(ppl.Pass):
     See the module docstring for the shape, the same-iteration proof and the refusals.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets | ppl.Modifies.Descriptors

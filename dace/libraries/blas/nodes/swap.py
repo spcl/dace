@@ -6,6 +6,7 @@ outputs (no inout connectors) so DaCe codegen produces one declaration
 per name. The expansion stages an initial cBLAS / cuBLAS ``copy`` into
 the output buffers then performs the actual ``swap`` on those.
 """
+
 import copy
 from typing import List, TYPE_CHECKING
 import warnings
@@ -20,6 +21,7 @@ from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -39,21 +41,19 @@ class ExpandSwapPure(ExpandTransformation):
         sdfg.add_array("_xout", [n], desc_x.dtype, strides=[sxo], storage=desc_x.storage)
         sdfg.add_array("_yout", [n], desc_y.dtype, strides=[syo], storage=desc_y.storage)
         state = sdfg.add_state(node.label + "_state")
-        state.add_mapped_tasklet("swap", {"__i": f"0:{n}"}, {
-            "__x": dace.Memlet("_xin[__i]"),
-            "__y": dace.Memlet("_yin[__i]")
-        },
-                                 "__xo = __y\n__yo = __x", {
-                                     "__xo": dace.Memlet("_xout[__i]"),
-                                     "__yo": dace.Memlet("_yout[__i]")
-                                 },
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            "swap",
+            {"__i": f"0:{n}"},
+            {"__x": dace.Memlet("_xin[__i]"), "__y": dace.Memlet("_yin[__i]")},
+            "__xo = __y\n__yo = __x",
+            {"__xo": dace.Memlet("_xout[__i]"), "__yo": dace.Memlet("_yout[__i]")},
+            external_edges=True,
+        )
         return sdfg
 
 
 @dace.library.expansion
 class ExpandSwapOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -62,7 +62,7 @@ class ExpandSwapOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(desc_x.dtype.base_type)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandSwapPure.expansion(node, parent_state, parent_sdfg, **kwargs)
         prefix = func.lower()
         code = f"""
@@ -70,16 +70,13 @@ class ExpandSwapOpenBLAS(ExpandTransformation):
         cblas_{prefix}copy({n}, _yin, {syi}, _yout, {syo});
         cblas_{prefix}swap({n}, _xout, {sxo}, _yout, {syo});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandSwapMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -89,7 +86,6 @@ class ExpandSwapMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandSwapGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -99,19 +95,17 @@ class ExpandSwapGPUBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(desc_x.dtype.base_type)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandSwapPure.expansion(node, parent_state, parent_sdfg, **kwargs)
         code = cls.environments[0].handle_setup_code(node)
         code += f"""
-        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _xin, {sxi}, _xout, {sxo});
-        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
-        {cls.dialect.func(func, 'swap')}({cls.dialect.handle}, {n}, _xout, {sxo}, _yout, {syo});
+        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _xin, {sxi}, _xout, {sxo});
+        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
+        {cls.dialect.func(func, "swap")}({cls.dialect.handle}, {n}, _xout, {sxo}, _yout, {syo});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
@@ -147,7 +141,7 @@ class Swap(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, **kwargs):
-        super().__init__(name, inputs=OrderedSet(('_xin', '_yin')), outputs=OrderedSet(('_xout', '_yout')), **kwargs)
+        super().__init__(name, inputs=OrderedSet(("_xin", "_yin")), outputs=OrderedSet(("_xout", "_yout")), **kwargs)
         self.n = n
 
     def validate(self, sdfg, state):
@@ -175,9 +169,9 @@ class Swap(dace.sdfg.nodes.LibraryNode):
         return (descs["_xin"], strides_in["_xin"]), (descs["_yin"], strides_in["_yin"]), sxo, syo, n
 
 
-@oprepo.replaces('dace.libraries.blas.swap')
-@oprepo.replaces('dace.libraries.blas.Swap')
-def swap_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y, x_result=None, y_result=None):
+@oprepo.replaces("dace.libraries.blas.swap")
+@oprepo.replaces("dace.libraries.blas.Swap")
+def swap_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, y, x_result=None, y_result=None):
     """Build a :class:`Swap` node.
 
     :param x_result: Output array for the swapped x; defaults to ``x`` (true in-place swap).
@@ -187,10 +181,10 @@ def swap_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y, x_res
     y_result = y_result if y_result is not None else y
     x_in, y_in = state.add_read(x), state.add_read(y)
     x_out, y_out = state.add_write(x_result), state.add_write(y_result)
-    libnode = Swap('swap', n=sdfg.arrays[x].shape[0])
+    libnode = Swap("swap", n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
-    state.add_edge(x_in, None, libnode, '_xin', mm.Memlet(x))
-    state.add_edge(y_in, None, libnode, '_yin', mm.Memlet(y))
-    state.add_edge(libnode, '_xout', x_out, None, mm.Memlet(x_result))
-    state.add_edge(libnode, '_yout', y_out, None, mm.Memlet(y_result))
+    state.add_edge(x_in, None, libnode, "_xin", mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, "_yin", mm.Memlet(y))
+    state.add_edge(libnode, "_xout", x_out, None, mm.Memlet(x_result))
+    state.add_edge(libnode, "_yout", y_out, None, mm.Memlet(y_result))
     return []

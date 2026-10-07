@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the LayoutChange library node: pure relayout expansion, op-sequence serialization,
 node chaining/folding, and the permute -> TensorTranspose (cuTENSOR/HPTT) dispatch selection."""
+
 import json
 import numpy
 import dace
@@ -51,11 +52,11 @@ def test_node_block_is_reshape():
 def test_node_block_unblock_folds_to_copy():
     sdfg, _, _ = _make([64], [Block(0, 16), Unblock(0, 16)])
     # simplify_ops folds Block∘Unblock -> [] so the output stays 1-D.
-    assert tuple(int(s) for s in sdfg.arrays["B"].shape) == (64, )
+    assert tuple(int(s) for s in sdfg.arrays["B"].shape) == (64,)
     sdfg.expand_library_nodes()
     sdfg.validate()
     A = numpy.random.rand(64)
-    B = numpy.zeros((64, ))
+    B = numpy.zeros((64,))
     sdfg(A=A.copy(), B=B)
     assert numpy.array_equal(B, A)
 
@@ -101,6 +102,7 @@ def test_sdfg_json_roundtrip_preserves_ops():
 def test_cutensor_dispatch_permute_uses_tensortranspose():
     """A pure permutation lowers to a nested SDFG containing a TensorTranspose (cuTENSOR)."""
     from dace.libraries.linalg import TensorTranspose
+
     sdfg, state, node = _make([6, 8], [Permute((1, 0))])
     nested = ExpandCuTensor.expansion(node, state, sdfg)
     tts = [n for st in nested.states() for n in st.nodes() if isinstance(n, TensorTranspose)]
@@ -112,6 +114,7 @@ def test_cutensor_dispatch_permute_uses_tensortranspose():
 def test_cutensor_dispatch_block_falls_back_to_pure():
     """A block (not a permutation) has no cuTENSOR path -> falls back to the pure relayout map."""
     from dace.libraries.linalg import TensorTranspose
+
     sdfg, state, node = _make([64], [Block(0, 16)])
     nested = ExpandCuTensor.expansion(node, state, sdfg)
     tts = [n for st in nested.states() for n in st.nodes() if isinstance(n, TensorTranspose)]

@@ -18,6 +18,7 @@ each reproduces the argmin oracle. Ties resolve to the first (lowest) index in b
 (strict ``<``) and numpy ``argmin``. Source: brute-force kNN (the exhaustive-scan baseline behind
 FLANN/FAISS IVF); SC26 layout paper (Permute over an all-pairs scan).
 """
+
 import numpy
 import dace
 

@@ -12,6 +12,7 @@ What is left here is the DECLARATION: the name and its width, registered on the 
 introduces a use does not have to arrange for the symbol to exist first, and so nested SDFGs inherit
 it through ``symbol_mapping`` like any other symbol.
 """
+
 from typing import Any, Dict, Optional
 
 from dace import SDFG, dtypes, nodes, properties, symbolic
@@ -40,7 +41,7 @@ def symbol_dtype(sdfg: SDFG) -> dtypes.typeclass:
 class SupplyNumThreads(ppl.Pass):
     """Declare ``__dace_num_threads`` on the top-level SDFG."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols

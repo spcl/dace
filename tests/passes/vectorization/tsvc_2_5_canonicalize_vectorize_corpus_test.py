@@ -21,6 +21,7 @@ inputs and skipped. Inner constant-tile loops (e.g. ``heat3d``'s tile size 8)
 would unroll 512x, so ``unroll_limit`` is capped, matching the canonicalize
 sibling :mod:`tests.canonicalize.tsvc_2_5_corpus_test`.
 """
+
 import contextlib
 import copy
 import inspect
@@ -58,25 +59,27 @@ CORPUS = tsvc_2_5.collect()
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
-UNTILED_KERNELS = frozenset({
-    "tests_corpus_tsvc_2_5_tsvc_2_5_argmax_value",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_argmax_with_index",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_argmin_value",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_capture",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_find_first",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_post_body",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_iv_additive",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_iv_multiplicative",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_loop_to_map_overlap_seq",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_even",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_odd",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_reduce_inner_carry",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_scan_multi_carry",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_thomas_solve",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_wavefront2d",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_wf_north_west",
-    "tests_corpus_tsvc_2_5_tsvc_2_5_wf_triangular",
-})
+UNTILED_KERNELS = frozenset(
+    {
+        "tests_corpus_tsvc_2_5_tsvc_2_5_argmax_value",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_argmax_with_index",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_argmin_value",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_capture",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_find_first",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_ext_break_post_body",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_iv_additive",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_iv_multiplicative",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_loop_to_map_overlap_seq",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_even",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_quasi_affine_reduce_odd",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_reduce_inner_carry",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_scan_multi_carry",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_thomas_solve",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_wavefront2d",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_wf_north_west",
+        "tests_corpus_tsvc_2_5_tsvc_2_5_wf_triangular",
+    }
+)
 
 # Round-robin knob set for the multidim tile-op vectorizer (valid combinations
 # only; see the VectorizeCPUMultiDim constructor). The legacy 1-D VectorizeCPU
@@ -112,15 +115,9 @@ def _reference(program):
     # values it declares (e.g. ``ssym``, ``k``); ``iv_*`` oracles take the trip
     # count as ``n``.
     pool = {
-        **{
-            n: a.copy()
-            for n, a in arrays.items()
-        },
+        **{n: a.copy() for n, a in arrays.items()},
         **scalars,
-        **{
-            s.lower(): v
-            for s, v in tsvc_2_5.SIZES.items()
-        },
+        **{s.lower(): v for s, v in tsvc_2_5.SIZES.items()},
         "n": tsvc_2_5.SIZES["LEN_1D"],
     }
     oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
@@ -141,11 +138,9 @@ def _canonicalized(program):
     """Canonicalize ``program`` (no correctness assertion -- caller checks)."""
     cand = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(cand,
-                     validate=True,
-                     peel_limit=PEEL_LIMIT,
-                     break_anti_dependence=BREAK_ANTI_DEP,
-                     unroll_limit=UNROLL_LIMIT)
+        canonicalize(
+            cand, validate=True, peel_limit=PEEL_LIMIT, break_anti_dependence=BREAK_ANTI_DEP, unroll_limit=UNROLL_LIMIT
+        )
     return cand
 
 
@@ -158,9 +153,10 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # index/permutation arrays are read-only inputs
-        assert _allclose(
-            ref[name], got[name]), (f"{program.name}/{name}: {stage} diverges from numpy oracle, "
-                                    f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert _allclose(ref[name], got[name]), (
+            f"{program.name}/{name}: {stage} diverges from numpy oracle, "
+            f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}"
+        )
 
 
 @pytest.mark.parametrize("idx,program", list(enumerate(CORPUS)), ids=[p.name for p in CORPUS])
@@ -192,14 +188,18 @@ def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
     # one SDFG aborts the tile pipeline), else fall back to K=1.
     if map_param_counts and min(map_param_counts) >= 2:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, 8),
-                            target_isa=ISA.SCALAR,
-                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                            branch_mode=BranchMode.MERGE,
-                            validate_all=True))
+            VectorizeConfig(
+                widths=(8, 8),
+                target_isa=ISA.SCALAR,
+                remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                branch_mode=BranchMode.MERGE,
+                validate_all=True,
+            )
+        )
     else:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)]))
+            VectorizeConfig(widths=(8,), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)])
+        )
     untransformed = copy.deepcopy(sdfg)
     vec.apply_pass(sdfg, {})
     sdfg.validate()
@@ -209,4 +209,5 @@ def test_tsvc_2_5_canonicalize_then_multidim_vectorize(idx, program):
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__, "-q"]))

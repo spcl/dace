@@ -26,59 +26,55 @@ class ExpandGetrsPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGetrsOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
-                                             cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = (
+            node.validate(parent_sdfg, parent_state)
+        )
         dtype = desc_a.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(lapack_complex_float*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(lapack_complex_double*)"
         if desc_a.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, {cast}_a, {stride_a}, _ipiv, {cast}_rhs_in, {stride_rhs});"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetrsMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
-                                             cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = (
+            node.validate(parent_sdfg, parent_state)
+        )
         dtype = desc_a.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(MKL_Complex8*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(MKL_Complex16*)"
         if desc_a.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, {cast}_a, {stride_a}, _ipiv, {cast}_rhs_in, {stride_rhs});"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
@@ -90,13 +86,14 @@ class ExpandGetrsGPUSolver(ExpandTransformation):
 
     @classmethod
     def expansion(cls, node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
-                                             cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = (
+            node.validate(parent_sdfg, parent_state)
+        )
         dtype = desc_a.dtype.base_type
         veclen = desc_a.dtype.veclen
 
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
-        func = func + 'getrs'
+        func = func + "getrs"
 
         n = n or node.n
         if veclen != 1:
@@ -112,16 +109,15 @@ class ExpandGetrsGPUSolver(ExpandTransformation):
             # right-hand sides are the descriptor's ROWS; its columns are the solve's ``n``.
             rhs_count = rows_rhs
 
-        code = cls.environments[0].handle_setup_code(node) + cls.call(func, cuda_type, rows_a, rhs_count, stride_a,
-                                                                      stride_rhs)
+        code = cls.environments[0].handle_setup_code(node) + cls.call(
+            func, cuda_type, rows_a, rhs_count, stride_a, stride_rhs
+        )
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dace.int32) if c == "_res" else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
 
         return tasklet
@@ -158,25 +154,26 @@ class ExpandGetrsRocSolver(ExpandGetrsGPUSolver):
 
 @dace.library.node
 class Getrs(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "OpenBLAS": ExpandGetrsOpenBLAS,
         "MKL": ExpandGetrsMKL,
         "cuSolverDn": ExpandGetrsCuSolverDn,
-        "rocSOLVER": ExpandGetrsRocSolver
+        "rocSOLVER": ExpandGetrsRocSolver,
     }
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs=OrderedSet(('_a', '_rhs_in', '_ipiv')),
-                         outputs=OrderedSet(('_rhs_out', '_res')),
-                         **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs=OrderedSet(("_a", "_rhs_in", "_ipiv")),
+            outputs=OrderedSet(("_rhs_out", "_res")),
+            **kwargs,
+        )
 
     def validate(self, sdfg, state):
         """
@@ -188,9 +185,9 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly three inputs to getrs")
         in_memlets = [None] * 2
         for _, _, _, conn, data in in_edges:
-            if conn == '_a':
+            if conn == "_a":
                 in_memlets[0] = data
-            elif conn == '_rhs_in':
+            elif conn == "_rhs_in":
                 in_memlets[1] = data
         out_edges = state.out_edges(self)
         if len(out_edges) != 2:

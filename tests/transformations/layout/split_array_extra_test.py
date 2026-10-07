@@ -1,14 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Extra unit tests for SplitArray (dace/transformation/layout/split_array.py): helper functions,
 splitting behaviour, and error paths not covered by tests/layout/split_array_test.py."""
+
 import numpy
 
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.layout.split_dimensions import SplitDimensions
-from dace.transformation.layout.split_array import (SplitArray, resolve_aliases, copy_state_contents,
-                                                    reverse_bfs_assignments)
+from dace.transformation.layout.split_array import (
+    SplitArray,
+    resolve_aliases,
+    copy_state_contents,
+    reverse_bfs_assignments,
+)
 
 nphase = dace.symbol("nphase", dtype=dace.int32)
 ncol = dace.symbol("ncol", dtype=dace.int32)
@@ -120,7 +125,7 @@ def test_split_first_dimension_bit_exact():
     for nm in NAMES:
         assert f"field_{nm}" in sdfg.arrays
         # Only the kept (col) axis survives in each split array.
-        assert tuple(str(s) for s in sdfg.arrays[f"field_{nm}"].shape) == ("ncol", )
+        assert tuple(str(s) for s in sdfg.arrays[f"field_{nm}"].shape) == ("ncol",)
 
     csdfg = sdfg.compile()
     ncol_v = 7
@@ -145,7 +150,7 @@ def test_split_two_phase_dimensions_bit_exact():
     for ni in NAMES:
         for nj in NAMES:
             assert f"m_{ni}_{nj}" in sdfg.arrays
-            assert tuple(str(s) for s in sdfg.arrays[f"m_{ni}_{nj}"].shape) == ("ncol", )
+            assert tuple(str(s) for s in sdfg.arrays[f"m_{ni}_{nj}"].shape) == ("ncol",)
 
     csdfg = sdfg.compile()
     ncol_v = 5
@@ -173,7 +178,7 @@ def test_split_full_dimension_creates_length1_descriptors():
     for nm in NAMES:
         assert f"coef_{nm}" in sdfg.arrays
         desc = sdfg.arrays[f"coef_{nm}"]
-        assert tuple(int(s) for s in desc.shape) == (1, )
+        assert tuple(int(s) for s in desc.shape) == (1,)
         assert desc.dtype == dace.float64
 
 
@@ -210,7 +215,7 @@ def test_index_read_from_split_array_is_rewritten_bit_exact():
     assert "idx" not in sdfg.arrays
     # The split index array is fully consumed, so each element is its own length-1 array.
     for nm in NAMES:
-        assert tuple(int(s) for s in sdfg.arrays[f"idx_{nm}"].shape) == (1, )
+        assert tuple(int(s) for s in sdfg.arrays[f"idx_{nm}"].shape) == (1,)
     # Asserted directly (not just via validate()): a silently-skipped edge is the actual failure mode.
     for e in sdfg.all_interstate_edges():
         assert "idx" not in e.data.free_symbols, f"edge still reads removed array 'idx': {e.data.assignments}"
@@ -224,7 +229,7 @@ def test_index_read_from_split_array_is_rewritten_bit_exact():
     args = {"out": out, "ncol": ncol_v}
     for i, nm in enumerate(NAMES):
         args[f"a_{nm}"] = a[i].copy()
-        args[f"idx_{nm}"] = idx[i:i + 1].copy()
+        args[f"idx_{nm}"] = idx[i : i + 1].copy()
     csdfg(**args)
 
     ref = numpy.zeros(ncol_v)
@@ -269,8 +274,10 @@ def indexed_by(expr_str: str, name: str):
     """Every ``name[...]`` access in ``expr_str``, as a sorted list of index-string tuples."""
     expr = dace.symbolic.pystr_to_symbolic(expr_str)
     return sorted(
-        tuple(str(a) for a in node.args[1:]) for node in expr.atoms(dace.symbolic.Subscript)
-        if str(node.args[0]) == name)
+        tuple(str(a) for a in node.args[1:])
+        for node in expr.atoms(dace.symbolic.Subscript)
+        if str(node.args[0]) == name
+    )
 
 
 def test_split_rewrites_every_access_and_keeps_the_rest_of_the_expression():
@@ -283,19 +290,21 @@ def test_split_rewrites_every_access_and_keeps_the_rest_of_the_expression():
     masks, factors = [True, False, False], [2, 1, 1]
 
     # the two-array product that made the greedy match overrun
-    out = split.split_array_accesses('(A[i, j, k] * B[i, j, k])', 'A', masks, factors)
-    assert indexed_by(out, 'A') == [('int_floor(i, 2)', 'j', 'k', 'Mod(i, 2)')], out
-    assert indexed_by(out, 'B') == [('i', 'j', 'k')], out  # the factor the substitution used to swallow
+    out = split.split_array_accesses("(A[i, j, k] * B[i, j, k])", "A", masks, factors)
+    assert indexed_by(out, "A") == [("int_floor(i, 2)", "j", "k", "Mod(i, 2)")], out
+    assert indexed_by(out, "B") == [("i", "j", "k")], out  # the factor the substitution used to swallow
 
     # every occurrence is rewritten, and the surrounding terms survive
-    out = split.split_array_accesses('A[i, j, k] * 2 + A[k, j, i]', 'A', masks, factors)
-    assert indexed_by(out, 'A') == [('int_floor(i, 2)', 'j', 'k', 'Mod(i, 2)'),
-                                    ('int_floor(k, 2)', 'j', 'i', 'Mod(k, 2)')], out
-    assert '2' in out
+    out = split.split_array_accesses("A[i, j, k] * 2 + A[k, j, i]", "A", masks, factors)
+    assert indexed_by(out, "A") == [
+        ("int_floor(i, 2)", "j", "k", "Mod(i, 2)"),
+        ("int_floor(k, 2)", "j", "i", "Mod(k, 2)"),
+    ], out
+    assert "2" in out
 
     # a longer name that merely starts with the split array's name is not an access to it
-    assert split.split_array_accesses('AB[i, j, k]', 'A', masks, factors) == 'AB[i, j, k]'
-    assert split.split_array_accesses('C_slice', 'A', masks, factors) == 'C_slice'
+    assert split.split_array_accesses("AB[i, j, k]", "A", masks, factors) == "AB[i, j, k]"
+    assert split.split_array_accesses("C_slice", "A", masks, factors) == "C_slice"
 
 
 if __name__ == "__main__":

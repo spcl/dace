@@ -14,6 +14,7 @@ that canonicalize wrongly parallelized, or an anti-dependence it broke unsafely,
 diverges from the numpy reference. Comparison always treats matching
 ``nan``/``inf``/``-inf`` as equal (``equal_nan=True``).
 """
+
 import contextlib
 import io
 
@@ -66,12 +67,13 @@ def test_canonicalize_corpus_value_preserving(kernel, request):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # gather indices are read-only
-        assert _allclose(
-            ref[name],
-            got[name]), (f"{kernel.name}/{name}: canonicalize diverges from numpy "
-                         f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert _allclose(ref[name], got[name]), (
+            f"{kernel.name}/{name}: canonicalize diverges from numpy "
+            f"reference, max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}"
+        )
 
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__, "-q"]))

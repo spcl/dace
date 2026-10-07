@@ -28,6 +28,7 @@ its size):
 - ``CUDA`` -- the same tagged-write + verify run ON the device (``gpucub::BlockReduce`` fold, one
   atomic per block), with only the resulting flag copied back.
 """
+
 from typing import Dict, List, Optional, Tuple
 
 import dace
@@ -45,8 +46,13 @@ OUTPUT_CONNECTOR_NAME = "_count_out"
 SCRATCH_CONNECTOR_NAME = "_owner_out"
 
 #: Storage the tag array may use: every expansion runs the check in host code.
-HOST_STORAGE = (dtypes.StorageType.Default, dtypes.StorageType.Register, dtypes.StorageType.CPU_Heap,
-                dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned)
+HOST_STORAGE = (
+    dtypes.StorageType.Default,
+    dtypes.StorageType.Register,
+    dtypes.StorageType.CPU_Heap,
+    dtypes.StorageType.CPU_ThreadLocal,
+    dtypes.StorageType.CPU_Pinned,
+)
 
 
 def _validate(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG):
@@ -58,8 +64,10 @@ def _validate(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SD
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     out_edges = [e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME]
     if len(in_edges) != 1 or len(out_edges) != 1:
-        raise ValueError(f"ScatterConflictCheck {node.label}: one '{INPUT_CONNECTOR_NAME}' in-edge + "
-                         f"one '{OUTPUT_CONNECTOR_NAME}' out-edge required.")
+        raise ValueError(
+            f"ScatterConflictCheck {node.label}: one '{INPUT_CONNECTOR_NAME}' in-edge + "
+            f"one '{OUTPUT_CONNECTOR_NAME}' out-edge required."
+        )
     in_desc = sdfg.arrays[required(in_edges[0].data.data)]
     out_desc = sdfg.arrays[required(out_edges[0].data.data)]
     if not isinstance(in_desc, dace.data.Array) or not _helpers.is_integer_dtype(in_desc.dtype):
@@ -74,13 +82,16 @@ def _validate(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SD
     if owner_edges:
         owner_desc = sdfg.arrays[required(owner_edges[0].data.data)]
         if not isinstance(owner_desc, dace.data.Array) or owner_desc.dtype != dtypes.int64:
-            raise ValueError(f"ScatterConflictCheck '{SCRATCH_CONNECTOR_NAME}' must be an int64 Array; "
-                             f"got {owner_desc}.")
+            raise ValueError(
+                f"ScatterConflictCheck '{SCRATCH_CONNECTOR_NAME}' must be an int64 Array; got {owner_desc}."
+            )
         # The check is host code in every expansion, so a device-resident tag array would be
         # dereferenced from the host. Refuse loudly rather than corrupt memory.
         if owner_desc.storage not in HOST_STORAGE:
-            raise ValueError(f"ScatterConflictCheck '{SCRATCH_CONNECTOR_NAME}' must live in host memory; "
-                             f"got storage {owner_desc.storage}.")
+            raise ValueError(
+                f"ScatterConflictCheck '{SCRATCH_CONNECTOR_NAME}' must live in host memory; "
+                f"got storage {owner_desc.storage}."
+            )
     return in_desc, in_edges[0].data.data, out_edges[0].data.data, owner_desc
 
 
@@ -98,8 +109,9 @@ def _outputs(owner_desc: Optional[dace.data.Array]) -> Dict[str, None]:
     return {OUTPUT_CONNECTOR_NAME: None, SCRATCH_CONNECTOR_NAME: None}
 
 
-def _owner(node: "ScatterConflictCheck", state: dace.SDFGState,
-           owner_desc: Optional[dace.data.Array]) -> Optional[Tuple[str, str]]:
+def _owner(
+    node: "ScatterConflictCheck", state: dace.SDFGState, owner_desc: Optional[dace.data.Array]
+) -> Optional[Tuple[str, str]]:
     """``(connector, capacity)`` for the wired tag array, or ``None``. Capacity comes from the
     edge's own subset, so it tracks whatever the caller actually sized the descriptor by."""
     if owner_desc is None:
@@ -119,7 +131,7 @@ def _tagcount_call(n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]
     scattered array's domain. Without one the runtime sizes its own buffer from ``max(idx)``, which
     costs an extra reduction pass plus an allocation. ``omp`` toggles the parallel form.
     """
-    par = 'true' if omp else 'false'
+    par = "true" if omp else "false"
     if owner is None:
         call = f"dace::detect_collision({src}, ({n}), {par})"
     else:
@@ -129,32 +141,33 @@ def _tagcount_call(n: str, src: str, omp: bool, owner: Optional[Tuple[str, str]]
 
 
 #: Loop variable and runtime tag-array size of the ``pure`` check, symbols of its own nested SDFG.
-CHECK_INDEX = 'conflict_i'
-CAPACITY = 'conflict_capacity'
+CHECK_INDEX = "conflict_i"
+CAPACITY = "conflict_capacity"
 #: The tag array the ``pure`` check allocates itself when no ``_owner_out`` is wired.
-OWN_TAGS = 'tags'
+OWN_TAGS = "tags"
 
 
-def index_loop(label: str, n: str, code: str, reads: Dict[str, Memlet], writes: Dict[str, Memlet],
-               nsdfg: dace.SDFG) -> dace.sdfg.state.LoopRegion:
+def index_loop(
+    label: str, n: str, code: str, reads: Dict[str, Memlet], writes: Dict[str, Memlet], nsdfg: dace.SDFG
+) -> dace.sdfg.state.LoopRegion:
     """One pass over the index array: ``x`` is element ``CHECK_INDEX`` of ``_idx_in``."""
-    loop = counted_loop(label, CHECK_INDEX, '0', n)
-    body = tasklet_state(nsdfg, f'{label}_body', code, {
-        'x': Memlet(element(nsdfg, INPUT_CONNECTOR_NAME, CHECK_INDEX)),
-        **reads
-    }, writes)
+    loop = counted_loop(label, CHECK_INDEX, "0", n)
+    body = tasklet_state(
+        nsdfg, f"{label}_body", code, {"x": Memlet(element(nsdfg, INPUT_CONNECTOR_NAME, CHECK_INDEX)), **reads}, writes
+    )
     chain(loop, [body])
     return loop
 
 
 def sized_tags(nsdfg: dace.SDFG, n: str) -> list:
     """Blocks that size a tag array from ``max(idx)`` as the runtime does, ending on the edge that binds it."""
-    nsdfg.add_scalar('top', dtypes.int64, transient=True)
+    nsdfg.add_scalar("top", dtypes.int64, transient=True)
     nsdfg.add_symbol(CAPACITY, dtypes.int64)
     nsdfg.add_array(OWN_TAGS, [CAPACITY], dtypes.int64, transient=True)
-    start = tasklet_state(nsdfg, 'top_start', 'm = 0', {}, {'m': Memlet('top[0]')})
-    sweep = index_loop('top_sweep', n, 'v = x\nm = v if v > t else t', {'t': Memlet('top[0]')}, {'m': Memlet('top[0]')},
-                       nsdfg)
+    start = tasklet_state(nsdfg, "top_start", "m = 0", {}, {"m": Memlet("top[0]")})
+    sweep = index_loop(
+        "top_sweep", n, "v = x\nm = v if v > t else t", {"t": Memlet("top[0]")}, {"m": Memlet("top[0]")}, nsdfg
+    )
     return [start, sweep]
 
 
@@ -170,28 +183,32 @@ class ExpandPure(ExpandTransformation):
         _validate(node, state, sdfg)
         edges = {e.dst_conn: e for e in state.in_edges(node)}
         edges.update({e.src_conn: e for e in state.out_edges(node)})
-        nsdfg = dace.SDFG(f'{node.label}_pure')
+        nsdfg = dace.SDFG(f"{node.label}_pure")
         for conn, edge in edges.items():
             operand_array(nsdfg, conn, edge, sdfg)
         n = symbolic.symstr(required(edges[INPUT_CONNECTOR_NAME].data.subset).num_elements())
         blocks = [] if SCRATCH_CONNECTOR_NAME in edges else sized_tags(nsdfg, n)
         tags = SCRATCH_CONNECTOR_NAME if SCRATCH_CONNECTOR_NAME in edges else OWN_TAGS
         capacity = symbolic.symstr(nsdfg.arrays[tags].total_size)
-        whole = Memlet(f'{tags}[0:{capacity}]', dynamic=True)
-        in_range = f'v >= 0 and v < {capacity}'
-        nsdfg.add_scalar('flag', dtypes.int64, transient=True)
-        tag = index_loop('tag', n, f'v = x\nif {in_range}:\n    t[v] = {CHECK_INDEX}', {}, {'t': whole}, nsdfg)
-        clear = tasklet_state(nsdfg, 'clear', 'f = 0', {}, {'f': Memlet('flag[0]')})
-        verify = index_loop('verify', n,
-                            f'v = x\nnf = f\nif {in_range}:\n    if t[v] != {CHECK_INDEX}:\n        nf = 1', {
-                                't': whole,
-                                'f': Memlet('flag[0]')
-                            }, {'nf': Memlet('flag[0]')}, nsdfg)
-        done = tasklet_state(nsdfg, 'write_back', 'c = f', {'f': Memlet('flag[0]')},
-                             {'c': Memlet(f'{OUTPUT_CONNECTOR_NAME}[0]')})
+        whole = Memlet(f"{tags}[0:{capacity}]", dynamic=True)
+        in_range = f"v >= 0 and v < {capacity}"
+        nsdfg.add_scalar("flag", dtypes.int64, transient=True)
+        tag = index_loop("tag", n, f"v = x\nif {in_range}:\n    t[v] = {CHECK_INDEX}", {}, {"t": whole}, nsdfg)
+        clear = tasklet_state(nsdfg, "clear", "f = 0", {}, {"f": Memlet("flag[0]")})
+        verify = index_loop(
+            "verify",
+            n,
+            f"v = x\nnf = f\nif {in_range}:\n    if t[v] != {CHECK_INDEX}:\n        nf = 1",
+            {"t": whole, "f": Memlet("flag[0]")},
+            {"nf": Memlet("flag[0]")},
+            nsdfg,
+        )
+        done = tasklet_state(
+            nsdfg, "write_back", "c = f", {"f": Memlet("flag[0]")}, {"c": Memlet(f"{OUTPUT_CONNECTOR_NAME}[0]")}
+        )
         chain(nsdfg, [*blocks, tag, clear, verify, done])
         if blocks:
-            nsdfg.edges_between(blocks[-1], tag)[0].data.assignments[CAPACITY] = 'top + 1'
+            nsdfg.edges_between(blocks[-1], tag)[0].data.assignments[CAPACITY] = "top + 1"
         return nsdfg
 
 
@@ -205,15 +222,19 @@ class ExpandCPU(ExpandTransformation):
     @staticmethod
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         from dace.transformation.auto.auto_optimize import libnode_is_sequential
+
         in_desc, _in, _out, owner_desc = _validate(node, state, sdfg)
         n = _length(node, state)
         owner = _owner(node, state, owner_desc)
         omp = node.schedule != dace.ScheduleType.Sequential and not libnode_is_sequential(node, state, sdfg)
         body = _tagcount_call(n, INPUT_CONNECTOR_NAME, omp=omp, owner=owner)
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME: None},
-                             _outputs(owner_desc),
-                             "{\n" + body + "}",
-                             language=dace.Language.CPP)
+        return nodes.Tasklet(
+            node.name,
+            {INPUT_CONNECTOR_NAME: None},
+            _outputs(owner_desc),
+            "{\n" + body + "}",
+            language=dace.Language.CPP,
+        )
 
 
 @library.expansion
@@ -242,35 +263,41 @@ class ExpandCUDA(ExpandTransformation):
     def expansion(node: "ScatterConflictCheck", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         if not ExpandCUDA.environments:
             from dace.libraries.sort.environments.cub import DetectScratch
+
             ExpandCUDA.environments = [DetectScratch]
         in_desc, _in, _out, owner_desc = _validate(node, state, sdfg)
         n, ct = _length(node, state), in_desc.dtype.ctype
         owner = _owner(node, state, owner_desc)
 
         idstr = global_code_id(sdfg, state, node)
-        cap_param = '' if owner is None else ', long long __sc_capacity'
-        cap_arg = '' if owner is None else ', __sc_capacity'
-        prototype = (f'DACE_EXPORTED gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, '
-                     f'long long __sc_n{cap_param}, long long *__sc_out, gpuStream_t __sc_stream);')
-        sdfg.append_global_code(prototype + '\n')
+        cap_param = "" if owner is None else ", long long __sc_capacity"
+        cap_arg = "" if owner is None else ", __sc_capacity"
+        prototype = (
+            f"DACE_EXPORTED gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, "
+            f"long long __sc_n{cap_param}, long long *__sc_out, gpuStream_t __sc_stream);"
+        )
+        sdfg.append_global_code(prototype + "\n")
         sdfg.append_global_code(
-            f'{prototype}\n'
-            f'gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, long long __sc_n{cap_param}, '
-            f'long long *__sc_out, gpuStream_t __sc_stream) {{\n'
-            f'    return ::dace::detect_collision_device(__sc_idx, __sc_n{cap_arg}, __sc_out, __sc_stream);\n'
-            f'}}\n', 'cuda')
+            f"{prototype}\n"
+            f"gpuError_t __dace_scatter_conflict_{idstr}(const {ct} *__sc_idx, long long __sc_n{cap_param}, "
+            f"long long *__sc_out, gpuStream_t __sc_stream) {{\n"
+            f"    return ::dace::detect_collision_device(__sc_idx, __sc_n{cap_arg}, __sc_out, __sc_stream);\n"
+            f"}}\n",
+            "cuda",
+        )
 
-        cap_call = '' if owner is None else f', ({owner[1]})'
-        code = ('{\n'
-                'long long __sc_result;\n'
-                f'DACE_GPU_CHECK(__dace_scatter_conflict_{idstr}({INPUT_CONNECTOR_NAME}, ({n}){cap_call}, '
-                f'&__sc_result, __dace_current_stream));\n'
-                f'{OUTPUT_CONNECTOR_NAME} = __sc_result;\n'
-                '}')
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME: None},
-                             _outputs(owner_desc),
-                             code,
-                             language=dace.Language.CPP)
+        cap_call = "" if owner is None else f", ({owner[1]})"
+        code = (
+            "{\n"
+            "long long __sc_result;\n"
+            f"DACE_GPU_CHECK(__dace_scatter_conflict_{idstr}({INPUT_CONNECTOR_NAME}, ({n}){cap_call}, "
+            f"&__sc_result, __dace_current_stream));\n"
+            f"{OUTPUT_CONNECTOR_NAME} = __sc_result;\n"
+            "}"
+        )
+        return nodes.Tasklet(
+            node.name, {INPUT_CONNECTOR_NAME: None}, _outputs(owner_desc), code, language=dace.Language.CPP
+        )
 
 
 @library.expansion

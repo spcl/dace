@@ -6,6 +6,7 @@ The kernels under test are the REAL corpus kernels (``tests.corpus.polybench``),
 kernels the pass is meant to recognise. The numerical oracle is the untransformed baseline SDFG at the corpus's
 dtype-aware tolerance, run multithreaded.
 """
+
 import os
 
 os.environ["OMP_NUM_THREADS"] = "4"
@@ -38,8 +39,9 @@ def corpus_kernel(name):
 
 def lifted(sdfg, cls):
     """``(state, node)`` for every ``cls`` library node in ``sdfg``."""
-    return [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-            if isinstance(n, cls)]
+    return [
+        (st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes() if isinstance(n, cls)
+    ]
 
 
 def loop_count(sdfg):
@@ -122,7 +124,7 @@ def test_syr2k_nest_is_not_lifted_to_syrk():
     sdfg = polybench.fresh_sdfg(kernel)
     LoopToRankKUpdate().apply_pass(sdfg, {})
     assert lifted(sdfg, Syrk) == []
-    (state, node), = lifted(sdfg, Syr2k)
+    ((state, node),) = lifted(sdfg, Syr2k)
     assert inputs_of(state, node) == {"_a": "A", "_b": "B", "_c": "C", "_alpha": "alpha", "_beta": "beta"}
 
 
@@ -132,21 +134,22 @@ def test_syrk_nest_is_not_lifted_to_syr2k():
     sdfg = polybench.fresh_sdfg(kernel)
     LoopToRankKUpdate().apply_pass(sdfg, {})
     assert lifted(sdfg, Syr2k) == []
-    (state, node), = lifted(sdfg, Syrk)
+    ((state, node),) = lifted(sdfg, Syrk)
     assert inputs_of(state, node) == {"_a": "A", "_c": "C", "_alpha": "alpha", "_beta": "beta"}
 
 
 @dace.program
-def syrk_then_syr2k(C: datatype[N, N], D: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: datatype[1],
-                    beta: datatype[1]):
+def syrk_then_syr2k(
+    C: datatype[N, N], D: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: datatype[1], beta: datatype[1]
+):
     for i in range(N):
-        C[i, :i + 1] *= beta[0]
+        C[i, : i + 1] *= beta[0]
         for k in range(M):
-            C[i, :i + 1] += alpha[0] * A[i, k] * A[:i + 1, k]
+            C[i, : i + 1] += alpha[0] * A[i, k] * A[: i + 1, k]
     for i in range(N):
-        D[i, :i + 1] *= beta[0]
+        D[i, : i + 1] *= beta[0]
         for k in range(M):
-            D[i, :i + 1] += A[:i + 1, k] * alpha[0] * B[i, k] + B[:i + 1, k] * alpha[0] * A[i, k]
+            D[i, : i + 1] += A[: i + 1, k] * alpha[0] * B[i, k] + B[: i + 1, k] * alpha[0] * A[i, k]
 
 
 def test_rank_k_and_rank_2k_nests_lifted_in_one_run():
@@ -154,8 +157,8 @@ def test_rank_k_and_rank_2k_nests_lifted_in_one_run():
     sdfg = syrk_then_syr2k.to_sdfg(simplify=True)
     assert LoopToRankKUpdate().apply_pass(sdfg, {}) == 2
 
-    (syrk_state, syrk_node), = lifted(sdfg, Syrk)
-    (syr2k_state, syr2k_node), = lifted(sdfg, Syr2k)
+    ((syrk_state, syrk_node),) = lifted(sdfg, Syrk)
+    ((syr2k_state, syr2k_node),) = lifted(sdfg, Syr2k)
     assert inputs_of(syrk_state, syrk_node)["_c"] == "C" and "_b" not in inputs_of(syrk_state, syrk_node)
     assert inputs_of(syr2k_state, syr2k_node)["_c"] == "D"
     assert loop_count(sdfg) == 0
@@ -197,9 +200,9 @@ def test_full_row_nest_not_matched():
 def asymmetric_nest(C: datatype[N, N], A: datatype[N, M], B: datatype[N, M], alpha: datatype[1], beta: datatype[1]):
     # Triangular and rank-k shaped, but ``A[i,k]*B[j,k]`` has no symmetric ``B[i,k]*A[j,k]`` partner.
     for i in range(N):
-        C[i, :i + 1] *= beta[0]
+        C[i, : i + 1] *= beta[0]
         for k in range(M):
-            C[i, :i + 1] += alpha[0] * A[i, k] * B[:i + 1, k]
+            C[i, : i + 1] += alpha[0] * A[i, k] * B[: i + 1, k]
 
 
 def test_asymmetric_pairing_not_matched():
@@ -222,8 +225,9 @@ def test_rank_k_resolver_refuses_a_wcr_write():
     state = sdfg.add_state()
     tasklet = state.add_tasklet("inc", {"__a"}, {"__o"}, "__o = __a")
     state.add_edge(state.add_read("A"), None, tasklet, "__a", dace.Memlet("A[0, 0]"))
-    state.add_edge(tasklet, "__o", state.add_write("C"), None,
-                   dace.Memlet(data="C", subset="0, 0", wcr="lambda x, y: x + y"))
+    state.add_edge(
+        tasklet, "__o", state.add_write("C"), None, dace.Memlet(data="C", subset="0, 0", wcr="lambda x, y: x + y")
+    )
     sdfg.validate()
 
     sink = next(n for n in state.data_nodes() if n.data == "C")

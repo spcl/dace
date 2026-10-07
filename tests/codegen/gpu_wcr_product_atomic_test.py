@@ -5,12 +5,13 @@ Under ``DACE_USE_GPU_ATOMICS`` the ``Product`` resolution's ``reduce_atomic`` ca
 ``wcr_custom::reduce``, so blocks racing on one accumulator lost multiplications: TSVC s312's product came back
 0.87x, 0.84x and -0.81x of the reference over three calls.
 """
+
 import numpy as np
 import pytest
 
 import dace
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -27,7 +28,7 @@ def test_a_gpu_product_reduction_keeps_every_factor():
         if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_Device:
             node.map.gpu_block_size = [128, 1, 1]
     a = np.ones(1 << 16)
-    a[::1 << 11] = 2.0
+    a[:: 1 << 11] = 2.0
     out = np.ones(1)
     sdfg(a=a, out=out, N=a.size)
     assert out[0] == 2.0**32, out[0] / 2.0**32

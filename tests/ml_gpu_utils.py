@@ -7,6 +7,7 @@ additional ``[gpu]`` variant is added that is only collected/run under ``pytest 
 drive the **experimental** CUDA code generator (``ExperimentalCUDACodeGen``) via :func:`experimental_cuda`,
 since that is the code generator the ``new-gpu-codegen-dev`` line exists to exercise.
 """
+
 import pytest
 
 import dace
@@ -31,7 +32,7 @@ def experimental_cuda():
     Use it around the call that triggers compilation (``sdfg(...)``, ``DaceModule(...)(...)``,
     ``ONNXModel(...)(...)``) so the experimental backend is active while code is generated.
     """
-    return dace.config.set_temporary('compiler', 'cuda', 'implementation', value='experimental')
+    return dace.config.set_temporary("compiler", "cuda", "implementation", value="experimental")
 
 
 def run_sdfg(sdfg: dace.SDFG, device: str, **inputs):

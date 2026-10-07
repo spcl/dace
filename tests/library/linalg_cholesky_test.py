@@ -9,6 +9,7 @@ import pytest
 
 def generate_matrix(size, dtype):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     A = rng.random((size, size), dtype=dtype)
     return (0.5 * A @ A.T).copy()
@@ -45,17 +46,17 @@ def test_cholesky_pure_refuses_a_slice_of_a_higher_rank_array():
     which connector and why.
     """
     size = 5
-    sdfg = dace.SDFG('linalg_cholesky_pure_sliced')
-    sdfg.add_array('xin', [2, size, size], dace.float64)
-    sdfg.add_array('xout', [2, size, size], dace.float64)
-    state = sdfg.add_state('dataflow')
-    node = Cholesky('cholesky', lower=True)
-    node.implementation = 'pure'
-    subset = '1, 0:%d, 0:%d' % (size, size)
-    state.add_memlet_path(state.add_read('xin'), node, dst_conn='_a', memlet=Memlet.simple('xin', subset))
-    state.add_memlet_path(node, state.add_write('xout'), src_conn='_b', memlet=Memlet.simple('xout', subset))
+    sdfg = dace.SDFG("linalg_cholesky_pure_sliced")
+    sdfg.add_array("xin", [2, size, size], dace.float64)
+    sdfg.add_array("xout", [2, size, size], dace.float64)
+    state = sdfg.add_state("dataflow")
+    node = Cholesky("cholesky", lower=True)
+    node.implementation = "pure"
+    subset = "1, 0:%d, 0:%d" % (size, size)
+    state.add_memlet_path(state.add_read("xin"), node, dst_conn="_a", memlet=Memlet.simple("xin", subset))
+    state.add_memlet_path(node, state.add_write("xout"), src_conn="_b", memlet=Memlet.simple("xout", subset))
 
-    with pytest.raises(NotImplementedError, match='rank-2 slice of a rank-3'):
+    with pytest.raises(NotImplementedError, match="rank-2 slice of a rank-3"):
         sdfg.expand_library_nodes()
 
 
@@ -85,18 +86,21 @@ def test_cholesky_pure_conjugates_a_complex_hermitian_factor(lower):
     np.testing.assert_array_equal(np.imag(np.diag(B)), 0.0)
 
 
-@pytest.mark.parametrize("implementation, dtype, storage", [
-    pytest.param("pure", dace.float32, dace.StorageType.Default),
-    pytest.param("pure", dace.float64, dace.StorageType.Default),
-    pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
-    pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
-    pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("rocSOLVER", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-    pytest.param("rocSOLVER", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, storage",
+    [
+        pytest.param("pure", dace.float32, dace.StorageType.Default),
+        pytest.param("pure", dace.float64, dace.StorageType.Default),
+        pytest.param("MKL", dace.float32, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("MKL", dace.float64, dace.StorageType.Default, marks=pytest.mark.mkl),
+        pytest.param("OpenBLAS", dace.float32, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", dace.float64, dace.StorageType.Default, marks=pytest.mark.lapack),
+        pytest.param("cuSolverDn", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("rocSOLVER", dace.float32, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+        pytest.param("rocSOLVER", dace.float64, dace.StorageType.GPU_Global, marks=pytest.mark.gpu),
+    ],
+)
 def test_cholesky(implementation, dtype, storage):
     sdfg = make_sdfg(implementation, dtype, storage)
     if implementation in GPU_SOLVERS:

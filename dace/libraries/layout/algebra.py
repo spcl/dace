@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Layout algebra: mixed-radix digit-tuple DSL (Permute/Block/Unblock/Pad/Shuffle/Zip/Unzip) and its optimizer."""
+
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Tuple
 
@@ -27,18 +28,20 @@ def _ceil_div(e, b):
 @dataclass(frozen=True)
 class Digit:
     """One mixed-radix digit: value ``(index[dim] // stride) % extent``."""
+
     dim: int
     stride: object
     extent: object
 
     def __post_init__(self):
-        object.__setattr__(self, 'stride', _sym(self.stride))
-        object.__setattr__(self, 'extent', _sym(self.extent))
+        object.__setattr__(self, "stride", _sym(self.stride))
+        object.__setattr__(self, "extent", _sym(self.extent))
 
 
 @dataclass(frozen=True)
 class LayoutMap:
     """A materialized layout: ordered digit tuple plus per-dim annotations (dim_sizes, shuffles, element)."""
+
     dim_sizes: Dict[int, object]
     digits: Tuple[Digit, ...]
     shuffles: Tuple[Tuple[int, Tuple[Tuple[str, bool], ...]], ...] = ()
@@ -61,14 +64,14 @@ def identity_map(shape, dims: Optional[List[int]] = None) -> LayoutMap:
 @dataclass(frozen=True)
 class Permute:
     """Reorder digit-tuple positions: ``new[i] = old[perm[i]]``."""
+
     perm: Tuple[int, ...]
 
     def apply(self, m: LayoutMap) -> LayoutMap:
-        assert len(self.perm) == len(m.digits), \
-            f"Permute {self.perm} does not match digit count {len(m.digits)}"
+        assert len(self.perm) == len(m.digits), f"Permute {self.perm} does not match digit count {len(m.digits)}"
         return replace(m, digits=tuple(m.digits[self.perm[i]] for i in range(len(self.perm))))
 
-    def inverse(self) -> 'Permute':
+    def inverse(self) -> "Permute":
         inv = [0] * len(self.perm)
         for i, p in enumerate(self.perm):
             inv[p] = i
@@ -78,6 +81,7 @@ class Permute:
 @dataclass(frozen=True)
 class Block:
     """Split ``dim``'s finest digit ``(d,s,e)`` into outer ``(d,s*b,ceil(e/b))`` + inner ``(d,s,b)`` (appended)."""
+
     dim: int
     factor: int
 
@@ -97,13 +101,14 @@ class Block:
         digits.append(inner)
         return replace(m, digits=tuple(digits))
 
-    def inverse(self) -> 'Unblock':
+    def inverse(self) -> "Unblock":
         return Unblock(self.dim, self.factor)
 
 
 @dataclass(frozen=True)
 class Unblock:
     """Merge ``dim``'s inner digit ``(d,s,b)`` with partner ``(d,s*b,eo)`` into ``(d,s,eo*b)``; inverse of Block."""
+
     dim: int
     factor: int
 
@@ -126,13 +131,14 @@ class Unblock:
                 return replace(m, digits=tuple(digits))
         raise ValueError(f"Unblock: no outer partner for dim {self.dim} factor {self.factor}")
 
-    def inverse(self) -> 'Block':
+    def inverse(self) -> "Block":
         return Block(self.dim, self.factor)
 
 
 @dataclass(frozen=True)
 class Pad:
     """Grow the padded extent of ``dim``'s coarsest digit by ``amount``."""
+
     dim: int
     amount: object
 
@@ -151,13 +157,14 @@ class Pad:
         sizes[self.dim] = as_expr(_sym(sizes.get(self.dim, 0))) + as_expr(_sym(self.amount))
         return replace(m, dim_sizes=sizes, digits=tuple(digits))
 
-    def inverse(self) -> 'Pad':
+    def inverse(self) -> "Pad":
         return Pad(self.dim, -_sym(self.amount))
 
 
 @dataclass(frozen=True)
 class Shuffle:
     """Attach a value-permutation token to ``dim`` (opaque; reads use its inverse)."""
+
     dim: int
     name: str
     inverted: bool = False
@@ -165,16 +172,17 @@ class Shuffle:
     def apply(self, m: LayoutMap) -> LayoutMap:
         chain = dict(m.shuffles)
         prev = chain.get(self.dim, ())
-        chain[self.dim] = prev + ((self.name, self.inverted), )
+        chain[self.dim] = prev + ((self.name, self.inverted),)
         return replace(m, shuffles=tuple(sorted((d, c) for d, c in chain.items())))
 
-    def inverse(self) -> 'Shuffle':
+    def inverse(self) -> "Shuffle":
         return Shuffle(self.dim, self.name, not self.inverted)
 
 
 @dataclass(frozen=True)
 class Zip:
     """Fuse the current arrays into a struct element with the given fields (boundary op)."""
+
     fields: Tuple[str, ...]
 
     def apply(self, m: LayoutMap) -> LayoutMap:
@@ -182,13 +190,14 @@ class Zip:
             raise ValueError("Zip: element is already a struct")
         return replace(m, element=tuple(self.fields))
 
-    def inverse(self) -> 'Unzip':
+    def inverse(self) -> "Unzip":
         return Unzip(self.fields)
 
 
 @dataclass(frozen=True)
 class Unzip:
     """Project a struct element back to separate arrays (boundary op)."""
+
     fields: Tuple[str, ...]
 
     def apply(self, m: LayoutMap) -> LayoutMap:
@@ -196,7 +205,7 @@ class Unzip:
             raise ValueError(f"Unzip: element {m.element} != {self.fields}")
         return replace(m, element=None)
 
-    def inverse(self) -> 'Zip':
+    def inverse(self) -> "Zip":
         return Zip(self.fields)
 
 
@@ -228,8 +237,13 @@ def _fuse_pair(a, b):
         if total == 0:
             return []
         return [Pad(a.dim, total)]
-    if isinstance(a, Shuffle) and isinstance(b, Shuffle) and a.dim == b.dim and a.name == b.name \
-            and a.inverted != b.inverted:
+    if (
+        isinstance(a, Shuffle)
+        and isinstance(b, Shuffle)
+        and a.dim == b.dim
+        and a.name == b.name
+        and a.inverted != b.inverted
+    ):
         return []
     return None
 
@@ -278,39 +292,39 @@ def physical_index_exprs(m: LayoutMap) -> List:
 def op_to_dict(op) -> Dict:
     """Encode one op as a JSON-safe dict ``{'op': <name>, ...fields}``."""
     if isinstance(op, Permute):
-        return {'op': 'Permute', 'perm': list(op.perm)}
+        return {"op": "Permute", "perm": list(op.perm)}
     if isinstance(op, Block):
-        return {'op': 'Block', 'dim': op.dim, 'factor': op.factor}
+        return {"op": "Block", "dim": op.dim, "factor": op.factor}
     if isinstance(op, Unblock):
-        return {'op': 'Unblock', 'dim': op.dim, 'factor': op.factor}
+        return {"op": "Unblock", "dim": op.dim, "factor": op.factor}
     if isinstance(op, Pad):
-        return {'op': 'Pad', 'dim': op.dim, 'amount': str(op.amount)}
+        return {"op": "Pad", "dim": op.dim, "amount": str(op.amount)}
     if isinstance(op, Shuffle):
-        return {'op': 'Shuffle', 'dim': op.dim, 'name': op.name, 'inverted': op.inverted}
+        return {"op": "Shuffle", "dim": op.dim, "name": op.name, "inverted": op.inverted}
     if isinstance(op, Zip):
-        return {'op': 'Zip', 'fields': list(op.fields)}
+        return {"op": "Zip", "fields": list(op.fields)}
     if isinstance(op, Unzip):
-        return {'op': 'Unzip', 'fields': list(op.fields)}
+        return {"op": "Unzip", "fields": list(op.fields)}
     raise TypeError(f"op_to_dict: unknown op {op!r}")
 
 
 def op_from_dict(d: Dict):
     """Decode an op previously encoded by :func:`op_to_dict`."""
-    kind = d['op']
-    if kind == 'Permute':
-        return Permute(tuple(d['perm']))
-    if kind == 'Block':
-        return Block(d['dim'], d['factor'])
-    if kind == 'Unblock':
-        return Unblock(d['dim'], d['factor'])
-    if kind == 'Pad':
-        return Pad(d['dim'], _sym(d['amount']))
-    if kind == 'Shuffle':
-        return Shuffle(d['dim'], d['name'], bool(d['inverted']))
-    if kind == 'Zip':
-        return Zip(tuple(d['fields']))
-    if kind == 'Unzip':
-        return Unzip(tuple(d['fields']))
+    kind = d["op"]
+    if kind == "Permute":
+        return Permute(tuple(d["perm"]))
+    if kind == "Block":
+        return Block(d["dim"], d["factor"])
+    if kind == "Unblock":
+        return Unblock(d["dim"], d["factor"])
+    if kind == "Pad":
+        return Pad(d["dim"], _sym(d["amount"]))
+    if kind == "Shuffle":
+        return Shuffle(d["dim"], d["name"], bool(d["inverted"]))
+    if kind == "Zip":
+        return Zip(tuple(d["fields"]))
+    if kind == "Unzip":
+        return Unzip(tuple(d["fields"]))
     raise ValueError(f"op_from_dict: unknown op kind {kind!r}")
 
 

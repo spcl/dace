@@ -104,8 +104,9 @@ def test_cloudsc_inout_body_preserved():
     s.validate()
     inout_after = _inout_nsdfgs(s)
     assert inout_after, "the inout (zqlhs RMW) body must be preserved, not flattened"
-    assert any("zqlhs" in (set(n.in_connectors) & set(n.out_connectors)) for n in inout_after), \
+    assert any("zqlhs" in (set(n.in_connectors) & set(n.out_connectors)) for n in inout_after), (
         "zqlhs must remain an inout connector on the preserved body"
+    )
 
 
 def test_cloudsc_inout_normalization_is_value_preserving():
@@ -133,11 +134,9 @@ def test_cloudsc_inout_normalization_is_value_preserving():
     va = {k: v.copy() for k, v in arrays.items()}
     vec.compile()(**va, **params)
     for k in arrays:
-        numpy.testing.assert_allclose(va[k],
-                                      ra[k],
-                                      rtol=1e-12,
-                                      atol=1e-12,
-                                      err_msg=f"normalize changed cloudsc array {k!r}")
+        numpy.testing.assert_allclose(
+            va[k], ra[k], rtol=1e-12, atol=1e-12, err_msg=f"normalize changed cloudsc array {k!r}"
+        )
 
 
 if __name__ == "__main__":

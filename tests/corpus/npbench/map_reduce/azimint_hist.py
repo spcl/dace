@@ -1,26 +1,28 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``azimint_hist`` (map_reduce) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace as dc
 
 dc_float = dc.float64
 dc_complex_float = dc.complex128
 
-SIZES = {'N': 400000, 'npt': 1000}
-PAPER_SIZES = {'N': 1000000, 'npt': 1000}
-INPUT_ARGS = ('N', 'npt')
-ARRAY_ARGS = ('data', 'radius', 'out')
+SIZES = {"N": 400000, "npt": 1000}
+PAPER_SIZES = {"N": 1000000, "npt": 1000}
+INPUT_ARGS = ("N", "npt")
+ARRAY_ARGS = ("data", "radius", "out")
 SCALARS = {}
-OUTPUT_ARGS = ('out', )
+OUTPUT_ARGS = ("out",)
 
-N, bins, npt = (dc.symbol(s, dtype=dc.int64) for s in ('N', 'bins', 'npt'))
+N, bins, npt = (dc.symbol(s, dtype=dc.int64) for s in ("N", "bins", "npt"))
 
 
 def initialize(N, npt, datatype=np.float64):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    data, radius = (rng.random((N, ), dtype=datatype), rng.random((N, ), dtype=datatype))
-    out = np.zeros((npt, ), dtype=datatype)
+    data, radius = (rng.random((N,), dtype=datatype), rng.random((N,), dtype=datatype))
+    out = np.zeros((npt,), dtype=datatype)
     return (data, radius, out)
 
 
@@ -49,7 +51,7 @@ def compute_bin(x: dc_float, bin_edges: dc_float[bins + 1]):
 
 @dc.program
 def histogram(a: dc_float[N], bin_edges: dc_float[bins + 1]):
-    hist = np.ndarray((bins, ), dtype=np.int64)
+    hist = np.ndarray((bins,), dtype=np.int64)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
     for i in dc.map[0:N]:
@@ -60,7 +62,7 @@ def histogram(a: dc_float[N], bin_edges: dc_float[bins + 1]):
 
 @dc.program
 def histogram_weights(a: dc_float[N], bin_edges: dc_float[bins + 1], weights: dc_float[N]):
-    hist = np.ndarray((bins, ), dtype=weights.dtype)
+    hist = np.ndarray((bins,), dtype=weights.dtype)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
     for i in dc.map[0:N]:
@@ -71,21 +73,23 @@ def histogram_weights(a: dc_float[N], bin_edges: dc_float[bins + 1], weights: dc
 
 @dc.program
 def kernel(data: dc_float[N], radius: dc_float[N]):
-    bin_edges_u = np.ndarray((npt + 1, ), dtype=dc_float)
+    bin_edges_u = np.ndarray((npt + 1,), dtype=dc_float)
     histu = histogram(radius, bin_edges_u)
-    bin_edges_w = np.ndarray((npt + 1, ), dtype=dc_float)
+    bin_edges_w = np.ndarray((npt + 1,), dtype=dc_float)
     histw = histogram_weights(radius, bin_edges_w, data)
     return histw / histu
 
 
-CORPUS = dict(name='azimint_hist',
-              dwarf='map_reduce',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="azimint_hist",
+    dwarf="map_reduce",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

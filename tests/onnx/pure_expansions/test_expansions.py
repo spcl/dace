@@ -53,7 +53,8 @@ def test_matmul_expansion(a_shape, b_shape, device):
         sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = run_sdfg(sdfg, device, X=X, Z=Z)
 
@@ -85,7 +86,8 @@ def test_cast_int_to_float(device):
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = run_sdfg(sdfg, device, X=X)
 
@@ -117,7 +119,8 @@ def test_cast_float_to_int(device):
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = run_sdfg(sdfg, device, X=X)
 
@@ -149,7 +152,8 @@ def test_cast_float_to_long(device):
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = run_sdfg(sdfg, device, X=X)
 
@@ -199,7 +203,8 @@ def test_reduce(keepdims, reduce_type, axes, device):
     sdfg.expand_library_nodes()
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
     result = run_sdfg(sdfg, device, X=X)
 
     assert_allclose(numpy_result, result, rtol=1e-5, atol=1e-5)
@@ -335,7 +340,8 @@ def test_reciprocal(device):
 
     # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
     assert not any(
-        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive())
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code") for n, _ in sdfg.all_nodes_recursive()
+    )
 
     result = run_sdfg(sdfg, device, X=X)
 
@@ -507,11 +513,13 @@ def test_gather_onnx_2(device):
     sdfg.expand_library_nodes()
     sdfg.simplify()
 
-    data = np.array([
-        [1.0, 1.2, 1.9],
-        [2.3, 3.4, 3.9],
-        [4.5, 5.7, 5.9],
-    ])
+    data = np.array(
+        [
+            [1.0, 1.2, 1.9],
+            [2.3, 3.4, 3.9],
+            [4.5, 5.7, 5.9],
+        ]
+    )
     indices = np.array([[0, 2]])
     result = run_sdfg(sdfg, device, inp=data.copy(), indices=indices.copy())
     np_result = np.take(data, indices, axis=1)
@@ -534,11 +542,13 @@ def test_unsqueeze(device):
 
     sdfg: dace.SDFG = unsqueeze.to_sdfg()
 
-    data = np.array([
-        [1.0, 1.2, 1.9],
-        [2.3, 3.4, 3.9],
-        [4.5, 5.7, 5.9],
-    ])
+    data = np.array(
+        [
+            [1.0, 1.2, 1.9],
+            [2.3, 3.4, 3.9],
+            [4.5, 5.7, 5.9],
+        ]
+    )
 
     np_result = np.reshape(data, [3, 1, 3, 1])
 
@@ -563,17 +573,26 @@ def test_pure_expansion_reads_gpu_staged_constant():
     from dace.sdfg.utils import in_edge_with_name
 
     node = helper.make_node("ReduceMean", ["data", "axes"], ["reduced"], keepdims=1)
-    graph = helper.make_graph([node],
-                              "reduce_mean", [helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 4, 10])],
-                              [helper.make_tensor_value_info("reduced", TensorProto.FLOAT, [2, 4, 1])],
-                              initializer=[numpy_helper.from_array(np.array([2], dtype=np.int64), name="axes")])
-    model = ONNXModel("test_pure_expansion_reads_gpu_staged_constant",
-                      helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)]),
-                      cuda=True,
-                      onnx_simplify=False)
+    graph = helper.make_graph(
+        [node],
+        "reduce_mean",
+        [helper.make_tensor_value_info("data", TensorProto.FLOAT, [2, 4, 10])],
+        [helper.make_tensor_value_info("reduced", TensorProto.FLOAT, [2, 4, 1])],
+        initializer=[numpy_helper.from_array(np.array([2], dtype=np.int64), name="axes")],
+    )
+    model = ONNXModel(
+        "test_pure_expansion_reads_gpu_staged_constant",
+        helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)]),
+        cuda=True,
+        onnx_simplify=False,
+    )
 
-    state, reduce_mean = next((state, n) for state in model.sdfg.states() for n in state.nodes()
-                              if isinstance(n, ONNXOp) and n.schema.name == "ReduceMean")
+    state, reduce_mean = next(
+        (state, n)
+        for state in model.sdfg.states()
+        for n in state.nodes()
+        if isinstance(n, ONNXOp) and n.schema.name == "ReduceMean"
+    )
 
     staged = in_edge_with_name(reduce_mean, state, "axes").src.data
     assert_allclose(model.clean_weights[staged].numpy(), np.array([2], dtype=np.int64))
@@ -587,9 +606,17 @@ if __name__ == "__main__":
     test_cast_float_to_int(device="cpu")
     test_cast_float_to_long(device="cpu")
 
-    reduce_params = [(True, 'Sum', [0]), (False, 'Sum', [-1]), (True, 'Sum', [0, -1]), (False, 'Max', [0, -1]),
-                     (True, 'Max', [0]), (True, 'Max', [-1]), (True, 'Mean', [-1]), (True, 'Mean', [0, -1]),
-                     (False, 'Mean', [0])]
+    reduce_params = [
+        (True, "Sum", [0]),
+        (False, "Sum", [-1]),
+        (True, "Sum", [0, -1]),
+        (False, "Max", [0, -1]),
+        (True, "Max", [0]),
+        (True, "Max", [-1]),
+        (True, "Mean", [-1]),
+        (True, "Mean", [0, -1]),
+        (False, "Mean", [0]),
+    ]
     for keepdims, reduce_type, axes in reduce_params:
         test_reduce(keepdims=keepdims, reduce_type=reduce_type, axes=axes, device="cpu")
 

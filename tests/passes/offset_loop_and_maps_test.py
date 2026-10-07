@@ -29,11 +29,19 @@ def _simple_element_wise(za: dace.float64[klev, klev]):
 
 
 @dace.program
-def _cloudsc_snippet_one(za: dace.float64[klev, kfdia], zliqfrac: dace.float64[klev, kfdia],
-                         zicefrac: dace.float64[klev, kfdia], zqx: dace.float64[klev, kfdia,
-                                                                                5], zli: dace.float64[klev, kfdia],
-                         zy: dace.float64[klev, kfdia, 5], zx: dace.float64[klev, kfdia, 4], rlmin: dace.float64,
-                         z1: dace.int64, z2: dace.int64, cond_int: dace.int64):
+def _cloudsc_snippet_one(
+    za: dace.float64[klev, kfdia],
+    zliqfrac: dace.float64[klev, kfdia],
+    zicefrac: dace.float64[klev, kfdia],
+    zqx: dace.float64[klev, kfdia, 5],
+    zli: dace.float64[klev, kfdia],
+    zy: dace.float64[klev, kfdia, 5],
+    zx: dace.float64[klev, kfdia, 4],
+    rlmin: dace.float64,
+    z1: dace.int64,
+    z2: dace.int64,
+    cond_int: dace.int64,
+):
     for i in range(1, klev + 1):
         for j in range(kidia + 1, kfdia + 1):
             za[i - 1, j - 1] = 2.0 * za[i - 1, j - 1] - 4.37
@@ -49,12 +57,19 @@ def _cloudsc_snippet_one(za: dace.float64[klev, kfdia], zliqfrac: dace.float64[k
 
 
 @dace.program
-def _cloudsc_snippet_one_within_if(za: dace.float64[klev, kfdia], zliqfrac: dace.float64[klev, kfdia],
-                                   zicefrac: dace.float64[klev, kfdia], zqx: dace.float64[klev, kfdia, 5],
-                                   zli: dace.float64[klev, kfdia], zy: dace.float64[klev, kfdia,
-                                                                                    5], zx: dace.float64[klev, kfdia,
-                                                                                                         4],
-                                   rlmin: dace.float64, z1: dace.int64, z2: dace.int64, cond_int: dace.int64):
+def _cloudsc_snippet_one_within_if(
+    za: dace.float64[klev, kfdia],
+    zliqfrac: dace.float64[klev, kfdia],
+    zicefrac: dace.float64[klev, kfdia],
+    zqx: dace.float64[klev, kfdia, 5],
+    zli: dace.float64[klev, kfdia],
+    zy: dace.float64[klev, kfdia, 5],
+    zx: dace.float64[klev, kfdia, 4],
+    rlmin: dace.float64,
+    z1: dace.int64,
+    z2: dace.int64,
+    cond_int: dace.int64,
+):
     if cond_int > 2:
         for i in range(1, klev + 1):
             for j in range(kidia + 1, kfdia + 1):
@@ -72,13 +87,10 @@ def _cloudsc_snippet_one_within_if(za: dace.float64[klev, kfdia], zliqfrac: dace
 
 def _get_symbol_use_in_tasklet_sdfg():
     sdfg = dace.SDFG("symbol_use_in_tasklet_sdfg")
-    sdfg.add_array("A", (N, ), dace.float64, dace.dtypes.StorageType.Default)
-    lr = LoopRegion(label="loop1",
-                    loop_var="i",
-                    condition_expr="i < N",
-                    initialize_expr="i = 0",
-                    update_expr="i = i + 1",
-                    sdfg=sdfg)
+    sdfg.add_array("A", (N,), dace.float64, dace.dtypes.StorageType.Default)
+    lr = LoopRegion(
+        label="loop1", loop_var="i", condition_expr="i < N", initialize_expr="i = 0", update_expr="i = i + 1", sdfg=sdfg
+    )
     cfg = ControlFlowRegion(label="loop1_cfg1", sdfg=sdfg, parent=lr)
     sdfg.add_node(lr, is_start_block=True)
     lr.add_node(cfg, is_start_block=True)
@@ -101,8 +113,11 @@ def _for_regions_and_beings(sdfg: dace.SDFG):
     d = dict()
     for cfg in sdfg.all_control_flow_regions():
         if isinstance(cfg, LoopRegion):
-            d[cfg.loop_variable] = cfg.init_statement.as_string.split("=")[-1].strip() if isinstance(
-                cfg.init_statement, CodeBlock) else str(cfg.init_statement)
+            d[cfg.loop_variable] = (
+                cfg.init_statement.as_string.split("=")[-1].strip()
+                if isinstance(cfg.init_statement, CodeBlock)
+                else str(cfg.init_statement)
+            )
     return d
 
 
@@ -125,20 +140,22 @@ def _make_args():
     z2 = numpy.int64(1)
     cond_int = numpy.int64(3)
 
-    return dict(za=za,
-                zliqfrac=zliqfrac,
-                zicefrac=zicefrac,
-                zqx=zqx,
-                zli=zli,
-                zy=zy,
-                zx=zx,
-                rlmin=rlmin,
-                z1=z1,
-                z2=z2,
-                klev=klev_v,
-                kidia=kidia_v,
-                kfdia=kfdia_v,
-                cond_int=cond_int)
+    return dict(
+        za=za,
+        zliqfrac=zliqfrac,
+        zicefrac=zicefrac,
+        zqx=zqx,
+        zli=zli,
+        zy=zy,
+        zx=zx,
+        rlmin=rlmin,
+        z1=z1,
+        z2=z2,
+        klev=klev_v,
+        kidia=kidia_v,
+        kfdia=kfdia_v,
+        cond_int=cond_int,
+    )
 
 
 def _run_and_compare(original_sdfg, transformed_sdfg, arg_names_to_compare):
@@ -182,8 +199,9 @@ def test_loop_offsetting(normalize_loops):
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1", convert_leq_to_lt=False,
-                       normalize_loops=normalize_loops).apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(
+        begin_expr=None, offset_expr="-1", convert_leq_to_lt=False, normalize_loops=normalize_loops
+    ).apply_pass(copy_sdfg, {})
     # Begin expressions should be:
     # 0 and kidia + 1
     regions = _for_regions_and_beings(copy_sdfg)
@@ -220,8 +238,9 @@ def test_symbol_use_in_tasklet():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1", convert_leq_to_lt=False,
-                       normalize_loops=False).apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr=None, offset_expr="-1", convert_leq_to_lt=False, normalize_loops=False).apply_pass(
+        copy_sdfg, {}
+    )
     # 1 taskelt should be left
     num_tasklets = 0
     for state in copy_sdfg.states():
@@ -232,8 +251,8 @@ def test_symbol_use_in_tasklet():
     copy_sdfg.validate()
     copy_sdfg.simplify()
 
-    orig_args = {"N": 5, "A": numpy.zeros((5, ))}
-    trans_args = {"N": 5, "A": numpy.zeros((5, ))}
+    orig_args = {"N": 5, "A": numpy.zeros((5,))}
+    trans_args = {"N": 5, "A": numpy.zeros((5,))}
     original_sdfg = sdfg
     transformed_sdfg = copy_sdfg
 
@@ -250,8 +269,9 @@ def test_simple_element_wise():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False,
-                       normalize_loops=False).apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False, normalize_loops=False).apply_pass(
+        copy_sdfg, {}
+    )
     # 1 taskelt should be left
     num_tasklets = 0
     for state in copy_sdfg.states():
@@ -280,8 +300,9 @@ def test_begin_expr_condition():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False,
-                       normalize_loops=False).apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False, normalize_loops=False).apply_pass(
+        copy_sdfg, {}
+    )
     # Begin expressions should be:
     # 0 and kidia + 1
     regions = _for_regions_and_beings(copy_sdfg)
@@ -296,8 +317,9 @@ def test_with_conditional():
     sdfg = _cloudsc_snippet_one_within_if.to_sdfg()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = copy_sdfg.name + "_offset"
-    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False,
-                       normalize_loops=False).apply_pass(copy_sdfg, {})
+    OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False, normalize_loops=False).apply_pass(
+        copy_sdfg, {}
+    )
     regions = _for_regions_and_beings(copy_sdfg)
     assert regions["i"] == "0", f"Expected 0 but got {regions['i']}"
     assert regions["j"] == "(kidia + 1)", f"Expected kidia + 1 but got {regions['j']}"
@@ -330,12 +352,13 @@ def test_map_ranges_offset_when_begin_expr_is_none():
     state.add_edge(mx, "OUT_A", w, None, mm.Memlet("A[3:7]"))
     sdfg.validate()
 
-    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None, convert_leq_to_lt=False,
-                       normalize_loops=False).apply_pass(sdfg, {})
+    OffsetLoopsAndMaps(offset_expr="1", begin_expr=None, convert_leq_to_lt=False, normalize_loops=False).apply_pass(
+        sdfg, {}
+    )
 
     entries = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
     assert len(entries) == 1
-    (b, e, s), = entries[0].map.range.ranges
+    ((b, e, s),) = entries[0].map.range.ranges
     # DaCe stores ``3:7`` as an inclusive (3, 6, 1) range. After +1
     # offset: (4, 7, 1).
     assert str(b) == "4", b
@@ -414,6 +437,7 @@ def test_maps_inside_nested_sdfg_are_offset():
     # Walk the post-transform SDFG tree and find the inner 2D map; both
     # axes must have been shifted by +1.
     from dace.sdfg import nodes as _nodes
+
     inner_map = None
     for n, _ in outer.all_nodes_recursive():
         if isinstance(n, _nodes.MapEntry) and n.map.params == ["i", "j"]:

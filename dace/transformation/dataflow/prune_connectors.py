@@ -18,11 +18,13 @@ def connectors_used_by_dataflow(nsdfg: nodes.NestedSDFG) -> bool:
     for inner_state in nsdfg.sdfg.states():
         for node in inner_state.data_nodes():
             name = node.data
-            if (name in inputs and name not in read
-                    and any(not e.data.is_empty() for e in inner_state.out_edges(node))):
+            if name in inputs and name not in read and any(not e.data.is_empty() for e in inner_state.out_edges(node)):
                 read.add(name)
-            if (name in outputs and name not in written
-                    and any(not e.data.is_empty() for e in inner_state.in_edges(node))):
+            if (
+                name in outputs
+                and name not in written
+                and any(not e.data.is_empty() for e in inner_state.in_edges(node))
+            ):
                 written.add(name)
             if len(read) == len(inputs) and len(written) == len(outputs):
                 return True
@@ -181,13 +183,13 @@ class PruneSymbols(pm.SingleStateTransformation):
 
             # Try to be conservative with C++ tasklets
             for node in nstate.nodes():
-                if (isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.CPP):
+                if isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.CPP:
                     for candidate in candidates:
-                        if re.findall(r'\b%s\b' % re.escape(candidate), node.code.as_string):
+                        if re.findall(r"\b%s\b" % re.escape(candidate), node.code.as_string):
                             state_syms.add(candidate)
 
             # Any symbol used in this state is considered used
-            candidates -= (state_syms - ignore)
+            candidates -= state_syms - ignore
             if len(candidates) == 0:
                 return set()
 
@@ -196,10 +198,10 @@ class PruneSymbols(pm.SingleStateTransformation):
             local_ignore = None
             for e in nstate.parent_graph.out_edges(nstate):
                 # Look for symbols in condition
-                candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
+                candidates -= set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore
 
                 for assign in e.data.assignments.values():
-                    candidates -= ((symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)) - ignore)
+                    candidates -= (symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)) - ignore
 
                 if local_ignore is None:
                     local_ignore = set(e.data.assignments.keys())

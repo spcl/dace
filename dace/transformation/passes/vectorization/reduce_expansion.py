@@ -17,6 +17,7 @@ API requires):
   ``NotImplementedError``. An unexpected schedule or a non-associative / custom
   reduction must surface, not be silently mis-lowered.
 """
+
 from copy import deepcopy as dcpy
 from typing import Callable, Dict, List, Tuple
 
@@ -102,19 +103,25 @@ def _build_vectorized_full_reduction(node: Reduce, state: SDFGState, sdfg: SDFG,
     # Only contiguous 1-D full-reduction-to-scalar. Non-unit step (strided input
     # ``a[0:2N:2]``) can't use the contiguous SIMD load ``__inp[_i + _l]`` below ->
     # fall back to pure/OpenMP (strided SIMD gather not worth it).
-    if (len(axes) != len(inedge.data.subset) or len(in_sizes) != 1 or out_elems != 1
-            or any(str(step) != "1" for (_, _, step) in as_range(insubset).ranges)):
+    if (
+        len(axes) != len(inedge.data.subset)
+        or len(in_sizes) != 1
+        or out_elems != 1
+        or any(str(step) != "1" for (_, _, step) in as_range(insubset).ranges)
+    ):
         return None
 
     ctype = input_data.dtype.ctype
     m_expr = symstr(in_sizes[0])
 
     nsdfg = dace.SDFG("reduce_vectorized")
-    nsdfg.add_array("_in",
-                    as_range(insubset).size(),
-                    input_data.dtype,
-                    strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
-                    storage=input_data.storage)
+    nsdfg.add_array(
+        "_in",
+        as_range(insubset).size(),
+        input_data.dtype,
+        strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
+        storage=input_data.storage,
+    )
     nsdfg.add_array("_out", as_range(outsubset).size(), output_data.dtype, storage=output_data.storage)
     nsdfg.append_global_code('#include "dace/horizontal_reduce.h"')
 
@@ -180,7 +187,8 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
             raise NotImplementedError(
                 f"ExpandReduceVectorized: reduction operator {redtype} has no associative "
                 f"horizontal-reduce lowering; supported: {sorted(t.name for t in REDTYPE_TO_OP)}. "
-                f"wcr={node.wcr!r}")
+                f"wcr={node.wcr!r}"
+            )
 
         schedule = node.schedule
         if schedule in _VECTORIZED_SEQUENTIAL_SCHEDULES:
@@ -198,10 +206,12 @@ class ExpandReduceVectorized(pm.ExpandTransformation):
             # clause; per-thread chunk is the inner kernel.
             return ExpandReduceOpenMP.expansion(node, state, sdfg)
 
-        raise NotImplementedError(f"ExpandReduceVectorized: schedule {schedule} is not supported in the CPU "
-                                  f"vectorization pipeline (expected Sequential/Default or CPU_Multicore). "
-                                  f"A GPU/MPI/other-scheduled reduction must use its own implementation, "
-                                  f"not 'vectorized'.")
+        raise NotImplementedError(
+            f"ExpandReduceVectorized: schedule {schedule} is not supported in the CPU "
+            f"vectorization pipeline (expected Sequential/Default or CPU_Multicore). "
+            f"A GPU/MPI/other-scheduled reduction must use its own implementation, "
+            f"not 'vectorized'."
+        )
 
 
 Reduce.register_implementation("vectorized", ExpandReduceVectorized)

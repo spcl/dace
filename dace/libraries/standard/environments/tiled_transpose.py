@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Environment exposing the tiled transpose / symmetrize kernels to the CUDA unit."""
+
 import dace.library
 from typing import Dict, List
 
@@ -22,7 +23,7 @@ class TiledTranspose:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': [], 'cuda': ['dace/cuda/transpose_tiled.cuh']}
+    headers = {"frame": [], "cuda": ["dace/cuda/transpose_tiled.cuh"]}
     state_fields: List[str] = []
     init_code = ""
     finalize_code = ""

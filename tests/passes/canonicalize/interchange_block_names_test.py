@@ -19,7 +19,7 @@ import numpy as np
 import dace
 from dace.transformation.passes.canonicalize.pipeline import _build_stages, canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -63,7 +63,7 @@ def test_no_stage_introduces_duplicate_block_names():
     for label, unit in _build_stages():
         unit.apply_pass(sdfg, {})
         duplicates = _duplicate_block_names(sdfg)
-        assert not duplicates, f'stage {label!r} introduced duplicate block names: {duplicates}'
+        assert not duplicates, f"stage {label!r} introduced duplicate block names: {duplicates}"
 
 
 def test_canonicalize_result_is_valid_and_correct():
@@ -90,10 +90,10 @@ def test_canonicalize_result_is_valid_and_correct():
 
     b_got, c_got = np.zeros((size, size)), np.zeros((size, size))
     sdfg(A=a.copy(), B=b_got, C=c_got, N=size)
-    assert np.allclose(b_got, b_ref, rtol=1e-13, atol=1e-13), 'stencil output diverges'
-    assert np.allclose(c_got, c_ref, rtol=1e-13, atol=1e-13), 'reduction/recurrence output diverges'
+    assert np.allclose(b_got, b_ref, rtol=1e-13, atol=1e-13), "stencil output diverges"
+    assert np.allclose(c_got, c_ref, rtol=1e-13, atol=1e-13), "reduction/recurrence output diverges"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_no_stage_introduces_duplicate_block_names()
     test_canonicalize_result_is_valid_and_correct()

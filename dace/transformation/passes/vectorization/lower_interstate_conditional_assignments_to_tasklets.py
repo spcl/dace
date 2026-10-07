@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
+
 from typing import Any, List, Type, Union
 import dace
 from dace import dtypes, SDFG, properties, SDFGState, symbolic
@@ -41,11 +42,11 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     Tested as part of the vectorization pipeline.
     """
 
-    CATEGORY: str = 'Vectorization'
+    CATEGORY: str = "Vectorization"
 
-    conditional_assignment_tasklet_prefix = properties.Property(dtype=str,
-                                                                default="condition_symbol_to_scalar",
-                                                                allow_none=False)
+    conditional_assignment_tasklet_prefix = properties.Property(
+        dtype=str, default="condition_symbol_to_scalar", allow_none=False
+    )
     also_demote = properties.ListProperty(element_type=str, default=[])
     apply_once = properties.Property(dtype=bool, default=False)
 
@@ -67,7 +68,7 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         return []
 
     @staticmethod
-    def arm_bound_symbols(sd: SDFG) -> dict[str, 'dtypes.typeclass']:
+    def arm_bound_symbols(sd: SDFG) -> dict[str, "dtypes.typeclass"]:
         """Symbols an arm of a ``ConditionalBlock`` binds on one of its own interstate edges.
 
         Only ``sd``'s own regions are walked -- a nested SDFG binds symbols in its own scope and is
@@ -121,8 +122,9 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                     structural = sdutil.structural_symbols(sd)
                     # Consulted only for a top-level SDFG; a nested one reads its parent's mapping.
                     free_syms = sd.free_symbols if sd.parent_nsdfg_node is None else set()
-                if (not sdutil.symbol_demotes_to_transient_scalar(sd, name, free_symbols=free_syms)
-                        or sdutil.symbol_carries_graph_structure(sd, name, structural=structural)):
+                if not sdutil.symbol_demotes_to_transient_scalar(
+                    sd, name, free_symbols=free_syms
+                ) or sdutil.symbol_carries_graph_structure(sd, name, structural=structural):
                     continue
                 # The symbol's OWN dtype. Overwriting it with fp64 first -- which is what
                 # ``demote_symbol_to_scalar`` reads -- turned an integer accumulator into a
@@ -149,8 +151,11 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                     # Python-bodied only -- the expression parse below is undefined otherwise.
                     # NOT the lane-level guard: this demotes a symbol SDFG-wide and the conditional
                     # arm it reads is lowered before any map scope exists around it.
-                    if (isinstance(node, nodes.Tasklet) and is_python_tasklet(node)
-                            and node.label.startswith(self.conditional_assignment_tasklet_prefix)):
+                    if (
+                        isinstance(node, nodes.Tasklet)
+                        and is_python_tasklet(node)
+                        and node.label.startswith(self.conditional_assignment_tasklet_prefix)
+                    ):
                         expr = symbolic.SymExpr(node.code.as_string.split(" = ")[-1])
                         syms = as_basic(expr).free_symbols
                         # If not in inconnectors then it is a symbol
@@ -162,15 +167,31 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                         # => Exclude them
                         func_calls = symbolic.arrays(expr)
                         boolean_func_calls = {
-                            "OR", "Or", "or", "AND", "And", "and", "not", "Not", "NOT", "False", "True", "false",
-                            "true", "FALSE", "TRUE"
+                            "OR",
+                            "Or",
+                            "or",
+                            "AND",
+                            "And",
+                            "and",
+                            "not",
+                            "Not",
+                            "NOT",
+                            "False",
+                            "True",
+                            "false",
+                            "true",
+                            "FALSE",
+                            "TRUE",
                         }
                         arr_names = {str(k) for k in cfg.sdfg.arrays.keys()}
-                        parent_symbol_name = {str(k)
-                                              for k in cfg.sdfg.parent_nsdfg_node.symbol_mapping.keys()
-                                              } if cfg.sdfg.parent_nsdfg_node is not None else {}
+                        parent_symbol_name = (
+                            {str(k) for k in cfg.sdfg.parent_nsdfg_node.symbol_mapping.keys()}
+                            if cfg.sdfg.parent_nsdfg_node is not None
+                            else {}
+                        )
                         no_access_free_syms = all_free_syms - func_calls.union(boolean_func_calls).union(
-                            arr_names).union(parent_symbol_name)
+                            arr_names
+                        ).union(parent_symbol_name)
                         free_conditional_symbols.update(dict.fromkeys(sorted(no_access_free_syms)))
 
             for additional_demote_sym in self.also_demote:
@@ -183,8 +204,9 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                 # An SDFG argument has no definition here to rewrite, and a symbol the graph
                 # evaluates (subset, map range, loop variable) stops being expressible as a scalar.
                 # Both are uniform across lanes, so the condition holds with them left symbols.
-                if (not sdutil.symbol_demotes_to_transient_scalar(sdfg, conditional_sym)
-                        or sdutil.symbol_carries_graph_structure(sdfg, conditional_sym)):
+                if not sdutil.symbol_demotes_to_transient_scalar(
+                    sdfg, conditional_sym
+                ) or sdutil.symbol_carries_graph_structure(sdfg, conditional_sym):
                     continue
                 # Declared dtype where there is one, for the reason above. A symbol read only
                 # by a lifted guard need not be declared at all, and fp64 stays the fallback for

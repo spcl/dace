@@ -66,6 +66,7 @@ The stride ranking reuses
 -- the same scorer that orders map nests -- now applied across the loop<->map
 boundary that the map-only and loop-only stride passes cannot cross.
 """
+
 import math
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -121,8 +122,11 @@ def launches_saved(loop: LoopRegion) -> float:
     Every map in the body counts, branches included (an upper bound on a trip's launches).
     """
     maps = len(lane_maps(loop))
-    start, end, step = (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
-                        loop_analysis.get_loop_stride(loop))
+    start, end, step = (
+        loop_analysis.get_init_assignment(loop),
+        loop_analysis.get_loop_end(loop),
+        loop_analysis.get_loop_stride(loop),
+    )
     if maps == 0 or start is None or end is None or step is None:
         return math.inf if maps else 0
     trips = symbolic.simplify((end - start) / step + 1)
@@ -158,21 +162,23 @@ class MoveLoopIntoMapGated(ppl.Pass):
     ``target='cpu'`` interchanges a single-map body only when doing so lowers the innermost stride.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     target = properties.Property(
         dtype=str,
-        default='cpu',
-        choices=['cpu', 'gpu'],
-        desc="Per-target interchange policy ('gpu' when launches drop; 'cpu' when stride drops).")
+        default="cpu",
+        choices=["cpu", "gpu"],
+        desc="Per-target interchange policy ('gpu' when launches drop; 'cpu' when stride drops).",
+    )
 
     single_iteration_only = properties.Property(
         dtype=bool,
         default=False,
-        desc='Only consider loops whose maps all run one iteration (the offload wraps host-side work in '
-        'such maps; the pass then runs on the offloaded graph)')
+        desc="Only consider loops whose maps all run one iteration (the offload wraps host-side work in "
+        "such maps; the pass then runs on the offloaded graph)",
+    )
 
-    def __init__(self, target: str = 'cpu', single_iteration_only: bool = False) -> None:
+    def __init__(self, target: str = "cpu", single_iteration_only: bool = False) -> None:
         super().__init__()
         self.target = target
         self.single_iteration_only = single_iteration_only
@@ -192,8 +198,8 @@ class MoveLoopIntoMapGated(ppl.Pass):
         :param sdfg: The SDFG to transform in place.
         :returns: The number of interchanges applied, or ``None`` if none.
         """
-        gpu = self.target == 'gpu'
-        options = {'cfg_body': gpu}
+        gpu = self.target == "gpu"
+        options = {"cfg_body": gpu}
         applied = 0
         # Re-scan after each apply: MoveLoopIntoMap rewrites the CFG (removes the
         # loop, nests a new one), invalidating the iterator.

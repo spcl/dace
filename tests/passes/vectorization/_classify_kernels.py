@@ -25,6 +25,7 @@ The classifier:
 Output: a triage table the harness reads to pick fixture coverage per
 kernel.
 """
+
 import ast
 import pathlib
 import sys
@@ -39,6 +40,7 @@ def _count_innermost_maps_in_sdfg(sdfg: dace.SDFG) -> int:
     """Apply LoopToMap pre-passes and count innermost MapEntry nodes."""
     try:
         from dace.transformation.interstate import LoopToMap
+
         sdfg.apply_transformations_repeated(LoopToMap, permissive=False, validate=False)
     except Exception:  # noqa: BLE001
         pass
@@ -70,7 +72,15 @@ def _fingerprint_hardness(fn: ast.FunctionDef) -> Tuple[str, List[str]]:
     has_reduction_call = False
 
     def walk_loops(node: ast.AST, in_loop: bool) -> None:
-        nonlocal has_branch, has_indirect, has_neighbor, reduction_count, statement_count_in_loop, for_count, augassign_count, has_reduction_call
+        nonlocal \
+            has_branch, \
+            has_indirect, \
+            has_neighbor, \
+            reduction_count, \
+            statement_count_in_loop, \
+            for_count, \
+            augassign_count, \
+            has_reduction_call
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.For, ast.While)):
                 for_count += 1
@@ -139,6 +149,7 @@ def classify_tsvc() -> List[Dict]:
     """Walk the TSVC corpus, classify each kernel."""
     sys.path.insert(0, str(REPO_ROOT))
     from tests.corpus.tsvc import tsvc
+
     src = (REPO_ROOT / "tests" / "corpus" / "tsvc.py").read_text()
     module = ast.parse(src)
     results: List[Dict] = []
@@ -164,13 +175,15 @@ def classify_tsvc() -> List[Dict]:
                 tier_final = "NO_MAPS"
             else:
                 tier_final = tier
-            results.append({
-                "name": kernel_name,
-                "regime": regime,
-                "tier": tier_final,
-                "maps": map_count,
-                "features": features,
-            })
+            results.append(
+                {
+                    "name": kernel_name,
+                    "regime": regime,
+                    "tier": tier_final,
+                    "maps": map_count,
+                    "features": features,
+                }
+            )
     return results
 
 
@@ -192,11 +205,11 @@ def main():
         elif tier == "T2":
             # T2 just list names so the report stays readable
             names = sorted(r["name"] for r in kernels)
-            for chunk in (names[i:i + 6] for i in range(0, len(names), 6)):
+            for chunk in (names[i : i + 6] for i in range(0, len(names), 6)):
                 print(f"  {', '.join(chunk)}")
         elif tier == "T3":
             names = sorted(r["name"] for r in kernels)
-            for chunk in (names[i:i + 6] for i in range(0, len(names), 6)):
+            for chunk in (names[i : i + 6] for i in range(0, len(names), 6)):
                 print(f"  {', '.join(chunk)}")
     print()
     print(f"Total: {len(results)} kernels")

@@ -16,6 +16,7 @@ Every case runs through the documented front door ``prepare_for_layout``, permut
 TARGET, or BOTH, asserts the ``wcr`` survives, and checks the transparent result is bit-exact with the
 numpy reduction. Both dtypes ``float64`` and ``complex128`` are swept.
 """
+
 import numpy
 import pytest
 import dace
@@ -92,15 +93,14 @@ def oracle_scalar(base):
 
 
 SPECS = {
-    "r2d1d": dict(build=build_r2d1d, base=BASE_A2, out_shape=(II, ), syms=dict(I=II, J=JJ), oracle=oracle_axis1),
-    "r3d2d": dict(build=build_r3d2d, base=BASE_A3, out_shape=(II, KK), syms=dict(I=II, J=JJ, K=KK),
-                  oracle=oracle_axis1),
-    "nested": dict(build=build_nested,
-                   base=BASE_A3,
-                   out_shape=(II, KK),
-                   syms=dict(I=II, J=JJ, K=KK),
-                   oracle=oracle_axis1),
-    "scalar": dict(build=build_scalar, base=BASE_A2, out_shape=(1, ), syms=dict(I=II, J=JJ), oracle=oracle_scalar),
+    "r2d1d": dict(build=build_r2d1d, base=BASE_A2, out_shape=(II,), syms=dict(I=II, J=JJ), oracle=oracle_axis1),
+    "r3d2d": dict(
+        build=build_r3d2d, base=BASE_A3, out_shape=(II, KK), syms=dict(I=II, J=JJ, K=KK), oracle=oracle_axis1
+    ),
+    "nested": dict(
+        build=build_nested, base=BASE_A3, out_shape=(II, KK), syms=dict(I=II, J=JJ, K=KK), oracle=oracle_axis1
+    ),
+    "scalar": dict(build=build_scalar, base=BASE_A2, out_shape=(1,), syms=dict(I=II, J=JJ), oracle=oracle_scalar),
 }
 
 PERMS2 = [[0, 1], [1, 0]]
@@ -117,8 +117,12 @@ NESTED_COMBOS = [
 
 
 def _has_wcr(sdfg) -> bool:
-    return any(edge.data is not None and edge.data.wcr is not None for nsdfg in sdfg.all_sdfgs_recursive()
-               for state in nsdfg.states() for edge in state.edges())
+    return any(
+        edge.data is not None and edge.data.wcr is not None
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for state in nsdfg.states()
+        for edge in state.edges()
+    )
 
 
 def _slug(perm):

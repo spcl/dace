@@ -5,6 +5,7 @@ collapses) -- each site is a candidate length-1-slice miscompile. Return slices 
 closure global) go through the fixed ``_add_read_slice`` and keep the axis; the rest are balanced
 squeezes. make_slice's non-indirection squeeze stays a latent site -- no return idiom reaches it.
 """
+
 import numpy as np
 
 import dace
@@ -95,7 +96,7 @@ def indirect_with_slice(A: dace.int64[N, M], idx: dace.int64[N]):
 def test_add_indirection_subgraph_with_slice_is_value_exact():
     rng = np.random.default_rng(2)
     A = rng.integers(0, 100, size=(N, M)).astype(np.int64)
-    idx = rng.integers(0, N, size=(N, )).astype(np.int64)
+    idx = rng.integers(0, N, size=(N,)).astype(np.int64)
     got = np.asarray(indirect_with_slice(A.copy(), idx.copy()))
     oracle = np.stack([A[idx[i], 1:2] for i in range(N)])
     assert got.shape == oracle.shape

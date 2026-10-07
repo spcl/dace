@@ -12,6 +12,7 @@
 Both emitters return a single C++/Python expression string that the
 caller wraps with ``_out = ...``.
 """
+
 import ast
 from dataclasses import dataclass
 
@@ -159,8 +160,12 @@ def _reduction_op_and_operands(rhs: ast.AST) -> tuple[str, list[ast.expr]] | Non
     if isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
         op = _AST_BOOLOP_TO_OP.get(type(rhs.op))
         return (op, list(rhs.values)) if op is not None else None
-    if (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id in _CALL_REDUCERS
-            and len(rhs.args) == 2):
+    if (
+        isinstance(rhs, ast.Call)
+        and isinstance(rhs.func, ast.Name)
+        and rhs.func.id in _CALL_REDUCERS
+        and len(rhs.args) == 2
+    ):
         return (rhs.func.id, list(rhs.args))
     return None
 
@@ -284,8 +289,12 @@ def _reduction_op_for_connector(tasklet: "dace.nodes.Tasklet", conn: str) -> str
     return None
 
 
-def _op_through_body(state: "dace.SDFGState", body: "dace.nodes.Node", read_edge: MultiConnectorEdge[Memlet],
-                     write_edge: MultiConnectorEdge[Memlet]) -> str | None:
+def _op_through_body(
+    state: "dace.SDFGState",
+    body: "dace.nodes.Node",
+    read_edge: MultiConnectorEdge[Memlet],
+    write_edge: MultiConnectorEdge[Memlet],
+) -> str | None:
     """Recover the reduction op combining the accumulator inside ``body``.
 
     ``body`` is either a flat tasklet (delegate to :func:`recognize_reduction`)
@@ -355,8 +364,12 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
     body = body_nodes[0]
 
     def _scalar_slot(e: MultiConnectorEdge[Memlet]) -> bool:
-        return (e.data is not None and e.data.data is not None and e.data.subset is not None
-                and e.data.subset.num_elements() == 1)
+        return (
+            e.data is not None
+            and e.data.data is not None
+            and e.data.subset is not None
+            and e.data.subset.num_elements() == 1
+        )
 
     reads = {e.data.data: e for e in state.out_edges(map_entry) if e.dst is body and _scalar_slot(e)}
     writes = {e.data.data: e for e in state.in_edges(map_exit) if e.src is body and _scalar_slot(e)}
@@ -366,18 +379,22 @@ def recognize_map_reduction(state: "dace.SDFGState", map_entry: "dace.nodes.MapE
             continue
         read_edge, write_edge = reads[acc], writes[acc]
         # ``y[j] = y[j] + e`` is element-wise, not a reduction: the slot must be one fixed element
-        if read_edge.data.subset != write_edge.data.subset or set(map_entry.map.params) & required(
-                write_edge.data.subset).free_symbols:
+        if (
+            read_edge.data.subset != write_edge.data.subset
+            or set(map_entry.map.params) & required(write_edge.data.subset).free_symbols
+        ):
             continue
         op = _op_through_body(state, body, read_edge, write_edge)
         if op is None or op not in IDENTITY:
             continue
-        return MapReductionInfo(op=op,
-                                identity=IDENTITY[op],
-                                accumulator=acc,
-                                map_entry=map_entry,
-                                map_exit=map_exit,
-                                body=body,
-                                read_edge=read_edge,
-                                write_edge=write_edge)
+        return MapReductionInfo(
+            op=op,
+            identity=IDENTITY[op],
+            accumulator=acc,
+            map_entry=map_entry,
+            map_exit=map_exit,
+            body=body,
+            read_edge=read_edge,
+            write_edge=write_edge,
+        )
     return None

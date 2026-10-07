@@ -17,6 +17,7 @@ This is the codegen-agnostic half of the "outline top-level loop nests into thei
 units" feature; the emission side (routing each ``no_inline`` nest to its own file) lives in the CPU
 code generator.
 """
+
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from dace import SDFG, dtypes
@@ -54,7 +55,7 @@ class OutlineTopLevelNests(ppl.Pass):
     """Outline each top-level map-nest and CFG loop region of the root SDFG into its own
     ``no_inline`` nested SDFG. See the module docstring."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         # Creates NestedSDFG nodes and rewrites a state's dataflow (Nodes covers NestedSDFGs/Scopes);
@@ -127,7 +128,7 @@ class OutlineTopLevelNests(ppl.Pass):
         nsdfg.unique_name = name
 
     def _unique_label(self, sdfg: SDFG, index: int) -> str:
-        return '%s_nest_%d' % (sdfg.label, index)
+        return "%s_nest_%d" % (sdfg.label, index)
 
 
 def outline_top_level_nests(sdfg: SDFG) -> int:

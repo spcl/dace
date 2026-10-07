@@ -58,9 +58,13 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
     # No difference should be observable. Use np.allclose to tolerate sub-ULP rounding
     # changes that come from the -ffast-math build flag reordering arithmetic when the
     # buffer is rewritten — semantic equivalence, not bitwise.
-    assert (sum(not np.allclose(input_data_orig[argName], input_data_llmr[argName])
-                for argName, argType in llmr_sdfg.arglist().items()) == 0
-            ), f"Output differs after transformation! Options: {options}"
+    assert (
+        sum(
+            not np.allclose(input_data_orig[argName], input_data_llmr[argName])
+            for argName, argType in llmr_sdfg.arglist().items()
+        )
+        == 0
+    ), f"Output differs after transformation! Options: {options}"
 
     # Memory footprint should be reduced
     orig_mem = sum(np.prod(arrType.shape) for arrName, arrType in orig_sdfg.arrays.items())
@@ -74,13 +78,9 @@ def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str,
 def check_transformation(sdfg: dace.SDFG, N: int, aps: bool = False):
     for bitmask in [False, True]:
         for np2 in [False, True]:
-            check_transformation_option(sdfg,
-                                        N,
-                                        options={
-                                            "bitmask_indexing": bitmask,
-                                            "next_power_of_two": np2,
-                                            "assume_positive_symbols": aps
-                                        })
+            check_transformation_option(
+                sdfg, N, options={"bitmask_indexing": bitmask, "next_power_of_two": np2, "assume_positive_symbols": aps}
+            )
 
 
 def test_simple():
@@ -886,7 +886,7 @@ def test_conditional6():
 
 def test_symbolic_offset():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32], d: dace.int64[1]):
@@ -904,7 +904,7 @@ def test_symbolic_offset():
 
 def test_symbolic_sizes():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(b: dace.float64[N], c: dace.float64[N]):
@@ -921,7 +921,7 @@ def test_symbolic_sizes():
 
 def test_symbolic_k():
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(b: dace.float64[64], c: dace.float64[64]):
@@ -940,10 +940,23 @@ def test_symbolic_k():
 def test_cloudsc():
 
     @dace.program
-    def tester(pt: dace.float64[100000], tendency_tmp_t: dace.float64[100000], ptsphy: dace.float64, r2es: dace.float64,
-               rtice: dace.float64, rtwat: dace.float64, rtwat_rtice_r: dace.float64, r3les: dace.float64,
-               r4les: dace.float64, r3ies: dace.float64, r4ies: dace.float64, rtt: dace.float64,
-               pap: dace.float64[100000], zqx: dace.float64, zsolqa: dace.float64[100000]):
+    def tester(
+        pt: dace.float64[100000],
+        tendency_tmp_t: dace.float64[100000],
+        ptsphy: dace.float64,
+        r2es: dace.float64,
+        rtice: dace.float64,
+        rtwat: dace.float64,
+        rtwat_rtice_r: dace.float64,
+        r3les: dace.float64,
+        r4les: dace.float64,
+        r3ies: dace.float64,
+        r4ies: dace.float64,
+        rtt: dace.float64,
+        pap: dace.float64[100000],
+        zqx: dace.float64,
+        zsolqa: dace.float64[100000],
+    ):
         ztp1 = dace.define_local([100000], dace.float64)
         zfoeewmt = dace.define_local([100000], dace.float64)
         zlevap = dace.define_local([100000], dace.float64)
@@ -955,10 +968,18 @@ def test_cloudsc():
         for jk in range(2, 100000):
             ztp1[jk] = pt[jk] + ptsphy * tendency_tmp_t[jk]
             zfoeewmt[jk] = min(
-                ((r2es * ((min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2)) *
-                          ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les)) +
-                          (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r)**2))) *
-                          ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))))) / pap[jk], 0.5)
+                (
+                    r2es
+                    * (
+                        (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r) ** 2))
+                        * ((r3les * (ztp1[jk] - rtt)) / (ztp1[jk] - r4les))
+                        + (1.0 - (min(1.0, ((max(rtice, min(rtwat, ztp1[jk])) - rtice) * rtwat_rtice_r) ** 2)))
+                        * ((r3ies * (ztp1[jk] - rtt)) / (ztp1[jk] - r4ies))
+                    )
+                )
+                / pap[jk],
+                0.5,
+            )
             zlevap[jk] = zfoeewmt[jk - 1] + max(zqx, 0.0)
             zsolqa[jk] = zsolqa[jk] + zlevap[jk - 1] * zlevap[jk - 2]
 
@@ -972,8 +993,9 @@ def check_llmr_applies(sdfg: dace.SDFG, min_apps: int = 1):
     test_sdfg = copy.deepcopy(sdfg)
     llmr = LoopLocalMemoryReduction()
     llmr.apply_pass(test_sdfg, {})
-    assert llmr.num_applications >= min_apps, \
+    assert llmr.num_applications >= min_apps, (
         f"Expected at least {min_apps} LLMR applications, got {llmr.num_applications}"
+    )
 
 
 # CloudSC pattern 1: temperature-dependent saturation lookup (ZFOEEWMT/ZQSMIX).
@@ -983,8 +1005,16 @@ def test_cloudsc_saturation_before():
     KLEV = 128
 
     @dace.program
-    def tester(pt: dace.float64[KLEV], pap: dace.float64[KLEV], r2es: dace.float64, r3les: dace.float64,
-               r4les: dace.float64, rtt: dace.float64, retv: dace.float64, zqsmix: dace.float64[KLEV]):
+    def tester(
+        pt: dace.float64[KLEV],
+        pap: dace.float64[KLEV],
+        r2es: dace.float64,
+        r3les: dace.float64,
+        r4les: dace.float64,
+        rtt: dace.float64,
+        retv: dace.float64,
+        zqsmix: dace.float64[KLEV],
+    ):
         zfoeewmt = dace.define_local([KLEV], dace.float64)
         for jk in range(KLEV):
             zfoeewmt[jk] = min((r2es * (r3les * (pt[jk] - rtt)) / (pt[jk] - r4les)) / pap[jk], 0.5)
@@ -1001,8 +1031,16 @@ def test_cloudsc_saturation_after():
     KLEV = 128
 
     @dace.program
-    def tester(pt: dace.float64[KLEV], pap: dace.float64[KLEV], r2es: dace.float64, r3les: dace.float64,
-               r4les: dace.float64, rtt: dace.float64, retv: dace.float64, zqsmix: dace.float64[KLEV]):
+    def tester(
+        pt: dace.float64[KLEV],
+        pap: dace.float64[KLEV],
+        r2es: dace.float64,
+        r3les: dace.float64,
+        r4les: dace.float64,
+        rtt: dace.float64,
+        retv: dace.float64,
+        zqsmix: dace.float64[KLEV],
+    ):
         for jk in range(KLEV):
             zfoeewmt_local = min((r2es * (r3les * (pt[jk] - rtt)) / (pt[jk] - r4les)) / pap[jk], 0.5)
             zqsmix[jk] = zfoeewmt_local / (1.0 - retv * zfoeewmt_local)
@@ -1056,8 +1094,14 @@ def test_cloudsc_evap_before():
     NPROMA = 128
 
     @dace.program
-    def tester(za: dace.float64[NPROMA], zliqfrac: dace.float64[NPROMA], zicefrac: dace.float64[NPROMA],
-               zdqs: dace.float64[NPROMA], zlicld: dace.float64[NPROMA], zsolqa: dace.float64[NPROMA]):
+    def tester(
+        za: dace.float64[NPROMA],
+        zliqfrac: dace.float64[NPROMA],
+        zicefrac: dace.float64[NPROMA],
+        zdqs: dace.float64[NPROMA],
+        zlicld: dace.float64[NPROMA],
+        zsolqa: dace.float64[NPROMA],
+    ):
         zlevapl = dace.define_local([NPROMA], dace.float64)
         zlevapi = dace.define_local([NPROMA], dace.float64)
         for jl in range(NPROMA):
@@ -1080,8 +1124,14 @@ def test_cloudsc_evap_after():
     NPROMA = 128
 
     @dace.program
-    def tester(za: dace.float64[NPROMA], zliqfrac: dace.float64[NPROMA], zicefrac: dace.float64[NPROMA],
-               zdqs: dace.float64[NPROMA], zlicld: dace.float64[NPROMA], zsolqa: dace.float64[NPROMA]):
+    def tester(
+        za: dace.float64[NPROMA],
+        zliqfrac: dace.float64[NPROMA],
+        zicefrac: dace.float64[NPROMA],
+        zdqs: dace.float64[NPROMA],
+        zlicld: dace.float64[NPROMA],
+        zsolqa: dace.float64[NPROMA],
+    ):
         for jl in range(NPROMA):
             zlevapl_local = 0.0
             zlevapi_local = 0.0

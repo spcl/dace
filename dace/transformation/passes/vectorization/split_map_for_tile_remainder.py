@@ -33,6 +33,7 @@ original) and on step-1 maps (before :class:`StrideMapByTileWidths`). A dim
 provably divisible by ``W`` is not split -> a fully-divisible map yields just
 the mask-free interior, no remainder.
 """
+
 from typing import Any, Tuple
 
 import dace
@@ -41,9 +42,12 @@ from dace.libraries.tileops.alignment import STRIDE_GUARD_PREFIX, TILE_GUARD_STA
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.helpers import replicate_scope
-from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
-                                                                           map_tile_widths)
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.utils.map_predicates import (
+    check_tile_widths,
+    is_vectorizable_map,
+    map_tile_widths,
+)
+from dace.transformation.passes.vectorization.utils.pass_invariants import assert_invariant, no_memlet_dim_mismatch
 from dace.sdfg.narrowing import as_basic, as_expr
 
 # Label suffix: boundary region is a plain step-1 scalar loop (scalar_postamble); every tile prep
@@ -69,15 +73,17 @@ def source_map_label(label: str) -> str:
     """
     for marker in REGION_MARKERS:
         if label.endswith(marker):
-            return label[:-len(marker)]
+            return label[: -len(marker)]
     return label
 
 
 # Storage classes whose base address the tile codegen is willing to assume anything about
 # (``tileops.alignment.BASE_ALIGN_BYTES``). A stride fact about anything else is never consumed, and
 # an unconsumed fact is a runtime abort bought for nothing.
-_DEVICE_STORAGE: Tuple[dace.dtypes.StorageType,
-                       ...] = (dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned)
+_DEVICE_STORAGE: Tuple[dace.dtypes.StorageType, ...] = (
+    dace.dtypes.StorageType.GPU_Global,
+    dace.dtypes.StorageType.CPU_Pinned,
+)
 
 
 @properties.make_properties
@@ -128,11 +134,13 @@ class SplitMapForTileRemainder(ppl.Pass):
         "no guards, hence no facts, hence the per-element path for symbolic shapes.",
     )
 
-    def __init__(self,
-                 widths: tuple[int, ...] = (8, ),
-                 tail_mode: str = "masked",
-                 assume_even: bool = False,
-                 range_check: bool = True) -> None:
+    def __init__(
+        self,
+        widths: tuple[int, ...] = (8,),
+        tail_mode: str = "masked",
+        assume_even: bool = False,
+        range_check: bool = True,
+    ) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -154,8 +162,10 @@ class SplitMapForTileRemainder(ppl.Pass):
         super().__init__()
         check_tile_widths("SplitMapForTileRemainder", widths)
         if tail_mode not in ("masked", "masked_branch", "scalar", "tile_k1"):
-            raise ValueError(f"SplitMapForTileRemainder: tail_mode {tail_mode!r} not in "
-                             f"{{'masked', 'masked_branch', 'scalar', 'tile_k1'}}")
+            raise ValueError(
+                f"SplitMapForTileRemainder: tail_mode {tail_mode!r} not in "
+                f"{{'masked', 'masked_branch', 'scalar', 'tile_k1'}}"
+            )
         self.widths = list(widths)
         self.tail_mode = tail_mode
         self.assume_even = assume_even
@@ -191,7 +201,7 @@ class SplitMapForTileRemainder(ppl.Pass):
     def _trip_class(self, lb: symbolic.SymbolicType, ub: symbolic.SymbolicType, W: int) -> str:
         # Classify a tiled dim's extent against width ``W``.
         if self._provably_divisible(lb, ub, W):  # constant or symbolic (``4*M % 4 == 0``)
-            return 'divisible'
+            return "divisible"
         trip = symbolic.simplify(ub - lb + 1)
         try:
             t = int(as_expr(trip))
@@ -200,11 +210,11 @@ class SplitMapForTileRemainder(ppl.Pass):
             # provable violation; an undecidable remainder falls through to a runtime guard.
             try:
                 if int(as_expr(symbolic.simplify(trip % W))) != 0:
-                    return 'nondivisible'
+                    return "nondivisible"
             except (TypeError, ValueError):
                 pass
-            return 'symbolic'
-        return 'below' if t < W else 'nondivisible'
+            return "symbolic"
+        return "below" if t < W else "nondivisible"
 
     def _split(self, state: dace.SDFGState, map_entry: MapEntry, widths: tuple[int, ...]) -> bool:
         # Peel ``map_entry``'s K innermost dims into interior + K slabs.
@@ -222,19 +232,21 @@ class SplitMapForTileRemainder(ppl.Pass):
                 classes.append((self._trip_class(lb, ub, W), d, W, lb, ub))
             # A provably-too-small dim (extent < W) keeps the whole map scalar, matching MarkTileDims under
             # ``assume_even``. With a remainder path the short dim is peeled into one masked tile instead.
-            if any(c == 'below' for c, *_ in classes):
+            if any(c == "below" for c, *_ in classes):
                 return False
             for c, d, W, lb, ub in classes:
-                if c == 'nondivisible':
+                if c == "nondivisible":
                     # Provable violation of the caller's even-extent guarantee: fail loudly at
                     # transform time (a runtime guard would only abort once the kernel launches).
-                    raise ValueError(f"SplitMapForTileRemainder: map {map_entry.map.label!r} dim {d} has extent "
-                                     f"{symbolic.simplify(ub - lb + 1)}, which is provably not a multiple of tile "
-                                     f"width {W} that assume_even requires. Rerun with assume_even=False to peel a "
-                                     f"masked remainder.")
+                    raise ValueError(
+                        f"SplitMapForTileRemainder: map {map_entry.map.label!r} dim {d} has extent "
+                        f"{symbolic.simplify(ub - lb + 1)}, which is provably not a multiple of tile "
+                        f"width {W} that assume_even requires. Rerun with assume_even=False to peel a "
+                        f"masked remainder."
+                    )
                 # Non-decidable extent: record a host-side runtime guard (extent % W == 0 and
                 # extent >= W). A provably-divisible extent needs no check.
-                if c == 'symbolic' and self.range_check:
+                if c == "symbolic" and self.range_check:
                     self._range_checks.append((state.sdfg, symbolic.simplify(ub - lb + 1), int(W)))
             if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
                 map_entry.map.label = map_entry.map.label + TILE_MAIN_MARKER
@@ -289,10 +301,15 @@ class SplitMapForTileRemainder(ppl.Pass):
         # Safe: the comprehension is fully evaluated before the first ``_split`` mutates anything.
         scan_cache: dict[int, Any] = {}
         eligible = [
-            (n, g, map_tile_widths(g, n, tuple(self.widths))) for n, g in sdfg.all_nodes_recursive()
-            if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState) and len(n.map.params) >= K
-            and not n.map.label.endswith((TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, TILE_K1_TAIL_MARKER,
-                                          MASKED_TAIL_MARKER)) and is_vectorizable_map(g, n, K, scan_cache=scan_cache)
+            (n, g, map_tile_widths(g, n, tuple(self.widths)))
+            for n, g in sdfg.all_nodes_recursive()
+            if isinstance(n, MapEntry)
+            and isinstance(g, dace.SDFGState)
+            and len(n.map.params) >= K
+            and not n.map.label.endswith(
+                (TILE_MAIN_MARKER, SCALAR_TAIL_MARKER, TILE_K1_TAIL_MARKER, MASKED_TAIL_MARKER)
+            )
+            and is_vectorizable_map(g, n, K, scan_cache=scan_cache)
         ]
         for n, g, widths in eligible:
             if self._split(g, n, widths):
@@ -301,8 +318,11 @@ class SplitMapForTileRemainder(ppl.Pass):
                     self._record_stride_facts(g, n)
         if self.range_check and (self._range_checks or self._stride_checks):
             self._emit_range_checks()
-        assert_invariant(no_memlet_dim_mismatch(sdfg), "SplitMapForTileRemainder",
-                         "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(
+            no_memlet_dim_mismatch(sdfg),
+            "SplitMapForTileRemainder",
+            "memlet subset and other_subset have matching dimensionality",
+        )
         return applied or None
 
     def _record_stride_facts(self, state: dace.SDFGState, map_entry: MapEntry) -> None:
@@ -335,28 +355,38 @@ class SplitMapForTileRemainder(ppl.Pass):
             guard = owner.add_state_before(owner.start_block, label=TILE_GUARD_STATE_LABEL, is_start_block=True)
             for extent_c, width in sorted(extents.get(owner, ())):
                 self._add_guard(
-                    guard, "tile_range_check", extent_c, width,
+                    guard,
+                    "tile_range_check",
+                    extent_c,
+                    width,
                     f"extent %lld violates assume_even (must be a multiple of tile width {width} "
-                    f"and >= {width}); rerun with assume_even=False.")
+                    f"and >= {width}); rerun with assume_even=False.",
+                )
             for name, chunk in sorted(strides.get(owner, ())):
                 self._add_guard(
-                    guard, f"{STRIDE_GUARD_PREFIX}{name}_{chunk}", name, chunk,
+                    guard,
+                    f"{STRIDE_GUARD_PREFIX}{name}_{chunk}",
+                    name,
+                    chunk,
                     f"array row stride {name}=%lld breaks the alignment the widened fp16 "
                     f"tile loads were compiled on (must be a multiple of {chunk} and >= {chunk}); "
-                    f"pad the array to an aligned row stride, or disable tile vectorization.")
+                    f"pad the array to an aligned row stride, or disable tile vectorization.",
+                )
 
     @staticmethod
     def _add_guard(guard: dace.SDFGState, label: str, expr_c: str, modulus: int, message: str) -> None:
         # Add one ``expr % modulus == 0 && expr >= modulus`` abort-on-violation tasklet, with ``printf`` /
         # ``__trap`` when the owning SDFG runs on the device (``fprintf`` / ``abort`` are host-only).
-        code = (f'if ((long long)({expr_c}) % {modulus} != 0 || (long long)({expr_c}) < {modulus}) {{\n'
-                f'#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)\n'
-                f'    printf("DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
-                f'    __trap();\n'
-                f'#else\n'
-                f'    fprintf(stderr, "DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
-                f'    abort();\n'
-                f'#endif\n'
-                f'}}')
+        code = (
+            f"if ((long long)({expr_c}) % {modulus} != 0 || (long long)({expr_c}) < {modulus}) {{\n"
+            f"#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)\n"
+            f'    printf("DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
+            f"    __trap();\n"
+            f"#else\n"
+            f'    fprintf(stderr, "DaCe tile vectorization: {message}\\n", (long long)({expr_c}));\n'
+            f"    abort();\n"
+            f"#endif\n"
+            f"}}"
+        )
         tasklet = guard.add_tasklet(name=label, inputs={}, outputs={}, code=code, language=dace.dtypes.Language.CPP)
         tasklet.side_effects = True

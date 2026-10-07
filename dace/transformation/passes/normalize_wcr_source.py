@@ -57,6 +57,7 @@ The pass is idempotent: re-running it finds no WCR edges sourced from CodeNodes
 (only AccessNode-sourced WCR survives), so a fixed-point pipeline terminates
 after a single iteration.
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
@@ -88,8 +89,9 @@ class NormalizeWCRSource(ppl.Pass):
     def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return []
 
-    def _output_descriptor(self, src: nodes.CodeNode, src_conn: str,
-                           target_desc: Optional[data.Data]) -> Optional[data.Data]:
+    def _output_descriptor(
+        self, src: nodes.CodeNode, src_conn: str, target_desc: Optional[data.Data]
+    ) -> Optional[data.Data]:
         """Return the data descriptor for the new private transient.
 
         For a :class:`NestedSDFG`, this is the inner array bound to the output connector
@@ -113,12 +115,14 @@ class NormalizeWCRSource(ppl.Pass):
         forced to ``transient=True`` + Scope lifetime so the codegen allocates it inside
         the Map body.
         """
-        is_scalar = (isinstance(inner, data.Scalar) or (isinstance(inner, data.Array) and tuple(inner.shape) == (1, )))
+        is_scalar = isinstance(inner, data.Scalar) or (isinstance(inner, data.Array) and tuple(inner.shape) == (1,))
         if is_scalar:
-            return data.Scalar(inner.dtype,
-                               transient=True,
-                               storage=dtypes.StorageType.Default,
-                               lifetime=dtypes.AllocationLifetime.Scope)
+            return data.Scalar(
+                inner.dtype,
+                transient=True,
+                storage=dtypes.StorageType.Default,
+                lifetime=dtypes.AllocationLifetime.Scope,
+            )
         new = copy.deepcopy(inner)
         new.transient = True
         new.storage = dtypes.StorageType.Default
@@ -128,8 +132,8 @@ class NormalizeWCRSource(ppl.Pass):
     def _priv_subset(self, desc: data.Data) -> str:
         """Memlet subset string covering the entire private buffer."""
         if isinstance(desc, data.Scalar):
-            return '0'
-        return ', '.join(f'0:{s}' for s in desc.shape)
+            return "0"
+        return ", ".join(f"0:{s}" for s in desc.shape)
 
     def _enclosing_map_params(self, state: SDFGState, e, scope: Dict) -> Set[str]:
         """Parameters of every Map enclosing edge ``e`` (its source's scope) plus, when the
@@ -219,8 +223,9 @@ class NormalizeWCRSource(ppl.Pass):
             for e in ist.edges():
                 if e.data is None or e.data.is_empty():
                     continue
-                if e.data.wcr is not None and (e.data.data in targets or
-                                               (isinstance(e.dst, nodes.AccessNode) and e.dst.data in targets)):
+                if e.data.wcr is not None and (
+                    e.data.data in targets or (isinstance(e.dst, nodes.AccessNode) and e.dst.data in targets)
+                ):
                     return True
                 if isinstance(e.src, nodes.AccessNode) and e.src.data in targets:
                     return True
@@ -229,14 +234,22 @@ class NormalizeWCRSource(ppl.Pass):
                     continue
                 inner: Set[str] = set()
                 for oe in ist.out_edges(node):
-                    if oe.src_conn and oe.data is not None and (oe.data.data in targets or
-                                                                (isinstance(oe.dst, nodes.AccessNode)
-                                                                 and oe.dst.data in targets)):
+                    if (
+                        oe.src_conn
+                        and oe.data is not None
+                        and (
+                            oe.data.data in targets or (isinstance(oe.dst, nodes.AccessNode) and oe.dst.data in targets)
+                        )
+                    ):
                         inner.add(oe.src_conn)
                 for ie in ist.in_edges(node):
-                    if ie.dst_conn and ie.data is not None and (ie.data.data in targets or
-                                                                (isinstance(ie.src, nodes.AccessNode)
-                                                                 and ie.src.data in targets)):
+                    if (
+                        ie.dst_conn
+                        and ie.data is not None
+                        and (
+                            ie.data.data in targets or (isinstance(ie.src, nodes.AccessNode) and ie.src.data in targets)
+                        )
+                    ):
                         inner.add(ie.dst_conn)
                 if inner and cls._accumulates_into(node.sdfg, inner):
                     return True
@@ -259,7 +272,8 @@ class NormalizeWCRSource(ppl.Pass):
         seed_targets: List[Tuple[str, str, bool, SDFGState]] = []
         # Snapshot first; we mutate the edge set inside the loop.
         targets = [
-            e for e in state.edges()
+            e
+            for e in state.edges()
             if e.data is not None and e.data.wcr is not None and isinstance(e.src, (nodes.Tasklet, nodes.NestedSDFG))
         ]
         # The write-once test inspects the pre-rewrite topology, and inserting the private
@@ -322,7 +336,7 @@ class NormalizeWCRSource(ppl.Pass):
             # edge so codegen falls back to its atomic-add path.
             if {str(s) for s in priv_desc.free_symbols} - set(sdfg.symbols.keys()):
                 continue
-            priv_name = sdfg.add_datadesc(f'_wcr_priv_{src.label}_{src_conn}', priv_desc, find_new_name=True)
+            priv_name = sdfg.add_datadesc(f"_wcr_priv_{src.label}_{src_conn}", priv_desc, find_new_name=True)
             priv_node = state.add_access(priv_name)
 
             state.add_edge(src, src_conn, priv_node, None, Memlet(data=priv_name, subset=self._priv_subset(priv_desc)))
@@ -343,8 +357,12 @@ class NormalizeWCRSource(ppl.Pass):
         out: Set[str] = set()
         for st in sd.states():
             for e in st.edges():
-                if (e.data is not None and e.data.wcr is None and not e.data.is_empty()
-                        and isinstance(e.dst, nodes.AccessNode)):
+                if (
+                    e.data is not None
+                    and e.data.wcr is None
+                    and not e.data.is_empty()
+                    and isinstance(e.dst, nodes.AccessNode)
+                ):
                     out.add(e.dst.data)
         return out
 
@@ -411,8 +429,13 @@ class NormalizeWCRSource(ppl.Pass):
         state = next(iter(states))
         idx_syms: Set[str] = set()
         for e in state.edges():
-            if (e.data is not None and e.data.data == name and e.data.wcr is not None
-                    and isinstance(e.dst, nodes.AccessNode) and e.dst.data == name):
+            if (
+                e.data is not None
+                and e.data.data == name
+                and e.data.wcr is not None
+                and isinstance(e.dst, nodes.AccessNode)
+                and e.dst.data == name
+            ):
                 sub = e.data.get_dst_subset(e, state) or e.data.subset
                 if sub is not None:
                     idx_syms |= {str(s) for s in sub.free_symbols}
@@ -430,10 +453,10 @@ class NormalizeWCRSource(ppl.Pass):
         ``float`` / ``int`` / ``bool`` / ``complex`` round-trip to plain literals."""
         nptype = dtype.type
         if numpy.issubdtype(nptype, numpy.bool_):
-            return 'True' if val else 'False'
+            return "True" if val else "False"
         if numpy.issubdtype(nptype, numpy.complexfloating):
             c = complex(val)
-            return f'complex({c.real!r}, {c.imag!r})'
+            return f"complex({c.real!r}, {c.imag!r})"
         if numpy.issubdtype(nptype, numpy.integer):
             return str(int(val))
         return repr(float(val))
@@ -476,19 +499,19 @@ class NormalizeWCRSource(ppl.Pass):
         if before is None:
             return False
         parent: ControlFlowRegion = before.parent_graph
-        seed = parent.add_state_before(before, label=name + '_wcr_seed', is_start_block=parent.start_block is before)
+        seed = parent.add_state_before(before, label=name + "_wcr_seed", is_start_block=parent.start_block is before)
         lit = self._identity_literal(val, desc.dtype)
         w = seed.add_write(name)
-        if isinstance(desc, data.Scalar) or tuple(desc.shape) == (1, ):
-            t = seed.add_tasklet(name + '_wcr_seed', {}, {'__out'}, f'__out = {lit}')
-            seed.add_edge(t, '__out', w, None, Memlet(data=name, subset='0'))
+        if isinstance(desc, data.Scalar) or tuple(desc.shape) == (1,):
+            t = seed.add_tasklet(name + "_wcr_seed", {}, {"__out"}, f"__out = {lit}")
+            seed.add_edge(t, "__out", w, None, Memlet(data=name, subset="0"))
         else:
-            me, mx = seed.add_map(name + '_wcr_seed', {f'_wcrseed_i{d}': f'0:{s}' for d, s in enumerate(desc.shape)})
+            me, mx = seed.add_map(name + "_wcr_seed", {f"_wcrseed_i{d}": f"0:{s}" for d, s in enumerate(desc.shape)})
             me.map.range = self._written_window(sd, name, next(iter(states)), desc)
-            t = seed.add_tasklet(name + '_wcr_seed', {}, {'__out'}, f'__out = {lit}')
-            idx = ', '.join(f'_wcrseed_i{d}' for d in range(len(desc.shape)))
+            t = seed.add_tasklet(name + "_wcr_seed", {}, {"__out"}, f"__out = {lit}")
+            idx = ", ".join(f"_wcrseed_i{d}" for d in range(len(desc.shape)))
             seed.add_edge(me, None, t, None, Memlet())
-            seed.add_memlet_path(t, mx, w, src_conn='__out', memlet=Memlet(data=name, subset=idx))
+            seed.add_memlet_path(t, mx, w, src_conn="__out", memlet=Memlet(data=name, subset=idx))
         return True
 
     def _apply(self, sdfg: SDFG) -> int:
@@ -527,4 +550,4 @@ class NormalizeWCRSource(ppl.Pass):
         if n == 0:
             return None
         sdfg.validate()
-        return {'normalized_wcr_edges': {str(n)}}
+        return {"normalized_wcr_edges": {str(n)}}

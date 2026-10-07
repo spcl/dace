@@ -22,21 +22,23 @@ class EliminateBranches(ppl.Pass):
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
-    def _has_no_parent_loops_or_maps(self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None],
-                                     node: ConditionalBlock) -> bool:
+    def _has_no_parent_loops_or_maps(
+        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None], node: ConditionalBlock
+    ) -> bool:
         parent_loops_and_maps = {
             m
-            for m in get_parent_map_and_loop_scopes(parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg,
-                                                    node, None)
+            for m in get_parent_map_and_loop_scopes(
+                parent_nsdfg_state.sdfg if parent_nsdfg_state is not None else sdfg, node, None
+            )
         }
         return len(parent_loops_and_maps) == 0
 
-    def _run_transformation(self,
-                            root: SDFG,
-                            sdfg: SDFG,
-                            parent_nsdfg_state: Union[SDFG, None] = None) -> Tuple[int, Set[str]]:
+    def _run_transformation(
+        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None
+    ) -> Tuple[int, Set[str]]:
         # Root SDFG is needed to collect all parent maps
         from dace.transformation.interstate import branch_elimination
+
         # Try applying without cleaning
         num_applied = 0
         added_scalar_names = set()
@@ -93,28 +95,30 @@ class EliminateBranches(ppl.Pass):
                     t.parent_nsdfg_state = parent_nsdfg_state
                     t.try_demote_and_fuse = self.try_demote_and_fuse
                     first_conditional, second_conditional = t.sequentialize_if_else_branch_for_all_subsets(
-                        node.parent_graph)
+                        node.parent_graph
+                    )
                     # We still can't apply the pass on these branches also try to lift states outside the branch
                     # because the branch elimination transformation requires the if branch to have one state
                     if first_conditional is not None and second_conditional is not None:
                         t.conditional = first_conditional
                         if not t.can_be_applied(first_conditional.parent_graph, 0, first_conditional.sdfg, False):
                             t.duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
-                                first_conditional.parent_graph)
+                                first_conditional.parent_graph
+                            )
                         t.conditional = second_conditional
                         if not t.can_be_applied(second_conditional.parent_graph, 0, second_conditional.sdfg, False):
                             t.duplicate_condition_across_all_top_level_nodes_if_line_graph_and_empty_interstate_edges(
-                                second_conditional.parent_graph)
+                                second_conditional.parent_graph
+                            )
 
         for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     self._run_clean(root, node.sdfg, state, lift_multi_state)
 
-    def _apply_eliminate_branches(self,
-                                  root: SDFG,
-                                  sdfg: SDFG,
-                                  parent_nsdfg_state: Union[SDFG, None] = None) -> Tuple[int, Set[str]]:
+    def _apply_eliminate_branches(
+        self, root: SDFG, sdfg: SDFG, parent_nsdfg_state: Union[SDFG, None] = None
+    ) -> Tuple[int, Set[str]]:
         """Apply EliminateBranches transformation to all eligible conditionals."""
         # Pattern matching with conditional branches to not work (9.10.25), avoid it
         # Depending on the number of nestedness we need to apply that many times because
@@ -191,4 +195,4 @@ class EliminateBranches(ppl.Pass):
         return num_applied, added_scalar_names
 
     def report(self, pass_retval: int) -> str:
-        return f'Fused (andd removed) {pass_retval} branches.'
+        return f"Fused (andd removed) {pass_retval} branches."

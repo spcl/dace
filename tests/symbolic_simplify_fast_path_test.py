@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``dace.symbolic.simplify`` answers numbers, plain symbols, integer linear forms and integer monomials
 without running ``sympy.simplify``; the answer must be exactly what ``sympy.simplify`` returns."""
+
 import random
 from collections.abc import Callable
 
@@ -15,28 +16,19 @@ SEED = 20260914
 REFERENCE_SIMPLIFY = sympy.simplify
 
 #: Assumption sets ``sympy.simplify`` may exploit; none makes a symbol zero or infinite.
-FLAVORS = ({}, {
-    "integer": True
-}, {
-    "positive": True
-}, {
-    "nonnegative": True
-}, {
-    "negative": True
-}, {
-    "nonzero": True
-}, {
-    "positive": True,
-    "integer": True
-}, {
-    "real": True
-}, {
-    "extended_positive": True
-}, {
-    "odd": True
-}, {
-    "imaginary": True
-})
+FLAVORS = (
+    {},
+    {"integer": True},
+    {"positive": True},
+    {"nonnegative": True},
+    {"negative": True},
+    {"nonzero": True},
+    {"positive": True, "integer": True},
+    {"real": True},
+    {"extended_positive": True},
+    {"odd": True},
+    {"imaginary": True},
+)
 
 
 def spy_on_sympy_simplify(monkeypatch: pytest.MonkeyPatch) -> list[object]:
@@ -74,7 +66,7 @@ def random_linear(rng: random.Random, pool: list[sympy.Symbol]) -> sympy.Expr:
 def random_monomial(rng: random.Random, pool: list[sympy.Symbol]) -> sympy.Expr:
     expr = sympy.Integer(rng.choice((1, -1, 2, -3, 12)))
     for sym in rng.sample(pool, rng.randint(1, 3)):
-        expr = expr * sym**rng.choice((1, 2, 3, -1, -2))
+        expr = expr * sym ** rng.choice((1, 2, 3, -1, -2))
     return expr
 
 
@@ -83,7 +75,7 @@ def random_affine_product(rng: random.Random, pool: list[sympy.Symbol]) -> sympy
 
 
 def random_affine_power(rng: random.Random, pool: list[sympy.Symbol]) -> sympy.Expr:
-    return rng.choice((1, -1, 2)) * random_linear(rng, pool)**rng.choice((2, 3, -1))
+    return rng.choice((1, -1, 2)) * random_linear(rng, pool) ** rng.choice((2, 3, -1))
 
 
 def random_rational_form(rng: random.Random, pool: list[sympy.Symbol]) -> sympy.Expr:
@@ -100,33 +92,38 @@ def random_degenerate_symbol_form(rng: random.Random, pool: list[sympy.Symbol]) 
     return rng.choice((degenerate + rng.choice(pool), 2 * degenerate * rng.choice(pool), 1 / degenerate))
 
 
-def generate(makers: tuple[Callable[[random.Random, list[sympy.Symbol]], sympy.Expr], ...],
-             count: int) -> list[sympy.Expr]:
+def generate(
+    makers: tuple[Callable[[random.Random, list[sympy.Symbol]], sympy.Expr], ...], count: int
+) -> list[sympy.Expr]:
     rng = random.Random(SEED)
     pool = plain_symbols()
     return [rng.choice(makers)(rng, pool) for index in range(count)]
 
 
-@pytest.mark.parametrize("expr", [
-    sympy.Integer(0),
-    sympy.Integer(-4),
-    sympy.Rational(3, 7),
-    sympy.Float(2.5),
-    sympy.oo,
-    sympy.Symbol("N"),
-    sympy.Symbol("N", positive=True, integer=True),
-    sympy.Symbol("N") - 1,
-    1 - sympy.Symbol("N"),
-    -sympy.Symbol("N") - sympy.Symbol("M"),
-    2 * sympy.Symbol("N") - 3 * sympy.Symbol("M", nonnegative=True) + 7,
-    sympy.Symbol("N") * sympy.Symbol("M"),
-    -2 * sympy.Symbol("N")**2 * sympy.Symbol("M"),
-    sympy.Symbol("N", positive=True)**3,
-    -3 / (sympy.Symbol("N") * sympy.Symbol("M")**2),
-],
-                         ids=str)
+@pytest.mark.parametrize(
+    "expr",
+    [
+        sympy.Integer(0),
+        sympy.Integer(-4),
+        sympy.Rational(3, 7),
+        sympy.Float(2.5),
+        sympy.oo,
+        sympy.Symbol("N"),
+        sympy.Symbol("N", positive=True, integer=True),
+        sympy.Symbol("N") - 1,
+        1 - sympy.Symbol("N"),
+        -sympy.Symbol("N") - sympy.Symbol("M"),
+        2 * sympy.Symbol("N") - 3 * sympy.Symbol("M", nonnegative=True) + 7,
+        sympy.Symbol("N") * sympy.Symbol("M"),
+        -2 * sympy.Symbol("N") ** 2 * sympy.Symbol("M"),
+        sympy.Symbol("N", positive=True) ** 3,
+        -3 / (sympy.Symbol("N") * sympy.Symbol("M") ** 2),
+    ],
+    ids=str,
+)
 def test_numbers_symbols_linear_forms_and_monomials_skip_sympy_and_come_back_unchanged(
-        expr: sympy.Basic, monkeypatch: pytest.MonkeyPatch) -> None:
+    expr: sympy.Basic, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = spy_on_sympy_simplify(monkeypatch)
 
     result = dace.symbolic.simplify(expr)
@@ -161,7 +158,7 @@ def test_python_int_becomes_the_sympy_integer_sympy_would_return(monkeypatch: py
     "expr",
     [
         (sympy.Symbol("N") - 1) * (sympy.Symbol("N") + 1),  # expands to N**2 - 1
-        (2 - sympy.Symbol("N"))**2,  # base sign is normalized
+        (2 - sympy.Symbol("N")) ** 2,  # base sign is normalized
         sympy.Symbol("N") * (2 * sympy.Symbol("M") + 2),  # content 2 is pulled out
         sympy.Symbol("z", zero=True),  # folds to 0
         1 / sympy.Symbol("w", infinite=True),  # folds to 0
@@ -171,9 +168,11 @@ def test_python_int_becomes_the_sympy_integer_sympy_would_return(monkeypatch: py
         sympy.Min(sympy.Symbol("N"), sympy.Symbol("M")),
         dace.symbolic.int_floor(sympy.Symbol("N"), 2),
     ],
-    ids=str)
-def test_shapes_outside_the_proven_rules_are_handed_to_sympy(expr: sympy.Basic,
-                                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    ids=str,
+)
+def test_shapes_outside_the_proven_rules_are_handed_to_sympy(
+    expr: sympy.Basic, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = spy_on_sympy_simplify(monkeypatch)
 
     result = dace.symbolic.simplify(expr)
@@ -193,8 +192,18 @@ def test_generated_linear_forms_and_monomials_skip_sympy_and_match_it(monkeypatc
 
 
 def test_generated_near_misses_match_sympy(monkeypatch: pytest.MonkeyPatch) -> None:
-    exprs = generate((random_affine_product, random_affine_power, random_rational_form, random_unevaluated_add,
-                      random_degenerate_symbol_form, random_linear, random_monomial), 300)
+    exprs = generate(
+        (
+            random_affine_product,
+            random_affine_power,
+            random_rational_form,
+            random_unevaluated_add,
+            random_degenerate_symbol_form,
+            random_linear,
+            random_monomial,
+        ),
+        300,
+    )
     calls = spy_on_sympy_simplify(monkeypatch)
 
     results = [dace.symbolic.simplify(e) for e in exprs]

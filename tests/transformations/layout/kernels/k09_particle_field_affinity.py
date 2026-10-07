@@ -18,6 +18,7 @@ Source: Slattery et al., Cabana (JOSS'22, AoSoA vector length V); Zhong et al., 
 reference affinity (PLDI'04); Chilimbi et al., cache-conscious structure definition (PLDI'99);
 Sung et al., in-place AoS->AoSoA (InPar'12).
 """
+
 import numpy
 import dace
 
@@ -30,8 +31,16 @@ DT = 1e-3
 
 
 @dace.program
-def particle_step(x: dace.float64[N], y: dace.float64[N], z: dace.float64[N], vx: dace.float64[N], vy: dace.float64[N],
-                  vz: dace.float64[N], q: dace.float64[N], m: dace.float64[N]):
+def particle_step(
+    x: dace.float64[N],
+    y: dace.float64[N],
+    z: dace.float64[N],
+    vx: dace.float64[N],
+    vy: dace.float64[N],
+    vz: dace.float64[N],
+    q: dace.float64[N],
+    m: dace.float64[N],
+):
     """One drift+kick+decay step per particle, in place on every field (all reads use old values)."""
     for i in dace.map[0:N] @ dace.ScheduleType.Sequential:
         x[i] = x[i] + DT * vx[i]  # drift: positions from (old) velocities

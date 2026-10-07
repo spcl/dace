@@ -19,6 +19,7 @@ Source: Springer, Su, Bientinesi, "HPTT," ARRAY@PLDI'17 (reference transposer); 
 "Nonlinear array layouts for hierarchical memory systems," ICS'99 (4D blocked layout); SC26 layout
 paper SS IV-B2 (transpose microbenchmark, Block primitive).
 """
+
 import numpy
 import dace
 

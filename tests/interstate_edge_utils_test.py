@@ -9,7 +9,7 @@ def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
     # Add symbols and arrays
     scalar1_name, scalar1 = sdfg.add_scalar("scalar1", dace.int32, transient=True, find_new_name=False)
     scalar2_name, scalar2 = sdfg.add_scalar("scalar2", dace.int32, transient=True, find_new_name=False)
-    array1_name, array1 = sdfg.add_array("array1", (10, ), dace.int32, transient=True, find_new_name=False)
+    array1_name, array1 = sdfg.add_array("array1", (10,), dace.int32, transient=True, find_new_name=False)
     sym1_name = sdfg.add_symbol("symbol1", dace.int32, find_new_name=False)
     sym2_name = sdfg.add_symbol("symbol2", dace.int32, find_new_name=False)
     sym3_name = sdfg.add_symbol("symbol3", dace.int32, find_new_name=False)
@@ -51,10 +51,17 @@ def test_used_symbols():
 def test_all_used_symbols():
     sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     e: dace.InterstateEdge = sdfg_and_edge[1]
-    assert e.data.used_symbols(
-        all_symbols=True, union_lhs_symbols=True) == {"scalar1", "scalar2", "symbol1", "symbol2", "symbol3", "array1"}
-    assert e.data.used_symbols(all_symbols=False, union_lhs_symbols=True) == e.data.used_symbols(all_symbols=True,
-                                                                                                 union_lhs_symbols=True)
+    assert e.data.used_symbols(all_symbols=True, union_lhs_symbols=True) == {
+        "scalar1",
+        "scalar2",
+        "symbol1",
+        "symbol2",
+        "symbol3",
+        "array1",
+    }
+    assert e.data.used_symbols(all_symbols=False, union_lhs_symbols=True) == e.data.used_symbols(
+        all_symbols=True, union_lhs_symbols=True
+    )
 
 
 def test_all_read_sdfg_symbols():
@@ -80,8 +87,10 @@ def test_all_used_arrays():
 
 def test_writing_to_scalar_on_iedge_is_invalid():
     # SDFG can't write to scalars on interstate edges catch for validity
-    with pytest.raises(dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
-                       match="Assignment to a scalar or an array detected in an interstate edge"):
+    with pytest.raises(
+        dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
+        match="Assignment to a scalar or an array detected in an interstate edge",
+    ):
         sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
         sdfg: dace.SDFG = sdfg_and_edge[0]
         sdfg.validate()
@@ -113,15 +122,17 @@ def test_writing_to_scalar_on_iedge_inside_a_region_is_invalid():
     interstate edges were never checked at all.
     """
     sdfg = _get_sdfg_writing_to_scalar_inside_a_region()
-    with pytest.raises(dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
-                       match="Assignment to a scalar or an array detected in an interstate edge"):
+    with pytest.raises(
+        dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
+        match="Assignment to a scalar or an array detected in an interstate edge",
+    ):
         sdfg.validate()
 
 
 def test_region_check_does_not_reject_a_plain_symbol_assignment():
     """Only assignments whose target is a data descriptor are rejected; ordinary symbols are fine."""
     sdfg = dace.SDFG("interstate_symbol_in_region")
-    sdfg.add_array("array1", (10, ), dace.int32, transient=True, find_new_name=False)
+    sdfg.add_array("array1", (10,), dace.int32, transient=True, find_new_name=False)
     sdfg.add_symbol("symbol1", dace.int32, find_new_name=False)
 
     entry_state = sdfg.add_state("entry", is_start_block=True)
@@ -136,30 +147,22 @@ def test_region_check_does_not_reject_a_plain_symbol_assignment():
     sdfg.validate()
 
 
-@pytest.mark.parametrize('assignments, names', [
-    ({}, []),
-    ({
-        'a': '1'
-    }, ['a']),
-    ({
-        'i': 'i + 1'
-    }, []),
-    ({
-        'a': 'b',
-        'b': 'a'
-    }, ['a']),
-    ({
-        'x': 'n * 2',
-        'y': 'x + 1',
-        'n': '0'
-    }, ['x', 'y']),
-])
+@pytest.mark.parametrize(
+    "assignments, names",
+    [
+        ({}, []),
+        ({"a": "1"}, ["a"]),
+        ({"i": "i + 1"}, []),
+        ({"a": "b", "b": "a"}, ["a"]),
+        ({"x": "n * 2", "y": "x + 1", "n": "0"}, ["x", "y"]),
+    ],
+)
 def test_new_symbol_names_are_the_keys_new_symbols_types(assignments, names):
     """Inlining reads only these names, and a mismatch with ``new_symbols`` renames a symbol that
     should have been kept (or keeps one that clashes)."""
     edge = dace.InterstateEdge(assignments=assignments)
     assert list(edge.new_symbol_names()) == names
-    assert list(edge.new_symbols(None, {'n': dace.int64, 'b': dace.int64})) == names
+    assert list(edge.new_symbols(None, {"n": dace.int64, "b": dace.int64})) == names
 
 
 if __name__ == "__main__":

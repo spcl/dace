@@ -27,6 +27,7 @@ The map count itself is printed only, never asserted: it is under active dispute
 bisect) and sensitive to the exact dace commit -- read it together with ``git rev-parse HEAD``,
 never in isolation.
 """
+
 import contextlib
 import os
 from typing import Any, Callable
@@ -51,8 +52,9 @@ _TOTAL_CLEANUP_BOUNDARIES = 8
 def test_ab_map_counts() -> None:
     skipped: list[str] = []
     applied: list[int] = []
-    original_apply: Callable[[canon_pipeline.StructuralCleanup, SDFG, dict[str, Any]],
-                             int | None] = (canon_pipeline.StructuralCleanup.apply_pass)
+    original_apply: Callable[[canon_pipeline.StructuralCleanup, SDFG, dict[str, Any]], int | None] = (
+        canon_pipeline.StructuralCleanup.apply_pass
+    )
 
     def counting_apply(self: canon_pipeline.StructuralCleanup, sdfg: SDFG, results: dict[str, Any]) -> int | None:
         applied.append(1)
@@ -70,23 +72,24 @@ def test_ab_map_counts() -> None:
     canon_pipeline.changed_the_graph = counting_changed
     try:
         sdfg = build_cloudsc_sdfg(simplify=False)
-        with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
-            canonicalize(sdfg, validate=True, validate_all=False, target='cpu', specialize_constants=SPECIES_CONSTANTS)
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+            canonicalize(sdfg, validate=True, validate_all=False, target="cpu", specialize_constants=SPECIES_CONSTANTS)
         sdfg.validate()
     finally:
         canon_pipeline.StructuralCleanup.apply_pass = original_apply
         canon_pipeline.changed_the_graph = original_changed
 
-    print(f'AB_RESULT maps={len(map_entries(sdfg))} omp_parallel_for={omp_parallel_for_count(sdfg)}')
-    print(f'AB_RESULT cleanup_blocks_run={len(applied)} of {_TOTAL_CLEANUP_BOUNDARIES}')
-    print(f'AB_RESULT analysis_only_results_filtered={len(skipped)} units={sorted(set(skipped))}')
+    print(f"AB_RESULT maps={len(map_entries(sdfg))} omp_parallel_for={omp_parallel_for_count(sdfg)}")
+    print(f"AB_RESULT cleanup_blocks_run={len(applied)} of {_TOTAL_CLEANUP_BOUNDARIES}")
+    print(f"AB_RESULT analysis_only_results_filtered={len(skipped)} units={sorted(set(skipped))}")
 
     assert len(applied) <= _TOTAL_CLEANUP_BOUNDARIES, (
-        f'{len(applied)} StructuralCleanup boundaries ran against a recipe that only splices in '
-        f'{_TOTAL_CLEANUP_BOUNDARIES} -- a boundary ran more than once, or one was double-counted.')
-    assert set(skipped) <= {
-        'Pipeline'
-    }, (f'changed_the_graph filtered {sorted(set(skipped) - {"Pipeline"})} as analysis-only with no '
-        'change, but only a bare ppl.Pipeline result is entitled to that filter -- every other unit '
-        'type reporting a non-None result IS a change, and treating it as one is what keeps the next '
-        'StructuralCleanup boundary from being skipped behind a real rewrite.')
+        f"{len(applied)} StructuralCleanup boundaries ran against a recipe that only splices in "
+        f"{_TOTAL_CLEANUP_BOUNDARIES} -- a boundary ran more than once, or one was double-counted."
+    )
+    assert set(skipped) <= {"Pipeline"}, (
+        f"changed_the_graph filtered {sorted(set(skipped) - {'Pipeline'})} as analysis-only with no "
+        "change, but only a bare ppl.Pipeline result is entitled to that filter -- every other unit "
+        "type reporting a non-None result IS a change, and treating it as one is what keeps the next "
+        "StructuralCleanup boundary from being skipped behind a real rewrite."
+    )

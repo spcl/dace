@@ -19,6 +19,7 @@ Locked knobs (constructor has full semantics):
 
 Every other combo -> ``NotImplementedError``.
 """
+
 import copy
 import warnings
 from collections.abc import Sequence
@@ -41,37 +42,51 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.equalize_symbol_dtypes import equalized
 from dace.transformation.passes.length_one_array_scalar_conversion import (
-    ConvertLengthOneArraysToScalars, )
+    ConvertLengthOneArraysToScalars,
+)
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
-from dace.transformation.passes.vectorization.utils.map_predicates import (innermost_enclosing_map_label,
-                                                                           mark_maps_no_vectorize)
-from dace.transformation.passes.vectorization.utils.pass_invariants import (lane_varying_interstate_guard,
-                                                                            no_lane_collapsing_nested_sdfgs,
-                                                                            no_wcr_in_map_body,
-                                                                            no_wcr_inside_nested_sdfgs,
-                                                                            no_widened_scalar_tasklets)
+from dace.transformation.passes.vectorization.utils.map_predicates import (
+    innermost_enclosing_map_label,
+    mark_maps_no_vectorize,
+)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (
+    lane_varying_interstate_guard,
+    no_lane_collapsing_nested_sdfgs,
+    no_wcr_in_map_body,
+    no_wcr_inside_nested_sdfgs,
+    no_widened_scalar_tasklets,
+)
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
-    GenerateTileIterationMask, )
+    GenerateTileIterationMask,
+)
 from dace.transformation.passes.vectorization.demote_data_reading_interstate_symbols import (
-    DemoteDataReadingInterstateSymbols)
+    DemoteDataReadingInterstateSymbols,
+)
 from dace.transformation.passes.vectorization.mark_tile_dims import MarkTileDims
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
-    NestInnermostMapBodyIntoNSDFG, )
+    NestInnermostMapBodyIntoNSDFG,
+)
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-    SameWriteSetIfElseToITECFG, )
+    SameWriteSetIfElseToITECFG,
+)
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.split_tasklets import SplitTasklets
-from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (CastScalarIteLiteralArms,
-                                                                                 ResolveMixedDtypeBinops)
+from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import (
+    CastScalarIteLiteralArms,
+    ResolveMixedDtypeBinops,
+)
 from dace.transformation.passes.eliminate_branches import EliminateBranches
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
-    LowerInterstateConditionalAssignmentsToTasklets, )
+    LowerInterstateConditionalAssignmentsToTasklets,
+)
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-    StageGlobalArrayThroughScalars, )
+    StageGlobalArrayThroughScalars,
+)
 from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
+
 # Unified WidenAccesses pass (replaces InferBodyTransientShapes + WidenScalarsToTiles
 # per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
@@ -81,13 +96,19 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 )
 from dace.transformation.passes.canonicalize.pipeline import disable_openmp_sections
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
-                                                                                insert_assumption_guards)
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
+    SetSymbolNonnegativeAssumptions,
+    insert_assumption_guards,
+)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.vectorization.stride_map_by_tile_widths import (
-    StrideMapByTileWidths, )
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SplitMapForTileRemainder,
-                                                                                   source_map_label)
+    StrideMapByTileWidths,
+)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+    SplitMapForTileRemainder,
+    source_map_label,
+)
+
 # Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile
 # transients and emits the TileGather / TileScatter / TileMaskGen boundary; ConvertTaskletsToTileOps
 # then rewrites the raw tasklets between staged tiles into TileBinop / TileITE / TileReduce.
@@ -101,8 +122,19 @@ from dace.transformation.passes.canonicalize import prune_and_inline_nested_sdfg
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx
 from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
-from dace.libraries.tileops.nodes import (MaskedCopyLibraryNode, TileBinop, TileFMA, TileIota, TileITE, TileGather,
-                                          TileMaskGen, TileMMA, TileReduce, TileScatter, TileUnop)
+from dace.libraries.tileops.nodes import (
+    MaskedCopyLibraryNode,
+    TileBinop,
+    TileFMA,
+    TileIota,
+    TileITE,
+    TileGather,
+    TileMaskGen,
+    TileMMA,
+    TileReduce,
+    TileScatter,
+    TileUnop,
+)
 from dace.libraries.tileops.dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
 from dace.transformation.passes.vectorization.restore_untiled_map_stride import RestoreUntiledMapStride
@@ -111,8 +143,17 @@ from dace.optionals import required
 from dace.sdfg.narrowing import as_map_entry
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
-TILE_NODE_TYPES: Tuple[Type[LibraryNode], ...] = (MaskedCopyLibraryNode, TileBinop, TileFMA, TileGather, TileMaskGen,
-                                                  TileITE, TileReduce, TileScatter, TileUnop)
+TILE_NODE_TYPES: Tuple[Type[LibraryNode], ...] = (
+    MaskedCopyLibraryNode,
+    TileBinop,
+    TileFMA,
+    TileGather,
+    TileMaskGen,
+    TileITE,
+    TileReduce,
+    TileScatter,
+    TileUnop,
+)
 
 #: Every node the emit stage can produce, including the two the selector above does not stamp.
 #: Used ONLY by the empty-emit audit, which must not report a kernel that did tile.
@@ -133,9 +174,10 @@ def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
     :param source: A standalone (throwaway) SDFG whose contents ``target`` adopts.
     """
     from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
+
     # Keep ``target._sdfg`` pointing at itself: copying ``source``'s makes walkers that climb out of
     # nested SDFGs via ``parent_graph.sdfg`` run past the top.
-    preserved = ('_parent', '_parent_sdfg', '_parent_nsdfg_node', '_cfg_list', '_sdfg', 'guid')
+    preserved = ("_parent", "_parent_sdfg", "_parent_nsdfg_node", "_cfg_list", "_sdfg", "guid")
     target.__dict__.update({k: v for k, v in source.__dict__.items() if k not in preserved})
     target._parent = None
     target._parent_sdfg = None
@@ -158,8 +200,9 @@ def _expandable_during_vectorization(node: dace.nodes.Node) -> bool:
     return isinstance(node, TILE_NODE_TYPES)
 
 
-def _wcr_output_is_injective_rmw(graph: dace.SDFGState, map_exit: dace.nodes.MapExit, array: str,
-                                 params: Sequence[str]) -> bool:
+def _wcr_output_is_injective_rmw(
+    graph: dace.SDFGState, map_exit: dace.nodes.MapExit, array: str, params: Sequence[str]
+) -> bool:
     # True iff every inner per-element write of ``array`` into ``map_exit`` indexes with EVERY enclosing map param -- an
     # injective per-element read-modify-write (s212 ``a[i] *= c[i]``) that writes each element exactly once, NOT a
     # cross-iteration reduction.
@@ -178,7 +221,6 @@ def _wcr_output_is_injective_rmw(graph: dace.SDFGState, map_exit: dace.nodes.Map
 
 
 class _MultiOutputReductionMapFission(MapFission):
-
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False) -> bool:
         # Base ``MapFission.can_be_applied`` can raise (KeyError seen on adi) on a map it can't
         # handle. Can't decide -> DECLINE, don't propagate: ``apply_transformations_repeated``
@@ -194,14 +236,18 @@ class _MultiOutputReductionMapFission(MapFission):
         params = as_map_entry(self.map_entry).map.params
         wcr_arrays = {
             e.data.data
-            for e in graph.out_edges(map_exit) if e.data is not None and e.data.data is not None
-            and e.data.wcr is not None and not _wcr_output_is_injective_rmw(graph, map_exit, e.data.data, params)
+            for e in graph.out_edges(map_exit)
+            if e.data is not None
+            and e.data.data is not None
+            and e.data.wcr is not None
+            and not _wcr_output_is_injective_rmw(graph, map_exit, e.data.data, params)
         }
         if len(wcr_arrays) < 2:
             return False
         # Do not fission independent pure-scalar reductions (azimint ``s += a[j]; cnt += 1``): each lifts
         # in place; fissioning would duplicate the shared mask read. Contractions (gesummv) still fission.
         from dace.transformation.passes.vectorization.lift_map_reduction import _recognize_pure_wcr_reductions
+
         if len(_recognize_pure_wcr_reductions(graph, self.map_entry)) >= 2:
             return False
         return True
@@ -210,8 +256,10 @@ class _MultiOutputReductionMapFission(MapFission):
 #: The GPU-only one-kernel strategies: ``SplitMapForTileRemainder`` peels a ``__tile_main``
 #: interior + a tail, and ``FuseBranchedTailRemainder`` folds the pair into one branched map. They
 #: differ only in the tail they peel (masked tile vs step-1 scalar), hence the shared handling.
-_BRANCHED_REMAINDER: Tuple[RemainderStrategy,
-                           ...] = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy.BRANCHED_TAIL)
+_BRANCHED_REMAINDER: Tuple[RemainderStrategy, ...] = (
+    RemainderStrategy.BRANCHED_MASKED_TAIL,
+    RemainderStrategy.BRANCHED_TAIL,
+)
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 
 
@@ -248,17 +296,17 @@ def expand_nested_sdfg_inputs_to_fixpoint(sdfg: dace.SDFG) -> int:
                     if not isinstance(node, dace.nodes.NestedSDFG) or node in refused:
                         continue
                     try:
-                        xform.setup_match(region.sdfg,
-                                          cfg_id,
-                                          state_id, {ExpandNestedSDFGInputs.nested_sdfg: node},
-                                          0,
-                                          override=True)
+                        xform.setup_match(
+                            region.sdfg, cfg_id, state_id, {ExpandNestedSDFGInputs.nested_sdfg: node}, 0, override=True
+                        )
                         accepted = xform.can_be_applied(block, 0, region.sdfg, permissive=False)
                     except Exception as ex:  # The matcher downgrades a raising probe to a refusal
-                        if Config.get_bool('optimizer', 'match_exception'):
+                        if Config.get_bool("optimizer", "match_exception"):
                             raise
-                        print(f'WARNING: ExpandNestedSDFGInputs::can_be_applied triggered a '
-                              f'{ex.__class__.__name__} exception: {ex}')
+                        print(
+                            f"WARNING: ExpandNestedSDFGInputs::can_be_applied triggered a "
+                            f"{ex.__class__.__name__} exception: {ex}"
+                        )
                         accepted = False
                     if accepted:
                         match = (region_index, block, node)
@@ -296,8 +344,9 @@ def in_map_body(sdfg: dace.SDFG, cache: dict[dace.SDFG, bool]) -> bool:
     """
     if sdfg not in cache:
         node = sdfg.parent_nsdfg_node
-        cache[sdfg] = node is not None and (sdfg.parent.entry_node(node) is not None
-                                            or in_map_body(sdfg.parent.sdfg, cache))
+        cache[sdfg] = node is not None and (
+            sdfg.parent.entry_node(node) is not None or in_map_body(sdfg.parent.sdfg, cache)
+        )
     return cache[sdfg]
 
 
@@ -334,7 +383,7 @@ def state_fusion_extended_to_fixpoint(sdfg: dace.SDFG) -> int:
             digraph = collapse_multigraph_to_nx(region)
             cfg_id = -1
             for u, v in digraph.edges:
-                first, second = digraph.nodes[u]['node'], digraph.nodes[v]['node']
+                first, second = digraph.nodes[u]["node"], digraph.nodes[v]["node"]
                 if not isinstance(first, dace.SDFGState) or not isinstance(second, dace.SDFGState) or u is v:
                     continue
                 pair = (first, second)
@@ -343,20 +392,22 @@ def state_fusion_extended_to_fixpoint(sdfg: dace.SDFG) -> int:
                 if cfg_id < 0:
                     cfg_id = region.cfg_id
                 try:
-                    xform.setup_match(region.sdfg,
-                                      cfg_id,
-                                      -1, {
-                                          StateFusionExtended.first_state: first,
-                                          StateFusionExtended.second_state: second
-                                      },
-                                      0,
-                                      override=True)
+                    xform.setup_match(
+                        region.sdfg,
+                        cfg_id,
+                        -1,
+                        {StateFusionExtended.first_state: first, StateFusionExtended.second_state: second},
+                        0,
+                        override=True,
+                    )
                     accepted = xform.can_be_applied(region, 0, region.sdfg, permissive=False)
                 except Exception as ex:  # The matcher downgrades a raising probe to a refusal
-                    if Config.get_bool('optimizer', 'match_exception'):
+                    if Config.get_bool("optimizer", "match_exception"):
                         raise
-                    print(f'WARNING: StateFusionExtended::can_be_applied triggered a '
-                          f'{ex.__class__.__name__} exception: {ex}')
+                    print(
+                        f"WARNING: StateFusionExtended::can_be_applied triggered a "
+                        f"{ex.__class__.__name__} exception: {ex}"
+                    )
                     accepted = False
                 if accepted:
                     match = (region_index, region, first, second)
@@ -530,8 +581,10 @@ class _AssertTileOpsLowered(ppl.Pass):
         found = lane_varying_interstate_guard(sdfg, self._widths)
         if found is not None:
             block, violation = found
-            raise VectorizeUnsupported(f"lane-varying guard over an interstate assignment: {violation}",
-                                       maps=innermost_enclosing_map_label(block.sdfg))
+            raise VectorizeUnsupported(
+                f"lane-varying guard over an interstate assignment: {violation}",
+                maps=innermost_enclosing_map_label(block.sdfg),
+            )
         return None
 
 
@@ -549,15 +602,21 @@ def _promote_read_output_connectors_to_inout(sdfg: dace.SDFG) -> int:
                 continue
             read_internally = any(
                 isinstance(n, dace.nodes.AccessNode) and n.data == oc and istate.out_degree(n) > 0
-                for n in istate.nodes())
+                for n in istate.nodes()
+            )
             if not read_internally:
                 continue
             out_edge = next((e for e in parent.out_edges(node) if e.src_conn == oc), None)
             if out_edge is None or out_edge.data.data is None:
                 continue
-            template = next((e for e in parent.in_edges(node)
-                             if e.data.data == out_edge.data.data and str(e.data.subset) == str(out_edge.data.subset)),
-                            None)
+            template = next(
+                (
+                    e
+                    for e in parent.in_edges(node)
+                    if e.data.data == out_edge.data.data and str(e.data.subset) == str(out_edge.data.subset)
+                ),
+                None,
+            )
             if template is None:
                 continue
             # ``force``: the name already exists as an OUT connector -- that is the point. An
@@ -597,9 +656,9 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
         """
         fused = state_fusion_extended_to_fixpoint(sdfg)
         promoted = _promote_read_output_connectors_to_inout(sdfg)
-        applied = sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG],
-                                                      permissive=False,
-                                                      validate=False)
+        applied = sdfg.apply_transformations_repeated(
+            [InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False
+        )
         if applied:
             return applied
         return 0 if (fused or promoted) else None
@@ -610,8 +669,9 @@ def _is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
 
-def _validate_knobs(widths: tuple[int, ...], target_isa: ISA, remainder_strategy: RemainderStrategy,
-                    scalar_remainder_emit: str) -> None:
+def _validate_knobs(
+    widths: tuple[int, ...], target_isa: ISA, remainder_strategy: RemainderStrategy, scalar_remainder_emit: str
+) -> None:
     # Reject unsupported knob combinations with one ``NotImplementedError``.
     # Checks list is built eagerly, so the AVX-512 ``widths[-1]`` access must be empty-safe:
     # ``widths=()`` (K=0) would raise IndexError before the ``1 <= len(widths) <= 3`` check
@@ -619,17 +679,25 @@ def _validate_knobs(widths: tuple[int, ...], target_isa: ISA, remainder_strategy
     # through to the K-range check.
     last_w = widths[-1] if widths else 8
     checks = [
-        (scalar_remainder_emit in _VALID_SCALAR_REMAINDER,
-         f"scalar_remainder_emit {scalar_remainder_emit!r} not in {_VALID_SCALAR_REMAINDER}"),
-        (scalar_remainder_emit != "tile_k1" or remainder_strategy is RemainderStrategy.SCALAR_POSTAMBLE,
-         f"scalar_remainder_emit='tile_k1' requires remainder_strategy=SCALAR_POSTAMBLE; "
-         f"got remainder_strategy={remainder_strategy.name}"),
+        (
+            scalar_remainder_emit in _VALID_SCALAR_REMAINDER,
+            f"scalar_remainder_emit {scalar_remainder_emit!r} not in {_VALID_SCALAR_REMAINDER}",
+        ),
+        (
+            scalar_remainder_emit != "tile_k1" or remainder_strategy is RemainderStrategy.SCALAR_POSTAMBLE,
+            f"scalar_remainder_emit='tile_k1' requires remainder_strategy=SCALAR_POSTAMBLE; "
+            f"got remainder_strategy={remainder_strategy.name}",
+        ),
         (1 <= len(widths) <= 3, f"K={len(widths)} not in {{1, 2, 3}}; got widths={widths!r}"),
         (all(_is_power_of_two(w) for w in widths), f"every width must be a power of 2; got {widths!r}"),
-        (target_isa is not ISA.AVX512
-         or last_w % 8 == 0, f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={last_w}"),
-        (target_isa is not ISA.CUDA
-         or last_w % 2 == 0, f"CUDA (half2 FP16x2) requires widths[-1] % 2 == 0; got widths[-1]={last_w}"),
+        (
+            target_isa is not ISA.AVX512 or last_w % 8 == 0,
+            f"AVX-512 requires widths[-1] % 8 == 0; got widths[-1]={last_w}",
+        ),
+        (
+            target_isa is not ISA.CUDA or last_w % 2 == 0,
+            f"CUDA (half2 FP16x2) requires widths[-1] % 2 == 0; got widths[-1]={last_w}",
+        ),
     ]
     for ok, msg in checks:
         if not ok:
@@ -673,8 +741,11 @@ def rewrites_inout_through_one_access_node(nsdfg: dace.nodes.NestedSDFG) -> bool
     :returns: True if some inner access node of an inout connector has both in- and out-edges.
     """
     inout = OrderedSet(nsdfg.in_connectors) & OrderedSet(nsdfg.out_connectors)
-    return any(node.data in inout and state.in_degree(node) > 0 and state.out_degree(node) > 0
-               for state in nsdfg.sdfg.states() for node in state.data_nodes())
+    return any(
+        node.data in inout and state.in_degree(node) > 0 and state.out_degree(node) > 0
+        for state in nsdfg.sdfg.states()
+        for node in state.data_nodes()
+    )
 
 
 def inline_loop_nest_wrappers(sdfg: dace.SDFG) -> int:
@@ -872,11 +943,15 @@ class VectorizeMultiDim(ppl.Pipeline):
             # a post pass fuses both into one kernel with an if/else body. Refused on CPU.
             name = remainder_strategy.name
             if not is_gpu_device:
-                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name} is GPU-only "
-                                          "(needs device=GPU / target_isa=ISA.CUDA).")
+                raise NotImplementedError(
+                    f"VectorizeMultiDim: remainder_strategy={name} is GPU-only "
+                    "(needs device=GPU / target_isa=ISA.CUDA)."
+                )
             if len(widths_t) != 1:
-                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name} supports K=1 "
-                                          f"(one tiled dim); got widths={widths_t!r}.")
+                raise NotImplementedError(
+                    f"VectorizeMultiDim: remainder_strategy={name} supports K=1 "
+                    f"(one tiled dim); got widths={widths_t!r}."
+                )
             tail_mode = "masked_branch" if remainder_strategy is RemainderStrategy.BRANCHED_MASKED_TAIL else "scalar"
             passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
         elif remainder_strategy in (RemainderStrategy.MASKED_TAIL, RemainderStrategy.SCALAR_POSTAMBLE):
@@ -1003,12 +1078,16 @@ class VectorizeMultiDim(ppl.Pipeline):
             except VectorizeUnsupported as unsupported:
                 marked = mark_maps_no_vectorize(snapshot, tuple(source_map_label(label) for label in unsupported.maps))
                 if not marked:
-                    warnings.warn(f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
-                                  f"un-tiled (correct, un-optimized): {unsupported}")
+                    warnings.warn(
+                        f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
+                        f"un-tiled (correct, un-optimized): {unsupported}"
+                    )
                     restore_sdfg_in_place(sdfg, snapshot)
                     return None
-                warnings.warn(f"VectorizeMultiDim: leaving map(s) {sorted(marked)} of {sdfg.name!r} un-tiled "
-                              f"and tiling the rest: {unsupported}")
+                warnings.warn(
+                    f"VectorizeMultiDim: leaving map(s) {sorted(marked)} of {sdfg.name!r} un-tiled "
+                    f"and tiling the rest: {unsupported}"
+                )
                 restore_sdfg_in_place(sdfg, copy.deepcopy(snapshot))
         # An empty emit is not a success: tile passes skip maps they refuse (e.g. an opaque library node),
         # so count it here, before tile nodes are expanded away. Not worded as a refusal.
@@ -1016,7 +1095,8 @@ class VectorizeMultiDim(ppl.Pipeline):
             warnings.warn(
                 f"VectorizeMultiDim: tiled nothing in {sdfg.name!r} -- no map passed the tile-candidate "
                 f"gate, so the SDFG is correct but un-vectorized",
-                stacklevel=2)
+                stacklevel=2,
+            )
         # Stamp ``target_isa`` + the concrete implementation on every tile lib node
         # UNCONDITIONALLY, even when expansion is deferred: a deferred SDFG
         # (``expand_tile_nodes=False``) is expanded later by the caller / ``compile()``, so its
@@ -1078,10 +1158,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # SEVERAL independent scalar accumulators (azimint ``s += a[j]; cnt += 1``); each is lifted
         # in place to a product buffer + WCR-free ``Reduce``, so no in-NSDFG WCR survives.
         from dace.transformation.passes.vectorization.lift_map_reduction import LiftMapReductionToReduce
-        LiftMapReductionToReduce(vectorized=reduce_vectorized,
-                                 pure_wcr_only=True,
-                                 nested_only=True,
-                                 wcr_free_output=True).apply_pass(sdfg, {})
+
+        LiftMapReductionToReduce(
+            vectorized=reduce_vectorized, pure_wcr_only=True, nested_only=True, wcr_free_output=True
+        ).apply_pass(sdfg, {})
         # Canonicalization already parallelized every loop that can be (never re-parallelize here);
         # a loop left in a body keeps that body un-tiled.
         # Canonical form keeps an in-body reduction as a WCR edge; the tile emitters need it as an
@@ -1101,8 +1181,12 @@ class VectorizeMultiDim(ppl.Pipeline):
     #: ``ConvertTaskletsToTileOps`` completes. ``NestInnermostMapBodyIntoNSDFG`` is NOT
     #: listed: it clears the stale scalar-staging ``other_subset`` on its boundary edges, so
     #: it leaves a VALID SDFG. The final ``sdfg.validate()`` re-checks the end state.
-    _SKIP_VALIDATE_AFTER: Tuple[Type[ppl.Pass], ...] = (WidenAccesses, GenerateTileIterationMask, InsertTileLoadStore,
-                                                        ConvertTaskletsToTileOps)
+    _SKIP_VALIDATE_AFTER: Tuple[Type[ppl.Pass], ...] = (
+        WidenAccesses,
+        GenerateTileIterationMask,
+        InsertTileLoadStore,
+        ConvertTaskletsToTileOps,
+    )
 
     # ``Any``: a subpass result is whatever that pass returns; the base declares ``Optional[Any]``.
     def apply_subpass(self, sdfg: dace.SDFG, p: ppl.Pass, state: dict[str, Any]) -> Any:
@@ -1125,8 +1209,9 @@ class VectorizeMultiDim(ppl.Pipeline):
                 # limit for this kernel, not a run-ending fault. Signal ``VectorizeUnsupported`` so
                 # ``apply_pass`` refuses this one kernel -- restoring the pristine input un-tiled and
                 # warning -- instead of aborting the sweep. The pass name rides along for the log.
-                raise VectorizeUnsupported(f"preprocessing pass {type(p).__name__!r} left the SDFG in a form "
-                                           f"that cannot be tiled: {ex}") from ex
+                raise VectorizeUnsupported(
+                    f"preprocessing pass {type(p).__name__!r} left the SDFG in a form that cannot be tiled: {ex}"
+                ) from ex
         return r
 
     @staticmethod
@@ -1141,8 +1226,11 @@ class VectorizeMultiDim(ppl.Pipeline):
         # thread-block maps beside the gpu_block_size the offload chose, which the GPU code generator
         # refuses (CloudSC fp64 x 2, kernel ``for_1327_fis0_lanes``).
         for node, state in sdfg.all_nodes_recursive():
-            if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.ScheduleType.Default
-                    and is_devicelevel_gpu(state.sdfg, state, node)):
+            if (
+                isinstance(node, dace.nodes.MapEntry)
+                and node.map.schedule == dace.ScheduleType.Default
+                and is_devicelevel_gpu(state.sdfg, state, node)
+            ):
                 node.map.schedule = dace.ScheduleType.Sequential
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
@@ -1154,7 +1242,8 @@ class VectorizeMultiDim(ppl.Pipeline):
 
         has_nontile_libnode = any(
             isinstance(node, dace.nodes.LibraryNode) and not isinstance(node, TILE_NODE_TYPES)
-            for node, _ in sdfg.all_nodes_recursive())
+            for node, _ in sdfg.all_nodes_recursive()
+        )
         if not has_nontile_libnode:
             return
         # Finalize for the TARGET device, not always CPU: a GPU-path reduction must pick the
@@ -1170,6 +1259,7 @@ class VectorizeMultiDim(ppl.Pipeline):
     def _gpu_place_reductions(self, sdfg: dace.SDFG) -> None:
         # GPU-place every lifted top-level ``Reduce`` so ``GPUAuto`` / cub applies.
         from dace.libraries.standard.nodes.reduce import Reduce
+
         gpu = dace.dtypes.StorageType.GPU_Global
         host = (dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.Default, dace.dtypes.StorageType.Register)
         for state in sdfg.states():
@@ -1196,7 +1286,7 @@ class VectorizeMultiDim(ppl.Pipeline):
                 # A host ISA's header backend is host functions, which device code cannot call; the
                 # pure expansion is the loop the kernel runs per thread (CloudSC fp64 x 2 on the GPU).
                 if host_isa and is_devicelevel_gpu(parent.sdfg, parent, node):
-                    node.implementation = 'pure'
+                    node.implementation = "pure"
                 else:
                     node.implementation = select_tile_implementation(node, parent)
 
@@ -1243,7 +1333,8 @@ def _has_gpu_device_map(sdfg: dace.SDFG) -> bool:
     # True iff any map in the SDFG (recursively) is ``GPU_Device``-scheduled.
     return any(
         isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-        for n, _ in sdfg.all_nodes_recursive())
+        for n, _ in sdfg.all_nodes_recursive()
+    )
 
 
 class VectorizeCPUMultiDim(VectorizeMultiDim):
@@ -1318,12 +1409,16 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         # keeps the even-extent fast path. Any explicitly requested strategy is honored as given --
         # ``branched_tail`` (scalar else-arm) remains reachable by naming it.
         resolved = config
-        if (len(config.widths) == 1 and not config.assume_even
-                and config.remainder_strategy is RemainderStrategy.MASKED_TAIL):
+        if (
+            len(config.widths) == 1
+            and not config.assume_even
+            and config.remainder_strategy is RemainderStrategy.MASKED_TAIL
+        ):
             resolved = dataclasses.replace(config, remainder_strategy=RemainderStrategy.BRANCHED_MASKED_TAIL)
         # A branched strategy handles the non-divisible extent itself, so it must NOT run under
         # ``assume_even`` (which would instead RAISE on the provably-non-divisible case). Every
         # other strategy keeps the even-extent fast path (single strided map, no remainder).
         branched = resolved.remainder_strategy in _BRANCHED_REMAINDER
         super().__init__(
-            dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched))
+            dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched)
+        )

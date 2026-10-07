@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Extract one kernel, evaluate its layout candidates, and return the ranked timings and the best."""
+
 import copy
 import itertools
 from dataclasses import dataclass, field
@@ -10,7 +11,7 @@ import numpy
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.transformation.layout.brute_force import SweepResult, best, sweep
-from dace.transformation.layout.externalize import (externalize_nest, nest_arguments, written_array_names)
+from dace.transformation.layout.externalize import externalize_nest, nest_arguments, written_array_names
 from dace.transformation.layout.timing import compute_region_stats_timer
 
 #: identity candidate's tag; must be enumerated first (tie-break law)
@@ -33,9 +34,11 @@ def default_permutation_candidates(ext: SDFG) -> Dict[str, Callable[[SDFG], None
         ndim = len(desc.shape)
         if ndim > MAX_PERMUTE_NDIM:
             # each candidate here is deepcopy'd, compiled, run and timed -- d! of them wedges a campaign
-            raise NotImplementedError(f"default_permutation_candidates: array {aname!r} has rank {ndim} > "
-                                      f"{MAX_PERMUTE_NDIM} -- the full-enumeration candidate space explodes; "
-                                      f"pass an explicit candidate dict, or prune by stride (task B1) first")
+            raise NotImplementedError(
+                f"default_permutation_candidates: array {aname!r} has rank {ndim} > "
+                f"{MAX_PERMUTE_NDIM} -- the full-enumeration candidate space explodes; "
+                f"pass an explicit candidate dict, or prune by stride (task B1) first"
+            )
         for perm in itertools.permutations(range(ndim)):
             if list(perm) == list(range(ndim)):
                 continue
@@ -50,6 +53,7 @@ def default_permutation_candidates(ext: SDFG) -> Dict[str, Callable[[SDFG], None
 @dataclass
 class NestEvaluation:
     """One nest's evaluated candidate sweep: externalized baseline, reference outputs, arguments, and ranked results."""
+
     ext: SDFG
     reference: Dict[str, numpy.ndarray]
     arguments: Dict[str, numpy.ndarray]
@@ -66,24 +70,27 @@ def call_symbols(ext: SDFG, symbols: Dict[str, int]) -> Dict[str, int]:
     return {name: value for name, value in symbols.items() if name in ext.symbols}
 
 
-def evaluate_nest(state: SDFGState,
-                  map_entry: Optional[nodes.MapEntry] = None,
-                  *,
-                  symbols: Dict[str, int],
-                  provided: Optional[Dict[str, numpy.ndarray]] = None,
-                  candidates: Optional[Dict[str, Callable[[SDFG], None]]] = None,
-                  device: str = "cpu",
-                  reps: int = 10,
-                  warmup: int = 2,
-                  timer: Optional[Callable] = compute_region_stats_timer,
-                  seed: int = 0,
-                  name: Optional[str] = None) -> NestEvaluation:
+def evaluate_nest(
+    state: SDFGState,
+    map_entry: Optional[nodes.MapEntry] = None,
+    *,
+    symbols: Dict[str, int],
+    provided: Optional[Dict[str, numpy.ndarray]] = None,
+    candidates: Optional[Dict[str, Callable[[SDFG], None]]] = None,
+    device: str = "cpu",
+    reps: int = 10,
+    warmup: int = 2,
+    timer: Optional[Callable] = compute_region_stats_timer,
+    seed: int = 0,
+    name: Optional[str] = None,
+) -> NestEvaluation:
     """Externalize the nest under `map_entry` and rank its layout candidates by measured time against a reference run."""
     ext = externalize_nest(state, map_entry, name=name)
     written = written_array_names(ext)
     if not written:
-        raise ValueError(f"evaluate_nest: nest '{ext.name}' writes no non-transient array; "
-                         f"nothing to verify a candidate against")
+        raise ValueError(
+            f"evaluate_nest: nest '{ext.name}' writes no non-transient array; nothing to verify a candidate against"
+        )
     args = nest_arguments(ext, symbols, provided, seed)
     syms = call_symbols(ext, symbols)
 
@@ -96,8 +103,10 @@ def evaluate_nest(state: SDFGState,
     if candidates is None:
         candidates = default_permutation_candidates(ext)
     if next(iter(candidates), None) != IDENTITY_TAG:
-        raise ValueError(f"evaluate_nest: the '{IDENTITY_TAG}' candidate must be enumerated first "
-                         f"(the tie-break law); got order {list(candidates)[:3]}...")
+        raise ValueError(
+            f"evaluate_nest: the '{IDENTITY_TAG}' candidate must be enumerated first "
+            f"(the tie-break law); got order {list(candidates)[:3]}..."
+        )
 
     def make_for(tag: str, apply: Callable[[SDFG], None]) -> Callable[[], SDFG]:
 
@@ -114,14 +123,13 @@ def evaluate_nest(state: SDFGState,
         sdfg(**run_args, **syms)
         return {out: run_args[out] for out in sorted(written)}
 
-    results = sweep({
-        tag: make_for(tag, apply)
-        for tag, apply in candidates.items()
-    },
-                    run,
-                    reference,
-                    reps=reps,
-                    warmup=warmup,
-                    device=device,
-                    timer=timer)
+    results = sweep(
+        {tag: make_for(tag, apply) for tag, apply in candidates.items()},
+        run,
+        reference,
+        reps=reps,
+        warmup=warmup,
+        device=device,
+        timer=timer,
+    )
     return NestEvaluation(ext=ext, reference=reference, arguments=args, symbols=syms, results=results)

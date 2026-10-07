@@ -1,17 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Per-pass end-to-end + structure tests built purely from the Python
-    frontend, using stencils with **indirection in a subset of dimensions**
-    (the ICON velocity-advection neighbour-gather shape:
-    ``out[i, k] = c1*w[cidx[i,0], k] - c2*w[cidx[i,1], k]`` -- dim 0 is
-    gathered through a neighbour-index table, the level dim ``k`` is
-    structured; cf. ``icon_loopnest_1/4`` and cloudsc column kernels).
+"""Per-pass end-to-end + structure tests built purely from the Python
+frontend, using stencils with **indirection in a subset of dimensions**
+(the ICON velocity-advection neighbour-gather shape:
+``out[i, k] = c1*w[cidx[i,0], k] - c2*w[cidx[i,1], k]`` -- dim 0 is
+gathered through a neighbour-index table, the level dim ``k`` is
+structured; cf. ``icon_loopnest_1/4`` and cloudsc column kernels).
 
-    Each test applies exactly one core transformation to a frontend SDFG,
-    asserts numerical identity to a pure-numpy oracle (e2e), and asserts the
-    structural outcome (map / loop / conditional counts). No canonicalization
-    pipeline code is used -- only core transformations -- so these run on
-    ``main`` as-is.
+Each test applies exactly one core transformation to a frontend SDFG,
+asserts numerical identity to a pure-numpy oracle (e2e), and asserts the
+structural outcome (map / loop / conditional counts). No canonicalization
+pipeline code is used -- only core transformations -- so these run on
+``main`` as-is.
 """
+
 import copy
 
 import numpy as np
@@ -24,8 +25,8 @@ from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate import LoopToMap
 
-N = dace.symbol('N')  # number of edges (structured horizontal index)
-L = dace.symbol('L')  # number of levels (structured vertical index)
+N = dace.symbol("N")  # number of edges (structured horizontal index)
+L = dace.symbol("L")  # number of levels (structured vertical index)
 
 
 def _n_maps(sdfg):
@@ -98,8 +99,14 @@ def test_move_if_into_loop_gather_nest_inside_and_e2e():
 
 
 @dace.program
-def two_independent_gathers(w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2],
-                            vidx: dace.int32[N, 2], b: dace.float64[N, L], d: dace.float64[N, L]):
+def two_independent_gathers(
+    w: dace.float64[N, L],
+    v: dace.float64[N, L],
+    cidx: dace.int32[N, 2],
+    vidx: dace.int32[N, 2],
+    b: dace.float64[N, L],
+    d: dace.float64[N, L],
+):
     for i in range(N):
         for k in range(L):
             b[i, k] = w[cidx[i, 0], k] + 1.0
@@ -137,8 +144,9 @@ def test_loop_fission_splits_independent_gathers_and_e2e():
 
 
 @dace.program
-def producer_consumer_gather(w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2],
-                             vidx: dace.int32[N, 2], b: dace.float64[N, L]):
+def producer_consumer_gather(
+    w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2], vidx: dace.int32[N, 2], b: dace.float64[N, L]
+):
     t = np.empty_like(w)
     for i, k in dace.map[0:N, 0:L]:
         t[i, k] = w[cidx[i, 0], k] * 2.0
@@ -205,7 +213,7 @@ def test_loop_to_map_gather_nest_parallelizes_and_e2e():
     assert np.allclose(out, ref) and np.allclose(out, exp)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_move_if_into_loop_gather_nest_inside_and_e2e()
     test_loop_fission_splits_independent_gathers_and_e2e()
     test_map_fusion_vertical_gather_merges_and_e2e()

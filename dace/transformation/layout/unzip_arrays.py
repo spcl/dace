@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """UnzipArrays -- inverse of ZipArrays: splits a fused array back into its component field arrays. Run after ``prepare_for_layout``; ``ZipArrays`` then ``UnzipArrays`` with matching fields is a no-op roundtrip."""
+
 import ast
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -53,7 +54,7 @@ class UnzipArrays(ppl.Pass):
     def _const_field(self, rng, fused):
         """Extract the constant field index ``k`` from a memlet range ``(k, k, 1)``."""
         b, e, s = rng
-        if str(dace.symbolic.simplify(e - b)) != '0' or str(s) != '1':
+        if str(dace.symbolic.simplify(e - b)) != "0" or str(s) != "1":
             raise NotImplementedError(f"UnzipArrays: non-constant field coordinate on '{fused}' ({rng})")
         return int(b)
 
@@ -71,13 +72,15 @@ class UnzipArrays(ppl.Pass):
         field_shape = [s for i, s in enumerate(desc.shape) if i != axis]
         for f in fields:
             if f not in sdfg.arrays:
-                sdfg.add_array(name=f,
-                               shape=field_shape,
-                               dtype=desc.dtype,
-                               storage=desc.storage,
-                               transient=desc.transient,
-                               lifetime=desc.lifetime,
-                               find_new_name=False)
+                sdfg.add_array(
+                    name=f,
+                    shape=field_shape,
+                    dtype=desc.dtype,
+                    storage=desc.storage,
+                    transient=desc.transient,
+                    lifetime=desc.lifetime,
+                    find_new_name=False,
+                )
 
         # Nested-SDFG boundary: split the connector into F field connectors; RW arrays unzip the inner array only once.
         unzipped_inner = set()
@@ -91,12 +94,12 @@ class UnzipArrays(ppl.Pass):
         for state in sdfg.states():
             for scope in [n for n in state.nodes() if isinstance(n, nd.MapEntry)]:
                 for conn in [c for c in scope.in_connectors]:
-                    out_conn = "OUT_" + conn[len("IN_"):]
+                    out_conn = "OUT_" + conn[len("IN_") :]
                     if self._scope_conn_multifield(state, scope, out_conn, fused, axis, is_entry=True):
                         self._split_map_scope(sdfg, state, scope, conn, out_conn, fused, fields, axis, is_entry=True)
             for scope in [n for n in state.nodes() if isinstance(n, nd.MapExit)]:
                 for conn in [c for c in scope.out_connectors]:
-                    in_conn = "IN_" + conn[len("OUT_"):]
+                    in_conn = "IN_" + conn[len("OUT_") :]
                     if self._scope_conn_multifield(state, scope, in_conn, fused, axis, is_entry=False):
                         self._split_map_scope(sdfg, state, scope, in_conn, conn, fused, fields, axis, is_entry=False)
 
@@ -109,12 +112,14 @@ class UnzipArrays(ppl.Pass):
                     ranges = list(edge.data.subset.ranges)
                     k = self._const_field(ranges[axis], fused)
                     # Preserve wcr: a reduction into an unzipped field keeps accumulating.
-                    edge.data = dace.memlet.Memlet(data=fields[k],
-                                                   subset=self._drop_axis(ranges, axis),
-                                                   other_subset=None,
-                                                   wcr=edge.data.wcr,
-                                                   wcr_nonatomic=edge.data.wcr_nonatomic,
-                                                   dynamic=edge.data.dynamic)
+                    edge.data = dace.memlet.Memlet(
+                        data=fields[k],
+                        subset=self._drop_axis(ranges, axis),
+                        other_subset=None,
+                        wcr=edge.data.wcr,
+                        wcr_nonatomic=edge.data.wcr_nonatomic,
+                        dynamic=edge.data.dynamic,
+                    )
             for node in list(state.nodes()):
                 if isinstance(node, nd.AccessNode) and node.data == fused:
                     node.data = fields[self._node_field(state, node, fields)]
@@ -135,21 +140,29 @@ class UnzipArrays(ppl.Pass):
         """Splits a map's fused ``(IN_x, OUT_x)`` connector pair into one pair per field; reservoir is IN on entry, OUT on exit."""
         reservoir_conn = in_conn if is_entry else out_conn
         interior_conn = out_conn if is_entry else in_conn
-        reservoir = [e for e in state.in_edges(scope) if e.dst_conn == reservoir_conn] if is_entry else \
-                    [e for e in state.out_edges(scope) if e.src_conn == reservoir_conn]
-        interior = [e for e in state.out_edges(scope) if e.src_conn == interior_conn] if is_entry else \
-                   [e for e in state.in_edges(scope) if e.dst_conn == interior_conn]
+        reservoir = (
+            [e for e in state.in_edges(scope) if e.dst_conn == reservoir_conn]
+            if is_entry
+            else [e for e in state.out_edges(scope) if e.src_conn == reservoir_conn]
+        )
+        interior = (
+            [e for e in state.out_edges(scope) if e.src_conn == interior_conn]
+            if is_entry
+            else [e for e in state.in_edges(scope) if e.dst_conn == interior_conn]
+        )
 
         # Reroute each interior edge to a per-field connector, keyed by its constant field.
         for e in interior:
             k = self._const_field(list(e.data.subset.ranges)[axis], fused)
             f = fields[k]
             fconn = ("OUT_" if is_entry else "IN_") + f
-            mem = dace.memlet.Memlet(data=f,
-                                     subset=self._drop_axis(list(e.data.subset.ranges), axis),
-                                     wcr=e.data.wcr,
-                                     wcr_nonatomic=e.data.wcr_nonatomic,
-                                     dynamic=e.data.dynamic)
+            mem = dace.memlet.Memlet(
+                data=f,
+                subset=self._drop_axis(list(e.data.subset.ranges), axis),
+                wcr=e.data.wcr,
+                wcr_nonatomic=e.data.wcr_nonatomic,
+                dynamic=e.data.dynamic,
+            )
             if is_entry:
                 if fconn not in scope.out_connectors:
                     scope.add_out_connector(fconn)
@@ -240,13 +253,15 @@ class UnzipArrays(ppl.Pass):
         members = dict(desc.dtype.fields)  # {field_name: typeclass}
         for f in fields:
             if f not in sdfg.arrays:
-                sdfg.add_array(f,
-                               list(desc.shape),
-                               members[f],
-                               storage=desc.storage,
-                               transient=desc.transient,
-                               lifetime=desc.lifetime,
-                               find_new_name=False)
+                sdfg.add_array(
+                    f,
+                    list(desc.shape),
+                    members[f],
+                    storage=desc.storage,
+                    transient=desc.transient,
+                    lifetime=desc.lifetime,
+                    find_new_name=False,
+                )
         for state in sdfg.states():
             # 1. Revert each tasklet's member access, retype the connector, and rename its fused edges to the accessed member.
             for node in [n for n in state.nodes() if isinstance(n, nd.Tasklet)]:
@@ -277,7 +292,7 @@ class UnzipArrays(ppl.Pass):
                     for e in list(state.in_edges(scope)):
                         if e.data is None or e.data.data != fused or not e.dst_conn:
                             continue
-                        f = self._interior_field(state, scope, "OUT_" + e.dst_conn[len("IN_"):], fields, is_entry=True)
+                        f = self._interior_field(state, scope, "OUT_" + e.dst_conn[len("IN_") :], fields, is_entry=True)
                         if f is not None:
                             e.data.data = f
                             changed = True
@@ -285,7 +300,9 @@ class UnzipArrays(ppl.Pass):
                     for e in list(state.out_edges(scope)):
                         if e.data is None or e.data.data != fused or not e.src_conn:
                             continue
-                        f = self._interior_field(state, scope, "IN_" + e.src_conn[len("OUT_"):], fields, is_entry=False)
+                        f = self._interior_field(
+                            state, scope, "IN_" + e.src_conn[len("OUT_") :], fields, is_entry=False
+                        )
                         if f is not None:
                             e.data.data = f
                             changed = True

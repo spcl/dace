@@ -23,11 +23,16 @@ every comparison against it hold trivially, wherever the NaN reached.
 
 Marked ``integration`` automatically by path (``tests/conftest.py``), with the rest of CloudSC.
 """
+
 import numpy as np
 
 from dace.symbolic import evaluate
-from tests.corpus.cloudsc.generate_data_for_cloudsc import (CLOUDSC_INPUT_RANGES, CLOUDSC_SYMBOLS, build_cloudsc_sdfg,
-                                                            generate_cloudsc_inputs)
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (
+    CLOUDSC_INPUT_RANGES,
+    CLOUDSC_SYMBOLS,
+    build_cloudsc_sdfg,
+    generate_cloudsc_inputs,
+)
 
 #: No CloudSC field is a large number in SI units: the biggest are pressures (~1e5 Pa) and the snow
 #: enthalpy flux (~2e3 W/m2). A ceiling three orders above that leaves every legitimate result
@@ -52,13 +57,14 @@ def test_every_generated_array_matches_its_descriptor_layout():
         if descriptor is None or not isinstance(value, np.ndarray) or value.ndim == 0:
             continue
         expected = tuple(int(evaluate(stride, CLOUDSC_SYMBOLS)) * value.itemsize for stride in descriptor.strides)
-        assert value.strides == expected, \
-            f'{name} is laid out {value.strides} but the descriptor declares {expected}; ' \
-            'the kernel would read a transpose of it'
-        assert value.base is None, f'{name} is a view, which the DaCe argument check rejects'
+        assert value.strides == expected, (
+            f"{name} is laid out {value.strides} but the descriptor declares {expected}; "
+            "the kernel would read a transpose of it"
+        )
+        assert value.base is None, f"{name} is a view, which the DaCe argument check rejects"
         checked.append(name)
 
-    assert len(checked) > 20, f'only {len(checked)} arrays were checked, so this asserts almost nothing'
+    assert len(checked) > 20, f"only {len(checked)} arrays were checked, so this asserts almost nothing"
 
 
 def test_pressure_is_a_monotone_hydrostatic_profile():
@@ -69,17 +75,20 @@ def test_pressure_is_a_monotone_hydrostatic_profile():
     than as a comparison against the generator's own formula, which would only restate it.
     """
     values = generate_cloudsc_inputs(build_cloudsc_sdfg(simplify=False), seed=0)
-    half, full = values['paph'], values['pap']
+    half, full = values["paph"], values["pap"]
 
     thickness = np.diff(half, axis=0)
-    assert (thickness > 0).all(), \
-        f'{int((thickness <= 0).sum())} layers have a non-positive thickness; the kernel divides by it'
-    assert (half[:-1] < full).all() and (full < half[1:]).all(), \
-        'a full level lies outside the half levels bracketing it'
-    for name, array in (('paph', half), ('pap', full)):
+    assert (thickness > 0).all(), (
+        f"{int((thickness <= 0).sum())} layers have a non-positive thickness; the kernel divides by it"
+    )
+    assert (half[:-1] < full).all() and (full < half[1:]).all(), (
+        "a full level lies outside the half levels bracketing it"
+    )
+    for name, array in (("paph", half), ("pap", full)):
         low, high = CLOUDSC_INPUT_RANGES[name]
-        assert low <= array.min() and array.max() <= high, \
-            f'{name} leaves its reference window [{low}, {high}]: [{array.min()}, {array.max()}]'
+        assert low <= array.min() and array.max() <= high, (
+            f"{name} leaves its reference window [{low}, {high}]: [{array.min()}, {array.max()}]"
+        )
 
 
 def test_the_reference_run_stays_inside_the_double_precision_envelope():
@@ -101,22 +110,22 @@ def test_the_reference_run_stays_inside_the_double_precision_envelope():
     def offences():
         found = {}
         for name, value in sorted(values.items()):
-            if not isinstance(value, np.ndarray) or value.dtype.kind != 'f' or value.size == 0:
+            if not isinstance(value, np.ndarray) or value.dtype.kind != "f" or value.size == 0:
                 continue
             finite = np.isfinite(value)
             magnitude = np.abs(value[finite])
             nonzero = magnitude[magnitude > 0.0]
             reasons = []
             if not finite.all():
-                reasons.append(f'{int((~finite).sum())} non-finite')
+                reasons.append(f"{int((~finite).sum())} non-finite")
             if nonzero.size and nonzero.min() < tiny:
-                reasons.append(f'{int((nonzero < tiny).sum())} subnormal')
+                reasons.append(f"{int((nonzero < tiny).sum())} subnormal")
             if magnitude.size and magnitude.max() > PHYSICAL_CEILING:
-                reasons.append(f'|max| = {magnitude.max():.4g}')
+                reasons.append(f"|max| = {magnitude.max():.4g}")
             if reasons:
-                found[name] = ', '.join(reasons)
+                found[name] = ", ".join(reasons)
         return found
 
-    assert not offences(), 'the generated INPUTS are already outside the envelope'
+    assert not offences(), "the generated INPUTS are already outside the envelope"
     sdfg(**values)
-    assert not offences(), 'CloudSC left the double-precision envelope'
+    assert not offences(), "CloudSC left the double-precision envelope"

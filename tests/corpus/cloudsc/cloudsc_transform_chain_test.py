@@ -20,6 +20,7 @@ It runs in two build regimes (see :func:`~tests.corpus.cloudsc.generate_data_for
 This is a slow integration test: it builds the full CloudSC SDFG once
 (``simplify=False`` parse is minutes) and compiles it several times.
 """
+
 import contextlib
 import copy
 import gc
@@ -31,8 +32,13 @@ import dace
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
-from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
-                                                            generate_cloudsc_inputs, make_sequential)
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (
+    IEEE_CPU_ARGS,
+    build_cloudsc_sdfg,
+    compare_outputs,
+    generate_cloudsc_inputs,
+    make_sequential,
+)
 
 #: (ieee_build, sequential, rtol, atol) per regime.
 #: ``(ieee_build, sequential, strict_tol, relaxed_tol)``. Both regimes run MULTITHREADED -- see the
@@ -40,8 +46,8 @@ from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build
 #: bit-exact once the candidate is rewritten to sequential schedules, so a sequential check is blind
 #: to the one mistake these steps can make.
 _REGIMES = {
-    'ieee': (True, False, 1e-15, 1e-15),
-    'release': (False, False, 1e-10, 1e-10),
+    "ieee": (True, False, 1e-15, 1e-15),
+    "release": (False, False, 1e-10, 1e-10),
 }
 
 
@@ -59,16 +65,16 @@ def _apply_simplify(sdfg: dace.SDFG):
 
 def _apply_loop_to_map(sdfg: dace.SDFG):
     # LoopToMap logs every refused loop; keep the test output readable.
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         sdfg.apply_transformations_repeated(LoopToMap)
 
 
 #: Ordered chain of (label, in-place transform) applied to the candidate.
 _CHAIN = [
-    ('uli_postamble', _apply_uli),
-    ('symbol_propagation', _apply_symbol_propagation),
-    ('simplify', _apply_simplify),
-    ('loop_to_map', _apply_loop_to_map),
+    ("uli_postamble", _apply_uli),
+    ("symbol_propagation", _apply_symbol_propagation),
+    ("simplify", _apply_simplify),
+    ("loop_to_map", _apply_loop_to_map),
 ]
 
 
@@ -76,38 +82,38 @@ def _run(sdfg: dace.SDFG, inputs, ieee_build: bool, sequential: bool, tag: str):
     """Run ``sdfg`` once on a private copy of ``inputs`` under the given build
     regime, returning the mutated buffers. ``sdfg`` is renamed (fresh build dir)
     and run in place; the prior ``compiler.cpu.args`` is restored afterwards."""
-    sdfg.name = f'cloudsc_chain_{tag}'
+    sdfg.name = f"cloudsc_chain_{tag}"
     if sequential:
         make_sequential(sdfg)
-    saved_args = dace.Config.get('compiler', 'cpu', 'args')
+    saved_args = dace.Config.get("compiler", "cpu", "args")
     try:
         if ieee_build:
-            dace.Config.set('compiler', 'cpu', 'args', value=IEEE_CPU_ARGS)
+            dace.Config.set("compiler", "cpu", "args", value=IEEE_CPU_ARGS)
         args = copy.deepcopy(inputs)
         sdfg(**args)
     finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
+        dace.Config.set("compiler", "cpu", "args", value=saved_args)
     return args
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def reference_sdfg_file(tmp_path_factory):
     """Build the un-transformed CloudSC SDFG once and persist it; each regime
     reloads it (the build's multi-minute parse is shared across regimes)."""
     ref = build_cloudsc_sdfg(simplify=False)
-    path = str(tmp_path_factory.mktemp('cloudsc') / 'cloudsc_nosimplify.sdfgz')
+    path = str(tmp_path_factory.mktemp("cloudsc") / "cloudsc_nosimplify.sdfgz")
     ref.save(path, compress=True)
     return path
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize('regime', list(_REGIMES))
+@pytest.mark.parametrize("regime", list(_REGIMES))
 def test_cloudsc_transform_chain(reference_sdfg_file, regime):
     ieee_build, sequential, rtol, atol = _REGIMES[regime]
 
     ref = dace.SDFG.from_file(reference_sdfg_file)
     inputs = generate_cloudsc_inputs(ref, seed=0)
-    reference_out = _run(ref, inputs, ieee_build, sequential, tag=f'{regime}_ref')
+    reference_out = _run(ref, inputs, ieee_build, sequential, tag=f"{regime}_ref")
     del ref
     gc.collect()
 
@@ -117,12 +123,13 @@ def test_cloudsc_transform_chain(reference_sdfg_file, regime):
     for label, transform in _CHAIN:
         transform(candidate)
         candidate.validate()
-        out = _run(candidate, inputs, ieee_build, sequential, tag=f'{regime}_{label}')
+        out = _run(candidate, inputs, ieee_build, sequential, tag=f"{regime}_{label}")
         report = compare_outputs(out, reference_out, rtol=rtol, atol=atol)
         bad = {name: (max_abs, max_rel) for name, (max_abs, max_rel, ok) in report.items() if not ok}
-        assert not bad, (f'{regime}/{label}: outputs diverge from the un-transformed reference '
-                         f'(rtol={rtol}, atol={atol}): {bad}')
+        assert not bad, (
+            f"{regime}/{label}: outputs diverge from the un-transformed reference (rtol={rtol}, atol={atol}): {bad}"
+        )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v', '-s'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "-s"])

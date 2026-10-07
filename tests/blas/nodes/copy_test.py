@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``Copy`` BLAS library node (``dace.libraries.blas.nodes.copy``)."""
+
 import pytest
 
 import dace
@@ -23,7 +24,7 @@ def test_validate_accepts_reparsed_symbol_instances():
     state.add_edge(node, "_y", state.add_write("y"), None, Memlet.from_array("y", sdfg.arrays["y"]))
     node.validate(sdfg, state)  # must not raise
 
-    sdfg.arrays["y"].shape = (dace.symbol("P", dace.int32), )
+    sdfg.arrays["y"].shape = (dace.symbol("P", dace.int32),)
     y_edge = next(e for e in state.out_edges(node) if e.src_conn == "_y")
     y_edge.data = Memlet.from_array("y", sdfg.arrays["y"])
     with pytest.raises(ValueError):

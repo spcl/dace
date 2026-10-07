@@ -23,6 +23,7 @@ in the ``tests/canonicalize/`` suite (see
 ``canonicalize_symbol_lifting_test.py`` and the cloudsc-style xfails the
 design doc pins).
 """
+
 from typing import List, Tuple
 
 import numpy as np
@@ -31,15 +32,17 @@ import pytest
 import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (CascadeInterstateEdgeAssignmentsUp,
-                                                                                  names_read_by)
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (
+    CascadeInterstateEdgeAssignmentsUp,
+    names_read_by,
+)
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
-N = dace.symbol('N')
-K = dace.symbol('K')
-M = dace.symbol('M')
+N = dace.symbol("N")
+K = dace.symbol("K")
+M = dace.symbol("M")
 
 
 def _apply(sdfg: dace.SDFG) -> int:
@@ -85,45 +88,45 @@ def _assignments_inside_loops(sdfg: dace.SDFG) -> List[Tuple[str, str, str]]:
 def test_outer_only_single_hoist_manual():
     """Hand-built SDFG: a single LoopRegion whose body's iedge carries
     ``kp1 = K + 1``. The hoist target is the SDFG root."""
-    sdfg = dace.SDFG('outer_only_single_hoist')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
+    sdfg = dace.SDFG("outer_only_single_hoist")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
 
-    loop = LoopRegion('outer_loop',
-                      condition_expr='i < N',
-                      loop_var='i',
-                      initialize_expr='i = 0',
-                      update_expr='i = i + 1')
-    s_pre = loop.add_state('body_pre', is_start_block=True)
-    s_post = loop.add_state('body_post')
-    loop.add_edge(s_pre, s_post, InterstateEdge(assignments={'kp1': 'K + 1'}))
+    loop = LoopRegion(
+        "outer_loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
+    s_pre = loop.add_state("body_pre", is_start_block=True)
+    s_post = loop.add_state("body_post")
+    loop.add_edge(s_pre, s_post, InterstateEdge(assignments={"kp1": "K + 1"}))
     sdfg.add_node(loop, is_start_block=True)
 
     # Before: assignment inside the loop.
     inside_before = _assignments_inside_loops(sdfg)
-    assert ('outer_loop', 'kp1', 'K + 1') in inside_before
+    assert ("outer_loop", "kp1", "K + 1") in inside_before
 
     moved = _apply(sdfg)
     assert moved == 1
 
     # After: assignment at SDFG root, none left in the loop body.
     inside_after = _assignments_inside_loops(sdfg)
-    assert ('outer_loop', 'kp1', 'K + 1') not in inside_after
+    assert ("outer_loop", "kp1", "K + 1") not in inside_after
     root_assignments = [(lhs, rhs) for cfg in [sdfg] for e in cfg.edges() for lhs, rhs in e.data.assignments.items()]
-    assert ('kp1', 'K + 1') in root_assignments
+    assert ("kp1", "K + 1") in root_assignments
 
 
 # T2. Two-loop shared hoist (one move serves both sibling loops)
 
 
-def _make_loop_with_iedge(name: str, key: str, rhs: str, loop_var: str = 'i') -> LoopRegion:
-    loop = LoopRegion(name,
-                      condition_expr=f'{loop_var} < N',
-                      loop_var=loop_var,
-                      initialize_expr=f'{loop_var} = 0',
-                      update_expr=f'{loop_var} = {loop_var} + 1')
-    s_pre = loop.add_state(f'{name}_body_pre', is_start_block=True)
-    s_post = loop.add_state(f'{name}_body_post')
+def _make_loop_with_iedge(name: str, key: str, rhs: str, loop_var: str = "i") -> LoopRegion:
+    loop = LoopRegion(
+        name,
+        condition_expr=f"{loop_var} < N",
+        loop_var=loop_var,
+        initialize_expr=f"{loop_var} = 0",
+        update_expr=f"{loop_var} = {loop_var} + 1",
+    )
+    s_pre = loop.add_state(f"{name}_body_pre", is_start_block=True)
+    s_post = loop.add_state(f"{name}_body_post")
     loop.add_edge(s_pre, s_post, InterstateEdge(assignments={key: rhs}))
     return loop
 
@@ -133,12 +136,12 @@ def test_two_sibling_loops_each_hoist_independently():
     Each is hoisted independently; the binding rule does not require
     cross-sibling sharing -- only that each move clears all enclosing
     loops of its source. Both end up at the SDFG root."""
-    sdfg = dace.SDFG('two_sibling_loops')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
+    sdfg = dace.SDFG("two_sibling_loops")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
 
-    l1 = _make_loop_with_iedge('loop_a', 'kp1', 'K + 1')
-    l2 = _make_loop_with_iedge('loop_b', 'kp1', 'K + 1')
+    l1 = _make_loop_with_iedge("loop_a", "kp1", "K + 1")
+    l2 = _make_loop_with_iedge("loop_b", "kp1", "K + 1")
     sdfg.add_node(l1, is_start_block=True)
     sdfg.add_node(l2)
     sdfg.add_edge(l1, l2, InterstateEdge())
@@ -156,16 +159,16 @@ def test_mixed_outer_plus_loop_var_refuses():
     """``tmp = K + i`` inside a loop with variable ``i``: the rhs reads
     ``i``, so the move out of that loop is illegal (L1). The pass leaves
     it in place."""
-    sdfg = dace.SDFG('mixed_outer_plus_loop_var')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('tmp', dace.int64)
+    sdfg = dace.SDFG("mixed_outer_plus_loop_var")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("tmp", dace.int64)
 
-    loop = _make_loop_with_iedge('mix_loop', 'tmp', 'K + i')
+    loop = _make_loop_with_iedge("mix_loop", "tmp", "K + i")
     sdfg.add_node(loop, is_start_block=True)
 
     moved = _apply(sdfg)
     assert moved == 0
-    assert ('mix_loop', 'tmp', 'K + i') in _assignments_inside_loops(sdfg)
+    assert ("mix_loop", "tmp", "K + i") in _assignments_inside_loops(sdfg)
 
 
 # T4. Data-dependent (refuse): rhs reads an array
@@ -181,24 +184,24 @@ def test_data_dependent_assignment_refuses_or_stays():
     reads). So we hand-build an iedge whose rhs references a symbol
     that is *assigned by another iedge inside the same loop* -- that is
     the practical 'data-dependent' shape the pass needs to refuse."""
-    sdfg = dace.SDFG('data_dependent')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('per_iter', dace.int64)
-    sdfg.add_symbol('derived', dace.int64)
+    sdfg = dace.SDFG("data_dependent")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("per_iter", dace.int64)
+    sdfg.add_symbol("derived", dace.int64)
 
-    loop = LoopRegion('dd_loop', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
-    s0 = loop.add_state('s0', is_start_block=True)
-    s1 = loop.add_state('s1')
-    s2 = loop.add_state('s2')
-    loop.add_edge(s0, s1, InterstateEdge(assignments={'per_iter': 'K * i'}))
-    loop.add_edge(s1, s2, InterstateEdge(assignments={'derived': 'per_iter + 1'}))
+    loop = LoopRegion("dd_loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    s0 = loop.add_state("s0", is_start_block=True)
+    s1 = loop.add_state("s1")
+    s2 = loop.add_state("s2")
+    loop.add_edge(s0, s1, InterstateEdge(assignments={"per_iter": "K * i"}))
+    loop.add_edge(s1, s2, InterstateEdge(assignments={"derived": "per_iter + 1"}))
     sdfg.add_node(loop, is_start_block=True)
 
     moved = _apply(sdfg)
     assert moved == 0  # ``per_iter`` depends on i; ``derived`` depends on per_iter
     inside = _assignments_inside_loops(sdfg)
-    assert ('dd_loop', 'per_iter', 'K*i') in inside or ('dd_loop', 'per_iter', 'K * i') in inside
-    assert ('dd_loop', 'derived', 'per_iter + 1') in inside
+    assert ("dd_loop", "per_iter", "K*i") in inside or ("dd_loop", "per_iter", "K * i") in inside
+    assert ("dd_loop", "derived", "per_iter + 1") in inside
 
 
 # T5. Conditional-guarded assignment (L5): refuse inside ConditionalBlock
@@ -208,26 +211,24 @@ def test_conditional_branch_refuses_l5():
     """``if c: { kp1 = K + 1 }`` inside a loop -- the iedge lives on an
     edge inside a ConditionalBlock branch. L5 refuses the hoist (the
     conservative subset). The assignment stays where it is."""
-    sdfg = dace.SDFG('conditional_branch')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('c', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
+    sdfg = dace.SDFG("conditional_branch")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
 
-    loop = LoopRegion('guard_loop',
-                      condition_expr='i < N',
-                      loop_var='i',
-                      initialize_expr='i = 0',
-                      update_expr='i = i + 1')
+    loop = LoopRegion(
+        "guard_loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
 
     # The branch is a CFR; inside it, a 2-state body whose iedge carries
     # the assignment.
-    branch = ControlFlowRegion('branch_body')
-    bs0 = branch.add_state('bs0', is_start_block=True)
-    bs1 = branch.add_state('bs1')
-    branch.add_edge(bs0, bs1, InterstateEdge(assignments={'kp1': 'K + 1'}))
+    branch = ControlFlowRegion("branch_body")
+    bs0 = branch.add_state("bs0", is_start_block=True)
+    bs1 = branch.add_state("bs1")
+    branch.add_edge(bs0, bs1, InterstateEdge(assignments={"kp1": "K + 1"}))
 
-    cb = ConditionalBlock('guard')
-    cb.add_branch(dace.properties.CodeBlock('c > 0'), branch)
+    cb = ConditionalBlock("guard")
+    cb.add_branch(dace.properties.CodeBlock("c > 0"), branch)
     loop.add_node(cb, is_start_block=True)
     sdfg.add_node(loop, is_start_block=True)
 
@@ -237,12 +238,12 @@ def test_conditional_branch_refuses_l5():
     # body inside the loop.
     found = False
     for cfg in sdfg.all_control_flow_regions(recursive=True):
-        if cfg.label != 'branch_body':
+        if cfg.label != "branch_body":
             continue
         for e in cfg.edges():
-            if e.data.assignments.get('kp1') in ('K + 1', 'K+1'):
+            if e.data.assignments.get("kp1") in ("K + 1", "K+1"):
                 found = True
-    assert found, 'guarded assignment was unexpectedly moved'
+    assert found, "guarded assignment was unexpectedly moved"
 
 
 # T6. Cross-NSDFG hoist (L6): v1 hoists within the inner SDFG, refuses to cross
@@ -256,26 +257,26 @@ def test_cross_nsdfg_hoist_l6_stops_at_boundary():
     ``_find_destination`` stops once it leaves the owning SDFG). A v2 that
     routes through ``symbol_mapping`` and drops the shadowed inner
     declaration is future work; this pins the current, intended refusal."""
-    outer = dace.SDFG('outer_cross_nsdfg_hoist_l6_stops_at_boundary')
-    outer.add_symbol('K', dace.int64)
-    outer.add_symbol('N', dace.int64)
-    inner = dace.SDFG('inner_cross_nsdfg_hoist_l6_stops_at_boundary')
-    inner.add_symbol('K', dace.int64)
-    inner.add_symbol('kp1', dace.int64)
-    inner.add_symbol('N', dace.int64)
-    loop = _make_loop_with_iedge('inner_loop', 'kp1', 'K + 1')
+    outer = dace.SDFG("outer_cross_nsdfg_hoist_l6_stops_at_boundary")
+    outer.add_symbol("K", dace.int64)
+    outer.add_symbol("N", dace.int64)
+    inner = dace.SDFG("inner_cross_nsdfg_hoist_l6_stops_at_boundary")
+    inner.add_symbol("K", dace.int64)
+    inner.add_symbol("kp1", dace.int64)
+    inner.add_symbol("N", dace.int64)
+    loop = _make_loop_with_iedge("inner_loop", "kp1", "K + 1")
     inner.add_node(loop, is_start_block=True)
-    st = outer.add_state('st', is_start_block=True)
-    st.add_nested_sdfg(inner, inputs=set(), outputs=set(), symbol_mapping={'K': 'K', 'N': 'N'})
+    st = outer.add_state("st", is_start_block=True)
+    st.add_nested_sdfg(inner, inputs=set(), outputs=set(), symbol_mapping={"K": "K", "N": "N"})
 
     moved = _apply(outer)
     assert moved == 1  # cleared inner_loop, landed at inner's own root
 
-    assert not _assignments_inside_loops(inner), 'assignment did not clear inner_loop'
+    assert not _assignments_inside_loops(inner), "assignment did not clear inner_loop"
     inner_root = [(lhs, rhs) for e in inner.edges() for lhs, rhs in e.data.assignments.items()]
-    assert ('kp1', 'K + 1') in inner_root, 'assignment did not land at the inner SDFG root'
+    assert ("kp1", "K + 1") in inner_root, "assignment did not land at the inner SDFG root"
     outer_root = [(lhs, rhs) for e in outer.edges() for lhs, rhs in e.data.assignments.items()]
-    assert ('kp1', 'K + 1') not in outer_root, 'v1 must not cross the NSDFG boundary'
+    assert ("kp1", "K + 1") not in outer_root, "v1 must not cross the NSDFG boundary"
     outer.validate()
 
 
@@ -286,21 +287,19 @@ def test_transitive_chain_both_hoist():
     """``s1 = K + 1`` then ``s2 = 2 * s1``: both invariants must hoist.
     The two assignments may end up on different iedges at the SDFG root,
     but neither must remain in the loop body."""
-    sdfg = dace.SDFG('transitive_chain')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('s1', dace.int64)
-    sdfg.add_symbol('s2', dace.int64)
+    sdfg = dace.SDFG("transitive_chain")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("s1", dace.int64)
+    sdfg.add_symbol("s2", dace.int64)
 
-    loop = LoopRegion('chain_loop',
-                      condition_expr='i < N',
-                      loop_var='i',
-                      initialize_expr='i = 0',
-                      update_expr='i = i + 1')
-    s0 = loop.add_state('s0', is_start_block=True)
-    s1 = loop.add_state('s1')
-    s2 = loop.add_state('s2')
-    loop.add_edge(s0, s1, InterstateEdge(assignments={'s1': 'K + 1'}))
-    loop.add_edge(s1, s2, InterstateEdge(assignments={'s2': '2 * s1'}))
+    loop = LoopRegion(
+        "chain_loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
+    s0 = loop.add_state("s0", is_start_block=True)
+    s1 = loop.add_state("s1")
+    s2 = loop.add_state("s2")
+    loop.add_edge(s0, s1, InterstateEdge(assignments={"s1": "K + 1"}))
+    loop.add_edge(s1, s2, InterstateEdge(assignments={"s2": "2 * s1"}))
     sdfg.add_node(loop, is_start_block=True)
 
     # Run to a fixed point (the second hoist becomes legal only after the
@@ -327,39 +326,39 @@ def test_all_or_nothing_one_level_only_refuses():
     The rhs reads ``j``, so the assignment cannot legally clear the
     ``j``-loop in the first place -- which means it ALSO cannot clear
     the outer ``i``-loop. The pass is a no-op."""
-    sdfg = dace.SDFG('all_or_nothing')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
+    sdfg = dace.SDFG("all_or_nothing")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
 
-    outer = LoopRegion('outer', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
-    inner = LoopRegion('inner', condition_expr='j < N', loop_var='j', initialize_expr='j = 0', update_expr='j = j + 1')
-    s0 = inner.add_state('s0', is_start_block=True)
-    s1 = inner.add_state('s1')
+    outer = LoopRegion("outer", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    inner = LoopRegion("inner", condition_expr="j < N", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1")
+    s0 = inner.add_state("s0", is_start_block=True)
+    s1 = inner.add_state("s1")
     # rhs references the inner loop var -> moving past inner is illegal
     # -> the binding rule forbids any move (since outer is also enclosing).
-    inner.add_edge(s0, s1, InterstateEdge(assignments={'kp1': 'K + j + 1'}))
+    inner.add_edge(s0, s1, InterstateEdge(assignments={"kp1": "K + j + 1"}))
     outer.add_node(inner, is_start_block=True)
     sdfg.add_node(outer, is_start_block=True)
 
     moved = _apply(sdfg)
     assert moved == 0
     inside = _assignments_inside_loops(sdfg)
-    assert ('inner', 'kp1', 'K + j + 1') in inside
+    assert ("inner", "kp1", "K + j + 1") in inside
 
 
 def test_all_or_nothing_two_enclosing_loops_invariant_both_hoist():
     """Sanity contrast for T8: when rhs is invariant w.r.t. *both*
     enclosing loops (``kp1 = K + 1``), the move clears both and lands at
     the SDFG root in one go."""
-    sdfg = dace.SDFG('all_or_nothing_yes')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
+    sdfg = dace.SDFG("all_or_nothing_yes")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
 
-    outer = LoopRegion('outer', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
-    inner = LoopRegion('inner', condition_expr='j < N', loop_var='j', initialize_expr='j = 0', update_expr='j = j + 1')
-    s0 = inner.add_state('s0', is_start_block=True)
-    s1 = inner.add_state('s1')
-    inner.add_edge(s0, s1, InterstateEdge(assignments={'kp1': 'K + 1'}))
+    outer = LoopRegion("outer", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    inner = LoopRegion("inner", condition_expr="j < N", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1")
+    s0 = inner.add_state("s0", is_start_block=True)
+    s1 = inner.add_state("s1")
+    inner.add_edge(s0, s1, InterstateEdge(assignments={"kp1": "K + 1"}))
     outer.add_node(inner, is_start_block=True)
     sdfg.add_node(outer, is_start_block=True)
 
@@ -372,10 +371,10 @@ def test_all_or_nothing_two_enclosing_loops_invariant_both_hoist():
 
 
 def test_idempotent_second_application_noop():
-    sdfg = dace.SDFG('idempotent_idempotent_second_application_noop')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
-    loop = _make_loop_with_iedge('idem_loop', 'kp1', 'K + 1')
+    sdfg = dace.SDFG("idempotent_idempotent_second_application_noop")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
+    loop = _make_loop_with_iedge("idem_loop", "kp1", "K + 1")
     sdfg.add_node(loop, is_start_block=True)
     first = _apply(sdfg)
     second = _apply(sdfg)
@@ -419,22 +418,22 @@ def test_frontend_kp1_value_preserving():
 def test_does_not_push_assignments_downward():
     """``kp1 = K + 1`` already at the SDFG root: the pass must NOT push
     it into the loop. It is already at its outermost legal scope."""
-    sdfg = dace.SDFG('already_at_root')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
-    pre = sdfg.add_state('pre', is_start_block=True)
-    loop = _make_loop_with_iedge('post_loop', 'unused_in_body_loop_var', 'i')  # placeholder iedge
+    sdfg = dace.SDFG("already_at_root")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = _make_loop_with_iedge("post_loop", "unused_in_body_loop_var", "i")  # placeholder iedge
     loop.edges()[0].data.assignments.clear()  # clear the placeholder iedge content
     sdfg.add_node(loop)
-    sdfg.add_edge(pre, loop, InterstateEdge(assignments={'kp1': 'K + 1'}))
+    sdfg.add_edge(pre, loop, InterstateEdge(assignments={"kp1": "K + 1"}))
 
     before_root = [(lhs, rhs) for e in sdfg.edges() for lhs, rhs in e.data.assignments.items()]
-    assert ('kp1', 'K + 1') in before_root
+    assert ("kp1", "K + 1") in before_root
 
     moved = _apply(sdfg)
     assert moved == 0
     after_root = [(lhs, rhs) for e in sdfg.edges() for lhs, rhs in e.data.assignments.items()]
-    assert ('kp1', 'K + 1') in after_root
+    assert ("kp1", "K + 1") in after_root
     assert not _assignments_inside_loops(sdfg)
 
 
@@ -456,65 +455,59 @@ def test_icon_pattern_per_i_beg_end_is_noop():
     sound when the moving symbol is truly invariant on every level we
     cross. The pass refuses every other move, including this one.
     """
-    sdfg = dace.SDFG('icon_pattern_icon_pattern_per_i_beg_end_is_noop')
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_symbol('beg', dace.int64)
-    sdfg.add_symbol('end', dace.int64)
+    sdfg = dace.SDFG("icon_pattern_icon_pattern_per_i_beg_end_is_noop")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("beg", dace.int64)
+    sdfg.add_symbol("end", dace.int64)
 
-    outer = LoopRegion('outer_i',
-                       condition_expr='i < N',
-                       loop_var='i',
-                       initialize_expr='i = 0',
-                       update_expr='i = i + 1')
+    outer = LoopRegion(
+        "outer_i", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
 
     # Inner loops over [beg, end) -- modeled as LoopRegions with explicit
     # beg/end as range symbols. Three of them.
-    setup_state = outer.add_state('setup', is_start_block=True)
-    inner_a = LoopRegion('inner_a',
-                         condition_expr='ja < end',
-                         loop_var='ja',
-                         initialize_expr='ja = beg',
-                         update_expr='ja = ja + 1')
-    inner_a.add_state('body_a', is_start_block=True)
-    inner_b = LoopRegion('inner_b',
-                         condition_expr='jb < end',
-                         loop_var='jb',
-                         initialize_expr='jb = beg',
-                         update_expr='jb = jb + 1')
-    inner_b.add_state('body_b', is_start_block=True)
-    inner_c = LoopRegion('inner_c',
-                         condition_expr='jc < end',
-                         loop_var='jc',
-                         initialize_expr='jc = beg',
-                         update_expr='jc = jc + 1')
-    inner_c.add_state('body_c', is_start_block=True)
+    setup_state = outer.add_state("setup", is_start_block=True)
+    inner_a = LoopRegion(
+        "inner_a", condition_expr="ja < end", loop_var="ja", initialize_expr="ja = beg", update_expr="ja = ja + 1"
+    )
+    inner_a.add_state("body_a", is_start_block=True)
+    inner_b = LoopRegion(
+        "inner_b", condition_expr="jb < end", loop_var="jb", initialize_expr="jb = beg", update_expr="jb = jb + 1"
+    )
+    inner_b.add_state("body_b", is_start_block=True)
+    inner_c = LoopRegion(
+        "inner_c", condition_expr="jc < end", loop_var="jc", initialize_expr="jc = beg", update_expr="jc = jc + 1"
+    )
+    inner_c.add_state("body_c", is_start_block=True)
 
     outer.add_node(inner_a)
     outer.add_node(inner_b)
     outer.add_node(inner_c)
     # setup -> inner_a, with the per-i beg/end assignments
-    outer.add_edge(setup_state, inner_a, InterstateEdge(assignments={'beg': '2 * i', 'end': '2 * i + 8'}))
+    outer.add_edge(setup_state, inner_a, InterstateEdge(assignments={"beg": "2 * i", "end": "2 * i + 8"}))
     outer.add_edge(inner_a, inner_b, InterstateEdge())
     outer.add_edge(inner_b, inner_c, InterstateEdge())
 
     sdfg.add_node(outer, is_start_block=True)
 
     moved = _apply(sdfg)
-    assert moved == 0, ('per-i beg/end assignments depend on the outer loop variable; cascade-up must '
-                        'refuse to move them past the outer loop')
+    assert moved == 0, (
+        "per-i beg/end assignments depend on the outer loop variable; cascade-up must "
+        "refuse to move them past the outer loop"
+    )
 
     # The iedge stays exactly where it was: still inside the outer LoopRegion,
     # on the setup -> inner_a edge.
     found_beg, found_end = False, False
     for cfg in sdfg.all_control_flow_regions(recursive=True):
-        if cfg.label != 'outer_i':
+        if cfg.label != "outer_i":
             continue
         for e in cfg.edges():
-            if 'beg' in e.data.assignments and '2*i' in str(e.data.assignments['beg']).replace(' ', ''):
+            if "beg" in e.data.assignments and "2*i" in str(e.data.assignments["beg"]).replace(" ", ""):
                 found_beg = True
-            if 'end' in e.data.assignments and '2*i+8' in str(e.data.assignments['end']).replace(' ', ''):
+            if "end" in e.data.assignments and "2*i+8" in str(e.data.assignments["end"]).replace(" ", ""):
                 found_end = True
-    assert found_beg and found_end, 'beg/end were moved away from the outer loop body'
+    assert found_beg and found_end, "beg/end were moved away from the outer loop body"
 
     # SDFG remains valid.
     sdfg.validate()
@@ -565,8 +558,9 @@ def test_icon_pattern_frontend_value_preserving():
 # CFG, and then we should be able to move it up all the way up").
 
 
-def _nested_loops(sdfg: dace.SDFG, depth: int, key: str, rhs: str,
-                  loop_vars: List[str]) -> Tuple[LoopRegion, LoopRegion]:
+def _nested_loops(
+    sdfg: dace.SDFG, depth: int, key: str, rhs: str, loop_vars: List[str]
+) -> Tuple[LoopRegion, LoopRegion]:
     """Build ``for v0: for v1: ... for v_{depth-1}: { s_pre -[key=rhs]-> s_post }``
     directly under ``sdfg``. Returns ``(outermost_loop, innermost_loop)``.
     """
@@ -575,18 +569,20 @@ def _nested_loops(sdfg: dace.SDFG, depth: int, key: str, rhs: str,
     inner = None
     for d in range(depth):
         lv = loop_vars[d]
-        loop = LoopRegion(f'loop_{lv}',
-                          condition_expr=f'{lv} < N',
-                          loop_var=lv,
-                          initialize_expr=f'{lv} = 0',
-                          update_expr=f'{lv} = {lv} + 1')
+        loop = LoopRegion(
+            f"loop_{lv}",
+            condition_expr=f"{lv} < N",
+            loop_var=lv,
+            initialize_expr=f"{lv} = 0",
+            update_expr=f"{lv} = {lv} + 1",
+        )
         parent.add_node(loop, is_start_block=(parent is sdfg) or (parent is not sdfg and len(parent.nodes()) == 1))
         if outer is None:
             outer = loop
         parent = loop
         inner = loop
-    s_pre = inner.add_state('body_pre', is_start_block=True)
-    s_post = inner.add_state('body_post')
+    s_pre = inner.add_state("body_pre", is_start_block=True)
+    s_post = inner.add_state("body_post")
     inner.add_edge(s_pre, s_post, InterstateEdge(assignments={key: rhs}))
     return outer, inner
 
@@ -599,11 +595,11 @@ def test_three_level_nest_invariant_cascades_to_root():
     """``for i: for j: for k: { kp1 = K + 1 }`` -- ``K`` is an SDFG symbol,
     invariant w.r.t. all three loop variables, so the assignment cascades
     all the way up to the SDFG root (clears i, j, k in one move)."""
-    sdfg = dace.SDFG('three_level_nest')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
-    _nested_loops(sdfg, 3, 'kp1', 'K + 1', ['i', 'j', 'k'])
-    assert ('loop_k', 'kp1', 'K + 1') in _assignments_inside_loops(sdfg)
+    sdfg = dace.SDFG("three_level_nest")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
+    _nested_loops(sdfg, 3, "kp1", "K + 1", ["i", "j", "k"])
+    assert ("loop_k", "kp1", "K + 1") in _assignments_inside_loops(sdfg)
 
     total = 0
     for _ in range(6):
@@ -612,8 +608,8 @@ def test_three_level_nest_invariant_cascades_to_root():
         if n == 0:
             break
     assert total >= 1
-    assert not _assignments_inside_loops(sdfg), 'assignment did not clear all three loops'
-    assert 'kp1' in _root_assignment_keys(sdfg), 'assignment did not reach the SDFG root'
+    assert not _assignments_inside_loops(sdfg), "assignment did not clear all three loops"
+    assert "kp1" in _root_assignment_keys(sdfg), "assignment did not reach the SDFG root"
 
 
 def test_three_level_nest_rhs_from_root_parent_cascades_up():
@@ -621,14 +617,14 @@ def test_three_level_nest_rhs_from_root_parent_cascades_up():
     (the SDFG root): ``root: s1 = K + 1`` then deep inside ``for i: for j:
     for k: { s2 = s1 + 1 }``. ``s2`` is invariant (``s1`` is root-defined),
     so it cascades all the way up to the root, next to ``s1``."""
-    sdfg = dace.SDFG('rhs_from_parent')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('s1', dace.int64)
-    sdfg.add_symbol('s2', dace.int64)
+    sdfg = dace.SDFG("rhs_from_parent")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("s1", dace.int64)
+    sdfg.add_symbol("s2", dace.int64)
     # Root-level parent assignment s1 = K + 1, then the nest.
-    pre = sdfg.add_state('root_pre', is_start_block=True)
-    outer, _inner = _nested_loops(sdfg, 3, 's2', 's1 + 1', ['i', 'j', 'k'])
-    sdfg.add_edge(pre, outer, InterstateEdge(assignments={'s1': 'K + 1'}))
+    pre = sdfg.add_state("root_pre", is_start_block=True)
+    outer, _inner = _nested_loops(sdfg, 3, "s2", "s1 + 1", ["i", "j", "k"])
+    sdfg.add_edge(pre, outer, InterstateEdge(assignments={"s1": "K + 1"}))
 
     total = 0
     for _ in range(6):
@@ -637,36 +633,38 @@ def test_three_level_nest_rhs_from_root_parent_cascades_up():
         if n == 0:
             break
     assert total >= 1
-    assert not _assignments_inside_loops(sdfg), 's2 did not clear all enclosing loops'
-    assert 's2' in _root_assignment_keys(sdfg)
+    assert not _assignments_inside_loops(sdfg), "s2 did not clear all enclosing loops"
+    assert "s2" in _root_assignment_keys(sdfg)
 
 
 def test_four_level_nest_transitive_chain_cascades_to_root():
     """Four-level nest with a transitive chain in the innermost body:
     ``a = K + 1; b = a * 2; c = b + 3``. All invariant; the whole chain
     must cascade to the SDFG root (running to a fixpoint)."""
-    sdfg = dace.SDFG('four_level_chain')
-    sdfg.add_symbol('K', dace.int64)
-    for s in ('a', 'b', 'c'):
+    sdfg = dace.SDFG("four_level_chain")
+    sdfg.add_symbol("K", dace.int64)
+    for s in ("a", "b", "c"):
         sdfg.add_symbol(s, dace.int64)
     parent: Any = sdfg
     outer = None
-    for d, lv in enumerate(['i', 'j', 'k', 'l']):
-        loop = LoopRegion(f'loop_{lv}',
-                          condition_expr=f'{lv} < N',
-                          loop_var=lv,
-                          initialize_expr=f'{lv} = 0',
-                          update_expr=f'{lv} = {lv} + 1')
+    for d, lv in enumerate(["i", "j", "k", "l"]):
+        loop = LoopRegion(
+            f"loop_{lv}",
+            condition_expr=f"{lv} < N",
+            loop_var=lv,
+            initialize_expr=f"{lv} = 0",
+            update_expr=f"{lv} = {lv} + 1",
+        )
         parent.add_node(loop, is_start_block=True)
         outer = outer or loop
         parent = loop
-    s0 = parent.add_state('s0', is_start_block=True)
-    s1 = parent.add_state('s1')
-    s2 = parent.add_state('s2')
-    s3 = parent.add_state('s3')
-    parent.add_edge(s0, s1, InterstateEdge(assignments={'a': 'K + 1'}))
-    parent.add_edge(s1, s2, InterstateEdge(assignments={'b': 'a * 2'}))
-    parent.add_edge(s2, s3, InterstateEdge(assignments={'c': 'b + 3'}))
+    s0 = parent.add_state("s0", is_start_block=True)
+    s1 = parent.add_state("s1")
+    s2 = parent.add_state("s2")
+    s3 = parent.add_state("s3")
+    parent.add_edge(s0, s1, InterstateEdge(assignments={"a": "K + 1"}))
+    parent.add_edge(s1, s2, InterstateEdge(assignments={"b": "a * 2"}))
+    parent.add_edge(s2, s3, InterstateEdge(assignments={"c": "b + 3"}))
 
     total = 0
     for _ in range(10):
@@ -674,9 +672,9 @@ def test_four_level_nest_transitive_chain_cascades_to_root():
         total += n
         if n == 0:
             break
-    assert total >= 3, f'expected the 3-link chain to hoist, got {total}'
-    assert not _assignments_inside_loops(sdfg), 'chain did not clear all four loops'
-    assert {'a', 'b', 'c'} <= _root_assignment_keys(sdfg)
+    assert total >= 3, f"expected the 3-link chain to hoist, got {total}"
+    assert not _assignments_inside_loops(sdfg), "chain did not clear all four loops"
+    assert {"a", "b", "c"} <= _root_assignment_keys(sdfg)
 
 
 def test_three_level_nest_rhs_uses_middle_loop_var_refuses():
@@ -684,12 +682,12 @@ def test_three_level_nest_rhs_uses_middle_loop_var_refuses():
     loop variable ``j``, so the assignment cannot clear the ``j`` loop;
     by the all-or-nothing rule it must NOT move at all (it would otherwise
     stall inside the ``i`` loop)."""
-    sdfg = dace.SDFG('rhs_middle_loopvar')
-    sdfg.add_symbol('x', dace.int64)
-    _nested_loops(sdfg, 3, 'x', 'j + 1', ['i', 'j', 'k'])
+    sdfg = dace.SDFG("rhs_middle_loopvar")
+    sdfg.add_symbol("x", dace.int64)
+    _nested_loops(sdfg, 3, "x", "j + 1", ["i", "j", "k"])
     moved = _apply(sdfg)
     assert moved == 0
-    assert ('loop_k', 'x', 'j + 1') in _assignments_inside_loops(sdfg)
+    assert ("loop_k", "x", "j + 1") in _assignments_inside_loops(sdfg)
 
 
 def test_read_of_key_before_the_assignment_inside_the_body_refuses():
@@ -700,41 +698,39 @@ def test_read_of_key_before_the_assignment_inside_the_body_refuses():
     iteration instead of the value bound before the loop, so ``a[0]`` is never written. The
     predecessor scan only walks the parent region, which cannot see inside the body.
     """
-    sdfg = dace.SDFG('read_before_assign')
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
-    sdfg.add_array('a', [4], dace.float64)
+    sdfg = dace.SDFG("read_before_assign")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
+    sdfg.add_array("a", [4], dace.float64)
 
-    entry = sdfg.add_state('entry', is_start_block=True)
-    loop = LoopRegion('body_loop',
-                      condition_expr='i < N',
-                      loop_var='i',
-                      initialize_expr='i = 0',
-                      update_expr='i = i + 1')
+    entry = sdfg.add_state("entry", is_start_block=True)
+    loop = LoopRegion(
+        "body_loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
     sdfg.add_node(loop)
-    sdfg.add_edge(entry, loop, InterstateEdge(assignments={'kp1': '0'}))
+    sdfg.add_edge(entry, loop, InterstateEdge(assignments={"kp1": "0"}))
 
-    body_pre = loop.add_state('body_pre', is_start_block=True)
-    tasklet = body_pre.add_tasklet('use_kp1', {}, {'o'}, 'o = 1.0')
-    body_pre.add_edge(tasklet, 'o', body_pre.add_access('a'), None, dace.Memlet('a[kp1]'))
-    body_post = loop.add_state('body_post')
-    loop.add_edge(body_pre, body_post, InterstateEdge(assignments={'kp1': 'K + 1'}))
+    body_pre = loop.add_state("body_pre", is_start_block=True)
+    tasklet = body_pre.add_tasklet("use_kp1", {}, {"o"}, "o = 1.0")
+    body_pre.add_edge(tasklet, "o", body_pre.add_access("a"), None, dace.Memlet("a[kp1]"))
+    body_post = loop.add_state("body_post")
+    loop.add_edge(body_pre, body_post, InterstateEdge(assignments={"kp1": "K + 1"}))
 
     assert _apply(sdfg) == 0
-    assert ('body_loop', 'kp1', 'K + 1') in _assignments_inside_loops(sdfg)
+    assert ("body_loop", "kp1", "K + 1") in _assignments_inside_loops(sdfg)
 
     # N = 2, K = 1: iteration 0 reads kp1 == 0, iteration 1 reads kp1 == 2.
     a = np.zeros(4)
     sdfg(a=a, N=2, K=1)
-    assert np.array_equal(a, np.array([1.0, 0.0, 1.0, 0.0])), f'first iteration read the hoisted value: {a}'
+    assert np.array_equal(a, np.array([1.0, 0.0, 1.0, 0.0])), f"first iteration read the hoisted value: {a}"
 
 
 def test_names_read_by_keeps_the_array_base():
     """``pystr_to_symbolic('A[0]').free_symbols`` is empty -- the guard needs the base name."""
-    assert 'A' in names_read_by('A[0]')
-    assert set(names_read_by('A[i] + B[0]')) == {'A', 'B', 'i'}
-    assert 'min' not in names_read_by('min(A[0], K)')
+    assert "A" in names_read_by("A[0]")
+    assert set(names_read_by("A[i] + B[0]")) == {"A", "B", "i"}
+    assert "min" not in names_read_by("min(A[0], K)")
 
 
 @dace.program
@@ -759,10 +755,10 @@ def test_constant_index_element_read_of_a_loop_written_array_stays_inside():
     ControlFlowRaising().apply_pass(sdfg, {})
 
     # Pin the shape the pass is asked about, so a frontend change cannot make this vacuous.
-    assert any(str(rhs) == 'A[0]' for _, _, rhs in _all_iedge_assignments(sdfg))
+    assert any(str(rhs) == "A[0]" for _, _, rhs in _all_iedge_assignments(sdfg))
 
     assert _apply(sdfg) == 0
-    assert [rhs for _, _, rhs in _assignments_inside_loops(sdfg) if str(rhs) == 'A[0]']
+    assert [rhs for _, _, rhs in _assignments_inside_loops(sdfg) if str(rhs) == "A[0]"]
 
     oracle = np.arange(1, n + 1, dtype=np.int64)
     for i in range(n):
@@ -770,16 +766,16 @@ def test_constant_index_element_read_of_a_loop_written_array_stays_inside():
 
     got = np.arange(1, n + 1, dtype=np.int64)
     sdfg(A=got, N=n)
-    assert got[0] == oracle[0], f'hoisted element read: {got[0]} != {oracle[0]}'
+    assert got[0] == oracle[0], f"hoisted element read: {got[0]} != {oracle[0]}"
 
 
 def test_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """A hoist only adds states and moves assignments; it never needed a whole-tree CFG-list rebuild."""
-    sdfg = dace.SDFG('two_sibling_loops_cfg')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_symbol('kp1', dace.int64)
-    l1 = _make_loop_with_iedge('loop_a', 'kp1', 'K + 1')
-    l2 = _make_loop_with_iedge('loop_b', 'kp1', 'K + 1')
+    sdfg = dace.SDFG("two_sibling_loops_cfg")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_symbol("kp1", dace.int64)
+    l1 = _make_loop_with_iedge("loop_a", "kp1", "K + 1")
+    l2 = _make_loop_with_iedge("loop_b", "kp1", "K + 1")
     sdfg.add_node(l1, is_start_block=True)
     sdfg.add_node(l2)
     sdfg.add_edge(l1, l2, InterstateEdge())
@@ -791,5 +787,5 @@ def test_hoisting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     assert_tree_matches_a_reset(sdfg)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -24,7 +24,6 @@ class ExpandGetriPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGetriOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -33,26 +32,23 @@ class ExpandGetriOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(lapack_complex_float*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(lapack_complex_double*)"
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandGetriMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -61,26 +57,23 @@ class ExpandGetriMKL(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
-        if lapack_dtype == 'c':
+        if lapack_dtype == "c":
             cast = "(MKL_Complex8*)"
-        elif lapack_dtype == 'z':
+        elif lapack_dtype == "z":
             cast = "(MKL_Complex16*)"
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, {cast}_xin, {stride_x}, _ipiv);"
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.node
 class Getri(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "OpenBLAS": ExpandGetriOpenBLAS,
@@ -89,14 +82,12 @@ class Getri(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs=OrderedSet(('_xin', '_ipiv')),
-                         outputs=OrderedSet(('_xout', '_res')),
-                         **kwargs)
+        super().__init__(
+            name, *args, inputs=OrderedSet(("_xin", "_ipiv")), outputs=OrderedSet(("_xout", "_res")), **kwargs
+        )
 
     def validate(self, sdfg, state):
         """
@@ -129,9 +120,9 @@ class Getri(dace.sdfg.nodes.LibraryNode):
 
         in_memlets = [None] * 2
         for _, _, _, conn, data in in_edges:
-            if conn == '_xin':
+            if conn == "_xin":
                 in_memlets[0] = data
-            elif conn == '_ipiv':
+            elif conn == "_ipiv":
                 in_memlets[1] = data
 
         # Squeeze input memlets

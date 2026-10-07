@@ -18,6 +18,7 @@ Match: both loops unit-stride, perfect one-child nest (empty connective
 states tolerated), constant nonnegative inner offset, single 2-D array at
 transposed single-point subscripts, no other body effect.
 """
+
 from typing import Any, Dict, List, Optional, Tuple
 
 import dace
@@ -28,8 +29,11 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.rank_k_match import unit_stride
-from dace.transformation.passes.canonicalize.loop_to_transpose import (_single_body_state, _single_child_loop,
-                                                                       match_copy_chain)
+from dace.transformation.passes.canonicalize.loop_to_transpose import (
+    _single_body_state,
+    _single_child_loop,
+    match_copy_chain,
+)
 from dace.sdfg.narrowing import as_expr
 
 
@@ -98,7 +102,8 @@ class LoopToSymmetrize(ppl.Pass):
             return False
         try:
             offset = symbolic.simplify(
-                as_expr(symbolic.pystr_to_symbolic(inner_init)) - as_expr(symbolic.pystr_to_symbolic(outer_var)))
+                as_expr(symbolic.pystr_to_symbolic(inner_init)) - as_expr(symbolic.pystr_to_symbolic(outer_var))
+            )
         except Exception:
             return False
         col_offset = _const_nonneg_int(offset)
@@ -121,7 +126,7 @@ class LoopToSymmetrize(ppl.Pass):
 
         # source_upper: the READ (source, preserved) triangle is the upper one iff
         # the read subset is [outer, inner] (inner >= outer + offset >= outer).
-        source_upper = (read_order == [outer_var, inner_var])
+        source_upper = read_order == [outer_var, inner_var]
 
         row_lo = str(loop_analysis.get_init_assignment(outer))
         row_hi = str(symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(loop_analysis.get_loop_end(outer))) + 1))
@@ -130,8 +135,9 @@ class LoopToSymmetrize(ppl.Pass):
         self._replace(cfg, outer, array, desc, row_lo, row_hi, col_offset, col_hi, source_upper)
         return True
 
-    def _extract_symmetric_copy(self, state: SDFGState, outer_var: str,
-                                inner_var: str) -> Optional[Tuple[str, List[str], List[str]]]:
+    def _extract_symmetric_copy(
+        self, state: SDFGState, outer_var: str, inner_var: str
+    ) -> Optional[Tuple[str, List[str], List[str]]]:
         """Match an in-place transposed copy of one 2-D array in ``state``.
 
         The body must read one square array ``X`` at a single point, pass the
@@ -154,21 +160,34 @@ class LoopToSymmetrize(ppl.Pass):
             return None
         return array, read_order, write_order
 
-    def _replace(self, cfg: ControlFlowRegion, outer: LoopRegion, array: str, desc: dace.data.Data, row_lo: str,
-                 row_hi: str, col_offset: int, col_hi: str, source_upper: bool) -> None:
+    def _replace(
+        self,
+        cfg: ControlFlowRegion,
+        outer: LoopRegion,
+        array: str,
+        desc: dace.data.Data,
+        row_lo: str,
+        row_hi: str,
+        col_offset: int,
+        col_hi: str,
+        source_upper: bool,
+    ) -> None:
         """Replace the ``outer`` loop nest with a state holding a ``Symmetrize`` node."""
         from dace.libraries.standard.nodes import Symmetrize
+
         was_start = cfg.start_block is outer
         in_edges = list(cfg.in_edges(outer))
         out_edges = list(cfg.out_edges(outer))
 
         sym_state = cfg.add_state(outer.label + "_symmetrize", is_start_block=was_start)
-        node = Symmetrize(outer.label + "_sym",
-                          row_lo=row_lo,
-                          row_hi=row_hi,
-                          col_offset=col_offset,
-                          col_hi=col_hi,
-                          source_upper=source_upper)
+        node = Symmetrize(
+            outer.label + "_sym",
+            row_lo=row_lo,
+            row_hi=row_hi,
+            col_offset=col_offset,
+            col_hi=col_hi,
+            source_upper=source_upper,
+        )
         sym_state.add_node(node)
 
         def _full() -> dace.Memlet:

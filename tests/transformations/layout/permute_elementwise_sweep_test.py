@@ -12,6 +12,7 @@ of the permuted array's dims (``itertools.permutations``), plus two-array (disti
 output-permute cases. Small sizes (n in {4, 6}). Every case compiles, runs, and ``numpy.allclose``
 against the oracle.
 """
+
 import itertools
 
 import numpy
@@ -158,7 +159,7 @@ def generate_array(rng, shape, spec):
 
 def run_case(spec, permute_map, n, tag):
     rng = numpy.random.default_rng(stable_seed(tag))
-    shape = (n, ) * spec["ndim"]
+    shape = (n,) * spec["ndim"]
     arrays = {name: generate_array(rng, shape, spec) for name in spec["inputs"]}
 
     scalar_value = None
@@ -201,45 +202,21 @@ def build_cases():
 
     # Two arrays permuted with DIFFERENT perms in the same kernel.
     two = [
-        ("add2d", 6, {
-            "A": [1, 0],
-            "B": [0, 1]
-        }),
-        ("add2d", 4, {
-            "A": [0, 1],
-            "B": [1, 0]
-        }),
-        ("affine3d", 6, {
-            "A": [2, 0, 1],
-            "B": [1, 2, 0]
-        }),
-        ("affine3d", 6, {
-            "A": [1, 0, 2],
-            "B": [2, 1, 0]
-        }),
-        ("mul3d", 6, {
-            "A": [2, 1, 0],
-            "B": [0, 2, 1]
-        }),
-        ("mul3d", 6, {
-            "A": [1, 2, 0],
-            "B": [2, 0, 1]
-        }),
+        ("add2d", 6, {"A": [1, 0], "B": [0, 1]}),
+        ("add2d", 4, {"A": [0, 1], "B": [1, 0]}),
+        ("affine3d", 6, {"A": [2, 0, 1], "B": [1, 2, 0]}),
+        ("affine3d", 6, {"A": [1, 0, 2], "B": [2, 1, 0]}),
+        ("mul3d", 6, {"A": [2, 1, 0], "B": [0, 2, 1]}),
+        ("mul3d", 6, {"A": [1, 2, 0], "B": [2, 0, 1]}),
     ]
     for kernel_key, n, pm in two:
         cases.append((kernel_key, n, pm))
 
     # Transparent permutation of the WRITTEN array C.
     outp = [
-        ("add2d", 6, {
-            "C": [1, 0]
-        }),
-        ("affine3d", 6, {
-            "C": [2, 0, 1]
-        }),
-        ("mul3d", 6, {
-            "C": [0, 2, 1]
-        }),
+        ("add2d", 6, {"C": [1, 0]}),
+        ("affine3d", 6, {"C": [2, 0, 1]}),
+        ("mul3d", 6, {"C": [0, 2, 1]}),
     ]
     for kernel_key, n, pm in outp:
         cases.append((kernel_key, n, pm))
@@ -257,8 +234,9 @@ def test_permute_elementwise(kernel_key, n, permute_map):
     tag = "{}_n{}_{}".format(kernel_key, n, perm_tag(permute_map))
     out, oracle = run_case(spec, permute_map, n, tag)
     assert out.shape == oracle.shape
-    assert numpy.allclose(out,
-                          oracle), "permute {} on {} (n={}) diverged from oracle".format(permute_map, kernel_key, n)
+    assert numpy.allclose(out, oracle), "permute {} on {} (n={}) diverged from oracle".format(
+        permute_map, kernel_key, n
+    )
 
 
 if __name__ == "__main__":

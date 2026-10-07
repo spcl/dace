@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The ``layout`` library: the layout-change algebra (DSL + optimizer) and the LayoutChange node."""
+
 from dace.library import register_library
 
 from dace.libraries.layout.algebra import (

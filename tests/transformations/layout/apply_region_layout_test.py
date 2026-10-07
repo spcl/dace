@@ -8,6 +8,7 @@ restore after it, both at the top level. It is the imposed, scoped counterpart o
 region). Here ``A`` is transposed only for the two middle nests of a four-nest chain; nests outside
 the region see the original layout, and the result is bit-exact.
 """
+
 import numpy
 import pytest
 
@@ -20,12 +21,18 @@ from dace.transformation.layout.prepare import prepare_for_layout
 
 N = dace.symbol("N")
 
-PERM10 = Layout("perm10", (Permute((1, 0)), ))
+PERM10 = Layout("perm10", (Permute((1, 0)),))
 
 
 @dace.program
-def chain(A: dace.float64[N, N], P: dace.float64[N, N], O0: dace.float64[N, N], O1: dace.float64[N, N],
-          O2: dace.float64[N, N], O3: dace.float64[N, N]):
+def chain(
+    A: dace.float64[N, N],
+    P: dace.float64[N, N],
+    O0: dace.float64[N, N],
+    O1: dace.float64[N, N],
+    O2: dace.float64[N, N],
+    O3: dace.float64[N, N],
+):
     for i, j in dace.map[0:N, 0:N]:
         O0[i, j] = A[i, j] + P[i, j]  # nest 0: A straight
     for i, j in dace.map[0:N, 0:N]:

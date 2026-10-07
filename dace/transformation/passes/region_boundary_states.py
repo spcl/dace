@@ -23,7 +23,7 @@ class RegionBoundaryStates(ppl.Pass):
     triples the state count of a program that never sizes anything from an interstate assignment.
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -44,7 +44,9 @@ class RegionBoundaryStates(ppl.Pass):
         sized_by: Set[str] = {
             str(s)
             for nested in sdfg.all_sdfgs_recursive()
-            for desc in nested.arrays.values() if desc.transient for s in desc.free_symbols
+            for desc in nested.arrays.values()
+            if desc.transient
+            for s in desc.free_symbols
         }
         if not sized_by:
             return None

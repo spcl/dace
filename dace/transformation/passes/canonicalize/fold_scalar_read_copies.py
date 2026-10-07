@@ -10,6 +10,7 @@ write in the same state that is ordered neither before the copy nor after every 
 copy folds by the mirror rule: no other access to the array may fall between the producing tasklet and the
 write.
 """
+
 from typing import Any, Dict, Iterator, List, Optional, Set
 
 from dace import SDFG, Memlet, data, symbolic
@@ -24,7 +25,7 @@ def reachable(state: SDFGState, start: nodes.Node, forward: bool = True) -> Set[
     stack = [start]
     while stack:
         node = stack.pop()
-        for edge in (state.out_edges(node) if forward else state.in_edges(node)):
+        for edge in state.out_edges(node) if forward else state.in_edges(node):
             neighbour = edge.dst if forward else edge.src
             if neighbour not in seen:
                 seen.add(neighbour)
@@ -119,8 +120,13 @@ def write_subset(copy: Any) -> Optional[Any]:
 
 def fold_write(state: SDFGState, produce: Any, target: Any) -> None:
     """Let the producing tasklet write the array element itself; drop the result scalar."""
-    state.add_edge(produce.src, produce.src_conn, target.dst, target.dst_conn,
-                   Memlet(data=target.dst.data, subset=write_subset(target)))
+    state.add_edge(
+        produce.src,
+        produce.src_conn,
+        target.dst,
+        target.dst_conn,
+        Memlet(data=target.dst.data, subset=write_subset(target)),
+    )
     state.remove_node(produce.dst)
 
 
@@ -134,7 +140,8 @@ def copy_edges(sdfg: SDFG, state: SDFGState) -> Iterator[Any]:
 @transformation.explicit_cf_compatible
 class FoldScalarReadCopies(ppl.Pass):
     """Fold every scalar read and result copy the snapshot rule allows, in ``sdfg`` and its nested SDFGs."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets

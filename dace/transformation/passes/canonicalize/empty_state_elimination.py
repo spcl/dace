@@ -18,6 +18,7 @@ fusion -- so merging rather than refusing is what makes this a fusion-prep
 pass. The merge is only performed when it is provably value-preserving (see
 ``_merge_assignments``); anything else is left untouched.
 """
+
 from typing import Any, Dict, List, Optional, Type, Union
 
 from dace import SDFG, symbolic
@@ -107,7 +108,8 @@ def _elide_one(region: ControlFlowRegion) -> bool:
 @transformation.explicit_cf_compatible
 class EmptyStateElimination(ppl.Pass):
     """Remove empty, trivially-connected boundary states (fixpoint)."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG

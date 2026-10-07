@@ -25,20 +25,22 @@ def test_module(device):
     torch_module = copy.deepcopy(module)
     dace_module = copy.deepcopy(module)
 
-    dace_module = DaceModule(dace_module,
-                             sdfg_name=f"test_full_training_graph_module_{device}",
-                             simplify=False,
-                             backward=True,
-                             training=True,
-                             auto_optimize=False,
-                             cuda=is_gpu(device))
+    dace_module = DaceModule(
+        dace_module,
+        sdfg_name=f"test_full_training_graph_module_{device}",
+        simplify=False,
+        backward=True,
+        training=True,
+        auto_optimize=False,
+        cuda=is_gpu(device),
+    )
 
     x = torch.randn(8, 12, device=dev)
 
     expected_output = torch_module(x)
     with experimental_cuda():
         result = dace_module(x)
-    torch_tensors_close('output', expected_output, result)
+    torch_tensors_close("output", expected_output, result)
 
     with experimental_cuda():
         dc_loss = dace_module(x).sum()
@@ -48,8 +50,9 @@ def test_module(device):
     pt_loss.backward()
 
     tensors_close("loss", pt_loss, dc_loss)
-    assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters()), \
+    assert all(hasattr(p, "grad") and p.grad is not None for p in dace_module.parameters()), (
         "Not all parameters have gradients computed"
+    )
 
     for d, t in zip(dace_module.parameters(), torch_module.parameters()):
         torch_tensors_close("param", t.grad, d.grad)
@@ -75,7 +78,7 @@ def test_parse_backward_simple(device):
     sdfg.validate()
 
     result = run_sdfg(sdfg, device, x=x.clone(), dy=dy.clone())
-    tensors_close('x.grad', dy.reshape(10, 1).expand(10, 5), result)
+    tensors_close("x.grad", dy.reshape(10, 1).expand(10, 5), result)
 
 
 @pytest.mark.torch
@@ -97,7 +100,7 @@ def test_parse_backward_scalar(device):
     sdfg.validate()
 
     result = run_sdfg(sdfg, device, x=x.clone())
-    tensors_close('x.grad', 1, result)
+    tensors_close("x.grad", 1, result)
 
 
 @pytest.mark.torch
@@ -133,7 +136,7 @@ def test_parse_backward_with_forwarding(device):
 
     result = run_sdfg(sdfg, device, x=x.clone())
     expected = torch_fn(x.clone())
-    tensors_close('x.grad', expected, result)
+    tensors_close("x.grad", expected, result)
 
 
 @pytest.mark.torch
@@ -182,8 +185,8 @@ def test_two_backward_passes(device):
 
     r1, r2 = run_sdfg(sdfg, device, x1=x1.clone(), x2=x2.clone(), dy=dy.clone())
     ex_1, ex_2 = torch_fn(x1.clone(), x2.clone(), dy.clone())
-    tensors_close('x2.grad', ex_2, r2)
-    tensors_close('x1.grad', ex_1, r1)
+    tensors_close("x2.grad", ex_2, r2)
+    tensors_close("x1.grad", ex_1, r1)
 
 
 @pytest.mark.torch
@@ -230,7 +233,7 @@ def test_two_backward_passes_accumulate(device):
     result = run_sdfg(sdfg, device, x=x1.clone(), dy=dy.clone())
     expected = torch_fn(x1.clone(), dy.clone())
 
-    tensors_close('x.grad', expected, result)
+    tensors_close("x.grad", expected, result)
 
 
 if __name__ == "__main__":

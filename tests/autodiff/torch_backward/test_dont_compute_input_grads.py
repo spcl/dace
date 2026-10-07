@@ -18,7 +18,6 @@ def test_skip_input_grads(use_cpp_dispatcher: bool, device):
     dev = torch_device(device)
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
@@ -45,12 +44,14 @@ def test_skip_input_grads(use_cpp_dispatcher: bool, device):
 
     # TODO: provide a better API for input names
     dispatcher_suffix = "cpp" if use_cpp_dispatcher else "ctypes"
-    dace_module = DaceModule(dace_module,
-                             sdfg_name=f"test_skip_input_grads_{dispatcher_suffix}_{device}",
-                             backward=True,
-                             inputs_to_skip=["onnx::MatMul_0"],
-                             compile_torch_extension=use_cpp_dispatcher,
-                             cuda=is_gpu(device))
+    dace_module = DaceModule(
+        dace_module,
+        sdfg_name=f"test_skip_input_grads_{dispatcher_suffix}_{device}",
+        backward=True,
+        inputs_to_skip=["onnx::MatMul_0"],
+        compile_torch_extension=use_cpp_dispatcher,
+        cuda=is_gpu(device),
+    )
 
     dy = torch.rand(8, 10, device=dev)
 
@@ -67,8 +68,9 @@ def test_skip_input_grads(use_cpp_dispatcher: bool, device):
     torch_tensors_close("param_grad", pt_module.fc1.grad, dace_module.model.fc1.grad)
 
     # Make sure that input grad is not being computed
-    assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1, \
+    assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1, (
         f"Expected 1 sink node (no input gradient), got {len(dace_module.backward_sdfg.node(0).sink_nodes())}"
+    )
 
 
 if __name__ == "__main__":

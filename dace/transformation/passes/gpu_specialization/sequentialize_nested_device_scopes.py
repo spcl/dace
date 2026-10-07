@@ -18,6 +18,7 @@ the loop order kept across trips).
 Runs on the offloaded graph, after schedule inference: ``canonicalize`` leaves the parallelism in
 place and device-neutral, and this is where the GPU target resolves it.
 """
+
 from typing import Any, Dict, Optional
 
 from dace import SDFG, dtypes, properties
@@ -30,7 +31,7 @@ from dace.transformation import pass_pipeline as ppl
 class SequentializeNestedDeviceScopes(ppl.Pass):
     """Pin every ``GPU_Device`` scope nested in another device scope to ``Sequential``."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -46,6 +47,7 @@ class SequentializeNestedDeviceScopes(ppl.Pass):
         :returns: how many scopes were pinned, or ``None`` if none were.
         """
         from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
         pinned = 0
         for node, state in sdfg.all_nodes_recursive():
             is_map = isinstance(node, nodes.MapEntry)
@@ -58,8 +60,9 @@ class SequentializeNestedDeviceScopes(ppl.Pass):
             if schedule != dtypes.ScheduleType.GPU_Device:
                 continue
             for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
-                in_device_map = isinstance(scope,
-                                           nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device
+                in_device_map = (
+                    isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device
+                )
                 if in_device_map or (not is_map and isinstance(scope, LoopRegion)):
                     if is_map:
                         node.map.schedule = dtypes.ScheduleType.Sequential

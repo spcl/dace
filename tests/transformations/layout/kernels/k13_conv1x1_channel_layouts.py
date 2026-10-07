@@ -20,6 +20,7 @@ Source: Intel oneDNN "Understanding Memory Formats" (nChw16c); NVIDIA cuDNN (NHW
 Georganas et al., "Anatomy of High-Performance Deep Learning Convolutions on SIMD Architectures,"
 SC'18 (blocked conv layouts).
 """
+
 import numpy
 import dace
 

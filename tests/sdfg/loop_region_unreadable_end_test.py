@@ -11,6 +11,7 @@ The iterator's type comes from the statements that DEFINE it -- its init and its
 bound only ever participates through a comparison, so leaving it out when it cannot be read narrows
 nothing. These tests pin that at both sites, and on the whole path through to a run.
 """
+
 import numpy as np
 import pytest
 
@@ -18,18 +19,18 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
-def compound_condition_sdfg(condition: str = 'i < N and i * i < N') -> dace.SDFG:
-    sdfg = dace.SDFG('compound_cond')
-    sdfg.add_array('a', [N], dace.float64)
-    loop = LoopRegion('walk', condition, 'i', 'i = 0', 'i = i + 1')
+def compound_condition_sdfg(condition: str = "i < N and i * i < N") -> dace.SDFG:
+    sdfg = dace.SDFG("compound_cond")
+    sdfg.add_array("a", [N], dace.float64)
+    loop = LoopRegion("walk", condition, "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    state = loop.add_state('body', is_start_block=True)
-    tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in + 1.0')
-    state.add_edge(state.add_read('a'), None, tasklet, '__in', dace.Memlet('a[i]'))
-    state.add_edge(tasklet, '__out', state.add_write('a'), None, dace.Memlet('a[i]'))
+    state = loop.add_state("body", is_start_block=True)
+    tasklet = state.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in + 1.0")
+    state.add_edge(state.add_read("a"), None, tasklet, "__in", dace.Memlet("a[i]"))
+    state.add_edge(tasklet, "__out", state.add_write("a"), None, dace.Memlet("a[i]"))
     sdfg.validate()
     return sdfg
 
@@ -45,16 +46,16 @@ def test_the_end_bound_is_genuinely_unreadable():
 
 def test_the_iterator_is_typed_from_init_and_step_alone():
     symbols = loop_of(compound_condition_sdfg()).new_symbols({})
-    assert symbols == {'i': dace.int64}, symbols
+    assert symbols == {"i": dace.int64}, symbols
 
 
 def test_codegen_survives_an_unreadable_end():
     """The second site: the frame codegen infers the same three expressions independently."""
-    code = '\n'.join(obj.clean_code for obj in compound_condition_sdfg().generate_code())
-    assert 'i < N' in code.replace('(', '').replace(')', '')
+    code = "\n".join(obj.clean_code for obj in compound_condition_sdfg().generate_code())
+    assert "i < N" in code.replace("(", "").replace(")", "")
 
 
-@pytest.mark.parametrize('n', [1, 4, 32])
+@pytest.mark.parametrize("n", [1, 4, 32])
 def test_the_compiled_loop_runs_the_right_iterations(n):
     sdfg = compound_condition_sdfg()
     got = np.zeros(n)
@@ -64,10 +65,10 @@ def test_the_compiled_loop_runs_the_right_iterations(n):
     while i < n and i * i < n:
         want[i] += 1.0
         i += 1
-    assert np.allclose(got, want), f'{got} != {want}'
+    assert np.allclose(got, want), f"{got} != {want}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_end_bound_is_genuinely_unreadable()
     test_the_iterator_is_typed_from_init_and_step_alone()
     test_codegen_survives_an_unreadable_end()

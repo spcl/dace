@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Run a freshly-compiled candidate in a forked child, so a segfault or runaway loop in generated code cannot take down the layout sweep; also pauses OpenMP thread pools first to avoid a fork deadlock."""
+
 import ctypes
 import json
 import os
@@ -35,16 +36,20 @@ def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> bool:
         try:
             pause = lib.omp_pause_resource_all
         except AttributeError:
-            warnings.warn(f"{soname}: no omp_pause_resource_all (pre-OpenMP-5.0 runtime); its thread "
-                          f"pool was NOT torn down before the fork -- fork safety now rests on its own "
-                          f"pthread_atfork handler, if it installs one (libgomp installs none).")
+            warnings.warn(
+                f"{soname}: no omp_pause_resource_all (pre-OpenMP-5.0 runtime); its thread "
+                f"pool was NOT torn down before the fork -- fork safety now rests on its own "
+                f"pthread_atfork handler, if it installs one (libgomp installs none)."
+            )
             torn_down = False
             continue
         pause.argtypes = [ctypes.c_int]
         pause.restype = ctypes.c_int
         if pause(mode) != 0:  # e.g. inside a parallel region: pool not torn down
-            warnings.warn(f"{soname}: omp_pause_resource_all(mode={mode}) returned non-zero; its "
-                          f"thread pool was NOT torn down before the fork.")
+            warnings.warn(
+                f"{soname}: omp_pause_resource_all(mode={mode}) returned non-zero; its "
+                f"thread pool was NOT torn down before the fork."
+            )
             torn_down = False
     return torn_down
 
@@ -72,9 +77,11 @@ def set_openmp_thread_count(threads: int) -> bool:
         try:
             setter, getter = lib.omp_set_num_threads, lib.omp_get_max_threads
         except AttributeError:
-            warnings.warn(f"{soname}: no omp_set_num_threads/omp_get_max_threads; its thread count "
-                          f"was NOT pinned to {threads} and its reduction order stays whatever the "
-                          f"runtime chose at initialisation.")
+            warnings.warn(
+                f"{soname}: no omp_set_num_threads/omp_get_max_threads; its thread count "
+                f"was NOT pinned to {threads} and its reduction order stays whatever the "
+                f"runtime chose at initialisation."
+            )
             pinned = False
             continue
         setter.argtypes = [ctypes.c_int]
@@ -82,8 +89,10 @@ def set_openmp_thread_count(threads: int) -> bool:
         getter.restype = ctypes.c_int
         setter(threads)
         if getter() != threads:  # e.g. a runtime that clamps to its own ceiling
-            warnings.warn(f"{soname}: omp_set_num_threads({threads}) left omp_get_max_threads() at "
-                          f"{getter()}; its thread count was NOT pinned.")
+            warnings.warn(
+                f"{soname}: omp_set_num_threads({threads}) left omp_get_max_threads() at "
+                f"{getter()}; its thread count was NOT pinned."
+            )
             pinned = False
     return pinned
 
@@ -92,6 +101,7 @@ def quiet_fatal_signals() -> None:
     """In the forked child, disable faulthandler so a segfault dies quietly instead of dumping a misleading traceback."""
     try:
         import faulthandler
+
         faulthandler.disable()
     except Exception:
         pass

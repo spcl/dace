@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """FuseMaps validates the SDFG after fusing only when its ``validate`` knob asks for it."""
+
 import copy
 
 import numpy as np
@@ -23,8 +24,8 @@ def count_maps(sdfg: dace.SDFG) -> int:
 
 def fusible_sdfg_with_an_unrelated_dangling_connector() -> dace.SDFG:
     sdfg = two_elementwise_maps.to_sdfg(simplify=True)
-    stray = sdfg.add_state_after(sdfg.sink_nodes()[0], 'stray')
-    stray.add_tasklet('dangling', {'x'}, {}, 'pass')
+    stray = sdfg.add_state_after(sdfg.sink_nodes()[0], "stray")
+    stray.add_tasklet("dangling", {"x"}, {}, "pass")
     return sdfg
 
 
@@ -43,7 +44,7 @@ def test_fuse_maps_with_validation_rejects_the_same_sdfg():
         FuseMaps(validate=True, validate_all=False).apply_pass(sdfg, {})
 
 
-@pytest.mark.parametrize('validate', [True, False])
+@pytest.mark.parametrize("validate", [True, False])
 def test_fused_maps_compute_the_same_values_with_or_without_validation(validate: bool):
     sdfg = copy.deepcopy(two_elementwise_maps.to_sdfg(simplify=True))
     a = np.arange(20, dtype=np.float64)

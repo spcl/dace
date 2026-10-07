@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared preprocessing for layout transformations: establishes the normal form layout passes assume (no stray views, implicit copies, or narrow nested-SDFG memlets; loops parallelized to maps)."""
+
 from dace import SDFG, data
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -17,13 +18,15 @@ def normalize_to_packed_c(sdfg: SDFG) -> None:
             continue
         # the rest of the stack (composed_permutation, the clone add_array) ASSUMES packed strides, so a
         # warning here just defers the failure to somewhere it reads as a miscompile
-        raise NotImplementedError(f"prepare_for_layout: array with non-packed strides {desc.strides} (shape "
-                                  f"{desc.shape}); the layout algebra assumes a packed C/Fortran "
-                                  f"representation. A relayout to the normal form must go through a "
-                                  f"LayoutChange node.")
+        raise NotImplementedError(
+            f"prepare_for_layout: array with non-packed strides {desc.strides} (shape "
+            f"{desc.shape}); the layout algebra assumes a packed C/Fortran "
+            f"representation. A relayout to the normal form must go through a "
+            f"LayoutChange node."
+        )
 
 
-def prepare_for_layout(sdfg: SDFG, target: str = 'cpu', validate: bool = True) -> SDFG:
+def prepare_for_layout(sdfg: SDFG, target: str = "cpu", validate: bool = True) -> SDFG:
     """Normalize ``sdfg`` in place into the precondition layout passes assume."""
     # Before canonicalize, whose plain UntileLoops refuses a blocked tile nest and leaves the array blocked.
     UntileLoops(unblock_arrays=True).apply_pass(sdfg, {})

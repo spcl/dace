@@ -4,6 +4,7 @@
 Precondition for remainder-split + iteration-mask passes: every innermost map
 body becomes one uniform unit.
 """
+
 from typing import Any
 
 import dace
@@ -15,15 +16,17 @@ from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.vectorization.lower_reduction_wcr import lower_reduction_wcr_in_body
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                   TILE_K1_TAIL_MARKER)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+    SCALAR_TAIL_MARKER,
+    TILE_K1_TAIL_MARKER,
+)
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
     is_vectorizable_map,
     map_body_nodes,
 )
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.utils.pass_invariants import assert_invariant, no_memlet_dim_mismatch
 from dace.optionals import required
 
 
@@ -49,14 +52,16 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         desc="Number of innermost dims the orchestrator will tile (``len(widths)``). Only forwarded "
         "to the shared ``is_vectorizable_map`` gate, so this pass agrees with the tile passes on "
         "which maps are candidates -- a map this pass declines to nest but a later pass strides is "
-        "exactly the desync that gate exists to prevent.")
+        "exactly the desync that gate exists to prevent.",
+    )
     nest_provably_divisible = properties.Property(
         dtype=bool,
         default=False,
         desc="Also nest innermost maps whose trip is provably a multiple of "
         "``vector_width`` (default skips them). The masked-tail tile path sets "
         "this: its provably-divisible interior still needs a NestedSDFG body "
-        "for the tile iteration mask.")
+        "for the tile iteration mask.",
+    )
 
     def __init__(self, vector_width: int = 8, nest_provably_divisible: bool = False, tiled_dims: int = 1) -> None:
         super().__init__()
@@ -99,9 +104,10 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         if not others:
             return False
         return all(
-            isinstance(k, dace.nodes.AccessNode) and any(
-                e.dst is map_exit and e.data is not None and e.data.wcr is not None for e in state.out_edges(k))
-            for k in others)
+            isinstance(k, dace.nodes.AccessNode)
+            and any(e.dst is map_exit and e.data is not None and e.data.wcr is not None for e in state.out_edges(k))
+            for k in others
+        )
 
     def _strip_boundary_other_subsets(self, state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
         # Drop stale ``other_subset`` on the body-NSDFG's boundary edges.
@@ -115,11 +121,14 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
     @staticmethod
     def expand_body_boundary(state: dace.SDFGState, nsdfg_node: dace.nodes.NestedSDFG) -> None:
         xform = ExpandNestedSDFGInputs()
-        xform.setup_match(state.sdfg,
-                          state.parent_graph.cfg_id,
-                          state.block_id, {ExpandNestedSDFGInputs.nested_sdfg: nsdfg_node},
-                          0,
-                          override=True)
+        xform.setup_match(
+            state.sdfg,
+            state.parent_graph.cfg_id,
+            state.block_id,
+            {ExpandNestedSDFGInputs.nested_sdfg: nsdfg_node},
+            0,
+            override=True,
+        )
         if xform.can_be_applied(state, 0, state.sdfg, permissive=False):
             xform.apply(state, state.sdfg)
 
@@ -163,8 +172,11 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
                 continue
             # Deliberately ``all_nodes_between``: a body ending in a write-only scratch scalar comes back empty
             # and stays un-nested, since the widener cannot lower it yet; RestoreUntiledMapStride fixes the step.
-            body_nodes = OrderedSet(node for node in g.all_nodes_between(n, required(g.exit_node(n)))
-                                    if not isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit)))
+            body_nodes = OrderedSet(
+                node
+                for node in g.all_nodes_between(n, required(g.exit_node(n)))
+                if not isinstance(node, (dace.nodes.MapEntry, dace.nodes.MapExit))
+            )
             if not body_nodes:
                 continue
             selected.append((g, n, body_nodes))
@@ -187,7 +199,8 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         if nested:
             # The WCR sink now flows from the NSDFG; interpose a private scalar (NormalizeWCRSource) so CPU
             # codegen emits the boundary WCR as an OpenMP reduction.
-            from dace.transformation.passes.normalize_wcr_source import (NormalizeWCRSource)
+            from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+
             NormalizeWCRSource().apply_pass(sdfg, {})
             # Rewrite the WCR ``nest_state_subgraph`` duplicated onto the inner body edge to ``acc = acc <op> src``
             # (foldable via TileReduce); the boundary WCR stays. Postamble tails keep it.
@@ -204,14 +217,21 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
                     if any(isinstance(inner, dace.nodes.NestedSDFG) for inner, _ in node.sdfg.all_nodes_recursive()):
                         self.expand_body_boundary(g, node)
                     node.sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
-                    inlined = node.sdfg.apply_transformations_repeated(
-                        [InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False) or 0
+                    inlined = (
+                        node.sdfg.apply_transformations_repeated(
+                            [InlineSDFG, InlineMultistateSDFG], permissive=False, validate=False
+                        )
+                        or 0
+                    )
                     # A body phase 2 did not nest (the map already held one NSDFG) or one that just inlined an inner
                     # body carries the No-View duplicate of its boundary reduction, which phase 2 never lowered.
                     is_tail = n.map.label.endswith(SCALAR_TAIL_MARKER) or n.map.label.endswith(TILE_K1_TAIL_MARKER)
                     lower_reduction_wcr_in_body(node.sdfg, tiled=not is_tail)
                     flattened += inlined
 
-        assert_invariant(no_memlet_dim_mismatch(sdfg), "NestInnermostMapBodyIntoNSDFG",
-                         "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(
+            no_memlet_dim_mismatch(sdfg),
+            "NestInnermostMapBodyIntoNSDFG",
+            "memlet subset and other_subset have matching dimensionality",
+        )
         return (nested + flattened) or None

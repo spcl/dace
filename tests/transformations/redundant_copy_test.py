@@ -7,8 +7,13 @@ from typing import Tuple
 import dace
 from dace import nodes, data as dace_data
 from dace.libraries.linalg import Transpose
-from dace.transformation.dataflow import (MapFusionVertical, RedundantArray, RedundantSecondArray,
-                                          RedundantArrayCopying, RedundantArrayCopyingIn)
+from dace.transformation.dataflow import (
+    MapFusionVertical,
+    RedundantArray,
+    RedundantSecondArray,
+    RedundantArrayCopying,
+    RedundantArrayCopyingIn,
+)
 from dace.transformation.interstate import LoopToMap
 
 from . import utility
@@ -59,12 +64,17 @@ def test_reshaping_with_redundant_arrays():
             None,
             dace.Memlet.from_array("input", input_desc),
         )
-        state.add_edge(a_an, None, b_an, None,
-                       dace.Memlet.simple(
-                           "a",
-                           subset_str="0:6, 0:6, 0:6",
-                           other_subset_str="0:36, 0, 0:6",
-                       ))
+        state.add_edge(
+            a_an,
+            None,
+            b_an,
+            None,
+            dace.Memlet.simple(
+                "a",
+                subset_str="0:6, 0:6, 0:6",
+                other_subset_str="0:36, 0, 0:6",
+            ),
+        )
         state.add_edge(
             b_an,
             None,
@@ -109,7 +119,7 @@ def test_reshaping_with_redundant_arrays():
             return sdfg
         assert False, "Could not apply the transformation."
 
-    input_array = np.array(np.random.rand(6, 6, 6), dtype=np.float64, order='C')
+    input_array = np.array(np.random.rand(6, 6, 6), dtype=np.float64, order="C")
     ref = input_array.reshape((36, 1, 6)).copy()
     output_step1 = np.zeros_like(ref)
     output_step2 = np.zeros_like(ref)
@@ -137,25 +147,25 @@ def test_ordering_edge_is_not_a_redundant_copy():
     """
     import warnings as _warnings
 
-    sdfg = dace.SDFG('ordering_edge_not_a_copy')
-    sdfg.add_array('a', [4], dace.float64)
-    sdfg.add_transient('t', [4], dace.float64)
-    state = sdfg.add_state('s', is_start_block=True)
-    tasklet = state.add_tasklet('w', {}, {'o'}, 'o = 1.0')
-    t_access, a_access = state.add_access('t'), state.add_access('a')
-    state.add_edge(tasklet, 'o', t_access, None, dace.Memlet('t[0]'))
+    sdfg = dace.SDFG("ordering_edge_not_a_copy")
+    sdfg.add_array("a", [4], dace.float64)
+    sdfg.add_transient("t", [4], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    tasklet = state.add_tasklet("w", {}, {"o"}, "o = 1.0")
+    t_access, a_access = state.add_access("t"), state.add_access("a")
+    state.add_edge(tasklet, "o", t_access, None, dace.Memlet("t[0]"))
     state.add_edge(t_access, None, a_access, None, dace.Memlet())  # ordering only, no data
 
     with _warnings.catch_warnings(record=True) as caught:
-        _warnings.simplefilter('always')
+        _warnings.simplefilter("always")
         sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
-        noisy = [str(w.message) for w in caught if 'validate_subsets failed' in str(w.message)]
+        noisy = [str(w.message) for w in caught if "validate_subsets failed" in str(w.message)]
 
-    assert not noisy, f'ordering edge treated as a copy candidate: {noisy}'
-    assert state.edges_between(t_access, a_access), 'the ordering edge must survive'
+    assert not noisy, f"ordering edge treated as a copy candidate: {noisy}"
+    assert state.edges_between(t_access, a_access), "the ordering edge must survive"
 
 
-@pytest.mark.parametrize('shape', [[1], [1, 1]])
+@pytest.mark.parametrize("shape", [[1], [1, 1]])
 def test_redundant_scalar_copy_is_removed(shape):
     """An all-size-1 buffer copied into another must still be recognized as redundant.
 
@@ -163,32 +173,32 @@ def test_redundant_scalar_copy_is_removed(shape):
     keeps one dimension rather than going to zero, so dropping every size-1 entry from the shape made
     the two disagree and the copy that scalar fission emits was never removed.
     """
-    for trafo, survivor in ((RedundantArray, 's'), (RedundantSecondArray, 'q')):
-        sdfg = dace.SDFG(f'redundant_scalar_{trafo.__name__}_{len(shape)}')
-        sdfg.add_array('a', [4], dace.float64)
-        sdfg.add_array('b', [4], dace.float64)
-        sdfg.add_transient('q', shape, dace.float64)
-        sdfg.add_transient('s', shape, dace.float64)
-        state = sdfg.add_state('s', is_start_block=True)
+    for trafo, survivor in ((RedundantArray, "s"), (RedundantSecondArray, "q")):
+        sdfg = dace.SDFG(f"redundant_scalar_{trafo.__name__}_{len(shape)}")
+        sdfg.add_array("a", [4], dace.float64)
+        sdfg.add_array("b", [4], dace.float64)
+        sdfg.add_transient("q", shape, dace.float64)
+        sdfg.add_transient("s", shape, dace.float64)
+        state = sdfg.add_state("s", is_start_block=True)
 
-        index = ', '.join('0' for _ in shape)
-        producer = state.add_tasklet('w', {'i'}, {'o'}, 'o = i * 2.0')
-        q_access, s_access = state.add_access('q'), state.add_access('s')
-        state.add_edge(state.add_access('a'), None, producer, 'i', dace.Memlet('a[0]'))
-        state.add_edge(producer, 'o', q_access, None, dace.Memlet(f'q[{index}]'))
-        state.add_edge(q_access, None, s_access, None, dace.Memlet(f'q[{index}] -> [{index}]'))
-        consumer = state.add_tasklet('r', {'i'}, {'o'}, 'o = i + 1.0')
-        state.add_edge(s_access, None, consumer, 'i', dace.Memlet(f's[{index}]'))
-        state.add_edge(consumer, 'o', state.add_access('b'), None, dace.Memlet('b[0]'))
+        index = ", ".join("0" for _ in shape)
+        producer = state.add_tasklet("w", {"i"}, {"o"}, "o = i * 2.0")
+        q_access, s_access = state.add_access("q"), state.add_access("s")
+        state.add_edge(state.add_access("a"), None, producer, "i", dace.Memlet("a[0]"))
+        state.add_edge(producer, "o", q_access, None, dace.Memlet(f"q[{index}]"))
+        state.add_edge(q_access, None, s_access, None, dace.Memlet(f"q[{index}] -> [{index}]"))
+        consumer = state.add_tasklet("r", {"i"}, {"o"}, "o = i + 1.0")
+        state.add_edge(s_access, None, consumer, "i", dace.Memlet(f"s[{index}]"))
+        state.add_edge(consumer, "o", state.add_access("b"), None, dace.Memlet("b[0]"))
         sdfg.validate()
 
         assert sdfg.apply_transformations_repeated(trafo, validate_all=True) == 1, trafo.__name__
-        assert sorted({n.data for n in state.data_nodes()}) == ['a', 'b', survivor]
+        assert sorted({n.data for n in state.data_nodes()}) == ["a", "b", survivor]
 
         a = np.arange(1, 5, dtype=np.float64)
         b = np.zeros(4, dtype=np.float64)
         sdfg(a=a, b=b)
-        assert b[0] == 3.0, f'{trafo.__name__} changed the result: {b[0]}'
+        assert b[0] == 3.0, f"{trafo.__name__} changed the result: {b[0]}"
 
 
 def test_out():
@@ -240,15 +250,15 @@ def test_out_success():
     sdfg.add_scalar("D", dace.float32, transient=True)
     sdfg.add_array("E", [3, 3, 3], dace.float32)
 
-    me, mx = state.add_map("Map", dict(i='0:3', j='0:3', k='0:3'))
-    t = state.add_tasklet("Tasklet", {'__in1', '__in2'}, {'__out'}, "__out = __in1 + __in2")
+    me, mx = state.add_map("Map", dict(i="0:3", j="0:3", k="0:3"))
+    t = state.add_tasklet("Tasklet", {"__in1", "__in2"}, {"__out"}, "__out = __in1 + __in2")
     D = state.add_access("D")
     E = state.add_access("E")
 
-    state.add_memlet_path(B, me, t, memlet=dace.Memlet.simple("B", "i, j"), dst_conn='__in1')
+    state.add_memlet_path(B, me, t, memlet=dace.Memlet.simple("B", "i, j"), dst_conn="__in1")
     state.add_memlet_path(B, me, D, memlet=dace.Memlet.simple("B", "j, k"))
-    state.add_edge(D, None, t, '__in2', dace.Memlet.simple("D", "0"))
-    state.add_memlet_path(t, mx, E, memlet=dace.Memlet.simple("E", "i, j, k"), src_conn='__out')
+    state.add_edge(D, None, t, "__in2", dace.Memlet.simple("D", "0"))
+    state.add_memlet_path(t, mx, E, memlet=dace.Memlet.simple("E", "i, j, k"), src_conn="__out")
 
     sdfg.validate()
     sdfg.simplify()
@@ -379,16 +389,16 @@ def test_in_failure_partial_copy():
     partial copy to a full one and corrupt the region the chain never wrote."""
 
     def build():
-        sdfg = dace.SDFG('rcin_failure_partial_copy')
+        sdfg = dace.SDFG("rcin_failure_partial_copy")
         state = sdfg.add_state()
-        sdfg.add_array('A', [4], dace.float64)
-        sdfg.add_transient('B', [4], dace.float64)
-        sdfg.add_transient('C', [4], dace.float64)
-        sdfg.add_array('D', [4], dace.float64)
-        A, B, C, D = (state.add_access(x) for x in 'ABCD')
-        state.add_nedge(A, B, dace.Memlet('A[0:4] -> [0:4]'))  # B = A (full)
-        state.add_nedge(B, C, dace.Memlet('B[0:2] -> [0:2]'))  # C[0:2] = B[0:2] (partial)
-        state.add_nedge(C, D, dace.Memlet('C[0:2] -> [0:2]'))  # D[0:2] = C[0:2] (partial)
+        sdfg.add_array("A", [4], dace.float64)
+        sdfg.add_transient("B", [4], dace.float64)
+        sdfg.add_transient("C", [4], dace.float64)
+        sdfg.add_array("D", [4], dace.float64)
+        A, B, C, D = (state.add_access(x) for x in "ABCD")
+        state.add_nedge(A, B, dace.Memlet("A[0:4] -> [0:4]"))  # B = A (full)
+        state.add_nedge(B, C, dace.Memlet("B[0:2] -> [0:2]"))  # C[0:2] = B[0:2] (partial)
+        state.add_nedge(C, D, dace.Memlet("C[0:2] -> [0:2]"))  # D[0:2] = C[0:2] (partial)
         sdfg.validate()
         return sdfg
 
@@ -406,18 +416,18 @@ def test_in_failure_extra_consumer():
     """RedundantArrayCopyingIn must refuse when the middle array feeds a second
     consumer: ``apply`` removes the middle node, which would orphan that
     consumer's source."""
-    sdfg = dace.SDFG('rcin_failure_extra_consumer')
+    sdfg = dace.SDFG("rcin_failure_extra_consumer")
     state = sdfg.add_state()
-    sdfg.add_array('A', [4], dace.float64)
-    sdfg.add_transient('B', [4], dace.float64)
-    sdfg.add_transient('C', [4], dace.float64)
-    sdfg.add_array('D', [4], dace.float64)
-    sdfg.add_array('E', [4], dace.float64)
-    A, B, C, D, E = (state.add_access(x) for x in 'ABCDE')
-    state.add_nedge(A, B, dace.Memlet('A[0:4] -> [0:4]'))
-    state.add_nedge(B, C, dace.Memlet('B[0:4] -> [0:4]'))
-    state.add_nedge(C, D, dace.Memlet('C[0:4] -> [0:4]'))
-    state.add_nedge(C, E, dace.Memlet('C[0:4] -> [0:4]'))  # second consumer of C
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_transient("B", [4], dace.float64)
+    sdfg.add_transient("C", [4], dace.float64)
+    sdfg.add_array("D", [4], dace.float64)
+    sdfg.add_array("E", [4], dace.float64)
+    A, B, C, D, E = (state.add_access(x) for x in "ABCDE")
+    state.add_nedge(A, B, dace.Memlet("A[0:4] -> [0:4]"))
+    state.add_nedge(B, C, dace.Memlet("B[0:4] -> [0:4]"))
+    state.add_nedge(C, D, dace.Memlet("C[0:4] -> [0:4]"))
+    state.add_nedge(C, E, dace.Memlet("C[0:4] -> [0:4]"))  # second consumer of C
     sdfg.validate()
 
     assert sdfg.apply_transformations_repeated(RedundantArrayCopyingIn) == 0
@@ -425,38 +435,38 @@ def test_in_failure_extra_consumer():
 
 
 def test_view_array_array():
-    sdfg = dace.SDFG('redarrtest')
-    sdfg.add_view('v', [2, 10], dace.float64)
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_transient('tmp', [20], dace.float64)
+    sdfg = dace.SDFG("redarrtest")
+    sdfg.add_view("v", [2, 10], dace.float64)
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_transient("tmp", [20], dace.float64)
 
     state = sdfg.add_state()
-    t = state.add_tasklet('something', {}, {'out'}, 'out[1, 1] = 6')
-    v = state.add_access('v')
-    tmp = state.add_access('tmp')
-    w = state.add_write('A')
-    state.add_edge(t, 'out', v, None, dace.Memlet('v[0:2, 0:10]'))
-    state.add_nedge(v, tmp, dace.Memlet('tmp[0:20]'))
-    state.add_nedge(tmp, w, dace.Memlet('A[0:20]'))
+    t = state.add_tasklet("something", {}, {"out"}, "out[1, 1] = 6")
+    v = state.add_access("v")
+    tmp = state.add_access("tmp")
+    w = state.add_write("A")
+    state.add_edge(t, "out", v, None, dace.Memlet("v[0:2, 0:10]"))
+    state.add_nedge(v, tmp, dace.Memlet("tmp[0:20]"))
+    state.add_nedge(tmp, w, dace.Memlet("A[0:20]"))
 
     assert sdfg.apply_transformations_repeated(RedundantArray) == 1
     sdfg.validate()
 
 
 def test_array_array_view():
-    sdfg = dace.SDFG('redarrtest')
-    sdfg.add_view('v', [2, 10], dace.float64)
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_transient('tmp', [20], dace.float64)
+    sdfg = dace.SDFG("redarrtest")
+    sdfg.add_view("v", [2, 10], dace.float64)
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_transient("tmp", [20], dace.float64)
 
     state = sdfg.add_state()
-    a = state.add_read('A')
-    tmp = state.add_access('tmp')
-    v = state.add_access('v')
-    t = state.add_tasklet('something', {'inp'}, {}, 'inp[1, 1] + 6')
-    state.add_nedge(a, tmp, dace.Memlet('A[0:20]'))
-    state.add_nedge(tmp, v, dace.Memlet('tmp[0:20]'))
-    state.add_edge(v, None, t, 'inp', dace.Memlet('v[0:2, 0:10]'))
+    a = state.add_read("A")
+    tmp = state.add_access("tmp")
+    v = state.add_access("v")
+    t = state.add_tasklet("something", {"inp"}, {}, "inp[1, 1] + 6")
+    state.add_nedge(a, tmp, dace.Memlet("A[0:20]"))
+    state.add_nedge(tmp, v, dace.Memlet("tmp[0:20]"))
+    state.add_edge(v, None, t, "inp", dace.Memlet("v[0:2, 0:10]"))
 
     assert sdfg.apply_transformations_repeated(RedundantSecondArray) == 1
     sdfg.validate()
@@ -476,21 +486,21 @@ def test_reverse_copy():
 
 
 def test_self_copy_through_transient():
-    """ Removing ``tmp`` from ``p[:, 2] -> tmp -> p[:, 3]`` leaves a self-copy, which must keep its direction. """
-    sdfg = dace.SDFG('redarr_self_copy')
-    sdfg.add_array('p', [4, 4], dace.float64)
-    sdfg.add_transient('tmp', [4], dace.float64)
+    """Removing ``tmp`` from ``p[:, 2] -> tmp -> p[:, 3]`` leaves a self-copy, which must keep its direction."""
+    sdfg = dace.SDFG("redarr_self_copy")
+    sdfg.add_array("p", [4, 4], dace.float64)
+    sdfg.add_transient("tmp", [4], dace.float64)
     state = sdfg.add_state()
-    r = state.add_read('p')
-    tmp = state.add_access('tmp')
-    w = state.add_write('p')
-    state.add_nedge(r, tmp, dace.Memlet('[0:4, 2] -> tmp[0:4]'))
-    state.add_nedge(tmp, w, dace.Memlet('tmp[0:4] -> [0:4, 3]'))
+    r = state.add_read("p")
+    tmp = state.add_access("tmp")
+    w = state.add_write("p")
+    state.add_nedge(r, tmp, dace.Memlet("[0:4, 2] -> tmp[0:4]"))
+    state.add_nedge(tmp, w, dace.Memlet("tmp[0:4] -> [0:4, 3]"))
 
     assert sdfg.apply_transformations(RedundantArray) == 1
-    e, = state.edges()
-    assert str(e.data.src_subset) == '0:4, 2'
-    assert str(e.data.dst_subset) == '0:4, 3'
+    (e,) = state.edges()
+    assert str(e.data.src_subset) == "0:4, 2"
+    assert str(e.data.dst_subset) == "0:4, 3"
 
     p = np.random.rand(4, 4)
     pp = np.copy(p)
@@ -500,8 +510,8 @@ def test_self_copy_through_transient():
 
 
 def test_reverse_copy_nested_symbolic():
-    """ A symbolic self-copy inlined into a concrete program, where ``R - 1`` and ``R - 2`` become constants. """
-    R = dace.symbol('R', dace.int64)
+    """A symbolic self-copy inlined into a concrete program, where ``R - 1`` and ``R - 2`` become constants."""
+    R = dace.symbol("R", dace.int64)
 
     @dace.program
     def inner(p: dace.float64[R, R]):
@@ -512,7 +522,7 @@ def test_reverse_copy_nested_symbolic():
         inner(p)
 
     # ``R - 1`` and ``R - 2`` are disjoint regardless of how each side's ``R`` is typed: no intermediate copy needed
-    assert not any(s.label.startswith('copy_from_view') for s in inner.to_sdfg(simplify=False).states())
+    assert not any(s.label.startswith("copy_from_view") for s in inner.to_sdfg(simplify=False).states())
 
     p = np.random.rand(4, 4)
     pp = np.copy(p)
@@ -521,7 +531,7 @@ def test_reverse_copy_nested_symbolic():
     assert np.allclose(p, pp)
 
 
-C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ('C_in', 'C_out', 'H', 'K', 'N', 'W'))
+C_in, C_out, H, K, N, W = (dace.symbol(s, dace.int64) for s in ("C_in", "C_out", "H", "K", "N", "W"))
 
 
 # Deep learning convolutional operator (stride = 1)
@@ -533,7 +543,7 @@ def conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[K, K, C_in,
     for i in range(H - K + 1):
         for j in range(W - K + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -541,15 +551,21 @@ def conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[K, K, C_in,
 
 
 def conv2d_py(input, weights):
-    output = np.ndarray((input.shape[0], input.shape[1] - weights.shape[0] + 1, input.shape[2] - weights.shape[1] + 1,
-                         weights.shape[3]),
-                        dtype=np.float64)
+    output = np.ndarray(
+        (
+            input.shape[0],
+            input.shape[1] - weights.shape[0] + 1,
+            input.shape[2] - weights.shape[1] + 1,
+            weights.shape[3],
+        ),
+        dtype=np.float64,
+    )
     K = weights.shape[0]
     # Loop structure adapted from https://github.com/SkalskiP/ILearnDeepLearning.py/blob/ba0b5ba589d4e656141995e8d1a06d44db6ce58d/01_mysteries_of_neural_networks/06_numpy_convolutional_neural_net/src/layers/convolutional.py#L88
     for i in range(output.shape[1]):
         for j in range(output.shape[2]):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -559,10 +575,11 @@ def conv2d_py(input, weights):
 def test_conv2d():
     sdfg = conv2d.to_sdfg(simplify=True)
     access_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive()
+        n
+        for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.AccessNode) and not isinstance(sdfg.arrays[n.data], dace.data.View)
     ]
-    assert (len(access_nodes) == 4)
+    assert len(access_nodes) == 4
 
 
 @dace.program
@@ -573,7 +590,7 @@ def padded_conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[1, 1
 
 
 def test_padded_conv2d():
-    """ Tests for issues regarding redundant arrays with views in nested SDFGs. """
+    """Tests for issues regarding redundant arrays with views in nested SDFGs."""
     input = np.random.rand(8, 32, 32, 3)
     weights = np.random.rand(1, 1, 3, 16)
     reference = np.zeros((8, 34, 34, 16), dtype=np.float64)
@@ -584,18 +601,18 @@ def test_padded_conv2d():
 
 
 def test_redundant_second_copy_isolated():
-    sdfg = dace.SDFG('rsc')
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_transient('tmp', [20], dace.float64)
+    sdfg = dace.SDFG("rsc")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_transient("tmp", [20], dace.float64)
     state = sdfg.add_state()
-    state.add_nedge(state.add_read('A'), state.add_write('tmp'), dace.Memlet('tmp'))
+    state.add_nedge(state.add_read("A"), state.add_write("tmp"), dace.Memlet("tmp"))
 
     assert sdfg.apply_transformations(RedundantSecondArray) == 1
     sdfg.validate()
     assert state.number_of_nodes() == 0
 
 
-@pytest.mark.parametrize('order', ['C', 'F'])
+@pytest.mark.parametrize("order", ["C", "F"])
 def test_invalid_redundant_array_strided(order):
 
     @dace.program
@@ -611,7 +628,8 @@ def test_invalid_redundant_array_strided(order):
 
 
 def _make_reshaping_not_zero_started_input_sdfg(
-    a_has_larger_rank_than_b: bool, ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
+    a_has_larger_rank_than_b: bool,
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
     sdfg = dace.SDFG(utility.unique_name("non_zero_offset_reshaping"))
     state = sdfg.add_state(is_start_block=True)
 
@@ -640,16 +658,18 @@ def _make_reshaping_not_zero_started_input_sdfg(
     a, b, c = (state.add_access(name) for name in "abc")
 
     state.add_edge(
-        a, None, b, None,
+        a,
+        None,
+        b,
+        None,
         dace.Memlet("a[5:10, 0, 1, 3:13] -> [0:5, 0, 0:10]")
-        if a_has_larger_rank_than_b else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"))
+        if a_has_larger_rank_than_b
+        else dace.Memlet("a[5:10, 3:13] -> [0:5, 0, 0:10]"),
+    )
 
     _, me, _ = state.add_mapped_tasklet(
         "comp",
-        map_ranges={
-            "__i": "5:10",
-            "__j": "3:13"
-        },
+        map_ranges={"__i": "5:10", "__j": "3:13"},
         inputs={"__in": dace.Memlet("b[__i - 5, 0, __j - 3]")},
         code="__out = __in + 1.3",
         outputs={"__out": dace.Memlet("c[__i, __j]")},
@@ -697,32 +717,44 @@ def test_redundant_second_array_across_map_exit():
     ``MapExit -> B`` is written in ``B``'s terms and the map range supplies the dimensions the
     ``(1, 1, 1)`` transient does not have, so that edge is not part of the redirection.
     """
-    N, tsteps = dace.symbol('N'), dace.symbol('tsteps')
+    N, tsteps = dace.symbol("N"), dace.symbol("tsteps")
 
     @dace.program
     def heat3d(A: dace.float64[N, N, N], B: dace.float64[N, N, N]):
         for _ in range(1, tsteps):
-            B[1:-1, 1:-1,
-              1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                       (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                       (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-            A[1:-1, 1:-1,
-              1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                       (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                       (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+            B[1:-1, 1:-1, 1:-1] = (
+                0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+                + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+                + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+                + A[1:-1, 1:-1, 1:-1]
+            )
+            A[1:-1, 1:-1, 1:-1] = (
+                0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+                + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+                + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+                + B[1:-1, 1:-1, 1:-1]
+            )
 
     def is_unit_transient(sd, name):
         desc = sd.arrays[name]
-        return desc.transient and all(str(size) == '1' for size in desc.shape)
+        return desc.transient and all(str(size) == "1" for size in desc.shape)
 
     def unit_transients(sdfg):
-        return [(sd.label, name) for sd in sdfg.all_sdfgs_recursive() for name in sd.arrays
-                if is_unit_transient(sd, name)]
+        return [
+            (sd.label, name) for sd in sdfg.all_sdfgs_recursive() for name in sd.arrays if is_unit_transient(sd, name)
+        ]
 
     def unit_transient_copies(sdfg):
-        return [(e.src.data, e.dst.data) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
-                if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
-                and is_unit_transient(sd, e.src.data) and is_unit_transient(sd, e.dst.data)]
+        return [
+            (e.src.data, e.dst.data)
+            for sd in sdfg.all_sdfgs_recursive()
+            for st in sd.states()
+            for e in st.edges()
+            if isinstance(e.src, nodes.AccessNode)
+            and isinstance(e.dst, nodes.AccessNode)
+            and is_unit_transient(sd, e.src.data)
+            and is_unit_transient(sd, e.dst.data)
+        ]
 
     sdfg = heat3d.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
@@ -745,16 +777,18 @@ def test_redundant_second_array_across_map_exit():
     ref_a = ((idx[:, None, None] + idx[None, :, None] + (n - idx[None, None, :])) * 10) / n
     ref_b = ref_a.copy()
     for _ in range(1, steps):
-        ref_b[1:-1, 1:-1,
-              1:-1] = (0.125 * (ref_a[2:, 1:-1, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[:-2, 1:-1, 1:-1]) +
-                       0.125 * (ref_a[1:-1, 2:, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, :-2, 1:-1]) +
-                       0.125 * (ref_a[1:-1, 1:-1, 2:] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, 1:-1, :-2]) +
-                       ref_a[1:-1, 1:-1, 1:-1])
-        ref_a[1:-1, 1:-1,
-              1:-1] = (0.125 * (ref_b[2:, 1:-1, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[:-2, 1:-1, 1:-1]) +
-                       0.125 * (ref_b[1:-1, 2:, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, :-2, 1:-1]) +
-                       0.125 * (ref_b[1:-1, 1:-1, 2:] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, 1:-1, :-2]) +
-                       ref_b[1:-1, 1:-1, 1:-1])
+        ref_b[1:-1, 1:-1, 1:-1] = (
+            0.125 * (ref_a[2:, 1:-1, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[:-2, 1:-1, 1:-1])
+            + 0.125 * (ref_a[1:-1, 2:, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, :-2, 1:-1])
+            + 0.125 * (ref_a[1:-1, 1:-1, 2:] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, 1:-1, :-2])
+            + ref_a[1:-1, 1:-1, 1:-1]
+        )
+        ref_a[1:-1, 1:-1, 1:-1] = (
+            0.125 * (ref_b[2:, 1:-1, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[:-2, 1:-1, 1:-1])
+            + 0.125 * (ref_b[1:-1, 2:, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, :-2, 1:-1])
+            + 0.125 * (ref_b[1:-1, 1:-1, 2:] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, 1:-1, :-2])
+            + ref_b[1:-1, 1:-1, 1:-1]
+        )
 
     a = ((idx[:, None, None] + idx[None, :, None] + (n - idx[None, None, :])) * 10) / n
     b = a.copy()
@@ -764,7 +798,7 @@ def test_redundant_second_array_across_map_exit():
     assert np.array_equal(b, ref_b)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_in()
     test_out()
     test_out_success()
@@ -779,8 +813,8 @@ if __name__ == '__main__':
     test_conv2d()
     test_padded_conv2d()
     test_redundant_second_copy_isolated()
-    test_invalid_redundant_array_strided('C')
-    test_invalid_redundant_array_strided('F')
+    test_invalid_redundant_array_strided("C")
+    test_invalid_redundant_array_strided("F")
     test_reshaping_not_zero_started_input(True)
     test_reshaping_not_zero_started_input(False)
     test_redundant_second_array_across_map_exit()

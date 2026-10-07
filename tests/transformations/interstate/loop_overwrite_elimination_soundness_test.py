@@ -28,13 +28,14 @@ it cannot, because line 11 imports the module-level wrapper, which swallows it.
 The pass is exported from ``dace.transformation.interstate`` but is not wired into any pipeline, so
 these are latent for anyone who requests the transformation explicitly.
 """
+
 import os
 
-os.environ.setdefault('OMP_NUM_THREADS', '4')
-os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
-os.environ.setdefault('OMPI_MCA_pml', 'ob1')
-os.environ.setdefault('OMPI_MCA_btl', 'self,vader')
-os.environ.setdefault('UCX_VFS_ENABLE', 'n')
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
+os.environ.setdefault("OMPI_MCA_pml", "ob1")
+os.environ.setdefault("OMPI_MCA_btl", "self,vader")
+os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 import numpy as np
 import pytest
@@ -65,7 +66,7 @@ def test_nondividing_stride_readback_is_not_eliminated():
 
     applied = sdfg.apply_transformations_repeated(LoopOverwriteElimination)
 
-    assert applied == 0, 'eliminated a loop whose last iterate reads the location it overwrites'
+    assert applied == 0, "eliminated a loop whose last iterate reads the location it overwrites"
     assert len(_loops(sdfg)) == 1
 
 
@@ -114,7 +115,7 @@ def test_nondividing_stride_without_readback_still_eliminates():
     ref_sdfg(A=ref)
 
     applied = xf_sdfg.apply_transformations_repeated(LoopOverwriteElimination)
-    assert applied == 1, 'refused a safe elimination: i never attains 9'
+    assert applied == 1, "refused a safe elimination: i never attains 9"
     assert len(_loops(xf_sdfg)) == 0
 
     xf_sdfg(A=got)
@@ -128,7 +129,7 @@ def test_symbolic_bound_nonunit_stride_is_value_preserving():
     element. ``int_floor`` keeps the symbolic and the emitted index in agreement. Swept over N so both
     parities of ``(end - start) / stride`` are covered.
     """
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester_symbolic_bound_nonunit_stride_is_value_preserving(A: dace.float64[64], B: dace.float64[1]):
@@ -144,7 +145,7 @@ def test_symbolic_bound_nonunit_stride_is_value_preserving():
         got = np.zeros(1, dtype=np.float64)
         xf_sdfg(A=A.copy(), B=got, N=n)
 
-        np.testing.assert_equal(got, expected, err_msg=f'wrong last iterate pinned for N={n}')
+        np.testing.assert_equal(got, expected, err_msg=f"wrong last iterate pinned for N={n}")
 
 
 def test_reparenting_does_not_collide_block_names():
@@ -154,28 +155,27 @@ def test_reparenting_does_not_collide_block_names():
     naming. A loop body is its own name scope, so a label unique inside the loop can already be taken
     in the destination. ``TrivialLoopElimination`` had this exact defect.
     """
-    sdfg = dace.SDFG('collide')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_symbol('i', dace.int64)
+    sdfg = dace.SDFG("collide")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
 
     # A parent state whose label the loop body also uses.
-    outer = sdfg.add_state('body', is_start_block=True)
+    outer = sdfg.add_state("body", is_start_block=True)
 
-    loop = LoopRegion('loop', 'i < 4', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
     sdfg.add_node(loop)
     sdfg.add_edge(outer, loop, dace.InterstateEdge())
-    inner = loop.add_state('body', is_start_block=True)
-    t = inner.add_tasklet('set', {}, {'out'}, 'out = 1.0')
-    inner.add_edge(t, 'out', inner.add_write('A'), None, dace.Memlet(data='A', subset='0'))
+    inner = loop.add_state("body", is_start_block=True)
+    t = inner.add_tasklet("set", {}, {"out"}, "out = 1.0")
+    inner.add_edge(t, "out", inner.add_write("A"), None, dace.Memlet(data="A", subset="0"))
 
     sdfg.apply_transformations_repeated(LoopOverwriteElimination)
 
     for region in sdfg.all_control_flow_regions(recursive=True):
         labels = [b.label for b in region.nodes()]
-        assert len(labels) == len(set(labels)), \
-            f'region {region.label!r} holds duplicate block names: {labels}'
+        assert len(labels) == len(set(labels)), f"region {region.label!r} holds duplicate block names: {labels}"
     sdfg.validate()
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-x', '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-x", "-q"])

@@ -42,6 +42,7 @@ is not the full array the operands are routed through strided Views (whose strid
 encode the per-axis step) so the library node still sees a dense operand. Only when
 every axis covers its whole array are plain full-array memlets emitted.
 """
+
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import sympy
@@ -124,8 +125,12 @@ def _is_copy_tasklet(node: nodes.Node) -> bool:
     if code.count("=") != 1:
         return False
     lhs, rhs = (s.strip() for s in code.split("=", 1))
-    return len(node.in_connectors) == 1 and len(node.out_connectors) == 1 and rhs in node.in_connectors and \
-        lhs in node.out_connectors
+    return (
+        len(node.in_connectors) == 1
+        and len(node.out_connectors) == 1
+        and rhs in node.in_connectors
+        and lhs in node.out_connectors
+    )
 
 
 def _node_side_subset(state: SDFGState, edge: MultiConnectorEdge[Memlet], node: nodes.Node) -> Optional[subsets.Subset]:
@@ -139,8 +144,9 @@ def _node_side_subset(state: SDFGState, edge: MultiConnectorEdge[Memlet], node: 
     return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
-def single_source_and_sink(state: SDFGState,
-                           access: List[nodes.AccessNode]) -> Optional[Tuple[nodes.AccessNode, nodes.AccessNode]]:
+def single_source_and_sink(
+    state: SDFGState, access: List[nodes.AccessNode]
+) -> Optional[Tuple[nodes.AccessNode, nodes.AccessNode]]:
     """The unique ``(source, sink)`` pair among ``access`` (in-degree 0 / out-degree 0), else ``None``."""
     sources = [n for n in access if state.in_degree(n) == 0 and state.out_degree(n) >= 1]
     sinks = [n for n in access if state.out_degree(n) == 0 and state.in_degree(n) >= 1]
@@ -150,7 +156,7 @@ def single_source_and_sink(state: SDFGState,
 
 
 def match_copy_chain(
-    state: SDFGState
+    state: SDFGState,
 ) -> Optional[Tuple[nodes.AccessNode, nodes.AccessNode, Optional[subsets.Subset], Optional[subsets.Subset]]]:
     """Match ``state`` as one pure copy chain: a single source and a single sink AccessNode joined
     only by transient scratch AccessNodes and ``__out = __inp`` copy tasklets.
@@ -196,8 +202,9 @@ def _extract_permutation_copy(state: SDFGState) -> Optional[Tuple[str, str, subs
     return src.data, sink.data, read_subset, write_subset
 
 
-def _axis_affine(idx: symbolic.SymbolicType,
-                 loop_var_syms: Sequence[sympy.Symbol]) -> Optional[Tuple[sympy.Symbol, int, symbolic.SymbolicType]]:
+def _axis_affine(
+    idx: symbolic.SymbolicType, loop_var_syms: Sequence[sympy.Symbol]
+) -> Optional[Tuple[sympy.Symbol, int, symbolic.SymbolicType]]:
     """Classify a single-point index expression ``idx``. Returns
     ``(loop_var_sym, coeff, off)`` if ``idx`` is affine in EXACTLY one loop
     variable (``coeff*v + off``, ``coeff`` a positive integer constant, ``off``
@@ -256,8 +263,16 @@ def _classify_side(
 class _Plan:
     """Everything needed to emit the transpose libnode for a matched nest."""
 
-    def __init__(self, in_array: str, out_array: str, axes: List[int], read_range: subsets.Range,
-                 write_range: subsets.Range, in_full: bool, out_full: bool) -> None:
+    def __init__(
+        self,
+        in_array: str,
+        out_array: str,
+        axes: List[int],
+        read_range: subsets.Range,
+        write_range: subsets.Range,
+        in_full: bool,
+        out_full: bool,
+    ) -> None:
         self.in_array = in_array
         self.out_array = out_array
         self.axes = axes
@@ -360,41 +375,67 @@ class LoopToTranspose(ppl.Pass):
 
         # Per-axis accessed ranges (the exact lo:hi:inc sub-grid, incl. affine coeff/off).
         def _side_ranges(
-                axis_of_var: Dict[sympy.Symbol, int], coeff_of_var: Dict[sympy.Symbol,
-                                                                         int], off_of_var: Dict[sympy.Symbol,
-                                                                                                symbolic.SymbolicType],
-                ndims: int) -> List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
+            axis_of_var: Dict[sympy.Symbol, int],
+            coeff_of_var: Dict[sympy.Symbol, int],
+            off_of_var: Dict[sympy.Symbol, symbolic.SymbolicType],
+            ndims: int,
+        ) -> List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
             var_at_axis = {a: v for v, a in axis_of_var.items()}
             out: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]] = []
             for a in range(ndims):
                 v = var_at_axis[a]
                 c, off = coeff_of_var[v], off_of_var[v]
                 lo_v, last_v, inc_v = ranges[v]
-                out.append((symbolic.simplify(c * lo_v + off), symbolic.simplify(c * last_v + off),
-                            symbolic.simplify(c * inc_v)))
+                out.append(
+                    (
+                        symbolic.simplify(c * lo_v + off),
+                        symbolic.simplify(c * last_v + off),
+                        symbolic.simplify(c * inc_v),
+                    )
+                )
             return out
 
         in_ranges = _side_ranges(in_axis, in_coeff, in_off, d)
         out_ranges = _side_ranges(out_axis, out_coeff, out_off, d)
 
-        def _is_full(rng_list: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]],
-                     desc: dace.data.Data) -> bool:
+        def _is_full(
+            rng_list: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]],
+            desc: dace.data.Data,
+        ) -> bool:
             for (lo, hi, st), sz in zip(rng_list, desc.shape):
                 # Bounds are rebuilt from the loop's reparsed ranges, the shape carries the declared
                 # assumptions: two instances of one name that never cancel.
                 end, sz_eq = symbolic.equalize_symbols_across(hi, sz)
-                if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or \
-                        symbolic.simplify(end - (sz_eq - 1)) != 0:
+                if (
+                    symbolic.simplify(lo) != 0
+                    or symbolic.simplify(st - 1) != 0
+                    or symbolic.simplify(end - (sz_eq - 1)) != 0
+                ):
                     return False
             return True
 
-        plan = _Plan(in_array, out_array, axes, subsets.Range(in_ranges), subsets.Range(out_ranges),
-                     _is_full(in_ranges, in_desc), _is_full(out_ranges, out_desc))
+        plan = _Plan(
+            in_array,
+            out_array,
+            axes,
+            subsets.Range(in_ranges),
+            subsets.Range(out_ranges),
+            _is_full(in_ranges, in_desc),
+            _is_full(out_ranges, out_desc),
+        )
         self._replace(cfg, outer, sdfg, plan, in_desc, out_desc, d)
         return True
 
-    def _replace(self, cfg: ControlFlowRegion, outer: LoopRegion, sdfg: dace.SDFG, plan: _Plan, in_desc: dace.data.Data,
-                 out_desc: dace.data.Data, d: int) -> None:
+    def _replace(
+        self,
+        cfg: ControlFlowRegion,
+        outer: LoopRegion,
+        sdfg: dace.SDFG,
+        plan: _Plan,
+        in_desc: dace.data.Data,
+        out_desc: dace.data.Data,
+        d: int,
+    ) -> None:
         """Splice ``outer`` out, replacing the nest with a state holding the
         transpose library node wired to the operand arrays (directly for a
         full-array access, via strided Views otherwise)."""
@@ -416,10 +457,20 @@ class LoopToTranspose(ppl.Pass):
 
         if plan.full:
             # Whole-array access on every axis: plain full-array memlets.
-            state.add_edge(state.add_read(plan.in_array), None, node, in_conn,
-                           Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))))
-            state.add_edge(node, out_conn, state.add_write(plan.out_array), None,
-                           Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))))
+            state.add_edge(
+                state.add_read(plan.in_array),
+                None,
+                node,
+                in_conn,
+                Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))),
+            )
+            state.add_edge(
+                node,
+                out_conn,
+                state.add_write(plan.out_array),
+                None,
+                Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))),
+            )
         else:
             # Offset / strided sub-grid: route each operand through a strided View whose
             # per-axis stride is the array stride times the access step, so the library
@@ -427,28 +478,42 @@ class LoopToTranspose(ppl.Pass):
             # correct elements. The connecting memlet carries the lo:hi:inc origin+extent.
             in_steps = [r[2] for r in plan.read_range.ndrange()]
             out_steps = [r[2] for r in plan.write_range.ndrange()]
-            iv_name, _ = sdfg.add_view(plan.in_array + "_tview",
-                                       list(plan.read_range.size()),
-                                       in_desc.dtype,
-                                       storage=in_desc.storage,
-                                       strides=[in_desc.strides[a] * in_steps[a] for a in range(d)],
-                                       find_new_name=True)
-            ov_name, _ = sdfg.add_view(plan.out_array + "_tview",
-                                       list(plan.write_range.size()),
-                                       out_desc.dtype,
-                                       storage=out_desc.storage,
-                                       strides=[out_desc.strides[b] * out_steps[b] for b in range(d)],
-                                       find_new_name=True)
+            iv_name, _ = sdfg.add_view(
+                plan.in_array + "_tview",
+                list(plan.read_range.size()),
+                in_desc.dtype,
+                storage=in_desc.storage,
+                strides=[in_desc.strides[a] * in_steps[a] for a in range(d)],
+                find_new_name=True,
+            )
+            ov_name, _ = sdfg.add_view(
+                plan.out_array + "_tview",
+                list(plan.write_range.size()),
+                out_desc.dtype,
+                storage=out_desc.storage,
+                strides=[out_desc.strides[b] * out_steps[b] for b in range(d)],
+                find_new_name=True,
+            )
             iv = state.add_access(iv_name)
             ov = state.add_access(ov_name)
             in_dense = subsets.Range([(0, s - 1, 1) for s in plan.read_range.size()])
             out_dense = subsets.Range([(0, s - 1, 1) for s in plan.write_range.size()])
-            state.add_edge(state.add_read(plan.in_array), None, iv, "views",
-                           Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))))
+            state.add_edge(
+                state.add_read(plan.in_array),
+                None,
+                iv,
+                "views",
+                Memlet(data=plan.in_array, subset=subsets.Range(list(plan.read_range.ndrange()))),
+            )
             state.add_edge(iv, None, node, in_conn, Memlet(data=iv_name, subset=in_dense))
             state.add_edge(node, out_conn, ov, None, Memlet(data=ov_name, subset=out_dense))
-            state.add_edge(ov, "views", state.add_write(plan.out_array), None,
-                           Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))))
+            state.add_edge(
+                ov,
+                "views",
+                state.add_write(plan.out_array),
+                None,
+                Memlet(data=plan.out_array, subset=subsets.Range(list(plan.write_range.ndrange()))),
+            )
 
         for e in in_edges:
             cfg.add_edge(e.src, state, e.data)

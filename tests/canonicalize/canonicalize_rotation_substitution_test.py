@@ -15,6 +15,7 @@ together or neither means anything.
 
 The shapes this rewrite must REFUSE live in ``canonicalize_rotation_false_positive_test.py``.
 """
+
 import numpy as np
 import pytest
 
@@ -26,7 +27,7 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepe
 from dace.transformation.dataflow import TrivialTaskletElimination
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 _LEN = 64
 
 
@@ -83,7 +84,7 @@ def _canonicalized(program, label):
 
 
 def _generated_code(sdfg) -> str:
-    return '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+    return "\n".join(obj.clean_code for obj in sdfg.generate_code())
 
 
 def _structure(sdfg) -> str:
@@ -94,22 +95,22 @@ def _structure(sdfg) -> str:
     """
     lines = []
     for state in sdfg.states():
-        lines.append(f'STATE {state.label}')
+        lines.append(f"STATE {state.label}")
         ids = {n: i for i, n in enumerate(state.nodes())}
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode):
-                lines.append(f'  N{ids[node]} access {node.data}')
+                lines.append(f"  N{ids[node]} access {node.data}")
             elif isinstance(node, nodes.Tasklet):
-                lines.append(f'  N{ids[node]} tasklet {node.code.as_string}')
+                lines.append(f"  N{ids[node]} tasklet {node.code.as_string}")
             else:
-                lines.append(f'  N{ids[node]} {type(node).__name__}')
+                lines.append(f"  N{ids[node]} {type(node).__name__}")
         for e in state.edges():
-            lines.append(f'  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}')
+            lines.append(f"  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}")
     for cfg in sdfg.all_control_flow_regions():
-        lines.append(f'CFG {cfg.label} {[b.label for b in cfg.nodes()]}')
+        lines.append(f"CFG {cfg.label} {[b.label for b in cfg.nodes()]}")
         for e in cfg.edges():
-            lines.append(f'  IE {e.src.label} -> {e.dst.label} {e.data.condition.as_string} {e.data.assignments}')
-    return '\n'.join(lines)
+            lines.append(f"  IE {e.src.label} -> {e.dst.label} {e.data.condition.as_string} {e.data.assignments}")
+    return "\n".join(lines)
 
 
 def _apply_rotation_alone(program, label):
@@ -131,37 +132,37 @@ def _apply_rotation_alone(program, label):
 
 
 def test_one_deep_rotation_parallelizes():
-    sdfg = _canonicalized(rotate_one_deep, 'rotate_one_deep_par')
-    assert '#pragma omp parallel for' in _generated_code(sdfg), 'the delay line still blocks parallelization'
+    sdfg = _canonicalized(rotate_one_deep, "rotate_one_deep_par")
+    assert "#pragma omp parallel for" in _generated_code(sdfg), "the delay line still blocks parallelization"
 
     rng = np.random.default_rng(2718)
     b = rng.random(_LEN)
     got = np.zeros(_LEN)
     sdfg.compile()(a=got, b=b.copy(), N=_LEN)
-    assert np.allclose(got, reference_one_deep(b), rtol=0, atol=0), 'the shifted read changed the values'
+    assert np.allclose(got, reference_one_deep(b), rtol=0, atol=0), "the shifted read changed the values"
 
 
 def test_two_deep_rotation_parallelizes():
     """``x == b[i-1]`` and ``y == b[i-2]``: the outer stage only becomes a rotation after the inner
     one is substituted, and each stage costs one peeled iteration."""
-    sdfg = _canonicalized(rotate_two_deep, 'rotate_two_deep_par')
-    assert '#pragma omp parallel for' in _generated_code(sdfg), 'the two-stage delay line still blocks it'
+    sdfg = _canonicalized(rotate_two_deep, "rotate_two_deep_par")
+    assert "#pragma omp parallel for" in _generated_code(sdfg), "the two-stage delay line still blocks it"
 
     rng = np.random.default_rng(2718)
     b = rng.random(_LEN)
     got = np.zeros(_LEN)
     sdfg.compile()(a=got, b=b.copy(), N=_LEN)
-    assert np.allclose(got, reference_two_deep(b), rtol=0, atol=0), 'a carried stage was shifted by the wrong amount'
+    assert np.allclose(got, reference_two_deep(b), rtol=0, atol=0), "a carried stage was shifted by the wrong amount"
 
 
 # the pass itself: fires once, refuses an accumulation, and is a fixed point
 
 
 def test_pass_applies_once_per_stage():
-    _sdfg, applied, _before = _apply_rotation_alone(rotate_one_deep, 'rotate_one_deep_unit')
-    assert applied == 1, f'expected exactly one rotation substitution, got {applied}'
-    _sdfg2, applied2, _b2 = _apply_rotation_alone(rotate_two_deep, 'rotate_two_deep_unit')
-    assert applied2 == 2, f'a two-stage delay line needs two substitutions, got {applied2}'
+    _sdfg, applied, _before = _apply_rotation_alone(rotate_one_deep, "rotate_one_deep_unit")
+    assert applied == 1, f"expected exactly one rotation substitution, got {applied}"
+    _sdfg2, applied2, _b2 = _apply_rotation_alone(rotate_two_deep, "rotate_two_deep_unit")
+    assert applied2 == 2, f"a two-stage delay line needs two substitutions, got {applied2}"
 
 
 def test_the_peel_keeps_the_cfg_list_in_place(monkeypatch):
@@ -170,7 +171,7 @@ def test_the_peel_keeps_the_cfg_list_in_place(monkeypatch):
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
     assert LoopCarriedRotationSubstitution(peel_limit=4).apply_pass(sdfg, {}) == 2
-    assert '_instantiate_peeled_iteration' not in resets, resets
+    assert "_instantiate_peeled_iteration" not in resets, resets
     assert_cfg_list_as_after_a_reset(sdfg)
     sdfg.validate()
 
@@ -179,30 +180,30 @@ def test_accumulation_is_refused_without_mutating():
     """``x = x + b[i]`` reads the scalar it writes, so no shifted read equals it. Refusing has to
     leave the SDFG untouched -- a pass that half-applies before declining is worse than one that
     applies wrongly, because nothing downstream is looking for the damage."""
-    sdfg, applied, before = _apply_rotation_alone(accumulate, 'accumulate_unit')
-    assert applied is None, 'an accumulation was rewritten as a rotation'
-    assert _structure(sdfg) == before, 'the pass mutated the SDFG on a shape it refused'
+    sdfg, applied, before = _apply_rotation_alone(accumulate, "accumulate_unit")
+    assert applied is None, "an accumulation was rewritten as a rotation"
+    assert _structure(sdfg) == before, "the pass mutated the SDFG on a shape it refused"
 
 
 def test_rotation_substitution_is_idempotent():
     """Re-running the pass on its own output must find nothing: the carry it removes is gone, and
     the shifted read it leaves behind is not itself a delay line."""
-    sdfg = _canonicalized(rotate_two_deep, 'rotate_two_deep_idem')
+    sdfg = _canonicalized(rotate_two_deep, "rotate_two_deep_idem")
     before = _structure(sdfg)
-    assert LoopCarriedRotationSubstitution(peel_limit=4).apply_pass(sdfg, {}) is None, 'the pass re-fired on its output'
-    assert _structure(sdfg) == before, 'a re-run mutated an already-substituted SDFG'
+    assert LoopCarriedRotationSubstitution(peel_limit=4).apply_pass(sdfg, {}) is None, "the pass re-fired on its output"
+    assert _structure(sdfg) == before, "a re-run mutated an already-substituted SDFG"
 
 
 def test_peel_limit_zero_disables_the_rewrite():
     """The shifted read is wrong on the first iteration, so the rewrite cannot happen without the
     peel that removes that iteration. With no peel budget it must decline, not substitute anyway."""
     sdfg = rotate_one_deep.to_sdfg(simplify=True)
-    sdfg.name = 'rotate_one_deep_peel0'
+    sdfg.name = "rotate_one_deep_peel0"
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     before = _structure(sdfg)
     assert LoopCarriedRotationSubstitution(peel_limit=0).apply_pass(sdfg, {}) is None
-    assert _structure(sdfg) == before, 'the pass mutated the SDFG with no peel budget'
+    assert _structure(sdfg) == before, "the pass mutated the SDFG with no peel budget"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

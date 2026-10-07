@@ -26,6 +26,7 @@ constraint extraction -- lives in
 :mod:`dace.sdfg.analysis.polyhedral_isl` so any pass can reuse it. This module
 re-exports the names :class:`WavefrontSkew` reaches through the ``poly`` alias.
 """
+
 from typing import Any, List, Optional, Sequence, Tuple
 
 import islpy as isl
@@ -33,10 +34,18 @@ import sympy as sp
 
 from dace import symbolic
 from dace.sdfg.narrowing import as_expr, simplified
+
 # noqa: F401 -- re-exports reached as poly.<name> from wavefront_skew; ruff cannot see that use.
 from dace.sdfg.analysis.polyhedral_isl import is_domain_empty  # noqa: F401
-from dace.sdfg.analysis.polyhedral_isl import (classify_dim, collect_basic_sets, constraint_to_sympy, dedupe_terms,
-                                               make_set, pwaff_bound, subs_by_name)
+from dace.sdfg.analysis.polyhedral_isl import (
+    classify_dim,
+    collect_basic_sets,
+    constraint_to_sympy,
+    dedupe_terms,
+    make_set,
+    pwaff_bound,
+    subs_by_name,
+)
 
 
 def constraints_from_condition(cond: Any) -> Optional[List[sp.Expr]]:
@@ -58,8 +67,8 @@ def constraints_from_condition(cond: Any) -> Optional[List[sp.Expr]]:
     # ``AND``/``OR`` also arrive as DaCe's own function nodes: ``pystr_to_symbolic`` builds a
     # parsed condition with ``evaluate=False`` and keeps them verbatim rather than folding to
     # sympy's connectives, so matching only ``sp.And`` would miss every parsed guard.
-    func = str(cond.func) if isinstance(cond, sp.Basic) else ''
-    if isinstance(cond, sp.And) or func == 'AND':
+    func = str(cond.func) if isinstance(cond, sp.Basic) else ""
+    if isinstance(cond, sp.And) or func == "AND":
         out: List[sp.Expr] = []
         for arg in cond.args:
             part = constraints_from_condition(arg)
@@ -67,7 +76,7 @@ def constraints_from_condition(cond: Any) -> Optional[List[sp.Expr]]:
                 return None
             out += part
         return out
-    if func == 'NOT':
+    if func == "NOT":
         return constraints_from_condition(symbolic.refold_booleans(sp.Not(cond.args[0])))
     if isinstance(cond, sp.StrictLessThan):  # a < b
         return [simplified(as_expr(cond.rhs) - as_expr(cond.lhs) - 1)]
@@ -88,21 +97,24 @@ class SkewBounds:
     ``[max(p_lo_terms), min(p_hi_terms)]``. The pass renders these to loop
     bounds."""
 
-    def __init__(self, t_lo_terms: List[sp.Expr], t_hi_terms: List[sp.Expr], p_lo_terms: List[sp.Expr],
-                 p_hi_terms: List[sp.Expr]) -> None:
+    def __init__(
+        self, t_lo_terms: List[sp.Expr], t_hi_terms: List[sp.Expr], p_lo_terms: List[sp.Expr], p_hi_terms: List[sp.Expr]
+    ) -> None:
         self.t_lo_terms = t_lo_terms
         self.t_hi_terms = t_hi_terms
         self.p_lo_terms = p_lo_terms
         self.p_hi_terms = p_hi_terms
 
 
-def skew_bounds(dims: Tuple[str, str],
-                params: Sequence[str],
-                domain_constraints: Sequence[sp.Expr],
-                tau: Tuple[int, int],
-                t_name: str,
-                p_name: str,
-                t_range: Optional[Tuple[sp.Expr, sp.Expr]] = None) -> Optional[SkewBounds]:
+def skew_bounds(
+    dims: Tuple[str, str],
+    params: Sequence[str],
+    domain_constraints: Sequence[sp.Expr],
+    tau: Tuple[int, int],
+    t_name: str,
+    p_name: str,
+    t_range: Optional[Tuple[sp.Expr, sp.Expr]] = None,
+) -> Optional[SkewBounds]:
     """Project the domain through the unimodular skew ``t = a*u + b*v`` and read
     back bound terms. ``dims`` are ``(u, v)``; ``tau = (a, b)``. The parallel axis
     ``p`` is the coordinate whose complement inverts over the integers:

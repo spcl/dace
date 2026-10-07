@@ -10,6 +10,7 @@ own ``data``, and ``other_subset`` is ``None``), and the masked store then wrote
 buffer whose only defined element is lane 0 -- a silent wrong answer, surfacing only once
 ``InsertExplicitCopies`` derived the matching source subset and refused it out-of-bounds.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -31,7 +32,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.passes.vectorization.tile_assertions import sdfg_masked_stores
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 WIDTH = 8
 
 
@@ -52,7 +53,7 @@ def vectorized_invariant_scalar_into_lane_indexed_write(name: str) -> dace.SDFG:
     sdfg = kernel.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(WIDTH, ), target_isa=detect_host_isa())).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(WIDTH,), target_isa=detect_host_isa())).apply_pass(sdfg, {})
     sdfg.name = name
     return sdfg
 
@@ -74,7 +75,7 @@ def single_element_producers_with_a_multi_element_memlet(sdfg: dace.SDFG):
                 desc = nested.arrays.get(edge.src.data)
                 if desc is None:
                     continue
-                if not (isinstance(desc, dd.Scalar) or tuple(str(s) for s in desc.shape) == ('1', )):
+                if not (isinstance(desc, dd.Scalar) or tuple(str(s) for s in desc.shape) == ("1",)):
                     continue
                 subset = edge.data.subset
                 if subset is not None and subset.num_elements() != 1:
@@ -89,39 +90,43 @@ def count_nodes(sdfg: dace.SDFG, node_type) -> int:
 def test_the_invariant_scalar_reaches_its_tile_bridge_through_a_broadcast():
     """Structure: the Scalar reaches the tile through a broadcast -- a ``TileGather(src_kind='Scalar')`` splat,
     or a ``TileBinop`` that takes it as a scalar operand -- never through a plain copy into the bridge."""
-    sdfg = vectorized_invariant_scalar_into_lane_indexed_write('splat_structure')
+    sdfg = vectorized_invariant_scalar_into_lane_indexed_write("splat_structure")
 
     # The map really was tiled -- a refused kernel is restored un-tiled and would satisfy every
     # assertion below by having no tile chain at all.
     assert sdfg_masked_stores(sdfg)
-    splats = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather) and n.src_kind == 'Scalar']
+    splats = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather) and n.src_kind == "Scalar"]
     for splat in splats:
-        assert tuple(splat.widths) == (WIDTH, )
+        assert tuple(splat.widths) == (WIDTH,)
     scalar_operands = [
-        n for n, state in sdfg.all_nodes_recursive() if isinstance(n, TileBinop) and any(
+        n
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, TileBinop)
+        and any(
             isinstance(e.src, AccessNode) and isinstance(state.sdfg.arrays[e.src.data], dd.Scalar)
-            for e in state.in_edges(n))
+            for e in state.in_edges(n)
+        )
     ]
-    assert splats or scalar_operands, 'the Scalar producer reaches the tile without a broadcast'
+    assert splats or scalar_operands, "the Scalar producer reaches the tile without a broadcast"
 
 
 def test_no_single_element_producer_claims_a_full_tile():
     """The Scalar no longer carries the whole-bridge memlet, and the graph validates."""
-    sdfg = vectorized_invariant_scalar_into_lane_indexed_write('splat_no_overwide')
+    sdfg = vectorized_invariant_scalar_into_lane_indexed_write("splat_no_overwide")
 
     assert sdfg_masked_stores(sdfg)
     assert single_element_producers_with_a_multi_element_memlet(sdfg) == []
     sdfg.validate()
 
 
-@pytest.mark.parametrize('length', [40, 37])
+@pytest.mark.parametrize("length", [40, 37])
 def test_every_lane_receives_the_invariant_value(length):
     """Numerics: all ``length`` entries hold the broadcast value, not just lane 0.
 
     ``37`` also drives the masked tail map, which carried the same Scalar-to-bridge edge, so this
     is not a remainder-only guard.
     """
-    sdfg = vectorized_invariant_scalar_into_lane_indexed_write(f'splat_numeric_{length}')
+    sdfg = vectorized_invariant_scalar_into_lane_indexed_write(f"splat_numeric_{length}")
     assert sdfg_masked_stores(sdfg)
 
     rng = np.random.default_rng(seed=20260911)
@@ -135,7 +140,7 @@ def test_every_lane_receives_the_invariant_value(length):
     assert np.allclose(res, 7.0 * a, rtol=0.0, atol=0.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_invariant_scalar_reaches_its_tile_bridge_through_a_broadcast()
     test_no_single_element_producer_claims_a_full_tile()
     for n in (40, 37):

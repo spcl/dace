@@ -7,11 +7,12 @@ of an idx data-dependency edge through MapEntry is brittle, per design Appendix 
 
 Numerical contract: ``B[i] = A[idx[i]]`` matches the unvectorised reference output.
 """
+
 import numpy as np
 import pytest
 
 import dace
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from tests.passes.vectorization.tile_assertions import assert_tiled
@@ -40,7 +41,7 @@ def test_k1_gather_matches_reference(N):
     vec_sdfg = k1_gather.to_sdfg(simplify=True)
     vec_sdfg.name = f"k1_gather_vec_{N}"
     try:
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001 - the walker may still refuse some gather shapes.
         pytest.xfail(f"gather walker path refused: {exc}")
     assert_tiled(vec_sdfg, ref_sdfg)
@@ -76,7 +77,7 @@ def test_k1_scatter_matches_reference():
     vec_sdfg = k1_scatter.to_sdfg(simplify=True)
     vec_sdfg.name = f"k1_scatter_vec_{n}"
     try:
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(vec_sdfg, {})
     except Exception as exc:  # noqa: BLE001
         pytest.xfail(f"scatter walker path refused: {exc}")
     assert_tiled(vec_sdfg, ref_sdfg)
@@ -125,5 +126,4 @@ def test_k2_partial_kdep_gather_emits_W0_ONE_idx_shape():
     for name, shape in idx_descs:
         assert len(shape) == 2, f"{name!r}: expected K=2 shape, got {shape}"
         assert int(shape[0]) == 8, f"{name!r}: expected W_0=8 on lane-dep dim, got {shape}"
-        assert dace.symbolic.has_one_marker(shape[1]), \
-            f"{name!r}: expected ONE on broadcast dim 1, got {shape}"
+        assert dace.symbolic.has_one_marker(shape[1]), f"{name!r}: expected ONE on broadcast dim 1, got {shape}"

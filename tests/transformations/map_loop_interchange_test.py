@@ -8,7 +8,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import MapLoopInterchange, MoveLoopIntoMap
 
-N, T, K = (dace.symbol(s) for s in 'NTK')
+N, T, K = (dace.symbol(s) for s in "NTK")
 
 
 @dace.program
@@ -42,7 +42,7 @@ def loop_map(A: dace.float64[T, N]):
 
 
 def run(sdfg: dace.SDFG, **symbols) -> np.ndarray:
-    A = np.random.default_rng(0).random((symbols['T'], symbols['N']))
+    A = np.random.default_rng(0).random((symbols["T"], symbols["N"]))
     sdfg(A=A, **symbols)
     return A
 
@@ -53,9 +53,9 @@ def test_the_loop_moves_outside_the_map_and_computes_the_same_values():
 
     assert sdfg.apply_transformations(MapLoopInterchange) == 1
 
-    (loop, ) = sdfg.nodes()
-    (state, ) = loop.nodes()
-    assert isinstance(loop, LoopRegion) and loop.loop_variable == 't'
+    (loop,) = sdfg.nodes()
+    (state,) = loop.nodes()
+    assert isinstance(loop, LoopRegion) and loop.loop_variable == "t"
     assert any(isinstance(n, nodes.MapEntry) for n in state.nodes())
     assert np.allclose(run(sdfg, N=5, T=4), run(reference, N=5, T=4), rtol=0, atol=0)
 

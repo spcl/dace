@@ -28,6 +28,7 @@ between them, nothing else), and structurally identical up to their iteration
 variable -- so it fires only on the re-rolled tile/remainder shape and its kin,
 never on unrelated adjacent loops.
 """
+
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,14 +60,14 @@ StateSignature = Tuple[Tuple[NodeKey, ...], Tuple[EdgeKey, ...]]
 
 #: Placeholder the iteration variable is normalised to when comparing two loop
 #: bodies, so ``a[_loop_it_0]`` and ``a[_loop_it_1]`` compare equal.
-ITER_PLACEHOLDER = '__lv__'
+ITER_PLACEHOLDER = "__lv__"
 
 #: Placeholder every body-local scratch transient name is normalised to, so two
 #: bodies differing only in a frontend-generated intermediate name (e.g.
 #: ``s0_plus_a_slice`` vs ``s0_plus_a_slice_0``) compare equal. The carried
 #: accumulator and the read/written arrays -- which are referenced OUTSIDE the
 #: body and so are not body-local -- keep their real names and must match.
-SCRATCH_PLACEHOLDER = '__scratch__'
+SCRATCH_PLACEHOLDER = "__scratch__"
 
 
 def _int_floor_to_sympy(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
@@ -78,8 +79,9 @@ def _int_floor_to_sympy(expr: symbolic.SymbolicType) -> symbolic.SymbolicType:
     which is exactly what an adjacency check between a tile bound and a
     remainder start needs.
     """
-    return expr.replace(lambda x: x.func.__name__ == 'int_floor' and len(x.args) == 2,
-                        lambda x: sympy.floor(x.args[0] / x.args[1]))
+    return expr.replace(
+        lambda x: x.func.__name__ == "int_floor" and len(x.args) == 2, lambda x: sympy.floor(x.args[0] / x.args[1])
+    )
 
 
 def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> bool:
@@ -106,7 +108,7 @@ def _symbolically_equal(a: symbolic.SymbolicType, b: symbolic.SymbolicType) -> b
 def _normalize(text: str, loop_var: str) -> str:
     """Replace whole-word occurrences of ``loop_var`` in ``text`` with the
     canonical placeholder so two bodies differing only in iterator name match."""
-    return re.sub(r'\b%s\b' % re.escape(loop_var), ITER_PLACEHOLDER, text)
+    return re.sub(r"\b%s\b" % re.escape(loop_var), ITER_PLACEHOLDER, text)
 
 
 def _canon_data(name: str, local_scratch: Dict[str, None]) -> str:
@@ -118,10 +120,10 @@ def _canon_data(name: str, local_scratch: Dict[str, None]) -> str:
 def _node_key(node: nodes.Node, loop_var: str, local_scratch: Dict[str, None]) -> NodeKey:
     """A structural key for a body node, iterator- and scratch-name-independent."""
     if isinstance(node, nodes.AccessNode):
-        return ('access', _canon_data(node.data, local_scratch))
+        return ("access", _canon_data(node.data, local_scratch))
     if isinstance(node, nodes.Tasklet):
-        return ('tasklet', _normalize(node.code.as_string.strip(), loop_var))
-    return ('other', type(node).__name__)
+        return ("tasklet", _normalize(node.code.as_string.strip(), loop_var))
+    return ("other", type(node).__name__)
 
 
 @explicit_cf_compatible
@@ -130,7 +132,7 @@ class FuseConsecutiveLoops(ppl.Pass):
     iteration ranges are adjacent (``[A, B)`` followed by ``[B, C)``) into a
     single loop over ``[A, C)``."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -195,7 +197,7 @@ class FuseConsecutiveLoops(ppl.Pass):
             # trivial condition, so nothing runs (or is decided) between them.
             if link.data.assignments:
                 continue
-            if link.data.condition is not None and link.data.condition.as_string not in ('1', 'True'):
+            if link.data.condition is not None and link.data.condition.as_string not in ("1", "True"):
                 continue
             if self._adjacent_identical(first, second, scratch_index):
                 self._merge(cfg, first, second, link)
@@ -269,19 +271,20 @@ class FuseConsecutiveLoops(ppl.Pass):
         node_sig = sorted(_node_key(n, loop_var, local_scratch) for n in state.nodes())
         edge_sig: List[EdgeKey] = []
         for e in state.edges():
-            subset = _normalize(str(e.data.subset), loop_var) if (e.data and e.data.subset is not None) else ''
+            subset = _normalize(str(e.data.subset), loop_var) if (e.data and e.data.subset is not None) else ""
             # A copy memlet indexes its DESTINATION in ``other_subset``; two bodies differing only
             # there are two different statements, and the loser's body is deleted by ``_merge``.
-            other = _normalize(str(e.data.other_subset), loop_var) if (e.data
-                                                                       and e.data.other_subset is not None) else ''
-            data_name = _canon_data(e.data.data, local_scratch) if (e.data is not None and e.data.data) else ''
-            wcr = str(e.data.wcr) if e.data is not None else ''
+            other = (
+                _normalize(str(e.data.other_subset), loop_var) if (e.data and e.data.other_subset is not None) else ""
+            )
+            data_name = _canon_data(e.data.data, local_scratch) if (e.data is not None and e.data.data) else ""
+            wcr = str(e.data.wcr) if e.data is not None else ""
             # Connectors are the only raw fields here, and a memlet-path edge carries None while a
             # View's carries 'views'. Two edges whose endpoints canonicalize alike then reach a
             # None-vs-str comparison in the sort below, so spell an absent connector like the rest.
             src_key = _node_key(e.src, loop_var, local_scratch)
             dst_key = _node_key(e.dst, loop_var, local_scratch)
-            edge_sig.append((src_key, e.src_conn or '', dst_key, e.dst_conn or '', data_name, subset, other, wcr))
+            edge_sig.append((src_key, e.src_conn or "", dst_key, e.dst_conn or "", data_name, subset, other, wcr))
         return (tuple(node_sig), tuple(sorted(edge_sig)))
 
     def _merge(self, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion, link: Edge[InterstateEdge]) -> None:
@@ -306,7 +309,7 @@ class FuseConsecutiveLoops(ppl.Pass):
             cfg.add_edge(first, e.dst, e.data)
 
 
-__all__ = ['FuseConsecutiveLoops', 'GuardedFusionPlan', 'plan_guarded_fusion', 'commit_guarded_fusion']
+__all__ = ["FuseConsecutiveLoops", "GuardedFusionPlan", "plan_guarded_fusion", "commit_guarded_fusion"]
 
 # #
 # Guarded fusion: the same adjacent-range rewrite for loops whose bodies DIFFER.
@@ -337,11 +340,18 @@ class GuardedFusionPlan:
     names in ``loop_vars`` and are renamed onto ``var`` at commit.
     """
 
-    __slots__ = ('loops', 'loop_vars', 'var', 'lo', 'hi', 'bounds', 'guards')
+    __slots__ = ("loops", "loop_vars", "var", "lo", "hi", "bounds", "guards")
 
-    def __init__(self, loops: List[LoopRegion], loop_vars: List[str], var: str, lo: symbolic.SymbolicType,
-                 hi: symbolic.SymbolicType, bounds: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]],
-                 guards: List[List[symbolic.SymbolicType]]) -> None:
+    def __init__(
+        self,
+        loops: List[LoopRegion],
+        loop_vars: List[str],
+        var: str,
+        lo: symbolic.SymbolicType,
+        hi: symbolic.SymbolicType,
+        bounds: List[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]],
+        guards: List[List[symbolic.SymbolicType]],
+    ) -> None:
         self.loops = loops
         self.loop_vars = loop_vars
         self.var = var
@@ -382,7 +392,7 @@ def plan_guarded_fusion(region: ControlFlowRegion) -> Optional[GuardedFusionPlan
         # Pure sequencing only: nothing may run, or be decided, between two fused siblings.
         if link.data.assignments:
             return None
-        if link.data.condition is not None and link.data.condition.as_string not in ('1', 'True'):
+        if link.data.condition is not None and link.data.condition.as_string not in ("1", "True"):
             return None
         chain.append(nxt)
     if len(chain) != len(loops):
@@ -425,17 +435,19 @@ def commit_guarded_fusion(plan: GuardedFusionPlan, region: ControlFlowRegion) ->
     # Read before any mutation: if the chain led the region, the fused loop has to inherit that,
     # and ``add_node`` is the only sanctioned way to say so.
     was_start = region.start_block is plan.loops[0]
-    merged = LoopRegion(f'{plan.loops[0].label}_fused',
-                        condition_expr=f'{var} < ({symbolic.symstr(plan.hi + 1)})',
-                        loop_var=var,
-                        initialize_expr=f'{var} = {symbolic.symstr(plan.lo)}',
-                        update_expr=f'{var} = {var} + 1',
-                        sdfg=sdfg)
-    selector = ConditionalBlock(f'{var}_range_select', sdfg=sdfg)
+    merged = LoopRegion(
+        f"{plan.loops[0].label}_fused",
+        condition_expr=f"{var} < ({symbolic.symstr(plan.hi + 1)})",
+        loop_var=var,
+        initialize_expr=f"{var} = {symbolic.symstr(plan.lo)}",
+        update_expr=f"{var} = {var} + 1",
+        sdfg=sdfg,
+    )
+    selector = ConditionalBlock(f"{var}_range_select", sdfg=sdfg)
     for k, loop in enumerate(plan.loops):
         if plan.loop_vars[k] != var:
             loop.replace_dict({plan.loop_vars[k]: var})
-        branch = ControlFlowRegion(f'{loop.label}_range', sdfg=sdfg)
+        branch = ControlFlowRegion(f"{loop.label}_range", sdfg=sdfg)
         # Snapshot before moving: ``add_node`` re-homes each block's ``parent_graph``, so the
         # edge list has to be read off the loop while it still owns them.
         start, blocks, edges = loop.start_block, list(loop.nodes()), list(loop.edges())
@@ -444,7 +456,7 @@ def commit_guarded_fusion(plan: GuardedFusionPlan, region: ControlFlowRegion) ->
         for e in edges:
             branch.add_edge(e.src, e.dst, e.data)
         last = k == len(plan.loops) - 1
-        selector.add_branch(None if last else f'{var} < ({symbolic.symstr(plan.bounds[k][1] + 1)})', branch)
+        selector.add_branch(None if last else f"{var} < ({symbolic.symstr(plan.bounds[k][1] + 1)})", branch)
     merged.add_node(selector, is_start_block=True)
 
     in_edges = list(region.in_edges(plan.loops[0]))

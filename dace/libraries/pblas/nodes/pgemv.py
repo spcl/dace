@@ -20,7 +20,7 @@ class ExpandPgemvMKLMPICH(ExpandTransformation):
         lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         # NOTE: MKL ScaLAPACK is using column-major order
-        transa = 'N' if node.transa == 'T' else 'T'
+        transa = "N" if node.transa == "T" else "T"
         code = f"""
         {scalapack_grid_code(node, parent_state, True)}
             const {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;
@@ -63,11 +63,13 @@ class ExpandPgemvMKLMPICH(ExpandTransformation):
                 _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _x_ldesc, &__state->__mkl_int_one,
                 &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _y_ldesc, &__state->__mkl_int_one);
         """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -91,7 +93,7 @@ class ExpandPgemvReferenceMPICH(ExpandTransformation):
         lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         # NOTE: MKL ScaLAPACK is using column-major order
-        transa = 'N' if node.transa == 'T' else 'T'
+        transa = "N" if node.transa == "T" else "T"
         code = f"""
         {scalapack_grid_code(node, parent_state, False)}
             {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;
@@ -134,11 +136,13 @@ class ExpandPgemvReferenceMPICH(ExpandTransformation):
                 _b, &__state->__int_one, &__state->__int_one, _x_ldesc, &__state->__int_one,
                 &zero, _c, &__state->__int_one, &__state->__int_one, _y_ldesc, &__state->__int_one);
         """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -153,28 +157,25 @@ class ExpandPgemvReferenceOpenMPI(ExpandTransformation):
 
 @dace.library.node
 class Pgemv(dace.sdfg.nodes.LibraryNode):
-    """Executes alpha * (A @ x) + beta * y.
-    """
+    """Executes alpha * (A @ x) + beta * y."""
 
     # Global properties
     implementations = {
         "MKLMPICH": ExpandPgemvMKLMPICH,
         "MKLOpenMPI": ExpandPgemvMKLOpenMPI,
         "ReferenceMPICH": ExpandPgemvReferenceMPICH,
-        "ReferenceOpenMPI": ExpandPgemvReferenceOpenMPI
+        "ReferenceOpenMPI": ExpandPgemvReferenceOpenMPI,
     }
     default_implementation = None
 
-    transa = dace.properties.Property(dtype=str, default='N', category='Semantics')
-    m = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    transa = dace.properties.Property(dtype=str, default="N", category="Semantics")
+    m = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
-    def __init__(self, name, transa='N', m=None, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs=OrderedSet(('_a', '_b', '_a_block_sizes', '_b_block_sizes')),
-                         outputs={"_c"},
-                         **kwargs)
+    def __init__(self, name, transa="N", m=None, n=None, *args, **kwargs):
+        super().__init__(
+            name, *args, inputs=OrderedSet(("_a", "_b", "_a_block_sizes", "_b_block_sizes")), outputs={"_c"}, **kwargs
+        )
         self.transa = transa
         self.m = m
         self.n = n

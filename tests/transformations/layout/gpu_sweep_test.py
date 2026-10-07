@@ -5,6 +5,7 @@ synchronizing on the stop event). The kernel is permuted on the pure-map path (n
 dependency); the sweep compiles with ``compiler.cuda.max_concurrent_streams = -1`` so dace emits the
 legacy default stream, the single stream the timer records on. Correctness (vs the numpy oracle) is
 the invariant; the measured time only has to be a finite positive number."""
+
 import math
 
 import numpy

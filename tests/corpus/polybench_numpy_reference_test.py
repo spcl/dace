@@ -30,6 +30,7 @@ belong in a speedup figure at all is a corpus question, not a reference question
 The dataset is the capped one ``make_inputs`` defaults to, the same shape the numerical corpus test
 uses, so the whole corpus fits in a normal test run.
 """
+
 from typing import Dict, Set, Tuple
 
 import numpy as np
@@ -46,7 +47,7 @@ SDFG_REFERENCE_CASES = [pytest.param(k.name, marks=pytest.mark.lapack if k.lapac
 def worst_difference(ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray]) -> Tuple[str, float, float]:
     """``(array name, max abs diff, max rel diff)`` over the compared arrays -- so a failure names
     WHICH output diverged and by how much, instead of only that something did."""
-    name, worst_abs, worst_rel = '', 0.0, 0.0
+    name, worst_abs, worst_rel = "", 0.0, 0.0
     for key, expected in ref.items():
         a = np.asarray(expected, dtype=np.float64)
         b = np.asarray(got[key], dtype=np.float64)
@@ -70,23 +71,24 @@ def test_every_kernel_has_a_numpy_reference():
     assert sorted(PN.VECTORIZATION) == sorted(KERNELS)
 
 
-@pytest.mark.parametrize('name', SDFG_REFERENCE_CASES)
+@pytest.mark.parametrize("name", SDFG_REFERENCE_CASES)
 def test_numpy_reference_matches_sdfg_reference(name):
     kernel = PB.collect(name)[0]
     arrays, psize = PB.make_inputs(kernel)
     sdfg_ref = PB.reference(kernel, arrays, psize)
     numpy_ref = PB.numpy_reference(kernel, arrays, psize)
-    assert moved(arrays, numpy_ref) == moved(
-        arrays,
-        sdfg_ref), (f'{name}: the numpy reference moved {sorted(moved(arrays, numpy_ref))} but the SDFG reference '
-                    f'moved {sorted(moved(arrays, sdfg_ref))}; a reference that writes nothing certifies nothing')
+    assert moved(arrays, numpy_ref) == moved(arrays, sdfg_ref), (
+        f"{name}: the numpy reference moved {sorted(moved(arrays, numpy_ref))} but the SDFG reference "
+        f"moved {sorted(moved(arrays, sdfg_ref))}; a reference that writes nothing certifies nothing"
+    )
     worst, abs_diff, rel_diff = worst_difference(sdfg_ref, numpy_ref)
-    assert PB.outputs_match(
-        sdfg_ref, numpy_ref), (f'{name}: numpy reference disagrees with the untransformed-SDFG reference on {worst!r} '
-                               f'(max abs {abs_diff:.3e}, max rel {rel_diff:.3e}); one of the two is wrong')
+    assert PB.outputs_match(sdfg_ref, numpy_ref), (
+        f"{name}: numpy reference disagrees with the untransformed-SDFG reference on {worst!r} "
+        f"(max abs {abs_diff:.3e}, max rel {rel_diff:.3e}); one of the two is wrong"
+    )
 
 
-@pytest.mark.parametrize('name', KERNELS)
+@pytest.mark.parametrize("name", KERNELS)
 def test_numpy_call_repeats_on_pristine_inputs(name):
     """A timed denominator runs the reference many times. The polybench kernels write their
     inputs, so without ``restore_inputs`` repetition 2 would compute from repetition 1's output --
@@ -99,9 +101,10 @@ def test_numpy_call_repeats_on_pristine_inputs(name):
     PB.restore_inputs(kwargs, arrays)
     fn(**kwargs)
     second = {n: np.asarray(kwargs[n]) for n in first}
-    assert PB.outputs_match(first, second), \
-        f'{name}: the second timed repetition did not reproduce the first; inputs were not pristine'
+    assert PB.outputs_match(first, second), (
+        f"{name}: the second timed repetition did not reproduce the first; inputs were not pristine"
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

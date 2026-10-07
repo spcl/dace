@@ -32,10 +32,11 @@ mutually exclusive: measured on :func:`guard_flip`, the if-arm's update to ``a``
 lanes. The pass must REFUSE -- the same in-place read-modify-write refusal
 ``_split_one_map`` already carries for the map path.
 """
+
 import os
 
 # ``to_sdfg`` lazily imports mpi4py; left to auto-init it can wedge the corpus import.
-os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
+os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
 import numpy as np
 import pytest
@@ -45,7 +46,7 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -81,7 +82,7 @@ def _inputs(n=64):
     """Inputs with a NEGATIVE ``d``, so the if-arm's update really can flip the guard."""
     rng = np.random.default_rng(0)
     a, b, d = rng.random(n), rng.random(n), -2.0 * rng.random(n)
-    assert sum(1 for i in range(n) if a[i] > b[i] and not a[i] + d[i] > b[i]) > 0, 'no lane flips; test is vacuous'
+    assert sum(1 for i in range(n) if a[i] > b[i] and not a[i] + d[i] > b[i]) > 0, "no lane flips; test is vacuous"
     return a, b, d
 
 
@@ -90,7 +91,7 @@ def _canonicalize_twice(program):
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, peel_limit=4, break_anti_dependence=True)
     sdfg.validate()
-    canonicalize(sdfg, semantic_lifting=False, target='cpu')
+    canonicalize(sdfg, semantic_lifting=False, target="cpu")
     sdfg.validate()
     return sdfg
 
@@ -121,9 +122,12 @@ def _shape(sdfg):
     references). Both are pre-existing name churn in other passes. What must hold here is
     that the GRAPH stops moving: no further clone, no further global.
     """
-    return (sorted(type(n).__name__ for n, _ in sdfg.all_nodes_recursive()),
-            sorted(k for s in sdfg.all_sdfgs_recursive() for k, v in s.arrays.items()
-                   if not v.transient), sum(len(s.edges()) for s in sdfg.states()), len(sdfg.states()))
+    return (
+        sorted(type(n).__name__ for n, _ in sdfg.all_nodes_recursive()),
+        sorted(k for s in sdfg.all_sdfgs_recursive() for k, v in s.arrays.items() if not v.transient),
+        sum(len(s.edges()) for s in sdfg.states()),
+        len(sdfg.states()),
+    )
 
 
 def test_canonicalize_reaches_a_fixed_point():
@@ -131,7 +135,7 @@ def test_canonicalize_reaches_a_fixed_point():
     sdfg = _canonicalize_twice(guard_flip)
     after_two = _shape(sdfg)
     for _ in range(2):
-        canonicalize(sdfg, semantic_lifting=False, target='cpu')
+        canonicalize(sdfg, semantic_lifting=False, target="cpu")
         sdfg.validate()
         assert _shape(sdfg) == after_two
 
@@ -147,7 +151,7 @@ def test_split_statements_refuses_the_in_place_body():
     sdfg = guard_flip.to_sdfg(simplify=True)
     canonicalize(sdfg, peel_limit=4, break_anti_dependence=True)
     aliased = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) and aliases(p, n)]
-    assert aliased, 'canonicalization no longer manufactures an input/output-aliased NestedSDFG'
+    assert aliased, "canonicalization no longer manufactures an input/output-aliased NestedSDFG"
     for node, state in aliased:
         assert SplitStatements._independent_output_groups(state, node) is None
     before = sdfg.hash_sdfg()
@@ -155,16 +159,16 @@ def test_split_statements_refuses_the_in_place_body():
     assert sdfg.hash_sdfg() == before
 
 
-@pytest.mark.parametrize('name', ['s2710_d_single'])
+@pytest.mark.parametrize("name", ["s2710_d_single"])
 def test_tsvc_double_canonicalize_is_valid_and_correct(name):
     """The reported kernel, end to end against the numpy reference."""
     from tests.corpus.tsvc import tsvc
     from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
     kernel = tsvc.collect(name=name)[0]
-    sdfg = tsvc.to_sdfg(kernel, tag='ss_rmw', simplify=True)
+    sdfg = tsvc.to_sdfg(kernel, tag="ss_rmw", simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
-    canonicalize(sdfg, validate=True, semantic_lifting=False, target='cpu')
+    canonicalize(sdfg, validate=True, semantic_lifting=False, target="cpu")
     sdfg.validate()
 
     arrays, consts = tsvc.make_inputs(kernel, seed=1234)
@@ -174,12 +178,12 @@ def test_tsvc_double_canonicalize_is_valid_and_correct(name):
     sdfg.compile()(**got, **consts)
     for n, a in got.items():
         if isinstance(a, np.ndarray) and np.issubdtype(a.dtype, np.floating) and a.size:
-            assert np.allclose(a, want[n], rtol=1e-9, atol=1e-9, equal_nan=True), f'{name}/{n} diverges'
+            assert np.allclose(a, want[n], rtol=1e-9, atol=1e-9, equal_nan=True), f"{name}/{n} diverges"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_double_canonicalize_of_a_guarded_rmw_pair_validates()
     test_double_canonicalize_preserves_values()
     test_canonicalize_reaches_a_fixed_point()
     test_split_statements_refuses_the_in_place_body()
-    test_tsvc_double_canonicalize_is_valid_and_correct('s2710_d_single')
+    test_tsvc_double_canonicalize_is_valid_and_correct("s2710_d_single")

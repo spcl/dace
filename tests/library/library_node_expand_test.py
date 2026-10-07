@@ -11,14 +11,15 @@ from dace import SDFGState, SDFG, library
 from dace.transformation.transformation import ExpandTransformation
 
 # Add the test library to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'library'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "library"))
 import addlib
 
 
 # Create a tiled expansion for testing keyword arguments
-@library.register_expansion(addlib.AddNode, 'tiled')
+@library.register_expansion(addlib.AddNode, "tiled")
 class ExpandAddTiled(ExpandTransformation):
     """Test expansion that accepts tile_size keyword argument"""
+
     environments = []
 
     @staticmethod
@@ -53,18 +54,18 @@ class ExpandAddTiled(ExpandTransformation):
 
 def create_test_sdfg():
     """Create a simple SDFG with an AddNode for testing"""
-    sdfg = dace.SDFG('test_expand')
-    sdfg.add_array('A', [1], dace.float32)
-    sdfg.add_array('B', [1], dace.float32)
+    sdfg = dace.SDFG("test_expand")
+    sdfg.add_array("A", [1], dace.float32)
+    sdfg.add_array("B", [1], dace.float32)
     state = sdfg.add_state()
 
-    A = state.add_read('A')
-    B = state.add_write('B')
-    addnode = addlib.AddNode('add')
+    A = state.add_read("A")
+    B = state.add_write("B")
+    addnode = addlib.AddNode("add")
     state.add_node(addnode)
 
-    state.add_edge(A, None, addnode, '_a', dace.Memlet('A[0]'))
-    state.add_edge(addnode, '_b', B, None, dace.Memlet('B[0]'))
+    state.add_edge(A, None, addnode, "_a", dace.Memlet("A[0]"))
+    state.add_edge(addnode, "_b", B, None, dace.Memlet("B[0]"))
 
     return sdfg, state, addnode
 
@@ -74,13 +75,13 @@ def test_new_library_node_expand_interface():
     sdfg, state, addnode = create_test_sdfg()
 
     # Test with explicit implementation
-    result = addnode.expand(state, 'pure')
-    assert result == 'pure'
+    result = addnode.expand(state, "pure")
+    assert result == "pure"
 
     # Test with default implementation (None)
     sdfg2, state2, addnode2 = create_test_sdfg()
     result2 = addnode2.expand(state2)
-    assert result2 == 'pure'
+    assert result2 == "pure"
 
 
 def test_old_library_node_expand_interface():
@@ -90,7 +91,7 @@ def test_old_library_node_expand_interface():
     # Test with old interface
     with pytest.warns(DeprecationWarning, match=r"The expand\(sdfg, state\) interface is deprecated"):
         result = addnode.expand(sdfg, state)
-    assert result == 'pure'
+    assert result == "pure"
 
 
 def test_state_expand_library_node_method():
@@ -98,8 +99,8 @@ def test_state_expand_library_node_method():
     sdfg, state, addnode = create_test_sdfg()
 
     # Test with valid implementation
-    result = state.expand_library_node(addnode, 'pure')
-    assert result == 'pure'
+    result = state.expand_library_node(addnode, "pure")
+    assert result == "pure"
 
 
 def test_state_expand_library_node_errors():
@@ -108,14 +109,14 @@ def test_state_expand_library_node_errors():
 
     # Test with invalid implementation
     with pytest.raises(KeyError) as exc_info:
-        state.expand_library_node(addnode, 'nonexistent')
-    assert 'Unknown implementation for node AddNode: nonexistent' in str(exc_info.value)
+        state.expand_library_node(addnode, "nonexistent")
+    assert "Unknown implementation for node AddNode: nonexistent" in str(exc_info.value)
 
     # Test with node not in state
     sdfg2, state2, addnode2 = create_test_sdfg()
     with pytest.raises(ValueError) as exc_info:
-        state.expand_library_node(addnode2, 'pure')
-    assert 'is not in this state' in str(exc_info.value)
+        state.expand_library_node(addnode2, "pure")
+    assert "is not in this state" in str(exc_info.value)
 
 
 def test_library_node_expand_with_kwargs():
@@ -125,15 +126,15 @@ def test_library_node_expand_with_kwargs():
     # Test that the method accepts kwargs even if they aren't used
     # We'll test with a library node that doesn't use kwargs but doesn't fail
     try:
-        result = addnode.expand(state, 'pure')
-        assert result == 'pure'
+        result = addnode.expand(state, "pure")
+        assert result == "pure"
     except TypeError:
         pytest.fail("expand method should handle kwargs gracefully")
 
     # Test with state method - this should also work
     sdfg2, state2, addnode2 = create_test_sdfg()
-    result2 = state2.expand_library_node(addnode2, 'pure')
-    assert result2 == 'pure'
+    result2 = state2.expand_library_node(addnode2, "pure")
+    assert result2 == "pure"
 
 
 def test_compatibility_with_existing_expand_library_nodes():
@@ -154,7 +155,7 @@ def test_functional_correctness():
     sdfg, state, addnode = create_test_sdfg()
 
     # Expand using new interface
-    addnode.expand(state, 'pure')
+    addnode.expand(state, "pure")
 
     # Test execution
     A = np.array([5.0], dtype=np.float32)
@@ -173,11 +174,11 @@ def test_implementation_override():
     assert addnode.implementation is None
 
     # Set a different implementation on the node
-    addnode.implementation = 'nonexistent'  # This would normally fail
+    addnode.implementation = "nonexistent"  # This would normally fail
 
     # But we override it with a valid implementation
-    result = addnode.expand(state, 'pure')
-    assert result == 'pure'
+    result = addnode.expand(state, "pure")
+    assert result == "pure"
 
 
 def test_expansion_with_keyword_arguments():
@@ -185,8 +186,8 @@ def test_expansion_with_keyword_arguments():
     sdfg, state, addnode = create_test_sdfg()
 
     # Test expansion with tile_size keyword argument
-    result = addnode.expand(state, 'tiled', tile_size=16)
-    assert result == 'tiled'
+    result = addnode.expand(state, "tiled", tile_size=16)
+    assert result == "tiled"
 
     # Find the nested SDFG that was created by the expansion
     nested_sdfg_nodes = [n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
@@ -198,7 +199,7 @@ def test_expansion_with_keyword_arguments():
     found_tiled_map = False
     for sdfg_state in nested_sdfg.nodes():
         for node in sdfg_state.nodes():
-            if isinstance(node, dace.nodes.MapEntry) and node.label == 'tiled_map':
+            if isinstance(node, dace.nodes.MapEntry) and node.label == "tiled_map":
                 # Check that the map range is "0:16" (range end is tile_size-1 since ranges are inclusive)
                 assert node.map.range.ranges[0] == (0, 15, 1)  # 0:16 becomes (0, 15, 1)
                 found_tiled_map = True
@@ -208,8 +209,8 @@ def test_expansion_with_keyword_arguments():
 
     # Test with different tile_size
     sdfg2, state2, addnode2 = create_test_sdfg()
-    result2 = addnode2.expand(state2, 'tiled', tile_size=32)
-    assert result2 == 'tiled'
+    result2 = addnode2.expand(state2, "tiled", tile_size=32)
+    assert result2 == "tiled"
 
     nested_sdfg_nodes2 = [n for n in state2.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     nested_sdfg2 = nested_sdfg_nodes2[0].sdfg
@@ -217,7 +218,7 @@ def test_expansion_with_keyword_arguments():
     found_tiled_map2 = False
     for sdfg_state in nested_sdfg2.nodes():
         for node in sdfg_state.nodes():
-            if isinstance(node, dace.nodes.MapEntry) and node.label == 'tiled_map':
+            if isinstance(node, dace.nodes.MapEntry) and node.label == "tiled_map":
                 assert node.map.range.ranges[0] == (0, 31, 1)  # 0:32 becomes (0, 31, 1)
                 found_tiled_map2 = True
                 break
@@ -229,15 +230,15 @@ def test_change_default_restores_after_exception():
     """change_default must restore the library's prior default even when the `with` body raises --
     a plain `yield` with no try/finally leaks the changed default into whatever runs next on the
     same worker (e.g. a later test picking up 'MKL' left behind by a failed one)."""
-    lib = types.SimpleNamespace(default_implementation='original')
-    with pytest.raises(RuntimeError, match='boom'):
-        with library.change_default(lib, 'temporary'):
-            assert lib.default_implementation == 'temporary'
-            raise RuntimeError('boom')
-    assert lib.default_implementation == 'original'
+    lib = types.SimpleNamespace(default_implementation="original")
+    with pytest.raises(RuntimeError, match="boom"):
+        with library.change_default(lib, "temporary"):
+            assert lib.default_implementation == "temporary"
+            raise RuntimeError("boom")
+    assert lib.default_implementation == "original"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_new_library_node_expand_interface()
     test_old_library_node_expand_interface()
     test_state_expand_library_node_method()

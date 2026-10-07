@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for ``NormalizeLoopAndMapOrigin``: every Map range / ``LoopRegion``
-    counter is rebased to a 0-based begin while KEEPING its stride (unlike
-    ``NormalizeLoopsAndMaps``, which folds the stride into the index).
+"""Tests for ``NormalizeLoopAndMapOrigin``: every Map range / ``LoopRegion``
+counter is rebased to a 0-based begin while KEEPING its stride (unlike
+``NormalizeLoopsAndMaps``, which folds the stride into the index).
 """
+
 import copy
 
 from typing import Optional, Tuple
@@ -17,7 +18,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.canonicalize.normalize_loops_and_maps import NormalizeLoopsAndMaps
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -64,7 +65,7 @@ def test_map_rebased_keeping_stride():
     changed = NormalizeLoopAndMapOrigin().apply_pass(sdfg, {})
     assert changed is not None
     sdfg.validate()
-    (b, e, s), = _map_ranges(sdfg)
+    ((b, e, s),) = _map_ranges(sdfg)
     assert str(b) == "0", b
     assert str(e) == "7", e
     assert str(s) == "3", s
@@ -208,7 +209,7 @@ def test_two_sided_copy_memlet_is_rebased_not_crashed():
     assert NormalizeLoopAndMapOrigin().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     assert str(loop_analysis.get_init_assignment(loop)) == "0"
-    edge, = body.edges()
+    (edge,) = body.edges()
     assert str(edge.data.subset) == "i + 2", edge.data.subset
     assert str(edge.data.other_subset) == "i + 2", edge.data.other_subset
 
@@ -237,7 +238,7 @@ def test_nested_sdfg_map_is_rebased_after_its_enclosing_map():
     """``scope_children`` restarts at every NestedSDFG, so the walk recurses into
     one as its own root -- from the scope level it sits at, i.e. after every Map
     enclosing it has already been shifted."""
-    inner = dace.SDFG('inner_nested_sdfg_map_is_rebased_after_its_enclosing_map')
+    inner = dace.SDFG("inner_nested_sdfg_map_is_rebased_after_its_enclosing_map")
     inner.add_array("A", [16, 16], dace.float64)
     istate = inner.add_state("ibody", is_start_block=True)
     ime, imx = istate.add_map("inner_map", {"j": "3:9"})
@@ -248,7 +249,7 @@ def test_nested_sdfg_map_is_rebased_after_its_enclosing_map():
     imx.add_out_connector("OUT_A")
     istate.add_edge(imx, "OUT_A", istate.add_write("A"), None, dace.Memlet("A[i, 3:9]"))
 
-    sdfg = dace.SDFG('outer_nested_sdfg_map_is_rebased_after_its_enclosing_map')
+    sdfg = dace.SDFG("outer_nested_sdfg_map_is_rebased_after_its_enclosing_map")
     sdfg.add_array("A", [16, 16], dace.float64)
     state = sdfg.add_state("body", is_start_block=True)
     ome, omx = state.add_map("outer_map", {"i": "2:10"})
@@ -266,12 +267,13 @@ def test_nested_sdfg_map_is_rebased_after_its_enclosing_map():
     assert str(ime.map.range) == "0:6", ime.map.range
     # ``A[i, j]`` under both shifts: the outer ``i`` came from the enclosing map (+2), the
     # inner ``j`` from the map in the nested SDFG (+3).
-    write, = [e for e in istate.edges() if e.dst is imx]
+    (write,) = [e for e in istate.edges() if e.dst is imx]
     assert str(write.data.subset) == "i + 2, j + 3", write.data.subset
 
 
-def mark_cells_under(state: dace.SDFGState, outer: Optional[Tuple[nodes.MapEntry, nodes.MapExit]],
-                     row_param_range: str) -> nodes.MapEntry:
+def mark_cells_under(
+    state: dace.SDFGState, outer: Optional[Tuple[nodes.MapEntry, nodes.MapExit]], row_param_range: str
+) -> nodes.MapEntry:
     """``for j in <row_param_range>: A[i, j] = 1`` nested under ``outer`` (a map entry, or None)."""
     entry, exit_node = state.add_map("cols", {"j": row_param_range})
     tasklet = state.add_tasklet("mark", set(), {"y"}, "y = 1.0")
@@ -281,12 +283,9 @@ def mark_cells_under(state: dace.SDFGState, outer: Optional[Tuple[nodes.MapEntry
     else:
         outer_entry, outer_exit = outer
         state.add_nedge(outer_entry, entry, dace.Memlet())
-        state.add_memlet_path(tasklet,
-                              exit_node,
-                              outer_exit,
-                              state.add_write("A"),
-                              src_conn="y",
-                              memlet=dace.Memlet("A[i, j]"))
+        state.add_memlet_path(
+            tasklet, exit_node, outer_exit, state.add_write("A"), src_conn="y", memlet=dace.Memlet("A[i, j]")
+        )
     return entry
 
 
@@ -354,17 +353,19 @@ def test_nested_sdfg_map_range_reading_the_rebased_param_follows_the_shift():
     assert np.array_equal(written_cells(sdfg), oracle)
 
 
-@pytest.mark.parametrize("language, code, rewritten, expected", [
-    (dace.Language.Python, "t = i * 2\nb = t + i", "t = ((i + 1) * 2)\nb = (t + (i + 1))", [0, 3, 6, 9]),
-    (dace.Language.CPP, "b = i;", "b = ((i + (1)));", [0, 1, 2, 3]),
-])
+@pytest.mark.parametrize(
+    "language, code, rewritten, expected",
+    [
+        (dace.Language.Python, "t = i * 2\nb = t + i", "t = ((i + 1) * 2)\nb = (t + (i + 1))", [0, 3, 6, 9]),
+        (dace.Language.CPP, "b = i;", "b = ((i + (1)));", [0, 1, 2, 3]),
+    ],
+)
 def test_rebased_map_shifts_the_parameter_in_every_statement_of_a_tasklet(language, code, rewritten, expected):
     sdfg = dace.SDFG("tasklet_reads_param")
     sdfg.add_array("B", [4], dace.float64)
-    tasklet, _, _ = sdfg.add_state().add_mapped_tasklet("m", {"i": "1:4"}, {},
-                                                        code, {"b": dace.Memlet("B[i]")},
-                                                        language=language,
-                                                        external_edges=True)
+    tasklet, _, _ = sdfg.add_state().add_mapped_tasklet(
+        "m", {"i": "1:4"}, {}, code, {"b": dace.Memlet("B[i]")}, language=language, external_edges=True
+    )
     B = np.zeros(4)
 
     NormalizeLoopAndMapOrigin().apply_pass(sdfg, {})
@@ -397,9 +398,9 @@ def test_rebased_loop_counter_is_shifted_inside_calls_in_loop_and_branch_conditi
 def test_map_whose_tasklet_assigns_the_parameter_is_left_unchanged():
     sdfg = dace.SDFG("tasklet_assigns_param")
     sdfg.add_array("B", [4], dace.float64)
-    sdfg.add_state().add_mapped_tasklet("m", {"i": "1:4"}, {},
-                                        "i = i + 1\nb = i", {"b": dace.Memlet("B[i]")},
-                                        external_edges=True)
+    sdfg.add_state().add_mapped_tasklet(
+        "m", {"i": "1:4"}, {}, "i = i + 1\nb = i", {"b": dace.Memlet("B[i]")}, external_edges=True
+    )
     before = sdfg.to_json()
 
     assert NormalizeLoopsAndMaps().apply_pass(sdfg, {}) is None

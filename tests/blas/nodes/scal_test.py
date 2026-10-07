@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``Scal`` BLAS library node (``dace.libraries.blas.nodes.scal``)."""
+
 import pytest
 
 import dace
@@ -23,7 +24,7 @@ def test_validate_accepts_reparsed_symbol_instances():
     state.add_edge(node, "_res", state.add_write("res"), None, Memlet.from_array("res", sdfg.arrays["res"]))
     node.validate(sdfg, state)  # must not raise
 
-    sdfg.arrays["res"].shape = (dace.symbol("P", dace.int32), )
+    sdfg.arrays["res"].shape = (dace.symbol("P", dace.int32),)
     res_edge = next(e for e in state.out_edges(node) if e.src_conn == "_res")
     res_edge.data = Memlet.from_array("res", sdfg.arrays["res"])
     with pytest.raises(ValueError):

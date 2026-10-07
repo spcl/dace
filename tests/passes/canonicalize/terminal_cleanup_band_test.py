@@ -24,6 +24,7 @@ such as the empty ``else`` arm ``LoopToScan`` leaves when it splits a masked sca
 Every behavioural test here is A/B in one test -- with the half under test and without it -- so none
 can go vacuous if a later change makes the residue disappear for some other reason.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -48,7 +49,7 @@ from dace.transformation.passes.canonicalize.prune_and_inline_nested_sdfgs impor
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 from dace.transformation.passes.simplify import SimplifyPass
 
-LEN_1D = dace.symbol('LEN_1D')
+LEN_1D = dace.symbol("LEN_1D")
 
 
 @dace.program
@@ -69,8 +70,9 @@ def _fuse_diamond(out: dace.float64[LEN_1D], a: dace.float64[LEN_1D]):
 
 
 @dace.program
-def _fission_dep_then_indep(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D],
-                            y: dace.float64[LEN_1D]):
+def _fission_dep_then_indep(
+    a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: dace.float64[LEN_1D], y: dace.float64[LEN_1D]
+):
     """A carried prefix sum beside an independent body -- fission splits them, and the split leaves
     a replica of the ``a`` staging chain that nothing downstream consumes."""
     a[0] = x[0]
@@ -108,13 +110,13 @@ def _is_reclaim_stage(unit: ppl.Pass) -> bool:
 
 #: Unit types of :func:`_structural_cleanup`, taken from the helper itself rather than transcribed:
 #: the A/B below has to skip exactly the cleanup, and a transcribed list goes stale silently.
-CLEANUP_TYPES = frozenset(type(p).__name__ for label, p in canon_pipeline._structural_cleanup('probe'))
+CLEANUP_TYPES = frozenset(type(p).__name__ for label, p in canon_pipeline._structural_cleanup("probe"))
 
 
 def _reclaim_slots() -> List[int]:
     """Recipe indices of every array-reclaiming stage, in order."""
     at = [i for i, (label, p) in enumerate(canon_pipeline._build_stages()) if _is_reclaim_stage(p)]
-    assert at, 'the recipe no longer reclaims arrays at all'
+    assert at, "the recipe no longer reclaims arrays at all"
     return at
 
 
@@ -142,26 +144,28 @@ def _cleanup_slots() -> List[int]:
     stages = canon_pipeline._build_stages()
     start = _band_start()
     names = [type(p).__name__ for label, p in stages]
-    want = [type(p).__name__ for label, p in canon_pipeline._structural_cleanup('probe')]
+    want = [type(p).__name__ for label, p in canon_pipeline._structural_cleanup("probe")]
     # The FIRST full occurrence of the helper after the reclaimers -- matched as a run, not by
     # membership: the recipe's tail holds further symbol passes of the same types, and picking
     # those up would make the A/B skip work that is not cleanup at all.
-    at = [i for i in range(start + 1, len(names) - len(want) + 1) if names[i:i + len(want)] == want]
-    assert at, 'no structural cleanup after the reclaimers -- re-home this A/B with it'
+    at = [i for i in range(start + 1, len(names) - len(want) + 1) if names[i : i + len(want)] == want]
+    assert at, "no structural cleanup after the reclaimers -- re-home this A/B with it"
     helper = list(range(at[0], at[0] + len(want)))
     slots = set(helper)
-    slots.update(i for i, (label, p) in enumerate(stages)
-                 if start < i <= helper[-1] and isinstance(p, PruneEmptyConditionalBranches))
+    slots.update(
+        i
+        for i, (label, p) in enumerate(stages)
+        if start < i <= helper[-1] and isinstance(p, PruneEmptyConditionalBranches)
+    )
     leading = [i for i, (label, p) in enumerate(stages) if start < i < helper[0] and _leads_a_cleanup(p)]
-    assert leading, 'the terminal cleanup is no longer led by an inline'
+    assert leading, "the terminal cleanup is no longer led by an inline"
     slots.add(leading[-1])
     return sorted(slots)
 
 
-def _canonicalize(sdfg: dace.SDFG,
-                  with_reclaim: bool = True,
-                  with_cleanup: bool = True,
-                  with_optional: bool = True) -> dace.SDFG:
+def _canonicalize(
+    sdfg: dace.SDFG, with_reclaim: bool = True, with_cleanup: bool = True, with_optional: bool = True
+) -> dace.SDFG:
     """Run the real recipe, optionally with one part of the terminal work skipped (the A/B
     reference). ``with_reclaim`` drops every reclaiming stage; ``with_cleanup`` drops the inline, the
     structural cleanup and the empty-arm prune that follow them; ``with_optional`` drops the
@@ -183,8 +187,9 @@ def _canonicalize(sdfg: dace.SDFG,
 
 
 def _transients(sdfg: dace.SDFG) -> List[str]:
-    return sorted(name for nested in sdfg.all_sdfgs_recursive() for name, desc in nested.arrays.items()
-                  if desc.transient)
+    return sorted(
+        name for nested in sdfg.all_sdfgs_recursive() for name, desc in nested.arrays.items() if desc.transient
+    )
 
 
 def _access_nodes(sdfg: dace.SDFG) -> List[str]:
@@ -209,18 +214,28 @@ def _units_of(unit) -> List[object]:
 def test_fused_diamond_loses_the_duplicate_map_fusion_carrier():
     """Without the stage the collapsed diamond carries ``__map_fusion_t`` AND a copy of it."""
     reference = _canonicalize(_fuse_diamond.to_sdfg(simplify=False), with_reclaim=False)
-    dupes = [n for n in _transients(reference) if n.startswith('__map_fusion_t')]
-    assert len(dupes) == 2, f'expected the duplicated carrier in the reference, got {_transients(reference)}'
-    copy_edges = [(e.src.data, e.dst.data) for nested in reference.all_sdfgs_recursive() for state in nested.states()
-                  for e in state.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)]
-    assert copy_edges, 'reference should still hold the AccessNode->AccessNode copy'
+    dupes = [n for n in _transients(reference) if n.startswith("__map_fusion_t")]
+    assert len(dupes) == 2, f"expected the duplicated carrier in the reference, got {_transients(reference)}"
+    copy_edges = [
+        (e.src.data, e.dst.data)
+        for nested in reference.all_sdfgs_recursive()
+        for state in nested.states()
+        for e in state.edges()
+        if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+    ]
+    assert copy_edges, "reference should still hold the AccessNode->AccessNode copy"
 
     cleaned = _canonicalize(_fuse_diamond.to_sdfg(simplify=False), with_reclaim=True)
-    assert len([n for n in _transients(cleaned) if n.startswith('__map_fusion_t')]) == 1, _transients(cleaned)
-    assert not [(e.src.data, e.dst.data) for nested in cleaned.all_sdfgs_recursive() for state in nested.states()
-                for e in state.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)]
+    assert len([n for n in _transients(cleaned) if n.startswith("__map_fusion_t")]) == 1, _transients(cleaned)
+    assert not [
+        (e.src.data, e.dst.data)
+        for nested in cleaned.all_sdfgs_recursive()
+        for state in nested.states()
+        for e in state.edges()
+        if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+    ]
     # The reclaim is a pure removal: it must not cost the fusion the diamond earned.
-    assert _maps(cleaned) == _maps(reference), 'reclaiming must not change the map structure'
+    assert _maps(cleaned) == _maps(reference), "reclaiming must not change the map structure"
 
 
 #: The orphaned replica the fission leaves behind: the staging array it reads uninitialized, the two
@@ -228,19 +243,19 @@ def test_fused_diamond_loses_the_duplicate_map_fusion_carrier():
 #: All three descriptors carry the replica's ``nested_sdfg_`` prefix; the live half of the split
 #: works on the ``_scan_*`` pair and the ``a_slice`` read (its result copy folds into the producing tasklet), so the
 #: sets never overlap.
-DEAD_REPLICA_ARRAY = 'nested_sdfg_a'
+DEAD_REPLICA_ARRAY = "nested_sdfg_a"
 DEAD_REPLICA_TRANSIENTS = {
-    'nested_sdfg_a',
-    'nested_sdfg_a_index',
-    'nested_sdfg_a_slice_plus_x_slice',
+    "nested_sdfg_a",
+    "nested_sdfg_a_index",
+    "nested_sdfg_a_slice_plus_x_slice",
 }
 DEAD_REPLICA_TASKLETS = {
-    '_Add_',
-    '_assign_in_nested_sdfg_a_to_nested_sdfg_a_index',
-    '_assign_out_nested_sdfg_a_slice_plus_x_slice_to_nested_sdfg_a',
+    "_Add_",
+    "_assign_in_nested_sdfg_a_to_nested_sdfg_a_index",
+    "_assign_out_nested_sdfg_a_slice_plus_x_slice_to_nested_sdfg_a",
 }
 #: What the split's live half computes -- named so the removal below cannot quietly take it too.
-LIVE_TRANSIENTS = {'_scan_in_a', '_scan_seed_a', 'a_slice'}
+LIVE_TRANSIENTS = {"_scan_in_a", "_scan_seed_a", "a_slice"}
 
 
 def test_fission_replica_is_absent_from_the_canonical_form():
@@ -276,9 +291,14 @@ def _workless_branches(sdfg: dace.SDFG) -> List[str]:
     Named by the arm rather than by a state, because that is the whole point of the case: an arm is
     a ControlFlowRegion, so ``DeadStateElimination`` walks past it however empty its states are.
     """
-    return sorted(branch.label for nested in sdfg.all_sdfgs_recursive() for block in nested.all_control_flow_blocks()
-                  if isinstance(block, ConditionalBlock) for condition, branch in block.branches
-                  if not any(state.nodes() for state in branch.states()))
+    return sorted(
+        branch.label
+        for nested in sdfg.all_sdfgs_recursive()
+        for block in nested.all_control_flow_blocks()
+        if isinstance(block, ConditionalBlock)
+        for condition, branch in block.branches
+        if not any(state.nodes() for state in branch.states())
+    )
 
 
 def test_spent_conditional_arm_is_spliced_out():
@@ -291,7 +311,7 @@ def test_spent_conditional_arm_is_spliced_out():
     """
     reference = _canonicalize(_guarded_scan.to_sdfg(simplify=False), with_cleanup=False)
     spent = _workless_branches(reference)
-    assert spent, f'expected the split scan to leave an empty arm, got {_states(reference)}'
+    assert spent, f"expected the split scan to leave an empty arm, got {_states(reference)}"
 
     cleaned = _canonicalize(_guarded_scan.to_sdfg(simplify=False), with_cleanup=True)
     assert _workless_branches(cleaned) == [], _states(cleaned)
@@ -322,33 +342,35 @@ def test_the_stage_is_idempotent():
     sdfg.validate()
 
 
-@pytest.mark.parametrize('program,kwargs', [
-    (_fuse_diamond, 'diamond'),
-    (_fission_dep_then_indep, 'fission'),
-])
+@pytest.mark.parametrize(
+    "program,kwargs",
+    [
+        (_fuse_diamond, "diamond"),
+        (_fission_dep_then_indep, "fission"),
+    ],
+)
 def test_reclaim_is_bit_exact(program, kwargs):
     """A reclaimer that changes results is a miscompile: same pipeline with and without the stage."""
     size = 64
     rng = np.random.default_rng(20260812)
     # Drawn ONCE, before the loop: both runs must see byte-identical inputs or the comparison
     # measures the RNG, not the stage.
-    base = {name: rng.random(size) + 0.5 for name in ('a', 'x', 'y')}
+    base = {name: rng.random(size) + 0.5 for name in ("a", "x", "y")}
 
     results = []
     for with_reclaim in (False, True):
         sdfg = _canonicalize(program.to_sdfg(simplify=False), with_reclaim=with_reclaim)
-        sdfg.name = f'{kwargs}_reclaim' if with_reclaim else f'{kwargs}_reference'
-        if kwargs == 'diamond':
+        sdfg.name = f"{kwargs}_reclaim" if with_reclaim else f"{kwargs}_reference"
+        if kwargs == "diamond":
             out = np.zeros(size)
-            sdfg.compile()(out=out, a=base['a'].copy(), LEN_1D=size)
+            sdfg.compile()(out=out, a=base["a"].copy(), LEN_1D=size)
             results.append(out)
         else:
             a, b = np.zeros(size), np.zeros(size)
-            sdfg.compile()(a=a, b=b, x=base['x'].copy(), y=base['y'].copy(), LEN_1D=size)
+            sdfg.compile()(a=a, b=b, x=base["x"].copy(), y=base["y"].copy(), LEN_1D=size)
             results.append(np.concatenate([a, b]))
-    assert np.array_equal(results[1].view(np.uint64), results[0].view(np.uint64)), \
-        'reclaiming changed the result'
+    assert np.array_equal(results[1].view(np.uint64), results[0].view(np.uint64)), "reclaiming changed the result"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

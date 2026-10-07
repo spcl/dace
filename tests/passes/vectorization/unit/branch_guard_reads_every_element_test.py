@@ -5,6 +5,7 @@
 inputs are the array reads. One input per array name folded ``A[0, i] + A[1, i]`` into ``2 * A[0, i]``: CloudSC's
 tidy-up guard ``zqx[ncldql] + zqx[ncldqi] < rlmin or za < ramin`` then fired on the wrong columns.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -27,8 +28,8 @@ def guard_summing_two_elements() -> dace.SDFG:
     body = dace.SDFG("guard_summing_two_elements_body")
     body.add_symbol("i", dace.int64)
     body.add_array("A", (2, LENGTH), dace.float64)
-    body.add_array("B", (LENGTH, ), dace.float64)
-    body.add_array("OUT", (LENGTH, ), dace.float64)
+    body.add_array("B", (LENGTH,), dace.float64)
+    body.add_array("OUT", (LENGTH,), dace.float64)
     stage = body.add_state("stage", is_start_block=True)
     guarded = ConditionalBlock("tidy_up")
     body.add_node(guarded)
@@ -42,8 +43,8 @@ def guard_summing_two_elements() -> dace.SDFG:
 
     sdfg = dace.SDFG("branch_guard_reads_every_element")
     sdfg.add_array("A", (2, LENGTH), dace.float64)
-    sdfg.add_array("B", (LENGTH, ), dace.float64)
-    sdfg.add_array("OUT", (LENGTH, ), dace.float64)
+    sdfg.add_array("B", (LENGTH,), dace.float64)
+    sdfg.add_array("OUT", (LENGTH,), dace.float64)
     outer = sdfg.add_state("outer")
     map_entry, map_exit = outer.add_map("per_column", {"i": f"0:{LENGTH}"}, schedule=dace.ScheduleType.CPU_Multicore)
     nested = outer.add_nested_sdfg(body, {"A": None, "B": None}, {"OUT": None}, symbol_mapping={"i": "i"})
@@ -62,8 +63,11 @@ def guard_summing_two_elements() -> dace.SDFG:
 
 def lifted_guard_reads(sdfg: dace.SDFG) -> list[str]:
     return sorted(
-        str(edge.data) for node, state in sdfg.all_nodes_recursive()
-        if isinstance(node, nodes.Tasklet) and node.label.startswith("lift_cond") for edge in state.in_edges(node))
+        str(edge.data)
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.Tasklet) and node.label.startswith("lift_cond")
+        for edge in state.in_edges(node)
+    )
 
 
 def test_guard_summing_two_elements_of_one_array_reads_both():

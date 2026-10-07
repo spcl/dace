@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """What a layout change costs, and when it pays for itself: insert iff uses * (t_nest(L0) - t_nest(L1)) > t_relayout."""
+
 import math
 from typing import Optional
 
@@ -51,8 +52,10 @@ def break_even_uses(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout:
     relayout = sp.sympify(t_relayout)
     for name, value in (("delta", delta), ("t_relayout", relayout)):
         if not value.is_number:
-            raise ValueError(f"break_even_uses needs concrete times; got a symbolic {name} {value}. "
-                             "Substitute the nest's symbols first.")
+            raise ValueError(
+                f"break_even_uses needs concrete times; got a symbolic {name} {value}. "
+                "Substitute the nest's symbols first."
+            )
     if float(delta) <= 0.0:
         return None
     return int(math.ceil(float(relayout) / float(delta)))
@@ -67,27 +70,25 @@ def relayout_pays(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout: s
 # Efficiency enters only the G (bandwidth) term below, never L (paid per message, not per byte).
 
 
-def bandwidth_efficiency(useful_bytes: sp.Basic,
-                         sectors_touched: sp.Basic,
-                         p: LogGP,
-                         written: bool = False,
-                         covers_full_block: bool = False) -> sp.Basic:
+def bandwidth_efficiency(
+    useful_bytes: sp.Basic, sectors_touched: sp.Basic, p: LogGP, written: bool = False, covers_full_block: bool = False
+) -> sp.Basic:
     """epsilon in (0, 1]: fraction of moved bytes the computation actually uses."""
     return as_expr(sp.sympify(useful_bytes)) / as_expr(block_traffic(sectors_touched, p, written, covers_full_block))
 
 
-def nest_time_by_efficiency(useful_bytes: sp.Basic, epsilon: sp.Basic, messages: sp.Basic, p: LogGP,
-                            concurrency: float) -> sp.Basic:
+def nest_time_by_efficiency(
+    useful_bytes: sp.Basic, epsilon: sp.Basic, messages: sp.Basic, p: LogGP, concurrency: float
+) -> sp.Basic:
     """nest_memory_time in efficiency form: useful_bytes / epsilon is the bytes moved."""
-    return nest_memory_time(p,
-                            as_expr(sp.sympify(useful_bytes)) / as_expr(sp.sympify(epsilon)), sp.sympify(messages),
-                            concurrency)
+    return nest_memory_time(
+        p, as_expr(sp.sympify(useful_bytes)) / as_expr(sp.sympify(epsilon)), sp.sympify(messages), concurrency
+    )
 
 
-def relayout_pays_by_efficiency(eps_before: float,
-                                eps_after: float,
-                                passes: int = 1,
-                                overhead_passes: float = 0.0) -> bool:
+def relayout_pays_by_efficiency(
+    eps_before: float, eps_after: float, passes: int = 1, overhead_passes: float = 0.0
+) -> bool:
     """Whether a relayout pays from efficiencies alone: passes * (1/eps_before - 1/eps_after) >= 2 + overhead_passes.
     Bandwidth regime only; use nest_time / relayout_pays for a latency-bound nest."""
     if not (0 < eps_before <= 1) or not (0 < eps_after <= 1):

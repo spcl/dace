@@ -15,6 +15,7 @@ Both share one skeleton and one dataflow-expression match (see
 at ``[i,k]`` and ``[j,k]`` is a rank-k update, two cross-paired operands are a rank-2k update. The BLAS primitive
 computes only the referenced triangle, threaded. Any deviation is a clean no-op.
 """
+
 from typing import Any, Dict, List, NamedTuple, Optional
 
 import sympy
@@ -22,12 +23,24 @@ import sympy
 from dace import SDFG, memlet as mm
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.canonicalize.rank_k_match import (RankKMatch, beta_and_inner_loop, expressions_equal,
-                                                                  full_memlet, internal_writes_contained, loop_extent,
-                                                                  loop_invariant, match_beta_state, operand_shape_ok,
-                                                                  outer_loop_candidates, replace_loop_with_state,
-                                                                  resolve_accumulate, root_sdfg_of, single_body_state,
-                                                                  sink_node, square_output_ok)
+from dace.transformation.passes.canonicalize.rank_k_match import (
+    RankKMatch,
+    beta_and_inner_loop,
+    expressions_equal,
+    full_memlet,
+    internal_writes_contained,
+    loop_extent,
+    loop_invariant,
+    match_beta_state,
+    operand_shape_ok,
+    outer_loop_candidates,
+    replace_loop_with_state,
+    resolve_accumulate,
+    root_sdfg_of,
+    single_body_state,
+    sink_node,
+    square_output_ok,
+)
 from dace.transformation.transformation import explicit_cf_compatible
 
 # Stand-in for the triangular slice index while the body expression is resolved.
@@ -76,8 +89,9 @@ def symmetric_operands(roles: Dict[str, Any], c_array: str) -> Optional[List[str
     return None if c_array in operands else operands
 
 
-def update_operands(root: SDFG, loop: LoopRegion, nest: TriangularNest, value: sympy.Basic, roles: Dict[str, Any],
-                    beta: str) -> Optional[List[str]]:
+def update_operands(
+    root: SDFG, loop: LoopRegion, nest: TriangularNest, value: sympy.Basic, roles: Dict[str, Any], beta: str
+) -> Optional[List[str]]:
     """The operands when ``value`` is ``C[i,j] + alpha * <symmetric pairing>`` over loop-invariant inputs."""
     operands = symmetric_operands(roles, nest.c)
     if operands is None:
@@ -136,31 +150,30 @@ class LoopToRankKUpdate(ppl.Pass):
         operands = update_operands(root, loop, nest, resolved[0], roles, beta)
         if operands is None:
             return None
-        return RankKMatch(c=nest.c,
-                          a=operands[0],
-                          b=operands[1] if len(operands) == 2 else None,
-                          alpha=next(iter(roles["coeffs"])),
-                          beta=beta,
-                          uplo=uplo,
-                          trans=roles["trans"],
-                          n=nest.n,
-                          k=nest.k)
+        return RankKMatch(
+            c=nest.c,
+            a=operands[0],
+            b=operands[1] if len(operands) == 2 else None,
+            alpha=next(iter(roles["coeffs"])),
+            beta=beta,
+            uplo=uplo,
+            trans=roles["trans"],
+            n=nest.n,
+            k=nest.k,
+        )
 
     def replace(self, parent: ControlFlowRegion, loop: LoopRegion, match: RankKMatch) -> None:
         # Deferred: the BLAS package imports transformations.
         from dace.libraries.blas.nodes.syr2k import Syr2k
         from dace.libraries.blas.nodes.syrk import Syrk
+
         node_class, suffix = (Syrk, "_syrk") if match.b is None else (Syr2k, "_syr2k")
         operands = [match.a] if match.b is None else [match.a, match.b]
         root = root_sdfg_of(parent)
         state = replace_loop_with_state(parent, loop, loop.label + suffix)
-        node = node_class(loop.label + suffix,
-                          uplo=match.uplo,
-                          trans=match.trans,
-                          alpha=1,
-                          beta=1,
-                          alpha_input=True,
-                          beta_input=True)
+        node = node_class(
+            loop.label + suffix, uplo=match.uplo, trans=match.trans, alpha=1, beta=1, alpha_input=True, beta_input=True
+        )
         state.add_node(node)
         for conn, name in zip(("_a", "_b"), operands):
             state.add_edge(state.add_read(name), None, node, conn, full_memlet(root, name))

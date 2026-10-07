@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A ``ConditionalBlock`` with >=3 branches (or ``if/elif`` without ``else``) becomes a chain of single-arm blocks."""
+
 import itertools
 
 import numpy as np

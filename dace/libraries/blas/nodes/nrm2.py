@@ -6,6 +6,7 @@ inputs ``?NRM2`` returns a real value (``SCNRM2`` / ``DZNRM2``), so the
 output descriptor's dtype is allowed to be the real base type of a
 complex input.
 """
+
 from typing import List, TYPE_CHECKING
 import warnings
 
@@ -18,6 +19,7 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import dtypes, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -42,21 +44,30 @@ class ExpandNrm2Pure(ExpandTransformation):
         accum = sdfg.add_state_after(init, node.label + "_accum")
         finish = sdfg.add_state_after(accum, node.label + "_finish")
 
-        init.add_mapped_tasklet("_init", {"__u": "0:1"}, {},
-                                "_out = 0", {"_out": dace.Memlet("_acc[0]")},
-                                external_edges=True)
-        accum.add_mapped_tasklet("_accum", {"__i": f"0:{n}"}, {"__x": dace.Memlet("_x[__i]")},
-                                 "__out = __x * __x", {"__out": dace.Memlet("_acc[0]", wcr="lambda a, b: a + b")},
-                                 external_edges=True)
-        finish.add_mapped_tasklet("_sqrt", {"__u": "0:1"}, {"__a": dace.Memlet("_acc[0]")},
-                                  "__o = math.sqrt(__a)", {"__o": dace.Memlet("_result[0]")},
-                                  external_edges=True)
+        init.add_mapped_tasklet(
+            "_init", {"__u": "0:1"}, {}, "_out = 0", {"_out": dace.Memlet("_acc[0]")}, external_edges=True
+        )
+        accum.add_mapped_tasklet(
+            "_accum",
+            {"__i": f"0:{n}"},
+            {"__x": dace.Memlet("_x[__i]")},
+            "__out = __x * __x",
+            {"__out": dace.Memlet("_acc[0]", wcr="lambda a, b: a + b")},
+            external_edges=True,
+        )
+        finish.add_mapped_tasklet(
+            "_sqrt",
+            {"__u": "0:1"},
+            {"__a": dace.Memlet("_acc[0]")},
+            "__o = math.sqrt(__a)",
+            {"__o": dace.Memlet("_result[0]")},
+            external_edges=True,
+        )
         return sdfg
 
 
 @dace.library.expansion
 class ExpandNrm2OpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -67,31 +78,33 @@ class ExpandNrm2OpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandNrm2Pure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         prefix = func.lower()
         # Complex returns real: SCNRM2 / DZNRM2.
         if dtype == dace.complex64:
-            cfunc = 'scnrm2'
+            cfunc = "scnrm2"
         elif dtype == dace.complex128:
-            cfunc = 'dznrm2'
+            cfunc = "dznrm2"
         else:
-            cfunc = prefix + 'nrm2'
+            cfunc = prefix + "nrm2"
 
         n = n or node.n or sz
         code = f"_result = cblas_{cfunc}({n}, _x, {stride_x});"
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': desc_res.dtype.base_type},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            {"_result": desc_res.dtype.base_type},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandNrm2MKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -101,7 +114,6 @@ class ExpandNrm2MKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandNrm2GPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -113,25 +125,28 @@ class ExpandNrm2GPUBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandNrm2Pure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         # Complex types: cublasScnrm2 / cublasDznrm2 (real-valued result).
         if dtype == dace.complex64:
-            cfunc = 'Scnrm2'
+            cfunc = "Scnrm2"
         elif dtype == dace.complex128:
-            cfunc = 'Dznrm2'
+            cfunc = "Dznrm2"
         else:
-            cfunc = func + 'nrm2'
+            cfunc = func + "nrm2"
 
         n = n or node.n or sz
         code = cls.environments[0].handle_setup_code(node)
         code += f"{cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x}, _result);"
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': dtypes.pointer(desc_res.dtype.base_type)},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            {"_result": dtypes.pointer(desc_res.dtype.base_type)},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -175,14 +190,14 @@ class Nrm2(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.nrm2')
-@oprepo.replaces('dace.libraries.blas.Nrm2')
-def nrm2_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, result):
+@oprepo.replaces("dace.libraries.blas.nrm2")
+@oprepo.replaces("dace.libraries.blas.Nrm2")
+def nrm2_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, result):
     """Build a :class:`Nrm2` library node and wire it into ``state``."""
     x_in = state.add_read(x)
     res = state.add_write(result)
-    libnode = Nrm2('nrm2', n=sdfg.arrays[x].shape[0])
+    libnode = Nrm2("nrm2", n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(libnode, '_result', res, None, mm.Memlet(result))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(libnode, "_result", res, None, mm.Memlet(result))
     return []

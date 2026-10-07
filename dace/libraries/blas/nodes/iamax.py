@@ -7,6 +7,7 @@ here write a ``dace.int32`` result in cBLAS convention (0-indexed). If
 the calling Fortran code needs the 1-indexed value, add the +1 at the
 call site.
 """
+
 from typing import List, TYPE_CHECKING
 import warnings
 
@@ -19,6 +20,7 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import dtypes, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -46,9 +48,14 @@ class ExpandIamaxPure(ExpandTransformation):
         copy_state = sdfg.add_state(node.label + "_copy")
         scan_state = sdfg.add_state_after(copy_state, node.label + "_scan")
 
-        copy_state.add_mapped_tasklet("_cp", {"__i": f"0:{n}"}, {"__x": dace.Memlet("_x[__i]")},
-                                      "__y = __x", {"__y": dace.Memlet("_x_in[__i]")},
-                                      external_edges=True)
+        copy_state.add_mapped_tasklet(
+            "_cp",
+            {"__i": f"0:{n}"},
+            {"__x": dace.Memlet("_x[__i]")},
+            "__y = __x",
+            {"__y": dace.Memlet("_x_in[__i]")},
+            external_edges=True,
+        )
 
         # One-iteration map drives a sequential scan tasklet (n is a runtime
         # bound; sympy expressions are fine inside the body).
@@ -76,7 +83,6 @@ __i = __besti
 
 @dace.library.expansion
 class ExpandIamaxOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -87,23 +93,25 @@ class ExpandIamaxOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandIamaxPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
-        cfunc = 'i' + func.lower() + 'amax'
+        cfunc = "i" + func.lower() + "amax"
         n = n or node.n or sz
         code = f"_result = (int)cblas_{cfunc}({n}, _x, {stride_x});"
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': desc_res.dtype.base_type},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            {"_result": desc_res.dtype.base_type},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandIamaxMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -113,7 +121,6 @@ class ExpandIamaxMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandIamaxGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -125,23 +132,25 @@ class ExpandIamaxGPUBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandIamaxPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         # cuBLAS returns 1-indexed; subtract 1 to match the cBLAS convention.
         # `cublasIdamax`, not `cublasIDamax`: the leading I is capital and the type letter is
         # not. The old spelling named a symbol neither vendor exports.
-        cfunc = 'I' + func.lower() + 'amax'
+        cfunc = "I" + func.lower() + "amax"
         n = n or node.n or sz
         code = cls.environments[0].handle_setup_code(node)
         # The vendor returns a 1-based index; ``_result`` is device memory, so the converted value
         # goes back with a copy rather than a host store.
         code += gpu_dialect.host_scalar_mode(
-            cls.dialect, f"""
+            cls.dialect,
+            f"""
         int __tmp_idx;
         {cls.dialect.check_error}({cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x},
                                                               &__tmp_idx));
-        """)
+        """,
+        )
         code += f"""
         __tmp_idx -= 1;
         DACE_GPU_CHECK(gpuMemcpyAsync(_result, &__tmp_idx, sizeof(int), gpuMemcpyHostToDevice,
@@ -149,10 +158,13 @@ class ExpandIamaxGPUBLAS(ExpandTransformation):
         DACE_GPU_CHECK(gpuStreamSynchronize(__dace_current_stream));
         """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': dtypes.pointer(desc_res.dtype.base_type)},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            {"_result": dtypes.pointer(desc_res.dtype.base_type)},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -196,14 +208,14 @@ class Iamax(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.iamax')
-@oprepo.replaces('dace.libraries.blas.Iamax')
-def iamax_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, result):
+@oprepo.replaces("dace.libraries.blas.iamax")
+@oprepo.replaces("dace.libraries.blas.Iamax")
+def iamax_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, result):
     """Build an :class:`Iamax` library node and wire it into ``state``."""
     x_in = state.add_read(x)
     res = state.add_write(result)
-    libnode = Iamax('iamax', n=sdfg.arrays[x].shape[0])
+    libnode = Iamax("iamax", n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(libnode, '_result', res, None, mm.Memlet(result))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(libnode, "_result", res, None, mm.Memlet(result))
     return []

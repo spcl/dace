@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lowering of nested ``GPU_Device`` maps into a single kernel guarded by bound checks."""
+
 import copy
 from collections.abc import Iterator
 from typing import TypeGuard
@@ -45,10 +46,10 @@ def bound_check(map_entry: nodes.MapEntry) -> str:
     """Condition selecting the iterations of ``map_entry``'s range; maps never have a negative step."""
     terms = []
     for param, (begin, end, step) in zip(map_entry.map.params, map_entry.map.range, strict=True):
-        terms.append(f'({param} >= {begin} and {param} <= {end})')
+        terms.append(f"({param} >= {begin} and {param} <= {end})")
         if step != 1:
-            terms.append(f'(({param} - {begin}) % {step} == 0)')
-    return ' and '.join(terms)
+            terms.append(f"(({param} - {begin}) % {step} == 0)")
+    return " and ".join(terms)
 
 
 @properties.make_properties
@@ -73,12 +74,12 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
         # The map's own params are defined by the map itself.
         defined = state.symbols_defined_at(map_entry)
         defined.update(map_entry.new_symbols(state.sdfg, state, defined))
-        nsdfg_node = helpers.nest_state_subgraph(state.sdfg,
-                                                 state,
-                                                 StateSubgraphView(
-                                                     state, list(state.all_nodes_between(map_entry,
-                                                                                         required(map_exit)))),
-                                                 name=f'if_of_nested_{map_entry.label}')
+        nsdfg_node = helpers.nest_state_subgraph(
+            state.sdfg,
+            state,
+            StateSubgraphView(state, list(state.all_nodes_between(map_entry, required(map_exit)))),
+            name=f"if_of_nested_{map_entry.label}",
+        )
         inner = nsdfg_node.sdfg
         for sym, sym_type in defined.items():
             if sym not in inner.symbols:
@@ -86,8 +87,8 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
             nsdfg_node.symbol_mapping.setdefault(sym, sym)
 
         body_state = inner.nodes()[0]
-        guard = ConditionalBlock(f'bound_check_{map_entry.label}', sdfg=inner, parent=inner)
-        branch = ControlFlowRegion(f'body_{map_entry.label}', sdfg=inner, parent=guard)
+        guard = ConditionalBlock(f"bound_check_{map_entry.label}", sdfg=inner, parent=inner)
+        branch = ControlFlowRegion(f"body_{map_entry.label}", sdfg=inner, parent=guard)
         inner.remove_node(body_state)
         branch.add_node(body_state, is_start_block=True)
         guard.add_branch(condition=CodeBlock(bound_check(map_entry)), branch=branch)
@@ -115,8 +116,9 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 state.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
         state.remove_nodes_from([map_entry, map_exit])
 
-    def hoisted_ranges(self, state: SDFGState, kernel: nodes.MapEntry,
-                       inner_maps: list[InnerMap]) -> list[subsets.Range]:
+    def hoisted_ranges(
+        self, state: SDFGState, kernel: nodes.MapEntry, inner_maps: list[InnerMap]
+    ) -> list[subsets.Range]:
         """Each inner map's range in the kernel SDFG's symbols; refuses a bound the host cannot evaluate."""
         host_symbols = OrderedSet(state.symbols_defined_at_state()).union(state.sdfg.constants)
         hoisted = []
@@ -126,8 +128,10 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 symbolic.safe_replace(sdfg.parent_nsdfg_node.symbol_mapping, rng.replace)
             unavailable = sorted(str(s) for s in rng.free_symbols if str(s) not in host_symbols)
             if unavailable:
-                raise NotImplementedError(f'Cannot absorb {inner_map.map.label} into {kernel.map.label}: its '
-                                          f'range {rng} names {unavailable}, undefined where the grid is sized')
+                raise NotImplementedError(
+                    f"Cannot absorb {inner_map.map.label} into {kernel.map.label}: its "
+                    f"range {rng} names {unavailable}, undefined where the grid is sized"
+                )
             hoisted.append(rng)
         return hoisted
 
@@ -172,7 +176,7 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 one = subsets.Range([rng[dim]])
                 ranges[param] = one if param not in ranges else subsets.union(ranges[param], one)
                 if ranges[param] is None:
-                    raise NotImplementedError(f'Cannot bound the union of the ranges of {param}')
+                    raise NotImplementedError(f"Cannot bound the union of the ranges of {param}")
 
         kernel.map.params.extend(ranges)
         kernel.map.range = subsets.Range(list(kernel.map.range) + [merged[0] for merged in ranges.values()])

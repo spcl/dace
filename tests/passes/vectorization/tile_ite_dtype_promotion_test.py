@@ -22,6 +22,7 @@ relaxation is not exercised by it. It is tested standalone here, against hand-bu
 provoking a genuinely mismatched-but-widening Tile arm end-to-end would need a kernel shape no
 current frontend lowering produces.
 """
+
 import dace
 from dace.libraries.tileops import TileITE
 
@@ -32,17 +33,15 @@ def _build_sdfg(kind_t: str, t_dtype, e_dtype, out_dtype):
     a ``t`` array (``_t``, only when ``kind_t == 'Tile'``) and an ``o`` output array. Returns
     ``(sdfg, state, ite)`` with the node wired but NOT validated -- the caller validates."""
     sdfg = dace.SDFG("probe_build_sdfg")
-    sdfg.add_array("mask", (2, ), dace.bool_, transient=False)
+    sdfg.add_array("mask", (2,), dace.bool_, transient=False)
     if kind_t == "Tile":
-        sdfg.add_array("t", (2, ), t_dtype, transient=False)
-    sdfg.add_array("e", (2, ), e_dtype, transient=False)
-    sdfg.add_array("o", (2, ), out_dtype, transient=False)
+        sdfg.add_array("t", (2,), t_dtype, transient=False)
+    sdfg.add_array("e", (2,), e_dtype, transient=False)
+    sdfg.add_array("o", (2,), out_dtype, transient=False)
     state = sdfg.add_state()
-    ite = TileITE(name="probe_ite",
-                  widths=(2, ),
-                  kind_t=kind_t,
-                  kind_e="Tile",
-                  expr_t=("0.0" if kind_t == "Symbol" else None))
+    ite = TileITE(
+        name="probe_ite", widths=(2,), kind_t=kind_t, kind_e="Tile", expr_t=("0.0" if kind_t == "Symbol" else None)
+    )
     state.add_node(ite)
     mask_an = state.add_access("mask")
     e_an = state.add_access("e")

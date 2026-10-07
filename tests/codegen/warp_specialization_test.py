@@ -8,10 +8,12 @@ from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDev
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(strict=True,
-                   raises=NotImplementedError,
-                   reason='NestedGPUDeviceMapLowering does not yet lower several nesting levels into one device map')
-@pytest.mark.parametrize('block_size', [None, '64,8,1'])
+@pytest.mark.xfail(
+    strict=True,
+    raises=NotImplementedError,
+    reason="NestedGPUDeviceMapLowering does not yet lower several nesting levels into one device map",
+)
+@pytest.mark.parametrize("block_size", [None, "64,8,1"])
 def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
 
     @dace.program
@@ -57,15 +59,17 @@ def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
     sdfg.validate()
 
-    num_device_maps = len({
-        n
-        for n, g in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-    })
+    num_device_maps = len(
+        {
+            n
+            for n, g in sdfg.all_nodes_recursive()
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        }
+    )
     assert num_device_maps == 1
 
     if block_size is not None:
-        with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):
+        with dace.config.set_temporary("compiler", "cuda", "default_block_size", value=block_size):
             sdfg(a, c=3.0)
     else:
         sdfg(a, c=3.0)
@@ -78,7 +82,7 @@ def test_double_nest_thread_specialization_noncontiguous_blocks(block_size):
 # nested GPU_Device structure (dynamic parallelism) which the new codegen
 # rejects by design. Only the legacy codegen supports this pattern.
 @pytest.mark.old_gpu_codegen_only
-@pytest.mark.parametrize('block_size', [None, '64,8,1'])
+@pytest.mark.parametrize("block_size", [None, "64,8,1"])
 def test_thread_specialization_noncontiguous_blocks(block_size):
 
     @dace.program
@@ -112,15 +116,17 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
     expected[:, 33:60] += 6
 
     NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
-    num_device_maps = len({
-        n
-        for n, g in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
-    })
+    num_device_maps = len(
+        {
+            n
+            for n, g in sdfg.all_nodes_recursive()
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        }
+    )
     assert num_device_maps == 1
 
     if block_size is not None:
-        with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value=block_size):
+        with dace.config.set_temporary("compiler", "cuda", "default_block_size", value=block_size):
             sdfg(a)
     else:
         sdfg(a)
@@ -128,8 +134,8 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
     assert np.allclose(a, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_thread_specialization_noncontiguous_blocks(None)
-    test_thread_specialization_noncontiguous_blocks('64,8,1')
+    test_thread_specialization_noncontiguous_blocks("64,8,1")
     test_double_nest_thread_specialization_noncontiguous_blocks(None)
-    test_double_nest_thread_specialization_noncontiguous_blocks('64,8,1')
+    test_double_nest_thread_specialization_noncontiguous_blocks("64,8,1")

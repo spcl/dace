@@ -23,6 +23,7 @@ Covered:
 
 GPU-executing tests run in a fresh interpreter so a device fault cannot crash the pytest parent.
 """
+
 import collections
 import glob
 import os
@@ -58,56 +59,69 @@ C2 = dace.float16(2.0)
 def _stencil3_2d(A: H[NC, NC], C: H[NC, NC]):
     # The inner map starts at 1 and is tiled by 2, so A[i, j] lands on an ODD element while its
     # +-1 neighbours land on even ones -- both residues in one kernel.
-    for i, j in dace.map[1:NC - 1, 1:NC - 1]:
+    for i, j in dace.map[1 : NC - 1, 1 : NC - 1]:
         C[i, j] = A[i, j - 1] + A[i, j] + A[i, j + 1]
 
 
 @dace.program
 def _stencil3_2d_symbolic(A: H[N, N], C: H[N, N]):
-    for i, j in dace.map[1:N - 1, 1:N - 1]:
+    for i, j in dace.map[1 : N - 1, 1 : N - 1]:
         C[i, j] = A[i, j - 1] + A[i, j] + A[i, j + 1]
 
 
 @dace.program
 def _heat3d(A: H[NC, NC, NC], B: H[NC, NC, NC]):
     for t in range(1, tsteps):
-        B[1:-1, 1:-1,
-          1:-1] = (C8 * (A[2:, 1:-1, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + C8 *
-                   (A[1:-1, 2:, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + C8 *
-                   (A[1:-1, 1:-1, 2:] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (C8 * (B[2:, 1:-1, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + C8 *
-                   (B[1:-1, 2:, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + C8 *
-                   (B[1:-1, 1:-1, 2:] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            C8 * (A[2:, 1:-1, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + C8 * (A[1:-1, 2:, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + C8 * (A[1:-1, 1:-1, 2:] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            C8 * (B[2:, 1:-1, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + C8 * (B[1:-1, 2:, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + C8 * (B[1:-1, 1:-1, 2:] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 @dace.program
 def _heat3d_symbolic(A: H[N, N, N], B: H[N, N, N]):
     for t in range(1, tsteps):
-        B[1:-1, 1:-1,
-          1:-1] = (C8 * (A[2:, 1:-1, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + C8 *
-                   (A[1:-1, 2:, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + C8 *
-                   (A[1:-1, 1:-1, 2:] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (C8 * (B[2:, 1:-1, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + C8 *
-                   (B[1:-1, 2:, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + C8 *
-                   (B[1:-1, 1:-1, 2:] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            C8 * (A[2:, 1:-1, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + C8 * (A[1:-1, 2:, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + C8 * (A[1:-1, 1:-1, 2:] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            C8 * (B[2:, 1:-1, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + C8 * (B[1:-1, 2:, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + C8 * (B[1:-1, 1:-1, 2:] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def _heat3d_oracle(A, B, steps):
     """The same expression in the same fp16 op order on the host."""
     import numpy as np
+
     A, B = A.copy(), B.copy()
     o, tw = np.float16(0.125), np.float16(2.0)
     for _ in range(1, steps):
-        B[1:-1, 1:-1,
-          1:-1] = (o * (A[2:, 1:-1, 1:-1] - tw * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + o *
-                   (A[1:-1, 2:, 1:-1] - tw * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + o *
-                   (A[1:-1, 1:-1, 2:] - tw * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (o * (B[2:, 1:-1, 1:-1] - tw * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + o *
-                   (B[1:-1, 2:, 1:-1] - tw * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + o *
-                   (B[1:-1, 1:-1, 2:] - tw * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            o * (A[2:, 1:-1, 1:-1] - tw * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + o * (A[1:-1, 2:, 1:-1] - tw * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + o * (A[1:-1, 1:-1, 2:] - tw * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            o * (B[2:, 1:-1, 1:-1] - tw * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + o * (B[1:-1, 2:, 1:-1] - tw * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + o * (B[1:-1, 1:-1, 2:] - tw * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
     return A, B
 
 
@@ -126,7 +140,7 @@ def _vectorized(prog, name=None, assume_even=False, fuse=False):
         sdfg.apply_transformations_repeated([MapFusion])
         sdfg.simplify()
     offload_to_gpu(sdfg)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=assume_even)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=assume_even)).apply_pass(sdfg, {})
     if name:
         sdfg.name = name
     return sdfg
@@ -165,11 +179,13 @@ def test_odd_neighbour_load_is_shifted_even_is_plain():
     cu = _device_code(_vectorized(_stencil3_2d))
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
     assert loads, "no fp16 width-2 tile_load emitted"
-    assert set(loads) == {", 4", ", 4, 1"}, \
+    assert set(loads) == {", 4", ", 4, 1"}, (
         f"expected the aligned +-1 neighbours and the shifted centre, got {set(loads)}"
+    )
     stores = re.findall(r"tile_store<dace::float16, 2, false([^>]*)>", cu)
-    assert stores and all(a == "" for a in stores), \
+    assert stores and all(a == "" for a in stores), (
         f"an odd-offset store must stay per-element (widening it clobbers neighbours), got {set(stores)}"
+    )
 
 
 def test_heat3d_widens_every_load():
@@ -192,8 +208,12 @@ def test_symbolic_stride_widens_only_under_its_guard():
     The claim and the check are the same object, so deleting the guard tasklet must take the
     widening with it: that is the property keeping a misaligned device access out of reach."""
     sdfg = _vectorized(_stencil3_2d_symbolic)
-    guards = [(st, n) for st in sdfg.states() for n in st.nodes()
-              if isinstance(n, dace.nodes.Tasklet) and n.label.startswith(STRIDE_GUARD_PREFIX)]
+    guards = [
+        (st, n)
+        for st in sdfg.states()
+        for n in st.nodes()
+        if isinstance(n, dace.nodes.Tasklet) and n.label.startswith(STRIDE_GUARD_PREFIX)
+    ]
     assert len(guards) == 1, f"expected exactly one guarded stride symbol, got {[n.label for _, n in guards]}"
     guard_state, guard_tasklet = guards[0]
     assert guard_tasklet.label == "tile_stride_div_N_2", f"guard names the wrong fact: {guard_tasklet.label}"
@@ -203,15 +223,15 @@ def test_symbolic_stride_widens_only_under_its_guard():
 
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", _device_code(sdfg))
     assert loads, "no fp16 width-2 tile_load emitted"
-    assert set(loads) == {", 4", ", 4, 1"}, \
-        f"the guarded symbolic stride must widen both residues, got {set(loads)}"
+    assert set(loads) == {", 4", ", 4, 1"}, f"the guarded symbolic stride must widen both residues, got {set(loads)}"
 
     # Same SDFG minus the check: the fact must not survive it.
     guard_state.remove_node(guard_tasklet)
     unguarded = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", _device_code(sdfg))
     assert unguarded, "no fp16 width-2 tile_load emitted"
-    assert all(a == "" for a in unguarded), \
+    assert all(a == "" for a in unguarded), (
         f"a symbolic row stride was claimed aligned with no runtime check behind it, got {set(unguarded)}"
+    )
 
 
 def test_the_stride_guard_compiles_wherever_its_map_ended_up():
@@ -225,16 +245,20 @@ def test_the_stride_guard_compiles_wherever_its_map_ended_up():
     """
     sdfg = _vectorized(_stencil3_2d_symbolic)
     guards = [
-        n for st in sdfg.states() for n in st.nodes()
+        n
+        for st in sdfg.states()
+        for n in st.nodes()
         if isinstance(n, dace.nodes.Tasklet) and n.label.startswith(STRIDE_GUARD_PREFIX)
     ]
     assert guards, "no stride guard emitted; the check below would be vacuous"
     code = guards[0].code.as_string
-    assert "__CUDA_ARCH__" in code and "__HIP_DEVICE_COMPILE__" in code, \
+    assert "__CUDA_ARCH__" in code and "__HIP_DEVICE_COMPILE__" in code, (
         f"the guard is not split by compilation target, so one target cannot compile it: {code}"
+    )
     for host_only, device_only in (("fprintf", "printf"), ("abort()", "__trap()")):
-        assert host_only in code and device_only in code, \
+        assert host_only in code and device_only in code, (
             f"the guard misses the {device_only!r} arm that device code needs: {code}"
+        )
 
 
 def test_interior_transient_stride_widens():
@@ -248,8 +272,9 @@ def test_interior_transient_stride_widens():
     assert strided, "no (N-2)-strided access in the fused kernel; the test proves nothing"
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
     assert loads, "no fp16 width-2 tile_load emitted"
-    assert not [a for a in loads if a == ""], \
+    assert not [a for a in loads if a == ""], (
         f"an (N-2)-strided transient stayed on the per-element path, got {collections.Counter(loads)}"
+    )
 
 
 def test_symbolic_stride_widens_under_assume_even():
@@ -260,8 +285,9 @@ def test_symbolic_stride_widens_under_assume_even():
     cu = _device_code(_vectorized(_stencil3_2d_symbolic, assume_even=True))
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
     assert loads, "no fp16 width-2 tile_load emitted"
-    assert set(loads) == {", 4", ", 4, 1"}, \
+    assert set(loads) == {", 4", ", 4, 1"}, (
         f"expected the aligned +-1 neighbours and the shifted centre, got {set(loads)}"
+    )
 
 
 # GPU: the SASS gate and the numeric gate. Each body runs in a fresh interpreter (see
@@ -286,6 +312,7 @@ def _body_heat3d_bitexact():
     and the widened window's overshoot element are both checked."""
     import numpy as np
     import cupy
+
     steps = 3
     rng = np.random.default_rng(0)
     A0 = rng.integers(0, 8, size=(NC, NC, NC)).astype(np.float16)
@@ -303,6 +330,7 @@ def _body_symbolic_heat3d():
     load and stays bit-exact at several extents."""
     import numpy as np
     import cupy
+
     sdfg = _vectorized(_heat3d_symbolic, name="shifted_heat3d_sym", assume_even=True)
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", _device_code(sdfg))
     assert loads and not [a for a in loads if a == ""], "a symbolic-N heat3d load stayed per-element"

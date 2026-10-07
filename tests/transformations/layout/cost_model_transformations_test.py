@@ -5,6 +5,7 @@ These pin the end-to-end signal the optimizer relies on: apply a real layout tra
 run the analysis on the resulting compute map, and check the predicted cost moves the right way. A
 transform that fixes a strided access must lower the block-message count; one that only pads must
 leave a contiguous access essentially unchanged. Pure/symbolic -- no measurement."""
+
 import dace
 import sympy as sp
 import pytest
@@ -70,8 +71,7 @@ def test_permute_lowers_the_predicted_time():
     st2, me2 = _compute_map(sdfg)
     after = analyze_loop_nest(st2, me2, P, block_bytes=64)
     # both nests are parallel -> bandwidth-bound; total_time is proportional to total blocks
-    assert float(sp.simplify(after.total_time()).subs(N, 4096)) < \
-        float(sp.simplify(before.total_time()).subs(N, 4096))
+    assert float(sp.simplify(after.total_time()).subs(N, 4096)) < float(sp.simplify(before.total_time()).subs(N, 4096))
 
 
 def test_pad_keeps_a_contiguous_access_cheap():
@@ -102,7 +102,7 @@ def _blocked_sdfg(ii_stride, block_bytes=64):
     """A 4D tiled access C[I,J,ii,jj] whose physical layout is what a Block transform materializes;
     ii_stride < inner-block => a contiguous tile, else a scattered one."""
     T = dace.symbol("T")
-    sdfg = dace.SDFG('blocked_blocked_sdfg')
+    sdfg = dace.SDFG("blocked_blocked_sdfg")
     sdfg.add_array("C", [T, T, 4, 4], dace.float64, strides=(T * 16, 16, ii_stride, 1))
     sdfg.add_array("D", [T, T, 4, 4], dace.float64)
     st = sdfg.add_state("s", is_start_block=True)

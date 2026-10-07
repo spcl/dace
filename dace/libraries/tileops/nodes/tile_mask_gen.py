@@ -1,10 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileMaskGen``: the iteration mask of a tile."""
+
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
 
-from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.environments import (
+    TileOpsAVX2,
+    TileOpsAVX512,
+    TileOpsCUDA,
+    TileOpsNeon,
+    TileOpsScalar,
+    TileOpsSVE,
+)
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
@@ -93,18 +101,22 @@ class TileMaskGen(TileOp):
         "could not lower, so the guarded region runs under the mask instead of as control flow.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, ...],
-                 iter_vars: tuple[str, ...],
-                 global_ubs: tuple[str, ...],
-                 guard_predicate: str | None = None,
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        iter_vars: tuple[str, ...],
+        global_ubs: tuple[str, ...],
+        guard_predicate: str | None = None,
+        location: str | None = None,
+    ):
         if not 1 <= len(widths) <= 3:
             raise ValueError(f"TileMaskGen: widths length {len(widths)} not in {{1, 2, 3}}")
         if len(iter_vars) != len(widths) or len(global_ubs) != len(widths):
-            raise ValueError(f"TileMaskGen: widths / iter_vars / global_ubs lengths must agree; "
-                             f"got {len(widths)}, {len(iter_vars)}, {len(global_ubs)}")
+            raise ValueError(
+                f"TileMaskGen: widths / iter_vars / global_ubs lengths must agree; "
+                f"got {len(widths)}, {len(iter_vars)}, {len(global_ubs)}"
+            )
         super().__init__(name, location=location, inputs=set(), outputs={"_o"})
         self.widths = list(widths)
         self.iter_vars = list(iter_vars)
@@ -115,8 +127,9 @@ class TileMaskGen(TileOp):
         out_edges = {edge.src_conn: edge for edge in state.out_edges(self) if edge.src_conn is not None}
         if "_o" not in out_edges:
             raise ValueError(f"{self.label}: required output '_o' not connected")
-        validate_mask_descriptor_lock(self.label, "_o", sdfg.arrays[required(out_edges["_o"].data.data)],
-                                      tuple(self.widths))
+        validate_mask_descriptor_lock(
+            self.label, "_o", sdfg.arrays[required(out_edges["_o"].data.data)], tuple(self.widths)
+        )
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         # The headers build the mask from the bounds alone and would drop the guard, running every lane.

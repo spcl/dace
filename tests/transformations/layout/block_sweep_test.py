@@ -7,6 +7,7 @@ closure reads each candidate SDFG's descriptor and reshapes the (packed-C) logic
 so every block factor is exercised end-to-end (SplitDimensions + normalize_schedule_for_layout) and
 verified against the flat numpy oracle.
 """
+
 import numpy
 import dace
 

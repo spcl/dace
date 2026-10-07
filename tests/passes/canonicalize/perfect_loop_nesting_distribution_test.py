@@ -21,6 +21,7 @@ the downstream fusion stages recombine what the split did not pay for. What is a
 STRUCTURE -- how many nests, which of their levels are parallel -- plus the values. Never a
 speedup.
 """
+
 import numpy as np
 import pytest
 
@@ -32,9 +33,13 @@ from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopE
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import _forward_flow_groups
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
-from dace.transformation.passes.canonicalize.perfect_loop_nesting import (PerfectLoopNesting, distribute_loops,
-                                                                          eliminate_trivial_loops, level_parallel,
-                                                                          parallel_level_diagnostic)
+from dace.transformation.passes.canonicalize.perfect_loop_nesting import (
+    PerfectLoopNesting,
+    distribute_loops,
+    eliminate_trivial_loops,
+    level_parallel,
+    parallel_level_diagnostic,
+)
 from dace.transformation.passes.loop_fission import LoopFission, _linear_blocks
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.simplify import SimplifyPass
@@ -45,49 +50,49 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
 #: The two kernels whose outer loop body holds sibling inner loops carrying in opposite directions.
-SIBLING_NESTS = ['s2233', 's233']
+SIBLING_NESTS = ["s2233", "s233"]
 
 #: Imperfect nests whose two children ARE separable, though the parent level was already parallel
 #: for both -- legal, so they distribute; the fusion stages are what may put them back.
-SEPARABLE_IMPERFECT = ['s2275', 's235']
+SEPARABLE_IMPERFECT = ["s2275", "s235"]
 
 #: Imperfect nests whose body edge carries a cross-loop induction variable. Whether they
 #: distribute is decided by whether the pipeline's IV passes have closed that counter yet, which is
 #: read off the SDFG rather than assumed -- see :func:`test_induction_variable_decides_the_verdict`.
-INDUCTION_VARIABLE_NESTS = ['s126', 's141']
+INDUCTION_VARIABLE_NESTS = ["s126", "s141"]
 
 #: The one genuine legality refusal in the corpus.
 REFUSED_NESTS = {
-    's2102': 'both children WRITE aa -- one dependence component',
+    "s2102": "both children WRITE aa -- one dependence component",
 }
 
 #: ``kernel -> (fused, distributed)`` parallel levels AT THE PARENT LEVEL, reported by
 #: :func:`parallel_level_diagnostic` for the split the pass performs. A diagnostic, not a gate:
 #: ``s2233`` / ``s233`` gain a level, ``s2275`` / ``s235`` do not, and the pass splits all four.
 PARENT_LEVEL_DIAGNOSTIC = {
-    's2233': (0, 1),
-    's233': (0, 1),
-    's2275': (1, 2),
-    's235': (1, 2),
+    "s2233": (0, 1),
+    "s233": (0, 1),
+    "s2275": (1, 2),
+    "s235": (1, 2),
 }
 
 #: ``kernel -> ((parallel, total), (parallel, total))`` loop-nest levels of the WHOLE kernel,
 #: fused against distributed, once every liftable loop has become a Map. The two induction-variable
 #: kernels are absent because their answer depends on the IV passes, not on this one.
 WHOLE_KERNEL_LEVELS = {
-    's2233': ((1, 3), (2, 4)),
-    's233': ((1, 3), (2, 4)),
-    's2275': ((2, 2), (3, 3)),
-    's235': ((1, 2), (2, 3)),
-    's2102': ((2, 2), (2, 2)),
+    "s2233": ((1, 3), (2, 4)),
+    "s233": ((1, 3), (2, 4)),
+    "s2275": ((2, 2), (3, 3)),
+    "s235": ((1, 2), (2, 3)),
+    "s2102": ((2, 2), (2, 2)),
 }
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def build(name, tag):
     """The corpus kernel ``name`` as a fresh, uniquely-named SDFG."""
-    kernel = [k for k in tsvc.collect() if k.name == name + '_d_single'][0]
+    kernel = [k for k in tsvc.collect() if k.name == name + "_d_single"][0]
     return kernel, tsvc.to_sdfg(kernel, tag, simplify=True)
 
 
@@ -95,8 +100,9 @@ def nest_levels(sdfg):
     """``(parallel, total)`` loop-nest levels: a Map parameter is a parallel level, a
     ``LoopRegion`` counter a sequential one."""
     parallel = sum(len(n.map.params) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    sequential = sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
-                     if isinstance(r, LoopRegion) and r.loop_variable)
+    sequential = sum(
+        1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    )
     return parallel, parallel + sequential
 
 
@@ -105,10 +111,11 @@ def outer_kinds(sdfg):
     kinds = []
     for block in sdfg.nodes():
         if isinstance(block, LoopRegion):
-            kinds.append('loop')
+            kinds.append("loop")
         elif isinstance(block, SDFGState) and any(
-                isinstance(n, nodes.MapEntry) and block.entry_node(n) is None for n in block.nodes()):
-            kinds.append('map')
+            isinstance(n, nodes.MapEntry) and block.entry_node(n) is None for n in block.nodes()
+        ):
+            kinds.append("map")
     return kinds
 
 
@@ -131,7 +138,7 @@ def only_loop(sdfg):
 def body_blocks(loop):
     """``loop``'s body blocks as a plain chain -- the granularity the distribution works at."""
     blocks = _linear_blocks(loop)
-    assert blocks is not None, 'the body is not a plain chain, so nothing here applies'
+    assert blocks is not None, "the body is not a plain chain, so nothing here applies"
     return blocks
 
 
@@ -144,8 +151,12 @@ def is_perfect_nest(loop):
 def has_open_induction_variable(sdfg):
     """Whether any loop body edge still ASSIGNS -- an induction variable the IV passes have not
     closed. Observable, so a test never has to assume which state the tree is in."""
-    return any(edge.data.assignments for region in sdfg.all_control_flow_regions(recursive=True)
-               if isinstance(region, LoopRegion) for edge in region.edges())
+    return any(
+        edge.data.assignments
+        for region in sdfg.all_control_flow_regions(recursive=True)
+        if isinstance(region, LoopRegion)
+        for edge in region.edges()
+    )
 
 
 def close_induction_variables(sdfg):
@@ -171,7 +182,8 @@ def written_arrays(block):
 def emitted_write_order(sdfg):
     """What each distributed nest writes, in EXECUTION order -- the emitted component order."""
     return [
-        written_arrays(block) for block in sdutil.dfs_topological_sort(sdfg, [sdfg.start_block])
+        written_arrays(block)
+        for block in sdutil.dfs_topological_sort(sdfg, [sdfg.start_block])
         if isinstance(block, LoopRegion)
     ]
 
@@ -205,16 +217,16 @@ def run_matches_untransformed(program, transformed, size=6, seed=11):
 # The sibling-nest shape: distribution is the only way to a second parallel level.
 
 
-@pytest.mark.parametrize('name', SIBLING_NESTS)
+@pytest.mark.parametrize("name", SIBLING_NESTS)
 def test_fused_sibling_nests_have_one_parallel_level_of_three(name):
     """Undistributed, the shared parent is blocked by the second child and the first child's own
     inner level by its own recurrence: of the three levels only one parallelizes."""
-    kernel, sdfg = build(name, f'fused_{name}')
+    kernel, sdfg = build(name, f"fused_{name}")
     assert nest_levels(parallelize(sdfg)) == (1, 3)
-    assert top_level_nests(sdfg) == 1, 'the fused form is one nest'
+    assert top_level_nests(sdfg) == 1, "the fused form is one nest"
 
 
-@pytest.mark.parametrize('name', SIBLING_NESTS)
+@pytest.mark.parametrize("name", SIBLING_NESTS)
 def test_sibling_nests_distribute_into_two_nests(name):
     """``PerfectLoopNesting`` splits the parent into one loop per dependence component, in program
     order: the two inner loops become two separate nests.
@@ -222,31 +234,32 @@ def test_sibling_nests_distribute_into_two_nests(name):
     This kernel says little about LEGALITY -- the children share only ``cc``, which both READ, so
     there is no cross-child dependence for any rule to get wrong. The adversarial nests further
     down are what decide the legality question."""
-    kernel, sdfg = build(name, f'split_{name}')
+    kernel, sdfg = build(name, f"split_{name}")
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
     sdfg.validate()
     assert top_level_nests(sdfg) == 2
-    assert nest_levels(sdfg) == (0, 4), 'four sequential levels before any lift'
+    assert nest_levels(sdfg) == (0, 4), "four sequential levels before any lift"
 
 
-@pytest.mark.parametrize('name', SIBLING_NESTS)
+@pytest.mark.parametrize("name", SIBLING_NESTS)
 def test_distribution_frees_a_second_parallel_level(name):
     """After the split each child parallelizes on the level the other one blocked: one nest becomes
     ``map i { loop j }``, the other ``loop i { map j }`` -- two parallel levels of four, against
     the one of three the fused nest reaches."""
-    kernel, sdfg = build(name, f'levels_{name}')
+    kernel, sdfg = build(name, f"levels_{name}")
     PerfectLoopNesting().apply_pass(sdfg, {})
     parallelize(sdfg)
     sdfg.validate()
     assert nest_levels(sdfg) == (2, 4)
-    assert sorted(outer_kinds(sdfg)) == ['loop', 'map'], \
-        'one nest must be outer-parallel and the other outer-sequential'
+    assert sorted(outer_kinds(sdfg)) == ["loop", "map"], (
+        "one nest must be outer-parallel and the other outer-sequential"
+    )
 
 
-@pytest.mark.parametrize('name', SIBLING_NESTS + SEPARABLE_IMPERFECT)
+@pytest.mark.parametrize("name", SIBLING_NESTS + SEPARABLE_IMPERFECT)
 def test_distributed_kernels_preserve_values(name):
     """The split is only worth having if it is also correct."""
-    kernel, sdfg = build(name, f'values_{name}')
+    kernel, sdfg = build(name, f"values_{name}")
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
     parallelize(sdfg)
     sdfg.validate()
@@ -256,29 +269,31 @@ def test_distributed_kernels_preserve_values(name):
 # Legality alone decides: a separable pair splits even where it frees no parent level.
 
 
-@pytest.mark.parametrize('name', SEPARABLE_IMPERFECT)
+@pytest.mark.parametrize("name", SEPARABLE_IMPERFECT)
 def test_separable_imperfect_nests_distribute_though_they_free_no_level(name):
     """``s2275`` / ``s235`` separate legally, and the parent level was already parallel for BOTH
     children, so the split frees nothing at that level. It happens anyway: canonicalization takes
     the finest legal partition and leaves the recombining to the fusion stages, because a
     "distribute only when it pays" rule is a cost decision and there is no cost model here."""
-    kernel, sdfg = build(name, f'separable_{name}')
+    kernel, sdfg = build(name, f"separable_{name}")
     loop = only_loop(sdfg)
     blocks = body_blocks(loop)
-    assert level_parallel(blocks, loop.loop_variable, loop.sdfg.arrays), \
-        'the fused parent level is already parallel for the whole body'
+    assert level_parallel(blocks, loop.loop_variable, loop.sdfg.arrays), (
+        "the fused parent level is already parallel for the whole body"
+    )
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
     sdfg.validate()
     assert top_level_nests(sdfg) == 2
-    assert all(is_perfect_nest(r) for r in sdfg.nodes() if isinstance(r, LoopRegion)), \
-        'each product must be a PERFECT nest -- that is the shape the later phases collapse'
+    assert all(is_perfect_nest(r) for r in sdfg.nodes() if isinstance(r, LoopRegion)), (
+        "each product must be a PERFECT nest -- that is the shape the later phases collapse"
+    )
 
 
-@pytest.mark.parametrize('name', sorted(PARENT_LEVEL_DIAGNOSTIC))
+@pytest.mark.parametrize("name", sorted(PARENT_LEVEL_DIAGNOSTIC))
 def test_parallel_level_diagnostic_is_reported_per_split(name):
     """The parallel-level comparison survives as a REPORTED number, not a decision. Recorded per
     split so a sweep can see which kernels a distribution actually freed a level for."""
-    kernel, sdfg = build(name, f'diag_{name}')
+    kernel, sdfg = build(name, f"diag_{name}")
     loop = only_loop(sdfg)
     groups = _forward_flow_groups(loop)
     assert groups is not None
@@ -289,26 +304,26 @@ def test_parallel_level_diagnostic_is_reported_per_split(name):
     assert [(fused, distributed) for label, fused, distributed in records] == [PARENT_LEVEL_DIAGNOSTIC[name]]
 
 
-@pytest.mark.parametrize('name', sorted(WHOLE_KERNEL_LEVELS))
+@pytest.mark.parametrize("name", sorted(WHOLE_KERNEL_LEVELS))
 def test_whole_kernel_levels_fused_against_distributed(name):
     """The corpus scorecard: parallel and total loop-nest levels before and after the pass, for the
     five kernels whose answer this pass alone decides. Structure only -- no timing claim is made or
     implied."""
     fused_expected, split_expected = WHOLE_KERNEL_LEVELS[name]
-    kernel, fused = build(name, f'wkfused_{name}')
+    kernel, fused = build(name, f"wkfused_{name}")
     assert nest_levels(parallelize(fused)) == fused_expected
 
-    kernel, split = build(name, f'wksplit_{name}')
+    kernel, split = build(name, f"wksplit_{name}")
     PerfectLoopNesting().apply_pass(split, {})
     parallelize(split)
     split.validate()
     assert nest_levels(split) == split_expected
 
 
-@pytest.mark.parametrize('name', sorted(WHOLE_KERNEL_LEVELS))
+@pytest.mark.parametrize("name", sorted(WHOLE_KERNEL_LEVELS))
 def test_pass_is_idempotent(name):
     """The finest legal partition is a fixpoint: a second application changes nothing."""
-    kernel, sdfg = build(name, f'idem_{name}')
+    kernel, sdfg = build(name, f"idem_{name}")
     PerfectLoopNesting().apply_pass(sdfg, {})
     once = sdfg.to_json()
     PerfectLoopNesting().apply_pass(sdfg, {})
@@ -318,41 +333,43 @@ def test_pass_is_idempotent(name):
 # The refused nests: a pass that refuses changes nothing.
 
 
-@pytest.mark.parametrize('name', sorted(REFUSED_NESTS))
+@pytest.mark.parametrize("name", sorted(REFUSED_NESTS))
 def test_refused_nests_are_byte_identical(name):
     """A refusal must leave the SDFG exactly as it was."""
-    kernel, sdfg = build(name, f'refuse_{name}')
+    kernel, sdfg = build(name, f"refuse_{name}")
     before = sdfg.to_json()
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is None, REFUSED_NESTS[name]
-    assert sdfg.to_json() == before, 'a refusal mutated the SDFG'
+    assert sdfg.to_json() == before, "a refusal mutated the SDFG"
 
 
 def add_loop_writing(region, label, condition, var, init, update, index):
     loop = LoopRegion(label, condition, var, init, update)
     region.add_node(loop, is_start_block=region.number_of_nodes() == 0)
-    body = loop.add_state(f'{label}_body', is_start_block=True)
-    write = body.add_tasklet(f'{label}_write', {}, {'o': None}, 'o = 1.0')
-    body.add_edge(write, 'o', body.add_write('a'), None, dace.Memlet(f'a[{index}]'))
+    body = loop.add_state(f"{label}_body", is_start_block=True)
+    write = body.add_tasklet(f"{label}_write", {}, {"o": None}, "o = 1.0")
+    body.add_edge(write, "o", body.add_write("a"), None, dace.Memlet(f"a[{index}]"))
     return loop
 
 
 def trivial_loop_fixture():
-    sdfg = dace.SDFG('trivial_loops')
-    sdfg.add_array('a', [8], dace.float64)
-    outer = add_loop_writing(sdfg, 'outer', 'i < 4', 'i', 'i = 0', 'i = i + 1', 'i')
-    add_loop_writing(outer, 'single', 'j < 1', 'j', 'j = 0', 'j = j + 1', 'j')
-    zero = add_loop_writing(sdfg, 'zero', 'k < 0', 'k', 'k = 0', 'k = k + 1', 'k')
+    sdfg = dace.SDFG("trivial_loops")
+    sdfg.add_array("a", [8], dace.float64)
+    outer = add_loop_writing(sdfg, "outer", "i < 4", "i", "i = 0", "i = i + 1", "i")
+    add_loop_writing(outer, "single", "j < 1", "j", "j = 0", "j = j + 1", "j")
+    zero = add_loop_writing(sdfg, "zero", "k < 0", "k", "k = 0", "k = k + 1", "k")
     sdfg.add_edge(outer, zero, dace.InterstateEdge())
-    wrapper = add_loop_writing(sdfg, 'wrapper', 'm < 3', 'm', 'm = 2', 'm = m + 1', 'm')
-    add_loop_writing(wrapper, 'inner', 'n < 6', 'n', 'n = 5', 'n = n + 1', 'n - m')
+    wrapper = add_loop_writing(sdfg, "wrapper", "m < 3", "m", "m = 2", "m = m + 1", "m")
+    add_loop_writing(wrapper, "inner", "n < 6", "n", "n = 5", "n = n + 1", "n - m")
     sdfg.add_edge(zero, wrapper, dace.InterstateEdge())
     sdfg.validate()
     return sdfg
 
 
 def region_layout(sdfg):
-    return [(region.label, [block.label for block in region.nodes()])
-            for region in sdfg.all_control_flow_regions(recursive=True)]
+    return [
+        (region.label, [block.label for block in region.nodes()])
+        for region in sdfg.all_control_flow_regions(recursive=True)
+    ]
 
 
 def test_trivial_loop_driver_eliminates_what_the_pattern_matcher_does_in_its_order():
@@ -362,22 +379,22 @@ def test_trivial_loop_driver_eliminates_what_the_pattern_matcher_does_in_its_ord
     count = eliminate_trivial_loops(driven, {})
 
     driven.validate()
-    assert count == len(applied['TrivialLoopElimination']) == 4
+    assert count == len(applied["TrivialLoopElimination"]) == 4
     assert region_layout(driven) == region_layout(matched)
-    assert [r.label for r in driven.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)] == ['outer']
+    assert [r.label for r in driven.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)] == ["outer"]
 
 
 def test_shared_written_array_is_one_dependence_component():
     """``s2102`` zeroes a column and then writes the diagonal element of that same column. Both
     children write ``aa``, so they form ONE component and the loop stands -- the subset-disjointness
     reasoning that would separate them is out of this pass's scope."""
-    kernel, sdfg = build('s2102', 'component_s2102')
+    kernel, sdfg = build("s2102", "component_s2102")
     loop = only_loop(sdfg)
-    assert _linear_blocks(loop) is not None, 'the body IS a plain two-block chain'
-    assert _forward_flow_groups(loop) is None, 'but the two blocks are one dependence component'
+    assert _linear_blocks(loop) is not None, "the body IS a plain two-block chain"
+    assert _forward_flow_groups(loop) is None, "but the two blocks are one dependence component"
 
 
-@pytest.mark.parametrize('name', INDUCTION_VARIABLE_NESTS)
+@pytest.mark.parametrize("name", INDUCTION_VARIABLE_NESTS)
 def test_induction_variable_decides_the_verdict(name):
     """``s126``'s ``k`` is incremented once per inner iteration AND once per outer iteration;
     ``s141`` reseeds ``k`` from ``i`` at the top of the body. While that counter sits on an
@@ -390,21 +407,21 @@ def test_induction_variable_decides_the_verdict(name):
     Which of the two states the tree is in is READ OFF THE SDFG rather than assumed: the IV passes
     are another module's, and this expectation must not depend on the order two people finished in.
     Values are checked in either state."""
-    kernel, raw = build(name, f'ivraw_{name}')
-    assert has_open_induction_variable(raw), 'the counter starts on a body edge'
+    kernel, raw = build(name, f"ivraw_{name}")
+    assert has_open_induction_variable(raw), "the counter starts on a body edge"
     before = raw.to_json()
-    assert PerfectLoopNesting().apply_pass(raw, {}) is None, 'an open counter blocks the split'
+    assert PerfectLoopNesting().apply_pass(raw, {}) is None, "an open counter blocks the split"
     assert raw.to_json() == before
 
-    kernel, sdfg = build(name, f'ivclosed_{name}')
+    kernel, sdfg = build(name, f"ivclosed_{name}")
     close_induction_variables(sdfg)
     still_open = has_open_induction_variable(sdfg)
     applied = PerfectLoopNesting().apply_pass(sdfg, {})
     sdfg.validate()
     if still_open:
-        assert applied is None, 'the counter survived, so the body still carries an assignment'
+        assert applied is None, "the counter survived, so the body still carries an assignment"
     else:
-        assert applied is not None, 'the counter is closed, so the nest must distribute'
+        assert applied is not None, "the counter is closed, so the nest must distribute"
         assert all(is_perfect_nest(r) for r in sdfg.nodes() if isinstance(r, LoopRegion))
     assert run_matches_reference(kernel, sdfg)
 
@@ -450,8 +467,9 @@ def per_iteration_producer(x: dace.float64[N, N], t: dace.float64[N, N], b: dace
 
 
 @dace.program
-def chain_plus_independent(p: dace.float64[N, N], q: dace.float64[N, N], r: dace.float64[N, N], s: dace.float64[N, N],
-                           a: dace.float64[N, N]):
+def chain_plus_independent(
+    p: dace.float64[N, N], q: dace.float64[N, N], r: dace.float64[N, N], s: dace.float64[N, N], a: dace.float64[N, N]
+):
     """FOUR children: an independent one FIRST, then a producer chain ``p -> q -> r``. Every
     dependence points forward and is per-iteration aligned, so all four separate."""
     for i in range(N):
@@ -489,10 +507,11 @@ def test_parent_carried_cross_child_read_is_refused():
     loop = only_loop(sdfg)
     blocks = body_blocks(loop)
     assert len(blocks) == 2
-    assert not level_parallel(blocks, loop.loop_variable, loop.sdfg.arrays), 'the fused level is carried'
-    assert all(level_parallel([block], loop.loop_variable, loop.sdfg.arrays) for block in blocks), \
-        'each child alone is parent-parallel -- the diagnostic would call this split a gain'
-    assert _forward_flow_groups(loop) is None, 'but the cross-child dependence runs backwards'
+    assert not level_parallel(blocks, loop.loop_variable, loop.sdfg.arrays), "the fused level is carried"
+    assert all(level_parallel([block], loop.loop_variable, loop.sdfg.arrays) for block in blocks), (
+        "each child alone is parent-parallel -- the diagnostic would call this split a gain"
+    )
+    assert _forward_flow_groups(loop) is None, "but the cross-child dependence runs backwards"
 
     before = sdfg.to_json()
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is None
@@ -520,8 +539,8 @@ def test_refused_split_would_have_changed_the_values():
     got_x, got_t, got_b = x0.copy(), np.zeros((size, size)), b0.copy()
     forced(x=got_x, t=got_t, b=got_b, N=size)
 
-    assert np.allclose(got_x, ref_x), 'the writer is unaffected either way'
-    assert not np.allclose(got_t, ref_t), 'the reader MUST diverge -- otherwise this pins nothing'
+    assert np.allclose(got_x, ref_x), "the writer is unaffected either way"
+    assert not np.allclose(got_t, ref_t), "the reader MUST diverge -- otherwise this pins nothing"
 
 
 def test_over_approximated_footprint_is_refused():
@@ -530,7 +549,7 @@ def test_over_approximated_footprint_is_refused():
     disjointness."""
     sdfg = range_footprint.to_sdfg(simplify=True)
     loop = only_loop(sdfg)
-    assert _linear_blocks(loop) is not None, 'the body IS a plain two-block chain'
+    assert _linear_blocks(loop) is not None, "the body IS a plain two-block chain"
     assert _forward_flow_groups(loop) is None
 
     before = sdfg.to_json()
@@ -561,11 +580,11 @@ def test_four_children_split_in_program_order():
     loop = only_loop(sdfg)
     groups = _forward_flow_groups(loop)
     assert groups is not None and [len(g) for g in groups] == [1, 1, 1, 1]
-    assert [written_arrays(block) for group in groups for block in group] == [['s'], ['p'], ['q'], ['r']]
+    assert [written_arrays(block) for group in groups for block in group] == [["s"], ["p"], ["q"], ["r"]]
 
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
     sdfg.validate()
-    assert emitted_write_order(sdfg) == [['s'], ['p'], ['q'], ['r']]
+    assert emitted_write_order(sdfg) == [["s"], ["p"], ["q"], ["r"]]
     assert run_matches_untransformed(chain_plus_independent, sdfg)
 
 
@@ -578,11 +597,11 @@ def test_component_straddling_an_independent_sibling():
     loop = only_loop(sdfg)
     groups = _forward_flow_groups(loop)
     assert groups is not None
-    assert [[written_arrays(block) for block in group] for group in groups] == [[['t'], ['x']], [['s']]]
+    assert [[written_arrays(block) for block in group] for group in groups] == [[["t"], ["x"]], [["s"]]]
 
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
     sdfg.validate()
-    assert emitted_write_order(sdfg) == [['t', 'x'], ['s']]
+    assert emitted_write_order(sdfg) == [["t", "x"], ["s"]]
     assert run_matches_untransformed(straddled_component, sdfg)
 
 
@@ -595,13 +614,13 @@ def test_distribution_order_is_stable_across_runs():
         distribute_loops(sdfg)
         UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, {})
         orders.append(emitted_write_order(sdfg))
-    assert orders[0] == orders[1] == orders[2] == [['s'], ['p'], ['q'], ['r']]
+    assert orders[0] == orders[1] == orders[2] == [["s"], ["p"], ["q"], ["r"]]
 
 
-@pytest.mark.parametrize('name', SIBLING_NESTS)
+@pytest.mark.parametrize("name", SIBLING_NESTS)
 def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(name, monkeypatch):
     """Each distribution clones the parent loop per group; ``add_node`` lists and re-homes every clone."""
-    kernel, sdfg = build(name, f'cfg_{name}')
+    kernel, sdfg = build(name, f"cfg_{name}")
     resets = spy_on_resets(monkeypatch)
     assert PerfectLoopNesting().apply_pass(sdfg, {}) is not None
     monkeypatch.undo()
@@ -611,5 +630,5 @@ def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(name, monkeypatch):
     sdfg.validate()
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

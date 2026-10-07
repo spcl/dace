@@ -21,12 +21,13 @@ The numbers are pinned by ``canonicalize_rotation_substitution_test.py``, which 
 byte-identical kernel at the same ``peel_limit`` and the same length against the same sequential
 oracle; what only lives here is the WCR refusal.
 """
+
 import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -43,13 +44,18 @@ def test_the_rotation_is_not_turned_into_an_accumulation():
     """Structural half: no WCR anywhere. A rotation has nothing to reduce, so any WCR the pipeline
     mints here is the copy being mistaken for an accumulator."""
     sdfg = rotate_two_deep.to_sdfg(simplify=True)
-    sdfg.name = 'rotate_two_deep_struct'
+    sdfg.name = "rotate_two_deep_struct"
     canonicalize(sdfg, validate=True, peel_limit=4)
 
-    wcrs = [(state.label, e.data.data) for sd in sdfg.all_sdfgs_recursive() for state in sd.states()
-            for e in state.edges() if e.data is not None and e.data.wcr is not None]
-    assert not wcrs, f'rotation lifted to a reduction: {wcrs}'
+    wcrs = [
+        (state.label, e.data.data)
+        for sd in sdfg.all_sdfgs_recursive()
+        for state in sd.states()
+        for e in state.edges()
+        if e.data is not None and e.data.wcr is not None
+    ]
+    assert not wcrs, f"rotation lifted to a reduction: {wcrs}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

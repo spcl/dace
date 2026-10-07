@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ZipArrays -- the Zip layout primitive: fuses F same-shape SoA arrays into one field-minor array ``Z``. Run after ``prepare_for_layout``; homogeneous fields become a plain ``[*S, F]`` array, heterogeneous fields an array of structs."""
+
 import ast
 import copy
 from dataclasses import dataclass
@@ -22,8 +23,9 @@ class StructMemberRewriter(ast.NodeTransformer):
         field = self.conn_field.get(node.id)
         if field is None:
             return node
-        return ast.copy_location(ast.Attribute(value=ast.Name(id=node.id, ctx=ast.Load()), attr=field, ctx=node.ctx),
-                                 node)
+        return ast.copy_location(
+            ast.Attribute(value=ast.Name(id=node.id, ctx=ast.Load()), attr=field, ctx=node.ctx), node
+        )
 
 
 @dataclass
@@ -71,24 +73,28 @@ class ZipArrays(ppl.Pass):
         axis = len(shape0) if self._field_axis is None else self._field_axis
         new_shape = list(shape0)
         new_shape.insert(axis, len(fields))
-        new_desc = dace.data.Array(descs[0].dtype,
-                                   new_shape,
-                                   storage=descs[0].storage,
-                                   transient=all(d.transient for d in descs),
-                                   lifetime=descs[0].lifetime)
+        new_desc = dace.data.Array(
+            descs[0].dtype,
+            new_shape,
+            storage=descs[0].storage,
+            transient=all(d.transient for d in descs),
+            lifetime=descs[0].lifetime,
+        )
         zip_homogeneous_fields(sdfg, new_name, {f: k for k, f in enumerate(fields)}, axis, new_desc)
 
     def _zip_struct(self, sdfg, new_name, fields, descs):
         """Different-dtype fields -> one contiguous array of structs (true interleaved AoS)."""
         elem = dace.dtypes.struct(f"{new_name}_t", **{f: descs[i].dtype for i, f in enumerate(fields)})
         transient = all(d.transient for d in descs)
-        sdfg.add_array(new_name,
-                       list(descs[0].shape),
-                       elem,
-                       storage=descs[0].storage,
-                       transient=transient,
-                       lifetime=descs[0].lifetime,
-                       find_new_name=False)
+        sdfg.add_array(
+            new_name,
+            list(descs[0].shape),
+            elem,
+            storage=descs[0].storage,
+            transient=transient,
+            lifetime=descs[0].lifetime,
+            find_new_name=False,
+        )
         field_set = set(fields)
         for state in sdfg.states():
             # 1. Rewrite tasklet code (conn -> conn.field) before the edge rename erases the field data name.
@@ -109,7 +115,8 @@ class ZipArrays(ppl.Pass):
                     raise NotImplementedError(
                         f"ZipArrays: the heterogeneous-struct path rewrites tasklet code as Python, so the "
                         f"{node.code.language.name} tasklet '{node.label}' is unsupported. Use the "
-                        f"struct-free homogeneous path (equal field dtypes), which does not touch tasklet code.")
+                        f"struct-free homogeneous path (equal field dtypes), which does not touch tasklet code."
+                    )
                 tree = ast.parse(node.code.as_string)
                 StructMemberRewriter(conn_field).visit(tree)
                 ast.fix_missing_locations(tree)
@@ -147,8 +154,9 @@ def with_field_index(subset: dace.subsets.Range, axis: int, first: int, last: in
     return dace.subsets.Range(ranges)
 
 
-def zip_homogeneous_fields(sdfg: dace.SDFG, new_name: str, field_index: Dict[str, int], axis: int,
-                           new_desc: dace.data.Array) -> None:
+def zip_homogeneous_fields(
+    sdfg: dace.SDFG, new_name: str, field_index: Dict[str, int], axis: int, new_desc: dace.data.Array
+) -> None:
     """Fuses the same-dtype containers of ``field_index`` into ``new_name`` (described by ``new_desc``), field
     ``f`` at index ``field_index[f]`` of dimension ``axis``. A nested SDFG fed a field is zipped the same way: its
     connectors are the outer containers (nested SDFG contract), so the field connectors become one connector of
@@ -187,15 +195,17 @@ def zip_homogeneous_fields(sdfg: dace.SDFG, new_name: str, field_index: Dict[str
             if memlet.data in field_index:
                 k = field_index[memlet.data]
                 # Preserve wcr: a reduction into a zipped field keeps accumulating (into Z[.., k]).
-                edge.data = dace.memlet.Memlet(data=new_name,
-                                               subset=with_field_index(memlet.subset, axis, k, k),
-                                               other_subset=None,
-                                               wcr=memlet.wcr,
-                                               wcr_nonatomic=memlet.wcr_nonatomic,
-                                               dynamic=memlet.dynamic)
+                edge.data = dace.memlet.Memlet(
+                    data=new_name,
+                    subset=with_field_index(memlet.subset, axis, k, k),
+                    other_subset=None,
+                    wcr=memlet.wcr,
+                    wcr_nonatomic=memlet.wcr_nonatomic,
+                    dynamic=memlet.dynamic,
+                )
             elif memlet.other_subset is not None:
                 # A copy named after its other end addresses the field through ``other_subset``.
-                other = edge.dst if memlet.data != getattr(edge.dst, 'data', None) else edge.src
+                other = edge.dst if memlet.data != getattr(edge.dst, "data", None) else edge.src
                 if isinstance(other, nd.AccessNode) and other.data in field_index:
                     k = field_index[other.data]
                     memlet.other_subset = with_field_index(memlet.other_subset, axis, k, k)

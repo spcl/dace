@@ -5,7 +5,7 @@ import numpy as np
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
 
-LEN_1D = dace.symbol('LEN_1D')
+LEN_1D = dace.symbol("LEN_1D")
 
 
 @dace.program
@@ -66,7 +66,7 @@ def chained_computed_middle(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
 
 
 def test_simple_if():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     for i in range(10):
         if i % 2 == 0:
@@ -74,7 +74,7 @@ def test_simple_if():
         else:
             ref[i] += 3 * i
     simple_if(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -87,7 +87,7 @@ def call_if(A: dace.int32[10]):
 
 
 def test_call_if():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     for i in range(10):
         if i % 2 == 0:
@@ -96,7 +96,7 @@ def test_call_if():
             ref[i] += 3 * i
     sdfg = call_if.to_sdfg()
     call_if(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -114,7 +114,7 @@ def call_if2(A: dace.int32[10]):
 
 
 def test_call_if2():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     ref[0] = 0
     i = 1
@@ -124,7 +124,7 @@ def test_call_if2():
         fib += ref[i]
         i += 1
     call_if2(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -136,12 +136,12 @@ def simple_while(A: dace.int32[10]):
 
 
 def test_simple_while():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     for i in range(10):
         ref[i] += 2 * i
     simple_while(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 @dace.program
@@ -156,7 +156,7 @@ def call_while(A: dace.int32[10]):
 
 
 def test_call_while():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
     ref = np.copy(A)
     ref[0] = 0
     i = 1
@@ -166,7 +166,7 @@ def test_call_while():
         fib += ref[i]
         i += 1
     call_while(A)
-    assert (np.array_equal(A, ref))
+    assert np.array_equal(A, ref)
 
 
 def test_if_return_both():
@@ -265,11 +265,17 @@ def test_simple_guard_reads_the_current_version():
     reads the stale pre-assignment data. TSVC s3113 is a max-reduction, so a guard stuck on the
     dead ``maxv`` is always true and ``b[0]`` silently becomes ``abs(a[-1])``, not the max."""
     sdfg = s3113_max_abs.to_sdfg(simplify=False)
-    cond, branch = next((c.as_string, br) for blk, _ in sdfg.all_nodes_recursive() if isinstance(blk, ConditionalBlock)
-                        for c, br in blk.branches if c is not None)
+    cond, branch = next(
+        (c.as_string, br)
+        for blk, _ in sdfg.all_nodes_recursive()
+        if isinstance(blk, ConditionalBlock)
+        for c, br in blk.branches
+        if c is not None
+    )
     updated = {e.dst.data for st in branch.states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)}
-    assert updated <= dace.symbolic.free_symbols_and_functions(cond), \
+    assert updated <= dace.symbolic.free_symbols_and_functions(cond), (
         f"guard {cond} does not name the accumulator {sorted(updated)} its body updates"
+    )
 
     a = np.random.default_rng(0).random(64)
     b = np.zeros(2)
@@ -292,11 +298,14 @@ def test_a_chained_compare_over_symbols_guards_the_branch():
     lowers to ``&&``, rather than a relation the conjunction cannot take."""
     sdfg = chained_symbolic_bounds.to_sdfg(simplify=False)
     guards = [
-        cond.as_string for blk, _ in sdfg.all_nodes_recursive() if isinstance(blk, ConditionalBlock)
-        for cond, _branch in blk.branches if cond is not None
+        cond.as_string
+        for blk, _ in sdfg.all_nodes_recursive()
+        if isinstance(blk, ConditionalBlock)
+        for cond, _branch in blk.branches
+        if cond is not None
     ]
-    assert guards == ['((0 <= i) and (i < (LEN_1D - 1)))'], guards
-    assert 'if (((0 <= i) && (i < (LEN_1D - 1))))' in sdfg.generate_code()[0].clean_code
+    assert guards == ["((0 <= i) and (i < (LEN_1D - 1)))"], guards
+    assert "if (((0 <= i) && (i < (LEN_1D - 1))))" in sdfg.generate_code()[0].clean_code
 
     a = np.arange(16, dtype=np.float64)
     b = np.zeros(16)
@@ -311,7 +320,7 @@ def test_a_chained_compare_reads_each_operand_once():
     twice. One multiplying tasklet is the whole point of evaluating the operands up front."""
     sdfg = chained_computed_middle.to_sdfg(simplify=False)
     products = [
-        n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and '*' in n.code.as_string
+        n.label for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet) and "*" in n.code.as_string
     ]
     assert len(products) == 1, f"the middle operand is computed {len(products)} times: {products}"
 

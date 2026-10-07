@@ -4,6 +4,7 @@
 For complex inputs ``?ASUM`` returns ``sum(|Re(x_i)| + |Im(x_i)|)`` and
 the output dtype is real (``SCASUM`` / ``DZASUM``).
 """
+
 from typing import List, TYPE_CHECKING
 import warnings
 
@@ -16,6 +17,7 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import dtypes, memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -38,18 +40,22 @@ class ExpandAsumPure(ExpandTransformation):
         init = sdfg.add_state(node.label + "_init")
         accum = sdfg.add_state_after(init, node.label + "_accum")
 
-        init.add_mapped_tasklet("_init", {"__u": "0:1"}, {},
-                                "_out = 0", {"_out": dace.Memlet("_result[0]")},
-                                external_edges=True)
-        accum.add_mapped_tasklet("_accum", {"__i": f"0:{n}"}, {"__x": dace.Memlet("_x[__i]")},
-                                 "__out = abs(__x)", {"__out": dace.Memlet("_result[0]", wcr="lambda a, b: a + b")},
-                                 external_edges=True)
+        init.add_mapped_tasklet(
+            "_init", {"__u": "0:1"}, {}, "_out = 0", {"_out": dace.Memlet("_result[0]")}, external_edges=True
+        )
+        accum.add_mapped_tasklet(
+            "_accum",
+            {"__i": f"0:{n}"},
+            {"__x": dace.Memlet("_x[__i]")},
+            "__out = abs(__x)",
+            {"__out": dace.Memlet("_result[0]", wcr="lambda a, b: a + b")},
+            external_edges=True,
+        )
         return sdfg
 
 
 @dace.library.expansion
 class ExpandAsumOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -60,30 +66,32 @@ class ExpandAsumOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandAsumPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         prefix = func.lower()
         if dtype == dace.complex64:
-            cfunc = 'scasum'
+            cfunc = "scasum"
         elif dtype == dace.complex128:
-            cfunc = 'dzasum'
+            cfunc = "dzasum"
         else:
-            cfunc = prefix + 'asum'
+            cfunc = prefix + "asum"
 
         n = n or node.n or sz
         code = f"_result = cblas_{cfunc}({n}, _x, {stride_x});"
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': desc_res.dtype.base_type},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            {"_result": desc_res.dtype.base_type},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandAsumMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -93,7 +101,6 @@ class ExpandAsumMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandAsumGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -105,24 +112,27 @@ class ExpandAsumGPUBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandAsumPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         if dtype == dace.complex64:
-            cfunc = 'Scasum'
+            cfunc = "Scasum"
         elif dtype == dace.complex128:
-            cfunc = 'Dzasum'
+            cfunc = "Dzasum"
         else:
-            cfunc = func + 'asum'
+            cfunc = func + "asum"
 
         n = n or node.n or sz
         code = cls.environments[0].handle_setup_code(node)
         code += f"{cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x}, _result);"
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors, {'_result': dtypes.pointer(desc_res.dtype.base_type)},
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            {"_result": dtypes.pointer(desc_res.dtype.base_type)},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -166,14 +176,14 @@ class Asum(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.asum')
-@oprepo.replaces('dace.libraries.blas.Asum')
-def asum_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, result):
+@oprepo.replaces("dace.libraries.blas.asum")
+@oprepo.replaces("dace.libraries.blas.Asum")
+def asum_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, result):
     """Build a :class:`Asum` library node and wire it into ``state``."""
     x_in = state.add_read(x)
     res = state.add_write(result)
-    libnode = Asum('asum', n=sdfg.arrays[x].shape[0])
+    libnode = Asum("asum", n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(libnode, '_result', res, None, mm.Memlet(result))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(libnode, "_result", res, None, mm.Memlet(result))
     return []

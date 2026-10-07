@@ -13,6 +13,7 @@ A node whose routine name already includes the letter must go through ``dialect.
 that does not must go through ``dialect.func``; using the wrong one doubles the letter into a symbol
 neither vendor exports.
 """
+
 import re
 
 import pytest
@@ -25,8 +26,10 @@ N = 128
 F = dace.float64
 
 #: The routine names a vendor BLAS exports, so a doubled or transposed type letter cannot pass.
-ROUTINES = (r"(axpy|copy|scal|swap|dot|nrm2|asum|amax|gemv|ger|symv|trmm|trsm|trmv|trsv|gemm|symm|"
-            r"syrk|syr2k)")
+ROUTINES = (
+    r"(axpy|copy|scal|swap|dot|nrm2|asum|amax|gemv|ger|symv|trmm|trsm|trmv|trsv|gemm|symm|"
+    r"syrk|syr2k)"
+)
 #: ``<prefix><ONE type letter><routine>``, plus each vendor's non-typed helpers and the two
 #: mixed-type norms (``Scnrm2``, ``Dzasum``).
 VENDOR_SYMBOL = {
@@ -36,27 +39,47 @@ VENDOR_SYMBOL = {
 
 #: node -> (factory, arrays, connector wiring). One entry per node converted to the shared dialect.
 SPECS = {
-    "axpy": (lambda: blas.axpy.Axpy("n", 2.0), [("x", [N], F), ("y", [N], F), ("r", [N], F)], [("_x", "x", True),
-                                                                                               ("_y", "y", True),
-                                                                                               ("_res", "r", False)]),
-    "scal": (lambda: blas.scal.Scal("n", 3.0), [("x", [N], F), ("r", [N], F)], [("_x", "x", True),
-                                                                                ("_res", "r", False)]),
-    "nrm2": (lambda: blas.nrm2.Nrm2("n", N), [("x", [N], F), ("r", [1], F)], [("_x", "x", True),
-                                                                              ("_result", "r", False)]),
-    "asum": (lambda: blas.asum.Asum("n", N), [("x", [N], F), ("r", [1], F)], [("_x", "x", True),
-                                                                              ("_result", "r", False)]),
-    "iamax": (lambda: blas.iamax.Iamax("n", N), [("x", [N], F), ("r", [1], dace.int32)], [("_x", "x", True),
-                                                                                          ("_result", "r", False)]),
-    "swap": (lambda: blas.swap.Swap("n"), [("x", [N], F), ("y", [N], F)], [("_xin", "x", True), ("_yin", "y", True),
-                                                                           ("_xout", "x", False),
-                                                                           ("_yout", "y", False)]),
+    "axpy": (
+        lambda: blas.axpy.Axpy("n", 2.0),
+        [("x", [N], F), ("y", [N], F), ("r", [N], F)],
+        [("_x", "x", True), ("_y", "y", True), ("_res", "r", False)],
+    ),
+    "scal": (
+        lambda: blas.scal.Scal("n", 3.0),
+        [("x", [N], F), ("r", [N], F)],
+        [("_x", "x", True), ("_res", "r", False)],
+    ),
+    "nrm2": (
+        lambda: blas.nrm2.Nrm2("n", N),
+        [("x", [N], F), ("r", [1], F)],
+        [("_x", "x", True), ("_result", "r", False)],
+    ),
+    "asum": (
+        lambda: blas.asum.Asum("n", N),
+        [("x", [N], F), ("r", [1], F)],
+        [("_x", "x", True), ("_result", "r", False)],
+    ),
+    "iamax": (
+        lambda: blas.iamax.Iamax("n", N),
+        [("x", [N], F), ("r", [1], dace.int32)],
+        [("_x", "x", True), ("_result", "r", False)],
+    ),
+    "swap": (
+        lambda: blas.swap.Swap("n"),
+        [("x", [N], F), ("y", [N], F)],
+        [("_xin", "x", True), ("_yin", "y", True), ("_xout", "x", False), ("_yout", "y", False)],
+    ),
     "copy": (lambda: blas.copy.Copy("n"), [("x", [N], F), ("r", [N], F)], [("_x", "x", True), ("_y", "r", False)]),
-    "ger": (lambda: blas.ger.Ger("n", alpha=1.0), [("x", [N], F), ("y", [N], F), ("a", [N, N], F),
-                                                   ("r", [N, N], F)], [("_x", "x", True), ("_y", "y", True),
-                                                                       ("_A", "a", True), ("_res", "r", False)]),
-    "gemv": (lambda: blas.gemv.Gemv("n", alpha=1.0, beta=0.0), [("a", [N, N], F), ("x", [N], F),
-                                                                ("y", [N], F)], [("_A", "a", True), ("_x", "x", True),
-                                                                                 ("_y", "y", False)]),
+    "ger": (
+        lambda: blas.ger.Ger("n", alpha=1.0),
+        [("x", [N], F), ("y", [N], F), ("a", [N, N], F), ("r", [N, N], F)],
+        [("_x", "x", True), ("_y", "y", True), ("_A", "a", True), ("_res", "r", False)],
+    ),
+    "gemv": (
+        lambda: blas.gemv.Gemv("n", alpha=1.0, beta=0.0),
+        [("a", [N, N], F), ("x", [N], F), ("y", [N], F)],
+        [("_A", "a", True), ("_x", "x", True), ("_y", "y", False)],
+    ),
 }
 
 
@@ -79,8 +102,11 @@ def emitted_code(name: str, implementation: str) -> str:
         else:
             state.add_memlet_path(node, state.add_write(arr), src_conn=conn, memlet=Memlet(f"{arr}[{subset}]"))
     sdfg.expand_library_nodes()
-    return "\n".join(n.code.as_string for n, _ in sdfg.all_nodes_recursive()
-                     if isinstance(n, dace.sdfg.nodes.Tasklet) and n.code.as_string)
+    return "\n".join(
+        n.code.as_string
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.sdfg.nodes.Tasklet) and n.code.as_string
+    )
 
 
 @pytest.mark.parametrize("name", sorted(SPECS))
@@ -90,9 +116,11 @@ def test_every_emitted_call_is_a_real_vendor_symbol(name: str, implementation: s
     calls = sorted({c.rstrip("(").strip() for c in re.findall(r"\b(?:cublas|rocblas)[A-Za-z_0-9]*\s*\(", code)})
     assert calls, f"{name}/{implementation} emitted no vendor call at all"
     unknown = [c for c in calls if not VENDOR_SYMBOL[implementation].match(c)]
-    assert not unknown, (f"{name}/{implementation} emits {unknown}, which no {implementation} exports. A doubled "
-                         "type letter means the expansion used dialect.func on a name that already carried it; "
-                         "use dialect.routine instead.")
+    assert not unknown, (
+        f"{name}/{implementation} emits {unknown}, which no {implementation} exports. A doubled "
+        "type letter means the expansion used dialect.func on a name that already carried it; "
+        "use dialect.routine instead."
+    )
 
 
 @pytest.mark.parametrize("name", sorted(SPECS))
@@ -101,8 +129,8 @@ def test_a_dialect_never_leaks_the_other_vendor(name: str) -> None:
     for implementation, foreign in (("cuBLAS", "rocblas"), ("rocBLAS", "cublas")):
         code = emitted_code(name, implementation)
         leaked = sorted(
-            {c
-             for c in re.findall(r"\b(?:cublas|rocblas)[A-Za-z_0-9]*", code) if c.lower().startswith(foreign)})
+            {c for c in re.findall(r"\b(?:cublas|rocblas)[A-Za-z_0-9]*", code) if c.lower().startswith(foreign)}
+        )
         assert not leaked, f"{name}/{implementation} leaks {leaked} from the other backend"
 
 
@@ -129,6 +157,8 @@ def test_a_host_scalar_is_only_passed_under_host_pointer_mode(name: str, impleme
     if taken < 0:
         pytest.skip(f"{name} passes no host scalar by address")
     mode = code.find(POINTER_HOST[implementation])
-    assert 0 <= mode < taken, (f"{name}/{implementation} passes a host address to the vendor without first setting "
-                               f"{POINTER_HOST[implementation]}. The handle is in device pointer mode, so the GPU "
-                               "dereferences a host stack address. Wrap the call in gpu_dialect.host_scalar_mode.")
+    assert 0 <= mode < taken, (
+        f"{name}/{implementation} passes a host address to the vendor without first setting "
+        f"{POINTER_HOST[implementation]}. The handle is in device pointer mode, so the GPU "
+        "dereferences a host stack address. Wrap the call in gpu_dialect.host_scalar_mode."
+    )

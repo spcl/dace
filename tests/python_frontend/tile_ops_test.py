@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``dace.tile.add`` and ``dace.tile.masked_copy`` build the tile library nodes from a ``@dace.program``."""
+
 import numpy as np
 import pytest
 
@@ -7,7 +8,7 @@ import dace
 from dace.frontend.python.common import DaceSyntaxError
 from dace.libraries.tileops import MaskedCopyLibraryNode, TileBinop
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 Register = dace.StorageType.Register
 LANES = 8
 
@@ -23,7 +24,7 @@ def random_mask(length: int, seed: int) -> np.ndarray:
 @dace.program
 def add_windows_in_a_map(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
     for i in dace.map[0:N:8]:
-        C[i:i + 8] = dace.tile.add(A[i:i + 8], B[i:i + 8])
+        C[i : i + 8] = dace.tile.add(A[i : i + 8], B[i : i + 8])
 
 
 @dace.program
@@ -34,49 +35,49 @@ def add_whole_arrays(A: dace.float64[8], B: dace.float64[8], C: dace.float64[8])
 @dace.program
 def add_matrix_windows(A: dace.float64[16, 16], B: dace.float64[16, 16], C: dace.float64[16, 16]):
     for i, j in dace.map[0:16:4, 0:16:8]:
-        C[i:i + 4, j:j + 8] = dace.tile.add(A[i:i + 4, j:j + 8], B[i:i + 4, j:j + 8])
+        C[i : i + 4, j : j + 8] = dace.tile.add(A[i : i + 4, j : j + 8], B[i : i + 4, j : j + 8])
 
 
 @dace.program
 def add_a_row_to_a_row(A: dace.float64[4, 16], B: dace.float64[4, 16], C: dace.float64[4, 16]):
     for i, j in dace.map[0:4, 0:16:8]:
-        C[i, j:j + 8] = dace.tile.add(A[i, j:j + 8], B[i, j:j + 8])
+        C[i, j : j + 8] = dace.tile.add(A[i, j : j + 8], B[i, j : j + 8])
 
 
 @dace.program
 def masked_window_copy(A: dace.float64[N], M: dace.bool_[N], C: dace.float64[N]):
     for i in dace.map[0:N:8]:
-        dace.tile.masked_copy(C[i:i + 8], A[i:i + 8], M[i:i + 8])
+        dace.tile.masked_copy(C[i : i + 8], A[i : i + 8], M[i : i + 8])
 
 
 @dace.program
 def masked_load_into_a_tile(A: dace.float64[N], M: dace.bool_[N], C: dace.float64[N]):
     for i in dace.map[0:N:8]:
         tile = dace.define_local([8], dace.float64, storage=dace.StorageType.Register)
-        dace.tile.masked_copy(tile, A[i:i + 8], M[i:i + 8])
-        C[i:i + 8] = tile
+        dace.tile.masked_copy(tile, A[i : i + 8], M[i : i + 8])
+        C[i : i + 8] = tile
 
 
 @dace.program
 def masked_store_from_a_tile(A: dace.float64[N], M: dace.bool_[N], C: dace.float64[N]):
     for i in dace.map[0:N:8]:
         tile = dace.define_local([8], dace.float64, storage=dace.StorageType.Register)
-        tile[:] = A[i:i + 8]
-        dace.tile.masked_copy(C[i:i + 8], tile, M[i:i + 8])
+        tile[:] = A[i : i + 8]
+        dace.tile.masked_copy(C[i : i + 8], tile, M[i : i + 8])
 
 
 @dace.program
 def masked_copy_under_a_register_mask(A: dace.float64[N], M: dace.bool_[N], C: dace.float64[N]):
     for i in dace.map[0:N:8]:
         mask = dace.define_local([8], dace.bool_, storage=dace.StorageType.Register)
-        mask[:] = M[i:i + 8]
-        dace.tile.masked_copy(C[i:i + 8], A[i:i + 8], mask)
+        mask[:] = M[i : i + 8]
+        dace.tile.masked_copy(C[i : i + 8], A[i : i + 8], mask)
 
 
 @dace.program
 def masked_copy_of_a_sum(A: dace.float64[N], B: dace.float64[N], M: dace.bool_[N], C: dace.float64[N]):
     for i in dace.map[0:N:8]:
-        dace.tile.masked_copy(C[i:i + 8], dace.tile.add(A[i:i + 8], B[i:i + 8]), M[i:i + 8])
+        dace.tile.masked_copy(C[i : i + 8], dace.tile.add(A[i : i + 8], B[i : i + 8]), M[i : i + 8])
 
 
 @dace.program
@@ -137,7 +138,7 @@ def test_the_sum_of_two_windows_of_a_matrix_is_a_two_dimensional_tile():
 def test_a_window_of_extent_one_in_a_dim_is_no_lane_dim():
     a, b, c = (np.random.default_rng(seed).random((4, 16)) for seed in (6, 7, 8))
     sdfg = add_a_row_to_a_row.to_sdfg(simplify=False)
-    assert [tuple(node.widths) for node, state in sdfg.all_nodes_recursive() if isinstance(node, TileBinop)] == [(8, )]
+    assert [tuple(node.widths) for node, state in sdfg.all_nodes_recursive() if isinstance(node, TileBinop)] == [(8,)]
     sdfg(A=a, B=b, C=c)
     np.testing.assert_array_equal(c, a + b)
 
@@ -188,19 +189,22 @@ def test_a_masked_copy_outside_a_map():
     np.testing.assert_array_equal(c, expected)
 
 
-@pytest.mark.parametrize("program,message", [
-    (lanes_differ, "different lanes"),
-    (types_differ, "different types"),
-    (mask_is_no_bool, "must be of type bool"),
-    (tile_to_tile, "between two tiles"),
-    (sum_of_unequal_lanes, "different lanes"),
-])
+@pytest.mark.parametrize(
+    "program,message",
+    [
+        (lanes_differ, "different lanes"),
+        (types_differ, "different types"),
+        (mask_is_no_bool, "must be of type bool"),
+        (tile_to_tile, "between two tiles"),
+        (sum_of_unequal_lanes, "different lanes"),
+    ],
+)
 def test_a_call_that_does_not_fit_the_tiles_is_refused(program, message):
     with pytest.raises(DaceSyntaxError, match=message):
         program.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_sum_of_two_windows_in_a_map()
     test_the_sum_of_two_whole_arrays()
     test_the_sum_of_two_windows_of_a_matrix_is_a_two_dimensional_tile()

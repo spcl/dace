@@ -2,6 +2,7 @@
 """A ``__field_operator_testee`` SDFG (register scalars, a nested SDFG, ``GPU_Global`` transients, and two
 conditionals guarded by ``metrics_level >= 10``) compiles, round-trips through serialization after the GPU pipeline
 ran, compiles again and computes the right result: ``gpu_stream_id`` and the wiring must survive."""
+
 import os
 import tempfile
 
@@ -14,9 +15,9 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 
-N = dace.symbol('N')
-M = dace.symbol('M')
-metrics_level = dace.symbol('metrics_level', dace.int64)
+N = dace.symbol("N")
+M = dace.symbol("M")
+metrics_level = dace.symbol("metrics_level", dace.int64)
 
 
 @dace.program
@@ -51,13 +52,11 @@ def _attach_metrics_blocks(sdfg: dace.SDFG) -> None:
     Each block contains one state and is guarded by ``metrics_level >= 10``.
     Mirrors the ``__field_operator_testee`` instrumentation gating pattern.
     """
-    sdfg.add_symbol('metrics_level', dace.int64)
-    sdfg.add_array('gt_compute_time',
-                   shape=(1, ),
-                   dtype=dace.float64,
-                   storage=dtypes.StorageType.CPU_Heap,
-                   transient=False)
-    sdfg.add_scalar('gt_start_time', dace.int64, storage=dtypes.StorageType.CPU_Heap, transient=True)
+    sdfg.add_symbol("metrics_level", dace.int64)
+    sdfg.add_array(
+        "gt_compute_time", shape=(1,), dtype=dace.float64, storage=dtypes.StorageType.CPU_Heap, transient=False
+    )
+    sdfg.add_scalar("gt_start_time", dace.int64, storage=dtypes.StorageType.CPU_Heap, transient=True)
 
     # The pre-existing body state(s) live under ``sdfg``. Insert two
     # ConditionalBlocks: one as the new start, one after the original sink.
@@ -66,26 +65,26 @@ def _attach_metrics_blocks(sdfg: dace.SDFG) -> None:
     sink_block = sink_blocks[0] if sink_blocks else original_start
 
     # Entry conditional becomes the new start of the SDFG.
-    entry_region = ConditionalBlock('metrics_entry')
+    entry_region = ConditionalBlock("metrics_entry")
     sdfg.add_node(entry_region, is_start_block=True)
-    entry_body = ControlFlowRegion('metrics_entry_body', sdfg=sdfg)
-    entry_state = entry_body.add_state('metrics_entry_collect', is_start_block=True)
-    entry_region.add_branch(CodeBlock('metrics_level >= 10'), entry_body)
-    t_in = entry_state.add_tasklet('gt_start_timer', set(), {'out': None}, 'out = 0')
-    t_in_an = entry_state.add_access('gt_start_time')
-    entry_state.add_edge(t_in, 'out', t_in_an, None, Memlet(data='gt_start_time', subset='0'))
+    entry_body = ControlFlowRegion("metrics_entry_body", sdfg=sdfg)
+    entry_state = entry_body.add_state("metrics_entry_collect", is_start_block=True)
+    entry_region.add_branch(CodeBlock("metrics_level >= 10"), entry_body)
+    t_in = entry_state.add_tasklet("gt_start_timer", set(), {"out": None}, "out = 0")
+    t_in_an = entry_state.add_access("gt_start_time")
+    entry_state.add_edge(t_in, "out", t_in_an, None, Memlet(data="gt_start_time", subset="0"))
 
     # Exit conditional.
-    exit_region = ConditionalBlock('metrics_exit')
+    exit_region = ConditionalBlock("metrics_exit")
     sdfg.add_node(exit_region)
-    exit_body = ControlFlowRegion('metrics_exit_body', sdfg=sdfg)
-    exit_state = exit_body.add_state('metrics_exit_collect', is_start_block=True)
-    exit_region.add_branch(CodeBlock('metrics_level >= 10'), exit_body)
-    t_out = exit_state.add_tasklet('gt_stop_timer', {'start': None}, {'out': None}, 'out = start - start')
-    t_out_an = exit_state.add_access('gt_start_time')
-    t_out_dst = exit_state.add_access('gt_compute_time')
-    exit_state.add_edge(t_out_an, None, t_out, 'start', Memlet(data='gt_start_time', subset='0'))
-    exit_state.add_edge(t_out, 'out', t_out_dst, None, Memlet(data='gt_compute_time', subset='0'))
+    exit_body = ControlFlowRegion("metrics_exit_body", sdfg=sdfg)
+    exit_state = exit_body.add_state("metrics_exit_collect", is_start_block=True)
+    exit_region.add_branch(CodeBlock("metrics_level >= 10"), exit_body)
+    t_out = exit_state.add_tasklet("gt_stop_timer", {"start": None}, {"out": None}, "out = start - start")
+    t_out_an = exit_state.add_access("gt_start_time")
+    t_out_dst = exit_state.add_access("gt_compute_time")
+    exit_state.add_edge(t_out_an, None, t_out, "start", Memlet(data="gt_start_time", subset="0"))
+    exit_state.add_edge(t_out, "out", t_out_dst, None, Memlet(data="gt_compute_time", subset="0"))
 
     sdfg.add_edge(entry_region, original_start, dace.InterstateEdge())
     sdfg.add_edge(sink_block, exit_region, dace.InterstateEdge())
@@ -131,7 +130,7 @@ def test_field_operator_roundtrip_and_run():
     sdfg.compile()
 
     with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, 'field_operator_postpipeline.sdfg')
+        path = os.path.join(tmp, "field_operator_postpipeline.sdfg")
         sdfg.save(path)
         reloaded = dace.SDFG.from_file(path)
 
@@ -147,6 +146,6 @@ def test_field_operator_roundtrip_and_run():
     np.testing.assert_allclose(out_1, exp_1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_field_operator_compile()
     test_field_operator_roundtrip_and_run()

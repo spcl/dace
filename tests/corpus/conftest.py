@@ -11,24 +11,29 @@ CLI options:
   SDFG to ``PATH`` as ``<regime>_<stage_index>_<stage_name>.sdfgz``.
   Empty by default (no dump).
 """
+
 import os
 import pytest
 
 
 def pytest_addoption(parser):
-    parser.addoption('--cloudsc-dump-dir',
-                     action='store',
-                     type=str,
-                     default='',
-                     help=('Directory to dump each cloudsc chain-stage SDFG into '
-                           '(filenames ``<regime>_<idx>_<stage>.sdfgz``). Empty (default) '
-                           'disables dumping. The directory is created if missing.'))
+    parser.addoption(
+        "--cloudsc-dump-dir",
+        action="store",
+        type=str,
+        default="",
+        help=(
+            "Directory to dump each cloudsc chain-stage SDFG into "
+            "(filenames ``<regime>_<idx>_<stage>.sdfgz``). Empty (default) "
+            "disables dumping. The directory is created if missing."
+        ),
+    )
 
 
 @pytest.fixture
 def cloudsc_dump_dir(request) -> str:
     """Resolved ``--cloudsc-dump-dir`` (created on first use); ``''`` if not set."""
-    raw = request.config.getoption('--cloudsc-dump-dir') or ''
+    raw = request.config.getoption("--cloudsc-dump-dir") or ""
     if raw:
         raw = os.path.expanduser(raw)
         os.makedirs(raw, exist_ok=True)

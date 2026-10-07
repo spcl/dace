@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the optional BreakAntiDependence pass (snapshot-rename to break a
 loop-carried WAR so LoopToMap can parallelize). SDFGs via the Python frontend."""
+
 import contextlib
 import os
 
@@ -13,9 +14,9 @@ from dace.sdfg import nodes
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 #: An int64 extent, so the frontend infers an int64 iterator and casts it to meet an int32 index array.
-N_INT64 = dace.symbol('N', dace.int64)
+N_INT64 = dace.symbol("N", dace.int64)
 
 
 def _nmaps(sdfg):
@@ -27,7 +28,7 @@ def _nloops(sdfg):
 
 
 def _l2m(sdfg):
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         sdfg.apply_transformations_repeated(LoopToMap)
 
 
@@ -103,7 +104,7 @@ def test_break_anti_dependence_symbolic_positive_offset():
     ``+inc`` which is non-numeric. The pass renames under the assumption ``inc > 0``
     AND inserts a runtime ``std::abort`` guard on ``inc <= 0``. This mirrors
     TSVC s175 (forward-read parallel with symbolic stride)."""
-    inc = dace.symbol('inc')
+    inc = dace.symbol("inc")
 
     @dace.program
     def s175_like_break_anti_dependence_symbolic_positive_offset(a: dace.float64[N], b: dace.float64[N]):
@@ -121,14 +122,14 @@ def test_break_anti_dependence_symbolic_positive_offset():
     guards = []
     for st in sdfg.states():
         for n in st.nodes():
-            if (isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_guard')):
+            if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_guard"):
                 guards.append(n)
     assert len(guards) == 1, [g.label for g in guards]
     g = guards[0]
     assert g.code.language == dace.dtypes.Language.Python
     assert not g.in_connectors and not g.out_connectors
     # The guard's expression should contain the offset symbol.
-    assert 'inc' in g.code.as_string and 'abort()' in g.code.as_string
+    assert "inc" in g.code.as_string and "abort()" in g.code.as_string
 
     # Numerical correctness (with inc=1, equivalent to the constant-offset case s121).
     rng = np.random.default_rng(0)
@@ -149,11 +150,13 @@ def test_break_anti_dependence_symbolic_guard_survives_full_canonicalize():
     assume-nonneg parallelization. Runs with a valid ``inc > 0`` (the trap must not
     fire) and checks the snapshot-renamed parallel result."""
     from dace.transformation.passes.canonicalize import canonicalize
-    inc = dace.symbol('inc')
+
+    inc = dace.symbol("inc")
 
     @dace.program
-    def s175_like_break_anti_dependence_symbolic_guard_survives_full_canonicalize(a: dace.float64[N],
-                                                                                  b: dace.float64[N]):
+    def s175_like_break_anti_dependence_symbolic_guard_survives_full_canonicalize(
+        a: dace.float64[N], b: dace.float64[N]
+    ):
         for i in range(N - inc):
             a[i] = a[i + inc] + b[i]
 
@@ -161,13 +164,14 @@ def test_break_anti_dependence_symbolic_guard_survives_full_canonicalize():
     canonicalize(sdfg, validate=True)
 
     guards = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.Tasklet) and 'abort()' in (n.code.as_string or '')
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.Tasklet) and "abort()" in (n.code.as_string or "")
     ]
-    assert len(guards) >= 1, 'the positive-offset guard must survive full canonicalize'
-    assert all(g.side_effects for g in guards), 'guard must be side-effecting so DCE keeps it'
-    assert any('inc' in g.code.as_string for g in guards)
-    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, 'the read-ahead loop should be parallelized'
+    assert len(guards) >= 1, "the positive-offset guard must survive full canonicalize"
+    assert all(g.side_effects for g in guards), "guard must be side-effecting so DCE keeps it"
+    assert any("inc" in g.code.as_string for g in guards)
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, "the read-ahead loop should be parallelized"
 
     n = 50
     rng = np.random.default_rng(1)
@@ -190,7 +194,7 @@ def test_break_anti_dependence_refuses_symbolic_difference_offset():
     refusing the algebraically equivalent ``M - K`` -- a canonical-ordering
     artifact -- emitting an unsatisfiable ``> 0`` guard that trapped or, once
     DCE'd, silently corrupted the output)."""
-    K, M = dace.symbol('K'), dace.symbol('M')
+    K, M = dace.symbol("K"), dace.symbol("M")
 
     @dace.program
     def diff_offset(a: dace.float64[N], b: dace.float64[N]):
@@ -200,7 +204,7 @@ def test_break_anti_dependence_refuses_symbolic_difference_offset():
     sdfg = diff_offset.to_sdfg(simplify=True)
     # Refused: no snapshot transient, no rename.
     assert not BreakAntiDependence().apply_pass(sdfg, {})
-    assert not any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    assert not any(name.endswith("_antidep_snap") for name in sdfg.arrays), list(sdfg.arrays)
     _l2m(sdfg)
     # The read-behind RAW cannot be mapped -> stays sequential.
     assert _nloops(sdfg) == 1 and _nmaps(sdfg) == 0
@@ -216,7 +220,7 @@ def test_break_anti_dependence_refuses_symbolic_difference_offset():
         ref_a[i] = ref_a[i + k - m] + b[i]  # sequential oracle (offset k-m = -3)
     a_run = a.copy()
     sdfg(a=a_run, b=b, N=n, K=k, M=m)
-    assert np.allclose(a_run, ref_a), f'max-diff {np.abs(a_run - ref_a).max()}'
+    assert np.allclose(a_run, ref_a), f"max-diff {np.abs(a_run - ref_a).max()}"
 
 
 def test_break_anti_dependence_sum_of_symbols_offset_renames():
@@ -224,7 +228,7 @@ def test_break_anti_dependence_sum_of_symbols_offset_renames():
     nonnegative symbols, hence provably ``>= 0`` (the soundness condition for the
     snapshot rename). It must still be renamed and parallelized, confirming the
     nonnegative-difference refusal does not over-reject genuine read-ahead WARs."""
-    K, P = dace.symbol('K'), dace.symbol('P')
+    K, P = dace.symbol("K"), dace.symbol("P")
 
     @dace.program
     def sum_offset(a: dace.float64[N], b: dace.float64[N]):
@@ -233,7 +237,7 @@ def test_break_anti_dependence_sum_of_symbols_offset_renames():
 
     sdfg = sum_offset.to_sdfg(simplify=True)
     assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
-    assert any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    assert any(name.endswith("_antidep_snap") for name in sdfg.arrays), list(sdfg.arrays)
     _l2m(sdfg)
     assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
     sdfg.validate()
@@ -248,7 +252,7 @@ def test_break_anti_dependence_sum_of_symbols_offset_renames():
         ref_a[i] = ref_a[i + k + p] + b[i]
     a_run = a.copy()
     sdfg(a=a_run, b=b, N=n, K=k, P=p)
-    assert np.allclose(a_run, ref_a), f'max-diff {np.abs(a_run - ref_a).max()}'
+    assert np.allclose(a_run, ref_a), f"max-diff {np.abs(a_run - ref_a).max()}"
 
 
 def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
@@ -263,9 +267,9 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     idx_dtype = dace.int32
 
     @dace.program
-    def indirect_break_anti_dependence_data_indirected_offset_via_runtime_check(a: dace.float64[N_INT64],
-                                                                                b: dace.float64[N_INT64],
-                                                                                idx: idx_dtype[N_INT64]):
+    def indirect_break_anti_dependence_data_indirected_offset_via_runtime_check(
+        a: dace.float64[N_INT64], b: dace.float64[N_INT64], idx: idx_dtype[N_INT64]
+    ):
         # Bound at N-1 so a[i + idx[i]] with idx[i] == 1 stays in range.
         for i in range(N - 1):
             a[i] = a[i + idx[i]] + b[i]
@@ -279,19 +283,21 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     # The pass must have planted an ARRAY guard tasklet over ``idx`` (CPP,
     # one input connector for ``idx``, no outputs, body asserts each slot > 0).
     array_guards = [
-        n for st in sdfg.states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_array_guard_')
+        n
+        for st in sdfg.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_array_guard_")
     ]
     assert len(array_guards) == 1, [g.label for g in array_guards]
     g = array_guards[0]
     assert g.code.language == dace.dtypes.Language.Python
     assert len(g.in_connectors) == 1 and not g.out_connectors
-    assert 'idx' in g.code.as_string and 'abort()' in g.code.as_string
+    assert "idx" in g.code.as_string and "abort()" in g.code.as_string
     # PARALLEL, not a serial scan: the guard sits right in front of the loop the snapshot exists
     # to parallelize, so it delegates to the omp/simd min-reduction in dace/runtime/include/dace/
     # detect.h instead of aborting on the first violation inside a loop of its own.
-    assert 'dace::detect_all_positive' in cppunparse.py2cpp(g.code.as_string)
-    assert 'for (' not in g.code.as_string, f'guard grew a serial loop back: {g.code.as_string!r}'
+    assert "dace::detect_all_positive" in cppunparse.py2cpp(g.code.as_string)
+    assert "for (" not in g.code.as_string, f"guard grew a serial loop back: {g.code.as_string!r}"
 
     # Numerical correctness with a permutation that satisfies idx[i] > 0
     # for the in-range positions.
@@ -355,7 +361,7 @@ def test_break_anti_dependence_post_normalize_negative_stride_reverse_scan():
     assert bad == 1, "BAD must recognise the reverse-scan WAR post-NNS"
     _l2m(sdfg)
     sdfg.validate()
-    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, ("after NNS + BAD + L2M the reverse scan must be lifted")
+    assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0, "after NNS + BAD + L2M the reverse scan must be lifted"
 
     # Numerics: reverse-iteration scan produces a SPECIFIC value pattern
     # (different from the forward-iteration scan because of the WAR).
@@ -426,13 +432,15 @@ def test_break_anti_dependence_cast_wrapped_iterator_in_indirected_chain():
     sdfg = cast_indirect.to_sdfg(simplify=True)
     # Must recognise the indirection (renamed == 1) despite the ``dace.int32(i)`` cast.
     assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
-    assert any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    assert any(name.endswith("_antidep_snap") for name in sdfg.arrays), list(sdfg.arrays)
     # A per-element array guard over ``idx`` must be planted (idx[i] > 0 soundness).
     guards = [
-        n for st in sdfg.states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and n.label.startswith('_break_antidep_array_guard_')
+        n
+        for st in sdfg.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and n.label.startswith("_break_antidep_array_guard_")
     ]
-    assert len(guards) == 1 and 'idx' in guards[0].code.as_string
+    assert len(guards) == 1 and "idx" in guards[0].code.as_string
     _l2m(sdfg)
     sdfg.validate()
     assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
@@ -465,7 +473,7 @@ def test_break_anti_dependence_loop_invariant_array_offset_refused():
 
     sdfg = inv_array.to_sdfg(simplify=True)
     assert BreakAntiDependence().apply_pass(sdfg, {}) is None  # refused, no rename
-    assert not any(name.endswith('_antidep_snap') for name in sdfg.arrays), list(sdfg.arrays)
+    assert not any(name.endswith("_antidep_snap") for name in sdfg.arrays), list(sdfg.arrays)
     _l2m(sdfg)
     assert _nloops(sdfg) >= 1 and _nmaps(sdfg) == 0  # stays a sequential loop
 
@@ -481,7 +489,7 @@ def test_break_anti_dependence_loop_invariant_array_offset_refused():
         ref[i] = a[i + 1] + b[i]  # sequential reads ORIGINAL a[i+1]
     out = a.copy()
     sdfg(a=out, b=b.copy(), idx=idx.copy(), N=n)
-    assert np.allclose(out, ref), f'max-diff {np.abs(out - ref).max()}'
+    assert np.allclose(out, ref), f"max-diff {np.abs(out - ref).max()}"
 
 
 def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
@@ -495,9 +503,9 @@ def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
     """
 
     @dace.program
-    def indirect_break_anti_dependence_pure_positive_subs_doesnt_break_indirected(a: dace.float64[N],
-                                                                                  b: dace.float64[N],
-                                                                                  idx: dace.int32[N]):
+    def indirect_break_anti_dependence_pure_positive_subs_doesnt_break_indirected(
+        a: dace.float64[N], b: dace.float64[N], idx: dace.int32[N]
+    ):
         for i in range(N - 1):
             a[i] = a[i + idx[i]] + b[i]
 
@@ -511,7 +519,7 @@ def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
 # forward_reads: break ONE read-ahead edge of an array whose other reads are true
 # dependences. The loop stays sequential; what it buys is that the read-ahead no
 # longer binds two otherwise-independent statements, so fission can distribute them.
-K = dace.symbol('K')
+K = dace.symbol("K")
 
 
 @dace.program
@@ -523,7 +531,7 @@ def _mixed_carry_and_read_ahead(a: dace.float64[N], d: dace.float64[N], x: dace.
 
 
 def _snaps(sdfg):
-    return sorted(nm for nm in sdfg.arrays if '_split_snap' in nm)
+    return sorted(nm for nm in sdfg.arrays if "_split_snap" in nm)
 
 
 def test_forward_reads_breaks_what_the_whole_array_policy_refuses():
@@ -611,25 +619,32 @@ def test_forward_reads_symbolic_offset_guard_is_strictly_positive():
     sdfg = sym_mixed.to_sdfg(simplify=True)
     assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
     guards = [
-        n.code.as_string for st in sdfg.states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and n.name.startswith('_break_antidep_guard_')
+        n.code.as_string
+        for st in sdfg.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and n.name.startswith("_break_antidep_guard_")
     ]
-    assert guards, 'a symbolic offset must carry a runtime guard'
-    strict = dace.symbolic.symstr(dace.symbolic.pystr_to_symbolic('K') - 1)
+    assert guards, "a symbolic offset must carry a runtime guard"
+    strict = dace.symbolic.symstr(dace.symbolic.pystr_to_symbolic("K") - 1)
     assert any(strict in g for g in guards), guards
 
 
 # Snapshot window: the copy covers the elements the redirected reads touch, not
 # the whole array. Proportional, so it only shows where the loop sweeps a slice.
-B = dace.symbol('B')
-NB = dace.symbol('NB')
+B = dace.symbol("B")
+NB = dace.symbol("NB")
 
 
 def _snapshot_copies(sdfg):
     """Every ``name -> snap`` copy memlet the pass planted, in state order."""
     return [
-        e.data for st in sdfg.states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)
-        and '_snap' in e.dst.data and e.data is not None and not e.data.is_empty()
+        e.data
+        for st in sdfg.states()
+        for e in st.edges()
+        if isinstance(e.dst, nodes.AccessNode)
+        and "_snap" in e.dst.data
+        and e.data is not None
+        and not e.data.is_empty()
     ]
 
 
@@ -651,7 +666,7 @@ def test_snapshot_copies_only_the_block_a_nested_loop_reads():
     sdfg.validate()
     copies = _snapshot_copies(sdfg)
     assert len(copies) == 1
-    assert 'N' not in {str(s) for s in copies[0].subset.free_symbols}, copies[0].subset
+    assert "N" not in {str(s) for s in copies[0].subset.free_symbols}, copies[0].subset
 
     n, b_, nb = 16, 4, 4
     rng = np.random.default_rng(21)
@@ -680,7 +695,7 @@ def test_forward_reads_snapshot_copies_only_the_swept_window():
     sdfg.validate()
     copies = _snapshot_copies(sdfg)
     assert len(copies) == 1
-    assert copies[0].subset.num_elements() == dace.symbolic.pystr_to_symbolic('N - 8')
+    assert copies[0].subset.num_elements() == dace.symbolic.pystr_to_symbolic("N - 8")
 
     n = 16
     rng = np.random.default_rng(22)
@@ -693,7 +708,7 @@ def test_forward_reads_snapshot_copies_only_the_swept_window():
     assert np.array_equal(got_d, ref_d)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_snapshot_copies_only_the_block_a_nested_loop_reads()
     test_forward_reads_snapshot_copies_only_the_swept_window()
     test_forward_reads_breaks_what_the_whole_array_policy_refuses()
@@ -733,12 +748,13 @@ def test_smt_fallback_breaks_a_guarded_indirected_read_ahead():
 
     base = guarded_indirect.to_sdfg(simplify=True)
     _l2m(base)
-    assert _nmaps(base) == 0, 'LoopToMap alone must refuse the guarded indirection'
+    assert _nmaps(base) == 0, "LoopToMap alone must refuse the guarded indirection"
 
     sdfg = guarded_indirect.to_sdfg(simplify=True)
-    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1, 'the SMT fallback should break exactly one array'
-    assert any(name.endswith('_antidep_snap') or '_antidep_snap' in name
-               for name in sdfg.arrays), f'no snapshot transient was added: {sorted(sdfg.arrays)}'
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1, "the SMT fallback should break exactly one array"
+    assert any(name.endswith("_antidep_snap") or "_antidep_snap" in name for name in sdfg.arrays), (
+        f"no snapshot transient was added: {sorted(sdfg.arrays)}"
+    )
 
     n = 16
     rng = np.random.default_rng(1)
@@ -751,7 +767,7 @@ def test_smt_fallback_breaks_a_guarded_indirected_read_ahead():
 
     got = a.copy()
     sdfg(A=got, IDX=idx.copy(), N=n)
-    assert np.allclose(got, expected), 'breaking the guarded anti-dependence must preserve values'
+    assert np.allclose(got, expected), "breaking the guarded anti-dependence must preserve values"
 
 
 def test_smt_fallback_refuses_the_same_shape_without_the_guard():
@@ -766,8 +782,8 @@ def test_smt_fallback_refuses_the_same_shape_without_the_guard():
 
     sdfg = unguarded_indirect.to_sdfg(simplify=True)
     before = sdfg.to_json()
-    assert BreakAntiDependence().apply_pass(sdfg, {}) is None, 'an unguarded indirect read is not read-ahead'
-    assert sdfg.to_json() == before, 'a refusing pass must leave the SDFG bit-identical'
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None, "an unguarded indirect read is not read-ahead"
+    assert sdfg.to_json() == before, "a refusing pass must leave the SDFG bit-identical"
 
 
 def test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop():
@@ -786,5 +802,5 @@ def test_smt_fallback_refuses_when_the_indirection_array_is_written_in_the_loop(
 
     sdfg = mutating_indirect.to_sdfg(simplify=True)
     before = sdfg.to_json()
-    assert BreakAntiDependence().apply_pass(sdfg, {}) is None, 'a loop-written indirection array must refuse'
-    assert sdfg.to_json() == before, 'a refusing pass must leave the SDFG bit-identical'
+    assert BreakAntiDependence().apply_pass(sdfg, {}) is None, "a loop-written indirection array must refuse"
+    assert sdfg.to_json() == before, "a refusing pass must leave the SDFG bit-identical"

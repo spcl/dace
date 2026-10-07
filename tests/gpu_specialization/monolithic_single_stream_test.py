@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Asserts the monolithic mode of ``AutoGPUStreamScheduler`` places every kernel on one stream with syncs only at
 host-transfer boundaries, and rejects CPU-only programs."""
+
 import dace
 import numpy as np
 import pytest
@@ -10,7 +11,7 @@ from dace.transformation.passes.gpu_specialization.gpu_specialization_pipeline i
 from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import AutoGPUStreamScheduler
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_pipeline_sync_tasklet
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -23,21 +24,30 @@ def jacobi_2d(TSTEPS: dace.int32, A: dace.float32[N, N], B: dace.float32[N, N]):
 @dace.program
 def heat_3d(TSTEPS: dace.int64, A: dace.float64[N, N, N], B: dace.float64[N, N, N]):
     for _ in range(1, TSTEPS):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def _count_sync_tasklets(sdfg):
     """Count pipeline-emitted sync tasklets across the SDFG hierarchy via the canonical
     :func:`is_pipeline_sync_tasklet` predicate."""
-    return sum(1 for nsdfg in sdfg.all_sdfgs_recursive() for state in nsdfg.states() for node in state.nodes()
-               if is_pipeline_sync_tasklet(node))
+    return sum(
+        1
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for state in nsdfg.states()
+        for node in state.nodes()
+        if is_pipeline_sync_tasklet(node)
+    )
 
 
 def _build_gpu_sdfg(program, *, monolithic: bool):
@@ -61,8 +71,10 @@ def test_monolithic_jacobi_2d_two_syncs_and_correctness():
 
     sdfg = _build_gpu_sdfg(jacobi_2d, monolithic=True)
     sync_count = _count_sync_tasklets(sdfg)
-    assert sync_count == 2, (f"Monolithic jacobi_2d should produce exactly 2 sync tasklets "
-                             f"(one after the H2D copy state, one at program exit); got {sync_count}.")
+    assert sync_count == 2, (
+        f"Monolithic jacobi_2d should produce exactly 2 sync tasklets "
+        f"(one after the H2D copy state, one at program exit); got {sync_count}."
+    )
 
     A_gpu, B_gpu = A.copy(), B.copy()
     sdfg(A=A_gpu, B=B_gpu, TSTEPS=TSTEPS, N=n_val)
@@ -84,8 +96,10 @@ def test_monolithic_heat_3d_two_syncs_and_correctness():
 
     sdfg = _build_gpu_sdfg(heat_3d, monolithic=True)
     sync_count = _count_sync_tasklets(sdfg)
-    assert sync_count == 2, (f"Monolithic heat_3d should produce exactly 2 sync tasklets "
-                             f"(one after the H2D copy state, one at program exit); got {sync_count}.")
+    assert sync_count == 2, (
+        f"Monolithic heat_3d should produce exactly 2 sync tasklets "
+        f"(one after the H2D copy state, one at program exit); got {sync_count}."
+    )
 
     A_gpu, B_gpu = A.copy(), B.copy()
     sdfg(A=A_gpu, B=B_gpu, TSTEPS=TSTEPS, N=n_val)
@@ -108,7 +122,7 @@ def test_monolithic_strategy_rejects_cpu_only_program():
         GPUStreamPipeline(scheduling_strategy=AutoGPUStreamScheduler(monolithic=True)).apply_pass(sdfg, {})
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_monolithic_strategy_rejects_cpu_only_program()
     test_monolithic_jacobi_2d_two_syncs_and_correctness()
     test_monolithic_heat_3d_two_syncs_and_correctness()

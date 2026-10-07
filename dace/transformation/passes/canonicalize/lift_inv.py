@@ -41,6 +41,7 @@ identity map to a loop and before the ITE-lowering passes rewrite its
 ``1 if ... else 0`` body. Like the other semantic lifts it is gated on the
 ``semantic_lifting`` knob, so the vectorizer path leaves ``solve(A, I)`` intact.
 """
+
 import ast
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -101,8 +102,12 @@ def is_identity_tasklet(tasklet: nodes.Tasklet, params: List[str]) -> bool:
     if not isinstance(ifexp, ast.IfExp) or not const_is(ifexp.body, 1.0) or not const_is(ifexp.orelse, 0.0):
         return False
     test = ifexp.test
-    if not (isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
-            and len(test.comparators) == 1):
+    if not (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+        and len(test.comparators) == 1
+    ):
         return False
     try:
         left = symbolic.pystr_to_symbolic(ast.unparse(test.left), simplify=False)
@@ -166,8 +171,11 @@ class LiftInv(ppl.Pass):
             return False
 
         ain_node, b_node, out_node = ain_edge.src, bin_edge.src, bout_edge.dst
-        if not (isinstance(ain_node, nodes.AccessNode) and isinstance(b_node, nodes.AccessNode)
-                and isinstance(out_node, nodes.AccessNode)):
+        if not (
+            isinstance(ain_node, nodes.AccessNode)
+            and isinstance(b_node, nodes.AccessNode)
+            and isinstance(out_node, nodes.AccessNode)
+        ):
             return False
 
         a_name, b_name, out_name = ain_node.data, b_node.data, out_node.data
@@ -205,17 +213,20 @@ class LiftInv(ppl.Pass):
         b_out = value_edges(state.out_edges(b_node))
         if len(b_out) != 1 or b_out[0] is not bin_edge:
             return False
-        refs = sum(1 for st in sdfg.states() for nd in st.nodes()
-                   if isinstance(nd, nodes.AccessNode) and nd.data == b_name)
+        refs = sum(
+            1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, nodes.AccessNode) and nd.data == b_name
+        )
         if refs != 1:
             return False
 
-        self._replace(sdfg, state, solve, ain_node, out_node, b_node, map_entry, map_exit, tasklet, a_desc, out_desc,
-                      b_name)
+        self._replace(
+            sdfg, state, solve, ain_node, out_node, b_node, map_entry, map_exit, tasklet, a_desc, out_desc, b_name
+        )
         return True
 
-    def _identity_producer(self, state: SDFGState, b_node: nodes.AccessNode,
-                           n: symbolic.SymbolicType) -> Optional[Tuple[nodes.MapEntry, nodes.MapExit, nodes.Tasklet]]:
+    def _identity_producer(
+        self, state: SDFGState, b_node: nodes.AccessNode, n: symbolic.SymbolicType
+    ) -> Optional[Tuple[nodes.MapEntry, nodes.MapExit, nodes.Tasklet]]:
         """If ``b_node`` is written, in ``state``, by exactly one identity map --
         two parameters over ``[0:n, 0:n]``, no map inputs, a single input-less
         ``out = 1 if p == q else 0`` tasklet, writing the whole array -- return
@@ -234,8 +245,11 @@ class LiftInv(ppl.Pass):
             # A memlet bound reparsed from a string and a shape carrying the declared assumptions are
             # two sympy instances of one name whose difference never cancels.
             end, extent = symbolic.equalize_symbols_across(hi, sz)
-            if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or \
-                    symbolic.simplify(end - (extent - 1)) != 0:
+            if (
+                symbolic.simplify(lo) != 0
+                or symbolic.simplify(st - 1) != 0
+                or symbolic.simplify(end - (extent - 1)) != 0
+            ):
                 return None
 
         map_entry = state.entry_node(map_exit)
@@ -244,12 +258,15 @@ class LiftInv(ppl.Pass):
         params = as_map_entry(map_entry).map.params
         if len(params) != 2:
             return None
-        for (lo, hi, st) in as_map_entry(map_entry).map.range.ndrange():
+        for lo, hi, st in as_map_entry(map_entry).map.range.ndrange():
             # The map range is reparsed from the lifted loop while ``n`` carries the descriptor's
             # declared assumptions: one name, two sympy instances, no cancellation.
             end, extent = symbolic.equalize_symbols_across(hi, n)
-            if symbolic.simplify(lo) != 0 or symbolic.simplify(st - 1) != 0 or \
-                    symbolic.simplify(end - (extent - 1)) != 0:
+            if (
+                symbolic.simplify(lo) != 0
+                or symbolic.simplify(st - 1) != 0
+                or symbolic.simplify(end - (extent - 1)) != 0
+            ):
                 return None
         # An identity reads nothing: the map has no data inputs.
         if any(e.data is not None and not e.data.is_empty() for e in state.in_edges(map_entry)):
@@ -270,10 +287,21 @@ class LiftInv(ppl.Pass):
             return None
         return map_entry, map_exit, tasklet
 
-    def _replace(self, sdfg: dace.SDFG, state: SDFGState, solve: nodes.LibraryNode, ain_node: nodes.AccessNode,
-                 out_node: nodes.AccessNode, b_node: nodes.AccessNode, map_entry: nodes.MapEntry,
-                 map_exit: nodes.MapExit, tasklet: nodes.Tasklet, a_desc: dace.data.Data, out_desc: dace.data.Data,
-                 b_name: str) -> None:
+    def _replace(
+        self,
+        sdfg: dace.SDFG,
+        state: SDFGState,
+        solve: nodes.LibraryNode,
+        ain_node: nodes.AccessNode,
+        out_node: nodes.AccessNode,
+        b_node: nodes.AccessNode,
+        map_entry: nodes.MapEntry,
+        map_exit: nodes.MapExit,
+        tasklet: nodes.Tasklet,
+        a_desc: dace.data.Data,
+        out_desc: dace.data.Data,
+        b_name: str,
+    ) -> None:
         """Replace the ``Solve`` + identity map with a single ``Inv`` node wired
         ``A -> _ain`` / ``_aout -> out`` (mirroring the frontend's ``Inv``
         wiring), then remove the identity subgraph and its transient."""

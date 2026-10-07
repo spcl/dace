@@ -57,6 +57,7 @@ fires on nussinov at all. The fix routes the substitution through ``replace_dict
 ``peel_limit=1`` DOES exercise this fix end to end (it raised the out-of-bounds error before
 it), so end-to-end bit-exactness is asserted there.
 """
+
 import copy
 import os
 
@@ -137,8 +138,9 @@ def test_trivial_loop_elimination_still_eliminates_single_trip_loop():
     tasklet = body.add_tasklet("set", {}, {"out"}, "out = 1")
     body.add_edge(tasklet, "out", body.add_write("table"), None, dace.Memlet(data="table", subset="N - 1, j"))
 
-    assert sdfg.apply_transformations_repeated([TrivialLoopElimination]) == 1, \
+    assert sdfg.apply_transformations_repeated([TrivialLoopElimination]) == 1, (
         "a genuine single-iteration loop must still be eliminated"
+    )
 
 
 def test_nussinov_canonicalize_valid_deterministic():

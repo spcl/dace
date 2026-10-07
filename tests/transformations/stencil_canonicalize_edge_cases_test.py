@@ -1,17 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Edge-case audit for the loop-centric canonicalization passes, exercised
-    with indirect / semi-indirect stencil kernels and guarded stencils.
+"""Edge-case audit for the loop-centric canonicalization passes, exercised
+with indirect / semi-indirect stencil kernels and guarded stencils.
 
-    Two invariants per test:
-      * *always correct* -- the post-pass SDFG is numerically identical to a
-        deep-copied pre-pass run, for the condition taken and not-taken;
-      * *always applied when possible* -- the pass fires (returns non-``None``,
-        structure changed) whenever its precondition holds, and provably
-        refuses (no-op, still correct) when it does not.
+Two invariants per test:
+  * *always correct* -- the post-pass SDFG is numerically identical to a
+    deep-copied pre-pass run, for the condition taken and not-taken;
+  * *always applied when possible* -- the pass fires (returns non-``None``,
+    structure changed) whenever its precondition holds, and provably
+    refuses (no-op, still correct) when it does not.
 
-    Kernels use the dace Python frontend with ``range`` so every loop is a
-    ``LoopRegion`` (``MoveIfIntoLoop`` / ``LoopFission`` operate on loops).
+Kernels use the dace Python frontend with ``range`` so every loop is a
+``LoopRegion`` (``MoveIfIntoLoop`` / ``LoopFission`` operate on loops).
 """
+
 import copy
 
 import numpy as np
@@ -22,8 +23,8 @@ from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.loop_fission import LoopFission
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _loops(sdfg):
@@ -120,7 +121,7 @@ def test_move_if_into_guarded_1d_stencil():
         assert np.allclose(out, ref), f"mismatch active={av}"
         if av > 0:
             exp = np.full(n, 5.0)
-            exp[1:n - 1] = a[0:n - 2] + a[1:n - 1] + a[2:n]
+            exp[1 : n - 1] = a[0 : n - 2] + a[1 : n - 1] + a[2:n]
             assert np.allclose(out, exp)
         else:
             assert np.allclose(out, 5.0)
@@ -226,8 +227,9 @@ def test_move_if_into_nested_dimension_guards():
         assert np.allclose(out, ref), f"mismatch gi={gi} gj={gj}"
         if gi > 0 and gj > 0:
             exp = np.full((n, m), 8.0)
-            exp[1:n - 1,
-                1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] + a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
+            exp[1 : n - 1, 1 : m - 1] = 0.25 * (
+                a[0 : n - 2, 1 : m - 1] + a[2:n, 1 : m - 1] + a[1 : n - 1, 0 : m - 2] + a[1 : n - 1, 2:m]
+            )
             assert np.allclose(out, exp)
         else:
             assert np.allclose(out, 8.0)
@@ -261,9 +263,12 @@ def guarded_stencil_with_else(a: dace.float64[N], b: dace.float64[N], active: da
             b[i] = a[i] * 2.0
 
 
-@pytest.mark.parametrize('prog,extra', [
-    (guarded_stencil_with_else, {}),
-])
+@pytest.mark.parametrize(
+    "prog,extra",
+    [
+        (guarded_stencil_with_else, {}),
+    ],
+)
 def test_move_if_into_loop_refuses_and_stays_correct(prog, extra):
     """When the precondition does not hold the pass is a provable no-op and
     the SDFG remains numerically correct for the condition taken/not-taken."""
@@ -322,8 +327,9 @@ def two_independent_stencils(a: dace.float64[N], b: dace.float64[N], c: dace.flo
 
 
 @dace.program
-def two_independent_gathers(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: dace.float64[N],
-                            e: dace.float64[N]):
+def two_independent_gathers(
+    a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: dace.float64[N], e: dace.float64[N]
+):
     # ``idx`` is a read-only shared input: it must NOT force a merge.
     for i in range(N):
         b[i] = a[idx[i]]
@@ -366,8 +372,8 @@ def test_loop_fission_splits_two_independent_stencils():
     sdfg(a=a.copy(), b=out_b, c=c.copy(), d=out_d, N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d)
     exp_b, exp_d = np.full(n, 6.0), np.full(n, 6.0)
-    exp_b[1:n - 1] = a[0:n - 2] + a[1:n - 1] + a[2:n]
-    exp_d[1:n - 1] = c[0:n - 2] + c[1:n - 1] + c[2:n]
+    exp_b[1 : n - 1] = a[0 : n - 2] + a[1 : n - 1] + a[2:n]
+    exp_d[1 : n - 1] = c[0 : n - 2] + c[1 : n - 1] + c[2:n]
     assert np.allclose(out_b, exp_b) and np.allclose(out_d, exp_d)
 
 

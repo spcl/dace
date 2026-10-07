@@ -9,6 +9,7 @@ shape per operator class (infix chain vs. function-call nest vs. tree),
 numerical equivalence of the emitted expression against a reference fold
 for every supported operator.
 """
+
 import math
 
 import pytest
@@ -30,6 +31,7 @@ IDENTITY_OPS = ["+", "*", "&", "|", "^", "max", "min"]
 def _ref_fold(op: str, values):
     """Left-associated reference fold matching the chain emitter."""
     import operator
+
     binop = {
         "+": operator.add,
         "-": operator.sub,

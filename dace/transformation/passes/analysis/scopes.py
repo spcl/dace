@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Analysis passes precomputing per-scope tables that code generation would otherwise rederive per node."""
+
 import collections
 from collections.abc import Mapping
 from typing import Dict, Final, List, NoReturn, Optional, Set
@@ -10,7 +11,7 @@ from dace.memlet import Memlet
 from dace.sdfg import graph as dgraph
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import (ControlFlowBlock, LoopRegion, SDFGState, enclosing_region_symbols, sdfg_scope_symbols)
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState, enclosing_region_symbols, sdfg_scope_symbols
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis.analysis import StateReachability
@@ -19,10 +20,12 @@ from dace.transformation.passes.analysis.analysis import StateReachability
 StateScopeTables = dict[nodes.EntryNode | None, dict[str, typeclass]]
 
 
-def state_scope_symbol_tables(sdfg: SDFG,
-                              state: SDFGState,
-                              base: dict[str, typeclass],
-                              region_tables: Optional[Dict[int, Dict[str, typeclass]]] = None) -> StateScopeTables:
+def state_scope_symbol_tables(
+    sdfg: SDFG,
+    state: SDFGState,
+    base: dict[str, typeclass],
+    region_tables: Optional[Dict[int, Dict[str, typeclass]]] = None,
+) -> StateScopeTables:
     """
     One table per scope of ``state``, each the answer ``symbols_defined_at`` would give for a node in
     that scope. Built outer to inner so every entry inherits its parent's finished table and
@@ -68,14 +71,22 @@ def state_scope_symbol_tables(sdfg: SDFG,
 class AllocationScopes(ppl.Pass):
     """Lookup tables for :meth:`DaCeCodeGenerator.determine_allocation_lifetime`, replacing its per-descriptor scans."""
 
-    CATEGORY: str = 'Analysis'
+    CATEGORY: str = "Analysis"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Symbols | ppl.Modifies.CFG
-                                | ppl.Modifies.AccessNodes | ppl.Modifies.Scopes))
+        return bool(
+            modified
+            & (
+                ppl.Modifies.Descriptors
+                | ppl.Modifies.Symbols
+                | ppl.Modifies.CFG
+                | ppl.Modifies.AccessNodes
+                | ppl.Modifies.Scopes
+            )
+        )
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[str, Dict]:
         """
@@ -108,9 +119,9 @@ class AllocationScopes(ppl.Pass):
             meta_symbols[sdfg.cfg_id] = meta
 
         return {
-            'data_states': data_states,
-            'root_data_states': root_data_states,
-            'meta_symbols': meta_symbols,
+            "data_states": data_states,
+            "root_data_states": root_data_states,
+            "meta_symbols": meta_symbols,
         }
 
 
@@ -119,14 +130,22 @@ class AllocationScopes(ppl.Pass):
 class AccessInstances(ppl.Pass):
     """Per container, the states using it in block-topological order, plus each SDFG's shared transients."""
 
-    CATEGORY: str = 'Analysis'
+    CATEGORY: str = "Analysis"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.CFG | ppl.Modifies.AccessNodes
-                                | ppl.Modifies.Tasklets | ppl.Modifies.InterstateEdges))
+        return bool(
+            modified
+            & (
+                ppl.Modifies.Descriptors
+                | ppl.Modifies.CFG
+                | ppl.Modifies.AccessNodes
+                | ppl.Modifies.Tasklets
+                | ppl.Modifies.InterstateEdges
+            )
+        )
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[str, Dict]:
         """
@@ -162,7 +181,7 @@ class AccessInstances(ppl.Pass):
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
-                    for used in (node.free_symbols & standin_names):
+                    for used in node.free_symbols & standin_names:
                         instances[used].append((state, nodes.AccessNode(used)))
                         code_uses[used].append((state, node))
 
@@ -176,9 +195,9 @@ class AccessInstances(ppl.Pass):
             code_instances[sdfg.cfg_id] = code_uses
 
         return {
-            'access_instances': access_instances,
-            'code_instances': code_instances,
-            'shared_transients': shared_transients,
+            "access_instances": access_instances,
+            "code_instances": code_instances,
+            "shared_transients": shared_transients,
         }
 
 
@@ -224,10 +243,10 @@ class UndeterminedDType:
     __slots__ = ()
 
     def __bool__(self) -> NoReturn:
-        raise TypeError('an undetermined symbol dtype has no truth value; report it, never default it')
+        raise TypeError("an undetermined symbol dtype has no truth value; report it, never default it")
 
     def __repr__(self) -> str:
-        return 'UNDETERMINED'
+        return "UNDETERMINED"
 
 
 #: Singleton :class:`UndeterminedDType`; compare with ``is``, since it refuses ``bool()``.
@@ -263,9 +282,11 @@ class UndeterminedSymbolDType(Exception):
     """No rung of :meth:`ScopedSymbolResolver.resolve_dtype`'s ladder declares the name."""
 
     def __init__(self, name: str, sdfg_label: str) -> None:
-        super().__init__(f'cannot determine the dtype of symbol "{name}" in SDFG "{sdfg_label}": it is not a data '
-                         f'descriptor, a typed connector, a memlet descriptor, an interstate-edge assignment, a '
-                         f'scoped (loop or map) symbol, nor a declared SDFG symbol. Report this, do not default it')
+        super().__init__(
+            f'cannot determine the dtype of symbol "{name}" in SDFG "{sdfg_label}": it is not a data '
+            f"descriptor, a typed connector, a memlet descriptor, an interstate-edge assignment, a "
+            f"scoped (loop or map) symbol, nor a declared SDFG symbol. Report this, do not default it"
+        )
         self.name = name
 
 
@@ -273,8 +294,10 @@ class StaleScopeCache(Exception):
     """A node sits in a dataflow scope the cached tables never saw: a pass added one and did not invalidate."""
 
     def __init__(self, state_label: str) -> None:
-        super().__init__(f'node in state "{state_label}" sits in a dataflow scope absent from the cached tables. A '
-                         f'pass added a scoped symbol; call invalidate_state or invalidate_sdfg before querying again')
+        super().__init__(
+            f'node in state "{state_label}" sits in a dataflow scope absent from the cached tables. A '
+            f"pass added a scoped symbol; call invalidate_state or invalidate_sdfg before querying again"
+        )
 
 
 class ScopedSymbolResolver:
@@ -296,7 +319,7 @@ class ScopedSymbolResolver:
     at all and the old answer is served, so invalidate on every mutation, not only the ones that raise.
     """
 
-    __slots__ = ('sdfg_bases', 'state_tables')
+    __slots__ = ("sdfg_bases", "state_tables")
 
     def __init__(self) -> None:
         self.sdfg_bases: dict[SDFG, dict[str, typeclass]] = {}
@@ -326,14 +349,16 @@ class ScopedSymbolResolver:
         self.state_tables[state] = tables
         return tables
 
-    def resolve_dtype(self,
-                      name: str,
-                      sdfg: SDFG,
-                      state: SDFGState | None = None,
-                      node: nodes.Node | None = None,
-                      connector: str | None = None,
-                      edge: dgraph.MultiConnectorEdge[Memlet] | None = None,
-                      interstate_edge: InterstateEdge | None = None) -> typeclass:
+    def resolve_dtype(
+        self,
+        name: str,
+        sdfg: SDFG,
+        state: SDFGState | None = None,
+        node: nodes.Node | None = None,
+        connector: str | None = None,
+        edge: dgraph.MultiConnectorEdge[Memlet] | None = None,
+        interstate_edge: InterstateEdge | None = None,
+    ) -> typeclass:
         """:meth:`resolve_dtype_or_undetermined`, raising :class:`UndeterminedSymbolDType` rather than returning
         something a caller could mistake for a dtype."""
         resolved = self.resolve_dtype_or_undetermined(name, sdfg, state, node, connector, edge, interstate_edge)
@@ -341,14 +366,16 @@ class ScopedSymbolResolver:
             raise UndeterminedSymbolDType(name, sdfg.label)
         return resolved
 
-    def resolve_dtype_or_undetermined(self,
-                                      name: str,
-                                      sdfg: SDFG,
-                                      state: SDFGState | None = None,
-                                      node: nodes.Node | None = None,
-                                      connector: str | None = None,
-                                      edge: dgraph.MultiConnectorEdge[Memlet] | None = None,
-                                      interstate_edge: InterstateEdge | None = None) -> typeclass | UndeterminedDType:
+    def resolve_dtype_or_undetermined(
+        self,
+        name: str,
+        sdfg: SDFG,
+        state: SDFGState | None = None,
+        node: nodes.Node | None = None,
+        connector: str | None = None,
+        edge: dgraph.MultiConnectorEdge[Memlet] | None = None,
+        interstate_edge: InterstateEdge | None = None,
+    ) -> typeclass | UndeterminedDType:
         """The declared dtype of ``name``, from the most specific source that knows it, else :data:`UNDETERMINED`.
 
         Rungs, most specific first, each skipped when the caller supplies nothing for it: the data descriptor,
@@ -390,10 +417,15 @@ class ScopedSymbolResolver:
         # Bound by an interstate edge the scoped tables never fold in: they read only the edges into the
         # start state, so a symbol assigned ahead of the branch holding ``node`` (gromacs' ``ci_cluster_index``)
         # is visible to nothing above. Only an edge control passes before reaching ``state`` binds it there.
-        bound = [] if state is None else [
-            edge.data.new_symbols(sdfg, sdfg.symbols).get(name) for edge in sdfg.all_interstate_edges()
-            if name in edge.data.assignments and edge_reaches(edge, state)
-        ]
+        bound = (
+            []
+            if state is None
+            else [
+                edge.data.new_symbols(sdfg, sdfg.symbols).get(name)
+                for edge in sdfg.all_interstate_edges()
+                if name in edge.data.assignments and edge_reaches(edge, state)
+            ]
+        )
         bound = [dtype for dtype in bound if dtype is not None]
         if bound:
             return dtypes.result_type_of(bound[0], *bound)

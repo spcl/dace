@@ -12,6 +12,7 @@ Six cases:
 * Refuses an edge whose endpoints don't include the AN.
 * Refuses an edge with no memlet.
 """
+
 import pytest
 
 import dace
@@ -20,7 +21,7 @@ from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset
 
 
-def _build_an_to_an(shape_a=(8, ), shape_b=(8, )):
+def _build_an_to_an(shape_a=(8,), shape_b=(8,)):
     sdfg = dace.SDFG("an_side_subset_fixture")
     sdfg.add_array("A", shape_a, dace.float64, transient=False)
     sdfg.add_array("B", shape_b, dace.float64, transient=False)
@@ -50,7 +51,7 @@ def test_data_points_at_other_returns_other_subset():
 
 def test_no_other_subset_reconstructs_from_descriptor():
     """Implicit full-shape copy: other_subset is None -> full descriptor range."""
-    sdfg, state, a, b = _build_an_to_an(shape_a=(4, ), shape_b=(4, ))
+    sdfg, state, a, b = _build_an_to_an(shape_a=(4,), shape_b=(4,))
     mem = Memlet(data="B", subset=subsets.Range([(0, 3, 1)]))
     edge = state.add_edge(a, None, b, None, mem)
     out = an_side_subset(edge, a, sdfg, state)
@@ -69,8 +70,8 @@ def test_multi_dim_full_shape_reconstruction():
 def test_refuses_edge_not_incident_on_an():
     """Edge that doesn't touch the AN -> ValueError."""
     sdfg, state, a, b = _build_an_to_an()
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
-    sdfg.add_array("D", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
+    sdfg.add_array("D", (8,), dace.float64, transient=False)
     c = state.add_access("C")
     d = state.add_access("D")
     edge = state.add_edge(c, None, d, None, Memlet("C[0:8]"))
@@ -80,7 +81,7 @@ def test_refuses_edge_not_incident_on_an():
 
 def test_empty_memlet_falls_back_to_descriptor():
     """Empty Memlet on an AN-incident edge: full-shape fallback fires."""
-    sdfg, state, a, b = _build_an_to_an(shape_a=(6, ), shape_b=(6, ))
+    sdfg, state, a, b = _build_an_to_an(shape_a=(6,), shape_b=(6,))
     edge = state.add_edge(a, None, b, None, Memlet())
     out = an_side_subset(edge, a, sdfg, state)
     assert out == subsets.Range([(0, 5, 1)])
@@ -91,6 +92,7 @@ def test_infer_edge_endpoints_an_to_an():
     for an AN -> AN edge regardless of which side ``memlet.data`` points at.
     """
     from dace.transformation.passes.vectorization.utils.subsets import infer_edge_endpoints
+
     sdfg, state, a, b = _build_an_to_an()
     mem = Memlet(data="A", subset=subsets.Range([(2, 5, 1)]))
     mem.other_subset = subsets.Range([(0, 3, 1)])
@@ -107,6 +109,7 @@ def test_infer_edge_endpoints_non_an_endpoint_returns_none():
     reports ``None`` for that side's data name + subset.
     """
     from dace.transformation.passes.vectorization.utils.subsets import infer_edge_endpoints
+
     sdfg, state, a, b = _build_an_to_an()
     t = state.add_tasklet("t", inputs={"_in"}, outputs=set(), code="pass")
     edge = state.add_edge(a, None, t, "_in", Memlet("A[0:8]"))

@@ -6,6 +6,7 @@ zero-pad no-op, recursion into a nested SDFG, non-final-dimension padding, symbo
 preservation of a Fortran-packed base, and the rank-mismatch guard. Every compiled case is checked
 bit-exact against a NumPy oracle, relying on the invariant that pad cells are never accessed.
 """
+
 import numpy
 import pytest
 

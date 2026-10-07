@@ -2,10 +2,10 @@
 import dace
 import numpy as np
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes, all SQUARE. A Gram-Schmidt QR of a wide matrix (M < N, the original PolyBench/C
@@ -59,6 +59,7 @@ def gramschmidt(A: datatype[M, N], R: datatype[N, N], Q: datatype[M, N]):
             A[:, j] -= Q[:, k] * R[k, j]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(1, 'R'), (2, 'Q')], init_array, gramschmidt)
+
+    polybench.main(sizes, args, [(1, "R"), (2, "Q")], init_array, gramschmidt)

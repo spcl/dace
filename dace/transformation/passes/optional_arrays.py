@@ -22,7 +22,7 @@ class OptionalArrayInference(ppl.Pass):
     * it is definitely (unconditionally) read or written in the SDFG.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
@@ -31,10 +31,9 @@ class OptionalArrayInference(ppl.Pass):
         # If connectivity or any edges were changed, some new descriptors may be marked as optional
         return modified & (ppl.Modifies.States)
 
-    def apply_pass(self,
-                   sdfg: SDFG,
-                   _,
-                   parent_arrays: Optional[Dict[str, bool]] = None) -> Optional[Set[Tuple[int, str]]]:
+    def apply_pass(
+        self, sdfg: SDFG, _, parent_arrays: Optional[Dict[str, bool]] = None
+    ) -> Optional[Set[Tuple[int, str]]]:
         """
         Infers the ``optional`` property of arrays in the SDFG and its nested SDFGs.
 
@@ -100,10 +99,9 @@ class OptionalArrayInference(ppl.Pass):
 
         return result or None
 
-    def traverse_unconditional_blocks(self,
-                                      cfg: ControlFlowRegion,
-                                      recursive: bool = True,
-                                      produce_nonstate: bool = False) -> Iterator[ControlFlowBlock]:
+    def traverse_unconditional_blocks(
+        self, cfg: ControlFlowRegion, recursive: bool = True, produce_nonstate: bool = False
+    ) -> Iterator[ControlFlowBlock]:
         """
         Traverse CFG and keep track of whether the block is executed unconditionally.
         """
@@ -135,4 +133,4 @@ class OptionalArrayInference(ppl.Pass):
             yield curblock
 
     def report(self, pass_retval: Set[Tuple[int, str]]) -> str:
-        return f'Inferred {len(pass_retval)} optional arrays.'
+        return f"Inferred {len(pass_retval)} optional arrays."

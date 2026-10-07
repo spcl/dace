@@ -24,6 +24,7 @@ convention, so there is no second mode to offer.
 Callers: the HLFIR frontend routes ``hlfir.cshift`` here, and the Python
 frontend lowers ``numpy.roll`` here (``replacements/array_manipulation.py``).
 """
+
 import dace
 import dace.library
 import dace.properties
@@ -33,16 +34,18 @@ from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
 import enum
 from typing import List, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
 
 class ShiftDirection(enum.Enum):
     """Which way a :class:`CShift` rotates."""
+
     #: ``out(i) = x(mod(i + shift, n))`` -- Fortran ``CSHIFT``.
-    FORTRAN = 'fortran'
+    FORTRAN = "fortran"
     #: ``out[i] = x[mod(i - shift, n)]`` -- ``numpy.roll``.
-    NUMPY = 'numpy'
+    NUMPY = "numpy"
 
 
 @dace.library.expansion
@@ -65,6 +68,7 @@ class ExpandCShiftPure(ExpandTransformation):
     entirely in the source memlet's subset, so no runtime helper is
     needed.
     """
+
     environments: List[type] = []
 
     @staticmethod
@@ -84,10 +88,12 @@ class ExpandCShiftPure(ExpandTransformation):
         # forgot to set ``shift`` gets a clear message, not a cryptic
         # free-symbol error downstream.
         if node.shift is None:
-            raise ValueError(f"CShift '{node.label}': shift is None.  The shift amount must "
-                             "be set on the node (a constant or an SDFG-bound symbol) before "
-                             "expansion -- the bridge supplies it from the Fortran "
-                             "CSHIFT(arr, shift) argument.")
+            raise ValueError(
+                f"CShift '{node.label}': shift is None.  The shift amount must "
+                "be set on the node (a constant or an SDFG-bound symbol) before "
+                "expansion -- the bridge supplies it from the Fortran "
+                "CSHIFT(arr, shift) argument."
+            )
         # The direction lives on the NODE, so the one place the sign can be got wrong is here.
         shift = node.shift if node.direction is ShiftDirection.FORTRAN else -node.shift
 
@@ -139,18 +145,20 @@ class CShift(dace.sdfg.nodes.LibraryNode):
     implementations = {"pure": ExpandCShiftPure}
     default_implementation = "pure"
 
-    dim = dace.properties.Property(dtype=int,
-                                   default=1,
-                                   desc="Fortran 1-based axis to rotate along (CSHIFT default 1).")
-    shift = dace.properties.SymbolicProperty(allow_none=True,
-                                             default=None,
-                                             desc="Shift amount; ``None`` means use the symbol ``__shift``.")
-    direction = dace.properties.EnumProperty(dtype=ShiftDirection,
-                                             default=ShiftDirection.FORTRAN,
-                                             desc="Which way to rotate: FORTRAN is CSHIFT's "
-                                             "``out(i) = x(mod(i + shift, n))``, NUMPY is roll's "
-                                             "``out[i] = x[mod(i - shift, n)]``. The expansion carries the "
-                                             "sign so a caller never has to negate its own shift.")
+    dim = dace.properties.Property(
+        dtype=int, default=1, desc="Fortran 1-based axis to rotate along (CSHIFT default 1)."
+    )
+    shift = dace.properties.SymbolicProperty(
+        allow_none=True, default=None, desc="Shift amount; ``None`` means use the symbol ``__shift``."
+    )
+    direction = dace.properties.EnumProperty(
+        dtype=ShiftDirection,
+        default=ShiftDirection.FORTRAN,
+        desc="Which way to rotate: FORTRAN is CSHIFT's "
+        "``out(i) = x(mod(i + shift, n))``, NUMPY is roll's "
+        "``out[i] = x[mod(i - shift, n)]``. The expansion carries the "
+        "sign so a caller never has to negate its own shift.",
+    )
 
     def __init__(self, name, *, dim=1, shift=None, direction=ShiftDirection.FORTRAN, **kwargs):
         super().__init__(name, inputs={"_x"}, outputs={"_out"}, **kwargs)
@@ -179,13 +187,13 @@ class CShift(dace.sdfg.nodes.LibraryNode):
         return desc_x, desc_out, self.dim - 1
 
 
-@oprepo.replaces('dace.libraries.standard.cshift')
-@oprepo.replaces('dace.libraries.standard.CShift')
-def cshift_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, out, *, dim=1):
+@oprepo.replaces("dace.libraries.standard.cshift")
+@oprepo.replaces("dace.libraries.standard.CShift")
+def cshift_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, out, *, dim=1):
     x_in = state.add_read(x)
     w = state.add_write(out)
-    node = CShift('cshift', dim=dim)
+    node = CShift("cshift", dim=dim)
     state.add_node(node)
-    state.add_edge(x_in, None, node, '_x', mm.Memlet(x))
-    state.add_edge(node, '_out', w, None, mm.Memlet(out))
+    state.add_edge(x_in, None, node, "_x", mm.Memlet(x))
+    state.add_edge(node, "_out", w, None, mm.Memlet(out))
     return []

@@ -73,7 +73,7 @@ def run_pytorch_module(
     torch_tensors_close("grad", pytorch_input.grad, dace_input.grad, rtol=rtol, atol=atol)
 
     for (name, dace_param), (pt_name, pt_param) in zip(module.named_parameters(), dace_module.named_parameters()):
-        assert 'model.' + name == pt_name
+        assert "model." + name == pt_name
         torch_tensors_close(name, pt_param.grad, dace_param.grad, rtol=rtol, atol=atol)
 
 
@@ -83,7 +83,6 @@ def run_pytorch_module(
 def test_simple(device):
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             x = torch.sqrt(x)
             x = torch.log(x)
@@ -98,7 +97,6 @@ def test_simple(device):
 def test_repeated(device):
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             x = torch.sqrt(x)
             x = torch.sqrt(x)
@@ -113,7 +111,6 @@ def test_repeated(device):
 def test_softmax(device):
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             x = F.softmax(x, dim=1)
             return x
@@ -128,12 +125,11 @@ def test_reshape_on_memlet_path(device):
     # required test: this function in a nn.Module, with apply simplify so that the reshape is
     # inlined and copy is removed
     class Module(torch.nn.Module):
-
         def forward(self, x):
             reshaped = torch.reshape(x + 1, [3, 3])
             return torch.log(reshaped) + torch.reshape(torch.tensor([[3, 2, 1]], device=reshaped.device), [3])
 
-    run_pytorch_module(Module(), sdfg_name="test_reshape_on_memlet_path", shape=(9, ), device=device)
+    run_pytorch_module(Module(), sdfg_name="test_reshape_on_memlet_path", shape=(9,), device=device)
 
 
 @pytest.mark.torch
@@ -142,7 +138,6 @@ def test_reshape_on_memlet_path(device):
 def test_weights_ln(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Linear(784, 120)
@@ -166,7 +161,6 @@ def test_weights_ln(device):
 def test_layernorm(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.ln = nn.LayerNorm(3)
@@ -183,7 +177,6 @@ def test_layernorm(device):
 def test_weights(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Linear(784, 120)
@@ -196,12 +189,9 @@ def test_weights(device):
             x = self.fc3(x)
             return x
 
-    run_pytorch_module(Module(),
-                       sdfg_name="test_weights",
-                       shape=(4, 784),
-                       use_max=False,
-                       auto_optimize=False,
-                       device=device)
+    run_pytorch_module(
+        Module(), sdfg_name="test_weights", shape=(4, 784), use_max=False, auto_optimize=False, device=device
+    )
 
 
 @pytest.mark.torch
@@ -210,7 +200,6 @@ def test_weights(device):
 def test_nested_gradient_summation(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
@@ -220,12 +209,14 @@ def test_nested_gradient_summation(device):
             z = x * 2
             return z + y
 
-    run_pytorch_module(Module(),
-                       sdfg_name="test_nested_gradient_summation",
-                       shape=(4, 10),
-                       use_max=False,
-                       auto_optimize=False,
-                       device=device)
+    run_pytorch_module(
+        Module(),
+        sdfg_name="test_nested_gradient_summation",
+        shape=(4, 10),
+        use_max=False,
+        auto_optimize=False,
+        device=device,
+    )
 
 
 @pytest.mark.torch
@@ -234,7 +225,6 @@ def test_nested_gradient_summation(device):
 def test_trans_add(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
 
@@ -243,7 +233,7 @@ def test_trans_add(device):
             x = torch.transpose(x.reshape(4, 4), 1, 0)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_trans_add", shape=(16, ), use_max=False, device=device)
+    run_pytorch_module(Module(), sdfg_name="test_trans_add", shape=(16,), use_max=False, device=device)
 
 
 @pytest.mark.torch
@@ -252,7 +242,6 @@ def test_trans_add(device):
 def test_batched_matmul(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Parameter(torch.ones([10, 5, 3]))
@@ -269,7 +258,6 @@ def test_batched_matmul(device):
 def test_scalar_forwarding(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.factor = nn.Parameter(torch.ones(()))
@@ -286,7 +274,6 @@ def test_scalar_forwarding(device):
 def test_scalar_buffer(device):
 
     class Module(torch.nn.Module):
-
         def __init__(self):
             super(Module, self).__init__()
             self.register_buffer("factor", torch.tensor(2))
@@ -304,7 +291,6 @@ def test_scalar_buffer(device):
 def test_simple_broadcasted_mul(device):
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             y = x.sum(axis=0)
             return x * y

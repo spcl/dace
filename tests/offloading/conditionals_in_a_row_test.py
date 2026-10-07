@@ -6,6 +6,7 @@ the section once per ROUTE through it: two routes per conditional, so ``2^k`` wa
 in a row. ls3df_scf's SCF loop holds 48, and the canon GPU offload of it ran into the 3600 s cap
 without finishing, while the CPU column validated in under 5 minutes.
 """
+
 import collections
 
 import numpy as np
@@ -18,7 +19,7 @@ from dace.transformation.passes.offloading import OffloadToAccelerator
 from dace.transformation.passes.offloading.offloading_ir_node import OffloadingIRNode
 from dace.ordered import OrderedSet
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 #: Conditionals in a row: 2^48 routes, which no route-by-route walk finishes.
 IN_A_ROW = 48
 STEPS = 3
@@ -51,18 +52,18 @@ def ir_diamonds(count: int):
     The shape the IR pass builds for them: each conditional is ``open_if -> arm -> close_if`` twice,
     and the next conditional hangs off the close node.
     """
-    sdfg = dace.SDFG('ir_diamonds')
-    section = OffloadingIRNode.new_open_node(sdfg.add_state('section'))
+    sdfg = dace.SDFG("ir_diamonds")
+    section = OffloadingIRNode.new_open_node(sdfg.add_state("section"))
     previous = section
     for k in range(count):
-        cond = OffloadingIRNode.new_open_node(sdfg.add_state(f'if_{k}'))
+        cond = OffloadingIRNode.new_open_node(sdfg.add_state(f"if_{k}"))
         previous.append_node(cond)
-        for arm in ('then', 'else'):
-            state = OffloadingIRNode.new_state_node(sdfg.add_state(f'{arm}_{k}'), OrderedSet(), OrderedSet())
+        for arm in ("then", "else"):
+            state = OffloadingIRNode.new_state_node(sdfg.add_state(f"{arm}_{k}"), OrderedSet(), OrderedSet())
             cond.append_node(state)
             state.append_node(cond.close)
         previous = cond.close
-    tail = OffloadingIRNode.new_state_node(sdfg.add_state('tail'), OrderedSet(), OrderedSet())
+    tail = OffloadingIRNode.new_state_node(sdfg.add_state("tail"), OrderedSet(), OrderedSet())
     previous.append_node(tail)
     tail.append_node(section.close)
     return section, tail
@@ -74,7 +75,7 @@ def test_a_tail_behind_conditionals_in_a_row_is_found_once():
     assert section.get_all_tails() == [tail]
 
 
-@pytest.mark.parametrize('count, one_route', [(0, True), (1, False), (IN_A_ROW, False)])
+@pytest.mark.parametrize("count, one_route", [(0, True), (1, False), (IN_A_ROW, False)])
 def test_a_conditional_makes_a_section_more_than_one_route(count, one_route):
     """Whether the close node's locations can be read off the section as a straight line: a section
     with a conditional in it is not one, however its arms meet again, and that is answered without
@@ -120,7 +121,7 @@ def test_conditionals_in_a_row_are_offloaded_and_keep_the_data_on_the_device():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('c', [0, 5, IN_A_ROW + 2])
+@pytest.mark.parametrize("c", [0, 5, IN_A_ROW + 2])
 def test_the_offloaded_conditionals_compute_what_numpy_computes(c):
     sdfg = offloaded()
     for node, parent in sdfg.all_nodes_recursive():

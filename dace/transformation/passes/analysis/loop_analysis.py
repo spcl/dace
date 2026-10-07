@@ -10,8 +10,15 @@ from dace.frontend.python import astutils
 import sympy
 
 from dace import symbolic
-from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
-                             ControlFlowRegion, LoopRegion)
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+)
 
 if TYPE_CHECKING:
     # Import-time only: ``dace.sdfg.state`` reaches back into this module (LoopRegion.new_symbols does
@@ -21,7 +28,7 @@ if TYPE_CHECKING:
     from dace.sdfg.sdfg import SDFG
 
 
-def symbol_use_sites(sdfg: 'SDFG') -> Tuple[Dict[str, Set[int]], Set[str]]:
+def symbol_use_sites(sdfg: "SDFG") -> Tuple[Dict[str, Set[int]], Set[str]]:
     """One walk of ``sdfg`` indexing where each symbol is used: name -> ``id()`` of every block and
     inter-state edge that references it, plus the set of names any data descriptor's shape or strides
     mention (anywhere in the SDFG tree, since a nested descriptor is materialised just as eagerly).
@@ -49,8 +56,9 @@ def symbol_use_sites(sdfg: 'SDFG') -> Tuple[Dict[str, Set[int]], Set[str]]:
     return uses, descriptor_symbols
 
 
-def symbol_used_outside(name: str, inside_sites: Set[int], use_sites: Dict[str, Set[int]],
-                        descriptor_symbols: Set[str]) -> bool:
+def symbol_used_outside(
+    name: str, inside_sites: Set[int], use_sites: Dict[str, Set[int]], descriptor_symbols: Set[str]
+) -> bool:
     """Whether ``name`` is read or written at any site not in ``inside_sites``.
 
     ``inside_sites`` holds the ``id()`` of every block and inter-state edge that counts as "inside";
@@ -62,11 +70,13 @@ def symbol_used_outside(name: str, inside_sites: Set[int], use_sites: Dict[str, 
     return any(site not in inside_sites for site in use_sites.get(name, ()))
 
 
-def counter_used_outside_loop(name: str,
-                              loop: LoopRegion,
-                              sdfg: 'SDFG',
-                              use_sites: Optional[Dict[str, Set[int]]] = None,
-                              descriptor_symbols: Optional[Set[str]] = None) -> bool:
+def counter_used_outside_loop(
+    name: str,
+    loop: LoopRegion,
+    sdfg: "SDFG",
+    use_sites: Optional[Dict[str, Set[int]]] = None,
+    descriptor_symbols: Optional[Set[str]] = None,
+) -> bool:
     """Whether ``name`` is read or written anywhere outside ``loop``.
 
     A LoopRegion counter is NOT scoped to its loop the way a map parameter is scoped to its map: DaCe
@@ -121,10 +131,10 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
     """
-    if loop.loop_variable is None or loop.loop_variable == '':
+    if loop.loop_variable is None or loop.loop_variable == "":
         return None
     end: Optional[symbolic.SymbolicType] = None
-    a = sympy.Wild('a')
+    a = sympy.Wild("a")
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
     itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
     match = condition.match(itersym < a)
@@ -145,7 +155,7 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return end
 
 
-def assignment_text(stmt: Optional['CodeBlock'], variable: Optional[str]) -> Optional[str]:
+def assignment_text(stmt: Optional["CodeBlock"], variable: Optional[str]) -> Optional[str]:
     """
     The right-hand side text a loop's init or update statement assigns to ``variable``.
 
@@ -279,19 +289,20 @@ class InductionVariable:
     The ``basis``, ``scale`` and ``offset`` fields are retained for diagnostic
     inspection but callers should generally rely on ``start`` / ``step``.
     """
+
     name: str
     start: symbolic.SymbolicType
     step: symbolic.SymbolicType
     loop: LoopRegion
     kind: str  # 'basic' | 'derived'
-    basis: Optional['InductionVariable'] = None
+    basis: Optional["InductionVariable"] = None
     scale: Optional[symbolic.SymbolicType] = None
     offset: Optional[symbolic.SymbolicType] = None
 
 
 def affine_in_iv(
     expr: symbolic.SymbolicType,
-    ivs: Dict[str, 'InductionVariable'],
+    ivs: Dict[str, "InductionVariable"],
     invariant_syms: Optional[Set[str]] = None,
 ) -> Optional[Tuple[Optional[str], symbolic.SymbolicType, symbolic.SymbolicType]]:
     """
@@ -360,8 +371,9 @@ def affine_in_iv(
                 # naming the IV), so the refusal above is already final and the second round is dead
                 # work on the most expensive input there is. CLOUDSC: 615 of these reach the round
                 # and not one ever produced a split ``expand`` had not already refused.
-                if normalize is sympy.expand and (cand_scale.has(sympy.Subs, sympy.Derivative)
-                                                  or cand_offset.has(sympy.Subs, sympy.Derivative)):
+                if normalize is sympy.expand and (
+                    cand_scale.has(sympy.Subs, sympy.Derivative) or cand_offset.has(sympy.Subs, sympy.Derivative)
+                ):
                     break
                 continue
             scale, offset = cand_scale, cand_offset
@@ -432,7 +444,7 @@ def _collect_tasklet_derived_ivs(loop: LoopRegion, pending: Dict[str, str]) -> N
                     writers += 1
         if writers != 1:
             continue
-        code = n.code.code if hasattr(n.code, 'code') else n.code
+        code = n.code.code if hasattr(n.code, "code") else n.code
         if not isinstance(code, list) or len(code) != 1:
             continue
         stmt = code[0]
@@ -475,7 +487,7 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
         start=start,
         step=step,
         loop=loop,
-        kind='basic',
+        kind="basic",
     )
 
     # Collect candidate derived IV assignments.
@@ -526,7 +538,7 @@ def detect_induction_variables(loop: LoopRegion) -> Dict[str, InductionVariable]
                 start=scale * basis_iv.start + offset,
                 step=scale * basis_iv.step,
                 loop=loop,
-                kind='derived',
+                kind="derived",
                 basis=basis_iv,
                 scale=scale,
                 offset=offset,

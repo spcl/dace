@@ -83,7 +83,6 @@ def test_exponent_t():
 
 
 class TestMathFuncs:
-
     @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt])
     @pytest.mark.parametrize("arg", [0.7, np.random.randn(5, 5)])
     def test_func(self, mathfunc, arg):
@@ -209,7 +208,7 @@ def test_scalarret_cond_3():
     assert res == 0.0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_exponent()
     test_sine()
     test_cosine()

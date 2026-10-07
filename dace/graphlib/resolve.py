@@ -1,4 +1,5 @@
 """Picks which GraphBackend implementation backs a given graph object."""
+
 import networkx
 
 import dace.graphlib.networkx_backend as networkx_backend
@@ -9,10 +10,10 @@ from dace.config import Config
 def resolve_backend():
     """Config.get('graph', 'backend'), read fresh on every call -- see the implementation plan
     (dace.graphlib package docs) for why this is deliberately not cached."""
-    name = Config.get('graph', 'backend')
-    if name == 'networkx':
+    name = Config.get("graph", "backend")
+    if name == "networkx":
         return networkx_backend.INSTANCE
-    if name == 'rustworkx':
+    if name == "rustworkx":
         return rustworkx_backend.INSTANCE
     raise ValueError(f"Unknown graph backend '{name}', expected 'networkx' or 'rustworkx'")
 

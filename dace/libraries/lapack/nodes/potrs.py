@@ -6,6 +6,7 @@ generate two declarations for the same name. The expansion stages a
 copy of ``_bin`` into ``_bout`` then calls LAPACKE in place on
 ``_bout``.
 """
+
 import copy
 
 import dace.library
@@ -23,7 +24,6 @@ from typing import List
 
 @dace.library.expansion
 class ExpandPotrsOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -39,16 +39,13 @@ class ExpandPotrsOpenBLAS(ExpandTransformation):
         std::memcpy(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}));
         _res = LAPACKE_{lap}potrs(LAPACK_ROW_MAJOR, {uplo}, {n_A}, {nrhs}, {cast}_a, {lda}, {cast}_bout, {ldb_out});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandPotrsMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -68,8 +65,16 @@ class ExpandPotrsGPUSolver(ExpandTransformation):
         raise NotImplementedError
 
     @classmethod
-    def call(cls, func: str, ctype: str, uplo: str, n_a: symbolic.SymbolicType, nrhs: symbolic.SymbolicType,
-             lda: symbolic.SymbolicType, ldb: symbolic.SymbolicType) -> str:
+    def call(
+        cls,
+        func: str,
+        ctype: str,
+        uplo: str,
+        n_a: symbolic.SymbolicType,
+        nrhs: symbolic.SymbolicType,
+        lda: symbolic.SymbolicType,
+        ldb: symbolic.SymbolicType,
+    ) -> str:
         """The vendor call, spelled by the cuSOLVER / rocSOLVER subclass."""
         raise NotImplementedError
 
@@ -78,25 +83,29 @@ class ExpandPotrsGPUSolver(ExpandTransformation):
         (desc_A, lda, n_A), (desc_B, ldb_in, ldb_out, nrhs) = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, ctype, _ = blas_helpers.cublas_type_metadata(dt)
-        func = func + 'potrs'
+        func = func + "potrs"
         # Both vendor solvers are column-major only, so a row-major lower factor is the
         # column-major UPPER one, and the leading dimension of B is its row count.
         uplo = cls.fill_enum(not node.lower)
         if not equal_valued(1, nrhs):
-            raise NotImplementedError("POTRS on a vendor GPU solver needs a column-major right-hand side. A "
-                                      "row-major (n, nrhs) B has ldb = nrhs, and the solver requires ldb >= n. "
-                                      "Stage a Transpose around the node, as linalg.Solve does.")
-        code = cls.environments[0].handle_setup_code(node) + f"""
+            raise NotImplementedError(
+                "POTRS on a vendor GPU solver needs a column-major right-hand side. A "
+                "row-major (n, nrhs) B has ldb = nrhs, and the solver requires ldb >= n. "
+                "Stage a Transpose around the node, as linalg.Solve does."
+            )
+        code = (
+            cls.environments[0].handle_setup_code(node)
+            + f"""
             gpuMemcpyAsync(_bout, _bin, sizeof({dt.ctype}) * ({n_A}) * ({ldb_in}),
                             gpuMemcpyDeviceToDevice, __dace_current_stream);
-            """ + cls.call(func, ctype, uplo, n_A, nrhs, lda, n_A)
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+            """
+            + cls.call(func, ctype, uplo, n_A, nrhs, lda, n_A)
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
-        tasklet.out_connectors = {c: (dtypes.pointer(dtypes.int32) if c == '_res' else t) for c, t in conn.items()}
+        tasklet.out_connectors = {c: (dtypes.pointer(dtypes.int32) if c == "_res" else t) for c, t in conn.items()}
         return tasklet
 
 
@@ -150,14 +159,14 @@ class Potrs(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandPotrsOpenBLAS,
         "MKL": ExpandPotrsMKL,
         "cuSolverDn": ExpandPotrsCuSolverDn,
-        "rocSOLVER": ExpandPotrsRocSolver
+        "rocSOLVER": ExpandPotrsRocSolver,
     }
     default_implementation = None
 
     lower = dace.properties.Property(dtype=bool, default=True, desc="True if the factor in _a is lower triangular")
 
     def __init__(self, name, lower=True, **kwargs):
-        super().__init__(name, inputs=OrderedSet(('_a', '_bin')), outputs=OrderedSet(('_bout', '_res')), **kwargs)
+        super().__init__(name, inputs=OrderedSet(("_a", "_bin")), outputs=OrderedSet(("_bout", "_res")), **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):

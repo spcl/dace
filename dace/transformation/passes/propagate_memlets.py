@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Rebuild every scope-summary memlet in an SDFG from its body."""
+
 from typing import Any, Dict, List, Optional, Type, Union
 
 from dace.sdfg import SDFG

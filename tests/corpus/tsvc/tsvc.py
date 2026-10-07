@@ -20,6 +20,7 @@ any 2D scratch) or ``"2d"`` (sweep ``LEN_2D`` in ``{16, 17}``). Intrinsic ``tags
 are derived at registration (``branch``/``reduction``/``gather``/``2d``) for
 :func:`collect`.
 """
+
 import copy
 import dataclasses
 import inspect
@@ -27,6 +28,7 @@ import re
 import textwrap
 import ast
 from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
+
 # Some kernels (e.g. s451) call ``sin``/``cos`` unqualified; the original
 # VectraArtifacts source imports them here, so do the same.
 from math import sin, cos  # noqa: F401  -- resolved unqualified inside kernel bodies
@@ -58,6 +60,7 @@ _LEN_2D_CODES = frozenset({"F2", "F2v", "FL2", "F1L2", "I2"})
 @dataclasses.dataclass(frozen=True)
 class TSVCKernel:
     """One corpus kernel and the metadata needed to instantiate it."""
+
     program: Callable  #: the ``@dace.program`` (unchanged by registration)
     args: Dict[str, str]  #: arg name -> shape code (documentation/tags only)
     params: Dict[str, object]  #: scalar parameter name -> value ("N4" -> LEN//4)
@@ -89,11 +92,9 @@ def _derived_tags(program, args: Dict[str, str]) -> FrozenSet[str]:
     return frozenset(tags)
 
 
-def tsvc_kernel(*,
-                args: Dict[str, str],
-                params: Optional[Dict[str, object]] = None,
-                regime: str = "1d",
-                tags: Tuple[str, ...] = ()):
+def tsvc_kernel(
+    *, args: Dict[str, str], params: Optional[Dict[str, object]] = None, regime: str = "1d", tags: Tuple[str, ...] = ()
+):
     """Register ``program`` in the corpus and return it unchanged.
 
     :param args: arg name -> shape code.
@@ -111,10 +112,9 @@ def tsvc_kernel(*,
     return deco
 
 
-def collect(*,
-            regime: Optional[str] = None,
-            tags: Optional[Tuple[str, ...]] = None,
-            name: Optional[str] = None) -> List[TSVCKernel]:
+def collect(
+    *, regime: Optional[str] = None, tags: Optional[Tuple[str, ...]] = None, name: Optional[str] = None
+) -> List[TSVCKernel]:
     """Filtered view of the corpus.
 
     :param regime: keep only this regime (``"1d"``/``"2d"``).
@@ -136,21 +136,21 @@ def collect(*,
     return out
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s000_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = b[i] + 1.0
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s111_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(1, LEN_1D, 2):
         a[i] = a[i - 1] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s1111_d_single(
     a: dace.float64[LEN_1D],
@@ -158,25 +158,25 @@ def s1111_d_single(
     c: dace.float64[LEN_1D],
     d: dace.float64[LEN_1D],
 ):
-    for i in dace.map[0:LEN_1D // 2]:
-        a[2 * i] = (c[i] * b[i] + d[i] * b[i] + c[i] * c[i] + d[i] * b[i] + d[i] * c[i])
+    for i in dace.map[0 : LEN_1D // 2]:
+        a[2 * i] = c[i] * b[i] + d[i] * b[i] + c[i] * c[i] + d[i] * b[i] + d[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s1112_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1, -1, -1):
         a[i] = b[i] + 1.0
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s1113_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[LEN_1D // 2] + b[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'cc': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "cc": "F2"}, params={}, regime="2d")
 @dace.program
 def s1115_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -188,7 +188,7 @@ def s1115_d_single(
             aa[i, j] = aa[i, j] * cc[j, i] + bb[i, j]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2"}, params={}, regime="2d")
 @dace.program
 def s1119_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
     for i in range(1, LEN_2D):
@@ -196,21 +196,21 @@ def s1119_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LE
             aa[i, j] = aa[i - 1, j] + bb[i, j]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s112_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 2, -1, -1):
         a[i + 1] = a[i] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s113_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(1, LEN_1D):
         a[i] = a[0] + b[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2"}, params={}, regime="2d")
 @dace.program
 def s114_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
     for i in range(LEN_2D // VLEN):
@@ -218,7 +218,7 @@ def s114_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN
             aa[i, j] = aa[j, i] + bb[i, j]
 
 
-@tsvc_kernel(args={'a': 'F2v', 'aa': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"a": "F2v", "aa": "F2"}, params={}, regime="2d")
 @dace.program
 def s115_d_single(a: dace.float64[LEN_2D], aa: dace.float64[LEN_2D, LEN_2D]):
     for j in range(LEN_2D):
@@ -226,7 +226,7 @@ def s115_d_single(a: dace.float64[LEN_2D], aa: dace.float64[LEN_2D, LEN_2D]):
             a[i] = a[i] - aa[j, i] * a[j]
 
 
-@tsvc_kernel(args={'a': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1"}, params={}, regime="1d")
 @dace.program
 def s116_d_single(a: dace.float64[LEN_1D]):
     for i in range(0, LEN_1D - 4, 4):
@@ -236,7 +236,7 @@ def s116_d_single(a: dace.float64[LEN_1D]):
         a[i + 3] = a[i + 4] * a[i + 3]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s1161_d_single(
     a: dace.float64[LEN_1D],
@@ -252,7 +252,7 @@ def s1161_d_single(
             a[i] = c[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F2v', 'bb': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"a": "F2v", "bb": "F2"}, params={}, regime="2d")
 @dace.program
 def s118_d_single(a: dace.float64[LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
     for i in range(1, LEN_2D):
@@ -260,7 +260,7 @@ def s118_d_single(a: dace.float64[LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
             a[i] = a[i] + bb[j, i] * a[i - j - 1]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2"}, params={}, regime="2d")
 @dace.program
 def s119_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
     for i in range(1, LEN_2D):
@@ -268,7 +268,7 @@ def s119_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN
             aa[i, j] = aa[i - 1, j - 1] + bb[i, j]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s121_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1):
@@ -276,7 +276,7 @@ def s121_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         a[i] = a[j] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s1213_d_single(
     a: dace.float64[LEN_1D],
@@ -289,7 +289,7 @@ def s1213_d_single(
         b[i] = a[i + 1] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={'n1': 1, 'n3': 2}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={"n1": 1, "n3": 2}, regime="1d")
 @dace.program
 def s122_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], n1: dace.int64, n3: dace.int64):
     j = 1
@@ -299,14 +299,14 @@ def s122_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], n1: dace.int
         a[i] = a[i] + b[LEN_1D - k]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s1221_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(4, LEN_1D):
         b[i] = b[i - 4] + a[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s123_d_single(
     a: dace.float64[LEN_1D],
@@ -324,7 +324,7 @@ def s123_d_single(
             a[j] = c[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'cc': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "cc": "F2"}, params={}, regime="2d")
 @dace.program
 def s1232_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -336,7 +336,7 @@ def s1232_d_single(
             aa[i, j] = bb[i, j] + cc[i, j]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s124_d_single(
     a: dace.float64[LEN_1D],
@@ -355,7 +355,7 @@ def s124_d_single(
             a[j] = c[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s1244_d_single(
     a: dace.float64[LEN_1D],
@@ -368,7 +368,7 @@ def s1244_d_single(
         d[i] = a[i] + a[i + 1]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'cc': 'F2', 'flat_2d_array': 'FL2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "cc": "F2", "flat_2d_array": "FL2"}, params={}, regime="2d")
 @dace.program
 def s125_d_single(
     flat_2d_array: dace.float64[LEN_2D * LEN_2D],
@@ -383,7 +383,7 @@ def s125_d_single(
             flat_2d_array[k] = aa[i, j] + bb[i, j] * cc[i, j]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s1251_d_single(
     a: dace.float64[LEN_1D],
@@ -398,7 +398,7 @@ def s1251_d_single(
         a[i] = s * e[i]
 
 
-@tsvc_kernel(args={'bb': 'F2', 'cc': 'F2', 'flat_2d_array': 'FL2'}, params={}, regime='2d')
+@tsvc_kernel(args={"bb": "F2", "cc": "F2", "flat_2d_array": "FL2"}, params={}, regime="2d")
 @dace.program
 def s126_d_single(
     bb: dace.float64[LEN_2D, LEN_2D],
@@ -413,7 +413,7 @@ def s126_d_single(
         k = k + 1
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s127_d_single(
     a: dace.float64[LEN_1D],
@@ -422,12 +422,12 @@ def s127_d_single(
     d: dace.float64[LEN_1D],
     e: dace.float64[LEN_1D],
 ):
-    for i in dace.map[0:LEN_1D // 2]:
+    for i in dace.map[0 : LEN_1D // 2]:
         a[2 * i] = b[i] + c[i] * d[i]
         a[2 * i + 1] = b[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s1279_d_single(
     a: dace.float64[LEN_1D],
@@ -442,7 +442,7 @@ def s1279_d_single(
                 c[i] = c[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s128_d_single(
     a: dace.float64[LEN_1D],
@@ -458,7 +458,7 @@ def s128_d_single(
         b[k] = a[i] + c[k]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s1281_d_single(
     a: dace.float64[LEN_1D],
@@ -473,14 +473,14 @@ def s1281_d_single(
         b[i] = x
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s131_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1):
         a[i] = a[i + 1] + b[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F22'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F22"}, params={}, regime="2d")
 @dace.program
 def s13110_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[2, 2]):
     maxv = aa[0, 0]
@@ -498,21 +498,21 @@ def s13110_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[2, 2]):
     bb[0, 0] = chksum
 
 
-@tsvc_kernel(args={'aa': 'F2', 'b': 'F2v', 'c': 'F2v'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "b": "F2v", "c": "F2v"}, params={}, regime="2d")
 @dace.program
 def s132_d_single(aa: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D], c: dace.float64[LEN_2D]):
     for i in range(1, LEN_2D):
         aa[0, i] = aa[1, i - 1] + b[i] * c[1]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s1351_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = b[i] + c[i]
 
 
-@tsvc_kernel(args={'bb': 'F2', 'flat_2d_array': 'FL2'}, params={}, regime='2d')
+@tsvc_kernel(args={"bb": "F2", "flat_2d_array": "FL2"}, params={}, regime="2d")
 @dace.program
 def s141_d_single(bb: dace.float64[LEN_2D, LEN_2D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     for i in range(LEN_2D):
@@ -522,7 +522,7 @@ def s141_d_single(bb: dace.float64[LEN_2D, LEN_2D], flat_2d_array: dace.float64[
             k = k + j + 1
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s1421_d_single(b: dace.float64[LEN_1D], a: dace.float64[LEN_1D]):
     half = LEN_1D // 2
@@ -530,14 +530,14 @@ def s1421_d_single(b: dace.float64[LEN_1D], a: dace.float64[LEN_1D]):
         b[i] = b[half + i] + a[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s151_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1):
         a[i] = a[i + 1] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s152_d_single(
     a: dace.float64[LEN_1D],
@@ -552,7 +552,7 @@ def s152_d_single(
         a[i] = a[i] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s161_d_single(
     a: dace.float64[LEN_1D],
@@ -568,7 +568,7 @@ def s161_d_single(
             a[i] = c[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={'k': 3}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={"k": 3}, regime="1d")
 @dace.program
 def s162_d_single(
     a: dace.float64[LEN_1D],
@@ -581,42 +581,42 @@ def s162_d_single(
             a[i] = a[i + k] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={'inc': 1}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={"inc": 1}, regime="1d")
 @dace.program
 def s171_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], inc: dace.int64):
     for i in range(LEN_1D):
         a[i * inc] = a[i * inc] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={'n1': 1, 'n3': 2}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={"n1": 1, "n3": 2}, regime="1d")
 @dace.program
 def s172_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], n1: dace.int64, n3: dace.int64):
     for i in range(n1 - 1, LEN_1D, n3):
         a[i] = a[i] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s173_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D // 2):
         a[i + (LEN_1D // 2)] = a[i] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={'M': 'N4'}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={"M": "N4"}, regime="1d")
 @dace.program
 def s174_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], M: dace.int64):
     for i in range(M):
         a[i + M] = a[i] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={'inc': 2}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={"inc": 2}, regime="1d")
 @dace.program
 def s175_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], inc: dace.int64):
     for i in range(0, LEN_1D - inc, inc):
         a[i] = a[i + inc] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s176_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     m = LEN_1D // 2
@@ -625,7 +625,7 @@ def s176_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
             a[i] = a[i] + b[i + m - j - 1] * c[j]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'cc': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "cc": "F2"}, params={}, regime="2d")
 @dace.program
 def s2101_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -636,7 +636,7 @@ def s2101_d_single(
         aa[i, i] = aa[i, i] + bb[i, i] * cc[i, i]
 
 
-@tsvc_kernel(args={'aa': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2"}, params={}, regime="2d")
 @dace.program
 def s2102_d_single(aa: dace.float64[LEN_2D, LEN_2D]):
     for i in range(LEN_2D):
@@ -645,7 +645,7 @@ def s2102_d_single(aa: dace.float64[LEN_2D, LEN_2D]):
         aa[i, i] = 1.0
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s211_d_single(
     a: dace.float64[LEN_1D],
@@ -659,7 +659,7 @@ def s211_d_single(
         b[i] = b[i + 1] - e[i] * d[i]
 
 
-@tsvc_kernel(args={'aa': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2"}, params={}, regime="2d")
 @dace.program
 def s2111_d_single(aa: dace.float64[LEN_2D, LEN_2D]):
     for j in range(1, LEN_2D):
@@ -667,7 +667,7 @@ def s2111_d_single(aa: dace.float64[LEN_2D, LEN_2D]):
             aa[j, i] = (aa[j, i - 1] + aa[j - 1, i]) / 1.9
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s212_d_single(
     a: dace.float64[LEN_1D],
@@ -680,7 +680,7 @@ def s212_d_single(
         b[i] = b[i] + (a[i + 1] * d[i])
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s221_d_single(
     a: dace.float64[LEN_1D],
@@ -693,7 +693,7 @@ def s221_d_single(
         b[i] = b[i - 1] + a[i] + d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s222_d_single(
     a: dace.float64[LEN_1D],
@@ -707,7 +707,7 @@ def s222_d_single(
         a[i] = a[i] - b[i] * c[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'cc': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "cc": "F2"}, params={}, regime="2d")
 @dace.program
 def s2233_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -721,7 +721,7 @@ def s2233_d_single(
             bb[i, j] = bb[i - 1, j] + cc[i, j]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s2244_d_single(
     a: dace.float64[LEN_1D],
@@ -734,7 +734,7 @@ def s2244_d_single(
         a[i] = b[i] + c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s2251_d_single(
     a: dace.float64[LEN_1D],
@@ -750,17 +750,9 @@ def s2251_d_single(
         b[i] = a[i] + d[i]
 
 
-@tsvc_kernel(args={
-    'a': 'F2v',
-    'aa': 'F2',
-    'b': 'F2v',
-    'bb': 'F2',
-    'c': 'F2v',
-    'cc': 'F2',
-    'd': 'F2v'
-},
-             params={},
-             regime='2d')
+@tsvc_kernel(
+    args={"a": "F2v", "aa": "F2", "b": "F2v", "bb": "F2", "c": "F2v", "cc": "F2", "d": "F2v"}, params={}, regime="2d"
+)
 @dace.program
 def s2275_d_single(
     a: dace.float64[LEN_2D],
@@ -777,7 +769,7 @@ def s2275_d_single(
         a[i] = b[i] + c[i] * d[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2"}, params={}, regime="2d")
 @dace.program
 def s231_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
     for i in range(LEN_2D):
@@ -785,7 +777,7 @@ def s231_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN
             aa[j, i] = aa[j - 1, i] + bb[j, i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2"}, params={}, regime="2d")
 @dace.program
 def s232_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN_2D]):
     for j in range(1, LEN_2D):
@@ -793,7 +785,7 @@ def s232_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[LEN_2D, LEN
             aa[j, i] = aa[j, i - 1] * aa[j, i - 1] + bb[j, i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'cc': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "cc": "F2"}, params={}, regime="2d")
 @dace.program
 def s233_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -807,7 +799,7 @@ def s233_d_single(
             bb[j, i] = bb[j, i - 1] + cc[j, i]
 
 
-@tsvc_kernel(args={'a': 'F2v', 'aa': 'F2', 'b': 'F2v', 'bb': 'F2', 'c': 'F2v'}, params={}, regime='2d')
+@tsvc_kernel(args={"a": "F2v", "aa": "F2", "b": "F2v", "bb": "F2", "c": "F2v"}, params={}, regime="2d")
 @dace.program
 def s235_d_single(
     a: dace.float64[LEN_2D],
@@ -822,7 +814,7 @@ def s235_d_single(
             aa[j, i] = aa[j - 1, i] + bb[j, i] * a[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s241_d_single(
     a: dace.float64[LEN_1D],
@@ -835,7 +827,7 @@ def s241_d_single(
         b[i] = a[i] * a[i + 1] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s242_d_single(
     a: dace.float64[LEN_1D],
@@ -847,7 +839,7 @@ def s242_d_single(
         a[i] = a[i - 1] + 0.5 + 1.0 + b[i] + c[i] + d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s243_d_single(
     a: dace.float64[LEN_1D],
@@ -862,7 +854,7 @@ def s243_d_single(
         a[i] = b[i] + a[i + 1] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s244_d_single(
     a: dace.float64[LEN_1D],
@@ -876,7 +868,7 @@ def s244_d_single(
         a[i + 1] = b[i] + a[i + 1] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s251_d_single(
     a: dace.float64[LEN_1D],
@@ -889,7 +881,7 @@ def s251_d_single(
         a[i] = s * s
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s252_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     t = 0.0
@@ -899,7 +891,7 @@ def s252_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
         t = s
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s253_d_single(
     a: dace.float64[LEN_1D],
@@ -914,7 +906,7 @@ def s253_d_single(
             a[i] = s
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s254_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     x = b[LEN_1D - 1]
@@ -923,7 +915,7 @@ def s254_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         x = b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s255_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     x = b[LEN_1D - 1]
@@ -934,7 +926,7 @@ def s255_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         x = b[i]
 
 
-@tsvc_kernel(args={'a': 'F2v', 'aa': 'F2', 'bb': 'F2', 'd': 'F2v'}, params={}, regime='2d')
+@tsvc_kernel(args={"a": "F2v", "aa": "F2", "bb": "F2", "d": "F2v"}, params={}, regime="2d")
 @dace.program
 def s256_d_single(
     a: dace.float64[LEN_2D],
@@ -948,7 +940,7 @@ def s256_d_single(
             aa[j, i] = a[j] + bb[j, i] * d[j]
 
 
-@tsvc_kernel(args={'a': 'F2v', 'aa': 'F2', 'bb': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"a": "F2v", "aa": "F2", "bb": "F2"}, params={}, regime="2d")
 @dace.program
 def s257_d_single(
     a: dace.float64[LEN_2D],
@@ -961,7 +953,7 @@ def s257_d_single(
             aa[j, i] = a[i] + bb[j, i]
 
 
-@tsvc_kernel(args={'a': 'F2v', 'aa': 'F1L2', 'b': 'F2v', 'c': 'F2v', 'd': 'F2v', 'e': 'F2v'}, params={}, regime='2d')
+@tsvc_kernel(args={"a": "F2v", "aa": "F1L2", "b": "F2v", "c": "F2v", "d": "F2v", "e": "F2v"}, params={}, regime="2d")
 @dace.program
 def s258_d_single(
     a: dace.float64[LEN_2D],
@@ -979,7 +971,7 @@ def s258_d_single(
         e[i] = (s + 1.0) * aa[0, i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s261_d_single(
     a: dace.float64[LEN_1D],
@@ -993,7 +985,7 @@ def s261_d_single(
         c[i] = c[i] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s271_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
@@ -1001,7 +993,7 @@ def s271_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
             a[i] = a[i] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1', 'x': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1", "x": "F1"}, params={}, regime="1d")
 @dace.program
 def s2710_d_single(
     a: dace.float64[LEN_1D],
@@ -1026,7 +1018,7 @@ def s2710_d_single(
                 c[i] = c[i] + e[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s2711_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
@@ -1034,7 +1026,7 @@ def s2711_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.flo
             a[i] = a[i] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s2712_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
@@ -1042,7 +1034,7 @@ def s2712_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.flo
             a[i] = a[i] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={'threshold': 0}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={"threshold": 0}, regime="1d")
 @dace.program
 def s272_d_single(
     a: dace.float64[LEN_1D],
@@ -1058,7 +1050,7 @@ def s272_d_single(
             b[i] = b[i] + c[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s273_d_single(
     a: dace.float64[LEN_1D],
@@ -1074,7 +1066,7 @@ def s273_d_single(
         c[i] = c[i] + a[i] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s274_d_single(
     a: dace.float64[LEN_1D],
@@ -1091,7 +1083,7 @@ def s274_d_single(
             a[i] = d[i] * e[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'cc': 'F2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "cc": "F2"}, params={}, regime="2d")
 @dace.program
 def s275_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -1104,7 +1096,7 @@ def s275_d_single(
                 aa[j, i] = aa[j - 1, i] + bb[j, i] * cc[j, i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s276_d_single(
     a: dace.float64[LEN_1D],
@@ -1120,7 +1112,7 @@ def s276_d_single(
             a[i] = a[i] + b[i] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s277_d_single(
     a: dace.float64[LEN_1D],
@@ -1136,7 +1128,7 @@ def s277_d_single(
             b[i + 1] = c[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s278_d_single(
     a: dace.float64[LEN_1D],
@@ -1153,7 +1145,7 @@ def s278_d_single(
         a[i] = b[i] + c[i] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s279_d_single(
     a: dace.float64[LEN_1D],
@@ -1172,7 +1164,7 @@ def s279_d_single(
         a[i] = b[i] + c[i] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s281_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
@@ -1181,7 +1173,7 @@ def s281_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
         b[i] = x
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s291_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     a[0] = (b[0] + b[LEN_1D - 1]) * 0.5
@@ -1189,7 +1181,7 @@ def s291_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         a[i] = (b[i] + b[i - 1]) * 0.5
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s292_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     a[0] = (b[0] + b[LEN_1D - 1] + b[LEN_1D - 2]) * 0.333
@@ -1198,7 +1190,7 @@ def s292_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         a[i] = (b[i] + b[i - 1] + b[i - 2]) * 0.333
 
 
-@tsvc_kernel(args={'a': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1"}, params={}, regime="1d")
 @dace.program
 def s293_d_single(a: dace.float64[LEN_1D]):
     a0 = a[0]
@@ -1206,7 +1198,7 @@ def s293_d_single(a: dace.float64[LEN_1D]):
         a[i] = a0
 
 
-@tsvc_kernel(args={'a': 'F1', 'sum_out': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "sum_out": "F1"}, params={}, regime="1d")
 @dace.program
 def s311_d_single(a: dace.float64[LEN_1D], sum_out: dace.float64[LEN_1D]):
     sum_out[0] = 0.0
@@ -1214,7 +1206,7 @@ def s311_d_single(a: dace.float64[LEN_1D], sum_out: dace.float64[LEN_1D]):
         sum_out[0] = sum_out[0] + a[i]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F22'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F22"}, params={}, regime="2d")
 @dace.program
 def s3110_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[2, 2]):
     maxv = aa[0, 0]
@@ -1232,7 +1224,7 @@ def s3110_d_single(aa: dace.float64[LEN_2D, LEN_2D], bb: dace.float64[2, 2]):
     bb[0, 0] = chksum
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F2c'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F2c"}, params={}, regime="1d")
 @dace.program
 def s3111_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     sum_val = 0.0
@@ -1242,7 +1234,7 @@ def s3111_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     b[0] = sum_val
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F2c'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F2c"}, params={}, regime="1d")
 @dace.program
 def s31111_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     sum_val = 0.0
@@ -1256,7 +1248,7 @@ def s31111_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     b[0] = sum_val
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s3112_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     sum = 0.0
@@ -1265,7 +1257,7 @@ def s3112_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         b[i] = sum
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F2c'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F2c"}, params={}, regime="1d")
 @dace.program
 def s3113_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     maxv = dace.float64(0)
@@ -1277,7 +1269,7 @@ def s3113_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     b[0] = maxv
 
 
-@tsvc_kernel(args={'a': 'F1', 'result': 'R1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "result": "R1"}, params={}, regime="1d")
 @dace.program
 def s312_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     prod = 1.0
@@ -1286,7 +1278,7 @@ def s312_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     result[0] = prod
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'dot': 'R1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "dot": "R1"}, params={}, regime="1d")
 @dace.program
 def s313_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], dot: dace.float64[1]):
     dot[0] = 0.0
@@ -1294,7 +1286,7 @@ def s313_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], dot: dace.fl
         dot[0] = dot[0] + a[i] * b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'result': 'R1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "result": "R1"}, params={}, regime="1d")
 @dace.program
 def s314_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     x = a[0]
@@ -1304,7 +1296,7 @@ def s314_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     result[0] = x
 
 
-@tsvc_kernel(args={'a': 'F1', 'result': 'R1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "result": "R1"}, params={}, regime="1d")
 @dace.program
 def s315_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     for i in range(LEN_1D):
@@ -1319,7 +1311,7 @@ def s315_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     result[0] = a[0]
 
 
-@tsvc_kernel(args={'a': 'F1', 'result': 'R1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "result": "R1"}, params={}, regime="1d")
 @dace.program
 def s316_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     x = a[0]
@@ -1329,7 +1321,7 @@ def s316_d_single(a: dace.float64[LEN_1D], result: dace.float64[1]):
     result[0] = x
 
 
-@tsvc_kernel(args={'q': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"q": "F1"}, params={}, regime="1d")
 @dace.program
 def s317_d_single(q: dace.float64[LEN_1D]):
     q[0] = 1.0
@@ -1337,7 +1329,7 @@ def s317_d_single(q: dace.float64[LEN_1D]):
         q[0] = q[0] * 0.99
 
 
-@tsvc_kernel(args={'a': 'F1', 'result': 'R1'}, params={'inc': 1}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "result": "R1"}, params={"inc": 1}, regime="1d")
 @dace.program
 def s318_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], inc: dace.int32):
     k = 0
@@ -1353,7 +1345,7 @@ def s318_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], inc: dace.in
     result[0] = maxv + float(index)
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s319_d_single(
     a: dace.float64[LEN_1D],
@@ -1371,21 +1363,21 @@ def s319_d_single(
     b[0] = sum_val
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s321_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(1, LEN_1D):
         a[i] = a[i] + a[i - 1] * b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s322_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(2, LEN_1D):
         a[i] = a[i] + a[i - 1] * b[i] + a[i - 2] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s323_d_single(
     a: dace.float64[LEN_1D],
@@ -1399,7 +1391,7 @@ def s323_d_single(
         b[i] = a[i] + c[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1"}, params={}, regime="1d")
 @dace.program
 def s3251_d_single(
     a: dace.float64[LEN_1D],
@@ -1414,7 +1406,7 @@ def s3251_d_single(
         d[i] = a[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F2c'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F2c"}, params={}, regime="1d")
 @dace.program
 def s331_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     j = -1
@@ -1425,7 +1417,7 @@ def s331_d_single(a: dace.float64[LEN_1D], b: dace.float64[2]):
     b[0] = j
 
 
-@tsvc_kernel(args={'a': 'F1', 'result': 'R1'}, params={'threshold': 0}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "result": "R1"}, params={"threshold": 0}, regime="1d")
 @dace.program
 def s332_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], threshold: dace.int64):
     index = -2
@@ -1438,7 +1430,7 @@ def s332_d_single(a: dace.float64[LEN_1D], result: dace.float64[1], threshold: d
     result[0] = value + float(index)
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s341_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     j = -1
@@ -1448,7 +1440,7 @@ def s341_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
             a[j] = b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s342_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     j = -1
@@ -1458,7 +1450,7 @@ def s342_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
             a[i] = b[j]
 
 
-@tsvc_kernel(args={'aa': 'F2', 'bb': 'F2', 'flat_2d_array': 'FL2'}, params={}, regime='2d')
+@tsvc_kernel(args={"aa": "F2", "bb": "F2", "flat_2d_array": "FL2"}, params={}, regime="2d")
 @dace.program
 def s343_d_single(
     aa: dace.float64[LEN_2D, LEN_2D],
@@ -1473,7 +1465,7 @@ def s343_d_single(
                 flat_2d_array[k] = aa[j, i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s351_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     alpha = c[0]
@@ -1484,18 +1476,19 @@ def s351_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
         a[i + 3] = a[i + 3] + alpha * b[i + 3]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F2c'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F2c"}, params={}, regime="1d")
 @dace.program
 def s352_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[2]):
     dot = 0.0
     dot = 0.0
     for i in range(0, LEN_1D - 4, 5):
-        dot = dot + (a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] +
-                     a[i + 4] * b[i + 4])
+        dot = dot + (
+            a[i] * b[i] + a[i + 1] * b[i + 1] + a[i + 2] * b[i + 2] + a[i + 3] * b[i + 3] + a[i + 4] * b[i + 4]
+        )
     c[0] = dot
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'ip': 'I1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "ip": "I1"}, params={}, regime="1d")
 @dace.program
 def s353_d_single(
     a: dace.float64[LEN_1D],
@@ -1511,14 +1504,14 @@ def s353_d_single(
         a[i + 3] = a[i + 3] + alpha * b[ip[i + 3]]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'ip': 'I1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "ip": "I1"}, params={}, regime="1d")
 @dace.program
 def s4112_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[ip[i]] * 2.0
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'ip': 'I1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "ip": "I1"}, params={}, regime="1d")
 @dace.program
 def s4113_d_single(
     a: dace.float64[LEN_1D],
@@ -1530,7 +1523,7 @@ def s4113_d_single(
         a[ip[i]] = b[ip[i]] + c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd_': 'F1', 'ip': 'I1'}, params={'n1': 1}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d_": "F1", "ip": "I1"}, params={"n1": 1}, regime="1d")
 @dace.program
 def s4114_d_single(
     a: dace.float64[LEN_1D],
@@ -1545,7 +1538,7 @@ def s4114_d_single(
         a[i] = b[i] + c[LEN_1D - k - 1] * d_[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'ip': 'I1', 'sum_out': 'R1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "ip": "I1", "sum_out": "R1"}, params={}, regime="1d")
 @dace.program
 def s4115_d_single(
     a: dace.float64[LEN_1D],
@@ -1560,7 +1553,7 @@ def s4115_d_single(
     sum_out[0] = sum_val
 
 
-@tsvc_kernel(args={'a': 'F1', 'aa': 'F2', 'ip': 'I2', 'sum_out': 'R1'}, params={'j': 1, 'inc': 1}, regime='2d')
+@tsvc_kernel(args={"a": "F1", "aa": "F2", "ip": "I2", "sum_out": "R1"}, params={"j": 1, "inc": 1}, regime="2d")
 @dace.program
 def s4116_d_single(
     a: dace.float64[LEN_1D],
@@ -1578,7 +1571,7 @@ def s4116_d_single(
     sum_out[0] = sum_val
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s4117_d_single(
     a: dace.float64[LEN_1D],
@@ -1591,28 +1584,28 @@ def s4117_d_single(
         a[i] = b[i] + c[j] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s4121_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'flat_2d_array': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "flat_2d_array": "F1"}, params={}, regime="1d")
 @dace.program
 def s421_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1):
         flat_2d_array[i] = flat_2d_array[i + 1] + a[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'flat_2d_array': 'FL2'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "flat_2d_array": "FL2"}, params={}, regime="1d")
 @dace.program
 def s422_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     for i in range(LEN_1D):
         flat_2d_array[4 + i] = flat_2d_array[8 + i] + a[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'flat_2d_array': 'FL2'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "flat_2d_array": "FL2"}, params={}, regime="1d")
 @dace.program
 def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_2D * LEN_2D]):
     vl = 64
@@ -1620,21 +1613,21 @@ def s423_d_single(a: dace.float64[LEN_1D], flat_2d_array: dace.float64[LEN_2D * 
         flat_2d_array[i + 1] = flat_2d_array[vl + i] + a[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'flat': 'F1', 'xx': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "flat": "F1", "xx": "F1"}, params={}, regime="1d")
 @dace.program
 def s424_d_single(a: dace.float64[LEN_1D], xx: dace.float64[LEN_1D], flat: dace.float64[LEN_1D]):
     for i in range(LEN_1D - 1):
         xx[i + 1] = flat[i] + a[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s431_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s441_d_single(
     a: dace.float64[LEN_1D],
@@ -1651,7 +1644,7 @@ def s441_d_single(
             a[i] = a[i] + c[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1', 'indx': 'I1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "e": "F1", "indx": "I1"}, params={}, regime="1d")
 @dace.program
 def s442_d_single(
     a: dace.float64[LEN_1D],
@@ -1672,7 +1665,7 @@ def s442_d_single(
             a[i] = a[i] + (e[i] * e[i])
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s443_d_single(
     a: dace.float64[LEN_1D],
@@ -1687,21 +1680,21 @@ def s443_d_single(
             a[i] = a[i] + b[i] * b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s451_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = sin(b[i]) + cos(c[i])
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s452_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = b[i] + c[i] * (i + 1)
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def s453_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     s = 0.0
@@ -1710,7 +1703,7 @@ def s453_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
         a[i] = s * b[i]
 
 
-@tsvc_kernel(args={'b': 'F1', 'c': 'F1', 'd': 'F1', 'e': 'F1', 'x': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"b": "F1", "c": "F1", "d": "F1", "e": "F1", "x": "F1"}, params={}, regime="1d")
 @dace.program
 def s471_d_single(
     x: dace.float64[LEN_1D],
@@ -1724,7 +1717,7 @@ def s471_d_single(
         b[i] = c[i] + d[i] * e[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1"}, params={}, regime="1d")
 @dace.program
 def s481_d_single(
     a: dace.float64[LEN_1D],
@@ -1738,7 +1731,7 @@ def s481_d_single(
         a[i] = a[i] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def s482_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
@@ -1747,7 +1740,7 @@ def s482_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.floa
             break
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1', 'd': 'F1', 'ip': 'I1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1", "d": "F1", "ip": "I1"}, params={}, regime="1d")
 @dace.program
 def s491_d_single(
     a: dace.float64[LEN_1D],
@@ -1760,28 +1753,28 @@ def s491_d_single(
         a[ip[i]] = b[i] + c[i] * d[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def va_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'ip': 'I1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "ip": "I1"}, params={}, regime="1d")
 @dace.program
 def vag_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = b[ip[i]]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'ip': 'I1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "ip": "I1"}, params={}, regime="1d")
 @dace.program
 def vas_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], ip: dace.int32[LEN_1D]):
     for i in range(LEN_1D):
         a[ip[i]] = b[i]
 
 
-@tsvc_kernel(args={'a': 'F2v', 'b': 'F2v', 'c': 'F2v', 'd': 'F2v', 'e': 'F2v', 'x': 'F2v'}, params={}, regime='2d')
+@tsvc_kernel(args={"a": "F2v", "b": "F2v", "c": "F2v", "d": "F2v", "e": "F2v", "x": "F2v"}, params={}, regime="2d")
 @dace.program
 def vbor_d_single(
     a: dace.float64[LEN_2D],
@@ -1798,15 +1791,25 @@ def vbor_d_single(
         d1 = d[i]
         e1 = e[i]
         f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
-              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
-        b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
+        a1 = (
+            a1 * b1 * c1
+            + a1 * b1 * d1
+            + a1 * b1 * e1
+            + a1 * b1 * f1
+            + a1 * c1 * d1
+            + a1 * c1 * e1
+            + a1 * c1 * f1
+            + a1 * d1 * e1
+            + a1 * d1 * f1
+            + a1 * e1 * f1
+        )
+        b1 = b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         d1 = d1 * e1 * f1
         x[i] = a1 * b1 * c1 * d1
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'dot_out': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "dot_out": "F1"}, params={}, regime="1d")
 @dace.program
 def vdotr_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], dot_out: dace.float64[LEN_1D]):
     dot_out[0] = 0.0
@@ -1815,7 +1818,7 @@ def vdotr_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], dot_out: da
         dot_out[0] = dot_out[0] + a[i] * b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def vif_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
@@ -1823,35 +1826,35 @@ def vif_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
             a[i] = b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def vpv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def vpvpv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] + c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def vpvts_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] * S
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def vpvtv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] + b[i] * c[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'sum_out': 'R1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "sum_out": "R1"}, params={}, regime="1d")
 @dace.program
 def vsumr_d_single(a: dace.float64[LEN_1D], sum_out: dace.float64[1]):
     s = 0.0
@@ -1861,14 +1864,14 @@ def vsumr_d_single(a: dace.float64[LEN_1D], sum_out: dace.float64[1]):
     sum_out[0] = s
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1"}, params={}, regime="1d")
 @dace.program
 def vtv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
         a[i] = a[i] * b[i]
 
 
-@tsvc_kernel(args={'a': 'F1', 'b': 'F1', 'c': 'F1'}, params={}, regime='1d')
+@tsvc_kernel(args={"a": "F1", "b": "F1", "c": "F1"}, params={}, regime="1d")
 @dace.program
 def vtvtv_d_single(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D]):
     for i in range(LEN_1D):
@@ -1918,8 +1921,9 @@ def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> 
             # numpy view inputs at call time, so force a fresh standalone array
             # via ``np.array(..., copy=True)`` (``ascontiguousarray`` is a no-op
             # on an already-contiguous view, leaving ``.base`` set).
-            arrays[name] = np.array((np.arange(int(np.prod(shape))) % max(shape)).astype(np_dtype).reshape(shape),
-                                    copy=True)
+            arrays[name] = np.array(
+                (np.arange(int(np.prod(shape))) % max(shape)).astype(np_dtype).reshape(shape), copy=True
+            )
         else:
             # Uniform on [-1, 1), NOT [0, 1): TSVC is full of ``if (a[i] < 0.)`` guards, and
             # non-negative inputs take only the false side of every one of them. For s1279 and
@@ -1943,17 +1947,17 @@ def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> 
 def _place_break_at_middle(kernel: TSVCKernel, arrays: Dict[str, np.ndarray], l1: int) -> None:
     """Rewrite the break-predicate array in place so the exit fires at ``l1 // 2``."""
     mid = l1 // 2
-    if kernel.name == 's481_d_single':  # break on d[i] < 0.0
-        d = arrays['d']
+    if kernel.name == "s481_d_single":  # break on d[i] < 0.0
+        d = arrays["d"]
         d[:mid] = np.abs(d[:mid])
         d[mid] = -abs(d[mid]) - 1.0
-    elif kernel.name == 's482_d_single':  # break on c[i] > b[i]
-        b, c = arrays['b'], arrays['c']
+    elif kernel.name == "s482_d_single":  # break on c[i] > b[i]
+        b, c = arrays["b"], arrays["c"]
         c[:mid] = np.minimum(c[:mid], b[:mid])
         c[mid] = b[mid] + 1.0
-    elif kernel.name == 's332_d_single':  # break on a[i] > threshold
-        a = arrays['a']
-        threshold = kernel.params.get('threshold', 0)
+    elif kernel.name == "s332_d_single":  # break on a[i] > threshold
+        a = arrays["a"]
+        threshold = kernel.params.get("threshold", 0)
         a[:mid] = threshold - np.abs(a[:mid]) - 1.0
         a[mid] = threshold + abs(a[mid]) + 1.0
 
@@ -2006,6 +2010,7 @@ def stable_seed(key) -> int:
     :returns: a 32-bit seed.
     """
     import zlib
+
     return zlib.crc32(repr(key).encode()) & 0xFFFFFFFF
 
 

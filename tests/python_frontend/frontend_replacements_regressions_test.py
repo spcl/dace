@@ -9,6 +9,7 @@ Bug 4: .copy() on a sliced array (an ArrayView) raised a bare NotImplementedErro
 transient-creation dispatch it landed on keys on the exact data descriptor type and does not
 recognize ArrayView, a concrete subclass of both Array and View.
 """
+
 import numpy as np
 
 import dace
@@ -114,7 +115,7 @@ def test_copy_of_whole_array_still_works():
     assert np.allclose(out, path)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_numpy_empty_default_dtype_matches_numpy()
     test_numpy_empty_explicit_dtype_still_honoured()
     test_numpy_empty_like_unaffected()

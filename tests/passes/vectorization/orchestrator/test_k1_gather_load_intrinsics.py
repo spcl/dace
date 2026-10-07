@@ -11,6 +11,7 @@ hardware masked gather only touches active lanes) -- exercised by leaving the
 inactive lanes' index pointing at a non-zero element and asserting the output
 lane is 0, not that element.
 """
+
 import os
 
 import numpy as np
@@ -66,13 +67,15 @@ def _gather_sdfg(name, impl, masked):
     sdfg.add_array("idx", [W], dace.int64)
     sdfg.add_array("dst", [W], dace.float64)
     state = sdfg.add_state()
-    node = TileGather(name="ld",
-                      widths=(W, ),
-                      dim_strides=(1, ),
-                      replicate_factor_per_dim=(1, ),
-                      src_dims=(0, ),
-                      gather_dims=(0, ),
-                      has_mask=masked)
+    node = TileGather(
+        name="ld",
+        widths=(W,),
+        dim_strides=(1,),
+        replicate_factor_per_dim=(1,),
+        src_dims=(0,),
+        gather_dims=(0,),
+        has_mask=masked,
+    )
     node.implementation = impl
     state.add_node(node)
     state.add_edge(state.add_access("src"), None, node, "_src", dace.Memlet("src[0:256]"))
@@ -90,12 +93,13 @@ def _strided_sdfg(name, impl, stride, masked):
     sdfg.add_array("dst", [W], dace.float64)
     sdfg.add_array("tile", [W], dace.float64, storage=dace.dtypes.StorageType.Register, transient=True)
     state = sdfg.add_state()
-    node = MaskedCopyLibraryNode("ld", widths=(W, ), has_mask=masked)
+    node = MaskedCopyLibraryNode("ld", widths=(W,), has_mask=masked)
     node.implementation = impl
     state.add_node(node)
     tile = state.add_access("tile")
-    state.add_edge(state.add_access("src"), None, node, INPUT_CONNECTOR_NAME,
-                   dace.Memlet(f"src[0:{W * stride}:{stride}]"))
+    state.add_edge(
+        state.add_access("src"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"src[0:{W * stride}:{stride}]")
+    )
     if masked:
         _wire_mask(sdfg, state, node)
     state.add_edge(node, OUTPUT_CONNECTOR_NAME, tile, None, dace.Memlet(f"tile[0:{W}]"))

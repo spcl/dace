@@ -18,6 +18,7 @@ Loops with symbolic bounds are assumed to execute at least one iteration and
 floating-point operations are assumed non-trapping, so speculative execution is
 not a concern.
 """
+
 import ast
 import copy
 import re
@@ -39,12 +40,18 @@ class LoopInvariantCodeMotion(ppl.Pass):
     CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Memlets
-                | ppl.Modifies.Descriptors | ppl.Modifies.InterstateEdges)
+        return (
+            ppl.Modifies.States
+            | ppl.Modifies.Nodes
+            | ppl.Modifies.Memlets
+            | ppl.Modifies.Descriptors
+            | ppl.Modifies.InterstateEdges
+        )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return bool(modified & (ppl.Modifies.States | ppl.Modifies.Nodes
-                                | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges))
+        return bool(
+            modified & (ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.InterstateEdges)
+        )
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         total = 0
@@ -199,8 +206,7 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
     # Determine the insertion order: preserve the order in which the children
     # appear along the start-to-end path of ``loop``.
     order_map = {
-        n: i
-        for i, n in enumerate(loop.bfs_nodes(loop.start_block) if hasattr(loop, "bfs_nodes") else loop.nodes())
+        n: i for i, n in enumerate(loop.bfs_nodes(loop.start_block) if hasattr(loop, "bfs_nodes") else loop.nodes())
     }
     hoistable.sort(key=lambda n: order_map.get(n, 0))
 
@@ -225,7 +231,7 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> int
     out_edges = loop.out_edges(child)
     successor = out_edges[0].dst if out_edges else None
     start_before = loop.start_block
-    was_start = (start_before is child)
+    was_start = start_before is child
 
     # Only a child on a plain unconditional chain can be lifted out. Branching predecessors or
     # successors have no single replacement edge; a condition means the child does not run every
@@ -319,8 +325,11 @@ def _region_has_work(region: Any) -> bool:
 def _region_has_side_effect(region: Any) -> bool:
     if isinstance(region, SDFGState):
         for n in region.nodes():
-            if isinstance(n, nodes.CodeNode) and not isinstance(n, nodes.NestedSDFG) and n.has_side_effects(
-                    region.sdfg):
+            if (
+                isinstance(n, nodes.CodeNode)
+                and not isinstance(n, nodes.NestedSDFG)
+                and n.has_side_effects(region.sdfg)
+            ):
                 return True
             for oe in region.out_edges(n):
                 if oe.data is not None and oe.data.wcr is not None:
@@ -490,7 +499,7 @@ def _code_free_symbols(tasklet: nodes.Tasklet) -> Set[str]:
     if tasklet.language != dtypes.Language.Python:
         text = stmts if isinstance(stmts, str) else str(stmts)
         connectors = set(tasklet.in_connectors.keys()) | set(tasklet.out_connectors.keys())
-        return set(re.findall(r'[A-Za-z_]\w*', text)) - connectors
+        return set(re.findall(r"[A-Za-z_]\w*", text)) - connectors
     if isinstance(stmts, str):
         try:
             stmts = [ast.parse(stmts)]
@@ -783,7 +792,7 @@ def _matching_outer_conn(src_conn: Optional[str]) -> Optional[str]:
     """MapEntry's internal OUT_x connector pairs with the external IN_x."""
     if not src_conn or not src_conn.startswith("OUT_"):
         return None
-    return "IN_" + src_conn[len("OUT_"):]
+    return "IN_" + src_conn[len("OUT_") :]
 
 
 def _hoist_tasklet_out_of_map(
@@ -892,7 +901,7 @@ def _prune_unused_map_connectors(state: SDFGState, me: nodes.MapEntry) -> None:
     for in_conn in list(me.in_connectors.keys()):
         if not in_conn.startswith("IN_"):
             continue
-        out_conn = "OUT_" + in_conn[len("IN_"):]
+        out_conn = "OUT_" + in_conn[len("IN_") :]
         internal_edges = list(state.out_edges_by_connector(me, out_conn))
         if internal_edges:
             continue
@@ -930,11 +939,12 @@ def _route_into_scope(
     while in_conn in me.in_connectors:
         idx += 1
         in_conn = f"IN_{base}_{idx}"
-    out_conn = "OUT_" + in_conn[len("IN_"):]
+    out_conn = "OUT_" + in_conn[len("IN_") :]
     me.add_in_connector(in_conn)
     me.add_out_connector(out_conn)
 
     from dace import Memlet
+
     desc = sdfg.arrays[data_name]
     state.add_edge(outer_access, None, me, in_conn, Memlet.from_array(data_name, desc))
     state.add_edge(me, out_conn, inner_access, None, Memlet.from_array(data_name, desc))

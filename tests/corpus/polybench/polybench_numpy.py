@@ -41,6 +41,7 @@ a first-order recurrence with no closed numpy form that does not overflow, so it
 reference interprets ~10^7 scalar updates at the ``paper`` preset and is NOT a defensible
 timing denominator.
 """
+
 from typing import Callable, Dict
 
 import numpy as np
@@ -60,36 +61,36 @@ from tests.corpus.polybench.medley.deriche import a1, a2, a3, a4, a5, a6, a7, a8
 #: * ``'scalar'`` -- SCALAR python loop over elements. NOT a defensible timing denominator; it is
 #:   the trap that disqualified the tsvc oracles. Must not enter a "vs numpy" figure unlabelled.
 VECTORIZATION: Dict[str, str] = {
-    'adi': 'blocked',
-    'atax': 'array',
-    'bicg': 'array',
-    'cholesky': 'array',
-    'correlation': 'blocked',
-    'covariance': 'blocked',
-    'deriche': 'blocked',
-    'doitgen': 'array',
-    'durbin': 'blocked',
-    'fdtd_2d': 'array',
-    'floyd_warshall': 'array',
-    'gemm': 'array',
-    'gemver': 'array',
-    'gesummv': 'array',
-    'gramschmidt': 'blocked',
-    'heat_3d': 'array',
-    'jacobi_1d': 'array',
-    'jacobi_2d': 'array',
-    'k2mm': 'array',
-    'k3mm': 'array',
-    'lu': 'blocked',
-    'ludcmp': 'blocked',
-    'mvt': 'array',
-    'nussinov': 'blocked',
-    'seidel_2d': 'scalar',
-    'symm': 'blocked',
-    'syr2k': 'blocked',
-    'syrk': 'blocked',
-    'trisolv': 'blocked',
-    'trmm': 'blocked',
+    "adi": "blocked",
+    "atax": "array",
+    "bicg": "array",
+    "cholesky": "array",
+    "correlation": "blocked",
+    "covariance": "blocked",
+    "deriche": "blocked",
+    "doitgen": "array",
+    "durbin": "blocked",
+    "fdtd_2d": "array",
+    "floyd_warshall": "array",
+    "gemm": "array",
+    "gemver": "array",
+    "gesummv": "array",
+    "gramschmidt": "blocked",
+    "heat_3d": "array",
+    "jacobi_1d": "array",
+    "jacobi_2d": "array",
+    "k2mm": "array",
+    "k3mm": "array",
+    "lu": "blocked",
+    "ludcmp": "blocked",
+    "mvt": "array",
+    "nussinov": "blocked",
+    "seidel_2d": "scalar",
+    "symm": "blocked",
+    "syr2k": "blocked",
+    "syrk": "blocked",
+    "trisolv": "blocked",
+    "trmm": "blocked",
 }
 
 
@@ -107,26 +108,28 @@ def ref_adi(u: np.ndarray, N: int, tsteps: int) -> None:
     e = 1.0 + (1.0 * (1.0 / tsteps) / (1.0 / (N * N)))
     f = d
     for _ in range(tsteps):
-        v[0, 1:N - 1] = 1.0
-        p[1:N - 1, 0] = 0.0
-        q[1:N - 1, 0] = 1.0
+        v[0, 1 : N - 1] = 1.0
+        p[1 : N - 1, 0] = 0.0
+        q[1 : N - 1, 0] = 1.0
         for j in range(1, N - 1):
-            p[1:N - 1, j] = -c / (a * p[1:N - 1, j - 1] + b)
-            q[1:N - 1, j] = (-d * u[j, 0:N - 2] + (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] -
-                             a * q[1:N - 1, j - 1]) / (a * p[1:N - 1, j - 1] + b)
-        v[N - 1, 1:N - 1] = 1.0
+            p[1 : N - 1, j] = -c / (a * p[1 : N - 1, j - 1] + b)
+            q[1 : N - 1, j] = (
+                -d * u[j, 0 : N - 2] + (1.0 + 2.0 * d) * u[j, 1 : N - 1] - f * u[j, 2:N] - a * q[1 : N - 1, j - 1]
+            ) / (a * p[1 : N - 1, j - 1] + b)
+        v[N - 1, 1 : N - 1] = 1.0
         for j in range(N - 2, 0, -1):
-            v[j, 1:N - 1] = p[1:N - 1, j] * v[j + 1, 1:N - 1] + q[1:N - 1, j]
-        u[1:N - 1, 0] = 1.0
-        p[1:N - 1, 0] = 0.0
-        q[1:N - 1, 0] = 1.0
+            v[j, 1 : N - 1] = p[1 : N - 1, j] * v[j + 1, 1 : N - 1] + q[1 : N - 1, j]
+        u[1 : N - 1, 0] = 1.0
+        p[1 : N - 1, 0] = 0.0
+        q[1 : N - 1, 0] = 1.0
         for j in range(1, N - 1):
-            p[1:N - 1, j] = -f / (d * p[1:N - 1, j - 1] + e)
-            q[1:N - 1, j] = (-a * v[0:N - 2, j] + (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] -
-                             d * q[1:N - 1, j - 1]) / (d * p[1:N - 1, j - 1] + e)
-        u[1:N - 1, N - 1] = 1.0
+            p[1 : N - 1, j] = -f / (d * p[1 : N - 1, j - 1] + e)
+            q[1 : N - 1, j] = (
+                -a * v[0 : N - 2, j] + (1.0 + 2.0 * a) * v[1 : N - 1, j] - c * v[2:N, j] - d * q[1 : N - 1, j - 1]
+            ) / (d * p[1 : N - 1, j - 1] + e)
+        u[1 : N - 1, N - 1] = 1.0
         for j in range(N - 2, 0, -1):
-            u[1:N - 1, j] = p[1:N - 1, j] * u[1:N - 1, j + 1] + q[1:N - 1, j]
+            u[1 : N - 1, j] = p[1 : N - 1, j] * u[1 : N - 1, j + 1] + q[1 : N - 1, j]
 
 
 def ref_atax(A: np.ndarray, x: np.ndarray, y: np.ndarray) -> None:
@@ -154,7 +157,7 @@ def ref_correlation(data: np.ndarray, corr: np.ndarray, mean: np.ndarray, stddev
     data /= np.sqrt(np.float64(N)) * stddev
     corr[:] = np.eye(M, dtype=data.dtype)
     for i in range(M - 1):
-        corr[i + 1:M, i] = corr[i, i + 1:M] = data[:, i] @ data[:, i + 1:M]
+        corr[i + 1 : M, i] = corr[i, i + 1 : M] = data[:, i] @ data[:, i + 1 : M]
 
 
 def ref_covariance(data: np.ndarray, cov: np.ndarray, mean: np.ndarray, M: int, N: int) -> None:
@@ -222,15 +225,27 @@ def ref_gemm(C: np.ndarray, A: np.ndarray, B: np.ndarray, alpha: np.ndarray, bet
     C[:] = alpha[0] * A @ B + beta[0] * C
 
 
-def ref_gemver(A: np.ndarray, u1: np.ndarray, v1: np.ndarray, u2: np.ndarray, v2: np.ndarray, w: np.ndarray,
-               x: np.ndarray, y: np.ndarray, z: np.ndarray, alpha: np.ndarray, beta: np.ndarray) -> None:
+def ref_gemver(
+    A: np.ndarray,
+    u1: np.ndarray,
+    v1: np.ndarray,
+    u2: np.ndarray,
+    v2: np.ndarray,
+    w: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    alpha: np.ndarray,
+    beta: np.ndarray,
+) -> None:
     A += np.outer(u1, v1) + np.outer(u2, v2)
     x += beta[0] * y @ A + z
     w += alpha[0] * A @ x
 
 
-def ref_gesummv(A: np.ndarray, B: np.ndarray, tmp: np.ndarray, x: np.ndarray, y: np.ndarray, alpha: np.ndarray,
-                beta: np.ndarray) -> None:
+def ref_gesummv(
+    A: np.ndarray, B: np.ndarray, tmp: np.ndarray, x: np.ndarray, y: np.ndarray, alpha: np.ndarray, beta: np.ndarray
+) -> None:
     # ``tmp`` is dead in the npbench formulation the in-repo kernel adopted; it stays in the
     # signature (and untouched) because the corpus compares every argument array.
     y[:] = alpha[0] * A @ x + beta[0] * B @ x
@@ -248,14 +263,18 @@ def ref_gramschmidt(A: np.ndarray, R: np.ndarray, Q: np.ndarray, N: int) -> None
 
 def ref_heat_3d(A: np.ndarray, B: np.ndarray, tsteps: int) -> None:
     for _ in range(1, tsteps):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def ref_jacobi_1d(A: np.ndarray, B: np.ndarray, tsteps: int) -> None:
@@ -297,7 +316,7 @@ def ref_ludcmp(A: np.ndarray, b: np.ndarray, x: np.ndarray, y: np.ndarray, N: in
     for i in range(N):
         y[i] = b[i] - A[i, :i] @ y[:i]
     for i in range(N - 1, -1, -1):
-        x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]
+        x[i] = (y[i] - A[i, i + 1 :] @ x[i + 1 :]) / A[i, i]
 
 
 def ref_mvt(x1: np.ndarray, x2: np.ndarray, y_1: np.ndarray, y_2: np.ndarray, A: np.ndarray) -> None:
@@ -322,7 +341,7 @@ def ref_nussinov(seq: np.ndarray, table: np.ndarray, N: int) -> None:
                     paired = paired + 1
                 best = max(best, paired)
             if j > i + 1:
-                best = max(best, (table[i, i + 1:j] + table[i + 2:j + 1, j]).max())
+                best = max(best, (table[i, i + 1 : j] + table[i + 2 : j + 1, j]).max())
             table[i, j] = best
 
 
@@ -333,15 +352,16 @@ def ref_seidel_2d(A: np.ndarray, N: int, tsteps: int) -> None:
     interprets O(tsteps * N^2) scalar updates and is NOT a defensible timing denominator."""
     for _ in range(0, tsteps - 1):
         for i in range(1, N - 1):
-            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] +
-                           A[i + 1, 2:])
+            A[i, 1:-1] += (
+                A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] + A[i + 1, 2:]
+            )
             for j in range(1, N - 1):
                 A[i, j] += A[i, j - 1]
                 A[i, j] /= 9.0
 
 
 def ref_symm(C: np.ndarray, A: np.ndarray, B: np.ndarray, alpha: np.ndarray, beta: np.ndarray, M: int, N: int) -> None:
-    temp2 = np.zeros((N, ), dtype=C.dtype)
+    temp2 = np.zeros((N,), dtype=C.dtype)
     C *= beta[0]
     for i in range(M):
         for j in range(N):
@@ -352,16 +372,16 @@ def ref_symm(C: np.ndarray, A: np.ndarray, B: np.ndarray, alpha: np.ndarray, bet
 
 def ref_syr2k(C: np.ndarray, A: np.ndarray, B: np.ndarray, alpha: np.ndarray, beta: np.ndarray, M: int, N: int) -> None:
     for i in range(N):
-        C[i, :i + 1] *= beta[0]
+        C[i, : i + 1] *= beta[0]
         for k in range(M):
-            C[i, :i + 1] += A[:i + 1, k] * alpha[0] * B[i, k] + B[:i + 1, k] * alpha[0] * A[i, k]
+            C[i, : i + 1] += A[: i + 1, k] * alpha[0] * B[i, k] + B[: i + 1, k] * alpha[0] * A[i, k]
 
 
 def ref_syrk(C: np.ndarray, A: np.ndarray, alpha: np.ndarray, beta: np.ndarray, M: int, N: int) -> None:
     for i in range(N):
-        C[i, :i + 1] *= beta[0]
+        C[i, : i + 1] *= beta[0]
         for k in range(M):
-            C[i, :i + 1] += alpha[0] * A[i, k] * A[:i + 1, k]
+            C[i, : i + 1] += alpha[0] * A[i, k] * A[: i + 1, k]
 
 
 def ref_trisolv(L: np.ndarray, x: np.ndarray, b: np.ndarray, N: int) -> None:
@@ -372,7 +392,7 @@ def ref_trisolv(L: np.ndarray, x: np.ndarray, b: np.ndarray, N: int) -> None:
 def ref_trmm(A: np.ndarray, B: np.ndarray, alpha: np.ndarray, M: int, N: int) -> None:
     for i in range(M):
         for j in range(N):
-            B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])
+            B[i, j] += np.dot(A[i + 1 :, i], B[i + 1 :, j])
     B *= alpha[0]
 
 
@@ -380,34 +400,34 @@ def ref_trmm(A: np.ndarray, B: np.ndarray, alpha: np.ndarray, M: int, N: int) ->
 #: ``call_arrays`` and dataset symbols, so a signature here must use the in-repo kernel's own
 #: argument names (``_fict_``, ``y_1``, ``imgIn``, ...) and symbol names (``tsteps``, ``TMAX``).
 REFERENCES: Dict[str, Callable[..., None]] = {
-    'adi': ref_adi,
-    'atax': ref_atax,
-    'bicg': ref_bicg,
-    'cholesky': ref_cholesky,
-    'correlation': ref_correlation,
-    'covariance': ref_covariance,
-    'deriche': ref_deriche,
-    'doitgen': ref_doitgen,
-    'durbin': ref_durbin,
-    'fdtd_2d': ref_fdtd_2d,
-    'floyd_warshall': ref_floyd_warshall,
-    'gemm': ref_gemm,
-    'gemver': ref_gemver,
-    'gesummv': ref_gesummv,
-    'gramschmidt': ref_gramschmidt,
-    'heat_3d': ref_heat_3d,
-    'jacobi_1d': ref_jacobi_1d,
-    'jacobi_2d': ref_jacobi_2d,
-    'k2mm': ref_k2mm,
-    'k3mm': ref_k3mm,
-    'lu': ref_lu,
-    'ludcmp': ref_ludcmp,
-    'mvt': ref_mvt,
-    'nussinov': ref_nussinov,
-    'seidel_2d': ref_seidel_2d,
-    'symm': ref_symm,
-    'syr2k': ref_syr2k,
-    'syrk': ref_syrk,
-    'trisolv': ref_trisolv,
-    'trmm': ref_trmm,
+    "adi": ref_adi,
+    "atax": ref_atax,
+    "bicg": ref_bicg,
+    "cholesky": ref_cholesky,
+    "correlation": ref_correlation,
+    "covariance": ref_covariance,
+    "deriche": ref_deriche,
+    "doitgen": ref_doitgen,
+    "durbin": ref_durbin,
+    "fdtd_2d": ref_fdtd_2d,
+    "floyd_warshall": ref_floyd_warshall,
+    "gemm": ref_gemm,
+    "gemver": ref_gemver,
+    "gesummv": ref_gesummv,
+    "gramschmidt": ref_gramschmidt,
+    "heat_3d": ref_heat_3d,
+    "jacobi_1d": ref_jacobi_1d,
+    "jacobi_2d": ref_jacobi_2d,
+    "k2mm": ref_k2mm,
+    "k3mm": ref_k3mm,
+    "lu": ref_lu,
+    "ludcmp": ref_ludcmp,
+    "mvt": ref_mvt,
+    "nussinov": ref_nussinov,
+    "seidel_2d": ref_seidel_2d,
+    "symm": ref_symm,
+    "syr2k": ref_syr2k,
+    "syrk": ref_syrk,
+    "trisolv": ref_trisolv,
+    "trmm": ref_trmm,
 }

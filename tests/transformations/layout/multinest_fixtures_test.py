@@ -2,6 +2,7 @@
 """D1 fixture validation: the multi-nest programs are bit-exact against
 their numpy oracles, and -- the load-bearing property -- their nests SURVIVE canonicalize + maximal
 fusion, so the line graph the global-layout machinery is tested on is genuine."""
+
 import numpy
 import pytest
 
@@ -50,7 +51,8 @@ def test_fixture_nests_survive_prepare(program_name):
     entries = top_level_map_entries(sdfg)
     assert len(entries) == EXPECTED_NESTS[program_name], (
         f"{program_name}: expected {EXPECTED_NESTS[program_name]} top-level nests, found "
-        f"{len(entries)}: {[e.map.label for e in entries]}")
+        f"{len(entries)}: {[e.map.label for e in entries]}"
+    )
     run_and_check(sdfg, program_name, seed=1)
 
 

@@ -14,6 +14,7 @@ in ``tile_binop.py``) exists to keep out of the generated text. The exclusion is
 value-only test: a bool FMA yields the same truthy answer either way. Hence the emitted C++ is what
 is asserted here, and the table itself is pinned against a hand-written expectation.
 """
+
 import numpy as np
 import pytest
 
@@ -21,19 +22,34 @@ import dace
 from dace.libraries.tileops import TileFMA
 from dace.libraries.tileops.nodes.tile_fma import NARROW_OPERAND_CTYPES
 
-WIDTHS = (4, )
+WIDTHS = (4,)
 
 #: Every registered dtype narrower than ``float``, C++ spelling, ``bool_`` deliberately absent.
 #: Read off ``dace/dtypes.py``'s registry BY HAND -- never recomputed with the predicate under
 #: test, which would make this a tautology. The two fp8 entries are what the node's previous
 #: hand-written table dropped.
-EXPECTED_NARROW_CTYPES = frozenset({
-    "dace::float16", "dace::bfloat16", "dace::float8_e4m3fn", "dace::float8_e5m2", "int8_t", "uint8_t", "int16_t",
-    "uint16_t"
-})
+EXPECTED_NARROW_CTYPES = frozenset(
+    {
+        "dace::float16",
+        "dace::bfloat16",
+        "dace::float8_e4m3fn",
+        "dace::float8_e5m2",
+        "int8_t",
+        "uint8_t",
+        "int16_t",
+        "uint16_t",
+    }
+)
 
 WIDENED_DTYPES = [
-    dace.float16, dace.bfloat16, dace.float8_e4m3fn, dace.float8_e5m2, dace.int8, dace.uint8, dace.int16, dace.uint16
+    dace.float16,
+    dace.bfloat16,
+    dace.float8_e4m3fn,
+    dace.float8_e5m2,
+    dace.int8,
+    dace.uint8,
+    dace.int16,
+    dace.uint16,
 ]
 
 

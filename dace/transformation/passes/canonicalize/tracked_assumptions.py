@@ -16,13 +16,14 @@ property): an assumption is recorded and emitted within a single in-memory
 canonicalize run, so it never needs to survive a save/load. A relation is a
 sympy ``Boolean`` (e.g. ``StrictLessThan(K, N)``) over the SDFG's free symbols.
 """
+
 from typing import List
 
 from dace import symbolic
 from dace.sdfg import SDFG
 
 #: Attribute under which recorded assumptions hang off the SDFG's ``__dict__``.
-ATTR = '_tracked_assumptions'
+ATTR = "_tracked_assumptions"
 
 
 def record_assumption(sdfg: SDFG, relation: symbolic.SymbolicType) -> None:
@@ -50,4 +51,4 @@ def tracked_assumptions(sdfg: SDFG) -> List[symbolic.SymbolicType]:
     return list(vars(sdfg).get(ATTR, ()))
 
 
-__all__ = ['record_assumption', 'tracked_assumptions']
+__all__ = ["record_assumption", "tracked_assumptions"]

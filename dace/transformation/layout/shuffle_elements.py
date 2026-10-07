@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ShuffleElements -- the Shuffle layout primitive: renumbers one or more full array dimensions via registered bijections ``sigma`` (one per dimension), rewriting body accesses and inserting gather/scatter boundary states."""
+
 import copy
 import re
 from dataclasses import dataclass
@@ -24,8 +25,14 @@ class ShuffleElements(ppl.Pass):
         self._shuffle_map = shuffle_map
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.States | ppl.Modifies.AccessNodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
-                | ppl.Modifies.NestedSDFGs | ppl.Modifies.Memlets)
+        return (
+            ppl.Modifies.States
+            | ppl.Modifies.AccessNodes
+            | ppl.Modifies.Edges
+            | ppl.Modifies.Descriptors
+            | ppl.Modifies.NestedSDFGs
+            | ppl.Modifies.Memlets
+        )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -115,8 +122,9 @@ class ShuffleElements(ppl.Pass):
         )
 
     # body rewrite: A[e] -> A'[sigma^{-1}(e)] on each shuffled dim; recurses into nested SDFGs
-    def _compose_subset(self, subset: dace.subsets.Range, fns: Dict[int, Any], sizes: Dict[int,
-                                                                                           Any]) -> dace.subsets.Range:
+    def _compose_subset(
+        self, subset: dace.subsets.Range, fns: Dict[int, Any], sizes: Dict[int, Any]
+    ) -> dace.subsets.Range:
         ranges = list(subset.ranges)
         for dim, fn in fns.items():
             b, e, s = ranges[dim]
@@ -128,13 +136,16 @@ class ShuffleElements(ppl.Pass):
             else:
                 raise NotImplementedError(
                     f"ShuffleElements: a shuffled dimension must be accessed point-wise or full; got range "
-                    f"({b}:{e}:{s}) on dim {dim} of size {sizes[dim]}.")
+                    f"({b}:{e}:{s}) on dim {dim} of size {sizes[dim]}."
+                )
         return dace.subsets.Range(ranges)
 
     def _is_full_extent(self, b, e, s, size) -> bool:
-        return (dace.symbolic.simplify(b) == 0
-                and dace.symbolic.simplify(e - (dace.symbolic.pystr_to_symbolic(size) - 1)) == 0
-                and dace.symbolic.simplify(s - 1) == 0)
+        return (
+            dace.symbolic.simplify(b) == 0
+            and dace.symbolic.simplify(e - (dace.symbolic.pystr_to_symbolic(size) - 1)) == 0
+            and dace.symbolic.simplify(s - 1) == 0
+        )
 
     def _rewrite_body(self, sdfg, arr, shuffled, fns, sizes, skip) -> None:
         # collect nested boundaries before the rename below, or the recursion misses them
@@ -151,18 +162,21 @@ class ShuffleElements(ppl.Pass):
                 if edge.data.data != arr:
                     # The other side of a copy keeps its own subset; one that indexes ``arr`` would need sigma^{-1}
                     if edge.data.other_subset is not None and any(
-                            isinstance(n, nd.AccessNode) and n.data == shuffled for n in (edge.src, edge.dst)):
+                        isinstance(n, nd.AccessNode) and n.data == shuffled for n in (edge.src, edge.dst)
+                    ):
                         raise NotImplementedError(f"ShuffleElements: a copy into '{arr}' named after its source.")
                     continue
                 self._rename_connectors(edge, arr, shuffled)
                 new_subset = self._compose_subset(edge.data.subset, fns, sizes)
                 # preserve wcr: reduction into the shuffled target keeps accumulating
-                edge.data = dace.memlet.Memlet(data=shuffled,
-                                               subset=new_subset,
-                                               other_subset=edge.data.other_subset,
-                                               wcr=edge.data.wcr,
-                                               wcr_nonatomic=edge.data.wcr_nonatomic,
-                                               dynamic=edge.data.dynamic)
+                edge.data = dace.memlet.Memlet(
+                    data=shuffled,
+                    subset=new_subset,
+                    other_subset=edge.data.other_subset,
+                    wcr=edge.data.wcr,
+                    wcr_nonatomic=edge.data.wcr_nonatomic,
+                    dynamic=edge.data.dynamic,
+                )
         # nested SDFGs keep the inner connector name; only body memlets compose sigma^{-1}
         for nsdfg, inner in nested:
             self._rewrite_inner(nsdfg, inner, fns, sizes)
@@ -173,12 +187,14 @@ class ShuffleElements(ppl.Pass):
                 if edge.data is None or edge.data.data != arr:
                     continue
                 new_subset = self._compose_subset(edge.data.subset, fns, sizes)
-                edge.data = dace.memlet.Memlet(data=arr,
-                                               subset=new_subset,
-                                               other_subset=edge.data.other_subset,
-                                               wcr=edge.data.wcr,
-                                               wcr_nonatomic=edge.data.wcr_nonatomic,
-                                               dynamic=edge.data.dynamic)
+                edge.data = dace.memlet.Memlet(
+                    data=arr,
+                    subset=new_subset,
+                    other_subset=edge.data.other_subset,
+                    wcr=edge.data.wcr,
+                    wcr_nonatomic=edge.data.wcr_nonatomic,
+                    dynamic=edge.data.dynamic,
+                )
         for nsdfg, inner in self._nested_targets(sdfg, arr):
             self._rewrite_inner(nsdfg, inner, fns, sizes)
 
@@ -199,8 +215,9 @@ class ShuffleElements(ppl.Pass):
             for node in state.nodes():
                 if not isinstance(node, nd.NestedSDFG):
                     continue
-                boundary = ([(ie, ie.dst_conn) for ie in state.in_edges(node)] + [(oe, oe.src_conn)
-                                                                                  for oe in state.out_edges(node)])
+                boundary = [(ie, ie.dst_conn) for ie in state.in_edges(node)] + [
+                    (oe, oe.src_conn) for oe in state.out_edges(node)
+                ]
                 for edge, conn in boundary:
                     if edge.data is None or edge.data.data != arr or conn is None:
                         continue
@@ -219,9 +236,11 @@ class ShuffleElements(ppl.Pass):
                 if token.search(str(v)):
                     raise NotImplementedError(
                         f"ShuffleElements: '{arr}' is referenced in an interstate edge assignment ('{k} = {v}'); "
-                        f"shuffling interstate-referenced arrays is not supported.")
+                        f"shuffling interstate-referenced arrays is not supported."
+                    )
             condition = edge.data.condition
             if condition is not None and token.search(condition.as_string):
                 raise NotImplementedError(
                     f"ShuffleElements: '{arr}' is referenced in an interstate edge condition "
-                    f"('{condition.as_string}'); shuffling interstate-referenced arrays is not supported.")
+                    f"('{condition.as_string}'); shuffling interstate-referenced arrays is not supported."
+                )

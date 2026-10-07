@@ -63,6 +63,7 @@ Scope
 
 Refusals leave the loop unmodified so downstream stages still see it.
 """
+
 import ast
 import copy
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
@@ -73,7 +74,7 @@ from dace import SDFG, data, dtypes, properties
 from dace import memlet as mm
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import (ControlFlowBlock, LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock)
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock
 from dace.subsets import Subset
 from dace.frontend import operations
 from dace.transformation import pass_pipeline as ppl
@@ -83,9 +84,9 @@ from dace.sdfg.narrowing import as_range
 
 #: AST binop class -> associative reduction operator string.
 BINOP_TO_OP: Dict[type, str] = {
-    ast.Add: '+',
-    ast.Sub: '-',
-    ast.Mult: '*',
+    ast.Add: "+",
+    ast.Sub: "-",
+    ast.Mult: "*",
 }
 
 #: Reduction operator string -> WCR lambda. Used ONLY to reuse
@@ -95,9 +96,9 @@ BINOP_TO_OP: Dict[type, str] = {
 #: ``acc - x1 - x2`` masks against the SAME additive identity ``0``
 #: (``acc - 0 == acc``).
 OP_TO_WCR: Dict[str, str] = {
-    '+': 'lambda a, b: a + b',
-    '-': 'lambda a, b: a + b',
-    '*': 'lambda a, b: a * b',
+    "+": "lambda a, b: a + b",
+    "-": "lambda a, b: a + b",
+    "*": "lambda a, b: a * b",
 }
 
 
@@ -138,7 +139,7 @@ class LoopToConditionalReduce(ppl.Pass):
     stage lowers it to a tree-reduction (OMP ``reduction`` clause / GPU block
     reduce) instead of a guarded atomic."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -207,12 +208,10 @@ class LoopToConditionalReduce(ppl.Pass):
         # Locate the unique accumulator: an AN that's a pure source AND another
         # AN with the same data name that's a pure sink.
         sources = {
-            n.data: n
-            for n in true_state.data_nodes() if true_state.in_degree(n) == 0 and true_state.out_degree(n) > 0
+            n.data: n for n in true_state.data_nodes() if true_state.in_degree(n) == 0 and true_state.out_degree(n) > 0
         }
         sinks = {
-            n.data: n
-            for n in true_state.data_nodes() if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0
+            n.data: n for n in true_state.data_nodes() if true_state.in_degree(n) > 0 and true_state.out_degree(n) == 0
         }
         acc_candidates = []
         for name in sources:
@@ -221,7 +220,7 @@ class LoopToConditionalReduce(ppl.Pass):
             desc = sdfg.arrays.get(name)
             if desc is None:
                 continue
-            if isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1, )):
+            if isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1,)):
                 acc_candidates.append(name)
         if len(acc_candidates) != 1:
             return None
@@ -236,13 +235,18 @@ class LoopToConditionalReduce(ppl.Pass):
         seen_elsewhere = [dn.data for st in sdfg.states() if st is not true_state for dn in st.data_nodes()]
         seen_elsewhere += [s for e in sdfg.all_interstate_edges(recursive=True) for s in e.data.free_symbols]
         seen_elsewhere += [
-            s for r in sdfg.all_control_flow_regions(recursive=True) for c in r.get_meta_codeblocks()
+            s
+            for r in sdfg.all_control_flow_regions(recursive=True)
+            for c in r.get_meta_codeblocks()
             for s in c.get_free_symbols()
         ]
         seen_elsewhere += [dn.data for dn in true_state.data_nodes() if true_state.in_degree(dn) == 0]
         for n in true_state.data_nodes():
-            if n is not sink_ans[0] and true_state.in_degree(n) > 0 and (not sdfg.arrays[n.data].transient
-                                                                         or n.data in seen_elsewhere):
+            if (
+                n is not sink_ans[0]
+                and true_state.in_degree(n) > 0
+                and (not sdfg.arrays[n.data].transient or n.data in seen_elsewhere)
+            ):
                 return None
 
         # Walk back from the sink to find the update tasklet.
@@ -254,7 +258,7 @@ class LoopToConditionalReduce(ppl.Pass):
         if upd_tasklet.code.language != dtypes.Language.Python:
             return None
         try:
-            tree = ast.parse((upd_tasklet.code.as_string or '').strip())
+            tree = ast.parse((upd_tasklet.code.as_string or "").strip())
         except SyntaxError:
             return None
         if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
@@ -297,7 +301,7 @@ class LoopToConditionalReduce(ppl.Pass):
 
         # ``-``: the accumulator must be on the LEFT for associativity
         # (``acc - x1 - x2`` is order-independent; ``x1 - acc - x2`` is not).
-        if op_str == '-' and acc_in_conn != lhs_name:
+        if op_str == "-" and acc_in_conn != lhs_name:
             return None
 
         return _Match(
@@ -345,11 +349,14 @@ class LoopToConditionalReduce(ppl.Pass):
                 return None
             # Is this an identity passthrough? Walk further back.
             try:
-                tree = ast.parse((upstream.code.as_string or '').strip())
+                tree = ast.parse((upstream.code.as_string or "").strip())
             except SyntaxError:
                 return upstream  # treat as the update; downstream will refuse
-            if (len(tree.body) == 1 and isinstance(tree.body[0], ast.Assign)
-                    and isinstance(tree.body[0].value, ast.Name)):
+            if (
+                len(tree.body) == 1
+                and isinstance(tree.body[0], ast.Assign)
+                and isinstance(tree.body[0].value, ast.Name)
+            ):
                 # Identity tasklet -> step over.
                 t_ins = list(state.in_edges(upstream))
                 if len(t_ins) != 1:
@@ -413,22 +420,24 @@ class LoopToConditionalReduce(ppl.Pass):
         # resolution rewrites the addend gather to that connector name, and every
         # OTHER array read the guard names becomes a wired ``__guardN`` input.
         guard_inputs: Dict[str, Tuple[str, str]] = {}
-        cond_expr_resolved = self._resolve_cond(m, sdfg, addend_conn_name='__addend', guard_inputs=guard_inputs)
+        cond_expr_resolved = self._resolve_cond(m, sdfg, addend_conn_name="__addend", guard_inputs=guard_inputs)
         if cond_expr_resolved is None:
             return False  # a guard read is not expressible as a mask input -- leave the loop untouched
 
         # 1. The mask tasklet: ``__addend`` plus one connector per wired guard read.
         acc_desc = sdfg.arrays[m.acc_name]
-        masked_val, _ = sdfg.add_scalar(f'{m.acc_name}_masked_val', acc_desc.dtype, transient=True, find_new_name=True)
+        masked_val, _ = sdfg.add_scalar(f"{m.acc_name}_masked_val", acc_desc.dtype, transient=True, find_new_name=True)
         mask_body = self._build_mask_body(cond_expr_resolved, m.identity_value)
         # dict.fromkeys, not a set: ``guard_inputs`` is already in AST-walk order and add_tasklet turns
         # the argument into the connector dict -- a set would randomize the emitted ``const T __guardN``
         # declaration order per process.
-        mask_tasklet = true_state.add_tasklet(name=f'{m.acc_name}_mask',
-                                              inputs=dict.fromkeys(['__addend', *guard_inputs]),
-                                              outputs=dict.fromkeys(['__out']),
-                                              code=mask_body,
-                                              language=dtypes.Language.Python)
+        mask_tasklet = true_state.add_tasklet(
+            name=f"{m.acc_name}_mask",
+            inputs=dict.fromkeys(["__addend", *guard_inputs]),
+            outputs=dict.fromkeys(["__out"]),
+            code=mask_body,
+            language=dtypes.Language.Python,
+        )
 
         # 2. Splice the mask between the addend's producer and the update tasklet:
         #    ``producer -> update.addend`` becomes ``producer -> mask -> masked_val
@@ -441,27 +450,30 @@ class LoopToConditionalReduce(ppl.Pass):
         #    ``LoopToReduce``'s single-tasklet ``_extract`` matcher, which keys off
         #    the top-level ``OP`` and would silently drop the mask.
         addend_edge = next(e for e in true_state.in_edges(m.upd_tasklet) if e.dst_conn == m.addend_in_conn)
-        acc_subset = '0'  # scalar / length-1 carrier; matcher enforces this
+        acc_subset = "0"  # scalar / length-1 carrier; matcher enforces this
         masked_an = true_state.add_access(masked_val)
-        true_state.add_edge(addend_edge.src, addend_edge.src_conn, mask_tasklet, '__addend',
-                            copy.deepcopy(addend_edge.data))
+        true_state.add_edge(
+            addend_edge.src, addend_edge.src_conn, mask_tasklet, "__addend", copy.deepcopy(addend_edge.data)
+        )
         true_state.remove_edge(addend_edge)
-        true_state.add_edge(mask_tasklet, '__out', masked_an, None, mm.Memlet(data=masked_val, subset=acc_subset))
-        true_state.add_edge(masked_an, None, m.upd_tasklet, m.addend_in_conn,
-                            mm.Memlet(data=masked_val, subset=acc_subset))
+        true_state.add_edge(mask_tasklet, "__out", masked_an, None, mm.Memlet(data=masked_val, subset=acc_subset))
+        true_state.add_edge(
+            masked_an, None, m.upd_tasklet, m.addend_in_conn, mm.Memlet(data=masked_val, subset=acc_subset)
+        )
 
         # 3. Wire the guard's own array reads as real mask inputs, so the folded
         #    cond evaluates against genuine data instead of an unbound name (the
         #    ``if a[i] > 0: s += a[i]*a[i]`` case, where the addend traces to the
         #    product transient and the guard's ``a[i]`` cannot map onto it).
         for conn, (arr_name, idx_str) in guard_inputs.items():
-            true_state.add_edge(true_state.add_read(arr_name), None, mask_tasklet, conn,
-                                mm.Memlet(data=arr_name, subset=idx_str))
+            true_state.add_edge(
+                true_state.add_read(arr_name), None, mask_tasklet, conn, mm.Memlet(data=arr_name, subset=idx_str)
+            )
 
         # 4. Hoist the true-branch state into the loop in the ConditionalBlock's
         #    place, stripping dead iedge assignments (the resolved cond no longer
         #    references the gather symbols).
-        was_start = (m.cond_block is loop.start_block)
+        was_start = m.cond_block is loop.start_block
         m.true_branch.remove_node(true_state)
         loop.add_node(true_state, is_start_block=was_start, ensure_unique_name=True)
         for ie in list(loop.in_edges(m.cond_block)):
@@ -484,20 +496,22 @@ class LoopToConditionalReduce(ppl.Pass):
         """Return Python source for the elementwise mask tasklet
         ``__out = (__addend if (cond) else IDENTITY)``, built as an AST so the
         resolved cond sub-expression is spliced structurally (no string surgery)."""
-        cond_ast = ast.parse(cond_expr, mode='eval').body
-        masked = ast.IfExp(test=cond_ast,
-                           body=ast.Name(id='__addend', ctx=ast.Load()),
-                           orelse=ast.Constant(value=identity_value))
-        assign = ast.Assign(targets=[ast.Name(id='__out', ctx=ast.Store())], value=masked)
+        cond_ast = ast.parse(cond_expr, mode="eval").body
+        masked = ast.IfExp(
+            test=cond_ast, body=ast.Name(id="__addend", ctx=ast.Load()), orelse=ast.Constant(value=identity_value)
+        )
+        assign = ast.Assign(targets=[ast.Name(id="__out", ctx=ast.Store())], value=masked)
         module = ast.Module(body=[assign], type_ignores=[])
         ast.fix_missing_locations(module)
         return ast.unparse(module)
 
-    def _resolve_cond(self,
-                      m: _Match,
-                      sdfg: SDFG,
-                      addend_conn_name: str = '__addend',
-                      guard_inputs: Optional[Dict[str, Tuple[str, str]]] = None) -> Optional[str]:
+    def _resolve_cond(
+        self,
+        m: _Match,
+        sdfg: SDFG,
+        addend_conn_name: str = "__addend",
+        guard_inputs: Optional[Dict[str, Tuple[str, str]]] = None,
+    ) -> Optional[str]:
         """Rewrite the cond expression over tasklet input connectors only.
 
         Substitutes iedge-bound symbols by their RHS and subscripts matching an input edge by its
@@ -514,7 +528,7 @@ class LoopToConditionalReduce(ppl.Pass):
         for e in m.loop.all_interstate_edges():
             for lhs, rhs in (e.data.assignments or {}).items():
                 try:
-                    binding_asts[lhs] = ast.parse(str(rhs), mode='eval').body
+                    binding_asts[lhs] = ast.parse(str(rhs), mode="eval").body
                 except SyntaxError:
                     continue
 
@@ -541,7 +555,6 @@ class LoopToConditionalReduce(ppl.Pass):
         wireable_guard_read = self._wireable_guard_read
 
         class _Subst(ast.NodeTransformer):
-
             def visit_Name(self, node: ast.Name) -> ast.AST:
                 # Inline iedge-bound gather symbol (``a_index`` -> ``a[i]`` AST).
                 # Recurse into the substituted AST so any Subscript inside it
@@ -564,20 +577,20 @@ class LoopToConditionalReduce(ppl.Pass):
                 except Exception:
                     unwireable.append(node)
                     return node
-                key = (arr_name, (idx_str, ))
+                key = (arr_name, (idx_str,))
                 conn = connector_for_access.get(key)
                 if conn is None:
                     # Not the addend's element: wire this read as its own mask input.
                     if not wireable_guard_read(m, sdfg, arr_name, idx):
                         unwireable.append(node)
                         return node
-                    conn = f'__guard{len(guard_inputs)}'
+                    conn = f"__guard{len(guard_inputs)}"
                     guard_inputs[conn] = (arr_name, idx_str)
                     connector_for_access[key] = conn  # reuse one connector per distinct element
                 return ast.copy_location(ast.Name(id=conn, ctx=ast.Load()), node)
 
         try:
-            cond_ast = ast.parse(cond_text, mode='eval').body
+            cond_ast = ast.parse(cond_text, mode="eval").body
         except SyntaxError:
             return cond_text
         new_ast = _Subst().visit(cond_ast)
@@ -633,7 +646,8 @@ class LoopToConditionalReduce(ppl.Pass):
         by interstate-edge assignments, which the former does not walk. Constants are
         usable in a subset too but are not symbols, so they are added explicitly."""
         return dict.fromkeys(
-            [*m.true_state.symbols_defined_at(m.upd_tasklet), *m.true_state.defined_symbols(), *sdfg.constants])
+            [*m.true_state.symbols_defined_at(m.upd_tasklet), *m.true_state.defined_symbols(), *sdfg.constants]
+        )
 
     def _collapse_empty_wrappers(self, loop: LoopRegion) -> None:
         """Eliminate empty SDFGState blocks in the loop body whose only role
@@ -670,4 +684,4 @@ class LoopToConditionalReduce(ppl.Pass):
                 break
 
 
-__all__ = ['LoopToConditionalReduce']
+__all__ = ["LoopToConditionalReduce"]

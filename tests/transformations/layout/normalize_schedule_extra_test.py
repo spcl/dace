@@ -6,6 +6,7 @@ of the inner block width from POINT ``Mod(param, b)`` accesses, refusal when a p
 conflicting widths, asymmetric per-dimension tile sizes, the ``divides_evenly`` flag's effect on the
 inner tile range, the ``_already_tiled`` idempotence guard in isolation, and multiple top-level maps
 tiled in a single pass. Where the SDFG compiles the result is checked bit-exact against numpy."""
+
 import numpy
 
 import dace

@@ -2,12 +2,13 @@
 """``np.argmax``/``np.argmin`` are the only frontend constructs that build a ``dtypes.struct`` dtype
 (the ``_val_and_idx`` pair the reduction carries), so they are where a struct that cannot stringify
 takes down a parse."""
+
 import numpy as np
 
 import dace
 from dace import dtypes
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 @dace.program
@@ -26,11 +27,11 @@ def test_argminmax_builds_no_struct():
     """
     sdfg = argmax_kernel.to_sdfg(simplify=False)
     structs = [name for name, desc in sdfg.arrays.items() if isinstance(desc.dtype, dtypes.struct)]
-    assert not structs, f'np.argmax built struct-typed containers: {structs}'
+    assert not structs, f"np.argmax built struct-typed containers: {structs}"
 
 
 def test_struct_pointer_vector_stringify():
-    assert dtypes.struct('_val_and_idx', idx=dace.int32, val=dace.float64).to_string() == '_val_and_idx'
+    assert dtypes.struct("_val_and_idx", idx=dace.int32, val=dace.float64).to_string() == "_val_and_idx"
     # Both wrap another typeclass without going through ``typeclass.__init__``.
     assert dtypes.pointer(dace.float32).to_string()
     assert dtypes.vector(dace.float32, 4).to_string()
@@ -44,7 +45,7 @@ def test_argmax_matches_numpy():
     assert b[0] == np.argmax(a)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_argminmax_builds_no_struct()
     test_struct_pointer_vector_stringify()
     test_argmax_matches_numpy()

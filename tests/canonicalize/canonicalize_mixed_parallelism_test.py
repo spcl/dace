@@ -25,6 +25,7 @@ Value preservation is checked against the original (un-canonicalized)
 SDFG -- the non-transformed reference -- so the ``B[i, -1]`` wrap on the
 first ``j`` iteration is matched exactly on both sides.
 """
+
 import numpy as np
 import pytest
 
@@ -33,7 +34,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -78,8 +79,8 @@ def test_mixed_parallelism_value_preserving():
     gotA, gotB = A0.copy(), B0.copy()
     sdfg(A=gotA, B=gotB, N=n)
 
-    assert np.allclose(gotA, refA), 'A (fully-parallel) value mismatch after canonicalize'
-    assert np.allclose(gotB, refB), 'B (j-carried) value mismatch after canonicalize'
+    assert np.allclose(gotA, refA), "A (fully-parallel) value mismatch after canonicalize"
+    assert np.allclose(gotB, refB), "B (j-carried) value mismatch after canonicalize"
 
 
 def test_mixed_parallelism_b_keeps_sequential_j():
@@ -90,9 +91,9 @@ def test_mixed_parallelism_b_keeps_sequential_j():
     sdfg = mixed_parallelism.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) == 1, f'exactly the j-carried B statement stays a LoopRegion, got {_nloops(sdfg)}'
+    assert _nloops(sdfg) == 1, f"exactly the j-carried B statement stays a LoopRegion, got {_nloops(sdfg)}"
     assert _nmaps(sdfg) == 2, f"expected A's 2D map and B's i-map, got {_nmaps(sdfg)}"
-    assert _map_param_counts(sdfg) == [1, 2], f'maps={_map_param_counts(sdfg)}'
+    assert _map_param_counts(sdfg) == [1, 2], f"maps={_map_param_counts(sdfg)}"
 
 
 def test_mixed_parallelism_default_pipeline_distributes():
@@ -121,16 +122,16 @@ def test_mixed_parallelism_default_pipeline_distributes():
     sdfg = mixed_parallelism.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _map_param_counts(sdfg) == [
-        1, 2
-    ], ('the default pipeline no longer distributes this nest into a collapsed 2D map for A and a '
-        f'1-D i-map for B; maps={_map_param_counts(sdfg)}')
+    assert _map_param_counts(sdfg) == [1, 2], (
+        "the default pipeline no longer distributes this nest into a collapsed 2D map for A and a "
+        f"1-D i-map for B; maps={_map_param_counts(sdfg)}"
+    )
 
     A_got, B_got = A0.copy(), B0.copy()
     sdfg.compile()(A=A_got, B=B_got, N=n)
-    assert np.allclose(A_got, A_ref), 'A diverged from the un-canonicalized reference'
-    assert np.allclose(B_got, B_ref), 'B diverged from the un-canonicalized reference'
+    assert np.allclose(A_got, A_ref), "A diverged from the un-canonicalized reference"
+    assert np.allclose(B_got, B_ref), "B diverged from the un-canonicalized reference"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

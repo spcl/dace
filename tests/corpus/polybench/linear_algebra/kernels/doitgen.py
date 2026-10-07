@@ -1,35 +1,21 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-NQ = dace.symbol('NQ')
-NR = dace.symbol('NR')
-NP = dace.symbol('NP')
+NQ = dace.symbol("NQ")
+NR = dace.symbol("NR")
+NP = dace.symbol("NP")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    NQ: 8,
-    NR: 10,
-    NP: 12
-}, {
-    NQ: 20,
-    NR: 25,
-    NP: 30
-}, {
-    NQ: 40,
-    NR: 50,
-    NP: 60
-}, {
-    NQ: 140,
-    NR: 150,
-    NP: 160
-}, {
-    NQ: 220,
-    NR: 250,
-    NP: 270
-}]
+sizes = [
+    {NQ: 8, NR: 10, NP: 12},
+    {NQ: 20, NR: 25, NP: 30},
+    {NQ: 40, NR: 50, NP: 60},
+    {NQ: 140, NR: 150, NP: 160},
+    {NQ: 220, NR: 250, NP: 270},
+]
 
 #: ported from the npbench bench_info paper row
 paper_sizes = {NQ: 250, NR: 220, NP: 270}
@@ -57,6 +43,7 @@ def doitgen(A: datatype[NR, NQ, NP], C4: datatype[NP, NP]):
         A[r, :, :] = A[r] @ C4
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(0, 'A')], init_array, doitgen)
+
+    polybench.main(sizes, args, [(0, "A")], init_array, doitgen)

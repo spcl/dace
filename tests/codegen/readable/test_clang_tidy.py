@@ -15,6 +15,7 @@ in npbench ``azimint_hist``) looks locally unmodified, so clang-tidy would add a
 These tests guard that exclusion: a deterministic assertion on the configured
 check list, and an end-to-end GPU compile of exactly that scatter pattern.
 """
+
 import numpy as np
 import pytest
 
@@ -34,13 +35,15 @@ def test_clang_tidy_excludes_unsafe_checks():
       an unresolved ``gpucub::BlockReduce<...>``, and ``modernize-loop-convert`` turned a reduction
       index loop into a range-for that used the value where an index was expected.
     """
-    assert '-readability-non-const-parameter' in CLANG_TIDY_CHECKS, (
-        'readability-non-const-parameter must be excluded (miscompiles forwarded scatter accumulators)')
-    assert 'modernize-' not in CLANG_TIDY_CHECKS, (
-        'the modernize-* family must be excluded (it rewrites the CUDA block-reduction on a '
-        'stripped-header half-parse and miscompiles it)')
+    assert "-readability-non-const-parameter" in CLANG_TIDY_CHECKS, (
+        "readability-non-const-parameter must be excluded (miscompiles forwarded scatter accumulators)"
+    )
+    assert "modernize-" not in CLANG_TIDY_CHECKS, (
+        "the modernize-* family must be excluded (it rewrites the CUDA block-reduction on a "
+        "stripped-header half-parse and miscompiles it)"
+    )
     # The pass is still meaningfully enabled.
-    assert 'readability-*' in CLANG_TIDY_CHECKS
+    assert "readability-*" in CLANG_TIDY_CHECKS
 
 
 # N = number of samples, B = number of histogram bins
@@ -78,7 +81,7 @@ def test_gpu_scatter_accumulator_compiles(require_experimental):
         with use_implementation(implementation):
             sdfg = scatter_histogram.to_sdfg(simplify=True)
             sdfg.apply_gpu_transformations()
-            sdfg.name = f'scatter_hist_{implementation}'
+            sdfg.name = f"scatter_hist_{implementation}"
             hist = np.zeros(B, dtype=np.int64)
             sdfg(data=data.copy(), bin_edges=bin_edges.copy(), hist=hist)
             return hist
@@ -87,9 +90,10 @@ def test_gpu_scatter_accumulator_compiles(require_experimental):
     assert np.array_equal(experimental, ref), (experimental, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_clang_tidy_excludes_unsafe_checks()
     from tests.codegen.readable.conftest import experimental_available
+
     if experimental_available():
         test_gpu_scatter_accumulator_compiles(None)
-    print('ok')
+    print("ok")

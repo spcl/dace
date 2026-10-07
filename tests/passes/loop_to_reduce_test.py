@@ -7,6 +7,7 @@ Every shape-and-value test runs under both emit modes the pass exposes:
 writeback`` so a downstream ``LoopToMap`` can produce ``#pragma omp
 parallel for reduction(op:scalar)``).
 """
+
 import copy
 
 import numpy as np
@@ -18,15 +19,19 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
-from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce, RetargetWCRAccumulator,
-                                                       augassign_to_wcr_in_state)
+from dace.transformation.passes.loop_to_reduce import (
+    AccumulatorCopyChainToWCR,
+    LoopToReduce,
+    RetargetWCRAccumulator,
+    augassign_to_wcr_in_state,
+)
 
 N = dace.symbol("N")
 M = dace.symbol("M")
 
 #: Emit strategies LoopToReduce exposes via its ``prefer`` knob. Each
 #: parameterised test runs under both.
-_PREFER_MODES = ('reduce-libnode', 'wcr-scalar')
+_PREFER_MODES = ("reduce-libnode", "wcr-scalar")
 
 
 @pytest.fixture(params=_PREFER_MODES)
@@ -46,7 +51,7 @@ def prefer(request):
 #: symbol-accumulator bridge by ``test_any_pattern_symbol_bridge_via_tmp_scalar``.
 #: ``reduce-libnode`` is the stronger single mode for refusals: only it can emit a ``Reduce``,
 #: and only under it does a wrong lift change ``_count_loops``.
-_MATCHER_ONLY_MODE = 'reduce-libnode'
+_MATCHER_ONLY_MODE = "reduce-libnode"
 
 
 def _count_loops(sdfg: dace.SDFG) -> int:
@@ -61,6 +66,7 @@ def _count_wcr_scalar_targets(sdfg: dace.SDFG, expected_wcr: str) -> int:
     """
     from dace import data
     from dace.sdfg import nodes as _nodes
+
     n = 0
     for state in sdfg.states():
         for e in state.edges():
@@ -81,7 +87,7 @@ def _expected_loop_count_after_lift(prefer: str, libnode_count: int, wcr_scalar_
     replaces it with a fresh LoopRegion of equal extent. Tests pass the value for each
     mode; helper returns whichever applies.
     """
-    return libnode_count if prefer == 'reduce-libnode' else wcr_scalar_count
+    return libnode_count if prefer == "reduce-libnode" else wcr_scalar_count
 
 
 def _assert_lifted_with_wcr(sdfg: dace.SDFG, prefer: str, expected_wcr: str):
@@ -91,23 +97,23 @@ def _assert_lifted_with_wcr(sdfg: dace.SDFG, prefer: str, expected_wcr: str):
     :param prefer: Emit mode the pass ran under.
     :param expected_wcr: The WCR lambda the lifted reduction carries.
     """
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
         assert len(reduces) == 1, reduces
-        (red, ) = reduces
+        (red,) = reduces
         assert red.wcr == expected_wcr, red.wcr
         assert red.identity is None
     else:
         # wcr-scalar emit: exactly one WCR-on-transient-Scalar memlet.
-        assert _count_wcr_scalar_targets(
-            sdfg,
-            expected_wcr) == 1, (f'wcr-scalar emit must land exactly one WCR-on-Scalar memlet with {expected_wcr!r}; '
-                                 f'sdfg has {_count_wcr_scalar_targets(sdfg, expected_wcr)}')
+        assert _count_wcr_scalar_targets(sdfg, expected_wcr) == 1, (
+            f"wcr-scalar emit must land exactly one WCR-on-Scalar memlet with {expected_wcr!r}; "
+            f"sdfg has {_count_wcr_scalar_targets(sdfg, expected_wcr)}"
+        )
 
 
-def _assert_single_sum_reduce_identity_none(sdfg: dace.SDFG, prefer: str = 'reduce-libnode'):
+def _assert_single_sum_reduce_identity_none(sdfg: dace.SDFG, prefer: str = "reduce-libnode"):
     """Backward-compat wrapper: a single ``sum`` reduction was lifted."""
-    _assert_lifted_with_wcr(sdfg, prefer, 'lambda a, b: a + b')
+    _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a + b")
 
 
 def test_sdfg_api_sum_reduction_is_lifted(prefer):
@@ -171,7 +177,7 @@ def test_frontend_augassign_length1_array_is_lifted():
     b = rng.standard_normal(n)
     a = np.zeros(1)
     sdfg(A=a, B=b.copy(), N=n)
-    assert np.isclose(a[0], b.sum()), f'lifted reduction diverged from the oracle: {a[0]} vs {b.sum()}'
+    assert np.isclose(a[0], b.sum()), f"lifted reduction diverged from the oracle: {a[0]} vs {b.sum()}"
 
 
 @dace.program
@@ -200,10 +206,10 @@ def test_frontend_augassign_array_slice_is_lifted(prefer):
     assert lifted and lifted >= 1
     _assert_single_sum_reduce_identity_none(sdfg, prefer)
 
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
         (red, state) = reduces[0]
-        (out_edge, ) = state.out_edges(red)
+        (out_edge,) = state.out_edges(red)
         assert out_edge.data.data == "C"
         assert str(out_edge.data.subset) in {"3", "3:4", "3:3"}
 
@@ -212,8 +218,8 @@ def test_frontend_augassign_array_slice_is_lifted(prefer):
     b = rng.standard_normal(n)
     c = np.zeros(m)
     sdfg(C=c, B=b.copy(), N=n, M=m)
-    assert np.isclose(c[3], b.sum()), f'lifted reduction diverged from the oracle: {c[3]} vs {b.sum()}'
-    assert np.allclose(np.delete(c, 3), 0.0), f'the lift wrote outside the accumulator slot: {c}'
+    assert np.isclose(c[3], b.sum()), f"lifted reduction diverged from the oracle: {c[3]} vs {b.sum()}"
+    assert np.allclose(np.delete(c, 3), 0.0), f"the lift wrote outside the accumulator slot: {c}"
 
 
 @dace.program
@@ -230,6 +236,7 @@ def test_per_row_inner_reduction_multidim_is_lifted(prefer):
     Regression: ``_expand_over_loop`` used to reject any subset with a dim independent
     of the reduction axis (computed ``jl - jm`` for ``jl`` and bailed)."""
     import numpy as np
+
     sdfg = _frontend_per_row_inner_reduction.to_sdfg(simplify=True)
     sdfg.validate()
     assert _count_loops(sdfg) >= 2  # outer jl + inner jm
@@ -243,10 +250,10 @@ def test_per_row_inner_reduction_multidim_is_lifted(prefer):
     # per-row outer jl loop survives around the lifted reduction.
     assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 1, 2)
 
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
         (red, state) = reduces[0]
-        (out_edge, ) = state.out_edges(red)
+        (out_edge,) = state.out_edges(red)
         assert out_edge.data.data == "acc"
 
     # Value-preserving: acc[jl] = sum_jm B[jl, jm].
@@ -315,12 +322,12 @@ def test_interstate_edge_lifts_with_non_default_dtype_loop_variable():
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
 
-    assert lifted == 1, 'a non-default-typed loop variable must not block the lift'
+    assert lifted == 1, "a non-default-typed loop variable must not block the lift"
     assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a + b")
     # ... and it folds the whole iteration space, not one element at a freed symbol.
-    ((red, state), ) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert str(state.in_edges(red)[0].data.subset) == '0:N'
+    ((red, state),) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert str(state.in_edges(red)[0].data.subset) == "0:N"
 
 
 def _build_conditional_minmax_sdfg(cond_expr: str):
@@ -351,7 +358,7 @@ def _build_conditional_minmax_sdfg(cond_expr: str):
 def _assert_single_reduce_with_wcr(sdfg: dace.SDFG, expected_wcr: str):
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert len(reduces) == 1, reduces
-    (red, ) = reduces
+    (red,) = reduces
     assert red.wcr == expected_wcr, red.wcr
     assert red.identity is None
 
@@ -363,7 +370,7 @@ def test_conditional_interstate_gt_lifts_to_max():
     ``wcr-scalar``: ``_cmp_to_wcr`` decides before the ``prefer`` dispatch and neither lift
     branches on the WCR op, so the two modes need not be crossed with all four guard forms.
     """
-    prefer = 'reduce-libnode'
+    prefer = "reduce-libnode"
     for cond in ("B[i] > accum", "accum < B[i]", "B[i] >= accum", "accum <= B[i]"):
         sdfg = _build_conditional_minmax_sdfg(cond)
         sdfg.validate()
@@ -381,7 +388,7 @@ def test_conditional_interstate_lt_lifts_to_min():
     Runs ``wcr-scalar`` so this pair covers both emit modes; ``min`` under ``reduce-libnode``
     is pinned by ``test_branched_min_is_lifted``.
     """
-    prefer = 'wcr-scalar'
+    prefer = "wcr-scalar"
     for cond in ("B[i] < accum", "accum > B[i]", "B[i] <= accum", "accum >= B[i]"):
         sdfg = _build_conditional_minmax_sdfg(cond)
         sdfg.validate()
@@ -597,11 +604,11 @@ def test_any_pattern_lifts_with_non_default_dtype_loop_variable():
     lifted = LoopToReduce(permissive=True, prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
 
-    assert lifted == 1, 'a non-default-typed loop variable must not block the any/all lift'
+    assert lifted == 1, "a non-default-typed loop variable must not block the any/all lift"
     assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a | b")
-    ((red, state), ) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert str(state.in_edges(red)[0].data.subset) == '0:N'
+    ((red, state),) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert str(state.in_edges(red)[0].data.subset) == "0:N"
 
 
 def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
@@ -610,22 +617,23 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
     for wcr-scalar), seeds it from the symbol, and assigns the symbol back
     on the outgoing interstate edge."""
     from dace.libraries.standard.nodes.reduce import Reduce as _Reduce
+
     sdfg = _build_any_pattern_sdfg()
     LoopToReduce(permissive=True, prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
 
     # Bridge scalar exists and is transient. Naming differs by emit mode.
-    bridge_prefix = "_red_tmp_tmp_call_13" if prefer == 'reduce-libnode' else "_priv_tmp_call_13"
+    bridge_prefix = "_red_tmp_tmp_call_13" if prefer == "reduce-libnode" else "_priv_tmp_call_13"
     bridge_names = [k for k in sdfg.arrays if k.startswith(bridge_prefix)]
-    assert len(bridge_names) == 1, f'bridge scalar with prefix {bridge_prefix!r} not found'
+    assert len(bridge_names) == 1, f"bridge scalar with prefix {bridge_prefix!r} not found"
     assert sdfg.arrays[bridge_names[0]].transient
 
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         # Reduce writes to the bridge scalar.
         reduces = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, _Reduce)]
         assert len(reduces) == 1
         red, state = reduces[0]
-        (out_edge, ) = state.out_edges(red)
+        (out_edge,) = state.out_edges(red)
         assert out_edge.data.data == bridge_names[0]
 
     # Outgoing interstate edge assigns the original symbol from the bridge.
@@ -658,7 +666,7 @@ def _prep_and_lift(sdfg: dace.SDFG, prefer: str) -> int:
     same ones the pipeline's ``reduction_to_wcr_map`` stage spells out around it."""
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
-    if prefer != 'wcr-scalar':
+    if prefer != "wcr-scalar":
         return LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
@@ -713,7 +721,7 @@ def test_array_slot_dot_product_is_lifted(prefer):
     sdfg = _array_slot_dot_product.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         assert lifted == 0
     else:
         assert lifted >= 1
@@ -767,7 +775,7 @@ def test_branched_max_is_lifted():
     ``_lift_wcr_scalar`` names s314 for -- and ``test_branched_min_is_lifted`` runs
     ``reduce-libnode`` on the same matcher.
     """
-    prefer = 'wcr-scalar'
+    prefer = "wcr-scalar"
     sdfg = _branched_max.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
@@ -786,7 +794,7 @@ def _branched_min(a: dace.float64[N], result: dace.float64[N]):
 def test_branched_min_is_lifted():
     """TSVC s316: same shape as s314 with ``<`` (branched min), run under ``reduce-libnode``
     so the s314/s316 pair still covers both emit modes."""
-    prefer = 'reduce-libnode'
+    prefer = "reduce-libnode"
     sdfg = _branched_min.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
@@ -815,21 +823,24 @@ def test_strided_branched_min_folds_only_visited_elements():
     """
     sdfg = _strided_branched_min.to_sdfg(simplify=True)
     sdfg.validate()
-    lifted = _prep_and_lift(sdfg, 'reduce-libnode')
+    lifted = _prep_and_lift(sdfg, "reduce-libnode")
     sdfg.validate()
     assert lifted >= 1
 
     steps = sorted(
-        str(rng[2]) for red, state in [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-        for rng in state.in_edges(red)[0].data.subset.ndrange())
-    assert steps == ['2'], f'the reduce must read only the stride-2 slots; got {steps}'
+        str(rng[2])
+        for red, state in [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+        for rng in state.in_edges(red)[0].data.subset.ndrange()
+    )
+    assert steps == ["2"], f"the reduce must read only the stride-2 slots; got {steps}"
 
     n = 16
     a = np.array([-100.0 if k % 2 == 0 else float(k) for k in range(n)])
     result = np.zeros(n)
     sdfg(a=a.copy(), result=result, N=n)
-    assert np.isclose(result[0], a[1:n:2].min()), (f'the lifted strided min folded elements the loop never visits: '
-                                                   f'got {result[0]}, expected {a[1:n:2].min()}')
+    assert np.isclose(result[0], a[1:n:2].min()), (
+        f"the lifted strided min folded elements the loop never visits: got {result[0]}, expected {a[1:n:2].min()}"
+    )
 
 
 def _build_interstate_edge_sum_sdfg(start: int, step: int):
@@ -839,11 +850,9 @@ def _build_interstate_edge_sum_sdfg(start: int, step: int):
     sdfg.add_array("B", [N], dace.float64)
     sdfg.add_array("result", [1], dace.float64)
     pre = sdfg.add_state("pre", is_start_block=True)
-    loop = LoopRegion("loop",
-                      condition_expr="i < N",
-                      loop_var="i",
-                      initialize_expr=f"i = {start}",
-                      update_expr=f"i = i + {step}")
+    loop = LoopRegion(
+        "loop", condition_expr="i < N", loop_var="i", initialize_expr=f"i = {start}", update_expr=f"i = i + {step}"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
     s1 = loop.add_state("s1", is_start_block=True)
@@ -865,21 +874,22 @@ def test_a_strided_interstate_edge_sum_reduces_only_the_visited_elements(step):
     n = 23
     sdfg = _build_interstate_edge_sum_sdfg(start, step)
     sdfg.validate()
-    lifted = LoopToReduce(prefer='reduce-libnode').apply_pass(sdfg, {})
+    lifted = LoopToReduce(prefer="reduce-libnode").apply_pass(sdfg, {})
     sdfg.validate()
     assert lifted == 1
 
     (red, state) = next((nd, g) for nd, g in sdfg.all_nodes_recursive() if isinstance(nd, Reduce))
     steps = sorted(str(rng[2]) for rng in state.in_edges(red)[0].data.subset.ndrange())
-    assert steps == [str(step)], f'the reduce must read only the stride-{step} slots; got {steps}'
+    assert steps == [str(step)], f"the reduce must read only the stride-{step} slots; got {steps}"
 
     rng = np.random.default_rng(step * 100 + start)
     b = rng.standard_normal(n)
     result = np.zeros(1)
     sdfg(B=b.copy(), N=n, accum=0.0, result=result)
     expected = float(b[start:n:step].sum())
-    assert np.isclose(result[0], expected), (f'the lifted strided sum folded elements the loop never visits: '
-                                             f'got {result[0]}, expected {expected}')
+    assert np.isclose(result[0], expected), (
+        f"the lifted strided sum folded elements the loop never visits: got {result[0]}, expected {expected}"
+    )
 
 
 def _build_conditional_interstate_max_sdfg(start: int, step: int):
@@ -889,11 +899,9 @@ def _build_conditional_interstate_max_sdfg(start: int, step: int):
     sdfg.add_array("B", [N], dace.float64)
     sdfg.add_array("result", [1], dace.float64)
     pre = sdfg.add_state("pre", is_start_block=True)
-    loop = LoopRegion("loop",
-                      condition_expr="i < N",
-                      loop_var="i",
-                      initialize_expr=f"i = {start}",
-                      update_expr=f"i = i + {step}")
+    loop = LoopRegion(
+        "loop", condition_expr="i < N", loop_var="i", initialize_expr=f"i = {start}", update_expr=f"i = i + {step}"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
     cb = ConditionalBlock("cb")
@@ -919,20 +927,21 @@ def test_a_strided_conditional_interstate_edge_max_reduces_only_the_visited_elem
     n = 23
     sdfg = _build_conditional_interstate_max_sdfg(start, step)
     sdfg.validate()
-    lifted = LoopToReduce(prefer='reduce-libnode').apply_pass(sdfg, {})
+    lifted = LoopToReduce(prefer="reduce-libnode").apply_pass(sdfg, {})
     sdfg.validate()
     assert lifted == 1
 
     (red, state) = next((nd, g) for nd, g in sdfg.all_nodes_recursive() if isinstance(nd, Reduce))
     steps = sorted(str(rng[2]) for rng in state.in_edges(red)[0].data.subset.ndrange())
-    assert steps == [str(step)], f'the reduce must read only the stride-{step} slots; got {steps}'
+    assert steps == [str(step)], f"the reduce must read only the stride-{step} slots; got {steps}"
 
     b = np.array([float(k) if k in range(start, n, step) else 1000.0 + k for k in range(n)])
     result = np.zeros(1)
     sdfg(B=b.copy(), N=n, accum=-1e18, result=result)
     expected = float(b[start:n:step].max())
-    assert np.isclose(result[0], expected), (f'the lifted strided max folded elements the loop never visits: '
-                                             f'got {result[0]}, expected {expected}')
+    assert np.isclose(result[0], expected), (
+        f"the lifted strided max folded elements the loop never visits: got {result[0]}, expected {expected}"
+    )
 
 
 # s4115: gather + sum reduction
@@ -959,7 +968,7 @@ def test_gather_sum_reduction_is_lifted(prefer):
     sdfg = _gather_sum_reduction.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         assert lifted == 0
     else:
         assert lifted >= 1
@@ -977,7 +986,7 @@ def test_gemm_innermost_loop_not_lifted_to_reduce(prefer):
     1-D reduction per ``(i, j)``, but lifting loses GEMM's multi-array structure;
     downstream library matching/tiling is the right handler. Pins the refusal so the
     matcher isn't widened."""
-    N, M, K = (dace.symbol(s) for s in ['NN', 'MM', 'KK'])
+    N, M, K = (dace.symbol(s) for s in ["NN", "MM", "KK"])
 
     @dace.program
     def gemm(A: dace.float64[N, K], B: dace.float64[K, M], C: dace.float64[N, M]):
@@ -989,7 +998,7 @@ def test_gemm_innermost_loop_not_lifted_to_reduce(prefer):
     sdfg = gemm.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         # The single-tasklet matcher refuses on body-shape grounds (two tasklets
         # after the frontend splits ``Mul`` and ``Add``). No libnode is emitted.
         assert lifted == 0
@@ -1007,7 +1016,7 @@ def test_matvec_innermost_loop_not_lifted_to_reduce(prefer):
     just one rank down. Two of the three data reads (``A[i, j]``, ``x[j]``)
     use the inner loop variable; the matcher must refuse the j-loop. Lifting
     it would lose the GEMV pattern recognisable downstream."""
-    N, M = (dace.symbol(s) for s in ['NN', 'MM'])
+    N, M = (dace.symbol(s) for s in ["NN", "MM"])
 
     @dace.program
     def matvec(A: dace.float64[N, M], x: dace.float64[M], y: dace.float64[N]):
@@ -1018,7 +1027,7 @@ def test_matvec_innermost_loop_not_lifted_to_reduce(prefer):
     sdfg = matvec.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         assert lifted == 0
     else:
         # Same contract as the GEMM test: GEMV-vs-scalar-reduction
@@ -1032,7 +1041,7 @@ def test_outer_axis_reduction_per_column_is_lifted(prefer):
     ``c[j] += A[i, j]``. Per fixed ``j``, a standard 1-D fold over ``i`` of ``A[:, j]``
     -- exactly what ``LoopToReduce`` handles. Pins that the GEMM-test refusal doesn't
     over-tighten and reject legitimate 1-D outer-axis reductions."""
-    N, M = (dace.symbol(s) for s in ['NN', 'MM'])
+    N, M = (dace.symbol(s) for s in ["NN", "MM"])
 
     @dace.program
     def axis_sum(A: dace.float64[N, M], c: dace.float64[M]):
@@ -1043,8 +1052,9 @@ def test_outer_axis_reduction_per_column_is_lifted(prefer):
     sdfg = axis_sum.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted >= 1, (f'``c[j] += A[i, j]`` (single loop-var-dependent read) must lift as a '
-                         f'1-D reduction along i; got {lifted}.')
+    assert lifted >= 1, (
+        f"``c[j] += A[i, j]`` (single loop-var-dependent read) must lift as a 1-D reduction along i; got {lifted}."
+    )
 
 
 # masked compound update with gather (multi-state, wcr-scalar only)
@@ -1066,10 +1076,11 @@ def test_masked_compound_gather_is_lifted(prefer):
     privatised body and the WCR write fires only when the guard is true.
     """
     import numpy as np
+
     sdfg = _masked_compound_gather.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         assert lifted == 0
     else:
         assert lifted >= 1
@@ -1082,7 +1093,7 @@ def test_masked_compound_gather_is_lifted(prefer):
     expected = float(sum(a_arr[idx_arr[i]] for i in range(n) if cond_arr[i] != 0))
     sum_out = np.zeros(1)
     sdfg(a=a_arr.copy(), idx=idx_arr.copy(), cond=cond_arr.copy(), sum_out=sum_out, N=n)
-    assert np.isclose(sum_out[0], expected), f'got {sum_out[0]}, expected {expected}'
+    assert np.isclose(sum_out[0], expected), f"got {sum_out[0]}, expected {expected}"
 
 
 # interleaved two-accumulator single loop
@@ -1110,10 +1121,11 @@ def test_interleaved_two_accumulator_partial_lift(prefer):
     ``test_interleaved_two_accumulator_lifts_both_after_loop_fission``).
     """
     import numpy as np
+
     sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    if prefer == 'reduce-libnode':
+    if prefer == "reduce-libnode":
         assert lifted == 0
     else:
         # At least one accumulator lifted; the matcher is single-accumulator
@@ -1140,15 +1152,16 @@ def test_interleaved_two_accumulator_lifts_both_after_loop_fission():
     """
     import numpy as np
     from dace.transformation.passes.loop_fission import LoopFission
+
     sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
     sdfg.validate()
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     fissioned = LoopFission().apply_pass(sdfg, {})
-    assert fissioned, 'LoopFission must split the interleaved 2-accumulator loop'
+    assert fissioned, "LoopFission must split the interleaved 2-accumulator loop"
     n_loops_after_fission = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
-    assert n_loops_after_fission >= 2, f'expected >= 2 loops after fission, got {n_loops_after_fission}'
-    lifted = LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
-    assert lifted == 2, f'both fissioned loops must lift; got {lifted}'
+    assert n_loops_after_fission >= 2, f"expected >= 2 loops after fission, got {n_loops_after_fission}"
+    lifted = LoopToReduce(prefer="wcr-scalar").apply_pass(sdfg, {})
+    assert lifted == 2, f"both fissioned loops must lift; got {lifted}"
     sdfg.validate()
     rng = np.random.default_rng(0)
     A_arr = rng.standard_normal(n_loops_after_fission * 8)
@@ -1171,19 +1184,20 @@ def test_interleaved_dual_strided_lifts_to_two_reduce_nodes():
     import numpy as np
     from dace.transformation.passes.loop_fission import LoopFission
     from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+
     sdfg = _interleaved_two_accum.to_sdfg(simplify=True)
     sdfg.validate()
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
-    assert LoopFission().apply_pass(sdfg, {}), 'LoopFission must split the interleaved 2-accumulator loop'
-    lifted = LoopToReduce(prefer='reduce-libnode').apply_pass(sdfg, {})
-    assert lifted == 2, f'both fissioned strided loops must lift to Reduce nodes; got {lifted}'
+    assert LoopFission().apply_pass(sdfg, {}), "LoopFission must split the interleaved 2-accumulator loop"
+    lifted = LoopToReduce(prefer="reduce-libnode").apply_pass(sdfg, {})
+    assert lifted == 2, f"both fissioned strided loops must lift to Reduce nodes; got {lifted}"
     sdfg.validate()
 
     # Two Reduce library nodes, each over a stride-2 input subset.
     reduces = [(n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert len(reduces) == 2, f'expected 2 Reduce nodes, got {len(reduces)}'
+    assert len(reduces) == 2, f"expected 2 Reduce nodes, got {len(reduces)}"
     steps = sorted(str(rng[2]) for red, st in reduces for rng in st.in_edges(red)[0].data.subset.ndrange())
-    assert steps == ['2', '2'], f'each Reduce must read a stride-2 subset; got {steps}'
+    assert steps == ["2", "2"], f"each Reduce must read a stride-2 subset; got {steps}"
 
     n = 16
     rng = np.random.default_rng(0)
@@ -1220,7 +1234,7 @@ def test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce():
     must NOT recognise the IV shape.
     """
     import numpy as np
-    from dace.transformation.passes.canonicalize.induction_variable_substitution import (InductionVariableSubstitution)
+    from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 
     sdfg = _array_slot_const_product.to_sdfg(simplify=True)
     sdfg.validate()
@@ -1228,19 +1242,19 @@ def test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce():
 
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
     substituted = InductionVariableSubstitution().apply_pass(sdfg, {})
-    assert substituted == 1, f'IVS must close-form the geometric IV; got {substituted}'
-    assert _count_loops(sdfg) == 0, 'IVS must eliminate the loop entirely'
+    assert substituted == 1, f"IVS must close-form the geometric IV; got {substituted}"
+    assert _count_loops(sdfg) == 0, "IVS must eliminate the loop entirely"
 
     # A subsequent LoopToReduce is a no-op (no loops left).
-    lifted = LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
-    assert lifted is None or lifted == 0, f'no loops left to lift, got {lifted}'
+    lifted = LoopToReduce(prefer="wcr-scalar").apply_pass(sdfg, {})
+    assert lifted is None or lifted == 0, f"no loops left to lift, got {lifted}"
     sdfg.validate()
 
     n = 16
     q = np.zeros(n)
     sdfg(q=q, N=n)
-    expected = 1.0 * (0.99**(n // 2))
-    assert np.isclose(q[0], expected), f'got {q[0]}, expected {expected}'
+    expected = 1.0 * (0.99 ** (n // 2))
+    assert np.isclose(q[0], expected), f"got {q[0]}, expected {expected}"
 
 
 def test_split_two_strided_loops_both_lift(prefer):
@@ -1251,10 +1265,11 @@ def test_split_two_strided_loops_both_lift(prefer):
     ``wcr-scalar`` keeps a per-iter ``A[2*i]`` WCR write.
     """
     import numpy as np
+
     sdfg = _split_two_strided.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted == 2, f'{prefer} must lift both strided loops; got {lifted}'
+    assert lifted == 2, f"{prefer} must lift both strided loops; got {lifted}"
     sdfg.validate()
     n = 16
     rng = np.random.default_rng(0)
@@ -1280,6 +1295,7 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     """
     import numpy as np
     from dace.transformation.passes.canonicalize.pipeline import _build_stages
+
     NN = dace.symbol("NN")
 
     @dace.program
@@ -1292,9 +1308,9 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     # LoopToReduce(wcr-scalar) sees it -- the exact shape the regression
     # surfaced under.
     for label, pass_obj in _build_stages():
-        if label == 'reduction_to_wcr_map':
+        if label == "reduction_to_wcr_map":
             break
-        if hasattr(pass_obj, 'apply_pass'):
+        if hasattr(pass_obj, "apply_pass"):
             try:
                 pass_obj.apply_pass(sdfg, {})
             except Exception:
@@ -1302,16 +1318,19 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
 
     # Now run the wcr-scalar lift with its full prelude. It must NOT create any WCR-bearing
     # write on ``b`` (the recurrence target).
-    LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    LoopToReduce(prefer="wcr-scalar").apply_pass(sdfg, {})
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
     RetargetWCRAccumulator().apply_pass(sdfg, {})
     sdfg.validate()
     bad_wcr = [
-        e for st in sdfg.states() for e in st.edges()
-        if e.data is not None and e.data.wcr is not None and e.data.data == 'b'
+        e
+        for st in sdfg.states()
+        for e in st.edges()
+        if e.data is not None and e.data.wcr is not None and e.data.data == "b"
     ]
-    assert not bad_wcr, (f'LoopToReduce(wcr-scalar) wrongly placed a WCR write on the recurrence '
-                         f'accumulator ``b``: {bad_wcr}')
+    assert not bad_wcr, (
+        f"LoopToReduce(wcr-scalar) wrongly placed a WCR write on the recurrence accumulator ``b``: {bad_wcr}"
+    )
 
     n = 21
     rng = np.random.default_rng(7)
@@ -1324,7 +1343,7 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     out = np.zeros(n)
     out[n - 1] = 1.0
     sdfg(a=a_arr.copy(), b=out, NN=n)
-    assert np.allclose(out, expected), f'recurrence value-preservation broke: got {out[:3]}, expected {expected[:3]}'
+    assert np.allclose(out, expected), f"recurrence value-preservation broke: got {out[:3]}, expected {expected[:3]}"
 
 
 def _build_scalarised_scan_writeback(n_sym=N):
@@ -1342,11 +1361,9 @@ def _build_scalarised_scan_writeback(n_sym=N):
     pre = sdfg.add_state("pre", is_start_block=True)
     pre.add_edge(pre.add_read("A"), None, pre.add_write("c"), None, mm.Memlet("A[0]"))
 
-    loop = LoopRegion("loop",
-                      condition_expr="i < N - 1",
-                      loop_var="i",
-                      initialize_expr="i = 0",
-                      update_expr="i = i + 1")
+    loop = LoopRegion(
+        "loop", condition_expr="i < N - 1", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
 
@@ -1391,9 +1408,9 @@ def test_scalarised_scan_writeback_into_folded_array_not_lifted():
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
 
-    assert not lifted, f'scalarised scan writeback must not lift; got {lifted}'
-    assert _count_loops(sdfg) == 1, 'the scan loop must survive for LoopToScan'
-    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
+    assert not lifted, f"scalarised scan writeback must not lift; got {lifted}"
+    assert _count_loops(sdfg) == 1, "the scan loop must survive for LoopToScan"
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], "no Reduce may be emitted"
 
     # Value preservation: the surviving loop still computes the in-place prefix scan.
     n = 12
@@ -1406,7 +1423,7 @@ def test_scalarised_scan_writeback_into_folded_array_not_lifted():
         expected[i + 1] = c
     got = a.copy()
     sdfg(A=got, N=n)
-    assert np.allclose(got, expected), f'scan value broke: got {got[:4]}, expected {expected[:4]}'
+    assert np.allclose(got, expected), f"scan value broke: got {got[:4]}, expected {expected[:4]}"
 
 
 def _build_transient_scan_writeback(n_sym=N):
@@ -1422,11 +1439,9 @@ def _build_transient_scan_writeback(n_sym=N):
     sdfg.add_scalar("c", dace.float64, transient=True)
     pre = sdfg.add_state("pre", is_start_block=True)
     pre.add_edge(pre.add_read("A"), None, pre.add_write("c"), None, mm.Memlet("A[0]"))
-    loop = LoopRegion("loop",
-                      condition_expr="i < N - 1",
-                      loop_var="i",
-                      initialize_expr="i = 0",
-                      update_expr="i = i + 1")
+    loop = LoopRegion(
+        "loop", condition_expr="i < N - 1", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
     body = loop.add_state("body", is_start_block=True)
@@ -1455,11 +1470,9 @@ def _build_double_buffer_scan_writeback(n_sym=N):
     sdfg.add_scalar("c", dace.float64, transient=True)
     pre = sdfg.add_state("pre", is_start_block=True)
     pre.add_edge(pre.add_read("A"), None, pre.add_write("c"), None, mm.Memlet("A[0]"))
-    loop = LoopRegion("loop",
-                      condition_expr="i < N - 1",
-                      loop_var="i",
-                      initialize_expr="i = 0",
-                      update_expr="i = i + 1")
+    loop = LoopRegion(
+        "loop", condition_expr="i < N - 1", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
     body = loop.add_state("body", is_start_block=True)
@@ -1482,14 +1495,15 @@ def test_transient_scan_writeback_not_lifted():
     Mode fixed: the refusal is ``_extract``'s, before the ``prefer`` dispatch.
     """
     from dace.libraries.standard.nodes.reduce import Reduce
+
     prefer = _MATCHER_ONLY_MODE
     sdfg = _build_transient_scan_writeback()
     assert _count_loops(sdfg) == 1
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
-    assert not lifted, f'transient scan writeback must not lift; got {lifted}'
-    assert _count_loops(sdfg) == 1, 'the scan loop must survive for LoopToScan'
-    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
+    assert not lifted, f"transient scan writeback must not lift; got {lifted}"
+    assert _count_loops(sdfg) == 1, "the scan loop must survive for LoopToScan"
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], "no Reduce may be emitted"
 
 
 def test_double_buffer_carry_scan_not_lifted():
@@ -1499,14 +1513,15 @@ def test_double_buffer_carry_scan_not_lifted():
     the ``prefer`` dispatch.
     """
     from dace.libraries.standard.nodes.reduce import Reduce
+
     prefer = _MATCHER_ONLY_MODE
     sdfg = _build_double_buffer_scan_writeback()
     assert _count_loops(sdfg) == 1
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
-    assert not lifted, f'double-buffer carry must not lift; got {lifted}'
-    assert _count_loops(sdfg) == 1, 'the recurrence loop must survive'
-    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
+    assert not lifted, f"double-buffer carry must not lift; got {lifted}"
+    assert _count_loops(sdfg) == 1, "the recurrence loop must survive"
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], "no Reduce may be emitted"
 
 
 # The loop's OWN SDFG decides the lift.
@@ -1558,8 +1573,13 @@ def _nested_live_write_caller(a: dace.float64[N_NEST], s: dace.float64[1], o: da
 
 def _loops_inside_nested_sdfgs(sdfg: dace.SDFG):
     """``[(loop.label, owner.name)]`` for every named loop that lives in a NestedSDFG."""
-    return [(r.label, sd.name) for sd in sdfg.all_sdfgs_recursive() if sd.parent_sdfg is not None
-            for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    return [
+        (r.label, sd.name)
+        for sd in sdfg.all_sdfgs_recursive()
+        if sd.parent_sdfg is not None
+        for r in sd.all_control_flow_regions()
+        if isinstance(r, LoopRegion) and r.loop_variable
+    ]
 
 
 def _nest_without_inlining(prog) -> dace.SDFG:
@@ -1571,14 +1591,15 @@ def _nest_without_inlining(prog) -> dace.SDFG:
     """
     from dace.transformation.passes.lift_preprocess import LiftPreprocess
     from dace.transformation.passes.simplify import SimplifyPass
+
     sdfg = prog.to_sdfg(simplify=False)
-    SimplifyPass(skip={'InlineSDFGs'}, validate=True).apply_pass(sdfg, {})
+    SimplifyPass(skip={"InlineSDFGs"}, validate=True).apply_pass(sdfg, {})
     LiftPreprocess().apply_pass(sdfg, {})
     return sdfg
 
 
 def _inner_sdfg(sdfg: dace.SDFG) -> dace.SDFG:
-    (inner, ) = [sd for sd in sdfg.all_sdfgs_recursive() if sd.parent_sdfg is not None]
+    (inner,) = [sd for sd in sdfg.all_sdfgs_recursive() if sd.parent_sdfg is not None]
     return inner
 
 
@@ -1614,26 +1635,29 @@ def test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays(prefer):
     """
     sdfg = _nest_without_inlining(_nested_sum_caller)
     inner = _inner_sdfg(sdfg)
-    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
-    assert 'ss' not in sdfg.arrays, 'fixture is vacuous: the caller must NOT define the accumulator'
+    assert _loops_inside_nested_sdfgs(sdfg), "fixture no longer nests the reduction loop"
+    assert "ss" not in sdfg.arrays, "fixture is vacuous: the caller must NOT define the accumulator"
 
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
-    assert lifted == 1, f'the nested reduction must lift; got {lifted}'
+    assert lifted == 1, f"the nested reduction must lift; got {lifted}"
     # Whatever the emit mode minted belongs to the loop's OWN SDFG, not the top-level one.
-    assert not _misowned_data(sdfg), f'the lift wired data across SDFGs: {_misowned_data(sdfg)}'
-    if prefer == 'reduce-libnode':
+    assert not _misowned_data(sdfg), f"the lift wired data across SDFGs: {_misowned_data(sdfg)}"
+    if prefer == "reduce-libnode":
         assert [
-            sd.name for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+            sd.name
+            for sd in sdfg.all_sdfgs_recursive()
+            for st in sd.states()
+            for n in st.nodes()
             if isinstance(n, Reduce)
-        ] == [inner.name], 'the Reduce must be emitted in the nested SDFG'
+        ] == [inner.name], "the Reduce must be emitted in the nested SDFG"
 
     n = 24
     rng = np.random.default_rng(1147)
     x = rng.standard_normal(n)
     t = np.zeros(1)
     sdfg(x=x, t=t, N_NEST=n)
-    assert np.allclose(t[0], x.sum()), 'lifted nested reduction diverged from the sequential oracle'
+    assert np.allclose(t[0], x.sum()), "lifted nested reduction diverged from the sequential oracle"
 
 
 def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient():
@@ -1653,14 +1677,15 @@ def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient(
     prefer = _MATCHER_ONLY_MODE
     sdfg = _nest_without_inlining(_nested_live_write_caller)
     inner = _inner_sdfg(sdfg)
-    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
-    assert sdfg.arrays['b'].transient and not inner.arrays['b'].transient, (
-        'fixture is vacuous: the collision must flip the transient flag between the two SDFGs')
+    assert _loops_inside_nested_sdfgs(sdfg), "fixture no longer nests the reduction loop"
+    assert sdfg.arrays["b"].transient and not inner.arrays["b"].transient, (
+        "fixture is vacuous: the collision must flip the transient flag between the two SDFGs"
+    )
 
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
     sdfg.validate()
-    assert not lifted, f'a loop writing a live array must not lift; got {lifted}'
-    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
+    assert not lifted, f"a loop writing a live array must not lift; got {lifted}"
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], "no Reduce may be emitted"
 
     n = 24
     rng = np.random.default_rng(1148)
@@ -1668,8 +1693,8 @@ def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient(
     s = np.zeros(1)
     o = np.zeros(n)
     sdfg(a=a, s=s, o=o, N_NEST=n)
-    assert np.allclose(s[0], a[0] + a.sum()), 'accumulator diverged from the sequential oracle'
-    assert np.allclose(o, a), 'the per-iteration write to the live array was dropped'
+    assert np.allclose(s[0], a[0] + a.sum()), "accumulator diverged from the sequential oracle"
+    assert np.allclose(o, a), "the per-iteration write to the live array was dropped"
 
 
 def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
@@ -1682,14 +1707,14 @@ def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_array
     downstream ``LoopToMap`` lowers to ``reduction(+:scalar)``.
     """
     sdfg = _nest_without_inlining(_nested_dot_caller)
-    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
-    assert 'dd' not in sdfg.arrays, 'fixture is vacuous: the caller must NOT define the accumulator'
+    assert _loops_inside_nested_sdfgs(sdfg), "fixture no longer nests the reduction loop"
+    assert "dd" not in sdfg.arrays, "fixture is vacuous: the caller must NOT define the accumulator"
 
-    LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    LoopToReduce(prefer="wcr-scalar").apply_pass(sdfg, {})
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
     retargeted = RetargetWCRAccumulator().apply_pass(sdfg, {})
     sdfg.validate()
-    assert retargeted == 1, f'the nested WCR accumulator must be retargeted; got {retargeted}'
+    assert retargeted == 1, f"the nested WCR accumulator must be retargeted; got {retargeted}"
 
     n = 24
     rng = np.random.default_rng(1149)
@@ -1697,7 +1722,7 @@ def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_array
     y = rng.standard_normal(n)
     t = np.zeros(1)
     sdfg(x=x, y=y, t=t, N_NEST=n)
-    assert np.allclose(t[0], x @ y), 'retargeted nested dot product diverged from the sequential oracle'
+    assert np.allclose(t[0], x @ y), "retargeted nested dot product diverged from the sequential oracle"
 
 
 if __name__ == "__main__":
@@ -1718,8 +1743,8 @@ if __name__ == "__main__":
     test_all_pattern_lifts_to_and_in_permissive()
     test_any_pattern_symbol_bridge_via_tmp_scalar()
     test_array_slot_sum_reduction_is_lifted()
-    test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays('reduce-libnode')
-    test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays('wcr-scalar')
+    test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays("reduce-libnode")
+    test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays("wcr-scalar")
     test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient()
     test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays()
 
@@ -1757,7 +1782,7 @@ def test_scatter_by_index_array_is_not_retargeted():
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
 
     assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
 
 
 def test_scatter_with_guarded_bin_index_is_not_retargeted():
@@ -1774,7 +1799,7 @@ def test_scatter_with_guarded_bin_index_is_not_retargeted():
     AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
 
     assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
 
 
 def test_guarded_scatter_histogram_keeps_every_bin():
@@ -1796,7 +1821,7 @@ def test_guarded_scatter_histogram_keeps_every_bin():
     np.add.at(expected, bins, 1.0)
 
     sdfg = scatter_add_guarded_bin.to_sdfg(simplify=True)
-    canonicalize(sdfg, target='cpu', validate_all=False)
+    canonicalize(sdfg, target="cpu", validate_all=False)
     out = np.zeros(m)
     sdfg(radius=radius, out=out, lo=lo, hi=hi, N=n, M=m)
 
@@ -1819,8 +1844,8 @@ def test_guarded_scatter_histogram_keeps_every_bin():
 def _add_zero_init(cfg, label: str, is_start_block: bool = False):
     """A state whose only job is ``acc = 0.0``, added to ``cfg``."""
     state = cfg.add_state(label, is_start_block=is_start_block)
-    task = state.add_tasklet('zero', {}, {'__out'}, '__out = 0.0')
-    state.add_edge(task, '__out', state.add_write('acc'), None, mm.Memlet('acc[0]'))
+    task = state.add_tasklet("zero", {}, {"__out"}, "__out = 0.0")
+    state.add_edge(task, "__out", state.add_write("acc"), None, mm.Memlet("acc[0]"))
     return state
 
 
@@ -1837,13 +1862,13 @@ def _add_accumulate_states(loop: LoopRegion, terms: int, first: bool):
     head = None
     prev = None
     for k in range(terms):
-        state = loop.add_state(f'accumulate_{k}', is_start_block=first and prev is None)
-        task = state.add_tasklet('add', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
-        state.add_edge(state.add_read('acc'), None, task, 'in_a', mm.Memlet('acc[0]'))
-        state.add_edge(state.add_read('src'), None, task, 'in_b', mm.Memlet(f'src[{k}, jl]'))
-        through = state.add_access('tmp')
-        state.add_edge(task, '__out', through, None, mm.Memlet('tmp[0]'))
-        state.add_edge(through, None, state.add_write('acc'), None, mm.Memlet('acc[0]'))
+        state = loop.add_state(f"accumulate_{k}", is_start_block=first and prev is None)
+        task = state.add_tasklet("add", {"in_a": None, "in_b": None}, {"__out": None}, "__out = in_a + in_b")
+        state.add_edge(state.add_read("acc"), None, task, "in_a", mm.Memlet("acc[0]"))
+        state.add_edge(state.add_read("src"), None, task, "in_b", mm.Memlet(f"src[{k}, jl]"))
+        through = state.add_access("tmp")
+        state.add_edge(task, "__out", through, None, mm.Memlet("tmp[0]"))
+        state.add_edge(through, None, state.add_write("acc"), None, mm.Memlet("acc[0]"))
         if prev is not None:
             loop.add_edge(prev, state, dace.InterstateEdge())
         head = head or state
@@ -1854,17 +1879,15 @@ def _add_accumulate_states(loop: LoopRegion, terms: int, first: bool):
 def _chain_scaffold(label: str, terms: int):
     """The arrays, a ``pre`` state, and an empty ``jl`` loop -- shared by both shapes below."""
     sdfg = dace.SDFG(label)
-    sdfg.add_array('src', [terms, N], dace.float64)
-    sdfg.add_array('base', [N], dace.float64)
-    sdfg.add_array('out', [N], dace.float64)
-    sdfg.add_scalar('acc', dace.float64, transient=True)
-    sdfg.add_scalar('tmp', dace.float64, transient=True)
-    pre = sdfg.add_state('pre', is_start_block=True)
-    loop = LoopRegion('jl_loop',
-                      condition_expr='jl < N',
-                      loop_var='jl',
-                      initialize_expr='jl = 0',
-                      update_expr='jl = jl + 1')
+    sdfg.add_array("src", [terms, N], dace.float64)
+    sdfg.add_array("base", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_scalar("acc", dace.float64, transient=True)
+    sdfg.add_scalar("tmp", dace.float64, transient=True)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    loop = LoopRegion(
+        "jl_loop", condition_expr="jl < N", loop_var="jl", initialize_expr="jl = 0", update_expr="jl = jl + 1"
+    )
     sdfg.add_node(loop)
     return sdfg, pre, loop
 
@@ -1874,18 +1897,18 @@ def _scratch_slot_loop(terms: int = 1) -> dace.SDFG:
 
     The init sits IN the body, so the slot is per-iteration scratch and ``jl`` carries nothing.
     """
-    sdfg, pre, loop = _chain_scaffold(f'chain_scratch_slot_{terms}', terms)
+    sdfg, pre, loop = _chain_scaffold(f"chain_scratch_slot_{terms}", terms)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
 
-    init = _add_zero_init(loop, 'body_init', is_start_block=True)
+    init = _add_zero_init(loop, "body_init", is_start_block=True)
     first, last = _add_accumulate_states(loop, terms, first=False)
     loop.add_edge(init, first, dace.InterstateEdge())
 
-    tail = loop.add_state('store')
-    task = tail.add_tasklet('store', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
-    tail.add_edge(tail.add_read('base'), None, task, 'in_a', mm.Memlet('base[jl]'))
-    tail.add_edge(tail.add_read('acc'), None, task, 'in_b', mm.Memlet('acc[0]'))
-    tail.add_edge(task, '__out', tail.add_write('out'), None, mm.Memlet('out[jl]'))
+    tail = loop.add_state("store")
+    task = tail.add_tasklet("store", {"in_a": None, "in_b": None}, {"__out": None}, "__out = in_a + in_b")
+    tail.add_edge(tail.add_read("base"), None, task, "in_a", mm.Memlet("base[jl]"))
+    tail.add_edge(tail.add_read("acc"), None, task, "in_b", mm.Memlet("acc[0]"))
+    tail.add_edge(task, "__out", tail.add_write("out"), None, mm.Memlet("out[jl]"))
     loop.add_edge(last, tail, dace.InterstateEdge())
 
     sdfg.validate()
@@ -1898,15 +1921,15 @@ def _carried_accumulator_loop(terms: int = 1) -> dace.SDFG:
     The same in-body chain with the init ahead of the loop and the store after it -- a genuine
     loop-carried accumulator, which is what the matcher exists to claim.
     """
-    sdfg, pre, loop = _chain_scaffold(f'chain_carried_accumulator_{terms}', terms)
-    init = _add_zero_init(sdfg, 'init')
+    sdfg, pre, loop = _chain_scaffold(f"chain_carried_accumulator_{terms}", terms)
+    init = _add_zero_init(sdfg, "init")
     sdfg.add_edge(pre, init, dace.InterstateEdge())
     sdfg.add_edge(init, loop, dace.InterstateEdge())
 
     _add_accumulate_states(loop, terms, first=True)
 
-    post = sdfg.add_state('store')
-    post.add_edge(post.add_read('acc'), None, post.add_write('out'), None, mm.Memlet('acc[0] -> [0]'))
+    post = sdfg.add_state("store")
+    post.add_edge(post.add_read("acc"), None, post.add_write("out"), None, mm.Memlet("acc[0] -> [0]"))
     sdfg.add_edge(loop, post, dace.InterstateEdge())
 
     sdfg.validate()
@@ -1941,12 +1964,12 @@ def test_body_reinitialized_accumulator_is_not_retargeted():
     ONE term, so the multi-chain refusal cannot stand in for this one.
     """
     sdfg = _scratch_slot_loop(terms=1)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'per-iteration scratch must not be retargeted'
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "per-iteration scratch must not be retargeted"
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
     out, src, base = _run_chain(sdfg, terms=1, seed=4115)
-    assert np.allclose(out, base + src.sum(axis=0)), 'the scratch slot became a loop-carried sum'
+    assert np.allclose(out, base + src.sum(axis=0)), "the scratch slot became a loop-carried sum"
 
 
 def test_slot_accumulated_twice_per_iteration_is_not_retargeted():
@@ -1958,12 +1981,12 @@ def test_slot_accumulated_twice_per_iteration_is_not_retargeted():
     Before it did, three terms turned a sum of 1.077926 into 10.059380.
     """
     sdfg = _carried_accumulator_loop(terms=3)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'a slot accumulated twice must not be retargeted'
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "a slot accumulated twice must not be retargeted"
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
     out, src, _base = _run_chain(sdfg, terms=3, seed=4117)
-    assert np.allclose(out[0], src.sum()), 'the multi-chain sum diverged from the sequential oracle'
+    assert np.allclose(out[0], src.sum()), "the multi-chain sum diverged from the sequential oracle"
 
 
 def test_accumulator_initialized_before_the_loop_is_still_retargeted():
@@ -1974,12 +1997,12 @@ def test_accumulator_initialized_before_the_loop_is_still_retargeted():
     still be privatized into the ``wcr-scalar`` shape ``LoopToMap`` lowers to ``reduction(+:scalar)``.
     """
     sdfg = _carried_accumulator_loop(terms=1)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) == 1, 'a loop-carried accumulator must still be retargeted'
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') >= 1
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) == 1, "a loop-carried accumulator must still be retargeted"
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") >= 1
     sdfg.validate()
 
     out, src, _base = _run_chain(sdfg, terms=1, seed=4116)
-    assert np.allclose(out[0], src.sum()), 'retargeting changed the carried sum'
+    assert np.allclose(out[0], src.sum()), "retargeting changed the carried sum"
 
 
 def wcr_write_beside_plain_chain_loop() -> dace.SDFG:
@@ -1989,26 +2012,24 @@ def wcr_write_beside_plain_chain_loop() -> dace.SDFG:
     ``l`` loop: the unrolled ``q`` terms each accumulate into one output slot, and only the last one
     was collapsed to a WCR write. The others stay plain read-modify-write chains on the same slot.
     """
-    sdfg = dace.SDFG('wcr_write_beside_plain_chain')
-    sdfg.add_array('src', [2, N], dace.float64)
-    sdfg.add_array('acc', [1], dace.float64)
-    loop = LoopRegion('jl_loop',
-                      condition_expr='jl < N',
-                      loop_var='jl',
-                      initialize_expr='jl = 0',
-                      update_expr='jl = jl + 1')
+    sdfg = dace.SDFG("wcr_write_beside_plain_chain")
+    sdfg.add_array("src", [2, N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    loop = LoopRegion(
+        "jl_loop", condition_expr="jl < N", loop_var="jl", initialize_expr="jl = 0", update_expr="jl = jl + 1"
+    )
     sdfg.add_node(loop, is_start_block=True)
 
-    plain = loop.add_state('plain_accumulate', is_start_block=True)
-    task = plain.add_tasklet('add', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
-    plain.add_edge(plain.add_read('acc'), None, task, 'in_a', mm.Memlet('acc[0]'))
-    plain.add_edge(plain.add_read('src'), None, task, 'in_b', mm.Memlet('src[0, jl]'))
-    plain.add_edge(task, '__out', plain.add_write('acc'), None, mm.Memlet('acc[0]'))
+    plain = loop.add_state("plain_accumulate", is_start_block=True)
+    task = plain.add_tasklet("add", {"in_a": None, "in_b": None}, {"__out": None}, "__out = in_a + in_b")
+    plain.add_edge(plain.add_read("acc"), None, task, "in_a", mm.Memlet("acc[0]"))
+    plain.add_edge(plain.add_read("src"), None, task, "in_b", mm.Memlet("src[0, jl]"))
+    plain.add_edge(task, "__out", plain.add_write("acc"), None, mm.Memlet("acc[0]"))
 
-    wcr = loop.add_state('wcr_accumulate')
-    task = wcr.add_tasklet('term', {'in_b': None}, {'__out': None}, '__out = in_b')
-    wcr.add_edge(wcr.add_read('src'), None, task, 'in_b', mm.Memlet('src[1, jl]'))
-    wcr.add_edge(task, '__out', wcr.add_write('acc'), None, mm.Memlet('acc[0]', wcr='lambda a, b: a + b'))
+    wcr = loop.add_state("wcr_accumulate")
+    task = wcr.add_tasklet("term", {"in_b": None}, {"__out": None}, "__out = in_b")
+    wcr.add_edge(wcr.add_read("src"), None, task, "in_b", mm.Memlet("src[1, jl]"))
+    wcr.add_edge(task, "__out", wcr.add_write("acc"), None, mm.Memlet("acc[0]", wcr="lambda a, b: a + b"))
     loop.add_edge(plain, wcr, dace.InterstateEdge())
 
     sdfg.validate()
@@ -2025,8 +2046,8 @@ def test_wcr_write_beside_a_plain_chain_on_the_same_slot_is_not_retargeted():
     and 107032401 of 108321948 outputs were wrong.
     """
     sdfg = wcr_write_beside_plain_chain_loop()
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'a slot also accessed by a plain chain was retargeted'
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "a slot also accessed by a plain chain was retargeted"
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
     n = 32
@@ -2034,7 +2055,7 @@ def test_wcr_write_beside_a_plain_chain_on_the_same_slot_is_not_retargeted():
     src = rng.standard_normal((2, n))
     acc = np.array([0.5])
     sdfg(src=src, acc=acc, N=n)
-    assert np.allclose(acc[0], 0.5 + src.sum()), 'the two accumulations into acc[0] diverged from the oracle'
+    assert np.allclose(acc[0], 0.5 + src.sum()), "the two accumulations into acc[0] diverged from the oracle"
 
 
 def wcr_write_beside_a_read_of_other_elements_loop() -> dace.SDFG:
@@ -2043,17 +2064,17 @@ def wcr_write_beside_a_read_of_other_elements_loop() -> dace.SDFG:
     The loop reads ``a`` too, but ``a[i - j - 1]`` for ``j`` in ``0..i-1`` is ``a[0:i]``, never the
     ``a[i]`` slot it accumulates into.
     """
-    sdfg = dace.SDFG('wcr_write_beside_other_elements')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('bb', [N], dace.float64)
-    sdfg.add_symbol('i', dace.int64)
-    loop = LoopRegion('j_loop', condition_expr='j < i', loop_var='j', initialize_expr='j = 0', update_expr='j = j + 1')
+    sdfg = dace.SDFG("wcr_write_beside_other_elements")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("bb", [N], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
+    loop = LoopRegion("j_loop", condition_expr="j < i", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1")
     sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('accumulate', is_start_block=True)
-    task = body.add_tasklet('term', {'x': None, 'y': None}, {'__out': None}, '__out = x * y')
-    body.add_edge(body.add_read('bb'), None, task, 'x', mm.Memlet('bb[j]'))
-    body.add_edge(body.add_read('a'), None, task, 'y', mm.Memlet('a[i - j - 1]'))
-    body.add_edge(task, '__out', body.add_write('a'), None, mm.Memlet('a[i]', wcr='lambda a, b: a + b'))
+    body = loop.add_state("accumulate", is_start_block=True)
+    task = body.add_tasklet("term", {"x": None, "y": None}, {"__out": None}, "__out = x * y")
+    body.add_edge(body.add_read("bb"), None, task, "x", mm.Memlet("bb[j]"))
+    body.add_edge(body.add_read("a"), None, task, "y", mm.Memlet("a[i - j - 1]"))
+    body.add_edge(task, "__out", body.add_write("a"), None, mm.Memlet("a[i]", wcr="lambda a, b: a + b"))
     sdfg.validate()
     return sdfg
 
@@ -2063,8 +2084,8 @@ def test_wcr_write_beside_a_read_of_other_elements_is_retargeted():
     ``a[i]`` is undecidable with ``j`` free, so s118's accumulation stopped being lifted to a reduction.
     Over the loop's range the read is ``a[0:i]``, disjoint from the slot."""
     sdfg = wcr_write_beside_a_read_of_other_elements_loop()
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is not None, 'a slot no other access touches was refused'
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 1
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is not None, "a slot no other access touches was refused"
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 1
     sdfg.validate()
 
     n, i = 16, 11
@@ -2083,24 +2104,22 @@ def running_value_consumer_loop(nested: bool) -> dace.SDFG:
     READS the running value. With ``nested`` that read sits in a one-trip inner loop, CP2K's shape
     (``alpha[...] += binomial_k_lxa * ...`` inside the ``l`` loop, ``binomial_k_lxa *= ...`` after).
     """
-    sdfg, pre, loop = _chain_scaffold(f'chain_running_value_consumer_{int(nested)}', 1)
-    init = _add_zero_init(sdfg, 'init')
+    sdfg, pre, loop = _chain_scaffold(f"chain_running_value_consumer_{int(nested)}", 1)
+    init = _add_zero_init(sdfg, "init")
     sdfg.add_edge(pre, init, dace.InterstateEdge())
     sdfg.add_edge(init, loop, dace.InterstateEdge())
 
     host = loop
     if nested:
-        host = LoopRegion('m_loop',
-                          condition_expr='m < 1',
-                          loop_var='m',
-                          initialize_expr='m = 0',
-                          update_expr='m = m + 1')
+        host = LoopRegion(
+            "m_loop", condition_expr="m < 1", loop_var="m", initialize_expr="m = 0", update_expr="m = m + 1"
+        )
         loop.add_node(host, is_start_block=True)
-    consume = host.add_state('consume', is_start_block=True)
-    task = consume.add_tasklet('consume', {'in_a': None, 'in_b': None}, {'__out': None}, '__out = in_a + in_b')
-    consume.add_edge(consume.add_read('base'), None, task, 'in_a', mm.Memlet('base[jl]'))
-    consume.add_edge(consume.add_read('acc'), None, task, 'in_b', mm.Memlet('acc[0]'))
-    consume.add_edge(task, '__out', consume.add_write('out'), None, mm.Memlet('out[jl]'))
+    consume = host.add_state("consume", is_start_block=True)
+    task = consume.add_tasklet("consume", {"in_a": None, "in_b": None}, {"__out": None}, "__out = in_a + in_b")
+    consume.add_edge(consume.add_read("base"), None, task, "in_a", mm.Memlet("base[jl]"))
+    consume.add_edge(consume.add_read("acc"), None, task, "in_b", mm.Memlet("acc[0]"))
+    consume.add_edge(task, "__out", consume.add_write("out"), None, mm.Memlet("out[jl]"))
 
     first = _add_accumulate_states(loop, 1, first=False)[0]
     loop.add_edge(host if nested else consume, first, dace.InterstateEdge())
@@ -2109,7 +2128,7 @@ def running_value_consumer_loop(nested: bool) -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.parametrize('nested', [False, True], ids=['sibling_state', 'nested_loop'])
+@pytest.mark.parametrize("nested", [False, True], ids=["sibling_state", "nested_loop"])
 def test_accumulator_read_in_the_body_is_not_retargeted(nested):
     """A body that reads the running accumulator is a scan, so the retarget must decline it.
 
@@ -2120,13 +2139,13 @@ def test_accumulator_read_in_the_body_is_not_retargeted(nested):
     out wrong in 10% of its elements with nothing raised -- hence the value assertion.
     """
     sdfg = running_value_consumer_loop(nested)
-    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, 'a scan must not be retargeted'
-    assert _count_wcr_scalar_targets(sdfg, 'lambda a, b: a + b') == 0
+    assert RetargetWCRAccumulator().apply_pass(sdfg, {}) is None, "a scan must not be retargeted"
+    assert _count_wcr_scalar_targets(sdfg, "lambda a, b: a + b") == 0
     sdfg.validate()
 
     out, src, base = _run_chain(sdfg, terms=1, seed=4118)
     exclusive = np.concatenate(([0.0], np.cumsum(src[0])[:-1]))
-    assert np.allclose(out, base + exclusive), 'the body read a stale accumulator'
+    assert np.allclose(out, base + exclusive), "the body read a stale accumulator"
 
 
 def test_loop_to_reduce_doesnt_lift_break_loop():
@@ -2143,12 +2162,12 @@ def test_loop_to_reduce_doesnt_lift_break_loop():
                 break
             a[i] = a[i] + b[i] * c[i]
 
-    for prefer in ('reduce-libnode', 'wcr-scalar'):
+    for prefer in ("reduce-libnode", "wcr-scalar"):
         sdfg = s481.to_sdfg(simplify=True)
         before = sdfg.to_json()
         res = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
         assert res is None
-        assert sdfg.to_json() == before, f'LoopToReduce({prefer}) refused the loop but still mutated the SDFG'
+        assert sdfg.to_json() == before, f"LoopToReduce({prefer}) refused the loop but still mutated the SDFG"
 
 
 # ``AugAssignToWCR`` traversal pinning: ``AccumulatorCopyChainToWCR`` used to drive
@@ -2161,68 +2180,68 @@ def test_loop_to_reduce_doesnt_lift_break_loop():
 
 def in_a_loop(sdfg: dace.SDFG) -> dace.SDFGState:
     """A body state of a 4-trip loop: the per-state driver converts a free tasklet only where it repeats."""
-    loop = LoopRegion('repeat', 'r < 4', 'r', 'r = 0', 'r = r + 1')
+    loop = LoopRegion("repeat", "r < 4", "r", "r = 0", "r = r + 1")
     sdfg.add_node(loop, is_start_block=True)
-    return loop.add_state('body', is_start_block=True)
+    return loop.add_state("body", is_start_block=True)
 
 
 def build_free_tasklet_rmw():
     """Expr 0: ``A[0] -> tasklet -> A[0]`` in a loop body, no map, no staging copies."""
-    sdfg = dace.SDFG('free_tasklet_rmw')
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('B', [6], dace.float64)
+    sdfg = dace.SDFG("free_tasklet_rmw")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [6], dace.float64)
     state = in_a_loop(sdfg)
-    a_r = state.add_read('A')
-    b_r = state.add_read('B')
-    a_w = state.add_write('A')
-    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
-    state.add_edge(a_r, None, tasklet, '__in1', mm.Memlet('A[0]'))
-    state.add_edge(b_r, None, tasklet, '__in2', mm.Memlet('B[2]'))
-    state.add_edge(tasklet, '__out', a_w, None, mm.Memlet('A[0]'))
+    a_r = state.add_read("A")
+    b_r = state.add_read("B")
+    a_w = state.add_write("A")
+    tasklet = state.add_tasklet("combine", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
+    state.add_edge(a_r, None, tasklet, "__in1", mm.Memlet("A[0]"))
+    state.add_edge(b_r, None, tasklet, "__in2", mm.Memlet("B[2]"))
+    state.add_edge(tasklet, "__out", a_w, None, mm.Memlet("A[0]"))
     sdfg.reset_cfg_list()
     return sdfg
 
 
 def build_free_map_rmw():
     """Expr 1: ``A[0] -> map_entry -> tasklet -> map_exit -> A[0]``, write subset loop-invariant."""
-    sdfg = dace.SDFG('free_map_rmw')
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('B', [6], dace.float64)
-    state = sdfg.add_state('body', is_start_block=True)
-    a_r = state.add_read('A')
-    b_r = state.add_read('B')
-    a_w = state.add_write('A')
-    me, mx = state.add_map('m', dict(i='0:6'))
-    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
-    state.add_memlet_path(a_r, me, tasklet, memlet=mm.Memlet('A[0]'), dst_conn='__in1')
-    state.add_memlet_path(b_r, me, tasklet, memlet=mm.Memlet('B[i]'), dst_conn='__in2')
-    state.add_memlet_path(tasklet, mx, a_w, memlet=mm.Memlet('A[0]'), src_conn='__out')
+    sdfg = dace.SDFG("free_map_rmw")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [6], dace.float64)
+    state = sdfg.add_state("body", is_start_block=True)
+    a_r = state.add_read("A")
+    b_r = state.add_read("B")
+    a_w = state.add_write("A")
+    me, mx = state.add_map("m", dict(i="0:6"))
+    tasklet = state.add_tasklet("combine", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
+    state.add_memlet_path(a_r, me, tasklet, memlet=mm.Memlet("A[0]"), dst_conn="__in1")
+    state.add_memlet_path(b_r, me, tasklet, memlet=mm.Memlet("B[i]"), dst_conn="__in2")
+    state.add_memlet_path(tasklet, mx, a_w, memlet=mm.Memlet("A[0]"), src_conn="__out")
     sdfg.reset_cfg_list()
     return sdfg
 
 
 def build_copy_wrapped_rmw():
     """Expr 2: ``A[0] -> copy_in -> tasklet -> copy_out -> A[0]`` in a loop body, private scalar staging."""
-    sdfg = dace.SDFG('copy_wrapped_rmw')
-    sdfg.add_array('A', [2], dace.float64)
-    sdfg.add_array('B', [6], dace.float64)
-    sdfg.add_scalar('a_in', dace.float64, transient=True)
-    sdfg.add_scalar('b_in', dace.float64, transient=True)
-    sdfg.add_scalar('a_sum', dace.float64, transient=True)
+    sdfg = dace.SDFG("copy_wrapped_rmw")
+    sdfg.add_array("A", [2], dace.float64)
+    sdfg.add_array("B", [6], dace.float64)
+    sdfg.add_scalar("a_in", dace.float64, transient=True)
+    sdfg.add_scalar("b_in", dace.float64, transient=True)
+    sdfg.add_scalar("a_sum", dace.float64, transient=True)
     state = in_a_loop(sdfg)
-    a_r = state.add_read('A')
-    a_in = state.add_access('a_in')
-    b_r = state.add_read('B')
-    b_in = state.add_access('b_in')
-    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
-    a_sum = state.add_access('a_sum')
-    a_w = state.add_write('A')
-    state.add_edge(a_r, None, a_in, None, mm.Memlet('A[0]'))
-    state.add_edge(a_in, None, tasklet, '__in1', mm.Memlet('a_in[0]'))
-    state.add_edge(b_r, None, b_in, None, mm.Memlet('B[2]'))
-    state.add_edge(b_in, None, tasklet, '__in2', mm.Memlet('b_in[0]'))
-    state.add_edge(tasklet, '__out', a_sum, None, mm.Memlet('a_sum[0]'))
-    state.add_edge(a_sum, None, a_w, None, mm.Memlet('A[0]'))
+    a_r = state.add_read("A")
+    a_in = state.add_access("a_in")
+    b_r = state.add_read("B")
+    b_in = state.add_access("b_in")
+    tasklet = state.add_tasklet("combine", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
+    a_sum = state.add_access("a_sum")
+    a_w = state.add_write("A")
+    state.add_edge(a_r, None, a_in, None, mm.Memlet("A[0]"))
+    state.add_edge(a_in, None, tasklet, "__in1", mm.Memlet("a_in[0]"))
+    state.add_edge(b_r, None, b_in, None, mm.Memlet("B[2]"))
+    state.add_edge(b_in, None, tasklet, "__in2", mm.Memlet("b_in[0]"))
+    state.add_edge(tasklet, "__out", a_sum, None, mm.Memlet("a_sum[0]"))
+    state.add_edge(a_sum, None, a_w, None, mm.Memlet("A[0]"))
     sdfg.reset_cfg_list()
     return sdfg
 
@@ -2230,19 +2249,19 @@ def build_copy_wrapped_rmw():
 def test_a_read_modify_write_that_runs_once_stays_plain():
     """Outside any loop or map an RMW accumulates nothing, and as a WCR it would lose its order against the
     plain writes a fusion puts beside it (a peeled ``A[N-1] += 1`` next to the map writing ``A[i]``)."""
-    sdfg = dace.SDFG('rmw_once')
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('B', [6], dace.float64)
-    state = sdfg.add_state('once', is_start_block=True)
-    tasklet = state.add_tasklet('combine', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
-    state.add_edge(state.add_read('A'), None, tasklet, '__in1', mm.Memlet('A[0]'))
-    state.add_edge(state.add_read('B'), None, tasklet, '__in2', mm.Memlet('B[2]'))
-    state.add_edge(tasklet, '__out', state.add_write('A'), None, mm.Memlet('A[0]'))
+    sdfg = dace.SDFG("rmw_once")
+    sdfg.add_array("A", [1], dace.float64)
+    sdfg.add_array("B", [6], dace.float64)
+    state = sdfg.add_state("once", is_start_block=True)
+    tasklet = state.add_tasklet("combine", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
+    state.add_edge(state.add_read("A"), None, tasklet, "__in1", mm.Memlet("A[0]"))
+    state.add_edge(state.add_read("B"), None, tasklet, "__in2", mm.Memlet("B[2]"))
+    state.add_edge(tasklet, "__out", state.add_write("A"), None, mm.Memlet("A[0]"))
     assert augassign_to_wcr_in_state(AugAssignToWCR(), sdfg, state) == 0
     assert not any(e.data.wcr for e in state.edges())
 
 
-@pytest.mark.parametrize('build', (build_free_tasklet_rmw, build_free_map_rmw, build_copy_wrapped_rmw))
+@pytest.mark.parametrize("build", (build_free_tasklet_rmw, build_free_map_rmw, build_copy_wrapped_rmw))
 def test_augassign_traversal_matches_old_generic_driver(build):
     """The direct walk must apply exactly what ``PatternMatchAndApplyRepeated([AugAssignToWCR()])``
     applied, on the same graph, for each anchor shape it enumerates."""
@@ -2253,18 +2272,20 @@ def test_augassign_traversal_matches_old_generic_driver(build):
     old_sdfg = copy.deepcopy(base)
     new_sdfg = copy.deepcopy(base)
 
-    old_applied = PatternMatchAndApplyRepeated([AugAssignToWCR()], permissive=False, validate=False,
-                                               validate_all=False).apply_pass(old_sdfg, {})
+    old_applied = PatternMatchAndApplyRepeated(
+        [AugAssignToWCR()], permissive=False, validate=False, validate_all=False
+    ).apply_pass(old_sdfg, {})
     old_count = sum(len(v) for v in old_applied.values()) if old_applied else 0
 
     new_xform = AugAssignToWCR()
     new_count = sum(augassign_to_wcr_in_state(new_xform, new_sdfg, state) for state in list(new_sdfg.states()))
 
-    assert old_count > 0, f'{build.__name__}: fixture did not exercise the old driver'
-    assert new_count == old_count, f'{build.__name__}: applied count diverged (old={old_count}, new={new_count})'
+    assert old_count > 0, f"{build.__name__}: fixture did not exercise the old driver"
+    assert new_count == old_count, f"{build.__name__}: applied count diverged (old={old_count}, new={new_count})"
     old_sdfg.validate()
     new_sdfg.validate()
     # ``hash_sdfg`` strips guids (freshly minted on every node an ``apply`` creates, so two
     # independently driven runs never share them) and compares everything else structural.
-    assert new_sdfg.hash_sdfg() == old_sdfg.hash_sdfg(
-    ), f'{build.__name__}: rewritten graph diverged from the old driver'
+    assert new_sdfg.hash_sdfg() == old_sdfg.hash_sdfg(), (
+        f"{build.__name__}: rewritten graph diverged from the old driver"
+    )

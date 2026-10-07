@@ -46,6 +46,7 @@ Conservative -- only fires when:
 
 Anything else is a no-op.
 """
+
 import copy
 from typing import Any, Dict, Optional, Set, Tuple
 
@@ -71,7 +72,7 @@ def _identifiers(expr: str) -> Set[str]:
     :param expr: The expression source.
     :returns: The identifier names it mentions.
     """
-    return set(re.findall(r'\b[A-Za-z_]\w*\b', expr))
+    return set(re.findall(r"\b[A-Za-z_]\w*\b", expr))
 
 
 def _is_predicate(expr: str) -> bool:
@@ -80,7 +81,7 @@ def _is_predicate(expr: str) -> bool:
     :param expr: The expression source.
     :returns: ``True`` if it reads as a comparison or logical combination.
     """
-    return bool(re.search(r'[<>]|==|!=|\band\b|\bor\b|\bnot\b', expr))
+    return bool(re.search(r"[<>]|==|!=|\band\b|\bor\b|\bnot\b", expr))
 
 
 def _single_meaningful_conditional(inner: SDFG) -> Optional[ConditionalBlock]:
@@ -113,7 +114,8 @@ def _resolve_through_mapping(cond: CodeBlock, symbol_mapping: Dict[str, Any]) ->
     free = {str(s) for s in expr.free_symbols}
     repl = {
         symbolic.symbol(k): symbolic.pystr_to_symbolic(str(v))
-        for k, v in symbol_mapping.items() if k in free and str(v) != k
+        for k, v in symbol_mapping.items()
+        if k in free and str(v) != k
     }
     resolved = expr.subs(repl) if repl else expr
     return symbolic.symstr(resolved), {str(s) for s in resolved.free_symbols}
@@ -154,11 +156,9 @@ def _connector_reads(ns: NestedSDFG, state: SDFGState) -> Dict[str, Set[str]]:
     return reads
 
 
-def _condition_invariant(cond: CodeBlock,
-                         ns: NestedSDFG,
-                         state: SDFGState,
-                         map_params: Set[str],
-                         allow_inner_defs: bool = True) -> bool:
+def _condition_invariant(
+    cond: CodeBlock, ns: NestedSDFG, state: SDFGState, map_params: Set[str], allow_inner_defs: bool = True
+) -> bool:
     """Report whether ``cond`` picks the same branch for every element of the map.
 
     A condition symbol qualifies in one of two ways:
@@ -225,8 +225,9 @@ def _free_names(expr: str) -> Set[str]:
     return {str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols}
 
 
-def _match(sdfg: SDFG,
-           require_full_hoist: bool = False) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
+def _match(
+    sdfg: SDFG, require_full_hoist: bool = False
+) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
     """Find a single-map state whose map body is one ``NestedSDFG`` guarding a
     map-invariant ``ConditionalBlock``.
 
@@ -315,15 +316,17 @@ def _candidates(sdfg: SDFG, allow_inner_defs: bool = True, require_full_hoist: b
                 if require_full_hoist or _branch_holds_a_map(cand[3]):
                     outer = _enclosing_map_params(st, me)
                     if outer and not all(
-                            _condition_invariant(c, cand[2], st, outer, allow_inner_defs)
-                            for c, _b in cand[3].branches if c is not None):
+                        _condition_invariant(c, cand[2], st, outer, allow_inner_defs)
+                        for c, _b in cand[3].branches
+                        if c is not None
+                    ):
                         continue
                 yield cand
 
 
-def _candidate_at(st: SDFGState,
-                  me: MapEntry,
-                  allow_inner_defs: bool = True) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
+def _candidate_at(
+    st: SDFGState, me: MapEntry, allow_inner_defs: bool = True
+) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
     """The candidate rooted at one map entry, if it qualifies.
 
     :param st: The state holding the map.
@@ -347,8 +350,8 @@ def _candidate_at(st: SDFGState,
     # just cleared.
     map_params = {str(p) for p in me.map.params}
     if not all(
-            _condition_invariant(cond, ns, st, map_params, allow_inner_defs)
-            for cond, _b in cb.branches if cond is not None):
+        _condition_invariant(cond, ns, st, map_params, allow_inner_defs) for cond, _b in cb.branches if cond is not None
+    ):
         return None
     # A branch with no blocks has no start block to splice in its place, and
     # ``start_block`` raises on a node-less region rather than returning None.
@@ -358,8 +361,8 @@ def _candidate_at(st: SDFGState,
 
 
 def _match_inner(
-        sdfg: SDFG,
-        require_full_hoist: bool = False) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
+    sdfg: SDFG, require_full_hoist: bool = False
+) -> Optional[Tuple[SDFGState, MapEntry, NestedSDFG, ConditionalBlock]]:
     """Find a guard that is invariant w.r.t. an *inner* map of a chain, so it
     can be hoisted to sit between that map and its parent.
 
@@ -397,8 +400,8 @@ def _liftable_prelude(ns: NestedSDFG, state: SDFGState, map_params: Set[str]) ->
             continue
         if e.data.subset is not None and ({str(s) for s in e.data.subset.free_symbols} & map_params):
             continue
-        subset = str(e.data.subset) if e.data.subset is not None else ''
-        conn_expr[e.dst_conn] = f'{e.data.data}[{subset}]' if subset else e.data.data
+        subset = str(e.data.subset) if e.data.subset is not None else ""
+        conn_expr[e.dst_conn] = f"{e.data.data}[{subset}]" if subset else e.data.data
 
     lifted: Dict[str, str] = {}
     for lhs, rhs in _inner_assignments(ns).items():
@@ -432,7 +435,7 @@ def _substitute_name(expr: str, name: str, replacement: str) -> str:
     :param replacement: The text to put in its place.
     :returns: The rewritten expression source.
     """
-    return re.sub(rf'\b{re.escape(name)}\b', f'({replacement})', expr)
+    return re.sub(rf"\b{re.escape(name)}\b", f"({replacement})", expr)
 
 
 def _replace_conditional_with_branch(inner: SDFG, cb_label: str, branch: ControlFlowRegion):
@@ -492,11 +495,12 @@ class MoveMapInvariantIfUp(ppl.Pass):
         cleared removes a re-evaluation from an enclosing iteration, so a
         partial hoist is still a win and this stays off.
     """
-    CATEGORY: str = 'Canonicalization'
 
-    require_full_hoist = properties.Property(dtype=bool,
-                                             default=False,
-                                             desc='Hoist only guards that clear the entire enclosing map chain.')
+    CATEGORY: str = "Canonicalization"
+
+    require_full_hoist = properties.Property(
+        dtype=bool, default=False, desc="Hoist only guards that clear the entire enclosing map chain."
+    )
 
     def __init__(self, require_full_hoist: bool = False):
         super().__init__()
@@ -572,13 +576,14 @@ class MoveMapInvariantIfUp(ppl.Pass):
             return False
 
         subgraph = st.scope_subgraph(me, include_entry=True, include_exit=True)
-        wrapper = nest_state_subgraph(st.sdfg, st, subgraph, name=f'{me.map.label}_guard_scope')
+        wrapper = nest_state_subgraph(st.sdfg, st, subgraph, name=f"{me.map.label}_guard_scope")
 
         # The guard's definitions now belong one level out, in the wrapper's
         # own CFG; leaving copies behind would keep the condition looking
         # body-defined (and so non-invariant) to the next match.
-        inner_ns = next(n for w in wrapper.sdfg.states() for n in w.nodes()
-                        if isinstance(n, NestedSDFG) and n.sdfg is ns.sdfg)
+        inner_ns = next(
+            n for w in wrapper.sdfg.states() for n in w.nodes() if isinstance(n, NestedSDFG) and n.sdfg is ns.sdfg
+        )
         inner_st = next(w for w in wrapper.sdfg.states() if inner_ns in w.nodes())
         # Recompute against the wrapper's own memlets: nesting re-bases data
         # names and subsets, so expressions built from the outer state would
@@ -602,7 +607,7 @@ class MoveMapInvariantIfUp(ppl.Pass):
 
         # Put the lifted definitions on the wrapper's entry edge, so they are
         # evaluated once per parent-map element instead of once per inner one.
-        pre = wrapper.sdfg.add_state(f'{me.map.label}_guard_pre', is_start_block=True)
+        pre = wrapper.sdfg.add_state(f"{me.map.label}_guard_pre", is_start_block=True)
         wrapper.sdfg.add_edge(pre, inner_st, InterstateEdge(assignments=lifted))
         for lhs in lifted:
             if lhs not in wrapper.sdfg.symbols:

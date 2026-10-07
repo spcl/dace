@@ -15,6 +15,7 @@ and that map stays scalar.
 The refusal is likewise scoped to the map's OWN params: a guard over an enclosing scope's symbol is
 uniform across the tiled lanes, the cloudsc ``for jk: for jl: if jk > 1`` shape.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -31,8 +32,8 @@ from dace.transformation.passes.vectorization.enums import RemainderStrategy, Br
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.helpers.isolation import run_isolated
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 W = 8
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
@@ -75,11 +76,14 @@ def vectorized(prog, tag):
     sdfg.name = tag
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(W, ),
-                        validate_all=True,
-                        target_isa=HOST_ISA,
-                        remainder_strategy=RemainderStrategy.FULL_MASK,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(W,),
+            validate_all=True,
+            target_isa=HOST_ISA,
+            remainder_strategy=RemainderStrategy.FULL_MASK,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg
 
@@ -91,8 +95,9 @@ def sole_map(sdfg, nparams):
     nest into one N-D map, so identify by arity, not by the name written in the kernel.
     """
     found = [m for m, _ in sdfg.all_nodes_recursive() if isinstance(m, nd.MapEntry) and len(m.map.params) == nparams]
-    assert len(
-        found) == 1, f'expected exactly one {nparams}-param map, found {len(found)}: {[m.map.params for m in found]}'
+    assert len(found) == 1, (
+        f"expected exactly one {nparams}-param map, found {len(found)}: {[m.map.params for m in found]}"
+    )
     return found[0]
 
 
@@ -113,7 +118,7 @@ def index_guard_reference(a, b, c, d, n):
     return out
 
 
-@pytest.mark.parametrize('n', [64, 61])
+@pytest.mark.parametrize("n", [64, 61])
 def test_index_guard_kernel_matches_numpy(n):
     """The flip point (i = n//2 - 1) is deliberately NOT tile-aligned, so a per-tile predicate
     mis-predicates. n=64 -> mid=32, flip at i=31, the last lane of tile [24:32) -> exactly one
@@ -124,7 +129,7 @@ def test_index_guard_kernel_matches_numpy(n):
     61-element buffer -- a fault that must fail this test, not take the pytest process down."""
     a, b, c, d = inputs_1d(n)
     ref = index_guard_reference(a, b, c, d, n)
-    sdfg = vectorized(index_guard_kernel, f'index_guard_{n}')
+    sdfg = vectorized(index_guard_kernel, f"index_guard_{n}")
     run_isolated(sdfg, dict(a=a.copy(), b=b, c=c, d=d, N=n), [])
     work = a.copy()
     run_isolated(sdfg, dict(a=work, b=b, c=c, d=d, N=n), [(work, ref)])
@@ -132,25 +137,25 @@ def test_index_guard_kernel_matches_numpy(n):
 
 def test_range_protecting_guard_leaves_the_map_scalar():
     """Structural half: an arm that needs the guard for its range keeps the i-map unstrided."""
-    sdfg = vectorized(range_guard_kernel, 'range_guard_struct')
-    assert step_of(sole_map(sdfg, 1)) == '1', 'map was tiled despite a guard its arms need for range'
+    sdfg = vectorized(range_guard_kernel, "range_guard_struct")
+    assert step_of(sole_map(sdfg, 1)) == "1", "map was tiled despite a guard its arms need for range"
 
 
 def test_range_protecting_guard_survives_as_a_scalar_loop_in_the_emitted_cpp():
     """The bug is defined in terms of emitted C++ -- a scalar ``if`` over the tile base -- so pin
     the C++. Catches the inverse regression the numeric test cannot: the map going scalar because
     some earlier pass started bailing, leaving the guard correct but this predicate dead."""
-    sdfg = vectorized(range_guard_kernel, 'range_guard_cpp')
+    sdfg = vectorized(range_guard_kernel, "range_guard_cpp")
     code = sdfg.generate_code()[0].clean_code
-    assert 'tile_mask_gen' not in code, 'the guarded map was tiled: tile ops emitted around a per-tile predicate'
-    assert '+= 8' not in code, 'a map was strided by the tile width despite the guard'
+    assert "tile_mask_gen" not in code, "the guarded map was tiled: tile ops emitted around a per-tile predicate"
+    assert "+= 8" not in code, "a map was strided by the tile width despite the guard"
 
 
 def test_value_selecting_guard_is_if_converted_and_tiles():
     """The other side of the discriminator: both arms in range, so the guard becomes a per-lane
     blend and the map tiles. Without this, refusing every param guard would also pass."""
-    sdfg = vectorized(index_guard_kernel, 'index_guard_blend')
-    assert step_of(sole_map(sdfg, 1)) == str(W), 'a value-selecting guard must not keep the map scalar'
+    sdfg = vectorized(index_guard_kernel, "index_guard_blend")
+    assert step_of(sole_map(sdfg, 1)) == str(W), "a value-selecting guard must not keep the map scalar"
 
 
 def test_outer_param_guard_still_tiles():
@@ -169,14 +174,14 @@ def test_outer_param_guard_still_tiles():
     ref = a.copy()
     ref[1:, :] = a[1:, :] + b[1:, :] * c[1:, :]
 
-    sdfg = vectorized(outer_param_guard_kernel, 'outer_param_guard')
-    assert step_of(sole_map(sdfg, 2)) == str(W), 'lane-uniform outer guard wrongly refused the tiled dim'
+    sdfg = vectorized(outer_param_guard_kernel, "outer_param_guard")
+    assert step_of(sole_map(sdfg, 2)) == str(W), "lane-uniform outer guard wrongly refused the tiled dim"
 
     work = a.copy()
     run_isolated(sdfg, dict(a=work, b=b, c=c, M=mm, N=nn), [(work, ref)])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_index_guard_kernel_matches_numpy(64)
     test_index_guard_kernel_matches_numpy(61)
     test_range_protecting_guard_leaves_the_map_scalar()

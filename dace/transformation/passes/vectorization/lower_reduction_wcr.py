@@ -10,6 +10,7 @@ stays on the boundary ``NSDFG -> AccessNode -[wcr]-> MapExit`` chain.
 ``WCRToAugAssign`` refuses this rewrite generically; it is sound here only
 because the tile emitter folds the result to a ``TileReduce``.
 """
+
 import copy
 
 from dace import SDFG, subsets
@@ -46,19 +47,21 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
                 continue
             acc, acc_subset = dst.data, memlet.subset
             src_subset = memlet.get_src_subset(edge, state)
-            tasklet = state.add_tasklet('reduce_accum', OrderedSet(('__in1', '__in2')), {'__out'},
-                                        f"__out = {_wcr_augassign_body(memlet.wcr)}")
-            state.add_edge(state.add_access(acc), None, tasklet, '__in1',
-                           Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
+            tasklet = state.add_tasklet(
+                "reduce_accum", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {_wcr_augassign_body(memlet.wcr)}"
+            )
+            state.add_edge(
+                state.add_access(acc), None, tasklet, "__in1", Memlet(data=acc, subset=copy.deepcopy(acc_subset))
+            )
             # __in2 subset must match edge.src's rank-1 scalar descriptor, not acc_subset:
             # a rank-2 acc_subset (e.g. C[i,j] -> (1,1)) trips a dimension-mismatch check.
             if src_subset is not None:
                 in2_subset = copy.deepcopy(src_subset)
             else:
                 src_desc = inner_sdfg.arrays.get(edge.src.data)
-                in2_subset = (subsets.Range.from_array(src_desc) if src_desc is not None else copy.deepcopy(acc_subset))
-            state.add_edge(edge.src, None, tasklet, '__in2', Memlet(data=edge.src.data, subset=in2_subset))
-            state.add_edge(tasklet, '__out', dst, None, Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
+                in2_subset = subsets.Range.from_array(src_desc) if src_desc is not None else copy.deepcopy(acc_subset)
+            state.add_edge(edge.src, None, tasklet, "__in2", Memlet(data=edge.src.data, subset=in2_subset))
+            state.add_edge(tasklet, "__out", dst, None, Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
             state.remove_edge(edge)
             rewritten += 1
     return rewritten

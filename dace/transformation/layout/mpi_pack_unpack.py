@@ -10,6 +10,7 @@ untouched (identity fast-path). A shuffled buffer is refused: Shuffle and MPI ar
 
 Run AFTER the layout passes (Permute/Block/apply_assignment).
 """
+
 from dataclasses import dataclass
 from typing import Any, Dict
 
@@ -26,14 +27,20 @@ class MpiPackUnpack(ppl.Pass):
         self._counter = 0
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.States | ppl.Modifies.AccessNodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
-                | ppl.Modifies.Memlets)
+        return (
+            ppl.Modifies.States
+            | ppl.Modifies.AccessNodes
+            | ppl.Modifies.Edges
+            | ppl.Modifies.Descriptors
+            | ppl.Modifies.Memlets
+        )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         from dace.libraries.mpi.nodes import Send, Isend, Recv, Irecv, Sendrecv
+
         count = 0
         for phase in program_phases(sdfg):
             for state in phase.states():
@@ -54,10 +61,12 @@ class MpiPackUnpack(ppl.Pass):
         if arr.startswith("shuffled_"):
             raise NotImplementedError(
                 f"MpiPackUnpack: buffer '{arr}' is a shuffled array; Shuffle and MPI are mutually "
-                f"exclusive (the shuffled memory order makes the send ambiguous).")
+                f"exclusive (the shuffled memory order makes the send ambiguous)."
+            )
 
     def _contiguous(self, sdfg: dace.SDFG, memlet) -> bool:
         from dace.libraries.mpi.utils import is_access_contiguous
+
         return is_access_contiguous(memlet, sdfg.arrays[memlet.data])
 
     def _require_access_node(self, endpoint, node) -> None:
@@ -69,7 +78,8 @@ class MpiPackUnpack(ppl.Pass):
                 f"MpiPackUnpack: the buffer of MPI node '{node.name}' is directly a "
                 f"{type(endpoint).__name__}, not an AccessNode -- an MPI transfer inside a parallel map is "
                 f"not supported. Pack/unpack into a contiguous buffer outside the map (before the map entry "
-                f"or after the map exit), then send/recv that. Add in-map support only if a real case needs it.")
+                f"or after the map exit), then send/recv that. Add in-map support only if a real case needs it."
+            )
 
     def _add_packed(self, sdfg: dace.SDFG, arr: str, subset) -> str:
         desc = sdfg.arrays[arr]
@@ -77,12 +87,14 @@ class MpiPackUnpack(ppl.Pass):
         self._counter += 1
         # SDFG lifetime, not Scope: an async Isend/Irecv buffer must survive from its state to the
         # matching Wait in a later state (a Scope-lifetime buffer is freed at state exit -> use-after-free).
-        sdfg.add_array(name,
-                       list(subset.size()),
-                       desc.dtype,
-                       transient=True,
-                       storage=desc.storage,
-                       lifetime=dace.dtypes.AllocationLifetime.SDFG)
+        sdfg.add_array(
+            name,
+            list(subset.size()),
+            desc.dtype,
+            transient=True,
+            storage=desc.storage,
+            lifetime=dace.dtypes.AllocationLifetime.SDFG,
+        )
         return name
 
     def _copy(self, state, arr, subset, packed, pack, arr_node=None, packed_node=None):
@@ -92,29 +104,34 @@ class MpiPackUnpack(ppl.Pass):
         params = [f"__j{k}" for k in range(len(sizes))]
         sym = dace.symbolic.symbol
         map_ranges = {params[k]: f"0:{sizes[k]}" for k in range(len(sizes))}
-        arr_rng = dace.subsets.Range([(mins[k] + sym(params[k]), mins[k] + sym(params[k]), 1)
-                                      for k in range(len(sizes))])
+        arr_rng = dace.subsets.Range(
+            [(mins[k] + sym(params[k]), mins[k] + sym(params[k]), 1) for k in range(len(sizes))]
+        )
         packed_rng = dace.subsets.Range([(sym(p), sym(p), 1) for p in params])
         if pack:
             pw = packed_node or state.add_access(packed)
-            state.add_mapped_tasklet(name=f"pack_{packed}",
-                                     map_ranges=map_ranges,
-                                     inputs={"__inp": dace.Memlet(data=arr, subset=arr_rng)},
-                                     code="__out = __inp",
-                                     outputs={"__out": dace.Memlet(data=packed, subset=packed_rng)},
-                                     input_nodes={arr: arr_node} if arr_node else None,
-                                     output_nodes={packed: pw},
-                                     external_edges=True)
+            state.add_mapped_tasklet(
+                name=f"pack_{packed}",
+                map_ranges=map_ranges,
+                inputs={"__inp": dace.Memlet(data=arr, subset=arr_rng)},
+                code="__out = __inp",
+                outputs={"__out": dace.Memlet(data=packed, subset=packed_rng)},
+                input_nodes={arr: arr_node} if arr_node else None,
+                output_nodes={packed: pw},
+                external_edges=True,
+            )
             return pw
         aw = arr_node or state.add_write(arr)
-        state.add_mapped_tasklet(name=f"unpack_{packed}",
-                                 map_ranges=map_ranges,
-                                 inputs={"__inp": dace.Memlet(data=packed, subset=packed_rng)},
-                                 code="__out = __inp",
-                                 outputs={"__out": dace.Memlet(data=arr, subset=arr_rng)},
-                                 input_nodes={packed: packed_node} if packed_node else None,
-                                 output_nodes={arr: aw},
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            name=f"unpack_{packed}",
+            map_ranges=map_ranges,
+            inputs={"__inp": dace.Memlet(data=packed, subset=packed_rng)},
+            code="__out = __inp",
+            outputs={"__out": dace.Memlet(data=arr, subset=arr_rng)},
+            input_nodes={packed: packed_node} if packed_node else None,
+            output_nodes={arr: aw},
+            external_edges=True,
+        )
         return aw
 
     def _pack_send(self, sdfg, state, node, conn) -> int:
@@ -178,6 +195,7 @@ class MpiPackUnpack(ppl.Pass):
 
     def _find_wait(self, sdfg, req: str):
         from dace.libraries.mpi.nodes import Wait, Waitall
+
         for st in sdfg.states():
             for n in st.nodes():
                 if isinstance(n, (Wait, Waitall)):
@@ -185,4 +203,5 @@ class MpiPackUnpack(ppl.Pass):
                         if e.dst_conn == "_request" and e.data is not None and e.data.data == req:
                             return st, n
         raise NotImplementedError(
-            f"MpiPackUnpack: no Wait/Waitall found for Irecv request '{req}'; cannot place the async unpack.")
+            f"MpiPackUnpack: no Wait/Waitall found for Irecv request '{req}'; cannot place the async unpack."
+        )

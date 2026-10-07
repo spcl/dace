@@ -13,6 +13,7 @@ hardcoded the world communicator (allgather / scatter / redistribute) plus the
 uniformity fix on barrier, and confirm backward compatibility (no connector ->
 ``MPI_COMM_WORLD``).
 """
+
 from unittest import mock
 
 import dace
@@ -44,7 +45,7 @@ class _MockProgramVisitor:
 
     def get_target_name(self, output_index=None, default=None):
         self._counter += 1
-        return default or f'__testgrid{self._counter}'
+        return default or f"__testgrid{self._counter}"
 
     def __getattr__(self, name):
         value = mock.MagicMock()
@@ -62,23 +63,23 @@ def _expanded_code(node, state, sdfg):
 def _wire_comm(sdfg, state, node):
     """Wire a ``_comm`` connector fed by a ``CommF2c`` (mirrors the dace-fortran
     ``_wire_user_comm`` path): a Fortran integer handle -> ``opaque(MPI_Comm)``."""
-    sdfg.add_scalar('_fh', dace.int32, transient=False)
-    sdfg.add_scalar('_usercomm', dace.dtypes.opaque("MPI_Comm"), transient=True)
-    f2c = CommF2c('_commf2c_')
+    sdfg.add_scalar("_fh", dace.int32, transient=False)
+    sdfg.add_scalar("_usercomm", dace.dtypes.opaque("MPI_Comm"), transient=True)
+    f2c = CommF2c("_commf2c_")
     state.add_node(f2c)
-    state.add_edge(state.add_read('_fh'), None, f2c, '_fcomm', Memlet(data='_fh', subset='0'))
-    cw = state.add_access('_usercomm')
-    state.add_edge(f2c, '_comm', cw, None, Memlet(data='_usercomm', subset='0'))
-    node.add_in_connector('_comm', dace.dtypes.opaque("MPI_Comm"))
-    state.add_edge(cw, None, node, '_comm', Memlet(data='_usercomm', subset='0'))
+    state.add_edge(state.add_read("_fh"), None, f2c, "_fcomm", Memlet(data="_fh", subset="0"))
+    cw = state.add_access("_usercomm")
+    state.add_edge(f2c, "_comm", cw, None, Memlet(data="_usercomm", subset="0"))
+    node.add_in_connector("_comm", dace.dtypes.opaque("MPI_Comm"))
+    state.add_edge(cw, None, node, "_comm", Memlet(data="_usercomm", subset="0"))
 
 
 def _wire_grid(sdfg, state, node):
     """Wire a ``_grid`` connector fed by a cartesian process grid (mirrors the
     ``dace.comm.Bcast(..., grid=...)`` frontend path)."""
     grid = comm_repl._cart_create(_MockProgramVisitor(), sdfg, state, [1, 2])
-    node.add_in_connector('_grid')
-    state.add_edge(state.add_read(grid), None, node, '_grid', Memlet(data=grid))
+    node.add_in_connector("_grid")
+    state.add_edge(state.add_read(grid), None, node, "_grid", Memlet(data=grid))
 
 
 # SDFG builders (one fresh node per variant so resolution is independent)
@@ -106,10 +107,9 @@ def _build_scatter():
     node = mpi.nodes.scatter.Scatter("scatter")
     state.add_memlet_path(state.add_access("inbuf"), node, dst_conn="_inbuffer", memlet=Memlet.simple("inbuf", "0:n*p"))
     state.add_memlet_path(state.add_access("root"), node, dst_conn="_root", memlet=Memlet.simple("root", "0:1"))
-    state.add_memlet_path(node,
-                          state.add_access("outbuf"),
-                          src_conn="_outbuffer",
-                          memlet=Memlet.simple("outbuf", "0:n"))
+    state.add_memlet_path(
+        node, state.add_access("outbuf"), src_conn="_outbuffer", memlet=Memlet.simple("outbuf", "0:n")
+    )
     return sdfg, state, node
 
 
@@ -122,7 +122,7 @@ def _build_barrier():
 
 
 def _build_redistribute():
-    P = dace.symbol('P', dace.int32)
+    P = dace.symbol("P", dace.int32)
 
     @dace.program
     def matrix_2d_2d(A: dace.int32[4 * P, 16]):

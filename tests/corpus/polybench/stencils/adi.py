@@ -2,29 +2,20 @@
 import dace
 import numpy as np
 
-N = dace.symbol('N')
-tsteps = dace.symbol('tsteps')
+N = dace.symbol("N")
+tsteps = dace.symbol("tsteps")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    tsteps: 20,
-    N: 20
-}, {
-    tsteps: 40,
-    N: 60
-}, {
-    tsteps: 100,
-    N: 200
-}, {
-    tsteps: 500,
-    N: 1000
-}, {
-    tsteps: 1000,
-    N: 2000
-}]
+sizes = [
+    {tsteps: 20, N: 20},
+    {tsteps: 40, N: 60},
+    {tsteps: 100, N: 200},
+    {tsteps: 500, N: 1000},
+    {tsteps: 1000, N: 2000},
+]
 
 #: ported from the npbench bench_info paper row (TSTEPS=100, N=200)
 paper_sizes = {tsteps: 100, N: 200}
@@ -148,6 +139,7 @@ def adi(u: datatype[N, N]):
                     uij = pij * ujp1 + qij
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(0, 'u')], init_array, adi)
+
+    polybench.main(sizes, args, [(0, "u")], init_array, adi)

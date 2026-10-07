@@ -12,6 +12,7 @@ container as a free symbol of the body, and ``add_nested_sdfg`` types an unknown
 This is the defect that made CloudSC's canonicalize pipeline diverge at stage ``parallelize``; the
 kernel here is the same shape stripped to the two nested headers that expose it.
 """
+
 import numpy as np
 import pytest
 
@@ -20,7 +21,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import CodeBlock, ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: Threshold and the value written when the guard holds. ``0 < THRESHOLD < 1`` is what makes the
 #: bug observable: truncated to an ``int`` the threshold is 0, so ``thr > 0.5`` flips to False.
@@ -33,25 +34,25 @@ def build_sdfg() -> dace.SDFG:
     The inner ``ConditionalBlock`` sits inside the outer one's branch region, which is exactly the
     depth the old header walk could not reach.
     """
-    sdfg = dace.SDFG('loop_to_map_nested_header_container')
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_scalar('thr', dace.float64)
+    sdfg = dace.SDFG("loop_to_map_nested_header_container")
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_scalar("thr", dace.float64)
 
-    loop = LoopRegion('outer_loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    loop = LoopRegion("outer_loop", "i < N", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
 
-    outer_if = ConditionalBlock('outer_if', sdfg=sdfg)
+    outer_if = ConditionalBlock("outer_if", sdfg=sdfg)
     loop.add_node(outer_if, is_start_block=True)
-    outer_body = ControlFlowRegion('outer_body', sdfg=sdfg, parent=outer_if)
-    outer_if.add_branch(CodeBlock('N > 0'), outer_body)
+    outer_body = ControlFlowRegion("outer_body", sdfg=sdfg, parent=outer_if)
+    outer_if.add_branch(CodeBlock("N > 0"), outer_body)
 
-    inner_if = ConditionalBlock('inner_if', sdfg=sdfg)
+    inner_if = ConditionalBlock("inner_if", sdfg=sdfg)
     outer_body.add_node(inner_if, is_start_block=True)
-    for label, value, condition in (('then_body', 1.0, CodeBlock('thr > 0.5')), ('else_body', -1.0, None)):
+    for label, value, condition in (("then_body", 1.0, CodeBlock("thr > 0.5")), ("else_body", -1.0, None)):
         branch = ControlFlowRegion(label, sdfg=sdfg, parent=inner_if)
-        state = branch.add_state(f'{label}_state', is_start_block=True)
-        tasklet = state.add_tasklet(label, {}, {'__out'}, f'__out = {value}')
-        state.add_edge(tasklet, '__out', state.add_write('B'), None, dace.Memlet('B[i]'))
+        state = branch.add_state(f"{label}_state", is_start_block=True)
+        tasklet = state.add_tasklet(label, {}, {"__out"}, f"__out = {value}")
+        state.add_edge(tasklet, "__out", state.add_write("B"), None, dace.Memlet("B[i]"))
         inner_if.add_branch(condition, branch)
 
     sdfg.validate()
@@ -65,9 +66,9 @@ def test_header_container_below_a_branch_is_routed():
     sdfg.validate()
 
     body = next(sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg)
-    assert 'thr' not in body.symbols, f'thr was re-typed as a symbol: {body.symbols.get("thr")}'
+    assert "thr" not in body.symbols, f"thr was re-typed as a symbol: {body.symbols.get('thr')}"
     nsdfg_node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
-    assert 'thr' in nsdfg_node.in_connectors
+    assert "thr" in nsdfg_node.in_connectors
 
 
 def test_header_container_below_a_branch_keeps_its_value():
@@ -80,6 +81,7 @@ def test_header_container_below_a_branch_keeps_its_value():
     assert np.array_equal(out, np.ones(8))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__]))

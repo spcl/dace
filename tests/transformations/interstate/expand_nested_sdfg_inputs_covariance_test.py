@@ -14,6 +14,7 @@ The tests assert bit-exactness against a NumPy oracle so a mis-offset transposed
 output (``cov[j, i]``) or a dropped reduction shows up as a value error, not just a
 crash.
 """
+
 import numpy as np
 
 import dace
@@ -79,7 +80,7 @@ def _covariance(data: dace.float64[N, M], cov: dace.float64[M, M], mean: dace.fl
                 indi << data[k, i]
                 indj << data[k, j]
                 cov_ij >> cov(1, lambda x, y: x + y)[i, j]
-                cov_ij = (indi * indj)
+                cov_ij = indi * indj
 
             with dace.tasklet:
                 cov_ij_in << cov[i, j]

@@ -13,6 +13,7 @@ side-effect free on a no-match.
 The canonicalization pipeline wires it in ahead of every lift stage. A direct caller that
 builds an SDFG straight from the Python frontend and wants the lifts must run it first.
 """
+
 from typing import List, Optional, Type, Union
 
 from dace import SDFG
@@ -24,7 +25,7 @@ from dace.transformation import transformation as xf
 class LiftPreprocess(ppl.Pass):
     """Canonicalize loop bodies for ``LoopToScan`` / ``LoopToReduce`` matching."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Symbols | ppl.Modifies.Nodes | ppl.Modifies.Memlets

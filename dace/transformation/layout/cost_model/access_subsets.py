@@ -2,6 +2,7 @@ import dace
 from typing import Dict, List
 import copy
 from dace.sdfg.narrowing import as_range
+
 """Access subsets: per-array index ranges touched by a loop nest."""
 
 
@@ -36,8 +37,9 @@ def get_access_subsets(
         direct_children = scope_children.get(entry, [])
         for child in direct_children:
             if isinstance(child, dace.nodes.Tasklet):
-                raise ValueError(f"Tasklet '{child.label}' found between map scopes — "
-                                 f"loop nest is not perfectly nested.")
+                raise ValueError(
+                    f"Tasklet '{child.label}' found between map scopes — loop nest is not perfectly nested."
+                )
             if isinstance(child, (dace.nodes.MapEntry, dace.nodes.MapExit)):
                 continue
             if isinstance(child, dace.nodes.AccessNode):

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shrink a transient that only ever lives inside one map body down to the box that body touches."""
+
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,8 +16,11 @@ from dace.transformation.passes.canonicalize.prune_unreferenced_transients impor
 from dace.optionals import required
 
 #: Storages whose buffer is a plain allocation this pass may resize.
-RESIZABLE_STORAGE: Tuple[dtypes.StorageType,
-                         ...] = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
+RESIZABLE_STORAGE: Tuple[dtypes.StorageType, ...] = (
+    dtypes.StorageType.Default,
+    dtypes.StorageType.CPU_Heap,
+    dtypes.StorageType.Register,
+)
 
 
 def named_in_text(sdfg: SDFG, name: str) -> bool:
@@ -26,7 +30,7 @@ def named_in_text(sdfg: SDFG, name: str) -> bool:
     :param name: Descriptor name.
     :returns: ``True`` when a tasklet body, interstate edge or loop header spells the name.
     """
-    word = re.compile(rf'\b{re.escape(name)}\b')
+    word = re.compile(rf"\b{re.escape(name)}\b")
     texts = [code_text(sdfg.init_code), code_text(sdfg.exit_code)]
     for state in sdfg.states():
         texts += [code_text(n.code) for n in state.nodes() if isinstance(n, nodes.Tasklet)]
@@ -175,7 +179,7 @@ class ShrinkMapLocalTransients(ppl.Pass):
     shrunk when every access names that one box and nothing in the nest reassigns its symbols.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets

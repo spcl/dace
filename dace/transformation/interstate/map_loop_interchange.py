@@ -23,11 +23,11 @@ def carried_across_iterations(loop: cf.LoopRegion, body: sd.SDFG) -> Optional[st
     for edge in loop.all_interstate_edges():
         for name, rhs in edge.data.assignments.items():
             if free_names(rhs) & assigned:
-                return f'symbol {name} is carried across iterations'
+                return f"symbol {name} is carried across iterations"
     for name, desc in body.arrays.items():
         states = [s for s in loop.states() if any(n.data == name for n in s.data_nodes())]
         if desc.transient and states and (len(states) > 1 or name in move_if_into_loop.upward_exposed_reads(states[0])):
-            return f'transient {name} is carried across iterations'
+            return f"transient {name} is carried across iterations"
     return None
 
 
@@ -53,26 +53,33 @@ class MapLoopInterchange(transformation.SingleStateTransformation):
         entry, body = self.map_entry, self.nested_sdfg
         blocks = body.sdfg.nodes()
         if len(blocks) != 1 or not isinstance(blocks[0], cf.LoopRegion):
-            return 'the body is not exactly one loop'
+            return "the body is not exactly one loop"
         loop = blocks[0]
         if any(e.dst is not body for e in state.out_edges(entry)):
-            return 'the map holds more than the nested SDFG'
-        if any(not isinstance(n, nodes.AccessNode) for n in state.scope_children()[None]
-               if n is not entry and n is not state.exit_node(entry)):
-            return 'the state holds more than the map; the loop would repeat it'
+            return "the map holds more than the nested SDFG"
+        if any(
+            not isinstance(n, nodes.AccessNode)
+            for n in state.scope_children()[None]
+            if n is not entry and n is not state.exit_node(entry)
+        ):
+            return "the state holds more than the map; the loop would repeat it"
         var = loop.loop_variable
         outer = state.sdfg
         if var in entry.map.params or var in outer.symbols or var in outer.arrays:
-            return f'the loop variable {var} is already defined outside the map'
+            return f"the loop variable {var} is already defined outside the map"
         statements = [c for c in (loop.init_statement, loop.loop_condition, loop.update_statement) if c is not None]
         for name in sorted({str(s) for code in statements for s in code.get_free_symbols()} - {var}):
-            if (name in entry.map.params or name in entry.in_connectors or name in body.sdfg.arrays
-                    or str(body.symbol_mapping.get(name)) != name):
-                return f'the loop bound {name} varies across map iterations'
+            if (
+                name in entry.map.params
+                or name in entry.in_connectors
+                or name in body.sdfg.arrays
+                or str(body.symbol_mapping.get(name)) != name
+            ):
+                return f"the loop bound {name} varies across map iterations"
         if any(
-                isinstance(b, (cf.BreakBlock, cf.ContinueBlock, cf.ReturnBlock))
-                for b in loop.all_control_flow_blocks()):
-            return 'the loop leaves an iteration early'
+            isinstance(b, (cf.BreakBlock, cf.ContinueBlock, cf.ReturnBlock)) for b in loop.all_control_flow_blocks()
+        ):
+            return "the loop leaves an iteration early"
         return carried_across_iterations(loop, body.sdfg)
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):

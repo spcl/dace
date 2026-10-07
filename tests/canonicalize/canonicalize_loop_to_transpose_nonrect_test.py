@@ -8,13 +8,14 @@ transposable box, and lifting it splices the outer iterator into the View subset
 reaches ``arglist()`` and the call fails with ``Missing program argument "_loop_it_0"`` -- a stranded
 symbol standing in for a wrong answer.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 
-M = dace.symbol('M')
+M = dace.symbol("M")
 
 
 @dace.program
@@ -29,8 +30,9 @@ def test_refuses_non_rectangular_nest():
     canonicalize(sdfg, validate=True, validate_all=False)
 
     # A stranded iterator would show up as a free symbol, hence as a required argument.
-    assert not [s for s in sdfg.symbols if str(s).startswith('_loop_it')], \
-        f'loop iterator stranded into sdfg.symbols: {sorted(map(str, sdfg.symbols))}'
+    assert not [s for s in sdfg.symbols if str(s).startswith("_loop_it")], (
+        f"loop iterator stranded into sdfg.symbols: {sorted(map(str, sdfg.symbols))}"
+    )
 
     m = 6
     b = np.arange(m * m, dtype=np.float64).reshape(m, m)
@@ -41,8 +43,8 @@ def test_refuses_non_rectangular_nest():
     for i in range(0, m - 1):
         for j in range(i + 1, m):
             want[j, i] = b[i, j]
-    assert np.array_equal(got, want), 'triangular copy was lifted to a transpose'
+    assert np.array_equal(got, want), "triangular copy was lifted to a transpose"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

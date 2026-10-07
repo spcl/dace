@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Canonicalization stops on control flow that ControlFlowRaising leaves unstructured."""
+
 import pytest
 
 import dace

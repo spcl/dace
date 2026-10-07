@@ -22,8 +22,9 @@ def _is_full_extent(memlet, arr) -> bool:
         return False
 
 
-def _nested_inner_permutation(sdfg, node, outer_name: str, inner_name: str, permute_map: Dict[str,
-                                                                                              List[int]]) -> List[int]:
+def _nested_inner_permutation(
+    sdfg, node, outer_name: str, inner_name: str, permute_map: Dict[str, List[int]]
+) -> List[int]:
     """Inner permutation for outer_name in node's nested SDFG; None if full/1-D rank match, else raises (partial-slice rank is unreachable after prepare_for_layout)."""
     if outer_name not in permute_map:
         return None
@@ -39,7 +40,8 @@ def _nested_inner_permutation(sdfg, node, outer_name: str, inner_name: str, perm
         f"PermuteDimensions: nested SDFG {node.label!r} receives {outer_name!r} (rank {outer_rank}) as "
         f"{inner_name!r} at rank {inner_rank} -- a partial slice. The induced permutation on the surviving "
         f"axes is not computed, and skipping it would leave the nested body reading the old layout. Run "
-        f"prepare_for_layout first (ExpandNestedSDFGInputs widens nested inputs to the full array).")
+        f"prepare_for_layout first (ExpandNestedSDFGInputs widens nested inputs to the full array)."
+    )
 
 
 def _is_memcpy_tasklet_between(state, src_an, dst_an) -> bool:
@@ -47,14 +49,18 @@ def _is_memcpy_tasklet_between(state, src_an, dst_an) -> bool:
     for oe in state.out_edges(src_an):
         if not isinstance(oe.dst, nd.Tasklet):
             continue
-        if not oe.dst.label.startswith('memcpy_'):
+        if not oe.dst.label.startswith("memcpy_"):
             continue
         for tasklet_oe in state.out_edges(oe.dst):
             if tasklet_oe.dst is dst_an:
                 src_arr = state.parent.arrays.get(src_an.data)
                 dst_arr = state.parent.arrays.get(dst_an.data)
-                if (src_arr and dst_arr and _is_full_extent(oe.data, src_arr)
-                        and _is_full_extent(tasklet_oe.data, dst_arr)):
+                if (
+                    src_arr
+                    and dst_arr
+                    and _is_full_extent(oe.data, src_arr)
+                    and _is_full_extent(tasklet_oe.data, dst_arr)
+                ):
                     return True
     return False
 
@@ -73,11 +79,11 @@ def _has_final_copy_in(state, t_name: str) -> bool:
                 dst_arr = sdfg.arrays.get(oe.dst.data)
                 if dst_arr and not dst_arr.transient and _is_full_extent(oe.data, t_arr):
                     return True
-            elif isinstance(oe.dst, nd.Tasklet) and oe.dst.label.startswith('memcpy_'):
+            elif isinstance(oe.dst, nd.Tasklet) and oe.dst.label.startswith("memcpy_"):
                 for tout in state.out_edges(oe.dst):
                     if isinstance(tout.dst, nd.AccessNode):
                         dst_arr = sdfg.arrays.get(tout.dst.data)
-                        if (dst_arr and not dst_arr.transient and _is_memcpy_tasklet_between(state, an, tout.dst)):
+                        if dst_arr and not dst_arr.transient and _is_memcpy_tasklet_between(state, an, tout.dst):
                             return True
     return False
 
@@ -125,21 +131,21 @@ def _warn_unhandled_full_extent_ops(sdfg, t_name: str, init_state, final_state) 
                     )
 
 
-def _is_zero_init_tasklet(t: 'nd.Tasklet') -> bool:
+def _is_zero_init_tasklet(t: "nd.Tasklet") -> bool:
     if not isinstance(t, nd.Tasklet):
         return False
     if len(t.in_connectors) != 0 or len(t.out_connectors) != 1:
         return False
     out_conn = next(iter(t.out_connectors))
-    code = t.code.as_string.strip().rstrip(';').strip()
+    code = t.code.as_string.strip().rstrip(";").strip()
     if t.language == dace.Language.Python:
         return code in (f"{out_conn} = 0", f"{out_conn} = 0.0")
     return code in (f"{out_conn} = 0", f"{out_conn} = 0.0")
 
 
-def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> Tuple[dace.SDFGState, 'nd.Node']:
+def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> Tuple[dace.SDFGState, "nd.Node"]:
     """Locates the unique (state, producer) that initializes name; raises ValueError if not exactly one."""
-    candidates: List[Tuple[dace.SDFGState, 'nd.Node']] = []
+    candidates: List[Tuple[dace.SDFGState, "nd.Node"]] = []
     desc = sdfg.arrays[name]
     full_volume = 1
     for s in desc.shape:
@@ -167,8 +173,10 @@ def _find_full_extent_writer(sdfg: dace.SDFG, name: str) -> Tuple[dace.SDFGState
             if covered:
                 candidates.append((state, producer))
     if len(candidates) != 1:
-        raise ValueError(f"Cannot permute transient '{name}': expected exactly one full-extent writer state, "
-                         f"found {len(candidates)}.")
+        raise ValueError(
+            f"Cannot permute transient '{name}': expected exactly one full-extent writer state, "
+            f"found {len(candidates)}."
+        )
     return candidates[0]
 
 
@@ -189,16 +197,23 @@ def _is_zero_initialized(sdfg: dace.SDFG, name: str) -> bool:
 
 @dataclass
 class PermuteDimensions(ppl.Pass):
-
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.States | ppl.Modifies.AccessNodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
-                | ppl.Modifies.NestedSDFGs | ppl.Modifies.Memlets)
+        return (
+            ppl.Modifies.States
+            | ppl.Modifies.AccessNodes
+            | ppl.Modifies.Edges
+            | ppl.Modifies.Descriptors
+            | ppl.Modifies.NestedSDFGs
+            | ppl.Modifies.Memlets
+        )
 
-    def __init__(self,
-                 permute_map: Dict[str, List[int]],
-                 add_permute_maps: bool,
-                 use_permute_libnodes: bool = False,
-                 column_major: bool = False):
+    def __init__(
+        self,
+        permute_map: Dict[str, List[int]],
+        add_permute_maps: bool,
+        use_permute_libnodes: bool = False,
+        column_major: bool = False,
+    ):
         self._permute_map = permute_map
         self._use_permute_libnodes = use_permute_libnodes
         self._add_permute_maps = add_permute_maps
@@ -214,8 +229,16 @@ class PermuteDimensions(ppl.Pass):
         self._permute_index(sdfg, sdfg, self._permute_map, self._add_permute_maps)
         return 0
 
-    def _add_permute_map(self, sdfg: dace.SDFG, state: dace.SDFGState, old_shape: List[int], new_shape: List[int],
-                         permute_indices: List[int], old_name: str, new_name: str):
+    def _add_permute_map(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        old_shape: List[int],
+        new_shape: List[int],
+        permute_indices: List[int],
+        old_name: str,
+        new_name: str,
+    ):
         """Copies old_name to new_name via transpose; no implementation chosen here (picked later by select_layout_lowering)."""
         if self._use_permute_libnodes:
             from dace.libraries.linalg import TensorTranspose
@@ -223,16 +246,19 @@ class PermuteDimensions(ppl.Pass):
             old_access = state.add_access(old_name)
             new_access = state.add_access(new_name)
 
-            assert len(old_shape) == len(new_shape), \
+            assert len(old_shape) == len(new_shape), (
                 f"Old shape {old_shape} and new shape {new_shape} must have the same length"
+            )
 
             tnode = TensorTranspose(f"permute_{old_name}_to_{new_name}", axes=permute_indices)
             state.add_node(tnode)
 
-            state.add_edge(old_access, None, tnode, "_inp_tensor",
-                           dace.Memlet.from_array(old_name, sdfg.arrays[old_name]))
-            state.add_edge(tnode, "_out_tensor", new_access, None,
-                           dace.Memlet.from_array(new_name, sdfg.arrays[new_name]))
+            state.add_edge(
+                old_access, None, tnode, "_inp_tensor", dace.Memlet.from_array(old_name, sdfg.arrays[old_name])
+            )
+            state.add_edge(
+                tnode, "_out_tensor", new_access, None, dace.Memlet.from_array(new_name, sdfg.arrays[new_name])
+            )
         else:
             # Map iterates over the OLD shape
             map_params = [f"__i{d}" for d in range(len(old_shape))]
@@ -262,8 +288,9 @@ class PermuteDimensions(ppl.Pass):
     def _retranspose_copies(self, state: dace.SDFGState, sides: Dict) -> None:
         retranspose_copies(state, sides, context="PermuteDimensions")
 
-    def _permute_index(self, root: dace.SDFG, sdfg: dace.SDFG, permute_map: Dict[str, List[int]],
-                       add_permute_maps: bool):
+    def _permute_index(
+        self, root: dace.SDFG, sdfg: dace.SDFG, permute_map: Dict[str, List[int]], add_permute_maps: bool
+    ):
         # top-level SDFG: may add transpose states/maps; nested: just replace array shapes
         name_map = dict()
         permute_states_to_skip = set()
@@ -275,9 +302,9 @@ class PermuteDimensions(ppl.Pass):
                 arr_shape = arr.shape
 
                 permuted_shape = []
-                assert len(permute_indices) == len(
-                    arr_shape
-                ), f"Permute indices {permute_indices} and array shape {arr_shape} must have the same length {arr_name}"
+                assert len(permute_indices) == len(arr_shape), (
+                    f"Permute indices {permute_indices} and array shape {arr_shape} must have the same length {arr_name}"
+                )
                 for i in permute_indices:
                     permuted_shape.append(arr_shape[i])
 
@@ -327,13 +354,15 @@ class PermuteDimensions(ppl.Pass):
                         new_shape = sdfg.arrays[new_name].shape
                         permute_indices = permute_map[old_name]
 
-                        self._add_permute_map(sdfg=sdfg,
-                                              state=permute_state,
-                                              old_shape=old_shape,
-                                              new_shape=new_shape,
-                                              permute_indices=permute_indices,
-                                              old_name=old_name,
-                                              new_name=new_name)
+                        self._add_permute_map(
+                            sdfg=sdfg,
+                            state=permute_state,
+                            old_shape=old_shape,
+                            new_shape=new_shape,
+                            permute_indices=permute_indices,
+                            old_name=old_name,
+                            new_name=new_name,
+                        )
 
                     # inverse: permuted -> original
                     for old_name, new_name in input_name_map.items():
@@ -342,13 +371,15 @@ class PermuteDimensions(ppl.Pass):
                         # map is old->new; invert for the return trip
                         inverse_permute_indices = self._inverse_permute_indices(permute_map[old_name])
 
-                        self._add_permute_map(sdfg=sdfg,
-                                              state=permute_out_state,
-                                              old_shape=new_shape,
-                                              new_shape=old_shape,
-                                              permute_indices=inverse_permute_indices,
-                                              old_name=new_name,
-                                              new_name=old_name)
+                        self._add_permute_map(
+                            sdfg=sdfg,
+                            state=permute_out_state,
+                            old_shape=new_shape,
+                            new_shape=old_shape,
+                            permute_indices=inverse_permute_indices,
+                            old_name=new_name,
+                            new_name=old_name,
+                        )
 
                 # per transient T: zero-init needs no transpose; else transpose after init (+ inverse
                 # before drain if any); unique full-extent writer required, else error
@@ -369,13 +400,15 @@ class PermuteDimensions(ppl.Pass):
 
                     after = sdfg.add_state_after(init_state, f"permute_after_{old_name}")
                     permute_states_to_skip.add(after)
-                    self._add_permute_map(sdfg=sdfg,
-                                          state=after,
-                                          old_shape=old_shape,
-                                          new_shape=new_shape,
-                                          permute_indices=permute_indices,
-                                          old_name=old_name,
-                                          new_name=new_name)
+                    self._add_permute_map(
+                        sdfg=sdfg,
+                        state=after,
+                        old_shape=old_shape,
+                        new_shape=new_shape,
+                        permute_indices=permute_indices,
+                        old_name=old_name,
+                        new_name=new_name,
+                    )
 
                     if final_state is not None:
                         # mirror of init: drain keeps old layout, fed by an inverse transpose
@@ -383,13 +416,15 @@ class PermuteDimensions(ppl.Pass):
                         before = sdfg.add_state_before(final_state, f"permute_before_{old_name}")
                         permute_states_to_skip.add(before)
                         inverse = self._inverse_permute_indices(permute_indices)
-                        self._add_permute_map(sdfg=sdfg,
-                                              state=before,
-                                              old_shape=new_shape,
-                                              new_shape=old_shape,
-                                              permute_indices=inverse,
-                                              old_name=new_name,
-                                              new_name=old_name)
+                        self._add_permute_map(
+                            sdfg=sdfg,
+                            state=before,
+                            old_shape=new_shape,
+                            new_shape=old_shape,
+                            permute_indices=inverse,
+                            old_name=new_name,
+                            new_name=old_name,
+                        )
 
         # shapes/maps added above; memlets not yet permuted. recurse into nested SDFGs first; a skipped state keeps
         # the old layout, and so do the nested SDFGs in it (their connectors are the outer containers)
@@ -440,9 +475,9 @@ def note_copy_side(sides: Dict, edge, permute_indices: List[int]) -> None:
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
     if isinstance(edge.dst, CopyLibraryNode):
-        sides.setdefault(edge.dst, {})['in'] = list(permute_indices)
+        sides.setdefault(edge.dst, {})["in"] = list(permute_indices)
     if isinstance(edge.src, CopyLibraryNode):
-        sides.setdefault(edge.src, {})['out'] = list(permute_indices)
+        sides.setdefault(edge.src, {})["out"] = list(permute_indices)
 
 
 def spanned_dims(memlet) -> int:
@@ -478,17 +513,21 @@ def retranspose_copies(state: dace.SDFGState, sides: Dict, context: str = "Permu
     from dace.libraries.standard.nodes.copy import CopyLibraryNode
 
     for copy_node, permuted in sides.items():
-        if 'in' in permuted and 'out' in permuted:
-            if permuted['in'] == permuted['out']:
+        if "in" in permuted and "out" in permuted:
+            if permuted["in"] == permuted["out"]:
                 continue  # both operands moved the same way -- still elementwise
-            raise NotImplementedError(f"{context}: the two operands of copy '{copy_node.label}' were permuted "
-                                      f"differently ({permuted['in']} vs {permuted['out']}); composing the two "
-                                      f"permutations into one transpose is not supported.")
-        axes = (inverse_permutation(permuted['in']) if 'in' in permuted else list(permuted['out']))
-        in_edge = next((e for e in state.in_edges(copy_node) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME),
-                       None)
-        out_edge = next((e for e in state.out_edges(copy_node) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME),
-                        None)
+            raise NotImplementedError(
+                f"{context}: the two operands of copy '{copy_node.label}' were permuted "
+                f"differently ({permuted['in']} vs {permuted['out']}); composing the two "
+                f"permutations into one transpose is not supported."
+            )
+        axes = inverse_permutation(permuted["in"]) if "in" in permuted else list(permuted["out"])
+        in_edge = next(
+            (e for e in state.in_edges(copy_node) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME), None
+        )
+        out_edge = next(
+            (e for e in state.out_edges(copy_node) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME), None
+        )
         if in_edge is None or out_edge is None:
             continue
 
@@ -506,23 +545,24 @@ def retranspose_copies(state: dace.SDFGState, sides: Dict, context: str = "Permu
                 f"{out_edge.data.subset}). Only a full-array copy (which the permutation IS) or a "
                 f"unit-element copy (which maps trivially) can be relaid out; any other subset "
                 f"needs the permutation induced on the dimensions it spans, which a whole-array "
-                f"TensorTranspose cannot express.")
+                f"TensorTranspose cannot express."
+            )
 
         # implementation left unset; lowering chosen later
         transpose = TensorTranspose(f"{copy_node.label}_transpose", axes=axes)
         state.add_node(transpose)
         state.add_edge(in_edge.src, in_edge.src_conn, transpose, "_inp_tensor", dace.Memlet.from_memlet(in_edge.data))
-        state.add_edge(transpose, "_out_tensor", out_edge.dst, out_edge.dst_conn,
-                       dace.Memlet.from_memlet(out_edge.data))
+        state.add_edge(
+            transpose, "_out_tensor", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data)
+        )
         state.remove_edge(in_edge)
         state.remove_edge(out_edge)
         state.remove_node(copy_node)
 
 
-def rewrite_state_for_permute(state: dace.SDFGState,
-                              name_map: Dict[str, str],
-                              permute_map: Dict[str, List[int]],
-                              note_copy_side=None) -> Dict:
+def rewrite_state_for_permute(
+    state: dace.SDFGState, name_map: Dict[str, str], permute_map: Dict[str, List[int]], note_copy_side=None
+) -> Dict:
     """Renames access nodes/connectors per name_map and permutes memlet subsets (new_subset[i] = old_subset[perm[i]]); shared rewrite core of PermuteDimensions and apply_assignment."""
     sides: Dict = {}
     for node in state.nodes():
@@ -574,7 +614,8 @@ def flip_gemm_operand_if_transposed(edge, permute_indices: List[int]) -> None:
     if list(permute_indices) != [1, 0]:
         raise NotImplementedError(
             f"PermuteDimensions: operand '{edge.dst_conn}' of '{edge.dst.label}' was permuted by "
-            f"{permute_indices}, but only a 2-D transpose [1, 0] can be absorbed into a BLAS flag.")
+            f"{permute_indices}, but only a 2-D transpose [1, 0] can be absorbed into a BLAS flag."
+        )
     flip_operand_transpose(edge.dst, edge.dst_conn)
 
 
@@ -589,7 +630,8 @@ def rewrite_einsum_if_permuted(edge, permute_indices: List[int]) -> None:
         raise NotImplementedError(
             f"PermuteDimensions: the output of '{edge.src.label}' was permuted by {permute_indices}, but the "
             f"output subscripts are shared with every operand, so permuting them alone would silently "
-            f"re-contract the expression.")
+            f"re-contract the expression."
+        )
     if not (isinstance(edge.dst, Einsum) and edge.dst_conn is not None and edge.dst_conn.startswith("_ein")):
         return
     operands = sorted(c for c in edge.dst.in_connectors if c.startswith("_ein"))
@@ -602,8 +644,9 @@ def permute_args(expr, permute_map: dict[str, list[int]]):
     def permuted_indices(name: str, indices):
         perm = permute_map[name]
         if len(perm) != len(indices):
-            raise ValueError(f'{name} is accessed with {len(indices)} indices, but its permutation has '
-                             f'{len(perm)} entries')
+            raise ValueError(
+                f"{name} is accessed with {len(indices)} indices, but its permutation has {len(perm)} entries"
+            )
         return [indices[perm[i]] for i in range(len(indices))]
 
     for name in permute_map:

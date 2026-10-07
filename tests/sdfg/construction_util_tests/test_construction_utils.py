@@ -17,6 +17,7 @@ two arms of an if-else into their own CFGs and then drop the conditional
 shell. Bugs in any of them silently corrupt control flow downstream; the
 tests below pin the contracts that pass requires.
 """
+
 import numpy as np
 
 import dace
@@ -49,7 +50,7 @@ def _build_scalar_add_state(sdfg: dace.SDFG, state_label: str, lhs: str, rhs: st
 def _scalar_sdfg(name: str, arrays=("a", "b", "c")) -> dace.SDFG:
     sdfg = dace.SDFG(name)
     for n in arrays:
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     return sdfg
 
 
@@ -80,12 +81,24 @@ def test_copy_state_contents_edge_connectors_preserved():
 
     node_map = copy_state_contents(src, dst)
 
-    src_edges = {(e.src.label if hasattr(e.src, "label") else e.src.data, e.src_conn,
-                  e.dst.label if hasattr(e.dst, "label") else e.dst.data, e.dst_conn)
-                 for e in src.edges()}
-    dst_edges = {(e.src.label if hasattr(e.src, "label") else e.src.data, e.src_conn,
-                  e.dst.label if hasattr(e.dst, "label") else e.dst.data, e.dst_conn)
-                 for e in dst.edges()}
+    src_edges = {
+        (
+            e.src.label if hasattr(e.src, "label") else e.src.data,
+            e.src_conn,
+            e.dst.label if hasattr(e.dst, "label") else e.dst.data,
+            e.dst_conn,
+        )
+        for e in src.edges()
+    }
+    dst_edges = {
+        (
+            e.src.label if hasattr(e.src, "label") else e.src.data,
+            e.src_conn,
+            e.dst.label if hasattr(e.dst, "label") else e.dst.data,
+            e.dst_conn,
+        )
+        for e in dst.edges()
+    }
     assert src_edges == dst_edges
 
 
@@ -108,14 +121,14 @@ def test_copy_state_contents_into_empty_state_idempotent_on_source():
 
 def test_copy_graph_contents_preserves_start_block():
     """The start block of ``old_graph`` must map to the start block of ``new_graph``."""
-    src = dace.SDFG('src_copy_graph_contents_preserves_start_block')
-    src.add_array("a", shape=(1, ), dtype=dace.float64)
+    src = dace.SDFG("src_copy_graph_contents_preserves_start_block")
+    src.add_array("a", shape=(1,), dtype=dace.float64)
     s0 = src.add_state("s0", is_start_block=True)
     s1 = src.add_state("s1")
     src.add_edge(s0, s1, dace.InterstateEdge())
 
-    dst = dace.SDFG('dst_copy_graph_contents_preserves_start_block')
-    dst.add_array("a", shape=(1, ), dtype=dace.float64)
+    dst = dace.SDFG("dst_copy_graph_contents_preserves_start_block")
+    dst.add_array("a", shape=(1,), dtype=dace.float64)
 
     node_map = copy_graph_contents(src, dst)
 
@@ -126,13 +139,13 @@ def test_copy_graph_contents_preserves_start_block():
 
 def test_copy_graph_contents_copies_interstate_edge_assignments():
     """Interstate edge ``assignments`` must come across deep-copied, not aliased."""
-    src = dace.SDFG('src_copy_graph_contents_copies_interstate_edge_assignments')
+    src = dace.SDFG("src_copy_graph_contents_copies_interstate_edge_assignments")
     src.add_symbol("k", dace.int64)
     s0 = src.add_state("s0", is_start_block=True)
     s1 = src.add_state("s1")
     src.add_edge(s0, s1, dace.InterstateEdge(assignments={"k": "5"}))
 
-    dst = dace.SDFG('dst_copy_graph_contents_copies_interstate_edge_assignments')
+    dst = dace.SDFG("dst_copy_graph_contents_copies_interstate_edge_assignments")
     dst.add_symbol("k", dace.int64)
 
     copy_graph_contents(src, dst)
@@ -145,9 +158,9 @@ def test_copy_graph_contents_copies_interstate_edge_assignments():
 
 def test_copy_graph_contents_rejects_non_cfr():
     """The helper has explicit ``assert isinstance(... ControlFlowRegion)`` guards."""
-    src = dace.SDFG('src_copy_graph_contents_rejects_non_cfr')
+    src = dace.SDFG("src_copy_graph_contents_rejects_non_cfr")
     state = src.add_state("only_state", is_start_block=True)
-    dst = dace.SDFG('dst_copy_graph_contents_rejects_non_cfr')
+    dst = dace.SDFG("dst_copy_graph_contents_rejects_non_cfr")
     with pytest.raises(AssertionError):
         copy_graph_contents(state, dst)
     with pytest.raises(AssertionError):
@@ -203,16 +216,16 @@ def test_move_state_after_noop_when_already_in_position():
 
 def test_move_state_after_rejects_self_move():
     sdfg = dace.SDFG("mv_after_self")
-    (s, ) = _linear_chain(sdfg, ["only"])
+    (s,) = _linear_chain(sdfg, ["only"])
     with pytest.raises(AssertionError):
         move_state_after(sdfg, state_to_move=s, target_predecessor=s)
 
 
 def test_move_state_after_rejects_foreign_state():
     sdfg = dace.SDFG("mv_after_foreign")
-    other = dace.SDFG('other_move_state_after_rejects_foreign_state')
-    s_local, = _linear_chain(sdfg, ["local"])
-    s_foreign, = _linear_chain(other, ["foreign"])
+    other = dace.SDFG("other_move_state_after_rejects_foreign_state")
+    (s_local,) = _linear_chain(sdfg, ["local"])
+    (s_foreign,) = _linear_chain(other, ["foreign"])
     with pytest.raises(ValueError):
         move_state_after(sdfg, state_to_move=s_foreign, target_predecessor=s_local)
 
@@ -274,7 +287,7 @@ def _build_conditional_with_two_branches(sdfg: dace.SDFG):
 
 def test_move_branch_cfg_up_replaces_conditional_with_then_body():
     sdfg = dace.SDFG("mbcu_then")
-    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (_build_conditional_with_two_branches(sdfg))
+    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = _build_conditional_with_two_branches(sdfg)
 
     move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=then_cfr)
 
@@ -293,7 +306,7 @@ def test_move_branch_cfg_up_replaces_conditional_with_then_body():
 
 def test_move_branch_cfg_up_replaces_conditional_with_else_body():
     sdfg = dace.SDFG("mbcu_else")
-    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (_build_conditional_with_two_branches(sdfg))
+    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = _build_conditional_with_two_branches(sdfg)
 
     move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=else_cfr)
 
@@ -309,7 +322,7 @@ def test_move_branch_cfg_up_replaces_conditional_with_else_body():
 def test_move_branch_cfg_up_rejects_foreign_branch():
     """``body_to_take`` must be one of the conditional's branches."""
     sdfg = dace.SDFG("mbcu_foreign")
-    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = (_build_conditional_with_two_branches(sdfg))
+    entry, cb, then_cfr, then_state, else_cfr, else_state, exit_state = _build_conditional_with_two_branches(sdfg)
     foreign = ControlFlowRegion("foreign", sdfg=sdfg)
     foreign.add_state("foreign_state", is_start_block=True)
 
@@ -364,7 +377,7 @@ def test_copy_state_contents_numerical_correctness():
     produces ``a + b``."""
     sdfg = dace.SDFG("copy_state_num")
     for n in ("a", "b", "c"):
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     src = _build_add_state_into(sdfg, "src", out_arr="c")
     sdfg.start_block = sdfg.node_id(src)
 
@@ -379,7 +392,7 @@ def test_copy_state_contents_numerical_correctness():
 
     a = np.array([3.5], dtype=np.float64)
     b = np.array([-1.25], dtype=np.float64)
-    c = np.zeros((1, ), dtype=np.float64)
+    c = np.zeros((1,), dtype=np.float64)
     sdfg(a=a, b=b, c=c)
     np.testing.assert_allclose(c, a + b)
 
@@ -388,9 +401,9 @@ def test_copy_graph_contents_numerical_correctness():
     """Compute ``c = (a + b) * 2`` in a source SDFG (two states), copy that
     graph into a fresh SDFG, and verify the copied SDFG produces the
     same result."""
-    src = dace.SDFG('src_copy_graph_contents_numerical_correctness')
+    src = dace.SDFG("src_copy_graph_contents_numerical_correctness")
     for n in ("a", "b", "tmp", "c"):
-        src.add_array(n, shape=(1, ), dtype=dace.float64)
+        src.add_array(n, shape=(1,), dtype=dace.float64)
     src.arrays["tmp"].transient = True
 
     # Compute tmp = a + b in state 0.
@@ -413,15 +426,15 @@ def test_copy_graph_contents_numerical_correctness():
     s1.add_edge(t1, "_c", sc, None, dace.Memlet("c[0]"))
 
     # Fresh SDFG with the same descriptors and an empty body.
-    dst = dace.SDFG('dst_copy_graph_contents_numerical_correctness')
+    dst = dace.SDFG("dst_copy_graph_contents_numerical_correctness")
     for n in ("a", "b", "tmp", "c"):
-        dst.add_array(n, shape=(1, ), dtype=dace.float64)
+        dst.add_array(n, shape=(1,), dtype=dace.float64)
     dst.arrays["tmp"].transient = True
     copy_graph_contents(src, dst)
 
     a = np.array([2.0], dtype=np.float64)
     b = np.array([0.5], dtype=np.float64)
-    c = np.zeros((1, ), dtype=np.float64)
+    c = np.zeros((1,), dtype=np.float64)
     dst(a=a, b=b, c=c)
     np.testing.assert_allclose(c, (a + b) * 2.0)
 
@@ -453,7 +466,7 @@ def test_move_state_after_numerical_correctness():
     computes the correct ``A`` and ``B``."""
     sdfg = dace.SDFG("mv_after_num")
     for n in ("inp", "A", "B"):
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     s_start = sdfg.add_state("s_start", is_start_block=True)
     sa, sb = _build_two_writers_with_shared_input(sdfg)
     s_end = sdfg.add_state("s_end")
@@ -464,8 +477,8 @@ def test_move_state_after_numerical_correctness():
     move_state_after(sdfg, state_to_move=sb, target_predecessor=s_start)
 
     inp = np.array([4.0], dtype=np.float64)
-    A = np.zeros((1, ), dtype=np.float64)
-    B = np.zeros((1, ), dtype=np.float64)
+    A = np.zeros((1,), dtype=np.float64)
+    B = np.zeros((1,), dtype=np.float64)
     sdfg(inp=inp, A=A, B=B)
     np.testing.assert_allclose(A, inp + 1.0)
     np.testing.assert_allclose(B, inp - 1.0)
@@ -474,7 +487,7 @@ def test_move_state_after_numerical_correctness():
 def test_move_state_before_numerical_correctness():
     sdfg = dace.SDFG("mv_before_num")
     for n in ("inp", "A", "B"):
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     s_start = sdfg.add_state("s_start", is_start_block=True)
     sa, sb = _build_two_writers_with_shared_input(sdfg)
     s_end = sdfg.add_state("s_end")
@@ -485,8 +498,8 @@ def test_move_state_before_numerical_correctness():
     move_state_before(sdfg, state_to_move=sa, target_successor=s_end)
 
     inp = np.array([-2.5], dtype=np.float64)
-    A = np.zeros((1, ), dtype=np.float64)
-    B = np.zeros((1, ), dtype=np.float64)
+    A = np.zeros((1,), dtype=np.float64)
+    B = np.zeros((1,), dtype=np.float64)
     sdfg(inp=inp, A=A, B=B)
     np.testing.assert_allclose(A, inp + 1.0)
     np.testing.assert_allclose(B, inp - 1.0)
@@ -497,7 +510,7 @@ def test_move_branch_cfg_up_then_branch_numerical_correctness():
     SDFG must unconditionally execute the then-branch's body — regardless
     of what the discarded condition would have evaluated to."""
     sdfg = dace.SDFG("mbcu_num")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("cond", dace.bool_)
     cb = ConditionalBlock("cb", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
@@ -521,7 +534,7 @@ def test_move_branch_cfg_up_then_branch_numerical_correctness():
     move_branch_cfg_up_discard_conditions(if_block=cb, body_to_take=then_cfr)
 
     for c in (True, False):
-        A = np.zeros((1, ), dtype=np.float64)
+        A = np.zeros((1,), dtype=np.float64)
         sdfg(A=A, cond=c)
         # Regardless of cond, the then-branch was forced — A == 17.
         np.testing.assert_allclose(A, np.array([17.0]))

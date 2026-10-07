@@ -4,6 +4,7 @@
 Re-exports :class:`VectorizeMultiDim`, its ``device=CPU`` wrapper
 :class:`VectorizeCPUMultiDim`, and the helpers the corpus harness/tests import.
 """
+
 from dace.transformation.passes.vectorization.vectorize_multi_dim import (
     VectorizeMultiDim,
     VectorizeCPUMultiDim,

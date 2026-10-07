@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Array extents that are not whole numbers. """
+"""Array extents that are not whole numbers."""
+
 import dace
 import numpy as np
 import pytest
 
-N = dace.symbol('N', dtype=dace.int64, positive=True)
-FN = dace.symbol('FN', dtype=dace.float64)
+N = dace.symbol("N", dtype=dace.int64, positive=True)
+FN = dace.symbol("FN", dtype=dace.float64)
 
 
 def test_a_float_valued_extent_is_refused_not_truncated():
@@ -22,7 +23,7 @@ def test_a_float_valued_extent_is_refused_not_truncated():
         tmp[0] = a[0]
         out[:] = tmp[0]
 
-    with pytest.raises(TypeError, match='integral'):
+    with pytest.raises(TypeError, match="integral"):
         literal_float_extent.to_sdfg(simplify=False)
 
 
@@ -37,7 +38,7 @@ def test_an_extent_with_a_floating_point_coefficient_is_refused():
         tmp[0] = a[0]
         out[:] = tmp[0]
 
-    with pytest.raises(TypeError, match='integral'):
+    with pytest.raises(TypeError, match="integral"):
         folded_float_extent.to_sdfg(simplify=False)
 
 
@@ -45,7 +46,7 @@ def test_a_float_typed_symbol_is_refused_as_an_extent():
     """The expression carries no float atom of its own, so only the symbol's dtype says it cannot
     count elements. Refused while the annotation is read, which is before any parse."""
 
-    with pytest.raises(TypeError, match='integral'):
+    with pytest.raises(TypeError, match="integral"):
 
         @dace.program
         def float_symbol_extent(a: dace.float64[FN], out: dace.float64[FN]):
@@ -63,7 +64,7 @@ def test_a_float_valued_scalar_promoted_into_a_shape_is_refused():
         tmp[0] = a[0]
         out[:] = tmp[0]
 
-    with pytest.raises(TypeError, match='integral'):
+    with pytest.raises(TypeError, match="integral"):
         promoted_float_extent.to_sdfg(simplify=False)
 
 
@@ -84,7 +85,7 @@ def test_an_integer_division_extent_still_sizes_and_computes():
     np.testing.assert_allclose(out[0:8], a[0:8] * 2.0, rtol=0.0, atol=0.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_float_valued_extent_is_refused_not_truncated()
     test_an_extent_with_a_floating_point_coefficient_is_refused()
     test_a_float_typed_symbol_is_refused_as_an_extent()
@@ -118,46 +119,46 @@ def test_integer_only_operations_on_symbols_are_accepted_as_extents():
 def test_an_extent_divided_by_an_integer_allocates_by_integer_division():
     """``N / 4`` built through the SDFG API is a Rational coefficient, not a float, and codegen sizes it with
     floored integer division."""
-    sdfg = dace.SDFG('rational_extent')
-    sdfg.add_array('x', [N / 4], dace.float64)
-    sdfg.add_transient('t', [N / 4], dace.float64)
+    sdfg = dace.SDFG("rational_extent")
+    sdfg.add_array("x", [N / 4], dace.float64)
+    sdfg.add_transient("t", [N / 4], dace.float64)
     state = sdfg.add_state()
-    entry, exit_node = state.add_map('m', {'i': '0:N/4'})
-    tasklet = state.add_tasklet('copy', {'a'}, {'b'}, 'b = a')
-    state.add_memlet_path(state.add_read('x'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('x[i]'))
-    state.add_memlet_path(tasklet, exit_node, state.add_write('t'), src_conn='b', memlet=dace.Memlet('t[i]'))
+    entry, exit_node = state.add_map("m", {"i": "0:N/4"})
+    tasklet = state.add_tasklet("copy", {"a"}, {"b"}, "b = a")
+    state.add_memlet_path(state.add_read("x"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("x[i]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_write("t"), src_conn="b", memlet=dace.Memlet("t[i]"))
 
     code = sdfg.generate_code()[0].clean_code
 
-    assert sdfg.arrays['t'].shape == (N / 4, )
-    assert '{ return py_floor(N, 4); }' in code, code  # the allocation's size helper
-    assert 'i < py_floor(N, 4);' in code, code
+    assert sdfg.arrays["t"].shape == (N / 4,)
+    assert "{ return py_floor(N, 4); }" in code, code  # the allocation's size helper
+    assert "i < py_floor(N, 4);" in code, code
 
 
 def test_a_float_symbol_divided_by_an_integer_is_still_refused():
     """Reading a Rational as integer division covers the coefficient only, never a float-typed operand."""
-    sdfg = dace.SDFG('rational_float_extent')
+    sdfg = dace.SDFG("rational_float_extent")
 
-    with pytest.raises(TypeError, match='integral'):
-        sdfg.add_array('x', [FN / 4], dace.float64)
+    with pytest.raises(TypeError, match="integral"):
+        sdfg.add_array("x", [FN / 4], dace.float64)
 
 
 def test_an_integer_cast_divided_by_an_integer_is_accepted_as_an_extent():
     """The cast is integral whatever it reads and the Rational reads as integer division, so both must count."""
     extent = dace.symbolic.int64(FN) / 2
-    sdfg = dace.SDFG('cast_division_extent')
+    sdfg = dace.SDFG("cast_division_extent")
 
-    sdfg.add_array('x', [extent], dace.float64)
+    sdfg.add_array("x", [extent], dace.float64)
 
-    assert sdfg.arrays['x'].shape == (extent, )
+    assert sdfg.arrays["x"].shape == (extent,)
 
 
 def test_an_extent_behind_integer_casts_survives_an_sdfg_json_round_trip():
     """The reload rebuilt ``int64`` as an opaque function of unknown integrality and refused the extent."""
-    extent = dace.symbolic.pystr_to_symbolic('int64(la) + int64(lb) + 1')
-    sdfg = dace.SDFG('cast_extent')
-    sdfg.add_array('x', [extent], dace.float64)
+    extent = dace.symbolic.pystr_to_symbolic("int64(la) + int64(lb) + 1")
+    sdfg = dace.SDFG("cast_extent")
+    sdfg.add_array("x", [extent], dace.float64)
 
     reloaded = dace.SDFG.from_json(sdfg.to_json())
 
-    assert reloaded.arrays['x'].shape == (extent, )
+    assert reloaded.arrays["x"].shape == (extent,)

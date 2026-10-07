@@ -21,6 +21,7 @@ callback/special-adjacency requirement (has_path, immediate_dominators, topologi
 do; the two rustworkx has no implementation of at all (transitive closure, max-flow/min-cut)
 always run on real networkx regardless of backend, since there's nothing to lower to.
 """
+
 import contextlib
 from typing import KeysView
 
@@ -32,11 +33,33 @@ from dace.graphlib.algorithms.flow import edmondskarp
 from networkx.exception import NetworkXError, NetworkXNoCycle, NetworkXNoPath, NetworkXUnfeasible, NodeNotFound
 
 __all__ = [
-    'DiGraph', 'MultiDiGraph', 'has_path', 'immediate_dominators', 'weakly_connected_components',
-    'weakly_connected_component', 'topological_sort', 'simple_cycles', 'find_cycle', 'is_directed_acyclic_graph',
-    'descendants', 'ancestors', 'all_simple_paths', 'transitive_closure', 'transitive_closure_dag', 'dfs_edges',
-    'shortest_path_length', 'minimum_cut', 'get_node_attributes', 'isomorphism', 'NetworkXError', 'NetworkXNoCycle',
-    'NetworkXNoPath', 'NetworkXUnfeasible', 'NodeNotFound', 'set_default_backend', 'get_backend_name'
+    "DiGraph",
+    "MultiDiGraph",
+    "has_path",
+    "immediate_dominators",
+    "weakly_connected_components",
+    "weakly_connected_component",
+    "topological_sort",
+    "simple_cycles",
+    "find_cycle",
+    "is_directed_acyclic_graph",
+    "descendants",
+    "ancestors",
+    "all_simple_paths",
+    "transitive_closure",
+    "transitive_closure_dag",
+    "dfs_edges",
+    "shortest_path_length",
+    "minimum_cut",
+    "get_node_attributes",
+    "isomorphism",
+    "NetworkXError",
+    "NetworkXNoCycle",
+    "NetworkXNoPath",
+    "NetworkXUnfeasible",
+    "NodeNotFound",
+    "set_default_backend",
+    "get_backend_name",
 ]
 
 
@@ -130,14 +153,16 @@ def get_node_attributes(G, name, default=None):
                 result[node] = attrs[name]
         return result
     import networkx
+
     return networkx.get_node_attributes(G, name, default)
 
 
-def minimum_cut(G, s, t, capacity='capacity', flow_func=None, **kwargs):
+def minimum_cut(G, s, t, capacity="capacity", flow_func=None, **kwargs):
     """ALWAYS real networkx internally -- rustworkx has no directed s-t max-flow/min-cut. One
     named function, one documented, tested fallback -- not a per-call shim pattern repeated
     everywhere."""
     import networkx
+
     if isinstance(G, rustworkx_backend.RustworkxGraphHandle):
         G = rustworkx_backend.to_networkx(G)
     return networkx.minimum_cut(G, s, t, capacity=capacity, flow_func=flow_func, **kwargs)
@@ -148,7 +173,7 @@ def set_default_backend(name: str):
     """Built directly on the existing dace.config.set_temporary primitive -- no new override
     mechanism needed. Affects graphs constructed for the duration of the context, not graphs
     that already exist (see resolve.py: backend is bound at construction time)."""
-    with dace.config.set_temporary('graph', 'backend', value=name):
+    with dace.config.set_temporary("graph", "backend", value=name):
         yield
 
 

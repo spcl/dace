@@ -4,12 +4,18 @@ standalone SDFG, is bit-exact against its PER-NEST numpy oracle -- inputs produc
 are provided (promoted to non-transient by the cutout), outputs start as deterministic noise and
 must be fully overwritten. The argument-fill invariants (complex dtypes, and integer fills capped by
 the smallest dynamically-indexed extent) are pinned here too."""
+
 import numpy
 import pytest
 
 import dace
-from dace.transformation.layout.externalize import (externalize_nest, indexed_extent_bound, nest_arguments,
-                                                    nest_entries, written_array_names)
+from dace.transformation.layout.externalize import (
+    externalize_nest,
+    indexed_extent_bound,
+    nest_arguments,
+    nest_entries,
+    written_array_names,
+)
 from dace.transformation.layout.prepare import prepare_for_layout
 
 from tests.transformations.layout import multinest_programs as fixtures
@@ -92,8 +98,9 @@ def test_externalized_nests_match_per_nest_oracles(program_name, n=48):
         ext(**args, N=n)
 
         reference = nest_oracles[NEST_INDEX_BY_OUTPUT[out_name]](**chain)
-        assert numpy.allclose(args[out_name], reference[out_name]), \
+        assert numpy.allclose(args[out_name], reference[out_name]), (
             f"{program_name}: externalized nest writing {out_name} diverges from its oracle"
+        )
     assert len(covered) == len(nest_oracles)  # each nest hit a DISTINCT oracle (KeyError above on a foreign one)
 
 
@@ -122,7 +129,7 @@ def test_complex_dtypes_get_a_deterministic_fill(n=6):
 
     for name, expected in (("zc", numpy.complex64), ("zd", numpy.complex128), ("zout", numpy.complex128)):
         assert args[name].dtype == expected, (name, args[name].dtype)
-        assert args[name].shape == (n, )
+        assert args[name].shape == (n,)
         assert numpy.all(args[name].imag != 0.0), name
 
     again = nest_arguments(ext, symbols={"N": n}, seed=0)

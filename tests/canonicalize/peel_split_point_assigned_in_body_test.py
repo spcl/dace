@@ -5,6 +5,7 @@ cegterg's gather ``for j: idx = unconv[j]; vc[:, j] = vc[:, idx]`` solves its br
 ``x = idx``. The segment bounds re-read ``x`` every iteration while the body reassigns it, so the
 segments skip or repeat iterations whenever ``unconv`` is not increasing.
 """
+
 from typing import Tuple
 
 import numpy as np
@@ -15,14 +16,21 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import loop_varying_symbols
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-K = dace.symbol('K')
-M = dace.symbol('M')
+K = dace.symbol("K")
+M = dace.symbol("M")
 TRIALS = 40
 
 
 @dace.program
-def gather(e: dace.float64[K], ew: dace.float64[M], vc: dace.float64[M, M], unconv: dace.int64[K], count: dace.int64,
-           nbase: dace.int64, width: dace.int64):
+def gather(
+    e: dace.float64[K],
+    ew: dace.float64[M],
+    vc: dace.float64[M, M],
+    unconv: dace.int64[K],
+    count: dace.int64,
+    nbase: dace.int64,
+    width: dace.int64,
+):
     for j in range(count):
         idx = int(unconv[j])
         ew[nbase + j] = e[idx]
@@ -37,10 +45,10 @@ def reference(e: np.ndarray, ew: np.ndarray, vc: np.ndarray, unconv: np.ndarray,
         vc[:, j] = vc[:, idx]
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def canonical() -> dace.SDFG:
     sdfg = gather.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
     return sdfg
 
 
@@ -50,8 +58,7 @@ def test_no_loop_bound_reads_a_symbol_its_body_assigns(canonical: dace.SDFG):
         if not isinstance(node, LoopRegion):
             continue
         header = {
-            str(s)
-            for c in (node.init_statement, node.loop_condition) if c is not None for s in c.get_free_symbols()
+            str(s) for c in (node.init_statement, node.loop_condition) if c is not None for s in c.get_free_symbols()
         }
         varying = loop_varying_symbols(node) & header
         if varying:
@@ -81,6 +88,7 @@ def test_split_gather_matches_numpy_for_unordered_indices(canonical: dace.SDFG):
     assert not mismatches, mismatches
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__]))

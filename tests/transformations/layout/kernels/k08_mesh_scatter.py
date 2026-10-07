@@ -50,6 +50,7 @@ after the nested-SDFG boundary widening the layout passes require (the index sub
 uncompilable ``tab[std::make_tuple(c, v)]``). The Permute/Pad witnesses therefore act on the 2-D sign
 table ``tsg``; the edge-index table stays a flat CSR-style gather index.
 """
+
 import numpy
 import dace
 
@@ -62,8 +63,14 @@ NC, NE, V = dace.symbol("NC"), dace.symbol("NE"), dace.symbol("V")
 
 
 @dace.program
-def mesh_edge_residual(x: dace.float64[NC], e0: dace.int64[NE], e1: dace.int64[NE], tabf: dace.int64[NC * V],
-                       tsg: dace.float64[NC, V], y: dace.float64[NC]):
+def mesh_edge_residual(
+    x: dace.float64[NC],
+    e0: dace.int64[NE],
+    e1: dace.int64[NE],
+    tabf: dace.int64[NC * V],
+    tsg: dace.float64[NC, V],
+    y: dace.float64[NC],
+):
     """Per-edge flux into a single-writer transient, then a per-cell WCR gather-reduce over V."""
     f = dace.define_local([NE], dace.float64)
     for e in dace.map[0:NE] @ dace.ScheduleType.Sequential:
@@ -194,15 +201,17 @@ def run_closure(inputs, n=8):
     def run(sdfg):
         shape = tuple(int(dace.symbolic.evaluate(s, {NC: nc, NE: ne, V: v})) for s in sdfg.arrays["tsg"].shape)
         y = numpy.zeros(nc)
-        sdfg(x=inputs["x"].copy(),
-             e0=inputs["e0"].copy(),
-             e1=inputs["e1"].copy(),
-             tabf=tabf.copy(),
-             tsg=pack_tsg(shape),
-             y=y,
-             NC=nc,
-             NE=ne,
-             V=v)
+        sdfg(
+            x=inputs["x"].copy(),
+            e0=inputs["e0"].copy(),
+            e1=inputs["e1"].copy(),
+            tabf=tabf.copy(),
+            tsg=pack_tsg(shape),
+            y=y,
+            NC=nc,
+            NE=ne,
+            V=v,
+        )
         return {"y": y}
 
     return run

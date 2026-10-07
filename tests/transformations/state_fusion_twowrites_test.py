@@ -61,7 +61,7 @@ def test_sftw():
     A = np.random.rand(20)
     expected = 2 * A + 7
     sdfg = sftw.to_sdfg(simplify=False)
-    assert len(sdfg.nodes()) > 2, 'nothing to fuse: the test would be vacuous'
+    assert len(sdfg.nodes()) > 2, "nothing to fuse: the test would be vacuous"
     sdfg.simplify()
 
     # Ensure almost all states were fused. How far fusion gets depends on how finely ``dup`` is
@@ -76,14 +76,14 @@ def test_sftw():
     # still validates and still happens to compute the right answer whenever the emission order
     # falls the right way (the ``correlation`` miscompile had exactly that shape).
     for state in sdfg.states():
-        dups = [n for n in state.data_nodes() if n.data == 'dup']
+        dups = [n for n in state.data_nodes() if n.data == "dup"]
         readers = [n for n in dups if state.out_degree(n) > 0]
         writers = [n for n in dups if state.in_degree(n) > 0]
         for reader in readers:
             for writer in writers:
                 if reader is writer:
                     continue
-                ordered = (nx.has_path(state.nx, reader, writer) or nx.has_path(state.nx, writer, reader))
+                ordered = nx.has_path(state.nx, reader, writer) or nx.has_path(state.nx, writer, reader)
                 assert ordered, f'unordered read/overwrite of "dup" in fused state {state.label}'
 
     sdfg(A=A)
@@ -91,5 +91,5 @@ def test_sftw():
     assert np.allclose(A, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_sftw()

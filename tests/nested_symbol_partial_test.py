@@ -26,5 +26,5 @@ def test_nested_symbol_partial():
     assert np.allclose(out, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_symbol_partial()

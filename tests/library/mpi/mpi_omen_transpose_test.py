@@ -23,6 +23,7 @@ Green's functions ~2.58 PiB -> ~1.8 TiB.
 manually here (mapped tasklets), matching the paper's hand-built Alltoallv pack. The local (single-process)
 form of the same layout choice is ``tests/transformations/layout/kernels/k10_omen_windowed_contraction.py``.
 """
+
 import numpy
 import pytest
 
@@ -39,8 +40,9 @@ assert NA % P == 0 and NE % P == 0, f"P={P} must divide NA={NA} and NE={NE}"
 
 
 @dace.program
-def phase1_pack(Hl: dace.complex128[NA, NEl, M, M], Xl: dace.complex128[NA, NEl, M, M],
-                send: dace.complex128[P, NAl, NEl, M, M]):
+def phase1_pack(
+    Hl: dace.complex128[NA, NEl, M, M], Xl: dace.complex128[NA, NEl, M, M], send: dace.complex128[P, NAl, NEl, M, M]
+):
     """Energy-distributed producer + pack into per-destination-rank chunks (the strided transpose gather)."""
     Gl = numpy.empty((NEl, NA, M, M), dace.complex128)  # producer/E-outer order, single-writer
     for el, a, i, j in dace.map[0:NEl, 0:NA, 0:M, 0:M] @ dace.ScheduleType.Sequential:
@@ -53,8 +55,9 @@ def phase1_pack(Hl: dace.complex128[NA, NEl, M, M], Xl: dace.complex128[NA, NEl,
 
 
 @dace.program
-def unpack_phase2(recv: dace.complex128[P, NAl, NEl, M, M], D: dace.complex128[W, M, M],
-                  Sigma: dace.complex128[NAl, NEO, M, M]):
+def unpack_phase2(
+    recv: dace.complex128[P, NAl, NEl, M, M], D: dace.complex128[W, M, M], Sigma: dace.complex128[NAl, NEO, M, M]
+):
     """Unpack the received chunks into atom-outer consumer order + the SSE energy-window contraction."""
     Ga = numpy.empty((NAl, NE, M, M), dace.complex128)  # consumer/atom-outer order
     for s, al, el, i, j in dace.map[0:P, 0:NAl, 0:NEl, 0:M, 0:M] @ dace.ScheduleType.Sequential:
@@ -127,7 +130,7 @@ def test_omen_transpose_kernels_offline():
     sends = []
     for r in range(P):
         send = numpy.zeros((P, NAl, NEl, M, M), numpy.complex128)
-        p1(Hl=H[:, r * NEl:(r + 1) * NEl].copy(), Xl=X[:, r * NEl:(r + 1) * NEl].copy(), send=send)
+        p1(Hl=H[:, r * NEl : (r + 1) * NEl].copy(), Xl=X[:, r * NEl : (r + 1) * NEl].copy(), send=send)
         sends.append(send)
 
     Sig = numpy.zeros((NA, NEO, M, M), numpy.complex128)
@@ -135,7 +138,7 @@ def test_omen_transpose_kernels_offline():
         recv = numpy.stack([sends[s][r] for s in range(P)])  # MPI_Alltoall: recv_r[s] = send_s[r]
         sl = numpy.zeros((NAl, NEO, M, M), numpy.complex128)
         p2(recv=recv.copy(), D=D.copy(), Sigma=sl)
-        Sig[r * NAl:(r + 1) * NAl] = sl
+        Sig[r * NAl : (r + 1) * NAl] = sl
     assert numpy.allclose(Sig, ref), numpy.abs(Sig - ref).max()
 
 
@@ -145,6 +148,7 @@ def test_omen_transpose_kernels_offline():
 @pytest.mark.mpi
 def test_omen_transpose_mpi():
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank, size = comm.Get_rank(), comm.Get_size()
     if size != P:
@@ -159,11 +163,13 @@ def test_omen_transpose_mpi():
     H, X, D = make_inputs()  # every rank builds the same global inputs, slices its own
     ref = oracle(H, X, D)
     Sigma = numpy.zeros((NAl, NEO, M, M), numpy.complex128)
-    compiled(Hl=H[:, rank * NEl:(rank + 1) * NEl].copy(),
-             Xl=X[:, rank * NEl:(rank + 1) * NEl].copy(),
-             D=D.copy(),
-             Sigma=Sigma)
-    mine = ref[rank * NAl:(rank + 1) * NAl]
+    compiled(
+        Hl=H[:, rank * NEl : (rank + 1) * NEl].copy(),
+        Xl=X[:, rank * NEl : (rank + 1) * NEl].copy(),
+        D=D.copy(),
+        Sigma=Sigma,
+    )
+    mine = ref[rank * NAl : (rank + 1) * NAl]
     if not numpy.allclose(Sigma, mine):
         raise ValueError(f"rank {rank}: max abs diff {numpy.abs(Sigma - mine).max()}")
 

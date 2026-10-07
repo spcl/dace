@@ -44,6 +44,7 @@ combined-increment tree is order-independent. ``min`` / ``max`` are associative
 too but arrive as a Call shape handled by ``ArgMaxLift``; this pass leaves them
 untouched.
 """
+
 import ast
 import copy
 from typing import Any, Dict, List, Optional, Tuple, Type
@@ -60,13 +61,13 @@ from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.optionals import required
 
 #: AST binop type -> operator source string. Only associative+commutative ops.
-FOLDABLE_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
+FOLDABLE_OPS: Dict[Type[ast.operator], str] = {ast.Add: "+", ast.Mult: "*"}
 
 
 def _binop_op(tasklet: nodes.Tasklet) -> Optional[type]:
     """The AST binop type if ``tasklet`` is a single ``__out = a OP b`` with a
     foldable ``OP``; else ``None``."""
-    if tasklet.language.name != 'Python' or len(tasklet.code.code) != 1:
+    if tasklet.language.name != "Python" or len(tasklet.code.code) != 1:
         return None
     stmt = tasklet.code.code[0]
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
@@ -128,9 +129,16 @@ def _chase_write_to_accum(
 class _Step:
     """One ``acc[S] = acc[S] OP inc`` accumulation in the chain."""
 
-    def __init__(self, binop: nodes.Tasklet, acc_read_node: nodes.AccessNode, acc_read_edge: MultiConnectorEdge[Memlet],
-                 inc_edge: MultiConnectorEdge[Memlet], write_final: nodes.AccessNode,
-                 write_intermediates: List[nodes.AccessNode], write_copies: List[nodes.Tasklet]) -> None:
+    def __init__(
+        self,
+        binop: nodes.Tasklet,
+        acc_read_node: nodes.AccessNode,
+        acc_read_edge: MultiConnectorEdge[Memlet],
+        inc_edge: MultiConnectorEdge[Memlet],
+        write_final: nodes.AccessNode,
+        write_intermediates: List[nodes.AccessNode],
+        write_copies: List[nodes.Tasklet],
+    ) -> None:
         self.binop = binop
         self.acc_read_node = acc_read_node  # AccessNode(acc) feeding the accumulator connector
         self.acc_read_edge = acc_read_edge  # acc_read_node -> binop (accumulator operand)
@@ -145,7 +153,7 @@ class _Step:
 class FuseChainedScalarReductions(ppl.Pass):
     """Re-associate a chain of same-accumulator ``+`` / ``*`` reductions into one."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -198,7 +206,10 @@ class FuseChainedScalarReductions(ppl.Pass):
             write_subset = wfin[0].data.subset
             # Identify the accumulator operand: the input edge reading acc_name at write_subset.
             acc_edges = [
-                e for e in in_edges if isinstance(e.src, nodes.AccessNode) and e.src.data == acc_name
+                e
+                for e in in_edges
+                if isinstance(e.src, nodes.AccessNode)
+                and e.src.data == acc_name
                 and str(e.data.subset) == str(write_subset)
             ]
             if len(acc_edges) != 1:
@@ -234,8 +245,11 @@ class FuseChainedScalarReductions(ppl.Pass):
             guard = 0
             while head.acc_read_node in steps_by_write and guard < len(all_steps) + 1:
                 prev = steps_by_write[head.acc_read_node]
-                if (prev.acc_name != head.acc_name or prev.write_subset != head.write_subset
-                        or _binop_op(prev.binop) is not op_type):
+                if (
+                    prev.acc_name != head.acc_name
+                    or prev.write_subset != head.write_subset
+                    or _binop_op(prev.binop) is not op_type
+                ):
                     break
                 head = prev
                 guard += 1
@@ -244,8 +258,12 @@ class FuseChainedScalarReductions(ppl.Pass):
             cur = head
             guard = 0
             while cur is not None and guard < len(all_steps) + 1:
-                if (cur.acc_name != head.acc_name or cur.write_subset != head.write_subset
-                        or _binop_op(cur.binop) is not op_type or cur in used):
+                if (
+                    cur.acc_name != head.acc_name
+                    or cur.write_subset != head.write_subset
+                    or _binop_op(cur.binop) is not op_type
+                    or cur in used
+                ):
                     break
                 chain.append(cur)
                 used[cur] = None
@@ -304,25 +322,38 @@ class FuseChainedScalarReductions(ppl.Pass):
             # set's hash order becomes the in_connectors order and codegen emits the connector declarations
             # in that order -- byte-different C for the same input on every run. ``dict.fromkeys`` is the
             # declared ``Dict[str, typeclass]`` form and matches what the set branch builds ({k: None}).
-            fold_t = st.add_tasklet(f'_fuse_red_{idx}', dict.fromkeys(['__in1', '__in2']), dict.fromkeys(['__out']),
-                                    f'__out = (__in1 {op_str} __in2)')
+            fold_t = st.add_tasklet(
+                f"_fuse_red_{idx}",
+                dict.fromkeys(["__in1", "__in2"]),
+                dict.fromkeys(["__out"]),
+                f"__out = (__in1 {op_str} __in2)",
+            )
             if cur_scalar_node is None:
                 st.add_edge(
                     required(left_edge).src,
-                    required(left_edge).src_conn, fold_t, '__in1', copy.deepcopy(required(left_edge).data))
+                    required(left_edge).src_conn,
+                    fold_t,
+                    "__in1",
+                    copy.deepcopy(required(left_edge).data),
+                )
             else:
                 run = cur_scalar_node.data
-                st.add_edge(cur_scalar_node, None, fold_t, '__in1', Memlet.from_array(run, sdfg.arrays[run]))
-            st.add_edge(right_edge.src, right_edge.src_conn, fold_t, '__in2', copy.deepcopy(right_edge.data))
-            fold_name = _fresh_scalar('_fused_inc')
+                st.add_edge(cur_scalar_node, None, fold_t, "__in1", Memlet.from_array(run, sdfg.arrays[run]))
+            st.add_edge(right_edge.src, right_edge.src_conn, fold_t, "__in2", copy.deepcopy(right_edge.data))
+            fold_name = _fresh_scalar("_fused_inc")
             fold_node = st.add_access(fold_name)
-            st.add_edge(fold_t, '__out', fold_node, None, Memlet.from_array(fold_name, sdfg.arrays[fold_name]))
+            st.add_edge(fold_t, "__out", fold_node, None, Memlet.from_array(fold_name, sdfg.arrays[fold_name]))
             cur_scalar_node = fold_node
 
         # 2. Re-plug the first step's binop increment operand to the folded increment.
         inc_conn = first.inc_edge.dst_conn
-        st.add_edge(cur_scalar_node, None, first.binop, inc_conn,
-                    Memlet.from_array(required(cur_scalar_node).data, sdfg.arrays[required(cur_scalar_node).data]))
+        st.add_edge(
+            cur_scalar_node,
+            None,
+            first.binop,
+            inc_conn,
+            Memlet.from_array(required(cur_scalar_node).data, sdfg.arrays[required(cur_scalar_node).data]),
+        )
 
         # 3. Redirect the first step's write path to the terminal accumulator node.
         #    The first step's write_final node is an intermediate; splice it out and
@@ -362,4 +393,4 @@ class FuseChainedScalarReductions(ppl.Pass):
                     st.remove_node(n)
 
 
-__all__ = ['FuseChainedScalarReductions']
+__all__ = ["FuseChainedScalarReductions"]

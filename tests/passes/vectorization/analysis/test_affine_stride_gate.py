@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for G6 -- AFFINE stride tile-invariance gate (design section 4.2)."""
+
 import dace
 from dace.subsets import Range
 from dace.transformation.passes.vectorization.utils.tile_access import (
@@ -23,8 +24,8 @@ def test_outer_constant_coefficient_stays_affine():
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_state("s")
     subset = Range([(dace.symbolic.pystr_to_symbolic("N*i + 1"), dace.symbolic.pystr_to_symbolic("N*i + 1"), 1)])
-    record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg)
-    assert record.per_dim_kind == (PerDimKind.AFFINE, )
+    record = classify_tile_access(subset, iter_vars=("i",), inner_sdfg=sdfg)
+    assert record.per_dim_kind == (PerDimKind.AFFINE,)
 
 
 def test_tile_dependent_coefficient_forces_gather():
@@ -32,7 +33,7 @@ def test_tile_dependent_coefficient_forces_gather():
     sdfg = _build_body("syma", "j")
     subset = Range([(dace.symbolic.pystr_to_symbolic("syma*i + 1"), dace.symbolic.pystr_to_symbolic("syma*i + 1"), 1)])
     record = classify_tile_access(subset, iter_vars=("i", "j"), inner_sdfg=sdfg)
-    assert record.per_dim_kind == (PerDimKind.GATHER, )
+    assert record.per_dim_kind == (PerDimKind.GATHER,)
 
 
 def test_unit_coefficient_stays_linear_even_with_inner_sdfg():
@@ -40,8 +41,8 @@ def test_unit_coefficient_stays_linear_even_with_inner_sdfg():
     sdfg = dace.SDFG("linear_check")
     sdfg.add_state("s")
     subset = Range([(dace.symbolic.pystr_to_symbolic("i + 3"), dace.symbolic.pystr_to_symbolic("i + 3"), 1)])
-    record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg)
-    assert record.per_dim_kind == (PerDimKind.LINEAR, )
+    record = classify_tile_access(subset, iter_vars=("i",), inner_sdfg=sdfg)
+    assert record.per_dim_kind == (PerDimKind.LINEAR,)
 
 
 def test_integer_coefficient_stays_affine():
@@ -49,13 +50,13 @@ def test_integer_coefficient_stays_affine():
     sdfg = dace.SDFG("int_coeff")
     sdfg.add_state("s")
     subset = Range([(dace.symbolic.pystr_to_symbolic("2*i + 1"), dace.symbolic.pystr_to_symbolic("2*i + 1"), 1)])
-    record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=sdfg)
-    assert record.per_dim_kind == (PerDimKind.AFFINE, )
-    assert record.dim_strides == (2, )
+    record = classify_tile_access(subset, iter_vars=("i",), inner_sdfg=sdfg)
+    assert record.per_dim_kind == (PerDimKind.AFFINE,)
+    assert record.dim_strides == (2,)
 
 
 def test_no_inner_sdfg_skips_gate():
     """When inner_sdfg is None, the gate is a no-op (preserves backwards compat)."""
     subset = Range([(dace.symbolic.pystr_to_symbolic("N*i + 1"), dace.symbolic.pystr_to_symbolic("N*i + 1"), 1)])
-    record = classify_tile_access(subset, iter_vars=("i", ), inner_sdfg=None)
-    assert record.per_dim_kind == (PerDimKind.AFFINE, )
+    record = classify_tile_access(subset, iter_vars=("i",), inner_sdfg=None)
+    assert record.per_dim_kind == (PerDimKind.AFFINE,)

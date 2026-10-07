@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The shuffle registry: user-defined value-permutation sigma (forward + inverse expressions), minting sympy Function classes and C++ lowerings for codegen."""
+
 import ast
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
@@ -17,8 +18,10 @@ _KNOWN_NAMES = frozenset({INDEX_VAR, "abs", "min", "max", "int"})
 
 #: floored modulo matching Python's ``%`` (C's ``%`` truncates toward zero).
 PYMOD_FUNC = "shuffle_pymod"
-PYMOD_DEF = (f"\nstatic inline long long {PYMOD_FUNC}(long long a, long long b) "
-             f"{{ long long r = a % b; return (r != 0 && ((r < 0) != (b < 0))) ? r + b : r; }}\n")
+PYMOD_DEF = (
+    f"\nstatic inline long long {PYMOD_FUNC}(long long a, long long b) "
+    f"{{ long long r = a % b; return (r != 0 && ((r < 0) != (b < 0))) ? r + b : r; }}\n"
+)
 
 _REGISTRY: "Dict[str, ShuffleFunction]" = {}
 
@@ -70,27 +73,32 @@ def _make_function_class(cname: str, expr: str, params: Tuple[str, ...]) -> type
 
         def fold(index_value: int) -> int:
             return int(
-                eval(code, {"__builtins__": {
-                    "abs": abs,
-                    "min": min,
-                    "max": max,
-                    "int": int
-                }}, {INDEX_VAR: int(index_value)}))
+                eval(
+                    code,
+                    {"__builtins__": {"abs": abs, "min": min, "max": max, "int": int}},
+                    {INDEX_VAR: int(index_value)},
+                )
+            )
 
     def eval_classmethod(cls, *args):
         if fold is not None and len(args) == 1 and args[0].is_Integer:
             return sympy.Integer(fold(int(args[0])))
         return None
 
-    return type(cname, (sympy.Function, ), {
-        "nargs": 1 + len(params),
-        "eval": classmethod(eval_classmethod),
-    })
+    return type(
+        cname,
+        (sympy.Function,),
+        {
+            "nargs": 1 + len(params),
+            "eval": classmethod(eval_classmethod),
+        },
+    )
 
 
 @dataclass(frozen=True)
 class ShuffleFunction:
     """A registered value-permutation: forward/inverse expressions, sympy classes, C defs."""
+
     name: str
     forward_expr: str
     inverse_expr: str
@@ -117,8 +125,10 @@ class ShuffleFunction:
 
     def _c_def(self, func_name: str, expr: str) -> str:
         sig_params = "".join(f", long long {p}" for p in self.params)
-        return (f"\nstatic inline long long {func_name}(long long {INDEX_VAR}{sig_params}) "
-                f"{{ return {_expr_to_c(expr)}; }}\n")
+        return (
+            f"\nstatic inline long long {func_name}(long long {INDEX_VAR}{sig_params}) "
+            f"{{ return {_expr_to_c(expr)}; }}\n"
+        )
 
     def forward_c_def(self) -> str:
         return self._c_def(self.forward_name(), self.forward_expr)
@@ -189,8 +199,10 @@ def emit_shuffle_globals(sdfg: dace.SDFG, names) -> None:
             return  # exact same definition already emitted -> idempotent
         if f" {func_name}(" in already:
             # genuine collision (e.g. shuffle 'inv_x' forward name == shuffle 'x' inverse name): fail loudly
-            raise ValueError(f"shuffle: C function name collision on '{func_name}' (two shuffles map "
-                             f"to the same emitted name; rename one, e.g. avoid naming a shuffle 'inv_<other>').")
+            raise ValueError(
+                f"shuffle: C function name collision on '{func_name}' (two shuffles map "
+                f"to the same emitted name; rename one, e.g. avoid naming a shuffle 'inv_<other>')."
+            )
         sdfg.append_global_code(definition)
         already += definition
 

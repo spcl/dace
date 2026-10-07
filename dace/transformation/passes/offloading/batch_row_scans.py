@@ -11,11 +11,18 @@ scans and the apply -- with the staged rows expanded to ``[rows, length]``, and 
 by one ``Scan`` with ``segments = rows``. The staging and apply maps collapse into two-dimensional
 kernels, and the scans run as one batched device call.
 """
+
 from typing import Any, Dict, List, Optional
 
 from dace import SDFG, dtypes, properties, subsets, symbolic
-from dace.libraries.standard.nodes.scan import (INIT_CONNECTOR_NAME, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan,
-                                                ScanOp, segmented)
+from dace.libraries.standard.nodes.scan import (
+    INIT_CONNECTOR_NAME,
+    INPUT_CONNECTOR_NAME,
+    OUTPUT_CONNECTOR_NAME,
+    Scan,
+    ScanOp,
+    segmented,
+)
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
@@ -25,8 +32,14 @@ from dace.transformation.dataflow import MapCollapse, MapFission
 
 def batchable_scan(scan: Scan) -> bool:
     """A scan the segmented lowering takes: the shape ``Scan.segments`` admits."""
-    return (not segmented(scan) and scan.chains == 1 and not scan.exclusive and scan.op is not ScanOp.AFFINE
-            and INIT_CONNECTOR_NAME not in scan.in_connectors and symbolic.equal_valued(1, scan.stride))
+    return (
+        not segmented(scan)
+        and scan.chains == 1
+        and not scan.exclusive
+        and scan.op is not ScanOp.AFFINE
+        and INIT_CONNECTOR_NAME not in scan.in_connectors
+        and symbolic.equal_valued(1, scan.stride)
+    )
 
 
 def row_of(memlet: Memlet, sdfg: SDFG, entry: nodes.MapEntry) -> bool:
@@ -34,15 +47,22 @@ def row_of(memlet: Memlet, sdfg: SDFG, entry: nodes.MapEntry) -> bool:
     walks ``begin:begin + rows`` -- the shape :class:`MapFission` gives a staged row it expands."""
     desc = sdfg.arrays[memlet.data]
     begin, end, step = entry.map.range[0]
-    if len(desc.shape) != 2 or step != 1 or desc.strides[1] != 1 or symbolic.equal(desc.strides[0],
-                                                                                   desc.shape[1]) is not True:
+    if (
+        len(desc.shape) != 2
+        or step != 1
+        or desc.strides[1] != 1
+        or symbolic.equal(desc.strides[0], desc.shape[1]) is not True
+    ):
         return False
     if symbolic.equal(desc.shape[0], end - begin + 1) is not True:
         return False
     index = symbolic.pystr_to_symbolic(entry.map.params[0]) - begin
     first, last, _ = memlet.subset[0]
-    return (symbolic.equal(first, index) is True and symbolic.equal(last, index) is True
-            and memlet.subset[1] == (0, desc.shape[1] - 1, 1))
+    return (
+        symbolic.equal(first, index) is True
+        and symbolic.equal(last, index) is True
+        and memlet.subset[1] == (0, desc.shape[1] - 1, 1)
+    )
 
 
 def replace_row_map(state: SDFGState, entry: nodes.MapEntry, scan: Scan) -> bool:
@@ -62,10 +82,20 @@ def replace_row_map(state: SDFGState, entry: nodes.MapEntry, scan: Scan) -> bool
     rows = entry.map.range.num_elements()
     state.remove_nodes_from([entry, exit_node])
     whole = {data: subsets.Range.from_array(state.sdfg.arrays[data]) for data in (source.data.data, target.data.data)}
-    state.add_edge(source.src, source.src_conn, scan, INPUT_CONNECTOR_NAME,
-                   Memlet(data=source.data.data, subset=whole[source.data.data]))
-    state.add_edge(scan, OUTPUT_CONNECTOR_NAME, target.dst, target.dst_conn,
-                   Memlet(data=target.data.data, subset=whole[target.data.data]))
+    state.add_edge(
+        source.src,
+        source.src_conn,
+        scan,
+        INPUT_CONNECTOR_NAME,
+        Memlet(data=source.data.data, subset=whole[source.data.data]),
+    )
+    state.add_edge(
+        scan,
+        OUTPUT_CONNECTOR_NAME,
+        target.dst,
+        target.dst_conn,
+        Memlet(data=target.data.data, subset=whole[target.data.data]),
+    )
     scan.segments = rows
     return True
 
@@ -74,7 +104,7 @@ def replace_row_map(state: SDFGState, entry: nodes.MapEntry, scan: Scan) -> bool
 class BatchRowScans(ppl.Pass):
     """Fission every host map around a row ``Scan`` and batch the scans into one segmented ``Scan``."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.Descriptors | ppl.Modifies.Memlets
@@ -108,7 +138,8 @@ class BatchRowScans(ppl.Pass):
                 for outer in set(children[None]) - before:
                     inner = [node for node in children.get(outer, ()) if isinstance(node, nodes.MapEntry)]
                     if len(inner) == 1 and MapCollapse.can_be_applied_to(
-                            state.sdfg, outer_map_entry=outer, inner_map_entry=inner[0]):
+                        state.sdfg, outer_map_entry=outer, inner_map_entry=inner[0]
+                    ):
                         MapCollapse.apply_to(state.sdfg, outer_map_entry=outer, inner_map_entry=inner[0], save=False)
         return batched or None
 
@@ -120,8 +151,11 @@ class BatchRowScans(ppl.Pass):
         for entry in children[None]:
             if not isinstance(entry, nodes.MapEntry) or len(entry.map.params) != 1:
                 continue
-            if entry.map.schedule not in (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                          dtypes.ScheduleType.CPU_Multicore):
+            if entry.map.schedule not in (
+                dtypes.ScheduleType.Default,
+                dtypes.ScheduleType.Sequential,
+                dtypes.ScheduleType.CPU_Multicore,
+            ):
                 continue
             scans = [node for node in children[entry] if isinstance(node, Scan)]
             if len(scans) == 1 and batchable_scan(scans[0]):

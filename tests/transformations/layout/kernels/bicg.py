@@ -17,6 +17,7 @@ Source: Pouchet & Yuki, PolyBench/C 4.2 (bicg, the BiConjugate Gradient stabiliz
 al., NPBench (ICS'21). Reduction (not BLAS gemv) form so the layout is honest -- BLAS packs operands
 internally and would hide the read-orientation conflict.
 """
+
 import numpy
 import dace
 

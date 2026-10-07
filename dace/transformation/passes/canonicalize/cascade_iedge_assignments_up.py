@@ -56,6 +56,7 @@ inward passes that may have buried invariant assignments inside loops, and
 again before the parallelization stage so the ``LoopToMap`` refuse-check
 sees a clean shape.
 """
+
 import ast
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
@@ -77,7 +78,8 @@ class HoistAnalysisCache:
     over a whole ``_cascade_once`` call and cleared (forcing a lazy rebuild on next use)
     right after every mutation, instead of recomputing the same answer per candidate.
     """
-    __slots__ = ('reads', 'writes', 'preds', 'region_indices')
+
+    __slots__ = ("reads", "writes", "preds", "region_indices")
 
     def __init__(self) -> None:
         self.reads: Dict[int, Optional[Dict[str, None]]] = {}
@@ -126,7 +128,7 @@ def names_read_by(expr: str) -> Dict[str, None]:
     """
     try:
         visitor = astutils.TaskletFreeSymbolVisitor([])
-        visitor.visit(ast.parse(expr.strip(), mode='eval'))
+        visitor.visit(ast.parse(expr.strip(), mode="eval"))
     except Exception:
         return {}
     # Consumed only by membership tests, so the visitor's unordered set cannot reach codegen.
@@ -286,8 +288,15 @@ def _block_writes(block: ControlFlowBlock) -> Tuple[Dict[str, None], Dict[str, N
     return asyms, wdata
 
 
-def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str,
-                         rhs_syms: Dict[str, None], sdfg: SDFG, cache: HoistAnalysisCache) -> bool:
+def _legal_to_hoist_into(
+    parent: ControlFlowRegion,
+    child: ControlFlowRegion,
+    key: str,
+    rhs: str,
+    rhs_syms: Dict[str, None],
+    sdfg: SDFG,
+    cache: HoistAnalysisCache,
+) -> bool:
     """Decide whether an assignment inside ``child`` may move up one level.
 
     Checks L1 RHS-invariance and L2/L3/L4 (no intervening reads/writes of
@@ -366,8 +375,9 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     return True
 
 
-def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG, origin: ControlFlowBlock,
-                      cache: HoistAnalysisCache) -> Optional[ControlFlowRegion]:
+def _find_destination(
+    edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG, origin: ControlFlowBlock, cache: HoistAnalysisCache
+) -> Optional[ControlFlowRegion]:
     """Walk up the ``parent_graph`` chain from ``edge_region`` to find the
     outermost ancestor ``D`` where the move is legal under L1-L6. Returns
     ``None`` if the binding all-or-nothing rule is not met or if no move
@@ -424,12 +434,12 @@ def _edge_landing_order(existing: Dict[str, str], key: str, rhs_syms: Dict[str, 
     after = any(s in existing for s in rhs_syms if s != key)
     before = any(key in names_read_by(str(other_rhs)) for other_key, other_rhs in existing.items() if other_key != key)
     if after and before:
-        return 'conflict'
+        return "conflict"
     if after:
-        return 'after'
+        return "after"
     if before:
-        return 'before'
-    return 'direct'
+        return "before"
+    return "direct"
 
 
 def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> bool:
@@ -456,9 +466,9 @@ def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: 
     rhs_syms = names_read_by(rhs)
     for e in dest.in_edges(child):
         order = _edge_landing_order(e.data.assignments, key, rhs_syms)
-        if order == 'direct':
+        if order == "direct":
             continue
-        if order == 'after' and e.data.is_unconditional():
+        if order == "after" and e.data.is_unconditional():
             continue
         return False
     return True
@@ -479,13 +489,13 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
     """
     in_edges = list(dest.in_edges(child))
     if not in_edges:
-        pre = dest.add_state(f'{child.label}_iedge_hoist', is_start_block=dest.start_block is child)
+        pre = dest.add_state(f"{child.label}_iedge_hoist", is_start_block=dest.start_block is child)
         dest.add_edge(pre, child, InterstateEdge(assignments={key: rhs}))
         return
     rhs_syms = names_read_by(rhs)
-    needs_split = any(_edge_landing_order(e.data.assignments, key, rhs_syms) == 'after' for e in in_edges)
+    needs_split = any(_edge_landing_order(e.data.assignments, key, rhs_syms) == "after" for e in in_edges)
     if needs_split:
-        dest.add_state_before(child, f'{child.label}_iedge_hoist', assignments={key: rhs})
+        dest.add_state_before(child, f"{child.label}_iedge_hoist", assignments={key: rhs})
         return
     for e in in_edges:
         e.data.assignments[key] = rhs
@@ -511,7 +521,7 @@ def _direct_child(dest: ControlFlowRegion, edge_region: ControlFlowRegion) -> Co
     while g.parent_graph is not dest:
         g = g.parent_graph
         if g is None:
-            raise RuntimeError('dest is not an ancestor of edge_region')
+            raise RuntimeError("dest is not an ancestor of edge_region")
     return g
 
 
@@ -547,7 +557,8 @@ class CascadeInterstateEdgeAssignmentsUp(ppl.Pass):
 
     Standalone, idempotent, can be invoked at multiple pipeline positions.
     """
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.InterstateEdges | ppl.Modifies.CFG

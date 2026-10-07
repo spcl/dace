@@ -35,15 +35,19 @@ def test_add_scope_connectors():
 
 
 def test_invalid_empty_memlet():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_array('B', [20], dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
     state = sdfg.add_state(is_start_block=True)
-    t, me, mx = state.add_mapped_tasklet('test_map',
-                                         dict(i='0:20'), {'inp': dace.Memlet('A[i]')},
-                                         'out = inp + 1', {'out': dace.Memlet('B[i]')},
-                                         external_edges=True)
-    unused = state.add_access('A')
+    t, me, mx = state.add_mapped_tasklet(
+        "test_map",
+        dict(i="0:20"),
+        {"inp": dace.Memlet("A[i]")},
+        "out = inp + 1",
+        {"out": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    unused = state.add_access("A")
     state.add_nedge(me, unused, dace.Memlet())
     e = state.add_nedge(unused, t, dace.Memlet())
 
@@ -52,10 +56,10 @@ def test_invalid_empty_memlet():
 
     # Add invalid empty memlet
     state.remove_edge(e)
-    state.add_edge(unused, None, t, 'something', dace.Memlet())
-    t.add_in_connector('something')
+    state.add_edge(unused, None, t, "something", dace.Memlet())
+    t.add_in_connector("something")
 
-    with pytest.raises(InvalidSDFGEdgeError, match='Empty memlet connected to tasklet'):
+    with pytest.raises(InvalidSDFGEdgeError, match="Empty memlet connected to tasklet"):
         sdfg.validate()
 
 

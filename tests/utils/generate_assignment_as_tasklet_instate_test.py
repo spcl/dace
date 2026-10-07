@@ -3,7 +3,7 @@ import dace.sdfg.construction_utils as cutil
 
 
 def _get_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('sd1_get_sdfg')
+    sdfg = dace.SDFG("sd1_get_sdfg")
     s1 = sdfg.add_state("s1", is_start_block=True)
 
     sdfg.add_array("A", (5, 5), dace.float64)
@@ -41,8 +41,9 @@ def test_read_modify_write_reads_the_in_connector():
     assert out_conn not in rhs, f"the body reads its own out connector: {rhs.strip()!r}"
     assert out_conn in lhs, f"the write must target the out connector, got {lhs.strip()!r}"
     # Every name the body reads is fed by an edge, so none of them escapes as a symbol.
-    assert not ({str(s) for s in tasklet.free_symbols} - set(tasklet.in_connectors)), \
+    assert not ({str(s) for s in tasklet.free_symbols} - set(tasklet.in_connectors)), (
         f"tasklet reads names nothing feeds: {tasklet.free_symbols}"
+    )
 
 
 if __name__ == "__main__":

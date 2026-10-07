@@ -29,13 +29,9 @@ def generate_matrix(size, dtype):
     return A
 
 
-def make_sdfg(implementation,
-              dtype,
-              id=0,
-              in_shape=[n, n],
-              out_shape=[n, n],
-              in_subset="0:n, 0:n",
-              out_subset="0:n, 0:n"):
+def make_sdfg(
+    implementation, dtype, id=0, in_shape=[n, n], out_shape=[n, n], in_subset="0:n, 0:n", out_subset="0:n, 0:n"
+):
 
     sdfg = dace.SDFG("linalg_solve_{}_{}_{}".format(implementation, dtype.__name__, id))
     sdfg.add_symbol("n", dace.int64)
@@ -54,37 +50,55 @@ def make_sdfg(implementation,
 
     state.add_memlet_path(ain, solve_node, dst_conn="_ain", memlet=Memlet.simple(ain, in_subset, num_accesses=n * n))
     state.add_memlet_path(bin, solve_node, dst_conn="_bin", memlet=Memlet.simple(bin, out_subset, num_accesses=n * n))
-    state.add_memlet_path(solve_node,
-                          bout,
-                          src_conn="_bout",
-                          memlet=Memlet.simple(bout, out_subset, num_accesses=n * n))
+    state.add_memlet_path(
+        solve_node, bout, src_conn="_bout", memlet=Memlet.simple(bout, out_subset, num_accesses=n * n)
+    )
 
     return sdfg
 
 
-@pytest.mark.parametrize("implementation, dtype, size, shape", [
-    pytest.param('pure', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
-    pytest.param('pure', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
-    pytest.param('pure', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]]),
-    pytest.param('MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
-    pytest.param('MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
-    pytest.param(
-        'MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl),
-    pytest.param(
-        'MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl),
-    pytest.param('OpenBLAS', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS',
-                 np.float32,
-                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-                 marks=pytest.mark.lapack),
-    pytest.param('OpenBLAS',
-                 np.float64,
-                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-                 marks=pytest.mark.lapack),
-    pytest.param('cuSolverDn', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu),
-    pytest.param('cuSolverDn', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu)
-])
+@pytest.mark.parametrize(
+    "implementation, dtype, size, shape",
+    [
+        pytest.param("pure", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
+        pytest.param("pure", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]]),
+        pytest.param("pure", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]]),
+        pytest.param("MKL", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
+        pytest.param("MKL", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.mkl),
+        pytest.param(
+            "MKL", np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl
+        ),
+        pytest.param(
+            "MKL", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], marks=pytest.mark.mkl
+        ),
+        pytest.param(
+            "OpenBLAS", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack
+        ),
+        pytest.param(
+            "OpenBLAS", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.lapack
+        ),
+        pytest.param(
+            "OpenBLAS",
+            np.float32,
+            4,
+            [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+            marks=pytest.mark.lapack,
+        ),
+        pytest.param(
+            "OpenBLAS",
+            np.float64,
+            4,
+            [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+            marks=pytest.mark.lapack,
+        ),
+        pytest.param(
+            "cuSolverDn", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu
+        ),
+        pytest.param(
+            "cuSolverDn", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], marks=pytest.mark.gpu
+        ),
+    ],
+)
 def test_solve(implementation, dtype, size, shape):
     global id
     id += 1
@@ -106,13 +120,15 @@ def test_solve(implementation, dtype, size, shape):
     in_subset = tuple([slice(o, o + size) if i in in_dims else o for i, o in enumerate(in_offset)])
     out_subset = tuple([slice(o, o + size) if i in out_dims else o for i, o in enumerate(out_offset)])
 
-    in_subset_str = ','.join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)])
-    out_subset_str = ','.join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)])
+    in_subset_str = ",".join(
+        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)]
+    )
+    out_subset_str = ",".join(
+        ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)]
+    )
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str)
-    if implementation == 'cuSolverDn':
+    if implementation == "cuSolverDn":
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
     solve_sdfg = sdfg.compile()
@@ -141,7 +157,7 @@ def test_solve(implementation, dtype, size, shape):
 # A single right-hand side reaches the library node RANK-1 whichever way the caller spelled it:
 # ``Solve.validate`` squeezes the memlet subsets, so an ``(n, 1)`` container arrives with the same
 # squeezed shape as a plain vector. The vendor path therefore has to serve both spellings.
-SINGLE_RHS_SHAPES = {'vector': [n], 'column': [n, 1]}
+SINGLE_RHS_SHAPES = {"vector": [n], "column": [n, 1]}
 
 
 def make_rhs_sdfg(implementation, dtype, rhs_shape, uid):
@@ -180,67 +196,67 @@ def expansion_report(sdfg):
             lapack.append(type(node).__name__)
         elif isinstance(node, Transpose):
             transposes += 1
-        elif isinstance(node, dace.sdfg.nodes.NestedSDFG) and '_binout' in node.sdfg.arrays:
-            binout = [str(d) for d in node.sdfg.arrays['_binout'].shape]
+        elif isinstance(node, dace.sdfg.nodes.NestedSDFG) and "_binout" in node.sdfg.arrays:
+            binout = [str(d) for d in node.sdfg.arrays["_binout"].shape]
     return sorted(lapack), binout, transposes
 
 
-@pytest.mark.parametrize("implementation", ['OpenBLAS', 'MKL'])
+@pytest.mark.parametrize("implementation", ["OpenBLAS", "MKL"])
 @pytest.mark.parametrize("spelling", sorted(SINGLE_RHS_SHAPES))
 def test_single_rhs_expands_to_vendor_getrs(implementation, spelling):
     sdfg = make_rhs_sdfg(implementation, np.float64, SINGLE_RHS_SHAPES[spelling], 100)
     lapack, binout, transposes = expansion_report(sdfg)
 
-    assert lapack == ['Getrf', 'Getrs']
-    assert binout == ['n']
+    assert lapack == ["Getrf", "Getrs"]
+    assert binout == ["n"]
     assert transposes == 0
-    assert 'LAPACKE_dgetrs' in ''.join(c.clean_code for c in sdfg.generate_code())
+    assert "LAPACKE_dgetrs" in "".join(c.clean_code for c in sdfg.generate_code())
 
 
-@pytest.mark.parametrize("implementation", ['OpenBLAS', 'MKL'])
+@pytest.mark.parametrize("implementation", ["OpenBLAS", "MKL"])
 def test_multi_rhs_expands_to_vendor_getrs(implementation):
     sdfg = make_rhs_sdfg(implementation, np.float64, [n, 3], 101)
     lapack, binout, transposes = expansion_report(sdfg)
 
-    assert lapack == ['Getrf', 'Getrs']
-    assert binout == ['n', '3']
+    assert lapack == ["Getrf", "Getrs"]
+    assert binout == ["n", "3"]
     assert transposes == 0
 
 
 @pytest.mark.parametrize("spelling", sorted(SINGLE_RHS_SHAPES))
 def test_single_rhs_gpu_skips_the_rhs_transposes(spelling):
-    sdfg = make_rhs_sdfg('cuSolverDn', np.float64, SINGLE_RHS_SHAPES[spelling], 102)
+    sdfg = make_rhs_sdfg("cuSolverDn", np.float64, SINGLE_RHS_SHAPES[spelling], 102)
     lapack, binout, transposes = expansion_report(sdfg)
 
     # One column is contiguous in both layouts, so only A is transposed; the multi-RHS graph below
     # needs three transposes for the same solve.
-    assert lapack == ['Getrf', 'Getrs']
-    assert binout == ['n']
+    assert lapack == ["Getrf", "Getrs"]
+    assert binout == ["n"]
     assert transposes == 1
 
 
 def test_multi_rhs_gpu_keeps_the_rhs_transposes():
-    sdfg = make_rhs_sdfg('cuSolverDn', np.float64, [n, 3], 103)
+    sdfg = make_rhs_sdfg("cuSolverDn", np.float64, [n, 3], 103)
     lapack, binout, transposes = expansion_report(sdfg)
 
-    assert lapack == ['Getrf', 'Getrs']
-    assert binout == ['3', 'n']
+    assert lapack == ["Getrf", "Getrs"]
+    assert binout == ["3", "n"]
     assert transposes == 3
 
 
 def test_multi_rhs_gpu_hands_getrs_the_rhs_count():
     """The staged B is ``[nrhs, n]`` column-major data, so getrs must read nrhs off its rows."""
-    sdfg = make_rhs_sdfg('cuSolverDn', np.float64, [n, 3], 106)
+    sdfg = make_rhs_sdfg("cuSolverDn", np.float64, [n, 3], 106)
     sdfg.apply_gpu_transformations()
-    code = ''.join(c.clean_code for c in sdfg.generate_code())
-    call = re.search(r'cusolverDnDgetrs\(\s*__dace_cusolverDn_handle,\s*CUBLAS_OP_N,\s*(\w+),\s*(\w+),', code)
-    assert call is not None, 'no cusolverDnDgetrs call emitted'
-    assert call.groups() == ('n', '3'), f'getrs got (n, nrhs) = {call.groups()}'
+    code = "".join(c.clean_code for c in sdfg.generate_code())
+    call = re.search(r"cusolverDnDgetrs\(\s*__dace_cusolverDn_handle,\s*CUBLAS_OP_N,\s*(\w+),\s*(\w+),", code)
+    assert call is not None, "no cusolverDnDgetrs call emitted"
+    assert call.groups() == ("n", "3"), f"getrs got (n, nrhs) = {call.groups()}"
 
 
 @pytest.mark.parametrize("spelling", sorted(SINGLE_RHS_SHAPES))
 def test_single_rhs_pure_stays_pure(spelling):
-    sdfg = make_rhs_sdfg('pure', np.float64, SINGLE_RHS_SHAPES[spelling], 104)
+    sdfg = make_rhs_sdfg("pure", np.float64, SINGLE_RHS_SHAPES[spelling], 104)
     lapack, binout, transposes = expansion_report(sdfg)
 
     assert lapack == []
@@ -251,35 +267,36 @@ def test_single_rhs_pure_stays_pure(spelling):
 @pytest.mark.parametrize(
     "implementation, rhs_shape",
     [
-        pytest.param('pure', [n]),
-        pytest.param('pure', [n, 1]),
-        pytest.param('pure', [n, 3]),
-        pytest.param('OpenBLAS', [n], marks=pytest.mark.lapack),
-        pytest.param('OpenBLAS', [n, 1], marks=pytest.mark.lapack),
-        pytest.param('OpenBLAS', [n, 3], marks=pytest.mark.lapack),
-        pytest.param('MKL', [n], marks=pytest.mark.mkl),
-        pytest.param('MKL', [n, 1], marks=pytest.mark.mkl),
-        pytest.param('MKL', [n, 3], marks=pytest.mark.mkl),
-        pytest.param('cuSolverDn', [n], marks=pytest.mark.gpu),
-        pytest.param('cuSolverDn', [n, 1], marks=pytest.mark.gpu),
-        pytest.param('cuSolverDn', [n, 3], marks=pytest.mark.gpu),
+        pytest.param("pure", [n]),
+        pytest.param("pure", [n, 1]),
+        pytest.param("pure", [n, 3]),
+        pytest.param("OpenBLAS", [n], marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", [n, 1], marks=pytest.mark.lapack),
+        pytest.param("OpenBLAS", [n, 3], marks=pytest.mark.lapack),
+        pytest.param("MKL", [n], marks=pytest.mark.mkl),
+        pytest.param("MKL", [n, 1], marks=pytest.mark.mkl),
+        pytest.param("MKL", [n, 3], marks=pytest.mark.mkl),
+        pytest.param("cuSolverDn", [n], marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", [n, 1], marks=pytest.mark.gpu),
+        pytest.param("cuSolverDn", [n, 3], marks=pytest.mark.gpu),
         # More right-hand sides than rows: npbench contour_integral's NR x NM solve.
-        pytest.param('pure', [n, 9]),
-        pytest.param('cuSolverDn', [n, 9], marks=pytest.mark.gpu),
-    ])
+        pytest.param("pure", [n, 9]),
+        pytest.param("cuSolverDn", [n, 9], marks=pytest.mark.gpu),
+    ],
+)
 def test_rhs_shape_values(implementation, rhs_shape):
     global id
     id += 1
     size = 6
     dtype = np.float64
     sdfg = make_rhs_sdfg(implementation, dtype, rhs_shape, id)
-    if implementation == 'cuSolverDn':
+    if implementation == "cuSolverDn":
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
 
     rng = np.random.default_rng(42)
     A = (generate_matrix(size, dtype) + size * np.eye(size)).astype(dtype)
-    shape = (size, ) if len(rhs_shape) == 1 else (size, rhs_shape[1])
+    shape = (size,) if len(rhs_shape) == 1 else (size, rhs_shape[1])
     B = rng.random(shape).astype(dtype)
     out = np.zeros(shape, dtype=dtype)
 
@@ -289,11 +306,14 @@ def test_rhs_shape_values(implementation, rhs_shape):
     assert np.linalg.norm(ref - out) / np.linalg.norm(ref) < 1e-12
 
 
-@pytest.mark.parametrize("implementation", [
-    pytest.param('pure'),
-    pytest.param('OpenBLAS', marks=pytest.mark.lapack),
-    pytest.param('MKL', marks=pytest.mark.mkl),
-])
+@pytest.mark.parametrize(
+    "implementation",
+    [
+        pytest.param("pure"),
+        pytest.param("OpenBLAS", marks=pytest.mark.lapack),
+        pytest.param("MKL", marks=pytest.mark.mkl),
+    ],
+)
 def test_single_rhs_strided_slice_values(implementation):
     """A single right-hand side that is a strided column of a bigger container."""
 
@@ -311,10 +331,9 @@ def test_single_rhs_strided_slice_values(implementation):
     solve_node.implementation = implementation
     state.add_memlet_path(state.add_read("ain"), solve_node, dst_conn="_ain", memlet=Memlet.simple("ain", "0:n, 0:n"))
     state.add_memlet_path(state.add_read("bin"), solve_node, dst_conn="_bin", memlet=Memlet.simple("bin", "1, 0:n, 2"))
-    state.add_memlet_path(solve_node,
-                          state.add_write("bout"),
-                          src_conn="_bout",
-                          memlet=Memlet.simple("bout", "3, 0:n, 4"))
+    state.add_memlet_path(
+        solve_node, state.add_write("bout"), src_conn="_bout", memlet=Memlet.simple("bout", "3, 0:n, 4")
+    )
 
     rng = np.random.default_rng(3)
     A = generate_matrix(size, np.float64) + size * np.eye(size)
@@ -335,7 +354,7 @@ def test_single_rhs_strided_slice_values(implementation):
 def test_frontend_single_rhs_is_not_refused():
     """``np.linalg.solve(A, vector)`` -- the spelling that used to raise NotImplementedError."""
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def solve_vector(A: dace.float64[N, N], b: dace.float64[N], out: dace.float64[N]):
@@ -344,7 +363,7 @@ def test_frontend_single_rhs_is_not_refused():
     size = 6
     sdfg = solve_vector.to_sdfg(simplify=True)
     sdfg.expand_library_nodes(recursive=False)
-    assert 'LAPACKE_dgetrs' in ''.join(c.clean_code for c in sdfg.generate_code())
+    assert "LAPACKE_dgetrs" in "".join(c.clean_code for c in sdfg.generate_code())
 
     rng = np.random.default_rng(7)
     A = rng.random((size, size)) + size * np.eye(size)
@@ -358,11 +377,11 @@ def test_frontend_single_rhs_is_not_refused():
 ###############################################################################
 
 if __name__ == "__main__":
-    test_solve('MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
-    test_solve('MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
-    test_solve('MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
-    test_solve('MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
-    test_solve('cuSolverDn', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
-    test_solve('cuSolverDn', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
-    test_solve('cuSolverDn', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
-    test_solve('cuSolverDn', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
+    test_solve("MKL", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
+    test_solve("MKL", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
+    test_solve("MKL", np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
+    test_solve("MKL", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
+    test_solve("cuSolverDn", np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
+    test_solve("cuSolverDn", np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]])
+    test_solve("cuSolverDn", np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])
+    test_solve("cuSolverDn", np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]])

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Calibrate the fork/join thresholds to the host CPU, at the start of the specialization band."""
+
 from typing import Any, Dict, Optional
 
 from dace.sdfg.narrowing import config_int
@@ -11,8 +12,8 @@ from dace.transformation.passes.cpu_specialization import machine
 
 #: Config keys this pass derives, paired with the function that derives each.
 CALIBRATED = (
-    (('compiler', 'cpu', 'parallel_min_work_per_region'), machine.min_work_per_region),
-    (('compiler', 'cpu', 'parallel_transfer_min_elements'), machine.transfer_min_elements),
+    (("compiler", "cpu", "parallel_min_work_per_region"), machine.min_work_per_region),
+    (("compiler", "cpu", "parallel_transfer_min_elements"), machine.transfer_min_elements),
 )
 
 
@@ -35,7 +36,7 @@ class CalibrateCpuThresholds(ppl.Pass):
     this is idempotent and its verdict is the same for every SDFG compiled in it.
     """
 
-    CATEGORY: str = 'CPU Specialization'
+    CATEGORY: str = "CPU Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -56,5 +57,5 @@ class CalibrateCpuThresholds(ppl.Pass):
             if int(value) == current:
                 continue
             Config.set(*key, value=value)
-            applied['.'.join(key)] = value
+            applied[".".join(key)] = value
         return applied or None

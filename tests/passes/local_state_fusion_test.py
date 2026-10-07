@@ -19,6 +19,7 @@ downstream and neither had a test.
 The helper is reached through the module rather than imported by name, so a falsification harness
 can swap it without the tests holding a stale binding.
 """
+
 import numpy as np
 
 import dace
@@ -32,7 +33,7 @@ CHAIN_LENGTH = 5
 
 #: Every tasklet the chain builds, by label. Fusion moves nodes between states; it creates and
 #: destroys none, so this list is what must still be there afterwards.
-CHAIN_TASKLETS = ['bump0', 'bump1', 'bump2', 'bump3', 'bump4', 'scale0', 'scale1', 'scale2', 'scale3', 'scale4']
+CHAIN_TASKLETS = ["bump0", "bump1", "bump2", "bump3", "bump4", "scale0", "scale1", "scale2", "scale3", "scale4"]
 
 
 def scratch_chain_sdfg() -> dace.SDFG:
@@ -41,22 +42,22 @@ def scratch_chain_sdfg() -> dace.SDFG:
     The shape an unrolled straight-line body leaves behind: consecutive states that share no
     transient, so every adjacent pair is fusable and the whole chain is one state's worth of work.
     """
-    sdfg = dace.SDFG('scratch_chain')
-    sdfg.add_array('A', [CHAIN_LENGTH], dace.float64)
-    sdfg.add_array('out', [CHAIN_LENGTH], dace.float64)
+    sdfg = dace.SDFG("scratch_chain")
+    sdfg.add_array("A", [CHAIN_LENGTH], dace.float64)
+    sdfg.add_array("out", [CHAIN_LENGTH], dace.float64)
     previous: dace.SDFGState | None = None
     for i in range(CHAIN_LENGTH):
-        sdfg.add_scalar(f'acc{i}', dace.float64, transient=True)
-        state = sdfg.add_state(f's{i}', is_start_block=(i == 0))
+        sdfg.add_scalar(f"acc{i}", dace.float64, transient=True)
+        state = sdfg.add_state(f"s{i}", is_start_block=(i == 0))
         if previous is not None:
             sdfg.add_edge(previous, state, dace.InterstateEdge())
-        scale = state.add_tasklet(f'scale{i}', {'a'}, {'o'}, 'o = a * 2.0')
-        state.add_edge(state.add_access('A'), None, scale, 'a', dace.Memlet(f'A[{i}]'))
-        staged = state.add_access(f'acc{i}')
-        state.add_edge(scale, 'o', staged, None, dace.Memlet(f'acc{i}[0]'))
-        bump = state.add_tasklet(f'bump{i}', {'a'}, {'o'}, 'o = a + 1.0')
-        state.add_edge(staged, None, bump, 'a', dace.Memlet(f'acc{i}[0]'))
-        state.add_edge(bump, 'o', state.add_access('out'), None, dace.Memlet(f'out[{i}]'))
+        scale = state.add_tasklet(f"scale{i}", {"a"}, {"o"}, "o = a * 2.0")
+        state.add_edge(state.add_access("A"), None, scale, "a", dace.Memlet(f"A[{i}]"))
+        staged = state.add_access(f"acc{i}")
+        state.add_edge(scale, "o", staged, None, dace.Memlet(f"acc{i}[0]"))
+        bump = state.add_tasklet(f"bump{i}", {"a"}, {"o"}, "o = a + 1.0")
+        state.add_edge(staged, None, bump, "a", dace.Memlet(f"acc{i}[0]"))
+        state.add_edge(bump, "o", state.add_access("out"), None, dace.Memlet(f"out[{i}]"))
         previous = state
     sdfg.validate()
     return sdfg
@@ -64,25 +65,25 @@ def scratch_chain_sdfg() -> dace.SDFG:
 
 def two_sibling_regions_sdfg() -> tuple[dace.SDFG, LoopRegion, LoopRegion]:
     """Two sequential ``LoopRegion``s, each holding a three-state fusable chain of its own."""
-    sdfg = dace.SDFG('two_regions')
-    sdfg.add_array('A', [3], dace.float64)
+    sdfg = dace.SDFG("two_regions")
+    sdfg.add_array("A", [3], dace.float64)
     regions: list[LoopRegion] = []
     previous_region: LoopRegion | None = None
     for r in range(2):
-        region = LoopRegion(f'r{r}', 'k < 4', 'k', 'k = 0', 'k = k + 1')
+        region = LoopRegion(f"r{r}", "k < 4", "k", "k = 0", "k = k + 1")
         sdfg.add_node(region, is_start_block=(r == 0))
         if previous_region is not None:
             sdfg.add_edge(previous_region, region, dace.InterstateEdge())
         previous_state: dace.SDFGState | None = None
         for i in range(3):
-            scalar = f'v{r * 3 + i}'
+            scalar = f"v{r * 3 + i}"
             sdfg.add_scalar(scalar, dace.float64, transient=True)
-            state = region.add_state(f'r{r}s{i}', is_start_block=(i == 0))
+            state = region.add_state(f"r{r}s{i}", is_start_block=(i == 0))
             if previous_state is not None:
                 region.add_edge(previous_state, state, dace.InterstateEdge())
-            tasklet = state.add_tasklet(f't{r}{i}', {'a'}, {'o'}, 'o = a + 1.0')
-            state.add_edge(state.add_access('A'), None, tasklet, 'a', dace.Memlet(f'A[{i}]'))
-            state.add_edge(tasklet, 'o', state.add_access(scalar), None, dace.Memlet(f'{scalar}[0]'))
+            tasklet = state.add_tasklet(f"t{r}{i}", {"a"}, {"o"}, "o = a + 1.0")
+            state.add_edge(state.add_access("A"), None, tasklet, "a", dace.Memlet(f"A[{i}]"))
+            state.add_edge(tasklet, "o", state.add_access(scalar), None, dace.Memlet(f"{scalar}[0]"))
             previous_state = state
         regions.append(region)
         previous_region = region
@@ -118,5 +119,5 @@ def test_fusing_one_region_leaves_its_sibling_regions_states_alone() -> None:
     assert fused == 2
     assert len(list(first.states())) == 1
     assert len(list(second.states())) == 3
-    assert tasklet_labels(sdfg) == ['t00', 't01', 't02', 't10', 't11', 't12']
+    assert tasklet_labels(sdfg) == ["t00", "t01", "t02", "t10", "t11", "t12"]
     sdfg.validate()

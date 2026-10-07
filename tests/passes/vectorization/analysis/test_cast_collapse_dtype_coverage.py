@@ -12,6 +12,7 @@ Order matters for the prefix-strip regex the same names build: ``float`` must no
 match inside ``float64``. Both halves are pinned -- the ordering as a structural property, and the
 ``float`` / ``float64`` pair by behavior.
 """
+
 import pytest
 
 from dace import dtypes, symbolic
@@ -20,8 +21,16 @@ from dace.transformation.passes.vectorization.utils import tile_access
 #: The dtype classes the hand-written list never held, by name. Hard-coded from the diff, not
 #: derived: two low-precision floats, both fp8 encodings, all three complex spellings, and the two
 #: bare Python-level names the frontend also emits.
-DROPPED_BY_THE_HAND_WRITTEN_LIST = ("bfloat16", "float8_e4m3fn", "float8_e5m2", "complex", "complex64", "complex128",
-                                    "int", "float")
+DROPPED_BY_THE_HAND_WRITTEN_LIST = (
+    "bfloat16",
+    "float8_e4m3fn",
+    "float8_e5m2",
+    "complex",
+    "complex64",
+    "complex128",
+    "int",
+    "float",
+)
 
 
 @pytest.mark.parametrize("name", sorted(dtypes.TYPECLASS_STRINGS))
@@ -41,7 +50,7 @@ def test_a_dropped_dtype_collapses_under_every_spelling_the_frontend_emits(prefi
 def test_a_shorter_dtype_name_never_precedes_a_longer_one_it_prefixes():
     """Longest-first ordering: no name in the alternation can shadow one that starts with it."""
     names = tile_access._CAST_NAMES_LONGEST_FIRST
-    shadowed = [(short, long) for i, short in enumerate(names) for long in names[i + 1:] if long.startswith(short)]
+    shadowed = [(short, long) for i, short in enumerate(names) for long in names[i + 1 :] if long.startswith(short)]
     assert shadowed == []
 
 

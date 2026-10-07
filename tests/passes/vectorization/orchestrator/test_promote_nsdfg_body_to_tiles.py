@@ -35,8 +35,14 @@ L = dace.symbol("LEN_2D")
 
 
 @dace.program
-def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L],
-          x: dace.float64[L]):
+def _vbor(
+    a: dace.float64[L],
+    b: dace.float64[L],
+    c: dace.float64[L],
+    d: dace.float64[L],
+    e: dace.float64[L],
+    x: dace.float64[L],
+):
     for i in range(L):
         a1 = a[i]
         b1 = b[i]
@@ -44,17 +50,33 @@ def _vbor(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.fl
         d1 = d[i]
         e1 = e[i]
         f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
-              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
-        b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
+        a1 = (
+            a1 * b1 * c1
+            + a1 * b1 * d1
+            + a1 * b1 * e1
+            + a1 * b1 * f1
+            + a1 * c1 * d1
+            + a1 * c1 * e1
+            + a1 * c1 * f1
+            + a1 * d1 * e1
+            + a1 * d1 * f1
+            + a1 * e1 * f1
+        )
+        b1 = b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         d1 = d1 * e1 * f1
         x[i] = a1 * b1 * c1 * d1
 
 
 @dace.program
-def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: dace.float64[L], e: dace.float64[L],
-                x: dace.float64[L]):
+def _unop_chain(
+    a: dace.float64[L],
+    b: dace.float64[L],
+    c: dace.float64[L],
+    d: dace.float64[L],
+    e: dace.float64[L],
+    x: dace.float64[L],
+):
     # vbor verbatim with two unary-minus unops injected on reused scalars: same
     # boundary-connector structure as _vbor, so the e2e isolates the TileUnop path.
     for i in range(L):
@@ -64,10 +86,20 @@ def _unop_chain(a: dace.float64[L], b: dace.float64[L], c: dace.float64[L], d: d
         d1 = d[i]
         e1 = e[i]
         f1 = a[i]
-        a1 = (a1 * b1 * c1 + a1 * b1 * d1 + a1 * b1 * e1 + a1 * b1 * f1 + a1 * c1 * d1 + a1 * c1 * e1 + a1 * c1 * f1 +
-              a1 * d1 * e1 + a1 * d1 * f1 + a1 * e1 * f1)
+        a1 = (
+            a1 * b1 * c1
+            + a1 * b1 * d1
+            + a1 * b1 * e1
+            + a1 * b1 * f1
+            + a1 * c1 * d1
+            + a1 * c1 * e1
+            + a1 * c1 * f1
+            + a1 * d1 * e1
+            + a1 * d1 * f1
+            + a1 * e1 * f1
+        )
         a1 = -a1  # unary-minus unop on a reused scalar
-        b1 = (b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1)
+        b1 = b1 * c1 * d1 + b1 * c1 * e1 + b1 * c1 * f1 + b1 * d1 * e1 + b1 * d1 * f1 + b1 * e1 * f1
         c1 = c1 * d1 * e1 + c1 * d1 * f1 + c1 * e1 * f1
         c1 = -c1  # unary-minus unop
         d1 = d1 * e1 * f1
@@ -102,8 +134,9 @@ def _vectorize(prog, name, expand=True):
     ``expand=False`` leaves the tile lib nodes in place (for structural
     assertions); ``expand=True`` expands them to tasklets (for e2e compile/run)."""
     sdfg = _build(prog, name)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
-                                         expand_tile_nodes=expand)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR, expand_tile_nodes=expand)).apply_pass(
+        sdfg, {}
+    )
     sdfg.validate()
     return sdfg
 
@@ -198,7 +231,7 @@ def test_s231_carried_dep_vectorizes_on_parallel_dim(n):
     np.testing.assert_allclose(av, ar, rtol=1e-12, atol=1e-12)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_const_store_to_output_matches_reference(16)
     test_const_store_to_output_matches_reference(17)
     test_vbor_nsdfg_body_matches_reference(16)

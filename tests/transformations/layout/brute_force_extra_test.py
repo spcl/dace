@@ -18,6 +18,7 @@ These complement ``brute_force_test.py`` by exercising the parts of
 
 Only correctness invariants are asserted; timing magnitudes are never asserted (noisy on a shared
 host)."""
+
 import inspect
 
 import numpy
@@ -25,8 +26,15 @@ import numpy
 import dace
 from dace.libraries.layout.shuffle import register_shuffle
 from dace.transformation.layout import brute_force
-from dace.transformation.layout.brute_force import (SweepResult, best, block_candidates, permutation_candidates,
-                                                    shuffle_candidates, sweep, time_cpu)
+from dace.transformation.layout.brute_force import (
+    SweepResult,
+    best,
+    block_candidates,
+    permutation_candidates,
+    shuffle_candidates,
+    sweep,
+    time_cpu,
+)
 
 N = dace.symbol("N")
 
@@ -341,7 +349,12 @@ def test_permutation_candidates_3d_named_set():
     for ndim=3 that is all 6 permutations, named ``permute_<arr>_<perm>``."""
     names = {name for name, _ in permutation_candidates("X", 3)}
     assert names == {
-        "permute_X_012", "permute_X_021", "permute_X_102", "permute_X_120", "permute_X_201", "permute_X_210"
+        "permute_X_012",
+        "permute_X_021",
+        "permute_X_102",
+        "permute_X_120",
+        "permute_X_201",
+        "permute_X_210",
     }
 
 

@@ -11,6 +11,7 @@ per refusal in the pass's contract.
 The pass runs inside the canonicalize pipeline's ``loop_to_x`` stage, so every test drives the
 full pipeline: a refusal that only holds when the pass is run in isolation is not a refusal.
 """
+
 import copy
 import numpy as np
 import pytest
@@ -22,8 +23,13 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import scopes
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.cpu_specialization import cpu_specialize
-from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (LoopToStreamCompaction, NestLevel,
-                                                                               IDX_PREFIX, MASK_PREFIX, TOTAL_PREFIX)
+from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (
+    LoopToStreamCompaction,
+    NestLevel,
+    IDX_PREFIX,
+    MASK_PREFIX,
+    TOTAL_PREFIX,
+)
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -36,8 +42,8 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
     assert_tree_consistent(sdfg)
 
 
-N = dace.symbol('N', dtype=dace.int64)
-M = dace.symbol('M', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
+M = dace.symbol("M", dtype=dace.int64)
 
 
 def lifted(sdfg: dace.SDFG) -> bool:
@@ -54,7 +60,7 @@ def num_loops(sdfg: dace.SDFG) -> int:
 
 
 def omp_parallel_for(sdfg: dace.SDFG) -> int:
-    return sum(part.clean_code.count('#pragma omp parallel for') for part in sdfg.generate_code())
+    return sum(part.clean_code.count("#pragma omp parallel for") for part in sdfg.generate_code())
 
 
 def nest_claimed(sdfg: dace.SDFG, levels: int) -> bool:
@@ -236,8 +242,9 @@ MM = 24
 
 
 @dace.program
-def s343_static_kernel(aa: dace.float64[MM, MM], bb: dace.float64[MM, MM], flat: dace.float64[MM * MM],
-                       kout: dace.int64[1]):
+def s343_static_kernel(
+    aa: dace.float64[MM, MM], bb: dace.float64[MM, MM], flat: dace.float64[MM * MM], kout: dace.int64[1]
+):
     k = -1
     for i in range(MM):
         for j in range(MM):
@@ -275,9 +282,9 @@ def test_s343_static_extents_lift_the_whole_nest():
     # 512 rather than the 256 named above because calibration only leaves a key alone when it
     # DIFFERS from the schema default, and 256 IS that default: pinning to it is indistinguishable
     # from not pinning at all. Any value with 24 < v < 576 states the same thing about the band.
-    with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=512):
+    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=512):
         assert omp_parallel_for(build(s343_static_kernel)) == 1
-    with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=0):
+    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=0):
         assert omp_parallel_for(build(s343_static_kernel)) >= 2
 
     rng = np.random.default_rng(3431)
@@ -391,7 +398,7 @@ def test_loop_invariant_step_of_two():
     assert np.array_equal(got, want)
 
 
-FLAG = dace.symbol('FLAG', dtype=dace.int64)
+FLAG = dace.symbol("FLAG", dtype=dace.int64)
 
 
 @dace.program
@@ -413,7 +420,7 @@ def test_guard_as_body_start_block():
 
     sdfg = guard_without_preamble.to_sdfg(simplify=True)
     for label, factory in CANONICALIZE_STAGES:
-        if label == 'loop_to_x':
+        if label == "loop_to_x":
             break
         for unit in factory():
             unit.apply_pass(sdfg, {})
@@ -441,12 +448,12 @@ def test_guard_as_body_start_block():
         assert np.array_equal(got, want)
 
 
-@pytest.mark.parametrize('pattern', ['all-taken', 'none-taken', 'alternating'])
+@pytest.mark.parametrize("pattern", ["all-taken", "none-taken", "alternating"])
 def test_degenerate_masks(pattern):
     """An all-true, all-false or alternating guard must still match the sequential loop exactly."""
     sdfg = build(s341_kernel)
     n = 64
-    b = {'all-taken': np.ones(n), 'none-taken': -np.ones(n), 'alternating': np.array([1.0, -1.0] * (n // 2))}[pattern]
+    b = {"all-taken": np.ones(n), "none-taken": -np.ones(n), "alternating": np.array([1.0, -1.0] * (n // 2))}[pattern]
     want = np.zeros(n)
     want_j = oracle_s341(want, b)
     got = np.zeros(n)
@@ -694,7 +701,7 @@ def test_refuse_side_effecting_body():
     def prefix_up_to_loop_to_x() -> dace.SDFG:
         sdfg = bump_after_writes.to_sdfg(simplify=True)
         for label, factory in CANONICALIZE_STAGES:
-            if label == 'loop_to_x':
+            if label == "loop_to_x":
                 return sdfg
             for unit in factory():
                 unit.apply_pass(sdfg, {})
@@ -751,26 +758,24 @@ def test_pass_is_a_no_op_when_it_refuses():
 
 def stride_loop_sdfg(stride: str) -> tuple[dace.SDFG, LoopRegion]:
     """A loop between two int32 bounds whose update step is ``stride``."""
-    sdfg = dace.SDFG('stride_loop_stride_loop_sdfg')
-    for name in ('M32', 'N32', 'S32'):
+    sdfg = dace.SDFG("stride_loop_stride_loop_sdfg")
+    for name in ("M32", "N32", "S32"):
         sdfg.add_symbol(name, dace.int32)
-    sdfg.add_array('A', (64, ), dace.float64)
-    loop = LoopRegion('L',
-                      condition_expr='it <= N32',
-                      loop_var='it',
-                      initialize_expr='it = M32',
-                      update_expr=f'it = it + {stride}')
+    sdfg.add_array("A", (64,), dace.float64)
+    loop = LoopRegion(
+        "L", condition_expr="it <= N32", loop_var="it", initialize_expr="it = M32", update_expr=f"it = it + {stride}"
+    )
     sdfg.add_node(loop)
-    loop.add_state('body')
+    loop.add_state("body")
     return sdfg, loop
 
 
 def test_a_symbolic_stride_axis_is_renamed_at_its_own_32_bit_width():
-    sdfg, loop = stride_loop_sdfg('S32')
+    sdfg, loop = stride_loop_sdfg("S32")
     sut = LoopToStreamCompaction()
 
     dtype = sut.iterator_dtype(loop, sdfg, scopes.ScopedSymbolResolver())
-    new_name = sut.rename_iterator(loop, sdfg, 'probe', dtype)
+    new_name = sut.rename_iterator(loop, sdfg, "probe", dtype)
 
     assert dtype == dace.int32
     assert sdfg.symbols[new_name] == dace.int32
@@ -778,19 +783,20 @@ def test_a_symbolic_stride_axis_is_renamed_at_its_own_32_bit_width():
     # The property an assumed width breaks: the renamed condition is read back by parsing its
     # text, and a symbol parsed from text carries the default width. Declared at any other width
     # the axis is two symbols of one name, and a difference over them does not cancel.
-    parsed = next(sym for sym in symbolic.pystr_to_symbolic(loop.loop_condition.as_string).free_symbols
-                  if sym.name == new_name)
+    parsed = next(
+        sym for sym in symbolic.pystr_to_symbolic(loop.loop_condition.as_string).free_symbols if sym.name == new_name
+    )
     assert symbolic.simplify(parsed - symbolic.symbol(new_name, sdfg.symbols[new_name])) == 0
 
 
 def test_a_unit_stride_axis_is_renamed_at_the_64_bit_width_its_step_infers():
     """The only shape this pass can match: the literal 1 in the update makes the axis int64 even
     between two int32 bounds, so the phase copies are int64 by inference, not by assumption."""
-    sdfg, loop = stride_loop_sdfg('1')
+    sdfg, loop = stride_loop_sdfg("1")
     sut = LoopToStreamCompaction()
 
     dtype = sut.iterator_dtype(loop, sdfg, scopes.ScopedSymbolResolver())
-    new_name = sut.rename_iterator(loop, sdfg, 'probe', dtype)
+    new_name = sut.rename_iterator(loop, sdfg, "probe", dtype)
 
     assert dtype == dace.int64
     assert sdfg.symbols[new_name] == dace.int64
@@ -813,14 +819,14 @@ def probe_point_subset(stride: str) -> tuple[dace.SDFG, str, subsets.Range]:
     sdfg, loop = stride_loop_sdfg(stride)
     sut = LoopToStreamCompaction()
     start, trip = sut.loop_extent(loop)
-    levels = (NestLevel(loop=loop, start=start, trip=trip, preamble=[], child=loop), )
+    levels = (NestLevel(loop=loop, start=start, trip=trip, preamble=[], child=loop),)
     dtype = sut.iterator_dtype(loop, sdfg, scopes.ScopedSymbolResolver())
-    new_name = sut.rename_iterator(loop, sdfg, 'probe', dtype)
+    new_name = sut.rename_iterator(loop, sdfg, "probe", dtype)
     return sdfg, new_name, sut.point_subset(sut.nest_index(levels, [loop], [dtype]))
 
 
 def test_the_mask_point_subset_names_the_axis_at_its_declared_width():
-    sdfg, new_name, subset = probe_point_subset('1')
+    sdfg, new_name, subset = probe_point_subset("1")
 
     axis = subset.symbols[new_name]
 
@@ -830,18 +836,18 @@ def test_the_mask_point_subset_names_the_axis_at_its_declared_width():
 
 def test_a_difference_over_the_mask_point_subset_axis_cancels():
     """The property a re-minted axis breaks: two symbols of one name never cancel."""
-    sdfg, new_name, subset = probe_point_subset('1')
+    sdfg, new_name, subset = probe_point_subset("1")
     declared = symbolic.symbol(new_name, sdfg.symbols[new_name])
 
-    residue = symbolic.simplify(subset.ranges[0][0] - (declared - symbolic.pystr_to_symbolic('M32')))
+    residue = symbolic.simplify(subset.ranges[0][0] - (declared - symbolic.pystr_to_symbolic("M32")))
 
     assert residue == 0
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
 
-N_GUARD = dace.symbol('N_GUARD', dtype=dace.int64)
+N_GUARD = dace.symbol("N_GUARD", dtype=dace.int64)
 
 
 @dace.program
@@ -877,7 +883,7 @@ def test_a_cursor_bump_under_a_nested_guard_is_not_lifted():
         assert np.array_equal(got[:want_cnt], want[:want_cnt])
 
 
-N_ITER = dace.symbol('N_ITER', dtype=dace.int64)
+N_ITER = dace.symbol("N_ITER", dtype=dace.int64)
 
 
 @dace.program
@@ -904,4 +910,4 @@ def test_a_guard_on_the_compacted_iterator_names_the_renamed_iterator_in_its_mas
         got_cnt = np.zeros(1, dtype=np.int64)
         sdfg(a=a.copy(), out=got, cnt=got_cnt, N_ITER=n)
         assert int(got_cnt[0]) == want.size
-        assert np.array_equal(got[:want.size], want)
+        assert np.array_equal(got[: want.size], want)

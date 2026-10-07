@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for UnzipArrays: the inverse of ZipArrays (homogeneous + struct), a Zip->Unzip roundtrip,
 and the nested-SDFG connector-split path."""
+
 import copy
 import numpy
 import dace
@@ -62,10 +63,7 @@ def test_unzip_homogeneous_standalone():
     state.add_mapped_tasklet(
         name="sum",
         map_ranges={"i": "0:N"},
-        inputs={
-            "a": dace.Memlet.simple("Z", "i, 0"),
-            "b": dace.Memlet.simple("Z", "i, 1")
-        },
+        inputs={"a": dace.Memlet.simple("Z", "i, 0"), "b": dace.Memlet.simple("Z", "i, 1")},
         code="c = a + b",
         outputs={"c": dace.Memlet.simple("C", "i")},
         external_edges=True,
@@ -114,10 +112,7 @@ def _build_nested_sum_sdfg():
     istate.add_mapped_tasklet(
         name="isum",
         map_ranges={"i": "0:N"},
-        inputs={
-            "a": dace.Memlet.simple("Zc", "i, 0"),
-            "b": dace.Memlet.simple("Zc", "i, 1")
-        },
+        inputs={"a": dace.Memlet.simple("Zc", "i, 0"), "b": dace.Memlet.simple("Zc", "i, 1")},
         code="c = a + b",
         outputs={"c": dace.Memlet.simple("Cc", "i")},
         external_edges=True,

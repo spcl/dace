@@ -25,8 +25,8 @@ def make_sdfg() -> dace.SDFG:
     sdfg.add_array(
         name="A",
         dtype=dace.float64,
-        shape=(N, ),
-        strides=(second_stride_A, ),
+        shape=(N,),
+        strides=(second_stride_A,),
         transient=False,
     )
 
@@ -43,10 +43,7 @@ def make_sdfg() -> dace.SDFG:
     # Simplest way to generate a mapped Tasklet, we will later modify it.
     state.add_mapped_tasklet(
         "computation",
-        map_ranges={
-            "__i0": "0:N",
-            "__i1": "0:N"
-        },
+        map_ranges={"__i0": "0:N", "__i1": "0:N"},
         inputs={
             "__in0": dace.Memlet("A[__i1]"),
             "__in1": dace.Memlet("B[__i0, __i1]"),
@@ -75,7 +72,7 @@ def make_sdfg() -> dace.SDFG:
         #  AccessNode, does not refers to the memory outside (its source) but to the transient
         #  inside (its destination)
         dace.Memlet(data="tmp_in", subset="0", other_subset="__i1"),  # This does not work!
-        #dace.Memlet(data="A", subset="__i1", other_subset="0"),   # This would work!
+        # dace.Memlet(data="A", subset="__i1", other_subset="0"),   # This would work!
     )
     state.add_edge(
         tmp_in,
@@ -174,21 +171,22 @@ def test_argument_signature_test():
     res_arglist = {k: v for k, v in state.scope_subgraph(map_entry).arglist().items()}
 
     ref_arglist = {
-        'A': dace.data.Array,
-        'B': dace.data.Array,
-        'C': dace.data.Array,
-        'D': dace.data.Array,
-        'N': dace.data.Scalar,
-        'second_stride_A': dace.data.Scalar,
-        'second_stride_D': dace.data.Scalar,
+        "A": dace.data.Array,
+        "B": dace.data.Array,
+        "C": dace.data.Array,
+        "D": dace.data.Array,
+        "N": dace.data.Scalar,
+        "second_stride_A": dace.data.Scalar,
+        "second_stride_D": dace.data.Scalar,
     }
 
     assert len(ref_arglist) == len(res_arglist), f"Expected {len(ref_arglist)} but got {len(res_arglist)}"
     for aname in ref_arglist.keys():
         atype_ref = ref_arglist[aname]
         atype_res = res_arglist[aname]
-        assert isinstance(atype_res,
-                          atype_ref), f"Expected '{aname}' to have type {atype_ref}, but it had {type(atype_res)}."
+        assert isinstance(atype_res, atype_ref), (
+            f"Expected '{aname}' to have type {atype_ref}, but it had {type(atype_res)}."
+        )
 
 
 @pytest.mark.gpu
@@ -216,8 +214,8 @@ def test_the_indirectly_referenced_arguments_reach_the_kernel():
     # ``D`` is written through the transposing ``other_subset`` on the inner memlet, so it is C's
     # transpose -- an all-zero D is the symptom of the kernel never receiving it at all.
     expected = cp.asnumpy(a)[np.newaxis, :] + cp.asnumpy(b)
-    assert np.allclose(cp.asnumpy(c), expected), 'the mapped tasklet did not compute A + B into C'
-    assert np.allclose(cp.asnumpy(d), expected.T), 'the second output, reached only indirectly, is wrong'
+    assert np.allclose(cp.asnumpy(c), expected), "the mapped tasklet did not compute A + B into C"
+    assert np.allclose(cp.asnumpy(d), expected.T), "the second output, reached only indirectly, is wrong"
 
 
 def make_init_symbol_sdfg() -> dace.SDFG:
@@ -228,13 +226,13 @@ def make_init_symbol_sdfg() -> dace.SDFG:
     ordering matters: both signatures are sorted, so ``GM`` sitting first is what makes a set
     mismatch land as a value shift rather than a harmless extra trailing argument.
     """
-    sdfg = dace.SDFG('init_symbol_signature')
-    GM = dace.symbol(sdfg.add_symbol('GM', dace.int32))
-    sdfg.add_symbol('Px', dace.int32)
-    sdfg.add_array('out', (GM, ), dace.float64, transient=False)
+    sdfg = dace.SDFG("init_symbol_signature")
+    GM = dace.symbol(sdfg.add_symbol("GM", dace.int32))
+    sdfg.add_symbol("Px", dace.int32)
+    sdfg.add_array("out", (GM,), dace.float64, transient=False)
     state = sdfg.add_state(is_start_block=True)
-    tasklet = state.add_tasklet('write_px', {}, {'o'}, 'o = Px')
-    state.add_edge(tasklet, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+    tasklet = state.add_tasklet("write_px", {}, {"o"}, "o = Px")
+    state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet("out[0]"))
     return sdfg
 
 
@@ -245,18 +243,18 @@ def test_init_receives_the_symbols_its_signature_declares():
     ``Cblacs_gridinit`` an array extent as the process-grid width."""
     sdfg = make_init_symbol_sdfg()
     # Non-vacuity: without this gap the two filters agree and the test proves nothing.
-    assert sdfg.used_symbols(all_symbols=False) != sdfg.free_symbols, 'the two symbol sets must differ here'
+    assert sdfg.used_symbols(all_symbols=False) != sdfg.free_symbols, "the two symbol sets must differ here"
 
     code = sdfg.generate_code()[0].clean_code
-    params = re.search(r'__dace_init_' + sdfg.name + r'\(([^)]*)\)', code).group(1)
-    assert [p.split()[-1] for p in params.split(',')] == ['Px'], f'unexpected init signature: {params}'
+    params = re.search(r"__dace_init_" + sdfg.name + r"\(([^)]*)\)", code).group(1)
+    assert [p.split()[-1] for p in params.split(",")] == ["Px"], f"unexpected init signature: {params}"
 
     # The init code runs with the init parameters in scope, so a wrong value for ``Px`` there is
     # observable: a non-zero ``__result`` makes the initializer return a null handle.
-    sdfg.append_init_code('if (Px != 3) { __result = 1; }')
+    sdfg.append_init_code("if (Px != 3) { __result = 1; }")
     out = np.zeros(4)
     sdfg(out=out, GM=4, Px=3)
-    assert out[0] == 3, f'the tasklet wrote {out[0]}, so the program itself got the wrong Px'
+    assert out[0] == 3, f"the tasklet wrote {out[0]}, so the program itself got the wrong Px"
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ smallest kernel that reproduces each bug (all regressions fixed 2026-06-15):
 Contract: bit-equivalence (modulo FMA reorder) of the ``VectorizeCPUMultiDim``
 output vs the unvectorised reference.
 """
+
 import numpy as np
 import pytest
 
@@ -32,7 +33,7 @@ import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from tests.passes.vectorization.tile_assertions import assert_tiled
 
 NB = dace.symbol("NB")
@@ -44,10 +45,11 @@ S2 = dace.symbol("S2")
 NB_VAL, NLEV_VAL, NPROMA_VAL = 2, 16, 64
 
 
-def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode=BranchMode.MERGE, seeds=(0, 1, 2)):
+def _run_compare(kern, make_inputs, params, widths=(8,), branch_mode=BranchMode.MERGE, seeds=(0, 1, 2)):
     """Vectorise ``kern`` with ``VectorizeCPUMultiDim`` and assert bit-equivalence
     with the unvectorised reference across several random seeds."""
     import copy
+
     ref_sdfg = kern.to_sdfg(simplify=False)
     ref_sdfg.simplify()
     vec_sdfg = copy.deepcopy(ref_sdfg)
@@ -56,10 +58,13 @@ def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode=BranchMode
     # reference stays the plain scalar oracle these numbers are compared against.
     canonicalize(vec_sdfg, validate=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=widths,
-                        target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
-                        branch_mode=branch_mode)).apply_pass(vec_sdfg, {})
+        VectorizeConfig(
+            widths=widths,
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+            branch_mode=branch_mode,
+        )
+    ).apply_pass(vec_sdfg, {})
     vec_sdfg.validate()
     assert_tiled(vec_sdfg, ref_sdfg, kern.name)
     c_ref = ref_sdfg.compile()
@@ -72,11 +77,9 @@ def _run_compare(kern, make_inputs, params, widths=(8, ), branch_mode=BranchMode
         c_ref(**ref, **params)
         c_vec(**tst, **params)
         for name in base:
-            np.testing.assert_allclose(tst[name],
-                                       ref[name],
-                                       rtol=1e-12,
-                                       atol=1e-12,
-                                       err_msg=f"{kern.name} seed={seed} array={name}")
+            np.testing.assert_allclose(
+                tst[name], ref[name], rtol=1e-12, atol=1e-12, err_msg=f"{kern.name} seed={seed} array={name}"
+            )
 
 
 def _icon_inputs(rng):
@@ -95,9 +98,13 @@ ICON_PARAMS = {"NB": NB_VAL, "NLEV": NLEV_VAL, "NPROMA": NPROMA_VAL}
 
 
 @dace.program
-def _gather_idx_direct(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA,
-                                                                                3], edge_blk: dace.int32[NB, NPROMA, 3],
-                       z_kin_hor_e: dace.float64[NB, NLEV, NPROMA], z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def _gather_idx_direct(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
@@ -113,9 +120,13 @@ def test_direct_gather_to_output_store():
 
 
 @dace.program
-def _gather_both_direct(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA, 3],
-                        edge_blk: dace.int32[NB, NPROMA, 3], z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
-                        z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def _gather_both_direct(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
@@ -131,26 +142,37 @@ def test_direct_double_gather_to_output_store():
 
 
 @dace.program
-def _gather_sum2(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA,
-                                                                          3], edge_blk: dace.int32[NB, NPROMA, 3],
-                 z_kin_hor_e: dace.float64[NB, NLEV, NPROMA], z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def _gather_sum2(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
-                z_ekinh[jb, jk,
-                        jc] = (z_kin_hor_e[jb, jk, edge_idx[jb, jc, 0]] + z_kin_hor_e[jb, jk, edge_idx[jb, jc, 1]])
+                z_ekinh[jb, jk, jc] = (
+                    z_kin_hor_e[jb, jk, edge_idx[jb, jc, 0]] + z_kin_hor_e[jb, jk, edge_idx[jb, jc, 1]]
+                )
 
 
 @dace.program
-def _gather_sum3(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA,
-                                                                          3], edge_blk: dace.int32[NB, NPROMA, 3],
-                 z_kin_hor_e: dace.float64[NB, NLEV, NPROMA], z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def _gather_sum3(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
-                z_ekinh[jb, jk,
-                        jc] = (z_kin_hor_e[jb, jk, edge_idx[jb, jc, 0]] + z_kin_hor_e[jb, jk, edge_idx[jb, jc, 1]] +
-                               z_kin_hor_e[jb, jk, edge_idx[jb, jc, 2]])
+                z_ekinh[jb, jk, jc] = (
+                    z_kin_hor_e[jb, jk, edge_idx[jb, jc, 0]]
+                    + z_kin_hor_e[jb, jk, edge_idx[jb, jc, 1]]
+                    + z_kin_hor_e[jb, jk, edge_idx[jb, jc, 2]]
+                )
 
 
 @pytest.mark.parametrize("kern", [_gather_sum2, _gather_sum3])
@@ -164,9 +186,13 @@ def test_multiple_distinct_gathers_of_one_array(kern):
 
 
 @dace.program
-def _struct_sum3(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA,
-                                                                          3], edge_blk: dace.int32[NB, NPROMA, 3],
-                 z_kin_hor_e: dace.float64[NB, NLEV, NPROMA], z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def _struct_sum3(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
@@ -183,15 +209,21 @@ def test_multiple_distinct_structured_reads_of_one_array():
 
 
 @dace.program
-def _icon_zekinh_full(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA,
-                                                                               3], edge_blk: dace.int32[NB, NPROMA, 3],
-                      z_kin_hor_e: dace.float64[NB, NLEV, NPROMA], z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def _icon_zekinh_full(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
-                z_ekinh[jb, jk, jc] = (e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]] +
-                                       e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]] +
-                                       e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
+                z_ekinh[jb, jk, jc] = (
+                    e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]]
+                    + e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]]
+                    + e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]]
+                )
 
 
 def test_icon_zekinh_full_gather_times_structured():
@@ -205,9 +237,9 @@ def test_icon_zekinh_full_gather_times_structured():
 
 
 def _branch_inputs(rng):
-    return dict(a=rng.random((NLEV_VAL, NPROMA_VAL)),
-                b=rng.random((NLEV_VAL, NPROMA_VAL)),
-                c=rng.random((NLEV_VAL, NPROMA_VAL)))
+    return dict(
+        a=rng.random((NLEV_VAL, NPROMA_VAL)), b=rng.random((NLEV_VAL, NPROMA_VAL)), c=rng.random((NLEV_VAL, NPROMA_VAL))
+    )
 
 
 BRANCH_PARAMS = {"S1": NLEV_VAL, "S2": NPROMA_VAL}

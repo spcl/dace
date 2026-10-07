@@ -5,13 +5,14 @@ CloudSC selects its supersaturation formula with ``yrecldp_nssopt``, a run-time 
 Its if/elif chain has no ``else``, so for an unlisted value the temporary keeps the previous column's
 value and the column loop cannot become a map. Baking the flag in collapses the chain.
 """
+
 import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -27,7 +28,7 @@ def flag_selected_temporary(a: dace.float64[N], b: dace.float64[N], flag: dace.i
 
 def canonicalized(constants: dict) -> dace.SDFG:
     sdfg = flag_selected_temporary.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, validate_all=False, target='cpu', specialize_constants=constants)
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu", specialize_constants=constants)
     sdfg.validate()
     return sdfg
 
@@ -37,7 +38,7 @@ def loops_left(sdfg: dace.SDFG) -> list:
 
 
 def test_a_specialized_flag_argument_lets_its_guarded_loop_become_a_map():
-    sdfg = canonicalized({'flag': 1})
+    sdfg = canonicalized({"flag": 1})
     assert loops_left(sdfg) == [], loops_left(sdfg)
     a = np.random.default_rng(0).random(17)
     b = np.zeros(17)
@@ -47,4 +48,4 @@ def test_a_specialized_flag_argument_lets_its_guarded_loop_become_a_map():
 
 def test_a_specialized_flag_argument_stays_in_the_signature():
     """Callers pass every argument of the unspecialized program, so the ABI must not change."""
-    assert 'flag' in canonicalized({'flag': 1}).arglist()
+    assert "flag" in canonicalized({"flag": 1}).arglist()

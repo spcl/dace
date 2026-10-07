@@ -6,6 +6,7 @@ C++ tasklet that calls the shipped ``dace_fio_*`` wrappers: open ``filename``
 for reading, read each connected item (``_out_0`` ... ``_out_{num_items-1}``)
 in order through the real Fortran runtime, then close.
 """
+
 import dace.library
 import dace.properties
 from dace import dtypes
@@ -19,7 +20,6 @@ from .. import environments
 
 @dace.library.expansion
 class ExpandReadFortranIO(ExpandTransformation):
-
     environments = [environments.FortranIO]
 
     @staticmethod
@@ -30,16 +30,18 @@ class ExpandReadFortranIO(ExpandTransformation):
         for conn, desc, count, is_value in items:
             suffix, ctype = fio_type(desc.dtype)
             if is_value:
-                lines.append(f'dace_fio_read_{suffix}(_u, ({ctype} *)&{conn});')
+                lines.append(f"dace_fio_read_{suffix}(_u, ({ctype} *)&{conn});")
             else:
-                lines.append(f'dace_fio_read_{suffix}_arr(_u, ({ctype} *){conn}, {count});')
+                lines.append(f"dace_fio_read_{suffix}_arr(_u, ({ctype} *){conn}, {count});")
         lines.append("dace_fio_close(_u);")
-        return nodes.Tasklet(node.name,
-                             node.in_connectors,
-                             node.out_connectors,
-                             "\n".join(lines),
-                             language=dtypes.Language.CPP,
-                             side_effects=True)
+        return nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            node.out_connectors,
+            "\n".join(lines),
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
 
 
 @dace.library.node

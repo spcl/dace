@@ -22,6 +22,7 @@ Source: SC26 layout paper SS IV-B1 (conjugation microbenchmark); R. Strzodka, "A
 and SoA Layout in C++," GPU Computing Gems Jade, 2012; Sung, Liu & Hwu, "DL: a data layout
 transformation system for heterogeneous computing," InPar 2012 (ASTA = AoSoA). Primitives: Zip, Block.
 """
+
 import numpy
 import dace
 

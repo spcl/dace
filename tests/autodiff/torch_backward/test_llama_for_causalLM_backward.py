@@ -2,8 +2,9 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("transformers",
-                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
+)
 import torch
 import torch.nn as nn
 from transformers import LlamaForCausalLM, LlamaConfig
@@ -13,7 +14,6 @@ from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class LlamaWrapper(nn.Module):
-
     def __init__(self, model):
         super().__init__()
         self.model = model
@@ -33,7 +33,7 @@ class LlamaWrapper(nn.Module):
 
         # Create causal mask for attention
         causal_mask = torch.triu(torch.ones((seq_length, seq_length), device=input_ids.device), diagonal=1)
-        causal_mask = causal_mask.masked_fill(causal_mask == 1, float('-inf'))
+        causal_mask = causal_mask.masked_fill(causal_mask == 1, float("-inf"))
         causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)
 
         # Forward through each layer
@@ -91,11 +91,13 @@ def test_llama_model_backward(device):
     wrapped_model = LlamaWrapper(model).to(dev)
 
     # Avoid the simplify pass since it takes too long for this model
-    dace_model = DaceModule(wrapped_model,
-                            sdfg_name=f"test_llama_model_backward_{device}",
-                            backward=True,
-                            onnx_simplify=True,
-                            cuda=is_gpu(device))
+    dace_model = DaceModule(
+        wrapped_model,
+        sdfg_name=f"test_llama_model_backward_{device}",
+        backward=True,
+        onnx_simplify=True,
+        cuda=is_gpu(device),
+    )
 
     wrapped_model(input.clone()).sum().backward()
     with experimental_cuda():
@@ -103,7 +105,7 @@ def test_llama_model_backward(device):
 
     # Check gradients of the parameters
     for (name, dace_param), (pt_name, pt_param) in zip(wrapped_model.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
+        assert "model." + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
         torch_tensors_close(name, pt_param.grad, dace_param.grad)
 
 

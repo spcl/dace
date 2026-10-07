@@ -7,6 +7,7 @@ that recomputing never pays. Every "declines" case below asserts that the UNGATE
 would have applied, so a shape change that makes the pattern disappear fails the test instead of
 passing it vacuously.
 """
+
 import copy
 import numpy as np
 
@@ -16,8 +17,7 @@ from dace.sdfg import nodes
 from dace.transformation.dataflow import OTFMapFusion
 from dace.transformation.passes.cpu_specialization import RecomputeOversizedIntermediates
 from dace.transformation.passes.cpu_specialization.machine import topology
-from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (intermediate_outgrows_cache
-                                                                                             )
+from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import intermediate_outgrows_cache
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
 
@@ -30,7 +30,7 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
     assert_tree_consistent(sdfg)
 
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: Small enough to fit any last-level cache this could run on: 16 doubles is 128 bytes.
 SMALL = 16
@@ -146,9 +146,13 @@ def test_consumers_in_separate_states_stay_materialized():
     sdfg.validate()
     assert intermediate[0] in sdfg.arrays
 
-    writers = [(st, n) for st in sdfg.states() for n in st.nodes()
-               if isinstance(n, nodes.AccessNode) and n.data == intermediate[0] and st.in_degree(n) > 0]
-    assert writers, 'the intermediate is read but nothing writes it'
+    writers = [
+        (st, n)
+        for st in sdfg.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.AccessNode) and n.data == intermediate[0] and st.in_degree(n) > 0
+    ]
+    assert writers, "the intermediate is read but nothing writes it"
 
     n = 64
     rng = np.random.default_rng(7)
@@ -161,19 +165,19 @@ def test_consumers_in_separate_states_stay_materialized():
 def test_the_gate_reads_the_host_last_level_cache():
     """The threshold is the host's own LLC, not a constant measured on the development box."""
     llc = topology().llc_bytes
-    sdfg = dace.SDFG('gate')
-    sdfg.add_array('over', [llc // 8 + 1], dace.float64, transient=True)
-    sdfg.add_array('under', [llc // 8 - 1], dace.float64, transient=True)
-    sdfg.add_array('symbolic', [N], dace.float64, transient=True)
-    sdfg.add_scalar('scalar', dace.float64, transient=True)
+    sdfg = dace.SDFG("gate")
+    sdfg.add_array("over", [llc // 8 + 1], dace.float64, transient=True)
+    sdfg.add_array("under", [llc // 8 - 1], dace.float64, transient=True)
+    sdfg.add_array("symbolic", [N], dace.float64, transient=True)
+    sdfg.add_scalar("scalar", dace.float64, transient=True)
 
-    assert intermediate_outgrows_cache(sdfg, 'over')
-    assert not intermediate_outgrows_cache(sdfg, 'under')
-    assert intermediate_outgrows_cache(sdfg, 'symbolic')
-    assert not intermediate_outgrows_cache(sdfg, 'scalar')
+    assert intermediate_outgrows_cache(sdfg, "over")
+    assert not intermediate_outgrows_cache(sdfg, "under")
+    assert intermediate_outgrows_cache(sdfg, "symbolic")
+    assert not intermediate_outgrows_cache(sdfg, "scalar")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_oversized_intermediate_is_recomputed()
     test_cache_resident_intermediate_stays_materialized()
     test_two_consumers_stay_materialized()

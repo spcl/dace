@@ -14,7 +14,7 @@ class IntelMKL:
     """
 
     cmake_minimum_version = None
-    cmake_packages = []  #["BLAS"]
+    cmake_packages = []  # ["BLAS"]
     cmake_variables = {"BLA_VENDOR": "Intel10_64lp"}
     cmake_compile_flags = []
     cmake_link_flags = []
@@ -28,54 +28,58 @@ class IntelMKL:
 
     @staticmethod
     def cmake_includes():
-        if 'MKLROOT' in os.environ:
-            return [os.path.join(os.environ['MKLROOT'], 'include')]
+        if "MKLROOT" in os.environ:
+            return [os.path.join(os.environ["MKLROOT"], "include")]
         # Anaconda
-        elif 'CONDA_PREFIX' in os.environ:
-            base_path = os.environ['CONDA_PREFIX']
+        elif "CONDA_PREFIX" in os.environ:
+            base_path = os.environ["CONDA_PREFIX"]
             # Anaconda on Windows
-            candpath = os.path.join(base_path, 'Library', 'include')
-            if os.path.isfile(os.path.join(candpath, 'mkl.h')):
+            candpath = os.path.join(base_path, "Library", "include")
+            if os.path.isfile(os.path.join(candpath, "mkl.h")):
                 return [candpath]
             # Anaconda on other platforms
-            candpath = os.path.join(base_path, 'include')
-            if os.path.isfile(os.path.join(candpath, 'mkl.h')):
+            candpath = os.path.join(base_path, "include")
+            if os.path.isfile(os.path.join(candpath, "mkl.h")):
                 return [candpath]
-            warnings.warn('Anaconda Python is installed but the MKL include directory cannot '
-                          'be found. Please install MKL includes with '
-                          '"conda install mkl-include" or set the MKLROOT environment '
-                          'variable')
+            warnings.warn(
+                "Anaconda Python is installed but the MKL include directory cannot "
+                "be found. Please install MKL includes with "
+                '"conda install mkl-include" or set the MKLROOT environment '
+                "variable"
+            )
             return []
         else:
             return []
 
     @staticmethod
     def cmake_libraries():
-        if 'MKLROOT' in os.environ:
-            prefix = Config.get('compiler', 'library_prefix')
-            suffix = Config.get('compiler', 'library_extension')
-            libfile = os.path.join(os.environ['MKLROOT'], 'lib', prefix + 'mkl_rt.' + suffix)
+        if "MKLROOT" in os.environ:
+            prefix = Config.get("compiler", "library_prefix")
+            suffix = Config.get("compiler", "library_extension")
+            libfile = os.path.join(os.environ["MKLROOT"], "lib", prefix + "mkl_rt." + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
             # Try with ${MKLROOT}/lib/intel64 (oneAPI on Linux)
-            libfile = os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', prefix + 'mkl_rt.' + suffix)
+            libfile = os.path.join(os.environ["MKLROOT"], "lib", "intel64", prefix + "mkl_rt." + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
 
-        path = ctypes.util.find_library('mkl_rt')
+        path = ctypes.util.find_library("mkl_rt")
         if not path:
-            path = ctypes.util.find_library('mkl_rt.1')
+            path = ctypes.util.find_library("mkl_rt.1")
         if path:
             # Attempt to link on Windows
-            if path.endswith('.dll'):
-                libfile = os.path.join(os.path.dirname(os.path.abspath(path)), '..', 'lib', 'mkl_rt.lib')
+            if path.endswith(".dll"):
+                libfile = os.path.join(os.path.dirname(os.path.abspath(path)), "..", "lib", "mkl_rt.lib")
                 if os.path.isfile(libfile):
                     return [libfile]
-                elif 'CONDA_PREFIX' in os.environ:
-                    warnings.warn('Anaconda Python is installed but the MKL library file '
-                                  'cannot be found for linkage. Please install libraries with '
-                                  '"conda install mkl-devel" or set the MKLROOT environment '
-                                  'variable')
+                elif "CONDA_PREFIX" in os.environ:
+                    warnings.warn(
+                        "Anaconda Python is installed but the MKL library file "
+                        "cannot be found for linkage. Please install libraries with "
+                        '"conda install mkl-devel" or set the MKLROOT environment '
+                        "variable"
+                    )
                     return []
                 else:
                     return []
@@ -83,7 +87,7 @@ class IntelMKL:
             return [path]
 
         # If all else fails, let CMake find the library
-        return ['mkl_rt']
+        return ["mkl_rt"]
 
     @staticmethod
     def is_installed():

@@ -22,6 +22,7 @@ on these recurrences (a wrongly-parallelized sweep would diverge).
 Structural assertions additionally pin that the carried axis stays a
 ``LoopRegion``.
 """
+
 import numpy as np
 import pytest
 
@@ -31,8 +32,8 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')  # horizontal (parallel) extent, e.g. columns / jl
-K = dace.symbol('K')  # vertical (carried) extent, e.g. levels / jk
+N = dace.symbol("N")  # horizontal (parallel) extent, e.g. columns / jl
+K = dace.symbol("K")  # vertical (carried) extent, e.g. levels / jk
 
 
 def _nmaps(sdfg):
@@ -61,8 +62,9 @@ def _nloops(sdfg):
 
 
 @dace.program
-def thomas_solve(a: dace.float64[N, K], b: dace.float64[N, K], c: dace.float64[N, K], d: dace.float64[N, K],
-                 x: dace.float64[N, K]):
+def thomas_solve(
+    a: dace.float64[N, K], b: dace.float64[N, K], c: dace.float64[N, K], d: dace.float64[N, K], x: dace.float64[N, K]
+):
     """Per-column tridiagonal solve. ``jc`` (= ``i``, rows/columns) is
     parallel; ``jk`` (vertical) is loop-carried in both sweeps. Mirrors the
     ICON implicit vertical solver shape. The outer ``i`` is written as a
@@ -122,7 +124,7 @@ def test_thomas_solve_value_preserving():
     sdfg.validate()
     x = np.zeros((n, k))
     sdfg(a=a.copy(), b=b.copy(), c=c.copy(), d=d.copy(), x=x, N=n, K=k)
-    assert np.allclose(x, exp), 'Thomas solve mis-canonicalized (carried vertical axis likely parallelized)'
+    assert np.allclose(x, exp), "Thomas solve mis-canonicalized (carried vertical axis likely parallelized)"
 
 
 def test_thomas_solve_keeps_vertical_axis_sequential():
@@ -131,10 +133,11 @@ def test_thomas_solve_keeps_vertical_axis_sequential():
     sdfg = thomas_solve.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) == 2, f'both jk sweeps must stay sequential LoopRegions, got {_nloops(sdfg)}'
-    assert len(carried_axis_loops(sdfg, 'K')) == 2, \
-        'a jk sweep was lifted to a Map -- parallelizing a Thomas sweep is a correctness bug'
-    assert _nmaps(sdfg) == 1, f'only the independent jc axis may map; got {_nmaps(sdfg)} maps'
+    assert _nloops(sdfg) == 2, f"both jk sweeps must stay sequential LoopRegions, got {_nloops(sdfg)}"
+    assert len(carried_axis_loops(sdfg, "K")) == 2, (
+        "a jk sweep was lifted to a Map -- parallelizing a Thomas sweep is a correctness bug"
+    )
+    assert _nmaps(sdfg) == 1, f"only the independent jc axis may map; got {_nmaps(sdfg)} maps"
 
 
 # Vertical flux prefix-scan / sedimentation
@@ -173,7 +176,7 @@ def test_vertical_flux_prefix_scan_value_preserving():
     sdfg.validate()
     flux = np.zeros((n, k))
     sdfg(fall=fall.copy(), flux=flux, N=n, K=k)
-    assert np.allclose(flux, exp), 'prefix-scan mis-canonicalized (carried level axis likely parallelized)'
+    assert np.allclose(flux, exp), "prefix-scan mis-canonicalized (carried level axis likely parallelized)"
 
 
 def test_vertical_flux_prefix_scan_keeps_level_axis_sequential():
@@ -182,9 +185,9 @@ def test_vertical_flux_prefix_scan_keeps_level_axis_sequential():
     sdfg = vertical_flux_prefix_scan.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) == 1, f'exactly the carried level sweep may survive, got {_nloops(sdfg)}'
-    assert len(carried_axis_loops(sdfg, 'K')) == 1, 'the carried level accumulation was lifted to a Map'
-    assert _nmaps(sdfg) == 1, f'only the independent column axis may map; got {_nmaps(sdfg)} maps'
+    assert _nloops(sdfg) == 1, f"exactly the carried level sweep may survive, got {_nloops(sdfg)}"
+    assert len(carried_axis_loops(sdfg, "K")) == 1, "the carried level accumulation was lifted to a Map"
+    assert _nmaps(sdfg) == 1, f"only the independent column axis may map; got {_nmaps(sdfg)} maps"
 
 
 # Loop-carried scratch SLOT across a fully unrolled loop
@@ -203,7 +206,7 @@ def carried_scratch_slot(A: dace.float64[SLOT_N], hist: dace.float64[SLOT_T], ou
     ordering over silently makes ``out[t, i]`` read a later iteration's value.
     ``hist`` keeps the slot live across the outer iteration.
     """
-    arr = np.zeros((4, ), dtype=np.float64)
+    arr = np.zeros((4,), dtype=np.float64)
     arr[1] = 5.0
     for t in range(SLOT_T):
         hist[t] = arr[1] * 2.0
@@ -254,14 +257,15 @@ def test_carried_scratch_slot_value_preserving():
     sdfg = carried_scratch_slot.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert not _ambiguous_write_nodes(sdfg), \
-        f'fusion merged unordered writes onto one AccessNode: {_ambiguous_write_nodes(sdfg)}'
+    assert not _ambiguous_write_nodes(sdfg), (
+        f"fusion merged unordered writes onto one AccessNode: {_ambiguous_write_nodes(sdfg)}"
+    )
     hist = np.zeros(SLOT_T)
     out = np.zeros((SLOT_T, SLOT_N))
     sdfg(A=A, hist=hist, out=out)
     assert np.allclose(hist, exp_hist)
-    assert np.allclose(out, exp_out), 'unrolled iterations of the carried scratch slot were mis-fused'
+    assert np.allclose(out, exp_out), "unrolled iterations of the carried scratch slot were mis-fused"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

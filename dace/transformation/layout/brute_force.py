@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Brute-force GLOBAL layout sweep -- the layout optimizer (no cost model): enumerate candidates, compile, verify against a numpy oracle, and time the correct ones."""
+
 import contextlib
 import itertools
 import time as _time
@@ -15,6 +16,7 @@ from dace.transformation.layout.isolation import run_isolated
 @dataclass
 class SweepResult:
     """One candidate's result; ``order`` is its enumeration position, used for tie-breaks."""
+
     name: str
     correct: bool
     time: Optional[float] = None
@@ -63,18 +65,20 @@ def single_default_stream():
         yield
 
 
-def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
-          run: Callable[[dace.SDFG], Dict[str, numpy.ndarray]],
-          reference: Dict[str, numpy.ndarray],
-          compare: Callable[[numpy.ndarray, numpy.ndarray], bool] = numpy.allclose,
-          reps: int = 5,
-          warmup: int = 1,
-          do_time: bool = True,
-          device: str = "cpu",
-          timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None,
-          attempt_log: Optional[str] = None,
-          isolate: bool = False,
-          isolate_timeout: float = 900.0) -> List[SweepResult]:
+def sweep(
+    candidates: Dict[str, Callable[[], dace.SDFG]],
+    run: Callable[[dace.SDFG], Dict[str, numpy.ndarray]],
+    reference: Dict[str, numpy.ndarray],
+    compare: Callable[[numpy.ndarray, numpy.ndarray], bool] = numpy.allclose,
+    reps: int = 5,
+    warmup: int = 1,
+    do_time: bool = True,
+    device: str = "cpu",
+    timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None,
+    attempt_log: Optional[str] = None,
+    isolate: bool = False,
+    isolate_timeout: float = 900.0,
+) -> List[SweepResult]:
     """Compile, run, verify, and (optionally) time each candidate; return results ranked (correct first, then by time). ``isolate`` forks each candidate (CPU only) so a crash doesn't kill the sweep, giving each child at most ``isolate_timeout`` seconds -- lower it for a wide sweep of small kernels, where the default would stall 15 min per hang."""
     if device not in ("cpu", "gpu"):
         raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
@@ -96,8 +100,11 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
         verdict: Dict[str, Any] = {"correct": bool(correct), "time": None, "metadata": {}}
         if do_time and correct:
             try:
-                t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
-                    lambda: run(sdfg), reps, warmup)
+                t = (
+                    timer(sdfg, run, reps, warmup)
+                    if timer is not None
+                    else default_timer(lambda: run(sdfg), reps, warmup)
+                )
                 if isinstance(t, (tuple, list)):  # stats timer: (median, metadata)
                     t, timer_metadata = t
                     verdict["metadata"].update(timer_metadata)
@@ -156,15 +163,18 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
                 for result, sdfg in verified:
                     log_attempt("time", result.name)
                     try:
-                        t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
-                            lambda: run(sdfg), reps, warmup)
+                        t = (
+                            timer(sdfg, run, reps, warmup)
+                            if timer is not None
+                            else default_timer(lambda: run(sdfg), reps, warmup)
+                        )
                         if isinstance(t, (tuple, list)):  # stats timer: (median, metadata)
                             t, timer_metadata = t
                             result.metadata.update(timer_metadata)
                         result.time = t
                     except Exception as ex:  # timing is advisory; a failure must not demote a correct candidate
                         result.metadata["timing_error"] = f"{type(ex).__name__}: {ex}"
-    results.sort(key=lambda r: (not r.correct, r.time if r.time is not None else float('inf')))
+    results.sort(key=lambda r: (not r.correct, r.time if r.time is not None else float("inf")))
     return results
 
 
@@ -172,6 +182,7 @@ def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Opt
     """The winning candidate: correct candidates within ``noise_floor`` (relative) of the fastest tie, resolved to the earliest-enumerated. Defaults to :data:`timing.SPREAD_CONTENDED_THRESHOLD`; ``None`` if nothing verified."""
     if noise_floor is None:
         from dace.transformation.layout.timing import SPREAD_CONTENDED_THRESHOLD
+
         noise_floor = SPREAD_CONTENDED_THRESHOLD
     # A non-positive median means the timer resolved nothing for that candidate, so it ranks nowhere: it
     # cannot be called fastest, and letting it set the window would drag every validly-timed candidate into

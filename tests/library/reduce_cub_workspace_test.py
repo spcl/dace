@@ -8,6 +8,7 @@ as it found it -- on fresh device memory, a clean array of zeros with no error r
 
 These assert on emitted code, so they need a CUDA toolchain for neither compilation nor a run.
 """
+
 import os
 import re
 
@@ -39,26 +40,26 @@ def generated_code_for(in_shape, axes, out_shape) -> str:
     sdfg = multidimred.to_sdfg(a, b)
     sdfg.apply_gpu_transformations()
     rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
-    rednode.implementation = 'CUDA (device)'
+    rednode.implementation = "CUDA (device)"
 
     generated = sdfg.generate_code()
     # Keyed on the code object's TITLE, not its extension: the GPU object is emitted as `.cu` under
     # CUDA and `.cpp` under HIP, and asserting `cpp` would also match the host file and pass even
     # when nothing lowered to the GPU at all.
-    assert any(code.title == 'CUDA' for code in generated), 'the reduction did not lower to a GPU file'
-    return '\n'.join(code.clean_code for code in generated)
+    assert any(code.title == "CUDA" for code in generated), "the reduction did not lower to a GPU file"
+    return "\n".join(code.clean_code for code in generated)
 
 
-@pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
+@pytest.mark.parametrize("in_shape,axes,out_shape", CUB_CASES)
 def test_the_cub_workspace_size_query_is_checked(in_shape, axes, out_shape):
     """A failed query leaves the size at zero, which is the zero-byte allocation below."""
     code = generated_code_for(in_shape, axes, out_shape)
-    query = re.search(r'^.*cub::Device\w*Reduce::\w+\(nullptr,.*$', code, re.MULTILINE)
-    assert query, 'no CUB size query was emitted'
-    assert 'DACE_GPU_CHECK' in query.group(0), f'the CUB size query is unchecked: {query.group(0).strip()}'
+    query = re.search(r"^.*cub::Device\w*Reduce::\w+\(nullptr,.*$", code, re.MULTILINE)
+    assert query, "no CUB size query was emitted"
+    assert "DACE_GPU_CHECK" in query.group(0), f"the CUB size query is unchecked: {query.group(0).strip()}"
 
 
-@pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
+@pytest.mark.parametrize("in_shape,axes,out_shape", CUB_CASES)
 def test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(in_shape, axes, out_shape):
     """The workspace now comes from the per-stream scratch pool (``get_scratch``), not a direct
     ``cudaMalloc`` -- the pool floors a zero-byte request and reports allocation failure itself (see
@@ -66,39 +67,40 @@ def test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(in_shape
     call site only has to check the pointer it gets back.
     """
     code = generated_code_for(in_shape, axes, out_shape)
-    fetch = re.search(r'^.*get_scratch<::dace::cub::ReduceTag>\(_cub_needed, stream, &_cub_status\);$', code,
-                      re.MULTILINE)
-    assert fetch, 'no CUB scratch-pool fetch was emitted'
-    checked = re.search(r'^\s*if \(_cub_scratch == nullptr\) return.*$', code, re.MULTILINE)
-    assert checked, 'the CUB scratch pointer is not checked for allocation failure'
+    fetch = re.search(
+        r"^.*get_scratch<::dace::cub::ReduceTag>\(_cub_needed, stream, &_cub_status\);$", code, re.MULTILINE
+    )
+    assert fetch, "no CUB scratch-pool fetch was emitted"
+    checked = re.search(r"^\s*if \(_cub_scratch == nullptr\) return.*$", code, re.MULTILINE)
+    assert checked, "the CUB scratch pointer is not checked for allocation failure"
 
 
-@pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
+@pytest.mark.parametrize("in_shape,axes,out_shape", CUB_CASES)
 def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
     """The work call is the only site holding CUB's status for the reduction that produces the output."""
     code = generated_code_for(in_shape, axes, out_shape)
-    assert re.search(
-        r'gpuError_t __dace_reduce_\w+\(',
-        code), ('the reduce helper returns void, so CUB\'s status is discarded at the only site that has it')
+    assert re.search(r"gpuError_t __dace_reduce_\w+\(", code), (
+        "the reduce helper returns void, so CUB's status is discarded at the only site that has it"
+    )
     # experimental_readable (the default CPU codegen) inlines the tasklet's _in/_out connectors to
     # the actual pointers they read/write; legacy keeps the literal connector names in the call. The
     # call site is the line that is not a declaration either way, and how the offloading pass spells
     # its device copy (``gpu_a``, ``a_gpu``) is that pass's business rather than this test's.
-    call = re.search(r'^(?!.*gpuError_t).*__dace_reduce_\w+\(\w+, \w+,.*$', code, re.MULTILINE)
-    assert call, 'no call to the reduce helper was emitted'
-    assert 'DACE_GPU_CHECK' in call.group(0), f'the reduction call is unchecked: {call.group(0).strip()}'
+    call = re.search(r"^(?!.*gpuError_t).*__dace_reduce_\w+\(\w+, \w+,.*$", code, re.MULTILINE)
+    assert call, "no call to the reduce helper was emitted"
+    assert "DACE_GPU_CHECK" in call.group(0), f"the reduction call is unchecked: {call.group(0).strip()}"
 
 
 def cudacommon_source() -> str:
     """The runtime header holding the check macros and the GPU context they record into."""
-    path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'cuda', 'cudacommon.cuh')
+    path = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "cuda", "cudacommon.cuh")
     with open(path) as fp:
         return fp.read()
 
 
 def cub_scratch_source() -> str:
     """The runtime header implementing the per-stream CUB scratch pool (``get_scratch``)."""
-    path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'cub_scratch.cuh')
+    path = os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "cub_scratch.cuh")
     with open(path) as fp:
         return fp.read()
 
@@ -109,12 +111,13 @@ def test_the_scratch_pool_floors_zero_byte_requests_and_reports_allocation_failu
     rather than a stale pointer.
     """
     source = cub_scratch_source()
-    floor = re.search(r'gpuMalloc\(&e\.storage, bytes_needed \? bytes_needed : 1\);', source)
-    assert floor, 'get_scratch no longer floors a zero-byte request to 1 byte'
-    failure = re.search(r'if \(err != gpuSuccess\) \{(?:.|\n)*?return nullptr;\n\s*\}', source)
-    assert failure, 'get_scratch does not handle a failed allocation'
-    assert 'if (status) *status = err;' in failure.group(0), (
-        'a failed allocation does not report its error through status')
+    floor = re.search(r"gpuMalloc\(&e\.storage, bytes_needed \? bytes_needed : 1\);", source)
+    assert floor, "get_scratch no longer floors a zero-byte request to 1 byte"
+    failure = re.search(r"if \(err != gpuSuccess\) \{(?:.|\n)*?return nullptr;\n\s*\}", source)
+    assert failure, "get_scratch does not handle a failed allocation"
+    assert "if (status) *status = err;" in failure.group(0), (
+        "a failed allocation does not report its error through status"
+    )
 
 
 def test_the_check_macro_evaluates_its_argument_once():
@@ -122,11 +125,13 @@ def test_the_check_macro_evaluates_its_argument_once():
 
     Naming the argument again to format the message would perform the failing call a second time.
     """
-    macro = re.search(r'#define DACE_GPU_CHECK\(err\)(?:.|\n)*?while \(0\)', cudacommon_source())
-    assert macro, 'DACE_GPU_CHECK is no longer defined where this test looks for it'
-    body = macro.group(0).split('gpuError_t errr = (err);', 1)[1]
-    assert '(err)' not in body, ('DACE_GPU_CHECK evaluates its argument a second time in the error path; wrapping a '
-                                 'call with side effects then performs it twice')
+    macro = re.search(r"#define DACE_GPU_CHECK\(err\)(?:.|\n)*?while \(0\)", cudacommon_source())
+    assert macro, "DACE_GPU_CHECK is no longer defined where this test looks for it"
+    body = macro.group(0).split("gpuError_t errr = (err);", 1)[1]
+    assert "(err)" not in body, (
+        "DACE_GPU_CHECK evaluates its argument a second time in the error path; wrapping a "
+        "call with side effects then performs it twice"
+    )
 
 
 def test_the_recorded_error_is_the_first_one():
@@ -137,16 +142,19 @@ def test_the_recorded_error_is_the_first_one():
     query. That later one is what a caller is handed if recording overwrites.
     """
     source = cudacommon_source()
-    recorder = re.search(r'void record_error\(gpuError_t err\)(?:.|\n)*?\n  \}', source)
-    assert recorder, 'the GPU context no longer records errors through record_error'
-    assert 'lasterror == (gpuError_t)0' in recorder.group(0), (
-        'record_error records unconditionally, so a later error about a consequence replaces the first one')
-    written = re.findall(r'^.*\blasterror = .*$', source, re.MULTILINE)
-    assert len(written) == 1, (f'an error is recorded without going through record_error, which overwrites whatever '
-                               f'was recorded before it: {[line.strip() for line in written]}')
+    recorder = re.search(r"void record_error\(gpuError_t err\)(?:.|\n)*?\n  \}", source)
+    assert recorder, "the GPU context no longer records errors through record_error"
+    assert "lasterror == (gpuError_t)0" in recorder.group(0), (
+        "record_error records unconditionally, so a later error about a consequence replaces the first one"
+    )
+    written = re.findall(r"^.*\blasterror = .*$", source, re.MULTILINE)
+    assert len(written) == 1, (
+        f"an error is recorded without going through record_error, which overwrites whatever "
+        f"was recorded before it: {[line.strip() for line in written]}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for shape, ax, out in CUB_CASES:
         test_the_cub_workspace_size_query_is_checked(shape, ax, out)
         test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(shape, ax, out)
@@ -159,65 +167,78 @@ if __name__ == '__main__':
 def scan_wrapper_code(exclusive: bool) -> str:
     """The ``__dace_scan_*`` unit the CUDA scan expansion appends to the SDFG's global code."""
     from dace import memlet as mm
-    from dace.libraries.standard.nodes.scan import (INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, ExpandCUDA, Scan,
-                                                    ScanOp)
-    n = dace.symbol('N')
-    sdfg = dace.SDFG('cub_scan_workspace')
-    sdfg.add_array('A', [n], dace.float64)
-    sdfg.add_array('B', [n], dace.float64)
+    from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, ExpandCUDA, Scan, ScanOp
+
+    n = dace.symbol("N")
+    sdfg = dace.SDFG("cub_scan_workspace")
+    sdfg.add_array("A", [n], dace.float64)
+    sdfg.add_array("B", [n], dace.float64)
     state = sdfg.add_state()
-    scan = Scan(name='scan', op=ScanOp.SUM, exclusive=exclusive, identity=0)
+    scan = Scan(name="scan", op=ScanOp.SUM, exclusive=exclusive, identity=0)
     state.add_node(scan)
-    state.add_edge(state.add_read('A'), None, scan, INPUT_CONNECTOR_NAME, mm.Memlet('A[0:N]'))
-    state.add_edge(scan, OUTPUT_CONNECTOR_NAME, state.add_write('B'), None, mm.Memlet('B[0:N]'))
+    state.add_edge(state.add_read("A"), None, scan, INPUT_CONNECTOR_NAME, mm.Memlet("A[0:N]"))
+    state.add_edge(scan, OUTPUT_CONNECTOR_NAME, state.add_write("B"), None, mm.Memlet("B[0:N]"))
     ExpandCUDA.expansion(scan, state, sdfg)
     # The expansion appends the prototype and the definition separately; the body is the one
     # holding the size variable.
-    return next(code.code for code in sdfg.global_code.values() if '_sc_needed' in code.code)
+    return next(code.code for code in sdfg.global_code.values() if "_sc_needed" in code.code)
 
 
 def sort_wrapper_code() -> str:
     """The ``__dace_sort_*`` unit the CUDA integer-sort expansion appends to the SDFG's global code."""
     from dace import memlet as mm
-    from dace.libraries.sort.nodes.integer_sort import (INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, ExpandCUDA,
-                                                        IntegerSort)
-    n = dace.symbol('N')
-    sdfg = dace.SDFG('cub_sort_workspace')
-    sdfg.add_array('A', [n], dace.int32)
-    sdfg.add_array('B', [n], dace.int32)
+    from dace.libraries.sort.nodes.integer_sort import (
+        INPUT_CONNECTOR_NAME,
+        OUTPUT_CONNECTOR_NAME,
+        ExpandCUDA,
+        IntegerSort,
+    )
+
+    n = dace.symbol("N")
+    sdfg = dace.SDFG("cub_sort_workspace")
+    sdfg.add_array("A", [n], dace.int32)
+    sdfg.add_array("B", [n], dace.int32)
     state = sdfg.add_state()
-    srt = IntegerSort(name='sort')
+    srt = IntegerSort(name="sort")
     state.add_node(srt)
-    state.add_edge(state.add_read('A'), None, srt, INPUT_CONNECTOR_NAME, mm.Memlet('A[0:N]'))
-    state.add_edge(srt, OUTPUT_CONNECTOR_NAME, state.add_write('B'), None, mm.Memlet('B[0:N]'))
+    state.add_edge(state.add_read("A"), None, srt, INPUT_CONNECTOR_NAME, mm.Memlet("A[0:N]"))
+    state.add_edge(srt, OUTPUT_CONNECTOR_NAME, state.add_write("B"), None, mm.Memlet("B[0:N]"))
     ExpandCUDA.expansion(srt, state, sdfg)
-    return next(code.code for code in sdfg.global_code.values() if '_ks_needed' in code.code)
+    return next(code.code for code in sdfg.global_code.values() if "_ks_needed" in code.code)
 
 
-@pytest.mark.parametrize('exclusive', [True, False])
+@pytest.mark.parametrize("exclusive", [True, False])
 def test_the_scan_wrapper_refuses_a_null_workspace(exclusive):
     """The reduce helper's protocol, on the scan helper. A null workspace makes CUB report the size
     and return, so an unguarded fetch leaves the output array EXACTLY as the scan found it -- the
     prefix sums of a freshly allocated buffer are a clean run of zeros, reported as success."""
     code = scan_wrapper_code(exclusive)
-    assert re.search(r'gpuError_t _sc_status = ::gpucub::DeviceScan::', code), \
-        f'the CUB size query is unchecked:\n{code}'
-    assert re.search(r'if \(_sc_status != gpuSuccess\) return _sc_status;', code), \
-        f'a failed size query is not propagated:\n{code}'
-    assert re.search(r'get_scratch<::dace::cub::ScanTag>\(_sc_needed, __sc_stream, &_sc_status\)', code), \
-        f'the scratch fetch does not ask for its allocation status:\n{code}'
-    assert re.search(r'if \(_sc_scratch == nullptr\) return', code), \
-        f'a null workspace is handed to CUB, which silently leaves the output unscanned:\n{code}'
+    assert re.search(r"gpuError_t _sc_status = ::gpucub::DeviceScan::", code), (
+        f"the CUB size query is unchecked:\n{code}"
+    )
+    assert re.search(r"if \(_sc_status != gpuSuccess\) return _sc_status;", code), (
+        f"a failed size query is not propagated:\n{code}"
+    )
+    assert re.search(r"get_scratch<::dace::cub::ScanTag>\(_sc_needed, __sc_stream, &_sc_status\)", code), (
+        f"the scratch fetch does not ask for its allocation status:\n{code}"
+    )
+    assert re.search(r"if \(_sc_scratch == nullptr\) return", code), (
+        f"a null workspace is handed to CUB, which silently leaves the output unscanned:\n{code}"
+    )
 
 
 def test_the_sort_wrapper_refuses_a_null_workspace():
     """Same protocol again: CUB leaves the keys UNSORTED rather than reporting anything."""
     code = sort_wrapper_code()
-    assert re.search(r'gpuError_t _ks_status = ::gpucub::DeviceRadixSort::', code), \
-        f'the CUB size query is unchecked:\n{code}'
-    assert re.search(r'if \(_ks_status != gpuSuccess\) return _ks_status;', code), \
-        f'a failed size query is not propagated:\n{code}'
-    assert re.search(r'get_scratch<::dace::cub::SortTag>\(_ks_needed, __ks_stream, &_ks_status\)', code), \
-        f'the scratch fetch does not ask for its allocation status:\n{code}'
-    assert re.search(r'if \(_ks_scratch == nullptr\) return', code), \
-        f'a null workspace is handed to CUB, which silently leaves the keys unsorted:\n{code}'
+    assert re.search(r"gpuError_t _ks_status = ::gpucub::DeviceRadixSort::", code), (
+        f"the CUB size query is unchecked:\n{code}"
+    )
+    assert re.search(r"if \(_ks_status != gpuSuccess\) return _ks_status;", code), (
+        f"a failed size query is not propagated:\n{code}"
+    )
+    assert re.search(r"get_scratch<::dace::cub::SortTag>\(_ks_needed, __ks_stream, &_ks_status\)", code), (
+        f"the scratch fetch does not ask for its allocation status:\n{code}"
+    )
+    assert re.search(r"if \(_ks_scratch == nullptr\) return", code), (
+        f"a null workspace is handed to CUB, which silently leaves the keys unsorted:\n{code}"
+    )

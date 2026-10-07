@@ -8,6 +8,7 @@ widener mis-lowers (unbound inner dimensions -> illegal DGEMM leading
 dimension, gemver's rank-2 update). ``LiftEinsum(contraction_only=True)`` refuses
 it so it tiles per-lane like any other elementwise broadcast.
 """
+
 import copy
 
 import pytest
@@ -32,21 +33,24 @@ def _to_maps(sdfg):
         stage.apply_pass(sdfg, {})
         if isinstance(stage, ParallelizeLoops):
             return
-    raise AssertionError('the parallelize pipeline no longer runs ParallelizeLoops')
+    raise AssertionError("the parallelize pipeline no longer runs ParallelizeLoops")
 
 
 def _gemm_libnodes(sdfg):
     """Count Gemm / Einsum library nodes (a lifted contraction)."""
     return [
-        type(n).__name__ for s in sdfg.all_sdfgs_recursive() for st in s.states() for n in st.nodes()
-        if isinstance(n, LibraryNode) and type(n).__name__ in ('Gemm', 'Einsum')
+        type(n).__name__
+        for s in sdfg.all_sdfgs_recursive()
+        for st in s.states()
+        for n in st.nodes()
+        if isinstance(n, LibraryNode) and type(n).__name__ in ("Gemm", "Einsum")
     ]
 
 
 def test_default_mode_lifts_outer_products_contraction_only_does_not():
     """On gemver's rank-2 update, the default lift produces GEMM/Einsum nodes
     from the outer products; the contraction-only mode produces none."""
-    base, _ = mp.CORPORA['poly'][1]('gemver')
+    base, _ = mp.CORPORA["poly"][1]("gemver")
 
     default = copy.deepcopy(base)
     _to_maps(default)
@@ -67,15 +71,17 @@ def test_existing_matmul_contractions_are_untouched():
     guard only affects the map-level outer-product lift, not real contractions."""
     from dace.transformation.passes.parallelize import parallelize
 
-    base, _ = mp.CORPORA['poly'][1]('gemver')
+    base, _ = mp.CORPORA["poly"][1]("gemver")
     sd = copy.deepcopy(base)
     parallelize(sd, validate=True, validate_all=False)
-    matmuls_before = sum(1 for s in sd.all_sdfgs_recursive() for st in s.states() for n in st.nodes()
-                         if isinstance(n, MatMul))
+    matmuls_before = sum(
+        1 for s in sd.all_sdfgs_recursive() for st in s.states() for n in st.nodes() if isinstance(n, MatMul)
+    )
     PatternMatchAndApplyRepeated([LiftEinsum(contraction_only=True)]).apply_pass(sd, {})
-    matmuls_after = sum(1 for s in sd.all_sdfgs_recursive() for st in s.states() for n in st.nodes()
-                        if isinstance(n, MatMul))
-    assert matmuls_before == matmuls_after == 2, 'the existing GEMV MatMuls must be untouched'
+    matmuls_after = sum(
+        1 for s in sd.all_sdfgs_recursive() for st in s.states() for n in st.nodes() if isinstance(n, MatMul)
+    )
+    assert matmuls_before == matmuls_after == 2, "the existing GEMV MatMuls must be untouched"
 
 
 def test_gemver_vectorizes_correctly_both_pipelines():
@@ -87,14 +93,14 @@ def test_gemver_vectorizes_correctly_both_pipelines():
     import copy
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
-    base, checker = mp.CORPORA['poly'][1]('gemver')
-    for config in ('canon+vec', 'parallelize+vec'):
+    base, checker = mp.CORPORA["poly"][1]("gemver")
+    for config in ("canon+vec", "parallelize+vec"):
         sd = copy.deepcopy(base)
         mp.apply_config(sd, config, mp.cpu_params(4))
-        fin = finalize_for_target(copy.deepcopy(sd), 'cpu')
-        fin.name = 'gemver_' + config.replace('+', '_')
-        assert bool(checker(fin)), f'gemver must be correct under {config}'
+        fin = finalize_for_target(copy.deepcopy(sd), "cpu")
+        fin.name = "gemver_" + config.replace("+", "_")
+        assert bool(checker(fin)), f"gemver must be correct under {config}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

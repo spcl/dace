@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 
-@pytest.mark.skip('Incorrect outputs')
+@pytest.mark.skip("Incorrect outputs")
 def test_strided_reduce():
     A = np.random.rand(50, 50)
     B = np.random.rand(25)
@@ -16,20 +16,20 @@ def test_strided_reduce():
     #     B[:] = dace.reduce(lambda a,b: a+b, A[::2, ::2], axis=0,
     #                        identity=0)
 
-    reduce_with_strides = dace.SDFG('reduce_with_strides')
-    reduce_with_strides.add_array('A', [50, 50], dace.float64)
-    reduce_with_strides.add_array('B', [25], dace.float64)
+    reduce_with_strides = dace.SDFG("reduce_with_strides")
+    reduce_with_strides.add_array("A", [50, 50], dace.float64)
+    reduce_with_strides.add_array("B", [25], dace.float64)
 
     state = reduce_with_strides.add_state()
-    node_a = state.add_read('A')
-    node_b = state.add_write('B')
-    red = state.add_reduce('lambda a,b: a+b', [0], 0)
-    state.add_edge(node_a, None, red, '_in', dace.Memlet.simple('A', '0:50:2, 0:50:2'))
-    state.add_edge(red, '_out', node_b, None, dace.Memlet.simple('B', '0:25'))
+    node_a = state.add_read("A")
+    node_b = state.add_write("B")
+    red = state.add_reduce("lambda a,b: a+b", [0], 0)
+    state.add_edge(node_a, None, red, "_in", dace.Memlet.simple("A", "0:50:2, 0:50:2"))
+    state.add_edge(red, "_out", node_b, None, dace.Memlet.simple("B", "0:25"))
     reduce_with_strides(A=A, B=B)
 
     assert np.allclose(B, np.sum(A[::2, ::2], axis=0))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_strided_reduce()

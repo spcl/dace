@@ -6,12 +6,18 @@ layout B, then A is at least as fast for EVERY (L, G, C) -- so a layout sweep ca
 compiling or timing anything. The claim it refuses: ranking layouts whose counts DISAGREE (fewer
 requests vs fewer bytes) -- that ranking is genuinely concurrency-dependent (C_flip), tier 2's job.
 """
+
 import dace
 import pytest
 import sympy as sp
 
-from dace.transformation.layout.cost_model.logp_analysis import (ArrayLogP, NestCounts, count_loop_nest,
-                                                                 dominance_verdict, pareto_front)
+from dace.transformation.layout.cost_model.logp_analysis import (
+    ArrayLogP,
+    NestCounts,
+    count_loop_nest,
+    dominance_verdict,
+    pareto_front,
+)
 from dace.transformation.layout.cost_model.loggp import LogGP, gap_from_bandwidth, nest_memory_time
 
 N = dace.symbol("N")
@@ -96,11 +102,13 @@ def test_verdict_first_implies_tier2_wins_for_every_parameter_set():
 def test_pareto_front_prunes_only_dominated_layouts():
     """The sweep integration: dominated layouts are dropped BEFORE compiling/timing; disagreeing
     ones both survive (each is optimal for some device)."""
-    front = pareto_front({
-        "contig": _hand_counts(1_000, 512_000),
-        "blocked": _hand_counts(2_000, 768_000),  # worse on both -> pruned
-        "fewer_bytes": _hand_counts(16_000, 256_000),  # disagrees with contig -> kept
-    })
+    front = pareto_front(
+        {
+            "contig": _hand_counts(1_000, 512_000),
+            "blocked": _hand_counts(2_000, 768_000),  # worse on both -> pruned
+            "fewer_bytes": _hand_counts(16_000, 256_000),  # disagrees with contig -> kept
+        }
+    )
     assert front == ["contig", "fewer_bytes"]
 
 

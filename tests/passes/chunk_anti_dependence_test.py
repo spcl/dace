@@ -4,6 +4,7 @@
 The canonical input is what ``BreakAntiDependence`` + ``LoopToMap`` leave behind: a window
 snapshot copy plus a fully parallel map reading it at ``[i + 1]``.
 """
+
 import contextlib
 import os
 
@@ -18,7 +19,7 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes import BreakAntiDependence
 from dace.transformation.passes.cpu_specialization import ChunkAntiDependence
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: A compile-time-constant extent, short enough that the default chunk size would leave one chunk.
 FIXED = 300
@@ -46,7 +47,7 @@ def _canonical(prog):
     """The device-neutral snapshot form: broken anti-dependence, mapped, states fused."""
     sdfg = prog.to_sdfg(simplify=True)
     BreakAntiDependence().apply_pass(sdfg, {})
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         sdfg.apply_transformations_repeated(LoopToMap)
         sdfg.simplify()
     return sdfg
@@ -54,29 +55,35 @@ def _canonical(prog):
 
 def _copies_into(sdfg, suffix):
     return [
-        e.data for st in sdfg.states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)
-        and e.dst.data.endswith(suffix) and e.data is not None and not e.data.is_empty()
+        e.data
+        for st in sdfg.states()
+        for e in st.edges()
+        if isinstance(e.dst, nodes.AccessNode)
+        and e.dst.data.endswith(suffix)
+        and e.data is not None
+        and not e.data.is_empty()
     ]
 
 
 def _snapshot_copies(sdfg):
-    return _copies_into(sdfg, '_antidep_snap')
+    return _copies_into(sdfg, "_antidep_snap")
 
 
 def _seam_copies(sdfg):
-    return _copies_into(sdfg, '_antidep_seam')
+    return _copies_into(sdfg, "_antidep_seam")
 
 
 def _seam_buffer(sdfg):
-    name, = [n for n in sdfg.arrays if n.endswith('_antidep_seam')]
+    (name,) = [n for n in sdfg.arrays if n.endswith("_antidep_seam")]
     return sdfg.arrays[name]
 
 
 def _chunk_maps(sdfg):
     """Every outer chunk map ``_tile`` introduced -- the body's and the seam iterations'."""
     return [
-        n.map for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.MapEntry) and n.map.params[0].startswith('antidep_chunk')
+        n.map
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.params[0].startswith("antidep_chunk")
     ]
 
 
@@ -85,12 +92,16 @@ def _chunk_bodies(sdfg):
     bodies = []
     for state in sdfg.states():
         for node in state.nodes():
-            if not (isinstance(node, nodes.MapEntry) and node.map.params[0].startswith('antidep_chunk')):
+            if not (isinstance(node, nodes.MapEntry) and node.map.params[0].startswith("antidep_chunk")):
                 continue
             scope = state.scope_subgraph(node, include_entry=False, include_exit=False)
-            loops = sorted(region.label for inner in scope.nodes() if isinstance(inner, nodes.NestedSDFG)
-                           for region in inner.sdfg.all_control_flow_regions(recursive=True)
-                           if isinstance(region, LoopRegion))
+            loops = sorted(
+                region.label
+                for inner in scope.nodes()
+                if isinstance(inner, nodes.NestedSDFG)
+                for region in inner.sdfg.all_control_flow_regions(recursive=True)
+                if isinstance(region, LoopRegion)
+            )
             maps = sorted(n.map.params[0] for n in scope.nodes() if isinstance(n, nodes.MapEntry))
             bodies.append((loops, maps))
     return sorted(bodies)
@@ -118,10 +129,10 @@ def test_the_in_chunk_sweep_is_a_loop_and_not_a_map():
     sdfg.validate()
 
     bodies = _chunk_bodies(sdfg)
-    assert len(bodies) == 2, f'the body and the seam iterations each keep their chunk map: {bodies}'
+    assert len(bodies) == 2, f"the body and the seam iterations each keep their chunk map: {bodies}"
     sweeps = [(loops, maps) for loops, maps in bodies if loops]
-    assert len(sweeps) == 1, f'exactly one chunk map holds the in-chunk sweep: {bodies}'
-    assert len(sweeps[0][0]) == 1 and not sweeps[0][1], f'the sweep is a loop, not a map: {bodies}'
+    assert len(sweeps) == 1, f"exactly one chunk map holds the in-chunk sweep: {bodies}"
+    assert len(sweeps[0][0]) == 1 and not sweeps[0][1], f"the sweep is a loop, not a map: {bodies}"
 
 
 def test_chunk_rewrite_is_bit_exact():
@@ -134,7 +145,7 @@ def test_chunk_rewrite_is_bit_exact():
     rng = np.random.default_rng(31)
     a, b = rng.standard_normal(n), rng.standard_normal(n)
     got = a.copy()
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         sdfg(a=got, b=b.copy(), N=n)
     assert np.array_equal(got, _ref_shift(a, b))
 
@@ -148,7 +159,7 @@ def test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide():
     rng = np.random.default_rng(32)
     a, b = rng.standard_normal(n), rng.standard_normal(n)
     got = a.copy()
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         sdfg(a=got, b=b.copy(), N=n)
     assert np.array_equal(got, _ref_shift(a, b))
 
@@ -158,14 +169,14 @@ def test_chunk_rewrite_copies_one_element_per_thread_plus_one():
     read. The point of the pass is the SIZE of that copy, so bind both symbols and count it."""
     sdfg = _canonical(_shift)
     before = _snapshot_copies(sdfg)
-    assert len(before) == 1 and before[0].subset.num_elements() == dace.symbolic.pystr_to_symbolic('N - 1')
+    assert len(before) == 1 and before[0].subset.num_elements() == dace.symbolic.pystr_to_symbolic("N - 1")
 
     assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
     after = _seam_copies(sdfg)
-    assert len(after) == 2, 'the strided gather and the trailing read'
+    assert len(after) == 2, "the strided gather and the trailing read"
 
     threads = 8
-    binding = {'N': 1000, dace.symbolic.NUM_THREADS_SYMBOL: threads}
+    binding = {"N": 1000, dace.symbolic.NUM_THREADS_SYMBOL: threads}
     total = int(dace.symbolic.evaluate(sum(m.subset.num_elements() for m in after), binding))
     assert total == threads + 1, total  # one boundary element per thread, not N - 1
 
@@ -176,15 +187,15 @@ def test_seam_buffer_is_compact():
     assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
 
     threads = 8
-    binding = {'N': 1000, dace.symbolic.NUM_THREADS_SYMBOL: threads}
-    shape, = _seam_buffer(sdfg).shape
+    binding = {"N": 1000, dace.symbolic.NUM_THREADS_SYMBOL: threads}
+    (shape,) = _seam_buffer(sdfg).shape
     assert int(dace.symbolic.evaluate(shape, binding)) == threads + 1, shape
-    assert not any(n.endswith('_antidep_snap') for n in sdfg.arrays), 'the whole-window snapshot must be gone'
+    assert not any(n.endswith("_antidep_snap") for n in sdfg.arrays), "the whole-window snapshot must be gone"
 
     # The gather is strided in the array and contiguous in the buffer; that pairing is the
     # whole point, and only ``other_subset`` expresses it.
-    strided, = [m for m in _seam_copies(sdfg) if str(m.subset[0][2]) != '1']
-    assert str(strided.other_subset[0][2]) == '1'
+    (strided,) = [m for m in _seam_copies(sdfg) if str(m.subset[0][2]) != "1"]
+    assert str(strided.other_subset[0][2]) == "1"
     assert strided.subset.num_elements() == strided.other_subset.num_elements()
 
 
@@ -192,7 +203,7 @@ def test_seam_reads_are_chunk_indexed():
     """The prologue reads slot 0; every seam iteration indexes off the outer chunk parameter."""
     sdfg = _canonical(_shift)
     assert ChunkAntiDependence().apply_pass(sdfg, {}) == 1
-    buf, = [n for n in sdfg.arrays if n.endswith('_antidep_seam')]
+    (buf,) = [n for n in sdfg.arrays if n.endswith("_antidep_seam")]
 
     reads = {}
     for st in sdfg.states():
@@ -200,13 +211,13 @@ def test_seam_reads_are_chunk_indexed():
             if e.data is not None and e.data.data == buf and isinstance(e.dst, nodes.AccessNode):
                 reads[st.label] = e.data.subset
 
-    pro, = [s for lbl, s in reads.items() if lbl.endswith('_prologue')]
-    assert pro.num_elements() == 1 and str(pro[0][0]) == '0'
+    (pro,) = [s for lbl, s in reads.items() if lbl.endswith("_prologue")]
+    assert pro.num_elements() == 1 and str(pro[0][0]) == "0"
 
-    tail, = [s for lbl, s in reads.items() if lbl.endswith('_seam_iters')]
+    (tail,) = [s for lbl, s in reads.items() if lbl.endswith("_seam_iters")]
     free = {str(s) for s in tail.free_symbols}
-    assert any(s.startswith('antidep_chunk') for s in free), free
-    assert 'i' not in free, 'a seam slot must not be recomputed from the array index'
+    assert any(s.startswith("antidep_chunk") for s in free), free
+    assert "i" not in free, "a seam slot must not be recomputed from the array index"
 
 
 def test_the_chunk_count_follows_the_thread_count():
@@ -221,11 +232,11 @@ def test_the_chunk_count_follows_the_thread_count():
     sdfg.validate()
 
     maps = _chunk_maps(sdfg)
-    assert maps, 'the pass did not introduce a chunk map'
+    assert maps, "the pass did not introduce a chunk map"
     for m in maps:
         stride = str(m.range[0][2])
-        assert 'int_ceil' in stride and dace.symbolic.NUM_THREADS_SYMBOL in stride, stride
-        assert 'ceil(' not in stride.replace('int_ceil(', ''), f'a raw ceiling truncates in C++: {stride}'
+        assert "int_ceil" in stride and dace.symbolic.NUM_THREADS_SYMBOL in stride, stride
+        assert "ceil(" not in stride.replace("int_ceil(", ""), f"a raw ceiling truncates in C++: {stride}"
 
 
 def test_the_seam_holds_exactly_one_slot_per_thread_plus_one():
@@ -241,9 +252,9 @@ def test_the_seam_holds_exactly_one_slot_per_thread_plus_one():
 
     shape = _seam_buffer(sdfg).shape
     assert len(shape) == 1, shape
-    expected = dace.symbolic.pystr_to_symbolic(f'{dace.symbolic.NUM_THREADS_SYMBOL} + 1')
-    assert dace.symbolic.equal(shape[0], expected) is not False, f'{shape[0]} != {expected}'
-    assert not sympy.sympify(shape[0]).find(sympy.ceiling), f'a raw ceiling survived: {shape[0]}'
+    expected = dace.symbolic.pystr_to_symbolic(f"{dace.symbolic.NUM_THREADS_SYMBOL} + 1")
+    assert dace.symbolic.equal(shape[0], expected) is not False, f"{shape[0]} != {expected}"
+    assert not sympy.sympify(shape[0]).find(sympy.ceiling), f"a raw ceiling survived: {shape[0]}"
 
 
 def test_short_constant_extent_stays_bit_exact():
@@ -255,7 +266,7 @@ def test_short_constant_extent_stays_bit_exact():
     rng = np.random.default_rng(33)
     a, b = rng.standard_normal(FIXED), rng.standard_normal(FIXED)
     got = a.copy()
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         sdfg(a=got, b=b.copy())
     assert np.array_equal(got, _ref_shift(a, b))
 
@@ -273,7 +284,7 @@ def test_chunk_rewrite_never_matches_a_gpu_scheduled_map():
 def test_chunk_rewrite_refuses_a_wider_read_ahead_offset():
     """``a[i] = a[i+2]`` needs a run of seam elements per chunk, not a point; keep the snapshot."""
     sdfg = _canonical(_shift_two)
-    assert _snapshot_copies(sdfg), 'the canonical snapshot form is the precondition'
+    assert _snapshot_copies(sdfg), "the canonical snapshot form is the precondition"
     assert ChunkAntiDependence().apply_pass(sdfg, {}) is None
 
 
@@ -286,7 +297,7 @@ def test_chunk_rewrite_is_idempotent():
     assert sdfg.hash_sdfg() == before
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_in_chunk_sweep_is_a_loop_and_not_a_map()
     test_chunk_rewrite_is_bit_exact()
     test_chunk_rewrite_is_bit_exact_when_the_chunk_size_does_not_divide()
@@ -315,10 +326,10 @@ def test_the_full_pipeline_reaches_the_seam_rewrite():
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.cpu_specialization import cpu_specialize
 
-    sdfg = canonicalize(_shift.to_sdfg(simplify=True), validate=True, validate_all=False, target='cpu')
+    sdfg = canonicalize(_shift.to_sdfg(simplify=True), validate=True, validate_all=False, target="cpu")
     cpu_specialize(sdfg)
-    assert [n for n in sdfg.arrays if n.endswith('_antidep_seam')], 'ChunkAntiDependence did not fire'
-    assert not _snapshot_copies(sdfg), 'the whole-window snapshot copy survived the rewrite'
+    assert [n for n in sdfg.arrays if n.endswith("_antidep_seam")], "ChunkAntiDependence did not fire"
+    assert not _snapshot_copies(sdfg), "the whole-window snapshot copy survived the rewrite"
 
     n = 4096
     rng = np.random.default_rng(17)

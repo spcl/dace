@@ -28,15 +28,19 @@ def local_extent_guard(a, b, c) -> str:
     :param c: Local descriptor of the C operand.
     :returns: C++ that aborts, naming each operand and both extents, when they disagree.
     """
-    operands = (('c', c), ('a', a), ('b', b))
-    checks = ' || '.join(f'n_l{n}_rows != ({symstr(d.shape[1])}) || n_l{n}_cols != ({symstr(d.shape[0])})'
-                         for n, d in operands)
+    operands = (("c", c), ("a", a), ("b", b))
+    checks = " || ".join(
+        f"n_l{n}_rows != ({symstr(d.shape[1])}) || n_l{n}_cols != ({symstr(d.shape[0])})" for n, d in operands
+    )
     # Everything is widened to ``long long`` for the report: MKL_INT is 64-bit under ILP64, so a
     # ``%d`` against it would print the wrong half of the number in the one build that most needs
     # the diagnostic.
-    reported = ', '.join(f'(long long)n_l{n}_rows, (long long)({symstr(d.shape[1])}), '
-                         f'(long long)n_l{n}_cols, (long long)({symstr(d.shape[0])})' for n, d in operands)
-    fields = ' '.join(f'{n}=%lldx%lld(want %lldx%lld)' for n, _ in operands)
+    reported = ", ".join(
+        f"(long long)n_l{n}_rows, (long long)({symstr(d.shape[1])}), "
+        f"(long long)n_l{n}_cols, (long long)({symstr(d.shape[0])})"
+        for n, d in operands
+    )
+    fields = " ".join(f"{n}=%lldx%lld(want %lldx%lld)" for n, _ in operands)
     return f"""            if ({checks}) {{
                 fprintf(stderr, "PGEMM block sizes do not describe the local arrays: {fields}. "
                                 "The descriptors are individually legal, so the call would "
@@ -97,11 +101,13 @@ class ExpandPgemmMKLMPICH(ExpandTransformation):
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc,
                 _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc);
         """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -166,11 +172,13 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
                 &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
                 _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, _c, &__state->__int_one, &__state->__int_one, _c_ldesc);
         """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
@@ -185,28 +193,25 @@ class ExpandPgemmReferenceOpenMPI(ExpandTransformation):
 
 @dace.library.node
 class Pgemm(dace.sdfg.nodes.LibraryNode):
-    """Executes alpha * (A @ B) + beta * C.
-    """
+    """Executes alpha * (A @ B) + beta * C."""
 
     # Global properties
     implementations = {
         "MKLMPICH": ExpandPgemmMKLMPICH,
         "MKLOpenMPI": ExpandPgemmMKLOpenMPI,
         "ReferenceMPICH": ExpandPgemmReferenceMPICH,
-        "ReferenceOpenMPI": ExpandPgemmReferenceOpenMPI
+        "ReferenceOpenMPI": ExpandPgemmReferenceOpenMPI,
     }
     default_implementation = None
 
-    m = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
-    k = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    m = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
+    k = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, m=None, n=None, k=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs=OrderedSet(('_a', '_b', '_a_block_sizes', '_b_block_sizes')),
-                         outputs={"_c"},
-                         **kwargs)
+        super().__init__(
+            name, *args, inputs=OrderedSet(("_a", "_b", "_a_block_sizes", "_b_block_sizes")), outputs={"_c"}, **kwargs
+        )
         self.m = m
         self.n = n
         self.k = k

@@ -8,6 +8,7 @@ negative. The guard must be the first state, be marked side-effecting so simplif
 keeps it, be a no-op when there is nothing signed to guard, and survive the full
 canonicalize pipeline.
 """
+
 import copy
 import os
 
@@ -29,8 +30,13 @@ from dace import subsets
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
-    AssumeSymbolConstraints, AssumeSymbolsNonnegative, insert_assumption_guards, insert_symbol_nonnegative_guard,
-    set_symbol_nonnegative_assumptions, GUARD_STATE_LABEL)
+    AssumeSymbolConstraints,
+    AssumeSymbolsNonnegative,
+    insert_assumption_guards,
+    insert_symbol_nonnegative_guard,
+    set_symbol_nonnegative_assumptions,
+    GUARD_STATE_LABEL,
+)
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
 from tests.sdfg.cfg_list_in_place_test import assert_tree_consistent
 
@@ -44,8 +50,8 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
     assert_tree_consistent(sdfg)
 
 
-N = dace.symbol('N', dtype=dace.int64)
-K = dace.symbol('K', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
+K = dace.symbol("K", dtype=dace.int64)
 
 
 def _axpy_sdfg():
@@ -60,7 +66,7 @@ def _axpy_sdfg():
 
 def _trap_tasklets(sdfg):
     return [
-        n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.Tasklet) and 'abort()' in n.code.as_string
+        n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.Tasklet) and "abort()" in n.code.as_string
     ]
 
 
@@ -70,7 +76,7 @@ def test_emits_guard_as_first_state():
     assert sdfg.start_block.label == GUARD_STATE_LABEL
     traps = _trap_tasklets(sdfg)
     assert len(traps) == 1
-    assert 'N < 0' in traps[0].code.as_string
+    assert "N < 0" in traps[0].code.as_string
     # Must be side-effecting so DeadDataflowElimination does not prune the
     # output-less trap (and, with it, the whole guard).
     assert traps[0].side_effects is True
@@ -90,8 +96,8 @@ def test_a_symbol_read_only_by_a_branch_is_not_trapped():
 
     sdfg = branch.to_sdfg(simplify=True)
     canonicalize(sdfg)
-    traps = ' '.join(t.code.as_string for t in _trap_tasklets(sdfg))
-    assert 'N < 0' in traps and 'K' not in traps, traps
+    traps = " ".join(t.code.as_string for t in _trap_tasklets(sdfg))
+    assert "N < 0" in traps and "K" not in traps, traps
     x = np.arange(4, dtype=np.float64)
     y = np.zeros(4)
     sdfg(x=x, y=y, N=4, K=-1)
@@ -165,8 +171,13 @@ def _plain_map_bound_symbols(sdfg):
         str(s)
         for sd in sdfg.all_sdfgs_recursive()
         for st in sd.states()
-        for n in st.nodes() if isinstance(n, nodes.MapEntry) for rng in n.map.range.ndrange() for bound in rng
-        if isinstance(bound, sympy.Basic) for s in bound.free_symbols if not s.is_nonnegative
+        for n in st.nodes()
+        if isinstance(n, nodes.MapEntry)
+        for rng in n.map.range.ndrange()
+        for bound in rng
+        if isinstance(bound, sympy.Basic)
+        for s in bound.free_symbols
+        if not s.is_nonnegative
     }
 
 
@@ -191,7 +202,7 @@ def test_reassumes_a_map_bound_that_was_rebuilt_plain():
     entries = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)]
     assert entries
     entries[0].map.range = subsets.Range.from_string(str(entries[0].map.range))
-    assert _plain_map_bound_symbols(sdfg) == {'N'}
+    assert _plain_map_bound_symbols(sdfg) == {"N"}
     assert set_symbol_nonnegative_assumptions(sdfg) == 1
     assert not _plain_map_bound_symbols(sdfg)
     assert set_symbol_nonnegative_assumptions(sdfg) is None
@@ -201,23 +212,24 @@ def test_a_positive_size_stays_positive_beside_a_plain_spelling():
     """``positive=True`` is a different sympy symbol from ``nonnegative=True``. A plain spelling of a positive size in the
     outer SDFG must not respell it merely nonnegative there while the nested SDFG keeps it positive: the connector
     descriptors would stop being equivalent (fuse_move_ifs, scatter_accum_dup, segment_reduce_ragged)."""
-    size = dace.symbol('P', dace.int64, positive=True)
-    inner = dace.SDFG('positive_inner')
-    inner.add_symbol('P', dace.int64)
-    inner.add_array('x', [size], dace.float64)
+    size = dace.symbol("P", dace.int64, positive=True)
+    inner = dace.SDFG("positive_inner")
+    inner.add_symbol("P", dace.int64)
+    inner.add_array("x", [size], dace.float64)
     inner.add_state()
-    sdfg = dace.SDFG('positive_outer')
-    sdfg.add_symbol('P', dace.int64)
-    sdfg.add_array('x', [size], dace.float64)
+    sdfg = dace.SDFG("positive_outer")
+    sdfg.add_symbol("P", dace.int64)
+    sdfg.add_array("x", [size], dace.float64)
     state = sdfg.add_state()
-    node = state.add_nested_sdfg(inner, {'x'}, set(), {'P': size})
-    state.add_edge(state.add_read('x'), None, node, 'x', dace.Memlet.from_array('x', sdfg.arrays['x']))
+    node = state.add_nested_sdfg(inner, {"x"}, set(), {"P": size})
+    state.add_edge(state.add_read("x"), None, node, "x", dace.Memlet.from_array("x", sdfg.arrays["x"]))
     # The plain spelling a re-parsed bound leaves behind.
-    state.add_mapped_tasklet('touch', {'i': '0:P'}, {'a': dace.Memlet('x[i]')}, 'pass', {}, external_edges=True)
+    state.add_mapped_tasklet("touch", {"i": "0:P"}, {"a": dace.Memlet("x[i]")}, "pass", {}, external_edges=True)
     assert set_symbol_nonnegative_assumptions(sdfg)
     sdfg.validate()
-    assert all(s.is_positive for g in sdfg.all_sdfgs_recursive() for d in g.arrays.values()
-               for s in d.shape[0].free_symbols)
+    assert all(
+        s.is_positive for g in sdfg.all_sdfgs_recursive() for d in g.arrays.values() for s in d.shape[0].free_symbols
+    )
 
 
 def test_guard_leads_the_block_list_on_every_canonicalize():
@@ -277,15 +289,15 @@ def test_guard_aborts_on_negative_symbol():
         csdfg(a=2.0, x=x, y=y, N=-1)
         print("NO_TRAP")
     """)
-    proc = subprocess.run([sys.executable, '-c', script],
-                          env={
-                              **os.environ, 'PYTHONPATH': os.path.dirname(dace.__path__[0])
-                          },
-                          capture_output=True,
-                          text=True)
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "PYTHONPATH": os.path.dirname(dace.__path__[0])},
+        capture_output=True,
+        text=True,
+    )
     # std::abort terminates via a signal -> negative returncode, and "NO_TRAP"
     # must not have been reached.
-    assert 'NO_TRAP' not in proc.stdout
+    assert "NO_TRAP" not in proc.stdout
     assert proc.returncode != 0
 
 
@@ -314,8 +326,8 @@ def test_tracked_assumption_emitted_as_own_tasklet():
     # All three tasklets live in the single guard start state.
     assert all(t in sdfg.start_block.nodes() for t in traps)
     conds = [t.code.as_string for t in traps]
-    assert any('K < 0' in c for c in conds) and any('N < 0' in c for c in conds)  # nonnegativity
-    assert any('K >= N' in c for c in conds)  # the tracked K < N, guarded on its negation
+    assert any("K < 0" in c for c in conds) and any("N < 0" in c for c in conds)  # nonnegativity
+    assert any("K >= N" in c for c in conds)  # the tracked K < N, guarded on its negation
     sdfg.validate()
 
 
@@ -324,7 +336,7 @@ def test_tracked_assumption_deduped_and_true_dropped():
     record_assumption(sdfg, K < N)
     record_assumption(sdfg, K < N)  # duplicate -> single entry
     record_assumption(sdfg, N < N + 1)  # simplifies to True -> dropped
-    assert [str(r) for r in tracked_assumptions(sdfg)] == ['K < N']
+    assert [str(r) for r in tracked_assumptions(sdfg)] == ["K < N"]
 
 
 def test_tracked_assumption_out_of_scope_skipped():
@@ -332,11 +344,11 @@ def test_tracked_assumption_out_of_scope_skipped():
     at the entry state, so it is skipped (only the nonneg tasklets remain). ``K`` is only a
     tasklet value here and in no kept relation, so it carries no nonnegativity trap either."""
     sdfg = _kn_sdfg()
-    record_assumption(sdfg, dace.symbol('Q', dtype=dace.int64) < N)  # Q is not in the SDFG
+    record_assumption(sdfg, dace.symbol("Q", dtype=dace.int64) < N)  # Q is not in the SDFG
     assert insert_assumption_guards(sdfg) == 1
     conds = [t.code.as_string for t in _trap_tasklets(sdfg)]
-    assert all('Q' not in c for c in conds)
-    assert conds == ['if (N < 0):\n    abort()'], conds
+    assert all("Q" not in c for c in conds)
+    assert conds == ["if (N < 0):\n    abort()"], conds
 
 
 def test_back_compat_aliases():
@@ -344,7 +356,7 @@ def test_back_compat_aliases():
     assert insert_symbol_nonnegative_guard is insert_assumption_guards
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_emits_guard_as_first_state()
     test_idempotent()
     test_noop_without_signed_int_symbols()

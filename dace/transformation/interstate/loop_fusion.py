@@ -32,6 +32,7 @@ the same point ``tmp[i]`` (no cross-iteration history, no outside use) is shrunk
 the buffer-reclaim ``MapFusionVertical`` does for maps, decided here on the loop iteration. See
 ``_contract_localized_intermediates``.
 """
+
 import copy
 from typing import Dict, List, Optional, Tuple
 
@@ -72,13 +73,15 @@ class LoopFusion(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first, cls.second)]
 
-    def can_be_applied(self,
-                       graph: ControlFlowRegion,
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False,
-                       *,
-                       allow_doall_fuse: bool = False) -> bool:
+    def can_be_applied(
+        self,
+        graph: ControlFlowRegion,
+        expr_index: int,
+        sdfg: SDFG,
+        permissive: bool = False,
+        *,
+        allow_doall_fuse: bool = False,
+    ) -> bool:
         first, second = self.first, self.second
         if second is first:
             return False
@@ -94,7 +97,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         # (or is decided) between the two loops.
         if link.data.assignments:
             return False
-        if link.data.condition is not None and link.data.condition.as_string not in ('1', 'True', '(1)'):
+        if link.data.condition is not None and link.data.condition.as_string not in ("1", "True", "(1)"):
             return False
         if not self._same_iteration_space(first, second):
             return False
@@ -138,6 +141,7 @@ class LoopFusion(transformation.MultiStateTransformation):
         are the same object for a top-level loop, so this costs nothing there.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
+
         try:
             return LoopToMap.can_be_applied_to(loop.sdfg, loop=loop)
         except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not provably DOALL
@@ -220,7 +224,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             return None
         ordered_edges = [succ[b] for b in order[:-1]]
         for e in ordered_edges:
-            if e.data.condition.as_string not in ('1', 'True', '(1)'):
+            if e.data.condition.as_string not in ("1", "True", "(1)"):
                 return None
             for lhs, rhs in (e.data.assignments or {}).items():
                 try:
@@ -287,8 +291,13 @@ class LoopFusion(transformation.MultiStateTransformation):
             renamed[arr] = out
         return renamed
 
-    def _fusion_legal(self, first: LoopRegion, second: LoopRegion, acc1: Tuple[Dict[str, List], Dict[str, List]],
-                      acc2: Tuple[Dict[str, List], Dict[str, List]]) -> bool:
+    def _fusion_legal(
+        self,
+        first: LoopRegion,
+        second: LoopRegion,
+        acc1: Tuple[Dict[str, List], Dict[str, List]],
+        acc2: Tuple[Dict[str, List], Dict[str, List]],
+    ) -> bool:
         """Whether running ``first``'s body then ``second``'s body per iteration preserves the value of
         the two loops run in sequence, given each body's own ``(reads, writes)`` (``_body_accesses``).
         See the module docstring for the rule."""
@@ -318,7 +327,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             for write in w1.get(arr, []):
                 for read in r2.get(arr, []):
                     cls, _ = classifier._dep_class(read, write, ivar)
-                    if cls not in ('RAW', 'none'):
+                    if cls not in ("RAW", "none"):
                         return False
             # anti: a value read in body1 must not have been overwritten earlier in the fused sweep by
             # body2 (read-behind of body2's write). 'invariant' is refused for the mirror reason: fused,
@@ -327,7 +336,7 @@ class LoopFusion(transformation.MultiStateTransformation):
             for read in r1.get(arr, []):
                 for write in w2.get(arr, []):
                     cls, _ = classifier._dep_class(read, write, ivar)
-                    if cls not in ('WAR', 'none'):
+                    if cls not in ("WAR", "none"):
                         return False
             # output: writes from both bodies must hit the same cell each iteration, else the last-writer
             # order differs between fused and unfused.
@@ -419,8 +428,11 @@ class LoopFusion(transformation.MultiStateTransformation):
                 continue
             # Exclusive: any access outside the fused loop's body means the buffer outlives one iteration.
             if any(
-                    isinstance(n, nodes.AccessNode) and n.data == arr for s in sdfg.states() if s not in body_set
-                    for n in s.nodes()):
+                isinstance(n, nodes.AccessNode) and n.data == arr
+                for s in sdfg.states()
+                if s not in body_set
+                for n in s.nodes()
+            ):
                 continue
             point = self._localized_point(arr, body_states, ivar)
             if point is not None:
@@ -480,11 +492,9 @@ class LoopFusion(transformation.MultiStateTransformation):
         """Replace every access to the localized 1-D ``arr`` with a fresh ``[1]`` transient indexed at
         ``[0]``, then drop ``arr``. The ``[1]`` array (not a register scalar) persists across the two body
         states within one iteration, which is where the write and the read live."""
-        local, _ = sdfg.add_array(arr + '_local', [1],
-                                  desc.dtype,
-                                  storage=desc.storage,
-                                  transient=True,
-                                  find_new_name=True)
+        local, _ = sdfg.add_array(
+            arr + "_local", [1], desc.dtype, storage=desc.storage, transient=True, find_new_name=True
+        )
         zero = subsets.Range([(0, 0, 1)])
         for s in body_states:
             for n in s.nodes():
@@ -501,4 +511,4 @@ class LoopFusion(transformation.MultiStateTransformation):
             pass  # still referenced by something outside our rewrite -> leave the dead array to simplify
 
 
-__all__ = ['LoopFusion']
+__all__ = ["LoopFusion"]

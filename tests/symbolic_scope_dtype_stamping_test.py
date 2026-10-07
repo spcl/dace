@@ -5,46 +5,47 @@ Symbol identity is the name, as on main: a shape that keeps the declared dtype a
 re-parsed from its string property name the same symbol, so ``N - N`` cancels and every proof
 comparing a bound against a subset sees one ``N``.
 """
+
 import dace
 from dace import dtypes, symbolic
 
 
 def test_an_unscoped_parse_keeps_the_default():
     """The authority only ever overrides; with none active nothing changes."""
-    parsed = symbolic.pystr_to_symbolic('N + 1')
+    parsed = symbolic.pystr_to_symbolic("N + 1")
     sym = next(iter(parsed.free_symbols))
     assert sym.dtype == symbolic.DEFAULT_SYMBOL_TYPE
 
 
 def test_a_scoped_parse_cancels_against_the_declared_symbol():
     """The property that actually matters: one name, one symbol, so the difference is zero."""
-    declared = symbolic.symbol('N', dtype=dtypes.int64)
-    with symbolic.serialization_symbol_dtypes({'N': dtypes.int64}):
-        reparsed = symbolic.pystr_to_symbolic('N - 1')
+    declared = symbolic.symbol("N", dtype=dtypes.int64)
+    with symbolic.serialization_symbol_dtypes({"N": dtypes.int64}):
+        reparsed = symbolic.pystr_to_symbolic("N - 1")
     assert symbolic.simplify(reparsed - (declared - 1)) == 0
 
 
 def test_the_parse_cache_is_keyed_on_the_authority():
     """The same text under two scopes must not return the first scope's symbol."""
-    with symbolic.serialization_symbol_dtypes({'M': dtypes.int32}):
-        narrow = symbolic.pystr_to_symbolic('M')
-    with symbolic.serialization_symbol_dtypes({'M': dtypes.int64}):
-        wide = symbolic.pystr_to_symbolic('M')
+    with symbolic.serialization_symbol_dtypes({"M": dtypes.int32}):
+        narrow = symbolic.pystr_to_symbolic("M")
+    with symbolic.serialization_symbol_dtypes({"M": dtypes.int64}):
+        wide = symbolic.pystr_to_symbolic("M")
     assert narrow.dtype == dtypes.int32
-    assert wide.dtype == dtypes.int64, 'the cache served the previous scope\'s symbol'
+    assert wide.dtype == dtypes.int64, "the cache served the previous scope's symbol"
 
 
 def test_one_authority_pushed_twice_is_served_from_the_parse_cache():
-    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64}):
-        first = symbolic.pystr_to_symbolic('K + 7')
-    with symbolic.serialization_symbol_dtypes({'K': dtypes.int64}):
-        second = symbolic.pystr_to_symbolic('K + 7')
+    with symbolic.serialization_symbol_dtypes({"K": dtypes.int64}):
+        first = symbolic.pystr_to_symbolic("K + 7")
+    with symbolic.serialization_symbol_dtypes({"K": dtypes.int64}):
+        second = symbolic.pystr_to_symbolic("K + 7")
     assert second is first
 
 
 def test_a_canonicalized_graph_spells_each_name_once():
     """End to end: after canonicalization no name appears under two dtypes."""
-    N = dace.symbol('N', dtype=dace.int64)
+    N = dace.symbol("N", dtype=dace.int64)
 
     @dace.program
     def two_dim(aa: dace.float64[N, N], bb: dace.float64[N, N]):
@@ -54,13 +55,14 @@ def test_a_canonicalized_graph_spells_each_name_once():
 
     sdfg = two_dim.to_sdfg(simplify=False)
     from dace.transformation.passes.canonicalize import pipeline as canon
+
     canon.canonicalize(sdfg)
 
     seen: dict = {}
     for g in sdfg.all_sdfgs_recursive():
         for desc in g.arrays.values():
             for expr in list(desc.shape) + list(desc.strides):
-                for sym in getattr(expr, 'free_symbols', ()):
+                for sym in getattr(expr, "free_symbols", ()):
                     seen.setdefault(str(sym), set()).add(str(sym.dtype))
         for state in g.states():
             for edge in state.edges():
@@ -68,13 +70,13 @@ def test_a_canonicalized_graph_spells_each_name_once():
                     continue
                 for rng in edge.data.subset.ranges:
                     for expr in rng:
-                        for sym in getattr(expr, 'free_symbols', ()):
+                        for sym in getattr(expr, "free_symbols", ()):
                             seen.setdefault(str(sym), set()).add(str(sym.dtype))
     split = {name: kinds for name, kinds in seen.items() if len(kinds) > 1}
-    assert not split, f'names carried at more than one dtype: {split}'
+    assert not split, f"names carried at more than one dtype: {split}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_an_unscoped_parse_keeps_the_default()
     test_a_scoped_parse_cancels_against_the_declared_symbol()
     test_the_parse_cache_is_keyed_on_the_authority()

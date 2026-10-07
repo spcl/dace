@@ -14,6 +14,7 @@ entirely. This test pins the rewrite for every arm shape ``_detect_ite``'s ``ITE
 already understands (connector / free symbol / literal), plus nesting -- and proves the pass is
 what does it (non-vacuity: the pass is reverted and the same assertions are shown to fail).
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -43,8 +44,8 @@ def _tasklet_sdfg(body, arrays_by_conn, symbols=None):
         sdfg.add_symbol(sym, dtype)
     for arr_name in arrays_by_conn.values():
         if arr_name not in sdfg.arrays:
-            sdfg.add_array(arr_name, (1, ), dace.float64, transient=False)
-    sdfg.add_array("O", (1, ), dace.float64, transient=False)
+            sdfg.add_array(arr_name, (1,), dace.float64, transient=False)
+    sdfg.add_array("O", (1,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     tasklet = state.add_tasklet("t", set(arrays_by_conn.keys()), {"_o"}, body)
     for conn, arr_name in arrays_by_conn.items():
@@ -117,13 +118,9 @@ def test_both_arms_non_connector():
 def test_nested_ternary():
     """A ternary in the else-arm recurses to a nested ``ITE``:
     ``_o = _t if _c1 else (_e if _c2 else _f)``."""
-    sdfg, tasklet = _tasklet_sdfg("_o = _t if _c1 else (_e if _c2 else _f)", {
-        "_c1": "C1",
-        "_t": "T",
-        "_c2": "C2",
-        "_e": "E",
-        "_f": "F"
-    })
+    sdfg, tasklet = _tasklet_sdfg(
+        "_o = _t if _c1 else (_e if _c2 else _f)", {"_c1": "C1", "_t": "T", "_c2": "C2", "_e": "E", "_f": "F"}
+    )
     n = NormalizeTernaryTasklets().apply_pass(sdfg, {})
     assert n == 1
     assert tasklet.code.as_string == "_o = ITE(_c1, _t, ITE(_c2, _e, _f))"
@@ -131,12 +128,15 @@ def test_nested_ternary():
     sdfg.validate()
 
 
-@pytest.mark.parametrize("body", [
-    "_o = _t if _cond else _e",
-    "_o = (_t if _cond else _e)",
-    "_o  =   _t   if _cond   else   _e",
-    "_o=(_t if _cond else _e)",
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        "_o = _t if _cond else _e",
+        "_o = (_t if _cond else _e)",
+        "_o  =   _t   if _cond   else   _e",
+        "_o=(_t if _cond else _e)",
+    ],
+)
 def test_parenthesisation_and_whitespace_variants(body):
     """Parens / odd whitespace don't matter -- normalization parses the AST, not the text."""
     sdfg, tasklet = _tasklet_sdfg(body, {"_cond": "COND", "_t": "T", "_e": "E"})
@@ -160,10 +160,10 @@ def test_negative_target_not_out_connector_left_alone():
     statement writes to a name that is NOT an out-connector is left alone rather than guessed
     at."""
     sdfg = dace.SDFG("malformed_fixture")
-    sdfg.add_array("COND", (1, ), dace.float64, transient=False)
-    sdfg.add_array("T", (1, ), dace.float64, transient=False)
-    sdfg.add_array("E", (1, ), dace.float64, transient=False)
-    sdfg.add_array("O", (1, ), dace.float64, transient=False)
+    sdfg.add_array("COND", (1,), dace.float64, transient=False)
+    sdfg.add_array("T", (1,), dace.float64, transient=False)
+    sdfg.add_array("E", (1,), dace.float64, transient=False)
+    sdfg.add_array("O", (1,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     # Out-connector is "_o", but the body assigns to "_other" -- not a real output write.
     tasklet = state.add_tasklet("t", {"_cond", "_t", "_e"}, {"_o"}, "_other = _t if _cond else _e")
@@ -176,5 +176,5 @@ def test_negative_target_not_out_connector_left_alone():
     assert tasklet.code.as_string == original
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-q', '-p', 'no:cacheprovider']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))

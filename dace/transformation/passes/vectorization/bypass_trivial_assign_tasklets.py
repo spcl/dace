@@ -31,6 +31,7 @@ The pass is body-NSDFG-scoped: the outer SDFG's ``AN -> AN`` edges may
 be scatter / gather staging, so they stay untouched. Mirrors
 :class:`EliminateDeadCopies`'s scoping.
 """
+
 import copy
 from typing import Any, List, Type, Union
 
@@ -42,9 +43,11 @@ from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant,
-                                                                            no_duplicate_connector_edges,
-                                                                            no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (
+    assert_invariant,
+    no_duplicate_connector_edges,
+    no_memlet_dim_mismatch,
+)
 from dace.sdfg.narrowing import as_range
 # is_assign_tasklet was previously imported from emit_tile_ops (deleted in the walker-primary
 # migration). The matcher is inlined below.
@@ -63,8 +66,9 @@ def is_assign_tasklet(t: dace.nodes.Node) -> bool:
     return body == f"{out_conn} = {in_conn}"
 
 
-def _assign_triple(istate: SDFGState,
-                   t: dace.nodes.Tasklet) -> tuple[MultiConnectorEdge[Memlet], MultiConnectorEdge[Memlet]] | None:
+def _assign_triple(
+    istate: SDFGState, t: dace.nodes.Tasklet
+) -> tuple[MultiConnectorEdge[Memlet], MultiConnectorEdge[Memlet]] | None:
     # Return ``(in_edge, out_edge)`` iff ``t`` is the trivial ``AN -> [_out=_in] -> AN`` triple.
     if not is_assign_tasklet(t):
         return None
@@ -128,10 +132,16 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             for state in list(nsdfg.states()):
                 total += self._dedup_identity_assigns(state)
                 total += self._bypass_transient_assigns(state)
-        assert_invariant(no_memlet_dim_mismatch(sdfg), "BypassTrivialAssignTasklets",
-                         "memlet subset and other_subset have matching dimensionality")
-        assert_invariant(no_duplicate_connector_edges(sdfg), "BypassTrivialAssignTasklets",
-                         "every connector has <=1 edge per direction")
+        assert_invariant(
+            no_memlet_dim_mismatch(sdfg),
+            "BypassTrivialAssignTasklets",
+            "memlet subset and other_subset have matching dimensionality",
+        )
+        assert_invariant(
+            no_duplicate_connector_edges(sdfg),
+            "BypassTrivialAssignTasklets",
+            "every connector has <=1 edge per direction",
+        )
         return total if total > 0 else None
 
     @staticmethod
@@ -156,8 +166,13 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             cur_src, cur_dst = in_e.src, out_e.dst
             if cur_dst is not kept_dst:
                 for de in list(istate.out_edges(cur_dst)):
-                    istate.add_edge(kept_dst, de.src_conn, de.dst, de.dst_conn,
-                                    dace.Memlet.from_memlet(de.data) if de.data is not None else dace.Memlet())
+                    istate.add_edge(
+                        kept_dst,
+                        de.src_conn,
+                        de.dst,
+                        de.dst_conn,
+                        dace.Memlet.from_memlet(de.data) if de.data is not None else dace.Memlet(),
+                    )
                     istate.remove_edge(de)
             for te in list(istate.in_edges(t)) + list(istate.out_edges(t)):
                 istate.remove_edge(te)
@@ -194,9 +209,11 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             # Do not splice onto a MapEntry / MapExit: renaming one side of the ``IN_x`` / ``OUT_x`` passthrough
             # leaves an invalid SDFG (spmv ``tmp``).
             src_at_scope = any(
-                isinstance(pe.src, (dace.nodes.MapEntry, dace.nodes.MapExit)) for pe in istate.in_edges(src_an))
+                isinstance(pe.src, (dace.nodes.MapEntry, dace.nodes.MapExit)) for pe in istate.in_edges(src_an)
+            )
             dst_at_scope = any(
-                isinstance(de.dst, (dace.nodes.MapEntry, dace.nodes.MapExit)) for de in istate.out_edges(dst_an))
+                isinstance(de.dst, (dace.nodes.MapEntry, dace.nodes.MapExit)) for de in istate.out_edges(dst_an)
+            )
             # The src splice is value-preserving only if the producer defines the value; an accumulator seeded
             # on the transient would strand its seed (tsvc_2_5 reduce_inner_carry).
             src_accumulated = any(_accumulates_into_destination(pe) for pe in istate.in_edges(src_an))
@@ -206,10 +223,17 @@ class BypassTrivialAssignTasklets(ppl.Pass):
             src_ordered = any(pe.data is None or pe.data.is_empty() for pe in istate.in_edges(src_an))
             # Splice only a sole producer that writes exactly the element the copy reads.
             src_in = istate.in_edges(src_an)
-            src_sole = len(src_in) == 1 and (src_in[0].data.get_dst_subset(
-                src_in[0], istate) or subsets.Range.from_array(src_desc)) == in_e.data.get_src_subset(in_e, istate)
-            if (src_desc.transient and src_sole and not src_xstate and not src_at_scope and not src_accumulated
-                    and not src_ordered):
+            src_sole = len(src_in) == 1 and (
+                src_in[0].data.get_dst_subset(src_in[0], istate) or subsets.Range.from_array(src_desc)
+            ) == in_e.data.get_src_subset(in_e, istate)
+            if (
+                src_desc.transient
+                and src_sole
+                and not src_xstate
+                and not src_at_scope
+                and not src_accumulated
+                and not src_ordered
+            ):
                 # P -> AN(src) -> [_out=_in] -> AN(dst) becomes P -> AN(dst), carrying both subsets so
                 # ``an_side_subset`` sees the lane-dep source subset; ``data`` names the AccessNode endpoint.
                 for pe in list(istate.in_edges(src_an)):
@@ -218,8 +242,11 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     if pe.data is None or pe.data.is_empty():
                         continue
                     pe_subset = copy.deepcopy(pe.data.get_src_subset(pe, istate))
-                    out_subset = subsets.Range(list(as_range(
-                        out_e.data.subset).ranges)) if out_e.data.subset is not None else None
+                    out_subset = (
+                        subsets.Range(list(as_range(out_e.data.subset).ranges))
+                        if out_e.data.subset is not None
+                        else None
+                    )
                     if isinstance(pe.src, dace.nodes.AccessNode):
                         new_memlet = dace.Memlet(data=pe.src.data, subset=pe_subset, other_subset=out_subset)
                     else:
@@ -253,10 +280,14 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                         if istate.degree(dst_an) == 0:
                             istate.remove_node(dst_an)
                         continue
-                    in_subset = subsets.Range(list(as_range(
-                        in_e.data.subset).ranges)) if in_e.data.subset is not None else None
-                    out_subset = subsets.Range(list(as_range(
-                        out_e.data.subset).ranges)) if out_e.data.subset is not None else None
+                    in_subset = (
+                        subsets.Range(list(as_range(in_e.data.subset).ranges)) if in_e.data.subset is not None else None
+                    )
+                    out_subset = (
+                        subsets.Range(list(as_range(out_e.data.subset).ranges))
+                        if out_e.data.subset is not None
+                        else None
+                    )
                     copy_memlet = dace.Memlet(data=src_an.data, subset=in_subset, other_subset=out_subset)
                     _wcr = out_e.data.wcr if out_e.data.wcr is not None else in_e.data.wcr
                     if _wcr is not None:
@@ -269,8 +300,9 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                     # write to a read-only input (TSVC s471).
                     if de.data is None or de.data.is_empty():
                         continue
-                    in_subset = subsets.Range(list(as_range(
-                        in_e.data.subset).ranges)) if in_e.data.subset is not None else None
+                    in_subset = (
+                        subsets.Range(list(as_range(in_e.data.subset).ranges)) if in_e.data.subset is not None else None
+                    )
                     de_subset = copy.deepcopy(de.data.get_dst_subset(de, istate))
                     if isinstance(de.dst, dace.nodes.AccessNode):
                         new_memlet = dace.Memlet(data=src_an.data, subset=in_subset, other_subset=de_subset)

@@ -60,6 +60,7 @@ References:
 - Bondhugula et al., *"A practical automatic polyhedral parallelizer ..."*
   (PLDI '08) -- Pluto, the affine-schedule generalisation.
 """
+
 import copy
 import zlib
 from typing import Any, Dict, List, Optional, Tuple
@@ -81,16 +82,21 @@ from dace.transformation.interstate.loop_to_map import carried_local_transients,
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suffix
 from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import (WAVEFRONT_DIAGONAL, WAVEFRONT_FRONT,
-                                                                         skew_label, tile_label, WAVEFRONT_TILE_COLUMN,
-                                                                         WAVEFRONT_TILE_DIAGONAL,
-                                                                         WAVEFRONT_TILE_INTERIOR)
-from dace.transformation.passes.canonicalize.fuse_consecutive_loops import (commit_guarded_fusion, plan_guarded_fusion)
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
+    WAVEFRONT_DIAGONAL,
+    WAVEFRONT_FRONT,
+    skew_label,
+    tile_label,
+    WAVEFRONT_TILE_COLUMN,
+    WAVEFRONT_TILE_DIAGONAL,
+    WAVEFRONT_TILE_INTERIOR,
+)
+from dace.transformation.passes.canonicalize.fuse_consecutive_loops import commit_guarded_fusion, plan_guarded_fusion
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import privatize_reduction_accumulator
 
 #: Prefix for the synthesised skewed iterators.
-SKEW_T_PREFIX = '_skew_t_'
-SKEW_P_PREFIX = '_skew_p_'
+SKEW_T_PREFIX = "_skew_t_"
+SKEW_P_PREFIX = "_skew_p_"
 
 #: Default extent of a skewed tile on each axis. 64x64 doubles on the paper shapes
 #: at N=768: measured 2.04-2.16x over the sequential nest on 4 threads, against
@@ -111,15 +117,15 @@ DEFAULT_GPU_TILE_SIZE = 64
 #: parameters (rather than ``int_ceil(N - 1, B)`` inline) keeps the projected diagonal
 #: bound affine; an inline integer division comes back as an ISL existential that
 #: ``pwaff_bound`` cannot render, and the whole tiling would be refused.
-TILE_I_PROBE = '_skew_ti_probe'
-TILE_J_PROBE = '_skew_tj_probe'
-TILE_NI_PROBE = '_skew_ni_probe'
-TILE_NJ_PROBE = '_skew_nj_probe'
+TILE_I_PROBE = "_skew_ti_probe"
+TILE_J_PROBE = "_skew_tj_probe"
+TILE_NI_PROBE = "_skew_ni_probe"
+TILE_NJ_PROBE = "_skew_nj_probe"
 
 #: Suffix ``BreakAntiDependence`` gives the per-iteration anti-dependence snapshot it
 #: inserts (``arr`` -> ``arr_split_snap``). Recognising it lets the skew absorb
 #: the snapshot back into the live array (see :func:`commit_split_snapshots`).
-SPLIT_SNAP_SUFFIX = '_split_snap'
+SPLIT_SNAP_SUFFIX = "_split_snap"
 
 #: Candidate diagonal skews, in preference order. ``tau = (a, b)``; the skew is
 #: unimodular when ``|a| == 1`` (``p = v``, ``u = a*(t - b*p)``) or ``|b| == 1``
@@ -201,7 +207,7 @@ class WriteMap:
         self.c = c
         self.det = m[0] * m[3] - m[1] * m[2]
         if abs(self.det) != 1:
-            raise ValueError(f'write map {m} is not unimodular (det={self.det}); it has no integer inverse')
+            raise ValueError(f"write map {m} is not unimodular (det={self.det}); it has no integer inverse")
 
     def invert(self, row_expr: sympy.Expr, col_expr: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
         """Iteration coordinates ``(u_r, v_r)`` that write array cell
@@ -310,7 +316,7 @@ def split_snapshot_window(state: SDFGState) -> Optional[subsets.Range]:
     e = edges[0]
     if not (isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)):
         return None
-    if e.dst.data != f'{e.src.data}{SPLIT_SNAP_SUFFIX}':
+    if e.dst.data != f"{e.src.data}{SPLIT_SNAP_SUFFIX}":
         return None
     src_desc = state.sdfg.arrays.get(e.src.data)
     dst_desc = state.sdfg.arrays.get(e.dst.data)
@@ -423,7 +429,7 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Op
     return snap_src, snap_reads, copy_states
 
 
-def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: 'Carrier', u: str, v: str) -> bool:
+def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: "Carrier", u: str, v: str) -> bool:
     """Every snapshot read must be a FORWARD (anti) dependence in ITERATION space:
     the writer of the cell it reads runs strictly later, so its value is the
     not-yet-overwritten old element the snapshot captured -- which the diagonal
@@ -437,7 +443,7 @@ def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: 'Carrier', u: st
     arr, wmap, dependences = carrier
     if wmap is None:
         return False  # a reduced (one-axis) carrier does not name the writing iteration
-    for (state, snap_node, edge, ridx, src_name, window) in snap_reads:
+    for state, snap_node, edge, ridx, src_name, window in snap_reads:
         if src_name != arr or len(ridx) != 2:
             return False  # snapshot not on the 2-D carrier -> cannot reason
         u_r, v_r = wmap.invert(ridx[0], ridx[1])
@@ -445,7 +451,7 @@ def snapshot_reads_forward(snap_reads: List[SnapRead], carrier: 'Carrier', u: st
         dv = simplified(v_r - sym(v))
         if du == 0 and dv == 0:
             continue  # reads the very cell being written (old value)
-        if dependence_kind(du, dv) != 'anti':
+        if dependence_kind(du, dv) != "anti":
             return False  # backward (flow) or undecidable -> unsafe to redirect
     return True
 
@@ -455,7 +461,7 @@ def snapshot_reads_in_window(snap_reads: List[SnapRead], u: str, v: str, domain:
     whatever ISL cannot decide."""
     dims = [u, v]
     iters = (u, v)
-    for (state, snap_node, edge, ridx, src_name, window) in snap_reads:
+    for state, snap_node, edge, ridx, src_name, window in snap_reads:
         rng = window.ndrange()
         if len(rng) != len(ridx):
             return False
@@ -476,13 +482,13 @@ def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGSta
     """Rewire the planned snapshot reads onto the live array and drop the copies.
     Called only after a legal skew is confirmed. Structural cleanup then removes
     the emptied copy states and eliminates the dead ``arr_split_snap`` arrays."""
-    for (state, snap_node, e, ridx, src_name, window) in snap_reads:
+    for state, snap_node, e, ridx, src_name, window in snap_reads:
         reader = live_reader(state, src_name)
         redirected = copy.deepcopy(e.data)
         redirected.data = src_name
         state.add_edge(reader, None, e.dst, e.dst_conn, redirected)
         state.remove_edge(e)
-    for (state, snap_node, edge, ridx, src_name, window) in snap_reads:
+    for state, snap_node, edge, ridx, src_name, window in snap_reads:
         if snap_node in state.nodes() and state.degree(snap_node) == 0:
             state.remove_node(snap_node)
     for st in copy_states:
@@ -498,7 +504,7 @@ def point_index(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[List
     iterators named in ``iters`` are re-keyed (:func:`canonical_iterators`) -- everything
     downstream then works in one symbol spelling."""
     idx: List[sympy.Expr] = []
-    for (start, end, step) in ndrange_exprs(subset):
+    for start, end, step in ndrange_exprs(subset):
         if start != end:
             return None
         idx.append(canonical_iterators(start, iters))
@@ -514,7 +520,7 @@ def access_extent(subset: subsets.Subset, iters: tuple[str, ...]) -> Optional[Li
     so the decision cannot be made here. ``None`` for a strided axis, whose two endpoints do not
     describe the elements it touches."""
     idx: List[Tuple[sympy.Expr, sympy.Expr]] = []
-    for (start, end, step) in ndrange_exprs(subset):
+    for start, end, step in ndrange_exprs(subset):
         if step != 1:
             return None
         idx.append((canonical_iterators(start, iters), canonical_iterators(end, iters)))
@@ -618,8 +624,9 @@ def axis_write_map(write_idxs: List[List[sympy.Expr]], u: str, v: str) -> Option
     return found
 
 
-def axis_distance(idx: sympy.Expr, coeff: sympy.Expr, const: sympy.Expr, u: str,
-                  v: str) -> Optional[Tuple[sympy.Expr, sympy.Expr]]:
+def axis_distance(
+    idx: sympy.Expr, coeff: sympy.Expr, const: sympy.Expr, u: str, v: str
+) -> Optional[Tuple[sympy.Expr, sympy.Expr]]:
     """``(du, dv) = writer - current`` for a read of the reduced carrier at ``idx``.
 
     ``coeff`` is its own inverse, so the writing ``v`` is ``coeff * (idx - const)``. Which ``u``
@@ -632,7 +639,7 @@ def axis_distance(idx: sympy.Expr, coeff: sympy.Expr, const: sympy.Expr, u: str,
     d = simplified(v_w - sym(v))
     if not d.is_number:
         return None
-    zero, back = as_expr('0'), as_expr('-1')
+    zero, back = as_expr("0"), as_expr("-1")
     return (zero, d) if d < 0 else (back, d)
 
 
@@ -699,12 +706,14 @@ class Dependence:
     :func:`dep_dims_and_cons`. Only the read's guard is collected, never the write's: assuming
     the write always happens can add dependences that do not exist but can never drop one."""
 
-    def __init__(self,
-                 du: sympy.Expr,
-                 dv: sympy.Expr,
-                 nested: List[Tuple[str, sympy.Expr, sympy.Expr]],
-                 kind: str = 'flow',
-                 guard: Optional[List[sympy.Expr]] = None) -> None:
+    def __init__(
+        self,
+        du: sympy.Expr,
+        dv: sympy.Expr,
+        nested: List[Tuple[str, sympy.Expr, sympy.Expr]],
+        kind: str = "flow",
+        guard: Optional[List[sympy.Expr]] = None,
+    ) -> None:
         self.du = simplified(du)
         self.dv = simplified(dv)
         self.nested = nested
@@ -737,12 +746,12 @@ def dependence_kind(du: sympy.Expr, dv: sympy.Expr) -> str:
     du_s, dv_s = simplified(du), simplified(dv)
     if du_s.is_number and dv_s.is_number:
         if du_s > 0 or (du_s == 0 and dv_s > 0):
-            return 'anti'
-        return 'flow'
+            return "anti"
+        return "flow"
     lead = du_s if du_s != 0 else dv_s  # lexicographically leading (first non-zero) component
     if lead.is_positive:
-        return 'anti'
-    return 'flow'
+        return "anti"
+    return "flow"
 
 
 def map_scope_context(state: SDFGState, node: nodes.Node) -> Optional[List[Tuple[str, sympy.Expr, sympy.Expr]]]:
@@ -774,7 +783,7 @@ def widened_beyond_reading(subset: subsets.Subset) -> bool:
     That is precisely what :func:`reduced_points` cannot enumerate, and precisely what memlet
     propagation produces at a map scope boundary when the body's window is symbolic.
     """
-    for (lo, hi, step) in ndrange_exprs(subset):
+    for lo, hi, step in ndrange_exprs(subset):
         if simplified(step) != 1:
             return True
         width = simplified(hi - lo)
@@ -809,8 +818,9 @@ def descend_into_map_scopes(state: SDFGState, data_name: str) -> bool:
     return descend
 
 
-def in_scope_accesses(state: SDFGState, edge: MultiConnectorEdge[Memlet],
-                      is_read: bool) -> Optional[List[Tuple[subsets.Subset, MapContext]]]:
+def in_scope_accesses(
+    state: SDFGState, edge: MultiConnectorEdge[Memlet], is_read: bool
+) -> Optional[List[Tuple[subsets.Subset, MapContext]]]:
     """``[(subset, map_ctx), ...]`` for the innermost edges ``edge`` stands for.
 
     Normally the edge's own subset, which is what every previously-analysable shape uses: a
@@ -842,9 +852,18 @@ def in_scope_accesses(state: SDFGState, edge: MultiConnectorEdge[Memlet],
     return out or None
 
 
-def scan_state_accesses(state: SDFGState, inner: LoopRegion, sdfg: SDFG, u: str, v: str, v_local: str,
-                        snap_src: Dict[str, str], sibling_cons: List[sympy.Expr], writes: Dict[str, List[Extent]],
-                        reads: Dict[str, List[ReadRecord]]) -> bool:
+def scan_state_accesses(
+    state: SDFGState,
+    inner: LoopRegion,
+    sdfg: SDFG,
+    u: str,
+    v: str,
+    v_local: str,
+    snap_src: Dict[str, str],
+    sibling_cons: List[sympy.Expr],
+    writes: Dict[str, List[Extent]],
+    reads: Dict[str, List[ReadRecord]],
+) -> bool:
     """Record ``state``'s point accesses to 2-D arrays into ``writes`` / ``reads``.
 
     ``False`` means refuse: a non-point subset, or an enclosing loop whose range is not a clean
@@ -900,15 +919,18 @@ def scan_state_accesses(state: SDFGState, inner: LoopRegion, sdfg: SDFG, u: str,
                 if idx is None:
                     return False  # strided read of a 2-D carrier -> refuse
                 reads.setdefault(data_name, []).append(
-                    ([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx], [*ctx, *map_ctx], guard))
+                    ([(lo.xreplace(rename), hi.xreplace(rename)) for lo, hi in idx], [*ctx, *map_ctx], guard)
+                )
     return True
 
 
-def collect_carrier(inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]],
-                    sdfg: SDFG,
-                    u: str,
-                    v: str,
-                    snap_src: Optional[Dict[str, str]] = None) -> Optional[Carrier]:
+def collect_carrier(
+    inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]],
+    sdfg: SDFG,
+    u: str,
+    v: str,
+    snap_src: Optional[Dict[str, str]] = None,
+) -> Optional[Carrier]:
     """Find the unique carrier array (written *and* self-read with a non-zero
     distance) across ``inners``' bodies, its write map, and its dependences. ``None``
     if there is no clean single carrier (refuse).
@@ -958,7 +980,7 @@ def collect_carrier(inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]],
             if points is None:
                 return None  # a kept axis is a range with no finite reading -> refuse
             wsubs.extend(points)
-        for (extent, ctx, guard) in rextents:
+        for extent, ctx, guard in rextents:
             points = reduced_points(extent, drop)
             if points is None:
                 return None
@@ -974,9 +996,9 @@ def collect_carrier(inners: List[Tuple[LoopRegion, str, List[sympy.Expr]]],
     return carriers[0]
 
 
-def carrier_dependences(wsubs: List[List[sympy.Expr]], rsubs: List[Tuple[List[sympy.Expr], MapContext,
-                                                                         List[sympy.Expr]]], u: str,
-                        v: str) -> Optional[Tuple[Optional[WriteMap], List[Dependence]]]:
+def carrier_dependences(
+    wsubs: List[List[sympy.Expr]], rsubs: List[Tuple[List[sympy.Expr], MapContext, List[sympy.Expr]]], u: str, v: str
+) -> Optional[Tuple[Optional[WriteMap], List[Dependence]]]:
     """``(write map, dependences)`` for one array, or ``None`` to refuse the whole nest.
 
     Two carrier shapes, by how many axes survived :func:`uniform_axes`:
@@ -994,7 +1016,7 @@ def carrier_dependences(wsubs: List[List[sympy.Expr]], rsubs: List[Tuple[List[sy
         if wmap is None:
             return None  # written by a non-affine or non-unimodular map -> refuse
         deps: List[Dependence] = []
-        for (idx, ctx, guard) in rsubs:
+        for idx, ctx, guard in rsubs:
             if len(idx) != 2:
                 return None
             u_r, v_r = wmap.invert(idx[0], idx[1])
@@ -1010,7 +1032,7 @@ def carrier_dependences(wsubs: List[List[sympy.Expr]], rsubs: List[Tuple[List[sy
         return None
     coeff, const = amap
     deps = []
-    for (idx, ctx, guard) in rsubs:
+    for idx, ctx, guard in rsubs:
         if len(idx) != 1:
             return None
         d = axis_distance(idx[0], coeff, const, u, v)
@@ -1021,7 +1043,7 @@ def carrier_dependences(wsubs: List[List[sympy.Expr]], rsubs: List[Tuple[List[sy
         # Output dependence: the same location is rewritten every outer iteration, so consecutive
         # sweeps must not land on one diagonal. Unguarded on purpose -- assuming a write always
         # happens can only add order, never drop it.
-        deps.append(Dependence(as_expr('-1'), as_expr('0'), [], 'flow'))
+        deps.append(Dependence(as_expr("-1"), as_expr("0"), [], "flow"))
     return None, deps
 
 
@@ -1039,8 +1061,9 @@ def consistent_write_map(write_subs: List[List[sympy.Expr]], u: str, v: str) -> 
     return wmap
 
 
-def domain_constraints(u: str, v: str, ub: Tuple[sympy.Expr, sympy.Expr], vb: Tuple[sympy.Expr,
-                                                                                    sympy.Expr]) -> List[sympy.Expr]:
+def domain_constraints(
+    u: str, v: str, ub: Tuple[sympy.Expr, sympy.Expr], vb: Tuple[sympy.Expr, sympy.Expr]
+) -> List[sympy.Expr]:
     """The 2-D iteration polyhedron as exprs, each ``>= 0``."""
     U, V = sym(u), sym(v)
     return [U - ub[0], ub[1] - U, V - vb[0], vb[1] - V]
@@ -1051,12 +1074,13 @@ def tau_dot(tau: Tuple[int, int], dep: Dependence) -> sympy.Expr:
     return simplified(a * dep.du + b * dep.dv)
 
 
-def dep_dims_and_cons(dep: Dependence, u: str, v: str, domain: List[sympy.Expr],
-                      assume: List[sympy.Expr]) -> Tuple[List[str], List[sympy.Expr]]:
+def dep_dims_and_cons(
+    dep: Dependence, u: str, v: str, domain: List[sympy.Expr], assume: List[sympy.Expr]
+) -> Tuple[List[str], List[sympy.Expr]]:
     """Dims + full constraint list (domain + this dep's nested ranges + assumptions)."""
     dims = [u, v] + [nm for (nm, _, _) in dep.nested]
     cons = list(domain)
-    for (nm, lo, hi) in dep.nested:
+    for nm, lo, hi in dep.nested:
         S = sym(nm)
         cons += [S - lo, hi - S]
     cons += list(dep.guard)
@@ -1097,8 +1121,9 @@ def outer_axis_parallel(deps: List[Dependence], u: str, v: str, domain: List[sym
     return True
 
 
-def schedule_legal(tau: Tuple[int, int], deps: List[Dependence], u: str, v: str, domain: List[sympy.Expr],
-                   assume: List[sympy.Expr]) -> bool:
+def schedule_legal(
+    tau: Tuple[int, int], deps: List[Dependence], u: str, v: str, domain: List[sympy.Expr], assume: List[sympy.Expr]
+) -> bool:
     """``tau`` is legal iff every dependence is strictly ordered on the sequential
     ``t`` axis. For a **flow** dependence the producer must precede the consumer
     (``tau.delta < 0``, i.e. no domain point with ``tau.delta >= 0``); for an
@@ -1112,7 +1137,7 @@ def schedule_legal(tau: Tuple[int, int], deps: List[Dependence], u: str, v: str,
         # as ``-tau.delta >= 0``). ``tau`` is legal for this dep iff that region
         # is empty over the domain.
         td = tau_dot(tau, dep)
-        cons = cons + [td if dep.kind == 'flow' else simplified(-td)]
+        cons = cons + [td if dep.kind == "flow" else simplified(-td)]
         try:
             empty = poly.is_domain_empty(dims, params_of(cons, dims), cons)
         except ValueError:
@@ -1127,7 +1152,7 @@ def tile_signs(d: int) -> Tuple[int, ...]:
     ``|d|`` is known not to exceed the tile extent: the two iterations either sit
     in the same tile or straddle exactly one boundary, in the direction of ``d``."""
     if d == 0:
-        return (0, )
+        return (0,)
     return (0, 1) if d > 0 else (-1, 0)
 
 
@@ -1164,7 +1189,7 @@ def tiling_legal(deps: List[Dependence], tau: Tuple[int, int], bi: int, bj: int)
                 if di == 0 and dj == 0:
                     continue  # same tile -> original sequential order
                 dot = a * di + b * dj
-                if dot >= 0 if dep.kind == 'flow' else dot <= 0:
+                if dot >= 0 if dep.kind == "flow" else dot <= 0:
                     return False
     return True
 
@@ -1195,8 +1220,16 @@ class TilePlan:
     """The skewed TILE-index bounds plus the grid origin and extents
     :meth:`WavefrontSkew.rewrite_tiled` emits from."""
 
-    def __init__(self, bounds: poly.SkewBounds, u_lo: sympy.Expr, v_lo: sympy.Expr, n_i: sympy.Expr, n_j: sympy.Expr,
-                 bi: int, bj: int) -> None:
+    def __init__(
+        self,
+        bounds: poly.SkewBounds,
+        u_lo: sympy.Expr,
+        v_lo: sympy.Expr,
+        n_i: sympy.Expr,
+        n_j: sympy.Expr,
+        bi: int,
+        bj: int,
+    ) -> None:
         self.bounds = bounds
         self.u_lo = u_lo
         self.v_lo = v_lo
@@ -1235,35 +1268,43 @@ class WavefrontSkew(ppl.Pass):
     asks: blocking is locality tuning for a cache, and a GPU is better served by the
     diagonal's wider parallelism."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
-    target = properties.Property(dtype=str,
-                                 default='cpu',
-                                 choices=['cpu', 'gpu'],
-                                 desc="Target policy: 'cpu' blocks the wavefront into skewed tiles wherever that "
-                                 "is legal; 'gpu' always takes the element-granularity diagonal.")
+    target = properties.Property(
+        dtype=str,
+        default="cpu",
+        choices=["cpu", "gpu"],
+        desc="Target policy: 'cpu' blocks the wavefront into skewed tiles wherever that "
+        "is legal; 'gpu' always takes the element-granularity diagonal.",
+    )
 
-    tile_i = properties.Property(dtype=int,
-                                 default=DEFAULT_TILE_SIZE,
-                                 desc='Skewed-tile extent on the outer (u) axis. A dependence reaching further than '
-                                 'this on that axis falls back to the untiled lowering. CPU only.')
-    tile_j = properties.Property(dtype=int,
-                                 default=DEFAULT_TILE_SIZE,
-                                 desc='Skewed-tile extent on the inner (v) axis; the innermost emitted loop runs one '
-                                 'tile row of it at unit stride. CPU only.')
+    tile_i = properties.Property(
+        dtype=int,
+        default=DEFAULT_TILE_SIZE,
+        desc="Skewed-tile extent on the outer (u) axis. A dependence reaching further than "
+        "this on that axis falls back to the untiled lowering. CPU only.",
+    )
+    tile_j = properties.Property(
+        dtype=int,
+        default=DEFAULT_TILE_SIZE,
+        desc="Skewed-tile extent on the inner (v) axis; the innermost emitted loop runs one "
+        "tile row of it at unit stride. CPU only.",
+    )
 
-    gpu_tile_i = properties.Property(dtype=int,
-                                     default=DEFAULT_GPU_TILE_SIZE,
-                                     desc='Skewed-tile extent on the outer (u) axis for the GPU lowering. Separate '
-                                     'from tile_i because the two targets are sized against different things: a CPU '
-                                     'tile is sized to a cache, a GPU tile trades grid width (tiles per diagonal, '
-                                     'which must cover the CUs) against block width (the intra-tile anti-diagonal, '
-                                     'which must cover a wavefront).')
-    gpu_tile_j = properties.Property(dtype=int,
-                                     default=DEFAULT_GPU_TILE_SIZE,
-                                     desc='Skewed-tile extent on the inner (v) axis for the GPU lowering.')
+    gpu_tile_i = properties.Property(
+        dtype=int,
+        default=DEFAULT_GPU_TILE_SIZE,
+        desc="Skewed-tile extent on the outer (u) axis for the GPU lowering. Separate "
+        "from tile_i because the two targets are sized against different things: a CPU "
+        "tile is sized to a cache, a GPU tile trades grid width (tiles per diagonal, "
+        "which must cover the CUs) against block width (the intra-tile anti-diagonal, "
+        "which must cover a wavefront).",
+    )
+    gpu_tile_j = properties.Property(
+        dtype=int, default=DEFAULT_GPU_TILE_SIZE, desc="Skewed-tile extent on the inner (v) axis for the GPU lowering."
+    )
 
-    def __init__(self, target: str = 'cpu') -> None:
+    def __init__(self, target: str = "cpu") -> None:
         super().__init__()
         self.target = target
 
@@ -1312,8 +1353,10 @@ class WavefrontSkew(ppl.Pass):
             fusion = plan_guarded_fusion(outer)
             if fusion is None:
                 return False
-            inners = [(loop, loop_var, [as_expr(g) for g in guard])
-                      for loop, loop_var, guard in zip(fusion.loops, fusion.loop_vars, fusion.guards)]
+            inners = [
+                (loop, loop_var, [as_expr(g) for g in guard])
+                for loop, loop_var, guard in zip(fusion.loops, fusion.loop_vars, fusion.guards)
+            ]
             v, vb = fusion.var, (as_expr(fusion.lo), as_expr(fusion.hi))
         else:
             if not unit_positive_stride(inner):
@@ -1396,8 +1439,8 @@ class WavefrontSkew(ppl.Pass):
         if tau is None:
             return False
 
-        probe_t = f'{SKEW_T_PREFIX}probe'
-        probe_p = f'{SKEW_P_PREFIX}probe'
+        probe_t = f"{SKEW_T_PREFIX}probe"
+        probe_p = f"{SKEW_P_PREFIX}probe"
         bounds = poly.skew_bounds((u, v), params_of(domain, dims), domain, tau, probe_t, probe_p)
         if bounds is None:
             return False
@@ -1424,8 +1467,9 @@ class WavefrontSkew(ppl.Pass):
             self.rewrite_tiled(outer, inner, sdfg, u, ub, vb, tau, tiles)
         return True
 
-    def plan_tiles(self, deps: List[Dependence], u: str, v: str, domain: List[sympy.Expr], dims: List[str],
-                   tau: Tuple[int, int]) -> Optional[TilePlan]:
+    def plan_tiles(
+        self, deps: List[Dependence], u: str, v: str, domain: List[sympy.Expr], dims: List[str], tau: Tuple[int, int]
+    ) -> Optional[TilePlan]:
         """The tile-index skew for a ``tile_i x tile_j`` blocking of this nest, or
         ``None`` to keep the element-granularity lowering.
 
@@ -1436,9 +1480,9 @@ class WavefrontSkew(ppl.Pass):
         # Both targets block, for different reasons and at different sizes (see the class
         # docstring): a CPU tile is cache blocking, a GPU tile is what turns one kernel launch per
         # element anti-diagonal into one per tile anti-diagonal.
-        if self.target == 'cpu':
+        if self.target == "cpu":
             bi, bj = int(self.tile_i), int(self.tile_j)
-        elif self.target == 'gpu':
+        elif self.target == "gpu":
             bi, bj = int(self.gpu_tile_i), int(self.gpu_tile_j)
         else:
             return None
@@ -1453,8 +1497,14 @@ class WavefrontSkew(ppl.Pass):
             box = domain_bbox(u, v, params_of(domain, dims), domain)
             if box is None:
                 return None
-            bounds = poly.skew_bounds(tile_dims, params_of(tile_domain, tdims), tile_domain, tau,
-                                      f'{SKEW_T_PREFIX}probe', f'{SKEW_P_PREFIX}probe')
+            bounds = poly.skew_bounds(
+                tile_dims,
+                params_of(tile_domain, tdims),
+                tile_domain,
+                tau,
+                f"{SKEW_T_PREFIX}probe",
+                f"{SKEW_P_PREFIX}probe",
+            )
         except ValueError:
             return None  # not renderable for ISL -> keep the untiled lowering
         if bounds is None:
@@ -1464,8 +1514,16 @@ class WavefrontSkew(ppl.Pass):
         n_j = symbolic.int_ceil(simplified(v_hi - v_lo + 1), bj)
         return TilePlan(bounds, u_lo, v_lo, n_i, n_j, bi, bj)
 
-    def rewrite(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
-                bounds: poly.SkewBounds) -> None:
+    def rewrite(
+        self,
+        outer: LoopRegion,
+        inner: LoopRegion,
+        sdfg: SDFG,
+        u: str,
+        v: str,
+        tau: Tuple[int, int],
+        bounds: poly.SkewBounds,
+    ) -> None:
         """Relabel ``outer -> t`` and ``inner -> p`` with the projected bounds, then
         substitute the original iterators in terms of ``(t, p)`` in the inner body
         and lift it to a parallel Map. The substitution matches the unimodular
@@ -1475,12 +1533,12 @@ class WavefrontSkew(ppl.Pass):
         t_var = f"{SKEW_T_PREFIX}{nid}"
         p_var = f"{SKEW_P_PREFIX}{nid}"
         declare_iterators(sdfg, t_var, p_var)
-        subs = {f'{SKEW_T_PREFIX}probe': sym(t_var), f'{SKEW_P_PREFIX}probe': sym(p_var)}
+        subs = {f"{SKEW_T_PREFIX}probe": sym(t_var), f"{SKEW_P_PREFIX}probe": sym(p_var)}
 
-        t_lo = bound_expr(bounds.t_lo_terms, subs, 'max')
-        t_hi = bound_expr(bounds.t_hi_terms, subs, 'min')
-        p_lo = bound_expr(bounds.p_lo_terms, subs, 'max')
-        p_hi = bound_expr(bounds.p_hi_terms, subs, 'min')
+        t_lo = bound_expr(bounds.t_lo_terms, subs, "max")
+        t_hi = bound_expr(bounds.t_hi_terms, subs, "min")
+        p_lo = bound_expr(bounds.p_lo_terms, subs, "max")
+        p_hi = bound_expr(bounds.p_hi_terms, subs, "min")
 
         outer.loop_variable = t_var
         outer.init_statement = properties.CodeBlock(f"{t_var} = ({t_lo})")
@@ -1513,8 +1571,17 @@ class WavefrontSkew(ppl.Pass):
 
         self._convert_inner_to_map(outer, inner, sdfg, WAVEFRONT_FRONT.format(skew=skew))
 
-    def rewrite_tiled(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, ub: Tuple[sympy.Expr, sympy.Expr],
-                      vb: Tuple[sympy.Expr, sympy.Expr], tau: Tuple[int, int], plan: TilePlan) -> None:
+    def rewrite_tiled(
+        self,
+        outer: LoopRegion,
+        inner: LoopRegion,
+        sdfg: SDFG,
+        u: str,
+        ub: Tuple[sympy.Expr, sympy.Expr],
+        vb: Tuple[sympy.Expr, sympy.Expr],
+        tau: Tuple[int, int],
+        plan: TilePlan,
+    ) -> None:
         """Lower the wavefront as a skewed tiling::
 
             for T in [t_lo .. t_hi]:              # tile diagonal, sequential
@@ -1535,8 +1602,8 @@ class WavefrontSkew(ppl.Pass):
         p_var = f"{SKEW_P_PREFIX}{nid}"
         declare_iterators(sdfg, t_var, p_var)
         subs = {
-            f'{SKEW_T_PREFIX}probe': sym(t_var),
-            f'{SKEW_P_PREFIX}probe': sym(p_var),
+            f"{SKEW_T_PREFIX}probe": sym(t_var),
+            f"{SKEW_P_PREFIX}probe": sym(p_var),
             TILE_NI_PROBE: plan.n_i,
             TILE_NJ_PROBE: plan.n_j,
         }
@@ -1549,7 +1616,7 @@ class WavefrontSkew(ppl.Pass):
         # The tile diagonal carries every wavefront dependence by construction; pin it
         # so a downstream LoopToMap / LoopToReduce never races it into a parallel map.
         outer.pinned_sequential = True
-        skew, tile = skew_label(a, b, u, 'j'), tile_label(plan.bi, plan.bj)
+        skew, tile = skew_label(a, b, u, "j"), tile_label(plan.bi, plan.bj)
         outer.specialization_hint = WAVEFRONT_TILE_DIAGONAL.format(skew=skew, tile=tile)
 
         t_sym, p_sym = sym(t_var), sym(p_var)
@@ -1560,12 +1627,20 @@ class WavefrontSkew(ppl.Pass):
         i_lo = simplified(plan.u_lo + plan.bi * i_tile)
         j_lo = simplified(plan.v_lo + plan.bj * j_tile)
 
-        p_loop = LoopRegion(f'{outer.label}_tile_diag', f"{p_var} <= ({bound_expr(bounds.p_hi_terms, subs, 'min')})",
-                            p_var, f"{p_var} = ({bound_expr(bounds.p_lo_terms, subs, 'max')})",
-                            f"{p_var} = {p_var} + 1")
-        i_loop = LoopRegion(f'{outer.label}_tile_row',
-                            f"{u} <= (min({symbolic.symstr(ub[1])}, {symbolic.symstr(i_lo + plan.bi - 1)}))", u,
-                            f"{u} = ({symbolic.symstr(i_lo)})", f"{u} = {u} + 1")
+        p_loop = LoopRegion(
+            f"{outer.label}_tile_diag",
+            f"{p_var} <= ({bound_expr(bounds.p_hi_terms, subs, 'min')})",
+            p_var,
+            f"{p_var} = ({bound_expr(bounds.p_lo_terms, subs, 'max')})",
+            f"{p_var} = {p_var} + 1",
+        )
+        i_loop = LoopRegion(
+            f"{outer.label}_tile_row",
+            f"{u} <= (min({symbolic.symstr(ub[1])}, {symbolic.symstr(i_lo + plan.bi - 1)}))",
+            u,
+            f"{u} = ({symbolic.symstr(i_lo)})",
+            f"{u} = {u} + 1",
+        )
         # The intra-tile loops carry the dependences the diagonal spreads apart, so
         # they stay sequential for the same reason the diagonal does.
         i_loop.pinned_sequential = True
@@ -1587,7 +1662,8 @@ class WavefrontSkew(ppl.Pass):
 
         inner.init_statement = properties.CodeBlock(f"{v} = (max({symbolic.symstr(vb[0])}, {symbolic.symstr(j_lo)}))")
         inner.loop_condition = properties.CodeBlock(
-            f"{v} <= (min({symbolic.symstr(vb[1])}, {symbolic.symstr(j_lo + plan.bj - 1)}))")
+            f"{v} <= (min({symbolic.symstr(vb[1])}, {symbolic.symstr(j_lo + plan.bj - 1)}))"
+        )
         inner.update_statement = properties.CodeBlock(f"{v} = {v} + 1")
         inner.pinned_sequential = True
         inner.specialization_hint = WAVEFRONT_TILE_INTERIOR.format(tile=tile)
@@ -1595,14 +1671,25 @@ class WavefrontSkew(ppl.Pass):
         # On a GPU the tile INTERIOR is the thread block, so it is skewed too (see
         # :meth:`skew_within_tile`). Done before the tile-column lift because both steps run
         # LoopToMap, and it is far simpler to rewrite loops while they are still loops.
-        if self.target == 'gpu':
+        if self.target == "gpu":
             self.skew_within_tile(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, ub, vb)
 
         self._convert_inner_to_map(outer, p_loop, sdfg, WAVEFRONT_TILE_COLUMN.format(tile=tile))
 
-    def skew_within_tile(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
-                         plan: TilePlan, i_lo: sympy.Expr, j_lo: sympy.Expr, ub: Tuple[sympy.Expr, sympy.Expr],
-                         vb: Tuple[sympy.Expr, sympy.Expr]) -> None:
+    def skew_within_tile(
+        self,
+        i_loop: LoopRegion,
+        inner: LoopRegion,
+        sdfg: SDFG,
+        u: str,
+        v: str,
+        tau: Tuple[int, int],
+        plan: TilePlan,
+        i_lo: sympy.Expr,
+        j_lo: sympy.Expr,
+        ub: Tuple[sympy.Expr, sympy.Expr],
+        vb: Tuple[sympy.Expr, sympy.Expr],
+    ) -> None:
         """Turn a tile's two sequential interior loops into a diagonal over a parallel Map.
 
         :meth:`rewrite` applied one level down; legality carries over since the tile interior is a
@@ -1635,22 +1722,35 @@ class WavefrontSkew(ppl.Pass):
         d_lo = corner + min(a * (plan.bi - 1), 0) + min(b * (plan.bj - 1), 0)
         d_hi = corner + max(a * (plan.bi - 1), 0) + max(b * (plan.bj - 1), 0)
         try:
-            bounds = poly.skew_bounds(dims,
-                                      params_of(interior, list(dims)),
-                                      interior,
-                                      tau,
-                                      f'{SKEW_T_PREFIX}probe',
-                                      f'{SKEW_P_PREFIX}probe',
-                                      t_range=(simplified(d_lo), simplified(d_hi)))
+            bounds = poly.skew_bounds(
+                dims,
+                params_of(interior, list(dims)),
+                interior,
+                tau,
+                f"{SKEW_T_PREFIX}probe",
+                f"{SKEW_P_PREFIX}probe",
+                t_range=(simplified(d_lo), simplified(d_hi)),
+            )
         except ValueError:
             return  # not renderable for ISL -> the interior stays sequential
         if bounds is None:
             return
         self.emit_tile_interior(i_loop, inner, sdfg, u, v, tau, plan, i_lo, j_lo, bounds, (d_lo, d_hi))
 
-    def emit_tile_interior(self, i_loop: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str,
-                           tau: Tuple[int, int], plan: TilePlan, i_lo: sympy.Expr, j_lo: sympy.Expr,
-                           bounds: poly.SkewBounds, d_range: Tuple[sympy.Expr, sympy.Expr]) -> None:
+    def emit_tile_interior(
+        self,
+        i_loop: LoopRegion,
+        inner: LoopRegion,
+        sdfg: SDFG,
+        u: str,
+        v: str,
+        tau: Tuple[int, int],
+        plan: TilePlan,
+        i_lo: sympy.Expr,
+        j_lo: sympy.Expr,
+        bounds: poly.SkewBounds,
+        d_range: Tuple[sympy.Expr, sympy.Expr],
+    ) -> None:
         """Diagonal over a CONSTANT-width parallel Map, with the real extent as a guard.
 
         This is :meth:`rewrite` with one difference, and the difference is forced by the hardware.
@@ -1667,27 +1767,27 @@ class WavefrontSkew(ppl.Pass):
         """
         a, b = tau
         nid = lowest_free_suffix(sdfg, (SKEW_T_PREFIX, SKEW_P_PREFIX))
-        d_var = f'{SKEW_T_PREFIX}{nid}'
-        k_var = f'{SKEW_P_PREFIX}{nid}'
+        d_var = f"{SKEW_T_PREFIX}{nid}"
+        k_var = f"{SKEW_P_PREFIX}{nid}"
         declare_iterators(sdfg, d_var, k_var)
-        subs = {f'{SKEW_T_PREFIX}probe': sym(d_var), f'{SKEW_P_PREFIX}probe': sym(k_var)}
-        p_lo = bound_expr(bounds.p_lo_terms, subs, 'max')
-        p_hi = bound_expr(bounds.p_hi_terms, subs, 'min')
+        subs = {f"{SKEW_T_PREFIX}probe": sym(d_var), f"{SKEW_P_PREFIX}probe": sym(k_var)}
+        p_lo = bound_expr(bounds.p_lo_terms, subs, "max")
+        p_hi = bound_expr(bounds.p_hi_terms, subs, "min")
 
         i_loop.loop_variable = d_var
-        i_loop.init_statement = properties.CodeBlock(f'{d_var} = ({symbolic.symstr(d_range[0])})')
-        i_loop.loop_condition = properties.CodeBlock(f'{d_var} <= ({symbolic.symstr(d_range[1])})')
-        i_loop.update_statement = properties.CodeBlock(f'{d_var} = {d_var} + 1')
+        i_loop.init_statement = properties.CodeBlock(f"{d_var} = ({symbolic.symstr(d_range[0])})")
+        i_loop.loop_condition = properties.CodeBlock(f"{d_var} <= ({symbolic.symstr(d_range[1])})")
+        i_loop.update_statement = properties.CodeBlock(f"{d_var} = {d_var} + 1")
         i_loop.pinned_sequential = True
         # No longer the verbatim interior order: the tile's own anti-diagonal.
-        i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(a, b, u, 'j'))
+        i_loop.specialization_hint = WAVEFRONT_DIAGONAL.format(skew=skew_label(a, b, u, "j"))
 
         # ``k`` indexes the block's threads: 0 .. width-1, the tile extent on the parallel axis.
         width = plan.bj if abs(a) == 1 else plan.bi
         inner.loop_variable = k_var
-        inner.init_statement = properties.CodeBlock(f'{k_var} = 0')
-        inner.loop_condition = properties.CodeBlock(f'{k_var} <= {width - 1}')
-        inner.update_statement = properties.CodeBlock(f'{k_var} = {k_var} + 1')
+        inner.init_statement = properties.CodeBlock(f"{k_var} = 0")
+        inner.loop_condition = properties.CodeBlock(f"{k_var} <= {width - 1}")
+        inner.update_statement = properties.CodeBlock(f"{k_var} = {k_var} + 1")
 
         # The projected axis is an absolute coordinate; a thread holds it at ``origin + k``.
         origin = j_lo if abs(a) == 1 else i_lo
@@ -1698,15 +1798,15 @@ class WavefrontSkew(ppl.Pass):
             inner.replace_dict({u: symbolic.symstr(coord), v: symbolic.symstr(b * (sym(d_var) - a * coord))})
 
         here = symbolic.symstr(coord)
-        self._guard_body(inner, sdfg, f'({here}) >= ({p_lo}) and ({here}) <= ({p_hi})')
-        self._convert_inner_to_map(i_loop, inner, sdfg, WAVEFRONT_FRONT.format(skew=skew_label(a, b, u, 'j')))
+        self._guard_body(inner, sdfg, f"({here}) >= ({p_lo}) and ({here}) <= ({p_hi})")
+        self._convert_inner_to_map(i_loop, inner, sdfg, WAVEFRONT_FRONT.format(skew=skew_label(a, b, u, "j")))
         for node, _ in i_loop.all_nodes_recursive():
             if isinstance(node, nodes.MapEntry):
                 node.map.is_warp_tile = True
 
     def _guard_body(self, loop: LoopRegion, sdfg: SDFG, condition: str) -> None:
         """Move ``loop``'s body under a single-branch ConditionalBlock testing ``condition``."""
-        branch = ControlFlowRegion(f'{loop.label}_active', sdfg=sdfg)
+        branch = ControlFlowRegion(f"{loop.label}_active", sdfg=sdfg)
         # Snapshot before moving: ``add_node`` re-homes each block's ``parent_graph``, so the edge
         # list has to be read off the loop while it still owns them.
         start, blocks, edges = loop.start_block, list(loop.nodes()), list(loop.edges())
@@ -1716,7 +1816,7 @@ class WavefrontSkew(ppl.Pass):
             branch.add_edge(e.src, e.dst, e.data)
         for blk in blocks:
             loop.remove_node(blk)
-        guard = ConditionalBlock(f'{loop.label}_lane', sdfg=sdfg)
+        guard = ConditionalBlock(f"{loop.label}_lane", sdfg=sdfg)
         guard.add_branch(condition, branch)
         loop.add_node(guard, is_start_block=True)
 
@@ -1731,6 +1831,7 @@ class WavefrontSkew(ppl.Pass):
         itself, since the lift keeps no record of the loop it consumed. Matched by iteration
         variable: ``LoopToMap`` names the map after the body, not after the axis."""
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+
         itervar = inner.loop_variable
         privatize_body_reductions(inner)
         ParallelizeLoops().parallelize_loop(sdfg, inner, proven=True)
@@ -1756,13 +1857,13 @@ class WavefrontSkew(ppl.Pass):
                         exprs.append(cs)
         if not exprs:
             return
-        parts = ' or '.join(f'(({symbolic.symstr(e)}) > 0)' for e in exprs)
+        parts = " or ".join(f"(({symbolic.symstr(e)}) > 0)" for e in exprs)
         # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED, so the guard
         # state and tasklet got a different label on every run of the SAME input -- different emitted C
         # symbols and a different build hash. crc32 is a stable digest of the same text.
-        tag = zlib.crc32(parts.encode()) & 0xfffffff
-        pre = outer.parent_graph.add_state_before(outer, label=f'_skew_guard_{tag:x}')
-        tutil.add_abort_guard(pre, f'_skew_guard_{tag:x}', parts)
+        tag = zlib.crc32(parts.encode()) & 0xFFFFFFF
+        pre = outer.parent_graph.add_state_before(outer, label=f"_skew_guard_{tag:x}")
+        tutil.add_abort_guard(pre, f"_skew_guard_{tag:x}", parts)
 
 
 def privatize_body_reductions(loop: LoopRegion) -> int:
@@ -1804,4 +1905,4 @@ def substitute_by_name(expr: sympy.Expr, subs: Dict[str, sympy.Expr]) -> sympy.E
     return e.subs(mp)
 
 
-__all__ = ['WavefrontSkew']
+__all__ = ["WavefrontSkew"]

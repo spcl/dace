@@ -4,42 +4,43 @@ import dace
 from dace import symbolic
 import numpy as np
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 def test_general_einsum():
 
     @dace.program
     def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M], C: dace.float64[M]):
-        return np.einsum('ij,ji,i->', A, B, C)
+        return np.einsum("ij,ji,i->", A, B, C)
 
     A = np.random.rand(10, 20)
     B = np.random.rand(20, 10)
     C = np.random.rand(10)
     out = einsumtest(A, B, C)
-    assert np.allclose(out, np.einsum('ij,ji,i->', A, B, C))
+    assert np.allclose(out, np.einsum("ij,ji,i->", A, B, C))
 
 
-@pytest.mark.parametrize('spec', ['abi,ab->ai', 'ijou,aj,au,ao->ai'])
+@pytest.mark.parametrize("spec", ["abi,ab->ai", "ijou,aj,au,ao->ai"])
 def test_an_einsum_of_real_and_complex_operands_is_complex(spec):
     """numpy's result type of float64 and complex128 operands is complex128. Typing the output after
     the first operand alone cannot even hold the product: quantum espresso's exchange kernel contracts
     a real table with complex projections, and the generated C++ refused the double assignment."""
     rng = np.random.default_rng(0)
-    if spec == 'abi,ab->ai':
+    if spec == "abi,ab->ai":
 
         @dace.program
         def einsumtest(A: dace.float64[M, N, 3], B: dace.complex128[M, N]):
-            return np.einsum('abi,ab->ai', A, B)
+            return np.einsum("abi,ab->ai", A, B)
 
         operands = (rng.random((4, 5, 3)), rng.random((4, 5)) + 1j * rng.random((4, 5)))
     else:
 
         @dace.program
-        def einsumtest(K: dace.float64[N, N, N, N], P: dace.complex128[M, N], Q: dace.complex128[M, N],
-                       R: dace.complex128[M, N]):
-            return np.einsum('ijou,aj,au,ao->ai', K, P, Q, R)
+        def einsumtest(
+            K: dace.float64[N, N, N, N], P: dace.complex128[M, N], Q: dace.complex128[M, N], R: dace.complex128[M, N]
+        ):
+            return np.einsum("ijou,aj,au,ao->ai", K, P, Q, R)
 
         operands = (rng.random((3, 3, 3, 3)), *(rng.random((4, 3)) + 1j * rng.random((4, 3)) for _ in range(3)))
     got = einsumtest(*operands)
@@ -52,7 +53,7 @@ def test_matmul():
 
     @dace.program
     def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M]):
-        return np.einsum('ik,kj', A, B)
+        return np.einsum("ik,kj", A, B)
 
     A = np.random.rand(10, 20)
     B = np.random.rand(20, 10)
@@ -63,7 +64,7 @@ def test_batch_matmul():
 
     @dace.program
     def einsumtest(A: dace.float64[4, M, N], B: dace.float64[4, N, M]):
-        return np.einsum('bik,bkj->bij', A, B)
+        return np.einsum("bik,bkj->bij", A, B)
 
     A = np.random.rand(4, 10, 20)
     B = np.random.rand(4, 20, 10)
@@ -73,53 +74,63 @@ def test_batch_matmul():
 def test_opteinsum_sym():
 
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
-                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
-        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
+    def einsumtest(
+        A: dace.float64[N, N, N, N],
+        B: dace.float64[N, N, N, N],
+        C: dace.float64[N, N, N, N],
+        D: dace.float64[N, N, N, N],
+        E: dace.float64[N, N, N, N],
+    ):
+        return np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
     try:
         einsumtest(A, B, C, D, E)
-        raise AssertionError('Exception should have been raised')
+        raise AssertionError("Exception should have been raised")
     except ValueError:
-        print('Exception successfully caught')
+        print("Exception successfully caught")
 
 
 def test_opteinsum():
     N = 10
 
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
-                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
-        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
+    def einsumtest(
+        A: dace.float64[N, N, N, N],
+        B: dace.float64[N, N, N, N],
+        C: dace.float64[N, N, N, N],
+        D: dace.float64[N, N, N, N],
+        E: dace.float64[N, N, N, N],
+    ):
+        return np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
 
-    assert np.allclose(einsumtest(A, B, C, D, E), np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E))
+    assert np.allclose(einsumtest(A, B, C, D, E), np.einsum("bdik,acaj,ikab,ajac,ikbd->", A, B, C, D, E))
 
 
 def test_einsum_libnode():
     from dace.libraries.blas.nodes.einsum import Einsum
 
-    sdfg = dace.SDFG('tester')
-    sdfg.arg_names = ['A', 'B']
-    sdfg.add_array('A', (20, 21), dace.float64)
-    sdfg.add_array('B', (21, 22), dace.float64)
-    sdfg.add_array('__return', (20, 22), dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.arg_names = ["A", "B"]
+    sdfg.add_array("A", (20, 21), dace.float64)
+    sdfg.add_array("B", (21, 22), dace.float64)
+    sdfg.add_array("__return", (20, 22), dace.float64)
 
     state = sdfg.add_state()
-    r1 = state.add_read('A')
-    r2 = state.add_read('B')
-    w = state.add_write('__return')
-    enode = Einsum('einsum')
-    enode.einsum_str = 'ik,kj->ij'
-    enode.in_connectors = {'a': None, 'b': None}
-    enode.out_connectors = {'out': None}
+    r1 = state.add_read("A")
+    r2 = state.add_read("B")
+    w = state.add_write("__return")
+    enode = Einsum("einsum")
+    enode.einsum_str = "ik,kj->ij"
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
     state.add_node(enode)
 
-    state.add_edge(r1, None, enode, 'a', dace.Memlet('A'))
-    state.add_edge(r2, None, enode, 'b', dace.Memlet('B'))
-    state.add_edge(enode, 'out', w, None, dace.Memlet('__return'))
+    state.add_edge(r1, None, enode, "a", dace.Memlet("A"))
+    state.add_edge(r2, None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", w, None, dace.Memlet("__return"))
 
     A = np.random.rand(20, 21)
     B = np.random.rand(21, 22)
@@ -128,9 +139,10 @@ def test_einsum_libnode():
 
 def test_lift_einsum():
     from dace.transformation.dataflow import LiftEinsum
-    N = dace.symbol('N')
-    M = dace.symbol('M')
-    K = dace.symbol('K')
+
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    K = dace.symbol("K")
 
     @dace.program
     def tester(A: dace.float64[M, K], B: dace.float64[K, N]):
@@ -157,7 +169,7 @@ def test_lift_einsum_mttkrp():
 
     @dace.program
     def tester(A, B, C, D):
-        for i, j, k, a in dace.map[0:A.shape[0], 0:A.shape[1], 0:A.shape[2], 0:B.shape[1]]:
+        for i, j, k, a in dace.map[0 : A.shape[0], 0 : A.shape[1], 0 : A.shape[2], 0 : B.shape[1]]:
             with dace.tasklet:
                 x << A[i, j, k]
                 y << B[j, a]
@@ -174,10 +186,10 @@ def test_lift_einsum_mttkrp():
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ijk,jl,kl->il'
+            assert node.einsum_str == "ijk,jl,kl->il"
 
     sdfg(A, B, C, D)
-    assert np.allclose(D, np.einsum('ijk,jl,kl->il', A, B, C))
+    assert np.allclose(D, np.einsum("ijk,jl,kl->il", A, B, C))
 
 
 def test_lift_einsum_reduce():
@@ -201,7 +213,7 @@ def test_lift_einsum_reduce():
     assert sdfg.apply_transformations(LiftEinsum) == 0
 
     sdfg(A, B)
-    assert np.allclose(B, np.einsum('ijk->', A))
+    assert np.allclose(B, np.einsum("ijk->", A))
 
 
 def test_lift_einsum_reduce_partial():
@@ -219,13 +231,13 @@ def test_lift_einsum_reduce_partial():
     # Capture the original Reduce node before lowering; afterwards it lives in a
     # nested SDFG that LiftEinsum intentionally does not traverse.
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
-    assert tuple(rnode.axes) == (1, )
+    assert tuple(rnode.axes) == (1,)
 
     sdfg.expand_library_nodes()
     assert sdfg.apply_transformations(LiftEinsum) == 0
 
     sdfg(A, B)
-    assert np.allclose(B, np.einsum('ijk->ik', A))
+    assert np.allclose(B, np.einsum("ijk->ik", A))
 
 
 def test_lift_einsum_outerproduct():
@@ -235,7 +247,7 @@ def test_lift_einsum_outerproduct():
     @dace.program
     def tester(A, B):
         C = np.ndarray([B.shape[0], A.shape[0]], A.dtype)
-        for i, j in dace.map[0:A.shape[0], 0:B.shape[0]]:
+        for i, j in dace.map[0 : A.shape[0], 0 : B.shape[0]]:
             with dace.tasklet:
                 a << A[i]
                 b << B[j]
@@ -251,9 +263,9 @@ def test_lift_einsum_outerproduct():
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'i,j->ji'
+            assert node.einsum_str == "i,j->ji"
 
-    assert np.allclose(sdfg(A, B), np.einsum('i,j->ji', A, B))
+    assert np.allclose(sdfg(A, B), np.einsum("i,j->ji", A, B))
 
 
 def test_lift_einsum_beta():
@@ -263,7 +275,7 @@ def test_lift_einsum_beta():
     @dace.program
     def tester(A, B):
         C = np.ones_like(A)
-        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+        for i, j, k in dace.map[0 : A.shape[0], 0 : A.shape[0], 0 : A.shape[0]]:
             with dace.tasklet:
                 a << A[i, k]
                 b << B[k, j]
@@ -280,24 +292,24 @@ def test_lift_einsum_beta():
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ij,jk->ik'
+            assert node.einsum_str == "ij,jk->ik"
             assert symbolic.equal_valued(1, node.alpha)
             assert symbolic.equal_valued(1, node.beta)
 
     assert np.allclose(sdfg(A, B), C)
 
 
-@pytest.mark.parametrize('symbolic_alpha', (False, True))
+@pytest.mark.parametrize("symbolic_alpha", (False, True))
 def test_lift_einsum_alpha_beta(symbolic_alpha):
     from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
 
-    alph = dace.symbol('alph') if symbolic_alpha else 2
+    alph = dace.symbol("alph") if symbolic_alpha else 2
 
     @dace.program
     def tester(A, B):
         C = np.ones_like(A)
-        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+        for i, j, k in dace.map[0 : A.shape[0], 0 : A.shape[0], 0 : A.shape[0]]:
             with dace.tasklet:
                 a << A[i, k]
                 b << B[k, j]
@@ -313,7 +325,7 @@ def test_lift_einsum_alpha_beta(symbolic_alpha):
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
-            assert node.einsum_str == 'ij,jk->ik'
+            assert node.einsum_str == "ij,jk->ik"
             assert node.alpha == alph
             assert symbolic.equal_valued(1, node.beta)
 
@@ -328,10 +340,10 @@ def test_rowwise_dot():
 
     @dace.program
     def einsumtest(A: dace.float64[M, N]):
-        return np.einsum('ik,ik->i', A, A)
+        return np.einsum("ik,ik->i", A, A)
 
     A = np.random.rand(10, 20)
-    assert np.allclose(einsumtest(A), np.einsum('ik,ik->i', A, A), rtol=1e-12)
+    assert np.allclose(einsumtest(A), np.einsum("ik,ik->i", A, A), rtol=1e-12)
 
 
 def test_batched_dot_4d():
@@ -339,34 +351,34 @@ def test_batched_dot_4d():
     the degenerate M=N=1 MatMul the contraction path used to mint could no longer dispatch. The
     contracted extent is the symbol ``k``, the contraction index letter as well: the map parameter
     must not shadow it."""
-    L = dace.symbol('L')
-    k = dace.symbol('k')
+    L = dace.symbol("L")
+    k = dace.symbol("k")
 
     @dace.program
     def einsumtest(A: dace.float64[L, L, L, k]):
-        return np.einsum('xyzk,xyzk->xyz', A, A)
+        return np.einsum("xyzk,xyzk->xyz", A, A)
 
     A = np.random.rand(4, 4, 4, 7)
-    assert np.allclose(einsumtest(A), np.einsum('xyzk,xyzk->xyz', A, A), rtol=1e-12)
+    assert np.allclose(einsumtest(A), np.einsum("xyzk,xyzk->xyz", A, A), rtol=1e-12)
 
 
 def test_batched_dot_in_loop():
     """The pure einsum path prepends a state that initializes the accumulator. Inside a loop body
     that state belongs to the loop's region, not to the SDFG, and it must run on every iteration."""
-    F = dace.symbol('F')
-    L = dace.symbol('L')
-    k = dace.symbol('k')
+    F = dace.symbol("F")
+    L = dace.symbol("L")
+    k = dace.symbol("k")
 
     @dace.program
     def einsumtest(psi: dace.float64[F, L, L, L, k], out: dace.float64[F, L, L, L]):
         for f in range(F):
-            dens = np.einsum('xyzk,xyzk->xyz', psi[f], psi[f])
+            dens = np.einsum("xyzk,xyzk->xyz", psi[f], psi[f])
             out[f] = dens
 
     psi = np.random.rand(3, 2, 2, 2, 5)
     out = np.zeros((3, 2, 2, 2))
     einsumtest(psi, out)
-    assert np.allclose(out, np.einsum('fxyzk,fxyzk->fxyz', psi, psi), rtol=1e-12)
+    assert np.allclose(out, np.einsum("fxyzk,fxyzk->fxyz", psi, psi), rtol=1e-12)
 
 
 def test_c_transposed():
@@ -374,7 +386,7 @@ def test_c_transposed():
 
     @dace.program
     def fn(a, b, c):
-        c[:] = np.einsum('nm,nf->fm', a, b)
+        c[:] = np.einsum("nm,nf->fm", a, b)
 
     a = np.random.rand(N, F_in)
     b = np.random.rand(N, F_out)
@@ -387,7 +399,7 @@ def test_c_transposed():
     assert np.allclose(c, c_expected)
 
 
-@pytest.mark.parametrize('beta', [0.0, 1.0])
+@pytest.mark.parametrize("beta", [0.0, 1.0])
 def test_einsum_dot_node(beta):
     """A directly-constructed scalar-output ``i,i->`` Einsum node expands to a stride-aware DDOT
     (a ``Dot`` node), NOT the degenerate 1x1 GEMM the contraction path emits (illegal ``lda=1``
@@ -395,22 +407,23 @@ def test_einsum_dot_node(beta):
     path that ``LiftEinsum`` deliberately no longer produces: ``out = alpha*dot(x,y) +
     beta*out_prior``."""
     from dace.libraries.blas.nodes.einsum import Einsum
+
     n = 40
-    sdfg = dace.SDFG('einsum_dot')
-    sdfg.add_array('x', [n], dace.float64)
-    sdfg.add_array('y', [n], dace.float64)
-    sdfg.add_array('r', [1], dace.float64)
+    sdfg = dace.SDFG("einsum_dot")
+    sdfg.add_array("x", [n], dace.float64)
+    sdfg.add_array("y", [n], dace.float64)
+    sdfg.add_array("r", [1], dace.float64)
     state = sdfg.add_state()
-    enode = Einsum('einsum')
-    enode.einsum_str = 'i,i->'
+    enode = Einsum("einsum")
+    enode.einsum_str = "i,i->"
     enode.alpha = 2.0
     enode.beta = beta
-    enode.in_connectors = {'a': None, 'b': None}
-    enode.out_connectors = {'out': None}
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
     state.add_node(enode)
-    state.add_edge(state.add_read('x'), None, enode, 'a', dace.Memlet(f'x[0:{n}]'))
-    state.add_edge(state.add_read('y'), None, enode, 'b', dace.Memlet(f'y[0:{n}]'))
-    state.add_edge(enode, 'out', state.add_write('r'), None, dace.Memlet('r[0]'))
+    state.add_edge(state.add_read("x"), None, enode, "a", dace.Memlet(f"x[0:{n}]"))
+    state.add_edge(state.add_read("y"), None, enode, "b", dace.Memlet(f"y[0:{n}]"))
+    state.add_edge(enode, "out", state.add_write("r"), None, dace.Memlet("r[0]"))
     sdfg.expand_library_nodes()
 
     rng = np.random.default_rng(0)
@@ -419,7 +432,7 @@ def test_einsum_dot_node(beta):
     r = np.array([7.0])
     prior = r[0]
     sdfg(x=x, y=y, r=r)
-    assert np.allclose(r[0], 2.0 * np.dot(x, y) + beta * prior), f'got {r[0]}'
+    assert np.allclose(r[0], 2.0 * np.dot(x, y) + beta * prior), f"got {r[0]}"
 
 
 def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
@@ -427,25 +440,25 @@ def test_matrix_vector_einsum_scratch_lives_where_its_output_lives():
     from dace.libraries.blas.nodes.einsum import Einsum
 
     gpu = dace.dtypes.StorageType.GPU_Global
-    sdfg = dace.SDFG('matrix_vector_einsum')
-    sdfg.add_array('A', (5, 5), dace.float64, storage=gpu)
-    sdfg.add_array('x', (5, ), dace.float64, storage=gpu)
-    sdfg.add_array('y', (5, ), dace.float64, storage=gpu)
+    sdfg = dace.SDFG("matrix_vector_einsum")
+    sdfg.add_array("A", (5, 5), dace.float64, storage=gpu)
+    sdfg.add_array("x", (5,), dace.float64, storage=gpu)
+    sdfg.add_array("y", (5,), dace.float64, storage=gpu)
     state = sdfg.add_state()
-    enode = Einsum('einsum')
-    enode.einsum_str = 'ij,j->i'
+    enode = Einsum("einsum")
+    enode.einsum_str = "ij,j->i"
     enode.beta = 1.0
-    enode.in_connectors = {'a': None, 'b': None}
-    enode.out_connectors = {'out': None}
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
     state.add_node(enode)
-    state.add_edge(state.add_read('A'), None, enode, 'a', dace.Memlet('A'))
-    state.add_edge(state.add_read('x'), None, enode, 'b', dace.Memlet('x'))
-    state.add_edge(enode, 'out', state.add_write('y'), None, dace.Memlet('y'))
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("x"), None, enode, "b", dace.Memlet("x"))
+    state.add_edge(enode, "out", state.add_write("y"), None, dace.Memlet("y"))
 
     enode.expand(sdfg, state)
 
-    scratch = [desc for _, name, desc in sdfg.arrays_recursive() if name.endswith('_gemv')]
-    assert len(scratch) == 1, 'the matrix-vector einsum did not lower to GEMV plus a beta fold'
+    scratch = [desc for _, name, desc in sdfg.arrays_recursive() if name.endswith("_gemv")]
+    assert len(scratch) == 1, "the matrix-vector einsum did not lower to GEMV plus a beta fold"
     assert scratch[0].storage == gpu
 
 
@@ -454,31 +467,32 @@ def test_einsum_shape_check_equalizes_symbols():
     pass rebuilt against one parsed from a string -- which compare unequal by identity. The einsum
     dimension check must go through the name, or it rejects a contraction whose shapes agree."""
     from dace.libraries.blas.nodes.einsum import Einsum
+
     rows, cols = 4, 6
-    wide = dace.symbol('ESN', dace.int32)
-    narrow = dace.symbol('ESN', dace.int64)
+    wide = dace.symbol("ESN", dace.int32)
+    narrow = dace.symbol("ESN", dace.int64)
     # the premise: identity says these differ, the name says they do not
     assert wide is not narrow and wide != narrow
     assert not symbolic.inequal_symbols(wide, narrow)
 
-    sdfg = dace.SDFG('einsum_symbol_instances')
-    sdfg.add_array('A', [rows, wide], dace.float64)
-    sdfg.add_array('v', [narrow], dace.float64)
-    sdfg.add_array('out', [rows], dace.float64)
+    sdfg = dace.SDFG("einsum_symbol_instances")
+    sdfg.add_array("A", [rows, wide], dace.float64)
+    sdfg.add_array("v", [narrow], dace.float64)
+    sdfg.add_array("out", [rows], dace.float64)
     state = sdfg.add_state()
-    enode = Einsum('einsum')
-    enode.einsum_str = 'ij,j->i'
-    enode.in_connectors = {'_ein00': None, '_ein01': None}
-    enode.out_connectors = {'_out': None}
+    enode = Einsum("einsum")
+    enode.einsum_str = "ij,j->i"
+    enode.in_connectors = {"_ein00": None, "_ein01": None}
+    enode.out_connectors = {"_out": None}
     state.add_node(enode)
     # from_array, not a parsed string: parsing both bounds from 'ESN' would mint ONE instance and
     # the mismatch under test could not arise.
-    state.add_edge(state.add_read('A'), None, enode, '_ein00', dace.Memlet.from_array('A', sdfg.arrays['A']))
-    state.add_edge(state.add_read('v'), None, enode, '_ein01', dace.Memlet.from_array('v', sdfg.arrays['v']))
-    state.add_edge(enode, '_out', state.add_write('out'), None, dace.Memlet.from_array('out', sdfg.arrays['out']))
+    state.add_edge(state.add_read("A"), None, enode, "_ein00", dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    state.add_edge(state.add_read("v"), None, enode, "_ein01", dace.Memlet.from_array("v", sdfg.arrays["v"]))
+    state.add_edge(enode, "_out", state.add_write("out"), None, dace.Memlet.from_array("out", sdfg.arrays["out"]))
 
     # the two instances survive as far as the check; without equalization this raises
-    assert sdfg.arrays['A'].shape[1] is not sdfg.arrays['v'].shape[0]
+    assert sdfg.arrays["A"].shape[1] is not sdfg.arrays["v"].shape[0]
     sdfg.expand_library_nodes()
     assert not any(isinstance(n, Einsum) for n in state.nodes())
 
@@ -487,32 +501,32 @@ def test_einsum_shape_check_equalizes_symbols():
     v = rng.random(cols)
     out = np.zeros(rows)
     sdfg(A=a, v=v, out=out, ESN=cols)
-    assert np.allclose(out, a @ v), f'got {out}, want {a @ v}'
+    assert np.allclose(out, a @ v), f"got {out}, want {a @ v}"
 
 
 def test_einsum_libnode_ordering_edge():
     """An ordering memlet into the Einsum node names no container; expansion must skip it."""
     from dace.libraries.blas.nodes.einsum import Einsum
 
-    sdfg = dace.SDFG('tester_ordering')
-    sdfg.arg_names = ['A', 'B']
-    sdfg.add_array('A', (20, 21), dace.float64)
-    sdfg.add_array('B', (21, 22), dace.float64)
-    sdfg.add_array('__return', (20, 22), dace.float64)
-    sdfg.add_transient('anchor', (1, ), dace.float64)
+    sdfg = dace.SDFG("tester_ordering")
+    sdfg.arg_names = ["A", "B"]
+    sdfg.add_array("A", (20, 21), dace.float64)
+    sdfg.add_array("B", (21, 22), dace.float64)
+    sdfg.add_array("__return", (20, 22), dace.float64)
+    sdfg.add_transient("anchor", (1,), dace.float64)
 
     state = sdfg.add_state()
-    enode = Einsum('einsum')
-    enode.einsum_str = 'ik,kj->ij'
-    enode.in_connectors = {'a': None, 'b': None}
-    enode.out_connectors = {'out': None}
+    enode = Einsum("einsum")
+    enode.einsum_str = "ik,kj->ij"
+    enode.in_connectors = {"a": None, "b": None}
+    enode.out_connectors = {"out": None}
     state.add_node(enode)
-    state.add_edge(state.add_read('A'), None, enode, 'a', dace.Memlet('A'))
-    state.add_edge(state.add_read('B'), None, enode, 'b', dace.Memlet('B'))
-    state.add_edge(enode, 'out', state.add_write('__return'), None, dace.Memlet('__return'))
+    state.add_edge(state.add_read("A"), None, enode, "a", dace.Memlet("A"))
+    state.add_edge(state.add_read("B"), None, enode, "b", dace.Memlet("B"))
+    state.add_edge(enode, "out", state.add_write("__return"), None, dace.Memlet("__return"))
 
-    anchor = state.add_access('anchor')
-    state.add_edge(state.add_tasklet('t', {}, {'o': None}, 'o = 1.0'), 'o', anchor, None, dace.Memlet('anchor[0]'))
+    anchor = state.add_access("anchor")
+    state.add_edge(state.add_tasklet("t", {}, {"o": None}, "o = 1.0"), "o", anchor, None, dace.Memlet("anchor[0]"))
     state.add_nedge(anchor, enode, dace.Memlet())
     sdfg.validate()
 
@@ -521,7 +535,7 @@ def test_einsum_libnode_ordering_edge():
     assert np.allclose(sdfg(A, B), A @ B)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_general_einsum()
     test_matmul()
     test_batch_matmul()

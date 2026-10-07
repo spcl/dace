@@ -23,6 +23,7 @@ lets ``SymbolDedup`` sit at every stage boundary instead of one chosen point.
 Results here are ``allclose``, NOT bit-exact: an atomic fold reassociates the additions, so two
 runs of the same input can differ in the last ulp (measured 1.2e-15 relative, 16 threads).
 """
+
 import numpy as np
 
 import dace
@@ -31,13 +32,15 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.symbol_dedup import SymbolDedup
-from dace.transformation.passes.scatter_to_guarded_maps import (detect_scatter_idx_arrays,
-                                                                indirect_write_needs_injectivity)
+from dace.transformation.passes.scatter_to_guarded_maps import (
+    detect_scatter_idx_arrays,
+    indirect_write_needs_injectivity,
+)
 
 #: Every descriptor the conflict guard allocates shares this infix (tag buffer + count scalar).
-GUARD_INFIX = 'scatter_guard'
+GUARD_INFIX = "scatter_guard"
 
-LEN_1D = dace.symbol('LEN_1D', dtype=dace.int64, positive=True)
+LEN_1D = dace.symbol("LEN_1D", dtype=dace.int64, positive=True)
 
 
 @dace.program
@@ -69,7 +72,7 @@ def _inputs(n: int, duplicates: bool):
 
 def _canonicalized():
     sdfg = _scatter_accum.to_sdfg(simplify=False)
-    canonicalize(sdfg, target='cpu')
+    canonicalize(sdfg, target="cpu")
     return sdfg
 
 
@@ -84,7 +87,7 @@ def test_duplicate_indices_run_and_match_oracle():
     it, so a regression here shows up as a crashed worker rather than a failed assertion.
     """
     bins, src, ip = _inputs(1024, duplicates=True)
-    assert np.unique(ip).size < ip.size, 'the draw must repeat an index or the test proves nothing'
+    assert np.unique(ip).size < ip.size, "the draw must repeat an index or the test proves nothing"
     got = bins.copy()
     _canonicalized()(bins=got, src=src.copy(), ip=ip.copy(), LEN_1D=1024)
     assert np.allclose(got, _oracle(bins, src, ip))
@@ -117,28 +120,31 @@ def test_accumulate_lifts_to_a_wcr_map_without_a_guard():
     the WCR assertion is the one that keeps the parallelization honest.
     """
     sdfg = _canonicalized()
-    assert not _guard_descriptors(sdfg), 'an accumulate must not allocate a conflict-check buffer'
+    assert not _guard_descriptors(sdfg), "an accumulate must not allocate a conflict-check buffer"
     assert not [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
     assert [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     wcr_writes = [
-        e.data.wcr for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
-        if e.data is not None and e.data.data == 'bins' and e.data.wcr is not None
+        e.data.wcr
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for e in st.edges()
+        if e.data is not None and e.data.data == "bins" and e.data.wcr is not None
     ]
-    assert wcr_writes, 'the indirect accumulate must reach codegen as a WCR write'
+    assert wcr_writes, "the indirect accumulate must reach codegen as a WCR write"
 
 
 def test_plain_indirect_store_is_still_guarded():
     """The guard is not disabled: a plain ``dst[ip[i]] = src[i]`` still needs its permutation."""
     sdfg = _scatter_store.to_sdfg(simplify=False)
-    canonicalize(sdfg, target='cpu')
-    assert _guard_descriptors(sdfg), 'a plain indirect store must keep its conflict check'
+    canonicalize(sdfg, target="cpu")
+    assert _guard_descriptors(sdfg), "a plain indirect store must keep its conflict check"
 
 
 def test_detector_ignores_accumulating_writes():
     """Unit-level mirror of the two tests above, on the detector itself."""
-    assert detect_scatter_idx_arrays(_scatter_store.to_sdfg(simplify=True)) == {'ip'}
-    assert indirect_write_needs_injectivity(dace.Memlet(data='bins', subset='0')) is True
-    assert indirect_write_needs_injectivity(dace.Memlet(data='bins', subset='0', wcr='lambda a, b: a + b')) is False
+    assert detect_scatter_idx_arrays(_scatter_store.to_sdfg(simplify=True)) == {"ip"}
+    assert indirect_write_needs_injectivity(dace.Memlet(data="bins", subset="0")) is True
+    assert indirect_write_needs_injectivity(dace.Memlet(data="bins", subset="0", wcr="lambda a, b: a + b")) is False
 
 
 def _alias_the_store_subscript(sdfg: dace.SDFG) -> str:
@@ -161,12 +167,12 @@ def _alias_the_store_subscript(sdfg: dace.SDFG) -> str:
                 for sym, rhs in list(iedge.data.assignments.items()):
                     for state in region.states():
                         for edge in state.edges():
-                            if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != 'bins':
+                            if not isinstance(edge.dst, nodes.AccessNode) or edge.dst.data != "bins":
                                 continue
                             subset = edge.data.dst_subset if edge.data.dst_subset is not None else edge.data.subset
                             if subset is None or sym not in {str(s) for s in subset.free_symbols}:
                                 continue
-                            alias = f'_alias_{sym}'
+                            alias = f"_alias_{sym}"
                             dtype = sd.symbols[sym]
                             iedge.data.assignments[alias] = rhs
                             sd.add_symbol(alias, dtype, find_new_name=False)
@@ -175,7 +181,7 @@ def _alias_the_store_subscript(sdfg: dace.SDFG) -> str:
                             # is invisible to it and every later rename silently skips this subset.
                             edge.data.replace({sym: symbolic.symbol(alias, dtype)})
                             return alias
-    raise AssertionError('no indirect store into bins to alias -- the premise of this test is gone')
+    raise AssertionError("no indirect store into bins to alias -- the premise of this test is gone")
 
 
 def test_two_names_for_one_address_still_becomes_a_wcr():
@@ -190,12 +196,15 @@ def test_two_names_for_one_address_still_becomes_a_wcr():
     sdfg = _scatter_accum.to_sdfg(simplify=True)
     alias = _alias_the_store_subscript(sdfg)
     assert alias in {s for sd in sdfg.all_sdfgs_recursive() for s in sd.symbols}
-    canonicalize(sdfg, target='cpu')
+    canonicalize(sdfg, target="cpu")
     assert not _guard_descriptors(sdfg)
     assert [
-        e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
-        if e.data is not None and e.data.data == 'bins' and e.data.wcr is not None
-    ], 'the accumulate lost its WCR to the aliased address'
+        e
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for e in st.edges()
+        if e.data is not None and e.data.data == "bins" and e.data.wcr is not None
+    ], "the accumulate lost its WCR to the aliased address"
 
 
 def test_symbol_dedup_is_idempotent():
@@ -207,7 +216,7 @@ def test_symbol_dedup_is_idempotent():
     sdfg = _scatter_accum.to_sdfg(simplify=True)
     _alias_the_store_subscript(sdfg)
     first = SymbolDedup().apply_pass(sdfg, {})
-    assert first, 'the aliased address must give SymbolDedup something to merge'
+    assert first, "the aliased address must give SymbolDedup something to merge"
     settled = sdfg.to_json()
     assert SymbolDedup().apply_pass(sdfg, {}) is None
     assert sdfg.to_json() == settled

@@ -10,16 +10,16 @@ import numpy as np
 #     B[4:11] = dace.reduce(lambda a,b: a+b, A[25:50, 13:20], axis=0,
 #                           identity=0)
 
-reduce_with_offsets = dace.SDFG('reduce_with_offsets')
-reduce_with_offsets.add_array('A', [50, 50], dace.float64)
-reduce_with_offsets.add_array('B', [25], dace.float64)
+reduce_with_offsets = dace.SDFG("reduce_with_offsets")
+reduce_with_offsets.add_array("A", [50, 50], dace.float64)
+reduce_with_offsets.add_array("B", [25], dace.float64)
 
 state = reduce_with_offsets.add_state()
-node_a = state.add_read('A')
-node_b = state.add_write('B')
-red = state.add_reduce('lambda a,b: a+b', [0], 0)
-state.add_edge(node_a, None, red, '_in', dace.Memlet.simple('A', '25:50, 13:20'))
-state.add_edge(red, '_out', node_b, None, dace.Memlet.simple('B', '4:11'))
+node_a = state.add_read("A")
+node_b = state.add_write("B")
+red = state.add_reduce("lambda a,b: a+b", [0], 0)
+state.add_edge(node_a, None, red, "_in", dace.Memlet.simple("A", "25:50, 13:20"))
+state.add_edge(red, "_out", node_b, None, dace.Memlet.simple("B", "4:11"))
 
 
 def test_offset_reduce():
@@ -52,23 +52,23 @@ def test_offset_reduce_indices():
     B = np.ndarray([1], dtype=np.float64)
     B[0] = -np.inf
 
-    reduce_with_indices = dace.SDFG('reduce_with_indices')
-    reduce_with_indices.add_array('A', [10, 10, 10, 10], dace.float64)
-    reduce_with_indices.add_array('B', [1], dace.float64)
+    reduce_with_indices = dace.SDFG("reduce_with_indices")
+    reduce_with_indices.add_array("A", [10, 10, 10, 10], dace.float64)
+    reduce_with_indices.add_array("B", [1], dace.float64)
 
     state = reduce_with_indices.add_state()
-    node_a = state.add_read('A')
-    node_b = state.add_write('B')
-    red = state.add_reduce('lambda a,b: max(a,b)', [0, 1, 2, 3])
-    state.add_edge(node_a, None, red, '_in', dace.Memlet.simple('A', '0, 1, 2, 0:10'))
-    state.add_edge(red, '_out', node_b, None, dace.Memlet.simple('B', '0'))
+    node_a = state.add_read("A")
+    node_b = state.add_write("B")
+    red = state.add_reduce("lambda a,b: max(a,b)", [0, 1, 2, 3])
+    state.add_edge(node_a, None, red, "_in", dace.Memlet.simple("A", "0, 1, 2, 0:10"))
+    state.add_edge(red, "_out", node_b, None, dace.Memlet.simple("B", "0"))
 
     reduce_with_indices(A=A, B=B)
 
     assert np.allclose(B, np.max(A[0, 1, 2, :], axis=0))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_offset_reduce()
     test_offset_reduce_sequential()
     test_offset_reduce_indices()

@@ -4,12 +4,18 @@ layout permutation reach an einsum/TensorDot operand's semantic indices) and Gem
 (exposing a Gemm's operand layout by lowering it to a TensorDot). Correctness oracle: the rewritten
 node still computes A @ B bit-exactly, and an eligible Gemm is replaced while a scaled/accumulating
 one is left in place."""
+
 import numpy
 import pytest
 import dace
 
-from dace.transformation.layout.rewrite_libnodes import (transform_einsum, remap_contracted_axes, GemmToTensorDot,
-                                                         permute_reduce, block_scan_stride)
+from dace.transformation.layout.rewrite_libnodes import (
+    transform_einsum,
+    remap_contracted_axes,
+    GemmToTensorDot,
+    permute_reduce,
+    block_scan_stride,
+)
 from dace.transformation.layout.select_lowering import select_layout_lowering
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes.reduce import Reduce

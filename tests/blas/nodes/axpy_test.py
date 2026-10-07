@@ -20,7 +20,6 @@ def run_test(configs, target):
     n = int(1 << 13)
 
     for i, config in enumerate(configs):
-
         a, veclen, dtype = config
 
         x = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type), alignment=256)
@@ -34,8 +33,7 @@ def run_test(configs, target):
         sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
 
-        with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
-
+        with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
             program(x=x, y=y, a=a, n=np.int32(n))
             ref_norm = np.linalg.norm(y - ref_result) / n
 
@@ -100,7 +98,7 @@ def test_validate_accepts_reparsed_symbol_instances():
     state.add_edge(node, "_res", state.add_write("res"), None, Memlet.from_array("res", sdfg.arrays["res"]))
     node.validate(sdfg, state)  # must not raise
 
-    sdfg.arrays["y"].shape = (dace.symbol("P", dace.int32), )
+    sdfg.arrays["y"].shape = (dace.symbol("P", dace.int32),)
     y_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_y")
     y_edge.data = Memlet.from_array("y", sdfg.arrays["y"])
     with pytest.raises(ValueError):

@@ -8,6 +8,7 @@ expansion is a parallel triangular copy -- turning a nest that ``LoopToMap``
 refuses (in-place symmetric read/write false-dependence) into a fully parallel
 form.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -24,7 +25,7 @@ from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Symmetrize
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-M = dace.symbol('M')
+M = dace.symbol("M")
 
 
 @dace.program
@@ -54,8 +55,9 @@ def _nsym(sdfg):
 
 
 def _nloops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
-               if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(
+        1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    )
 
 
 def _mirror(X, source_upper):
@@ -72,13 +74,13 @@ def _mirror(X, source_upper):
 
 def test_node_expands_and_runs():
     """A Symmetrize node builds, expands to a parallel triangular copy, and runs."""
-    sdfg = dace.SDFG('sym_node')
-    sdfg.add_array('X', [M, M], dace.float64)
+    sdfg = dace.SDFG("sym_node")
+    sdfg.add_array("X", [M, M], dace.float64)
     st = sdfg.add_state()
-    node = Symmetrize('sym', row_lo='0', row_hi='M', col_offset=1, col_hi='M', source_upper=True)
+    node = Symmetrize("sym", row_lo="0", row_hi="M", col_offset=1, col_hi="M", source_upper=True)
     st.add_node(node)
-    st.add_edge(st.add_read('X'), None, node, '_in', dace.Memlet('X[0:M, 0:M]'))
-    st.add_edge(node, '_out', st.add_write('X'), None, dace.Memlet('X[0:M, 0:M]'))
+    st.add_edge(st.add_read("X"), None, node, "_in", dace.Memlet("X[0:M, 0:M]"))
+    st.add_edge(node, "_out", st.add_write("X"), None, dace.Memlet("X[0:M, 0:M]"))
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -92,14 +94,14 @@ def test_node_expands_and_runs():
     assert np.allclose(got, got.T)
 
 
-@pytest.mark.parametrize('prog,source_upper', [(symmetrize_upper, True), (symmetrize_lower, False)])
+@pytest.mark.parametrize("prog,source_upper", [(symmetrize_upper, True), (symmetrize_lower, False)])
 def test_lifts_and_parallelizes(prog, source_upper):
     """The triangular symmetrization nest lifts to one Symmetrize node, leaves no
     sequential loop, and stays value-correct."""
     sdfg = prog.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nsym(sdfg) == 1, 'the symmetrization nest must lift to exactly one Symmetrize node'
-    assert _nloops(sdfg) == 0, 'no sequential loop should remain'
+    assert _nsym(sdfg) == 1, "the symmetrization nest must lift to exactly one Symmetrize node"
+    assert _nloops(sdfg) == 0, "no sequential loop should remain"
     sdfg.validate()
 
     m = 9
@@ -130,18 +132,18 @@ def test_cross_array_copy_not_lifted():
     assert np.allclose(got, exp)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
 
 
 def cuda_launch_dimensions(sdfg: dace.SDFG) -> list[str]:
     """The ``dim3(...)`` grid and block arguments of every kernel launch the CUDA unit emits."""
     dims: list[str] = []
     for obj in sdfg.generate_code():
-        if obj.language not in ('cu', 'cpp'):
+        if obj.language not in ("cu", "cpp"):
             continue
         for line in obj.clean_code.splitlines():
-            dims += [chunk.split(')')[0] for chunk in line.split('dim3(')[1:]]
+            dims += [chunk.split(")")[0] for chunk in line.split("dim3(")[1:]]
     return dims
 
 
@@ -153,15 +155,15 @@ def test_the_triangular_column_map_never_reaches_a_launch_dimension():
     number if it had compiled."""
     sdfg = symmetrize_upper.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nsym(sdfg) == 1, 'the nest did not lift, so this asserts nothing'
+    assert _nsym(sdfg) == 1, "the nest did not lift, so this asserts nothing"
     sdfg.apply_gpu_transformations()
 
     dims = cuda_launch_dimensions(sdfg)
-    assert dims, 'no kernel was launched, so the launch dimensions assert nothing'
-    assert not [d for d in dims if '__i' in d], f'a launch dimension reads a map parameter: {dims}'
+    assert dims, "no kernel was launched, so the launch dimensions assert nothing"
+    assert not [d for d in dims if "__i" in d], f"a launch dimension reads a map parameter: {dims}"
 
 
-@pytest.mark.parametrize('source_upper', [True, False])
+@pytest.mark.parametrize("source_upper", [True, False])
 def test_the_bounding_box_expansion_walks_a_rectangle_and_computes_the_same_mirror(source_upper):
     """The fallback GPU lowering trades the triangle for its bounding box to keep BOTH axes parallel.
 
@@ -175,25 +177,27 @@ def test_the_bounding_box_expansion_walks_a_rectangle_and_computes_the_same_mirr
     rather than asserting the index expression. No GPU is involved: the shape of the iteration
     space is what is under test, and it is the same on either target.
     """
-    sdfg = dace.SDFG(f'sym_gpu_{int(source_upper)}')
-    sdfg.add_array('X', [M, M], dace.float64)
+    sdfg = dace.SDFG(f"sym_gpu_{int(source_upper)}")
+    sdfg.add_array("X", [M, M], dace.float64)
     st = sdfg.add_state()
-    node = Symmetrize('sym', row_lo='0', row_hi='M - 1', col_offset=1, col_hi='M', source_upper=source_upper)
+    node = Symmetrize("sym", row_lo="0", row_hi="M - 1", col_offset=1, col_hi="M", source_upper=source_upper)
     st.add_node(node)
-    st.add_edge(st.add_read('X'), None, node, '_in', dace.Memlet('X[0:M, 0:M]'))
-    st.add_edge(node, '_out', st.add_write('X'), None, dace.Memlet('X[0:M, 0:M]'))
-    node.implementation = 'bounding_box'
+    st.add_edge(st.add_read("X"), None, node, "_in", dace.Memlet("X[0:M, 0:M]"))
+    st.add_edge(node, "_out", st.add_write("X"), None, dace.Memlet("X[0:M, 0:M]"))
+    node.implementation = "bounding_box"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
 
     maps = [n.map for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)]
-    assert len(maps) == 1, f'the bounding box has to be ONE map for the tiler to split it: {[m.label for m in maps]}'
-    assert len(maps[0].params) == 2, f'both axes have to reach the launch: {maps[0].params}'
+    assert len(maps) == 1, f"the bounding box has to be ONE map for the tiler to split it: {[m.label for m in maps]}"
+    assert len(maps[0].params) == 2, f"both axes have to reach the launch: {maps[0].params}"
     outer = maps[0].params[0]
     inner_bounds = str(maps[0].range[1])
-    assert outer not in inner_bounds, (f'the column extent still names the row parameter ({outer}), so it would '
-                                       f'become a per-block launch dimension: {inner_bounds}')
+    assert outer not in inner_bounds, (
+        f"the column extent still names the row parameter ({outer}), so it would "
+        f"become a per-block launch dimension: {inner_bounds}"
+    )
 
     m = 9
     rng = np.random.default_rng(1)
@@ -205,8 +209,8 @@ def test_the_bounding_box_expansion_walks_a_rectangle_and_computes_the_same_mirr
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('source_upper', [True, False])
-@pytest.mark.parametrize('m', [9, 32, 33, 64, 100])
+@pytest.mark.parametrize("source_upper", [True, False])
+@pytest.mark.parametrize("m", [9, 32, 33, 64, 100])
 def test_the_tiled_cuda_kernel_mirrors_every_size(source_upper, m):
     """The tiled kernel is guarded per element, so the ragged sizes are the ones that matter.
 
@@ -215,16 +219,16 @@ def test_the_tiled_cuda_kernel_mirrors_every_size(source_upper, m):
     destination elements at once. Values, not structure -- an off-by-one in those guards writes the
     wrong triangle and no error is raised.
     """
-    sdfg = dace.SDFG(f'sym_cuda_{int(source_upper)}_{m}')
+    sdfg = dace.SDFG(f"sym_cuda_{int(source_upper)}_{m}")
     # Host signature: ``apply_gpu_transformations`` stages it to the device and schedules the node
     # there, which is the shape the pipeline actually produces.
-    sdfg.add_array('X', [M, M], dace.float64)
+    sdfg.add_array("X", [M, M], dace.float64)
     st = sdfg.add_state()
-    node = Symmetrize('sym', row_lo='0', row_hi='M - 1', col_offset=1, col_hi='M', source_upper=source_upper)
-    node.implementation = 'CUDA'
+    node = Symmetrize("sym", row_lo="0", row_hi="M - 1", col_offset=1, col_hi="M", source_upper=source_upper)
+    node.implementation = "CUDA"
     st.add_node(node)
-    st.add_edge(st.add_read('X'), None, node, '_in', dace.Memlet('X[0:M, 0:M]'))
-    st.add_edge(node, '_out', st.add_write('X'), None, dace.Memlet('X[0:M, 0:M]'))
+    st.add_edge(st.add_read("X"), None, node, "_in", dace.Memlet("X[0:M, 0:M]"))
+    st.add_edge(node, "_out", st.add_write("X"), None, dace.Memlet("X[0:M, 0:M]"))
     sdfg.validate()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
 

@@ -27,8 +27,9 @@ def overlapping_access_with_previous_write(A: dace.float64[2, 2, S], B: dace.flo
 
 
 @dace.program
-def overlapping_with_intermediate_access_node(A: dace.float64[2, 2, S], B: dace.float64[2, 2, S], C: dace.float64[2,
-                                                                                                                  S]):
+def overlapping_with_intermediate_access_node(
+    A: dace.float64[2, 2, S], B: dace.float64[2, 2, S], C: dace.float64[2, S]
+):
     A[0, 0, 0] = 3.0
     for i in dace.map[0:2:1]:
         c = B[i, 0, 0]
@@ -37,12 +38,12 @@ def overlapping_with_intermediate_access_node(A: dace.float64[2, 2, S], B: dace.
 
 
 @dace.program
-def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):  #, N, tsteps):
+def jacobi2d(A: dace.float64[S, S], B: dace.float64[S, S], tsteps: dace.int64):  # , N, tsteps):
     for t in range(tsteps):
-        for i, j in dace.map[0:S - 2, 0:S - 2]:
+        for i, j in dace.map[0 : S - 2, 0 : S - 2]:
             B[i + 1, j + 1] = 0.2 * (A[i + 1, j + 1] + A[i, j + 1] + A[i + 2, j + 1] + A[i + 1, j] + A[i + 1, j + 2])
 
-        for i, j in dace.map[0:S - 2, 0:S - 2]:
+        for i, j in dace.map[0 : S - 2, 0 : S - 2]:
             A[i + 1, j + 1] = 0.2 * (B[i + 1, j + 1] + B[i, j + 1] + B[i + 2, j + 1] + B[i + 1, j] + B[i + 1, j + 2])
 
 
@@ -67,8 +68,9 @@ def run_comparison(sdfg1, sdfg2, arrays, params):
 
     # Compare results
     for name in arrays.keys():
-        assert numpy.allclose(arrays_orig[name], arrays_vec[name]), \
+        assert numpy.allclose(arrays_orig[name], arrays_vec[name]), (
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
+        )
 
 
 @pytest.mark.parametrize("apply_only_if_subsets_not_equal", [True, False])
@@ -118,7 +120,7 @@ def test_overlapping_access(apply_only_if_subsets_not_equal: bool):
     _S = 64
     tsteps = 5
     A = numpy.random.random((2, 2, _S))
-    B = numpy.random.random((_S, ))
+    B = numpy.random.random((_S,))
     run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B}, params={"tsteps": tsteps, "S": _S})
 
 
@@ -144,7 +146,7 @@ def test_non_overlapping_access(apply_only_if_subsets_not_equal: bool):
     _S = 64
     tsteps = 5
     A = numpy.random.random((2, 2, _S))
-    B = numpy.random.random((_S, ))
+    B = numpy.random.random((_S,))
     run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B}, params={"tsteps": tsteps, "S": _S})
 
 
@@ -167,7 +169,7 @@ def test_overlapping_access_with_previous_write(apply_only_if_subsets_not_equal:
     _S = 64
     tsteps = 5
     A = numpy.random.random((2, 2, _S))
-    B = numpy.random.random((_S, ))
+    B = numpy.random.random((_S,))
     run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B}, params={"tsteps": tsteps, "S": _S})
 
 
@@ -178,9 +180,12 @@ def test_overlapping_access_with_intermediate_access_node(apply_only_if_subsets_
     sdfg.validate()
 
     copy_sdfg = copy.deepcopy(sdfg)
-    map_entries = {(n, g)
-                   for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)
-                   if g.scope_dict()[n] is not None}
+    map_entries = {
+        (n, g)
+        for n, g in copy_sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry)
+        if g.scope_dict()[n] is not None
+    }
     assert len(map_entries) == 1
     map_entry, state = map_entries.pop()
 
@@ -192,10 +197,12 @@ def test_overlapping_access_with_intermediate_access_node(apply_only_if_subsets_
     tsteps = 5
     A = numpy.random.random((2, 2, _S))
     B = numpy.random.random((2, 2, _S))
-    C = numpy.random.random((
-        2,
-        _S,
-    ))
+    C = numpy.random.random(
+        (
+            2,
+            _S,
+        )
+    )
     run_comparison(sdfg, copy_sdfg, arrays={"A": A, "B": B, "C": C}, params={"tsteps": tsteps, "S": _S})
 
 

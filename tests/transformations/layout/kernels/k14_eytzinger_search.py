@@ -38,6 +38,7 @@ the *layout* is a plain elementwise pass over the key array; we keep that -- a
 per-key touch of ``A`` -- and drop the descent (it is a compute detail, not a
 layout decision).
 """
+
 import numpy
 import dace
 

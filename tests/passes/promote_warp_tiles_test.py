@@ -10,6 +10,7 @@ Two failure directions, both checked below: losing the tag (the request never ar
 redeeming it where a thread block has no meaning (nested inside another one, or with no kernel
 around it at all).
 """
+
 import numpy as np
 import pytest
 
@@ -19,39 +20,44 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import finalize
 from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 TILE = 64
 
 
 def two_level(outer_schedule=dtypes.ScheduleType.Default, inner_schedule=dtypes.ScheduleType.Default, tag=True):
     """A device map over a tile map, in the shape the offload produces: outer kernel, inner tile."""
-    sdfg = dace.SDFG('warp_tile')
-    sdfg.add_array('a', [N, TILE], dace.float64)
-    state = sdfg.add_state('s', is_start_block=True)
-    outer_e, outer_x = state.add_map('outer', {'ti': '0:N'}, schedule=outer_schedule)
-    inner_e, inner_x = state.add_map('tile', {'tj': f'0:{TILE}'}, schedule=inner_schedule)
+    sdfg = dace.SDFG("warp_tile")
+    sdfg.add_array("a", [N, TILE], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    outer_e, outer_x = state.add_map("outer", {"ti": "0:N"}, schedule=outer_schedule)
+    inner_e, inner_x = state.add_map("tile", {"tj": f"0:{TILE}"}, schedule=inner_schedule)
     inner_e.map.is_warp_tile = tag
-    tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in * 2.0')
-    rd, wr = state.add_read('a'), state.add_write('a')
-    state.add_memlet_path(rd, outer_e, inner_e, tasklet, dst_conn='__in', memlet=dace.Memlet('a[ti, tj]'))
-    state.add_memlet_path(tasklet, inner_x, outer_x, wr, src_conn='__out', memlet=dace.Memlet('a[ti, tj]'))
+    tasklet = state.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in * 2.0")
+    rd, wr = state.add_read("a"), state.add_write("a")
+    state.add_memlet_path(rd, outer_e, inner_e, tasklet, dst_conn="__in", memlet=dace.Memlet("a[ti, tj]"))
+    state.add_memlet_path(tasklet, inner_x, outer_x, wr, src_conn="__out", memlet=dace.Memlet("a[ti, tj]"))
     sdfg.validate()
     return sdfg
 
 
 def tile_map(sdfg):
-    return next(n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
-                if isinstance(n, nodes.MapEntry) and n.map.label == 'tile')
+    return next(
+        n
+        for g in sdfg.all_sdfgs_recursive()
+        for st in g.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.MapEntry) and n.map.label == "tile"
+    )
 
 
 def test_the_tag_is_off_by_default():
     """Nothing gets a thread block by accident: every map ever built starts untagged."""
     sdfg = two_level(tag=False)
     assert tile_map(sdfg).map.is_warp_tile is False
-    plain = dace.SDFG('plain')
-    plain.add_array('a', [N], dace.float64)
-    st = plain.add_state('s', is_start_block=True)
-    entry, _ = st.add_map('m', {'i': '0:N'})
+    plain = dace.SDFG("plain")
+    plain.add_array("a", [N], dace.float64)
+    st = plain.add_state("s", is_start_block=True)
+    entry, _ = st.add_map("m", {"i": "0:N"})
     assert entry.map.is_warp_tile is False
 
 
@@ -64,8 +70,8 @@ def test_the_device_offload_sequentializes_the_map_and_keeps_the_tag():
     sdfg = two_level()
     sdfg.apply_gpu_transformations()
     tile = tile_map(sdfg)
-    assert tile.map.schedule == dtypes.ScheduleType.Sequential, 'the offload stopped sequentializing'
-    assert tile.map.is_warp_tile is True, 'the tag did not survive the offload'
+    assert tile.map.schedule == dtypes.ScheduleType.Sequential, "the offload stopped sequentializing"
+    assert tile.map.is_warp_tile is True, "the tag did not survive the offload"
     assert PromoteWarpTiles().apply_pass(sdfg, {}) == 1
     assert tile_map(sdfg).map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
 
@@ -77,9 +83,14 @@ def test_the_full_offload_redeems_the_tag_itself():
     sdfg = two_level()
     finalize.offload_to_gpu(sdfg)
     assert tile_map(sdfg).map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-    kernel = next(n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
-                  if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device)
-    assert kernel.map.gpu_block_size is None, 'the thread-block map is the block spec; nothing may declare another'
+    kernel = next(
+        n
+        for g in sdfg.all_sdfgs_recursive()
+        for st in g.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
+    )
+    assert kernel.map.gpu_block_size is None, "the thread-block map is the block spec; nothing may declare another"
 
 
 def test_an_untagged_map_stays_sequential():
@@ -100,15 +111,15 @@ def test_a_map_someone_else_already_scheduled_is_not_overruled():
 
 def test_a_tag_with_no_kernel_around_it_is_refused():
     """A thread block outside a kernel is meaningless; the tag alone must not conjure one."""
-    sdfg = dace.SDFG('hostside')
-    sdfg.add_array('a', [N], dace.float64)
-    state = sdfg.add_state('s', is_start_block=True)
-    entry, exit_ = state.add_map('tile', {'i': '0:N'}, schedule=dtypes.ScheduleType.Sequential)
+    sdfg = dace.SDFG("hostside")
+    sdfg.add_array("a", [N], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    entry, exit_ = state.add_map("tile", {"i": "0:N"}, schedule=dtypes.ScheduleType.Sequential)
     entry.map.is_warp_tile = True
-    tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in + 1.0')
-    rd, wr = state.add_read('a'), state.add_write('a')
-    state.add_memlet_path(rd, entry, tasklet, dst_conn='__in', memlet=dace.Memlet('a[i]'))
-    state.add_memlet_path(tasklet, exit_, wr, src_conn='__out', memlet=dace.Memlet('a[i]'))
+    tasklet = state.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in + 1.0")
+    rd, wr = state.add_read("a"), state.add_write("a")
+    state.add_memlet_path(rd, entry, tasklet, dst_conn="__in", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(tasklet, exit_, wr, src_conn="__out", memlet=dace.Memlet("a[i]"))
     sdfg.validate()
     assert PromoteWarpTiles().apply_pass(sdfg, {}) is None
     assert entry.map.schedule == dtypes.ScheduleType.Sequential
@@ -123,17 +134,17 @@ def test_a_tag_inside_a_thread_block_is_refused():
 
 def test_a_tag_wrapping_a_thread_block_is_refused():
     """Same rule from the other side: a promotion may not put a block scope inside a block scope."""
-    sdfg = dace.SDFG('threedeep')
-    sdfg.add_array('a', [N, 8, 8], dace.float64)
-    state = sdfg.add_state('s', is_start_block=True)
-    dev_e, dev_x = state.add_map('outer', {'ti': '0:N'}, schedule=dtypes.ScheduleType.GPU_Device)
-    mid_e, mid_x = state.add_map('tile', {'tj': '0:8'}, schedule=dtypes.ScheduleType.Sequential)
+    sdfg = dace.SDFG("threedeep")
+    sdfg.add_array("a", [N, 8, 8], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    dev_e, dev_x = state.add_map("outer", {"ti": "0:N"}, schedule=dtypes.ScheduleType.GPU_Device)
+    mid_e, mid_x = state.add_map("tile", {"tj": "0:8"}, schedule=dtypes.ScheduleType.Sequential)
     mid_e.map.is_warp_tile = True
-    in_e, in_x = state.add_map('block', {'tk': '0:8'}, schedule=dtypes.ScheduleType.GPU_ThreadBlock)
-    tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in * 2.0')
-    rd, wr = state.add_read('a'), state.add_write('a')
-    state.add_memlet_path(rd, dev_e, mid_e, in_e, tasklet, dst_conn='__in', memlet=dace.Memlet('a[ti, tj, tk]'))
-    state.add_memlet_path(tasklet, in_x, mid_x, dev_x, wr, src_conn='__out', memlet=dace.Memlet('a[ti, tj, tk]'))
+    in_e, in_x = state.add_map("block", {"tk": "0:8"}, schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+    tasklet = state.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in * 2.0")
+    rd, wr = state.add_read("a"), state.add_write("a")
+    state.add_memlet_path(rd, dev_e, mid_e, in_e, tasklet, dst_conn="__in", memlet=dace.Memlet("a[ti, tj, tk]"))
+    state.add_memlet_path(tasklet, in_x, mid_x, dev_x, wr, src_conn="__out", memlet=dace.Memlet("a[ti, tj, tk]"))
     sdfg.validate()
     assert PromoteWarpTiles().apply_pass(sdfg, {}) is None
     assert mid_e.map.schedule == dtypes.ScheduleType.Sequential
@@ -152,9 +163,10 @@ def test_the_tag_survives_a_json_round_trip():
 def test_a_promoted_tile_still_computes():
     """The point is a kernel that is both faster and RIGHT; this checks the second half."""
     import cupy
+
     sdfg = two_level()
     finalize.offload_to_gpu(sdfg)
-    finalize.finalize_for_target(sdfg, 'gpu')
+    finalize.finalize_for_target(sdfg, "gpu")
     n = 40
     a = np.random.default_rng(7).random((n, TILE))
     device = cupy.asarray(a)
@@ -165,26 +177,30 @@ def test_a_promoted_tile_still_computes():
 def stepped_two_level(tag=True, tile=128):
     """A thread-block map re-entered by a sequential loop -- the shape that needs a barrier."""
     from dace.sdfg.state import LoopRegion
-    sdfg = dace.SDFG('stepped')
-    sdfg.add_array('a', [N, tile], dace.float64)
-    outer = LoopRegion('step', 'step < N', 'step', 'step = 0', 'step = step + 1')
+
+    sdfg = dace.SDFG("stepped")
+    sdfg.add_array("a", [N, tile], dace.float64)
+    outer = LoopRegion("step", "step < N", "step", "step = 0", "step = step + 1")
     sdfg.add_node(outer, is_start_block=True)
-    state = outer.add_state('body', is_start_block=True)
-    dev_e, dev_x = state.add_map('outer', {'ti': '0:N'}, schedule=dtypes.ScheduleType.Default)
-    tile_e, tile_x = state.add_map('tile', {'tj': f'0:{tile}'}, schedule=dtypes.ScheduleType.Default)
+    state = outer.add_state("body", is_start_block=True)
+    dev_e, dev_x = state.add_map("outer", {"ti": "0:N"}, schedule=dtypes.ScheduleType.Default)
+    tile_e, tile_x = state.add_map("tile", {"tj": f"0:{tile}"}, schedule=dtypes.ScheduleType.Default)
     tile_e.map.is_warp_tile = tag
-    tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in * 2.0')
-    rd, wr = state.add_read('a'), state.add_write('a')
-    state.add_memlet_path(rd, dev_e, tile_e, tasklet, dst_conn='__in', memlet=dace.Memlet('a[ti, tj]'))
-    state.add_memlet_path(tasklet, tile_x, dev_x, wr, src_conn='__out', memlet=dace.Memlet('a[ti, tj]'))
+    tasklet = state.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in * 2.0")
+    rd, wr = state.add_read("a"), state.add_write("a")
+    state.add_memlet_path(rd, dev_e, tile_e, tasklet, dst_conn="__in", memlet=dace.Memlet("a[ti, tj]"))
+    state.add_memlet_path(tasklet, tile_x, dev_x, wr, src_conn="__out", memlet=dace.Memlet("a[ti, tj]"))
     sdfg.validate()
     return sdfg
 
 
 def barrier_tasklets(sdfg):
     return [
-        n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and '__syncthreads' in n.code.as_string
+        n
+        for g in sdfg.all_sdfgs_recursive()
+        for st in g.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and "__syncthreads" in n.code.as_string
     ]
 
 
@@ -198,7 +214,7 @@ def test_a_promoted_tile_inside_a_loop_gets_a_barrier():
     """
     sdfg = stepped_two_level()
     finalize.offload_to_gpu(sdfg)
-    assert barrier_tasklets(sdfg), 'a thread block re-entered by a loop must be separated by a barrier'
+    assert barrier_tasklets(sdfg), "a thread block re-entered by a loop must be separated by a barrier"
 
 
 def test_a_promoted_tile_with_no_loop_around_it_gets_no_barrier():
@@ -206,7 +222,7 @@ def test_a_promoted_tile_with_no_loop_around_it_gets_no_barrier():
     sdfg = two_level()
     finalize.offload_to_gpu(sdfg)
     assert tile_map(sdfg).map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-    assert not barrier_tasklets(sdfg), 'nothing re-enters this map; the barrier is pure cost'
+    assert not barrier_tasklets(sdfg), "nothing re-enters this map; the barrier is pure cost"
 
 
 def test_an_untagged_map_inside_a_loop_gets_no_barrier():
@@ -222,14 +238,14 @@ def test_the_barrier_sits_outside_the_lane_mask_in_the_emitted_code():
     the thread-block guard and every thread of the block reaches it."""
     sdfg = stepped_two_level()
     finalize.offload_to_gpu(sdfg)
-    finalize.finalize_for_target(sdfg, 'gpu')
-    device = [c for c in sdfg.generate_code() if c.title == 'CUDA']
-    assert device, 'no device translation unit was generated'
-    code = '\n'.join(c.clean_code for c in device)
-    assert '__syncthreads();' in code, 'the barrier never reached the generated kernel'
+    finalize.finalize_for_target(sdfg, "gpu")
+    device = [c for c in sdfg.generate_code() if c.title == "CUDA"]
+    assert device, "no device translation unit was generated"
+    code = "\n".join(c.clean_code for c in device)
+    assert "__syncthreads();" in code, "the barrier never reached the generated kernel"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_tag_is_off_by_default()
     test_the_device_offload_sequentializes_the_map_and_keeps_the_tag()
     test_the_full_offload_redeems_the_tag_itself()

@@ -24,6 +24,7 @@ silently drops a store the program needed, so the pass declines wherever it cann
 picture: one state, no nested SDFGs, no conditionals, no WCR, and every access to the array
 affine in the loop variable with matching non-scan indices.
 """
+
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 
 import sympy
@@ -49,6 +50,7 @@ class CarriedStore(NamedTuple):
     :ivar distance: ``c - d`` -- how many iterations later the kill lands, and so how many
         iterations must be peeled off the tail to keep the stores the loop really makes.
     """
+
     name: str
     dead_edge: MultiConnectorEdge[Memlet]
     dead_offset: int
@@ -80,9 +82,10 @@ def constant_offset_on_axis(subset: Subset, loop_var: str) -> Optional[Tuple[int
     found: Optional[Tuple[int, int]] = None
     for axis, (begin, end, step) in enumerate(subset.ndrange()):
         begin, end = symbolic.pystr_to_symbolic(begin), symbolic.pystr_to_symbolic(end)
-        if symbolic.simplify(as_expr(end) -
-                             as_expr(begin)) != 0 or symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(step)) -
-                                                                       1) != 0:
+        if (
+            symbolic.simplify(as_expr(end) - as_expr(begin)) != 0
+            or symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(step)) - 1) != 0
+        ):
             return None
         ivar = symbol_named(begin, loop_var)
         if ivar is None:
@@ -174,19 +177,30 @@ def find_killed_store(loop: LoopRegion, body: List[SDFGState], stride: int) -> O
                     continue
                 if (dead_off - kill_off) % stride != 0:
                     continue
-                if not reads_are_clear(body, dead_state, name, loop.loop_variable, dead_axis, kill_off, dead_off,
-                                       dead_edge):
+                if not reads_are_clear(
+                    body, dead_state, name, loop.loop_variable, dead_axis, kill_off, dead_off, dead_edge
+                ):
                     continue
-                return dead_state, CarriedStore(name=name,
-                                                dead_edge=dead_edge,
-                                                dead_offset=dead_off,
-                                                kill_offset=kill_off,
-                                                distance=(dead_off - kill_off) // stride)
+                return dead_state, CarriedStore(
+                    name=name,
+                    dead_edge=dead_edge,
+                    dead_offset=dead_off,
+                    kill_offset=kill_off,
+                    distance=(dead_off - kill_off) // stride,
+                )
     return None
 
 
-def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loop_var: str, axis: int, kill_off: int,
-                    dead_off: int, dead_edge: MultiConnectorEdge[Memlet]) -> bool:
+def reads_are_clear(
+    body: List[SDFGState],
+    dead_state: SDFGState,
+    name: str,
+    loop_var: str,
+    axis: int,
+    kill_off: int,
+    dead_off: int,
+    dead_edge: MultiConnectorEdge[Memlet],
+) -> bool:
     """No read of ``name`` observes the dead store -- in a later iteration, or in this one.
 
     Across iterations: a read at offset ``r`` in iteration ``i`` addresses what the dead store of
@@ -251,7 +265,7 @@ def reads_are_clear(body: List[SDFGState], dead_state: SDFGState, name: str, loo
                 if order > 0 or not reaches(state, edge.dst, producer):
                     return False
     # Any later state reading the array at all is a read-after-write within the iteration.
-    for state in body[body.index(dead_state) + 1:]:
+    for state in body[body.index(dead_state) + 1 :]:
         if any(isinstance(n, nodes.AccessNode) and n.data == name and state.out_degree(n) > 0 for n in state.nodes()):
             return False
     downstream, frontier = set(), [dead_edge.dst]
@@ -311,14 +325,16 @@ class DeadCarriedStoreElimination(ppl.Pass):
     See the module docstring for the shape and for why ``DeadDataflowElimination`` cannot do it.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     max_peel = properties.Property(
         dtype=int,
         default=4,
-        desc=('Largest kill distance to act on. The peel costs one copy of the body per iteration, '
-              'so a far-reaching kill would trade a store for more code than it saves; it also '
-              'bounds the assumption that the loop runs more times than it peels.'),
+        desc=(
+            "Largest kill distance to act on. The peel costs one copy of the body per iteration, "
+            "so a far-reaching kill would trade a store for more code than it saves; it also "
+            "bounds the assumption that the loop runs more times than it peels."
+        ),
     )
 
     def modifies(self) -> ppl.Modifies:
@@ -332,10 +348,13 @@ class DeadCarriedStoreElimination(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         from dace.transformation.interstate.loop_peeling import LoopPeeling
+
         count = 0
         for loop in [
-                b for g in sdfg.all_sdfgs_recursive() for b in g.all_control_flow_regions(recursive=True)
-                if isinstance(b, LoopRegion)
+            b
+            for g in sdfg.all_sdfgs_recursive()
+            for b in g.all_control_flow_regions(recursive=True)
+            if isinstance(b, LoopRegion)
         ]:
             stride = loop_analysis.get_loop_stride(loop)
             if stride is None or not symbolic.pystr_to_symbolic(stride).is_Integer:
@@ -352,13 +371,9 @@ class DeadCarriedStoreElimination(ppl.Pass):
             # Peel FIRST: the tail iterations keep the store, and if the peel refuses (an
             # infeasible or too-short loop) nothing has been removed yet.
             try:
-                LoopPeeling().apply_to(sdfg=loop.sdfg,
-                                       loop=loop,
-                                       verify=False,
-                                       options={
-                                           'count': match[1].distance,
-                                           'begin': False
-                                       })
+                LoopPeeling().apply_to(
+                    sdfg=loop.sdfg, loop=loop, verify=False, options={"count": match[1].distance, "begin": False}
+                )
             except Exception:  # noqa: BLE001 -- an unpeelable loop keeps its store
                 continue
             # ``apply_to`` rewrites the region in place, so re-find the store in what remains
@@ -379,8 +394,9 @@ class DeadCarriedStoreElimination(ppl.Pass):
             # precisely what DeadDataflowElimination handles; the cross-iteration, non-transient
             # half it cannot see is what this pass did first.
             from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
+
             ppl.Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
         return count or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Dropped {pass_retval} loop-carried store(s) a later iteration overwrites.'
+        return f"Dropped {pass_retval} loop-carried store(s) a later iteration overwrites."

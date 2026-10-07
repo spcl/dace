@@ -15,6 +15,7 @@ from dace.autodiff.library import library
 try:
     from dace.autodiff.library import torch_integration
     from dace.frontend.python.replacements import torch_autodiff
+
     TORCH_INTEGRATION_AVAILABLE = True
 except ImportError:
     torch_integration = None

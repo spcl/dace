@@ -17,14 +17,18 @@ from dace import SDFG, SDFGState, nodes
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
-from dace.libraries.onnx.op_implementations.utils import (in_desc_with_name, op_implementation, out_desc_with_name,
-                                                          python_pure_op_implementation)
+from dace.libraries.onnx.op_implementations.utils import (
+    in_desc_with_name,
+    op_implementation,
+    out_desc_with_name,
+    python_pure_op_implementation,
+)
 
 # ============================================================================
 # Softmax Operations
 # ============================================================================
 
-softmax_compute = dict(axis=lambda node, input: tuple(range(len(input.shape)))[node.axis:])
+softmax_compute = dict(axis=lambda node, input: tuple(range(len(input.shape)))[node.axis :])
 
 
 @python_pure_op_implementation(**softmax_compute)
@@ -52,7 +56,7 @@ def LogSoftmax(input, output):
 
 def _layernorm_first_axis(node, X):
     # The attribute is absent in opsets that predate it; ONNX defaults it to -1.
-    axis = node.axis if hasattr(node, 'axis') else -1
+    axis = node.axis if hasattr(node, "axis") else -1
     return axis if axis >= 0 else len(X.shape) + axis
 
 
@@ -66,7 +70,7 @@ def _layernorm_norm_size(node, X):
 
 
 def _layernorm_epsilon(node, X):
-    eps = getattr(node, 'epsilon', 1e-5)
+    eps = getattr(node, "epsilon", 1e-5)
     return X.dtype.type(eps)
 
 
@@ -74,10 +78,9 @@ def _layernorm_one(X):
     return X.dtype.type(1)
 
 
-layernorm_compute = dict(axis=_layernorm_axis,
-                         epsilon=_layernorm_epsilon,
-                         norm_size=_layernorm_norm_size,
-                         one=_layernorm_one)
+layernorm_compute = dict(
+    axis=_layernorm_axis, epsilon=_layernorm_epsilon, norm_size=_layernorm_norm_size, one=_layernorm_one
+)
 
 
 @python_pure_op_implementation(**layernorm_compute)
@@ -99,11 +102,10 @@ def LayerNormalization(X, Scale, B, Y):
 
 @op_implementation(op="Dropout", name="pure")
 class PureDropout(ONNXForward):
-    """ Dropout implementation with support for training and inference modes.
-    """
+    """Dropout implementation with support for training and inference modes."""
 
     @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> bool:
         # Get input descriptor
         data = in_desc_with_name(node, state, sdfg, "data")
 
@@ -130,7 +132,7 @@ class PureDropout(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
         # Get descriptors
         data = in_desc_with_name(node, state, sdfg, "data")
         output = out_desc_with_name(node, state, sdfg, "output")
@@ -148,10 +150,10 @@ class PureDropout(ONNXForward):
 
         # Get dropout ratio (from attribute or will be provided as input)
         # ONNX spec: default ratio is 0.5 if not specified
-        dropout_ratio = getattr(node, 'ratio', 0.5) if not has_ratio_input else None
+        dropout_ratio = getattr(node, "ratio", 0.5) if not has_ratio_input else None
 
         # Get seed if specified (for reproducible dropout)
-        seed = getattr(node, 'seed', None)
+        seed = getattr(node, "seed", None)
 
         # Calculate total elements
         total_elements = data.total_size
@@ -203,10 +205,10 @@ class PureDropout(ONNXForward):
         #include <ctime>
 
         // Get dropout ratio
-        {dtype_str} ratio = {dropout_ratio if not has_ratio_input else '__ratio'};
+        {dtype_str} ratio = {dropout_ratio if not has_ratio_input else "__ratio"};
 
         // Get training mode (default to false if not specified)
-        bool training_mode = {('__training_mode' if has_training_mode_input else 'false')};
+        bool training_mode = {("__training_mode" if has_training_mode_input else "false")};
 
         // If in inference mode, just copy input to output
         if (!training_mode) {{
@@ -220,9 +222,9 @@ class PureDropout(ONNXForward):
             // Initialize random seed. Device code cannot use std::time or dynamically
             // initialized function-scope statics; seed from the device clock instead.
         #if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
-            uint64_t rng_state = {seed if seed is not None else 'uint64_t(clock64())'};
+            uint64_t rng_state = {seed if seed is not None else "uint64_t(clock64())"};
         #else
-            static uint64_t rng_state = {seed if seed is not None else 'uint64_t(std::time(nullptr))'};
+            static uint64_t rng_state = {seed if seed is not None else "uint64_t(std::time(nullptr))"};
         #endif
 
             // Scale factor for remaining values (1 / (1 - ratio))
@@ -267,11 +269,13 @@ class PureDropout(ONNXForward):
             tasklet_outputs["__mask"] = dace.pointer(mask.dtype)
 
         # Create the tasklet
-        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
-                                     inputs=tasklet_inputs,
-                                     outputs=tasklet_outputs,
-                                     code=code,
-                                     language=dace.Language.CPP)
+        tasklet = nstate.add_tasklet(
+            name=node.label + "_tasklet",
+            inputs=tasklet_inputs,
+            outputs=tasklet_outputs,
+            code=code,
+            language=dace.Language.CPP,
+        )
 
         # Connect the tasklet with memlets
         nstate.add_edge(data_read, None, tasklet, "__data", dace.Memlet.from_array("data", data))
@@ -280,8 +284,13 @@ class PureDropout(ONNXForward):
             nstate.add_edge(ratio_read, None, tasklet, "__ratio", dace.Memlet.from_array("ratio", ratio_desc))
 
         if has_training_mode_input:
-            nstate.add_edge(training_mode_read, None, tasklet, "__training_mode",
-                            dace.Memlet.from_array("training_mode", training_mode_desc))
+            nstate.add_edge(
+                training_mode_read,
+                None,
+                tasklet,
+                "__training_mode",
+                dace.Memlet.from_array("training_mode", training_mode_desc),
+            )
 
         nstate.add_edge(tasklet, "__output", output_write, None, dace.Memlet.from_array("output", output))
 

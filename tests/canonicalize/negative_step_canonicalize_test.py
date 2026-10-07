@@ -1,20 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Canonicalization of descending (negative-step) sequential loops.
+"""Canonicalization of descending (negative-step) sequential loops.
 
-    A ``range(hi, lo, -s)`` loop lowers to a ``LoopRegion``. The pipeline
-    rewrites it to a positive-stride ascending iterator with every access
-    rewritten ``i -> start + step*i'``, so the traversal order is unchanged
-    and the result holds for loop-carried (vertical) dependencies where the
-    order is load-bearing. The canonical-form contract here is **positive
-    stride**: the rewrite must produce ``step > 0`` (the property
-    ``LoopToMap`` and subset-analysis rely on). Zero-based / unit-stride is
-    a property the negative-step rewrite happens to emit but is not itself
-    a correctness requirement, so it is not asserted. References are
-    pure-numpy oracles.
+A ``range(hi, lo, -s)`` loop lowers to a ``LoopRegion``. The pipeline
+rewrites it to a positive-stride ascending iterator with every access
+rewritten ``i -> start + step*i'``, so the traversal order is unchanged
+and the result holds for loop-carried (vertical) dependencies where the
+order is load-bearing. The canonical-form contract here is **positive
+stride**: the rewrite must produce ``step > 0`` (the property
+``LoopToMap`` and subset-analysis rely on). Zero-based / unit-stride is
+a property the negative-step rewrite happens to emit but is not itself
+a correctness requirement, so it is not asserted. References are
+pure-numpy oracles.
 
-    (Negative-step ``dace.map`` parallel maps are rejected by SDFG
-    validation and are out of scope here.)
+(Negative-step ``dace.map`` parallel maps are rejected by SDFG
+validation and are out of scope here.)
 """
+
 import numpy as np
 import pytest
 
@@ -24,7 +25,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _negative_step_ranges(sdfg):
@@ -33,14 +34,14 @@ def _negative_step_ranges(sdfg):
     for st in sdfg.states():
         for n in st.nodes():
             if isinstance(n, nodes.MapEntry):
-                for (_, _, s) in n.map.range:
+                for _, _, s in n.map.range:
                     if (s < 0) == True:
-                        bad.append(('map', n.map.label))
+                        bad.append(("map", n.map.label))
     for r in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(r, LoopRegion):
             stride = loop_analysis.get_loop_stride(r)
             if stride is not None and (stride < 0) == True:
-                bad.append(('loop', r.label))
+                bad.append(("loop", r.label))
     return bad
 
 
@@ -58,7 +59,7 @@ def _assert_positive_step_bounds(sdfg, n: int, expected_iterations=None):
     that would be a bug -- it reads or writes past the recurrence's extent -- so that is what is
     pinned, together with the numerics the caller checks against a hand-rolled oracle.
     """
-    subs = {dace.symbol('N'): n}
+    subs = {dace.symbol("N"): n}
     seen = 0
     trips_seen = []
 
@@ -69,28 +70,29 @@ def _assert_positive_step_bounds(sdfg, n: int, expected_iterations=None):
     for st in sdfg.states():
         for me in st.nodes():
             if isinstance(me, nodes.MapEntry):
-                for (b, e, s) in me.map.range:
-                    assert dace.symbolic.evaluate(s, subs) > 0, f'map step {s} not > 0'
+                for b, e, s in me.map.range:
+                    assert dace.symbolic.evaluate(s, subs) > 0, f"map step {s} not > 0"
                     if expected_iterations is not None:
                         trip = _trip(b, e, s)
-                        assert trip <= expected_iterations, f'map trips {trip} > {expected_iterations}'
+                        assert trip <= expected_iterations, f"map trips {trip} > {expected_iterations}"
                         trips_seen.append(trip)
                     seen += 1
     for r in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(r, LoopRegion):
             start = loop_analysis.get_init_assignment(r)
             stride = loop_analysis.get_loop_stride(r)
-            assert dace.symbolic.evaluate(stride, subs) > 0, f'loop stride {stride} not > 0'
+            assert dace.symbolic.evaluate(stride, subs) > 0, f"loop stride {stride} not > 0"
             if expected_iterations is not None:
                 end = loop_analysis.get_loop_end(r)
                 trip = _trip(start, end, stride)
-                assert trip <= expected_iterations, f'loop trips {trip} > {expected_iterations}'
+                assert trip <= expected_iterations, f"loop trips {trip} > {expected_iterations}"
                 trips_seen.append(trip)
             seen += 1
-    assert seen > 0, 'no map/loop found to check bounds on'
+    assert seen > 0, "no map/loop found to check bounds on"
     if expected_iterations is not None:
-        assert expected_iterations in trips_seen, \
-            f'nothing iterates the recurrence extent {expected_iterations}, only {sorted(set(trips_seen))}'
+        assert expected_iterations in trips_seen, (
+            f"nothing iterates the recurrence extent {expected_iterations}, only {sorted(set(trips_seen))}"
+        )
 
 
 @dace.program
@@ -115,8 +117,9 @@ def descending_parallel(a: dace.float64[N], b: dace.float64[N]):
 
 
 @dace.program
-def thomas_solve(lo: dace.float64[N], di: dace.float64[N], up: dace.float64[N], rhs: dace.float64[N],
-                 x: dace.float64[N]):
+def thomas_solve(
+    lo: dace.float64[N], di: dace.float64[N], up: dace.float64[N], rhs: dace.float64[N], x: dace.float64[N]
+):
     cp = dace.define_local([N], dace.float64)
     dp = dace.define_local([N], dace.float64)
     cp[0] = up[0] / di[0]
@@ -130,10 +133,13 @@ def thomas_solve(lo: dace.float64[N], di: dace.float64[N], up: dace.float64[N], 
         x[i] = dp[i] - cp[i] * x[i + 1]
 
 
-@pytest.mark.parametrize('prog,seed_tail,recur', [
-    (recurrence_down, 1, lambda b, a, i: b[i + 1] + a[i]),
-    (recurrence_down_two, 2, lambda b, a, i: 0.5 * b[i + 1] + 0.25 * b[i + 2] + a[i]),
-])
+@pytest.mark.parametrize(
+    "prog,seed_tail,recur",
+    [
+        (recurrence_down, 1, lambda b, a, i: b[i + 1] + a[i]),
+        (recurrence_down_two, 2, lambda b, a, i: 0.5 * b[i + 1] + 0.25 * b[i + 2] + a[i]),
+    ],
+)
 def test_descending_recurrence_canonicalizes_correctly(prog, seed_tail, recur):
     """A descending loop-carried recurrence canonicalizes to an ascending
     iterator, stays numerically exact, and leaves no negative-step range."""

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``InductionVariableSubstitution``."""
+
 import numpy as np
 
 import dace
@@ -88,7 +89,7 @@ def test_geometric_iv_array_slot_collapses_to_closed_form():
     q = np.zeros(n)
     q[0] = 1.0
     sdfg(q=q, N=n)
-    expected = 1.0 * 0.99**(n // 2)
+    expected = 1.0 * 0.99 ** (n // 2)
     assert np.isclose(q[0], expected)
     # The rest of ``q`` should be untouched (still zeros).
     assert np.allclose(q[1:], 0.0)
@@ -188,8 +189,9 @@ def test_arithmetic_iv_symbolic_stride_collapses_to_closed_form():
 
 
 @dace.program
-def _iedge_iv_counter_in_inner_loop(flat: dace.float64[N * N], a: dace.float64[N, N], b: dace.float64[N, N],
-                                    c: dace.float64[N, N]):
+def _iedge_iv_counter_in_inner_loop(
+    flat: dace.float64[N * N], a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N]
+):
     """TSVC ``s125`` minimal repro: scalar counter ``k`` incremented each
     inner iter, indexing a flat output array. After IV substitution the
     inner-body reference to ``k`` becomes ``k + (loop_var - start + 1)``
@@ -217,7 +219,7 @@ def test_iedge_iv_counter_in_inner_loop_substitution():
     c = rng.standard_normal((n, n))
     flat = np.zeros(n * n)
     sdfg(flat=flat, a=a, b=b, c=c, N=n)
-    expected = (a + b * c).ravel(order='C')
+    expected = (a + b * c).ravel(order="C")
     assert np.allclose(flat, expected), f"got {flat}, expected {expected}"
 
 
@@ -317,157 +319,157 @@ def _build_iedge_iv_loop(label, step_rhs, at_bottom, extra_body_iv=None):
     (gather reads post-increment ``k``). ``extra_body_iv`` optionally adds a
     second IV ``(sym, rhs)`` on another edge (for the loop-variant-step refusal)."""
     sdfg = dace.SDFG(label)
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_symbol('k', dace.int64)
-    sdfg.add_symbol('g', dace.float64)
-    for s in set(symbolic.pystr_to_symbolic(step_rhs).free_symbols) - {symbolic.pystr_to_symbolic('k')}:
-        if str(s) not in sdfg.symbols and str(s) != 'N':
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("g", dace.float64)
+    for s in set(symbolic.pystr_to_symbolic(step_rhs).free_symbols) - {symbolic.pystr_to_symbolic("k")}:
+        if str(s) not in sdfg.symbols and str(s) != "N":
             sdfg.add_symbol(str(s), dace.int64)
     if extra_body_iv is not None and extra_body_iv[0] not in sdfg.symbols:
         sdfg.add_symbol(extra_body_iv[0], dace.int64)
 
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion(label + '_lp',
-                      initialize_expr='i = 0',
-                      condition_expr='i < N',
-                      update_expr='i = i + 1',
-                      loop_var='i')
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion(
+        label + "_lp", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i"
+    )
     sdfg.add_node(loop)
-    seed = {'k': '0'}
+    seed = {"k": "0"}
     if extra_body_iv is not None:
-        seed[extra_body_iv[0]] = '0'
+        seed[extra_body_iv[0]] = "0"
     sdfg.add_edge(init, loop, dace.InterstateEdge(assignments=seed))
 
-    start = loop.add_state('start', is_start_block=True)
-    mid = loop.add_state('mid')
-    sink = loop.add_state('sink')
+    start = loop.add_state("start", is_start_block=True)
+    mid = loop.add_state("mid")
+    sink = loop.add_state("sink")
     if at_bottom:
-        loop.add_edge(start, mid, dace.InterstateEdge(assignments={'g': 'a[k]'}))  # gather (pre-increment)
-        loop.add_edge(mid, sink, dace.InterstateEdge(assignments={'k': step_rhs}))  # IV update at bottom (sink)
+        loop.add_edge(start, mid, dace.InterstateEdge(assignments={"g": "a[k]"}))  # gather (pre-increment)
+        loop.add_edge(mid, sink, dace.InterstateEdge(assignments={"k": step_rhs}))  # IV update at bottom (sink)
     else:
-        loop.add_edge(start, mid, dace.InterstateEdge(assignments={'k': step_rhs}))  # IV update at top (start)
-        loop.add_edge(mid, sink, dace.InterstateEdge(assignments={'g': 'a[k]'}))  # gather (post-increment)
+        loop.add_edge(start, mid, dace.InterstateEdge(assignments={"k": step_rhs}))  # IV update at top (start)
+        loop.add_edge(mid, sink, dace.InterstateEdge(assignments={"g": "a[k]"}))  # gather (post-increment)
     if extra_body_iv is not None:
         # A second IV on the gather edge's successor -- makes ``extra_body_iv[0]``
         # loop-variant; if ``step_rhs`` references it the closed form is invalid.
-        loop.add_edge(sink, loop.add_state('sink2'),
-                      dace.InterstateEdge(assignments={extra_body_iv[0]: extra_body_iv[1]}))
+        loop.add_edge(
+            sink, loop.add_state("sink2"), dace.InterstateEdge(assignments={extra_body_iv[0]: extra_body_iv[1]})
+        )
     return sdfg, loop
 
 
 def _gather_rhs(loop):
     for e in loop.all_interstate_edges():
-        if 'g' in (e.data.assignments or {}):
-            return str(e.data.assignments['g'])
+        if "g" in (e.data.assignments or {}):
+            return str(e.data.assignments["g"])
     return None
 
 
 def test_iedge_iv_bottom_symbolic_step():
     """Update-at-bottom + symbolic step ``k := k + inc``: the gather ``a[k]`` is
     closed to ``a[k + (i-0)*inc]`` (pre-increment, offset ``i``). TSVC s318 shape."""
-    sdfg, loop = _build_iedge_iv_loop('iv_bot_sym', 'k + inc', at_bottom=True)
+    sdfg, loop = _build_iedge_iv_loop("iv_bot_sym", "k + inc", at_bottom=True)
     sdfg.validate()
     assert InductionVariableSubstitution().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     # a[k + i*inc]: subtract expected -> 0.
-    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split('[', 1)[1].rsplit(']', 1)[0])
-    expected = symbolic.pystr_to_symbolic('k + i*inc')
+    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split("[", 1)[1].rsplit("]", 1)[0])
+    expected = symbolic.pystr_to_symbolic("k + i*inc")
     assert symbolic.simplify(got - expected) == 0, f"gather index {got}, expected {expected}"
 
 
 def test_iedge_iv_top_symbolic_step():
     """Update-at-top + symbolic step: the gather reads post-increment ``k``, so
     the closed form is ``a[k + (i+1)*inc]`` (offset ``i+1``)."""
-    sdfg, loop = _build_iedge_iv_loop('iv_top_sym', 'k + inc', at_bottom=False)
+    sdfg, loop = _build_iedge_iv_loop("iv_top_sym", "k + inc", at_bottom=False)
     sdfg.validate()
     assert InductionVariableSubstitution().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split('[', 1)[1].rsplit(']', 1)[0])
-    expected = symbolic.pystr_to_symbolic('k + (i + 1)*inc')
+    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split("[", 1)[1].rsplit("]", 1)[0])
+    expected = symbolic.pystr_to_symbolic("k + (i + 1)*inc")
     assert symbolic.simplify(got - expected) == 0, f"gather index {got}, expected {expected}"
 
 
 def test_iedge_iv_bottom_literal_step():
     """Update-at-bottom + literal step ``k := k + 3`` -> ``a[k + 3*i]``."""
-    sdfg, loop = _build_iedge_iv_loop('iv_bot_lit', 'k + 3', at_bottom=True)
+    sdfg, loop = _build_iedge_iv_loop("iv_bot_lit", "k + 3", at_bottom=True)
     sdfg.validate()
     assert InductionVariableSubstitution().apply_pass(sdfg, {}) == 1
-    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split('[', 1)[1].rsplit(']', 1)[0])
-    assert symbolic.simplify(got - symbolic.pystr_to_symbolic('k + 3*i')) == 0
+    got = symbolic.pystr_to_symbolic(_gather_rhs(loop).split("[", 1)[1].rsplit("]", 1)[0])
+    assert symbolic.simplify(got - symbolic.pystr_to_symbolic("k + 3*i")) == 0
 
 
 def test_iedge_iv_refuses_loop_variant_step():
     """``k := k + m`` where ``m`` is itself reassigned in the body (``m := m+1``)
     is NOT loop-invariant -- no closed form, so the substitution is refused."""
-    sdfg, loop = _build_iedge_iv_loop('iv_variant', 'k + m', at_bottom=True, extra_body_iv=('m', 'm + 1'))
+    sdfg, loop = _build_iedge_iv_loop("iv_variant", "k + m", at_bottom=True, extra_body_iv=("m", "m + 1"))
     sdfg.validate()
     res = InductionVariableSubstitution().apply_pass(sdfg, {})
     # The IV ``k`` must not be substituted (its step ``m`` varies); gather stays ``a[k]``.
-    assert _gather_rhs(loop) == 'a[k]', f"loop-variant step must be refused, gather={_gather_rhs(loop)}"
+    assert _gather_rhs(loop) == "a[k]", f"loop-variant step must be refused, gather={_gather_rhs(loop)}"
 
 
 # Between-blocks IV: the increment sits between content blocks (neither the empty
 # start nor the empty sink). Substitutable with a single offset iff every use is
 # on one consistent side -- pre-increment (before) / post-increment (after);
 # mixed uses are refused. This is the generalization s128 needs.
-def _build_between_blocks_iv(label, use_before, use_after, step_rhs='k + 1'):
+def _build_between_blocks_iv(label, use_before, use_after, step_rhs="k + 1"):
     sdfg = dace.SDFG(label)
-    sdfg.add_array('a', [4 * N], dace.float64)
-    sdfg.add_symbol('k', dace.int64)
-    sdfg.add_symbol('g', dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion(label + '_lp',
-                      initialize_expr='i = 0',
-                      condition_expr='i < N',
-                      update_expr='i = i + 1',
-                      loop_var='i')
+    sdfg.add_array("a", [4 * N], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("g", dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion(
+        label + "_lp", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i"
+    )
     sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'k': '0'}))
-    s = loop.add_state('s', is_start_block=True)
-    m1 = loop.add_state('m1')
-    m2 = loop.add_state('m2')
-    snk = loop.add_state('snk')
-    loop.add_edge(s, m1, dace.InterstateEdge(assignments={'g': 'a[k]'} if use_before else {}))
-    loop.add_edge(m1, m2, dace.InterstateEdge(assignments={'k': step_rhs}))  # IV, strictly between blocks
-    loop.add_edge(m2, snk, dace.InterstateEdge(assignments={'g': 'a[k]'} if use_after else {}))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"k": "0"}))
+    s = loop.add_state("s", is_start_block=True)
+    m1 = loop.add_state("m1")
+    m2 = loop.add_state("m2")
+    snk = loop.add_state("snk")
+    loop.add_edge(s, m1, dace.InterstateEdge(assignments={"g": "a[k]"} if use_before else {}))
+    loop.add_edge(m1, m2, dace.InterstateEdge(assignments={"k": step_rhs}))  # IV, strictly between blocks
+    loop.add_edge(m2, snk, dace.InterstateEdge(assignments={"g": "a[k]"} if use_after else {}))
     return sdfg, loop
 
 
 def _idx(loop):
-    return symbolic.pystr_to_symbolic(_gather_rhs(loop).split('[', 1)[1].rsplit(']', 1)[0])
+    return symbolic.pystr_to_symbolic(_gather_rhs(loop).split("[", 1)[1].rsplit("]", 1)[0])
 
 
 def test_between_blocks_iv_pre_increment():
     """Update between content blocks, used only BEFORE it -> pre-increment closed
     form ``a[k + i]`` (offset i)."""
-    sdfg, loop = _build_between_blocks_iv('bb_pre', use_before=True, use_after=False)
+    sdfg, loop = _build_between_blocks_iv("bb_pre", use_before=True, use_after=False)
     sdfg.validate()
     assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None
     sdfg.validate()
-    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic('k + i')) == 0, f"got {_idx(loop)}"
+    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic("k + i")) == 0, f"got {_idx(loop)}"
 
 
 def test_between_blocks_iv_post_increment():
     """Update between content blocks, used only AFTER it -> post-increment closed
     form ``a[k + i + 1]`` (offset i+1)."""
-    sdfg, loop = _build_between_blocks_iv('bb_post', use_before=False, use_after=True)
+    sdfg, loop = _build_between_blocks_iv("bb_post", use_before=False, use_after=True)
     sdfg.validate()
     assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None
     sdfg.validate()
-    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic('k + i + 1')) == 0, f"got {_idx(loop)}"
+    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic("k + i + 1")) == 0, f"got {_idx(loop)}"
 
 
 def test_between_blocks_iv_mixed_uses_refused():
     """Used both before AND after the increment -> the two sides need different
     offsets, so the pass refuses and leaves the IV iedge intact."""
-    sdfg, loop = _build_between_blocks_iv('bb_mixed', use_before=True, use_after=True)
+    sdfg, loop = _build_between_blocks_iv("bb_mixed", use_before=True, use_after=True)
     sdfg.validate()
     InductionVariableSubstitution().apply_pass(sdfg, {})
-    iv_edges = [e for e in loop.edges() if 'k' in (e.data.assignments or {})]
+    iv_edges = [e for e in loop.edges() if "k" in (e.data.assignments or {})]
     assert len(iv_edges) == 1, "the IV update must survive a mixed-side refusal"
-    assert symbolic.simplify(
-        symbolic.pystr_to_symbolic(iv_edges[0].data.assignments['k']) -
-        symbolic.pystr_to_symbolic('k + 1')) == 0, "IV must be untouched on refusal"
+    assert (
+        symbolic.simplify(
+            symbolic.pystr_to_symbolic(iv_edges[0].data.assignments["k"]) - symbolic.pystr_to_symbolic("k + 1")
+        )
+        == 0
+    ), "IV must be untouched on refusal"
 
 
 # Derived symbol: defined purely by a loop-var expression (no self-reference) ->
@@ -475,44 +477,42 @@ def test_between_blocks_iv_mixed_uses_refused():
 # ``k := 2*i``), resolved within IV-subst's fixed point.
 def _build_derived_symbol_loop(label):
     sdfg = dace.SDFG(label)
-    sdfg.add_array('a', [8 * N], dace.float64)
-    sdfg.add_symbol('m', dace.int64)
-    sdfg.add_symbol('c', dace.int64)
-    sdfg.add_symbol('g', dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion(label + '_lp',
-                      initialize_expr='i = 0',
-                      condition_expr='i < N',
-                      update_expr='i = i + 1',
-                      loop_var='i')
+    sdfg.add_array("a", [8 * N], dace.float64)
+    sdfg.add_symbol("m", dace.int64)
+    sdfg.add_symbol("c", dace.int64)
+    sdfg.add_symbol("g", dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion(
+        label + "_lp", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
-    s = loop.add_state('s', is_start_block=True)
-    mid = loop.add_state('mid')
-    snk = loop.add_state('snk')
-    loop.add_edge(s, mid, dace.InterstateEdge(assignments={'m': '2*i + c'}))  # derived: loop-var + invariant
-    loop.add_edge(mid, snk, dace.InterstateEdge(assignments={'g': 'a[m]'}))  # use after the definition
+    s = loop.add_state("s", is_start_block=True)
+    mid = loop.add_state("mid")
+    snk = loop.add_state("snk")
+    loop.add_edge(s, mid, dace.InterstateEdge(assignments={"m": "2*i + c"}))  # derived: loop-var + invariant
+    loop.add_edge(mid, snk, dace.InterstateEdge(assignments={"g": "a[m]"}))  # use after the definition
     return sdfg, loop
 
 
 def test_derived_symbol_inlined():
     """``m := 2*i + c`` (no self-reference) is inlined into ``a[m]`` -> ``a[2*i + c]``."""
-    sdfg, loop = _build_derived_symbol_loop('derived')
+    sdfg, loop = _build_derived_symbol_loop("derived")
     sdfg.validate()
     assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None
     sdfg.validate()
-    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic('2*i + c')) == 0, f"got {_idx(loop)}"
+    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic("2*i + c")) == 0, f"got {_idx(loop)}"
 
 
 def test_derived_symbol_self_reference_is_not_derived():
     """A self-referential ``k := k + 1`` is a recurrence, NOT a derived symbol --
     it must go through the IV path (closed form), not be inlined verbatim."""
-    sdfg, loop = _build_iedge_iv_loop('dsym_selfref', 'k + 1', at_bottom=True)
+    sdfg, loop = _build_iedge_iv_loop("dsym_selfref", "k + 1", at_bottom=True)
     sdfg.validate()
     assert InductionVariableSubstitution().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     # closed form (pre-increment offset i), not the verbatim ``k + 1``.
-    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic('k + i')) == 0, f"got {_idx(loop)}"
+    assert symbolic.simplify(_idx(loop) - symbolic.pystr_to_symbolic("k + i")) == 0, f"got {_idx(loop)}"
 
 
 def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
@@ -524,46 +524,54 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
     The inner counter itself IS closed: it is stepped only by the loop that owns it, so the body
     reads ``k + jj`` and the loop materialises ``k + N`` on the way out. That leaves the outer init
     exactly as it was, which is the property this pins."""
-    sdfg = dace.SDFG('nested_rewrite')
-    sdfg.add_array('a', [8 * N], dace.float64)
-    sdfg.add_symbol('k', dace.int64)
-    sdfg.add_symbol('g', dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
-    outer = LoopRegion('outer', initialize_expr='i = 0', condition_expr='i < N', update_expr='i = i + 1', loop_var='i')
+    sdfg = dace.SDFG("nested_rewrite")
+    sdfg.add_array("a", [8 * N], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("g", dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    outer = LoopRegion("outer", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i")
     sdfg.add_node(outer)
     sdfg.add_edge(init, outer, dace.InterstateEdge())
-    o0 = outer.add_state('o0', is_start_block=True)
-    inner = LoopRegion('inner',
-                       initialize_expr='jj = 0',
-                       condition_expr='jj < N',
-                       update_expr='jj = jj + 1',
-                       loop_var='jj')
+    o0 = outer.add_state("o0", is_start_block=True)
+    inner = LoopRegion(
+        "inner", initialize_expr="jj = 0", condition_expr="jj < N", update_expr="jj = jj + 1", loop_var="jj"
+    )
     outer.add_node(inner)
-    outer.add_edge(o0, inner, dace.InterstateEdge(assignments={'k': '2*i'}))  # looks derived at the outer level
-    i0 = inner.add_state('i0', is_start_block=True)
-    i1 = inner.add_state('i1')
-    i2 = inner.add_state('i2')
-    inner.add_edge(i0, i1, dace.InterstateEdge(assignments={'g': 'a[k]'}))  # uses k
-    inner.add_edge(i1, i2, dace.InterstateEdge(assignments={'k': 'k + 1'}))  # inner counter update
+    outer.add_edge(o0, inner, dace.InterstateEdge(assignments={"k": "2*i"}))  # looks derived at the outer level
+    i0 = inner.add_state("i0", is_start_block=True)
+    i1 = inner.add_state("i1")
+    i2 = inner.add_state("i2")
+    inner.add_edge(i0, i1, dace.InterstateEdge(assignments={"g": "a[k]"}))  # uses k
+    inner.add_edge(i1, i2, dace.InterstateEdge(assignments={"k": "k + 1"}))  # inner counter update
     sdfg.validate()
 
     InductionVariableSubstitution().apply_pass(sdfg, {})
     sdfg.validate()
-    init_k = [e for e in outer.edges() if e.dst is inner and 'k' in (e.data.assignments or {})]
+    init_k = [e for e in outer.edges() if e.dst is inner and "k" in (e.data.assignments or {})]
     assert len(init_k) == 1, "the outer k-init must survive -- k is re-written in the nested loop"
-    assert symbolic.simplify(
-        symbolic.pystr_to_symbolic(init_k[0].data.assignments['k']) - symbolic.pystr_to_symbolic('2*i')) == 0, \
-        "outer k-init must not be inlined/altered"
-    assert not [e for e in inner.edges() if 'k' in (e.data.assignments or {})], \
+    assert (
+        symbolic.simplify(
+            symbolic.pystr_to_symbolic(init_k[0].data.assignments["k"]) - symbolic.pystr_to_symbolic("2*i")
+        )
+        == 0
+    ), "outer k-init must not be inlined/altered"
+    assert not [e for e in inner.edges() if "k" in (e.data.assignments or {})], (
         "the inner counter is stepped only by the loop that owns it, so it closes"
-    reads = [e.data.assignments['g'] for e in inner.edges() if 'g' in (e.data.assignments or {})]
-    assert len(reads) == 1 and symbolic.simplify(
-        symbolic.pystr_to_symbolic(reads[0].strip('a[]')) - symbolic.pystr_to_symbolic('k + jj')) == 0, \
-        f"the body must read the closed form a[k + jj], got {reads}"
-    exit_k = [e for e in outer.edges() if e.src is inner and 'k' in (e.data.assignments or {})]
-    assert len(exit_k) == 1 and symbolic.simplify(
-        symbolic.pystr_to_symbolic(exit_k[0].data.assignments['k']) - symbolic.pystr_to_symbolic('k + N')) == 0, \
-        "the inner loop must hand the outer one the counter value it would have had"
+    )
+    reads = [e.data.assignments["g"] for e in inner.edges() if "g" in (e.data.assignments or {})]
+    assert (
+        len(reads) == 1
+        and symbolic.simplify(symbolic.pystr_to_symbolic(reads[0].strip("a[]")) - symbolic.pystr_to_symbolic("k + jj"))
+        == 0
+    ), f"the body must read the closed form a[k + jj], got {reads}"
+    exit_k = [e for e in outer.edges() if e.src is inner and "k" in (e.data.assignments or {})]
+    assert (
+        len(exit_k) == 1
+        and symbolic.simplify(
+            symbolic.pystr_to_symbolic(exit_k[0].data.assignments["k"]) - symbolic.pystr_to_symbolic("k + N")
+        )
+        == 0
+    ), "the inner loop must hand the outer one the counter value it would have had"
 
 
 # Array-dependent symbol is NOT an induction variable
@@ -578,8 +586,11 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
 
 def _subset_reads_array(sdfg: dace.SDFG) -> bool:
     """True iff any memlet subset embeds a data-array access (a nested Subscript)."""
-    return any(e.data is not None and e.data.subset is not None and symbolic.arrays(str(e.data.subset))
-               for state in sdfg.states() for e in state.edges())
+    return any(
+        e.data is not None and e.data.subset is not None and symbolic.arrays(str(e.data.subset))
+        for state in sdfg.states()
+        for e in state.edges()
+    )
 
 
 @dace.program
@@ -594,10 +605,11 @@ def test_array_load_not_inlined_as_iv_program():
     """Frontend shape: ``idx = A[jl, jm]`` inside a loop must not be dissolved into the
     ``B[jl, idx]`` subset by IV substitution -- no array-dependent symbol is an IV."""
     sdfg = _prep_and_run(_indirect_scatter)
-    assert not _subset_reads_array(sdfg), \
+    assert not _subset_reads_array(sdfg), (
         "IV substitution inlined an array load into a memlet subset (nested Subscript)"
+    )
     # Codegen must succeed with no un-lowerable ``std::make_tuple`` subscript.
-    assert 'make_tuple' not in '\n'.join(c.clean_code for c in sdfg.generate_code())
+    assert "make_tuple" not in "\n".join(c.clean_code for c in sdfg.generate_code())
 
     A = np.zeros((6, 5), np.int64)  # every gather index -> column 0
     B = np.zeros((6, 5), np.float64)
@@ -610,33 +622,32 @@ def test_array_load_not_inlined_as_iv_program():
 def test_array_load_not_inlined_as_iv_handbuilt():
     """The exact post-promotion shape -- an interstate load ``idx := A[jl, jm]`` feeding a
     ``B[jl, idx]`` memlet -- IV substitution must leave alone (direct structural regression)."""
-    sdfg = dace.SDFG('indirect_gather_iv')
-    sdfg.add_array('A', [8, 5], dace.int64)
-    sdfg.add_array('B', [8, 5], dace.float64)
-    sdfg.add_symbol('jm', dace.int64)
-    sdfg.add_symbol('idx', dace.int64)
-    loop = LoopRegion('jlloop',
-                      condition_expr='jl < 8',
-                      loop_var='jl',
-                      initialize_expr='jl = 0',
-                      update_expr='jl = jl + 1')
+    sdfg = dace.SDFG("indirect_gather_iv")
+    sdfg.add_array("A", [8, 5], dace.int64)
+    sdfg.add_array("B", [8, 5], dace.float64)
+    sdfg.add_symbol("jm", dace.int64)
+    sdfg.add_symbol("idx", dace.int64)
+    loop = LoopRegion(
+        "jlloop", condition_expr="jl < 8", loop_var="jl", initialize_expr="jl = 0", update_expr="jl = jl + 1"
+    )
     sdfg.add_node(loop, is_start_block=True)
-    s_def = loop.add_state('s_def', is_start_block=True)
-    s_use = loop.add_state('s_use')
-    loop.add_edge(s_def, s_use, dace.InterstateEdge(assignments={'idx': 'A[jl, jm]'}))
-    t = s_use.add_tasklet('w', {}, {'o'}, 'o = 1.0')
-    b = s_use.add_access('B')
-    s_use.add_edge(t, 'o', b, None, dace.Memlet('B[jl, idx]'))
+    s_def = loop.add_state("s_def", is_start_block=True)
+    s_use = loop.add_state("s_use")
+    loop.add_edge(s_def, s_use, dace.InterstateEdge(assignments={"idx": "A[jl, jm]"}))
+    t = s_use.add_tasklet("w", {}, {"o"}, "o = 1.0")
+    b = s_use.add_access("B")
+    s_use.add_edge(t, "o", b, None, dace.Memlet("B[jl, idx]"))
 
     InductionVariableSubstitution().apply_pass(sdfg, {})
 
     # ``idx`` stays a plain symbol in the subset; the load stays on the interstate edge.
     b_subsets = [
-        str(e.data.subset) for st in loop.states() for e in st.edges() if e.data is not None and e.data.data == 'B'
+        str(e.data.subset) for st in loop.states() for e in st.edges() if e.data is not None and e.data.data == "B"
     ]
-    assert b_subsets == ['jl, idx'], b_subsets
-    assert any('idx' in (e.data.assignments or {}) for e in sdfg.all_interstate_edges()), \
+    assert b_subsets == ["jl, idx"], b_subsets
+    assert any("idx" in (e.data.assignments or {}) for e in sdfg.all_interstate_edges()), (
         "the interstate load 'idx := A[jl, jm]' must survive -- it is not an IV"
+    )
 
 
 def test_a_wcr_accumulator_is_not_an_induction_variable():

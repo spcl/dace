@@ -26,6 +26,7 @@ supports. The corpus declares ``LEN_2D`` bare, which is why the two kernels abov
 and cannot express that failure; ``test_2d_argmax_lifts_when_the_shape_symbol_carries_assumptions``
 covers it on the declaration real frontends emit.
 """
+
 import os
 
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -44,7 +45,7 @@ from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
-KERNELS = ('s3110_d_single', 's13110_d_single')
+KERNELS = ("s3110_d_single", "s13110_d_single")
 
 
 def canonicalized(name, tag):
@@ -58,7 +59,9 @@ def canonicalized(name, tag):
 def residual_loops(sdfg):
     """The sequential ``LoopRegion`` s canonicalize did not turn into parallel work."""
     return [
-        r for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions()
+        r
+        for sd in sdfg.all_sdfgs_recursive()
+        for r in sd.all_control_flow_regions()
         if isinstance(r, LoopRegion) and r.loop_variable
     ]
 
@@ -69,10 +72,10 @@ def num_argreduce(sdfg):
 
 def assert_lowers_to_a_parallel_reduction(sdfg, name):
     """The libnode must reach the C++ as a parallel arg-reduction, not a sequential scan."""
-    finalize.finalize_for_target(sdfg, 'cpu')
-    src = '\n'.join(o.clean_code for o in sdfg.generate_code())
-    assert '#pragma omp parallel for reduction' in src, f'{name}: ArgReduce must lower to a parallel reduction'
-    assert '#pragma omp declare reduction' in src, f'{name}: the arg-reduction needs its (value, index) combiner'
+    finalize.finalize_for_target(sdfg, "cpu")
+    src = "\n".join(o.clean_code for o in sdfg.generate_code())
+    assert "#pragma omp parallel for reduction" in src, f"{name}: ArgReduce must lower to a parallel reduction"
+    assert "#pragma omp declare reduction" in src, f"{name}: the arg-reduction needs its (value, index) combiner"
 
 
 def assert_matches_reference(kernel, sdfg):
@@ -89,32 +92,33 @@ def assert_matches_reference(kernel, sdfg):
     for n, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue
-        assert np.allclose(ref[n], got[n], equal_nan=True), f'{kernel.name}: value mismatch on {n}'
+        assert np.allclose(ref[n], got[n], equal_nan=True), f"{kernel.name}: value mismatch on {n}"
 
 
-@pytest.mark.parametrize('name', KERNELS)
+@pytest.mark.parametrize("name", KERNELS)
 def test_2d_argmax_nest_lifts_to_one_flat_argreduce(name):
     """The whole nest becomes a single flat ``ArgReduce``, leaving no sequential loop behind."""
-    kernel, sdfg = canonicalized(name, 'lift')
-    assert num_argreduce(sdfg) == 1, f'{name}: the 2-D nest must lift to exactly one flat ArgReduce'
-    assert residual_loops(sdfg) == [], f'{name}: no loop of the nest may survive the lift'
+    kernel, sdfg = canonicalized(name, "lift")
+    assert num_argreduce(sdfg) == 1, f"{name}: the 2-D nest must lift to exactly one flat ArgReduce"
+    assert residual_loops(sdfg) == [], f"{name}: no loop of the nest may survive the lift"
     assert_matches_reference(kernel, sdfg)
 
 
-@pytest.mark.parametrize('name', KERNELS)
+@pytest.mark.parametrize("name", KERNELS)
 def test_2d_argmax_argreduce_lowers_to_an_openmp_reduction(name):
     """The lift only pays off if the libnode lowers PARALLEL; a counter cannot see that."""
-    _kernel, sdfg = canonicalized(name, 'omp')
+    _kernel, sdfg = canonicalized(name, "omp")
     assert_lowers_to_a_parallel_reduction(sdfg, name)
 
 
 def scaling_transients(sdfg):
     """Transients whose allocation grows with a program symbol -- i.e. a copy of the input."""
-    return sorted(name for name, desc in sdfg.arrays.items()
-                  if desc.transient and dace.symbolic.symlist(desc.total_size))
+    return sorted(
+        name for name, desc in sdfg.arrays.items() if desc.transient and dace.symbolic.symlist(desc.total_size)
+    )
 
 
-@pytest.mark.parametrize('name', KERNELS)
+@pytest.mark.parametrize("name", KERNELS)
 def test_2d_argmax_lift_allocates_nothing_of_problem_size(name):
     """The flat arg-reduce must read ``aa`` itself, not a staged copy of it.
 
@@ -123,11 +127,11 @@ def test_2d_argmax_lift_allocates_nothing_of_problem_size(name):
     corpus's XL rung. Asserted structurally because it is a property of the canonical form, and a
     numeric check passes just as happily with the copy in place.
     """
-    _kernel, sdfg = canonicalized(name, 'nobuf')
-    assert scaling_transients(sdfg) == [], f'{name}: the lift allocated a problem-sized buffer'
+    _kernel, sdfg = canonicalized(name, "nobuf")
+    assert scaling_transients(sdfg) == [], f"{name}: the lift allocated a problem-sized buffer"
     node, state = next((n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce))
-    in_edge = next(e for e in state.in_edges(node) if e.dst_conn == '_in')
-    assert in_edge.data.data == 'aa', f'{name}: the arg-reduce must read the input array directly'
+    in_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_in")
+    assert in_edge.data.data == "aa", f"{name}: the arg-reduce must read the input array directly"
 
 
 def test_2d_argmax_ties_resolve_to_the_first_maximum_in_row_major_order():
@@ -139,7 +143,7 @@ def test_2d_argmax_ties_resolve_to_the_first_maximum_in_row_major_order():
     the decomposition ``(flat // ncols, flat % ncols)`` puts it back on the right pair of indices.
     Random draws never tie; these values are placed.
     """
-    M = dace.symbol('argmax2d_tie_M')
+    M = dace.symbol("argmax2d_tie_M")
 
     @dace.program
     def argmax2d_tie(aa: dace.float64[M, M], out: dace.float64[3]):
@@ -159,7 +163,7 @@ def test_2d_argmax_ties_resolve_to_the_first_maximum_in_row_major_order():
     sdfg = argmax2d_tie.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4)
     assert num_argreduce(sdfg) == 1
-    assert scaling_transients(sdfg) == [], 'the 2-D lift allocated a problem-sized buffer'
+    assert scaling_transients(sdfg) == [], "the 2-D lift allocated a problem-sized buffer"
 
     n = 5
     # A plateau of equal maxima spread over three rows, so a scan that split the array differently
@@ -172,10 +176,10 @@ def test_2d_argmax_ties_resolve_to_the_first_maximum_in_row_major_order():
 
     flat = int(np.argmax(aa))  # numpy also returns the first occurrence in row-major order
     assert (flat // n, flat % n) == (1, 3)  # sanity: the fixture's first maximum
-    assert out[0] == 7.0, f'value: got {out[0]}'
-    assert (int(out[1]),
-            int(out[2])) == (flat // n, flat %
-                             n), (f'ties must resolve to the first maximum (1, 3); got ({int(out[1])}, {int(out[2])})')
+    assert out[0] == 7.0, f"value: got {out[0]}"
+    assert (int(out[1]), int(out[2])) == (flat // n, flat % n), (
+        f"ties must resolve to the first maximum (1, 3); got ({int(out[1])}, {int(out[2])})"
+    )
 
 
 def test_2d_argmax_lifts_when_the_shape_symbol_carries_assumptions():
@@ -186,7 +190,7 @@ def test_2d_argmax_lifts_when_the_shape_symbol_carries_assumptions():
     ``s3110_d_single``, and checked against numpy's 2-D argmax rather than ``REFERENCES`` because
     the corpus has no assumption-carrying twin of that kernel to name.
     """
-    N = dace.symbol('argmax2d_assumed_N', dtype=dace.int64, positive=True)
+    N = dace.symbol("argmax2d_assumed_N", dtype=dace.int64, positive=True)
 
     @dace.program
     def argmax2d_assumed(aa: dace.float64[N, N], out: dace.float64[3]):
@@ -205,18 +209,18 @@ def test_2d_argmax_lifts_when_the_shape_symbol_carries_assumptions():
 
     sdfg = argmax2d_assumed.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4)
-    assert num_argreduce(sdfg) == 1, 'declared symbol assumptions must not hide the contiguity of the nest'
-    assert residual_loops(sdfg) == [], 'no loop of the nest may survive the lift'
-    assert_lowers_to_a_parallel_reduction(sdfg, 'argmax2d_assumed')
+    assert num_argreduce(sdfg) == 1, "declared symbol assumptions must not hide the contiguity of the nest"
+    assert residual_loops(sdfg) == [], "no loop of the nest may survive the lift"
+    assert_lowers_to_a_parallel_reduction(sdfg, "argmax2d_assumed")
 
     n = 7
     aa = np.random.default_rng(311013110).standard_normal((n, n))
     out = np.zeros(3)
     sdfg(aa=aa, out=out, argmax2d_assumed_N=n)
     flat = int(np.argmax(aa))
-    assert np.isclose(out[0], aa.flat[flat]), f'value: got {out[0]}, expected {aa.flat[flat]}'
-    assert (int(out[1]), int(out[2])) == (flat // n, flat % n), f'index: got ({out[1]}, {out[2]})'
+    assert np.isclose(out[0], aa.flat[flat]), f"value: got {out[0]}, expected {aa.flat[flat]}"
+    assert (int(out[1]), int(out[2])) == (flat // n, flat % n), f"index: got ({out[1]}, {out[2]})"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

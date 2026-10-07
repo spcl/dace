@@ -7,6 +7,7 @@ parallelize the enclosing ``k`` loop as a reduction. It must lift only genuine
 reductions -- a pure accumulator read at a loop-invariant subset -- and refuse
 recurrences (accumulator read for the increment, or a loop-indexed write).
 """
+
 import os
 
 import numpy as np
@@ -20,24 +21,27 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.interstate import LoopToMap
 
-K = dace.symbol('K')
-N = dace.symbol('N')
+K = dace.symbol("K")
+N = dace.symbol("N")
 
 
 def _apply(sdfg) -> int:
     # Canonicalize folds the frontend's scalar copies before the lift; so does this direct call.
     FoldScalarReadCopies().apply_pass(sdfg, {})
     res = Pipeline([LiftLoopCarriedReduction()]).apply_pass(sdfg, {})
-    return (res or {}).get('LiftLoopCarriedReduction', 0) or 0
+    return (res or {}).get("LiftLoopCarriedReduction", 0) or 0
 
 
 def _num_wcr(sdfg) -> int:
-    return sum(1 for e, _ in sdfg.all_edges_recursive() if getattr(getattr(e, 'data', None), 'wcr', None) is not None)
+    return sum(1 for e, _ in sdfg.all_edges_recursive() if getattr(getattr(e, "data", None), "wcr", None) is not None)
 
 
 def _num_loops(sdfg) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, LoopRegion) and not getattr(n, 'pinned_sequential', False))
+    return sum(
+        1
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, LoopRegion) and not getattr(n, "pinned_sequential", False)
+    )
 
 
 @dace.program
@@ -75,7 +79,7 @@ def test_lifts_rowsum_reduction_and_parallelizes():
     sdfg = _rowsum.to_sdfg(simplify=True)
     _specialize(sdfg, K=k, N=n)
     assert _apply(sdfg) >= 1
-    assert _num_wcr(sdfg) >= 1, 'the accumulation should become a WCR write'
+    assert _num_wcr(sdfg) >= 1, "the accumulation should become a WCR write"
     sdfg.validate()
     # the k loop is now parallelizable
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
@@ -120,9 +124,9 @@ def test_refuses_loop_indexed_write():
 # correctly, including under real multithreading.
 # #
 
-KK = dace.symbol('KK')
-NR = dace.symbol('NR')
-NM = dace.symbol('NM')
+KK = dace.symbol("KK")
+NR = dace.symbol("NR")
+NM = dace.symbol("NM")
 
 
 def _specialize(sdfg, **subs):
@@ -136,15 +140,19 @@ def _specialize(sdfg, **subs):
 
 def _canon_full(prog, **subs):
     from dace.transformation.passes.canonicalize import canonicalize
+
     sdfg = prog.to_sdfg(simplify=True)
     _specialize(sdfg, **subs)
-    canonicalize(sdfg, validate=True, target='cpu')
+    canonicalize(sdfg, validate=True, target="cpu")
     return sdfg
 
 
 def _residual_loops(sdfg) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, LoopRegion) and not getattr(n, 'pinned_sequential', False))
+    return sum(
+        1
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, LoopRegion) and not getattr(n, "pinned_sequential", False)
+    )
 
 
 @dace.program
@@ -260,17 +268,17 @@ def test_refuses_symbolic_sizes():
     confirms it fully parallelizes once the sizes are known, so the residual loop here is the
     size guard, not a matching failure."""
     sym = _canon_full(_contour_sum)  # KK, NR, NM left symbolic -- no substitution
-    assert _residual_loops(sym) >= 1, 'symbolic-size reduction axis must stay sequential (lift refused)'
+    assert _residual_loops(sym) >= 1, "symbolic-size reduction axis must stay sequential (lift refused)"
 
 
 def restore_omp_threads(previous: str | None) -> None:
     """Put ``OMP_NUM_THREADS`` -- and the loaded runtime's own count -- back as they were."""
     if previous is None:
-        os.environ.pop('OMP_NUM_THREADS', None)
+        os.environ.pop("OMP_NUM_THREADS", None)
     elif previous.isdigit():
         set_openmp_thread_count(int(previous))
     else:
-        os.environ['OMP_NUM_THREADS'] = previous
+        os.environ["OMP_NUM_THREADS"] = previous
 
 
 def test_contour_pattern_thread_safe_reduction():
@@ -283,11 +291,11 @@ def test_contour_pattern_thread_safe_reduction():
     X = B + 1.0
     ref0 = X.sum(axis=0)
     ref1 = (2.0 * X).sum(axis=0)
-    prev = os.environ.get('OMP_NUM_THREADS')
+    prev = os.environ.get("OMP_NUM_THREADS")
     # libgomp parses OMP_NUM_THREADS in its initialiser and caches it, so writing os.environ
     # after ``import dace`` reaches nobody: ask the loaded runtime itself, and refuse to report
     # green on a team of one, where the race this test exists to catch cannot happen.
-    assert set_openmp_thread_count(4), 'the cross-iteration race needs a real multi-thread team'
+    assert set_openmp_thread_count(4), "the cross-iteration race needs a real multi-thread team"
     try:
         csdfg = sdfg.compile()
         for _ in range(6):
@@ -319,5 +327,5 @@ def test_contour_pattern_indexed_write_is_injective_not_reduction():
     assert np.allclose(Q, ref)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -10,13 +10,18 @@ the parallel map. Size is the ONLY thing the expansion decides; whether an enclo
 re-enters the transfer is the band's call, via the helpers pinned at the bottom of this file.
 These assert the ``Auto`` selection only (no compile).
 """
+
 import functools
 
 import pytest
 
 import dace
-from dace.libraries.standard.helper import (cpu_transfer_parallelizes, is_parallel_cpu_transfer_size,
-                                            is_reentered_cpu_transfer, is_short_loop)
+from dace.libraries.standard.helper import (
+    cpu_transfer_parallelizes,
+    is_parallel_cpu_transfer_size,
+    is_reentered_cpu_transfer,
+    is_short_loop,
+)
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg.state import LoopRegion
@@ -70,14 +75,14 @@ def _memset_libnode_sdfg(n):
 def test_large_copy_selects_mapped():
     sdfg, ln = _copy_libnode_sdfg(BIG_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
 
 
 @pin_threshold
 def test_small_copy_selects_memcpy():
     sdfg, ln = _copy_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MemcpyCPU'
+    assert ln.implementation == "MemcpyCPU"
 
 
 @pin_threshold
@@ -86,28 +91,28 @@ def test_symbolic_copy_selects_mapped():
     as "small" is what single-threaded every dynamically sized bulk copy."""
     sdfg, ln = _copy_libnode_sdfg(N)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
 
 
 @pin_threshold
 def test_symbolic_memset_selects_pure():
     sdfg, ln = _memset_libnode_sdfg(N)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'pure'
+    assert ln.implementation == "pure"
 
 
 @pin_threshold
 def test_large_memset_selects_pure():
     sdfg, ln = _memset_libnode_sdfg(BIG_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'pure'
+    assert ln.implementation == "pure"
 
 
 @pin_threshold
 def test_small_memset_selects_cpu():
     sdfg, ln = _memset_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'CPU'
+    assert ln.implementation == "CPU"
 
 
 def test_threshold_config_flips_selection():
@@ -118,18 +123,28 @@ def test_threshold_config_flips_selection():
         dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=4096)
         below, ln_below = _copy_libnode_sdfg(2048)
         below.expand_library_nodes(recursive=True)
-        assert ln_below.implementation == 'MemcpyCPU'
+        assert ln_below.implementation == "MemcpyCPU"
         at, ln_at = _copy_libnode_sdfg(4096)
         at.expand_library_nodes(recursive=True)
-        assert ln_at.implementation == 'MappedTasklet'
+        assert ln_at.implementation == "MappedTasklet"
     finally:
         dace.config.Config.set("compiler", "cpu", "parallel_transfer_min_elements", value=orig)
 
 
 # The size gate itself
 @pin_threshold
-@pytest.mark.parametrize("count,expected", [(SMALL_ELEMS, False), (TEST_THRESHOLD - 1, False), (TEST_THRESHOLD, True),
-                                            (BIG_ELEMS, True), (N, True), (2 * N, True), (N * dace.symbol("M"), True)])
+@pytest.mark.parametrize(
+    "count,expected",
+    [
+        (SMALL_ELEMS, False),
+        (TEST_THRESHOLD - 1, False),
+        (TEST_THRESHOLD, True),
+        (BIG_ELEMS, True),
+        (N, True),
+        (2 * N, True),
+        (N * dace.symbol("M"), True),
+    ],
+)
 def test_size_gate_defaults_to_parallel(count, expected):
     """Only a PROVABLY sub-threshold count is serial. Every symbolic count -- one symbol, a
     multiple, or a product of two -- is assumed big enough, with no symbol outranking another."""
@@ -147,10 +162,12 @@ def _loop_nested_copy(name: str, trip: str):
     sdfg.add_node(loop, is_start_block=True)
     state = loop.add_state("body", is_start_block=True)
     ln = CopyLibraryNode(name="cp")
-    state.add_edge(state.add_access("src"), None, ln, CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                   dace.Memlet(f"src[0:{BIG_ELEMS}]"))
-    state.add_edge(ln, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None,
-                   dace.Memlet(f"dst[0:{BIG_ELEMS}, k]"))
+    state.add_edge(
+        state.add_access("src"), None, ln, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"src[0:{BIG_ELEMS}]")
+    )
+    state.add_edge(
+        ln, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet(f"dst[0:{BIG_ELEMS}, k]")
+    )
     sdfg.validate()
     return sdfg, state, ln, loop
 
@@ -190,16 +207,20 @@ def test_parallel_map_scope_is_reentry():
     state = sdfg.add_state("s", is_start_block=True)
     me, mx = state.add_map("outer", dict(k="0:8"), schedule=dace.dtypes.ScheduleType.CPU_Multicore)
     ln = CopyLibraryNode(name="cp")
-    state.add_memlet_path(state.add_access("src"),
-                          me,
-                          ln,
-                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                          memlet=dace.Memlet(f"src[0:{BIG_ELEMS}]"))
-    state.add_memlet_path(ln,
-                          mx,
-                          state.add_access("dst"),
-                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
-                          memlet=dace.Memlet(f"dst[k, 0:{BIG_ELEMS}]"))
+    state.add_memlet_path(
+        state.add_access("src"),
+        me,
+        ln,
+        dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet(f"src[0:{BIG_ELEMS}]"),
+    )
+    state.add_memlet_path(
+        ln,
+        mx,
+        state.add_access("dst"),
+        src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
+        memlet=dace.Memlet(f"dst[k, 0:{BIG_ELEMS}]"),
+    )
     sdfg.validate()
     assert is_reentered_cpu_transfer(ln, state) is True
     me.map.schedule = dace.dtypes.ScheduleType.Sequential
@@ -213,7 +234,7 @@ def test_expansion_ignores_reentry():
     sdfg, state, ln, _ = _loop_nested_copy("expand_ignores_reentry", "T")
     assert cpu_transfer_parallelizes(ln, state, BIG_ELEMS) is False
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ a floating-point reassociation cannot flip a branch.
 Deterministic: everything derives from ``seed`` through one ``numpy.random.default_rng``. Every
 array is built ROW-MAJOR, the standing invariant for CloudSC data.
 """
+
 from typing import Dict, List, Tuple, Union
 
 import numpy as np
@@ -54,8 +55,12 @@ import sympy
 
 import dace
 
-from tests.corpus.cloudsc.generate_data_for_cloudsc import (CLOUDSC_CONSTANTS, CLOUDSC_INPUT_RANGES, CLOUDSC_SYMBOLS,
-                                                            pressure_profile)
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (
+    CLOUDSC_CONSTANTS,
+    CLOUDSC_INPUT_RANGES,
+    CLOUDSC_SYMBOLS,
+    pressure_profile,
+)
 
 Field = Dict[str, np.ndarray]
 Inputs = Dict[str, Union[np.ndarray, int, float]]
@@ -105,31 +110,35 @@ def instantiate_dim(dim: object) -> int:
 
 def liquid_fraction(t: np.ndarray) -> np.ndarray:
     """The kernel's ``zfoealfa`` (``cloudsc.py:401``): the liquid share of condensate at ``t``."""
-    rtice = CLOUDSC_CONSTANTS['ydthf_rtice']
-    rtwat = CLOUDSC_CONSTANTS['ydthf_rtwat']
-    scale = CLOUDSC_CONSTANTS['ydthf_rtwat_rtice_r']
-    return np.minimum(1.0, ((np.maximum(rtice, np.minimum(rtwat, t)) - rtice) * scale)**2)
+    rtice = CLOUDSC_CONSTANTS["ydthf_rtice"]
+    rtwat = CLOUDSC_CONSTANTS["ydthf_rtwat"]
+    scale = CLOUDSC_CONSTANTS["ydthf_rtwat_rtice_r"]
+    return np.minimum(1.0, ((np.maximum(rtice, np.minimum(rtwat, t)) - rtice) * scale) ** 2)
 
 
 def saturation_mixing_ratio(t: np.ndarray, p: np.ndarray) -> np.ndarray:
     """The kernel's ``zqsmix`` (``cloudsc.py:405``): mixed-phase saturation specific humidity."""
     alfa = liquid_fraction(t)
-    rtt = CLOUDSC_CONSTANTS['ydcst_rtt']
-    over_water = np.exp(CLOUDSC_CONSTANTS['ydthf_r3les'] * (t - rtt) / (t - CLOUDSC_CONSTANTS['ydthf_r4les']))
-    over_ice = np.exp(CLOUDSC_CONSTANTS['ydthf_r3ies'] * (t - rtt) / (t - CLOUDSC_CONSTANTS['ydthf_r4ies']))
-    vapor = np.minimum(CLOUDSC_CONSTANTS['ydthf_r2es'] * (alfa * over_water + (1.0 - alfa) * over_ice) / p, 0.5)
-    return vapor / (1.0 - CLOUDSC_CONSTANTS['ydcst_retv'] * vapor)
+    rtt = CLOUDSC_CONSTANTS["ydcst_rtt"]
+    over_water = np.exp(CLOUDSC_CONSTANTS["ydthf_r3les"] * (t - rtt) / (t - CLOUDSC_CONSTANTS["ydthf_r4les"]))
+    over_ice = np.exp(CLOUDSC_CONSTANTS["ydthf_r3ies"] * (t - rtt) / (t - CLOUDSC_CONSTANTS["ydthf_r4ies"]))
+    vapor = np.minimum(CLOUDSC_CONSTANTS["ydthf_r2es"] * (alfa * over_water + (1.0 - alfa) * over_ice) / p, 0.5)
+    return vapor / (1.0 - CLOUDSC_CONSTANTS["ydcst_retv"] * vapor)
 
 
 def phase_thresholds() -> Tuple[float, ...]:
     """Temperatures the kernel branches on: melting, homogeneous freezing, and the mixed-phase band."""
-    return (CLOUDSC_CONSTANTS['ydcst_rtt'], CLOUDSC_CONSTANTS['yrecldp_rthomo'], CLOUDSC_CONSTANTS['ydthf_rtice'],
-            CLOUDSC_CONSTANTS['ydthf_rtwat'])
+    return (
+        CLOUDSC_CONSTANTS["ydcst_rtt"],
+        CLOUDSC_CONSTANTS["yrecldp_rthomo"],
+        CLOUDSC_CONSTANTS["ydthf_rtice"],
+        CLOUDSC_CONSTANTS["ydthf_rtwat"],
+    )
 
 
 def repel_from_thresholds(values: np.ndarray, thresholds: Tuple[float, ...], margin: float) -> np.ndarray:
     """Push every element at least ``margin`` away from every threshold, keeping which side it is on."""
-    out = np.array(values, dtype=np.float64, order='C')
+    out = np.array(values, dtype=np.float64, order="C")
     for threshold in thresholds:
         delta = out - threshold
         near = np.abs(delta) < margin
@@ -160,10 +169,10 @@ def build_conditioned_fields(klev: int, klon: int, nclv: int, seed: int) -> Fiel
     rng = np.random.default_rng(seed)
     fields: Field = {}
 
-    paph = pressure_profile('paph', [klev + 1, klon])
-    pap = pressure_profile('pap', [klev, klon])
-    fields['paph'] = paph
-    fields['pap'] = pap
+    paph = pressure_profile("paph", [klev + 1, klon])
+    pap = pressure_profile("pap", [klev, klon])
+    fields["paph"] = paph
+    fields["pap"] = pap
     sigma = pap / paph[klev, :][None, :]
 
     # Temperature: standard profile, plus a per-column surface anomaly that decays to zero at the
@@ -172,7 +181,7 @@ def build_conditioned_fields(klev: int, klon: int, nclv: int, seed: int) -> Fiel
     anomaly = rng.uniform(-8.0, 8.0, size=klon)[None, :]
     pt = standard_temperature(pap) + below * anomaly + rng.uniform(-0.35, 0.35, size=(klev, klon))
     pt = repel_from_thresholds(pt, phase_thresholds(), PHASE_MARGIN)
-    fields['pt'] = pt
+    fields["pt"] = pt
 
     # Humidity: a relative humidity that falls with height, against the kernel's own saturation
     # function, with a stratospheric floor of ~3 ppmv instead of a saturation-scaled value.
@@ -180,7 +189,7 @@ def build_conditioned_fields(klev: int, klon: int, nclv: int, seed: int) -> Fiel
     relative_humidity = np.clip(0.75 * below + 0.10 + 0.20 * rng.standard_normal((klev, klon)), 0.02, 0.90)
     pq = np.maximum(relative_humidity * qsat, 3.0e-6)
     pq = np.where(pap < TROPOPAUSE_PRESSURE, np.minimum(pq, 6.0e-6), pq)
-    fields['pq'] = np.array(pq, order='C')
+    fields["pq"] = np.array(pq, order="C")
 
     # Cloud slabs: contiguous tropospheric level ranges with a raised-sine shape, so cloud fraction
     # and condensate rise and fall together instead of being independent noise.
@@ -197,23 +206,24 @@ def build_conditioned_fields(klev: int, klon: int, nclv: int, seed: int) -> Fiel
             shape = np.sin(np.pi * (levels - start + 0.5) / depth)
             peak_fraction = float(rng.uniform(0.3, 0.95))
             peak_condensate = float(np.exp(rng.uniform(np.log(5.0e-6), np.log(4.0e-4))))
-            cloud_fraction[levels,
-                           column] = np.maximum(cloud_fraction[levels, column],
-                                                MIN_CLOUD_FRACTION + (peak_fraction - MIN_CLOUD_FRACTION) * shape)
+            cloud_fraction[levels, column] = np.maximum(
+                cloud_fraction[levels, column], MIN_CLOUD_FRACTION + (peak_fraction - MIN_CLOUD_FRACTION) * shape
+            )
             condensate[levels, column] = np.maximum(condensate[levels, column], peak_condensate * (0.2 + 0.8 * shape))
             cloud_top[column] = min(cloud_top[column], int(levels[0]))
-    fields['pa'] = np.array(np.clip(cloud_fraction, 0.0, 1.0), order='C')
+    fields["pa"] = np.array(np.clip(cloud_fraction, 0.0, 1.0), order="C")
 
     # Precipitation: present from the highest cloud top downwards, split rain / snow across the
     # melting layer, and never left between zero and the kernel's rlmin dump threshold.
-    rlmin = CLOUDSC_CONSTANTS['yrecldp_rlmin']
+    rlmin = CLOUDSC_CONSTANTS["yrecldp_rlmin"]
     floor = CONDENSATE_MARGIN * rlmin
     level_index = np.arange(klev)[:, None]
     falling = level_index >= cloud_top[None, :]
     depth_below = np.maximum(level_index - cloud_top[None, :], 0)
-    precipitation = np.where(falling,
-                             rng.uniform(2.0e-6, 2.0e-5, size=(klev, klon)) * (1.0 - np.exp(-depth_below / 3.0)), 0.0)
-    rain_share = np.clip((pt - (CLOUDSC_CONSTANTS['ydcst_rtt'] - 2.0)) / 4.0, 0.0, 1.0)
+    precipitation = np.where(
+        falling, rng.uniform(2.0e-6, 2.0e-5, size=(klev, klon)) * (1.0 - np.exp(-depth_below / 3.0)), 0.0
+    )
+    rain_share = np.clip((pt - (CLOUDSC_CONSTANTS["ydcst_rtt"] - 2.0)) / 4.0, 0.0, 1.0)
     rain = precipitation * rain_share
     snow = precipitation * (1.0 - rain_share)
     rain = np.where(rain < floor, 0.0, rain)
@@ -226,57 +236,63 @@ def build_conditioned_fields(klev: int, klon: int, nclv: int, seed: int) -> Fiel
     ice = np.where(ice < floor, 0.0, ice)
     # A cloudy cell must keep ql + qi above rlmin, or cloudsc.py:371 dumps it and zeroes za.
     cloudy = (liquid + ice) >= floor
-    fields['pa'] = np.array(np.where(cloudy, fields['pa'], 0.0), order='C')
+    fields["pa"] = np.array(np.where(cloudy, fields["pa"], 0.0), order="C")
 
     pclv = np.zeros((nclv, klev, klon))
-    pclv[CLOUDSC_SYMBOLS['ncldql'] - 1] = liquid
-    pclv[CLOUDSC_SYMBOLS['ncldqi'] - 1] = ice
-    pclv[CLOUDSC_SYMBOLS['ncldqr'] - 1] = rain
-    pclv[CLOUDSC_SYMBOLS['ncldqs'] - 1] = snow
-    fields['pclv'] = np.array(pclv, order='C')
+    pclv[CLOUDSC_SYMBOLS["ncldql"] - 1] = liquid
+    pclv[CLOUDSC_SYMBOLS["ncldqi"] - 1] = ice
+    pclv[CLOUDSC_SYMBOLS["ncldqr"] - 1] = rain
+    pclv[CLOUDSC_SYMBOLS["ncldqs"] - 1] = snow
+    fields["pclv"] = np.array(pclv, order="C")
 
     # Dynamics tendencies: bounded RELATIVE increments, so ptsphy * tendency never moves a field
     # across a guard the field itself is safely on one side of.
-    ptsphy = CLOUDSC_CONSTANTS['ptsphy']
+    ptsphy = CLOUDSC_CONSTANTS["ptsphy"]
     rate = MAX_RELATIVE_INCREMENT / ptsphy
-    fields['tendency_tmp_t'] = np.array(rng.uniform(-0.5, 0.5, size=(klev, klon)) / ptsphy, order='C')
-    fields['tendency_tmp_q'] = np.array(rate * rng.uniform(-1.0, 1.0, size=(klev, klon)) * fields['pq'], order='C')
-    fields['tendency_tmp_a'] = np.array(rate * rng.uniform(-1.0, 1.0, size=(klev, klon)) * fields['pa'], order='C')
-    fields['tendency_tmp_cld'] = np.array(rate * rng.uniform(-1.0, 1.0, size=(nclv, klev, klon)) * fields['pclv'],
-                                          order='C')
+    fields["tendency_tmp_t"] = np.array(rng.uniform(-0.5, 0.5, size=(klev, klon)) / ptsphy, order="C")
+    fields["tendency_tmp_q"] = np.array(rate * rng.uniform(-1.0, 1.0, size=(klev, klon)) * fields["pq"], order="C")
+    fields["tendency_tmp_a"] = np.array(rate * rng.uniform(-1.0, 1.0, size=(klev, klon)) * fields["pa"], order="C")
+    fields["tendency_tmp_cld"] = np.array(
+        rate * rng.uniform(-1.0, 1.0, size=(nclv, klev, klon)) * fields["pclv"], order="C"
+    )
 
     # Convection: one decision per column drives ldcum, ktype and every convective profile, so
     # detrainment cannot appear in a column that has no convection.
     convective = rng.random(klon) < 0.4
-    fields['ldcum'] = np.array(convective.astype(np.int32), order='C')
-    fields['ktype'] = np.array(np.where(convective, rng.integers(1, 3, size=klon), 0).astype(np.int32), order='C')
+    fields["ldcum"] = np.array(convective.astype(np.int32), order="C")
+    fields["ktype"] = np.array(np.where(convective, rng.integers(1, 3, size=klon), 0).astype(np.int32), order="C")
     updraft_shape = np.where(falling, np.sin(np.pi * np.clip(depth_below / max(klev - 1, 1), 0.0, 1.0)), 0.0)
     active = convective[None, :] & falling
-    fields['pmfu'] = np.array(np.where(active, CLOUDSC_INPUT_RANGES['pmfu'][1] * updraft_shape, 0.0), order='C')
-    fields['plu'] = np.array(np.where(active, CLOUDSC_INPUT_RANGES['plu'][1] * updraft_shape, 0.0), order='C')
+    fields["pmfu"] = np.array(np.where(active, CLOUDSC_INPUT_RANGES["pmfu"][1] * updraft_shape, 0.0), order="C")
+    fields["plu"] = np.array(np.where(active, CLOUDSC_INPUT_RANGES["plu"][1] * updraft_shape, 0.0), order="C")
     detrainable = np.zeros((klev, klon), dtype=bool)
-    detrainable[:-1] = active[:-1] & (fields['plu'][1:] > 0.0)
-    plude = np.where(detrainable, CLOUDSC_INPUT_RANGES['plude'][1] * updraft_shape, 0.0)
-    fields['plude'] = np.array(np.where(plude < floor, 0.0, plude), order='C')
+    detrainable[:-1] = active[:-1] & (fields["plu"][1:] > 0.0)
+    plude = np.where(detrainable, CLOUDSC_INPUT_RANGES["plude"][1] * updraft_shape, 0.0)
+    fields["plude"] = np.array(np.where(plude < floor, 0.0, plude), order="C")
 
     # Detrained supersaturation: a sparse source inside convective cloud, not a value in every cell.
     supersaturated = active & cloudy & (rng.random((klev, klon)) < 0.2)
-    psupsat = np.where(supersaturated, rng.uniform(1.0e-7, CLOUDSC_INPUT_RANGES['psupsat'][1], size=(klev, klon)), 0.0)
-    fields['psupsat'] = np.array(psupsat, order='C')
+    psupsat = np.where(supersaturated, rng.uniform(1.0e-7, CLOUDSC_INPUT_RANGES["psupsat"][1], size=(klev, klon)), 0.0)
+    fields["psupsat"] = np.array(psupsat, order="C")
 
     # Fields the kernel reads only in the flux diagnostics or the forcing: keep the dwarf's band but
     # give them a vertical envelope, and never an exact zero, so no cumulative flux starts dead.
     envelope = 4.0 * sigma * (1.0 - sigma) + 0.05
-    fields['pvervel'] = np.array(CLOUDSC_INPUT_RANGES['pvervel'][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)),
-                                 order='C')
-    fields['phrlw'] = np.array(CLOUDSC_INPUT_RANGES['phrlw'][0] * envelope * rng.uniform(0.05, 1.0, (klev, klon)),
-                               order='C')
-    fields['pvfl'] = np.array(CLOUDSC_INPUT_RANGES['pvfl'][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)),
-                              order='C')
-    fields['pvfi'] = np.array(CLOUDSC_INPUT_RANGES['pvfi'][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)),
-                              order='C')
-    fields['pvfa'] = np.array(CLOUDSC_INPUT_RANGES['pvfa'][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)),
-                              order='C')
+    fields["pvervel"] = np.array(
+        CLOUDSC_INPUT_RANGES["pvervel"][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)), order="C"
+    )
+    fields["phrlw"] = np.array(
+        CLOUDSC_INPUT_RANGES["phrlw"][0] * envelope * rng.uniform(0.05, 1.0, (klev, klon)), order="C"
+    )
+    fields["pvfl"] = np.array(
+        CLOUDSC_INPUT_RANGES["pvfl"][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)), order="C"
+    )
+    fields["pvfi"] = np.array(
+        CLOUDSC_INPUT_RANGES["pvfi"][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)), order="C"
+    )
+    fields["pvfa"] = np.array(
+        CLOUDSC_INPUT_RANGES["pvfa"][1] * envelope * rng.uniform(-1.0, 1.0, (klev, klon)), order="C"
+    )
     return fields
 
 
@@ -292,7 +308,7 @@ def generate_conditioned_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Input
     :param seed: seed for the single generator every draw comes from.
     :returns: a kwargs dict of arrays, scalars and symbol values.
     """
-    klev, klon, nclv = CLOUDSC_SYMBOLS['klev'], CLOUDSC_SYMBOLS['klon'], CLOUDSC_SYMBOLS['nclv']
+    klev, klon, nclv = CLOUDSC_SYMBOLS["klev"], CLOUDSC_SYMBOLS["klon"], CLOUDSC_SYMBOLS["nclv"]
     fields = build_conditioned_fields(klev, klon, nclv, seed)
 
     arrays: Dict[str, np.ndarray] = {}
@@ -300,22 +316,21 @@ def generate_conditioned_cloudsc_inputs(sdfg: dace.SDFG, seed: int = 0) -> Input
         if desc.transient:
             continue
         dims: List[int] = [instantiate_dim(d) for d in desc.shape]
-        is_int = 'int' in str(desc.dtype)
+        is_int = "int" in str(desc.dtype)
         if name in fields:
             arrays[name] = fields[name]
         elif name in CLOUDSC_CONSTANTS:
             value = CLOUDSC_CONSTANTS[name]
-            arrays[name] = np.full(dims,
-                                   int(value) if is_int else value,
-                                   dtype=np.int32 if is_int else np.float64,
-                                   order='C')
+            arrays[name] = np.full(
+                dims, int(value) if is_int else value, dtype=np.int32 if is_int else np.float64, order="C"
+            )
         elif is_int:
-            data = np.zeros(dims, order='C').astype(np.int32)
+            data = np.zeros(dims, order="C").astype(np.int32)
             if name in CLOUDSC_SYMBOLS:
                 data.flat[0] = CLOUDSC_SYMBOLS[name]
             arrays[name] = data
         else:
-            arrays[name] = np.zeros(dims, order='C')
+            arrays[name] = np.zeros(dims, order="C")
 
     inputs: Inputs = {name: (data.flat[0] if data.size == 1 else data) for name, data in arrays.items()}
     inputs.update(CLOUDSC_SYMBOLS)

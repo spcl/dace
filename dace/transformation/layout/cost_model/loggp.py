@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """LogP/LogGP parameters (L, o, g, G) of a memory level, and the fit extracting them from microbenchmarks."""
+
 import math
 from dataclasses import dataclass
 from typing import List, Sequence
@@ -10,6 +11,7 @@ import sympy
 @dataclass(frozen=True)
 class LogGP:
     """LogP/LogGP parameters of ONE memory level (e.g. global DRAM), in seconds and seconds/byte."""
+
     L: float  # s -- unloaded round-trip latency of one line
     o: float  # s -- per-message overhead (0 in v1)
     g: float  # s -- minimum interval between requests from one core
@@ -90,7 +92,7 @@ def bandwidth_delay_product(p: LogGP) -> float:
 
 
 def regime(p: LogGP, available_concurrency: float) -> str:
-    """"bandwidth" if available_concurrency reaches the bandwidth-delay product, else "latency"."""
+    """ "bandwidth" if available_concurrency reaches the bandwidth-delay product, else "latency"."""
     return "bandwidth" if available_concurrency >= bandwidth_delay_product(p) else "latency"
 
 
@@ -104,6 +106,7 @@ def memory_time(blocks_per_iter: float, total_iters: float, p: LogGP, concurrenc
 @dataclass(frozen=True)
 class Fit:
     """A least-squares ``T(n) = alpha + beta * n`` over the message-size sweep."""
+
     alpha: float  # s -- intercept; identifies with L
     beta: float  # s/byte -- slope; identifies with the single-core per-byte gap
     residual: float  # relative RMS residual, so a bad fit cannot be silently trusted
@@ -125,38 +128,48 @@ def fit_message_size(sizes: Sequence[int], times: Sequence[float]) -> Fit:
     beta = (sw * swxy - swx * swy) / denom
     alpha = (swy - beta * swx) / sw
     predicted = [alpha + beta * x for x in sizes]
-    num = sum(w * (y - p)**2 for w, y, p in zip(weight, times, predicted))
+    num = sum(w * (y - p) ** 2 for w, y, p in zip(weight, times, predicted))
     mean = swy / sw
-    den = sum(w * (y - mean)**2 for w, y in zip(weight, times))
+    den = sum(w * (y - mean) ** 2 for w, y in zip(weight, times))
     residual = math.sqrt(num / den) if den > 0 else 0.0
     return Fit(alpha=alpha, beta=beta, residual=residual)
 
 
-def validate(p: LogGP,
-             fit: Fit,
-             peak_bytes_per_s: float,
-             knee_concurrency: float,
-             latency_tol: float = 0.10,
-             gap_tol: float = 0.20) -> List[str]:
+def validate(
+    p: LogGP,
+    fit: Fit,
+    peak_bytes_per_s: float,
+    knee_concurrency: float,
+    latency_tol: float = 0.10,
+    gap_tol: float = 0.20,
+) -> List[str]:
     """Reasons to reject the parametrization; empty means accept. Cross-checks each parameter two independent ways."""
     reasons: List[str] = []
     if p.L <= 0 or p.G <= 0 or p.g <= 0:
         reasons.append("non-positive L, G, or g")
         return reasons
     if _relative_gap(fit.alpha, p.L) > latency_tol:
-        reasons.append(f"fit intercept {fit.alpha * 1e9:.1f} ns disagrees with measured L "
-                       f"{p.L * 1e9:.1f} ns by > {latency_tol:.0%}")
+        reasons.append(
+            f"fit intercept {fit.alpha * 1e9:.1f} ns disagrees with measured L "
+            f"{p.L * 1e9:.1f} ns by > {latency_tol:.0%}"
+        )
     core_gap = gap_from_bandwidth(p.bw_core)
     if _relative_gap(fit.beta, core_gap) > gap_tol:
-        reasons.append(f"fit slope {fit.beta * 1e9:.4f} ns/B disagrees with single-core 1/bw "
-                       f"{core_gap * 1e9:.4f} ns/B by > {gap_tol:.0%}")
+        reasons.append(
+            f"fit slope {fit.beta * 1e9:.4f} ns/B disagrees with single-core 1/bw "
+            f"{core_gap * 1e9:.4f} ns/B by > {gap_tol:.0%}"
+        )
     # one-sided: knee <= L/g always; only knee > cap is impossible
     if knee_concurrency > p.concurrency * 1.35:
-        reasons.append(f"outstanding-miss knee {knee_concurrency:.1f} exceeds the issue cap "
-                       f"L/g = {p.concurrency:.1f} -- impossible under min(), so the run is broken")
+        reasons.append(
+            f"outstanding-miss knee {knee_concurrency:.1f} exceeds the issue cap "
+            f"L/g = {p.concurrency:.1f} -- impossible under min(), so the run is broken"
+        )
     if p.bw_saturated > peak_bytes_per_s:
-        reasons.append(f"saturated bandwidth {p.bw_saturated / 1e9:.1f} GB/s exceeds hardware peak "
-                       f"{peak_bytes_per_s / 1e9:.1f} GB/s (a cache-resident array)")
+        reasons.append(
+            f"saturated bandwidth {p.bw_saturated / 1e9:.1f} GB/s exceeds hardware peak "
+            f"{peak_bytes_per_s / 1e9:.1f} GB/s (a cache-resident array)"
+        )
     return reasons
 
 

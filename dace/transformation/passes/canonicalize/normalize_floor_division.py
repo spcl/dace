@@ -21,6 +21,7 @@ Call sites use ``int_floor`` directly; this pass is the net that keeps one misse
 reaching codegen as a wrong index. Recovery is exact: ``together`` puts the distributed argument
 back over a common denominator before it is split into numerator and denominator.
 """
+
 from typing import Any, Dict, List, Optional, Type, Union
 
 import sympy
@@ -85,7 +86,8 @@ def normalize_descriptor(desc: dt.Data) -> int:
 @transformation.explicit_cf_compatible
 class NormalizeFloorDivision(ppl.Pass):
     """Replace ``sympy.floor(a / b)`` with ``int_floor(a, b)`` everywhere it can reach codegen."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets | ppl.Modifies.Descriptors | ppl.Modifies.Nodes

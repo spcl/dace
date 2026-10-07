@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the trivial-tasklet-elimination transformation. """
+"""Contains classes that implement the trivial-tasklet-elimination transformation."""
 
 import ast
 
@@ -43,17 +43,18 @@ def _is_carried_reduction_accumulator(sdfg, name: str) -> bool:
                 continue
             seen_states += 1
             if not is_wcr_target:
-                is_wcr_target = any(e.data is not None and e.data.wcr is not None for n in nodes_here
-                                    for e in state.in_edges(n))
+                is_wcr_target = any(
+                    e.data is not None and e.data.wcr is not None for n in nodes_here for e in state.in_edges(n)
+                )
     return seen_states > 1 and is_wcr_target
 
 
 @make_properties
 class TrivialTaskletElimination(transformation.SingleStateTransformation):
-    """ Implements the Trivial-Tasklet Elimination pattern.
+    """Implements the Trivial-Tasklet Elimination pattern.
 
-        Trivial-Tasklet Elimination removes tasklets that just copy the input
-        to the output without WCR.
+    Trivial-Tasklet Elimination removes tasklets that just copy the input
+    to the output without WCR.
     """
 
     read = transformation.PatternNode(nodes.AccessNode)
@@ -91,11 +92,16 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
             if len(body) != 1:
                 return False
             stmt = body[0]
-            if (not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name)
-                    or stmt.targets[0].id != out_conn or not isinstance(stmt.value, ast.Name)
-                    or stmt.value.id != in_conn):
+            if (
+                not isinstance(stmt, ast.Assign)
+                or len(stmt.targets) != 1
+                or not isinstance(stmt.targets[0], ast.Name)
+                or stmt.targets[0].id != out_conn
+                or not isinstance(stmt.value, ast.Name)
+                or stmt.value.id != in_conn
+            ):
                 return False
-        elif tasklet.code.as_string != f'{out_conn} = {in_conn}':
+        elif tasklet.code.as_string != f"{out_conn} = {in_conn}":
             return False
         read_memlet = graph.edges_between(read, tasklet)[0].data
         read_desc = sdfg.arrays[read_memlet.data]
@@ -129,8 +135,9 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         # staged from an array, reduced via WCR, and written back) must survive:
         # eliminating it splices the array element straight onto the WCR-written
         # scalar and drops the accumulator's carry (ludcmp's LU update -> zero).
-        if _is_carried_reduction_accumulator(sdfg, read_memlet.data) or \
-                _is_carried_reduction_accumulator(sdfg, write_memlet.data):
+        if _is_carried_reduction_accumulator(sdfg, read_memlet.data) or _is_carried_reduction_accumulator(
+            sdfg, write_memlet.data
+        ):
             return False
 
         return True

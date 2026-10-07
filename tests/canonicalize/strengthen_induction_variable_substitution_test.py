@@ -48,39 +48,39 @@ def _build_use_before_increment_sdfg(n: int) -> dace.SDFG:
     unconditionally, so ``j`` tracks ``i`` exactly. ``a`` is sized ``n + 1`` so an
     off-by-one write (``a[i+1]``) stays in-bounds instead of segfaulting.
     """
-    sdfg = dace.SDFG('use_before_inc')
-    sdfg.add_array('a', [n + 1], dace.float64)
-    sdfg.add_array('b', [n], dace.float64)
-    sdfg.add_array('c', [n], dace.float64)
-    sdfg.add_symbol('j', dace.int64)
+    sdfg = dace.SDFG("use_before_inc")
+    sdfg.add_array("a", [n + 1], dace.float64)
+    sdfg.add_array("b", [n], dace.float64)
+    sdfg.add_array("c", [n], dace.float64)
+    sdfg.add_symbol("j", dace.int64)
 
-    init = sdfg.add_state('init', is_start_block=True)
+    init = sdfg.add_state("init", is_start_block=True)
 
-    loop = LoopRegion('loop', condition_expr=f'i < {n}', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    loop = LoopRegion("loop", condition_expr=f"i < {n}", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
     # Seed the IV symbol ``j`` before the loop.
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'j': '0'}))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"j": "0"}))
 
-    cb = ConditionalBlock('cb')
+    cb = ConditionalBlock("cb")
     loop.add_node(cb, is_start_block=True)
 
     def _populate_branch(br: ControlFlowRegion, name: str, src_array: str) -> None:
-        s1 = br.add_state(name + '_use', is_start_block=True)
-        s2 = br.add_state(name + '_end')
+        s1 = br.add_state(name + "_use", is_start_block=True)
+        s2 = br.add_state(name + "_end")
         rd = s1.add_read(src_array)
-        wr = s1.add_write('a')
-        tlt = s1.add_tasklet(name + '_t', {'__in'}, {'__out'}, '__out = __in', language=dace.dtypes.Language.Python)
-        s1.add_edge(rd, None, tlt, '__in', dace.Memlet(data=src_array, subset='i'))
-        s1.add_edge(tlt, '__out', wr, None, dace.Memlet(data='a', subset='j'))
+        wr = s1.add_write("a")
+        tlt = s1.add_tasklet(name + "_t", {"__in"}, {"__out"}, "__out = __in", language=dace.dtypes.Language.Python)
+        s1.add_edge(rd, None, tlt, "__in", dace.Memlet(data=src_array, subset="i"))
+        s1.add_edge(tlt, "__out", wr, None, dace.Memlet(data="a", subset="j"))
         # Increment AFTER the use.
-        br.add_edge(s1, s2, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+        br.add_edge(s1, s2, dace.InterstateEdge(assignments={"j": "j + 1"}))
 
-    then_br = ControlFlowRegion('then')
-    els_br = ControlFlowRegion('els')
-    cb.add_branch(CodeBlock('(i % 2) == 0'), then_br)
+    then_br = ControlFlowRegion("then")
+    els_br = ControlFlowRegion("els")
+    cb.add_branch(CodeBlock("(i % 2) == 0"), then_br)
     cb.add_branch(None, els_br)
-    _populate_branch(then_br, 'then', 'b')
-    _populate_branch(els_br, 'els', 'c')
+    _populate_branch(then_br, "then", "b")
+    _populate_branch(els_br, "els", "c")
 
     sdfg.validate()
     return sdfg
@@ -101,8 +101,12 @@ def _reference(n: int, b: np.ndarray, c: np.ndarray) -> np.ndarray:
 def _carries_symbol(sdfg: dace.SDFG, sym: str) -> bool:
     """Whether any loop body still assigns ``sym`` -- i.e. the loop-carried dependency
     on the IV survived (the loop cannot parallelize)."""
-    return any(sym in (e.data.assignments or {}) for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)
-               for e in r.all_interstate_edges())
+    return any(
+        sym in (e.data.assignments or {})
+        for r in sdfg.all_control_flow_regions()
+        if isinstance(r, LoopRegion)
+        for e in r.all_interstate_edges()
+    )
 
 
 def test_branch_uniform_hoist_use_before_increment():
@@ -112,13 +116,14 @@ def test_branch_uniform_hoist_use_before_increment():
     c = rng.random(n)
 
     sdfg = _build_use_before_increment_sdfg(n)
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, (
         "read-before-increment branch-uniform IV must be hoisted + closed, not refused"
+    )
     sdfg.validate()
 
     # The lift's whole point: ``j`` is no longer loop-carried, so the body is a pure
     # function of the loop variable and LoopToMap can parallelize it.
-    assert not _carries_symbol(sdfg, 'j'), "loop-carried ``j`` survived -> loop still sequential"
+    assert not _carries_symbol(sdfg, "j"), "loop-carried ``j`` survived -> loop still sequential"
 
     got = np.zeros(n + 1, dtype=np.float64)
     sdfg.compile()(a=got, b=b.copy(), c=c.copy())
@@ -137,41 +142,41 @@ def _build_unused_iv_sdfg() -> dace.SDFG:
     effect is to drop the loop-carried ``j`` so the loop can parallelize. ``N`` is kept
     SYMBOLIC on purpose.
     """
-    sdfg = dace.SDFG('unused_iv')
-    n = dace.symbol('N', dace.int64)
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_symbol('j', dace.int64)
-    for name in ('a', 'a2', 'b', 'c'):
+    sdfg = dace.SDFG("unused_iv")
+    n = dace.symbol("N", dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("j", dace.int64)
+    for name in ("a", "a2", "b", "c"):
         sdfg.add_array(name, [n], dace.float64)
-    sdfg.add_array('d', [n + 1], dace.float64)
-    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_array("d", [n + 1], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
 
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'j': '0'}))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"j": "0"}))
 
     def _copy_state(state, dst, src):
         rd = state.add_read(src)
         wr = state.add_write(dst)
-        tlt = state.add_tasklet(dst + '_t', {'__in'}, {'__out'}, '__out = __in', language=dace.dtypes.Language.Python)
-        state.add_edge(rd, None, tlt, '__in', dace.Memlet(data=src, subset='i'))
-        state.add_edge(tlt, '__out', wr, None, dace.Memlet(data=dst, subset='i'))
+        tlt = state.add_tasklet(dst + "_t", {"__in"}, {"__out"}, "__out = __in", language=dace.dtypes.Language.Python)
+        state.add_edge(rd, None, tlt, "__in", dace.Memlet(data=src, subset="i"))
+        state.add_edge(tlt, "__out", wr, None, dace.Memlet(data=dst, subset="i"))
 
-    s0 = loop.add_state('s0', is_start_block=True)
-    s1 = loop.add_state('s1')
-    _copy_state(s0, 'a', 'b')
-    _copy_state(s1, 'a2', 'c')
-    loop.add_edge(s0, s1, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+    s0 = loop.add_state("s0", is_start_block=True)
+    s1 = loop.add_state("s1")
+    _copy_state(s0, "a", "b")
+    _copy_state(s1, "a2", "c")
+    loop.add_edge(s0, s1, dace.InterstateEdge(assignments={"j": "j + 1"}))
 
     # Post-loop reader: the ONLY use of ``j``, so the closed form's exit value is observable.
-    post = sdfg.add_state('post')
+    post = sdfg.add_state("post")
     sdfg.add_edge(loop, post, dace.InterstateEdge())
-    rd = post.add_read('d')
-    wr = post.add_write('out')
-    tlt = post.add_tasklet('post_t', {'__in'}, {'__out'}, '__out = __in', language=dace.dtypes.Language.Python)
-    post.add_edge(rd, None, tlt, '__in', dace.Memlet(data='d', subset='j'))
-    post.add_edge(tlt, '__out', wr, None, dace.Memlet(data='out', subset='0'))
+    rd = post.add_read("d")
+    wr = post.add_write("out")
+    tlt = post.add_tasklet("post_t", {"__in"}, {"__out"}, "__out = __in", language=dace.dtypes.Language.Python)
+    post.add_edge(rd, None, tlt, "__in", dace.Memlet(data="d", subset="j"))
+    post.add_edge(tlt, "__out", wr, None, dace.Memlet(data="out", subset="0"))
 
     sdfg.validate()
     return sdfg
@@ -185,10 +190,11 @@ def test_unused_iv_is_liftable_not_ambiguous():
     b, c, d = rng.random(n), rng.random(n), rng.random(n + 1)
 
     sdfg = _build_unused_iv_sdfg()
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, (
         "an IV with NO body use must lift (either offset is correct), not be refused as ambiguous"
+    )
     sdfg.validate()
-    assert not _carries_symbol(sdfg, 'j'), "loop-carried ``j`` survived -> loop still sequential"
+    assert not _carries_symbol(sdfg, "j"), "loop-carried ``j`` survived -> loop still sequential"
 
     a, a2, out = np.zeros(n), np.zeros(n), np.zeros(1)
     sdfg.compile()(a=a, a2=a2, b=b.copy(), c=c.copy(), d=d.copy(), out=out, N=n)
@@ -207,26 +213,26 @@ def _build_use_before_definition_sdfg(seed: str) -> dace.SDFG:
     when ``seed == f(start - stride) = f(-1) = 0``. ``seed='0'`` must lift to the fully
     parallel ``a[i] = b[i]``; any other seed must refuse.
     """
-    sdfg = dace.SDFG('use_before_def_' + seed)
-    n = dace.symbol('N', dace.int64)
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_symbol('k', dace.int64)
-    sdfg.add_array('a', [n], dace.float64)
-    sdfg.add_array('b', [n], dace.float64)
+    sdfg = dace.SDFG("use_before_def_" + seed)
+    n = dace.symbol("N", dace.int64)
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_array("a", [n], dace.float64)
+    sdfg.add_array("b", [n], dace.float64)
 
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'k': seed}))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"k": seed}))
 
-    s0 = loop.add_state('s0', is_start_block=True)
-    tail = loop.add_state('tail')
-    rd = s0.add_read('b')
-    wr = s0.add_write('a')
-    tlt = s0.add_tasklet('g_t', {'__in'}, {'__out'}, '__out = __in', language=dace.dtypes.Language.Python)
-    s0.add_edge(rd, None, tlt, '__in', dace.Memlet(data='b', subset='k'))
-    s0.add_edge(tlt, '__out', wr, None, dace.Memlet(data='a', subset='i'))
-    loop.add_edge(s0, tail, dace.InterstateEdge(assignments={'k': 'i + 1'}))
+    s0 = loop.add_state("s0", is_start_block=True)
+    tail = loop.add_state("tail")
+    rd = s0.add_read("b")
+    wr = s0.add_write("a")
+    tlt = s0.add_tasklet("g_t", {"__in"}, {"__out"}, "__out = __in", language=dace.dtypes.Language.Python)
+    s0.add_edge(rd, None, tlt, "__in", dace.Memlet(data="b", subset="k"))
+    s0.add_edge(tlt, "__out", wr, None, dace.Memlet(data="a", subset="i"))
+    loop.add_edge(s0, tail, dace.InterstateEdge(assignments={"k": "i + 1"}))
 
     sdfg.validate()
     return sdfg
@@ -247,11 +253,12 @@ def test_derived_iv_use_before_definition_lifts():
     n = 8
     b = np.random.default_rng(2).random(n)
 
-    sdfg = _build_use_before_definition_sdfg('0')
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+    sdfg = _build_use_before_definition_sdfg("0")
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, (
         "use-before-definition derived IV with an agreeing seed must lift, not be refused"
+    )
     sdfg.validate()
-    assert not _carries_symbol(sdfg, 'k'), "loop-carried ``k`` survived -> loop still sequential"
+    assert not _carries_symbol(sdfg, "k"), "loop-carried ``k`` survived -> loop still sequential"
 
     got = np.zeros(n)
     sdfg.compile()(a=got, b=b.copy(), N=n)
@@ -265,10 +272,11 @@ def test_derived_iv_use_before_definition_disagreeing_seed_refuses():
     n = 8
     b = np.random.default_rng(3).random(n)
 
-    sdfg = _build_use_before_definition_sdfg('3')  # f(-1) == 0 != 3
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is None, \
+    sdfg = _build_use_before_definition_sdfg("3")  # f(-1) == 0 != 3
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is None, (
         "a seed disagreeing with the lagged closed form must be refused, not lifted"
-    assert _carries_symbol(sdfg, 'k'), "``k`` must stay loop-carried when the lift is refused"
+    )
+    assert _carries_symbol(sdfg, "k"), "``k`` must stay loop-carried when the lift is refused"
 
     got = np.zeros(n)
     sdfg.compile()(a=got, b=b.copy(), N=n)
@@ -285,31 +293,29 @@ def _build_symbolic_stride_counter_sdfg() -> dace.SDFG:
     (``int_floor(i - START, STRIDE)``) would scale the gather index by the stride -- reading a
     wholly different element of ``b`` on every iteration but the first.
     """
-    sdfg = dace.SDFG('symbolic_stride_counter')
-    n = dace.symbol('N', dace.int64)
-    for name in ('N', 'START', 'STRIDE', 'k'):
+    sdfg = dace.SDFG("symbolic_stride_counter")
+    n = dace.symbol("N", dace.int64)
+    for name in ("N", "START", "STRIDE", "k"):
         sdfg.add_symbol(name, dace.int64)
-    sdfg.add_array('a', [n], dace.float64)
-    sdfg.add_array('b', [n], dace.float64)
+    sdfg.add_array("a", [n], dace.float64)
+    sdfg.add_array("b", [n], dace.float64)
 
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop',
-                      condition_expr='i < N',
-                      loop_var='i',
-                      initialize_expr='i = START',
-                      update_expr='i = i + STRIDE')
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion(
+        "loop", condition_expr="i < N", loop_var="i", initialize_expr="i = START", update_expr="i = i + STRIDE"
+    )
     sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'k': '0'}))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"k": "0"}))
 
-    head = loop.add_state('head', is_start_block=True)
-    body = loop.add_state('body')
-    loop.add_edge(head, body, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+    head = loop.add_state("head", is_start_block=True)
+    body = loop.add_state("body")
+    loop.add_edge(head, body, dace.InterstateEdge(assignments={"k": "k + 1"}))
 
-    rd = body.add_read('b')
-    wr = body.add_write('a')
-    tlt = body.add_tasklet('g_t', {'__in'}, {'__out'}, '__out = __in', language=dace.dtypes.Language.Python)
-    body.add_edge(rd, None, tlt, '__in', dace.Memlet(data='b', subset='N - k'))
-    body.add_edge(tlt, '__out', wr, None, dace.Memlet(data='a', subset='i'))
+    rd = body.add_read("b")
+    wr = body.add_write("a")
+    tlt = body.add_tasklet("g_t", {"__in"}, {"__out"}, "__out = __in", language=dace.dtypes.Language.Python)
+    body.add_edge(rd, None, tlt, "__in", dace.Memlet(data="b", subset="N - k"))
+    body.add_edge(tlt, "__out", wr, None, dace.Memlet(data="a", subset="i"))
 
     sdfg.validate()
     return sdfg
@@ -331,10 +337,11 @@ def test_symbolic_start_and_stride_counter_lifts():
     b = np.random.default_rng(4).random(n)
 
     sdfg = _build_symbolic_stride_counter_sdfg()
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, (
         "a symbolic stride does not stop the counter having a closed form -- it must lift"
+    )
     sdfg.validate()
-    assert not _carries_symbol(sdfg, 'k'), "loop-carried ``k`` survived -> loop still sequential"
+    assert not _carries_symbol(sdfg, "k"), "loop-carried ``k`` survived -> loop still sequential"
 
     got = np.zeros(n)
     sdfg.compile()(a=got, b=b.copy(), N=n, START=start, STRIDE=stride)
@@ -352,42 +359,42 @@ def _build_guarded_data_iv_sdfg(n: int, guarded: bool) -> dace.SDFG:
     unconditional twin, which MUST lift -- that is what makes the refusal attributable to the
     guard rather than to some incidental mismatch in the fixture.
     """
-    sdfg = dace.SDFG('guarded_data_iv' if guarded else 'plain_data_iv')
-    sdfg.add_array('a', [1], dace.float64)
-    sdfg.add_array('b', [n], dace.float64)
+    sdfg = dace.SDFG("guarded_data_iv" if guarded else "plain_data_iv")
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("b", [n], dace.float64)
 
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop', condition_expr=f'i < {n}', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr=f"i < {n}", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
 
-    use = loop.add_state('use', is_start_block=True)
-    rb = use.add_read('b')
-    ra = use.add_read('a')
-    wb = use.add_write('b')
-    scale = use.add_tasklet('scale', {'__in1', '__in2'}, {'__out'},
-                            '__out = (__in1 * __in2)',
-                            language=dace.dtypes.Language.Python)
-    use.add_edge(rb, None, scale, '__in1', dace.Memlet(data='b', subset='i'))
-    use.add_edge(ra, None, scale, '__in2', dace.Memlet(data='a', subset='0'))
-    use.add_edge(scale, '__out', wb, None, dace.Memlet(data='b', subset='i'))
+    use = loop.add_state("use", is_start_block=True)
+    rb = use.add_read("b")
+    ra = use.add_read("a")
+    wb = use.add_write("b")
+    scale = use.add_tasklet(
+        "scale", {"__in1", "__in2"}, {"__out"}, "__out = (__in1 * __in2)", language=dace.dtypes.Language.Python
+    )
+    use.add_edge(rb, None, scale, "__in1", dace.Memlet(data="b", subset="i"))
+    use.add_edge(ra, None, scale, "__in2", dace.Memlet(data="a", subset="0"))
+    use.add_edge(scale, "__out", wb, None, dace.Memlet(data="b", subset="i"))
 
     def _populate_update(state):
-        ra2 = state.add_read('a')
-        wa = state.add_write('a')
-        half = state.add_tasklet('half', {'__in'}, {'__out'},
-                                 '__out = (__in * 0.5)',
-                                 language=dace.dtypes.Language.Python)
-        state.add_edge(ra2, None, half, '__in', dace.Memlet(data='a', subset='0'))
-        state.add_edge(half, '__out', wa, None, dace.Memlet(data='a', subset='0'))
+        ra2 = state.add_read("a")
+        wa = state.add_write("a")
+        half = state.add_tasklet(
+            "half", {"__in"}, {"__out"}, "__out = (__in * 0.5)", language=dace.dtypes.Language.Python
+        )
+        state.add_edge(ra2, None, half, "__in", dace.Memlet(data="a", subset="0"))
+        state.add_edge(half, "__out", wa, None, dace.Memlet(data="a", subset="0"))
 
     if guarded:
-        cb = ConditionalBlock('cb')
+        cb = ConditionalBlock("cb")
         loop.add_node(cb)
         loop.add_edge(use, cb, dace.InterstateEdge())
-        then_br = ControlFlowRegion('then')
-        cb.add_branch(CodeBlock('(i % 2) == 0'), then_br)
-        _populate_update(then_br.add_state('upd', is_start_block=True))
+        then_br = ControlFlowRegion("then")
+        cb.add_branch(CodeBlock("(i % 2) == 0"), then_br)
+        _populate_update(then_br.add_state("upd", is_start_block=True))
     else:
         _populate_update(use)  # same state as the read: the use-site expansion's single-state shape
 
@@ -411,8 +418,9 @@ def test_unconditional_data_iv_twin_lifts():
     b = np.random.default_rng(6).random(n)
 
     sdfg = _build_guarded_data_iv_sdfg(n, guarded=False)
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, (
         "the unconditional twin is the use-site expansion's shape and must lift"
+    )
     sdfg.validate()
 
     got_a, got_b = np.array([1.0]), b.copy()
@@ -429,8 +437,9 @@ def test_conditional_data_iv_update_refuses():
     b = np.random.default_rng(5).random(n)
 
     sdfg = _build_guarded_data_iv_sdfg(n, guarded=True)
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is None, \
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is None, (
         "a conditionally-updated accumulator has no closed form in the loop variable -- must refuse"
+    )
     sdfg.validate()
 
     got_a, got_b = np.array([1.0]), b.copy()
@@ -440,5 +449,5 @@ def test_conditional_data_iv_update_refuses():
     assert got_a[0] == ref_a, f"refusal must preserve the accumulator: {got_a[0]} != {ref_a}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

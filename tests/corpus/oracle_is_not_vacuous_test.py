@@ -10,6 +10,7 @@ the suite looking green.
 Catching it needs no compilation: run the oracle on a copy and require that it changed at least one
 compared array. Cheap enough to run over the whole corpus.
 """
+
 import numpy as np
 import pytest
 
@@ -27,17 +28,17 @@ def _changed(arrays, ref) -> bool:
     return any(not np.array_equal(np.asarray(arrays[n]), np.asarray(ref[n])) for n in arrays)
 
 
-@pytest.mark.parametrize('name', mp.CORPORA['tsvc'][0]())
+@pytest.mark.parametrize("name", mp.CORPORA["tsvc"][0]())
 def test_tsvc_oracle_writes_something(name):
     arrays, _, ref = mp.tsvc_reference(name)
-    assert _changed(arrays, ref), f'{name}: the numpy oracle left every array at its input value'
+    assert _changed(arrays, ref), f"{name}: the numpy oracle left every array at its input value"
 
 
-@pytest.mark.parametrize('name', mp.CORPORA['tsvc25'][0]())
+@pytest.mark.parametrize("name", mp.CORPORA["tsvc25"][0]())
 def test_tsvc25_oracle_writes_something(name):
     program = [p for p in _T25.collect() if p.name == name][0]
     arrays, _, ref = mp.tsvc25_reference(program)
-    assert _changed(arrays, ref), f'{name}: the numpy oracle left every array at its input value'
+    assert _changed(arrays, ref), f"{name}: the numpy oracle left every array at its input value"
 
 
 def _two_summation_orders(seed: int):
@@ -66,12 +67,14 @@ def test_gate_accepts_reassociation_at_paper_scale():
     reference, versus the scalar oracle's 2.7e-11). ``REASSOC_SCALE`` is what closes that.
     """
     seq, blocked = _two_summation_orders(11)
-    assert not np.array_equal(seq, blocked), 'the two summation orders must actually differ'
-    assert np.max(np.abs(seq - blocked)) > _PB._tol_for(np.float64)[1], \
-        'this dataset no longer exceeds the constant floor, so it gates nothing'
-    assert _PB.outputs_match({'acc': seq}, {'acc': blocked}), \
-        (f'the gate rejected a legal reassociation: max|diff|={np.max(np.abs(seq - blocked)):.3e} '
-         f'against a floor of {_PB.atol_for(seq, _PB._tol_for(np.float64)[1]):.3e}')
+    assert not np.array_equal(seq, blocked), "the two summation orders must actually differ"
+    assert np.max(np.abs(seq - blocked)) > _PB._tol_for(np.float64)[1], (
+        "this dataset no longer exceeds the constant floor, so it gates nothing"
+    )
+    assert _PB.outputs_match({"acc": seq}, {"acc": blocked}), (
+        f"the gate rejected a legal reassociation: max|diff|={np.max(np.abs(seq - blocked)):.3e} "
+        f"against a floor of {_PB.atol_for(seq, _PB._tol_for(np.float64)[1]):.3e}"
+    )
 
 
 def test_gate_still_rejects_a_real_error_at_paper_scale():
@@ -83,9 +86,10 @@ def test_gate_still_rejects_a_real_error_at_paper_scale():
     victim = int(np.argmin(np.abs(seq)))
     wrong = blocked.copy()
     wrong[victim] += 1000.0 * floor
-    assert not _PB.outputs_match({'acc': seq}, {'acc': wrong}), \
-        f'an error of {1000.0 * floor:.3e} at acc[{victim}] (|value|={abs(seq[victim]):.3e}) went unnoticed'
+    assert not _PB.outputs_match({"acc": seq}, {"acc": wrong}), (
+        f"an error of {1000.0 * floor:.3e} at acc[{victim}] (|value|={abs(seq[victim]):.3e}) went unnoticed"
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

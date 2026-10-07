@@ -1,35 +1,21 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-NI = dace.symbol('NI')
-NJ = dace.symbol('NJ')
-NK = dace.symbol('NK')
+NI = dace.symbol("NI")
+NJ = dace.symbol("NJ")
+NK = dace.symbol("NK")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    NI: 20,
-    NJ: 25,
-    NK: 30
-}, {
-    NI: 60,
-    NJ: 70,
-    NK: 80
-}, {
-    NI: 200,
-    NJ: 220,
-    NK: 240
-}, {
-    NI: 1000,
-    NJ: 1100,
-    NK: 1200
-}, {
-    NI: 2000,
-    NJ: 2300,
-    NK: 2600
-}]
+sizes = [
+    {NI: 20, NJ: 25, NK: 30},
+    {NI: 60, NJ: 70, NK: 80},
+    {NI: 200, NJ: 220, NK: 240},
+    {NI: 1000, NJ: 1100, NK: 1200},
+    {NI: 2000, NJ: 2300, NK: 2600},
+]
 #: ported from npbench bench_info gemm.json parameters.paper
 paper_sizes = {NI: 2000, NJ: 2300, NK: 2600}
 
@@ -59,10 +45,11 @@ def gemm(C: datatype[NI, NJ], A: datatype[NI, NK], B: datatype[NK, NJ], alpha: d
     C[:] = alpha[0] * A @ B + beta[0] * C
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     if polybench:
-        polybench.main(sizes, args, [(0, 'C')], init_array, gemm)
+        polybench.main(sizes, args, [(0, "C")], init_array, gemm)
     else:
         init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         gemm(*args)

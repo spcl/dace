@@ -7,9 +7,10 @@ Lane ``l`` of a ``W``-wide tile evaluates the index expression at ``iter_var + l
 ``tile_load`` / ``tile_store`` intrinsics strode by ``inc`` regardless. The memlet was therefore a lie
 about which cells the map iteration touches, which every downstream analysis and ``validate`` reads.
 """
+
 import os
 
-os.environ.setdefault('MPI4PY_RC_INITIALIZE', '0')
+os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
 import warnings
 
@@ -25,19 +26,19 @@ from dace.transformation.passes.vectorization.widen_accesses import WidenAccesse
 from tests.passes.vectorization.tile_assertions import masked_stores
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
-def widened(index: str, iter_var: str = 'i', width: int = 8):
+def widened(index: str, iter_var: str = "i", width: int = 8):
     """Widen a single-element subset ``[index]`` and return its one ``(begin, end, step)``."""
-    new = WidenAccesses(widths=(width, ))._widen_subset_inplace(subsets.Range.from_string(index), (iter_var, ))
+    new = WidenAccesses(widths=(width,))._widen_subset_inplace(subsets.Range.from_string(index), (iter_var,))
     assert new is not None, f"{index!r} was not widened at all"
     return new.ranges[0], new
 
 
 def test_symbolic_lane_stride_becomes_the_window_step():
-    (beg, end, step), rng = widened('i * inc')
-    i, inc = dace.symbolic.pystr_to_symbolic('i'), dace.symbolic.pystr_to_symbolic('inc')
+    (beg, end, step), rng = widened("i * inc")
+    i, inc = dace.symbolic.pystr_to_symbolic("i"), dace.symbolic.pystr_to_symbolic("inc")
     assert dace.symbolic.simplify(beg - i * inc) == 0
     assert dace.symbolic.simplify(step - inc) == 0
     # ``beg + inc*W - 1`` (not ``beg + inc*(W-1)``): both cover lanes 0..W-1, but this form lets
@@ -47,22 +48,22 @@ def test_symbolic_lane_stride_becomes_the_window_step():
 
 
 def test_affine_lane_stride_keeps_the_offset_and_strides_by_the_coefficient():
-    (beg, end, step), rng = widened('3 * i + 2')
-    i = dace.symbolic.pystr_to_symbolic('i')
+    (beg, end, step), rng = widened("3 * i + 2")
+    i = dace.symbolic.pystr_to_symbolic("i")
     assert dace.symbolic.simplify(beg - (3 * i + 2)) == 0
     assert step == 3
     assert dace.symbolic.simplify(rng.size()[0] - 8) == 0
 
 
 def test_unit_stride_window_is_unchanged():
-    (beg, end, step), rng = widened('i + 1')
-    i = dace.symbolic.pystr_to_symbolic('i')
+    (beg, end, step), rng = widened("i + 1")
+    i = dace.symbolic.pystr_to_symbolic("i")
     assert dace.symbolic.simplify(beg - (i + 1)) == 0
     assert dace.symbolic.simplify(end - (i + 8)) == 0
     assert step == 1
 
 
-@pytest.mark.parametrize('index', ['i % 4', '-i'])
+@pytest.mark.parametrize("index", ["i % 4", "-i"])
 def test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback(index):
     """``i % 4`` is not affine in ``i`` and ``-i`` walks backwards; neither has a per-lane step
     this window form can express (the tile-op base pointer is lane 0's address). Both keep the
@@ -76,8 +77,8 @@ def assert_window_strides_by(edge, stride_name: str, width: int = 8):
     copy. Every comparison stays inside the SDFG's own symbol instances -- a ``pystr_to_symbolic(name)`` here would
     mint a differently-assumed symbol and ``inc - inc`` would not cancel."""
     beg, end, step = edge.data.subset.ranges[0]
-    assert dace.symbolic.symstr(step) == stride_name, f'window step {step} is not the lane stride'
-    assert dace.symbolic.simplify(end - beg - width * step + 1) == 0, f'window {edge.data.subset} is not {width} lanes'
+    assert dace.symbolic.symstr(step) == stride_name, f"window step {step} is not the lane stride"
+    assert dace.symbolic.simplify(end - beg - width * step + 1) == 0, f"window {edge.data.subset} is not {width} lanes"
 
 
 def canonicalized_and_vectorized(prog):
@@ -85,14 +86,17 @@ def canonicalized_and_vectorized(prog):
     sdfg = prog.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+        warnings.simplefilter("always")
         VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ),
-                            target_isa=ISA.SCALAR,
-                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                            branch_mode=BranchMode.MERGE,
-                            validate_all=True)).apply_pass(sdfg, {})
-        refusals = [str(m.message) for m in caught if 'refusing to vectorize' in str(m.message)]
+            VectorizeConfig(
+                widths=(8,),
+                target_isa=ISA.SCALAR,
+                remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                branch_mode=BranchMode.MERGE,
+                validate_all=True,
+            )
+        ).apply_pass(sdfg, {})
+        refusals = [str(m.message) for m in caught if "refusing to vectorize" in str(m.message)]
     sdfg.validate()
     return sdfg, refusals
 
@@ -115,9 +119,9 @@ def test_strided_store_window_matches_the_intrinsic_stride():
     stores = [
         e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in masked_stores(st) for e in st.out_edges(n)
     ]
-    assert stores, 'kernel was not tiled -- nothing to check'
+    assert stores, "kernel was not tiled -- nothing to check"
     for edge in stores:
-        assert_window_strides_by(edge, 'n3')
+        assert_window_strides_by(edge, "n3")
 
     a, b = np.random.rand(64), np.random.rand(64)
     ref = a.copy()
@@ -143,9 +147,9 @@ def test_promoted_product_index_reaches_the_tile_store_as_a_stride():
     stores = [
         e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in masked_stores(st) for e in st.out_edges(n)
     ]
-    assert stores, 'kernel was not tiled -- nothing to check'
+    assert stores, "kernel was not tiled -- nothing to check"
     for edge in stores:
-        assert_window_strides_by(edge, 'inc')
+        assert_window_strides_by(edge, "inc")
 
     a, b = np.random.rand(64), np.random.rand(64)
     got = a.copy()
@@ -170,16 +174,19 @@ def test_linearized_multi_var_index_is_refused_not_broadcast():
     sdfg = linearized_write.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+        warnings.simplefilter("always")
         VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, 8),
-                            target_isa=ISA.SCALAR,
-                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                            branch_mode=BranchMode.MERGE,
-                            validate_all=True)).apply_pass(sdfg, {})
-        refusals = [str(m.message) for m in caught if 'refusing to vectorize' in str(m.message)]
+            VectorizeConfig(
+                widths=(8, 8),
+                target_isa=ISA.SCALAR,
+                remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                branch_mode=BranchMode.MERGE,
+                validate_all=True,
+            )
+        ).apply_pass(sdfg, {})
+        refusals = [str(m.message) for m in caught if "refusing to vectorize" in str(m.message)]
     sdfg.validate()
-    assert any('indexed jointly by several of the tile iter-vars' in r for r in refusals), refusals
+    assert any("indexed jointly by several of the tile iter-vars" in r for r in refusals), refusals
 
     n = 16
     rng = np.random.default_rng(3)
@@ -189,12 +196,12 @@ def test_linearized_multi_var_index_is_refused_not_broadcast():
     assert np.allclose(got.reshape(n, n), aa + bb, rtol=1e-12, atol=1e-12)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symbolic_lane_stride_becomes_the_window_step()
     test_affine_lane_stride_keeps_the_offset_and_strides_by_the_coefficient()
     test_unit_stride_window_is_unchanged()
-    test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback('i % 4')
-    test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback('-i')
+    test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback("i % 4")
+    test_non_affine_and_descending_indices_are_left_to_the_contiguous_fallback("-i")
     test_strided_store_window_matches_the_intrinsic_stride()
     test_promoted_product_index_reaches_the_tile_store_as_a_stride()
     test_linearized_multi_var_index_is_refused_not_broadcast()

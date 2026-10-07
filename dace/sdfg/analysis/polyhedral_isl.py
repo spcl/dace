@@ -12,6 +12,7 @@ dependence / domain reasoning (:class:`WavefrontSkew` today; a future
 
 ``islpy`` is a hard dependency of dace (see ``pyproject.toml``).
 """
+
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import islpy as isl
@@ -33,9 +34,9 @@ def build_name_map(dims: Sequence[str], params: Sequence[str]) -> Dict[str, str]
     """Bijection ``original -> ISL-safe`` covering the iteration dims and params."""
     mp: Dict[str, str] = {}
     for i, d in enumerate(dims):
-        mp[d] = safe_name('d', i)
+        mp[d] = safe_name("d", i)
     for i, p in enumerate(params):
-        mp[p] = safe_name('P', i)
+        mp[p] = safe_name("P", i)
     return mp
 
 
@@ -121,16 +122,17 @@ def render_affine(expr: SymbolicLike, name_map: Dict[str, str]) -> str:
 def constraints_str(constraints: Iterable[SymbolicLike], name_map: Dict[str, str]) -> str:
     """`` and ``-joined ISL constraint body from exprs each meaning ``>= 0``."""
     parts = [f"({render_affine(c, name_map)}) >= 0" for c in constraints]
-    return ' and '.join(parts) if parts else 'true'
+    return " and ".join(parts) if parts else "true"
 
 
-def make_set(dims: Sequence[str], params: Sequence[str],
-             constraints: Iterable[SymbolicLike]) -> Tuple[isl.Set, Dict[str, str]]:
+def make_set(
+    dims: Sequence[str], params: Sequence[str], constraints: Iterable[SymbolicLike]
+) -> Tuple[isl.Set, Dict[str, str]]:
     """Build an ``isl.Set`` over ``dims`` parametrised by ``params`` from a list
     of exprs (each ``>= 0``). Returns ``(set, name_map)``."""
     name_map = build_name_map(dims, params)
-    pstr = ', '.join(name_map[p] for p in params)
-    dstr = ', '.join(name_map[d] for d in dims)
+    pstr = ", ".join(name_map[p] for p in params)
+    dstr = ", ".join(name_map[d] for d in dims)
     body = constraints_str(constraints, name_map)
     text = f"[{pstr}] -> {{ [{dstr}] : {body} }}"
     return isl.Set(text), name_map
@@ -146,8 +148,9 @@ def value_to_int(v: isl.Val) -> int:
     return int(v.to_python())
 
 
-def constraint_to_sympy(c: isl.Constraint, safe_dims: Sequence[str], safe_params: Sequence[str],
-                        inv_map: Dict[str, str]) -> sympy.Expr:
+def constraint_to_sympy(
+    c: isl.Constraint, safe_dims: Sequence[str], safe_params: Sequence[str], inv_map: Dict[str, str]
+) -> sympy.Expr:
     """Reconstruct the affine expr (meaning ``>= 0``) of an ``isl.Constraint``,
     mapping ISL-safe names back to originals via ``inv_map``."""
     expr = as_expr(value_to_int(c.get_constant_val()))

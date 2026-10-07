@@ -48,14 +48,16 @@ def pure_graph(implementation, dtype, veclen):
     return ger_node, state, sdfg
 
 
-def run_ger(target: str,
-            n: int,
-            m: int,
-            tile_size_x: int,
-            tile_size_y: int,
-            alpha: float = 1,
-            veclen: int = 1,
-            eps: float = 1e-6):
+def run_ger(
+    target: str,
+    n: int,
+    m: int,
+    tile_size_x: int,
+    tile_size_y: int,
+    alpha: float = 1,
+    veclen: int = 1,
+    eps: float = 1e-6,
+):
 
     if target == "pure":
         ger_node, state, sdfg = pure_graph("pure", dace.float32, veclen)
@@ -72,7 +74,7 @@ def run_ger(target: str,
     res[:] = A[:]
     ref[:] = A[:]
 
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         sdfg(x=x, y=y, A=A, res=res, m=dace.int32(m), n=dace.int32(n), alpha=alpha)
 
     ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=ref)
@@ -107,7 +109,7 @@ def test_validate_accepts_reparsed_symbol_instances():
     state.add_edge(node, "_res", state.add_write("res"), None, Memlet.from_array("res", sdfg.arrays["res"]))
     node.validate(sdfg, state)  # must not raise
 
-    sdfg.arrays["x"].shape = (dace.symbol("P", dace.int32), )
+    sdfg.arrays["x"].shape = (dace.symbol("P", dace.int32),)
     x_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_x")
     x_edge.data = Memlet.from_array("x", sdfg.arrays["x"])
     with pytest.raises(ValueError):
@@ -119,7 +121,6 @@ def test_ger_pure():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=256)
     parser.add_argument("M", type=int, nargs="?", default=512)

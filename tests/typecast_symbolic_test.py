@@ -11,6 +11,7 @@ reasoning, and print to the matching ``dace::<type>(x)`` C++ cast
 (truncating for int) -- so the SAME bare spelling round-trips through the
 sympy printer and cppunparse to identical code.
 """
+
 import re
 import numpy as np
 import pytest
@@ -25,12 +26,15 @@ from dace.codegen.targets.cpp import sym2cpp
 # order a commutative sum differently. Both are equivalent C++ -- `2` promotes to float, `-r` promotes
 # to double, and `+` commutes -- so pinning one spelling tests the incumbent's formatting rather than
 # DaCe's semantics. Accept either; the cast itself is what is under test and stays exact.
-@pytest.mark.parametrize("expr,accepted", [
-    ("int32(qm) + 1", ("(dace::int32(qm) + 1)", )),
-    ("int64(x)", ("dace::int64(x)", )),
-    ("float32(i) * 2", ("(2 * dace::float32(i))", "(2.0f*dace::float32(i))")),
-    ("float64(i) - r", ("((- r) + dace::float64(i))", "(dace::float64(i) + dace::float64(-r))")),
-])
+@pytest.mark.parametrize(
+    "expr,accepted",
+    [
+        ("int32(qm) + 1", ("(dace::int32(qm) + 1)",)),
+        ("int64(x)", ("dace::int64(x)",)),
+        ("float32(i) * 2", ("(2 * dace::float32(i))", "(2.0f*dace::float32(i))")),
+        ("float64(i) - r", ("((- r) + dace::float64(i))", "(dace::float64(i) + dace::float64(-r))")),
+    ],
+)
 def test_typecast_prints_to_dace_cast(expr: str, accepted: tuple[str, ...]) -> None:
     got = sym2cpp(pystr_to_symbolic(expr))
     assert got in accepted, f"{expr!r} printed {got!r}, none of {accepted!r}"
@@ -75,12 +79,15 @@ def test_all_width_casts_parse_and_print(name: str) -> None:
     assert pystr_to_symbolic(bare.replace("::", ".")) == pystr_to_symbolic(f"{name}(x)")
 
 
-@pytest.mark.parametrize("expr,expect", [
-    ("math.sin(y)", "sin(y)"),
-    ("numpy.sqrt(x)", "sqrt(x)"),
-    ("np.exp(x) + 1", "exp(x) + 1"),
-    ("dace.math.sin(y)", "sin(y)"),
-])
+@pytest.mark.parametrize(
+    "expr,expect",
+    [
+        ("math.sin(y)", "sin(y)"),
+        ("numpy.sqrt(x)", "sqrt(x)"),
+        ("np.exp(x) + 1", "exp(x) + 1"),
+        ("dace.math.sin(y)", "sin(y)"),
+    ],
+)
 def test_math_module_qualifier_is_stripped(expr, expect):
     # A library-function module qualifier (math/numpy/np/dace.math) is noise in a symbolic expression: it is
     # stripped to the bare sympy function, not folded to ``Attr(math, sin)(y)`` -> 'Attr' object is not
@@ -101,8 +108,8 @@ def test_a_cast_beside_a_qualified_call_in_a_view_offset_is_spelled_for_cpp():
     """``int(index[i, 2])`` indexing a flattened block array puts ``int64(bid) * K**2`` in the view's
     pointer offset. Its reparsed printing carries ``dace::math::ipow``, which the Python reparse cannot
     read and hands back untouched, so a bare ``int64(`` reached the compiler (dbcsr)."""
-    N = dace.symbol('N', dtype=dace.int64)
-    K = dace.symbol('K', dtype=dace.int64)
+    N = dace.symbol("N", dtype=dace.int64)
+    K = dace.symbol("K", dtype=dace.int64)
 
     @dace.program
     def block_matmul(index: dace.int32[N, 3], blocks: dace.float64[N, K, K], out: dace.float64[K, K]):
@@ -117,7 +124,7 @@ def test_a_cast_beside_a_qualified_call_in_a_view_offset_is_spelled_for_cpp():
     offsets = [line for line in code.splitlines() if "= &blocks[" in line]
     assert offsets, "no view offset into blocks was emitted"
     # Each offset is computed in 64 bits: either the index is cast, or it multiplies the int64 ``K**2``.
-    assert sdfg.symbols['K'] == dace.int64
+    assert sdfg.symbols["K"] == dace.int64
     assert all("dace::int64(" in line or "ipow(K, 2)" in line for line in offsets), offsets
     assert not re.search(r"(?<![:\w])int64\(", code), "a bare int64( cast reached the C++ code"
 

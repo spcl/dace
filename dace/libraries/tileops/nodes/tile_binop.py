@@ -1,16 +1,33 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileBinop``: a binary op on K-dim register tiles."""
+
 import dace
 from dace import library, properties
 from dace.sdfg import nodes
 
-from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.environments import (
+    TileOpsAVX2,
+    TileOpsAVX512,
+    TileOpsCUDA,
+    TileOpsNeon,
+    TileOpsScalar,
+    TileOpsSVE,
+)
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import IsaCall
 from dace.libraries.tileops.kinds import TILE
-from dace.libraries.tileops.operands import (LaneOperands, Operand, check_operands, edge_ctype, elementwise_tasklet,
-                                             has_lane_invariant_output, input_connectors, operands_share_output_type,
-                                             output_edge, validate_elementwise)
+from dace.libraries.tileops.operands import (
+    LaneOperands,
+    Operand,
+    check_operands,
+    edge_ctype,
+    elementwise_tasklet,
+    has_lane_invariant_output,
+    input_connectors,
+    operands_share_output_type,
+    output_edge,
+    validate_elementwise,
+)
 from dace.libraries.tileops.ops import BINARY_OPS
 from dace.libraries.tileops.validation import promotion_ok
 from dace.libraries.tileops.nodes.tile_op import TileOp
@@ -114,26 +131,27 @@ class TileBinop(TileOp):
         desc="The expression of the right operand when it is a 'Symbol'.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, ...],
-                 op: str = "+",
-                 has_mask: bool = False,
-                 kind_a: str = TILE,
-                 kind_b: str = TILE,
-                 expr_a: str | None = None,
-                 expr_b: str | None = None,
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        op: str = "+",
+        has_mask: bool = False,
+        kind_a: str = TILE,
+        kind_b: str = TILE,
+        expr_a: str | None = None,
+        expr_b: str | None = None,
+        location: str | None = None,
+    ):
         if op not in BINARY_OPS:
             raise ValueError(f"TileBinop: unknown op {op!r}; allowed: {sorted(BINARY_OPS)}")
         if not 1 <= len(widths) <= 3:
             raise ValueError(f"TileBinop: widths must have length in {{1, 2, 3}}, got {widths!r}")
         operands = [Operand("_a", kind_a, expr_a), Operand("_b", kind_b, expr_b)]
         check_operands("TileBinop", operands)
-        super().__init__(name,
-                         location=location,
-                         inputs=dict.fromkeys(input_connectors(operands, has_mask)),
-                         outputs={"_c"})
+        super().__init__(
+            name, location=location, inputs=dict.fromkeys(input_connectors(operands, has_mask)), outputs={"_c"}
+        )
         self.widths = list(widths)
         self.op = op
         self.has_mask = has_mask
@@ -148,29 +166,35 @@ class TileBinop(TileOp):
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         # A comparison compares a tile operand at its own dtype and stores the ``bool`` it answers, which every numeric
         # output holds: ``b_index > 0.0`` into an int8 mask narrows nothing, so its operands are not promoted.
-        validate_elementwise(self,
-                             state,
-                             sdfg,
-                             self.operands(),
-                             "_c",
-                             self.has_mask,
-                             promotion=None if BINARY_OPS[self.op].comparison else promotion_ok)
+        validate_elementwise(
+            self,
+            state,
+            sdfg,
+            self.operands(),
+            "_c",
+            self.has_mask,
+            promotion=None if BINARY_OPS[self.op].comparison else promotion_ok,
+        )
 
     def can_lower_to_isa(self, state: dace.SDFGState, sdfg: dace.SDFG) -> bool:
         operands = self.operands()
-        return (BINARY_OPS[self.op].isa_code is not None
-                and not has_lane_invariant_output(operands, output_edge(state, self, "_c"))
-                and operands_share_output_type(self, state, sdfg, operands, "_c"))
+        return (
+            BINARY_OPS[self.op].isa_code is not None
+            and not has_lane_invariant_output(operands, output_edge(state, self, "_c"))
+            and operands_share_output_type(self, state, sdfg, operands, "_c")
+        )
 
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         self.validate(sdfg, state)
         operands = self.operands()
         out_ctype = edge_ctype(sdfg, output_edge(state, self, "_c"))
         lanes = LaneOperands.of(self, state, sdfg, operands, out_ctype)
-        lhs, rhs = (lanes.reference(operand, [other for other in operands if other is not operand])
-                    for operand in operands)
-        return elementwise_tasklet(self, state, operands, "_c", BINARY_OPS[self.op].cpp(lhs, rhs), out_ctype,
-                                   lanes.in_edges)
+        lhs, rhs = (
+            lanes.reference(operand, [other for other in operands if other is not operand]) for operand in operands
+        )
+        return elementwise_tasklet(
+            self, state, operands, "_c", BINARY_OPS[self.op].cpp(lhs, rhs), out_ctype, lanes.in_edges
+        )
 
     def isa_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG, backend: str) -> nodes.Tasklet:
         self.validate(sdfg, state)
@@ -179,6 +203,8 @@ class TileBinop(TileOp):
         (a_broadcast, a_pointer), (b_broadcast, b_pointer) = (call.operand(operand) for operand in operands)
         masked = "true" if self.has_mask else "false"
         mask_argument = "_mask" if self.has_mask else "nullptr"
-        text = (f"dace::tileops::tile_binop<{call.ctype}, {call.vlen}, '{BINARY_OPS[self.op].isa_code}', "
-                f"{a_broadcast}, {b_broadcast}, {masked}>(_c, {a_pointer}, {b_pointer}, {mask_argument});")
+        text = (
+            f"dace::tileops::tile_binop<{call.ctype}, {call.vlen}, '{BINARY_OPS[self.op].isa_code}', "
+            f"{a_broadcast}, {b_broadcast}, {masked}>(_c, {a_pointer}, {b_pointer}, {mask_argument});"
+        )
         return call.tasklet(self, backend, operands, "_c", text, self.has_mask)

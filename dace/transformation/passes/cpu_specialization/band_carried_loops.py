@@ -85,6 +85,7 @@ Conditions (H) and (T) of ``HoistParallelRegion`` are inherited unchanged: this 
 loop the same way and wraps it in a map the same way, so the same replication and privatization
 rules apply. Only the wrapping map's extent and the inner map's range differ.
 """
+
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Set
 
@@ -94,11 +95,11 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import transformation
 from dace.transformation.passes.canonicalize.supply_num_threads import DTYPE as NUM_THREADS_DTYPE
-from dace.transformation.passes.cpu_specialization.hoist_parallel_region import (WORKSHARED, HoistParallelRegion)
+from dace.transformation.passes.cpu_specialization.hoist_parallel_region import WORKSHARED, HoistParallelRegion
 from dace.optionals import required
 
 #: Parameter name of the band loop. One name, so the reshape can find the map it just made.
-BAND_PARAM = '__dace_band'
+BAND_PARAM = "__dace_band"
 
 #: Built ONCE, and built WITH THEIR DTYPE. DaCe folds dtype and assumptions into symbol identity,
 #: so a name minted twice at two widths is two symbols that never cancel; declaring these here at
@@ -118,7 +119,7 @@ def axis_symbol(position: int):
     (``_loop_it_1`` against ``_loop_it_4``), and comparing the spellings would read one location as
     two unrelated ones, which is how a cross-map dependence goes unseen.
     """
-    return symbolic.symbol(f'__dace_band_axis{position}', NUM_THREADS_DTYPE)
+    return symbolic.symbol(f"__dace_band_axis{position}", NUM_THREADS_DTYPE)
 
 
 def index_expressions(subset) -> List[Any]:
@@ -279,8 +280,14 @@ def rewritten(expressions: List, substitution: Dict[str, Any]) -> List:
     return out
 
 
-def boundary_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, allowed: Set[str],
-                      reads: Dict[str, List[List[Any]]], writes: Dict[str, List[List[Any]]]) -> bool:
+def boundary_accesses(
+    state: SDFGState,
+    map_entry: nodes.MapEntry,
+    map_exit: nodes.MapExit,
+    allowed: Set[str],
+    reads: Dict[str, List[List[Any]]],
+    writes: Dict[str, List[List[Any]]],
+) -> bool:
     """Add the PER-ITERATION accesses the scope BOUNDARY edges carry, whatever produced them.
 
     :func:`collect_accesses` reads the subsets adjacent to code nodes, so a value assembled in a
@@ -329,8 +336,9 @@ def boundary_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nod
     return all(name in writes for name in union_writes)
 
 
-def collect_band_accesses(state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, reads: Dict,
-                          writes: Dict) -> bool:
+def collect_band_accesses(
+    state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, reads: Dict, writes: Dict
+) -> bool:
     """Add ``map_entry``'s per-element accesses to ``reads`` / ``writes``, on the band's own axes.
 
     The map's parameters are rewritten to the positional stand-ins (:func:`axis_symbol`) so that the
@@ -462,8 +470,11 @@ def cut_into_bands(map_entry: nodes.MapEntry, band: Any) -> None:
     ranges = list(map_entry.map.range.ranges)
     begin, end, step = ranges[-1]
     extent = end - begin + 1
-    ranges[-1] = (begin + symbolic.int_floor(extent * band, THREADS_SYMBOL),
-                  begin + symbolic.int_floor(extent * (band + 1), THREADS_SYMBOL) - 1, step)
+    ranges[-1] = (
+        begin + symbolic.int_floor(extent * band, THREADS_SYMBOL),
+        begin + symbolic.int_floor(extent * (band + 1), THREADS_SYMBOL) - 1,
+        step,
+    )
     map_entry.map.range = subsets.Range(ranges)
 
 
@@ -478,7 +489,7 @@ class BandCarriedLoops(HoistParallelRegion):
     legality test and reshapes what the outlining produced. See the module docstring.
     """
 
-    CATEGORY: str = 'Optimization'
+    CATEGORY: str = "Optimization"
 
     def __init__(self):
         super().__init__()
@@ -530,7 +541,7 @@ class BandCarriedLoops(HoistParallelRegion):
             # nested in another region the new state can land a level up. Rare, and a full walk is
             # affordable once it happens -- unlike doing it unconditionally.
             team, state = new_team_map(sdfg, before, recursive=True)
-        assert team is not None, 'the outlining produced no team map to widen into bands'
+        assert team is not None, "the outlining produced no team map to widen into bands"
         # The unit team map becomes the band loop itself: P iterations, worksharing, so codegen
         # emits one ``#pragma omp parallel for`` and no inner barrier survives.
         team.map.params = [BAND_PARAM]
@@ -553,11 +564,14 @@ def new_team_map(region, before, recursive: bool = False):
     :param recursive: descend into nested SDFGs as well.
     :returns: ``(map_entry, state)``, or ``(None, None)``.
     """
-    blocks = (region.states() if recursive else [b for b in region.nodes() if isinstance(b, SDFGState)])
+    blocks = region.states() if recursive else [b for b in region.nodes() if isinstance(b, SDFGState)]
     for block in blocks:
         for node in block.nodes():
-            if (isinstance(node, nodes.MapEntry) and id(node) not in before
-                    and node.map.schedule == dtypes.ScheduleType.CPU_Persistent):
+            if (
+                isinstance(node, nodes.MapEntry)
+                and id(node) not in before
+                and node.map.schedule == dtypes.ScheduleType.CPU_Persistent
+            ):
                 return node, block
     return None, None
 

@@ -43,8 +43,7 @@ def _validate_count_edges(node, sdfg, state):
     """
     in_edges = [ie for ie in state.in_edges(node) if ie.dst_conn == _INPUT_CONNECTOR_NAME]
     if len(in_edges) != 1:
-        raise ValueError(f"{type(node).__name__} expects exactly one "
-                         f"``{_INPUT_CONNECTOR_NAME}`` input edge.")
+        raise ValueError(f"{type(node).__name__} expects exactly one ``{_INPUT_CONNECTOR_NAME}`` input edge.")
     ie = in_edges[0]
     mask = sdfg.arrays[ie.data.data]
     mask_subset = ie.data.subset
@@ -52,8 +51,7 @@ def _validate_count_edges(node, sdfg, state):
 
     out_edges = [oe for oe in state.out_edges(node) if oe.src_conn == _OUTPUT_CONNECTOR_NAME]
     if len(out_edges) != 1:
-        raise ValueError(f"{type(node).__name__} expects exactly one "
-                         f"``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
+        raise ValueError(f"{type(node).__name__} expects exactly one ``{_OUTPUT_CONNECTOR_NAME}`` output edge.")
     oe = out_edges[0]
     out = sdfg.arrays[oe.data.data]
     out_subset = oe.data.subset
@@ -73,8 +71,7 @@ def _fortran_dim_to_axes(dim, mask_rank):
     if dim is None or dim == -1:
         return None
     if not (1 <= dim <= mask_rank):
-        raise ValueError(f"CountLibraryNode `dim={dim}` is out of range "
-                         f"for a rank-{mask_rank} mask.")
+        raise ValueError(f"CountLibraryNode `dim={dim}` is out of range for a rank-{mask_rank} mask.")
     return [dim - 1]
 
 
@@ -92,6 +89,7 @@ class ExpandPure(ExpandTransformation):
     explicit cast tasklet narrows non-integer mask dtypes to ``int32``;
     DaCe's simplification folds it for already-integer masks.
     """
+
     environments: List[type] = []
 
     @staticmethod
@@ -100,7 +98,7 @@ class ExpandPure(ExpandTransformation):
 
         # int_floor, never `//`: `(e + 1 - b) // s` over a symbolic subset is a sum numerator.
         mask_shape = [dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in mask_subset]
-        out_shape = ([dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in out_subset] if out_subset.dims() else [])
+        out_shape = [dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in out_subset] if out_subset.dims() else []
         axes = _fortran_dim_to_axes(node.dim, len(mask_shape))
 
         # Inner SDFG: cast → reduce.  Cast turns a non-integer mask
@@ -143,8 +141,9 @@ class ExpandPure(ExpandTransformation):
         reduce_state.add_node(red)
         mask_in = reduce_state.add_access("_mask_int")
         out_w = reduce_state.add_access(out_name)
-        reduce_state.add_edge(mask_in, None, red, "_in",
-                              dace.memlet.Memlet.from_array("_mask_int", sdfg.arrays["_mask_int"]))
+        reduce_state.add_edge(
+            mask_in, None, red, "_in", dace.memlet.Memlet.from_array("_mask_int", sdfg.arrays["_mask_int"])
+        )
         reduce_state.add_edge(red, "_out", out_w, None, dace.memlet.Memlet.from_array(out_name, sdfg.arrays[out_name]))
 
         return sdfg
@@ -190,11 +189,13 @@ class CountLibraryNode(nodes.LibraryNode):
     )
 
     def __init__(self, name, dim=-1, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={CountLibraryNode.INPUT_CONNECTOR_NAME},
-                         outputs={CountLibraryNode.OUTPUT_CONNECTOR_NAME},
-                         **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs={CountLibraryNode.INPUT_CONNECTOR_NAME},
+            outputs={CountLibraryNode.OUTPUT_CONNECTOR_NAME},
+            **kwargs,
+        )
         self.dim = dim
 
     def validate(self, sdfg, state):

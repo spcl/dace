@@ -15,6 +15,7 @@ inspection, no compile) and that the lowered access reproduces the legacy result
 (bit-exact on CPU, tight ``allclose`` on GPU), on CPU and inside ``__global__``
 kernels.
 """
+
 import copy
 
 import re
@@ -24,8 +25,13 @@ import pytest
 
 import dace
 from dace import subsets
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
-                                             use_implementation)
+from tests.codegen.readable.conftest import (
+    EXPERIMENTAL,
+    LEGACY,
+    assert_outputs_equivalent,
+    run_isolated,
+    use_implementation,
+)
 
 
 def strided_view_copy_sdfg(name):
@@ -36,16 +42,16 @@ def strided_view_copy_sdfg(name):
     onto ``A``), so the generator must emit ``V_idx`` from the view's strides.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [8, 16], dace.float64)
-    sdfg.add_array('C', [8, 8], dace.float64)
-    sdfg.add_view('V', [8, 8], dace.float64, strides=[16, 2])
-    state = sdfg.add_state('main')
-    a, v, c = state.add_access('A'), state.add_access('V'), state.add_access('C')
-    state.add_edge(a, None, v, 'views', dace.Memlet(data='A', subset=subsets.Range([(0, 7, 1), (0, 15, 2)])))
-    entry, exit_node = state.add_map('m', dict(i='0:8', j='0:8'))
-    tasklet = state.add_tasklet('cpy', {'inp'}, {'out'}, 'out = inp')
-    state.add_memlet_path(v, entry, tasklet, dst_conn='inp', memlet=dace.Memlet(data='V', subset='i, j'))
-    state.add_memlet_path(tasklet, exit_node, c, src_conn='out', memlet=dace.Memlet(data='C', subset='i, j'))
+    sdfg.add_array("A", [8, 16], dace.float64)
+    sdfg.add_array("C", [8, 8], dace.float64)
+    sdfg.add_view("V", [8, 8], dace.float64, strides=[16, 2])
+    state = sdfg.add_state("main")
+    a, v, c = state.add_access("A"), state.add_access("V"), state.add_access("C")
+    state.add_edge(a, None, v, "views", dace.Memlet(data="A", subset=subsets.Range([(0, 7, 1), (0, 15, 2)])))
+    entry, exit_node = state.add_map("m", dict(i="0:8", j="0:8"))
+    tasklet = state.add_tasklet("cpy", {"inp"}, {"out"}, "out = inp")
+    state.add_memlet_path(v, entry, tasklet, dst_conn="inp", memlet=dace.Memlet(data="V", subset="i, j"))
+    state.add_memlet_path(tasklet, exit_node, c, src_conn="out", memlet=dace.Memlet(data="C", subset="i, j"))
     sdfg.validate()
     return sdfg
 
@@ -60,14 +66,14 @@ def generated_for(build, name, implementation, gpu=False):
         sdfg = build(name)
         if gpu:
             sdfg.apply_gpu_transformations()
-        return '\n'.join((obj.clean_code or obj.code) for obj in sdfg.generate_code())
+        return "\n".join((obj.clean_code or obj.code) for obj in sdfg.generate_code())
 
 
 def view_index_body(code):
     """Body of the emitted ``V_idx`` index function (the ``return ...;`` line)."""
     # A GPU build names the device copy ``V_gpu``
-    lines = [ln.strip() for ln in code.splitlines() if re.search(r'\bV(_gpu)?_idx\(', ln) and 'return' in ln]
-    assert lines, 'experimental codegen emitted no V_idx index function:\n' + code
+    lines = [ln.strip() for ln in code.splitlines() if re.search(r"\bV(_gpu)?_idx\(", ln) and "return" in ln]
+    assert lines, "experimental codegen emitted no V_idx index function:\n" + code
     return lines[0]
 
 
@@ -77,22 +83,22 @@ def view_index_body(code):
 def test_view_idx_uses_view_strides(require_experimental):
     """``V_idx`` linearizes with the VIEW's strides ``[16, 2]`` -- ``16*d0 + 2*d1``
     -- and the access is connector-free (``V[V_idx(...)]`` in the body)."""
-    code = generated_for(strided_view_copy_sdfg, 'view_inspect', EXPERIMENTAL)
+    code = generated_for(strided_view_copy_sdfg, "view_inspect", EXPERIMENTAL)
     body = view_index_body(code)
-    assert '16 * __d0' in body, body
-    assert '2 * __d1' in body, body
+    assert "16 * __d0" in body, body
+    assert "2 * __d1" in body, body
     # The view is accessed directly through its index function, no copy-in temp.
-    assert any('V[V_idx(' in ln for ln in code.splitlines()), 'no V[V_idx(..)] access emitted:\n' + code
-    assert 'double inp =' not in code and 'double inp;' not in code
+    assert any("V[V_idx(" in ln for ln in code.splitlines()), "no V[V_idx(..)] access emitted:\n" + code
+    assert "double inp =" not in code and "double inp;" not in code
 
 
 def test_view_no_pure_fallback(require_experimental):
     """A View input never forces the classic connector copy: the readable body
     references the view pointer directly."""
-    code = generated_for(strided_view_copy_sdfg, 'view_nofallback', EXPERIMENTAL)
+    code = generated_for(strided_view_copy_sdfg, "view_nofallback", EXPERIMENTAL)
     # Connector name gone from the body; view name present as an indexed pointer.
-    assert 'V[V_idx(' in code
-    assert '///////////////////' not in code
+    assert "V[V_idx(" in code
+    assert "///////////////////" not in code
 
 
 # #
@@ -102,14 +108,14 @@ def run_variant(build, name, implementation, target, base):
 
     def work():
         sdfg = build(name)
-        if target == 'gpu':
+        if target == "gpu":
             sdfg.apply_gpu_transformations()
         arrays = copy.deepcopy(base)
         sdfg.compile()(**arrays)
         return {k: v for k, v in arrays.items() if isinstance(v, np.ndarray)}
 
     with use_implementation(implementation):
-        return work() if target == 'gpu' else run_isolated(work)
+        return work() if target == "gpu" else run_isolated(work)
 
 
 def test_view_access_bit_exact(require_experimental, target):
@@ -117,30 +123,31 @@ def test_view_access_bit_exact(require_experimental, target):
     tolerance GPU) and equals the analytical ``A[:, ::2]``."""
     rng = np.random.default_rng(42)
     base = dict(A=rng.random((8, 16)), C=np.zeros((8, 8)))
-    legacy = run_variant(strided_view_copy_sdfg, f'view_run_leg_{target}', LEGACY, target, base)
-    experimental = run_variant(strided_view_copy_sdfg, f'view_run_exp_{target}', EXPERIMENTAL, target, base)
-    assert_outputs_equivalent(legacy, experimental, target, label='strided_view_copy')
-    assert np.allclose(experimental['C'], reference(base['A']))
+    legacy = run_variant(strided_view_copy_sdfg, f"view_run_leg_{target}", LEGACY, target, base)
+    experimental = run_variant(strided_view_copy_sdfg, f"view_run_exp_{target}", EXPERIMENTAL, target, base)
+    assert_outputs_equivalent(legacy, experimental, target, label="strided_view_copy")
+    assert np.allclose(experimental["C"], reference(base["A"]))
 
 
 @pytest.mark.gpu
 def test_view_idx_inside_kernel(require_experimental):
     """``V[V_idx(...)]`` (view strides) appears inside the ``__global__`` kernel."""
-    code = generated_for(strided_view_copy_sdfg, 'view_gpu_inspect', EXPERIMENTAL, gpu=True)
-    assert '__global__' in code, 'no CUDA kernel emitted'
-    assert re.search(r'\bV(_gpu)?_idx\(', code), 'view index function missing from device code'
+    code = generated_for(strided_view_copy_sdfg, "view_gpu_inspect", EXPERIMENTAL, gpu=True)
+    assert "__global__" in code, "no CUDA kernel emitted"
+    assert re.search(r"\bV(_gpu)?_idx\(", code), "view index function missing from device code"
     body = view_index_body(code)
-    assert '2 * __d1' in body, body
+    assert "2 * __d1" in body, body
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from tests.codegen.readable.conftest import experimental_available
+
     if not experimental_available():
-        print('experimental readable codegen not ready; skipping')
+        print("experimental readable codegen not ready; skipping")
     else:
         test_view_idx_uses_view_strides(None)
         test_view_no_pure_fallback(None)
-        test_view_access_bit_exact(None, 'cpu')
-        test_view_access_bit_exact(None, 'gpu')
+        test_view_access_bit_exact(None, "cpu")
+        test_view_access_bit_exact(None, "gpu")
         test_view_idx_inside_kernel(None)
-        print('ok')
+        print("ok")

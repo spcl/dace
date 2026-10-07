@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Detect indirect (data-dependent) array accesses for the layout algebra: names the ``(index_array, data_array)`` pair behind each ``A[idx[i]]`` gather/scatter, via symbol promotion (``sym := idx[f(loop_var)]`` on the loop region, then a data memlet ``A[sym]``)."""
+
 import ast
 from typing import Dict, List, NamedTuple, Optional
 
@@ -9,6 +10,7 @@ from dace.sdfg.state import LoopRegion
 
 class IndirectAccess(NamedTuple):
     """One indirect access site: ``data_array`` subscripted by ``index_array``'s value; ``kind`` is ``'gather'`` (read) or ``'scatter'`` (write)."""
+
     index_array: str
     data_array: str
     kind: str
@@ -17,7 +19,7 @@ class IndirectAccess(NamedTuple):
 def resolve_index_source(rhs: str, loop_var: str, sdfg: SDFG) -> Optional[str]:
     """Return ``arr`` if ``rhs`` is ``arr[f(loop_var)]`` with ``arr`` a descriptor in ``sdfg``, else ``None``."""
     try:
-        tree = ast.parse(str(rhs), mode='eval').body
+        tree = ast.parse(str(rhs), mode="eval").body
     except (SyntaxError, ValueError, TypeError):
         return None
     if not isinstance(tree, ast.Subscript) or not isinstance(tree.value, ast.Name):
@@ -64,8 +66,9 @@ def indirect_accesses(sdfg: SDFG) -> List[IndirectAccess]:
                 for node in state.data_nodes():
                     if node.data not in sd.arrays:
                         continue
-                    edges = ([(e, 'scatter') for e in state.in_edges(node)] + [(e, 'gather')
-                                                                               for e in state.out_edges(node)])
+                    edges = [(e, "scatter") for e in state.in_edges(node)] + [
+                        (e, "gather") for e in state.out_edges(node)
+                    ]
                     for edge, kind in edges:
                         if edge.data is None or edge.data.subset is None:
                             continue

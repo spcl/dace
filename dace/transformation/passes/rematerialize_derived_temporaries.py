@@ -25,6 +25,7 @@ Nothing here is tied to a kernel or a constant. What generalizes is the pair of 
 a transient that is a pure elementwise function of one produced value, and a consumer that already
 reads the container that value was also stored to.
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -111,10 +112,11 @@ class RematerializeDerivedTemporaries(ppl.Pass):
     max_recompute_tasklets = properties.Property(
         dtype=int,
         default=8,
-        desc='Refuse when the total number of cloned tasklets (chain length times consumer reads) exceeds this. '
-        'The saving is bytes and the cost is flops; at the ~0.1 bytes/flop machine balance of every CPU and '
-        'GPU we target a stored-and-reloaded double is worth ~100 flops, so this bound is deliberately '
-        'generous and only excludes runaway chains.')
+        desc="Refuse when the total number of cloned tasklets (chain length times consumer reads) exceeds this. "
+        "The saving is bytes and the cost is flops; at the ~0.1 bytes/flop machine balance of every CPU and "
+        "GPU we target a stored-and-reloaded double is worth ~100 flops, so this bound is deliberately "
+        "generous and only excludes runaway chains.",
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
@@ -153,8 +155,8 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         return index
 
     def temporary_node(
-            self, sdfg: SDFG, name: str,
-            index: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]) -> Optional[Tuple[SDFGState, nodes.AccessNode]]:
+        self, sdfg: SDFG, name: str, index: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]
+    ) -> Optional[Tuple[SDFGState, nodes.AccessNode]]:
         """The unique access node of ``name``, if it has exactly one and is a real in-memory array.
 
         :param sdfg: The SDFG owning ``name``.
@@ -171,8 +173,9 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         found = index.get(name, ())
         return found[0] if len(found) == 1 else None
 
-    def match(self, sdfg: SDFG, name: str, index: Dict[str, List[Tuple[SDFGState,
-                                                                       nodes.AccessNode]]]) -> Optional[Dict[str, Any]]:
+    def match(
+        self, sdfg: SDFG, name: str, index: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]
+    ) -> Optional[Dict[str, Any]]:
         """Recognize the rematerialization shape around temporary ``name``.
 
         :param sdfg: The SDFG owning ``name``.
@@ -204,11 +207,11 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         if len(produced) != 1:
             return None
         write = produced[0]
-        if write.data.wcr is not None or write.data.dynamic or not str(write.dst_conn).startswith('IN_'):
+        if write.data.wcr is not None or write.data.dynamic or not str(write.dst_conn).startswith("IN_"):
             return None
         # A second edge off the same map-exit connector carries the produced value somewhere the
         # temporary is not, and that consumer survives the deletion.
-        if len(list(state.out_edges_by_connector(exit1, write.dst_conn.replace('IN_', 'OUT_', 1)))) != 1:
+        if len(list(state.out_edges_by_connector(exit1, write.dst_conn.replace("IN_", "OUT_", 1)))) != 1:
             return None
         wpoint = point_of(write.data.dst_subset if write.data.dst_subset is not None else write.data.subset)
         if wpoint is None:
@@ -232,7 +235,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             entry2 = outer_read.dst
             if not isinstance(entry2, nodes.MapEntry) or entry2 is entry1:
                 return None
-            if not str(outer_read.dst_conn).startswith('IN_') or outer_read.data.data != name:
+            if not str(outer_read.dst_conn).startswith("IN_") or outer_read.data.data != name:
                 return None
             # Every element the consumer spans must have been written by this producer, else the value
             # rematerialization reproduces was never in the temporary to begin with.
@@ -241,7 +244,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             # Pair the inner reads with THIS outer edge by connector. Filtering by container name alone
             # collects the same inner edge once per outer edge when the entry carries two of them, and
             # the rewrite then tries to remove one edge twice.
-            inner = list(state.out_edges_by_connector(entry2, outer_read.dst_conn.replace('IN_', 'OUT_', 1)))
+            inner = list(state.out_edges_by_connector(entry2, outer_read.dst_conn.replace("IN_", "OUT_", 1)))
             if not inner:
                 return None
             for edge in inner:
@@ -256,18 +259,18 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                     return None
                 reads.append(plan)
 
-        distinct = len(OrderedSet(r['key'] for r in reads))
+        distinct = len(OrderedSet(r["key"] for r in reads))
         if len(tasklets) * distinct > self.max_recompute_tasklets:
             return None
 
         return {
-            'state': state,
-            'tnode': tnode,
-            'exit1': exit1,
-            'write': write,
-            'tasklets': tasklets,
-            'sources': sources,
-            'reads': reads
+            "state": state,
+            "tnode": tnode,
+            "exit1": exit1,
+            "write": write,
+            "tasklets": tasklets,
+            "sources": sources,
+            "reads": reads,
         }
 
     def invert(self, params: List[str], wpoint: List[symbolic.SymbolicType]) -> Optional[Dict[str, Any]]:
@@ -300,10 +303,11 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             shifts.append(shift)
         if len(used) != len(pset):
             return None
-        return {'params': dimparams, 'shift': shifts}
+        return {"params": dimparams, "shift": shifts}
 
-    def slice_back(self, sdfg: SDFG, state: SDFGState, entry1: nodes.MapEntry,
-                   write) -> Optional[Tuple[List[nodes.Tasklet], Dict[Any, SourceRead]]]:
+    def slice_back(
+        self, sdfg: SDFG, state: SDFGState, entry1: nodes.MapEntry, write
+    ) -> Optional[Tuple[List[nodes.Tasklet], Dict[Any, SourceRead]]]:
         """Backward slice of the temporary's write, cut at values that are also stored to a container.
 
         Walks back from whatever feeds the temporary. A tasklet is cloned. A scope-local register access
@@ -417,8 +421,15 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 return (edge.data.data, pt, member)
         return None
 
-    def plan_read(self, sdfg: SDFG, state: SDFGState, entry2: nodes.MapEntry, edge, inverse: Dict[str, Any],
-                  sources: Dict[Any, SourceRead]) -> Optional[Dict[str, Any]]:
+    def plan_read(
+        self,
+        sdfg: SDFG,
+        state: SDFGState,
+        entry2: nodes.MapEntry,
+        edge,
+        inverse: Dict[str, Any],
+        sources: Dict[Any, SourceRead],
+    ) -> Optional[Dict[str, Any]]:
         """Check one consumer read of the temporary and record how to feed it instead.
 
         :returns: ``{'edge', 'entry', 'wiring', 'key'}`` where wiring maps each boundary edge of the
@@ -431,7 +442,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             return None
         subst = {
             param: symbolic.simplify(coord - shift)
-            for param, shift, coord in zip(inverse['params'], inverse['shift'], rpoint)
+            for param, shift, coord in zip(inverse["params"], inverse["shift"], rpoint)
         }
         available = self.consumer_reads(state, entry2)
         written = self.consumer_writes(state, entry2)
@@ -454,7 +465,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 return None
             wiring[boundary] = (match[0], need, container)
         key = tuple(str(v) for v in subst.values())
-        return {'edge': edge, 'entry': entry2, 'wiring': wiring, 'key': (id(entry2), key)}
+        return {"edge": edge, "entry": entry2, "wiring": wiring, "key": (id(entry2), key)}
 
     def consumer_reads(self, state: SDFGState, entry2: nodes.MapEntry) -> Dict[str, List[Any]]:
         """Every point read already crossing the consumer map entry, keyed by container."""
@@ -470,7 +481,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             # container has two in-edges for it, and only one of them feeds this connector. Matching by
             # name validates the read against whichever version happens to come last.
             if edge.src_conn is not None:
-                for outer in state.in_edges_by_connector(entry2, edge.src_conn.replace('OUT_', 'IN_', 1)):
+                for outer in state.in_edges_by_connector(entry2, edge.src_conn.replace("OUT_", "IN_", 1)):
                     if isinstance(outer.src, nodes.AccessNode):
                         src = outer.src
             out.setdefault(edge.data.data, []).append((edge.src_conn, pt, src))
@@ -487,8 +498,14 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 written.add(edge.data.data)
         return written
 
-    def same_version(self, state: SDFGState, container: str, consumer_src: Optional[nodes.AccessNode], boundary,
-                     origin: Optional[nodes.AccessNode]) -> bool:
+    def same_version(
+        self,
+        state: SDFGState,
+        container: str,
+        consumer_src: Optional[nodes.AccessNode],
+        boundary,
+        origin: Optional[nodes.AccessNode],
+    ) -> bool:
         """Whether the consumer reads the very access node the producer's value lives in.
 
         For a cut register the producer STORES into an access node through its map exit; for a map-entry
@@ -521,27 +538,27 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         plan = self.match(sdfg, name, index)
         if plan is None:
             return False
-        state: SDFGState = plan['state']
+        state: SDFGState = plan["state"]
         touched: OrderedSet = OrderedSet()
         built: Dict[Any, nodes.AccessNode] = {}
-        for read in plan['reads']:
-            edge = read['edge']
+        for read in plan["reads"]:
+            edge = read["edge"]
             dst, dst_conn = edge.dst, edge.dst_conn
-            if read['key'] not in built:
-                built[read['key']] = self.clone_into(sdfg, state, plan, read)
-            sink = built[read['key']]
+            if read["key"] not in built:
+                built[read["key"]] = self.clone_into(sdfg, state, plan, read)
+            sink = built[read["key"]]
             # The read is a whole memlet path -- inner edge, both connectors of the consumer entry, the
             # outer edge -- and it goes as one; removing the inner edge alone leaves the entry with an
             # edgeless connector. ``remove_memlet_path`` stops at a connector another read still uses.
             state.remove_memlet_path(edge, remove_orphans=False)
             if dst_conn is not None:
                 dst.add_in_connector(dst_conn)  # the path removal took it with the edge
-            state.add_edge(sink, None, dst, dst_conn, Memlet(data=sink.data, subset='0'))
-            touched.add(read['entry'])
+            state.add_edge(sink, None, dst, dst_conn, Memlet(data=sink.data, subset="0"))
+            touched.add(read["entry"])
 
-        state.remove_memlet_path(plan['write'], remove_orphans=False)
-        state.remove_node(plan['tnode'])
-        pruned = self.prune_dead(sdfg, state, plan['tasklets'])
+        state.remove_memlet_path(plan["write"], remove_orphans=False)
+        state.remove_node(plan["tnode"])
+        pruned = self.prune_dead(sdfg, state, plan["tasklets"])
         sdfg.remove_data(name, validate=False)
         # The pruned registers' descriptors go too: the pipeline schedules this pass last on the
         # promise that it leaves nothing for a following simplify.
@@ -571,16 +588,18 @@ class RematerializeDerivedTemporaries(ppl.Pass):
 
         :returns: The access node holding the rematerialized value.
         """
-        entry2, wiring = read['entry'], read['wiring']
-        sink_name, _ = sdfg.add_scalar('remat_' + plan['tnode'].data,
-                                       sdfg.arrays[plan['tnode'].data].dtype,
-                                       storage=dtypes.StorageType.Register,
-                                       transient=True,
-                                       find_new_name=True)
+        entry2, wiring = read["entry"], read["wiring"]
+        sink_name, _ = sdfg.add_scalar(
+            "remat_" + plan["tnode"].data,
+            sdfg.arrays[plan["tnode"].data].dtype,
+            storage=dtypes.StorageType.Register,
+            transient=True,
+            find_new_name=True,
+        )
         sink = state.add_access(sink_name)
 
-        value = self.value_edge(state, plan['write'], plan['sources'])
-        if not plan['tasklets']:
+        value = self.value_edge(state, plan["write"], plan["sources"])
+        if not plan["tasklets"]:
             # Degenerate chain: the temporary was a plain copy of the value, so the consumer's existing
             # read of the container IS the value. Route it straight through a private register.
             conn, point, container = wiring[value]
@@ -588,7 +607,7 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             return sink
 
         clones: Dict[nodes.Tasklet, nodes.Tasklet] = {}
-        for tasklet in plan['tasklets']:
+        for tasklet in plan["tasklets"]:
             clone = copy.deepcopy(tasklet)
             state.add_node(clone)
             clones[tasklet] = clone
@@ -603,32 +622,35 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                     state.add_edge(entry2, conn, clone, edge.dst_conn, point_memlet(container, point))
                 else:
                     carrier = self.carrier(sdfg, state, edge.src, carriers)
-                    state.add_edge(carrier, None, clone, edge.dst_conn, Memlet(data=carrier.data, subset='0'))
+                    state.add_edge(carrier, None, clone, edge.dst_conn, Memlet(data=carrier.data, subset="0"))
             if state.in_degree(clone) == 0:
                 # A clone built only from literals still has to live inside the consumer's scope.
                 state.add_edge(entry2, None, clone, None, Memlet())
         for tasklet, clone in clones.items():
             for edge in state.out_edges(tasklet):
                 if edge is value:
-                    state.add_edge(clone, edge.src_conn, sink, None, Memlet(data=sink_name, subset='0'))
+                    state.add_edge(clone, edge.src_conn, sink, None, Memlet(data=sink_name, subset="0"))
                 else:
                     # Every other output gets its own private register: the clone's code still writes
                     # that connector, and a connector with no edge is an invalid SDFG. ``slice_back``
                     # already refused a tasklet whose other output leaves the producer's scope.
                     carrier = self.carrier(sdfg, state, edge.dst, carriers)
-                    state.add_edge(clone, edge.src_conn, carrier, None, Memlet(data=carrier.data, subset='0'))
+                    state.add_edge(clone, edge.src_conn, carrier, None, Memlet(data=carrier.data, subset="0"))
         return sink
 
-    def carrier(self, sdfg: SDFG, state: SDFGState, origin: nodes.AccessNode,
-                carriers: Dict[nodes.AccessNode, nodes.AccessNode]) -> nodes.AccessNode:
+    def carrier(
+        self, sdfg: SDFG, state: SDFGState, origin: nodes.AccessNode, carriers: Dict[nodes.AccessNode, nodes.AccessNode]
+    ) -> nodes.AccessNode:
         """A fresh private register mirroring an intermediate value of the producer slice."""
         if origin in carriers:
             return carriers[origin]
-        name, _ = sdfg.add_scalar('remat_' + origin.data,
-                                  sdfg.arrays[origin.data].dtype,
-                                  storage=dtypes.StorageType.Register,
-                                  transient=True,
-                                  find_new_name=True)
+        name, _ = sdfg.add_scalar(
+            "remat_" + origin.data,
+            sdfg.arrays[origin.data].dtype,
+            storage=dtypes.StorageType.Register,
+            transient=True,
+            find_new_name=True,
+        )
         node = state.add_access(name)
         carriers[origin] = node
         return node

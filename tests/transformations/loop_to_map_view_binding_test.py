@@ -11,6 +11,7 @@ its per-element loops read ``Xiv``/``Yiv``, reshapes of ``Xi``/``Yi``, and were 
 The binding is skipped; traffic THROUGH the view is not, and the second test is what holds that
 line -- a store into a view still lands on the viewed array and is analysed there.
 """
+
 import numpy as np
 
 import dace
@@ -18,7 +19,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 
-M = dace.symbol('M')
+M = dace.symbol("M")
 
 
 def loop_labels(sdfg: dace.SDFG):
@@ -33,7 +34,7 @@ def has_map(sdfg: dace.SDFG) -> bool:
 def view_read_in_two_loops(a: dace.float64[M, M], out: dace.float64[M * M], out2: dace.float64[M * M]):
     # Two consumers keep the view alive past either loop, which is what puts its binding edge
     # inside both loop bodies -- a view local to one loop is never examined here.
-    flat = np.reshape(a, (M * M, ))
+    flat = np.reshape(a, (M * M,))
     for i in range(M * M):
         out[i] = flat[i] * 2.0
     for j in range(M * M):
@@ -44,7 +45,7 @@ def view_read_in_two_loops(a: dace.float64[M, M], out: dace.float64[M * M], out2
 def broadcast_write_through_view(a: dace.float64[M, M], src: dace.float64[M * M], out: dace.float64[M * M]):
     # Every iteration stores to the SAME element through the view: a genuine conflict that the
     # binding skip must not swallow.
-    flat = np.reshape(a, (M * M, ))
+    flat = np.reshape(a, (M * M,))
     for i in range(M * M):
         out[i] = flat[i]
         flat[0] = src[i]
@@ -83,7 +84,7 @@ def test_the_lifted_view_reads_keep_their_values():
     assert np.allclose(out2, ref2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_view_binding_does_not_block_the_lift()
     test_a_write_through_a_view_still_refuses()
     test_the_lifted_view_reads_keep_their_values()

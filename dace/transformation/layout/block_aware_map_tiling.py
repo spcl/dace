@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """BlockAwareMapTiling -- tiles top-level maps matching ``tile_sizes`` so SplitDimensions emits clean tile/offset indices and Block lowers cleanly, with no residual %/int_floor."""
+
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
@@ -16,7 +17,8 @@ def provably_indivisible(map_entry: dace.nodes.MapEntry, tile_sizes: Tuple[int, 
     """True iff some tiled dim's extent is a known constant not divisible by its tile; symbolic extents return False."""
     for (begin, end, _), tile in zip(map_entry.map.range, tile_sizes):
         extent = symbolic.simplify(
-            as_expr(symbolic.pystr_to_symbolic(end)) - as_expr(symbolic.pystr_to_symbolic(begin)) + 1)
+            as_expr(symbolic.pystr_to_symbolic(end)) - as_expr(symbolic.pystr_to_symbolic(begin)) + 1
+        )
         remainder = symbolic.simplify(sympy.Mod(extent, tile))
         if as_basic(remainder).is_number and remainder != 0:
             return True
@@ -42,17 +44,17 @@ class BlockAwareMapTiling(ppl.Pass):
         for state in sdfg.states():
             scope = state.scope_dict()
             top_maps = [
-                n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and scope[n] is None
+                n
+                for n in state.nodes()
+                if isinstance(n, dace.nodes.MapEntry)
+                and scope[n] is None
                 and len(n.map.params) == len(self._tile_sizes)
             ]
             for me in top_maps:
                 # Never assert divides_evenly on a map that provably does not.
                 divides = self._divides_evenly and not provably_indivisible(me, self._tile_sizes)
-                MapTiling.apply_to(sdfg,
-                                   options={
-                                       'tile_sizes': self._tile_sizes,
-                                       'divides_evenly': divides
-                                   },
-                                   map_entry=me)
+                MapTiling.apply_to(
+                    sdfg, options={"tile_sizes": self._tile_sizes, "divides_evenly": divides}, map_entry=me
+                )
                 count += 1
         return count

@@ -5,6 +5,7 @@ A non-contiguous (strided) MPI buffer gets a contiguous ``packed_*`` transient p
 MPI sees a contiguous buffer in the new layout; a contiguous buffer is left untouched; a shuffled buffer
 is refused. Runtime correctness is covered by the 2-rank tests under tests/library/mpi.
 """
+
 import pytest
 import dace
 from dace.memlet import Memlet

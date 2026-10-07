@@ -27,6 +27,7 @@ Out of scope: multi-state bodies; IV components sharing an external
 AccessNode with another statement; multiple independent IV updates per body
 (fissions one per call, re-run for the next).
 """
+
 import ast
 import copy
 from typing import Any, Dict, Optional, Tuple
@@ -74,8 +75,8 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     out_edges = value_edges(state.out_edges(tasklet))
     if len(in_edges) != 1 or len(out_edges) != 1:
         return False
-    (in_edge, ) = in_edges
-    (write_edge, ) = out_edges
+    (in_edge,) = in_edges
+    (write_edge,) = out_edges
     # A WCR store is ``acc = wcr(acc, rhs)``: not an IV recurrence, so not fissionable as one.
     if in_edge.data.wcr is not None or write_edge.data.wcr is not None:
         return False
@@ -127,7 +128,7 @@ def _is_copy_tasklet(t: nodes.Tasklet) -> bool:
     if t.code.language != dtypes.Language.Python:
         return False
     code = (t.code.as_string or "").strip()
-    return code in ('__out = __inp', '__out = (__inp)')
+    return code in ("__out = __inp", "__out = (__inp)")
 
 
 def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optional[Dict[nodes.Node, None]]:
@@ -150,8 +151,9 @@ def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optio
     return component
 
 
-def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, component: Dict[nodes.Node, None],
-                                        sdfg: SDFG, parent: ControlFlowRegion) -> None:
+def _split_iv_component_to_sibling_loop(
+    loop: LoopRegion, state: SDFGState, component: Dict[nodes.Node, None], sdfg: SDFG, parent: ControlFlowRegion
+) -> None:
     """Move the IV component into a fresh sibling loop *before* ``loop``.
 
     The sibling loop is a deep copy of ``loop`` with the body state's contents
@@ -201,9 +203,9 @@ def id_for(n: nodes.Node) -> Tuple[str, ...]:
     bases; every node that can sit in a state resolves it.
     """
     if isinstance(n, nodes.AccessNode):
-        return ('access', n.data)
+        return ("access", n.data)
     if isinstance(n, nodes.Tasklet):
-        return ('tasklet', n.label, n.code.as_string)
+        return ("tasklet", n.label, n.code.as_string)
     return (type(n).__name__, n.label)
 
 
@@ -268,4 +270,4 @@ class HoistInductionVariableUpdates(ppl.Pass):
         return False
 
 
-__all__ = ['HoistInductionVariableUpdates']
+__all__ = ["HoistInductionVariableUpdates"]

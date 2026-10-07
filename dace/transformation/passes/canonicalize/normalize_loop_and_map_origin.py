@@ -32,6 +32,7 @@ The shifting mechanics (subset / tasklet / interstate substitution) are
 ``OffsetLoopsAndMaps``' module-level helpers, driven here per scope rather than
 over the whole SDFG.
 """
+
 from typing import Any, Dict, Iterable, List, Optional, Type, Union
 
 import dace
@@ -43,8 +44,13 @@ from dace.symbolic import pystr_to_symbolic, symstr
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis, map_scope
-from dace.transformation.passes.offset_loop_and_maps import (add_to_rhs, process_memlets_in_edges, repl_recursive,
-                                                             repl_tasklets_on_node_list, tasklets_assign)
+from dace.transformation.passes.offset_loop_and_maps import (
+    add_to_rhs,
+    process_memlets_in_edges,
+    repl_recursive,
+    repl_tasklets_on_node_list,
+    tasklets_assign,
+)
 
 
 def rebinds_params(node_list: Iterable[nodes.Node], params: Dict[str, None]) -> bool:
@@ -101,7 +107,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
     See the module docstring for the rationale and the traversal order.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.Tasklets | ppl.Modifies.Memlets | ppl.Modifies.CFG
@@ -256,4 +262,4 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
         return 1
 
 
-__all__ = ['NormalizeLoopAndMapOrigin', 'rebinds_params', 'shift_map_ranges']
+__all__ = ["NormalizeLoopAndMapOrigin", "rebinds_params", "shift_map_ranges"]

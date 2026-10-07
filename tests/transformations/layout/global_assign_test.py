@@ -2,23 +2,31 @@
 """C1/C2/C3 solver tests on synthetic cost tables: the DP matches the
 brute-force oracle everywhere, the greedy baseline loses exactly where it should (edge-blind), both
 edge regimes work, ties resolve toward identity, and every refusal is loud."""
+
 import random
 
 import pytest
 
 from dace.libraries.layout.algebra import Permute
 from dace.transformation.layout.apply_assignment import IDENTITY_LAYOUT, Layout
-from dace.transformation.layout.global_assign import (AssignmentCosts, brute_force_trajectories, conflict_report,
-                                                      format_conflict_report, greedy_assignment, per_array_dp,
-                                                      to_assignment, trajectory_cost)
+from dace.transformation.layout.global_assign import (
+    AssignmentCosts,
+    brute_force_trajectories,
+    conflict_report,
+    format_conflict_report,
+    greedy_assignment,
+    per_array_dp,
+    to_assignment,
+    trajectory_cost,
+)
 
-CM = Layout("perm10", (Permute((1, 0)), ))
+CM = Layout("perm10", (Permute((1, 0)),))
 
 # A THREE-layout candidate set. With two layouts identity sits at index 0, so almost any tie-break looks
 # identity-first by accident; three is the smallest set that can tell a whole-trajectory lexicographic
 # tie-break apart from a per-kernel one.
-P120 = Layout("perm120", (Permute((1, 2, 0)), ))
-P201 = Layout("perm201", (Permute((2, 0, 1)), ))
+P120 = Layout("perm120", (Permute((1, 2, 0)),))
+P201 = Layout("perm201", (Permute((2, 0, 1)),))
 THREE = {"A": [IDENTITY_LAYOUT, P120, P201]}
 
 
@@ -71,7 +79,7 @@ def test_trajectory_wins_when_relayout_is_cheap():
         ("A", 1, "identity"): 3.0,
         ("A", 1, "perm10"): 1.0,
         ("A", 2, "identity"): 3.0,
-        ("A", 2, "perm10"): 1.0
+        ("A", 2, "perm10"): 1.0,
     }
     rel = {("A", "identity", "perm10"): 0.5, ("A", "perm10", "identity"): 0.5}
     costs = table(node, rel)
@@ -86,18 +94,20 @@ def test_dp_matches_oracle_on_random_tables():
     """Random node/edge tables AND random liveness facts (entry needed / last-write position): the
     flag-state DP must equal the enumeration oracle under the full objective in both regimes."""
     rng = random.Random(42)
-    layouts = {"A": [IDENTITY_LAYOUT, CM, Layout("perm01x", (Permute((0, 1)), ))]}
+    layouts = {"A": [IDENTITY_LAYOUT, CM, Layout("perm01x", (Permute((0, 1)),))]}
     tags = [l.tag for l in layouts["A"]]
     for trial in range(40):
         n = rng.randint(2, 5)
         node = {("A", k, t): rng.uniform(0.5, 5.0) for k in range(n) for t in tags}
         rel = {("A", a, b): rng.uniform(0.1, 3.0) for a in tags for b in tags if a != b}
         lw = rng.choice([None] + list(range(n)))
-        costs = AssignmentCosts(layouts=layouts,
-                                node_cost=node,
-                                relayout_cost=rel,
-                                entry_conversion_needed={"A": rng.random() < 0.5},
-                                last_write_kernel={} if lw is None else {"A": lw})
+        costs = AssignmentCosts(
+            layouts=layouts,
+            node_cost=node,
+            relayout_cost=rel,
+            entry_conversion_needed={"A": rng.random() < 0.5},
+            last_write_kernel={} if lw is None else {"A": lw},
+        )
         for allow in (True, False):
             dp = per_array_dp(costs, n, allow_changes=allow)["A"]
             oracle = brute_force_trajectories(costs, n, allow_changes=allow)["A"]
@@ -163,11 +173,13 @@ def test_exit_conversion_priced_once():
     oscillation."""
     rel = {("B", "identity", "perm10"): 0.4, ("B", "perm10", "identity"): 0.4}
     node = {("B", 0, "identity"): 2.0, ("B", 0, "perm10"): 1.0, ("B", 1, "identity"): 1.0, ("B", 1, "perm10"): 1.0}
-    costs = AssignmentCosts(layouts={"B": [IDENTITY_LAYOUT, CM]},
-                            node_cost=node,
-                            relayout_cost=rel,
-                            entry_conversion_needed={"B": False},
-                            last_write_kernel={"B": 0})
+    costs = AssignmentCosts(
+        layouts={"B": [IDENTITY_LAYOUT, CM]},
+        node_cost=node,
+        relayout_cost=rel,
+        entry_conversion_needed={"B": False},
+        last_write_kernel={"B": 0},
+    )
     assert trajectory_cost(costs, "B", ["perm10", "identity"]) == pytest.approx(2.4)
     assert trajectory_cost(costs, "B", ["perm10", "perm10"]) == pytest.approx(2.4)
     assert trajectory_cost(costs, "B", ["identity", "identity"]) == pytest.approx(3.0)
@@ -177,11 +189,13 @@ def test_exit_conversion_priced_once():
     assert dp.cost == pytest.approx(brute_force_trajectories(costs, 2)["B"].cost)
 
     node3 = {("B", k, t): 1.0 for k in range(3) for t in ("identity", "perm10")}
-    costs3 = AssignmentCosts(layouts={"B": [IDENTITY_LAYOUT, CM]},
-                             node_cost=node3,
-                             relayout_cost=rel,
-                             entry_conversion_needed={"B": False},
-                             last_write_kernel={"B": 0})
+    costs3 = AssignmentCosts(
+        layouts={"B": [IDENTITY_LAYOUT, CM]},
+        node_cost=node3,
+        relayout_cost=rel,
+        entry_conversion_needed={"B": False},
+        last_write_kernel={"B": 0},
+    )
     assert trajectory_cost(costs3, "B", ["perm10", "identity", "identity"]) == pytest.approx(3.4)
     assert trajectory_cost(costs3, "B", ["perm10", "perm10", "identity"]) == pytest.approx(3.4)
     assert trajectory_cost(costs3, "B", ["perm10", "identity", "perm10"]) == pytest.approx(3.8)
@@ -219,12 +233,8 @@ def test_refusals_are_loud():
     with pytest.raises(ValueError, match="exceed"):
         brute_force_trajectories(complete, 2, cap=3)
     missing_edge = table(
-        {
-            ("A", 0, "identity"): 1.0,
-            ("A", 0, "perm10"): 1.0,
-            ("A", 1, "identity"): 1.0,
-            ("A", 1, "perm10"): 1.0
-        }, {})
+        {("A", 0, "identity"): 1.0, ("A", 0, "perm10"): 1.0, ("A", 1, "identity"): 1.0, ("A", 1, "perm10"): 1.0}, {}
+    )
     with pytest.raises(ValueError, match="missing relayout"):
         per_array_dp(missing_edge, 2)
     per_array_dp(missing_edge, 2, allow_changes=False)  # no edges needed in the no-change regime
@@ -289,10 +299,12 @@ def test_dp_tags_match_the_oracle_with_three_layouts():
         node = {("A", k, l.tag): rng.choice([1.0, 1.5]) for k in range(n) for l in THREE["A"]}
         rel = {("A", a.tag, b.tag): rng.choice([0.0, 0.5]) for a in THREE["A"] for b in THREE["A"] if a is not b}
         lw = rng.choice([None, 0, n - 1])
-        costs = three_layout_table(node,
-                                   rel,
-                                   entry_conversion_needed={"A": rng.random() < 0.5},
-                                   last_write_kernel={} if lw is None else {"A": lw})
+        costs = three_layout_table(
+            node,
+            rel,
+            entry_conversion_needed={"A": rng.random() < 0.5},
+            last_write_kernel={} if lw is None else {"A": lw},
+        )
         for allow in (True, False):
             dp = per_array_dp(costs, n, allow_changes=allow)["A"]
             oracle = brute_force_trajectories(costs, n, allow_changes=allow)["A"]
@@ -320,22 +332,28 @@ def test_check_requires_only_the_conversions_it_charges():
     falsely refuses a complete table."""
     node = {("A", 0, "identity"): 1.0, ("A", 0, "perm10"): 1.0}
     layouts = {"A": [IDENTITY_LAYOUT, CM]}
-    exit_only = AssignmentCosts(layouts=layouts,
-                                node_cost=node,
-                                relayout_cost={("A", "perm10", "identity"): 2.0},
-                                entry_conversion_needed={"A": False},
-                                last_write_kernel={"A": 0})
+    exit_only = AssignmentCosts(
+        layouts=layouts,
+        node_cost=node,
+        relayout_cost={("A", "perm10", "identity"): 2.0},
+        entry_conversion_needed={"A": False},
+        last_write_kernel={"A": 0},
+    )
     assert per_array_dp(exit_only, 1, allow_changes=False)["A"].tags == ["identity"]
-    entry_only = AssignmentCosts(layouts=layouts,
-                                 node_cost=node,
-                                 relayout_cost={("A", "identity", "perm10"): 2.0},
-                                 entry_conversion_needed={"A": True})
+    entry_only = AssignmentCosts(
+        layouts=layouts,
+        node_cost=node,
+        relayout_cost={("A", "identity", "perm10"): 2.0},
+        entry_conversion_needed={"A": True},
+    )
     assert per_array_dp(entry_only, 1, allow_changes=False)["A"].tags == ["identity"]
     # ...while an edge the solver WILL consult is still refused loudly
     with pytest.raises(ValueError, match="missing relayout"):
-        per_array_dp(AssignmentCosts(layouts=layouts, node_cost=node, entry_conversion_needed={"A": True}),
-                     1,
-                     allow_changes=False)
+        per_array_dp(
+            AssignmentCosts(layouts=layouts, node_cost=node, entry_conversion_needed={"A": True}),
+            1,
+            allow_changes=False,
+        )
 
 
 def test_single_kernel_charges_entry_and_exit_together():
@@ -343,11 +361,13 @@ def test_single_kernel_charges_entry_and_exit_together():
     random oracle draws n >= 2 and never reaches it."""
     node = {("A", 0, "identity"): 5.0, ("A", 0, "perm10"): 1.0}
     rel = {("A", "identity", "perm10"): 1.0, ("A", "perm10", "identity"): 1.0}
-    costs = AssignmentCosts(layouts={"A": [IDENTITY_LAYOUT, CM]},
-                            node_cost=node,
-                            relayout_cost=rel,
-                            entry_conversion_needed={"A": True},
-                            last_write_kernel={"A": 0})
+    costs = AssignmentCosts(
+        layouts={"A": [IDENTITY_LAYOUT, CM]},
+        node_cost=node,
+        relayout_cost=rel,
+        entry_conversion_needed={"A": True},
+        last_write_kernel={"A": 0},
+    )
     dp = per_array_dp(costs, 1)["A"]
     oracle = brute_force_trajectories(costs, 1)["A"]
     assert dp.tags == oracle.tags and dp.tags == ["perm10"]  # 1 (node) + 1 (entry) + 1 (exit) beats 5

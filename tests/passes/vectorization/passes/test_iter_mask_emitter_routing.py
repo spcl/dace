@@ -12,6 +12,7 @@ Wiring of ``_iter_mask`` to per-op tasklets (the pipeline-level integration)
 is a follow-up slice; these tests construct ``EmitCtx`` directly so the
 consumer logic can be validated in isolation.
 """
+
 import dace
 
 from dace.transformation.passes.vectorization.utils.tasklets import (
@@ -26,11 +27,11 @@ N = dace.symbol("N")
 def _make_ctx(templates: dict, mask_connector=None) -> EmitCtx:
     """Build an EmitCtx with a stub state/node so _generate_code can read out_edges."""
     sdfg = dace.SDFG("emit_routing_probe")
-    sdfg.add_array("a", (8, ), dace.float64)
-    sdfg.add_array("b", (8, ), dace.float64)
-    sdfg.add_array("out", (8, ), dace.float64)
+    sdfg.add_array("a", (8,), dace.float64)
+    sdfg.add_array("b", (8,), dace.float64)
+    sdfg.add_array("out", (8,), dace.float64)
     if mask_connector:
-        sdfg.add_array("_iter_mask", (8, ), dace.bool_, transient=True)
+        sdfg.add_array("_iter_mask", (8,), dace.bool_, transient=True)
     state = sdfg.add_state()
     a, b, out_n = state.add_access("a"), state.add_access("b"), state.add_access("out")
     t = state.add_tasklet("t", {"a", "b"}, {"out"}, "out = a + b")
@@ -41,15 +42,17 @@ def _make_ctx(templates: dict, mask_connector=None) -> EmitCtx:
         m = state.add_access("_iter_mask")
         t.add_in_connector(mask_connector)
         state.add_edge(m, None, t, mask_connector, dace.Memlet("_iter_mask[0:8]"))
-    return EmitCtx(state=state,
-                   node=t,
-                   templates=templates,
-                   vector_dtype=dace.float64,
-                   vector_width=8,
-                   vector_map_param="i",
-                   is_commutative=True,
-                   fallbackcode_due_to_types=False,
-                   mask_connector=mask_connector)
+    return EmitCtx(
+        state=state,
+        node=t,
+        templates=templates,
+        vector_dtype=dace.float64,
+        vector_width=8,
+        vector_map_param="i",
+        is_commutative=True,
+        fallbackcode_due_to_types=False,
+        mask_connector=mask_connector,
+    )
 
 
 def test_template_key_no_mask_returns_base():

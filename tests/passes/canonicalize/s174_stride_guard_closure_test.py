@@ -24,6 +24,7 @@ boundary the guard used to cover, and fails (SIGABRT) on an unconditional-``Scan
 ``test_s171_symbolic_stride_guard_is_kept`` pins the other direction -- a stride guard whose
 predicate is NOT provable must survive untouched.
 """
+
 import copy
 
 import numpy as np
@@ -60,7 +61,7 @@ def _structure(sdfg):
 def test_s174_stride_guard_closes_to_bare_map():
     """The provable ``M >= 1`` guard is discharged: no conditional, no pinned fallback, and the
     parallel form is a plain Map rather than an (abort-on-``stride <= 0``) Scan."""
-    sdfg, _ = _canonicalized('s174_d_single', 'guardclose_struct')
+    sdfg, _ = _canonicalized("s174_d_single", "guardclose_struct")
     loops, maps, scans = _structure(sdfg)
     assert guarded_fallback_loops(sdfg) == 0, "guarded sequential fallback survived"
     assert loops == 0, "a sequential LoopRegion survived the closure"
@@ -71,23 +72,23 @@ def test_s174_stride_guard_closes_to_bare_map():
 def test_s174_closed_map_is_bit_exact():
     """Canonicalize 10x in-process (the cross-process canon flake is order-dependent): the
     closed form stays a bare Map and is BIT-exact against the numpy oracle every time."""
-    kernel = tsvc.collect(name='s174_d_single')[0]
+    kernel = tsvc.collect(name="s174_d_single")[0]
     arrays, call_kwargs = tsvc.make_inputs(kernel, seed=1234)
     ref = {n: a.copy() for n, a in arrays.items()}
-    REFERENCES['s174_d_single'](**ref, **call_kwargs)
+    REFERENCES["s174_d_single"](**ref, **call_kwargs)
 
     for trial in range(10):
-        sdfg = tsvc.to_sdfg(kernel, tag=f'guardclose_exact_{trial}', simplify=True)
+        sdfg = tsvc.to_sdfg(kernel, tag=f"guardclose_exact_{trial}", simplify=True)
         canonicalize(sdfg, validate=True, validate_all=False, **cpu_params(4))
         assert guarded_fallback_loops(sdfg) == 0
         assert _structure(sdfg) == (0, 1, 0)
-        fin = finalize_for_target(copy.deepcopy(sdfg), 'cpu')
-        fin.name = f'{fin.name}_gc_exact_{trial}'
+        fin = finalize_for_target(copy.deepcopy(sdfg), "cpu")
+        fin.name = f"{fin.name}_gc_exact_{trial}"
         got = {n: a.copy() for n, a in arrays.items()}
         fin.compile()(**got, **call_kwargs)
         # No reduction and no reassociation -- an elementwise DOALL Map must match exactly.
         for name in arrays:
-            assert np.array_equal(got[name], ref[name]), f'trial {trial}: {name} not bit-exact'
+            assert np.array_equal(got[name], ref[name]), f"trial {trial}: {name} not bit-exact"
 
 
 def test_s174_zero_trip_count_does_not_abort():
@@ -100,26 +101,28 @@ def test_s174_zero_trip_count_does_not_abort():
     process has already run compiled kernels, and a fork child deadlocks on the OpenMP team it
     inherits without owning.
     """
-    sdfg, _ = _canonicalized('s174_d_single', 'guardclose_zero')
-    fin = finalize_for_target(copy.deepcopy(sdfg), 'cpu')
-    fin.name = f'{fin.name}_gc_zero'
+    sdfg, _ = _canonicalized("s174_d_single", "guardclose_zero")
+    fin = finalize_for_target(copy.deepcopy(sdfg), "cpu")
+    fin.name = f"{fin.name}_gc_zero"
 
     a = np.arange(ZERO_TRIP_LEN, dtype=np.float64)
     b = np.ones(ZERO_TRIP_LEN, dtype=np.float64)
     work = a.copy()
 
     # M == 0 must leave `a` untouched, so `work` is compared against the pristine `a`.
-    code = exit_code(fin, {'a': work, 'b': b, 'M': 0, 'LEN_1D': ZERO_TRIP_LEN}, [(work, a)], exact=True)
+    code = exit_code(fin, {"a": work, "b": b, "M": 0, "LEN_1D": ZERO_TRIP_LEN}, [(work, a)], exact=True)
 
-    assert code >= 0, (f'zero-trip M=0 killed by signal {-code} '
-                       '(SIGABRT=6 means the guard was dropped onto an unconditional strided Scan)')
-    assert code != MISMATCH, 'M=0 must be a no-op, but the kernel wrote to `a`'
-    assert code == 0, f'zero-trip M=0 run failed (exit {code})'
+    assert code >= 0, (
+        f"zero-trip M=0 killed by signal {-code} "
+        "(SIGABRT=6 means the guard was dropped onto an unconditional strided Scan)"
+    )
+    assert code != MISMATCH, "M=0 must be a no-op, but the kernel wrote to `a`"
+    assert code == 0, f"zero-trip M=0 run failed (exit {code})"
 
 
 def test_s171_symbolic_stride_guard_is_kept():
     """The counterpart soundness bound: ``s171`` (``a[i * inc] = ...``) has a stride guard whose
     predicate is NOT statically provable, so the guarded fallback must SURVIVE. Closing it would
     be a miscompile, so this pins that the discharge stays narrow."""
-    sdfg, _ = _canonicalized('s171_d_single', 'guardclose_kept')
-    assert guarded_fallback_loops(sdfg) == 1, 's171 unprovable stride guard was wrongly dropped'
+    sdfg, _ = _canonicalized("s171_d_single", "guardclose_kept")
+    assert guarded_fallback_loops(sdfg) == 1, "s171 unprovable stride guard was wrongly dropped"

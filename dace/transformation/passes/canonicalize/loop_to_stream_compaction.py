@@ -149,8 +149,17 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Type, Union
 import dace
 from dace import SDFG, data, dtypes, memlet as mm, properties, subsets, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
-                             ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState)
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis, scopes
@@ -158,10 +167,10 @@ from dace.optionals import required
 from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Prefixes for the transients and symbol this pass introduces.
-MASK_PREFIX = 'compaction_mask_'
-IDX_PREFIX = 'compaction_rank_'
-TOTAL_PREFIX = 'compaction_total_'
-BASE_PREFIX = 'compaction_base_'
+MASK_PREFIX = "compaction_mask_"
+IDX_PREFIX = "compaction_rank_"
+TOTAL_PREFIX = "compaction_total_"
+BASE_PREFIX = "compaction_base_"
 
 #: Index dtype of the rank buffer, the total and the cursor base symbol. An index stays int64.
 COUNT_DTYPE = dtypes.int64
@@ -222,7 +231,7 @@ class CompactionMatch(NamedTuple):
 class LoopToStreamCompaction(ppl.Pass):
     """Lift conditional-append loops to a parallel mask + exclusive scan + guarded scatter."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -293,14 +302,16 @@ class LoopToStreamCompaction(ppl.Pass):
         if not self.affine_cursor_probe(loop, sdfg, cursor_name, step, levels):
             return None
 
-        return CompactionMatch(root=loop,
-                               levels=levels,
-                               parent=loop.parent_graph,
-                               sdfg=sdfg,
-                               cond_block=cond_block,
-                               cond_str=cond_str,
-                               cursor=cursor_name,
-                               step=step)
+        return CompactionMatch(
+            root=loop,
+            levels=levels,
+            parent=loop.parent_graph,
+            sdfg=sdfg,
+            cond_block=cond_block,
+            cond_str=cond_str,
+            cursor=cursor_name,
+            step=step,
+        )
 
     def is_attached(self, region: AbstractControlFlowRegion, sdfg: SDFG) -> bool:
         """Stale-snapshot guard: an earlier rewrite in this sweep may have detached a whole nest."""
@@ -337,7 +348,7 @@ class LoopToStreamCompaction(ppl.Pass):
             else:
                 return None  # zero or several guards, or a level that both loops and guards
             pos = chain.index(child)
-            for blk in chain[pos + 1:]:
+            for blk in chain[pos + 1 :]:
                 if not (isinstance(blk, SDFGState) and blk.number_of_nodes() == 0):
                     return None  # a non-empty tail would run before phase 3's guard on the copy
             levels.append(NestLevel(loop=cur, start=start, trip=trip, preamble=chain[:pos], child=child))
@@ -346,8 +357,9 @@ class LoopToStreamCompaction(ppl.Pass):
                 return tuple(levels), child
             cur = child
 
-    def nest_index(self, levels: Tuple[NestLevel, ...], loops: List[LoopRegion],
-                   iterator_dtypes: List[dtypes.typeclass]) -> List[symbolic.SymbolicType]:
+    def nest_index(
+        self, levels: Tuple[NestLevel, ...], loops: List[LoopRegion], iterator_dtypes: List[dtypes.typeclass]
+    ) -> List[symbolic.SymbolicType]:
         """The origin-shifted iteration vector, one component per level, SYMBOLIC.
 
         ``mask`` / ``rank`` carry one DIMENSION per level rather than a linearized index. Both are
@@ -429,8 +441,9 @@ class LoopToStreamCompaction(ppl.Pass):
                     return False  # stream push order is observable
         return True
 
-    def cursor_increment(self, loop: LoopRegion, branch: ControlFlowRegion,
-                         levels: Tuple[NestLevel, ...]) -> Optional[Tuple[str, symbolic.SymbolicType]]:
+    def cursor_increment(
+        self, loop: LoopRegion, branch: ControlFlowRegion, levels: Tuple[NestLevel, ...]
+    ) -> Optional[Tuple[str, symbolic.SymbolicType]]:
         """Find the unique ``c = c + K`` interstate assignment; it must live inside ``branch``."""
         assigned: Dict[str, int] = {}
         bumps: List[Tuple[str, symbolic.SymbolicType, bool]] = []
@@ -470,7 +483,7 @@ class LoopToStreamCompaction(ppl.Pass):
             meta += [
                 level.loop.loop_condition.as_string,
                 required(level.loop.init_statement).as_string,
-                required(level.loop.update_statement).as_string
+                required(level.loop.update_statement).as_string,
             ]
         for code in meta:
             if cursor in self.expression_names(code):
@@ -499,8 +512,11 @@ class LoopToStreamCompaction(ppl.Pass):
                 name = edge.data.data
                 uses_cursor = cursor in {str(s) for s in required(edge.data.subset).free_symbols}
                 writes = isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
-                target = (cursor_written if uses_cursor else plain_written) if writes else (
-                    cursor_read if uses_cursor else read)
+                target = (
+                    (cursor_written if uses_cursor else plain_written)
+                    if writes
+                    else (cursor_read if uses_cursor else read)
+                )
                 target[name] = target.get(name, 0) + 1
         # Interstate edges and branch conditions read data too; a compaction whose source read is
         # bound to a symbol (``t = Z[i]``) aliases its target exactly as a dataflow read would.
@@ -588,8 +604,9 @@ class LoopToStreamCompaction(ppl.Pass):
         # by name: carried holds equalized instances, loop_vars the originals
         return all(sum(1 for var in carried if str(var) == str(outer)) == 1 for outer in loop_vars)
 
-    def affine_cursor_probe(self, loop: LoopRegion, sdfg: SDFG, cursor: str, step: symbolic.SymbolicType,
-                            levels: Tuple[NestLevel, ...]) -> bool:
+    def affine_cursor_probe(
+        self, loop: LoopRegion, sdfg: SDFG, cursor: str, step: symbolic.SymbolicType, levels: Tuple[NestLevel, ...]
+    ) -> bool:
         """Ask ``LoopToMap`` about the residual body with the cursor modelled as an injective affine index.
 
         The model is the OUTERMOST level's index, ``K * (i - start)``: the probe's job is to judge
@@ -601,6 +618,7 @@ class LoopToStreamCompaction(ppl.Pass):
         linearized inner index would carry a symbolic coefficient and refuse every symbolic extent.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
+
         probe_sdfg = copy.deepcopy(sdfg)
         probe_loop = self.locate_corresponding(probe_sdfg, loop)
         if probe_loop is None:
@@ -624,9 +642,12 @@ class LoopToStreamCompaction(ppl.Pass):
         """
         found: List[LoopRegion] = []
         for region in target.all_control_flow_regions():
-            if (isinstance(region, LoopRegion) and region.label == loop.label
-                    and region.loop_variable == loop.loop_variable
-                    and region.number_of_nodes() == loop.number_of_nodes()):
+            if (
+                isinstance(region, LoopRegion)
+                and region.label == loop.label
+                and region.loop_variable == loop.loop_variable
+                and region.number_of_nodes() == loop.number_of_nodes()
+            ):
                 found.append(region)
         return found[0] if len(found) == 1 else None
 
@@ -646,7 +667,7 @@ class LoopToStreamCompaction(ppl.Pass):
         """Every bare identifier in a Python expression / statement."""
         if not code:
             return []
-        return [n.id for n in ast.walk(ast.parse(code, mode='exec')) if isinstance(n, ast.Name)]
+        return [n.id for n in ast.walk(ast.parse(code, mode="exec")) if isinstance(n, ast.Name)]
 
     def expression_reads_containers(self, code: str, sdfg: SDFG) -> bool:
         return any(name in sdfg.arrays for name in self.expression_names(code))
@@ -673,25 +694,25 @@ class LoopToStreamCompaction(ppl.Pass):
         total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + root.label, COUNT_DTYPE, transient=True, find_new_name=True)
         base_sym = BASE_PREFIX + root.label
         while base_sym in sdfg.symbols:
-            base_sym += '_'
+            base_sym += "_"
         sdfg.add_symbol(base_sym, sdfg.symbols.get(m.cursor, COUNT_DTYPE))
 
         in_edges = list(parent.in_edges(root))
         out_edges = list(parent.out_edges(root))
         was_start = parent.start_block is root
 
-        entry = parent.add_state(root.label + '_compaction_entry', is_start_block=was_start)
-        mask_nest = self.clone_loop(m, '_compaction_mask')
-        scan = parent.add_state(root.label + '_compaction_scan')
-        scatter_nest = self.clone_loop(m, '_compaction_scatter')
-        exit_state = parent.add_state(root.label + '_compaction_exit')
+        entry = parent.add_state(root.label + "_compaction_entry", is_start_block=was_start)
+        mask_nest = self.clone_loop(m, "_compaction_mask")
+        scan = parent.add_state(root.label + "_compaction_scan")
+        scatter_nest = self.clone_loop(m, "_compaction_scatter")
+        exit_state = parent.add_state(root.label + "_compaction_exit")
         self.build_mask_loop(m, mask_nest, mask_name, iterator_dtypes)
         self.build_scatter_loop(m, scatter_nest, idx_name, base_sym, iterator_dtypes)
 
         parent.add_edge(entry, mask_nest, dace.InterstateEdge(assignments={base_sym: m.cursor}))
         parent.add_edge(mask_nest, scan, dace.InterstateEdge())
         parent.add_edge(scan, scatter_nest, dace.InterstateEdge())
-        live_out = f'({base_sym}) + ({symbolic.symstr(m.step)}) * {total_name}'
+        live_out = f"({base_sym}) + ({symbolic.symstr(m.step)}) * {total_name}"
         parent.add_edge(scatter_nest, exit_state, dace.InterstateEdge(assignments={m.cursor: live_out}))
 
         self.emit_scan_and_count(scan, mask_name, idx_name, total_name, shape)
@@ -743,9 +764,9 @@ class LoopToStreamCompaction(ppl.Pass):
 
     def rename_iterator(self, loop: LoopRegion, sdfg: SDFG, suffix: str, dtype: dtypes.typeclass) -> str:
         """Give a phase copy its own iterator: LoopToMap refuses a counter another block still names."""
-        new_name = f'compaction_it_{suffix}'
+        new_name = f"compaction_it_{suffix}"
         while new_name in sdfg.symbols or new_name in sdfg.arrays:
-            new_name += '_'
+            new_name += "_"
         sdfg.add_symbol(new_name, dtype)
         repl = {loop.loop_variable: new_name}
         loop.replace_meta_accesses(repl)
@@ -753,8 +774,9 @@ class LoopToStreamCompaction(ppl.Pass):
         loop.loop_variable = new_name
         return new_name
 
-    def build_mask_loop(self, m: CompactionMatch, root: LoopRegion, mask_name: str,
-                        iterator_dtypes: List[dtypes.typeclass]) -> None:
+    def build_mask_loop(
+        self, m: CompactionMatch, root: LoopRegion, mask_name: str, iterator_dtypes: List[dtypes.typeclass]
+    ) -> None:
         """Phase 1: the nest with its guard replaced by a store of the guard's value."""
         loops, guard = self.clone_path(m, root)
         for loop, dtype in zip(loops, iterator_dtypes):
@@ -762,19 +784,25 @@ class LoopToStreamCompaction(ppl.Pass):
         # The clone's guard carries the renamed iterators; ``m.cond_str`` still names the original ones.
         cond_str = guard.branches[0][0].as_string.strip()
         inner = loops[-1]
-        store = inner.add_state(root.label + '_store', is_start_block=inner.start_block is guard)
+        store = inner.add_state(root.label + "_store", is_start_block=inner.start_block is guard)
         for edge in list(inner.in_edges(guard)):
             inner.remove_edge(edge)
             inner.add_edge(edge.src, store, edge.data)
         for block in [b for b in inner.nodes() if b is not store and self.reaches(inner, guard, b)]:
             inner.remove_node(block)
         index = self.nest_index(m.levels, loops, iterator_dtypes)
-        tasklet = store.add_tasklet(root.label + '_mask', {}, {'__out'}, f'__out = ({cond_str})')
+        tasklet = store.add_tasklet(root.label + "_mask", {}, {"__out"}, f"__out = ({cond_str})")
         write = store.add_write(mask_name)
-        store.add_edge(tasklet, '__out', write, None, mm.Memlet(data=mask_name, subset=self.point_subset(index)))
+        store.add_edge(tasklet, "__out", write, None, mm.Memlet(data=mask_name, subset=self.point_subset(index)))
 
-    def build_scatter_loop(self, m: CompactionMatch, root: LoopRegion, idx_name: str, base_sym: str,
-                           iterator_dtypes: List[dtypes.typeclass]) -> None:
+    def build_scatter_loop(
+        self,
+        m: CompactionMatch,
+        root: LoopRegion,
+        idx_name: str,
+        base_sym: str,
+        iterator_dtypes: List[dtypes.typeclass],
+    ) -> None:
         """Phase 3: the nest verbatim, with the cursor rebound from the scan on the guard's in-edge."""
         loops, guard = self.clone_path(m, root)
         for loop, dtype in zip(loops, iterator_dtypes):
@@ -783,13 +811,13 @@ class LoopToStreamCompaction(ppl.Pass):
         # An interstate assignment IS text -- ``InterstateEdge.assignments`` holds source, parsed
         # by the consumer -- so this one component is spelled out. It reaches a CodeBlock, not a
         # subset, and no symbol object survives that boundary in either direction.
-        index = ', '.join(symbolic.symstr(comp) for comp in self.nest_index(m.levels, loops, iterator_dtypes))
-        binding = f'({base_sym}) + ({symbolic.symstr(m.step)}) * {idx_name}[{index}]'
+        index = ", ".join(symbolic.symstr(comp) for comp in self.nest_index(m.levels, loops, iterator_dtypes))
+        binding = f"({base_sym}) + ({symbolic.symstr(m.step)}) * {idx_name}[{index}]"
         edges = inner.in_edges(guard)
         if not edges:
             # No preamble: the guard is the body's first block, so there is no edge to bind on.
             # Dropping the rebinding would leave the cursor at its stale carried value.
-            bind = inner.add_state(root.label + '_bind', is_start_block=True)
+            bind = inner.add_state(root.label + "_bind", is_start_block=True)
             inner.add_edge(bind, guard, dace.InterstateEdge(assignments={m.cursor: binding}))
             return
         for edge in edges:
@@ -809,8 +837,9 @@ class LoopToStreamCompaction(ppl.Pass):
                     frontier.append(edge.dst)
         return False
 
-    def emit_scan_and_count(self, state: SDFGState, mask: str, rank: str, total: str,
-                            shape: List[symbolic.SymbolicType]) -> None:
+    def emit_scan_and_count(
+        self, state: SDFGState, mask: str, rank: str, total: str, shape: List[symbolic.SymbolicType]
+    ) -> None:
         """Phase 2: ``rank = exclusive_scan(mask)`` and ``total = sum(mask)``, off one mask read.
 
         The whole shaped buffer is one span: ``Scan`` sizes its loop from the subset's element
@@ -827,23 +856,26 @@ class LoopToStreamCompaction(ppl.Pass):
         through ``dace::reduce::sum<T, U>``. Summing at the mask's width would wrap at 127.
         """
         from dace.libraries.standard.nodes.reduce import Reduce
-        from dace.libraries.standard.nodes.scan import (INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp)
+        from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp
+
         read = state.add_read(mask)
         span = subsets.Range([(0, extent - 1, 1) for extent in shape])
 
-        scan = Scan(name=state.label + '_scan', op=ScanOp.SUM, exclusive=True, identity=0)
+        scan = Scan(name=state.label + "_scan", op=ScanOp.SUM, exclusive=True, identity=0)
         state.add_node(scan)
         state.add_edge(read, None, scan, INPUT_CONNECTOR_NAME, mm.Memlet(data=mask, subset=copy.deepcopy(span)))
-        state.add_edge(scan, OUTPUT_CONNECTOR_NAME, state.add_write(rank), None,
-                       mm.Memlet(data=rank, subset=copy.deepcopy(span)))
+        state.add_edge(
+            scan, OUTPUT_CONNECTOR_NAME, state.add_write(rank), None, mm.Memlet(data=rank, subset=copy.deepcopy(span))
+        )
 
-        count = Reduce(name=state.label + '_count', wcr='lambda a, b: a + b', axes=list(range(len(shape))), identity=0)
-        count.add_in_connector('_in')
-        count.add_out_connector('_out')
+        count = Reduce(name=state.label + "_count", wcr="lambda a, b: a + b", axes=list(range(len(shape))), identity=0)
+        count.add_in_connector("_in")
+        count.add_out_connector("_out")
         state.add_node(count)
-        state.add_edge(read, None, count, '_in', mm.Memlet(data=mask, subset=copy.deepcopy(span)))
-        state.add_edge(count, '_out', state.add_write(total), None,
-                       mm.Memlet(data=total, subset=subsets.Range([(0, 0, 1)])))
+        state.add_edge(read, None, count, "_in", mm.Memlet(data=mask, subset=copy.deepcopy(span)))
+        state.add_edge(
+            count, "_out", state.add_write(total), None, mm.Memlet(data=total, subset=subsets.Range([(0, 0, 1)]))
+        )
 
     def parallelize(self, loop: LoopRegion, sdfg: SDFG, permissive: bool) -> None:
         """Best effort -- the three-phase form is correct whether or not the phases become Maps.
@@ -853,7 +885,8 @@ class LoopToStreamCompaction(ppl.Pass):
         iterations. Phase 1 needs no waiver, so it is lifted strictly.
         """
         from dace.transformation.passes.parallelize_loops import ParallelizeLoops
+
         ParallelizeLoops(permissive=permissive).parallelize_loop(sdfg, loop)
 
 
-__all__ = ['LoopToStreamCompaction']
+__all__ = ["LoopToStreamCompaction"]

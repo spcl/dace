@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Inline multi-state SDFGs. """
+"""Inline multi-state SDFGs."""
 
 from copy import deepcopy as dc
 import itertools
@@ -26,9 +26,11 @@ def _same_layout(outer_desc: data.Data, inner_desc: data.Data) -> bool:
     would refuse the inline over a container type. Compare by value. A connector keeping an offset of
     its own (one-based indices) addresses the container in another index space than the parent.
     """
-    return (symbolic.same_value(tuple(outer_desc.shape), tuple(inner_desc.shape))
-            and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides))
-            and symbolic.same_value(tuple(outer_desc.offset), tuple(inner_desc.offset)))
+    return (
+        symbolic.same_value(tuple(outer_desc.shape), tuple(inner_desc.shape))
+        and symbolic.same_value(tuple(outer_desc.strides), tuple(inner_desc.strides))
+        and symbolic.same_value(tuple(outer_desc.offset), tuple(inner_desc.offset))
+    )
 
 
 def _trailing_returns(nsdfg: SDFG) -> List[ReturnBlock]:
@@ -134,7 +136,8 @@ def tasklet_connector_names(sdfg: SDFG) -> Set[str]:
     return {
         conn
         for state in sdfg.states()
-        for node in state.nodes() if isinstance(node, nodes.Tasklet)
+        for node in state.nodes()
+        if isinstance(node, nodes.Tasklet)
         for conn in node.in_connectors.keys() | node.out_connectors.keys()
     }
 
@@ -159,8 +162,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.nested_sdfg)]
 
     @staticmethod
-    def _check_strides(inner_strides: List[symbolic.SymbolicType], outer_strides: List[symbolic.SymbolicType],
-                       memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
+    def _check_strides(
+        inner_strides: List[symbolic.SymbolicType],
+        outer_strides: List[symbolic.SymbolicType],
+        memlet: Memlet,
+        nested_sdfg: nodes.NestedSDFG,
+    ) -> bool:
         """
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
@@ -284,8 +291,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     node.environments |= nsdfg_node.environments
 
         # Isolate the nested SDFG in a separate state.
-        predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(state=outer_state,
-                                                                                      nsdfg_node=nsdfg_node)
+        predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(
+            state=outer_state, nsdfg_node=nsdfg_node
+        )
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
@@ -387,8 +395,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # tasklets join the parent's, so one whose connector names a parent container is renamed (connector
         # and code only: a nested container of the same name keeps it), and no inlined transient takes a name
         # either set of tasklets uses.
-        _disambiguate_code_connectors(nsdfg,
-                                      set(sdfg.arrays) | set(nsdfg.arrays) | set(outer_symbols) | set(sdfg.constants))
+        _disambiguate_code_connectors(
+            nsdfg, set(sdfg.arrays) | set(nsdfg.arrays) | set(outer_symbols) | set(sdfg.constants)
+        )
         connectors = tasklet_connector_names(sdfg) | tasklet_connector_names(nsdfg)
 
         # Mapping from nested transient name to top-level name
@@ -402,23 +411,31 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
-                        if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants
-                                or new_name in connectors):
-                            new_name = data.find_new_name(f'{nsdfg.label}_{node.data}', connectors)
+                        if (
+                            new_name in sdfg.arrays
+                            or new_name in outer_symbols
+                            or new_name in sdfg.constants
+                            or new_name in connectors
+                        ):
+                            new_name = data.find_new_name(f"{nsdfg.label}_{node.data}", connectors)
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                         transients[node.data] = name
 
             # All transients of edges between code nodes are also added to parent
             for edge in nstate.edges():
-                if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
+                if isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode):
                     if edge.data.data is not None:
                         datadesc = nsdfg.arrays[edge.data.data]
                         if edge.data.data not in transients and datadesc.transient:
                             new_name = edge.data.data
-                            if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants
-                                    or new_name in connectors):
-                                new_name = data.find_new_name(f'{nsdfg.label}_{edge.data.data}', connectors)
+                            if (
+                                new_name in sdfg.arrays
+                                or new_name in outer_symbols
+                                or new_name in sdfg.constants
+                                or new_name in connectors
+                            ):
+                                new_name = data.find_new_name(f"{nsdfg.label}_{edge.data.data}", connectors)
 
                             name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                             transients[edge.data.data] = name

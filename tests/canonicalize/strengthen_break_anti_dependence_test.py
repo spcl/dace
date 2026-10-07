@@ -9,12 +9,13 @@ state reading the ``a[i]`` the loop just produced -- has that read as a pure-rea
 node (in-degree 0 within its own state) even though it must read the freshly
 written value. Redirecting it to the pre-loop snapshot reads the stale original and
 silently corrupts the result. Bit-exact vs a sequential numpy oracle."""
+
 import numpy as np
 
 import dace
 from dace.transformation.passes import BreakAntiDependence
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def test_break_anti_dependence_offset0_read_across_state_not_snapshotted():
@@ -50,9 +51,9 @@ def test_break_anti_dependence_offset0_read_across_state_not_snapshotted():
     ao = a.copy()
     co = np.zeros(n)
     sdfg(a=ao, b=b.copy(), c=co, N=n)
-    assert np.allclose(ao, ra), f'a max-diff {np.abs(ao - ra).max()}'
-    assert np.allclose(co, rc), f'c max-diff {np.abs(co - rc).max()}'
+    assert np.allclose(ao, ra), f"a max-diff {np.abs(ao - ra).max()}"
+    assert np.allclose(co, rc), f"c max-diff {np.abs(co - rc).max()}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_break_anti_dependence_offset0_read_across_state_not_snapshotted()

@@ -1,12 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the subset helpers shared by the redundant-array transformations."""
+
 import numpy as np
 
 import dace
 from dace import subsets
 from dace.transformation.dataflow import RedundantSecondArray
-from dace.transformation.dataflow.redundant_array import (compose_and_push_back, find_dims_to_pop, find_dims_to_pop2,
-                                                          pop_dims)
+from dace.transformation.dataflow.redundant_array import (
+    compose_and_push_back,
+    find_dims_to_pop,
+    find_dims_to_pop2,
+    pop_dims,
+)
 
 
 def test_find_dims_to_pop_is_descending() -> None:

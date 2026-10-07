@@ -11,7 +11,6 @@ from dace.sdfg.narrowing import as_expr
 
 @dataclass
 class SplitDimensions(ppl.Pass):
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
 
@@ -22,8 +21,9 @@ class SplitDimensions(ppl.Pass):
         self._split_map = split_map
         self._verbose = verbose
 
-    def _split_dimension(self, arr: dace.data.Data, dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int,
-                         factor: int):
+    def _split_dimension(
+        self, arr: dace.data.Data, dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int, factor: int
+    ):
         # outer block count: int_floor if evenly divisible else int_ceil; never `/` or `//`
         if isinstance(dim_expr, dace.symbolic.symbol):
             return dace.symbolic.SymExpr(f"int_ceil({dim_expr}, {factor})")
@@ -40,12 +40,21 @@ class SplitDimensions(ppl.Pass):
             else:
                 return dace.symbolic.SymExpr(f"int_ceil({dim_expr}, {factor})")
         else:
-            raise ValueError(f"Dimension in array.shape must be int, "
-                             f"symbol or symexpr {arr} ({arr.shape}) dimension "
-                             f"{dim_expr} is {type(dim_expr)}")
+            raise ValueError(
+                f"Dimension in array.shape must be int, "
+                f"symbol or symexpr {arr} ({arr.shape}) dimension "
+                f"{dim_expr} is {type(dim_expr)}"
+            )
 
-    def _split_range_expr(self, b: dace.symbolic.SymExpr, e: dace.symbolic.SymExpr, s: dace.symbolic.SymExpr,
-                          factor: int, is_perfect_match: bool, inner_block_replacement_map: Dict[str, str]):
+    def _split_range_expr(
+        self,
+        b: dace.symbolic.SymExpr,
+        e: dace.symbolic.SymExpr,
+        s: dace.symbolic.SymExpr,
+        factor: int,
+        is_perfect_match: bool,
+        inner_block_replacement_map: Dict[str, str],
+    ):
         step_expr = s / factor
         try:
             int_step_expr = int(as_expr(step_expr))
@@ -57,27 +66,40 @@ class SplitDimensions(ppl.Pass):
 
         if is_perfect_match:
             symbolified_inner_block_replacement_map = {
-                dace.symbolic.symbol(k): dace.symbolic.SymExpr(v)
-                for k, v in inner_block_replacement_map.items()
+                dace.symbolic.symbol(k): dace.symbolic.SymExpr(v) for k, v in inner_block_replacement_map.items()
             }
             new_b = b.subs(symbolified_inner_block_replacement_map)
             new_e = e.subs(symbolified_inner_block_replacement_map)
-            return (dace.symbolic.SymExpr(f"({new_b / factor})"), dace.symbolic.SymExpr(f"({new_e / factor})"),
-                    dace.symbolic.SymExpr(f"{step_expr}"))
+            return (
+                dace.symbolic.SymExpr(f"({new_b / factor})"),
+                dace.symbolic.SymExpr(f"({new_e / factor})"),
+                dace.symbolic.SymExpr(f"{step_expr}"),
+            )
         else:
-            return (dace.symbolic.SymExpr(f"int_floor({b}, {factor})"),
-                    dace.symbolic.SymExpr(f"int_floor({e}, {factor})"), dace.symbolic.SymExpr(f"{step_expr}"))
+            return (
+                dace.symbolic.SymExpr(f"int_floor({b}, {factor})"),
+                dace.symbolic.SymExpr(f"int_floor({e}, {factor})"),
+                dace.symbolic.SymExpr(f"{step_expr}"),
+            )
 
-    def _modulo_range_expr(self, b: dace.symbolic.SymExpr, e: dace.symbolic.SymExpr, s: dace.symbolic.SymExpr,
-                           factor: int, is_perfect_match: bool, inner_block_replacement_map: Dict[str, str]):
+    def _modulo_range_expr(
+        self,
+        b: dace.symbolic.SymExpr,
+        e: dace.symbolic.SymExpr,
+        s: dace.symbolic.SymExpr,
+        factor: int,
+        is_perfect_match: bool,
+        inner_block_replacement_map: Dict[str, str],
+    ):
         if is_perfect_match is True:
             symbolified_inner_block_replacement_map = {
                 dace.symbolic.symbol(k): dace.symbolic.SymExpr(k) - dace.symbolic.SymExpr(v)
                 for k, v in inner_block_replacement_map.items()
             }
             # non-unit range: overapproximate to full block below
-            range_len = dace.symbolic.int_floor((e + 1) - b,
-                                                s)  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
+            range_len = dace.symbolic.int_floor(
+                (e + 1) - b, s
+            )  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
             if range_len == 1:
                 assert e == b
                 assert s == 1
@@ -92,8 +114,9 @@ class SplitDimensions(ppl.Pass):
             return (new_b, new_e, new_s)
         else:
             # non-unit range: overapproximate to full block below
-            range_len = dace.symbolic.int_floor((e + 1) - b,
-                                                s)  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
+            range_len = dace.symbolic.int_floor(
+                (e + 1) - b, s
+            )  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
             if range_len == 1:
                 assert e == b
                 assert s == 1
@@ -124,8 +147,9 @@ class SplitDimensions(ppl.Pass):
         b, e, s = evaluated
         return ((e + 1) - b), s == 1
 
-    def _is_perfect_block_match(self, state: dace.SDFGState, edge: Edge[EdgeT], node: dace.nodes.Node,
-                                block_shape: Tuple[int]):
+    def _is_perfect_block_match(
+        self, state: dace.SDFGState, edge: Edge[EdgeT], node: dace.nodes.Node, block_shape: Tuple[int]
+    ):
         if self._verbose:
             print(f"[BlockMatch] Called for edge({edge}), node({node})")
         entry_node = state.entry_node(node)
@@ -150,8 +174,10 @@ class SplitDimensions(ppl.Pass):
 
         if len(inner_map_params) != len(block_shape):
             if self._verbose:
-                print(f"[BlockMatch] Inner map param count {len(inner_map_params)} "
-                      f"≠ block_shape length {len(block_shape)}.")
+                print(
+                    f"[BlockMatch] Inner map param count {len(inner_map_params)} "
+                    f"≠ block_shape length {len(block_shape)}."
+                )
             return False, None
 
         for (b, e, s), blk in zip(inner_map_range, block_shape):
@@ -162,8 +188,10 @@ class SplitDimensions(ppl.Pass):
                 return False, None
             if over_range != blk:
                 if self._verbose:
-                    print(f"[BlockMatch] Inner range {over_range} ≠ block size {blk} "
-                          f"for {b}:{e}:{s}. ({inner_map_range}) ({inner_map_params})")
+                    print(
+                        f"[BlockMatch] Inner range {over_range} ≠ block size {blk} "
+                        f"for {b}:{e}:{s}. ({inner_map_range}) ({inner_map_params})"
+                    )
                 return False, None
 
         inner_block_replacement_map = dict()
@@ -177,8 +205,9 @@ class SplitDimensions(ppl.Pass):
                 if str(b) == outer_param:
                     if matching_step_size is not None:
                         if self._verbose:
-                            print(f"[BlockMatch] Ambiguous match for {b}: "
-                                  f"already matched with step {matching_step_size}.")
+                            print(
+                                f"[BlockMatch] Ambiguous match for {b}: already matched with step {matching_step_size}."
+                            )
                         return False, None
                     matching_step_size = os
                     matching_outer_param = outer_param
@@ -190,8 +219,7 @@ class SplitDimensions(ppl.Pass):
 
             if matching_step_size != blk:
                 if self._verbose:
-                    print(f"[BlockMatch] Outer step {matching_step_size} ≠ "
-                          f"block size {blk} for inner {b}.")
+                    print(f"[BlockMatch] Outer step {matching_step_size} ≠ block size {blk} for inner {b}.")
                 return False, None
 
             inner_block_replacement_map[p] = matching_outer_param
@@ -200,23 +228,30 @@ class SplitDimensions(ppl.Pass):
             print("[BlockMatch] Perfect block match found.")
         return True, inner_block_replacement_map
 
-    def _split_dimensions(self, arr: dace.data.Data, masks: List[int],
-                          factors: List[bool]) -> List[dace.symbolic.symbol | int | dace.symbolic.SymExpr]:
+    def _split_dimensions(
+        self, arr: dace.data.Data, masks: List[int], factors: List[bool]
+    ) -> List[dace.symbolic.symbol | int | dace.symbolic.SymExpr]:
         # unsplit dims (or block count) first, then split factors appended at the end
         new_shape = []
-        for (dim_len, mask, factor) in zip(arr.shape, masks, factors):
+        for dim_len, mask, factor in zip(arr.shape, masks, factors):
             if mask == False:
                 new_shape.append(dim_len)
             else:
                 new_shape.append(self._split_dimension(arr, dim_len, factor))
-        for (dim_len, mask, factor) in zip(arr.shape, masks, factors):
+        for dim_len, mask, factor in zip(arr.shape, masks, factors):
             if mask == True:
                 new_shape.append(factor)
 
         return new_shape
 
-    def _split_range_expressions(self, subset: dace.subsets.Range, masks: List[int], factors: List[bool],
-                                 edge: Edge[EdgeT], state: dace.SDFGState) -> dace.subsets.Range:
+    def _split_range_expressions(
+        self,
+        subset: dace.subsets.Range,
+        masks: List[int],
+        factors: List[bool],
+        edge: Edge[EdgeT],
+        state: dace.SDFGState,
+    ) -> dace.subsets.Range:
         new_range_list = []
         # overapproximate partial-block accesses; TODO: whole-dimension range optimization
         src = edge.src
@@ -239,12 +274,12 @@ class SplitDimensions(ppl.Pass):
         else:
             is_perfect_match, repl_map = self._is_perfect_block_match(state, edge, node, block_shape)
 
-        for ((b, e, s), mask, factor) in zip(subset, masks, factors):
+        for (b, e, s), mask, factor in zip(subset, masks, factors):
             if mask == False:
                 new_range_list.append((b, e, s))
             else:
                 new_range_list.append(self._split_range_expr(b, e, s, factor, is_perfect_match, repl_map))
-        for ((b, e, s), mask, factor) in zip(subset, masks, factors):
+        for (b, e, s), mask, factor in zip(subset, masks, factors):
             if mask == True:
                 new_b, new_e, new_s = self._modulo_range_expr(b, e, s, factor, is_perfect_match, repl_map)
                 new_range_list.append((new_b, new_e, new_s))
@@ -287,12 +322,14 @@ class SplitDimensions(ppl.Pass):
                 if edge.data is not None and edge.data.data == arr_name:
                     new_range = self._split_range_expressions(edge.data.subset, masks, factors, edge, state)
                     # preserve wcr/wcr_nonatomic/dynamic -- omitting would silently drop reductions
-                    new_memlet = dace.memlet.Memlet(data=edge.data.data,
-                                                    subset=new_range,
-                                                    other_subset=copy.deepcopy(edge.data.other_subset),
-                                                    wcr=edge.data.wcr,
-                                                    wcr_nonatomic=edge.data.wcr_nonatomic,
-                                                    dynamic=edge.data.dynamic)
+                    new_memlet = dace.memlet.Memlet(
+                        data=edge.data.data,
+                        subset=new_range,
+                        other_subset=copy.deepcopy(edge.data.other_subset),
+                        wcr=edge.data.wcr,
+                        wcr_nonatomic=edge.data.wcr_nonatomic,
+                        dynamic=edge.data.dynamic,
+                    )
                     edge.data = new_memlet
                 if isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name:
                     if edge.data is not None and edge.data.other_subset is not None:
@@ -316,8 +353,9 @@ class SplitDimensions(ppl.Pass):
 
         def split_indices(indices):
             if len(indices) != len(masks):
-                raise ValueError(f'{name} is accessed with {len(indices)} indices, but its split map has '
-                                 f'{len(masks)} dimensions')
+                raise ValueError(
+                    f"{name} is accessed with {len(indices)} indices, but its split map has {len(masks)} dimensions"
+                )
             # mirrors _split_range_expr/_modulo_range_expr: masked dims are divided, unmasked ones kept,
             # and one tile index per masked dim is appended. int_floor, never `//`: sympy floor is
             # dropped by sym2cpp.

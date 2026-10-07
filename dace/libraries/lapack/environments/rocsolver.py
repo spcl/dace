@@ -26,7 +26,7 @@ class rocSOLVER:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': ["../include/dace_rocsolver.h"], 'cuda': ["../include/dace_rocsolver.h"]}
+    headers = {"frame": ["../include/dace_rocsolver.h"], "cuda": ["../include/dace_rocsolver.h"]}
     state_fields: List[str] = []
     init_code = ""
     finalize_code = ""
@@ -40,4 +40,4 @@ class rocSOLVER:
 
     @staticmethod
     def is_installed():
-        return ctypes.util.find_library('rocsolver') is not None
+        return ctypes.util.find_library("rocsolver") is not None

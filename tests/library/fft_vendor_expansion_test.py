@@ -7,6 +7,7 @@ real input, the unnormalised complex-to-complex transform, then the ``norm`` sca
 the numpy semantics that wrapper has to reproduce -- the axes, the three norms, both precisions, a
 real input, a strided (leading-axis) transform and the in-place ``x[:] = fft(x)``.
 """
+
 import warnings
 
 import numpy as np
@@ -21,14 +22,14 @@ from dace.libraries.fft.nodes.fft import gpu_fft_layout
 from dace.transformation.auto.auto_optimize import find_fast_library
 from dace.transformation.passes.canonicalize.finalize import canonicalize_set_fast_implementations
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-CPU_IMPLEMENTATIONS = ['pure', pytest.param('FFTW3', marks=pytest.mark.fftw)]
+CPU_IMPLEMENTATIONS = ["pure", pytest.param("FFTW3", marks=pytest.mark.fftw)]
 
 
 def gpu_implementation() -> str:
     """The vendor FFT of this build's GPU backend."""
-    return 'hipFFT' if get_gpu_backend() == 'hip' else 'cuFFT'
+    return "hipFFT" if get_gpu_backend() == "hip" else "cuFFT"
 
 
 def compile_with(program, implementation: str, gpu: bool = False) -> dace.SDFG:
@@ -37,7 +38,7 @@ def compile_with(program, implementation: str, gpu: bool = False) -> dace.SDFG:
     if gpu:
         sdfg.apply_gpu_transformations()
     nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (FFT, IFFT))]
-    assert nodes, 'the program lost its FFT library nodes'
+    assert nodes, "the program lost its FFT library nodes"
     for node in nodes:
         node.implementation = implementation
     return sdfg
@@ -46,7 +47,7 @@ def compile_with(program, implementation: str, gpu: bool = False) -> dace.SDFG:
 def run_without_fallback(sdfg: dace.SDFG, **arguments):
     """Run ``sdfg``; a vendor expansion falling back to ``pure`` warns, and that fails the case."""
     with warnings.catch_warnings():
-        warnings.filterwarnings('error', message='.* cannot transform axes')
+        warnings.filterwarnings("error", message=".* cannot transform axes")
         return sdfg(**arguments)
 
 
@@ -75,7 +76,7 @@ def check_poisson_round_trip(implementation: str, gpu: bool = False):
 
 
 def check_fft_1d_round_trip(implementation: str, gpu: bool = False):
-    x = rng_complex((1000, ))
+    x = rng_complex((1000,))
     y, z = np.zeros_like(x), np.zeros_like(x)
     run_without_fallback(compile_with(fft_1d_round_trip, implementation, gpu), x=x.copy(), y=y, z=z, N=1000)
     np.testing.assert_allclose(y, np.fft.fft(x), rtol=1e-12, atol=1e-10)
@@ -94,7 +95,7 @@ def forward_and_inverse(axes, norm):
 
 def check_norms_and_axes(implementation: str, axes, gpu: bool = False):
     """``fftn`` / ``ifftn`` over ``axes`` of a rank-3 array under each of numpy's three norms."""
-    for norm in ('backward', 'ortho', 'forward'):
+    for norm in ("backward", "ortho", "forward"):
         x = rng_complex((6, 10, 8))
         program = forward_and_inverse(axes, norm)
         forward, inverse = run_without_fallback(compile_with(program, implementation, gpu), x=x.copy())
@@ -109,10 +110,10 @@ def check_single_precision(implementation: str, gpu: bool = False):
     def transforms_check_single_precision(x: dace.complex64[N]):
         return np.fft.fft(x), np.fft.ifft(x)
 
-    x = rng_complex((256, ), np.complex64)
-    forward, inverse = run_without_fallback(compile_with(transforms_check_single_precision, implementation, gpu),
-                                            x=x.copy(),
-                                            N=256)
+    x = rng_complex((256,), np.complex64)
+    forward, inverse = run_without_fallback(
+        compile_with(transforms_check_single_precision, implementation, gpu), x=x.copy(), N=256
+    )
     assert forward.dtype == np.complex64 and inverse.dtype == np.complex64
     np.testing.assert_allclose(forward, np.fft.fft(x), rtol=1e-4, atol=1e-3)
     np.testing.assert_allclose(inverse, np.fft.ifft(x), rtol=1e-4, atol=1e-5)
@@ -137,39 +138,39 @@ def check_in_place(implementation: str, gpu: bool = False):
     def transform_check_in_place(x: dace.complex128[N]):
         x[:] = np.fft.fft(x)
 
-    x = rng_complex((300, ))
+    x = rng_complex((300,))
     want = np.fft.fft(x)
     run_without_fallback(compile_with(transform_check_in_place, implementation, gpu), x=x, N=300)
     np.testing.assert_allclose(x, want, rtol=1e-12, atol=1e-10)
 
 
-@pytest.mark.parametrize('implementation', CPU_IMPLEMENTATIONS)
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_cpu_poisson_round_trip_of_a_real_grid(implementation):
     check_poisson_round_trip(implementation)
 
 
-@pytest.mark.parametrize('implementation', CPU_IMPLEMENTATIONS)
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_cpu_1d_round_trip_over_a_symbolic_extent(implementation):
     check_fft_1d_round_trip(implementation)
 
 
-@pytest.mark.parametrize('axes', [None, (1, 2), (0, 2), (2, 0)])
-@pytest.mark.parametrize('implementation', CPU_IMPLEMENTATIONS)
+@pytest.mark.parametrize("axes", [None, (1, 2), (0, 2), (2, 0)])
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_cpu_norms_over_every_axis_set(implementation, axes):
     check_norms_and_axes(implementation, axes)
 
 
-@pytest.mark.parametrize('implementation', CPU_IMPLEMENTATIONS)
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_cpu_single_precision(implementation):
     check_single_precision(implementation)
 
 
-@pytest.mark.parametrize('implementation', CPU_IMPLEMENTATIONS)
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_cpu_leading_axis(implementation):
     check_leading_axis(implementation)
 
 
-@pytest.mark.parametrize('implementation', CPU_IMPLEMENTATIONS)
+@pytest.mark.parametrize("implementation", CPU_IMPLEMENTATIONS)
 def test_cpu_in_place(implementation):
     check_in_place(implementation)
 
@@ -183,8 +184,8 @@ def test_fftw3_falls_back_to_pure_for_a_repeated_axis():
         return np.fft.fftn(x, axes=(1, 1))
 
     x = rng_complex((8, 6))
-    sdfg = compile_with(transform_fftw3_falls_back_to_pure_for_a_repeated_axis, 'FFTW3')
-    with pytest.warns(UserWarning, match='FFTW3 cannot transform axes'):
+    sdfg = compile_with(transform_fftw3_falls_back_to_pure_for_a_repeated_axis, "FFTW3")
+    with pytest.warns(UserWarning, match="FFTW3 cannot transform axes"):
         sdfg.expand_library_nodes()
     np.testing.assert_allclose(sdfg(x=x.copy()), np.fft.fftn(x, axes=(1, 1)), rtol=1e-12, atol=1e-12)
 
@@ -196,21 +197,21 @@ def test_canonicalize_lowers_a_host_fft_to_fftw3():
     sdfg = poisson_round_trip.to_sdfg(simplify=True)
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.CPU)
     picked = {n.implementation for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (FFT, IFFT))}
-    assert picked == {'FFTW3'}, picked
+    assert picked == {"FFTW3"}, picked
 
 
-@pytest.mark.parametrize('backend, vendor', [('cuda', 'cuFFT'), ('hip', 'hipFFT')])
+@pytest.mark.parametrize("backend, vendor", [("cuda", "cuFFT"), ("hip", "hipFFT")])
 def test_each_gpu_backend_prioritizes_its_own_fft(monkeypatch, backend, vendor):
     """Each GPU row names its vendor FFT, so neither backend lowers a host FFT to ``pure``."""
-    monkeypatch.setattr('dace.codegen.common.get_gpu_backend', lambda: backend)
+    monkeypatch.setattr("dace.codegen.common.get_gpu_backend", lambda: backend)
     priority = find_fast_library(dtypes.DeviceType.GPU)
-    assert vendor in priority and priority.index(vendor) < priority.index('pure'), priority
+    assert vendor in priority and priority.index(vendor) < priority.index("pure"), priority
 
 
-@pytest.mark.parametrize('backend, vendor', [('cuda', 'cuFFT'), ('hip', 'hipFFT')])
+@pytest.mark.parametrize("backend, vendor", [("cuda", "cuFFT"), ("hip", "hipFFT")])
 def test_canonicalize_lowers_a_host_gpu_fft_to_the_backend_vendor(monkeypatch, backend, vendor):
     """On the GPU the canonicalize finalize picks the backend's vendor transform through the shared dialect."""
-    monkeypatch.setattr('dace.codegen.common.get_gpu_backend', lambda: backend)
+    monkeypatch.setattr("dace.codegen.common.get_gpu_backend", lambda: backend)
     sdfg = poisson_round_trip.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     canonicalize_set_fast_implementations(sdfg, dtypes.DeviceType.GPU)
@@ -229,7 +230,7 @@ def test_gpu_1d_round_trip_over_a_symbolic_extent():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('axes', [None, (1, 2), (0, 1), (2, )])
+@pytest.mark.parametrize("axes", [None, (1, 2), (0, 1), (2,)])
 def test_gpu_norms_over_every_batched_axis_block(axes):
     check_norms_and_axes(gpu_implementation(), axes, gpu=True)
 
@@ -259,7 +260,7 @@ def test_gpu_fft_falls_back_to_pure_for_a_middle_axis():
 
     x = rng_complex((4, 6, 8))
     sdfg = compile_with(transform_gpu_fft_falls_back_to_pure_for_a_middle_axis, gpu_implementation(), gpu=True)
-    with pytest.warns(UserWarning, match='cannot transform axes'):
+    with pytest.warns(UserWarning, match="cannot transform axes"):
         sdfg.expand_library_nodes()
     np.testing.assert_allclose(sdfg(x=x.copy()), np.fft.fft(x, axis=1), rtol=1e-12, atol=1e-12)
 
@@ -297,7 +298,7 @@ def test_a_gpu_fft_plans_a_stride_canonicalization_spelled_as_an_integer_power()
     """Canonicalization respells the packed stride ``N**2`` as ``ipow(N, 2)``, which SymPy never
     relates to the ``N * N`` the extents multiply out to. ls3df_scf's C-order ``(N, N, N)`` grid then
     read as padded, its ``fftn`` fell back to the separable DFT, and that failed validation."""
-    n = dace.symbol('N')
+    n = dace.symbol("N")
     grid = strided_array([n, n, n], [dace.symbolic.ipow(n, 2), n, 1])
     extents, istride, idist, ostride, odist, batch = gpu_fft_layout(grid, grid, [0, 1, 2])
     assert (extents, istride, ostride, batch) == ([n, n, n], 1, 1, 1)
@@ -307,28 +308,28 @@ def test_a_gpu_fft_plans_a_stride_canonicalization_spelled_as_an_integer_power()
 def run_strided_fftn(src_strides, out_strides):
     """``fftn`` over axes (0, 1, 2) of a (4, 5, 6, 3) operand, each side in its own layout, on the GPU."""
     shape = (4, 5, 6, 3)
-    sdfg = dace.SDFG('strided_fftn')
+    sdfg = dace.SDFG("strided_fftn")
     # Device buffers in the host arrays' own layouts, so both transfers are plain copies.
-    for name, strides in (('x', src_strides), ('y', out_strides)):
+    for name, strides in (("x", src_strides), ("y", out_strides)):
         sdfg.add_datadesc(name, strided_array(shape, strides, dtypes.StorageType.Default))
         device = strided_array(shape, strides)
         device.transient = True
-        sdfg.add_datadesc(f'g{name}', device)
+        sdfg.add_datadesc(f"g{name}", device)
     state = sdfg.add_state()
-    node = FFT('fft', axes=[0, 1, 2])
+    node = FFT("fft", axes=[0, 1, 2])
     node.implementation = gpu_implementation()
-    gx, gy = state.add_access('gx'), state.add_access('gy')
-    state.add_nedge(state.add_read('x'), gx, dace.Memlet.from_array('x', sdfg.arrays['x']))
-    state.add_edge(gx, None, node, '_inp', dace.Memlet.from_array('gx', sdfg.arrays['gx']))
-    state.add_edge(node, '_out', gy, None, dace.Memlet.from_array('gy', sdfg.arrays['gy']))
-    state.add_nedge(gy, state.add_write('y'), dace.Memlet.from_array('gy', sdfg.arrays['gy']))
+    gx, gy = state.add_access("gx"), state.add_access("gy")
+    state.add_nedge(state.add_read("x"), gx, dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(gx, None, node, "_inp", dace.Memlet.from_array("gx", sdfg.arrays["gx"]))
+    state.add_edge(node, "_out", gy, None, dace.Memlet.from_array("gy", sdfg.arrays["gy"]))
+    state.add_nedge(gy, state.add_write("y"), dace.Memlet.from_array("gy", sdfg.arrays["gy"]))
     itemsize = np.dtype(np.complex128).itemsize
-    buffer = rng_complex((4 * 5 * 6 * 3, ))
+    buffer = rng_complex((4 * 5 * 6 * 3,))
     x = np.lib.stride_tricks.as_strided(buffer, shape, [s * itemsize for s in src_strides])
     y_buffer = np.zeros(4 * 5 * 6 * 3, dtype=np.complex128)
     y = np.lib.stride_tricks.as_strided(y_buffer, shape, [s * itemsize for s in out_strides])
     # The operands ARE strided views; that layout is the point of the case.
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         run_without_fallback(sdfg, x=x, y=y)
     np.testing.assert_allclose(y, np.fft.fftn(x, axes=(0, 1, 2)), rtol=1e-12, atol=1e-10)
 
@@ -352,32 +353,29 @@ def test_gpu_fft_over_an_empty_batch_is_a_no_op():
     The vendor planner raises SIGFPE on a zero batch; cegterg's canon GPU run died there once no
     unconverged vector was left (``__sym_notcnv_iter == 0``).
     """
-    batch = dace.symbol('batch')
+    batch = dace.symbol("batch")
     shape = (4, 5, 6, batch)
-    sdfg = dace.SDFG('empty_batch_fftn')
-    for name in ('x', 'y'):
+    sdfg = dace.SDFG("empty_batch_fftn")
+    for name in ("x", "y"):
         sdfg.add_array(name, shape, dace.complex128, strides=FORTRAN)
-        sdfg.add_array(f'g{name}',
-                       shape,
-                       dace.complex128,
-                       strides=FORTRAN,
-                       storage=dtypes.StorageType.GPU_Global,
-                       transient=True)
+        sdfg.add_array(
+            f"g{name}", shape, dace.complex128, strides=FORTRAN, storage=dtypes.StorageType.GPU_Global, transient=True
+        )
     state = sdfg.add_state()
-    node = FFT('fft', axes=[0, 1, 2])
+    node = FFT("fft", axes=[0, 1, 2])
     node.implementation = gpu_implementation()
-    gx, gy = state.add_access('gx'), state.add_access('gy')
-    state.add_nedge(state.add_read('x'), gx, dace.Memlet.from_array('x', sdfg.arrays['x']))
-    state.add_edge(gx, None, node, '_inp', dace.Memlet.from_array('gx', sdfg.arrays['gx']))
-    state.add_edge(node, '_out', gy, None, dace.Memlet.from_array('gy', sdfg.arrays['gy']))
-    state.add_nedge(gy, state.add_write('y'), dace.Memlet.from_array('gy', sdfg.arrays['gy']))
+    gx, gy = state.add_access("gx"), state.add_access("gy")
+    state.add_nedge(state.add_read("x"), gx, dace.Memlet.from_array("x", sdfg.arrays["x"]))
+    state.add_edge(gx, None, node, "_inp", dace.Memlet.from_array("gx", sdfg.arrays["gx"]))
+    state.add_edge(node, "_out", gy, None, dace.Memlet.from_array("gy", sdfg.arrays["gy"]))
+    state.add_nedge(gy, state.add_write("y"), dace.Memlet.from_array("gy", sdfg.arrays["gy"]))
     compiled = sdfg.compile()
     for extent in (3, 0):
         x = np.asfortranarray(rng_complex((4, 5, 6, extent)))
-        y = np.zeros_like(x, order='F')
+        y = np.zeros_like(x, order="F")
         compiled(x=x, y=y, batch=extent)
         np.testing.assert_allclose(y, np.fft.fftn(x, axes=(0, 1, 2)), rtol=1e-12, atol=1e-10)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

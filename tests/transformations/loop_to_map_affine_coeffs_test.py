@@ -10,6 +10,7 @@ does not come back -- the pipeline hung outright.
 The deep case below is the regression: it is instant when the coefficients are derived (derivative
 and evaluation at zero, both structural) and does not finish when they are searched for.
 """
+
 import pytest
 
 from dace import symbolic
@@ -20,22 +21,25 @@ def _sym(src):
     return symbolic.pystr_to_symbolic(src)
 
 
-@pytest.mark.parametrize('expr,coeff,offset', [
-    ('2*i + 3', 2, 3),
-    ('i', 1, 0),
-    ('7', 0, 7),
-    ('N - i', -1, 'N'),
-    ('j*i + 1', 'j', 1),
-])
+@pytest.mark.parametrize(
+    "expr,coeff,offset",
+    [
+        ("2*i + 3", 2, 3),
+        ("i", 1, 0),
+        ("7", 0, 7),
+        ("N - i", -1, "N"),
+        ("j*i + 1", "j", 1),
+    ],
+)
 def test_affine_expressions_give_their_coefficients(expr, coeff, offset):
-    a, b = _affine_coeffs(_sym(expr), _sym('i'))
+    a, b = _affine_coeffs(_sym(expr), _sym("i"))
     assert a == _sym(str(coeff))
     assert b == _sym(str(offset))
 
 
-@pytest.mark.parametrize('expr', ['i**2', '(i + 1)*(i + 2)', 'int_floor(i, 8)'])
+@pytest.mark.parametrize("expr", ["i**2", "(i + 1)*(i + 2)", "int_floor(i, 8)"])
 def test_non_affine_expressions_are_refused(expr):
-    assert _affine_coeffs(_sym(expr), _sym('i')) is None
+    assert _affine_coeffs(_sym(expr), _sym("i")) is None
 
 
 def test_a_deeply_nested_tile_index_does_not_blow_up():
@@ -44,11 +48,11 @@ def test_a_deeply_nested_tile_index_does_not_blow_up():
     Built as a product of sums so that EXPANDING it is exponential, while the coefficient of ``i``
     is trivially derivable. Correctness is the assertion; termination is the point.
     """
-    factors = ' * '.join(f'(t{d} + o{d} + 1)' for d in range(12))
-    a, b = _affine_coeffs(_sym(f'i * {factors} + {factors}'), _sym('i'))
-    assert a == _sym(factors), 'the coefficient of i is the product, unexpanded'
+    factors = " * ".join(f"(t{d} + o{d} + 1)" for d in range(12))
+    a, b = _affine_coeffs(_sym(f"i * {factors} + {factors}"), _sym("i"))
+    assert a == _sym(factors), "the coefficient of i is the product, unexpanded"
     assert b == _sym(factors)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

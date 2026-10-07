@@ -19,6 +19,7 @@ the body states first; the tests below drive it through ``canonicalize`` for tha
 and check that the lift survives vectorization (an un-lifted slice nest hand-rolls its
 accumulation and the vectorizer used to drop the WCR that made it safe).
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -82,8 +83,9 @@ def _symm_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha:
 
 
 @dace.program
-def symm_sign_flip_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
-                          beta: datatype[1]):
+def symm_sign_flip_kernel(
+    C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1]
+):
     """Same access shapes as ``_symm_kernel``, but the finalize step SUBTRACTS the
     ``temp2`` term instead of adding it."""
 
@@ -121,8 +123,9 @@ def symm_sign_flip_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N
 
 
 @dace.program
-def symm_missing_alpha_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
-                              beta: datatype[1]):
+def symm_missing_alpha_kernel(
+    C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1]
+):
     """Same access shapes as ``_symm_kernel``, but the triangular WCR term into ``C``
     drops the ``alpha`` factor."""
 
@@ -181,7 +184,7 @@ def _reference(A_tri, B, C, alpha, beta):
 
 @dace.program
 def _symm_slice_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1]):
-    temp2 = np.zeros((N, ), dtype=C.dtype)
+    temp2 = np.zeros((N,), dtype=C.dtype)
     C *= beta[0]
     for i in range(M):
         for j in range(N):
@@ -191,9 +194,10 @@ def _symm_slice_kernel(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], 
 
 
 @dace.program
-def _symm_slice_missing_term(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
-                             beta: datatype[1]):
-    temp2 = np.zeros((N, ), dtype=C.dtype)
+def _symm_slice_missing_term(
+    C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1]
+):
+    temp2 = np.zeros((N,), dtype=C.dtype)
     C *= beta[0]
     for i in range(M):
         for j in range(N):
@@ -203,9 +207,10 @@ def _symm_slice_missing_term(C: datatype[M, N], A: datatype[M, M], B: datatype[M
 
 
 @dace.program
-def _symm_slice_transposed_dot(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
-                               beta: datatype[1]):
-    temp2 = np.zeros((N, ), dtype=C.dtype)
+def _symm_slice_transposed_dot(
+    C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1]
+):
+    temp2 = np.zeros((N,), dtype=C.dtype)
     C *= beta[0]
     for i in range(M):
         for j in range(N):
@@ -215,9 +220,10 @@ def _symm_slice_transposed_dot(C: datatype[M, N], A: datatype[M, M], B: datatype
 
 
 @dace.program
-def _symm_slice_temp_escapes(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1],
-                             beta: datatype[1], out: datatype[N]):
-    temp2 = np.zeros((N, ), dtype=C.dtype)
+def _symm_slice_temp_escapes(
+    C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatype[1], beta: datatype[1], out: datatype[N]
+):
+    temp2 = np.zeros((N,), dtype=C.dtype)
     C *= beta[0]
     for i in range(M):
         for j in range(N):
@@ -296,11 +302,17 @@ def test_slice_nest_lifted_with_the_prescale_left_alone():
     assert node.side == "L" and node.uplo == "L"
     assert node.alpha_input and not node.beta_input and node.beta == 1
     assert "_beta" not in node.in_connectors
-    assert (_operand(state, node, "_a"), _operand(state, node, "_b"), _operand(state, node, "_c"),
-            _operand(state, node, "_alpha")) == ("A", "B", "C", "alpha")
+    assert (
+        _operand(state, node, "_a"),
+        _operand(state, node, "_b"),
+        _operand(state, node, "_c"),
+        _operand(state, node, "_alpha"),
+    ) == ("A", "B", "C", "alpha")
     # The whole nest is gone: no LoopRegion is left anywhere to recompute C.
     assert [
-        r for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions(recursive=True)
+        r
+        for sd in sdfg.all_sdfgs_recursive()
+        for r in sd.all_control_flow_regions(recursive=True)
         if isinstance(r, LoopRegion)
     ] == []
 
@@ -319,10 +331,13 @@ def test_lifted_slice_nest_survives_vectorization():
     sdfg = copy.deepcopy(_canonicalized(_symm_slice_kernel))
     sdfg.name = f"{sdfg.name}_vectorized"
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=detect_host_isa(),
-                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,),
+            target_isa=detect_host_isa(),
+            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
     assert len(_symm_nodes(sdfg)) == 1, "vectorization must not dismantle the lifted node"
     # No parallel map may write C: the prescale is elementwise and the product is the
     # library node's business, so a Multicore scope storing to C means the hand-rolled
@@ -335,8 +350,9 @@ def test_lifted_slice_nest_survives_vectorization():
                     continue
                 scope = scopes[dn]
                 while scope is not None:
-                    assert not (isinstance(scope, nodes.MapEntry)
-                                and "Multicore" in str(scope.map.schedule)), f"C written inside {scope.map.params}"
+                    assert not (isinstance(scope, nodes.MapEntry) and "Multicore" in str(scope.map.schedule)), (
+                        f"C written inside {scope.map.params}"
+                    )
                     scope = scopes[scope]
 
     # The race this guards is invisible on one thread, so pin the thread count HERE instead of
@@ -357,11 +373,14 @@ def test_lifted_slice_nest_survives_vectorization():
     assert np.allclose(got, ref), f"maxdiff {np.max(np.abs(got - ref))}"
 
 
-@pytest.mark.parametrize("program,why", [
-    (_symm_slice_missing_term, "finalize drops the alpha*temp2 term"),
-    (_symm_slice_transposed_dot, "the inner product reads A's unreferenced column"),
-    (_symm_slice_temp_escapes, "the scratch vector is read after the nest"),
-])
+@pytest.mark.parametrize(
+    "program,why",
+    [
+        (_symm_slice_missing_term, "finalize drops the alpha*temp2 term"),
+        (_symm_slice_transposed_dot, "the inner product reads A's unreferenced column"),
+        (_symm_slice_temp_escapes, "the scratch vector is read after the nest"),
+    ],
+)
 def test_deviating_slice_nest_is_not_lifted(program, why):
     """Each deviation is a DIFFERENT program from ``symm``, so the lift must decline it:
     dropping a term changes the result, reading ``A[:i, i]`` reads the triangle the
@@ -389,10 +408,13 @@ def map_form_reference(A, B, C, alpha, beta, variant):
     return out
 
 
-@pytest.mark.parametrize("program,variant,why", [
-    (symm_sign_flip_kernel, "sign_flip", "the temp2 term is subtracted instead of added"),
-    (symm_missing_alpha_kernel, "missing_alpha", "alpha is dropped from the triangular WCR term"),
-])
+@pytest.mark.parametrize(
+    "program,variant,why",
+    [
+        (symm_sign_flip_kernel, "sign_flip", "the temp2 term is subtracted instead of added"),
+        (symm_missing_alpha_kernel, "missing_alpha", "alpha is dropped from the triangular WCR term"),
+    ],
+)
 def test_a_nest_with_symm_access_shapes_but_other_arithmetic_is_not_lifted(program, variant, why):
     """Same NestedSDFG boundary shapes as the real polybench symm nest -- triangular
     self-scatter onto C, symmetric operand A read on its lower triangle + diagonal,

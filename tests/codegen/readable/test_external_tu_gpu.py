@@ -16,6 +16,7 @@ device pointers), it keeps the nestedness the test intends, and the device argum
 cupy arrays at call time. Coverage: flat sibling kernels, a kernel inside a top-level loop, and a
 host/device hybrid.
 """
+
 import re
 
 import numpy as np
@@ -85,6 +86,7 @@ def kernel_in_loop(name):
     into a single child SDFG -> one ``.cu`` (depth 1: the kernel inside is not lifted again). The loop
     variable ``t`` is defined inside the child, so it never crosses the call boundary."""
     from dace.sdfg.state import LoopRegion
+
     sdfg = dace.SDFG(name)
     for arr in ("A", "B"):
         sdfg.add_array(arr, [256], dace.float64, storage=GPU_GLOBAL)
@@ -121,14 +123,17 @@ def hybrid_cpu_gpu(name):
 
 
 def generate_with_ext_tu(sdfg, on):
-    with dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA), \
-         dace.config.set_temporary(*EXT_TU_KEY, value=on):
+    with (
+        dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA),
+        dace.config.set_temporary(*EXT_TU_KEY, value=on),
+    ):
         return codegen.generate_code(sdfg)
 
 
 def device_array(host):
     """A cupy device array holding ``host`` (the fixtures' GPU_Global args take device pointers)."""
     import cupy as cp
+
     return cp.asarray(host)
 
 
@@ -198,8 +203,10 @@ def test_two_siblings_run_matches_single_tu():
     for on in (False, True):
         sdfg = two_sibling_kernels(f"run_{int(on)}")
         B, C = device_array(np.zeros(256)), device_array(np.zeros(256))
-        with dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA), \
-             dace.config.set_temporary(*EXT_TU_KEY, value=on):
+        with (
+            dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA),
+            dace.config.set_temporary(*EXT_TU_KEY, value=on),
+        ):
             sdfg.compile()(A=device_array(A), B=B, C=C)
         outputs[on] = (to_host(B), to_host(C))
     assert np.allclose(outputs[True][0], A * 2.0)
@@ -217,8 +224,10 @@ def test_loop_nested_run():
     for on in (False, True):
         sdfg = kernel_in_loop(f"loop_run_{int(on)}")
         B = device_array(np.zeros(256))
-        with dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA), \
-             dace.config.set_temporary(*EXT_TU_KEY, value=on):
+        with (
+            dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA),
+            dace.config.set_temporary(*EXT_TU_KEY, value=on),
+        ):
             sdfg.compile()(A=device_array(A), B=B)
         outs[on] = to_host(B)
     assert np.allclose(outs[True], A + 3.0)
@@ -237,8 +246,10 @@ def test_hybrid_run():
         sdfg = hybrid_cpu_gpu(f"hybrid_run_{int(on)}")
         B = np.zeros(256)  # host output
         D = device_array(np.zeros(256))  # device output
-        with dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA), \
-             dace.config.set_temporary(*EXT_TU_KEY, value=on):
+        with (
+            dace.config.set_temporary("compiler", "cuda", "implementation", value=NEW_CUDA),
+            dace.config.set_temporary(*EXT_TU_KEY, value=on),
+        ):
             sdfg.compile()(A=A.copy(), B=B, C=device_array(C), D=D)
         outs[on] = (to_host(B), to_host(D))
     assert np.allclose(outs[True][0], A + 1.0)  # host (CPU) map

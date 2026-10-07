@@ -4,6 +4,7 @@
 Every case asserts the STRUCTURE first: a ``numpy_<name>`` callback returns the right numbers, so a
 numeric check alone passes through one unchanged and proves nothing about the lowering.
 """
+
 import numpy as np
 import pytest
 
@@ -15,14 +16,14 @@ def assert_callback_free(prog: dace.frontend.python.parser.DaceProgram) -> dace.
     """Fails if the parsed SDFG carries a Python-callback container or tasklet."""
     sdfg = prog.to_sdfg(simplify=False)
     for nested in sdfg.all_sdfgs_recursive():
-        pystate = [name for name in nested.arrays if '__pystate' in name]
-        assert not pystate, f'{nested.label} holds callback state {pystate}'
+        pystate = [name for name in nested.arrays if "__pystate" in name]
+        assert not pystate, f"{nested.label} holds callback state {pystate}"
         for state in nested.states():
             for node in state.nodes():
                 if not isinstance(node, nd.Tasklet):
                     continue
-                assert 'numpy_' not in node.code.as_string, f'callback tasklet {node.label} in {nested.label}'
-                assert not node.label.startswith('callback'), f'callback tasklet {node.label} in {nested.label}'
+                assert "numpy_" not in node.code.as_string, f"callback tasklet {node.label} in {nested.label}"
+                assert not node.label.startswith("callback"), f"callback tasklet {node.label} in {nested.label}"
     return sdfg
 
 
@@ -91,7 +92,7 @@ def test_inner_matrix_vector():
     a = np.arange(12.0).reshape(4, 3)
     b = np.arange(2.0, 5.0)
     result = prog_inner_matrix_vector(a, b)
-    assert result.shape == (4, )
+    assert result.shape == (4,)
     assert np.array_equal(result, np.inner(a, b))
 
 
@@ -146,7 +147,7 @@ def test_kron_vectors():
     assert_callback_free(prog_kron_vectors)
     a, b = np.arange(1.0, 5.0), np.arange(7.0, 10.0)
     result = prog_kron_vectors(a, b)
-    assert result.shape == (12, )
+    assert result.shape == (12,)
     assert np.array_equal(result, np.kron(a, b))
 
 
@@ -174,7 +175,7 @@ def test_cross_vectors():
     assert_callback_free(prog_cross_vectors)
     a, b = np.array([1.0, 2.0, 3.0]), np.array([-4.0, 5.0, 6.0])
     result = prog_cross_vectors(a, b)
-    assert result.shape == (3, )
+    assert result.shape == (3,)
     assert np.array_equal(result, np.cross(a, b))
 
 
@@ -233,7 +234,7 @@ def test_cross_2d_pair_drops_the_last_mode():
     a = np.arange(1.0, 9.0).reshape(4, 2)
     b = np.arange(20.0, 28.0).reshape(4, 2)
     result = prog_cross_2d_pair_drops_the_last_mode(a, b)
-    assert result.shape == (4, )
+    assert result.shape == (4,)
     assert np.array_equal(result, a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])
 
 
@@ -243,7 +244,7 @@ def test_cross_refuses_a_four_component_vector():
     def prog_cross_refuses_a_four_component_vector(a: dace.float64[4], b: dace.float64[4]):
         return np.cross(a, b)
 
-    with pytest.raises(Exception, match='last mode of 2 or 3'):
+    with pytest.raises(Exception, match="last mode of 2 or 3"):
         prog_cross_refuses_a_four_component_vector.to_sdfg(simplify=False)
 
 
@@ -253,11 +254,11 @@ def test_kron_refuses_a_scalar_operand():
     def prog_kron_refuses_a_scalar_operand(a: dace.float64[4], b: dace.float64):
         return np.kron(a, b)
 
-    with pytest.raises(Exception, match='0-D operand'):
+    with pytest.raises(Exception, match="0-D operand"):
         prog_kron_refuses_a_scalar_operand.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_outer_vectors()
     test_outer_flattens_operands()
     test_inner_matrices()

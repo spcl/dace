@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`~dace.transformation.passes.canonicalize.untile_loops.UntileLoops`."""
+
 import copy
 import inspect
 
@@ -14,7 +15,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _loops(sdfg):
@@ -48,11 +49,11 @@ def test_case_a_combined_access_K4_collapses_to_single_loop():
     sdfg.validate()
     assert res == 1
     loops_after = _loops(sdfg)
-    assert len(loops_after) == 1, f'expected 1 collapsed loop, got {len(loops_after)}'
-    assert loops_after[0].loop_variable.startswith('_untile_k_')
+    assert len(loops_after) == 1, f"expected 1 collapsed loop, got {len(loops_after)}"
+    assert loops_after[0].loop_variable.startswith("_untile_k_")
 
     sdfg(a=a, b=b, N=n)
-    assert np.allclose(a, ref_a), f'value mismatch: got {a}, expected {ref_a}'
+    assert np.allclose(a, ref_a), f"value mismatch: got {a}, expected {ref_a}"
 
 
 def test_case_a_with_arithmetic_combination_collapses():
@@ -144,11 +145,11 @@ def test_case_b_inner_stride_2_collapses_preserving_step():
     sdfg.validate()
     assert res == 1
     loops_after = _loops(sdfg)
-    assert len(loops_after) == 1, f'expected 1 collapsed loop, got {len(loops_after)}'
-    assert loop_analysis.get_loop_stride(loops_after[0]) == 2, 'the collapsed loop lost the original stride'
+    assert len(loops_after) == 1, f"expected 1 collapsed loop, got {len(loops_after)}"
+    assert loop_analysis.get_loop_stride(loops_after[0]) == 2, "the collapsed loop lost the original stride"
 
     sdfg(a=a, b=b, N=n)
-    assert np.allclose(a, ref_a), f'value mismatch: got {a}, expected {ref_a}'
+    assert np.allclose(a, ref_a), f"value mismatch: got {a}, expected {ref_a}"
 
 
 def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
@@ -183,13 +184,13 @@ def test_case_b_3level_cascade_collapses_via_fixpoint_preserving_stride():
     assert len(_loops(sdfg)) == 3
     res = UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 2, f'fixpoint should collapse 2 tile pairs; got res={res}'
+    assert res == 2, f"fixpoint should collapse 2 tile pairs; got res={res}"
     loops_after = _loops(sdfg)
-    assert len(loops_after) == 1, f'expected 1 collapsed loop, got {len(loops_after)}'
-    assert loop_analysis.get_loop_stride(loops_after[0]) == 2, 'the collapsed loop lost the original stride'
+    assert len(loops_after) == 1, f"expected 1 collapsed loop, got {len(loops_after)}"
+    assert loop_analysis.get_loop_stride(loops_after[0]) == 2, "the collapsed loop lost the original stride"
 
     sdfg(a=a, b=b, N=n)
-    assert np.allclose(a, ref_a), f'value mismatch: got {a}, expected {ref_a}'
+    assert np.allclose(a, ref_a), f"value mismatch: got {a}, expected {ref_a}"
 
 
 # Refusal contracts.
@@ -202,7 +203,7 @@ def test_untiles_when_outer_stride_is_bare_symbol():
     tile collapses to ``for k in range(0, N)`` -- ``end == BS - 1`` folds against
     ``K_expr - 1`` symbolically. Only a unit inner stride is admitted for
     symbolic tiles (a concrete stride cannot be proven to divide a symbol)."""
-    BS = dace.symbol('BS')
+    BS = dace.symbol("BS")
 
     @dace.program
     def tiled_untiles_when_outer_stride_is_bare_symbol(a: dace.float64[N], b: dace.float64[N]):
@@ -216,21 +217,21 @@ def test_untiles_when_outer_stride_is_bare_symbol():
     sdfg.validate()
     assert res == 1
     loops_after = _loops(sdfg)
-    assert len(loops_after) == 1, f'expected 1 collapsed loop, got {len(loops_after)}'
-    assert loops_after[0].loop_variable.startswith('_untile_k_')
+    assert len(loops_after) == 1, f"expected 1 collapsed loop, got {len(loops_after)}"
+    assert loops_after[0].loop_variable.startswith("_untile_k_")
 
     n = 16  # multiple of BS=4 (clean tile)
     rng = np.random.default_rng(7)
     a = np.zeros(n)
     b = rng.standard_normal(n)
     sdfg(a=a, b=b, N=n, BS=4)
-    assert np.allclose(a, b * 2.0), f'value mismatch: got {a}'
+    assert np.allclose(a, b * 2.0), f"value mismatch: got {a}"
 
 
 def test_untiles_when_outer_stride_is_bare_symbol_case_b():
     """Case B with a bare-symbol tile: ``for i in range(0, N, BS):
     for ii in range(i, i + BS): a[ii] = ...`` collapses to a single loop."""
-    BS = dace.symbol('BS')
+    BS = dace.symbol("BS")
 
     @dace.program
     def tiled_untiles_when_outer_stride_is_bare_symbol_case_b(a: dace.float64[N], b: dace.float64[N]):
@@ -342,8 +343,9 @@ def squared_both(a: dace.float64[N * N], b: dace.float64[N * N]):
             a[i * i + ii * ii] = b[i * i + ii * ii]
 
 
-@pytest.mark.parametrize('program,index', [(scaled_outer, lambda i, ii: 2 * i + ii),
-                                           (squared_both, lambda i, ii: i * i + ii * ii)])
+@pytest.mark.parametrize(
+    "program,index", [(scaled_outer, lambda i, ii: 2 * i + ii), (squared_both, lambda i, ii: i * i + ii * ii)]
+)
 def test_refuses_when_iterators_do_not_enter_as_their_sum(program, index):
     """``i`` and ``ii`` co-occurring is not enough -- they must enter as ``i + ii``.
 
@@ -382,7 +384,7 @@ def test_untiles_when_outer_start_is_not_zero():
 
     sdfg = tiled_untiles_when_outer_start_is_not_zero.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
-    assert res is not None, 'start!=0 tile nest must untile'
+    assert res is not None, "start!=0 tile nest must untile"
     # Exactly one collapsed unit-stride loop over [8, N) remains.
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
     assert len(loops) == 1
@@ -393,7 +395,7 @@ def test_untiles_when_outer_start_is_not_zero():
     sdfg(a=got, N=n)
     exp = np.zeros(n + 8)
     exp[8:n] = 1.0
-    assert np.allclose(got, exp), f'got {got} expected {exp}'
+    assert np.allclose(got, exp), f"got {got} expected {exp}"
 
 
 def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():
@@ -433,8 +435,8 @@ def test_refuses_when_outer_body_is_not_a_perfect_two_level_nest():
 #     stride = middle trip x middle stride. Untile fixpoint must collapse
 #     each axis twice.
 
-M = dace.symbol('M')
-P = dace.symbol('P')
+M = dace.symbol("M")
+P = dace.symbol("P")
 
 
 def _count_loops(sdfg):
@@ -443,6 +445,7 @@ def _count_loops(sdfg):
 
 def _count_maps(sdfg):
     from dace.sdfg import nodes
+
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
 
 
@@ -462,24 +465,27 @@ def test_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest():
             for jj in range(0, M - 2, K):
                 for i in range(K):
                     for j in range(K):
-                        b[ii + i + 1, jj + j +
-                          1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] + a[ii + i + 1, jj + j + 2] +
-                                      a[ii + i, jj + j + 1] + a[ii + i + 2, jj + j + 1])
+                        b[ii + i + 1, jj + j + 1] = 0.2 * (
+                            a[ii + i + 1, jj + j + 1]
+                            + a[ii + i + 1, jj + j]
+                            + a[ii + i + 1, jj + j + 2]
+                            + a[ii + i, jj + j + 1]
+                            + a[ii + i + 2, jj + j + 1]
+                        )
 
     n, m = 10, 10
     rng = np.random.default_rng(0)
     a = rng.standard_normal((n, m))
     b = np.zeros((n, m))
     ref = b.copy()
-    copy.deepcopy(jacobi2d_tiled_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest.to_sdfg(simplify=True))(a=a.copy(),
-                                                                                                        b=ref,
-                                                                                                        N=n,
-                                                                                                        M=m)
+    copy.deepcopy(jacobi2d_tiled_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest.to_sdfg(simplify=True))(
+        a=a.copy(), b=ref, N=n, M=m
+    )
 
     sdfg = jacobi2d_tiled_jacobi2d_tiled_1lvl_range_collapses_to_2d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _count_loops(sdfg) == 2, f'expected 2 collapsed loops, got {_count_loops(sdfg)}'
+    assert _count_loops(sdfg) == 2, f"expected 2 collapsed loops, got {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m)
     assert np.allclose(b, ref)
 
@@ -495,21 +501,24 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
 
     @dace.program
     def jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map(a: dace.float64[N, M], b: dace.float64[N, M]):
-        for ii, jj in dace.map[0:N - 2:K, 0:M - 2:K]:
+        for ii, jj in dace.map[0 : N - 2 : K, 0 : M - 2 : K]:
             for i, j in dace.map[0:K, 0:K]:
-                b[ii + i + 1,
-                  jj + j + 1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] + a[ii + i + 1, jj + j + 2] +
-                                       a[ii + i, jj + j + 1] + a[ii + i + 2, jj + j + 1])
+                b[ii + i + 1, jj + j + 1] = 0.2 * (
+                    a[ii + i + 1, jj + j + 1]
+                    + a[ii + i + 1, jj + j]
+                    + a[ii + i + 1, jj + j + 2]
+                    + a[ii + i, jj + j + 1]
+                    + a[ii + i + 2, jj + j + 1]
+                )
 
     n, m = 10, 10
     rng = np.random.default_rng(1)
     a = rng.standard_normal((n, m))
     b = np.zeros((n, m))
     ref = b.copy()
-    copy.deepcopy(jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map.to_sdfg(simplify=True))(a=a.copy(),
-                                                                                                     b=ref,
-                                                                                                     N=n,
-                                                                                                     M=m)
+    copy.deepcopy(jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map.to_sdfg(simplify=True))(
+        a=a.copy(), b=ref, N=n, M=m
+    )
 
     sdfg = jacobi2d_tiled_jacobi2d_tiled_1lvl_map_collapses_to_2d_map.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
@@ -517,8 +526,8 @@ def test_jacobi2d_tiled_1lvl_map_collapses_to_2d_map():
     # ExpandNestedSDFGInputs + InlineMultistateSDFG flatten the round-trip NSDFGs, the multi-dim
     # ascent fires, and the fixpoint collapses the tile pair per axis. The general splice
     # reconnects the parent's pred/succ chain through the spliced body, so no orphan state remains.
-    assert _count_maps(sdfg) == 2, f'expected one recovered Map per axis, got {_count_maps(sdfg)}'
-    assert _count_loops(sdfg) == 0, f'the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}'
+    assert _count_maps(sdfg) == 2, f"expected one recovered Map per axis, got {_count_maps(sdfg)}"
+    assert _count_loops(sdfg) == 0, f"the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m)
     assert np.allclose(b, ref)
 
@@ -541,8 +550,13 @@ def test_jacobi2d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
                     for j1 in range(j0, j0 + K1, K2):
                         for i2 in range(i1, i1 + K2):
                             for j2 in range(j1, j1 + K2):
-                                b[i2 + 1, j2 + 1] = 0.2 * (a[i2 + 1, j2 + 1] + a[i2 + 1, j2] + a[i2 + 1, j2 + 2] +
-                                                           a[i2, j2 + 1] + a[i2 + 2, j2 + 1])
+                                b[i2 + 1, j2 + 1] = 0.2 * (
+                                    a[i2 + 1, j2 + 1]
+                                    + a[i2 + 1, j2]
+                                    + a[i2 + 1, j2 + 2]
+                                    + a[i2, j2 + 1]
+                                    + a[i2 + 2, j2 + 1]
+                                )
 
     n, m = 18, 18  # N-2 = 16 = K1 (single outermost tile), tiles align cleanly
     rng = np.random.default_rng(2)
@@ -554,7 +568,7 @@ def test_jacobi2d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
     sdfg = jacobi2d_2lvl.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _count_loops(sdfg) == 2, f'expected 2 fully-collapsed axes, got {_count_loops(sdfg)}'
+    assert _count_loops(sdfg) == 2, f"expected 2 fully-collapsed axes, got {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m)
     assert np.allclose(b, ref)
 
@@ -579,25 +593,31 @@ def test_heat3d_tiled_1lvl_range_collapses_to_3d_nest():
                                 I = ii + i + 1
                                 J = jj + j + 1
                                 Kk = kk + k + 1
-                                b[I, J, Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] +
-                                                       a[I, J + 1, Kk] - 2.0 * a[I, J, Kk] + a[I, J - 1, Kk] +
-                                                       a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] + a[I, J, Kk - 1])
+                                b[I, J, Kk] = 0.125 * (
+                                    a[I + 1, J, Kk]
+                                    - 2.0 * a[I, J, Kk]
+                                    + a[I - 1, J, Kk]
+                                    + a[I, J + 1, Kk]
+                                    - 2.0 * a[I, J, Kk]
+                                    + a[I, J - 1, Kk]
+                                    + a[I, J, Kk + 1]
+                                    - 2.0 * a[I, J, Kk]
+                                    + a[I, J, Kk - 1]
+                                )
 
     n, m, p = 10, 10, 10
     rng = np.random.default_rng(3)
     a = rng.standard_normal((n, m, p))
     b = np.zeros((n, m, p))
     ref = b.copy()
-    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_range_collapses_to_3d_nest.to_sdfg(simplify=True))(a=a.copy(),
-                                                                                                    b=ref,
-                                                                                                    N=n,
-                                                                                                    M=m,
-                                                                                                    P=p)
+    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_range_collapses_to_3d_nest.to_sdfg(simplify=True))(
+        a=a.copy(), b=ref, N=n, M=m, P=p
+    )
 
     sdfg = heat3d_tiled_heat3d_tiled_1lvl_range_collapses_to_3d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _count_loops(sdfg) == 3, f'expected 3 collapsed loops, got {_count_loops(sdfg)}'
+    assert _count_loops(sdfg) == 3, f"expected 3 collapsed loops, got {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m, P=p)
     assert np.allclose(b, ref)
 
@@ -610,32 +630,38 @@ def test_heat3d_tiled_1lvl_map_collapses_to_3d_map():
 
     @dace.program
     def heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map(a: dace.float64[N, M, P], b: dace.float64[N, M, P]):
-        for ii, jj, kk in dace.map[0:N - 2:K, 0:M - 2:K, 0:P - 2:K]:
+        for ii, jj, kk in dace.map[0 : N - 2 : K, 0 : M - 2 : K, 0 : P - 2 : K]:
             for i, j, k in dace.map[0:K, 0:K, 0:K]:
                 I = ii + i + 1
                 J = jj + j + 1
                 Kk = kk + k + 1
-                b[I, J,
-                  Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] + a[I, J + 1, Kk] - 2.0 *
-                                 a[I, J, Kk] + a[I, J - 1, Kk] + a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] + a[I, J, Kk - 1])
+                b[I, J, Kk] = 0.125 * (
+                    a[I + 1, J, Kk]
+                    - 2.0 * a[I, J, Kk]
+                    + a[I - 1, J, Kk]
+                    + a[I, J + 1, Kk]
+                    - 2.0 * a[I, J, Kk]
+                    + a[I, J - 1, Kk]
+                    + a[I, J, Kk + 1]
+                    - 2.0 * a[I, J, Kk]
+                    + a[I, J, Kk - 1]
+                )
 
     n, m, p = 10, 10, 10
     rng = np.random.default_rng(4)
     a = rng.standard_normal((n, m, p))
     b = np.zeros((n, m, p))
     ref = b.copy()
-    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map.to_sdfg(simplify=True))(a=a.copy(),
-                                                                                                 b=ref,
-                                                                                                 N=n,
-                                                                                                 M=m,
-                                                                                                 P=p)
+    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map.to_sdfg(simplify=True))(
+        a=a.copy(), b=ref, N=n, M=m, P=p
+    )
 
     sdfg = heat3d_tiled_heat3d_tiled_1lvl_map_collapses_to_3d_map.to_sdfg(simplify=True)
     UntileLoops(map_roundtrip=True).apply_pass(sdfg, {})
     sdfg.validate()
     # 3 axes -> one recovered Map each, and no orphan connective state from the general splice.
-    assert _count_maps(sdfg) == 3, f'expected one recovered Map per axis, got {_count_maps(sdfg)}'
-    assert _count_loops(sdfg) == 0, f'the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}'
+    assert _count_maps(sdfg) == 3, f"expected one recovered Map per axis, got {_count_maps(sdfg)}"
+    assert _count_loops(sdfg) == 0, f"the Map round-trip left a LoopRegion behind: {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m, P=p)
     assert np.allclose(b, ref)
 
@@ -661,10 +687,17 @@ def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
                                             I = i2 + 1
                                             J = j2 + 1
                                             Kk = k2 + 1
-                                            b[I, J,
-                                              Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] +
-                                                             a[I, J + 1, Kk] - 2.0 * a[I, J, Kk] + a[I, J - 1, Kk] +
-                                                             a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] + a[I, J, Kk - 1])
+                                            b[I, J, Kk] = 0.125 * (
+                                                a[I + 1, J, Kk]
+                                                - 2.0 * a[I, J, Kk]
+                                                + a[I - 1, J, Kk]
+                                                + a[I, J + 1, Kk]
+                                                - 2.0 * a[I, J, Kk]
+                                                + a[I, J - 1, Kk]
+                                                + a[I, J, Kk + 1]
+                                                - 2.0 * a[I, J, Kk]
+                                                + a[I, J, Kk - 1]
+                                            )
 
     n, m, p = 18, 18, 18
     rng = np.random.default_rng(5)
@@ -676,7 +709,7 @@ def test_heat3d_tiled_2lvl_range_collapses_via_cascade_fixpoint():
     sdfg = heat3d_2lvl.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _count_loops(sdfg) == 3, f'expected 3 fully-collapsed axes, got {_count_loops(sdfg)}'
+    assert _count_loops(sdfg) == 3, f"expected 3 fully-collapsed axes, got {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m, P=p)
     assert np.allclose(b, ref)
 
@@ -689,7 +722,7 @@ def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
     fixpoint collapses (ii, i) and (jj, j) in two iterations, leaving a
     single 2D nest -- same as the concrete-``K`` variant but the tile is a
     runtime block-size parameter."""
-    BS = dace.symbol('BS')
+    BS = dace.symbol("BS")
 
     @dace.program
     def jacobi2d_tiled_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest(a: dace.float64[N, M], b: dace.float64[N, M]):
@@ -697,9 +730,13 @@ def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
             for jj in range(0, M - 2, BS):
                 for i in range(BS):
                     for j in range(BS):
-                        b[ii + i + 1, jj + j +
-                          1] = 0.2 * (a[ii + i + 1, jj + j + 1] + a[ii + i + 1, jj + j] + a[ii + i + 1, jj + j + 2] +
-                                      a[ii + i, jj + j + 1] + a[ii + i + 2, jj + j + 1])
+                        b[ii + i + 1, jj + j + 1] = 0.2 * (
+                            a[ii + i + 1, jj + j + 1]
+                            + a[ii + i + 1, jj + j]
+                            + a[ii + i + 1, jj + j + 2]
+                            + a[ii + i, jj + j + 1]
+                            + a[ii + i + 2, jj + j + 1]
+                        )
 
     n, m, bs = 10, 10, 4  # N-2 == M-2 == 8 divisible by BS=4 (clean tile)
     rng = np.random.default_rng(20)
@@ -713,7 +750,7 @@ def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
     sdfg = jacobi2d_tiled_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _count_loops(sdfg) == 2, f'expected 2 collapsed loops, got {_count_loops(sdfg)}'
+    assert _count_loops(sdfg) == 2, f"expected 2 collapsed loops, got {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m, BS=bs)
     assert np.allclose(b, ref)
 
@@ -721,11 +758,12 @@ def test_jacobi2d_tiled_1lvl_sym_range_collapses_to_2d_nest():
 def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
     """1-level 3D tile with a bare-symbol tile ``BS`` per axis; fixpoint
     collapses all three tile axes to a single 3D nest."""
-    BS = dace.symbol('BS')
+    BS = dace.symbol("BS")
 
     @dace.program
-    def heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest(a: dace.float64[N, M, P], b: dace.float64[N, M,
-                                                                                                                P]):
+    def heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest(
+        a: dace.float64[N, M, P], b: dace.float64[N, M, P]
+    ):
         for ii in range(0, N - 2, BS):
             for jj in range(0, M - 2, BS):
                 for kk in range(0, P - 2, BS):
@@ -735,26 +773,31 @@ def test_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest():
                                 I = ii + i + 1
                                 J = jj + j + 1
                                 Kk = kk + k + 1
-                                b[I, J, Kk] = 0.125 * (a[I + 1, J, Kk] - 2.0 * a[I, J, Kk] + a[I - 1, J, Kk] +
-                                                       a[I, J + 1, Kk] - 2.0 * a[I, J, Kk] + a[I, J - 1, Kk] +
-                                                       a[I, J, Kk + 1] - 2.0 * a[I, J, Kk] + a[I, J, Kk - 1])
+                                b[I, J, Kk] = 0.125 * (
+                                    a[I + 1, J, Kk]
+                                    - 2.0 * a[I, J, Kk]
+                                    + a[I - 1, J, Kk]
+                                    + a[I, J + 1, Kk]
+                                    - 2.0 * a[I, J, Kk]
+                                    + a[I, J - 1, Kk]
+                                    + a[I, J, Kk + 1]
+                                    - 2.0 * a[I, J, Kk]
+                                    + a[I, J, Kk - 1]
+                                )
 
     n, m, p, bs = 10, 10, 10, 4
     rng = np.random.default_rng(21)
     a = rng.standard_normal((n, m, p))
     b = np.zeros((n, m, p))
     ref = b.copy()
-    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest.to_sdfg(simplify=True))(a=a.copy(),
-                                                                                                        b=ref,
-                                                                                                        N=n,
-                                                                                                        M=m,
-                                                                                                        P=p,
-                                                                                                        BS=bs)
+    copy.deepcopy(heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest.to_sdfg(simplify=True))(
+        a=a.copy(), b=ref, N=n, M=m, P=p, BS=bs
+    )
 
     sdfg = heat3d_tiled_heat3d_tiled_1lvl_sym_range_collapses_to_3d_nest.to_sdfg(simplify=True)
     UntileLoops().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _count_loops(sdfg) == 3, f'expected 3 collapsed loops, got {_count_loops(sdfg)}'
+    assert _count_loops(sdfg) == 3, f"expected 3 collapsed loops, got {_count_loops(sdfg)}"
     sdfg(a=a, b=b, N=n, M=m, P=p, BS=bs)
     assert np.allclose(b, ref)
 
@@ -768,7 +811,8 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
     own inner tile overshoots). Value-preserving when the tile divides evenly."""
     import sympy
     from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
-    BS = dace.symbol('BS')
+
+    BS = dace.symbol("BS")
 
     @dace.program
     def tiled_symbolic_tile_nonunit_inner_stride_collapses_under_assumption(a: dace.float64[N], b: dace.float64[N]):
@@ -778,16 +822,18 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
 
     sdfg = tiled_symbolic_tile_nonunit_inner_stride_collapses_under_assumption.to_sdfg(simplify=True)
     res = UntileLoops().apply_pass(sdfg, {})
-    assert res == 1, 'symbolic tile + non-unit inner stride should collapse (under assumption)'
+    assert res == 1, "symbolic tile + non-unit inner stride should collapse (under assumption)"
     recorded = tracked_assumptions(sdfg)
-    assert any(a == sympy.Eq(sympy.Mod(BS, 2), 0) for a in recorded), \
-        f'expected a recorded BS % 2 == 0 divisibility assumption; got {recorded}'
+    assert any(a == sympy.Eq(sympy.Mod(BS, 2), 0) for a in recorded), (
+        f"expected a recorded BS % 2 == 0 divisibility assumption; got {recorded}"
+    )
     # No residual tile loop remains for the collapsed axis.
     tile_loops = [
-        r for r in sdfg.all_control_flow_regions()
-        if isinstance(r, LoopRegion) and r.loop_variable and 'untile' not in r.loop_variable
+        r
+        for r in sdfg.all_control_flow_regions()
+        if isinstance(r, LoopRegion) and r.loop_variable and "untile" not in r.loop_variable
     ]
-    assert not tile_loops, f'tile loops should be collapsed, found {[l.label for l in tile_loops]}'
+    assert not tile_loops, f"tile loops should be collapsed, found {[l.label for l in tile_loops]}"
 
     # Value-preserving with an even tile (BS | N): copies the even indices.
     sdfg.validate()
@@ -800,7 +846,7 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
         for ii in range(i, i + bs, 2):
             exp[ii] = b[ii]
     sdfg(a=a, b=b, N=n, BS=bs)
-    assert np.allclose(a, exp), f'symbolic strided untile diverged: {a} vs {exp}'
+    assert np.allclose(a, exp), f"symbolic strided untile diverged: {a} vs {exp}"
 
 
 # The tiled-stencil corpus family, exactly as the perf corpus measures it
@@ -815,16 +861,16 @@ def test_symbolic_tile_nonunit_inner_stride_collapses_under_assumption():
 #: kernel -> (axes, length symbol, OUTERMOST tile at ``tsvc_2_5.SIZES``). The canonical extent
 #: depends on the outermost tile alone: the inner rungs subdivide that same window.
 _TILED_FAMILY = {
-    'jacobi2d_tiled_const': (2, 'LEN_2D', 8),
-    'jacobi2d_tiled_sym': (2, 'LEN_2D', tsvc_2_5.SIZES['T']),
-    'jacobi2d_double_tiled_const': (2, 'LEN_2D', 16),
-    'jacobi2d_double_tiled_sym': (2, 'LEN_2D', tsvc_2_5.SIZES['T1']),
-    'jacobi2d_triple_tiled_const': (2, 'LEN_2D', 16),
-    'jacobi2d_triple_tiled_sym': (2, 'LEN_2D', tsvc_2_5.SIZES['T1']),
-    'heat3d_tiled_const': (3, 'LEN_3D', 8),
-    'heat3d_tiled_sym': (3, 'LEN_3D', tsvc_2_5.SIZES['T']),
-    'heat3d_double_tiled_const': (3, 'LEN_3D', 8),
-    'heat3d_double_tiled_sym': (3, 'LEN_3D', tsvc_2_5.SIZES['T1']),
+    "jacobi2d_tiled_const": (2, "LEN_2D", 8),
+    "jacobi2d_tiled_sym": (2, "LEN_2D", tsvc_2_5.SIZES["T"]),
+    "jacobi2d_double_tiled_const": (2, "LEN_2D", 16),
+    "jacobi2d_double_tiled_sym": (2, "LEN_2D", tsvc_2_5.SIZES["T1"]),
+    "jacobi2d_triple_tiled_const": (2, "LEN_2D", 16),
+    "jacobi2d_triple_tiled_sym": (2, "LEN_2D", tsvc_2_5.SIZES["T1"]),
+    "heat3d_tiled_const": (3, "LEN_3D", 8),
+    "heat3d_tiled_sym": (3, "LEN_3D", tsvc_2_5.SIZES["T"]),
+    "heat3d_double_tiled_const": (3, "LEN_3D", 8),
+    "heat3d_double_tiled_sym": (3, "LEN_3D", tsvc_2_5.SIZES["T1"]),
 }
 
 
@@ -849,51 +895,53 @@ def _assert_canonical_nest(sdfg, axes, extent, sizes):
     """The recovered nest is ``axes`` unit-stride loops over the full canonical extent, one per
     level, with no tile-index loop and no remainder guard left anywhere."""
     loops = _loops(sdfg)
-    assert len(loops) == axes, f'expected {axes} recovered loops, got {[l.loop_variable for l in loops]}'
-    assert sorted(_nest_depth(l) for l in loops) == list(range(axes)), \
-        f'recovered loops are not one perfect chain: depths {[_nest_depth(l) for l in loops]}'
+    assert len(loops) == axes, f"expected {axes} recovered loops, got {[l.loop_variable for l in loops]}"
+    assert sorted(_nest_depth(l) for l in loops) == list(range(axes)), (
+        f"recovered loops are not one perfect chain: depths {[_nest_depth(l) for l in loops]}"
+    )
     for loop in loops:
-        assert loop.loop_variable.startswith('_untile_k_'), f'leftover tile-index loop {loop.loop_variable}'
+        assert loop.loop_variable.startswith("_untile_k_"), f"leftover tile-index loop {loop.loop_variable}"
         stride = int(symbolic.evaluate(loop_analysis.get_loop_stride(loop), sizes))
-        assert stride == 1, f'{loop.loop_variable} kept tile stride {stride}'
+        assert stride == 1, f"{loop.loop_variable} kept tile stride {stride}"
         start = int(symbolic.evaluate(loop_analysis.get_init_assignment(loop), sizes))
         end = int(symbolic.evaluate(loop_analysis.get_loop_end(loop) + 1, sizes))
-        assert (start, end) == extent, f'{loop.loop_variable} runs [{start}, {end}), expected {extent}'
+        assert (start, end) == extent, f"{loop.loop_variable} runs [{start}, {end}), expected {extent}"
     guards = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
-    assert not guards, f'remainder guard left behind: {[b.label for b in guards]}'
+    assert not guards, f"remainder guard left behind: {[b.label for b in guards]}"
 
 
 def _assert_emitted_nest(sdfg, axes):
     """The generated C++ carries exactly ``axes`` loops, every one of them unit stride. This is
     the only place a surviving tile stride is visible once the SDFG claims to be untiled."""
-    code = '\n'.join(c.clean_code for c in sdfg.generate_code())
-    emitted = [line.strip() for line in code.splitlines() if line.strip().startswith('for (')]
-    assert len(emitted) == axes, f'expected {axes} emitted loops, got {len(emitted)}:\n' + '\n'.join(emitted)
+    code = "\n".join(c.clean_code for c in sdfg.generate_code())
+    emitted = [line.strip() for line in code.splitlines() if line.strip().startswith("for (")]
+    assert len(emitted) == axes, f"expected {axes} emitted loops, got {len(emitted)}:\n" + "\n".join(emitted)
     for line in emitted:
         # Last token of the declarator IS the name: the type spelling varies (``auto``,
         # ``int64_t``, ``long long``) and stripping one fixed prefix left the type glued to
         # the name, so the substring below could never match and every loop read as strided.
-        var = line.split('(', 1)[1].split('=', 1)[0].split()[-1]
-        assert f'{var} += 1)' in line or f'{var} = ({var} + 1))' in line, f'emitted loop kept a tile stride: {line}'
+        var = line.split("(", 1)[1].split("=", 1)[0].split()[-1]
+        assert f"{var} += 1)" in line or f"{var} = ({var} + 1))" in line, f"emitted loop kept a tile stride: {line}"
 
 
-@pytest.mark.parametrize('name', sorted(_TILED_FAMILY))
+@pytest.mark.parametrize("name", sorted(_TILED_FAMILY))
 def test_tiled_stencil_corpus_untiles_to_the_canonical_nest(name):
     """Every member of the tiled-stencil family collapses to its canonical nest, values intact."""
     axes, length_symbol, tile = _TILED_FAMILY[name]
     sizes = tsvc_2_5.SIZES
     program = getattr(tsvc_2_5, name)
     arrays, scalars = tsvc_2_5.make_inputs(program)
-    oracle = getattr(tsvc_2_5_numpy, 'ref_' + name)
+    oracle = getattr(tsvc_2_5_numpy, "ref_" + name)
     pool = {**{n: a.copy() for n, a in arrays.items()}, **scalars, **{s.lower(): v for s, v in sizes.items()}}
     oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
 
     sdfg = program.to_sdfg(simplify=True)
     before = _loops(sdfg)
-    assert len(before) > axes, f'precondition: {name} must arrive hand-tiled, got {len(before)} loops'
+    assert len(before) > axes, f"precondition: {name} must arrive hand-tiled, got {len(before)} loops"
     # One collapse removes exactly one loop, so the count is the whole cascade, not a partial one.
-    assert UntileLoops().apply_pass(sdfg, {}) == len(before) - axes, \
-        f'{name}: untile stopped short, {len(_loops(sdfg))} loops left'
+    assert UntileLoops().apply_pass(sdfg, {}) == len(before) - axes, (
+        f"{name}: untile stopped short, {len(_loops(sdfg))} loops left"
+    )
     sdfg.validate()
     _assert_canonical_nest(sdfg, axes, _tile_union_extent(sizes[length_symbol], tile), sizes)
     _assert_emitted_nest(sdfg, axes)
@@ -902,7 +950,7 @@ def test_tiled_stencil_corpus_untiles_to_the_canonical_nest(name):
     symbols = {s: v for s, v in sizes.items() if s in {str(x) for x in sdfg.free_symbols}}
     sdfg.compile()(**got, **scalars, **symbols)
     for arr in arrays:
-        assert np.allclose(got[arr], pool[arr]), f'{name}/{arr} diverges from the numpy oracle'
+        assert np.allclose(got[arr], pool[arr]), f"{name}/{arr} diverges from the numpy oracle"
 
 
 def _map_dims(sdfg):
@@ -917,30 +965,32 @@ def test_map_tiled_3level_untiles_on_the_pass_defaults():
     pass byte-identical -- the hand-written tiling reached codegen and the canonical form was
     never seen. Structure is what proves the recovery: one 2-D iteration space over the full
     extent, unit stride, no tile-strided Map left."""
-    M = dace.symbol('M')
+    M = dace.symbol("M")
 
     @dace.program
     def map_tiled(a: dace.float64[N, M], b: dace.float64[N, M]):
-        for i0, j0 in dace.map[0:N - 2:16, 0:M - 2:16]:
-            for i1, j1 in dace.map[i0:i0 + 16:8, j0:j0 + 16:8]:
-                for i2, j2 in dace.map[i1:i1 + 8, j1:j1 + 8]:
-                    b[i2 + 1, j2 + 1] = 0.2 * (a[i2 + 1, j2 + 1] + a[i2 + 1, j2] + a[i2 + 1, j2 + 2] + a[i2, j2 + 1] +
-                                               a[i2 + 2, j2 + 1])
+        for i0, j0 in dace.map[0 : N - 2 : 16, 0 : M - 2 : 16]:
+            for i1, j1 in dace.map[i0 : i0 + 16 : 8, j0 : j0 + 16 : 8]:
+                for i2, j2 in dace.map[i1 : i1 + 8, j1 : j1 + 8]:
+                    b[i2 + 1, j2 + 1] = 0.2 * (
+                        a[i2 + 1, j2 + 1] + a[i2 + 1, j2] + a[i2 + 1, j2 + 2] + a[i2, j2 + 1] + a[i2 + 2, j2 + 1]
+                    )
 
     n, m = 18, 18
     sdfg = map_tiled.to_sdfg(simplify=True)
-    assert _count_maps(sdfg) == 3 and _count_loops(sdfg) == 0, 'precondition: three tiled Maps'
+    assert _count_maps(sdfg) == 3 and _count_loops(sdfg) == 0, "precondition: three tiled Maps"
 
-    assert UntileLoops().apply_pass(sdfg, {}) == 4, 'both axes must collapse twice'
+    assert UntileLoops().apply_pass(sdfg, {}) == 4, "both axes must collapse twice"
     sdfg.validate()
-    assert _count_loops(sdfg) == 0, 'a Map must not come back as a loop'
+    assert _count_loops(sdfg) == 0, "a Map must not come back as a loop"
     dims = _map_dims(sdfg)
-    assert len(dims) == 2, f'expected one 2-D iteration space, got {len(dims)} Map dimensions'
-    sizes = {'N': n, 'M': m}
+    assert len(dims) == 2, f"expected one 2-D iteration space, got {len(dims)} Map dimensions"
+    sizes = {"N": n, "M": m}
     for begin, end, step in dims:
-        assert int(symbolic.evaluate(step, sizes)) == 1, 'recovered Map kept a tile stride'
-        assert (int(symbolic.evaluate(begin, sizes)), int(symbolic.evaluate(end + 1, sizes))) == (0, 16), \
-            'recovered Map does not cover the canonical extent'
+        assert int(symbolic.evaluate(step, sizes)) == 1, "recovered Map kept a tile stride"
+        assert (int(symbolic.evaluate(begin, sizes)), int(symbolic.evaluate(end + 1, sizes))) == (0, 16), (
+            "recovered Map does not cover the canonical extent"
+        )
 
     rng = np.random.default_rng(11)
     a = rng.standard_normal((n, m))
@@ -963,19 +1013,19 @@ def test_map_roundtrip_declined_when_a_map_would_not_come_back():
     @dace.program
     def tiled_plus_scatter(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], idx: dace.int64[N]):
         for i0 in dace.map[0:N:8]:
-            for i1 in dace.map[i0:i0 + 8]:
+            for i1 in dace.map[i0 : i0 + 8]:
                 b[i1] = a[i1] * 2.0
         for i in dace.map[0:N]:
             c[idx[i]] = a[i] * 3.0
 
     sdfg = tiled_plus_scatter.to_sdfg(simplify=True)
     maps_before = _count_maps(sdfg)
-    assert UntileLoops().apply_pass(sdfg, {}) is None, 'the declined round trip must not touch the SDFG'
-    assert _count_maps(sdfg) == maps_before and _count_loops(sdfg) == 0, 'no Map may be left as a loop'
+    assert UntileLoops().apply_pass(sdfg, {}) is None, "the declined round trip must not touch the SDFG"
+    assert _count_maps(sdfg) == maps_before and _count_loops(sdfg) == 0, "no Map may be left as a loop"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
 
 # The remainder clamp -- ``min(i + K, <parent limit>)``.
 #
@@ -986,32 +1036,35 @@ if __name__ == '__main__':
 # heap corruption (``free(): invalid size``), not a slow kernel, which is why every case below
 # runs the result and compares it.
 
-TSTEPS = dace.symbol('TSTEPS')
+TSTEPS = dace.symbol("TSTEPS")
 
 
 def jacobi_reference(A, B, n, tsteps):
     """The flat, untiled stencil. Vectorised, so the oracle is never the slow part."""
     for _ in range(tsteps):
         B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[:-2, 1:-1] + A[2:, 1:-1])
-        A[1:n - 1, 1:n - 1] = B[1:n - 1, 1:n - 1]
+        A[1 : n - 1, 1 : n - 1] = B[1 : n - 1, 1 : n - 1]
     return A, B
 
 
 def run_against_flat_stencil(prog, n=96, tsteps=3):
     """Canonicalize, run, and compare against the flat nest. Returns the surviving loops."""
     from dace.transformation.passes.canonicalize import finalize, pipeline as canon
+
     rng = np.random.default_rng(5)
     a0, b0 = rng.random((n, n)), rng.random((n, n))
     want_a, want_b = jacobi_reference(a0.copy(), b0.copy(), n, tsteps)
 
     sdfg = prog.to_sdfg(simplify=False)
-    canon.canonicalize(sdfg, target='cpu')
-    finalize.finalize_for_target(sdfg, 'cpu')
+    canon.canonicalize(sdfg, target="cpu")
+    finalize.finalize_for_target(sdfg, "cpu")
     a, b = a0.copy(), b0.copy()
     sdfg(A=a, B=b, N=n, TSTEPS=tsteps)
-    assert np.allclose(a, want_a) and np.allclose(b, want_b), f'{prog.name}: untiled result diverged'
+    assert np.allclose(a, want_a) and np.allclose(b, want_b), f"{prog.name}: untiled result diverged"
     return [
-        r.loop_variable for g in sdfg.all_sdfgs_recursive() for r in g.all_control_flow_regions(recursive=True)
+        r.loop_variable
+        for g in sdfg.all_sdfgs_recursive()
+        for r in g.all_control_flow_regions(recursive=True)
         if isinstance(r, LoopRegion)
     ]
 
@@ -1028,10 +1081,10 @@ def test_a_clamped_two_level_tile_collapses_to_the_flat_stencil():
                     for i in range(ii, min(ii + W, N - 1)):
                         for j in range(jj, min(jj + W, N - 1)):
                             B[i, j] = 0.2 * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i - 1, j] + A[i + 1, j])
-            A[1:N - 1, 1:N - 1] = B[1:N - 1, 1:N - 1]
+            A[1 : N - 1, 1 : N - 1] = B[1 : N - 1, 1 : N - 1]
 
     survivors = run_against_flat_stencil(two_lvl)
-    assert len(survivors) == 1, f'only the time loop may survive; got {survivors}'
+    assert len(survivors) == 1, f"only the time loop may survive; got {survivors}"
 
 
 def test_a_clamped_tile_with_swapped_inner_axes_collapses():
@@ -1046,10 +1099,10 @@ def test_a_clamped_tile_with_swapped_inner_axes_collapses():
                     for j in range(jj, min(jj + W, N - 1)):
                         for i in range(ii, min(ii + W, N - 1)):
                             B[i, j] = 0.2 * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i - 1, j] + A[i + 1, j])
-            A[1:N - 1, 1:N - 1] = B[1:N - 1, 1:N - 1]
+            A[1 : N - 1, 1 : N - 1] = B[1 : N - 1, 1 : N - 1]
 
     survivors = run_against_flat_stencil(swapped)
-    assert len(survivors) == 1, f'only the time loop may survive; got {survivors}'
+    assert len(survivors) == 1, f"only the time loop may survive; got {survivors}"
 
 
 def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
@@ -1080,9 +1133,10 @@ def test_a_four_level_cascade_of_nested_clamps_collapses_completely():
                                         for j4 in range(j3, min(j3 + W3, j2 + W2, j1 + W1, N - 1), W4):
                                             for i in range(i4, min(i4 + W4, i3 + W3, i2 + W2, i1 + W1, N - 1)):
                                                 for j in range(j4, min(j4 + W4, j3 + W3, j2 + W2, j1 + W1, N - 1)):
-                                                    B[i, j] = 0.2 * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i - 1, j] +
-                                                                     A[i + 1, j])
-            A[1:N - 1, 1:N - 1] = B[1:N - 1, 1:N - 1]
+                                                    B[i, j] = 0.2 * (
+                                                        A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i - 1, j] + A[i + 1, j]
+                                                    )
+            A[1 : N - 1, 1 : N - 1] = B[1 : N - 1, 1 : N - 1]
 
     survivors = run_against_flat_stencil(four_lvl)
-    assert len(survivors) == 1, f'all ten spatial loops must collapse; got {survivors}'
+    assert len(survivors) == 1, f"all ten spatial loops must collapse; got {survivors}"

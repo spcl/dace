@@ -26,6 +26,7 @@ widened body would run per-lane buffers under a step-1 map, so the kernel is ref
 :class:`~dace.transformation.passes.vectorization.utils.errors.VectorizeUnsupported` and the
 orchestrator hands the caller back their pristine input.
 """
+
 from typing import Any
 
 import dace
@@ -54,7 +55,7 @@ class RestoreUntiledMapStride(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
+    def __init__(self, widths: tuple[int, ...] = (8,)) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -89,7 +90,7 @@ class RestoreUntiledMapStride(ppl.Pass):
         ranges = list(map_entry.map.range.ranges)
         if not widths or len(ranges) < len(widths):
             return False
-        return all(str(step) == str(width) for (_lb, _ub, step), width in zip(ranges[-len(widths):], widths))
+        return all(str(step) == str(width) for (_lb, _ub, step), width in zip(ranges[-len(widths) :], widths))
 
     @staticmethod
     def scope_nodes(state: dace.SDFGState, map_entry: MapEntry) -> list[dace.nodes.Node]:
@@ -155,13 +156,18 @@ class RestoreUntiledMapStride(ppl.Pass):
             if any(isinstance(n, TILE_NODES) for n in scope):
                 continue
             if any(
-                    isinstance(inner, TILE_NODES) for n in scope if isinstance(n, dace.nodes.NestedSDFG)
-                    for inner, _ in n.sdfg.all_nodes_recursive()):
+                isinstance(inner, TILE_NODES)
+                for n in scope
+                if isinstance(n, dace.nodes.NestedSDFG)
+                for inner, _ in n.sdfg.all_nodes_recursive()
+            ):
                 continue
             if self.body_was_widened(scope):
-                raise VectorizeUnsupported(f"map {node.map.label!r} steps by {widths} over a body the "
-                                           f"emitters widened but never lowered to tile ops; the stride cannot be "
-                                           f"restored, so this kernel is refused")
+                raise VectorizeUnsupported(
+                    f"map {node.map.label!r} steps by {widths} over a body the "
+                    f"emitters widened but never lowered to tile ops; the stride cannot be "
+                    f"restored, so this kernel is refused"
+                )
             self.restore_step(node, len(widths))
             repaired += 1
         return repaired or None

@@ -10,6 +10,7 @@ communicator with the same ``_color`` lands in the same new communicator, ordere
 by ``_key``.  The communicator being split is resolved from an optional ``_comm``
 or ``_grid`` input connector, else the default world.
 """
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -22,7 +23,6 @@ from dace.ordered import OrderedSet
 
 @dace.library.expansion
 class ExpandCommSplitMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -32,13 +32,15 @@ class ExpandCommSplitMPI(ExpandTransformation):
         code = f"""
             _newcomm = MPI_COMM_NULL;
             MPI_Comm_split({comm}, _color, _key, &_newcomm);"""
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dtypes.Language.CPP,
-                                          side_effects=True)
-        conn = {c: (dtypes.opaque("MPI_Comm") if c == '_newcomm' else t) for c, t in tasklet.out_connectors.items()}
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
+        conn = {c: (dtypes.opaque("MPI_Comm") if c == "_newcomm" else t) for c, t in tasklet.out_connectors.items()}
         tasklet.out_connectors = conn
         return tasklet
 
@@ -56,7 +58,7 @@ class CommSplit(MPINode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(('_color', '_key')), outputs={"_newcomm"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(("_color", "_key")), outputs={"_newcomm"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

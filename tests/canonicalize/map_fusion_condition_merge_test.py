@@ -32,7 +32,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 # Kernels: two separate loops guarded by the same condition

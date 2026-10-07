@@ -22,6 +22,7 @@ stencil, 2D elementwise, 2D out-of-place transpose), dtypes float64 and float32,
 OR the output, blocking the final dim (plain reshape) OR a non-final dim (reshape+transpose), by
 factors {2, 4, 8} over divisible extents.
 """
+
 import numpy
 import pytest
 
@@ -54,7 +55,7 @@ def build_stencil1d(dt):
 
     @dace.program
     def stencil1d(x: dt[N], y: dt[N]):
-        for i in dace.map[1:N - 1] @ dace.ScheduleType.Sequential:
+        for i in dace.map[1 : N - 1] @ dace.ScheduleType.Sequential:
             y[i] = W0 * x[i - 1] + W1 * x[i] + W2 * x[i + 1]
 
     return stencil1d.to_sdfg(simplify=True)
@@ -125,50 +126,29 @@ def transpose2d_oracle(inputs):
 KERNELS = {
     "scale1d": {
         "build": build_scale1d,
-        "syms": {
-            "N": 32
-        },
-        "arrays": {
-            "x": ("in", (32, )),
-            "y": ("out", (32, ))
-        },
+        "syms": {"N": 32},
+        "arrays": {"x": ("in", (32,)), "y": ("out", (32,))},
         "inputs": scale1d_inputs,
         "oracle": scale1d_oracle,
     },
     "stencil1d": {
         "build": build_stencil1d,
-        "syms": {
-            "N": 32
-        },
-        "arrays": {
-            "x": ("in", (32, )),
-            "y": ("out", (32, ))
-        },
+        "syms": {"N": 32},
+        "arrays": {"x": ("in", (32,)), "y": ("out", (32,))},
         "inputs": stencil1d_inputs,
         "oracle": stencil1d_oracle,
     },
     "elem2d": {
         "build": build_elem2d,
-        "syms": {
-            "M": 16,
-            "N": 24
-        },
-        "arrays": {
-            "A": ("in", (16, 24)),
-            "B": ("out", (16, 24))
-        },
+        "syms": {"M": 16, "N": 24},
+        "arrays": {"A": ("in", (16, 24)), "B": ("out", (16, 24))},
         "inputs": elem2d_inputs,
         "oracle": elem2d_oracle,
     },
     "transpose2d": {
         "build": build_transpose2d,
-        "syms": {
-            "N": 32
-        },
-        "arrays": {
-            "A": ("in", (32, 32)),
-            "B": ("out", (32, 32))
-        },
+        "syms": {"N": 32},
+        "arrays": {"A": ("in", (32, 32)), "B": ("out", (32, 32))},
         "inputs": transpose2d_inputs,
         "oracle": transpose2d_oracle,
     },

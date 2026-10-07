@@ -5,8 +5,8 @@ from dace import nodes
 from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
 import pytest
 
-H = dace.symbol('H')
-W = dace.symbol('W')
+H = dace.symbol("H")
+W = dace.symbol("W")
 
 
 @dace.program
@@ -26,7 +26,7 @@ def _test(sdfg):
     W = 128
     H = 64
 
-    print('Vector double CUDA (shared memory 2D) %dx%d' % (W, H))
+    print("Vector double CUDA (shared memory 2D) %dx%d" % (W, H))
 
     V = dace.ndarray([H, W], dace.float64)
     Vout = dace.ndarray([H, W], dace.float64)
@@ -57,7 +57,7 @@ def test_gpu():
 def test_gpu_localstorage():
     sdfg = cudahello.to_sdfg()
     sdfg.name = "cuda_smem2d_gpu_localstorage"
-    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage], options=[{}, {'array': 'gpu_V'}]) == 2
+    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage], options=[{}, {"array": "gpu_V"}]) == 2
     _test(sdfg)
 
 
@@ -76,12 +76,12 @@ def test_gpu_2localstorage():
 
     sdfg = addtwoandmult.to_sdfg()
     sdfg.name = "cuda_2_smem2d_gpu_localstorage"
-    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage, InLocalStorage],
-                                      options=[{}, {
-                                          'array': 'gpu_A'
-                                      }, {
-                                          'array': 'gpu_B'
-                                      }]) == 3
+    assert (
+        sdfg.apply_transformations(
+            [GPUTransformMap, InLocalStorage, InLocalStorage], options=[{}, {"array": "gpu_A"}, {"array": "gpu_B"}]
+        )
+        == 3
+    )
 
     A = np.random.rand(128, 64)
     B = np.random.rand(128, 64)
@@ -100,8 +100,8 @@ def test_gpu_2shared_for():
             for _ in range(1):
                 local_a = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
                 local_b = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
-                local_a << A[i:i + 8, j:j + 32]
-                local_b << B[i:i + 8, j:j + 32]
+                local_a << A[i : i + 8, j : j + 32]
+                local_b << B[i : i + 8, j : j + 32]
                 for bi, bj in dace.map[0:8, 0:32]:
                     with dace.tasklet:
                         a << local_a[bi, bj]
@@ -114,7 +114,7 @@ def test_gpu_2shared_for():
     state = sdfg.nodes()[0]
     map_entry = -1
     for node in state.nodes():
-        if isinstance(node, nodes.MapEntry) and 'i' in node.map.params:
+        if isinstance(node, nodes.MapEntry) and "i" in node.map.params:
             map_entry = state.node_id(node)
             break
     transformation = GPUTransformMap()
@@ -130,13 +130,13 @@ def test_gpu_2shared_for():
 
 
 def _find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
-    """ Finds the first map entry node by the given parameter name. """
+    """Finds the first map entry node by the given parameter name."""
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
 @pytest.mark.gpu
 def test_gpu_2shared_map():
-    K = dace.symbol('K')
+    K = dace.symbol("K")
 
     @dace.program
     def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
@@ -144,8 +144,8 @@ def test_gpu_2shared_map():
             for _ in dace.map[0:K]:
                 local_a = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
                 local_b = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
-                local_a << A[i:i + 8, j:j + 32]
-                local_b << B[i:i + 8, j:j + 32]
+                local_a << A[i : i + 8, j : j + 32]
+                local_b << B[i : i + 8, j : j + 32]
                 for bi, bj in dace.map[0:8, 0:32]:
                     with dace.tasklet:
                         a << local_a[bi, bj]
@@ -156,10 +156,10 @@ def test_gpu_2shared_map():
     sdfg = addtwoandmult.to_sdfg()
     sdfg.name = "cuda_2_shared_map"
 
-    me = _find_map_by_param(sdfg, '_')
+    me = _find_map_by_param(sdfg, "_")
     me.schedule = dace.ScheduleType.Sequential
     sdfg.apply_gpu_transformations()
-    me = _find_map_by_param(sdfg, 'bi')
+    me = _find_map_by_param(sdfg, "bi")
     me.schedule = dace.ScheduleType.GPU_ThreadBlock
 
     A = np.random.rand(128, 64)

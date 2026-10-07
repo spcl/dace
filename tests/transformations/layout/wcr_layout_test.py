@@ -12,6 +12,7 @@ widens nested-SDFG boundary memlets) and checks the result is bit-exact with the
 Both the collapsed (single map exit) and nested (parallel outer map, reduce inner map -> WCR
 through two map exits + a nested SDFG) forms are covered.
 """
+
 import numpy
 import pytest
 import dace
@@ -26,8 +27,12 @@ I, J, K = (dace.symbol(s) for s in ("I", "J", "K"))
 
 
 def _has_wcr(sdfg) -> bool:
-    return any(edge.data is not None and edge.data.wcr is not None for nsdfg in sdfg.all_sdfgs_recursive()
-               for state in nsdfg.states() for edge in state.edges())
+    return any(
+        edge.data is not None and edge.data.wcr is not None
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for state in nsdfg.states()
+        for edge in state.edges()
+    )
 
 
 # reduction programs

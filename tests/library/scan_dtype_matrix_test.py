@@ -23,13 +23,20 @@ sizes reach the SAME blocked code, which is exactly why the pair is still worth 
 one covers a team whose blocks are shorter than the tile, the large one covers several tiles, and
 both need the same UDR / identity to compile at all.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace import memlet as mm
 from dace.codegen.exceptions import CompilationError
-from dace.libraries.standard.nodes.scan import Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, INIT_CONNECTOR_NAME
+from dace.libraries.standard.nodes.scan import (
+    Scan,
+    ScanOp,
+    INPUT_CONNECTOR_NAME,
+    OUTPUT_CONNECTOR_NAME,
+    INIT_CONNECTOR_NAME,
+)
 
 _LOWP = (dace.float16, dace.bfloat16)
 _COMPLEX = (dace.complex64, dace.complex128)
@@ -38,34 +45,34 @@ _COMPLEX = (dace.complex64, dace.complex128)
 _N_BELOW = 64
 _N_ABOVE = 40000
 
-_RTOL = {'float16': 1e-2, 'bfloat16': 1e-1, 'complex64': 1e-6, 'complex128': 1e-12}
+_RTOL = {"float16": 1e-2, "bfloat16": 1e-1, "complex64": 1e-6, "complex128": 1e-12}
 
 
 def _tol(dtype):
     return _RTOL[dtype.to_string()]
 
 
-def _scan_sdfg(dtype, op, n, implementation='CPU', with_init=False):
-    sdfg = dace.SDFG('scangap_%s_%s_%d_%d' % (op.value, dtype.to_string().replace(':', '_'), n, with_init))
-    sdfg.add_array('arr_in', [n], dtype)
-    sdfg.add_array('arr_out', [n], dtype)
+def _scan_sdfg(dtype, op, n, implementation="CPU", with_init=False):
+    sdfg = dace.SDFG("scangap_%s_%s_%d_%d" % (op.value, dtype.to_string().replace(":", "_"), n, with_init))
+    sdfg.add_array("arr_in", [n], dtype)
+    sdfg.add_array("arr_out", [n], dtype)
     state = sdfg.add_state()
-    node = Scan('Scan', op=op, exclusive=False)
+    node = Scan("Scan", op=op, exclusive=False)
     node.implementation = implementation
     state.add_node(node)
-    state.add_edge(state.add_read('arr_in'), None, node, INPUT_CONNECTOR_NAME, mm.Memlet('arr_in[0:%d]' % n))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('arr_out'), None, mm.Memlet('arr_out[0:%d]' % n))
+    state.add_edge(state.add_read("arr_in"), None, node, INPUT_CONNECTOR_NAME, mm.Memlet("arr_in[0:%d]" % n))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("arr_out"), None, mm.Memlet("arr_out[0:%d]" % n))
     if with_init:
-        sdfg.add_array('seed', [1], dtype)
+        sdfg.add_array("seed", [1], dtype)
         node.add_in_connector(INIT_CONNECTOR_NAME)
-        state.add_edge(state.add_read('seed'), None, node, INIT_CONNECTOR_NAME, mm.Memlet('seed[0]'))
+        state.add_edge(state.add_read("seed"), None, node, INIT_CONNECTOR_NAME, mm.Memlet("seed[0]"))
     sdfg.validate()
     return sdfg
 
 
-@pytest.mark.parametrize('n', [_N_BELOW, _N_ABOVE], ids=['below_threshold', 'above_threshold'])
-@pytest.mark.parametrize('dtype', _COMPLEX, ids=lambda d: d.to_string())
-@pytest.mark.parametrize('op', [ScanOp.SUM, ScanOp.PRODUCT])
+@pytest.mark.parametrize("n", [_N_BELOW, _N_ABOVE], ids=["below_threshold", "above_threshold"])
+@pytest.mark.parametrize("dtype", _COMPLEX, ids=lambda d: d.to_string())
+@pytest.mark.parametrize("op", [ScanOp.SUM, ScanOp.PRODUCT])
 def test_scan_complex_parallel_shape(op, dtype, n):
     """GAP S1. A unit-modulus factor keeps the product bounded over 40000 elements."""
     np_t = dtype.as_numpy_dtype()
@@ -80,7 +87,7 @@ def test_scan_complex_parallel_shape(op, dtype, n):
     assert np.allclose(out.astype(np.complex128), want, rtol=_tol(dtype))
 
 
-@pytest.mark.parametrize('dtype', _COMPLEX, ids=lambda d: d.to_string())
+@pytest.mark.parametrize("dtype", _COMPLEX, ids=lambda d: d.to_string())
 def test_scan_complex_sum_seeded_parallel_shape(dtype):
     """GAP S1, seeded overload: ``_scan_init`` wired in, above the parallel threshold."""
     np_t = dtype.as_numpy_dtype()
@@ -93,8 +100,8 @@ def test_scan_complex_sum_seeded_parallel_shape(dtype):
     assert np.allclose(out.astype(np.complex128), want, rtol=_tol(dtype))
 
 
-@pytest.mark.parametrize('n', [_N_BELOW, _N_ABOVE], ids=['below_threshold', 'above_threshold'])
-@pytest.mark.parametrize('dtype', _LOWP, ids=lambda d: d.to_string())
+@pytest.mark.parametrize("n", [_N_BELOW, _N_ABOVE], ids=["below_threshold", "above_threshold"])
+@pytest.mark.parametrize("dtype", _LOWP, ids=lambda d: d.to_string())
 def test_scan_low_precision_max_parallel_shape(dtype, n):
     """GAP S2. Values stay dyadic and small, so the running maximum is exact in fp16 and bf16."""
     np_t = dtype.as_numpy_dtype()
@@ -105,13 +112,13 @@ def test_scan_low_precision_max_parallel_shape(dtype, n):
     assert np.allclose(out.astype(np.float64), want, rtol=_tol(dtype))
 
 
-@pytest.mark.parametrize('dtype', _COMPLEX, ids=lambda d: d.to_string())
-@pytest.mark.parametrize('op', [ScanOp.MIN, ScanOp.MAX])
+@pytest.mark.parametrize("dtype", _COMPLEX, ids=lambda d: d.to_string())
+@pytest.mark.parametrize("op", [ScanOp.MIN, ScanOp.MAX])
 def test_scan_names_the_complex_ordering_rejection(op, dtype):
     """GAP S3. Complex has no ordering; the refusal must be the runtime's own diagnostic.
 
     ``CPU`` only: ``pure`` is a hand-written loop that never calls into ``scan.hpp``, so it is
     not this rejection's contract (see the module docstring).
     """
-    with pytest.raises(CompilationError, match='needs an ordered element type'):
-        _scan_sdfg(dtype, op, _N_BELOW, implementation='CPU').compile()
+    with pytest.raises(CompilationError, match="needs an ordered element type"):
+        _scan_sdfg(dtype, op, _N_BELOW, implementation="CPU").compile()

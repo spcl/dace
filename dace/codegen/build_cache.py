@@ -18,6 +18,7 @@ The cache lives in RAM (``/dev/shm``) by default. On HPC nodes the user cache di
 NFS-backed ``$HOME``, and re-reading a ~100 MB PCH over NFS for every translation unit costs more
 than the PCH saves. Override the root with ``DACE_BUILD_CACHE_DIR``.
 """
+
 import getpass
 import hashlib
 import os
@@ -26,7 +27,7 @@ import shutil
 from typing import Callable, List, Optional, Sequence
 
 #: Name of the generated one-line header that pulls in the DaCe runtime umbrella.
-PREWARM_HEADER = 'dace_prewarm.h'
+PREWARM_HEADER = "dace_prewarm.h"
 
 
 def cache_root(kind: str) -> str:
@@ -35,12 +36,12 @@ def cache_root(kind: str) -> str:
     Per-user, because ``/dev/shm`` is shared by everyone on the node and the entries are written
     with the creating user's ownership.
     """
-    root = os.environ.get('DACE_BUILD_CACHE_DIR')
+    root = os.environ.get("DACE_BUILD_CACHE_DIR")
     if not root:
-        if os.path.isdir('/dev/shm') and os.access('/dev/shm', os.W_OK):
-            root = os.path.join('/dev/shm', f'dace_build_cache_{getpass.getuser()}')
+        if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK):
+            root = os.path.join("/dev/shm", f"dace_build_cache_{getpass.getuser()}")
         else:
-            root = os.path.expanduser('~/.cache/dace/build_cache')
+            root = os.path.expanduser("~/.cache/dace/build_cache")
     return os.path.join(root, kind)
 
 
@@ -57,7 +58,7 @@ FALLBACK_BUDGET = 256 * 1024**2
 
 def signature(*parts: object) -> str:
     """Short stable digest of everything an entry depends on."""
-    return hashlib.sha256('\0'.join(str(p) for p in parts).encode()).hexdigest()[:16]
+    return hashlib.sha256("\0".join(str(p) for p in parts).encode()).hexdigest()[:16]
 
 
 def entry_size(path: str) -> int:
@@ -79,7 +80,7 @@ def entry_size(path: str) -> int:
 
 def budget(root: str) -> int:
     """Bytes the cache under ``root`` may occupy."""
-    override = os.environ.get('DACE_BUILD_CACHE_MAX_MB')
+    override = os.environ.get("DACE_BUILD_CACHE_MAX_MB")
     if override:
         try:
             return int(float(override) * 1024**2)
@@ -162,18 +163,19 @@ def runtime_digest(directory: str) -> str:
         dirs.sort()
         for name in sorted(filenames):
             path = os.path.join(root, name)
-            digest.update(os.path.relpath(path, directory).encode() + b'\0')
+            digest.update(os.path.relpath(path, directory).encode() + b"\0")
             try:
-                with open(path, 'rb') as f:
+                with open(path, "rb") as f:
                     digest.update(f.read())
             except OSError:
                 pass
-            digest.update(b'\0')
+            digest.update(b"\0")
     return digest.hexdigest()
 
 
-def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtime_version: str,
-                    run: Callable[[List[str]], None]) -> Optional[List[str]]:
+def ensure_dace_pch(
+    cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtime_version: str, run: Callable[[List[str]], None]
+) -> Optional[List[str]]:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it.
 
     Returns the extra ``-I``/``-include`` flags that make g++/clang++ pick up the cached PCH, or
@@ -187,22 +189,22 @@ def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtim
     try:
         # ``runtime_version`` is :func:`runtime_digest` of ``runtime_inc``, so an entry that exists was
         # built from exactly these headers.
-        pch_dir = os.path.join(cache_root('pch'), signature(cxx, runtime_inc, runtime_version, *pch_flags))
+        pch_dir = os.path.join(cache_root("pch"), signature(cxx, runtime_inc, runtime_version, *pch_flags))
         header = os.path.join(pch_dir, PREWARM_HEADER)
-        gch = header + '.gch'
+        gch = header + ".gch"
         if not os.path.isfile(gch):
             os.makedirs(pch_dir, exist_ok=True)
             if not os.path.isfile(header):
-                with open(header, 'w') as f:
-                    f.write('#include <dace/dace.h>\n')
+                with open(header, "w") as f:
+                    f.write("#include <dace/dace.h>\n")
             # Compile to a per-process temp then rename into place, so a concurrent build (pytest -n4
             # shares this global cache) can never observe a half-written .gch.
-            tmp_gch = f'{gch}.tmp.{os.getpid()}'
-            run([cxx] + list(pch_flags) + ['-I', runtime_inc, '-x', 'c++-header', header, '-o', tmp_gch])
+            tmp_gch = f"{gch}.tmp.{os.getpid()}"
+            run([cxx] + list(pch_flags) + ["-I", runtime_inc, "-x", "c++-header", header, "-o", tmp_gch])
             os.replace(tmp_gch, gch)
-            prune(cache_root('pch'))  # a new ~110 MB entry just landed in RAM
+            prune(cache_root("pch"))  # a new ~110 MB entry just landed in RAM
         touch(pch_dir)
-        return ['-I', pch_dir, '-include', PREWARM_HEADER]
+        return ["-I", pch_dir, "-include", PREWARM_HEADER]
     except Exception:
         return None  # any trouble -> compile without the PCH
 
@@ -215,8 +217,8 @@ def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtim
 #: each still forces the other half of the work -- while both together turn a ~0.95s fresh configure
 #: into a ~0.25s reconfigure. Deliberately NOT the whole ``CMakeFiles/``: under Ninja that directory
 #: also holds the build's object files, which must never be transplanted between programs.
-_CACHE_FILE = 'CMakeCache.txt'
-_CMAKEFILES = 'CMakeFiles'
+_CACHE_FILE = "CMakeCache.txt"
+_CMAKEFILES = "CMakeFiles"
 
 
 def _version_dir(cmakefiles: str) -> Optional[str]:
@@ -236,7 +238,7 @@ def seed_configure_cache(build_folder: str, key: str) -> bool:
     """
     if os.path.isfile(os.path.join(build_folder, _CACHE_FILE)):
         return False  # already configured; its own cache is newer than anything we could seed
-    entry = os.path.join(cache_root('configure'), key)
+    entry = os.path.join(cache_root("configure"), key)
     cached_cache, cached_files = os.path.join(entry, _CACHE_FILE), os.path.join(entry, _CMAKEFILES)
     if not (os.path.isfile(cached_cache) and os.path.isdir(cached_files)):
         return False
@@ -247,12 +249,14 @@ def seed_configure_cache(build_folder: str, key: str) -> bool:
         # so the transplanted cache belongs to this build folder.
         with open(cached_cache) as f:
             cache_text = f.read()
-        cache_text = re.sub(r'^CMAKE_CACHEFILE_DIR:INTERNAL=.*$',
-                            'CMAKE_CACHEFILE_DIR:INTERNAL=' + build_folder.replace('\\', '/'),
-                            cache_text,
-                            count=1,
-                            flags=re.MULTILINE)
-        with open(os.path.join(build_folder, _CACHE_FILE), 'w') as f:
+        cache_text = re.sub(
+            r"^CMAKE_CACHEFILE_DIR:INTERNAL=.*$",
+            "CMAKE_CACHEFILE_DIR:INTERNAL=" + build_folder.replace("\\", "/"),
+            cache_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        with open(os.path.join(build_folder, _CACHE_FILE), "w") as f:
             f.write(cache_text)
         shutil.copytree(cached_files, os.path.join(build_folder, _CMAKEFILES), dirs_exist_ok=True)
         return True
@@ -270,7 +274,7 @@ def publish_configure_cache(build_folder: str, key: str) -> None:
     Never overwrites an existing entry: a concurrent build that got there first published the same
     thing, and replacing a directory another process may be reading from is not worth the race.
     """
-    entry = os.path.join(cache_root('configure'), key)
+    entry = os.path.join(cache_root("configure"), key)
     if os.path.isdir(entry):
         return
     cache_file = os.path.join(build_folder, _CACHE_FILE)
@@ -278,17 +282,17 @@ def publish_configure_cache(build_folder: str, key: str) -> None:
     version = _version_dir(cmakefiles)
     if not (os.path.isfile(cache_file) and version):
         return
-    staging = f'{entry}.tmp.{os.getpid()}'
+    staging = f"{entry}.tmp.{os.getpid()}"
     try:
         os.makedirs(os.path.join(staging, _CMAKEFILES), exist_ok=True)
         shutil.copy2(cache_file, os.path.join(staging, _CACHE_FILE))
         shutil.copytree(os.path.join(cmakefiles, version), os.path.join(staging, _CMAKEFILES, version))
         os.rename(staging, entry)  # atomic; fails harmlessly if another build won the race
-        prune(cache_root('configure'))
+        prune(cache_root("configure"))
     except OSError:
         shutil.rmtree(staging, ignore_errors=True)
 
 
 def drop_configure_cache(key: str) -> None:
     """Remove the entry for ``key``, so a configure failure cannot poison every later build."""
-    shutil.rmtree(os.path.join(cache_root('configure'), key), ignore_errors=True)
+    shutil.rmtree(os.path.join(cache_root("configure"), key), ignore_errors=True)

@@ -30,6 +30,7 @@ default: ``canon_gpu`` stops before offload so the
 graph stays CPU-runnable and every phase is numeric-checked on the host. The offload phase itself is
 checked by ``validate()`` + CUDA code generation instead.
 """
+
 import copy
 from typing import Dict, FrozenSet, Iterable, Optional, Set, Tuple
 
@@ -49,14 +50,14 @@ from dace.transformation.passes.analysis.analysis import FindAccessNodes, StateR
 #: ``DO JKGLO = 1, NGPTOT, NPROMA`` instead, so that frontend passes ``('ngptot', )``. A name signal is
 #: needed because after canonicalization the block map is not distinguishable from a horizontal map by
 #: shape alone.
-BLOCK_MAP_SYMBOLS: Tuple[str, ...] = ('nblocks', )
+BLOCK_MAP_SYMBOLS: Tuple[str, ...] = ("nblocks",)
 
 CPU_STORAGES = (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register)
 
 
-def offload_cloudsc_to_gpu(sdfg: dace.SDFG,
-                           block_map_symbols: Iterable[str] = BLOCK_MAP_SYMBOLS,
-                           exclude_from_offload: Iterable[str] = ()) -> None:
+def offload_cloudsc_to_gpu(
+    sdfg: dace.SDFG, block_map_symbols: Iterable[str] = BLOCK_MAP_SYMBOLS, exclude_from_offload: Iterable[str] = ()
+) -> None:
     """Make ``sdfg`` GPU-compilable with the block loop kept on the host.
 
     :param sdfg: The CloudSC SDFG, canonicalized/parallelized (maps already formed).
@@ -96,7 +97,7 @@ def pin_default_gpu_stream() -> None:
     ``cudaMemcpyAsync`` the graph emits runs on it. Set here rather than left to the caller's
     environment so the offloaded graph has one stream regime wherever it is built.
     """
-    Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
+    Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
 
 
 def readonly_range_scalars(graph: dace.SDFG) -> Set[str]:
@@ -377,23 +378,22 @@ def mirror_nontransients_to_gpu(sdfg: dace.SDFG, excluded: FrozenSet[str]) -> No
     constants = constant_offload_data(sdfg, mirrored)
 
     old_start = sdfg.start_block
-    head = sdfg.add_state('gpu_copy_in', is_start_block=True)
+    head = sdfg.add_state("gpu_copy_in", is_start_block=True)
     sdfg.add_edge(head, old_start, InterstateEdge())
     sinks = sdfg.sink_nodes()
-    tail = sdfg.add_state('gpu_copy_out')
+    tail = sdfg.add_state("gpu_copy_out")
     for sink in sinks:
         sdfg.add_edge(sink, tail, InterstateEdge())
     # One copy-in state per constant producer, so the mirror is filled after the host value is final.
     after_producer = {
-        state: sdfg.add_state_after(state, 'gpu_const_copy_in')
-        for state in set(constants.values()) - {None}
+        state: sdfg.add_state_after(state, "gpu_const_copy_in") for state in set(constants.values()) - {None}
     }
     copy_states = {head, tail} | set(after_producer.values())
 
     for name in sorted(mirrored):
         desc = sdfg.arrays[name]
-        gpu_name = 'gpu_' + name
-        assert gpu_name not in sdfg.arrays, f'{gpu_name!r} already exists; offload ran twice?'
+        gpu_name = "gpu_" + name
+        assert gpu_name not in sdfg.arrays, f"{gpu_name!r} already exists; offload ran twice?"
         gpu_desc = copy.deepcopy(desc)
         gpu_desc.transient = True
         gpu_desc.storage = dtypes.StorageType.GPU_Global
@@ -413,7 +413,7 @@ def mirror_nontransients_to_gpu(sdfg: dace.SDFG, excluded: FrozenSet[str]) -> No
         sdict = state.scope_dict()
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in mirrored and is_kernel_side(node, state, sdict):
-                node.data = 'gpu_' + node.data
+                node.data = "gpu_" + node.data
                 retargeted.add(id(node))
 
     for state in sdfg.states():
@@ -424,7 +424,7 @@ def mirror_nontransients_to_gpu(sdfg: dace.SDFG, excluded: FrozenSet[str]) -> No
             if edge.data is None or edge.data.data not in mirrored:
                 continue
             if edge_is_kernel_side(edge, state, sdict, retargeted):
-                edge.data.data = 'gpu_' + edge.data.data
+                edge.data.data = "gpu_" + edge.data.data
 
 
 def add_full_copy(state: SDFGState, src: str, src_desc: data.Data, dst: str) -> None:
@@ -472,13 +472,14 @@ def touches_device(node: nodes.Node, state: SDFGState, sdict: Dict, in_kernel: b
         parent = sdict[parent]
     if not isinstance(node, nodes.AccessNode):
         return False
-    return (any(is_device_boundary(e.src) for e in state.in_edges(node))
-            or any(is_device_boundary(e.dst) for e in state.out_edges(node)))
+    return any(is_device_boundary(e.src) for e in state.in_edges(node)) or any(
+        is_device_boundary(e.dst) for e in state.out_edges(node)
+    )
 
 
-def device_touched_per_sdfg(graph: dace.SDFG,
-                            in_kernel: bool = False,
-                            out: Optional[Dict[int, Set[str]]] = None) -> Dict[int, Set[str]]:
+def device_touched_per_sdfg(
+    graph: dace.SDFG, in_kernel: bool = False, out: Optional[Dict[int, Set[str]]] = None
+) -> Dict[int, Set[str]]:
     """Map ``id(sdfg) -> local data names that reach a ``GPU_Device`` computation``, for ``graph`` and
     every SDFG below it.
 
@@ -501,8 +502,8 @@ def device_touched_per_sdfg(graph: dace.SDFG,
             if edge.data is None or edge.data.data is None:
                 continue
             if any(
-                    is_device_boundary(end) or touches_device(end, state, sdict, in_kernel)
-                    for end in (edge.src, edge.dst)):
+                is_device_boundary(end) or touches_device(end, state, sdict, in_kernel) for end in (edge.src, edge.dst)
+            ):
                 touched.add(edge.data.data)
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode):
@@ -527,9 +528,9 @@ def device_touched_names(graph: dace.SDFG) -> Set[str]:
     return device_touched_per_sdfg(graph)[id(graph)]
 
 
-def device_written_per_sdfg(graph: dace.SDFG,
-                            in_kernel: bool = False,
-                            out: Optional[Dict[int, Set[str]]] = None) -> Dict[int, Set[str]]:
+def device_written_per_sdfg(
+    graph: dace.SDFG, in_kernel: bool = False, out: Optional[Dict[int, Set[str]]] = None
+) -> Dict[int, Set[str]]:
     """Names WRITTEN by device code, per SDFG, following NestedSDFG connector bindings.
 
     The write-side twin of :func:`device_touched_per_sdfg`, and whole-SDFG for the same reason: a
@@ -546,8 +547,9 @@ def device_written_per_sdfg(graph: dace.SDFG,
             if isinstance(node, nodes.AccessNode):
                 if state.in_degree(node) == 0:
                     continue
-                if (touches_device(node, state, sdict, in_kernel)
-                        or any(is_device_boundary(edge.src) for edge in state.in_edges(node))):
+                if touches_device(node, state, sdict, in_kernel) or any(
+                    is_device_boundary(edge.src) for edge in state.in_edges(node)
+                ):
                     written.add(node.data)
             elif isinstance(node, nodes.NestedSDFG):
                 below = in_kernel or touches_device(node, state, sdict)
@@ -648,7 +650,7 @@ def tasklet_accessed_arrays(graph: dace.SDFG, in_kernel: bool, device_side: bool
             desc = graph.arrays.get(node.data)
             if not (isinstance(desc, data.Array) and desc.transient):
                 continue
-            for edge in (state.in_edges(node) if writing else state.out_edges(node)):
+            for edge in state.in_edges(node) if writing else state.out_edges(node):
                 # An empty memlet orders the tasklet after the array; it accesses nothing.
                 if edge.data.is_empty():
                     continue
@@ -666,8 +668,11 @@ def host_pinned_arrays(graph: dace.SDFG, in_kernel: bool) -> Set[str]:
     """Transient Arrays in ``graph`` that must keep a host-resident master, because host code accesses
     them: on an interstate edge, or from a bare tasklet reading or writing. The master cannot move to
     ``GPU_Global``; device users get a ``gpu_<name>`` mirror instead."""
-    return (interstate_read_arrays(graph) | tasklet_accessed_arrays(graph, in_kernel, False, writing=True)
-            | tasklet_accessed_arrays(graph, in_kernel, False, writing=False))
+    return (
+        interstate_read_arrays(graph)
+        | tasklet_accessed_arrays(graph, in_kernel, False, writing=True)
+        | tasklet_accessed_arrays(graph, in_kernel, False, writing=False)
+    )
 
 
 def mirror_host_needed_transients(sdfg: dace.SDFG) -> int:
@@ -705,7 +710,7 @@ def mirror_host_needed_transients(sdfg: dace.SDFG) -> int:
         copy_states: Set[SDFGState] = set()
         for name in sorted(mirrored):
             desc = graph.arrays[name]
-            gpu_name = 'gpu_' + name
+            gpu_name = "gpu_" + name
             if gpu_name in graph.arrays:
                 continue
             gpu_desc = copy.deepcopy(desc)
@@ -714,15 +719,16 @@ def mirror_host_needed_transients(sdfg: dace.SDFG) -> int:
             gpu_desc.lifetime = dtypes.AllocationLifetime.SDFG
             graph.add_datadesc(gpu_name, gpu_desc)
             writer_states = [
-                state for state in graph.states() if any(
-                    isinstance(n, nodes.AccessNode) and n.data == name and state.in_edges(n) for n in state.nodes())
+                state
+                for state in graph.states()
+                if any(isinstance(n, nodes.AccessNode) and n.data == name and state.in_edges(n) for n in state.nodes())
             ]
             for wstate in writer_states:
-                cstate = wstate.parent_graph.add_state_after(wstate, f'gpu_copy_{name}')
+                cstate = wstate.parent_graph.add_state_after(wstate, f"gpu_copy_{name}")
                 add_full_copy(cstate, name, desc, gpu_name)
                 copy_states.add(cstate)
         for name in sorted(mirrored):
-            retarget_kernel_side_reads(graph, name, 'gpu_' + name, copy_states)
+            retarget_kernel_side_reads(graph, name, "gpu_" + name, copy_states)
         count += len(mirrored)
     return count
 

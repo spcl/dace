@@ -24,6 +24,7 @@ The fixtures (k17 pattern, greedy-vs-global-vs-oracle):
 Per-nest oracles (``*_NEST_ORACLES``) mirror one nest each for A1 externalization tests; whole
 program oracles (``*_oracle``) are the end-to-end reference.
 """
+
 import numpy
 
 import dace
@@ -45,12 +46,8 @@ def conflict2_oracle(A):
 
 
 CONFLICT2_NEST_ORACLES = (
-    lambda A, **_: {
-        "B": 2.0 * A
-    },
-    lambda A, B, **_: {
-        "C": B.T + A
-    },
+    lambda A, **_: {"B": 2.0 * A},
+    lambda A, B, **_: {"C": B.T + A},
 )
 
 
@@ -71,15 +68,9 @@ def conflict3_oracle(A):
 
 
 CONFLICT3_NEST_ORACLES = (
-    lambda A, **_: {
-        "B": 2.0 * A
-    },
-    lambda A, B, **_: {
-        "C": B.T + A
-    },
-    lambda A, B, C, **_: {
-        "D": 0.5 * B.T + C[:, ::-1] + A
-    },
+    lambda A, **_: {"B": 2.0 * A},
+    lambda A, B, **_: {"C": B.T + A},
+    lambda A, B, C, **_: {"D": 0.5 * B.T + C[:, ::-1] + A},
 )
 
 
@@ -87,7 +78,7 @@ CONFLICT3_NEST_ORACLES = (
 def agree2(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N - 1]):
     for i, j in dace.map[0:N, 0:N]:
         B[i, j] = A[i, j] * 2.0
-    for i, j in dace.map[0:N, 0:N - 1]:
+    for i, j in dace.map[0:N, 0 : N - 1]:
         C[i, j] = B[i, j] + B[i, j + 1]
 
 
@@ -97,12 +88,8 @@ def agree2_oracle(A):
 
 
 AGREE2_NEST_ORACLES = (
-    lambda A, **_: {
-        "B": 2.0 * A
-    },
-    lambda A, B, **_: {
-        "C": B[:, :-1] + B[:, 1:]
-    },
+    lambda A, **_: {"B": 2.0 * A},
+    lambda A, B, **_: {"C": B[:, :-1] + B[:, 1:]},
 )
 
 PROGRAMS = {
@@ -121,18 +108,8 @@ def make_inputs(n, seed=0):
 def output_arrays(program_name, n):
     """Zero-initialized output buffers matching each fixture's descriptor shapes."""
     shapes = {
-        "conflict2": {
-            "B": (n, n),
-            "C": (n, n)
-        },
-        "conflict3": {
-            "B": (n, n),
-            "C": (n, n),
-            "D": (n, n)
-        },
-        "agree2": {
-            "B": (n, n),
-            "C": (n, n - 1)
-        },
+        "conflict2": {"B": (n, n), "C": (n, n)},
+        "conflict3": {"B": (n, n), "C": (n, n), "D": (n, n)},
+        "agree2": {"B": (n, n), "C": (n, n - 1)},
     }
     return {name: numpy.zeros(shape) for name, shape in shapes[program_name].items()}

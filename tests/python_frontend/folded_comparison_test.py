@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A comparison the loop bounds decide folds to a sympy boolean; the boolean operators must still accept it."""
+
 import numpy as np
 
 import dace
 
-N = dace.symbol('N', dtype=dace.int64, positive=True)
+N = dace.symbol("N", dtype=dace.int64, positive=True)
 
 
 @dace.program
@@ -21,5 +22,5 @@ def test_a_comparison_the_bounds_decide_inside_and():
     assert np.array_equal(t, np.triu(np.ones((5, 5), dtype=np.int32), 1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_comparison_the_bounds_decide_inside_and()

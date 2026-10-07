@@ -78,6 +78,7 @@ miscompiles this staged shape into an invalid (rank-mismatched) SDFG. Because th
 pipeline runs on a disposable copy, an over-eager step can only cost a missed lift,
 never corrupt the real SDFG.
 """
+
 import ast
 import copy
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, Union
@@ -103,6 +104,7 @@ from dace.sdfg.narrowing import as_basic, as_expr
 
 class EinsumSpec(NamedTuple):
     """Everything needed to rebuild an ``Einsum`` node on the original arrays."""
+
     einsum_str: str
     alpha: object
     beta: object
@@ -112,6 +114,7 @@ class EinsumSpec(NamedTuple):
 
 class TransposeSpec(NamedTuple):
     """Everything needed to rebuild a ``Transpose`` node on the original arrays."""
+
     src: str
     dst: str
     dtype: object
@@ -121,7 +124,7 @@ class TransposeSpec(NamedTuple):
 
 def _is_single_element(desc: data.Data) -> bool:
     """A ``Scalar`` or a length-1 ``Array`` -- the frontend's per-read staging shape."""
-    return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == '1' for s in desc.shape))
+    return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == "1" for s in desc.shape))
 
 
 def _loop_data_census(loop: LoopRegion) -> Tuple[Dict[str, None], Dict[str, None], Dict[str, int]]:
@@ -195,6 +198,7 @@ def _region_in_loop(region: Optional[AbstractControlFlowRegion]) -> bool:
 
 class _NestShape(NamedTuple):
     """Cheap structural summary of a loop nest (one walk, no copying)."""
+
     n_dims: int  # upper bound on the iteration dimensions the probe can collapse into one map
     has_mul: bool  # some tasklet's code holds a '*'
     all_copy_tasklets: bool  # every tasklet is a pure ``__out = __inp``
@@ -218,7 +222,7 @@ def _nest_shape(loop: LoopRegion) -> _NestShape:
                     # The probe inlines the body, so its loops, maps and tasklets count as this nest's own.
                     regions.append(n.sdfg)
                 elif isinstance(n, nodes.Tasklet):
-                    has_mul = has_mul or '*' in n.code.as_string
+                    has_mul = has_mul or "*" in n.code.as_string
                     all_copy = all_copy and _is_copy_tasklet(n)
     return _NestShape(n_dims, has_mul, all_copy)
 
@@ -244,7 +248,7 @@ def _build_probe(loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live
     or non-transient in the original) become full-size non-transient descriptors;
     purely-internal staging scratch keeps its transient flag so simplification /
     the scalar splice can remove it."""
-    probe = SDFG('probe_' + loop.label)
+    probe = SDFG("probe_" + loop.label)
     # sorted(): this fixes the probe's ARRAY INSERTION ORDER, which the probe pipeline (SimplifyPass +
     # apply_transformations_repeated + LiftEinsum) walks when enumerating matches. The lift test is
     # all-or-nothing, so a different order flips lift <-> no-lift for a whole nest -- a nest either collapses
@@ -350,11 +354,18 @@ def _run_probe_pipeline(probe: SDFG) -> None:
 
 
 def _probe_compute_nodes(
-    probe: SDFG
-) -> Tuple[List[nodes.LibraryNode], List[nodes.Tasklet], List[nodes.MapEntry], List[nodes.LibraryNode],
-           List[nodes.NestedSDFG], List[LoopRegion]]:
+    probe: SDFG,
+) -> Tuple[
+    List[nodes.LibraryNode],
+    List[nodes.Tasklet],
+    List[nodes.MapEntry],
+    List[nodes.LibraryNode],
+    List[nodes.NestedSDFG],
+    List[LoopRegion],
+]:
     """(einsum_nodes, tasklets, map_entries, other_libnodes, nested) across the probe."""
     from dace.libraries.blas.nodes.einsum import Einsum
+
     einsums: List[nodes.LibraryNode] = []
     tasklets: List[nodes.Tasklet] = []
     maps: List[nodes.MapEntry] = []
@@ -390,7 +401,7 @@ def _extract_einsum(probe: SDFG, written: Dict[str, None]) -> Optional[EinsumSpe
     # (covariance's per-``(i,j)`` k-dot ``sum_k data[k,i]*data[k,j]``) slips through and is
     # lifted to a standalone scalar-output Einsum whose result never re-embeds into the
     # per-iteration ``cov[i,j]`` -- corrupting the kernel. Refuse it; LoopToReduce lifts it.
-    if node.einsum_str.rstrip().endswith('->'):
+    if node.einsum_str.rstrip().endswith("->"):
         return None
     host = next((st for st in probe.states() if node in st.nodes()), None)
     if host is None:
@@ -436,7 +447,7 @@ def _extract_transpose(probe: SDFG, written: Dict[str, None]) -> Optional[Transp
     if len(map_entry.map.params) != 2:
         return None
     for rng in map_entry.map.range:
-        if str(rng[0]) != '0' or str(rng[2]) != '1':
+        if str(rng[0]) != "0" or str(rng[2]) != "1":
             return None  # partial / strided range -- not a full transpose
 
     host = next((st for st in probe.states() if map_entry in st.nodes()), None)
@@ -487,11 +498,13 @@ def _extract_transpose(probe: SDFG, written: Dict[str, None]) -> Optional[Transp
 def sweeps_whole_array(order: List[str], ends: Dict[str, object], desc: data.Data) -> bool:
     """Whether ``order`` (one parameter per axis, each running ``0 .. ends[param]``) covers all of ``desc``."""
     return all(
-        symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape))
+        symbolic.simplify(pystr_to_symbolic(ends[p]) - (extent - 1)) == 0 for p, extent in zip(order, desc.shape)
+    )
 
 
-def _boundary_axis_order(edges: List[MultiConnectorEdge[Memlet]], probe: SDFG,
-                         transient_ok: bool) -> Optional[Tuple[str, List[str], subsets.Range]]:
+def _boundary_axis_order(
+    edges: List[MultiConnectorEdge[Memlet]], probe: SDFG, transient_ok: bool
+) -> Optional[Tuple[str, List[str], subsets.Range]]:
     """From a MapEntry's scope-side out-edges (or a MapExit's scope-side in-edges),
     the single non-transient boundary array touched, its per-axis index order, and
     a full-array subset. ``None`` unless exactly one such array is found."""
@@ -516,11 +529,12 @@ def _boundary_axis_order(edges: List[MultiConnectorEdge[Memlet]], probe: SDFG,
 
 #: Index letters, in the order ``LiftEinsum`` hands them out (kept identical so a
 #: directly-matched einsum string is spelled the way the post-LoopToMap lift spells it).
-EINSUM_CHARS = 'ijklmnopqrstuvwxyzabcdefgh'
+EINSUM_CHARS = "ijklmnopqrstuvwxyzabcdefgh"
 
 
 class _Axis(NamedTuple):
     """One iteration dimension of a nest: ``param`` runs ``0 .. end`` inclusive, step 1."""
+
     param: str
     end: object
 
@@ -530,6 +544,7 @@ class _Nest(NamedTuple):
 
     ``entry`` is the innermost ``MapEntry`` (``None`` when the whole nest is
     ``LoopRegion``s and the body is the state's top level)."""
+
     axes: List[_Axis]
     state: SDFGState
     entry: Optional[nodes.MapEntry]
@@ -537,14 +552,16 @@ class _Nest(NamedTuple):
 
 class _Leaf(NamedTuple):
     """An array read at a single point: ``array`` indexed by one expression per axis."""
+
     array: str
     idx: List[str]
 
 
 class _Product(NamedTuple):
     """A tasklet-level product: ``scale`` (a number) times every term."""
+
     scale: object
-    terms: List[Union[_Leaf, '_Product']]
+    terms: List[Union[_Leaf, "_Product"]]
 
 
 def _plain_edges(region: ControlFlowRegion) -> bool:
@@ -553,7 +570,7 @@ def _plain_edges(region: ControlFlowRegion) -> bool:
     for e in region.edges():
         if e.data.assignments:
             return False
-        if e.data.condition is not None and e.data.condition.as_string.strip() not in ('1', 'True'):
+        if e.data.condition is not None and e.data.condition.as_string.strip() not in ("1", "True"):
             return False
     return True
 
@@ -719,8 +736,9 @@ def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
         return False
 
 
-def _resolve(state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
-             visited: Dict[nodes.Node, None]) -> Optional[Union[_Leaf, _Product]]:
+def _resolve(
+    state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet], visited: Dict[nodes.Node, None]
+) -> Optional[Union[_Leaf, _Product]]:
     """The value flowing along ``edge``, chasing back through single-element transient
     staging scalars and product tasklets to the leaf array reads. ``visited`` collects
     every node consumed, so the caller can verify the body holds nothing else."""
@@ -750,8 +768,9 @@ def _resolve(state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
     return None
 
 
-def _resolve_tasklet(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: Dict[nodes.Node,
-                                                                                         None]) -> Optional[_Product]:
+def _resolve_tasklet(
+    state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: Dict[nodes.Node, None]
+) -> Optional[_Product]:
     """``tasklet`` as a product of its resolved inputs, or ``None``. Single-consumer
     only: a re-used intermediate is not a tree and would be counted twice."""
     if tasklet in visited or state.out_degree(tasklet) != 1:
@@ -786,6 +805,7 @@ def _flatten(term: Union[_Leaf, _Product]) -> Tuple[object, List[_Leaf]]:
 class _BodyValue(NamedTuple):
     """What the nest's innermost body computes: ``coeff * prod(leaves)`` accumulated
     (or assigned, when ``accumulates`` is False) into ``array`` at ``idx``."""
+
     array: str
     idx: List[str]
     coeff: object
@@ -810,7 +830,10 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
         write_node = tail if isinstance(tail, nodes.AccessNode) else None
     else:
         written = [
-            n for n in body if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0
+            n
+            for n in body
+            if isinstance(n, nodes.AccessNode)
+            and state.in_degree(n) > 0
             and not (sdfg.arrays[n.data].transient and _is_single_element(sdfg.arrays[n.data]))
         ]
         if len(written) != 1 or state.out_degree(written[0]) != 0 or state.in_degree(written[0]) != 1:
@@ -861,7 +884,7 @@ def _axis_subset(idx: List[str], axes: Dict[str, _Axis]) -> subsets.Range:
     """The whole-operand range a point access ``idx`` sweeps over the nest -- what
     memlet propagation out of the equivalent map produces, and what ``LiftEinsum``
     hands the ``Einsum`` node."""
-    return subsets.Range([(0, 0, 1) if i == '0' else (0, axes[i].end, 1) for i in idx])
+    return subsets.Range([(0, 0, 1) if i == "0" else (0, axes[i].end, 1) for i in idx])
 
 
 def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[EinsumSpec]:
@@ -880,19 +903,19 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
 
     tensors, coeffs = [], []
     for leaf in value.leaves:
-        if any(i != '0' and i not in axes for i in leaf.idx):
+        if any(i != "0" and i not in axes for i in leaf.idx):
             return None  # an index that is not an axis parameter
-        (tensors if any(i != '0' for i in leaf.idx) else coeffs).append(leaf)
+        (tensors if any(i != "0" for i in leaf.idx) else coeffs).append(leaf)
     # >=2 tensor operands: a single one is a copy / transpose / reduction, not a matmul.
     # At most one runtime scalar: the node wires exactly one ``_alpha`` connector.
     if len(tensors) < 2 or len(coeffs) > 1:
         return None
-    if any(i != '0' and i not in axes for i in value.idx):
+    if any(i != "0" and i not in axes for i in value.idx):
         return None
     if any(t.array == value.array for t in tensors):
         return None  # the output feeds its own contraction -- a real loop-carried dependence
-    out_chars = dict.fromkeys(i for i in value.idx if i != '0')
-    in_chars = dict.fromkeys(i for t in tensors for i in t.idx if i != '0')
+    out_chars = dict.fromkeys(i for i in value.idx if i != "0")
+    in_chars = dict.fromkeys(i for t in tensors for i in t.idx if i != "0")
     if not out_chars:
         return None  # scalar output: a dot / full reduction, LoopToReduce's domain
     if not all(c in in_chars for c in out_chars):
@@ -913,9 +936,9 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
     mapping: Dict[str, str] = {}
 
     def term(idx: List[str]) -> str:
-        out = ''
+        out = ""
         for i in idx:
-            if i == '0':
+            if i == "0":
                 continue
             if i not in mapping:
                 mapping[i] = EINSUM_CHARS[len(mapping)]
@@ -926,11 +949,11 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
     einsum_str = f"{','.join(terms)}->{term(value.idx)}"
     # Connector names are chosen so SORTED order is operand order: the ``Einsum``
     # expansion feeds ``*sorted(inputs)`` to the contraction, so the two must agree.
-    inputs = [(f'_ein{i:02d}', t.array, _axis_subset(t.idx, axes), None) for i, t in enumerate(tensors)]
+    inputs = [(f"_ein{i:02d}", t.array, _axis_subset(t.idx, axes), None) for i, t in enumerate(tensors)]
     if coeffs:
-        inputs.append(('_alpha', coeffs[0].array, _axis_subset(coeffs[0].idx, axes), None))
+        inputs.append(("_alpha", coeffs[0].array, _axis_subset(coeffs[0].idx, axes), None))
     beta = _fold_coefficient(sdfg, value.array, value.write_node)
-    return EinsumSpec(einsum_str, value.coeff, beta, inputs, ('_out', value.array, _axis_subset(value.idx, axes), None))
+    return EinsumSpec(einsum_str, value.coeff, beta, inputs, ("_out", value.array, _axis_subset(value.idx, axes), None))
 
 
 def _fold_coefficient(sdfg: SDFG, array: str, write_node: Optional[nodes.AccessNode]) -> float:
@@ -952,9 +975,13 @@ def _fold_coefficient(sdfg: SDFG, array: str, write_node: Optional[nodes.AccessN
     # Scoped to THIS sdfg so a same-named array in an unrelated nested SDFG cannot
     # false-positive a prior writer.
     # Only a non-empty in-edge is a write: an ordering memlet transfers nothing.
-    has_prior_writer = any(n.data == array and n is not write_node and any(e.data is not None and not e.data.is_empty()
-                                                                           for e in st.in_edges(n))
-                           for st in sdfg.states() for n in st.data_nodes())
+    has_prior_writer = any(
+        n.data == array
+        and n is not write_node
+        and any(e.data is not None and not e.data.is_empty() for e in st.in_edges(n))
+        for st in sdfg.states()
+        for n in st.data_nodes()
+    )
     return 1.0 if (has_prior_writer or not sdfg.arrays[array].transient) else 0.0
 
 
@@ -986,8 +1013,9 @@ def _direct_transpose(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Tr
 def _scope_boundary_is_ordered(state: SDFGState, entry: nodes.MapEntry) -> bool:
     """Whether an empty memlet crosses the scope boundary -- deleting the scope would lose it."""
     exit_node = state.exit_node(entry)
-    return (any(e.data.is_empty() for e in state.in_edges(entry))
-            or any(e.data.is_empty() for e in state.out_edges(exit_node)))
+    return any(e.data.is_empty() for e in state.in_edges(entry)) or any(
+        e.data.is_empty() for e in state.out_edges(exit_node)
+    )
 
 
 def _may_hold_map_contraction(state: SDFGState) -> bool:
@@ -998,7 +1026,7 @@ def _may_hold_map_contraction(state: SDFGState) -> bool:
     for node in state.nodes():
         if isinstance(node, nodes.MapEntry):
             has_map = True
-        elif isinstance(node, nodes.Tasklet) and '*' in node.code.as_string:
+        elif isinstance(node, nodes.Tasklet) and "*" in node.code.as_string:
             has_mul = True
         if has_map and has_mul:
             return True
@@ -1101,8 +1129,9 @@ class LoopToEinsum(ppl.Pass):
             count += 1
         return count
 
-    def _match(self, loop: LoopRegion, root: SDFG,
-               root_counts: Dict[str, int]) -> Optional[Union[EinsumSpec, TransposeSpec]]:
+    def _match(
+        self, loop: LoopRegion, root: SDFG, root_counts: Dict[str, int]
+    ) -> Optional[Union[EinsumSpec, TransposeSpec]]:
         """Match ``loop`` directly; on a decline fall back to the probe (and count it)."""
         referenced, written, inside = _loop_data_census(loop)
         if not referenced:
@@ -1118,8 +1147,9 @@ class LoopToEinsum(ppl.Pass):
             LoopToEinsum.FALLBACK_LIFTS += 1
         return spec
 
-    def _probe(self, loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live: Dict[str, None],
-               written: Dict[str, None]) -> Optional[Union[EinsumSpec, TransposeSpec]]:
+    def _probe(
+        self, loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live: Dict[str, None], written: Dict[str, None]
+    ) -> Optional[Union[EinsumSpec, TransposeSpec]]:
         """Copy the loop, run the lift pipeline on the copy, and return an
         ``EinsumSpec`` / ``TransposeSpec`` if it cleanly collapsed, else ``None``.
         Any probe failure is swallowed -- the lift is strictly opt-in."""
@@ -1137,8 +1167,9 @@ class LoopToEinsum(ppl.Pass):
 
     def _replace_with_einsum(self, parent: ControlFlowRegion, loop: LoopRegion, spec: EinsumSpec) -> None:
         from dace.libraries.blas.nodes.einsum import Einsum
-        state = replace_loop_with_state(parent, loop, loop.label + '_einsum')
-        node = Einsum(loop.label + '_einsum')
+
+        state = replace_loop_with_state(parent, loop, loop.label + "_einsum")
+        node = Einsum(loop.label + "_einsum")
         node.einsum_str = spec.einsum_str
         node.alpha = spec.alpha
         node.beta = spec.beta
@@ -1148,15 +1179,17 @@ class LoopToEinsum(ppl.Pass):
             state.add_edge(state.add_read(array), None, node, conn, Memlet(data=array, subset=copy.deepcopy(subset)))
         out_conn, out_array, out_subset, out_dtype = spec.output
         node.add_out_connector(out_conn, out_dtype)
-        state.add_edge(node, out_conn, state.add_write(out_array), None,
-                       Memlet(data=out_array, subset=copy.deepcopy(out_subset)))
+        state.add_edge(
+            node, out_conn, state.add_write(out_array), None, Memlet(data=out_array, subset=copy.deepcopy(out_subset))
+        )
 
     def _replace_map_with_einsum(self, state: SDFGState, entry: nodes.MapEntry, spec: EinsumSpec) -> None:
         """Swap a map scope for an ``Einsum`` node in place, reusing the AccessNodes
         the scope already reads from / writes to (the rest of the state is untouched)."""
         from dace.libraries.blas.nodes.einsum import Einsum
+
         scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
-        node = Einsum(entry.map.label + '_einsum')
+        node = Einsum(entry.map.label + "_einsum")
         node.einsum_str = spec.einsum_str
         node.alpha = spec.alpha
         node.beta = spec.beta
@@ -1172,19 +1205,27 @@ class LoopToEinsum(ppl.Pass):
         node.add_out_connector(out_conn, out_dtype)
         exit_node = state.exit_node(entry)
         dst = next((e.dst for e in state.out_edges(exit_node) if isinstance(e.dst, nodes.AccessNode)), None)
-        state.add_edge(node, out_conn, dst if dst is not None else state.add_write(out_array), None,
-                       Memlet(data=out_array, subset=copy.deepcopy(out_subset)))
+        state.add_edge(
+            node,
+            out_conn,
+            dst if dst is not None else state.add_write(out_array),
+            None,
+            Memlet(data=out_array, subset=copy.deepcopy(out_subset)),
+        )
         state.remove_nodes_from(scope.nodes())
 
     def _replace_with_transpose(self, parent: ControlFlowRegion, loop: LoopRegion, spec: TransposeSpec) -> None:
         from dace.libraries.linalg.nodes.transpose import Transpose
-        state = replace_loop_with_state(parent, loop, loop.label + '_transpose')
-        node = Transpose(loop.label + '_transpose', dtype=spec.dtype)
+
+        state = replace_loop_with_state(parent, loop, loop.label + "_transpose")
+        node = Transpose(loop.label + "_transpose", dtype=spec.dtype)
         state.add_node(node)
-        state.add_edge(state.add_read(spec.src), None, node, '_inp',
-                       Memlet(data=spec.src, subset=copy.deepcopy(spec.src_subset)))
-        state.add_edge(node, '_out', state.add_write(spec.dst), None,
-                       Memlet(data=spec.dst, subset=copy.deepcopy(spec.dst_subset)))
+        state.add_edge(
+            state.add_read(spec.src), None, node, "_inp", Memlet(data=spec.src, subset=copy.deepcopy(spec.src_subset))
+        )
+        state.add_edge(
+            node, "_out", state.add_write(spec.dst), None, Memlet(data=spec.dst, subset=copy.deepcopy(spec.dst_subset))
+        )
 
 
 __all__ = ["LoopToEinsum"]

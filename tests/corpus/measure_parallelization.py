@@ -28,6 +28,7 @@ Run::
     python -m tests.corpus.measure_parallelization tsvc --peel 8   # one corpus, peel study
     python -m tests.corpus.measure_parallelization --peel 0        # peeling disabled
 """
+
 import os
 
 # Pin a deterministic, single-threaded, no-MPI-init run before DaCe/OpenMP load,
@@ -46,6 +47,7 @@ import time
 from typing import Callable, Dict, List, Tuple
 
 import dace
+
 # Import canonicalize FIRST -- it is the clean entry that fully loads the
 # passes.vectorization + interstate packages in the right order. Importing
 # ``dace.transformation.interstate`` before canonicalize can trip a circular
@@ -86,12 +88,14 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 
 
 def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) -> Dict:
-    return dict(target='cpu',
-                peel_limit=peel_limit,
-                break_anti_dependence=True,
-                interchange_carry_with_map=True,
-                scatter_to_guarded_maps=True,
-                reconstruct_wavefront_nest=reconstruct_wavefront_nest)
+    return dict(
+        target="cpu",
+        peel_limit=peel_limit,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+        reconstruct_wavefront_nest=reconstruct_wavefront_nest,
+    )
 
 
 # #
@@ -99,7 +103,7 @@ def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) ->
 # #
 #: Column names of :func:`count`, in order -- the single source of truth for the
 #: report width, so a new counter needs no second literal kept in sync.
-COUNTERS = ('loops', 'inmap', 'maps', 'reduce', 'scan', 'libnode', 'states', 'guards')
+COUNTERS = ("loops", "inmap", "maps", "reduce", "scan", "libnode", "states", "guards")
 
 
 def in_parallel_scope(loop: LoopRegion) -> bool:
@@ -146,8 +150,7 @@ def count(sdfg) -> List[int]:
     # inside a nested SDFG vanished from the metric while its Maps still counted -- polybench
     # ``deriche`` reported 0 residual sequential loops when it actually has 4.
     all_loops = [
-        cfr for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions()
-        if isinstance(cfr, LoopRegion)
+        cfr for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions() if isinstance(cfr, LoopRegion)
     ]
     loops = len(all_loops)
     inmap = sum(1 for lp in all_loops if in_parallel_scope(lp))
@@ -159,8 +162,9 @@ def count(sdfg) -> List[int]:
     # failure -- when the work simply moved somewhere the other counters do not look. polybench
     # ``trisolv`` is the case: its inner product is a MatMul libnode. Reduce/Scan are
     # LibraryNodes too and already have their own columns, so they are excluded here.
-    libnodes = sum(1 for n, _ in sdfg.all_nodes_recursive()
-                   if isinstance(n, nd.LibraryNode) and not isinstance(n, (Reduce, Scan)))
+    libnodes = sum(
+        1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.LibraryNode) and not isinstance(n, (Reduce, Scan))
+    )
     all_states = [st for sd in sdfg.all_sdfgs_recursive() for st in sd.states()]
     guards = sum(1 for st in all_states if is_assumption_guard_block(st))
     return [loops, inmap, maps, reduces, scans, libnodes, len(all_states), guards]
@@ -238,13 +242,13 @@ def _tsvc_names() -> List[str]:
 def tsvc_reference(name):
     """``(arrays, call_kwargs, ref)`` for one tsvc kernel: the inputs, and what the numpy oracle
     makes of them. Shared with the non-vacuity test, which asserts ``ref != arrays``."""
-    ctx = _CS.make('tsvc', name, 'S')
-    return ctx['arrays'], ctx['params'], ctx['ref']
+    ctx = _CS.make("tsvc", name, "S")
+    return ctx["arrays"], ctx["params"], ctx["ref"]
 
 
 def _tsvc_case(name):
     k = _TS.collect(name=name)[0]
-    base = _TS.to_sdfg(k, tag='measurepar', simplify=True)
+    base = _TS.to_sdfg(k, tag="measurepar", simplify=True)
     arrays, ck, ref = tsvc_reference(name)
 
     def check(fin):
@@ -261,8 +265,8 @@ def _tsvc25_names() -> List[str]:
 
 def tsvc25_reference(program):
     """``(arrays, scalars, ref)`` for one tsvc_2_5 kernel. Shared with the non-vacuity test."""
-    ctx = _CS.make('tsvc25', program.name, 'S')
-    return ctx['arrays'], ctx['scalars'], ctx['ref']
+    ctx = _CS.make("tsvc25", program.name, "S")
+    return ctx["arrays"], ctx["scalars"], ctx["ref"]
 
 
 def _tsvc25_case(name):
@@ -291,7 +295,7 @@ def _tsvc25_case(name):
 def _hpcagent_framework():
     from hpcagent_bench.frameworks import DaceFramework
 
-    dfw = DaceFramework('dace_cpu')
+    dfw = DaceFramework("dace_cpu")
     dfw.set_datatype(None)  # fp64 / complex128, matching the corpus's numpy references
     return dfw
 
@@ -309,13 +313,13 @@ def _hpcagent_names() -> List[str]:
     covered: List[str] = []
     no_dace: List[str] = []
     names: List[str] = []
-    for key in KERNELS.select_keys('all'):
+    for key in KERNELS.select_keys("all"):
         spec = BenchSpec.load(key)
-        if spec.subtrack == 'polybench' or 'npbench' in spec.tags:
+        if spec.subtrack == "polybench" or "npbench" in spec.tags:
             covered.append(key)
             continue
         kdir = hpcagent_paths.BENCHMARKS / spec.relative_path
-        if not (kdir / f'{spec.module_name}_dace.py').exists():
+        if not (kdir / f"{spec.module_name}_dace.py").exists():
             no_dace.append(key)
             continue
         names.append(key)
@@ -323,7 +327,8 @@ def _hpcagent_names() -> List[str]:
         f"[hpcagent] {len(names)} kernels selected; skipped {len(covered)} "
         f"(np/poly duplicates already covered above), {len(no_dace)} (no DaCe impl): "
         f"{sorted(no_dace)}",
-        flush=True)
+        flush=True,
+    )
     return sorted(names)
 
 
@@ -336,22 +341,22 @@ def _hpcagent_case(name):
     base = program.to_sdfg(simplify=True)
 
     def check(fin):
-        bdata = bench.get_data(preset='S', datatype=None)
+        bdata = bench.get_data(preset="S", datatype=None)
         reference = dfw.reference_outputs(bench, bdata)
         if reference is None:  # no numpy reference available -- nothing to check against
             return True
-        variant = TimedCompiledSDFG(fin.compile(), fin, 'canon')
+        variant = TimedCompiledSDFG(fin.compile(), fin, "canon")
         return dfw.verify(variant, reference, bench, bdata)
 
     return base, check
 
 
 CORPORA: Dict[str, Tuple[Callable, Callable]] = {
-    'poly': (_poly_names, _poly_case),
-    'np': (_np_names, _np_case),
-    'tsvc': (_tsvc_names, _tsvc_case),
-    'tsvc25': (_tsvc25_names, _tsvc25_case),
-    'hpcagent': (_hpcagent_names, _hpcagent_case),
+    "poly": (_poly_names, _poly_case),
+    "np": (_np_names, _np_case),
+    "tsvc": (_tsvc_names, _tsvc_case),
+    "tsvc25": (_tsvc25_names, _tsvc25_case),
+    "hpcagent": (_hpcagent_names, _hpcagent_case),
 }
 
 #: Pipeline configurations under measurement. Each maps an SDFG in place.
@@ -366,12 +371,12 @@ CORPORA: Dict[str, Tuple[Callable, Callable]] = {
 #: The vectorizer runs at a fixed width with the scalar ISA so the measurement
 #: is machine-independent: what is being compared is how much of each corpus
 #: each recipe leaves parallel, not the throughput of a particular target.
-CONFIGS = ('canon', 'canon+vec', 'parallelize+vec', 'autoopt')
+CONFIGS = ("canon", "canon+vec", "parallelize+vec", "autoopt")
 
 
 def _vectorize(sdfg):
     """Apply the CPU multi-dim vectorizer in place."""
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -388,33 +393,35 @@ def apply_config(sdfg, config: str, params: Dict):
     # takes parallel wherever the choice is open -- would be scored against ``autoopt``, which has
     # already made the CPU's fork/join decisions, and the canon legs would read higher than what
     # they actually emit.
-    if config == 'canon':
+    if config == "canon":
         canonicalize(sdfg, validate=True, validate_all=False, **params)
-        cpu_specialize(sdfg, break_anti_dependence=params.get('break_anti_dependence', True))
-    elif config == 'canon+vec':
+        cpu_specialize(sdfg, break_anti_dependence=params.get("break_anti_dependence", True))
+    elif config == "canon+vec":
         canonicalize(sdfg, validate=True, validate_all=False, **params)
-        cpu_specialize(sdfg, break_anti_dependence=params.get('break_anti_dependence', True))
+        cpu_specialize(sdfg, break_anti_dependence=params.get("break_anti_dependence", True))
         _vectorize(sdfg)
-    elif config == 'parallelize+vec':
+    elif config == "parallelize+vec":
         parallelize(sdfg, validate=True, validate_all=False)
         _vectorize(sdfg)
-    elif config == 'autoopt':
+    elif config == "autoopt":
         # ``expand=False``: expanding library nodes to their fast vendor calls swaps the construct
         # being counted for an opaque call, which is not a parallelism difference. The comparison is
         # what each recipe leaves parallel in the SDFG, so both sides keep their library nodes.
         auto_optimize(sdfg, dace.DeviceType.CPU, validate=True, validate_all=False, expand=False)
     else:
-        raise ValueError(f'unknown config {config!r}')
+        raise ValueError(f"unknown config {config!r}")
     return sdfg
 
 
-def sweep(corpus: str,
-          peel_limit: int = 4,
-          check: bool = False,
-          verbose: bool = True,
-          config: str = 'canon',
-          shard: Tuple[int, int] = (0, 1),
-          limit: int = 0) -> Dict:
+def sweep(
+    corpus: str,
+    peel_limit: int = 4,
+    check: bool = False,
+    verbose: bool = True,
+    config: str = "canon",
+    shard: Tuple[int, int] = (0, 1),
+    limit: int = 0,
+) -> Dict:
     """Measure one corpus. :returns: a result dict with per-kernel rows.
 
     ``shard=(index, count)`` keeps only every ``count``-th kernel starting at ``index``,
@@ -436,18 +443,18 @@ def sweep(corpus: str,
         row = dict(base=None, l2m=None, canon=None, guarded=0, correct=None, error=None)
         try:
             base, checker = case_fn(name)
-            row['base'] = count(base)
+            row["base"] = count(base)
             l2m = copy.deepcopy(base)
             l2m.apply_transformations_repeated(LoopToMap, validate=False, validate_all=False)
-            row['l2m'] = count(l2m)
+            row["l2m"] = count(l2m)
             canon = copy.deepcopy(base)
             apply_config(canon, config, params)
-            row['canon'] = count(canon)
-            row['guarded'] = guarded_fallback_loops(canon)
+            row["canon"] = count(canon)
+            row["guarded"] = guarded_fallback_loops(canon)
             if check:
-                fin = finalize_for_target(copy.deepcopy(canon), 'cpu')
+                fin = finalize_for_target(copy.deepcopy(canon), "cpu")
                 fin.name = f"{fin.name}_mp_{i}"
-                row['correct'] = bool(checker(fin))
+                row["correct"] = bool(checker(fin))
         except Exception as e:  # a build/codegen raise is recorded, not fatal to the sweep
             # Some validation errors carry a stale node/state id whose own ``__str__`` re-raises
             # (e.g. ``NodeNotFoundError`` after the offending node was removed); stringifying the
@@ -455,42 +462,47 @@ def sweep(corpus: str,
             try:
                 detail = str(e)[:160]
             except Exception:
-                detail = '<message unavailable>'
-            row['error'] = f"{type(e).__name__}: {detail}"
+                detail = "<message unavailable>"
+            row["error"] = f"{type(e).__name__}: {detail}"
         rows[name] = row
         if verbose:
-            flag = 'OK ' if row['correct'] else ('.. ' if row['correct'] is None and not row['error'] else
-                                                 ('ERR' if row['error'] else 'BAD'))
+            flag = (
+                "OK "
+                if row["correct"]
+                else (".. " if row["correct"] is None and not row["error"] else ("ERR" if row["error"] else "BAD"))
+            )
             print(
                 f"[{corpus} {config} p{peel_limit} {i:3d}/{len(names)}] {flag} {name:28s} "
                 f"base={row['base']} l2m={row['l2m']} canon={row['canon']} g={row['guarded']} "
                 f"{row['error'] or ''}",
-                flush=True)
-    return dict(corpus=corpus,
-                config=config,
-                peel_limit=peel_limit,
-                seconds=round(time.perf_counter() - t0, 1),
-                rows=rows)
+                flush=True,
+            )
+    return dict(
+        corpus=corpus, config=config, peel_limit=peel_limit, seconds=round(time.perf_counter() - t0, 1), rows=rows
+    )
 
 
 #: Per-kernel CSV header: the three measured phases crossed with COUNTERS, plus the verdicts.
-CSV_FIELDS = (('config', 'corpus', 'kernel') + tuple(f'{phase}_{c}' for phase in ('base', 'l2m', 'canon')
-                                                     for c in COUNTERS) + ('guarded', 'correct', 'error'))
+CSV_FIELDS = (
+    ("config", "corpus", "kernel")
+    + tuple(f"{phase}_{c}" for phase in ("base", "l2m", "canon") for c in COUNTERS)
+    + ("guarded", "correct", "error")
+)
 
 
 def write_csv(res: Dict, path: str) -> None:
     """Append ``res``'s per-kernel rows to ``path`` (writing the header if new)."""
     fresh = not os.path.exists(path) or os.path.getsize(path) == 0
-    with open(path, 'a', newline='') as fh:
+    with open(path, "a", newline="") as fh:
         writer = csv.DictWriter(fh, CSV_FIELDS)
         if fresh:
             writer.writeheader()
-        for name, row in res['rows'].items():
-            flat = dict(config=res['config'], corpus=res['corpus'], kernel=name)
-            for phase in ('base', 'l2m', 'canon'):
-                counts = row.get(phase) or [''] * len(COUNTERS)
-                flat.update({f'{phase}_{c}': v for c, v in zip(COUNTERS, counts)})
-            flat.update(guarded=row['guarded'], correct=row['correct'], error=row['error'] or '')
+        for name, row in res["rows"].items():
+            flat = dict(config=res["config"], corpus=res["corpus"], kernel=name)
+            for phase in ("base", "l2m", "canon"):
+                counts = row.get(phase) or [""] * len(COUNTERS)
+                flat.update({f"{phase}_{c}": v for c, v in zip(COUNTERS, counts)})
+            flat.update(guarded=row["guarded"], correct=row["correct"], error=row["error"] or "")
             writer.writerow(flat)
 
 
@@ -503,30 +515,33 @@ def summarize_csv(paths: List[str]) -> int:
     """
     rows: List[Dict[str, str]] = []
     for path in paths:
-        with open(path, newline='') as fh:
+        with open(path, newline="") as fh:
             rows.extend(csv.DictReader(fh))
 
     groups: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
     for row in rows:
-        groups.setdefault((row['config'], row['corpus']), []).append(row)
+        groups.setdefault((row["config"], row["corpus"]), []).append(row)
 
     def is_wrong(row: Dict[str, str]) -> bool:
         # Only ``--check`` runs fill this in; an unchecked run leaves it empty, which is
         # "not measured", not "correct".
-        return row['correct'] == 'False'
+        return row["correct"] == "False"
 
-    print(f"\n{'config':16s} {'corpus':10s} {'n':>4s}  " + '  '.join(f'{c:>7s}' for c in COUNTERS) + '   err  wrong')
+    print(f"\n{'config':16s} {'corpus':10s} {'n':>4s}  " + "  ".join(f"{c:>7s}" for c in COUNTERS) + "   err  wrong")
     for (config, corpus), grp in sorted(groups.items()):
-        totals = [sum(int(r[f'canon_{c}']) for r in grp if r[f'canon_{c}']) for c in COUNTERS]
-        errs = sum(1 for r in grp if r['error'])
+        totals = [sum(int(r[f"canon_{c}"]) for r in grp if r[f"canon_{c}"]) for c in COUNTERS]
+        errs = sum(1 for r in grp if r["error"])
         wrong = sum(1 for r in grp if is_wrong(r))
-        print(f"{config:16s} {corpus:10s} {len(grp):4d}  " + '  '.join(f'{t:7d}'
-                                                                       for t in totals) + f"   {errs:3d}  {wrong:5d}")
+        print(
+            f"{config:16s} {corpus:10s} {len(grp):4d}  "
+            + "  ".join(f"{t:7d}" for t in totals)
+            + f"   {errs:3d}  {wrong:5d}"
+        )
 
-    errored = [r for r in rows if r['error']]
+    errored = [r for r in rows if r["error"]]
     if errored:
         print(f"\n=== {len(errored)} ERRORS ===")
-        for r in sorted(errored, key=lambda r: (r['corpus'], r['kernel'])):
+        for r in sorted(errored, key=lambda r: (r["corpus"], r["kernel"])):
             print(f"  {r['corpus']:10s} {r['kernel']:28s} {r['error']}")
 
     # A kernel that canonicalizes cleanly and answers wrong is the worse failure of the two:
@@ -534,7 +549,7 @@ def summarize_csv(paths: List[str]) -> int:
     wrong = [r for r in rows if is_wrong(r)]
     if wrong:
         print(f"\n=== {len(wrong)} MISCOMPILES (canonicalize is value-preserving; these are bugs) ===")
-        for r in sorted(wrong, key=lambda r: (r['corpus'], r['kernel'])):
+        for r in sorted(wrong, key=lambda r: (r["corpus"], r["kernel"])):
             print(f"  {r['corpus']:10s} {r['kernel']}")
     return len(errored) + len(wrong)
 
@@ -553,15 +568,17 @@ def _agg(rows, key) -> List[int]:
 
 
 def summarize(res: Dict) -> None:
-    rows = res['rows']
-    ok = [n for n, r in rows.items() if r['correct'] is True]
-    bad = [n for n, r in rows.items() if r['correct'] is False and not r['error']]
-    err = [n for n, r in rows.items() if r['error']]
-    b, l, c = _agg(rows, 'base'), _agg(rows, 'l2m'), _agg(rows, 'canon')
-    guarded = sum(r.get('guarded') or 0 for r in rows.values())
+    rows = res["rows"]
+    ok = [n for n, r in rows.items() if r["correct"] is True]
+    bad = [n for n, r in rows.items() if r["correct"] is False and not r["error"]]
+    err = [n for n, r in rows.items() if r["error"]]
+    b, l, c = _agg(rows, "base"), _agg(rows, "l2m"), _agg(rows, "canon")
+    guarded = sum(r.get("guarded") or 0 for r in rows.values())
     eff = c[0] - c[1] - guarded
-    print(f"\n===== {res['corpus']} [{res.get('config', 'canon')}] peel_limit={res['peel_limit']} "
-          f"({len(rows)} kernels, {res['seconds']}s) =====")
+    print(
+        f"\n===== {res['corpus']} [{res.get('config', 'canon')}] peel_limit={res['peel_limit']} "
+        f"({len(rows)} kernels, {res['seconds']}s) ====="
+    )
     if ok or bad or err:
         # Errored kernels count against the denominator: a kernel that failed to build was NOT
         # shown to be correct, and "CORRECT: 10/10, ERROR: 20" reads as full coverage.
@@ -570,62 +587,64 @@ def summarize(res: Dict) -> None:
             print(f"    WRONG: {', '.join(sorted(bad))}")
         for n in sorted(err):
             print(f"    ERROR {n}: {rows[n]['error']}")
-    header = ''.join(f'{name:>8s}' for name in COUNTERS)
+    header = "".join(f"{name:>8s}" for name in COUNTERS)
     print(f"  {'strategy':14s}{header}")
-    for label, totals in (('baseline', b), ('LoopToMap', l), (res.get('config', 'canon'), c)):
-        print(f"  {label:14s}" + ''.join(f'{v:8d}' for v in totals))
+    for label, totals in (("baseline", b), ("LoopToMap", l), (res.get("config", "canon"), c)):
+        print(f"  {label:14s}" + "".join(f"{v:8d}" for v in totals))
     # Same accounting on every row, or the comparison is rigged: a loop inside a parallel map is
     # parallel work whichever strategy produced it.
-    print(f"  residual sequential loops (loops - inmap): baseline={b[0] - b[1]}  "
-          f"L2M={l[0] - l[1]}  canon={c[0] - c[1]}")
+    print(
+        f"  residual sequential loops (loops - inmap): baseline={b[0] - b[1]}  L2M={l[0] - l[1]}  canon={c[0] - c[1]}"
+    )
     print(f"  guarded (if cond: map else: seq) fallbacks counted as parallel: {guarded}")
     print(f"  loops INSIDE a parallel map (tile / wavefront bodies) counted as parallel: {c[1]}")
-    print(f"  EFFECTIVE residual sequential (canon - inmap - guarded): {eff}  "
-          f"(parallelized {b[0] - b[1] - eff}/{b[0] - b[1]} = "
-          f"{100 * (b[0] - b[1] - eff) / max(1, b[0] - b[1]):.1f}%)")
+    print(
+        f"  EFFECTIVE residual sequential (canon - inmap - guarded): {eff}  "
+        f"(parallelized {b[0] - b[1] - eff}/{b[0] - b[1]} = "
+        f"{100 * (b[0] - b[1] - eff) / max(1, b[0] - b[1]):.1f}%)"
+    )
 
     def _eff(r):
-        return (r['canon'][0] - r['canon'][1] - (r.get('guarded') or 0)) if r['canon'] else None
+        return (r["canon"][0] - r["canon"][1] - (r.get("guarded") or 0)) if r["canon"] else None
 
-    worse = [n for n, r in rows.items() if r['l2m'] and r['canon'] and _eff(r) > r['l2m'][0] - r['l2m'][1]]
+    worse = [n for n, r in rows.items() if r["l2m"] and r["canon"] and _eff(r) > r["l2m"][0] - r["l2m"][1]]
     if worse:
         print(f"  * canon MORE sequential than L2M: {', '.join(sorted(worse))}")
-    seqleft = sorted(n for n, r in rows.items() if r['canon'] and _eff(r) > 0)
+    seqleft = sorted(n for n, r in rows.items() if r["canon"] and _eff(r) > 0)
     if seqleft:
         print(f"  loops still sequential after canon ({len(seqleft)}): {', '.join(seqleft)}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('corpus', nargs='?', choices=list(CORPORA) + ['all'], default='all')
-    ap.add_argument('--peel', type=int, default=4, help='peel_limit (default 4; 0 disables peeling)')
-    ap.add_argument('--check', action='store_true', help='also compile+run and assert value-preserving')
-    ap.add_argument('--config',
-                    default='canon',
-                    choices=list(CONFIGS) + ['all'],
-                    help='pipeline configuration to measure (default canon)')
-    ap.add_argument('--shard', default='0/1', help='"i/n": measure only every n-th kernel starting at i')
-    ap.add_argument('--limit', type=int, default=0, help='only the first N kernels of the corpus (smoke runs)')
-    ap.add_argument('--csv', default=None, help='append per-kernel rows to this CSV')
-    ap.add_argument('--summarize', nargs='+', default=None, help='report on existing CSVs instead of measuring')
+    ap.add_argument("corpus", nargs="?", choices=list(CORPORA) + ["all"], default="all")
+    ap.add_argument("--peel", type=int, default=4, help="peel_limit (default 4; 0 disables peeling)")
+    ap.add_argument("--check", action="store_true", help="also compile+run and assert value-preserving")
+    ap.add_argument(
+        "--config",
+        default="canon",
+        choices=list(CONFIGS) + ["all"],
+        help="pipeline configuration to measure (default canon)",
+    )
+    ap.add_argument("--shard", default="0/1", help='"i/n": measure only every n-th kernel starting at i')
+    ap.add_argument("--limit", type=int, default=0, help="only the first N kernels of the corpus (smoke runs)")
+    ap.add_argument("--csv", default=None, help="append per-kernel rows to this CSV")
+    ap.add_argument("--summarize", nargs="+", default=None, help="report on existing CSVs instead of measuring")
     args = ap.parse_args()
     if args.summarize:
         raise SystemExit(1 if summarize_csv(args.summarize) else 0)
-    index, total = (int(p) for p in args.shard.split('/'))
-    targets = list(CORPORA) if args.corpus == 'all' else [args.corpus]
-    configs = list(CONFIGS) if args.config == 'all' else [args.config]
+    index, total = (int(p) for p in args.shard.split("/"))
+    targets = list(CORPORA) if args.corpus == "all" else [args.corpus]
+    configs = list(CONFIGS) if args.config == "all" else [args.config]
     for config in configs:
         for corpus in targets:
-            res = sweep(corpus,
-                        peel_limit=args.peel,
-                        check=args.check,
-                        config=config,
-                        shard=(index, total),
-                        limit=args.limit)
+            res = sweep(
+                corpus, peel_limit=args.peel, check=args.check, config=config, shard=(index, total), limit=args.limit
+            )
             if args.csv:
                 write_csv(res, args.csv)
             summarize(res)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

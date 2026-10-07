@@ -5,6 +5,7 @@ The pass consolidates a map body that mixes control flow with siblings into a
 single NestedSDFG (sequencing the siblings), so downstream ``ConditionFusion``
 can fold same-condition guards that MapFusion left in separate nested SDFGs.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -30,8 +31,8 @@ from dace.transformation.passes.canonicalize.normalize_map_body import Normalize
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -59,7 +60,8 @@ def _body_nsdfg_count(sdfg: dace.SDFG) -> int:
         for n in st.nodes():
             if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None:
                 counts.append(
-                    sum(1 for x in st.all_nodes_between(n, st.exit_node(n)) if isinstance(x, nodes.NestedSDFG)))
+                    sum(1 for x in st.all_nodes_between(n, st.exit_node(n)) if isinstance(x, nodes.NestedSDFG))
+                )
     return max(counts)
 
 
@@ -114,22 +116,22 @@ def _sibling_nsdfg(label: str, with_tmp_conn: bool, with_tmp_array: bool):
     writing tasklet's out-connector is named ``tmp`` (``with_tmp_conn``) or an inner
     transient scalar is named ``tmp`` (``with_tmp_array``)."""
     nsdfg = dace.SDFG(label)
-    nsdfg.add_scalar('x', dace.float64)
-    nsdfg.add_scalar('o', dace.float64)
-    st = nsdfg.add_state('st_' + label)
-    conn = 'tmp' if with_tmp_conn else 'r'
-    rd = st.add_access('x')
+    nsdfg.add_scalar("x", dace.float64)
+    nsdfg.add_scalar("o", dace.float64)
+    st = nsdfg.add_state("st_" + label)
+    conn = "tmp" if with_tmp_conn else "r"
+    rd = st.add_access("x")
     if with_tmp_array:
-        nsdfg.add_scalar('tmp', dace.float64, transient=True)
-        t = st.add_tasklet(label + '_t', {'a'}, {conn}, f'{conn} = a + 1.0')
-        mid = st.add_access('tmp')
-        st.add_edge(rd, None, t, 'a', dace.Memlet('x[0]'))
-        st.add_edge(t, conn, mid, None, dace.Memlet('tmp[0]'))
-        st.add_edge(mid, None, st.add_access('o'), None, dace.Memlet('o[0]'))
+        nsdfg.add_scalar("tmp", dace.float64, transient=True)
+        t = st.add_tasklet(label + "_t", {"a"}, {conn}, f"{conn} = a + 1.0")
+        mid = st.add_access("tmp")
+        st.add_edge(rd, None, t, "a", dace.Memlet("x[0]"))
+        st.add_edge(t, conn, mid, None, dace.Memlet("tmp[0]"))
+        st.add_edge(mid, None, st.add_access("o"), None, dace.Memlet("o[0]"))
     else:
-        t = st.add_tasklet(label + '_t', {'a'}, {conn}, f'{conn} = a + 2.0')
-        st.add_edge(rd, None, t, 'a', dace.Memlet('x[0]'))
-        st.add_edge(t, conn, st.add_access('o'), None, dace.Memlet('o[0]'))
+        t = st.add_tasklet(label + "_t", {"a"}, {conn}, f"{conn} = a + 2.0")
+        st.add_edge(rd, None, t, "a", dace.Memlet("x[0]"))
+        st.add_edge(t, conn, st.add_access("o"), None, dace.Memlet("o[0]"))
     return nsdfg
 
 
@@ -138,28 +140,28 @@ def test_merge_siblings_data_vs_connector_name_collision():
     names, not only its array names: base sibling writes through a connector ``tmp``,
     tail sibling owns an array ``tmp`` -- merging the array in unchecked collides with the
     connector (``'tmp' already used as ... array name``). The tail array must be renamed."""
-    sdfg = dace.SDFG('merge_conn_collision')
-    for arr in ('X', 'A', 'B'):
+    sdfg = dace.SDFG("merge_conn_collision")
+    for arr in ("X", "A", "B"):
         sdfg.add_array(arr, [N], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', {'i': '0:N'})
+    me, mx = state.add_map("m", {"i": "0:N"})
     # sibling A: tasklet out-connector named 'tmp'; sibling B: inner array named 'tmp'.
-    sibA = _sibling_nsdfg('sibA', with_tmp_conn=True, with_tmp_array=False)
-    sibB = _sibling_nsdfg('sibB', with_tmp_conn=False, with_tmp_array=True)
-    nA = state.add_nested_sdfg(sibA, {'x'}, {'o'})
-    nB = state.add_nested_sdfg(sibB, {'x'}, {'o'})
-    rd = state.add_read('X')
-    state.add_memlet_path(rd, me, nA, dst_conn='x', memlet=dace.Memlet('X[i]'))
-    state.add_memlet_path(rd, me, nB, dst_conn='x', memlet=dace.Memlet('X[i]'))
-    state.add_memlet_path(nA, mx, state.add_write('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
-    state.add_memlet_path(nB, mx, state.add_write('B'), src_conn='o', memlet=dace.Memlet('B[i]'))
+    sibA = _sibling_nsdfg("sibA", with_tmp_conn=True, with_tmp_array=False)
+    sibB = _sibling_nsdfg("sibB", with_tmp_conn=False, with_tmp_array=True)
+    nA = state.add_nested_sdfg(sibA, {"x"}, {"o"})
+    nB = state.add_nested_sdfg(sibB, {"x"}, {"o"})
+    rd = state.add_read("X")
+    state.add_memlet_path(rd, me, nA, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_memlet_path(rd, me, nB, dst_conn="x", memlet=dace.Memlet("X[i]"))
+    state.add_memlet_path(nA, mx, state.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(nB, mx, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[i]"))
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
-    assert NormalizeMapBody().apply_pass(sdfg, {}) is not None, 'the two siblings should merge'
+    assert NormalizeMapBody().apply_pass(sdfg, {}) is not None, "the two siblings should merge"
     sdfg.validate()  # would raise the connector/array-name collision without the fix
     merged = [n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG)]
-    assert len(merged) == 1, 'siblings merged into one nested SDFG'
+    assert len(merged) == 1, "siblings merged into one nested SDFG"
 
     n = 8
     rng = np.random.default_rng(0)
@@ -236,11 +238,11 @@ def _scalar_body(name: str, in_conn: str, out_conn: str, code: str) -> dace.SDFG
     inner = dace.SDFG(name)
     inner.add_array(in_conn, [1], dace.float64)
     inner.add_array(out_conn, [1], dace.float64)
-    st = inner.add_state('body', is_start_block=True)
+    st = inner.add_state("body", is_start_block=True)
     # The input connector is not named ``i``: under the nested SDFG contract the body also sees the map parameter.
-    t = st.add_tasklet('t', {'v'}, {'o'}, code)
-    st.add_edge(st.add_read(in_conn), None, t, 'v', dace.Memlet(f'{in_conn}[0]'))
-    st.add_edge(t, 'o', st.add_write(out_conn), None, dace.Memlet(f'{out_conn}[0]'))
+    t = st.add_tasklet("t", {"v"}, {"o"}, code)
+    st.add_edge(st.add_read(in_conn), None, t, "v", dace.Memlet(f"{in_conn}[0]"))
+    st.add_edge(t, "o", st.add_write(out_conn), None, dace.Memlet(f"{out_conn}[0]"))
     return inner
 
 
@@ -251,21 +253,21 @@ def _producer_consumer_siblings() -> dace.SDFG:
     Merging them makes the carrier both a predecessor and a successor of the single surviving
     node, which no state can express.
     """
-    sdfg = dace.SDFG('sibling_carrier')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('c', [N], dace.float64)
-    sdfg.add_scalar('carrier', dace.float64, transient=True)
+    sdfg = dace.SDFG("sibling_carrier")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("c", [N], dace.float64)
+    sdfg.add_scalar("carrier", dace.float64, transient=True)
 
-    state = sdfg.add_state('main', is_start_block=True)
-    me, mx = state.add_map('m', dict(i='0:N'))
-    producer = state.add_nested_sdfg(_scalar_body('produce', 'x', 'y', 'o = v + 1.0'), {'x'}, {'y'})
-    consumer = state.add_nested_sdfg(_scalar_body('consume', 'y', 'z', 'o = v * 2.0'), {'y'}, {'z'})
-    carrier = state.add_access('carrier')
+    state = sdfg.add_state("main", is_start_block=True)
+    me, mx = state.add_map("m", dict(i="0:N"))
+    producer = state.add_nested_sdfg(_scalar_body("produce", "x", "y", "o = v + 1.0"), {"x"}, {"y"})
+    consumer = state.add_nested_sdfg(_scalar_body("consume", "y", "z", "o = v * 2.0"), {"y"}, {"z"})
+    carrier = state.add_access("carrier")
 
-    state.add_memlet_path(state.add_read('a'), me, producer, dst_conn='x', memlet=dace.Memlet('a[i]'))
-    state.add_edge(producer, 'y', carrier, None, dace.Memlet('carrier[0]'))
-    state.add_edge(carrier, None, consumer, 'y', dace.Memlet('carrier[0]'))
-    state.add_memlet_path(consumer, mx, state.add_write('c'), src_conn='z', memlet=dace.Memlet('c[i]'))
+    state.add_memlet_path(state.add_read("a"), me, producer, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_edge(producer, "y", carrier, None, dace.Memlet("carrier[0]"))
+    state.add_edge(carrier, None, consumer, "y", dace.Memlet("carrier[0]"))
+    state.add_memlet_path(consumer, mx, state.add_write("c"), src_conn="z", memlet=dace.Memlet("c[i]"))
     return sdfg
 
 
@@ -281,74 +283,76 @@ def test_data_dependent_siblings_merge_without_a_cycle():
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
-    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings must merge'
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, "the two siblings must merge"
     sdfg.validate()
     state = sdfg.states()[0]
     nested = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)]
-    assert len(nested) == 1, f'the map body must be a single nested SDFG, got {len(nested)}'
+    assert len(nested) == 1, f"the map body must be a single nested SDFG, got {len(nested)}"
     merged = nested[0]
     assert not (set(state.predecessors(merged)) & set(state.successors(merged))), (
-        'a node may not both produce and consume the same access node')
-    assert not [n for n in state.data_nodes() if n.data == 'carrier'
-                ], ('the carrier is produced and consumed inside the merged nested SDFG: its outer node is dead')
+        "a node may not both produce and consume the same access node"
+    )
+    assert not [n for n in state.data_nodes() if n.data == "carrier"], (
+        "the carrier is produced and consumed inside the merged nested SDFG: its outer node is dead"
+    )
     me = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)][0]
-    assert merged in state.all_nodes_between(
-        me,
-        state.exit_node(me)), ('a sink the map exit cannot reach makes the whole body invisible to all_nodes_between')
+    assert merged in state.all_nodes_between(me, state.exit_node(me)), (
+        "a sink the map exit cannot reach makes the whole body invisible to all_nodes_between"
+    )
 
     n = 16
     rng = np.random.default_rng(0)
     a = rng.random(n)
     c = np.zeros(n)
     sdfg(a=a, c=c, N=n)
-    assert np.allclose(c, (a + 1.0) * 2.0), f'got {c[:3]}'
+    assert np.allclose(c, (a + 1.0) * 2.0), f"got {c[:3]}"
 
 
 def _inner_read_write() -> dace.SDFG:
     """Sibling body ``b = a + 1``."""
-    inner = dace.SDFG('inner_rw_inner_read_write')
-    inner.add_array('a', [1], dace.float64)
-    inner.add_array('b', [1], dace.float64)
+    inner = dace.SDFG("inner_rw_inner_read_write")
+    inner.add_array("a", [1], dace.float64)
+    inner.add_array("b", [1], dace.float64)
     st = inner.add_state()
-    tasklet = st.add_tasklet('add', {'__i'}, {'__o'}, '__o = __i + 1.0')
-    st.add_edge(st.add_read('a'), None, tasklet, '__i', dace.Memlet('a[0]'))
-    st.add_edge(tasklet, '__o', st.add_write('b'), None, dace.Memlet('b[0]'))
+    tasklet = st.add_tasklet("add", {"__i"}, {"__o"}, "__o = __i + 1.0")
+    st.add_edge(st.add_read("a"), None, tasklet, "__i", dace.Memlet("a[0]"))
+    st.add_edge(tasklet, "__o", st.add_write("b"), None, dace.Memlet("b[0]"))
     return inner
 
 
 def _inner_const_write() -> dace.SDFG:
     """Sibling body ``c = 7``, no in-connectors."""
-    inner = dace.SDFG('inner_const')
-    inner.add_array('c', [1], dace.float64)
+    inner = dace.SDFG("inner_const")
+    inner.add_array("c", [1], dace.float64)
     st = inner.add_state()
-    tasklet = st.add_tasklet('const', {}, {'__o'}, '__o = 7.0')
-    st.add_edge(tasklet, '__o', st.add_write('c'), None, dace.Memlet('c[0]'))
+    tasklet = st.add_tasklet("const", {}, {"__o"}, "__o = 7.0")
+    st.add_edge(tasklet, "__o", st.add_write("c"), None, dace.Memlet("c[0]"))
     return inner
 
 
 def _sibling_nsdfgs_with_ordering_edge(n: int) -> dace.SDFG:
     """``map i: { nsdfg(b=a+1) ; nsdfg(c=7) }``; the reader-less sibling is held by an empty memlet."""
-    sdfg = dace.SDFG('ordering_edge_siblings')
-    for name in ('A', 'B', 'C'):
+    sdfg = dace.SDFG("ordering_edge_siblings")
+    for name in ("A", "B", "C"):
         sdfg.add_array(name, [n], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i=f'0:{n}'))
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    for conn in ('B', 'C'):
-        mx.add_in_connector(f'IN_{conn}')
-        mx.add_out_connector(f'OUT_{conn}')
+    me, mx = state.add_map("m", dict(i=f"0:{n}"))
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    for conn in ("B", "C"):
+        mx.add_in_connector(f"IN_{conn}")
+        mx.add_out_connector(f"OUT_{conn}")
 
-    first = state.add_nested_sdfg(_inner_read_write(), {'a'}, {'b'})
-    second = state.add_nested_sdfg(_inner_const_write(), {}, {'c'})
+    first = state.add_nested_sdfg(_inner_read_write(), {"a"}, {"b"})
+    second = state.add_nested_sdfg(_inner_const_write(), {}, {"c"})
 
-    state.add_edge(state.add_read('A'), None, me, 'IN_A', dace.Memlet(f'A[0:{n}]'))
-    state.add_edge(me, 'OUT_A', first, 'a', dace.Memlet('A[i]'))
-    state.add_edge(first, 'b', mx, 'IN_B', dace.Memlet('B[i]'))
-    state.add_edge(mx, 'OUT_B', state.add_write('B'), None, dace.Memlet(f'B[0:{n}]'))
+    state.add_edge(state.add_read("A"), None, me, "IN_A", dace.Memlet(f"A[0:{n}]"))
+    state.add_edge(me, "OUT_A", first, "a", dace.Memlet("A[i]"))
+    state.add_edge(first, "b", mx, "IN_B", dace.Memlet("B[i]"))
+    state.add_edge(mx, "OUT_B", state.add_write("B"), None, dace.Memlet(f"B[0:{n}]"))
     state.add_edge(me, None, second, None, dace.Memlet())
-    state.add_edge(second, 'c', mx, 'IN_C', dace.Memlet('C[i]'))
-    state.add_edge(mx, 'OUT_C', state.add_write('C'), None, dace.Memlet(f'C[0:{n}]'))
+    state.add_edge(second, "c", mx, "IN_C", dace.Memlet("C[i]"))
+    state.add_edge(mx, "OUT_C", state.add_write("C"), None, dace.Memlet(f"C[0:{n}]"))
     return sdfg
 
 
@@ -359,25 +363,26 @@ def test_ordering_memlet_into_sibling_keeps_no_connector():
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
 
-    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings must merge'
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, "the two siblings must merge"
 
     state = sdfg.states()[0]
     nested = [nd for nd in state.nodes() if isinstance(nd, nodes.NestedSDFG)]
-    assert len(nested) == 1, f'the map body must be a single nested SDFG, got {len(nested)}'
+    assert len(nested) == 1, f"the map body must be a single nested SDFG, got {len(nested)}"
     merged = nested[0]
-    assert None not in merged.in_connectors, f'ordering memlet became a connector: {merged.in_connectors}'
-    assert None not in merged.out_connectors, f'ordering memlet became a connector: {merged.out_connectors}'
+    assert None not in merged.in_connectors, f"ordering memlet became a connector: {merged.in_connectors}"
+    assert None not in merged.out_connectors, f"ordering memlet became a connector: {merged.out_connectors}"
     me = [nd for nd in state.nodes() if isinstance(nd, nodes.MapEntry)][0]
     assert any(e.data.is_empty() for e in state.edges_between(me, merged)), (
-        'the happens-before edge that held the reader-less sibling in the scope was dropped')
+        "the happens-before edge that held the reader-less sibling in the scope was dropped"
+    )
     sdfg.validate()
 
     a = np.arange(n, dtype=np.float64)
     b = np.zeros(n)
     c = np.zeros(n)
     sdfg(A=a, B=b, C=c)
-    assert np.allclose(b, a + 1.0), f'got {b}'
-    assert np.allclose(c, 7.0), f'got {c}'
+    assert np.allclose(b, a + 1.0), f"got {b}"
+    assert np.allclose(c, 7.0), f"got {c}"
 
 
 if __name__ == "__main__":
@@ -387,12 +392,12 @@ if __name__ == "__main__":
 def single_tasklet_body(name: str) -> dace.SDFG:
     """A trivial map body: ``o[0] = a[0] + 1``."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array('a', [1], dace.float64)
-    sdfg.add_array('o', [1], dace.float64)
+    sdfg.add_array("a", [1], dace.float64)
+    sdfg.add_array("o", [1], dace.float64)
     state = sdfg.add_state()
-    tasklet = state.add_tasklet('t', {'__in'}, {'__out'}, '__out = __in + 1.0')
-    state.add_edge(state.add_read('a'), None, tasklet, '__in', dace.Memlet('a[0]'))
-    state.add_edge(tasklet, '__out', state.add_write('o'), None, dace.Memlet('o[0]'))
+    tasklet = state.add_tasklet("t", {"__in"}, {"__out"}, "__out = __in + 1.0")
+    state.add_edge(state.add_read("a"), None, tasklet, "__in", dace.Memlet("a[0]"))
+    state.add_edge(tasklet, "__out", state.add_write("o"), None, dace.Memlet("o[0]"))
     return sdfg
 
 
@@ -402,22 +407,19 @@ def outer_map_over_two_inner_maps() -> tuple:
     The nested SDFGs are two scopes down from the outer entry, so they are reachable between it and
     its exit while belonging to neither its body nor each other's.
     """
-    sdfg = dace.SDFG('outer_map_over_two_inner_maps')
-    for name in ('A', 'B', 'C'):
+    sdfg = dace.SDFG("outer_map_over_two_inner_maps")
+    for name in ("A", "B", "C"):
         sdfg.add_array(name, [N], dace.float64)
     state = sdfg.add_state()
-    read = state.add_read('A')
-    outer_entry, outer_exit = state.add_map('outer', {'i': '0:N'})
-    for name in ('B', 'C'):
-        inner_entry, inner_exit = state.add_map('inner_' + name, {'j': '0:N'})
-        nested = state.add_nested_sdfg(single_tasklet_body('leaf_' + name), {'a'}, {'o'})
-        state.add_memlet_path(read, outer_entry, inner_entry, nested, dst_conn='a', memlet=dace.Memlet('A[j]'))
-        state.add_memlet_path(nested,
-                              inner_exit,
-                              outer_exit,
-                              state.add_write(name),
-                              src_conn='o',
-                              memlet=dace.Memlet(name + '[j]'))
+    read = state.add_read("A")
+    outer_entry, outer_exit = state.add_map("outer", {"i": "0:N"})
+    for name in ("B", "C"):
+        inner_entry, inner_exit = state.add_map("inner_" + name, {"j": "0:N"})
+        nested = state.add_nested_sdfg(single_tasklet_body("leaf_" + name), {"a"}, {"o"})
+        state.add_memlet_path(read, outer_entry, inner_entry, nested, dst_conn="a", memlet=dace.Memlet("A[j]"))
+        state.add_memlet_path(
+            nested, inner_exit, outer_exit, state.add_write(name), src_conn="o", memlet=dace.Memlet(name + "[j]")
+        )
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg, state
@@ -437,8 +439,9 @@ def test_a_map_body_collects_only_its_own_scopes_nested_sdfgs():
     state._clear_scopedict_cache()
     scope = state.scope_dict()
     unpaired = [(n, scope[n]) for n in state.nodes() if isinstance(n, nodes.MapExit) and scope[n].map is not n.map]
-    assert not unpaired, ('a map exit was left inside a foreign map scope: ' +
-                          ', '.join(f'{exit_node} in scope {parent}' for exit_node, parent in unpaired))
+    assert not unpaired, "a map exit was left inside a foreign map scope: " + ", ".join(
+        f"{exit_node} in scope {parent}" for exit_node, parent in unpaired
+    )
     sdfg.validate()
 
 
@@ -449,45 +452,48 @@ def test_a_sibling_inner_map_keeps_the_nested_sdfg_that_forms_its_body():
 
     state._clear_scopedict_cache()
     scope = state.scope_dict()
-    for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label.startswith('inner_')]:
+    for entry in [n for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.map.label.startswith("inner_")]:
         owned = [n for n in state.nodes() if isinstance(n, nodes.NestedSDFG) and scope[n] is entry]
-        assert len(owned) == 1, f'{entry.map.label} owns {len(owned)} nested SDFGs, expected 1'
+        assert len(owned) == 1, f"{entry.map.label} owns {len(owned)} nested SDFGs, expected 1"
 
 
 def guarded_scalar_body(name: str, taken_condition: str) -> dace.SDFG:
     """A nested SDFG whose whole control-flow graph is one ``ConditionalBlock``:
     ``if <taken_condition>: o = x + 1 else: o = x - 1``, the shape a guarded map body reaches the pass in."""
     inner = dace.SDFG(name)
-    inner.add_array('x', [1], dace.float64)
-    inner.add_array('o', [1], dace.float64)
-    cond = ConditionalBlock('cond', inner)
+    inner.add_array("x", [1], dace.float64)
+    inner.add_array("o", [1], dace.float64)
+    cond = ConditionalBlock("cond", inner)
     inner.add_node(cond, is_start_block=True)
-    for label, condition, code in (('taken', CodeBlock(taken_condition), 'r = v + 1.0'), ('otherwise', None,
-                                                                                          'r = v - 1.0')):
+    for label, condition, code in (
+        ("taken", CodeBlock(taken_condition), "r = v + 1.0"),
+        ("otherwise", None, "r = v - 1.0"),
+    ):
         branch = ControlFlowRegion(label, inner)
-        st = branch.add_state(f'{label}_body', is_start_block=True)
-        t = st.add_tasklet(label, {'v'}, {'r'}, code)
-        st.add_edge(st.add_read('x'), None, t, 'v', dace.Memlet('x[0]'))
-        st.add_edge(t, 'r', st.add_write('o'), None, dace.Memlet('o[0]'))
+        st = branch.add_state(f"{label}_body", is_start_block=True)
+        t = st.add_tasklet(label, {"v"}, {"r"}, code)
+        st.add_edge(st.add_read("x"), None, t, "v", dace.Memlet("x[0]"))
+        st.add_edge(t, "r", st.add_write("o"), None, dace.Memlet("o[0]"))
         cond.add_branch(condition, branch)
     return inner
 
 
 def guarded_siblings_sdfg(maps: int, siblings: int) -> dace.SDFG:
     """``maps`` maps in one state; each body holds ``siblings`` guarded nested SDFGs writing A<k>/B<k>."""
-    sdfg = dace.SDFG(f'guarded_siblings_{maps}_{siblings}')
-    sdfg.add_array('X', [N], dace.float64)
+    sdfg = dace.SDFG(f"guarded_siblings_{maps}_{siblings}")
+    sdfg.add_array("X", [N], dace.float64)
     state = sdfg.add_state()
-    rd = state.add_read('X')
+    rd = state.add_read("X")
     for k in range(maps):
-        me, mx = state.add_map(f'm{k}', {'i': '0:N'})
+        me, mx = state.add_map(f"m{k}", {"i": "0:N"})
         for s in range(siblings):
-            out = f'O{k}_{s}'
+            out = f"O{k}_{s}"
             sdfg.add_array(out, [N], dace.float64)
-            body = state.add_nested_sdfg(guarded_scalar_body(f'body{k}_{s}', '1 > 0' if s == 0 else '0 > 0'), {'x'},
-                                         {'o'})
-            state.add_memlet_path(rd, me, body, dst_conn='x', memlet=dace.Memlet('X[i]'))
-            state.add_memlet_path(body, mx, state.add_write(out), src_conn='o', memlet=dace.Memlet(f'{out}[i]'))
+            body = state.add_nested_sdfg(
+                guarded_scalar_body(f"body{k}_{s}", "1 > 0" if s == 0 else "0 > 0"), {"x"}, {"o"}
+            )
+            state.add_memlet_path(rd, me, body, dst_conn="x", memlet=dace.Memlet("X[i]"))
+            state.add_memlet_path(body, mx, state.add_write(out), src_conn="o", memlet=dace.Memlet(f"{out}[i]"))
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
@@ -498,9 +504,9 @@ def test_a_map_with_one_nested_body_never_sorts_its_state(monkeypatch):
     every node of the state, the common case of a canonicalize run."""
     calls = []
     sort = sdutil.dfs_topological_sort
-    monkeypatch.setattr(sdutil, 'dfs_topological_sort', lambda *a, **k: calls.append(1) or sort(*a, **k))
+    monkeypatch.setattr(sdutil, "dfs_topological_sort", lambda *a, **k: calls.append(1) or sort(*a, **k))
     assert NormalizeMapBody().apply_pass(guarded_siblings_sdfg(maps=4, siblings=1), {}) is None
-    assert calls == [], f'the state was sorted {len(calls)} times for maps with nothing to merge'
+    assert calls == [], f"the state was sorted {len(calls)} times for maps with nothing to merge"
 
 
 def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
@@ -509,7 +515,7 @@ def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset(
     with the tree the next time anything resets it. The moves keep it so without a reset of their own."""
     sdfg = guarded_siblings_sdfg(maps=1, siblings=2)
     resets = spy_on_resets(monkeypatch)
-    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, 'the two siblings should merge'
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, "the two siblings should merge"
     monkeypatch.undo()
     assert resets == []
     assert_tree_matches_a_reset(sdfg)
@@ -518,7 +524,7 @@ def test_merging_conditional_block_siblings_keeps_the_cfg_list_of_a_fresh_reset(
     assert len([b for b in merged[0].sdfg.nodes() if isinstance(b, ConditionalBlock)]) == 2
     before = list(sdfg.cfg_list)
     sdfg.reset_cfg_list()
-    assert before == sdfg.cfg_list, 'the CFG list differs from a fresh reset'
+    assert before == sdfg.cfg_list, "the CFG list differs from a fresh reset"
     sdfg.validate()
 
     x = np.random.default_rng(0).random(8)

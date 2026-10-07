@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def test_cache_same_args():
@@ -87,7 +87,7 @@ def test_cache_skips_autoopt_specialized_symbols():
     for n, expected in ((0, 1.0), (5, 2.0)):
         x = np.zeros(10, dtype=np.float64)
         test(x, N=n)
-        assert np.allclose(x, expected), f'N={n} ran an SDFG specialized for another value: {x[0]}'
+        assert np.allclose(x, expected), f"N={n} ran an SDFG specialized for another value: {x[0]}"
 
 
 @dace.program
@@ -107,18 +107,18 @@ def _compiled_entries(program) -> int:
 
 def test_autooptimized_program_is_not_reused_for_other_symbol_values():
     """Auto-optimization specializes the SDFG for the call's symbol values, so a call with other values recompiles."""
-    with dace.config.set_temporary('optimizer', 'autooptimize', value=True):
+    with dace.config.set_temporary("optimizer", "autooptimize", value=True):
         doubled._cache.clear()
         for n in (5, 6, 5):
             out = np.zeros(n)
             doubled(np.arange(n, dtype=np.float64), out)
-            assert np.allclose(out, 2.0 * np.arange(n)), f'wrong result for N={n}'
-        assert _compiled_entries(doubled) == 2, 'a repeated call with the same values must hit the cache'
+            assert np.allclose(out, 2.0 * np.arange(n)), f"wrong result for N={n}"
+        assert _compiled_entries(doubled) == 2, "a repeated call with the same values must hit the cache"
 
 
 def test_nesting_an_autooptimized_program_does_not_inherit_its_symbol_values():
     """A program nesting one that was auto-optimized for N=5 must still see N as a symbol."""
-    with dace.config.set_temporary('optimizer', 'autooptimize', value=True):
+    with dace.config.set_temporary("optimizer", "autooptimize", value=True):
         doubled._cache.clear()
         calls_doubled._cache.clear()
         doubled(np.arange(5, dtype=np.float64), np.zeros(5))
@@ -127,7 +127,7 @@ def test_nesting_an_autooptimized_program_does_not_inherit_its_symbol_values():
         assert np.allclose(out, 2.0 * np.arange(6))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cache_same_args()
     test_cache_different_args()
     test_cache_return_values()

@@ -8,6 +8,7 @@ does contraction). On GPU it PREFERS ``cuTENSOR`` but only where it can build an
 linkable, operands GPU-resident, dtype supported); otherwise it falls back to the pure GPU map. These
 tests pin that contract: the passes leave lowering unset, the step selects it per device with the
 right gates, an explicit choice is preserved, and a bad device is rejected."""
+
 import numpy
 import pytest
 import dace

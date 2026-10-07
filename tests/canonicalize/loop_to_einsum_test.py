@@ -13,6 +13,7 @@ reduction (that is what parallelising / BLAS-lowering a sum is), so it agrees
 with numpy only to a tight tolerance (~1 ULP), matching the repo's existing
 ``lift_einsum_matmul_test`` convention.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -35,8 +36,8 @@ from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -181,8 +182,9 @@ def _n_transpose(sdfg):
 
 
 def _n_loops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
-               if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(
+        1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    )
 
 
 def test_matvec_lifts():
@@ -190,8 +192,8 @@ def test_matvec_lifts():
     nest is gone and the result matches numpy."""
     sdfg = matvec.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
-    assert _n_einsum(sdfg) == 1, 'the matvec nest must lift to exactly one Einsum node'
-    assert _n_loops(sdfg) == 0, 'no sequential loop should remain'
+    assert _n_einsum(sdfg) == 1, "the matvec nest must lift to exactly one Einsum node"
+    assert _n_loops(sdfg) == 0, "no sequential loop should remain"
     sdfg.validate()
 
     n = 12
@@ -205,8 +207,8 @@ def test_transposed_matvec_lifts():
     """``y[j] += A[i,j]*x[i]`` lifts to one Einsum (``ij,i->j`` = A^T@x)."""
     sdfg = transposed_matvec.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
-    assert _n_einsum(sdfg) == 1, 'the transposed-matvec nest must lift to exactly one Einsum node'
-    assert _n_loops(sdfg) == 0, 'no sequential loop should remain'
+    assert _n_einsum(sdfg) == 1, "the transposed-matvec nest must lift to exactly one Einsum node"
+    assert _n_loops(sdfg) == 0, "no sequential loop should remain"
     sdfg.validate()
 
     n = 12
@@ -220,8 +222,8 @@ def test_matmul_lifts():
     """``C[i,j] += A[i,k]*B[k,j]`` lifts to one Einsum (``ij,jk->ik`` = A@B)."""
     sdfg = matmul.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
-    assert _n_einsum(sdfg) == 1, 'the matmul nest must lift to exactly one Einsum node'
-    assert _n_loops(sdfg) == 0, 'no sequential loop should remain'
+    assert _n_einsum(sdfg) == 1, "the matmul nest must lift to exactly one Einsum node"
+    assert _n_loops(sdfg) == 0, "no sequential loop should remain"
     sdfg.validate()
 
     n = 10
@@ -236,9 +238,9 @@ def test_transpose_lifts():
     (a pure copy reorders nothing)."""
     sdfg = matrix_transpose.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
-    assert _n_transpose(sdfg) == 1, 'the transpose nest must lift to exactly one Transpose node'
-    assert _n_einsum(sdfg) == 0, 'a transpose is not a contraction -- no Einsum'
-    assert _n_loops(sdfg) == 0, 'no sequential loop should remain'
+    assert _n_transpose(sdfg) == 1, "the transpose nest must lift to exactly one Transpose node"
+    assert _n_einsum(sdfg) == 0, "a transpose is not a contraction -- no Einsum"
+    assert _n_loops(sdfg) == 0, "no sequential loop should remain"
     sdfg.validate()
 
     n = 11
@@ -254,9 +256,9 @@ def test_non_contraction_noop():
     sdfg = elementwise.to_sdfg(simplify=True)
     loops_before = _n_loops(sdfg)
     LoopToEinsum().apply_pass(sdfg, {})
-    assert _n_einsum(sdfg) == 0, 'an elementwise loop must not lift to an Einsum'
-    assert _n_transpose(sdfg) == 0, 'an elementwise loop must not lift to a Transpose'
-    assert _n_loops(sdfg) == loops_before, 'the non-contraction loop must be left unchanged'
+    assert _n_einsum(sdfg) == 0, "an elementwise loop must not lift to an Einsum"
+    assert _n_transpose(sdfg) == 0, "an elementwise loop must not lift to a Transpose"
+    assert _n_loops(sdfg) == loops_before, "the non-contraction loop must be left unchanged"
     sdfg.validate()
 
     n = 12
@@ -274,9 +276,9 @@ def test_reset_then_transposed_matvec_lifts():
     sdfg = reset_then_transposed_matvec.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
     einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
-    assert len(einsums) == 1, 'the transposed matvec must lift to exactly one Einsum node'
-    assert einsums[0].einsum_str == 'ij,i->j'
-    assert float(einsums[0].beta) == 1.0, 'accumulate onto the reset-zeroed y (beta=1)'
+    assert len(einsums) == 1, "the transposed matvec must lift to exactly one Einsum node"
+    assert einsums[0].einsum_str == "ij,i->j"
+    assert float(einsums[0].beta) == 1.0, "accumulate onto the reset-zeroed y (beta=1)"
     sdfg.validate()
 
     n = 13
@@ -302,9 +304,9 @@ def test_atax_style_outer_axis_accumulate_lifts():
     sdfg.apply_transformations_repeated(MapToForLoop, validate=False, validate_all=False)
     LoopToEinsum().apply_pass(sdfg, {})
     einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
-    assert len(einsums) == 1, 'the outer-axis transposed matvec must lift to exactly one Einsum node'
-    assert einsums[0].einsum_str == 'ij,i->j'
-    assert float(einsums[0].beta) == 1.0, 'no in-SDFG writer -> fold onto the caller-provided prior (beta=1)'
+    assert len(einsums) == 1, "the outer-axis transposed matvec must lift to exactly one Einsum node"
+    assert einsums[0].einsum_str == "ij,i->j"
+    assert float(einsums[0].beta) == 1.0, "no in-SDFG writer -> fold onto the caller-provided prior (beta=1)"
     sdfg.validate()
 
     n = 11
@@ -323,9 +325,9 @@ def test_alpha_scaled_matmul_lifts():
     sdfg = alpha_matmul.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
     einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
-    assert len(einsums) == 1, 'the alpha-scaled matmul must lift to exactly one Einsum node'
-    assert einsums[0].einsum_str == 'ij,jk->ik'
-    assert float(einsums[0].alpha) == 2.5, 'the 2.5 coefficient must land on the Einsum alpha'
+    assert len(einsums) == 1, "the alpha-scaled matmul must lift to exactly one Einsum node"
+    assert einsums[0].einsum_str == "ij,jk->ik"
+    assert float(einsums[0].alpha) == 2.5, "the 2.5 coefficient must land on the Einsum alpha"
     assert _n_loops(sdfg) == 0
     sdfg.validate()
 
@@ -341,8 +343,8 @@ def test_4d_tensor_contraction_lifts():
     sdfg = tensor_contraction.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
     einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
-    assert len(einsums) == 1, 'the 4-D contraction must lift to exactly one Einsum node'
-    assert einsums[0].einsum_str == 'ijk,kl->ijl'
+    assert len(einsums) == 1, "the 4-D contraction must lift to exactly one Einsum node"
+    assert einsums[0].einsum_str == "ijk,kl->ijl"
     assert _n_loops(sdfg) == 0
     sdfg.validate()
 
@@ -350,7 +352,7 @@ def test_4d_tensor_contraction_lifts():
     rng = np.random.default_rng(8)
     A, B, C = rng.random((n, n, n)), rng.random((n, n)), np.zeros((n, n, n))
     sdfg(A=A, B=B, C=C, N=n)
-    assert np.allclose(C, np.einsum('ijl,lk->ijk', A, B), rtol=1e-9, atol=1e-12)
+    assert np.allclose(C, np.einsum("ijl,lk->ijk", A, B), rtol=1e-9, atol=1e-12)
 
 
 def test_map_form_contraction_lifts():
@@ -360,10 +362,11 @@ def test_map_form_contraction_lifts():
     sdfg = map_matmul.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
     einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
-    assert len(einsums) == 1, 'the map-form contraction must lift to exactly one Einsum node'
-    assert einsums[0].einsum_str == 'ij,jk->ik'
-    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)], \
-        'the contraction map scope must be gone'
+    assert len(einsums) == 1, "the map-form contraction must lift to exactly one Einsum node"
+    assert einsums[0].einsum_str == "ij,jk->ik"
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)], (
+        "the contraction map scope must be gone"
+    )
     sdfg.validate()
 
     n = 9
@@ -378,8 +381,8 @@ def test_mixed_loop_and_map_contraction_lifts():
     sdfg = mixed_loop_map_matmul.to_sdfg(simplify=True)
     LoopToEinsum().apply_pass(sdfg, {})
     einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
-    assert len(einsums) == 1, 'the mixed loop+map nest must lift to exactly one Einsum node'
-    assert einsums[0].einsum_str == 'ij,jk->ik'
+    assert len(einsums) == 1, "the mixed loop+map nest must lift to exactly one Einsum node"
+    assert einsums[0].einsum_str == "ij,jk->ik"
     assert _n_loops(sdfg) == 0
     sdfg.validate()
 
@@ -390,11 +393,14 @@ def test_mixed_loop_and_map_contraction_lifts():
     assert np.allclose(C, A @ B, rtol=1e-9, atol=1e-12)
 
 
-@pytest.mark.parametrize('program,reason', [
-    (triangular_matvec, 'a parameter-dependent (triangular) bound is not a dense contraction'),
-    (self_referential_matmul, 'the output feeding its own contraction is a loop-carried dependence'),
-    (subtracting_matmul, '``-=`` is not a Sum reduction'),
-])
+@pytest.mark.parametrize(
+    "program,reason",
+    [
+        (triangular_matvec, "a parameter-dependent (triangular) bound is not a dense contraction"),
+        (self_referential_matmul, "the output feeding its own contraction is a loop-carried dependence"),
+        (subtracting_matmul, "``-=`` is not a Sum reduction"),
+    ],
+)
 def test_refused_shapes(program, reason):
     """Shapes that look like a contraction but must NOT be lifted. The triangular case
     doubles as the guard that keeps this generic lift off the shapes the dedicated
@@ -404,7 +410,7 @@ def test_refused_shapes(program, reason):
     LoopToEinsum().apply_pass(sdfg, {})
     assert _n_einsum(sdfg) == 0, reason
     assert _n_transpose(sdfg) == 0, reason
-    assert _n_loops(sdfg) == loops_before, 'the refused nest must be left untouched'
+    assert _n_loops(sdfg) == loops_before, "the refused nest must be left untouched"
     sdfg.validate()
 
 
@@ -425,11 +431,11 @@ def test_ordering_memlet_is_not_a_prior_writer():
     sdfg = k2.to_sdfg(simplify=True)
     # An ordering-only AccessNode for the accumulator: legal SDFG, transfers nothing.
     last = sdfg.states()[-1]
-    last.add_edge(next(iter(last.data_nodes())), None, last.add_access('Eacc'), None, dace.Memlet())
+    last.add_edge(next(iter(last.data_nodes())), None, last.add_access("Eacc"), None, dace.Memlet())
 
     assert LoopToEinsum().apply_pass(sdfg, {}) == 1
     betas = [nd.beta for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, Einsum)]
-    assert betas == [0.0], f'ordering memlet was read as a prior writer: beta={betas}'
+    assert betas == [0.0], f"ordering memlet was read as a prior writer: beta={betas}"
     sdfg.validate()
 
     rng = np.random.default_rng(7)
@@ -440,7 +446,7 @@ def test_ordering_memlet_is_not_a_prior_writer():
     for _ in range(3):  # the transient keeps its previous contents, so beta=1 would compound
         c = np.zeros((n, m))
         csdfg(A=a, B=b, C=c)
-        assert np.allclose(c, ref), f'max diff {np.abs(c - ref).max()}'
+        assert np.allclose(c, ref), f"max diff {np.abs(c - ref).max()}"
 
 
 def test_map_form_lift_refuses_a_boundary_ordering_memlet():
@@ -450,13 +456,13 @@ def test_map_form_lift_refuses_a_boundary_ordering_memlet():
     sdfg = map_matmul.to_sdfg(simplify=True)
     state = next(s for s in sdfg.states() if any(isinstance(nd, dace.sdfg.nodes.MapEntry) for nd in s.nodes()))
     me = next(nd for nd in state.nodes() if isinstance(nd, dace.sdfg.nodes.MapEntry))
-    anchor = state.add_access('C')
+    anchor = state.add_access("C")
     state.add_edge(anchor, None, me, None, dace.Memlet())
     sdfg.validate()
 
-    assert LoopToEinsum().apply_pass(sdfg, {}) is None, 'the lift must decline'
+    assert LoopToEinsum().apply_pass(sdfg, {}) is None, "the lift must decline"
     assert _n_einsum(sdfg) == 0
-    assert state.edges_between(anchor, me), 'the ordering memlet must survive the refusal'
+    assert state.edges_between(anchor, me), "the ordering memlet must survive the refusal"
     sdfg.validate()
 
     rng = np.random.default_rng(21)
@@ -479,21 +485,22 @@ def transpose4(A: dace.float64[4, 4], B: dace.float64[4, 4]):
             B[i, j] = A[j, i]
 
 
-@pytest.mark.parametrize('prog, lift', [(symmetrize4, LoopToSymmetrize), (transpose4, LoopToTranspose),
-                                        (transpose4, LoopToEinsum)])
+@pytest.mark.parametrize(
+    "prog, lift", [(symmetrize4, LoopToSymmetrize), (transpose4, LoopToTranspose), (transpose4, LoopToEinsum)]
+)
 def test_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays(prog, lift):
     """The lift reads the nested SDFG's descriptors, not same-named ones of its parent. The connectors bind
     differently named outer containers (No-View lets only the name differ), so a parent lookup finds nothing."""
     inner = prog.to_sdfg(simplify=True)
-    inner.remove_symbol('i'), inner.remove_symbol('j')  # loop iterators, not free symbols
-    outer = dace.SDFG('outer_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays')
+    inner.remove_symbol("i"), inner.remove_symbol("j")  # loop iterators, not free symbols
+    outer = dace.SDFG("outer_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays")
     state = outer.add_state()
     names = [n for n, d in inner.arrays.items() if not d.transient]
     call = state.add_nested_sdfg(inner, dict.fromkeys(names), dict.fromkeys(names), symbol_mapping={})
     for n in names:
-        outer.add_array(f'{n}_outer', inner.arrays[n].shape, inner.arrays[n].dtype)
-        state.add_edge(state.add_read(f'{n}_outer'), None, call, n, dace.Memlet(f'{n}_outer[0:4, 0:4]'))
-        state.add_edge(call, n, state.add_write(f'{n}_outer'), None, dace.Memlet(f'{n}_outer[0:4, 0:4]'))
+        outer.add_array(f"{n}_outer", inner.arrays[n].shape, inner.arrays[n].dtype)
+        state.add_edge(state.add_read(f"{n}_outer"), None, call, n, dace.Memlet(f"{n}_outer[0:4, 0:4]"))
+        state.add_edge(call, n, state.add_write(f"{n}_outer"), None, dace.Memlet(f"{n}_outer[0:4, 0:4]"))
     arrays = {n: np.arange(16.0).reshape(4, 4) * (k + 1) for k, n in enumerate(names)}
     expected = {n: a.copy() for n, a in arrays.items()}
     prog.f(**expected)
@@ -501,10 +508,12 @@ def test_a_nest_in_a_nested_sdfg_is_lifted_over_the_nested_sdfgs_own_arrays(prog
     lift().apply_pass(outer, {})
 
     assert [
-        str(e.data.subset) for n, st in outer.all_nodes_recursive() if isinstance(n, dace.nodes.LibraryNode)
+        str(e.data.subset)
+        for n, st in outer.all_nodes_recursive()
+        if isinstance(n, dace.nodes.LibraryNode)
         for e in st.all_edges(n)
-    ] == ['0:4, 0:4', '0:4, 0:4']
-    outer(**{f'{n}_outer': a for n, a in arrays.items()})
+    ] == ["0:4, 0:4", "0:4, 0:4"]
+    outer(**{f"{n}_outer": a for n, a in arrays.items()})
     assert all(np.array_equal(arrays[n], expected[n]) for n in names)
 
 
@@ -528,5 +537,5 @@ def test_a_transpose_of_the_leading_block_is_not_lifted_to_a_whole_matrix_transp
     assert np.array_equal(B, expected)
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-v', '-p', 'no:cacheprovider']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-v", "-p", "no:cacheprovider"]))

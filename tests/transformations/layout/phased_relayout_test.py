@@ -27,6 +27,7 @@ This is the local, single-process shape of the OMEN transpose (mpi_omen_transpos
 "two phases want opposite layouts, pay one transpose between them" decision, here priced by the cost
 model instead of hand-placed.
 """
+
 import numpy
 import pytest
 
@@ -34,8 +35,13 @@ import dace
 from dace.transformation.layout.apply_assignment import apply_assignment
 from dace.transformation.layout.assignment_costs import assignment_arrays, model_costs
 from dace.transformation.layout.cost_model.relayout import break_even_uses
-from dace.transformation.layout.global_assign import (brute_force_trajectories, conflict_report, format_conflict_report,
-                                                      per_array_dp, to_assignment)
+from dace.transformation.layout.global_assign import (
+    brute_force_trajectories,
+    conflict_report,
+    format_conflict_report,
+    per_array_dp,
+    to_assignment,
+)
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
 
@@ -43,9 +49,18 @@ N = dace.symbol("N")
 
 
 @dace.program
-def phased(A: dace.float64[N, N], P: dace.float64[N, N], O0: dace.float64[N, N], O1: dace.float64[N, N],
-           O2: dace.float64[N, N], O3: dace.float64[N, N], O4: dace.float64[N, N], O5: dace.float64[N, N],
-           O6: dace.float64[N, N], O7: dace.float64[N, N]):
+def phased(
+    A: dace.float64[N, N],
+    P: dace.float64[N, N],
+    O0: dace.float64[N, N],
+    O1: dace.float64[N, N],
+    O2: dace.float64[N, N],
+    O3: dace.float64[N, N],
+    O4: dace.float64[N, N],
+    O5: dace.float64[N, N],
+    O6: dace.float64[N, N],
+    O7: dace.float64[N, N],
+):
     for i, j in dace.map[0:N, 0:N]:
         O0[i, j] = A[i, j] + P[i, j]
     for i, j in dace.map[0:N, 0:N]:

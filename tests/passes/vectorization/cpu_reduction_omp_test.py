@@ -14,6 +14,7 @@ their loop-carried ``acc = f(acc, A[i])`` (frontend emits combine-then-copyback
 subgraph ``acc -> combine -> slice -> copyback -> acc``) into a WCR write so
 ``LoopToMap`` can parallelize. Asserts clause + tile fold + numeric exactness.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -78,7 +79,7 @@ def _vectorized(prog):
     sdfg.apply_transformations_repeated(AugAssignToWCR)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ))).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,))).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -104,7 +105,7 @@ def _inputs(kind, nval):
     k = nval // 4
     a = np.ones(nval, np.float32)
     a[:k] = 2.0
-    a[k:2 * k] = 0.5
+    a[k : 2 * k] = 0.5
     return rng.permutation(a).astype(np.float32), np.prod
 
 
@@ -130,8 +131,12 @@ def test_partial_folds_to_single_element(kind):
     into a fresh ``_priv_acc`` scalar, so the name in the clause is the one that has to be a
     Scalar, and pinning the source name would test a descriptor the pragma never mentions."""
     sdfg = _vectorized(PROGRAMS[kind][0])
-    parts = [(k, d) for s in sdfg.all_sdfgs_recursive() for k, d in s.arrays.items()
-             if k.startswith("_wcr_priv") and k.endswith("_acc")]
+    parts = [
+        (k, d)
+        for s in sdfg.all_sdfgs_recursive()
+        for k, d in s.arrays.items()
+        if k.startswith("_wcr_priv") and k.endswith("_acc")
+    ]
     assert parts, "expected an interposed _wcr_priv reduction partial"
     for k, d in parts:
         assert d.total_size == 1, f"{k} reduction partial must fold onto a single element, got {d.total_size}"
@@ -141,8 +146,9 @@ def test_partial_folds_to_single_element(kind):
     for name in clause:
         descs = [d for s in sdfg.all_sdfgs_recursive() for k, d in s.arrays.items() if k == name]
         assert descs, f"reduction clause names {name}, which is not a descriptor of the SDFG"
-        assert all(isinstance(d, dace.data.Scalar) for d in descs), \
+        assert all(isinstance(d, dace.data.Scalar) for d in descs), (
             f"accumulator {name} must stay a Scalar, got {[type(d).__name__ for d in descs]}"
+        )
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))

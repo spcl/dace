@@ -32,6 +32,7 @@ splice a never-executed peel, so s118 canonicalizes cleanly with either change a
 underlying reparenting bug is unaffected by that guard -- a merely single-iteration loop is
 trivially eliminable and still collides -- which is what the unit test above pins.
 """
+
 import copy
 
 import pytest
@@ -67,10 +68,10 @@ def _duplicate_block_names(sdfg: dace.SDFG):
 
 def _single_iteration_loop(sdfg: dace.SDFG, label: str, body_label: str) -> LoopRegion:
     """A ``for i in range(1)`` loop whose body block is named ``body_label`` and writes ``a[0]``."""
-    loop = LoopRegion(label, condition_expr='i < 1', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    loop = LoopRegion(label, condition_expr="i < 1", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     body = loop.add_state(body_label, is_start_block=True)
-    tasklet = body.add_tasklet(f'{label}_t', {}, {'out'}, 'out = 1.0')
-    body.add_edge(tasklet, 'out', body.add_access('a'), None, dace.Memlet('a[0]'))
+    tasklet = body.add_tasklet(f"{label}_t", {}, {"out"}, "out = 1.0")
+    body.add_edge(tasklet, "out", body.add_access("a"), None, dace.Memlet("a[0]"))
     return loop
 
 
@@ -81,26 +82,26 @@ def test_trivial_loop_elimination_reparents_clone_bodies_uniquely():
     Pre-fix this leaves two ``dup_body`` blocks in the SDFG root and ``validate`` raises
     ``Found multiple blocks with the same name``.
     """
-    sdfg = dace.SDFG('tle_clone_body_names')
-    sdfg.add_array('a', [_N], dace.float64)
-    sdfg.add_symbol('i', dace.int64)
+    sdfg = dace.SDFG("tle_clone_body_names")
+    sdfg.add_array("a", [_N], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
 
-    original = _single_iteration_loop(sdfg, 'loop_p0', 'dup_body')
+    original = _single_iteration_loop(sdfg, "loop_p0", "dup_body")
     clone = copy.deepcopy(original)  # a deepcopy carries the body label over verbatim -- the real shape
-    clone.label = 'loop_p1'
+    clone.label = "loop_p1"
     sdfg.add_node(original, is_start_block=True)
     sdfg.add_node(clone)
     sdfg.add_edge(original, clone, InterstateEdge())
 
     # Sibling loops each owning a `dup_body` is legal: a LoopRegion is its own name scope.
-    assert _duplicate_block_names(sdfg) == [], 'precondition: the input SDFG is valid'
+    assert _duplicate_block_names(sdfg) == [], "precondition: the input SDFG is valid"
     sdfg.validate()
 
     applied = PatternMatchAndApplyRepeated([TrivialLoopElimination()]).apply_pass(sdfg, {})
-    assert applied, 'both single-iteration loops should have been eliminated'
+    assert applied, "both single-iteration loops should have been eliminated"
     assert not [cfr for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion)]
 
-    assert _duplicate_block_names(sdfg) == [], 'TrivialLoopElimination reparented a body under a taken name'
+    assert _duplicate_block_names(sdfg) == [], "TrivialLoopElimination reparented a body under a taken name"
     sdfg.validate()
 
 
@@ -114,17 +115,17 @@ def test_unique_block_name_survives_an_in_place_rename():
     ``['renamed', 's_0', 'renamed']`` and CloudSC's canon_cpu died at ``loop_to_x`` with
     ``Found multiple blocks with the same name in for_447``.
     """
-    sdfg = dace.SDFG('unique_block_name_after_rename')
-    first = sdfg.add_state('s', is_start_block=True)
-    second = sdfg.add_state('s')  # -> 's_0'; cache and node count agree from here on
+    sdfg = dace.SDFG("unique_block_name_after_rename")
+    first = sdfg.add_state("s", is_start_block=True)
+    second = sdfg.add_state("s")  # -> 's_0'; cache and node count agree from here on
 
-    first.label = 'renamed'  # what inline() does: rename in place, count unchanged
-    third = sdfg.add_state('renamed')
+    first.label = "renamed"  # what inline() does: rename in place, count unchanged
+    third = sdfg.add_state("renamed")
     sdfg.add_edge(first, second, InterstateEdge())
     sdfg.add_edge(second, third, InterstateEdge())
 
     labels = [b.label for b in sdfg.nodes()]
-    assert len(labels) == len(set(labels)), f'stale label cache reissued a taken name: {labels}'
+    assert len(labels) == len(set(labels)), f"stale label cache reissued a taken name: {labels}"
     assert _duplicate_block_names(sdfg) == []
     sdfg.validate()
 
@@ -132,12 +133,12 @@ def test_unique_block_name_survives_an_in_place_rename():
 def test_s118_canonicalizes_to_a_valid_sdfg():
     """The reported failure: ``s118`` canonicalization raised ``Found multiple blocks with the same
     name in for_259_par``. Repeated in-process because the producing order is not deterministic."""
-    kernel = TS.collect(name='s118_d_single')[0]
-    base = TS.to_sdfg(kernel, tag='s118_dupnames', simplify=True)
+    kernel = TS.collect(name="s118_d_single")[0]
+    base = TS.to_sdfg(kernel, tag="s118_dupnames", simplify=True)
     for trial in range(_TRIALS):
         sdfg = copy.deepcopy(base)
         canonicalize(sdfg, validate=True, validate_all=False, **cpu_params(4))
-        assert _duplicate_block_names(sdfg) == [], f'trial {trial}: duplicate block names survived'
+        assert _duplicate_block_names(sdfg) == [], f"trial {trial}: duplicate block names survived"
 
 
 def test_s118_matches_its_oracle_after_canonicalization():
@@ -155,30 +156,32 @@ def test_s118_matches_its_oracle_after_canonicalization():
     rather than fork: this process has already run compiled kernels, and a fork child deadlocks on
     the OpenMP team it inherits without owning.
     """
-    kernel = TS.collect(name='s118_d_single')[0]
+    kernel = TS.collect(name="s118_d_single")[0]
     arrays, call_kwargs = TS.make_inputs(kernel, seed=1234)
     ref = {n: a.copy() for n, a in arrays.items()}
-    REFERENCES['s118_d_single'](**ref, **call_kwargs)
+    REFERENCES["s118_d_single"](**ref, **call_kwargs)
 
-    sdfg = TS.to_sdfg(kernel, tag='s118_dupnames_exact', simplify=True)
+    sdfg = TS.to_sdfg(kernel, tag="s118_dupnames_exact", simplify=True)
     canonicalize(sdfg, validate=True, validate_all=False, **cpu_params(4))
-    fin = finalize_for_target(copy.deepcopy(sdfg), 'cpu')
-    fin.name = f'{fin.name}_s118_dupnames_exact'
+    fin = finalize_for_target(copy.deepcopy(sdfg), "cpu")
+    fin.name = f"{fin.name}_s118_dupnames_exact"
 
     # The reassociation this test tolerates has exactly one source: the inner accumulation
     # became a reduction map. Assert that, so a drift arriving any other way is still a failure.
     reduction_maps = [
-        st.label for st in sdfg.states() for e in st.edges()
+        st.label
+        for st in sdfg.states()
+        for e in st.edges()
         if e.data is not None and e.data.wcr is not None and isinstance(e.dst, nodes.MapExit)
     ]
-    assert reduction_maps, 'the inner accumulation is expected to be lifted to a reduction (WCR) map'
+    assert reduction_maps, "the inner accumulation is expected to be lifted to a reduction (WCR) map"
 
     got = {n: a.copy() for n, a in arrays.items()}
     code = exit_code(fin, dict(got, **call_kwargs), [(got[n], ref[n]) for n in arrays], exact=False)
 
-    assert code >= 0, f's118 killed by signal {-code}'
-    assert code == 0, f's118 diverges from the numpy oracle beyond 1e-12 (code {code})'
+    assert code >= 0, f"s118 killed by signal {-code}"
+    assert code == 0, f"s118 diverges from the numpy oracle beyond 1e-12 (code {code})"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

@@ -41,6 +41,7 @@ NSDFG boundaries); they are documented here with a precise xfail reason
 linking to the deferred ``CascadeInterstateEdgeAssignmentsUp`` design
 work that targets them.
 """
+
 import numpy as np
 import pytest
 import re
@@ -51,9 +52,9 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
-M = dace.symbol('M')
-K = dace.symbol('K')
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K")
 
 
 def _all_symbols(sdfg):
@@ -68,15 +69,19 @@ def assignment_sites(sdfg):
     belongs at SDFG scope, a per-iteration one under the scope that varies it, and the difference is
     invisible to a symbol COUNT.
     """
-    return [(region.sdfg is sdfg, region.label, dict(e.data.assignments))
-            for region in sdfg.all_control_flow_regions(recursive=True) for e in region.edges() if e.data.assignments]
+    return [
+        (region.sdfg is sdfg, region.label, dict(e.data.assignments))
+        for region in sdfg.all_control_flow_regions(recursive=True)
+        for e in region.edges()
+        if e.data.assignments
+    ]
 
 
 def _count_promoted(sdfg, base: str) -> int:
     """Number of ``<base>_(plus|minus|times|div)_<digits>(_<digits>)?`` symbols
     declared anywhere in the SDFG hierarchy. SSA renaming may add a trailing
     ``_<n>`` suffix, so the regex tolerates one extra disambiguation suffix."""
-    pat = re.compile(rf'^{re.escape(base)}_(plus|minus|times|div)_\d+(_\d+)?$')
+    pat = re.compile(rf"^{re.escape(base)}_(plus|minus|times|div)_\d+(_\d+)?$")
     return sum(1 for s in _all_symbols(sdfg) if pat.match(s))
 
 
@@ -119,9 +124,9 @@ def test_outer_only_promoted_bound_idempotent_symbol_count():
     """Re-running canonicalize must not snowball the promoted-bound count."""
     sdfg = outer_only_promoted_bound.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    before = _count_promoted(sdfg, 'N')
+    before = _count_promoted(sdfg, "N")
     canonicalize(sdfg, validate=True)
-    after = _count_promoted(sdfg, 'N')
+    after = _count_promoted(sdfg, "N")
     assert before == after, f"canonicalize duplicated N_minus symbols: {before} -> {after}"
 
 
@@ -143,7 +148,7 @@ def test_two_loops_share_promoted_bound_no_runaway():
     # Two source-program uses of ``N - 1``: at most a handful of declared
     # ``N_minus_<n>`` instances (each loop gets its own SSA), but the count
     # must not grow per canonicalize iteration.
-    cnt = _count_promoted(sdfg, 'N')
+    cnt = _count_promoted(sdfg, "N")
     assert cnt <= 4, f"unexpected N_minus duplication: {cnt} (all symbols: {sorted(_all_symbols(sdfg))})"
 
 
@@ -234,10 +239,12 @@ def test_loop_var_dependent_inner_bound_value_preserving():
     assert np.allclose(out, exp)
     # ``i + 1`` varies per outer iteration, so nothing derived from it may reach SDFG scope: the
     # root symbol table must still carry exactly the program's own two extents.
-    assert list(_all_symbols(sdfg)) and set(sdfg.symbols) == {'M', 'N'}, \
-        f'a per-iteration bound was lifted to SDFG scope: {sorted(sdfg.symbols)}'
-    assert all(not is_root for is_root, _label, _asg in assignment_sites(sdfg)), \
-        f'the ragged bound is materialised at SDFG scope: {assignment_sites(sdfg)}'
+    assert list(_all_symbols(sdfg)) and set(sdfg.symbols) == {"M", "N"}, (
+        f"a per-iteration bound was lifted to SDFG scope: {sorted(sdfg.symbols)}"
+    )
+    assert all(not is_root for is_root, _label, _asg in assignment_sites(sdfg)), (
+        f"the ragged bound is materialised at SDFG scope: {assignment_sites(sdfg)}"
+    )
 
 
 @dace.program
@@ -265,8 +272,8 @@ def test_mixed_outer_plus_loop_var_value_preserving():
     assert np.allclose(out, exp)
     # ``k + 1`` is invariant, so it folds into the memlet at SDFG scope: the whole nest is one map
     # and nothing is re-materialised per iteration.
-    assert (_nmaps(sdfg), _nloops(sdfg)) == (1, 0), f'expected one map, got {_nmaps(sdfg)}/{_nloops(sdfg)}'
-    assert assignment_sites(sdfg) == [], f'the invariant offset is recomputed per iteration: {assignment_sites(sdfg)}'
+    assert (_nmaps(sdfg), _nloops(sdfg)) == (1, 0), f"expected one map, got {_nmaps(sdfg)}/{_nloops(sdfg)}"
+    assert assignment_sites(sdfg) == [], f"the invariant offset is recomputed per iteration: {assignment_sites(sdfg)}"
 
 
 # Data-dependent symbols (read from arrays at runtime)
@@ -296,8 +303,8 @@ def test_data_dependent_index_value_preserving():
     # ``idx[i]`` is read per lane, so its symbol must be assigned INSIDE the map body and must not
     # appear in the root symbol table, which would make one lane's index the whole map's.
     sites = assignment_sites(sdfg)
-    assert len(sites) == 1 and not sites[0][0], f'the gathered index escaped the map scope: {sites}'
-    assert set(sdfg.symbols) == {'N'}, f'a per-lane index reached SDFG scope: {sorted(sdfg.symbols)}'
+    assert len(sites) == 1 and not sites[0][0], f"the gathered index escaped the map scope: {sites}"
+    assert set(sdfg.symbols) == {"N"}, f"a per-lane index reached SDFG scope: {sorted(sdfg.symbols)}"
 
 
 @dace.program
@@ -327,9 +334,10 @@ def test_data_dependent_bound_value_preserving():
             exp[i, j] = a[i] + j
     assert np.allclose(out, exp)
     # The per-row bound is a memory load, so it cannot be hoisted to SDFG scope.
-    assert set(sdfg.symbols) == {'M', 'N'}, f'a data-dependent bound reached SDFG scope: {sorted(sdfg.symbols)}'
-    assert all(not is_root for is_root, _label, _asg in assignment_sites(sdfg)), \
-        f'the per-row bound is materialised at SDFG scope: {assignment_sites(sdfg)}'
+    assert set(sdfg.symbols) == {"M", "N"}, f"a data-dependent bound reached SDFG scope: {sorted(sdfg.symbols)}"
+    assert all(not is_root for is_root, _label, _asg in assignment_sites(sdfg)), (
+        f"the per-row bound is materialised at SDFG scope: {assignment_sites(sdfg)}"
+    )
 
 
 # Clutter / robustness
@@ -353,11 +361,11 @@ def test_irrelevant_outer_symbol_clutter_robust_to_unused_symbols():
     n = 9
     a = rng.random(n)
     sdfg = irrelevant_outer_symbol_clutter.to_sdfg(simplify=True)
-    sdfg.add_symbol('UNUSED_A', dace.int32)
-    sdfg.add_symbol('UNUSED_B', dace.int32)
+    sdfg.add_symbol("UNUSED_A", dace.int32)
+    sdfg.add_symbol("UNUSED_B", dace.int32)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert set(sdfg.symbols) == {'N'}, f'dead-symbol cleanup kept an unread symbol: {sorted(sdfg.symbols)}'
+    assert set(sdfg.symbols) == {"N"}, f"dead-symbol cleanup kept an unread symbol: {sorted(sdfg.symbols)}"
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n)
     assert np.allclose(out, a + 1.0)
@@ -365,8 +373,8 @@ def test_irrelevant_outer_symbol_clutter_robust_to_unused_symbols():
 
 # Combined patterns
 
-_kidia = dace.symbol('kidia')
-_kfdia = dace.symbol('kfdia')
+_kidia = dace.symbol("kidia")
+_kfdia = dace.symbol("kfdia")
 
 
 @dace.program
@@ -392,13 +400,14 @@ def test_cloudsc_style_range_plus_one_value_preserving():
     sdfg.validate()
     # The promoted ``kfdia_plus_1`` must not be re-assigned inside the loop body -- the shape
     # ``LoopToMap`` refuses -- and a second run must mint nothing new.
-    assert assignment_sites(sdfg) == [], f'the bound is materialised inside the body: {assignment_sites(sdfg)}'
-    promoted_before, symbols_before = _count_promoted(sdfg, 'kfdia'), list(_all_symbols(sdfg))
+    assert assignment_sites(sdfg) == [], f"the bound is materialised inside the body: {assignment_sites(sdfg)}"
+    promoted_before, symbols_before = _count_promoted(sdfg, "kfdia"), list(_all_symbols(sdfg))
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _count_promoted(sdfg, 'kfdia') == promoted_before, 'a second run duplicated the promoted bound'
-    assert list(_all_symbols(sdfg)) == symbols_before, \
-        f'the second run grew the symbol table: {symbols_before} -> {list(_all_symbols(sdfg))}'
+    assert _count_promoted(sdfg, "kfdia") == promoted_before, "a second run duplicated the promoted bound"
+    assert list(_all_symbols(sdfg)) == symbols_before, (
+        f"the second run grew the symbol table: {symbols_before} -> {list(_all_symbols(sdfg))}"
+    )
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, kidia=kidia, kfdia=kfdia, N=n)
     exp = np.zeros(n)
@@ -418,7 +427,7 @@ def guarded_promoted_bound(a: dace.float64[N], b: dace.float64[N], c: dace.int32
             b[i] = a[i] + 1.0
 
 
-@pytest.mark.parametrize('cv', [1, 0])
+@pytest.mark.parametrize("cv", [1, 0])
 def test_guarded_promoted_bound_value_preserving(cv):
     rng = np.random.default_rng(42)
     n = 10
@@ -429,15 +438,16 @@ def test_guarded_promoted_bound_value_preserving(cv):
     # The guard's own symbol is materialised ONCE, on a root-level edge -- not per iteration inside
     # the loop ``MoveIfIntoLoop`` leaves behind.
     sites = assignment_sites(sdfg)
-    assert len(sites) == 1 and sites[0][0] and set(sites[0][2]) == {'c_index'}, \
-        f'the guard symbol is not materialised once at SDFG scope: {sites}'
-    assert (_nmaps(sdfg), _nloops(sdfg)) == (1, 0), f'expected one map, got {_nmaps(sdfg)}/{_nloops(sdfg)}'
+    assert len(sites) == 1 and sites[0][0] and set(sites[0][2]) == {"c_index"}, (
+        f"the guard symbol is not materialised once at SDFG scope: {sites}"
+    )
+    assert (_nmaps(sdfg), _nloops(sdfg)) == (1, 0), f"expected one map, got {_nmaps(sdfg)}/{_nloops(sdfg)}"
 
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, c=np.array([cv], np.int32), N=n)
     exp = np.zeros(n)
-    exp[0:n - 1] = (a[0:n - 1] + 1.0) if cv > 0 else 0.0
-    assert np.allclose(out, exp), f'value mismatch for c={cv}'
+    exp[0 : n - 1] = (a[0 : n - 1] + 1.0) if cv > 0 else 0.0
+    assert np.allclose(out, exp), f"value mismatch for c={cv}"
 
 
 # Deferred: reduction-with-inner-accumulator (known failing shape)

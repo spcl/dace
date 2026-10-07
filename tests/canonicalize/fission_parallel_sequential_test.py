@@ -15,6 +15,7 @@ sequential compute" decomposition. This test asserts fission unlocks a parallel
 map the fused form cannot, that the recurrence survives as a sequential region,
 and that the result stays numerically identical to the numpy oracle.
 """
+
 import contextlib
 import inspect
 import io
@@ -43,8 +44,9 @@ def _program(name: str):
 
 
 def _top_maps(sdfg: dace.SDFG) -> int:
-    return sum(1 for st in sdfg.states() for n in st.nodes()
-               if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)
+    return sum(
+        1 for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None
+    )
 
 
 def _loop_regions(sdfg: dace.SDFG) -> int:
@@ -65,15 +67,10 @@ def _assert_matches_oracle(program, canon):
     arrays, scalars = tsvc_2_5.make_inputs(program)
     oracle = getattr(tsvc_2_5_numpy, "ref_" + program.name.rsplit("tsvc_2_5_", 1)[-1])
     pool = {
-        **{
-            n: a.copy()
-            for n, a in arrays.items()
-        },
+        **{n: a.copy() for n, a in arrays.items()},
         **scalars,
-        **{
-            s.lower(): v
-            for s, v in tsvc_2_5.SIZES.items()
-        }, "n": tsvc_2_5.SIZES["LEN_1D"]
+        **{s.lower(): v for s, v in tsvc_2_5.SIZES.items()},
+        "n": tsvc_2_5.SIZES["LEN_1D"],
     }
     oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
     ref = {n: pool[n] for n in arrays}
@@ -90,8 +87,9 @@ def _assert_matches_oracle(program, canon):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue
-        assert np.allclose(ref[name], got[name], rtol=1e-9, atol=1e-9, equal_nan=True), \
+        assert np.allclose(ref[name], got[name], rtol=1e-9, atol=1e-9, equal_nan=True), (
             f"{program.name}/{name}: fissioned canon diverges from numpy oracle"
+        )
 
 
 @pytest.mark.parametrize("kernel", ["fission_dep_then_indep", "fission_dep_const_offset"])
@@ -135,13 +133,16 @@ def _loop_writes(sdfg):
         if not (isinstance(region, LoopRegion) and region.loop_variable):
             continue
         out.append(
-            sorted({
-                node.data
-                for state in region.states()
-                for node in state.data_nodes()
-                if not state.sdfg.arrays[node.data].transient and any(e.data is not None and not e.data.is_empty()
-                                                                      for e in state.in_edges(node))
-            }))
+            sorted(
+                {
+                    node.data
+                    for state in region.states()
+                    for node in state.data_nodes()
+                    if not state.sdfg.arrays[node.data].transient
+                    and any(e.data is not None and not e.data.is_empty() for e in state.in_edges(node))
+                }
+            )
+        )
     return sorted(out)
 
 
@@ -165,8 +166,9 @@ def test_fission_dep_then_indep_yields_one_loop_per_statement():
         canonicalize(canon, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
     assert _loop_regions(canon) == 0, "nothing may stay a sequential loop: b maps, a becomes a Scan"
     assert _top_maps(canon) == 1, "the independent statement is the one map"
-    assert sum(1 for n, _ in canon.all_nodes_recursive() if isinstance(n, Scan)) == 1, \
+    assert sum(1 for n, _ in canon.all_nodes_recursive() if isinstance(n, Scan)) == 1, (
         "the prefix-sum recurrence must be lifted to exactly one Scan"
+    )
     _assert_matches_oracle(program, canon)
 
 

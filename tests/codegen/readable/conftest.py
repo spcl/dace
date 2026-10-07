@@ -5,6 +5,7 @@ CPU kernels are compared against the legacy generator to within 1 ULP per elemen
 a crashing kernel cannot take down pytest. GPU kernels run in-process (CUDA does not survive a fork) and are compared
 with a tolerance, as their reduction and atomic order is not reproducible.
 """
+
 import functools
 import os
 import signal
@@ -92,13 +93,14 @@ def without_fma_contraction():
 def without_simd():
     """Builds without OpenMP ``simd`` clauses: the generators place them on different loops, and a vectorized
     reduction reassociates its sum."""
-    return set_temporary('compiler', 'cpu', 'simd_maps', value=False)
+    return set_temporary("compiler", "cpu", "simd_maps", value=False)
 
 
 def to_host(value):
     """Return a host numpy array for ``value`` (handles cupy device arrays)."""
     if type(value).__module__.split(".")[0] == "cupy":
         import cupy
+
         return cupy.asnumpy(value)
     return np.asarray(value)
 
@@ -142,6 +144,7 @@ def run_isolated(build_and_run, timeout=300):
     worker.
     """
     from dace.transformation.layout.isolation import pause_openmp_pools, set_openmp_thread_count
+
     pause_openmp_pools()
     handle, path = tempfile.mkstemp(suffix=".npz")
     os.close(handle)
@@ -154,6 +157,7 @@ def run_isolated(build_and_run, timeout=300):
             os._exit(0)
         except BaseException:  # noqa: BLE001 - report and exit non-zero, never raise past fork
             import traceback
+
             traceback.print_exc()
             os._exit(17)
     try:
@@ -196,8 +200,7 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
     a dtype tolerance on GPU."""
     legacy = {name: to_host(value) for name, value in legacy.items()}
     experimental = {name: to_host(value) for name, value in experimental.items()}
-    assert set(legacy) == set(experimental), (f"{label}: output-key mismatch "
-                                              f"{sorted(legacy)} vs {sorted(experimental)}")
+    assert set(legacy) == set(experimental), f"{label}: output-key mismatch {sorted(legacy)} vs {sorted(experimental)}"
     for name, lv in legacy.items():
         ev = experimental[name]
         assert lv.shape == ev.shape, f"{label}/{name}: shape {lv.shape} vs {ev.shape}"
@@ -208,9 +211,9 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
                 assert np.array_equal(lv, ev), f"{label}/{name}: experimental CPU codegen differs from legacy"
         else:
             rtol, atol = tolerance_for(lv.dtype)
-            assert np.allclose(lv, ev, rtol=rtol, atol=atol,
-                               equal_nan=True), (f"{label}/{name}: experimental GPU codegen diverges from legacy, "
-                                                 f"max|diff|={max_abs_diff(lv, ev):.3e}")
+            assert np.allclose(lv, ev, rtol=rtol, atol=atol, equal_nan=True), (
+                f"{label}/{name}: experimental GPU codegen diverges from legacy, max|diff|={max_abs_diff(lv, ev):.3e}"
+            )
 
 
 # #
@@ -220,13 +223,16 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
 def require_experimental():
     """Assert the readable generator is wired up; it is required, not optional."""
     assert experimental_available(), (
-        "the readable CPU generator produced byte-identical output to legacy -- it is not wired up")
+        "the readable CPU generator produced byte-identical output to legacy -- it is not wired up"
+    )
 
 
-@pytest.fixture(params=[
-    pytest.param("cpu", id="cpu"),
-    pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
-])
+@pytest.fixture(
+    params=[
+        pytest.param("cpu", id="cpu"),
+        pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
+    ]
+)
 def target(request):
     """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with ``-m gpu``)."""
     return request.param

@@ -6,16 +6,23 @@ import copy
 from dace.transformation.transformation import explicit_cf_compatible
 
 
-def view_keeps_a_data_binding(state: dace.SDFGState, view: dace.nodes.AccessNode,
-                              dropped: MultiConnectorEdge[dace.Memlet]) -> bool:
+def view_keeps_a_data_binding(
+    state: dace.SDFGState, view: dace.nodes.AccessNode, dropped: MultiConnectorEdge[dace.Memlet]
+) -> bool:
     """Whether ``view`` binds data through some edge other than ``dropped`` (else the fold leaves it dangling)."""
     for e in state.in_edges(view):
-        if e is not dropped and not e.data.is_empty() and isinstance(
-                state.memlet_path(e)[0].src, dace.nodes.AccessNode):
+        if (
+            e is not dropped
+            and not e.data.is_empty()
+            and isinstance(state.memlet_path(e)[0].src, dace.nodes.AccessNode)
+        ):
             return True
     for e in state.out_edges(view):
-        if e is not dropped and not e.data.is_empty() and isinstance(
-                state.memlet_path(e)[-1].dst, dace.nodes.AccessNode):
+        if (
+            e is not dropped
+            and not e.data.is_empty()
+            and isinstance(state.memlet_path(e)[-1].dst, dace.nodes.AccessNode)
+        ):
             return True
     return False
 
@@ -50,7 +57,8 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
     """
 
     permissive = dace.properties.Property(
-        dtype=bool, default=False, desc="If permissive the pass does not check if scalar is used in other states")
+        dtype=bool, default=False, desc="If permissive the pass does not check if scalar is used in other states"
+    )
 
     def __init__(self, permissive: bool = False):
         self.permissive = permissive
@@ -61,8 +69,9 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _check_pattern(self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet],
-                       access_node: dace.nodes.AccessNode):
+    def _check_pattern(
+        self, state: dace.SDFGState, out_edge: MultiConnectorEdge[dace.Memlet], access_node: dace.nodes.AccessNode
+    ):
         """Match ``access_node -> A_slice(scalar transient) -> tasklet``.
 
         :param state: State holding the candidate subgraph.
@@ -97,8 +106,10 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
         if desc is None or not desc.transient:
             return None, None, None
 
-        if not (isinstance(desc, dace.data.Scalar) or
-                (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)):
+        if not (
+            isinstance(desc, dace.data.Scalar)
+            or (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.total_size == 1)
+        ):
             return None, None, None
         if isinstance(desc, dace.data.View):
             return None, None, None
@@ -225,8 +236,11 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                         continue
 
                     # A View source binds via whichever edge reaches an access node; this fold retargets one.
-                    if (isinstance(an1, dace.nodes.AccessNode) and isinstance(sdfg.arrays[an1.data], dace.data.View)
-                            and not view_keeps_a_data_binding(state, an1, ie)):
+                    if (
+                        isinstance(an1, dace.nodes.AccessNode)
+                        and isinstance(sdfg.arrays[an1.data], dace.data.View)
+                        and not view_keeps_a_data_binding(state, an1, ie)
+                    ):
                         continue
 
                     reused = (not self.permissive) and self._scalar_reused_elsewhere(sdfg, an2.data, an2)
@@ -235,21 +249,34 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                         # Keep the scalar; replace the copy with an assignment
                         # tasklet that casts in its body. No map is introduced.
                         state.remove_edge(ie)
-                        cast = state.add_tasklet(name=f"_assign_in_{array_name}_to_{an2.data}",
-                                                 inputs={"_in"},
-                                                 outputs={"_out"},
-                                                 code="_out = _in")
-                        state.add_edge(ie.src, ie.src_conn, cast, "_in",
-                                       dace.memlet.Memlet(data=array_name, subset=read_subset))
-                        state.add_edge(cast, "_out", an2, None,
-                                       dace.memlet.Memlet(data=an2.data, subset=dace.subsets.Range([(0, 0, 1)])))
+                        cast = state.add_tasklet(
+                            name=f"_assign_in_{array_name}_to_{an2.data}",
+                            inputs={"_in"},
+                            outputs={"_out"},
+                            code="_out = _in",
+                        )
+                        state.add_edge(
+                            ie.src, ie.src_conn, cast, "_in", dace.memlet.Memlet(data=array_name, subset=read_subset)
+                        )
+                        state.add_edge(
+                            cast,
+                            "_out",
+                            an2,
+                            None,
+                            dace.memlet.Memlet(data=an2.data, subset=dace.subsets.Range([(0, 0, 1)])),
+                        )
                     else:
                         # Not reused: drop the scalar and wire the source
                         # (array AccessNode or MapEntry connector) straight
                         # into the tasklet.
                         state.remove_node(an2)
-                        state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn,
-                                       dace.memlet.Memlet(data=array_name, subset=read_subset))
+                        state.add_edge(
+                            ie.src,
+                            ie.src_conn,
+                            oe.dst,
+                            oe.dst_conn,
+                            dace.memlet.Memlet(data=array_name, subset=read_subset),
+                        )
 
                     folded += 1
 

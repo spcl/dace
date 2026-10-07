@@ -34,6 +34,7 @@ Constraint types:
   the one written) is deliberately excluded: a ``coeff != 0`` condition does not
   make that data-parallel.
 """
+
 from dataclasses import dataclass
 from typing import Optional, Set
 
@@ -51,6 +52,7 @@ from dace.sdfg.narrowing import as_expr
 @dataclass(slots=True)
 class ScopeFacts:
     """Whole-SDFG facts the stride matcher reads, built on first use and valid until ``sdfg`` mutates."""
+
     sdfg: SDFG
     invariant: set[str] | None = None
     bindings: dict[str, str | None] | None = None
@@ -76,7 +78,7 @@ class ParallelizeUnderConstraint(ppl.Pass):
     ``inc != 0``) always holds. Default ``False`` keeps the sound ``if cond: par
     else: seq`` guard."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def __init__(self, assume_constraint: bool = False):
         super().__init__()
@@ -217,7 +219,8 @@ class ParallelizeUnderConstraint(ppl.Pass):
                     if not {str(sym) for sym in expr.free_symbols} - facts.invariant_names():
                         continue
                     expr, lvar = symbolic.equalize_symbols_across(
-                        resolve_bindings(expr, sdfg, bindings=facts.binding_table()), loop_var)
+                        resolve_bindings(expr, sdfg, bindings=facts.binding_table()), loop_var
+                    )
                 if lvar not in expr.free_symbols:
                     # Fail closed. A write whose index still carries a symbol this pass cannot
                     # relate to the loop variable is NOT known to be loop-invariant -- it may well
@@ -238,4 +241,4 @@ class ParallelizeUnderConstraint(ppl.Pass):
         return f"({next(iter(coeffs))}) != 0"
 
 
-__all__ = ['ParallelizeUnderConstraint']
+__all__ = ["ParallelizeUnderConstraint"]

@@ -9,6 +9,7 @@ to a globally-unique name so every data name owns exactly one ``(ndim, strides, 
 Separately, ``_flush_generated_functions`` must emit each helper once per OUTPUT FILE (not per stream),
 so an un-inlined nested-SDFG function does not re-emit an identical helper into the same host TU.
 """
+
 import re
 
 import pytest
@@ -25,8 +26,10 @@ N = dace.symbol("N")
 #: type is ``int64_t``/``int32_t``, NOT ``long long``) so the match cannot silently go vacuous. Named
 #: groups expose the helper name and its ``return`` body, so a test can assert two same-named helpers
 #: are byte-identical (a benign duplicate) versus different-bodied (the ODR bug the pass exists to kill).
-HELPER_DEF = re.compile(r"static\s+DACE_HDFI\s+constexpr\s+\w+\s+(?P<name>\w+_idx)\s*"
-                        r"\((?P<params>[^)]*)\)\s*\{\s*return\s+(?P<body>[^;]+);\s*\}")
+HELPER_DEF = re.compile(
+    r"static\s+DACE_HDFI\s+constexpr\s+\w+\s+(?P<name>\w+_idx)\s*"
+    r"\((?P<params>[^)]*)\)\s*\{\s*return\s+(?P<body>[^;]+);\s*\}"
+)
 
 
 def _helper_bodies(code):
@@ -144,6 +147,7 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
     ``<name>_idx`` at most once per translation unit (no ODR redefinition)."""
     import importlib.util
     import os
+
     base = os.path.join(os.path.dirname(__file__), "..", "..", "corpus", "polybench", "linear_algebra", "solvers")
     path = os.path.join(base, f"{kernel}.py")
     assert os.path.exists(path), "in-repo polybench corpus not present in this build"

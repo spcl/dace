@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests the symbol write scopes analysis pass. """
+"""Tests the symbol write scopes analysis pass."""
 
 import copy
 
@@ -17,116 +17,116 @@ def test_loop_iter_symbol_reused_split():
     and the init assignment of the second loop are on different interstate edges.
     """
     # Construct the SDFG.
-    sdfg = dace.SDFG('symbol')
+    sdfg = dace.SDFG("symbol")
 
-    N = dace.symbol('N')
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [N], dace.int32)
-    sdfg.add_array('B', [N], dace.int32)
-    sdfg.add_array('tmp', [1], dace.int32, transient=True)
+    N = dace.symbol("N")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [N], dace.int32)
+    sdfg.add_array("B", [N], dace.int32)
+    sdfg.add_array("tmp", [1], dace.int32, transient=True)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    loop_1_1 = sdfg.add_state('loop_1_1')
-    loop_1_2 = sdfg.add_state('loop_1_2')
-    intermediate = sdfg.add_state('intermediate')
-    guard_2 = sdfg.add_state('guard_2')
-    loop_2_1 = sdfg.add_state('loop_2_1')
-    loop_2_2 = sdfg.add_state('loop_2_2')
-    end_state = sdfg.add_state('end')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    loop_1_1 = sdfg.add_state("loop_1_1")
+    loop_1_2 = sdfg.add_state("loop_1_2")
+    intermediate = sdfg.add_state("intermediate")
+    guard_2 = sdfg.add_state("guard_2")
+    loop_2_1 = sdfg.add_state("loop_2_1")
+    loop_2_2 = sdfg.add_state("loop_2_2")
+    end_state = sdfg.add_state("end")
 
-    init_tasklet = init_state.add_tasklet('init', {}, {'out'}, 'out = 0')
-    init_write = init_state.add_write('tmp')
-    init_state.add_edge(init_tasklet, 'out', init_write, None, dace.Memlet('tmp[0]'))
+    init_tasklet = init_state.add_tasklet("init", {}, {"out"}, "out = 0")
+    init_write = init_state.add_write("tmp")
+    init_state.add_edge(init_tasklet, "out", init_write, None, dace.Memlet("tmp[0]"))
 
-    tmp1_tasklet = loop_1_1.add_tasklet('tmp1', {'a', 'b'}, {'out'}, 'out = a * b')
-    tmp1_write = loop_1_1.add_write('tmp')
-    a1_read = loop_1_1.add_read('A')
-    b1_read = loop_1_1.add_read('B')
-    loop_1_1.add_edge(a1_read, None, tmp1_tasklet, 'a', dace.Memlet('A[i]'))
-    loop_1_1.add_edge(b1_read, None, tmp1_tasklet, 'b', dace.Memlet('B[i]'))
-    loop_1_1.add_edge(tmp1_tasklet, 'out', tmp1_write, None, dace.Memlet('tmp[0]'))
+    tmp1_tasklet = loop_1_1.add_tasklet("tmp1", {"a", "b"}, {"out"}, "out = a * b")
+    tmp1_write = loop_1_1.add_write("tmp")
+    a1_read = loop_1_1.add_read("A")
+    b1_read = loop_1_1.add_read("B")
+    loop_1_1.add_edge(a1_read, None, tmp1_tasklet, "a", dace.Memlet("A[i]"))
+    loop_1_1.add_edge(b1_read, None, tmp1_tasklet, "b", dace.Memlet("B[i]"))
+    loop_1_1.add_edge(tmp1_tasklet, "out", tmp1_write, None, dace.Memlet("tmp[0]"))
 
-    loop1_tasklet_1 = loop_1_2.add_tasklet('loop1_1', {'ap', 't'}, {'a'}, 'a = ap + 2 * t')
-    loop1_tasklet_2 = loop_1_2.add_tasklet('loop1_2', {'bp', 't'}, {'b'}, 'b = bp - 2 * t')
-    loop1_read_tmp = loop_1_2.add_read('tmp')
-    loop1_read_a = loop_1_2.add_read('A')
-    loop1_read_b = loop_1_2.add_read('B')
-    loop1_write_a = loop_1_2.add_write('A')
-    loop1_write_b = loop_1_2.add_write('B')
-    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_1, 't', dace.Memlet('tmp[0]'))
-    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_2, 't', dace.Memlet('tmp[0]'))
-    loop_1_2.add_edge(loop1_read_a, None, loop1_tasklet_1, 'ap', dace.Memlet('A[i + 1]'))
-    loop_1_2.add_edge(loop1_read_b, None, loop1_tasklet_2, 'bp', dace.Memlet('B[i + 1]'))
-    loop_1_2.add_edge(loop1_tasklet_1, 'a', loop1_write_a, None, dace.Memlet('A[i]'))
-    loop_1_2.add_edge(loop1_tasklet_2, 'b', loop1_write_b, None, dace.Memlet('B[i]'))
+    loop1_tasklet_1 = loop_1_2.add_tasklet("loop1_1", {"ap", "t"}, {"a"}, "a = ap + 2 * t")
+    loop1_tasklet_2 = loop_1_2.add_tasklet("loop1_2", {"bp", "t"}, {"b"}, "b = bp - 2 * t")
+    loop1_read_tmp = loop_1_2.add_read("tmp")
+    loop1_read_a = loop_1_2.add_read("A")
+    loop1_read_b = loop_1_2.add_read("B")
+    loop1_write_a = loop_1_2.add_write("A")
+    loop1_write_b = loop_1_2.add_write("B")
+    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_1, "t", dace.Memlet("tmp[0]"))
+    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_2, "t", dace.Memlet("tmp[0]"))
+    loop_1_2.add_edge(loop1_read_a, None, loop1_tasklet_1, "ap", dace.Memlet("A[i + 1]"))
+    loop_1_2.add_edge(loop1_read_b, None, loop1_tasklet_2, "bp", dace.Memlet("B[i + 1]"))
+    loop_1_2.add_edge(loop1_tasklet_1, "a", loop1_write_a, None, dace.Memlet("A[i]"))
+    loop_1_2.add_edge(loop1_tasklet_2, "b", loop1_write_b, None, dace.Memlet("B[i]"))
 
-    tmp2_tasklet = loop_2_1.add_tasklet('tmp2', {'a', 'b'}, {'out'}, 'out = a / b')
-    tmp2_write = loop_2_1.add_write('tmp')
-    a2_read = loop_2_1.add_read('A')
-    b2_read = loop_2_1.add_read('B')
-    loop_2_1.add_edge(a2_read, None, tmp2_tasklet, 'a', dace.Memlet('A[i + 1]'))
-    loop_2_1.add_edge(b2_read, None, tmp2_tasklet, 'b', dace.Memlet('B[i + 1]'))
-    loop_2_1.add_edge(tmp2_tasklet, 'out', tmp2_write, None, dace.Memlet('tmp[0]'))
+    tmp2_tasklet = loop_2_1.add_tasklet("tmp2", {"a", "b"}, {"out"}, "out = a / b")
+    tmp2_write = loop_2_1.add_write("tmp")
+    a2_read = loop_2_1.add_read("A")
+    b2_read = loop_2_1.add_read("B")
+    loop_2_1.add_edge(a2_read, None, tmp2_tasklet, "a", dace.Memlet("A[i + 1]"))
+    loop_2_1.add_edge(b2_read, None, tmp2_tasklet, "b", dace.Memlet("B[i + 1]"))
+    loop_2_1.add_edge(tmp2_tasklet, "out", tmp2_write, None, dace.Memlet("tmp[0]"))
 
-    loop2_tasklet_1 = loop_2_2.add_tasklet('loop2_1', {'ap', 't'}, {'a'}, 'a = ap + t * t')
-    loop2_tasklet_2 = loop_2_2.add_tasklet('loop2_2', {'bp', 't'}, {'b'}, 'b = bp - t * t')
-    loop2_read_tmp = loop_2_2.add_read('tmp')
-    loop2_read_a = loop_2_2.add_read('A')
-    loop2_read_b = loop_2_2.add_read('B')
-    loop2_write_a = loop_2_2.add_write('A')
-    loop2_write_b = loop_2_2.add_write('B')
-    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_1, 't', dace.Memlet('tmp[0]'))
-    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_2, 't', dace.Memlet('tmp[0]'))
-    loop_2_2.add_edge(loop2_read_a, None, loop2_tasklet_1, 'ap', dace.Memlet('A[i]'))
-    loop_2_2.add_edge(loop2_read_b, None, loop2_tasklet_2, 'bp', dace.Memlet('B[i]'))
-    loop_2_2.add_edge(loop2_tasklet_1, 'a', loop2_write_a, None, dace.Memlet('A[i + 1]'))
-    loop_2_2.add_edge(loop2_tasklet_2, 'b', loop2_write_b, None, dace.Memlet('B[i + 1]'))
+    loop2_tasklet_1 = loop_2_2.add_tasklet("loop2_1", {"ap", "t"}, {"a"}, "a = ap + t * t")
+    loop2_tasklet_2 = loop_2_2.add_tasklet("loop2_2", {"bp", "t"}, {"b"}, "b = bp - t * t")
+    loop2_read_tmp = loop_2_2.add_read("tmp")
+    loop2_read_a = loop_2_2.add_read("A")
+    loop2_read_b = loop_2_2.add_read("B")
+    loop2_write_a = loop_2_2.add_write("A")
+    loop2_write_b = loop_2_2.add_write("B")
+    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_1, "t", dace.Memlet("tmp[0]"))
+    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_2, "t", dace.Memlet("tmp[0]"))
+    loop_2_2.add_edge(loop2_read_a, None, loop2_tasklet_1, "ap", dace.Memlet("A[i]"))
+    loop_2_2.add_edge(loop2_read_b, None, loop2_tasklet_2, "bp", dace.Memlet("B[i]"))
+    loop_2_2.add_edge(loop2_tasklet_1, "a", loop2_write_a, None, dace.Memlet("A[i + 1]"))
+    loop_2_2.add_edge(loop2_tasklet_2, "b", loop2_write_b, None, dace.Memlet("B[i + 1]"))
 
-    loop_1_init_edge = dace.InterstateEdge(assignments={'i': 0})
+    loop_1_init_edge = dace.InterstateEdge(assignments={"i": 0})
     sdfg.add_edge(init_state, guard_1, loop_1_init_edge)
-    loop_1_in_condition_edge = dace.InterstateEdge(condition='i < (N - 1)')
+    loop_1_in_condition_edge = dace.InterstateEdge(condition="i < (N - 1)")
     sdfg.add_edge(guard_1, loop_1_1, loop_1_in_condition_edge)
     sdfg.add_edge(loop_1_1, loop_1_2, dace.InterstateEdge())
-    loop_1_inc_edge = dace.InterstateEdge(assignments={'i': 'i + 1'})
+    loop_1_inc_edge = dace.InterstateEdge(assignments={"i": "i + 1"})
     sdfg.add_edge(loop_1_2, guard_1, loop_1_inc_edge)
-    loop_1_out_condition_edge = dace.InterstateEdge(condition='i >= (N - 1)')
+    loop_1_out_condition_edge = dace.InterstateEdge(condition="i >= (N - 1)")
     sdfg.add_edge(guard_1, intermediate, loop_1_out_condition_edge)
 
-    loop_2_init_edge = dace.InterstateEdge(assignments={'i': 0})
+    loop_2_init_edge = dace.InterstateEdge(assignments={"i": 0})
     sdfg.add_edge(intermediate, guard_2, loop_2_init_edge)
-    loop_2_in_condition_edge = dace.InterstateEdge(condition='i < (N - 1)')
+    loop_2_in_condition_edge = dace.InterstateEdge(condition="i < (N - 1)")
     sdfg.add_edge(guard_2, loop_2_1, loop_2_in_condition_edge)
     sdfg.add_edge(loop_2_1, loop_2_2, dace.InterstateEdge())
-    loop_2_inc_edge = dace.InterstateEdge(assignments={'i': 'i + 1'})
+    loop_2_inc_edge = dace.InterstateEdge(assignments={"i": "i + 1"})
     sdfg.add_edge(loop_2_2, guard_2, loop_2_inc_edge)
-    loop_2_out_condition_edge = dace.InterstateEdge(condition='i >= (N - 1)')
+    loop_2_out_condition_edge = dace.InterstateEdge(condition="i >= (N - 1)")
     sdfg.add_edge(guard_2, end_state, loop_2_out_condition_edge)
 
     # Test the pass.
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'N', 'i', 'i_0', 'i_1'}
+    assert set(sdfg.symbols.keys()) == {"N", "i", "i_0", "i_1"}
 
-    assert set(loop_1_init_edge.assignments.keys()) == {'i_0'}
-    assert loop_1_in_condition_edge.free_symbols == {'i_0', 'N'}
-    assert loop_1_out_condition_edge.free_symbols == {'i_0', 'N'}
-    assert 'i_0' in loop_1_inc_edge.assignments
-    assert 'i_0' in loop_1_inc_edge.assignments['i_0']
-    assert set(loop_1_inc_edge.assignments.keys()) == {'i_0'}
+    assert set(loop_1_init_edge.assignments.keys()) == {"i_0"}
+    assert loop_1_in_condition_edge.free_symbols == {"i_0", "N"}
+    assert loop_1_out_condition_edge.free_symbols == {"i_0", "N"}
+    assert "i_0" in loop_1_inc_edge.assignments
+    assert "i_0" in loop_1_inc_edge.assignments["i_0"]
+    assert set(loop_1_inc_edge.assignments.keys()) == {"i_0"}
 
-    assert set(loop_2_init_edge.assignments.keys()) == {'i_1'}
-    assert loop_2_in_condition_edge.free_symbols == {'i_1', 'N'}
-    assert loop_2_out_condition_edge.free_symbols == {'i_1', 'N'}
-    assert 'i_1' in loop_2_inc_edge.assignments
-    assert 'i_1' in loop_2_inc_edge.assignments['i_1']
-    assert set(loop_2_inc_edge.assignments.keys()) == {'i_1'}
+    assert set(loop_2_init_edge.assignments.keys()) == {"i_1"}
+    assert loop_2_in_condition_edge.free_symbols == {"i_1", "N"}
+    assert loop_2_out_condition_edge.free_symbols == {"i_1", "N"}
+    assert "i_1" in loop_2_inc_edge.assignments
+    assert "i_1" in loop_2_inc_edge.assignments["i_1"]
+    assert set(loop_2_inc_edge.assignments.keys()) == {"i_1"}
 
-    assert loop_1_1.free_symbols == {'i_0', 'N'}
-    assert loop_1_2.free_symbols == {'i_0', 'N'}
-    assert loop_2_1.free_symbols == {'i_1', 'N'}
-    assert loop_2_2.free_symbols == {'i_1', 'N'}
+    assert loop_1_1.free_symbols == {"i_0", "N"}
+    assert loop_1_2.free_symbols == {"i_0", "N"}
+    assert loop_2_1.free_symbols == {"i_1", "N"}
+    assert loop_2_2.free_symbols == {"i_1", "N"}
 
 
 def test_loop_iter_symbol_reused_fused():
@@ -135,138 +135,138 @@ def test_loop_iter_symbol_reused_fused():
     and the init assignment of the second loop are on the same interstate edge.
     """
     # Construct the SDFG.
-    sdfg = dace.SDFG('symbol')
+    sdfg = dace.SDFG("symbol")
 
-    N = dace.symbol('N')
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [N], dace.int32)
-    sdfg.add_array('B', [N], dace.int32)
-    sdfg.add_array('tmp', [1], dace.int32, transient=True)
+    N = dace.symbol("N")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [N], dace.int32)
+    sdfg.add_array("B", [N], dace.int32)
+    sdfg.add_array("tmp", [1], dace.int32, transient=True)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    loop_1_1 = sdfg.add_state('loop_1_1')
-    loop_1_2 = sdfg.add_state('loop_1_2')
-    guard_2 = sdfg.add_state('guard_2')
-    loop_2_1 = sdfg.add_state('loop_2_1')
-    loop_2_2 = sdfg.add_state('loop_2_2')
-    end_state = sdfg.add_state('end')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    loop_1_1 = sdfg.add_state("loop_1_1")
+    loop_1_2 = sdfg.add_state("loop_1_2")
+    guard_2 = sdfg.add_state("guard_2")
+    loop_2_1 = sdfg.add_state("loop_2_1")
+    loop_2_2 = sdfg.add_state("loop_2_2")
+    end_state = sdfg.add_state("end")
 
-    init_tasklet = init_state.add_tasklet('init', {}, {'out'}, 'out = 0')
-    init_write = init_state.add_write('tmp')
-    init_state.add_edge(init_tasklet, 'out', init_write, None, dace.Memlet('tmp[0]'))
+    init_tasklet = init_state.add_tasklet("init", {}, {"out"}, "out = 0")
+    init_write = init_state.add_write("tmp")
+    init_state.add_edge(init_tasklet, "out", init_write, None, dace.Memlet("tmp[0]"))
 
-    tmp1_tasklet = loop_1_1.add_tasklet('tmp1', {'a', 'b'}, {'out'}, 'out = a * b')
-    tmp1_write = loop_1_1.add_write('tmp')
-    a1_read = loop_1_1.add_read('A')
-    b1_read = loop_1_1.add_read('B')
-    loop_1_1.add_edge(a1_read, None, tmp1_tasklet, 'a', dace.Memlet('A[i]'))
-    loop_1_1.add_edge(b1_read, None, tmp1_tasklet, 'b', dace.Memlet('B[i]'))
-    loop_1_1.add_edge(tmp1_tasklet, 'out', tmp1_write, None, dace.Memlet('tmp[0]'))
+    tmp1_tasklet = loop_1_1.add_tasklet("tmp1", {"a", "b"}, {"out"}, "out = a * b")
+    tmp1_write = loop_1_1.add_write("tmp")
+    a1_read = loop_1_1.add_read("A")
+    b1_read = loop_1_1.add_read("B")
+    loop_1_1.add_edge(a1_read, None, tmp1_tasklet, "a", dace.Memlet("A[i]"))
+    loop_1_1.add_edge(b1_read, None, tmp1_tasklet, "b", dace.Memlet("B[i]"))
+    loop_1_1.add_edge(tmp1_tasklet, "out", tmp1_write, None, dace.Memlet("tmp[0]"))
 
-    loop1_tasklet_1 = loop_1_2.add_tasklet('loop1_1', {'ap', 't'}, {'a'}, 'a = ap + 2 * t')
-    loop1_tasklet_2 = loop_1_2.add_tasklet('loop1_2', {'bp', 't'}, {'b'}, 'b = bp - 2 * t')
-    loop1_read_tmp = loop_1_2.add_read('tmp')
-    loop1_read_a = loop_1_2.add_read('A')
-    loop1_read_b = loop_1_2.add_read('B')
-    loop1_write_a = loop_1_2.add_write('A')
-    loop1_write_b = loop_1_2.add_write('B')
-    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_1, 't', dace.Memlet('tmp[0]'))
-    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_2, 't', dace.Memlet('tmp[0]'))
-    loop_1_2.add_edge(loop1_read_a, None, loop1_tasklet_1, 'ap', dace.Memlet('A[i + 1]'))
-    loop_1_2.add_edge(loop1_read_b, None, loop1_tasklet_2, 'bp', dace.Memlet('B[i + 1]'))
-    loop_1_2.add_edge(loop1_tasklet_1, 'a', loop1_write_a, None, dace.Memlet('A[i]'))
-    loop_1_2.add_edge(loop1_tasklet_2, 'b', loop1_write_b, None, dace.Memlet('B[i]'))
+    loop1_tasklet_1 = loop_1_2.add_tasklet("loop1_1", {"ap", "t"}, {"a"}, "a = ap + 2 * t")
+    loop1_tasklet_2 = loop_1_2.add_tasklet("loop1_2", {"bp", "t"}, {"b"}, "b = bp - 2 * t")
+    loop1_read_tmp = loop_1_2.add_read("tmp")
+    loop1_read_a = loop_1_2.add_read("A")
+    loop1_read_b = loop_1_2.add_read("B")
+    loop1_write_a = loop_1_2.add_write("A")
+    loop1_write_b = loop_1_2.add_write("B")
+    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_1, "t", dace.Memlet("tmp[0]"))
+    loop_1_2.add_edge(loop1_read_tmp, None, loop1_tasklet_2, "t", dace.Memlet("tmp[0]"))
+    loop_1_2.add_edge(loop1_read_a, None, loop1_tasklet_1, "ap", dace.Memlet("A[i + 1]"))
+    loop_1_2.add_edge(loop1_read_b, None, loop1_tasklet_2, "bp", dace.Memlet("B[i + 1]"))
+    loop_1_2.add_edge(loop1_tasklet_1, "a", loop1_write_a, None, dace.Memlet("A[i]"))
+    loop_1_2.add_edge(loop1_tasklet_2, "b", loop1_write_b, None, dace.Memlet("B[i]"))
 
-    tmp2_tasklet = loop_2_1.add_tasklet('tmp2', {'a', 'b'}, {'out'}, 'out = a / b')
-    tmp2_write = loop_2_1.add_write('tmp')
-    a2_read = loop_2_1.add_read('A')
-    b2_read = loop_2_1.add_read('B')
-    loop_2_1.add_edge(a2_read, None, tmp2_tasklet, 'a', dace.Memlet('A[i + 1]'))
-    loop_2_1.add_edge(b2_read, None, tmp2_tasklet, 'b', dace.Memlet('B[i + 1]'))
-    loop_2_1.add_edge(tmp2_tasklet, 'out', tmp2_write, None, dace.Memlet('tmp[0]'))
+    tmp2_tasklet = loop_2_1.add_tasklet("tmp2", {"a", "b"}, {"out"}, "out = a / b")
+    tmp2_write = loop_2_1.add_write("tmp")
+    a2_read = loop_2_1.add_read("A")
+    b2_read = loop_2_1.add_read("B")
+    loop_2_1.add_edge(a2_read, None, tmp2_tasklet, "a", dace.Memlet("A[i + 1]"))
+    loop_2_1.add_edge(b2_read, None, tmp2_tasklet, "b", dace.Memlet("B[i + 1]"))
+    loop_2_1.add_edge(tmp2_tasklet, "out", tmp2_write, None, dace.Memlet("tmp[0]"))
 
-    loop2_tasklet_1 = loop_2_2.add_tasklet('loop2_1', {'ap', 't'}, {'a'}, 'a = ap + t * t')
-    loop2_tasklet_2 = loop_2_2.add_tasklet('loop2_2', {'bp', 't'}, {'b'}, 'b = bp - t * t')
-    loop2_read_tmp = loop_2_2.add_read('tmp')
-    loop2_read_a = loop_2_2.add_read('A')
-    loop2_read_b = loop_2_2.add_read('B')
-    loop2_write_a = loop_2_2.add_write('A')
-    loop2_write_b = loop_2_2.add_write('B')
-    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_1, 't', dace.Memlet('tmp[0]'))
-    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_2, 't', dace.Memlet('tmp[0]'))
-    loop_2_2.add_edge(loop2_read_a, None, loop2_tasklet_1, 'ap', dace.Memlet('A[i]'))
-    loop_2_2.add_edge(loop2_read_b, None, loop2_tasklet_2, 'bp', dace.Memlet('B[i]'))
-    loop_2_2.add_edge(loop2_tasklet_1, 'a', loop2_write_a, None, dace.Memlet('A[i + 1]'))
-    loop_2_2.add_edge(loop2_tasklet_2, 'b', loop2_write_b, None, dace.Memlet('B[i + 1]'))
+    loop2_tasklet_1 = loop_2_2.add_tasklet("loop2_1", {"ap", "t"}, {"a"}, "a = ap + t * t")
+    loop2_tasklet_2 = loop_2_2.add_tasklet("loop2_2", {"bp", "t"}, {"b"}, "b = bp - t * t")
+    loop2_read_tmp = loop_2_2.add_read("tmp")
+    loop2_read_a = loop_2_2.add_read("A")
+    loop2_read_b = loop_2_2.add_read("B")
+    loop2_write_a = loop_2_2.add_write("A")
+    loop2_write_b = loop_2_2.add_write("B")
+    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_1, "t", dace.Memlet("tmp[0]"))
+    loop_2_2.add_edge(loop2_read_tmp, None, loop2_tasklet_2, "t", dace.Memlet("tmp[0]"))
+    loop_2_2.add_edge(loop2_read_a, None, loop2_tasklet_1, "ap", dace.Memlet("A[i]"))
+    loop_2_2.add_edge(loop2_read_b, None, loop2_tasklet_2, "bp", dace.Memlet("B[i]"))
+    loop_2_2.add_edge(loop2_tasklet_1, "a", loop2_write_a, None, dace.Memlet("A[i + 1]"))
+    loop_2_2.add_edge(loop2_tasklet_2, "b", loop2_write_b, None, dace.Memlet("B[i + 1]"))
 
-    loop_1_init_edge = dace.InterstateEdge(assignments={'i': 0})
+    loop_1_init_edge = dace.InterstateEdge(assignments={"i": 0})
     sdfg.add_edge(init_state, guard_1, loop_1_init_edge)
-    loop_1_in_condition_edge = dace.InterstateEdge(condition='i < (N - 1)')
+    loop_1_in_condition_edge = dace.InterstateEdge(condition="i < (N - 1)")
     sdfg.add_edge(guard_1, loop_1_1, loop_1_in_condition_edge)
     sdfg.add_edge(loop_1_1, loop_1_2, dace.InterstateEdge())
-    loop_1_inc_edge = dace.InterstateEdge(assignments={'i': 'i + 1'})
+    loop_1_inc_edge = dace.InterstateEdge(assignments={"i": "i + 1"})
     sdfg.add_edge(loop_1_2, guard_1, loop_1_inc_edge)
-    shared_cond_init_edge = dace.InterstateEdge(condition='i >= (N - 1)', assignments={'i': 0})
+    shared_cond_init_edge = dace.InterstateEdge(condition="i >= (N - 1)", assignments={"i": 0})
     sdfg.add_edge(guard_1, guard_2, shared_cond_init_edge)
 
-    loop_2_in_condition_edge = dace.InterstateEdge(condition='i < (N - 1)')
+    loop_2_in_condition_edge = dace.InterstateEdge(condition="i < (N - 1)")
     sdfg.add_edge(guard_2, loop_2_1, loop_2_in_condition_edge)
     sdfg.add_edge(loop_2_1, loop_2_2, dace.InterstateEdge())
-    loop_2_inc_edge = dace.InterstateEdge(assignments={'i': 'i + 1'})
+    loop_2_inc_edge = dace.InterstateEdge(assignments={"i": "i + 1"})
     sdfg.add_edge(loop_2_2, guard_2, loop_2_inc_edge)
-    loop_2_out_condition_edge = dace.InterstateEdge(condition='i >= (N - 1)')
+    loop_2_out_condition_edge = dace.InterstateEdge(condition="i >= (N - 1)")
     sdfg.add_edge(guard_2, end_state, loop_2_out_condition_edge)
 
     # Test the pass.
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'N', 'i', 'i_0', 'i_1'}
+    assert set(sdfg.symbols.keys()) == {"N", "i", "i_0", "i_1"}
 
-    assert set(loop_1_init_edge.assignments.keys()) == {'i_0'}
-    assert loop_1_in_condition_edge.free_symbols == {'i_0', 'N'}
-    assert 'i_0' in loop_1_inc_edge.assignments
-    assert 'i_0' in loop_1_inc_edge.assignments['i_0']
-    assert set(loop_1_inc_edge.assignments.keys()) == {'i_0'}
-    assert 'i_0' in shared_cond_init_edge.free_symbols
+    assert set(loop_1_init_edge.assignments.keys()) == {"i_0"}
+    assert loop_1_in_condition_edge.free_symbols == {"i_0", "N"}
+    assert "i_0" in loop_1_inc_edge.assignments
+    assert "i_0" in loop_1_inc_edge.assignments["i_0"]
+    assert set(loop_1_inc_edge.assignments.keys()) == {"i_0"}
+    assert "i_0" in shared_cond_init_edge.free_symbols
 
-    assert set(shared_cond_init_edge.assignments.keys()) == {'i_1'}
-    assert loop_2_in_condition_edge.free_symbols == {'i_1', 'N'}
-    assert loop_2_out_condition_edge.free_symbols == {'i_1', 'N'}
-    assert 'i_1' in loop_2_inc_edge.assignments
-    assert 'i_1' in loop_2_inc_edge.assignments['i_1']
-    assert set(loop_2_inc_edge.assignments.keys()) == {'i_1'}
+    assert set(shared_cond_init_edge.assignments.keys()) == {"i_1"}
+    assert loop_2_in_condition_edge.free_symbols == {"i_1", "N"}
+    assert loop_2_out_condition_edge.free_symbols == {"i_1", "N"}
+    assert "i_1" in loop_2_inc_edge.assignments
+    assert "i_1" in loop_2_inc_edge.assignments["i_1"]
+    assert set(loop_2_inc_edge.assignments.keys()) == {"i_1"}
 
-    assert loop_1_1.free_symbols == {'i_0', 'N'}
-    assert loop_1_2.free_symbols == {'i_0', 'N'}
-    assert loop_2_1.free_symbols == {'i_1', 'N'}
-    assert loop_2_2.free_symbols == {'i_1', 'N'}
+    assert loop_1_1.free_symbols == {"i_0", "N"}
+    assert loop_1_2.free_symbols == {"i_0", "N"}
+    assert loop_2_1.free_symbols == {"i_1", "N"}
+    assert loop_2_2.free_symbols == {"i_1", "N"}
 
 
 def test_branch_subscope_nofission():
-    sdfg = dace.SDFG('branch_subscope_nofission')
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [2], dace.int32)
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    guard_2 = sdfg.add_state('guard_2')
-    right1_state = sdfg.add_state('right1')
-    right2_state = sdfg.add_state('right2')
-    left2_state = sdfg.add_state('left2')
-    merge_1 = sdfg.add_state('merge_1')
-    merge_2 = sdfg.add_state('merge_2')
-    guard_after = sdfg.add_state('guard_after')
-    left_after = sdfg.add_state('left_after')
-    right_after = sdfg.add_state('right_after')
-    merge_after = sdfg.add_state('merge_after')
-    first_assign = dace.InterstateEdge(assignments={'i': 'A[0]'})
+    sdfg = dace.SDFG("branch_subscope_nofission")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [2], dace.int32)
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    guard_2 = sdfg.add_state("guard_2")
+    right1_state = sdfg.add_state("right1")
+    right2_state = sdfg.add_state("right2")
+    left2_state = sdfg.add_state("left2")
+    merge_1 = sdfg.add_state("merge_1")
+    merge_2 = sdfg.add_state("merge_2")
+    guard_after = sdfg.add_state("guard_after")
+    left_after = sdfg.add_state("left_after")
+    right_after = sdfg.add_state("right_after")
+    merge_after = sdfg.add_state("merge_after")
+    first_assign = dace.InterstateEdge(assignments={"i": "A[0]"})
     sdfg.add_edge(init_state, guard_1, first_assign)
-    combined_assign_cond = dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0')
+    combined_assign_cond = dace.InterstateEdge(assignments={"i": "A[1]"}, condition="i > 0")
     sdfg.add_edge(guard_1, guard_2, combined_assign_cond)
-    right_cond = dace.InterstateEdge(condition='i <= 0')
-    left_2_cond = dace.InterstateEdge(condition='i <= 0')
-    right_2_cond = dace.InterstateEdge(condition='i > 0')
+    right_cond = dace.InterstateEdge(condition="i <= 0")
+    left_2_cond = dace.InterstateEdge(condition="i <= 0")
+    right_2_cond = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_1, right1_state, right_cond)
     sdfg.add_edge(guard_2, right2_state, right_2_cond)
     sdfg.add_edge(guard_2, left2_state, left_2_cond)
@@ -275,8 +275,8 @@ def test_branch_subscope_nofission():
     sdfg.add_edge(left2_state, merge_2, dace.InterstateEdge())
     sdfg.add_edge(merge_2, merge_1, dace.InterstateEdge())
     sdfg.add_edge(merge_1, guard_after, dace.InterstateEdge())
-    after_cond_left = dace.InterstateEdge(condition='i <= 0')
-    after_cond_right = dace.InterstateEdge(condition='i > 0')
+    after_cond_left = dace.InterstateEdge(condition="i <= 0")
+    after_cond_right = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_after, left_after, after_cond_left)
     sdfg.add_edge(guard_after, right_after, after_cond_right)
     sdfg.add_edge(left_after, merge_after, dace.InterstateEdge())
@@ -286,32 +286,32 @@ def test_branch_subscope_nofission():
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    assert set(sdfg.symbols.keys()) == {"i"}
 
 
 def test_branch_subscope_fission():
-    sdfg = dace.SDFG('branch_subscope_fission')
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [2], dace.int32)
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    guard_2 = sdfg.add_state('guard_2')
-    right1_state = sdfg.add_state('right1')
-    right2_state = sdfg.add_state('right2')
-    left2_state = sdfg.add_state('left2')
-    merge_1 = sdfg.add_state('merge_1')
-    merge_2 = sdfg.add_state('merge_2')
-    guard_after = sdfg.add_state('guard_after')
-    left_after = sdfg.add_state('left_after')
-    right_after = sdfg.add_state('right_after')
-    merge_after = sdfg.add_state('merge_after')
-    first_assign = dace.InterstateEdge(assignments={'i': 'A[0]'})
+    sdfg = dace.SDFG("branch_subscope_fission")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [2], dace.int32)
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    guard_2 = sdfg.add_state("guard_2")
+    right1_state = sdfg.add_state("right1")
+    right2_state = sdfg.add_state("right2")
+    left2_state = sdfg.add_state("left2")
+    merge_1 = sdfg.add_state("merge_1")
+    merge_2 = sdfg.add_state("merge_2")
+    guard_after = sdfg.add_state("guard_after")
+    left_after = sdfg.add_state("left_after")
+    right_after = sdfg.add_state("right_after")
+    merge_after = sdfg.add_state("merge_after")
+    first_assign = dace.InterstateEdge(assignments={"i": "A[0]"})
     sdfg.add_edge(init_state, guard_1, first_assign)
-    combined_assign_cond = dace.InterstateEdge(assignments={'i': 'A[1]'}, condition='i > 0')
+    combined_assign_cond = dace.InterstateEdge(assignments={"i": "A[1]"}, condition="i > 0")
     sdfg.add_edge(guard_1, guard_2, combined_assign_cond)
-    right_cond = dace.InterstateEdge(condition='i <= 0')
-    left_2_cond = dace.InterstateEdge(condition='i <= 0')
-    right_2_cond = dace.InterstateEdge(condition='i > 0')
+    right_cond = dace.InterstateEdge(condition="i <= 0")
+    left_2_cond = dace.InterstateEdge(condition="i <= 0")
+    right_2_cond = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_1, right1_state, right_cond)
     sdfg.add_edge(guard_2, right2_state, right_2_cond)
     sdfg.add_edge(guard_2, left2_state, left_2_cond)
@@ -319,10 +319,10 @@ def test_branch_subscope_fission():
     sdfg.add_edge(right2_state, merge_2, dace.InterstateEdge())
     sdfg.add_edge(left2_state, merge_2, dace.InterstateEdge())
     sdfg.add_edge(merge_2, merge_1, dace.InterstateEdge())
-    after_assign = dace.InterstateEdge(assignments={'i': 'i + 1'})
+    after_assign = dace.InterstateEdge(assignments={"i": "i + 1"})
     sdfg.add_edge(merge_1, guard_after, after_assign)
-    after_cond_left = dace.InterstateEdge(condition='i <= 0')
-    after_cond_right = dace.InterstateEdge(condition='i > 0')
+    after_cond_left = dace.InterstateEdge(condition="i <= 0")
+    after_cond_right = dace.InterstateEdge(condition="i > 0")
     sdfg.add_edge(guard_after, left_after, after_cond_left)
     sdfg.add_edge(guard_after, right_after, after_cond_right)
     sdfg.add_edge(left_after, merge_after, dace.InterstateEdge())
@@ -332,10 +332,10 @@ def test_branch_subscope_fission():
     pipeline = FixedPointPipeline([StrictSymbolSSA()])
     pipeline.apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i', 'i_0', 'i_1'}
+    assert set(sdfg.symbols.keys()) == {"i", "i_0", "i_1"}
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_loop_iter_symbol_reused_split()
     test_loop_iter_symbol_reused_fused()
     test_branch_subscope_nofission()
@@ -347,19 +347,19 @@ def unrolled_index_chain_sdfg() -> dace.SDFG:
 
     ``s0 -[idx=arr[0]]-> s1 -[idx=arr[1]]-> s2 -[idx=arr[2]]-> s3``, each state reading ``idx``.
     """
-    sdfg = dace.SDFG('unrolled_index_chain')
-    sdfg.add_array('arr', [3], dace.int64)
-    sdfg.add_array('out', [3], dace.float64)
-    sdfg.add_symbol('idx', dace.int64)
+    sdfg = dace.SDFG("unrolled_index_chain")
+    sdfg.add_array("arr", [3], dace.int64)
+    sdfg.add_array("out", [3], dace.float64)
+    sdfg.add_symbol("idx", dace.int64)
 
-    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(4)]
+    states = [sdfg.add_state(f"s{i}", is_start_block=(i == 0)) for i in range(4)]
     for i in range(3):
-        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={'idx': f'arr[{i}]'}))
+        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={"idx": f"arr[{i}]"}))
     # Every state after the first reads the symbol, so each replay has a consumer.
     for i in range(1, 4):
-        tasklet = states[i].add_tasklet(f't{i}', {}, {'o'}, 'o = 1.0')
-        access = states[i].add_access('out')
-        states[i].add_edge(tasklet, 'o', access, None, dace.Memlet(data='out', subset='idx'))
+        tasklet = states[i].add_tasklet(f"t{i}", {}, {"o"}, "o = 1.0")
+        access = states[i].add_access("out")
+        states[i].add_edge(tasklet, "o", access, None, dace.Memlet(data="out", subset="idx"))
     return sdfg
 
 
@@ -368,9 +368,9 @@ def test_symbol_ssa_versions_an_unrolled_index_chain():
     sdfg = unrolled_index_chain_sdfg()
     result = SymbolSSA().apply_pass(sdfg, {})
 
-    assert result is not None and 'idx' in result
+    assert result is not None and "idx" in result
     # Three definitions; the last is live at the region exit and must keep the original name.
-    assert len(result['idx']) == 2, result
+    assert len(result["idx"]) == 2, result
     defined = [set(e.data.assignments.keys()) for e in sdfg.edges()]
     assert all(len(names) == 1 for names in defined), defined
     assert len({next(iter(names)) for names in defined}) == 3, defined
@@ -385,21 +385,21 @@ def test_symbol_ssa_versions_an_unrolled_index_chain():
 
 def test_symbol_ssa_leaves_an_ambiguous_definition_alone():
     """A symbol whose versions merge at a join would need a phi, so nothing is renamed."""
-    sdfg = dace.SDFG('ambiguous_join')
-    sdfg.add_array('out', [4], dace.float64)
-    sdfg.add_symbol('idx', dace.int64)
-    entry = sdfg.add_state('entry', is_start_block=True)
-    left, right, join = sdfg.add_state('left'), sdfg.add_state('right'), sdfg.add_state('join')
-    sdfg.add_edge(entry, left, dace.InterstateEdge(condition='idx < 1', assignments={'idx': '1'}))
-    sdfg.add_edge(entry, right, dace.InterstateEdge(condition='idx >= 1', assignments={'idx': '2'}))
+    sdfg = dace.SDFG("ambiguous_join")
+    sdfg.add_array("out", [4], dace.float64)
+    sdfg.add_symbol("idx", dace.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    left, right, join = sdfg.add_state("left"), sdfg.add_state("right"), sdfg.add_state("join")
+    sdfg.add_edge(entry, left, dace.InterstateEdge(condition="idx < 1", assignments={"idx": "1"}))
+    sdfg.add_edge(entry, right, dace.InterstateEdge(condition="idx >= 1", assignments={"idx": "2"}))
     # Both definitions reach the join, so neither may be renamed to it.
     sdfg.add_edge(left, join, dace.InterstateEdge())
     sdfg.add_edge(right, join, dace.InterstateEdge())
-    tasklet = join.add_tasklet('t', {}, {'o'}, 'o = 1.0')
-    join.add_edge(tasklet, 'o', join.add_access('out'), None, dace.Memlet(data='out', subset='idx'))
+    tasklet = join.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    join.add_edge(tasklet, "o", join.add_access("out"), None, dace.Memlet(data="out", subset="idx"))
 
     assert SymbolSSA().apply_pass(sdfg, {}) is None
-    assert all(set(e.data.assignments) <= {'idx'} for e in sdfg.edges())
+    assert all(set(e.data.assignments) <= {"idx"} for e in sdfg.edges())
 
 
 def test_symbol_ssa_leaves_a_loop_carried_increment_alone():
@@ -409,18 +409,18 @@ def test_symbol_ssa_leaves_a_loop_carried_increment_alone():
     has two reaching definitions -- versioning either one would break the recurrence, and would
     also destroy the self-referential shape ``InductionVariableSubstitution`` matches on.
     """
-    sdfg = dace.SDFG('loop_carried_increment')
-    sdfg.add_array('out', [16], dace.float64)
-    sdfg.add_symbol('k', dace.int64)
-    init, body, done = sdfg.add_state('init', is_start_block=True), sdfg.add_state('body'), sdfg.add_state('done')
-    sdfg.add_edge(init, body, dace.InterstateEdge(assignments={'k': '0'}))
-    tasklet = body.add_tasklet('t', {}, {'o'}, 'o = 1.0')
-    body.add_edge(tasklet, 'o', body.add_access('out'), None, dace.Memlet(data='out', subset='k'))
-    sdfg.add_edge(body, body, dace.InterstateEdge(condition='k < 15', assignments={'k': 'k + 1'}))
-    sdfg.add_edge(body, done, dace.InterstateEdge(condition='k >= 15'))
+    sdfg = dace.SDFG("loop_carried_increment")
+    sdfg.add_array("out", [16], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    init, body, done = sdfg.add_state("init", is_start_block=True), sdfg.add_state("body"), sdfg.add_state("done")
+    sdfg.add_edge(init, body, dace.InterstateEdge(assignments={"k": "0"}))
+    tasklet = body.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_access("out"), None, dace.Memlet(data="out", subset="k"))
+    sdfg.add_edge(body, body, dace.InterstateEdge(condition="k < 15", assignments={"k": "k + 1"}))
+    sdfg.add_edge(body, done, dace.InterstateEdge(condition="k >= 15"))
 
     assert SymbolSSA().apply_pass(sdfg, {}) is None
-    assert {k for e in sdfg.edges() for k in e.data.assignments} == {'k'}
+    assert {k for e in sdfg.edges() for k in e.data.assignments} == {"k"}
 
 
 def test_symbol_ssa_versions_an_unrolled_accumulator_chain():
@@ -430,22 +430,22 @@ def test_symbol_ssa_versions_an_unrolled_accumulator_chain():
     ``k_1 = k + 1; k_2 = k_1 + 1; ...`` -- with the exit-live definition keeping the original name
     so whatever reads ``k`` after the region still finds it.
     """
-    sdfg = dace.SDFG('unrolled_accumulator')
-    sdfg.add_array('out', [8], dace.float64)
-    sdfg.add_symbol('k', dace.int64)
-    states = [sdfg.add_state(f's{i}', is_start_block=(i == 0)) for i in range(4)]
+    sdfg = dace.SDFG("unrolled_accumulator")
+    sdfg.add_array("out", [8], dace.float64)
+    sdfg.add_symbol("k", dace.int64)
+    states = [sdfg.add_state(f"s{i}", is_start_block=(i == 0)) for i in range(4)]
     for i in range(3):
-        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={'k': 'k + 1'}))
+        sdfg.add_edge(states[i], states[i + 1], dace.InterstateEdge(assignments={"k": "k + 1"}))
     for state in states[1:]:
-        tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
-        state.add_edge(tasklet, 'o', state.add_access('out'), None, dace.Memlet(data='out', subset='k'))
+        tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1.0")
+        state.add_edge(tasklet, "o", state.add_access("out"), None, dace.Memlet(data="out", subset="k"))
 
     result = SymbolSSA().apply_pass(sdfg, {})
-    assert result is not None and len(result['k']) == 2, result
+    assert result is not None and len(result["k"]) == 2, result
     # Every definition is distinct, and the last one still writes the escaping name.
     defined = [next(iter(e.data.assignments)) for e in sdfg.edges()]
     assert len(set(defined)) == 3, defined
-    assert 'k' in defined, defined
+    assert "k" in defined, defined
     # Each increment reads exactly the version defined immediately above it, never a later one.
     # Compare symbols, not substrings: 'k' occurs inside 'k_0'.
     chain = [next(iter(e.data.assignments)) for e in sdfg.edges()]
@@ -453,21 +453,21 @@ def test_symbol_ssa_versions_an_unrolled_accumulator_chain():
         target = next(iter(edge.data.assignments))
         rhs = edge.data.assignments[target]
         read = {str(sym) for sym in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}
-        expected = 'k' if position == 0 else chain[position - 1]
+        expected = "k" if position == 0 else chain[position - 1]
         assert read == {expected}, (target, rhs, expected)
     sdfg.validate()
 
 
 def gather_into(state: dace.SDFGState, sym: str, index: str):
-    tasklet = state.add_tasklet('gather', {'inp'}, {'o'}, 'o = inp + 1.0')
-    state.add_edge(state.add_read('b'), None, tasklet, 'inp', dace.Memlet(f'b[{sym}]'))
-    state.add_edge(tasklet, 'o', state.add_write('out'), None, dace.Memlet(f'out[{index}]'))
+    tasklet = state.add_tasklet("gather", {"inp"}, {"o"}, "o = inp + 1.0")
+    state.add_edge(state.add_read("b"), None, tasklet, "inp", dace.Memlet(f"b[{sym}]"))
+    state.add_edge(tasklet, "o", state.add_write("out"), None, dace.Memlet(f"out[{index}]"))
 
 
 def gather_arrays(sdfg: dace.SDFG):
-    for name in ('idx', 'b', 'out'):
-        sdfg.add_array(name, [8], dace.int64 if name == 'idx' else dace.float64)
-    sdfg.add_symbol('s', dace.int64)
+    for name in ("idx", "b", "out"):
+        sdfg.add_array(name, [8], dace.int64 if name == "idx" else dace.float64)
+    sdfg.add_symbol("s", dace.int64)
 
 
 def run_gather(sdfg: dace.SDFG) -> np.ndarray:
@@ -478,21 +478,21 @@ def run_gather(sdfg: dace.SDFG) -> np.ndarray:
 
 def peel_after_loop_sdfg() -> dace.SDFG:
     """CloudSC's shape: a loop body and its peeled last iteration both assign ``s = idx[.]``."""
-    sdfg = dace.SDFG('peel_after_loop')
+    sdfg = dace.SDFG("peel_after_loop")
     gather_arrays(sdfg)
-    loop = LoopRegion('body_loop', 'i < 7', 'i', 'i = 0', 'i = i + 1')
+    loop = LoopRegion("body_loop", "i < 7", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    head, comp = loop.add_state('head', is_start_block=True), loop.add_state('comp')
-    loop.add_edge(head, comp, dace.InterstateEdge(assignments={'s': 'idx[i]'}))
-    gather_into(comp, 's', 'i')
-    peel = sdfg.add_state('peel')
-    sdfg.add_edge(loop, peel, dace.InterstateEdge(assignments={'s': 'idx[7]'}))
-    guard = ConditionalBlock('guard')
+    head, comp = loop.add_state("head", is_start_block=True), loop.add_state("comp")
+    loop.add_edge(head, comp, dace.InterstateEdge(assignments={"s": "idx[i]"}))
+    gather_into(comp, "s", "i")
+    peel = sdfg.add_state("peel")
+    sdfg.add_edge(loop, peel, dace.InterstateEdge(assignments={"s": "idx[7]"}))
+    guard = ConditionalBlock("guard")
     sdfg.add_node(guard)
     sdfg.add_edge(peel, guard, dace.InterstateEdge())
-    branch = ControlFlowRegion('guard_body', sdfg=sdfg)
-    guard.add_branch(dace.properties.CodeBlock('s > 0'), branch)
-    gather_into(branch.add_state('guarded', is_start_block=True), 's', '7')
+    branch = ControlFlowRegion("guard_body", sdfg=sdfg)
+    guard.add_branch(dace.properties.CodeBlock("s > 0"), branch)
+    gather_into(branch.add_state("guarded", is_start_block=True), "s", "7")
     sdfg.validate()
     return sdfg
 
@@ -503,11 +503,11 @@ def test_symbol_ssa_renames_a_peel_apart_from_its_loop_body():
     expected = run_gather(copy.deepcopy(sdfg))
     result = SymbolSSA().apply_pass(sdfg, {})
 
-    assert result is not None and len(result['s']) == 1, result
+    assert result is not None and len(result["s"]) == 1, result
     loop, peel_edge = sdfg.start_block, sdfg.out_edges(sdfg.start_block)[0]
-    (body_name, ), (peel_name, ) = loop.edges()[0].data.assignments, peel_edge.data.assignments
+    (body_name,), (peel_name,) = loop.edges()[0].data.assignments, peel_edge.data.assignments
     assert body_name != peel_name
-    comp = next(b for b in loop.nodes() if b.label == 'comp')
+    comp = next(b for b in loop.nodes() if b.label == "comp")
     guard = next(b for b in sdfg.nodes() if isinstance(b, ConditionalBlock))
     assert body_name in comp.free_symbols and peel_name not in comp.free_symbols
     assert guard.branches[0][0].get_free_symbols() == {peel_name}
@@ -518,30 +518,30 @@ def test_symbol_ssa_renames_a_peel_apart_from_its_loop_body():
 
 def test_symbol_ssa_keeps_a_branch_join_on_one_name():
     """Two branch definitions meeting at a join stay one name; a later, separate definition gets its own."""
-    sdfg = dace.SDFG('branch_join_then_redefine')
+    sdfg = dace.SDFG("branch_join_then_redefine")
     gather_arrays(sdfg)
-    entry = sdfg.add_state('entry', is_start_block=True)
-    branches = ConditionalBlock('pick')
+    entry = sdfg.add_state("entry", is_start_block=True)
+    branches = ConditionalBlock("pick")
     sdfg.add_node(branches)
     sdfg.add_edge(entry, branches, dace.InterstateEdge())
-    for cond, rhs in (('idx[0] > 2', 'idx[1]'), (None, 'idx[2]')):
-        region = ControlFlowRegion(f'arm_{rhs[4]}', sdfg=sdfg)
+    for cond, rhs in (("idx[0] > 2", "idx[1]"), (None, "idx[2]")):
+        region = ControlFlowRegion(f"arm_{rhs[4]}", sdfg=sdfg)
         branches.add_branch(dace.properties.CodeBlock(cond) if cond else None, region)
-        first = region.add_state(f'arm_start_{rhs[4]}', is_start_block=True)
-        region.add_edge(first, region.add_state(f'arm_end_{rhs[4]}'), dace.InterstateEdge(assignments={'s': rhs}))
-    join = sdfg.add_state('join')
+        first = region.add_state(f"arm_start_{rhs[4]}", is_start_block=True)
+        region.add_edge(first, region.add_state(f"arm_end_{rhs[4]}"), dace.InterstateEdge(assignments={"s": rhs}))
+    join = sdfg.add_state("join")
     sdfg.add_edge(branches, join, dace.InterstateEdge())
-    gather_into(join, 's', '0')
-    later = sdfg.add_state('later')
-    sdfg.add_edge(join, later, dace.InterstateEdge(assignments={'s': 'idx[3]'}))
-    gather_into(later, 's', '1')
+    gather_into(join, "s", "0")
+    later = sdfg.add_state("later")
+    sdfg.add_edge(join, later, dace.InterstateEdge(assignments={"s": "idx[3]"}))
+    gather_into(later, "s", "1")
     sdfg.validate()
     expected = run_gather(copy.deepcopy(sdfg))
 
     result = SymbolSSA().apply_pass(sdfg, {})
-    assert result is not None and len(result['s']) == 1, result
+    assert result is not None and len(result["s"]) == 1, result
     arm_names = {k for _, region in branches.branches for e in region.edges() for k in e.data.assignments}
-    (later_name, ) = sdfg.in_edges(later)[0].data.assignments
+    (later_name,) = sdfg.in_edges(later)[0].data.assignments
     assert len(arm_names) == 1 and later_name not in arm_names, (arm_names, later_name)
     assert arm_names <= join.free_symbols and later_name in later.free_symbols
     sdfg.validate()
@@ -550,16 +550,16 @@ def test_symbol_ssa_keeps_a_branch_join_on_one_name():
 
 def test_symbol_ssa_leaves_a_value_carried_into_a_loop_region_alone():
     """A body read before the body's own redefinition sees both the pre-loop value and the back edge: one web."""
-    sdfg = dace.SDFG('carried_into_loop_region')
+    sdfg = dace.SDFG("carried_into_loop_region")
     gather_arrays(sdfg)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('carry_loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("carry_loop", "i < 8", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'s': 'idx[0]'}))
-    use = loop.add_state('use', is_start_block=True)
-    gather_into(use, 's', 'i')
-    loop.add_edge(use, loop.add_state('tail'), dace.InterstateEdge(assignments={'s': 'idx[i]'}))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"s": "idx[0]"}))
+    use = loop.add_state("use", is_start_block=True)
+    gather_into(use, "s", "i")
+    loop.add_edge(use, loop.add_state("tail"), dace.InterstateEdge(assignments={"s": "idx[i]"}))
     sdfg.validate()
 
     assert SymbolSSA().apply_pass(sdfg, {}) is None
-    assert {k for e in sdfg.all_interstate_edges() for k in e.data.assignments} == {'s'}
+    assert {k for e in sdfg.all_interstate_edges() for k in e.data.assignments} == {"s"}

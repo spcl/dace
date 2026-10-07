@@ -11,6 +11,7 @@ now walks the real enclosing scopes across the nested-SDFG boundary and keeps th
 WCR -- the "map of reductions" shape (like a gemm k-reduction) surviving the
 round-trip. See ``dace/transformation/dataflow/wcr_conversion.py``.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -34,7 +35,7 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     """
     cshape = [N] if reduce_over_i else [N, N]
     cidx = "c[k]" if reduce_over_i else "c[i, k]"
-    inner = dace.SDFG('inner_nested_reduction_sdfg')
+    inner = dace.SDFG("inner_nested_reduction_sdfg")
     inner.add_symbol("i", dace.int64)
     inner.add_array("arow", [N], dace.float64)
     inner.add_array("c", cshape, dace.float64)
@@ -42,11 +43,9 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     ime, imx = ist.add_map("kmap", {"k": "0:N"})
     t = ist.add_tasklet("acc", {"__in"}, {"__out"}, "__out = __in")
     ist.add_memlet_path(ist.add_read("arow"), ime, t, dst_conn="__in", memlet=dace.Memlet("arow[k]"))
-    ist.add_memlet_path(t,
-                        imx,
-                        ist.add_write("c"),
-                        src_conn="__out",
-                        memlet=dace.Memlet(cidx, wcr="lambda x, y: x + y"))
+    ist.add_memlet_path(
+        t, imx, ist.add_write("c"), src_conn="__out", memlet=dace.Memlet(cidx, wcr="lambda x, y: x + y")
+    )
 
     sdfg = dace.SDFG("outer_nested_reduction")
     sdfg.add_array("A", [N, N], dace.float64)
@@ -56,11 +55,9 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     nsdfg = state.add_nested_sdfg(inner, {"arow"}, {"c"}, {"N": "N", "i": "i"})
     state.add_memlet_path(state.add_read("A"), me, nsdfg, dst_conn="arow", memlet=dace.Memlet("A[i, 0:N]"))
     cbound = "C[0:N]" if reduce_over_i else "C[i, 0:N]"
-    state.add_memlet_path(nsdfg,
-                          mx,
-                          state.add_write("C"),
-                          src_conn="c",
-                          memlet=dace.Memlet(cbound, wcr="lambda x, y: x + y"))
+    state.add_memlet_path(
+        nsdfg, mx, state.add_write("C"), src_conn="c", memlet=dace.Memlet(cbound, wcr="lambda x, y: x + y")
+    )
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
@@ -108,11 +105,9 @@ def _toplevel_injective_sdfg() -> dace.SDFG:
     me, mx = state.add_map("m", {"i": "0:N"})
     t = state.add_tasklet("acc", {"__in"}, {"__out"}, "__out = __in")
     state.add_memlet_path(state.add_read("A"), me, t, dst_conn="__in", memlet=dace.Memlet("A[i]"))
-    state.add_memlet_path(t,
-                          mx,
-                          state.add_write("C"),
-                          src_conn="__out",
-                          memlet=dace.Memlet("C[i]", wcr="lambda x, y: x + y"))
+    state.add_memlet_path(
+        t, mx, state.add_write("C"), src_conn="__out", memlet=dace.Memlet("C[i]", wcr="lambda x, y: x + y")
+    )
     sdfg.validate()
     return sdfg
 

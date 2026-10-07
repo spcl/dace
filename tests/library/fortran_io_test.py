@@ -6,6 +6,7 @@ Fortran wrappers perform the transfer) and reads them back through a ``Read``
 node, asserting the values survive the file round-trip.  Skips when no Fortran
 compiler is available, since the wrappers must be compiled + linked.
 """
+
 import shutil
 
 import numpy as np
@@ -139,8 +140,9 @@ def test_namelist_read(tmp_path):
     """Read scalar + array members of a namelist group into output arrays."""
     nml = tmp_path / "phys.nml"
     nml.write_text("&phys\n  alpha = 1.5,\n  nsteps = 7\n  coef = 10.0, 20.0, 30.0\n/\n")
-    sdfg = _namelist_sdfg(str(nml), "phys", ["alpha", "nsteps", "coef"], [dace.float64, dace.int32, dace.float64],
-                          [[1], [1], [3]])
+    sdfg = _namelist_sdfg(
+        str(nml), "phys", ["alpha", "nsteps", "coef"], [dace.float64, dace.int32, dace.float64], [[1], [1], [3]]
+    )
 
     alpha = np.zeros(1, dtype=np.float64)
     nsteps = np.zeros(1, dtype=np.int32)
@@ -157,8 +159,14 @@ def test_namelist_selects_named_group(tmp_path):
     across mixed member types (f32 scalar, i32 array, f64 scalar)."""
     nml = tmp_path / "multi.nml"
     nml.write_text("&other\n  scale = 99.0\n/\n&phys\n  scale = 2.5\n  flags = 1 2 3\n  ratio = 0.5\n/\n")
-    sdfg = _namelist_sdfg(str(nml), "phys", ["scale", "flags", "ratio"], [dace.float32, dace.int32, dace.float64],
-                          [[1], [3], [1]], "_multi")
+    sdfg = _namelist_sdfg(
+        str(nml),
+        "phys",
+        ["scale", "flags", "ratio"],
+        [dace.float32, dace.int32, dace.float64],
+        [[1], [3], [1]],
+        "_multi",
+    )
 
     scale = np.zeros(1, dtype=np.float32)
     flags = np.zeros(3, dtype=np.int32)

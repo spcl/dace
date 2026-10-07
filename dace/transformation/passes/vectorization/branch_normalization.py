@@ -9,6 +9,7 @@ guarded by ``not c0 and ... and ck`` (first-match semantics);
 overlapping-but-not-identical write sets unsupported (``NotImplementedError``).
 No ``ConditionalBlock`` remains afterwards.
 """
+
 import ast
 import copy
 
@@ -28,7 +29,10 @@ from dace.sdfg.construction_utils import (
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-    SameWriteSetIfElseToITECFG, arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
+    SameWriteSetIfElseToITECFG,
+    arm_accesses_are_in_range_unguarded,
+    condition_guards_iteration_symbol,
+)
 from dace.optionals import required
 from dace.sdfg.narrowing import as_range, free_symbol_names
 from dace.ordered import OrderedSet
@@ -126,6 +130,7 @@ def compute_arm_escape_writes(sdfg: dace.SDFG, cb: ConditionalBlock) -> dict[int
     # Branch conditions live on the ConditionalBlock, not interstate edges;
     # collect sibling cond-block conditions (rule 2 excludes cb's own).
     from dace.sdfg.state import ConditionalBlock
+
     for region in local_sdfg.all_control_flow_blocks():
         if not isinstance(region, ConditionalBlock) or region is cb:
             continue
@@ -297,8 +302,9 @@ class BranchNormalization(ppl.Pass):
                 constant = {
                     sym: expr
                     for sym, expr in e.data.assignments.items()
-                    if sym not in pred_syms and self._sdfg_constant_binding(cb.sdfg, sym, str(expr)) and all(
-                        str(ie.data.assignments.get(sym, expr)) == str(expr) for ie in in_edges)
+                    if sym not in pred_syms
+                    and self._sdfg_constant_binding(cb.sdfg, sym, str(expr))
+                    and all(str(ie.data.assignments.get(sym, expr)) == str(expr) for ie in in_edges)
                 }
                 if not constant:
                     continue
@@ -321,7 +327,7 @@ class BranchNormalization(ppl.Pass):
                     return False
                 bound.add(lhs)
         try:
-            tree = ast.parse(expr, mode='eval')
+            tree = ast.parse(expr, mode="eval")
         except SyntaxError:
             return False
         names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
@@ -333,8 +339,12 @@ class BranchNormalization(ppl.Pass):
             index = sub.slice.elts if isinstance(sub.slice, ast.Tuple) else [sub.slice]
             shape = sdfg.arrays[sub.value.id].shape
             if len(index) != len(shape) or not all(
-                    isinstance(i, ast.Constant) and isinstance(i.value, int) and not symbolic.issymbolic(d)
-                    and 0 <= i.value < int(d) for i, d in zip(index, shape)):
+                isinstance(i, ast.Constant)
+                and isinstance(i.value, int)
+                and not symbolic.issymbolic(d)
+                and 0 <= i.value < int(d)
+                for i, d in zip(index, shape)
+            ):
                 return False
         read = names & set(sdfg.arrays)
         return not any(n.data in read and state.in_degree(n) > 0 for state in sdfg.states() for n in state.data_nodes())
@@ -353,18 +363,21 @@ class BranchNormalization(ppl.Pass):
                 for _lhs, rhs in (e.data.assignments or {}).items():
                     if symbolic.symbols_in_code(str(rhs), potential_symbols=only):
                         return True
-                if e.data.condition is not None and symbolic.symbols_in_code(e.data.condition.as_string,
-                                                                             potential_symbols=only):
+                if e.data.condition is not None and symbolic.symbols_in_code(
+                    e.data.condition.as_string, potential_symbols=only
+                ):
                     return True
             if isinstance(cfg, ConditionalBlock):
                 for c, _br in cfg.branches:
-                    if c is not None and symbolic.symbols_in_code(c.as_string if isinstance(c, CodeBlock) else str(c),
-                                                                  potential_symbols=only):
+                    if c is not None and symbolic.symbols_in_code(
+                        c.as_string if isinstance(c, CodeBlock) else str(c), potential_symbols=only
+                    ):
                         return True
             if isinstance(cfg, LoopRegion):
                 for code in (cfg.loop_condition, cfg.update_statement, cfg.init_statement):
                     if code is not None and symbolic.symbols_in_code(
-                            code.as_string if isinstance(code, CodeBlock) else str(code), potential_symbols=only):
+                        code.as_string if isinstance(code, CodeBlock) else str(code), potential_symbols=only
+                    ):
                         return True
         for state in sdfg.states():
             if state in inside_states:
@@ -465,8 +478,9 @@ class BranchNormalization(ppl.Pass):
             return None
         return self.snapshot_guard(cb, cond_text, lifter) if verdict else cond_text
 
-    def guard_snapshot_verdict(self, cb: ConditionalBlock, cond_text: str,
-                               lifter: SameWriteSetIfElseToITECFG) -> bool | None:
+    def guard_snapshot_verdict(
+        self, cb: ConditionalBlock, cond_text: str, lifter: SameWriteSetIfElseToITECFG
+    ) -> bool | None:
         """Whether one guard of ``cb`` needs a snapshot before the arms run; mutates nothing.
 
         :param cb: conditional block about to be serialized.
@@ -510,9 +524,11 @@ class BranchNormalization(ppl.Pass):
         guard_state = parent.add_state_before(cb, label=f"{cb.label}_guard", is_start_block=parent.start_block is cb)
         resolved = lifter._resolve_cond_to_array(local_sdfg, guard_state, cond_text, subset_str, skip_cb=cb)
         if resolved is None:
-            raise NotImplementedError(f"BranchNormalization: cannot snapshot the guard of {cb.label!r} "
-                                      f"({cond_text!r}) although its arms write data it reads; "
-                                      f"serializing the arms would re-test a mutated guard")
+            raise NotImplementedError(
+                f"BranchNormalization: cannot snapshot the guard of {cb.label!r} "
+                f"({cond_text!r}) although its arms write data it reads; "
+                f"serializing the arms would re-test a mutated guard"
+            )
         cond_name = resolved[0]
         snapshot_subset = "0" if local_sdfg.arrays[cond_name].total_size == 1 else subset_str
         return f"{cond_name}[{snapshot_subset}]"
@@ -532,7 +548,8 @@ class BranchNormalization(ppl.Pass):
             evaluated unconditionally beside a guard that keeps an iteration symbol in range.
         """
         texts = [
-            cond.as_string if isinstance(cond, CodeBlock) else str(cond) for cond, body in cb.branches
+            cond.as_string if isinstance(cond, CodeBlock) else str(cond)
+            for cond, body in cb.branches
             if cond is not None
         ]
         verdicts = [self.guard_snapshot_verdict(cb, text, lifter) for text in texts]
@@ -602,8 +619,9 @@ class BranchNormalization(ppl.Pass):
             parent.add_edge(chain[-1], edge.dst, edge.data)
         parent.remove_node(cb)
 
-    def serialize_two_arm(self, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
-                          body1: ControlFlowRegion) -> bool:
+    def serialize_two_arm(
+        self, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion, body1: ControlFlowRegion
+    ) -> bool:
         """Serialize ``if c: A else: B`` into ``if c: A`` then ``if not c: B``.
 
         Mostly a CFG rewrite: ``cb`` keeps the if-arm; a new negated single-arm
@@ -640,8 +658,9 @@ class BranchNormalization(ppl.Pass):
         parent.add_edge(cb, neg_block, dace.InterstateEdge())
         return True
 
-    def _normalize_single_arm(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock,
-                              body: ControlFlowRegion) -> bool:
+    def _normalize_single_arm(
+        self, sdfg: dace.SDFG, cb: ConditionalBlock, cond: CodeBlock, body: ControlFlowRegion
+    ) -> bool:
         # Lower ``if cond: body`` to ``arr = ITE(cond, expr, arr)`` writes. An index guard (``if i < N - 1``)
         # keeps the arm's own accesses in range, so leave it for the masking path (shared detector).
         if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
@@ -727,8 +746,11 @@ class BranchNormalization(ppl.Pass):
     @staticmethod
     def _symbol_is_arm_local(sdfg: dace.SDFG, body: ControlFlowRegion, sym: str) -> bool:
         # Whether ``sym``'s reads are confined to ``body`` (the arm region).
-        arm_blocks = set(body.all_control_flow_blocks(
-            recursive=True)) if isinstance(body, ControlFlowRegion) else set(body.nodes())
+        arm_blocks = (
+            set(body.all_control_flow_blocks(recursive=True))
+            if isinstance(body, ControlFlowRegion)
+            else set(body.nodes())
+        )
         # Any reference to sym outside the arm disqualifies the lift.
         for cfg in sdfg.all_control_flow_regions(recursive=True):
             for blk in cfg.nodes():
@@ -741,8 +763,11 @@ class BranchNormalization(ppl.Pass):
                         if sym in symbolic.symbols_in_code(str(v)):
                             return False
                     if ie.data.condition is not None:
-                        cond_str = ie.data.condition.as_string if isinstance(ie.data.condition, CodeBlock) else str(
-                            ie.data.condition)
+                        cond_str = (
+                            ie.data.condition.as_string
+                            if isinstance(ie.data.condition, CodeBlock)
+                            else str(ie.data.condition)
+                        )
                         if sym in symbolic.symbols_in_code(cond_str):
                             return False
                 # Branch-block conditions on conditional blocks.
@@ -797,8 +822,14 @@ class BranchNormalization(ppl.Pass):
             return None
         return order
 
-    def _split_two_arm_disjoint(self, sdfg: dace.SDFG, cb: ConditionalBlock, cond0: CodeBlock, body0: ControlFlowRegion,
-                                body1: ControlFlowRegion) -> bool:
+    def _split_two_arm_disjoint(
+        self,
+        sdfg: dace.SDFG,
+        cb: ConditionalBlock,
+        cond0: CodeBlock,
+        body0: ControlFlowRegion,
+        body1: ControlFlowRegion,
+    ) -> bool:
         # Split a disjoint-write ``if/else`` into two sequential single-arm ``if`` s.
         # Refuse to even split an index-guarded ``if/else`` (see _normalize_single_arm): the
         # negated-else halves this produces would be flattened just the same, fabricating the
@@ -828,7 +859,8 @@ class BranchNormalization(ppl.Pass):
             raise NotImplementedError(
                 f"BranchNormalization: two-arm ConditionalBlock {cb.label!r} has overlapping "
                 f"write subsets {sorted(truly_overlapping)} that M3.1b did not normalize; this pass "
-                f"cannot flatten it without dropping or duplicating writes")
+                f"cannot flatten it without dropping or duplicating writes"
+            )
 
         # Split into two single-arm conditionals: else-body -> new ``if not cond0: body1``
         # block after ``cb`` (now if-arm only); later cycles rewrite each single-arm form.
@@ -837,32 +869,37 @@ class BranchNormalization(ppl.Pass):
 
     def _collect_write_subsets(self, state: dace.SDFGState) -> dict[str, subsets.Range] | None:
         from dace.transformation.passes.vectorization.utils.queries import collect_element_write_subsets
+
         return collect_element_write_subsets(state)
 
-    def _resolve_arm_cond(self,
-                          sdfg: dace.SDFG,
-                          state: dace.SDFGState,
-                          cond_text: str,
-                          any_subset_str: str,
-                          skip_cb: ConditionalBlock | None = None) -> tuple[str | None, dace.nodes.AccessNode | None]:
+    def _resolve_arm_cond(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        cond_text: str,
+        any_subset_str: str,
+        skip_cb: ConditionalBlock | None = None,
+    ) -> tuple[str | None, dace.nodes.AccessNode | None]:
         # Resolve the arm condition to ``(cond_array_name, cond_producer)``.
         from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-            SameWriteSetIfElseToITECFG, )  # local import: avoids an import cycle at module load
-        resolved = SameWriteSetIfElseToITECFG()._resolve_cond_to_array(sdfg,
-                                                                       state,
-                                                                       cond_text,
-                                                                       any_subset_str,
-                                                                       skip_cb=skip_cb)
+            SameWriteSetIfElseToITECFG,
+        )  # local import: avoids an import cycle at module load
+
+        resolved = SameWriteSetIfElseToITECFG()._resolve_cond_to_array(
+            sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb
+        )
         return (None, None) if resolved is None else resolved
 
-    def _rewrite_writes_to_ite(self,
-                               sdfg: dace.SDFG,
-                               state: dace.SDFGState,
-                               write_subsets: dict[str, subsets.Range],
-                               cond_text: str,
-                               *,
-                               skip_cb: ConditionalBlock | None = None,
-                               preresolved: tuple[str | None, dace.nodes.AccessNode | None] | None = None) -> None:
+    def _rewrite_writes_to_ite(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        write_subsets: dict[str, subsets.Range],
+        cond_text: str,
+        *,
+        skip_cb: ConditionalBlock | None = None,
+        preresolved: tuple[str | None, dace.nodes.AccessNode | None] | None = None,
+    ) -> None:
         # Redirect each write in ``state`` through ``arr = ITE(cond, expr, arr)``. Resolve cond once: the
         # symbol lift deletes the upstream assignment. ``preresolved`` lets a multi-state caller share it;
         # ``producer=None`` forces a fresh in-state read of the cond array.
@@ -870,11 +907,9 @@ class BranchNormalization(ppl.Pass):
             cond_array_name, cond_producer = preresolved
         else:
             any_subset_str = str(next(iter(write_subsets.values())))
-            cond_array_name, cond_producer = self._resolve_arm_cond(sdfg,
-                                                                    state,
-                                                                    cond_text,
-                                                                    any_subset_str,
-                                                                    skip_cb=skip_cb)
+            cond_array_name, cond_producer = self._resolve_arm_cond(
+                sdfg, state, cond_text, any_subset_str, skip_cb=skip_cb
+            )
 
         for arr_name in list(write_subsets.keys()):
             # Every write AN for this array. Each may target a different subset
@@ -889,22 +924,33 @@ class BranchNormalization(ppl.Pass):
                     continue
                 # One AN can carry several element writes (cloudsc ``zsolqa``); each in-edge gets its own gate.
                 for in_edge in in_edges:
-                    self._gate_one_write(sdfg, state, arr_name, write_an, in_edge, cond_text, cond_array_name,
-                                         cond_producer)
+                    self._gate_one_write(
+                        sdfg, state, arr_name, write_an, in_edge, cond_text, cond_array_name, cond_producer
+                    )
 
-    def _gate_one_write(self, sdfg: dace.SDFG, state: dace.SDFGState, arr_name: str, write_an: dace.nodes.AccessNode,
-                        in_edge: MultiConnectorEdge[Memlet], cond_text: str, cond_array_name: str | None,
-                        cond_producer: dace.nodes.AccessNode | None) -> None:
+    def _gate_one_write(
+        self,
+        sdfg: dace.SDFG,
+        state: dace.SDFGState,
+        arr_name: str,
+        write_an: dace.nodes.AccessNode,
+        in_edge: MultiConnectorEdge[Memlet],
+        cond_text: str,
+        cond_array_name: str | None,
+        cond_producer: dace.nodes.AccessNode | None,
+    ) -> None:
         # Redirect ONE write edge through ``arr = ITE(cond, expr, arr)``.
         write_subset = in_edge.data.subset
 
         # 1-element scratch ``__bn_<arr>_new`` holds this element's value.
-        tmp_name, _ = sdfg.add_array(name=f"__bn_{arr_name}_new",
-                                     shape=(1, ),
-                                     dtype=sdfg.arrays[arr_name].dtype,
-                                     storage=dace.dtypes.StorageType.Register,
-                                     transient=True,
-                                     find_new_name=True)
+        tmp_name, _ = sdfg.add_array(
+            name=f"__bn_{arr_name}_new",
+            shape=(1,),
+            dtype=sdfg.arrays[arr_name].dtype,
+            storage=dace.dtypes.StorageType.Register,
+            transient=True,
+            find_new_name=True,
+        )
         tmp_an = state.add_access(tmp_name)
 
         # ITE old value = ``arr_name`` before the writing tasklet ran: for chained RMW the AN the tasklet
@@ -913,8 +959,12 @@ class BranchNormalization(ppl.Pass):
         old_an = None
         if isinstance(writer_tasklet, dace.nodes.Tasklet):
             for re_ in state.in_edges(writer_tasklet):
-                if (isinstance(re_.src, dace.nodes.AccessNode) and re_.src.data == arr_name
-                        and re_.data.subset is not None and str(re_.data.subset) == str(in_edge.data.subset)):
+                if (
+                    isinstance(re_.src, dace.nodes.AccessNode)
+                    and re_.src.data == arr_name
+                    and re_.data.subset is not None
+                    and str(re_.data.subset) == str(in_edge.data.subset)
+                ):
                     old_an = re_.src
                     break
         if old_an is None:
@@ -930,7 +980,7 @@ class BranchNormalization(ppl.Pass):
             cond_access = cond_producer if cond_producer is not None else state.add_access(cond_array_name)
             ite_t = state.add_tasklet(
                 name=f"bn_ite_{arr_name}",
-                inputs=OrderedSet(('_c', '_new', '_old')),
+                inputs=OrderedSet(("_c", "_new", "_old")),
                 outputs={"_o"},
                 code="_o = ITE(_c, _new, _old)",
             )
@@ -939,7 +989,7 @@ class BranchNormalization(ppl.Pass):
         else:
             ite_t = state.add_tasklet(
                 name=f"bn_ite_{arr_name}",
-                inputs=OrderedSet(('_new', '_old')),
+                inputs=OrderedSet(("_new", "_old")),
                 outputs={"_o"},
                 code=f"_o = ITE({cond_text}, _new, _old)",
             )

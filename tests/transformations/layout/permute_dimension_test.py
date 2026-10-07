@@ -9,7 +9,7 @@ def test_standalone_execution():
     print("Running standalone permute transformations test...")
 
     # Setup
-    dace.Config.set('cache', value='unique')
+    dace.Config.set("cache", value="unique")
     N_val = 8
     TSTEPS_val = 2
 
@@ -24,20 +24,26 @@ def test_standalone_execution():
         neighbors: dace.int64[N, N, 8],
     ):
         for _ in range(1, TSTEPS):
-            for i, j, k in dace.map[0:N - 2, 0:N - 2, 0:N - 2]:
-                vals_B[i + 1, j + 1, k +
-                       1] = 0.2 * (vals_A[i + 1, j + 1, k + 1] + vals_A[i + 1, j, k + 1] + vals_A[i + 1, j + 2, k + 1] +
-                                   vals_A[neighbors[i + 1, k + 1, 0], j + 1, neighbors[i + 1, k + 1, 4]] +
-                                   vals_A[neighbors[i + 1, k + 1, 1], j + 1, neighbors[i + 1, k + 1, 5]] +
-                                   vals_A[neighbors[i + 1, k + 1, 2], j + 1, neighbors[i + 1, k + 1, 6]] +
-                                   vals_A[neighbors[i + 1, k + 1, 3], j + 1, neighbors[i + 1, k + 1, 7]])
-            for i, j, k in dace.map[0:N - 2, 0:N - 2, 0:N - 2]:
-                vals_A[i + 1, j + 1, k +
-                       1] = 0.2 * (vals_B[i + 1, j + 1, k + 1] + vals_B[i + 1, j, k + 1] + vals_B[i + 1, j + 2, k + 1] +
-                                   vals_B[neighbors[i + 1, k + 1, 0], j + 1, neighbors[i + 1, k + 1, 4]] +
-                                   vals_B[neighbors[i + 1, k + 1, 1], j + 1, neighbors[i + 1, k + 1, 5]] +
-                                   vals_B[neighbors[i + 1, k + 1, 2], j + 1, neighbors[i + 1, k + 1, 6]] +
-                                   vals_B[neighbors[i + 1, k + 1, 3], j + 1, neighbors[i + 1, k + 1, 7]])
+            for i, j, k in dace.map[0 : N - 2, 0 : N - 2, 0 : N - 2]:
+                vals_B[i + 1, j + 1, k + 1] = 0.2 * (
+                    vals_A[i + 1, j + 1, k + 1]
+                    + vals_A[i + 1, j, k + 1]
+                    + vals_A[i + 1, j + 2, k + 1]
+                    + vals_A[neighbors[i + 1, k + 1, 0], j + 1, neighbors[i + 1, k + 1, 4]]
+                    + vals_A[neighbors[i + 1, k + 1, 1], j + 1, neighbors[i + 1, k + 1, 5]]
+                    + vals_A[neighbors[i + 1, k + 1, 2], j + 1, neighbors[i + 1, k + 1, 6]]
+                    + vals_A[neighbors[i + 1, k + 1, 3], j + 1, neighbors[i + 1, k + 1, 7]]
+                )
+            for i, j, k in dace.map[0 : N - 2, 0 : N - 2, 0 : N - 2]:
+                vals_A[i + 1, j + 1, k + 1] = 0.2 * (
+                    vals_B[i + 1, j + 1, k + 1]
+                    + vals_B[i + 1, j, k + 1]
+                    + vals_B[i + 1, j + 2, k + 1]
+                    + vals_B[neighbors[i + 1, k + 1, 0], j + 1, neighbors[i + 1, k + 1, 4]]
+                    + vals_B[neighbors[i + 1, k + 1, 1], j + 1, neighbors[i + 1, k + 1, 5]]
+                    + vals_B[neighbors[i + 1, k + 1, 2], j + 1, neighbors[i + 1, k + 1, 6]]
+                    + vals_B[neighbors[i + 1, k + 1, 3], j + 1, neighbors[i + 1, k + 1, 7]]
+                )
 
     # Create original SDFG
     original_sdfg = kernel.to_sdfg(use_cache=False, simplify=False)
@@ -49,10 +55,7 @@ def test_standalone_execution():
 
     # Apply transformations
     PermuteDimensions(
-        permute_map={
-            "vals_A": [0, 2, 1],
-            "vals_B": [0, 2, 1]
-        },
+        permute_map={"vals_A": [0, 2, 1], "vals_B": [0, 2, 1]},
         add_permute_maps=True,
     ).apply_pass(sdfg=transformed_sdfg, pipeline_results={})
 
@@ -96,17 +99,19 @@ def test_permute_args_permutes_subscript_indices():
     The array name is the FIRST ARGUMENT, not the function, so the old ``str(expr.func)`` lookup
     never matched an array: descriptors and memlets were permuted while the index expressions
     inlined into interstate assignments were silently left alone, reading the wrong element."""
-    expr = dace.symbolic.pystr_to_symbolic('(A[i, j, k] * B[i, j, k])')
-    permuted = permute_args(expr, {'A': [1, 0, 2]})
+    expr = dace.symbolic.pystr_to_symbolic("(A[i, j, k] * B[i, j, k])")
+    permuted = permute_args(expr, {"A": [1, 0, 2]})
 
     accesses = {str(sub.args[0]): [str(a) for a in sub.args[1:]] for sub in permuted.atoms(dace.symbolic.Subscript)}
-    assert accesses['A'] == ['j', 'i', 'k'], accesses
-    assert accesses['B'] == ['i', 'j', 'k'], accesses  # arrays outside the permute map are untouched
+    assert accesses["A"] == ["j", "i", "k"], accesses
+    assert accesses["B"] == ["i", "j", "k"], accesses  # arrays outside the permute map are untouched
 
     # new index position i takes old position perm[i], matching how the descriptor shape is permuted
-    assert [str(a) for a in permute_args(dace.symbolic.pystr_to_symbolic('A[i, j, k]'), {
-        'A': [2, 0, 1]
-    }).args[1:]] == ['k', 'i', 'j']
+    assert [str(a) for a in permute_args(dace.symbolic.pystr_to_symbolic("A[i, j, k]"), {"A": [2, 0, 1]}).args[1:]] == [
+        "k",
+        "i",
+        "j",
+    ]
 
 
 if __name__ == "__main__":

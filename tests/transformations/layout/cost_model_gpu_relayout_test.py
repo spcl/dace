@@ -18,6 +18,7 @@ Takeaway: to make the LogGP model value a GPU relayout correctly, feed it GPU
 params AND a FINITE concurrency (n_cores * core_mlp), never the parallel-schedule ``inf`` default --
 otherwise it prices only bytes and UNDER-values the transpose, missing the coalescing win entirely.
 """
+
 import pytest
 
 import dace

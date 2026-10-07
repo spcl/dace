@@ -35,6 +35,7 @@ forced-fuse check inside it for the numeric proof that fusing would in fact be s
 Each test runs the UNFUSED loop-form SDFG as its own oracle, then fuses and runs again. Refusing to
 fuse is always acceptable; changing the numbers never is.
 """
+
 import numpy as np
 import pytest
 
@@ -96,8 +97,9 @@ def assert_loop_fusion_preserves_meaning(build, what: str) -> int:
     if applied:
         got = run_ab(fused)
         for name, expected in oracle.items():
-            assert np.array_equal(got[name], expected), (f"fusing the loop-form changed {name} "
-                                                         f"({what}): {got[name]} != {expected}")
+            assert np.array_equal(got[name], expected), (
+                f"fusing the loop-form changed {name} ({what}): {got[name]} != {expected}"
+            )
     return applied
 
 
@@ -108,12 +110,12 @@ def force_fuse(sdfg: dace.SDFG, first: LoopRegion, second: LoopRegion) -> None:
     -- `_can_be_applied_and_apply` only forwards entries that are in `cls.__properties__`), so this
     drives the transformation instance directly."""
     instance = LoopFusion()
-    instance.setup_match(sdfg, sdfg.cfg_id, -1, {
-        LoopFusion.first: sdfg.node_id(first),
-        LoopFusion.second: sdfg.node_id(second)
-    }, 0)
-    assert instance.can_be_applied(sdfg, 0, sdfg, allow_doall_fuse=True), \
+    instance.setup_match(
+        sdfg, sdfg.cfg_id, -1, {LoopFusion.first: sdfg.node_id(first), LoopFusion.second: sdfg.node_id(second)}, 0
+    )
+    assert instance.can_be_applied(sdfg, 0, sdfg, allow_doall_fuse=True), (
         "expected the dependence logic alone (DOALL guard aside) to judge this pair fusable"
+    )
     instance.apply(sdfg, sdfg)
     sdfg.validate()
 
@@ -154,12 +156,14 @@ def build_copy_memlet_hides_write_loop_form() -> dace.SDFG:
 
 
 def test_copy_memlet_naming_the_inner_container_hides_the_write_loop_form():
-    map_applied = build_copy_memlet_hides_write_map_form().apply_transformations_repeated(dftrans.MapFusionHorizontal,
-                                                                                          validate_all=True)
+    map_applied = build_copy_memlet_hides_write_map_form().apply_transformations_repeated(
+        dftrans.MapFusionHorizontal, validate_all=True
+    )
     assert map_applied == 0, "map-fusion baseline changed -- re-check this loop-form parity claim"
 
-    loop_applied = assert_loop_fusion_preserves_meaning(build_copy_memlet_hides_write_loop_form,
-                                                        "copy-Memlet naming the inner container")
+    loop_applied = assert_loop_fusion_preserves_meaning(
+        build_copy_memlet_hides_write_loop_form, "copy-Memlet naming the inner container"
+    )
     assert loop_applied == 0, "expected LoopFusion to refuse this WAW hazard, matching MapFusionHorizontal"
 
 
@@ -206,12 +210,14 @@ def build_view_aliases_array_loop_form() -> dace.SDFG:
 
 
 def test_view_of_the_same_array_is_not_a_different_array_loop_form():
-    map_applied = build_view_aliases_array_map_form().apply_transformations_repeated(dftrans.MapFusionHorizontal,
-                                                                                     validate_all=True)
+    map_applied = build_view_aliases_array_map_form().apply_transformations_repeated(
+        dftrans.MapFusionHorizontal, validate_all=True
+    )
     assert map_applied == 0, "map-fusion baseline changed -- re-check this loop-form parity claim"
 
-    loop_applied = assert_loop_fusion_preserves_meaning(build_view_aliases_array_loop_form,
-                                                        "View aliasing the written array")
+    loop_applied = assert_loop_fusion_preserves_meaning(
+        build_view_aliases_array_loop_form, "View aliasing the written array"
+    )
     assert loop_applied == 0, "expected LoopFusion to refuse this WAR-through-a-View hazard"
 
 
@@ -243,8 +249,9 @@ def test_unknown_boundary_subset_must_not_erase_the_access_sets_loop_form():
     body1 = _single_compute_state(first)
 
     # Blank the write-to-A edge's subset in body1, exactly as an uninitialised Memlet would present it.
-    blanked = next(e for n in body1.nodes() if isinstance(n, nodes.AccessNode) and n.data == "A"
-                   for e in body1.in_edges(n))
+    blanked = next(
+        e for n in body1.nodes() if isinstance(n, nodes.AccessNode) and n.data == "A" for e in body1.in_edges(n)
+    )
     blanked.data.subset = None
 
     reads, writes = LoopFusion._accesses(body1)
@@ -252,8 +259,9 @@ def test_unknown_boundary_subset_must_not_erase_the_access_sets_loop_form():
 
     body2 = _single_compute_state(second)
     instance = LoopFusion()
-    assert instance._fusion_legal(first, second, (reads, writes), LoopFusion._accesses(body2)) is False, \
+    assert instance._fusion_legal(first, second, (reads, writes), LoopFusion._accesses(body2)) is False, (
         "an unresolvable write subset must refuse fusion (fail closed), not silently allow it"
+    )
 
 
 # InOut split must not redirect a cross-state read (map verdict: REFUSE)
@@ -339,14 +347,16 @@ def test_inout_split_must_not_redirect_a_cross_state_read_loop_form():
 
     forced = build_inout_split_loop_form_unified_names()
     loops = loop_regions(forced)
-    first = next(loop for loop in loops
-                 if forced.out_edges(loop) and isinstance(forced.out_edges(loop)[0].dst, LoopRegion))
+    first = next(
+        loop for loop in loops if forced.out_edges(loop) and isinstance(forced.out_edges(loop)[0].dst, LoopRegion)
+    )
     second = forced.out_edges(first)[0].dst
     force_fuse(forced, first, second)
     got_forced = run_txb(forced)
     for name in ("T", "X", "B"):
-        assert np.array_equal(got_forced[name], oracle[name]), \
+        assert np.array_equal(got_forced[name], oracle[name]), (
             f"forced fuse past the DOALL guard changed {name} -- would be the InOut-split miscompile class"
+        )
 
 
 # WCR shapes: reduction consumed vs. independent
@@ -417,8 +427,9 @@ def test_reduction_consumed_by_the_second_loop_is_not_fused():
     either. The barrier is inherent to the computation (loop2 needs the fully-reduced, scaled value),
     not an artifact of either representation -- AGREE.
     """
-    map_applied = _wcr_shape(reduction_is_consumed=True).apply_transformations_repeated(dftrans.MapFusionVertical,
-                                                                                        validate_all=True)
+    map_applied = _wcr_shape(reduction_is_consumed=True).apply_transformations_repeated(
+        dftrans.MapFusionVertical, validate_all=True
+    )
     assert map_applied == 0, "map-fusion baseline changed -- re-check this loop-form parity claim"
 
     oracle = _run_wcr(build_wcr_loop_form(reduction_is_consumed=True))
@@ -449,8 +460,9 @@ def test_reduction_independent_of_the_second_loop_is_refused_by_a_doall_guard():
     `ReconstructWavefrontNest`) confirms `_fusion_legal`'s claim: fusing is value-preserving here, it is
     simply left undone by policy.
     """
-    map_applied = _wcr_shape(reduction_is_consumed=False).apply_transformations_repeated(dftrans.MapFusionVertical,
-                                                                                         validate_all=True)
+    map_applied = _wcr_shape(reduction_is_consumed=False).apply_transformations_repeated(
+        dftrans.MapFusionVertical, validate_all=True
+    )
     assert map_applied == 1, "map-fusion baseline changed -- re-check this loop-form parity claim"
 
     oracle = _run_wcr(build_wcr_loop_form(reduction_is_consumed=False))
@@ -570,8 +582,9 @@ def test_conditional_block_body_is_accepted_once_the_shape_gate_is_relaxed():
     sdfg = build_conditional_running_count_pair()
     first = next(loop for loop in loop_regions(sdfg) if loop.label == "loop1")
     second = next(loop for loop in loop_regions(sdfg) if loop.label == "loop2")
-    assert _single_compute_state(first) is None and _single_compute_state(second) is None, \
+    assert _single_compute_state(first) is None and _single_compute_state(second) is None, (
         "fixture must actually exercise the OLD gate's blind spot (a ConditionalBlock body)"
+    )
 
     oracle = run_mc(build_conditional_running_count_pair())
     fused = build_conditional_running_count_pair()
@@ -644,8 +657,9 @@ def test_read_ahead_flow_hazard_across_multi_state_bodies_still_refused():
     acc1 = LoopFusion._body_accesses(first)
     acc2 = LoopFusion._body_accesses(second)
     assert acc1 is not None and acc2 is not None, "the multi-state body must now reach the legality kernel"
-    assert LoopFusion()._fusion_legal(first, second, acc1, acc2) is False, \
+    assert LoopFusion()._fusion_legal(first, second, acc1, acc2) is False, (
         "a read-ahead flow hazard on y must refuse fusion, not be silently accepted"
+    )
 
     oracle = run_yz(build_read_ahead_multi_state_pair())
     sdfg2 = build_read_ahead_multi_state_pair()

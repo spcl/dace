@@ -19,6 +19,7 @@ the replicas do not race. The ordering edge is dropped rather than rerouted: a d
 sequences the second Map after the first, so the Tasklet still runs after the first Map once it
 lives inside that Map.
 """
+
 import copy
 from typing import Any, Union
 
@@ -42,11 +43,9 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
     def expressions(cls) -> Any:
         return [sdutil.node_path_graph(cls.first_map_exit, cls.tasklet, cls.access, cls.second_map_entry)]
 
-    def can_be_applied(self,
-                       graph: Union[SDFGState, SDFG],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(
+        self, graph: Union[SDFGState, SDFG], expr_index: int, sdfg: SDFG, permissive: bool = False
+    ) -> bool:
         tasklet, access, second_map_entry = self.tasklet, self.access, self.second_map_entry
 
         # Free Tasklet: nothing to read, one value to produce.
@@ -68,7 +67,7 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
             return False
 
         consumer_edge = graph.out_edges(access)[0]
-        if consumer_edge.dst_conn is None or not consumer_edge.dst_conn.startswith('IN_'):
+        if consumer_edge.dst_conn is None or not consumer_edge.dst_conn.startswith("IN_"):
             return False
         if len(list(graph.in_edges_by_connector(second_map_entry, consumer_edge.dst_conn))) != 1:
             return False
@@ -79,13 +78,15 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
             return False
         # That data path is also what keeps the dropped ordering edge satisfied after the move.
         if not mfhelper.is_node_reachable_from(
-                graph=graph, begin=self.first_map_exit, end=second_map_entry, ignore_empty_edges=True):
+            graph=graph, begin=self.first_map_exit, end=second_map_entry, ignore_empty_edges=True
+        ):
             return False
 
         # Whole-SDFG walks last: the local refusals above reject nearly every candidate.
         # Scope allocation is only sound if nothing outside this Map's scope names the buffer.
-        if any(node is not access and node.data == access.data for state in sdfg.states()
-               for node in state.data_nodes()):
+        if any(
+            node is not access and node.data == access.data for state in sdfg.states() for node in state.data_nodes()
+        ):
             return False
         return not any(access.data in edge.data.free_symbols for edge in sdfg.all_interstate_edges())
 
@@ -93,7 +94,7 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
         tasklet, access, second_map_entry = self.tasklet, self.access, self.second_map_entry
         consumer_edge = graph.out_edges(access)[0]
         in_conn = consumer_edge.dst_conn
-        out_conn = 'OUT_' + in_conn[3:]
+        out_conn = "OUT_" + in_conn[3:]
 
         for in_edge in list(graph.in_edges(tasklet)):
             graph.remove_edge(in_edge)
@@ -107,4 +108,4 @@ class DistributeTaskletIntoMap(transformation.SingleStateTransformation):
         graph.add_edge(second_map_entry, None, tasklet, None, dace.Memlet())
 
 
-__all__ = ['DistributeTaskletIntoMap']
+__all__ = ["DistributeTaskletIntoMap"]

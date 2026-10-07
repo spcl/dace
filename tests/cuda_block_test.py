@@ -6,7 +6,7 @@ from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
 import pytest
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -31,7 +31,7 @@ def cudahello(V: dace.float64[N], Vout: dace.float64[N]):
 def _test(sdfg):
     N = 128
 
-    print('Vector double CUDA (block) %d' % (N))
+    print("Vector double CUDA (block) %d" % (N))
 
     V = dace.ndarray([N], dace.float64)
     Vout = dace.ndarray([N], dace.float64)
@@ -98,7 +98,7 @@ def test_different_block_sizes_nesting():
                     out >> v2[i + bi - 1]
                     out = in_V * 3
 
-            nested2(V[bi - 1:bi + 33], v1[bi // 32:bi // 32 + 1])
+            nested2(V[bi - 1 : bi + 33], v1[bi // 32 : bi // 32 + 1])
 
     sdfg = diffblocks.to_sdfg()
     # The offloader reports what it placed on the device; an empty result means the graph
@@ -106,16 +106,20 @@ def test_different_block_sizes_nesting():
     assert sdfg.apply_gpu_transformations()
     # Library nodes as well as maps: a graph whose only work is a Reduce carries its device
     # schedule on the library node and has no map at all until the node is expanded.
-    assert any(node.schedule in dtypes.GPU_SCHEDULES for nested in sdfg.all_sdfgs_recursive()
-               for state in nested.states() for node in state.nodes()
-               if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)))
+    assert any(
+        node.schedule in dtypes.GPU_SCHEDULES
+        for nested in sdfg.all_sdfgs_recursive()
+        for state in nested.states()
+        for node in state.nodes()
+        if isinstance(node, (nodes.EntryNode, nodes.LibraryNode))
+    )
     V = np.random.rand(130)
     v1 = np.zeros([4], np.float64)
     v2 = np.random.rand(128)
     expected_v2 = V[1:129] * 3
     expected_v1 = np.zeros([4], np.float64)
     for i in range(4):
-        expected_v1[i] = np.sum(V[i * 32:(i + 1) * 32 + 2]) * 2
+        expected_v1[i] = np.sum(V[i * 32 : (i + 1) * 32 + 2]) * 2
 
     sdfg(V, v1, v2)
     assert np.linalg.norm(v1 - expected_v1) <= 1e-6
@@ -139,12 +143,12 @@ def test_custom_block_size_onemap():
     # Test 1: too many dimensions
     mapentry.map.gpu_block_size = (13, 5, 3, 4)
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    assert 'dim3(13, 5, 12)' in code
+    assert "dim3(13, 5, 12)" in code
 
     # Test 2: too few dimensions
     mapentry.map.gpu_block_size = (127, 5)
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    assert 'dim3(127, 5, 1)' in code
+    assert "dim3(127, 5, 1)" in code
 
     # Test 3: compilation
     sdfg.compile()
@@ -164,12 +168,14 @@ def test_custom_block_size_twomaps():
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations()
     mapentry: dace.nodes.MapEntry = next(
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device)
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device
+    )
 
     mapentry.map.gpu_block_size = (127, 5)
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    assert 'dim3(127, 5, 1)' in code
+    assert "dim3(127, 5, 1)" in code
 
     # Test 3: compilation
     sdfg.compile()
@@ -182,7 +188,7 @@ def test_block_thread_specialization():
     # split comes from the kernel map's own range, not from a second map nested inside it, so a
     # graph whose parallelism sits in an inner map lands in a single block and can say nothing
     # about ``gpu_block``.
-    block_size = int(Config.get('compiler', 'cuda', 'default_block_size').split(',')[0])
+    block_size = int(Config.get("compiler", "cuda", "default_block_size").split(",")[0])
     n = 2 * block_size
     lanes = list(range(2, 9, 3))
 
@@ -199,15 +205,16 @@ def test_block_thread_specialization():
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations()
     inner_maps_scheduled_by_the_kernel(sdfg)
-    tasklet = next(n for n, _ in sdfg.all_nodes_recursive()
-                   if isinstance(n, dace.nodes.Tasklet) and '2' in n.code.as_string)
-    tasklet.location['gpu_thread'] = dace.subsets.Range.from_string('2:9:3')
-    tasklet.location['gpu_block'] = 1
+    tasklet = next(
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and "2" in n.code.as_string
+    )
+    tasklet.location["gpu_thread"] = dace.subsets.Range.from_string("2:9:3")
+    tasklet.location["gpu_block"] = 1
 
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
     sdfg.compile()
-    assert '>= 2' in code and '<= 8' in code
-    assert ' == 1' in code
+    assert ">= 2" in code and "<= 8" in code
+    assert " == 1" in code
 
     a = np.random.rand(n)
     ref = np.ones_like(a)
@@ -218,7 +225,7 @@ def test_block_thread_specialization():
     assert np.allclose(a, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cpu()
     test_gpu()
     test_different_block_sizes_nesting()

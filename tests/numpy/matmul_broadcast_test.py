@@ -7,6 +7,7 @@ batch index instead -- or aligning from the left -- runs off the end of the smal
 surfaced as an out-of-bounds memlet on ``(B,1,M,K) @ (1,C,K,N)`` and, for a rank mismatch, as a
 silently wrong result.
 """
+
 import numpy as np
 import pytest
 
@@ -18,8 +19,8 @@ def run(prog, expected, **arrays):
     sdfg.expand_library_nodes()
     res = np.zeros_like(expected)
     sdfg(**arrays, res=res)
-    assert res.shape == expected.shape, f'shape {res.shape} != numpy {expected.shape}'
-    assert np.allclose(res, expected), f'max|diff| = {np.max(np.abs(res - expected))}'
+    assert res.shape == expected.shape, f"shape {res.shape} != numpy {expected.shape}"
+    assert np.allclose(res, expected), f"max|diff| = {np.max(np.abs(res - expected))}"
 
 
 def test_broadcast_both_sides():
@@ -28,8 +29,9 @@ def test_broadcast_both_sides():
     rng = np.random.default_rng(42)
 
     @dace.program
-    def kernel_broadcast_both_sides(a: dace.float64[2, 1, 8, 5], b: dace.float64[1, 3, 5, 4], res: dace.float64[2, 3, 8,
-                                                                                                                4]):
+    def kernel_broadcast_both_sides(
+        a: dace.float64[2, 1, 8, 5], b: dace.float64[1, 3, 5, 4], res: dace.float64[2, 3, 8, 4]
+    ):
         res[:] = np.matmul(a, b)
 
     a = rng.random((2, 1, 8, 5))
@@ -61,8 +63,9 @@ def test_broadcast_rank_mismatch():
     rng = np.random.default_rng(42)
 
     @dace.program
-    def kernel_broadcast_rank_mismatch(a: dace.float64[2, 3, 8, 5], b: dace.float64[3, 5, 4], res: dace.float64[2, 3, 8,
-                                                                                                                4]):
+    def kernel_broadcast_rank_mismatch(
+        a: dace.float64[2, 3, 8, 5], b: dace.float64[3, 5, 4], res: dace.float64[2, 3, 8, 4]
+    ):
         res[:] = np.matmul(a, b)
 
     a = rng.random((2, 3, 8, 5))
@@ -89,11 +92,12 @@ def test_incompatible_batches_refused():
     from dace.frontend.python.common import DaceSyntaxError
 
     @dace.program
-    def kernel_incompatible_batches_refused(a: dace.float64[3, 8, 5], b: dace.float64[2, 5, 4], res: dace.float64[3, 8,
-                                                                                                                  4]):
+    def kernel_incompatible_batches_refused(
+        a: dace.float64[3, 8, 5], b: dace.float64[2, 5, 4], res: dace.float64[3, 8, 4]
+    ):
         res[:] = np.matmul(a, b)
 
-    with pytest.raises((DaceSyntaxError, ValueError), match='broadcast'):
+    with pytest.raises((DaceSyntaxError, ValueError), match="broadcast"):
         kernel_incompatible_batches_refused.to_sdfg(simplify=True)
 
 
@@ -110,18 +114,19 @@ def _batch_check(prog):
         for node in state.nodes():
             if isinstance(node, MatMul):
                 return lambda: refuse_broadcast_batches(node, state, sdfg)
-    raise AssertionError('the parsed SDFG carries no matmul node to check')
+    raise AssertionError("the parsed SDFG carries no matmul node to check")
 
 
 def test_strided_lowering_refuses_a_stretched_batch():
     """Extent 1 against extent 3 is a real broadcast: one fixed stride cannot express it."""
 
     @dace.program
-    def kernel_strided_lowering_refuses_a_stretched_batch(a: dace.float64[1, 8, 5], b: dace.float64[3, 5, 4],
-                                                          res: dace.float64[3, 8, 4]):
+    def kernel_strided_lowering_refuses_a_stretched_batch(
+        a: dace.float64[1, 8, 5], b: dace.float64[3, 5, 4], res: dace.float64[3, 8, 4]
+    ):
         res[:] = np.matmul(a, b)
 
-    with pytest.raises(ValueError, match='broadcast'):
+    with pytest.raises(ValueError, match="broadcast"):
         _batch_check(kernel_strided_lowering_refuses_a_stretched_batch)()
 
 
@@ -130,11 +135,12 @@ def test_strided_lowering_accepts_distinct_batch_symbols():
     run time, which is what the result's batch shape already assumes. Refusing it sends every
     symbolically-batched matmul to a failed expansion (it did, under auto-optimization)."""
     rng = np.random.default_rng(42)
-    B, L, M, K, N = (dace.symbol(s) for s in ('B', 'L', 'M', 'K', 'N'))
+    B, L, M, K, N = (dace.symbol(s) for s in ("B", "L", "M", "K", "N"))
 
     @dace.program
-    def kernel_strided_lowering_accepts_distinct_batch_symbols(a: dace.float64[B, M, K], b: dace.float64[L, K, N],
-                                                               res: dace.float64[B, M, N]):
+    def kernel_strided_lowering_accepts_distinct_batch_symbols(
+        a: dace.float64[B, M, K], b: dace.float64[L, K, N], res: dace.float64[B, M, N]
+    ):
         res[:] = np.matmul(a, b)
 
     _batch_check(kernel_strided_lowering_accepts_distinct_batch_symbols)()  # must not raise
@@ -145,10 +151,10 @@ def test_strided_lowering_accepts_distinct_batch_symbols():
     sdfg = kernel_strided_lowering_accepts_distinct_batch_symbols.to_sdfg(simplify=True)
     sdfg.expand_library_nodes()
     sdfg(a=a, b=b, res=res, B=3, L=3, M=8, K=5, N=4)
-    assert np.allclose(res, a @ b), f'max|diff| = {np.max(np.abs(res - a @ b))}'
+    assert np.allclose(res, a @ b), f"max|diff| = {np.max(np.abs(res - a @ b))}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_broadcast_both_sides()
     test_broadcast_leading_one()
     test_broadcast_rank_mismatch()

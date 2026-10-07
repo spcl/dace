@@ -17,6 +17,7 @@ to ``run_vectorization_test``. Tests with no branches do not need it.
 Both modes must produce numerically identical results against the
 unvectorized scalar reference, otherwise the two lowerings have drifted.
 """
+
 import zlib
 
 import numpy as np

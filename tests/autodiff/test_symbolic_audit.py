@@ -5,6 +5,7 @@ Each test pins an invariant that used to hold only by accident: how a subset dim
 what kind of symbol reaches a differentiated expression, and what a backward nested SDFG node
 declares about its symbols and connectors.
 """
+
 import typing
 import warnings
 
@@ -138,8 +139,9 @@ def test_backward_nested_sdfgs_declare_their_symbol_mapping():
     for node, parent in nested:
         required = node.sdfg.free_symbols - {"NoneSymbol"}
         assert required, f"nested SDFG {node.label} carries no symbol; the test program lost its symbolic shape"
-        assert required <= set(node.symbol_mapping), (f"nested SDFG {node.label} leaves "
-                                                      f"{sorted(required - set(node.symbol_mapping))} unmapped")
+        assert required <= set(node.symbol_mapping), (
+            f"nested SDFG {node.label} leaves {sorted(required - set(node.symbol_mapping))} unmapped"
+        )
         for name in required:
             declared = parent.sdfg.symbols.get(name)
             if declared is None:

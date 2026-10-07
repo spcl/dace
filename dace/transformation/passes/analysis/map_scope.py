@@ -12,6 +12,7 @@ state, and it is already paid for, since ``state.exit_node`` reads the same cach
 Neutral home on purpose: canonicalization must not import from vectorization, and both trees need
 the same answer.
 """
+
 from typing import List
 
 from dace.sdfg import SDFGState, nodes

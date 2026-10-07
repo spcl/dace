@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``DistributeTaskletIntoMap`` must only absorb a free Tasklet that is what blocks Map fusion."""
+
 import copy
 from typing import Any, Dict
 
@@ -14,13 +15,15 @@ from tests.helpers.isolation import call_in_child
 N = 8
 
 
-def build(ordering_edge: bool = True,
-          tasklet_reads_data: bool = False,
-          tasklet_has_side_effects: bool = False,
-          scalar_used_later: bool = False,
-          second_map_end: int = N,
-          tasklet_reads_symbol: bool = False,
-          extra_consumer: bool = False) -> dace.SDFG:
+def build(
+    ordering_edge: bool = True,
+    tasklet_reads_data: bool = False,
+    tasklet_has_side_effects: bool = False,
+    scalar_used_later: bool = False,
+    second_map_end: int = N,
+    tasklet_reads_symbol: bool = False,
+    extra_consumer: bool = False,
+) -> dace.SDFG:
     """``map1{T[i]=A[i]*2}`` and ``map2{B[i]=T[i]+S}``, with a free ``S = 3.0`` Tasklet beside them.
 
     Without ``ordering_edge`` the two Maps already fuse; with it the Tasklet becomes an
@@ -168,20 +171,15 @@ def test_a_second_same_state_consumer_of_the_scalar_still_gets_its_value():
     assert got[N] == 3.0, "the second consumer of S lost its value"
 
 
-@pytest.mark.parametrize("flags,reason", [
-    ({
-        "tasklet_reads_data": True
-    }, "a replica would read whatever the input holds at that iteration"),
-    ({
-        "tasklet_has_side_effects": True
-    }, "the side effect would happen once per iteration instead of once"),
-    ({
-        "scalar_used_later": True
-    }, "a Map-scoped buffer does not survive to the next state"),
-    ({
-        "second_map_end": N - 1
-    }, "the Maps cannot fuse anyway"),
-])
+@pytest.mark.parametrize(
+    "flags,reason",
+    [
+        ({"tasklet_reads_data": True}, "a replica would read whatever the input holds at that iteration"),
+        ({"tasklet_has_side_effects": True}, "the side effect would happen once per iteration instead of once"),
+        ({"scalar_used_later": True}, "a Map-scoped buffer does not survive to the next state"),
+        ({"second_map_end": N - 1}, "the Maps cannot fuse anyway"),
+    ],
+)
 def test_unsound_or_pointless_absorptions_are_refused(flags: dict, reason: str):
     sdfg = build(**flags)
     before = shape_of(sdfg)

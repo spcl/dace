@@ -24,7 +24,7 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _loop_nest_order(sdfg: dace.SDFG):
@@ -49,14 +49,16 @@ def _loop_control_tokens(sdfg: dace.SDFG, variable: str):
         for blk in region.nodes():
             if isinstance(blk, LoopRegion):
                 if blk.loop_variable == variable:
-                    text = ' '.join(code.as_string
-                                    for code in (blk.init_statement, blk.loop_condition, blk.update_statement)
-                                    if code is not None)
-                    found.append(set(re.findall(r'\b[A-Za-z_]\w*\b', text)))
+                    text = " ".join(
+                        code.as_string
+                        for code in (blk.init_statement, blk.loop_condition, blk.update_statement)
+                        if code is not None
+                    )
+                    found.append(set(re.findall(r"\b[A-Za-z_]\w*\b", text)))
                 walk(blk)
 
     walk(sdfg)
-    assert len(found) == 1, f'expected exactly one loop over {variable}, found {len(found)}'
+    assert len(found) == 1, f"expected exactly one loop over {variable}, found {len(found)}"
     return found[0]
 
 
@@ -71,7 +73,7 @@ def recurrence_unit_stride_outer(aa: dace.float64[N, N], bb: dace.float64[N, N])
 
 def test_interchange_moves_unit_stride_loop_innermost():
     sdfg = recurrence_unit_stride_outer.to_sdfg(simplify=True)
-    assert _loop_nest_order(sdfg) == ['i', 'j']
+    assert _loop_nest_order(sdfg) == ["i", "j"]
 
     rng = np.random.default_rng(0)
     aa0 = rng.standard_normal((16, 16))
@@ -81,7 +83,7 @@ def test_interchange_moves_unit_stride_loop_innermost():
 
     applied = LoopStridePermutation().apply_pass(sdfg, {})
     assert applied == 1, "the unit-stride DOALL loop i should be interchanged innermost"
-    assert _loop_nest_order(sdfg) == ['j', 'i'], "j (recurrence) outer, i (unit-stride) inner"
+    assert _loop_nest_order(sdfg) == ["j", "i"], "j (recurrence) outer, i (unit-stride) inner"
 
     got_aa = aa0.copy()
     sdfg(aa=got_aa, bb=bb.copy(), N=16)
@@ -100,18 +102,18 @@ def trapezoid_lower_bound(aa: dace.float64[N, N], bb: dace.float64[N, N]):
 
 def test_trapezoidal_nest_is_interchanged_by_bound_rewrite():
     """TSVC s1232: the inner loop STARTS at 8*j, so the unit-stride axis (j) is the outer one.
-       A metadata swap alone would change the iteration set; the bounds are rebuilt instead."""
+    A metadata swap alone would change the iteration set; the bounds are rebuilt instead."""
     sdfg = trapezoid_lower_bound.to_sdfg(simplify=True)
-    assert _loop_nest_order(sdfg) == ['j', 'i']
-    assert 'j' in _loop_control_tokens(sdfg, 'i'), 'the i bound must start out referencing j'
+    assert _loop_nest_order(sdfg) == ["j", "i"]
+    assert "j" in _loop_control_tokens(sdfg, "i"), "the i bound must start out referencing j"
 
     assert LoopStridePermutation().apply_pass(sdfg, {}) == 1
-    assert _loop_nest_order(sdfg) == ['i', 'j']
+    assert _loop_nest_order(sdfg) == ["i", "j"]
     # The trapezoid REWRITE, asserted on the bounds rather than on a stopwatch: the dependence
     # between the two bounds has to change direction with the loops. A metadata swap that left
     # `i in range(8 * j, N)` under a j loop would enumerate a different iteration set.
-    assert 'j' not in _loop_control_tokens(sdfg, 'i'), 'the i bound must no longer reference j'
-    assert 'i' in _loop_control_tokens(sdfg, 'j'), 'the rebuilt j bound must be capped by i'
+    assert "j" not in _loop_control_tokens(sdfg, "i"), "the i bound must no longer reference j"
+    assert "i" in _loop_control_tokens(sdfg, "j"), "the rebuilt j bound must be capped by i"
     sdfg.validate()
 
     n = 64
@@ -134,7 +136,7 @@ def triangular_upper_bound(aa: dace.float64[N, N], bb: dace.float64[N, N]):
 
 def test_reject_triangular_upper_bound():
     """The outer variable in the inner CONDITION is outside the rewrite: the interchanged upper
-       bound is not an affine function of the new outer iterate."""
+    bound is not an affine function of the new outer iterate."""
     sdfg = triangular_upper_bound.to_sdfg(simplify=True)
     before = _loop_nest_order(sdfg)
     assert not LoopStridePermutation().apply_pass(sdfg, {})
@@ -153,7 +155,7 @@ def test_noop_when_unit_stride_already_innermost():
     sdfg = unit_stride_already_inner.to_sdfg(simplify=True)
     applied = LoopStridePermutation().apply_pass(sdfg, {})
     assert not applied, "no interchange needed when the unit-stride loop is already innermost"
-    assert _loop_nest_order(sdfg) == ['j', 'i']
+    assert _loop_nest_order(sdfg) == ["j", "i"]
 
 
 #  Unit-stride loop is NOT DOALL: the outer (unit-stride) loop carries the
@@ -185,7 +187,7 @@ def three_level_unit_stride_outer(aa: dace.float64[N, N, N], bb: dace.float64[N,
 
 def test_interchange_bubbles_unit_stride_through_three_levels():
     sdfg = three_level_unit_stride_outer.to_sdfg(simplify=True)
-    assert _loop_nest_order(sdfg) == ['i', 'j', 'k']
+    assert _loop_nest_order(sdfg) == ["i", "j", "k"]
 
     rng = np.random.default_rng(1)
     aa0 = rng.standard_normal((10, 10, 10))
@@ -196,8 +198,8 @@ def test_interchange_bubbles_unit_stride_through_three_levels():
     applied = LoopStridePermutation().apply_pass(sdfg, {})
     assert applied == 1, "the unit-stride DOALL axis i must bubble to innermost"
     order = _loop_nest_order(sdfg)
-    assert order[-1] == 'i', f"i (unit-stride) must be innermost, got {order}"
-    assert set(order) == {'i', 'j', 'k'}
+    assert order[-1] == "i", f"i (unit-stride) must be innermost, got {order}"
+    assert set(order) == {"i", "j", "k"}
 
     got_aa = aa0.copy()
     sdfg(aa=got_aa, bb=bb.copy(), N=10)
@@ -216,7 +218,7 @@ def three_level_unit_stride_middle(bb: dace.float64[N, N, N], cc: dace.float64[N
 
 def test_interchange_bubbles_middle_axis_to_innermost():
     sdfg = three_level_unit_stride_middle.to_sdfg(simplify=True)
-    assert _loop_nest_order(sdfg) == ['i', 'j', 'k']
+    assert _loop_nest_order(sdfg) == ["i", "j", "k"]
 
     rng = np.random.default_rng(2)
     bb0 = rng.standard_normal((10, 10, 10))
@@ -226,7 +228,7 @@ def test_interchange_bubbles_middle_axis_to_innermost():
 
     applied = LoopStridePermutation().apply_pass(sdfg, {})
     assert applied == 1, "the unit-stride DOALL middle axis j must bubble to innermost"
-    assert _loop_nest_order(sdfg) == ['i', 'k', 'j'], "j (unit-stride) innermost, k stays a sequential loop"
+    assert _loop_nest_order(sdfg) == ["i", "k", "j"], "j (unit-stride) innermost, k stays a sequential loop"
 
     got = bb0.copy()
     sdfg(bb=got, cc=cc.copy(), N=10)
@@ -286,11 +288,11 @@ def test_noop_on_wavefront_unit_stride_already_inner():
     sdfg = wavefront_unit_stride_inner.to_sdfg(simplify=True)
     applied = LoopStridePermutation().apply_pass(sdfg, {})
     assert not applied, "unit-stride already innermost -> nothing to interchange"
-    assert _loop_nest_order(sdfg) == ['j', 'i']
+    assert _loop_nest_order(sdfg) == ["j", "i"]
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])
 
 
 #  A/B: the interchange is the whole difference between the two binaries, so the
@@ -305,8 +307,8 @@ def s1232(aa: dace.float64[N, N], bb: dace.float64[N, N], cc: dace.float64[N, N]
 @pytest.mark.perf
 def test_trapezoid_interchange_is_faster():
     """Same iteration set, same arithmetic, opposite access order: the strided nest touches a new
-       cache line per iteration. Measured 16x (N=1024) and 28x (N=2048) here; assert only 2x, which
-       no cache hierarchy inverts."""
+    cache line per iteration. Measured 16x (N=1024) and 28x (N=2048) here; assert only 2x, which
+    no cache hierarchy inverts."""
     n = 1024
     rng = np.random.default_rng(0)
     bb = rng.random((n, n))
@@ -331,4 +333,4 @@ def test_trapezoid_interchange_is_faster():
     strided, aa_strided = best(build(False))
     unit, aa_unit = best(build(True))
     assert np.allclose(aa_strided, aa_unit)
-    assert unit * 2 < strided, f'unit-stride {unit:.4f}s not faster than strided {strided:.4f}s'
+    assert unit * 2 < strided, f"unit-stride {unit:.4f}s not faster than strided {strided:.4f}s"

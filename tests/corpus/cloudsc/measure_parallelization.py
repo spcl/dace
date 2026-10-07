@@ -13,6 +13,7 @@ MapEntries / Reduce libnodes after (a) ``LoopToMap`` repeated and (b) full
 configurable set of kernels (default: those where canon and L2M produce
 different map counts or where canon leaves more loops sequential).
 """
+
 import copy
 import time
 import traceback
@@ -32,7 +33,7 @@ _PEEL_LIMIT = 4
 _BREAK_ANTI_DEP = True
 
 #: Kernels to dump in detail at the end (in addition to auto-detected anomalies).
-_FORCE_INSPECT = {'s1115_d_single', 's152_d_single', 's172_d_single'}
+_FORCE_INSPECT = {"s1115_d_single", "s152_d_single", "s172_d_single"}
 
 
 def _count(sdfg) -> Tuple[int, int, int, int]:
@@ -48,15 +49,18 @@ def _structure(sdfg) -> Tuple[List[str], List[str], List[str], List[str]]:
     """Per-kernel structural summary: list of loop / map / reduce / scan descriptions."""
     loops = [
         f"loop {cfr.label} var={cfr.loop_variable!s} cond={cfr.loop_condition.as_string!s}"
-        for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion)
+        for cfr in sdfg.all_control_flow_regions()
+        if isinstance(cfr, LoopRegion)
     ]
     maps = [
-        f"map {n.map.label} dims={len(n.map.range)} range={n.map.range}" for n, _ in sdfg.all_nodes_recursive()
+        f"map {n.map.label} dims={len(n.map.range)} range={n.map.range}"
+        for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nd.MapEntry)
     ]
     reduces = [f"reduce axes={n.axes} wcr={n.wcr}" for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     scans = [
-        f"scan {n.label} op={n.op} stride={getattr(n, 'stride', 1)}" for n, _ in sdfg.all_nodes_recursive()
+        f"scan {n.label} op={n.op} stride={getattr(n, 'stride', 1)}"
+        for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, Scan)
     ]
     return loops, maps, reduces, scans
@@ -138,7 +142,7 @@ def main() -> None:
         except Exception:
             errors[k.name] = traceback.format_exc(limit=2)
         if i % 20 == 0 or i == len(kernels):
-            print(f"  [{i:3d}/{len(kernels)}] {time.perf_counter()-t0:6.1f}s elapsed", flush=True)
+            print(f"  [{i:3d}/{len(kernels)}] {time.perf_counter() - t0:6.1f}s elapsed", flush=True)
     print()
 
     # Aggregate (loops, maps, reduces, scans).
@@ -152,24 +156,27 @@ def main() -> None:
     print(f"  {'canonicalize':16s} {agg_c[0]:7d} {agg_c[1]:7d} {agg_c[2]:8d} {agg_c[3]:7d}")
     print()
     print("Conversion vs baseline:")
-    print(f"  loops -> maps                    L2M={agg_l[1]-agg_b[1]:4d}   canon={agg_c[1]-agg_b[1]:4d}")
-    print(f"  loops -> reduce                  L2M={0:4d}   canon={agg_c[2]-agg_b[2]:4d}")
-    print(f"  loops -> scan                    L2M={0:4d}   canon={agg_c[3]-agg_b[3]:4d}")
-    print(f"  loops eliminated (any cause)     L2M={agg_b[0]-agg_l[0]:4d}   canon={agg_b[0]-agg_c[0]:4d}")
+    print(f"  loops -> maps                    L2M={agg_l[1] - agg_b[1]:4d}   canon={agg_c[1] - agg_b[1]:4d}")
+    print(f"  loops -> reduce                  L2M={0:4d}   canon={agg_c[2] - agg_b[2]:4d}")
+    print(f"  loops -> scan                    L2M={0:4d}   canon={agg_c[3] - agg_b[3]:4d}")
+    print(f"  loops eliminated (any cause)     L2M={agg_b[0] - agg_l[0]:4d}   canon={agg_b[0] - agg_c[0]:4d}")
     par_canon = (agg_c[1] - agg_b[1]) + (agg_c[2] - agg_b[2]) + (agg_c[3] - agg_b[3])
     print(
-        f"  baseline loops parallelized      L2M={_pct(agg_l[1]-agg_b[1], agg_b[0])}  canon={_pct(par_canon, agg_b[0])}"
+        f"  baseline loops parallelized      L2M={_pct(agg_l[1] - agg_b[1], agg_b[0])}  canon={_pct(par_canon, agg_b[0])}"
     )
     final_total = agg_c[0] + agg_c[1] + agg_c[2] + agg_c[3]
     print(
-        f"  final iteration is parallel      L2M={_pct(agg_l[1]+agg_l[2]+agg_l[3], agg_l[0]+agg_l[1]+agg_l[2]+agg_l[3])}  "
-        f"canon={_pct(agg_c[1]+agg_c[2]+agg_c[3], final_total)}")
+        f"  final iteration is parallel      L2M={_pct(agg_l[1] + agg_l[2] + agg_l[3], agg_l[0] + agg_l[1] + agg_l[2] + agg_l[3])}  "
+        f"canon={_pct(agg_c[1] + agg_c[2] + agg_c[3], final_total)}"
+    )
     print()
 
     # Per-kernel table (all 151)
-    print("Per-kernel (status: '=' same parallel-construct count; '+N' canon has N more parallel "
-          "constructs; '-N' canon has N fewer; 'R+N' canon emits N reduces; '!seq+N' canon left N "
-          "more loops sequential than L2M -- the regression marker):")
+    print(
+        "Per-kernel (status: '=' same parallel-construct count; '+N' canon has N more parallel "
+        "constructs; '-N' canon has N fewer; 'R+N' canon emits N reduces; '!seq+N' canon left N "
+        "more loops sequential than L2M -- the regression marker):"
+    )
     print(f"  {'kernel':22s}  {'base':>10s}  {'l2m':>10s}  {'canon':>10s}  status")
     for name in sorted(results.keys()):
         b, l, c = results[name]
@@ -190,5 +197,5 @@ def main() -> None:
             print(f"  {name}: {tb.strip().splitlines()[-1]}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

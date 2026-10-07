@@ -21,6 +21,7 @@ Covered:
   * the program compiles with nvcc, and is bit-exact against the NumPy fp16 oracle at an ODD
     extent, which is the extent that actually executes the scalar tail.
 """
+
 import os
 import re
 import subprocess
@@ -52,7 +53,7 @@ def _vectorized(name: str = None) -> dace.SDFG:
     sdfg = _where16.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     if name:
         sdfg.name = name
     return sdfg
@@ -117,8 +118,9 @@ def _body_bitexact():
         expected = _oracle(x)
         y = np.zeros(n, dtype=np.float16)
         csr(x=x, y=y, N=n)
-        assert np.array_equal(y.view(np.uint16), expected.view(np.uint16)), \
+        assert np.array_equal(y.view(np.uint16), expected.view(np.uint16)), (
             f"N={n}: not bit-exact vs the numpy fp16 oracle"
+        )
 
 
 @pytest.mark.gpu

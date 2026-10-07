@@ -30,7 +30,7 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 def _canonicalize_counts(name):
     kernel = [k for k in tsvc.collect() if k.name == name][0]
-    sdfg = tsvc.to_sdfg(kernel, 'iv_' + name, simplify=True)
+    sdfg = tsvc.to_sdfg(kernel, "iv_" + name, simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4)
 
     arrays, call_kwargs = tsvc.make_inputs(kernel)
@@ -51,18 +51,20 @@ def _canonicalize_counts(name):
 def test_s128_derived_iv_chain_parallelizes():
     """s128: derived-IV chain (k := j+1 before j := j+2, between content blocks).
     Must reduce to affine k=2i and fully parallelize, value-preserving."""
-    nloops, nmaps, _sdfg = _canonicalize_counts('s128_d_single')
-    assert nloops == 0 and nmaps >= 1, \
+    nloops, nmaps, _sdfg = _canonicalize_counts("s128_d_single")
+    assert nloops == 0 and nmaps >= 1, (
         f"s128 (derived-IV chain) should fully parallelize, got loops={nloops} maps={nmaps}"
+    )
 
 
 def test_s124_branch_uniform_iv_parallelizes():
     """s124: ``j += 1`` in BOTH branches of the conditional (branch-uniform IV).
     Hoisting the common increment out of the conditional lets IV substitution
     close it to ``j = i``, so ``a[j]`` becomes the parallel ``a[i]``."""
-    nloops, nmaps, _sdfg = _canonicalize_counts('s124_d_single')
-    assert nloops == 0 and nmaps >= 1, \
+    nloops, nmaps, _sdfg = _canonicalize_counts("s124_d_single")
+    assert nloops == 0 and nmaps >= 1, (
         f"s124 (branch-uniform IV) should fully parallelize, got loops={nloops} maps={nmaps}"
+    )
 
 
 def test_s453_use_site_iv_parallelizes():
@@ -70,18 +72,20 @@ def test_s453_use_site_iv_parallelizes():
     statement READS, so it is neither eliminable nor fissionable. Expanding its closed form at
     the use site (``s == s_entry + 2.0*(i+1)`` after this iteration's update) leaves a pure
     per-element body."""
-    nloops, nmaps, _sdfg = _canonicalize_counts('s453_d_single')
-    assert nloops == 0 and nmaps >= 1, \
+    nloops, nmaps, _sdfg = _canonicalize_counts("s453_d_single")
+    assert nloops == 0 and nmaps >= 1, (
         f"s453 (use-site data IV) should fully parallelize, got loops={nloops} maps={nmaps}"
+    )
 
 
 def test_s122_symbolic_start_and_stride_iv_parallelizes():
     """s122: ``for i in range(n1-1, LEN_1D, n3): k = k + j; a[i] = a[i] + b[LEN_1D-k]`` -- BOTH
     the start and the stride are symbolic, so the counter's closed form needs the trip index
     ``t = int_floor(i - start, stride)`` rather than ``i - start``."""
-    nloops, nmaps, _sdfg = _canonicalize_counts('s122_d_single')
-    assert nloops == 0 and nmaps >= 1, \
+    nloops, nmaps, _sdfg = _canonicalize_counts("s122_d_single")
+    assert nloops == 0 and nmaps >= 1, (
         f"s122 (symbolic start/stride IV) should fully parallelize, got loops={nloops} maps={nmaps}"
+    )
 
 
 def test_s318_staged_counter_iv_lifts_to_an_arg_reduction():
@@ -95,13 +99,15 @@ def test_s318_staged_counter_iv_lifts_to_an_arg_reduction():
     per-iteration tasklet and the lift refuses the body outright.
     """
     from dace.libraries.standard.nodes import ArgReduce
-    nloops, _nmaps, sdfg = _canonicalize_counts('s318_d_single')
+
+    nloops, _nmaps, sdfg = _canonicalize_counts("s318_d_single")
     # A map count is the wrong proxy for "parallelized" here: the lift now folds the gather into
     # the ArgReduce's own strided _in memlet, so the correct answer has ZERO maps. What has to hold
     # is that no sequential loop survives and the strided argmax became one library node.
     assert nloops == 0, f"s318 (staged counter IV) should leave no sequential loop, got loops={nloops}"
-    assert sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, ArgReduce)) == 1, \
+    assert sum(1 for node, _ in sdfg.all_nodes_recursive() if isinstance(node, ArgReduce)) == 1, (
         "the strided argmax must lift to a single ArgReduce, not to a value-only reduction"
+    )
 
 
 def test_s126_two_level_counter_closes_one_loop_at_a_time():
@@ -112,9 +118,10 @@ def test_s126_two_level_counter_closes_one_loop_at_a_time():
     loop with a single step per iteration for the next round of the fixed point. Refusing the
     counter outright (the old rule for "stepped in another loop too") left BOTH loops sequential.
     """
-    nloops, nmaps, _sdfg = _canonicalize_counts('s126_d_single')
-    assert nloops <= 1 and nmaps >= 2, \
+    nloops, nmaps, _sdfg = _canonicalize_counts("s126_d_single")
+    assert nloops <= 1 and nmaps >= 2, (
         f"s126 (two-level counter) should leave at most the j recurrence, got loops={nloops} maps={nmaps}"
+    )
 
 
 def test_s126_two_level_counter_leaves_no_k_and_an_affine_subset():
@@ -130,17 +137,24 @@ def test_s126_two_level_counter_leaves_no_k_and_an_affine_subset():
     expression itself so both sides carry the same assumptions (two ``LEN_2D`` objects that
     differ only in assumptions do not cancel).
     """
-    _nloops, _nmaps, sdfg = _canonicalize_counts('s126_d_single')
+    _nloops, _nmaps, sdfg = _canonicalize_counts("s126_d_single")
 
     for sd in sdfg.all_sdfgs_recursive():
-        leftovers = ({'k'} & set(sd.symbols)) | ({'k'} & set(sd.arrays)) | ({'k'} & {str(s) for s in sd.free_symbols})
+        leftovers = ({"k"} & set(sd.symbols)) | ({"k"} & set(sd.arrays)) | ({"k"} & {str(s) for s in sd.free_symbols})
         assert not leftovers, f"the counter survived canonicalization in {sd.label} as {leftovers}"
 
-    reads = [(state, e) for state in sdfg.states() for e in state.edges() if e.data is not None
-             and not e.data.is_empty() and e.data.data == 'flat_2d_array' and e.data.subset.num_elements() == 1]
+    reads = [
+        (state, e)
+        for state in sdfg.states()
+        for e in state.edges()
+        if e.data is not None
+        and not e.data.is_empty()
+        and e.data.data == "flat_2d_array"
+        and e.data.subset.num_elements() == 1
+    ]
     assert len(reads) == 1, f"expected one single-element flat_2d_array read, got {len(reads)}"
     state, edge = reads[0]
-    (expr, ) = edge.data.subset.min_element()
+    (expr,) = edge.data.subset.min_element()
 
     scope = state.scope_dict()
     enclosing, node = {}, edge.dst
@@ -148,13 +162,14 @@ def test_s126_two_level_counter_leaves_no_k_and_an_affine_subset():
         node = scope[node]
         if isinstance(node, nodes.MapEntry):
             enclosing.update(zip(node.map.params, node.map.range))
-    (outer, ) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 0]
-    (inner, ) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 1]
+    (outer,) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 0]
+    (inner,) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 1]
 
     by_name = {str(s): s for s in expr.free_symbols}
-    i, j, n = by_name[outer], by_name[inner], by_name['LEN_2D']
-    assert symbolic.simplify(expr - (i * n + j - 1)) == 0, \
+    i, j, n = by_name[outer], by_name[inner], by_name["LEN_2D"]
+    assert symbolic.simplify(expr - (i * n + j - 1)) == 0, (
         f"s126 gather must be i*LEN_2D + j - 1, got {expr} (i={outer}, j={inner})"
+    )
 
 
 def test_two_level_counter_exit_value_is_exact():
@@ -168,7 +183,7 @@ def test_two_level_counter_exit_value_is_exact():
     ``k`` starts at 1 and advances ``LEN`` per outer iteration (``LEN - 1`` inner steps plus the
     trailing one), so after ``LEN`` outer iterations it is ``1 + LEN*LEN``.
     """
-    LEN = dace.symbol('LEN', dtype=dace.int64, positive=True)
+    LEN = dace.symbol("LEN", dtype=dace.int64, positive=True)
 
     @dace.program
     def two_level_counter_exit(out: dace.int64[1], flat: dace.float64[LEN * LEN], src: dace.float64[LEN]):
@@ -200,5 +215,5 @@ def test_two_level_counter_exit_value_is_exact():
         assert np.allclose(flat, want), f"LEN={n}: gather landed on the wrong elements"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

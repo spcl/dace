@@ -51,14 +51,14 @@ from dace.sdfg import nodes as nd, utils as sdutil, graph as gr
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg.narrowing import as_expr
 
-_PASS = 'RemoveViews'
-_DEBUGPRINT = config.Config.get('debugprint') in (True, '1', 'true', 'yes')
+_PASS = "RemoveViews"
+_DEBUGPRINT = config.Config.get("debugprint") in (True, "1", "true", "yes")
 
 
 def _fmt_desc(desc, name):
     """One-line summary of a data descriptor."""
     kind = type(desc).__name__
-    return f'{name}: {kind}{list(desc.shape)} strides={list(desc.strides)}'
+    return f"{name}: {kind}{list(desc.shape)} strides={list(desc.strides)}"
 
 
 def _ordering_side(
@@ -266,7 +266,8 @@ def _reshape_subset(
     try:
         is_full = all(
             int(as_expr(r[0])) == 0 and int(as_expr(r[1])) == d - 1 and int(as_expr(r[2])) == 1
-            for r, d in zip(edge_subset.ranges, view_shape))
+            for r, d in zip(edge_subset.ranges, view_shape)
+        )
     except (TypeError, ValueError):
         is_full = False
     if is_full:
@@ -295,7 +296,7 @@ def _reshape_subset(
 def _try_constant_fold(node: ast.expr) -> ast.expr:
     """Try to evaluate an AST expression to a Python int constant."""
     try:
-        code = compile(ast.Expression(body=ast.fix_missing_locations(node)), '<fold>', 'eval')
+        code = compile(ast.Expression(body=ast.fix_missing_locations(node)), "<fold>", "eval")
         result = eval(code)
         if isinstance(result, int):
             return ast.Constant(value=result)
@@ -352,7 +353,7 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
         new_indices = self._delinearize(flat_expr)
         new_indices = [_try_constant_fold(idx) for idx in new_indices]
 
-        new_slice = (new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load()))
+        new_slice = new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load())
         self.changed = True
         return ast.fix_missing_locations(ast.Subscript(value=node.value, slice=new_slice, ctx=node.ctx))
 
@@ -368,9 +369,9 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
             if vs == 0:
                 continue
             # Build term: idx * vstride  (or just idx when vstride == 1)
-            term = (idx if vs == 1 else ast.BinOp(left=idx, op=ast.Mult(), right=ast.Constant(value=vs)))
+            term = idx if vs == 1 else ast.BinOp(left=idx, op=ast.Mult(), right=ast.Constant(value=vs))
             # Accumulate: result + term
-            result = (term if result is None else ast.BinOp(left=result, op=ast.Add(), right=term))
+            result = term if result is None else ast.BinOp(left=result, op=ast.Add(), right=term)
         return result if result is not None else ast.Constant(value=0)
 
     def _delinearize(self, flat: ast.expr) -> List[ast.expr]:
@@ -386,7 +387,7 @@ class _ReshapeIndexRewriter(ast.NodeTransformer):
         out: List[ast.expr] = []
         for astr, ashp in zip(self.astrides, self.array_shape):
             # flat // stride  (skip division when stride == 1)
-            expr = (flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr)))
+            expr = flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr))
             # (flat // stride) % shape  -- extract this dimension's digit
             expr = ast.BinOp(left=expr, op=ast.Mod(), right=ast.Constant(value=ashp))
             out.append(expr)
@@ -415,16 +416,16 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         self.array_name = array_name
         self.mode = mode
         self.changed = False
-        if mode == 'affine':
-            self.mapping: Dict[int, int] = kwargs['mapping']
-            self.view_subset: subsets.Range = kwargs['view_subset']
-            self.view_ndim: int = kwargs['view_ndim']
-        elif mode == 'linearize':
-            self.vstrides: List[int] = kwargs['vstrides']
-            self.astrides: List[int] = kwargs['astrides']
-            self.array_shape: List[int] = kwargs['array_shape']
+        if mode == "affine":
+            self.mapping: Dict[int, int] = kwargs["mapping"]
+            self.view_subset: subsets.Range = kwargs["view_subset"]
+            self.view_ndim: int = kwargs["view_ndim"]
+        elif mode == "linearize":
+            self.vstrides: List[int] = kwargs["vstrides"]
+            self.astrides: List[int] = kwargs["astrides"]
+            self.array_shape: List[int] = kwargs["array_shape"]
         else:
-            raise ValueError(f'Unknown mode: {mode!r}')
+            raise ValueError(f"Unknown mode: {mode!r}")
 
     @staticmethod
     def _sym_to_ast(val) -> ast.expr:
@@ -432,7 +433,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         try:
             return ast.Constant(value=int(val))
         except (TypeError, ValueError):
-            return ast.parse(str(val), mode='eval').body
+            return ast.parse(str(val), mode="eval").body
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         self.generic_visit(node)
@@ -445,7 +446,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         else:
             indices = [node.slice]
 
-        if self.mode == 'affine':
+        if self.mode == "affine":
             if len(indices) != self.view_ndim:
                 return node
             new_indices = self._rewrite_affine(indices)
@@ -455,7 +456,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
             new_indices = self._rewrite_linearize(indices)
 
         new_indices = [_try_constant_fold(idx) for idx in new_indices]
-        new_slice = (new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load()))
+        new_slice = new_indices[0] if len(new_indices) == 1 else ast.Tuple(elts=new_indices, ctx=ast.Load())
 
         new_value = ast.Name(id=self.array_name, ctx=node.value.ctx)
         self.changed = True
@@ -514,7 +515,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
         for idx, vs in zip(indices, self.vstrides):
             if vs == 0:
                 continue
-            term = (idx if vs == 1 else ast.BinOp(left=idx, op=ast.Mult(), right=ast.Constant(value=vs)))
+            term = idx if vs == 1 else ast.BinOp(left=idx, op=ast.Mult(), right=ast.Constant(value=vs))
             flat = term if flat is None else ast.BinOp(left=flat, op=ast.Add(), right=term)
         if flat is None:
             flat = ast.Constant(value=0)
@@ -525,7 +526,7 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
 
         out: List[ast.expr] = []
         for astr, ashp in zip(self.astrides, self.array_shape):
-            expr = (flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr)))
+            expr = flat if astr == 1 else ast.BinOp(left=flat, op=ast.FloorDiv(), right=ast.Constant(value=astr))
             expr = ast.BinOp(left=expr, op=ast.Mod(), right=ast.Constant(value=ashp))
             out.append(expr)
         return out
@@ -534,9 +535,9 @@ class _InterstateSubscriptRewriter(ast.NodeTransformer):
 def _condition_text(edge_data) -> str:
     """The edge condition as text, or '' when it has none -- the prefilter's haystack."""
     try:
-        return edge_data.condition.as_string or ''
+        return edge_data.condition.as_string or ""
     except Exception:
-        return ''
+        return ""
 
 
 def _references_view(edge_data, view_name: str, condition_text: str) -> bool:
@@ -553,7 +554,7 @@ def _has_view_subscript(tree: ast.AST, view_name: str) -> bool:
     means the rewriter didn't handle it (wrong rank, etc.).
     """
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == view_name):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == view_name:
             return True
     return False
 
@@ -561,13 +562,12 @@ def _has_view_subscript(tree: ast.AST, view_name: str) -> bool:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class RemoveViews(ppl.Pass):
-
     #: Interstate edges paired with their condition text, derived once per :meth:`apply_pass` run
     #: and dropped again at its end. Empty outside a run.
     interstate_edges: List[Tuple[gr.Edge, str]] = []
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets)
+        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets | ppl.Modifies.Tasklets
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.AccessNodes)
@@ -596,7 +596,7 @@ class RemoveViews(ppl.Pass):
             changed = False
             iteration += 1
             if _DEBUGPRINT:
-                print(f'[{_PASS}] --- fixpoint iteration {iteration} ---')
+                print(f"[{_PASS}] --- fixpoint iteration {iteration} ---")
             for state in sdfg.states():
                 changed |= self._process_state(sdfg, state, removed)
         self.interstate_edges = []
@@ -608,20 +608,18 @@ class RemoveViews(ppl.Pass):
             if name in sdfg.arrays and name not in accessed:
                 sdfg.remove_data(name, validate=False)
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}] garbage-collected descriptor'
-                          f' "{name}"')
+                    print(f'[{_PASS}] garbage-collected descriptor "{name}"')
 
         if _DEBUGPRINT:
             if removed:
-                print(f'[{_PASS}] === done: removed {len(removed)} views:'
-                      f' {removed} ===')
+                print(f"[{_PASS}] === done: removed {len(removed)} views: {removed} ===")
             else:
-                print(f'[{_PASS}] === done: nothing to remove ===')
+                print(f"[{_PASS}] === done: nothing to remove ===")
 
         return removed or None
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Removed {len(pass_retval)} views: {pass_retval}.'
+        return f"Removed {len(pass_retval)} views: {pass_retval}."
 
     @staticmethod
     def _is_library_node_operand(state: SDFGState, vnode: nd.AccessNode) -> bool:
@@ -656,8 +654,9 @@ class RemoveViews(ppl.Pass):
         view_nodes = [n for n in state.data_nodes() if isinstance(sdfg.arrays.get(n.data), dt.View)]
 
         if _DEBUGPRINT and view_nodes:
-            print(f'[{_PASS}] state "{state.label}": found {len(view_nodes)}'
-                  f' view node(s): {[n.data for n in view_nodes]}')
+            print(
+                f'[{_PASS}] state "{state.label}": found {len(view_nodes)} view node(s): {[n.data for n in view_nodes]}'
+            )
 
         for vnode in view_nodes:
             if vnode not in state.nodes():
@@ -666,9 +665,11 @@ class RemoveViews(ppl.Pass):
             info = _classify_view(state, vnode, sdfg)
             if info is None:
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}]   "{vnode.data}": cannot classify'
-                          f' (StructureView / no view edge / dtype mismatch)'
-                          f' -- skipping')
+                    print(
+                        f'[{_PASS}]   "{vnode.data}": cannot classify'
+                        f" (StructureView / no view edge / dtype mismatch)"
+                        f" -- skipping"
+                    )
                 continue
             viewed_node, view_edge, viewed_subset, is_viewed_src = info
 
@@ -692,12 +693,11 @@ class RemoveViews(ppl.Pass):
             if _DEBUGPRINT:
                 vdesc = sdfg.arrays[vnode.data]
                 adesc = sdfg.arrays[viewed_node.data]
-                direction = ('read' if is_viewed_src else 'write')
-                print(f'[{_PASS}]   "{vnode.data}" -> "{viewed_node.data}"'
-                      f' ({direction})')
-                print(f'[{_PASS}]     view:  {_fmt_desc(vdesc, vnode.data)}')
-                print(f'[{_PASS}]     array: {_fmt_desc(adesc, viewed_node.data)}')
-                print(f'[{_PASS}]     view edge subset: {viewed_subset}')
+                direction = "read" if is_viewed_src else "write"
+                print(f'[{_PASS}]   "{vnode.data}" -> "{viewed_node.data}" ({direction})')
+                print(f"[{_PASS}]     view:  {_fmt_desc(vdesc, vnode.data)}")
+                print(f"[{_PASS}]     array: {_fmt_desc(adesc, viewed_node.data)}")
+                print(f"[{_PASS}]     view edge subset: {viewed_subset}")
 
             vdesc = sdfg.arrays[vnode.data]
             adesc = sdfg.arrays[viewed_node.data]
@@ -707,23 +707,26 @@ class RemoveViews(ppl.Pass):
             if mapping_result is not None:
                 mapping, _unsqueezed, _squeezed = mapping_result
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}]     strategy 1 (map_view_to_array):'
-                          f' mapping={mapping},'
-                          f' squeezed={_squeezed},'
-                          f' unsqueezed={_unsqueezed}')
+                    print(
+                        f"[{_PASS}]     strategy 1 (map_view_to_array):"
+                        f" mapping={mapping},"
+                        f" squeezed={_squeezed},"
+                        f" unsqueezed={_unsqueezed}"
+                    )
 
                 def _rw_1():
-                    return _InterstateSubscriptRewriter(vnode.data,
-                                                        viewed_node.data,
-                                                        mode='affine',
-                                                        mapping=mapping,
-                                                        view_subset=viewed_subset,
-                                                        view_ndim=len(vdesc.shape))
+                    return _InterstateSubscriptRewriter(
+                        vnode.data,
+                        viewed_node.data,
+                        mode="affine",
+                        mapping=mapping,
+                        view_subset=viewed_subset,
+                        view_ndim=len(vdesc.shape),
+                    )
 
                 if not self._interstate_feasible(sdfg, vnode.data, _rw_1):
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]     strategy 1: interstate edge'
-                              f' rewrite infeasible -- trying next strategy')
+                        print(f"[{_PASS}]     strategy 1: interstate edge rewrite infeasible -- trying next strategy")
                 else:
                     self._rewrite_memlets(state, vnode, viewed_node, view_edge, viewed_subset, mapping, is_viewed_src)
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1)
@@ -733,37 +736,35 @@ class RemoveViews(ppl.Pass):
                     removed.add(vnode.data)
                     changed = True
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]     REMOVED "{vnode.data}"'
-                              f' via strategy 1')
+                        print(f'[{_PASS}]     REMOVED "{vnode.data}" via strategy 1')
                     continue
 
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     strategy 1: map_view_to_array'
-                      f' returned None')
+                print(f"[{_PASS}]     strategy 1: map_view_to_array returned None")
 
             # Strategy 1b: derive mapping from view edge subset
             mapping_1b = _derive_mapping_from_subset(viewed_subset, vdesc.shape)
             if mapping_1b is not None:
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}]     strategy 1b'
-                          f' (derive_mapping_from_subset):'
-                          f' mapping={mapping_1b}')
+                    print(f"[{_PASS}]     strategy 1b (derive_mapping_from_subset): mapping={mapping_1b}")
 
                 def _rw_1b():
-                    return _InterstateSubscriptRewriter(vnode.data,
-                                                        viewed_node.data,
-                                                        mode='affine',
-                                                        mapping=mapping_1b,
-                                                        view_subset=viewed_subset,
-                                                        view_ndim=len(vdesc.shape))
+                    return _InterstateSubscriptRewriter(
+                        vnode.data,
+                        viewed_node.data,
+                        mode="affine",
+                        mapping=mapping_1b,
+                        view_subset=viewed_subset,
+                        view_ndim=len(vdesc.shape),
+                    )
 
                 if not self._interstate_feasible(sdfg, vnode.data, _rw_1b):
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]     strategy 1b: interstate edge'
-                              f' rewrite infeasible -- trying next strategy')
+                        print(f"[{_PASS}]     strategy 1b: interstate edge rewrite infeasible -- trying next strategy")
                 else:
-                    self._rewrite_memlets(state, vnode, viewed_node, view_edge, viewed_subset, mapping_1b,
-                                          is_viewed_src)
+                    self._rewrite_memlets(
+                        state, vnode, viewed_node, view_edge, viewed_subset, mapping_1b, is_viewed_src
+                    )
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1b)
                     self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
                     state.remove_node(vnode)
@@ -771,53 +772,42 @@ class RemoveViews(ppl.Pass):
                     removed.add(vnode.data)
                     changed = True
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]     REMOVED "{vnode.data}"'
-                              f' via strategy 1b')
+                        print(f'[{_PASS}]     REMOVED "{vnode.data}" via strategy 1b')
                     continue
 
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     strategy 1b:'
-                      f' derive_mapping_from_subset returned None')
+                print(f"[{_PASS}]     strategy 1b: derive_mapping_from_subset returned None")
 
             # Strategy 2: dense reshape
-            if self._try_linearize_removal(state,
-                                           vnode,
-                                           viewed_node,
-                                           view_edge,
-                                           viewed_subset,
-                                           is_viewed_src,
-                                           require_dense=True):
+            if self._try_linearize_removal(
+                state, vnode, viewed_node, view_edge, viewed_subset, is_viewed_src, require_dense=True
+            ):
                 removed.add(vnode.data)
                 changed = True
                 continue
 
             # Strategy 3: pure linearization (last resort)
-            if self._try_linearize_removal(state,
-                                           vnode,
-                                           viewed_node,
-                                           view_edge,
-                                           viewed_subset,
-                                           is_viewed_src,
-                                           require_dense=False):
+            if self._try_linearize_removal(
+                state, vnode, viewed_node, view_edge, viewed_subset, is_viewed_src, require_dense=False
+            ):
                 removed.add(vnode.data)
                 changed = True
                 continue
 
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     all strategies failed for'
-                      f' "{vnode.data}" -- keeping view')
+                print(f'[{_PASS}]     all strategies failed for "{vnode.data}" -- keeping view')
 
         return changed
 
     def _rewrite_memlets(self, state, view_node, viewed_node, view_edge, viewed_subset, mapping, is_viewed_src):
         sdfg = state.parent
         full_view_range = subsets.Range.from_array(sdfg.arrays[view_node.data])
-        non_view_edges = (list(state.out_edges(view_node)) if is_viewed_src else list(state.in_edges(view_node)))
+        non_view_edges = list(state.out_edges(view_node)) if is_viewed_src else list(state.in_edges(view_node))
         for edge in non_view_edges:
             for tree_edge in state.memlet_tree(edge):
                 m = tree_edge.data
                 if m.data == view_node.data:
-                    old = f'{m.data}[{m.subset}]'
+                    old = f"{m.data}[{m.subset}]"
                     m.data = viewed_node.data
                     if m.subset is not None and m.subset == full_view_range:
                         # Full view range: copy the view edge subset
@@ -828,15 +818,12 @@ class RemoveViews(ppl.Pass):
                     else:
                         m.subset = copy.deepcopy(viewed_subset)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet: {old}'
-                              f' -> {m.data}[{m.subset}]')
+                        print(f"[{_PASS}]       memlet: {old} -> {m.data}[{m.subset}]")
                 elif m.other_subset is not None:
-                    old_other = f'other_subset={m.other_subset}'
+                    old_other = f"other_subset={m.other_subset}"
                     m.other_subset = _compute_rewritten_subset(mapping, viewed_subset, m.other_subset)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet {m.data}:'
-                              f' {old_other}'
-                              f' -> other_subset={m.other_subset}')
+                        print(f"[{_PASS}]       memlet {m.data}: {old_other} -> other_subset={m.other_subset}")
                 elif m.data is not None:
                     # A copy keyed to the OTHER endpoint leaves this side UNSPELLED, meaning the
                     # view's full range -- so the view's own indices live nowhere else on the edge.
@@ -848,8 +835,7 @@ class RemoveViews(ppl.Pass):
                     # and must keep both sides unspelled.
                     m.other_subset = copy.deepcopy(viewed_subset)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet {m.data}:'
-                              f' other_subset=None -> other_subset={m.other_subset}')
+                        print(f"[{_PASS}]       memlet {m.data}: other_subset=None -> other_subset={m.other_subset}")
 
     def _reconnect_edges(self, state, view_node, view_edge, is_viewed_src):
         """Splice ``view_node`` out of its own edges, then drop the defining edge.
@@ -875,11 +861,13 @@ class RemoveViews(ppl.Pass):
                 if e is view_edge:
                     continue
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}]       reconnect:'
-                          f' {view_node.data}:{e.src_conn}'
-                          f' -> {e.dst}:{e.dst_conn}'
-                          f'  =>  {view_edge.src}:{view_edge.src_conn}'
-                          f' -> {e.dst}:{e.dst_conn}')
+                    print(
+                        f"[{_PASS}]       reconnect:"
+                        f" {view_node.data}:{e.src_conn}"
+                        f" -> {e.dst}:{e.dst_conn}"
+                        f"  =>  {view_edge.src}:{view_edge.src_conn}"
+                        f" -> {e.dst}:{e.dst_conn}"
+                    )
                 state.remove_edge(e)
                 state.add_edge(view_edge.src, view_edge.src_conn, e.dst, e.dst_conn, e.data)
         else:
@@ -887,11 +875,13 @@ class RemoveViews(ppl.Pass):
                 if e is view_edge:
                     continue
                 if _DEBUGPRINT:
-                    print(f'[{_PASS}]       reconnect:'
-                          f' {e.src}:{e.src_conn}'
-                          f' -> {view_node.data}:{e.dst_conn}'
-                          f'  =>  {e.src}:{e.src_conn}'
-                          f' -> {view_edge.dst}:{view_edge.dst_conn}')
+                    print(
+                        f"[{_PASS}]       reconnect:"
+                        f" {e.src}:{e.src_conn}"
+                        f" -> {view_node.data}:{e.dst_conn}"
+                        f"  =>  {e.src}:{e.src_conn}"
+                        f" -> {view_edge.dst}:{view_edge.dst_conn}"
+                    )
                 state.remove_edge(e)
                 state.add_edge(e.src, e.src_conn, view_edge.dst, view_edge.dst_conn, e.data)
         # ``X -> V -> C`` already implied X before C, so the re-homed ``X -> C`` adds no
@@ -905,7 +895,7 @@ class RemoveViews(ppl.Pass):
                 if not state.edges_between(u, v):
                     state.add_nedge(u, v, Memlet())
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       ordering edge re-homed: {u} -> {v}')
+                        print(f"[{_PASS}]       ordering edge re-homed: {u} -> {v}")
             state.remove_edge(oe)
         if view_edge in state.edges():
             state.remove_edge(view_edge)
@@ -923,7 +913,7 @@ class RemoveViews(ppl.Pass):
             # Assignments: parse each RHS, visit, confirm no V-subscripts remain.
             for rhs in e.data.assignments.values():
                 try:
-                    tree = ast.parse(rhs, mode='exec')
+                    tree = ast.parse(rhs, mode="exec")
                 except SyntaxError:
                     return False
                 rw = rewriter()
@@ -949,14 +939,13 @@ class RemoveViews(ppl.Pass):
 
             for k, v in list(data.assignments.items()):
                 rw = rewriter()
-                tree = ast.parse(v, mode='exec')
+                tree = ast.parse(v, mode="exec")
                 tree = rw.visit(tree)
                 if rw.changed:
                     new_v = astutils.unparse(tree)
                     data.assignments[k] = new_v
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       interstate assign "{k}":'
-                              f' {v!r} -> {new_v!r}')
+                        print(f'[{_PASS}]       interstate assign "{k}": {v!r} -> {new_v!r}')
 
     def _cleanup_isolated_viewed_node(self, state, viewed_node):
         """
@@ -968,17 +957,11 @@ class RemoveViews(ppl.Pass):
         if viewed_node in state.nodes() and state.degree(viewed_node) == 0:
             state.remove_node(viewed_node)
             if _DEBUGPRINT:
-                print(f'[{_PASS}]       cleaned up isolated'
-                      f' "{viewed_node.data}"')
+                print(f'[{_PASS}]       cleaned up isolated "{viewed_node.data}"')
 
-    def _try_linearize_removal(self,
-                               state,
-                               vnode,
-                               viewed_node,
-                               view_edge,
-                               viewed_subset,
-                               is_viewed_src,
-                               require_dense=True):
+    def _try_linearize_removal(
+        self, state, vnode, viewed_node, view_edge, viewed_subset, is_viewed_src, require_dense=True
+    ):
         """
         Attempt to remove a view by linearizing memlet ranges with the
         view's strides and delinearizing with the array's strides.
@@ -999,13 +982,11 @@ class RemoveViews(ppl.Pass):
         sdfg = state.parent
         vdesc = sdfg.arrays[vnode.data]
         adesc = sdfg.arrays[viewed_node.data]
-        strat_name = 'strategy 2 (dense reshape)' if require_dense \
-                     else 'strategy 3 (pure linearization)'
+        strat_name = "strategy 2 (dense reshape)" if require_dense else "strategy 3 (pure linearization)"
 
         if require_dense and not _is_dense_reshape(vdesc, adesc):
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     {strat_name}: not a dense reshape'
-                      f' -- skipping')
+                print(f"[{_PASS}]     {strat_name}: not a dense reshape -- skipping")
             return False
 
         # Linearization via vstrides only works when the view maps to
@@ -1014,9 +995,11 @@ class RemoveViews(ppl.Pass):
         full_range = subsets.Range.from_array(adesc)
         if viewed_subset != full_range:
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     {strat_name}: view edge subset'
-                      f' {viewed_subset} != full range {full_range}'
-                      f' -- skipping')
+                print(
+                    f"[{_PASS}]     {strat_name}: view edge subset"
+                    f" {viewed_subset} != full range {full_range}"
+                    f" -- skipping"
+                )
             return False
 
         view_shape = _int_shape(vdesc)
@@ -1025,20 +1008,17 @@ class RemoveViews(ppl.Pass):
         astrides = _int_strides(adesc)
         if None in (view_shape, array_shape, vstrides, astrides):
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     {strat_name}: symbolic'
-                      f' shapes/strides -- skipping')
+                print(f"[{_PASS}]     {strat_name}: symbolic shapes/strides -- skipping")
             return False
         if vdesc.dtype != adesc.dtype:
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     {strat_name}: dtype mismatch'
-                      f' -- skipping')
+                print(f"[{_PASS}]     {strat_name}: dtype mismatch -- skipping")
             return False
 
         if _DEBUGPRINT:
-            print(f'[{_PASS}]     {strat_name}: vstrides={vstrides},'
-                  f' astrides={astrides}')
+            print(f"[{_PASS}]     {strat_name}: vstrides={vstrides}, astrides={astrides}")
 
-        non_view_edges = (list(state.out_edges(vnode)) if is_viewed_src else list(state.in_edges(vnode)))
+        non_view_edges = list(state.out_edges(vnode)) if is_viewed_src else list(state.in_edges(vnode))
 
         # -- feasibility: every memlet subset must be reshapable,
         #    every tasklet must be Python.
@@ -1048,40 +1028,38 @@ class RemoveViews(ppl.Pass):
                 if isinstance(leaf, nd.Tasklet):
                     if leaf.language != dtypes.Language.Python:
                         if _DEBUGPRINT:
-                            print(f'[{_PASS}]     {strat_name}: non-Python'
-                                  f' tasklet "{leaf.label}" -- aborting')
+                            print(f'[{_PASS}]     {strat_name}: non-Python tasklet "{leaf.label}" -- aborting')
                         return False
                 m = te.data
                 if m.data == vnode.data and m.subset is not None:
                     if _reshape_subset(m.subset, vstrides, view_shape, astrides, array_shape) is None:
                         if _DEBUGPRINT:
-                            print(f'[{_PASS}]     {strat_name}: cannot'
-                                  f' reshape subset {m.data}[{m.subset}]'
-                                  f' -- aborting')
+                            print(f"[{_PASS}]     {strat_name}: cannot reshape subset {m.data}[{m.subset}] -- aborting")
                         return False
                 if m.data != vnode.data and m.other_subset is not None:
                     if _reshape_subset(m.other_subset, vstrides, view_shape, astrides, array_shape) is None:
                         if _DEBUGPRINT:
-                            print(f'[{_PASS}]     {strat_name}: cannot'
-                                  f' reshape other_subset {m.other_subset}'
-                                  f' -- aborting')
+                            print(
+                                f"[{_PASS}]     {strat_name}: cannot reshape other_subset {m.other_subset} -- aborting"
+                            )
                         return False
 
         # Interstate-edge feasibility: ensure every V-subscript in every
         # interstate-edge assignment/condition can be parsed and has the
         # right rank for the linearize rewriter.
         def _rw_lin():
-            return _InterstateSubscriptRewriter(vnode.data,
-                                                viewed_node.data,
-                                                mode='linearize',
-                                                vstrides=vstrides,
-                                                astrides=astrides,
-                                                array_shape=array_shape)
+            return _InterstateSubscriptRewriter(
+                vnode.data,
+                viewed_node.data,
+                mode="linearize",
+                vstrides=vstrides,
+                astrides=astrides,
+                array_shape=array_shape,
+            )
 
         if not self._interstate_feasible(sdfg, vnode.data, _rw_lin):
             if _DEBUGPRINT:
-                print(f'[{_PASS}]     {strat_name}: interstate edge'
-                      f' rewrite infeasible -- aborting')
+                print(f"[{_PASS}]     {strat_name}: interstate edge rewrite infeasible -- aborting")
             return False
 
         # apply: rewrite memlets
@@ -1089,37 +1067,35 @@ class RemoveViews(ppl.Pass):
             for te in state.memlet_tree(edge):
                 m = te.data
                 if m.data == vnode.data:
-                    old = f'{m.data}[{m.subset}]'
+                    old = f"{m.data}[{m.subset}]"
                     m.data = viewed_node.data
                     if m.subset is not None:
                         m.subset = _reshape_subset(m.subset, vstrides, view_shape, astrides, array_shape)
                     else:
                         m.subset = subsets.Range.from_array(adesc)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet: {old}'
-                              f' -> {m.data}[{m.subset}]')
+                        print(f"[{_PASS}]       memlet: {old} -> {m.data}[{m.subset}]")
                 elif m.data != vnode.data and m.other_subset is not None:
-                    old_other = f'{m.other_subset}'
+                    old_other = f"{m.other_subset}"
                     m.other_subset = _reshape_subset(m.other_subset, vstrides, view_shape, astrides, array_shape)
                     if _DEBUGPRINT:
-                        print(f'[{_PASS}]       memlet {m.data}:'
-                              f' other_subset={old_other}'
-                              f' -> {m.other_subset}')
+                        print(f"[{_PASS}]       memlet {m.data}: other_subset={old_other} -> {m.other_subset}")
 
         # apply: rewrite tasklet Python code
         for edge in non_view_edges:
             for te in state.memlet_tree(edge):
                 leaf = te.dst if is_viewed_src else te.src
                 conn = te.dst_conn if is_viewed_src else te.src_conn
-                if (isinstance(leaf, nd.Tasklet) and conn and leaf.language == dtypes.Language.Python
-                        and leaf.code.code):
+                if isinstance(leaf, nd.Tasklet) and conn and leaf.language == dtypes.Language.Python and leaf.code.code:
                     old_code = leaf.code.as_string
                     rw = _ReshapeIndexRewriter(conn, vstrides, astrides, array_shape)
                     leaf.code.code = [rw.visit(copy.deepcopy(stmt)) for stmt in leaf.code.code]
                     if _DEBUGPRINT and rw.changed:
-                        print(f'[{_PASS}]       tasklet "{leaf.label}"'
-                              f' connector "{conn}": {old_code!r}'
-                              f' -> {leaf.code.as_string!r}')
+                        print(
+                            f'[{_PASS}]       tasklet "{leaf.label}"'
+                            f' connector "{conn}": {old_code!r}'
+                            f" -> {leaf.code.as_string!r}"
+                        )
 
         # apply: rewrite interstate edge assignments & conditions
         self._rewrite_interstate_edges(sdfg, vnode.data, _rw_lin)
@@ -1129,6 +1105,5 @@ class RemoveViews(ppl.Pass):
         state.remove_node(vnode)
         self._cleanup_isolated_viewed_node(state, viewed_node)
         if _DEBUGPRINT:
-            print(f'[{_PASS}]     REMOVED "{vnode.data}"'
-                  f' via {strat_name}')
+            print(f'[{_PASS}]     REMOVED "{vnode.data}" via {strat_name}')
         return True

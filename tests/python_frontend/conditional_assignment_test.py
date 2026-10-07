@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests assignments in conditions. """
+"""Tests assignments in conditions."""
+
 import numpy as np
 import dace
 import pytest
@@ -19,14 +20,14 @@ def test_none_or_field_call():
             func2(A, B)
 
     B = np.random.randn(10)
-    A = np.ones((10, ))
+    A = np.ones((10,))
     func(A, B)
     assert np.allclose(A, B)
     func(A, None)
     assert np.allclose(A, 7.0)
 
 
-@pytest.mark.skip('Needs Reference support')
+@pytest.mark.skip("Needs Reference support")
 def test_none_or_field_assignment_globalarr():
     globalarr = np.random.randn(10)
 
@@ -39,14 +40,14 @@ def test_none_or_field_assignment_globalarr():
         A[...] = C
 
     B = np.random.randn(10)
-    A = np.ones((10, ))
+    A = np.ones((10,))
     func(A, B)
     assert np.allclose(A, B)
     func(A, None)
     assert np.allclose(A, globalarr)
 
 
-@pytest.mark.skip('Needs Reference support')
+@pytest.mark.skip("Needs Reference support")
 def test_none_or_field_assignment_arr():
 
     @dace.program
@@ -58,7 +59,7 @@ def test_none_or_field_assignment_arr():
         A[...] = C
 
     B = np.random.randn(10)
-    A = np.ones((10, ))
+    A = np.ones((10,))
     arr = np.random.randn(10)
     func(A, B, arr)
     assert np.allclose(A, B)
@@ -75,12 +76,12 @@ def test_none_arg():
         else:
             field[...] = 2.0
 
-    field = np.zeros((10, ))
+    field = np.zeros((10,))
     some_func(field, None)
     assert np.allclose(field, 1.0)
 
 
-@pytest.mark.skip('Reference scalars unsupported in Python frontend (fails without simplification)')
+@pytest.mark.skip("Reference scalars unsupported in Python frontend (fails without simplification)")
 def test_maybe_none_scalar_arg():
 
     @dace.program
@@ -88,7 +89,7 @@ def test_maybe_none_scalar_arg():
         if a_scalar is not None:
             field[...] = a_scalar
 
-    field = np.zeros((10, ))
+    field = np.zeros((10,))
     some_func(field, 3.0)
     assert np.allclose(field, 3.0)
 
@@ -214,7 +215,7 @@ def test_numpy_where_covers_the_data_case():
     assert np.allclose(b, np.maximum(a, 0.0))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_none_or_field_call()
     # test_none_or_field_assignment_globalarr()
     # test_none_or_field_assignment_arr()

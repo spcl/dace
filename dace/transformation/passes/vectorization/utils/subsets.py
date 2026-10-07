@@ -7,6 +7,7 @@
   a single subset.
 - Memlet rewrite (``replace_all_access_subsets``): walk edges, replace the payload in-place.
 """
+
 import copy
 
 import dace
@@ -20,8 +21,9 @@ from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdSc
 from dace.sdfg.narrowing import as_basic
 
 
-def infer_edge_endpoints(edge: MultiConnectorEdge[Memlet], sdfg: dace.SDFG,
-                         state: 'dace.SDFGState') -> tuple[str | None, Range | None, str | None, Range | None]:
+def infer_edge_endpoints(
+    edge: MultiConnectorEdge[Memlet], sdfg: dace.SDFG, state: "dace.SDFGState"
+) -> tuple[str | None, Range | None, str | None, Range | None]:
     """``(src_data_name, src_subset, dst_data_name, dst_subset)`` for a memlet edge, both endpoints
     inferred.
 
@@ -40,6 +42,7 @@ def infer_edge_endpoints(edge: MultiConnectorEdge[Memlet], sdfg: dace.SDFG,
         :class:`Range` copies (safe to mutate) or ``None`` for non-AN endpoints.
     """
     from dace.sdfg.nodes import AccessNode
+
     mem = edge.data
     if mem is None:
         raise ValueError(f"infer_edge_endpoints: edge {edge} has no memlet")
@@ -56,7 +59,7 @@ def infer_edge_endpoints(edge: MultiConnectorEdge[Memlet], sdfg: dace.SDFG,
     return src_data, src_subset, dst_data, dst_subset
 
 
-def an_side_subset(edge: MultiConnectorEdge[Memlet], an: AccessNode, sdfg: dace.SDFG, state: 'dace.SDFGState') -> Range:
+def an_side_subset(edge: MultiConnectorEdge[Memlet], an: AccessNode, sdfg: dace.SDFG, state: "dace.SDFGState") -> Range:
     """Return the subset belonging to ``an`` on the AN-incident ``edge``.
 
     An AN-incident edge carries one endpoint's region in ``edge.data.subset`` and the other's in
@@ -99,8 +102,9 @@ def repl_subset(subset: dace.subsets.Range, repl_dict: dict[str, str]) -> dace.s
     return new_subset
 
 
-def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: set[str], free_syms: set[str],
-                                helper_name: str) -> None:
+def _assert_no_new_free_symbols(
+    sdfg: dace.SDFG, prev_sdfg_free_syms: set[str], free_syms: set[str], helper_name: str
+) -> None:
     """Raise if a subset rewrite introduced new free symbols into the SDFG.
 
     :param sdfg: The SDFG being rewritten.
@@ -112,9 +116,11 @@ def _assert_no_new_free_symbols(sdfg: dace.SDFG, prev_sdfg_free_syms: set[str], 
     newly_free = sdfg.free_symbols - prev_sdfg_free_syms
     for free_sym in free_syms:
         if str(free_sym) in newly_free:
-            raise Exception(f"`{helper_name}` has introduced new free symbols (this will cause problems as the new "
-                            f"symbols should not be free). This will result an invalid SDFG, either call with "
-                            f"`add_missing_symbols=True` or fix this issue")
+            raise Exception(
+                f"`{helper_name}` has introduced new free symbols (this will cause problems as the new "
+                f"symbols should not be free). This will result an invalid SDFG, either call with "
+                f"`add_missing_symbols=True` or fix this issue"
+            )
 
 
 def symbol_instances(subset: dace.subsets.Range) -> dict[str, symbolic.symbol]:
@@ -150,8 +156,9 @@ def subset_symbol_dtype(sdfg: dace.SDFG, name: str, carried: dict[str, symbolic.
     raise scopes.UndeterminedSymbolDType(name, sdfg.label)
 
 
-def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str,
-                                     vector_map_param: str) -> dace.subsets.Range:
+def repl_subset_to_use_laneid_offset(
+    sdfg: dace.SDFG, subset: dace.subsets.Range, symbol_offset: str, vector_map_param: str
+) -> dace.subsets.Range:
     """Rewrite a subset's free symbols to their per-lane variants.
 
     Each free symbol ``s`` becomes ``s_laneid_<symbol_offset>`` (added to the
@@ -174,8 +181,11 @@ def repl_subset_to_use_laneid_offset(sdfg: dace.SDFG, subset: dace.subsets.Range
 
     offset_lane = int(symbol_offset)
     repl_dict = {
-        str(free_sym): (LaneIdScheme.make_dim(str(free_sym), 0, offset_lane)
-                        if str(free_sym) != vector_map_param else f"({str(free_sym)} + {symbol_offset})")
+        str(free_sym): (
+            LaneIdScheme.make_dim(str(free_sym), 0, offset_lane)
+            if str(free_sym) != vector_map_param
+            else f"({str(free_sym)} + {symbol_offset})"
+        )
         for free_sym in free_syms
     }
 

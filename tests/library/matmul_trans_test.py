@@ -18,6 +18,7 @@ operands.  Tolerances are tight (``rtol=1e-12``) because GEMM does the
 same dot-products as numpy on the same floats; any drift would be a
 real bug.
 """
+
 import dace
 import numpy as np
 import pytest
@@ -63,12 +64,15 @@ def _reference(a, b, transA, transB):
     return a_eff @ b_eff
 
 
-@pytest.mark.parametrize("transA,transB", [
-    (False, False),
-    (True, False),
-    (False, True),
-    (True, True),
-])
+@pytest.mark.parametrize(
+    "transA,transB",
+    [
+        (False, False),
+        (True, False),
+        (False, True),
+        (True, True),
+    ],
+)
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_matmul_trans_flags(transA, transB, dtype):
     """Every combination of ``transA`` / ``transB`` on 2-D operands.
@@ -135,8 +139,9 @@ def test_matmul_trans_no_transient_in_sdfg():
     # added to hold ``A^T``.
     post_transient_count = sum(1 for d in sdfg.arrays.values() if d.transient)
     extra_kn_transient = any(d.transient and tuple(int(s) for s in d.shape) == (m, k) for d in sdfg.arrays.values())
-    assert not extra_kn_transient, (f"transA=True minted an unexpected (m,k) "
-                                    f"transient -- transpose should fuse into GEMM, not materialise a copy")
+    assert not extra_kn_transient, (
+        f"transA=True minted an unexpected (m,k) transient -- transpose should fuse into GEMM, not materialise a copy"
+    )
 
     # Sanity: the program still computes the right answer.
     prog = sdfg.compile()

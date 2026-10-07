@@ -13,6 +13,7 @@ fans the ``S`` pre-loop seeds out by ``_i mod S`` in BOTH directions -- forward
 class ``k`` seeds from ``iter_start + k_r + k``, reverse class ``k`` seeds from
 ``k_r - k`` (the head at the high end of the range) -- so the shape lifts.
 """
+
 import numpy as np
 
 import dace
@@ -20,7 +21,7 @@ from dace.libraries.standard.nodes.scan import Scan
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _num_scan_nodes(sdfg):
@@ -41,7 +42,7 @@ def test_reverse_stride2_residue_class_scan():
 
     # The reverse residue-class (stride>1) shape LIFTS: one Scan libnode running the
     # S independent class scans, plus the per-class seed fan-out in the apply Map.
-    assert res, 'reverse stride-2 scan must lift'
+    assert res, "reverse stride-2 scan must lift"
     assert _num_scan_nodes(sdfg) == 1
 
     n = 12
@@ -58,10 +59,11 @@ def test_reverse_stride2_residue_class_scan():
     # whose chunked association is implementation-defined and team-size dependent
     # (sanctioned by design decision -- this is association-order slack, not a
     # weakened assertion; a real miscompile moves the result far more than 1e-12).
-    assert np.allclose(got, expected, rtol=1e-12,
-                       atol=1e-12), (f'reverse stride-2 scan mismatch (lifted={res}, '
-                                     f'scan_nodes={_num_scan_nodes(sdfg)}):\n got={got}\n exp={expected}\n'
-                                     f' diff={np.abs(got - expected)}')
+    assert np.allclose(got, expected, rtol=1e-12, atol=1e-12), (
+        f"reverse stride-2 scan mismatch (lifted={res}, "
+        f"scan_nodes={_num_scan_nodes(sdfg)}):\n got={got}\n exp={expected}\n"
+        f" diff={np.abs(got - expected)}"
+    )
 
 
 def test_reverse_stride3_residue_class_scan_odd_trip():
@@ -78,7 +80,7 @@ def test_reverse_stride3_residue_class_scan_odd_trip():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res, 'reverse stride-3 scan must lift'
+    assert res, "reverse stride-3 scan must lift"
     assert _num_scan_nodes(sdfg) == 1
 
     n = 14
@@ -93,5 +95,6 @@ def test_reverse_stride3_residue_class_scan_odd_trip():
     sdfg(acc=got, delta=delta, N=n)
     # Tolerance, not bit-exact: OpenMP 5.0 ``inscan`` association-order slack, per the
     # same design decision as the stride-2 case above.
-    assert np.allclose(got, expected, rtol=1e-12,
-                       atol=1e-12), f'reverse stride-3 scan mismatch:\n got={got}\n exp={expected}'
+    assert np.allclose(got, expected, rtol=1e-12, atol=1e-12), (
+        f"reverse stride-3 scan mismatch:\n got={got}\n exp={expected}"
+    )

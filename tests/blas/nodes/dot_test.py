@@ -69,8 +69,7 @@ def run_test(target, size, vector_length):
 
     diff = abs(result[0] - ref)
     if diff >= 1e-6 * ref:
-        raise ValueError("Unexpected result returned from dot product: "
-                         "got {}, expected {}".format(result[0], ref))
+        raise ValueError("Unexpected result returned from dot product: got {}, expected {}".format(result[0], ref))
 
     return sdfg
 
@@ -93,7 +92,7 @@ def test_validate_accepts_reparsed_symbol_instances():
     state.add_edge(node, "_result", state.add_write("r"), None, Memlet.from_array("r", sdfg.arrays["r"]))
     node.validate(sdfg, state)  # must not raise
 
-    sdfg.arrays["y"].shape = (dace.symbol("P", dace.int32), )
+    sdfg.arrays["y"].shape = (dace.symbol("P", dace.int32),)
     y_edge = next(e for e in state.in_edges(node) if e.dst_conn == "_y")
     y_edge.data = Memlet.from_array("y", sdfg.arrays["y"])
     with pytest.raises(ValueError):

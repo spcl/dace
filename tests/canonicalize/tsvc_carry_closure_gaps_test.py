@@ -24,6 +24,7 @@ Numerics are asserted unconditionally on every case, because the outcome that ma
 "left sequential" is "parallelized into a race". Structure is asserted separately: a value check
 passes just as happily on the un-lifted loop, so it cannot tell a closed carry from an open one.
 """
+
 import os
 
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -41,7 +42,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: Loose enough that an FMA contraction or a scan's reassociation cannot decide an assertion,
 #: tight enough that a wrong element cannot hide behind it.
@@ -59,8 +60,9 @@ def staged_delay_line(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]
 
 
 @dace.program
-def coupled_scan_via_transient(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N],
-                               e: dace.float64[N]):
+def coupled_scan_via_transient(
+    a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]
+):
     """s323's arithmetic with the intra-iteration value forwarded instead of reloaded from ``a``."""
     for i in range(1, N):
         tmp = b[i - 1] + c[i] * d[i]
@@ -86,7 +88,9 @@ def canonicalized_corpus(kernel_name: str, tag: str):
 def residual_loops(sdfg: dace.SDFG) -> list[str]:
     """Labels of the sequential ``LoopRegion`` s canonicalize did not turn into parallel work."""
     return [
-        r.label for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions()
+        r.label
+        for sd in sdfg.all_sdfgs_recursive()
+        for r in sd.all_control_flow_regions()
         if isinstance(r, LoopRegion) and r.loop_variable
     ]
 
@@ -110,7 +114,7 @@ def assert_matches_corpus_reference(kernel, sdfg: dace.SDFG) -> None:
     got = {n: arr.copy() for n, arr in arrays.items()}
     sdfg.compile()(**got, **call_kwargs)
     for name in arrays:
-        assert np.allclose(want[name], got[name], **TOL), f'{kernel.name}: value mismatch on {name}'
+        assert np.allclose(want[name], got[name], **TOL), f"{kernel.name}: value mismatch on {name}"
 
 
 def s252_reference(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
@@ -139,9 +143,9 @@ def test_s252_corpus_form_closes_the_delay_line():
     the kernel, and this pins that the one-stage form is genuinely handled rather than merely
     untested.
     """
-    kernel, sdfg = canonicalized_corpus('s252_d_single', 's252_corpus')
-    assert residual_loops(sdfg) == [], 's252 must close its delay line and parallelize'
-    assert maps(sdfg), 's252 lost its carry but never became a map'
+    kernel, sdfg = canonicalized_corpus("s252_d_single", "s252_corpus")
+    assert residual_loops(sdfg) == [], "s252 must close its delay line and parallelize"
+    assert maps(sdfg), "s252 lost its carry but never became a map"
     assert_matches_corpus_reference(kernel, sdfg)
 
 
@@ -151,10 +155,10 @@ def test_s252_staged_delay_line_is_value_preserving():
     want = np.zeros(64)
     s252_reference(want, b, c)
 
-    sdfg = canonicalized(staged_delay_line, 'staged_delay_line_values')
+    sdfg = canonicalized(staged_delay_line, "staged_delay_line_values")
     got = np.zeros(64)
     sdfg.compile()(a=got, b=b.copy(), c=c.copy(), N=64)
-    assert np.allclose(want, got, **TOL), 'the staged delay line no longer computes s252'
+    assert np.allclose(want, got, **TOL), "the staged delay line no longer computes s252"
 
 
 def test_s252_staged_delay_line_should_still_close():
@@ -166,9 +170,9 @@ def test_s252_staged_delay_line_should_still_close():
     ``rematerializable_producer`` recomputes the extra stage instead of refusing the body-written
     input it reads.
     """
-    sdfg = canonicalized(staged_delay_line, 'staged_delay_line_struct')
-    assert residual_loops(sdfg) == [], 'the staged delay line must close the same way the corpus form does'
-    assert maps(sdfg), 'the staged delay line lost its carry but never became a map'
+    sdfg = canonicalized(staged_delay_line, "staged_delay_line_struct")
+    assert residual_loops(sdfg) == [], "the staged delay line must close the same way the corpus form does"
+    assert maps(sdfg), "the staged delay line lost its carry but never became a map"
 
 
 def test_s323_becomes_a_scan_when_the_carry_skips_the_array_round_trip():
@@ -184,19 +188,19 @@ def test_s323_becomes_a_scan_when_the_carry_skips_the_array_round_trip():
     want = [a.copy(), b.copy(), c, d, e]
     s323_reference(*want)
 
-    sdfg = canonicalized(coupled_scan_via_transient, 'coupled_scan_via_transient')
-    assert 'Scan' in libnodes(sdfg), 'the forwarded form must lift to a Scan'
-    assert residual_loops(sdfg) == [], 'the forwarded form must leave no sequential loop'
+    sdfg = canonicalized(coupled_scan_via_transient, "coupled_scan_via_transient")
+    assert "Scan" in libnodes(sdfg), "the forwarded form must lift to a Scan"
+    assert residual_loops(sdfg) == [], "the forwarded form must leave no sequential loop"
 
     got_a, got_b = a.copy(), b.copy()
     sdfg.compile()(a=got_a, b=got_b, c=c.copy(), d=d.copy(), e=e.copy(), N=64)
-    assert np.allclose(want[0], got_a, **TOL), 'the lifted scan computed `a` wrong'
-    assert np.allclose(want[1], got_b, **TOL), 'the lifted scan computed `b` wrong'
+    assert np.allclose(want[0], got_a, **TOL), "the lifted scan computed `a` wrong"
+    assert np.allclose(want[1], got_b, **TOL), "the lifted scan computed `b` wrong"
 
 
 def test_s323_is_value_preserving():
     """s323 must still compute s323 -- the assertion that a wrong "parallelization" would break."""
-    kernel, sdfg = canonicalized_corpus('s323_d_single', 's323_values')
+    kernel, sdfg = canonicalized_corpus("s323_d_single", "s323_values")
     assert_matches_corpus_reference(kernel, sdfg)
 
 
@@ -215,10 +219,10 @@ def test_s323_lifts_to_a_prefix_scan():
     ``b`` loop it isolates is the scan above -- the shape
     ``test_s323_becomes_a_scan_when_the_carry_skips_the_array_round_trip`` always lifted.
     """
-    _kernel, sdfg = canonicalized_corpus('s323_d_single', 's323_struct')
-    assert 'Scan' in libnodes(sdfg), 's323 carries a prefix sum and must lift to a Scan'
-    assert residual_loops(sdfg) == [], 's323 must leave no sequential loop once the scan is lifted'
+    _kernel, sdfg = canonicalized_corpus("s323_d_single", "s323_struct")
+    assert "Scan" in libnodes(sdfg), "s323 carries a prefix sum and must lift to a Scan"
+    assert residual_loops(sdfg) == [], "s323 must leave no sequential loop once the scan is lifted"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

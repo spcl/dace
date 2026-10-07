@@ -8,7 +8,7 @@ import pytest
 
 from dace.codegen.compiler import build_subprocess_sigmask
 
-pytestmark = pytest.mark.skipif(os.name != 'posix', reason='pthread_sigmask/SIGCHLD are POSIX-only')
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="pthread_sigmask/SIGCHLD are POSIX-only")
 
 
 def test_sigchld_unblocked_inside_and_restored_after():
@@ -29,6 +29,6 @@ def test_unblocked_mask_is_left_alone():
     assert signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, [])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_sigchld_unblocked_inside_and_restored_after()
     test_unblocked_mask_is_left_alone()

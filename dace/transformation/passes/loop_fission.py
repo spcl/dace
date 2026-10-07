@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop fission (distribution): the LoopRegion equivalent of MapFission.
+"""Loop fission (distribution): the LoopRegion equivalent of MapFission.
 
 Splits a ``LoopRegion`` whose body is a single ``SDFGState`` into one loop
 per independent node group, replicating the loop header. Components that
@@ -7,6 +7,7 @@ share a written data container (a RAW/WAW/WAR dependency) stay in the same
 loop; only data-independent groups are separated, so the result is always
 value-preserving. A no-op when the body has a single group.
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -53,7 +54,7 @@ def _is_per_iter_subset(subset, loop_var: Optional[str]) -> bool:
             return False
         if loop_sym in expr.free_symbols:
             offset = symbolic.simplify(as_expr(expr) - as_expr(loop_sym))
-            if not (getattr(offset, 'is_number', False) and offset == 0):
+            if not (getattr(offset, "is_number", False) and offset == 0):
                 return False
             saw_loop_var = True
     # A subset that NEVER references the loop variable is a constant slot in
@@ -89,8 +90,11 @@ def _subsets_at_node(node: nodes.AccessNode, state: SDFGState):
 
 def _loop_bounds(loop: LoopRegion):
     """``(start, end, stride)`` of ``loop``; any ``None`` means it is unanalyzable."""
-    return (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
-            loop_analysis.get_loop_stride(loop))
+    return (
+        loop_analysis.get_init_assignment(loop),
+        loop_analysis.get_loop_end(loop),
+        loop_analysis.get_loop_stride(loop),
+    )
 
 
 def _accesses_interfere_across_iterations(loop: LoopRegion, subset_a, subset_b, bounds=None) -> bool:
@@ -191,14 +195,18 @@ def _rewrite_per_iter_bridges(state: SDFGState, loop_var: Optional[str], sdfg: S
     written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
     for data in list(written):
         desc = sdfg.arrays.get(data)
-        if desc is None or getattr(desc, 'transient', False):
+        if desc is None or getattr(desc, "transient", False):
             continue
         if not _container_per_iter_only(state, data, loop_var):
             continue
         # Find writer-side AccessNodes with downstream consumers.
         for n in list(state.nodes()):
-            if not (isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0
-                    and state.out_degree(n) > 0):
+            if not (
+                isinstance(n, nodes.AccessNode)
+                and n.data == data
+                and state.in_degree(n) > 0
+                and state.out_degree(n) > 0
+            ):
                 continue
             out_edges = list(state.out_edges(n))
             if not out_edges:
@@ -243,7 +251,7 @@ def _is_accumulator_group(group: List[nodes.Node], state: SDFGState, sdfg: SDFG)
     written_data = {n.data for n in data_nodes if state.in_degree(n) > 0}
     for data in written_data:
         desc = sdfg.arrays.get(data)
-        if desc is None or getattr(desc, 'transient', False) is False:
+        if desc is None or getattr(desc, "transient", False) is False:
             continue
         if _has_self_path(state, data):
             return True
@@ -262,7 +270,7 @@ def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
     further split.
     """
     loop = state.parent_graph
-    if loop is None or not hasattr(loop, 'parent_graph'):
+    if loop is None or not hasattr(loop, "parent_graph"):
         return False
     parent = loop.parent_graph
     if parent is None:
@@ -273,7 +281,7 @@ def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
         # Skip the loop itself, and skip the original loop when this state is a
         # deepcopy probe (the probe shares the parent's nodes, so the original loop
         # would otherwise look like a sibling of itself).
-        if block is loop or getattr(block, 'label', None) == getattr(loop, 'label', None):
+        if block is loop or getattr(block, "label", None) == getattr(loop, "label", None):
             continue
         reads, _ = _block_rw(block)
         if reads & data:
@@ -281,11 +289,9 @@ def _consumed_by_sibling_loop(state: SDFGState, data: Set[str]) -> bool:
     return False
 
 
-def _merge_side_write_groups(groups: List[List[nodes.Node]],
-                             state: SDFGState,
-                             loop_var: Optional[str],
-                             sdfg: SDFG,
-                             sibling_check: bool = True) -> List[List[nodes.Node]]:
+def _merge_side_write_groups(
+    groups: List[List[nodes.Node]], state: SDFGState, loop_var: Optional[str], sdfg: SDFG, sibling_check: bool = True
+) -> List[List[nodes.Node]]:
     """Merge side-write groups when they are part of a compound reduction body
     (one scalar accumulator group plus multiple per-element side writes) or when
     they feed a sibling consumer loop. Both cases are value-preserving: keeping the
@@ -320,10 +326,9 @@ def _merge_side_write_groups(groups: List[List[nodes.Node]],
     return sorted(kept, key=lambda g: order[g[0]])
 
 
-def _independent_groups(state: SDFGState,
-                        loop: Optional[LoopRegion],
-                        sdfg: SDFG,
-                        sibling_check: bool = True) -> List[List[nodes.Node]]:
+def _independent_groups(
+    state: SDFGState, loop: Optional[LoopRegion], sdfg: SDFG, sibling_check: bool = True
+) -> List[List[nodes.Node]]:
     """Partition ``state``'s nodes into data-independent groups.
 
     A *pure input* is an AccessNode with no in-edges whose data is never
@@ -358,8 +363,11 @@ def _independent_groups(state: SDFGState,
     # Hoisted: fixed per loop, was re-parsed for every subset pair of the four-deep nest below.
     loop_bounds = _loop_bounds(loop) if loop is not None and smt_dependence.has_z3() else None
     written = OrderedSet(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
-    is_input = OrderedSet(n for n in state.nodes()
-                          if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written)
+    is_input = OrderedSet(
+        n
+        for n in state.nodes()
+        if isinstance(n, nodes.AccessNode) and state.in_degree(n) == 0 and n.data not in written
+    )
     core = [n for n in state.nodes() if n not in is_input]
     parent: Dict[nodes.Node, nodes.Node] = {n: n for n in core}
     loop_var = loop.loop_variable if loop is not None else None
@@ -397,11 +405,15 @@ def _independent_groups(state: SDFGState,
         per_iter_non_transient = False
         if loop_var is not None:
             desc = sdfg.arrays.get(data)
-            per_iter_non_transient = (desc is not None and not getattr(desc, 'transient', False)
-                                      and _container_per_iter_only(state, data, loop_var))
+            per_iter_non_transient = (
+                desc is not None
+                and not getattr(desc, "transient", False)
+                and _container_per_iter_only(state, data, loop_var)
+            )
         if per_iter_non_transient:
             write_nodes = [
-                n for n in state.nodes()
+                n
+                for n in state.nodes()
                 if isinstance(n, nodes.AccessNode) and n.data == data and state.in_degree(n) > 0
             ]
             reps = []
@@ -411,14 +423,15 @@ def _independent_groups(state: SDFGState,
                 union(reps[0], r)
             continue
 
-        access_nodes = sorted((n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == data),
-                              key=lambda n: order[n])
+        access_nodes = sorted(
+            (n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == data), key=lambda n: order[n]
+        )
         for i, n1 in enumerate(access_nodes):
             reps1 = group_of(n1)
             if not reps1:
                 continue
             subs1 = list(_subsets_at_node(n1, state))
-            for n2 in access_nodes[i + 1:]:
+            for n2 in access_nodes[i + 1 :]:
                 reps2 = group_of(n2)
                 if not reps2:
                     continue
@@ -491,6 +504,7 @@ def _single_compute_state(loop: LoopRegion) -> Optional[SDFGState]:
         for lhs, rhs in (e.data.assignments or {}).items():
             try:
                 from dace import symbolic
+
                 rhs_free = set(str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols)
             except Exception:
                 rhs_free = {lhs}  # conservative: assume self-reference on parse failure
@@ -530,7 +544,7 @@ def _linear_blocks(loop: LoopRegion) -> Optional[List]:
     if len(edges) != len(blocks) - 1:
         return None
     for e in edges:
-        if e.data.assignments or e.data.condition.as_string not in ('1', 'True', '(1)'):
+        if e.data.assignments or e.data.condition.as_string not in ("1", "True", "(1)"):
             return None
     succ = {e.src: e.dst for e in edges}
     order = [loop.start_block]
@@ -587,7 +601,8 @@ class LoopFission(ppl.Pass):
     (perfect-loop-nesting for loops -- the LoopRegion analogue of how
     map-side ``PerfLoopNesting`` delegates to ``MapFission``).
     """
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges

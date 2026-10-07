@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Make every symbol name carry the one dtype its scope declares."""
+
 import contextlib
 from typing import Any, Dict, Iterator, Mapping, Optional
 
@@ -66,7 +67,7 @@ class EqualizeSymbolDtypes(ppl.Pass):
     mapping that spells a declared name at another dtype.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets | ppl.Modifies.Nodes | ppl.Modifies.Descriptors
@@ -108,9 +109,12 @@ class EqualizeSymbolDtypes(ppl.Pass):
             strides = [retype_expression(stride, table) for stride in desc.strides]
             total = retype_expression(desc.total_size, table)
             offset = [retype_expression(offs, table) for offs in desc.offset]
-            if (any(new is not old for new, old in zip(shape, desc.shape))
-                    or any(new is not old for new, old in zip(strides, desc.strides)) or total is not desc.total_size
-                    or any(new is not old for new, old in zip(offset, desc.offset))):
+            if (
+                any(new is not old for new, old in zip(shape, desc.shape))
+                or any(new is not old for new, old in zip(strides, desc.strides))
+                or total is not desc.total_size
+                or any(new is not old for new, old in zip(offset, desc.offset))
+            ):
                 desc.shape, desc.strides, desc.total_size, desc.offset = shape, strides, total, offset
                 rewritten += 1
         return rewritten
@@ -139,7 +143,8 @@ class EqualizeSymbolDtypes(ppl.Pass):
                             node.sdfg.symbols[name] = outer
                             rewritten += 1
                     retyped = retype_expression(
-                        symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value, table)
+                        symbolic.pystr_to_symbolic(value) if isinstance(value, str) else value, table
+                    )
                     if not isinstance(value, str) and retyped is not value:
                         node.symbol_mapping[name] = retyped
                         rewritten += 1

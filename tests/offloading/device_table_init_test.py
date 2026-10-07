@@ -7,6 +7,7 @@ never lifted the fill, and the copy analysis shipped the finished table down bet
 CloudSC's ``iphase`` and ``zvqx`` are the same fill with interstate reads on top, so the host keeps its
 own fill and the device fills a twin.
 """
+
 from typing import Optional
 
 import numpy as np
@@ -31,42 +32,44 @@ def fill_then_kernel(host_read: Optional[str] = None, looped: bool = False) -> d
     (CloudSC's ``zvqx``), ``tasklet`` of ``table[2]`` by a host tasklet after the kernel. ``looped`` puts
     the fill inside a loop.
     """
-    sdfg = dace.SDFG(f'fill_then_kernel_{host_read}_{looped}')
-    sdfg.add_array('x', [N], dace.float64)
-    sdfg.add_array('y', [N], dace.float64)
-    sdfg.add_array('first', [1], dace.float64)
-    sdfg.add_scalar('s', dace.float64)
-    sdfg.add_array('table', [len(TABLE)], dace.float64, transient=True)
+    sdfg = dace.SDFG(f"fill_then_kernel_{host_read}_{looped}")
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_array("y", [N], dace.float64)
+    sdfg.add_array("first", [1], dace.float64)
+    sdfg.add_scalar("s", dace.float64)
+    sdfg.add_array("table", [len(TABLE)], dace.float64, transient=True)
 
     if looped:
-        region = LoopRegion('fill_loop', 'r < 2', 'r', 'r = 0', 'r = r + 1')
+        region = LoopRegion("fill_loop", "r < 2", "r", "r = 0", "r = r + 1")
         sdfg.add_node(region, is_start_block=True)
-        fill = region.add_state('fill', is_start_block=True)
+        fill = region.add_state("fill", is_start_block=True)
     else:
-        region = fill = sdfg.add_state('fill', is_start_block=True)
-    table = fill.add_write('table')
+        region = fill = sdfg.add_state("fill", is_start_block=True)
+    table = fill.add_write("table")
     for index, value in enumerate(TABLE):
         if value is None:
-            tasklet = fill.add_tasklet(f'fill_{index}', {'inp'}, {'out'}, 'out = inp')
-            fill.add_edge(fill.add_read('s'), None, tasklet, 'inp', dace.Memlet('s[0]'))
+            tasklet = fill.add_tasklet(f"fill_{index}", {"inp"}, {"out"}, "out = inp")
+            fill.add_edge(fill.add_read("s"), None, tasklet, "inp", dace.Memlet("s[0]"))
         else:
-            tasklet = fill.add_tasklet(f'fill_{index}', {}, {'out'}, f'out = {value}')
-        fill.add_edge(tasklet, 'out', table, None, dace.Memlet(f'table[{index}]'))
+            tasklet = fill.add_tasklet(f"fill_{index}", {}, {"out"}, f"out = {value}")
+        fill.add_edge(tasklet, "out", table, None, dace.Memlet(f"table[{index}]"))
 
-    use = sdfg.add_state('use')
-    use.add_mapped_tasklet('scale', {'i': f'0:{N}'}, {
-        'x_in': dace.Memlet('x[i]'),
-        't_in': dace.Memlet(f'table[i % {len(TABLE)}]')
-    },
-                           'o = x_in * t_in', {'o': dace.Memlet('y[i]')},
-                           external_edges=True)
-    sdfg.add_edge(region, use, dace.InterstateEdge(assignments={'k': 'table[1]'} if host_read == 'interstate' else {}))
+    use = sdfg.add_state("use")
+    use.add_mapped_tasklet(
+        "scale",
+        {"i": f"0:{N}"},
+        {"x_in": dace.Memlet("x[i]"), "t_in": dace.Memlet(f"table[i % {len(TABLE)}]")},
+        "o = x_in * t_in",
+        {"o": dace.Memlet("y[i]")},
+        external_edges=True,
+    )
+    sdfg.add_edge(region, use, dace.InterstateEdge(assignments={"k": "table[1]"} if host_read == "interstate" else {}))
 
-    if host_read == 'tasklet':
-        after = sdfg.add_state_after(use, 'after')
-        tasklet = after.add_tasklet('peek', {'inp'}, {'out'}, 'out = inp')
-        after.add_edge(after.add_read('table'), None, tasklet, 'inp', dace.Memlet('table[2]'))
-        after.add_edge(tasklet, 'out', after.add_write('first'), None, dace.Memlet('first[0]'))
+    if host_read == "tasklet":
+        after = sdfg.add_state_after(use, "after")
+        tasklet = after.add_tasklet("peek", {"inp"}, {"out"}, "out = inp")
+        after.add_edge(after.add_read("table"), None, tasklet, "inp", dace.Memlet("table[2]"))
+        after.add_edge(tasklet, "out", after.add_write("first"), None, dace.Memlet("first[0]"))
     sdfg.validate()
     return sdfg
 
@@ -85,7 +88,7 @@ def table_copies(sdfg: dace.SDFG) -> list[tuple[str, str]]:
         for edge in state.edges():
             if not (isinstance(edge.src, dace.nodes.AccessNode) and isinstance(edge.dst, dace.nodes.AccessNode)):
                 continue
-            if not edge.src.data.startswith('table'):
+            if not edge.src.data.startswith("table"):
                 continue
             sides = [n.desc(state.sdfg).storage in GPU_RESIDENT_STORAGES for n in (edge.src, edge.dst)]
             if sides[0] != sides[1]:
@@ -95,18 +98,18 @@ def table_copies(sdfg: dace.SDFG) -> list[tuple[str, str]]:
 
 def fill_scopes(sdfg: dace.SDFG) -> list:
     """The scope entry of every tasklet in the fill state: None for host code."""
-    fill = next(state for state in sdfg.states() if state.label == 'fill')
+    fill = next(state for state in sdfg.states() if state.label == "fill")
     scopes = fill.scope_dict()
     return [scopes[node] for node in fill.nodes() if isinstance(node, dace.nodes.Tasklet)]
 
 
-@pytest.mark.parametrize('host_read', [None, 'interstate', 'tasklet'])
+@pytest.mark.parametrize("host_read", [None, "interstate", "tasklet"])
 def test_a_table_kernels_read_is_never_copied_to_the_device(host_read):
     copies = table_copies(offloaded(host_read))
     assert not copies, copies
 
 
-@pytest.mark.parametrize('host_read', [None, 'interstate', 'tasklet'])
+@pytest.mark.parametrize("host_read", [None, "interstate", "tasklet"])
 def test_the_device_fill_is_one_kernel_launch(host_read):
     """One size-1 kernel per state replaces the copy; a launch per element would trade one transfer for four."""
     kernels = {scope for scope in fill_scopes(offloaded(host_read)) if scope is not None}
@@ -114,7 +117,7 @@ def test_the_device_fill_is_one_kernel_launch(host_read):
     assert next(iter(kernels)).map.schedule == dtypes.ScheduleType.GPU_Device
 
 
-@pytest.mark.parametrize('host_read', ['interstate', 'tasklet'])
+@pytest.mark.parametrize("host_read", ["interstate", "tasklet"])
 def test_a_table_the_host_reads_keeps_its_host_fill(host_read):
     """The host reads its own copy; filling only the device one would need the copy back."""
     host = [scope for scope in fill_scopes(offloaded(host_read)) if scope is None]
@@ -129,7 +132,7 @@ def test_a_fill_inside_a_loop_stays_host_code():
 
 def test_a_table_the_device_only_reads_is_not_copied_back():
     """The host copy is still current, so a device-to-host copy of it before the host read is dead traffic."""
-    assert table_copies(offloaded('tasklet', looped=True)) == [('table', 'table_gpu')]
+    assert table_copies(offloaded("tasklet", looped=True)) == [("table", "table_gpu")]
 
 
 def ordering_edge_after_a_kernel() -> dace.SDFG:
@@ -137,18 +140,23 @@ def ordering_edge_after_a_kernel() -> dace.SDFG:
 
     CloudSC's ``zpsupsatsrce`` orders some thirty reads this way, ``ptsphy`` among them.
     """
-    sdfg = dace.SDFG('device_table_init_ordering_edge_after_a_kernel')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_scalar('s', dace.float64)
-    state = sdfg.add_state('ordered')
-    _, _, exit_a = state.add_mapped_tasklet('write_a', {'i': f'0:{N}'}, {},
-                                            'o = 1.0', {'o': dace.Memlet('A[i]')},
-                                            external_edges=True)
+    sdfg = dace.SDFG("device_table_init_ordering_edge_after_a_kernel")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_scalar("s", dace.float64)
+    state = sdfg.add_state("ordered")
+    _, _, exit_a = state.add_mapped_tasklet(
+        "write_a", {"i": f"0:{N}"}, {}, "o = 1.0", {"o": dace.Memlet("A[i]")}, external_edges=True
+    )
     written = state.out_edges(exit_a)[0].dst
-    _, entry_b, _ = state.add_mapped_tasklet('scale_b', {'i': f'0:{N}'}, {'inp': dace.Memlet('s[0]')},
-                                             'o = inp * 2.0', {'o': dace.Memlet('B[i]')},
-                                             external_edges=True)
+    _, entry_b, _ = state.add_mapped_tasklet(
+        "scale_b",
+        {"i": f"0:{N}"},
+        {"inp": dace.Memlet("s[0]")},
+        "o = inp * 2.0",
+        {"o": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
     state.add_nedge(written, state.in_edges(entry_b)[0].src, dace.Memlet())
     sdfg.validate()
     return sdfg
@@ -159,12 +167,12 @@ def test_an_ordering_edge_does_not_make_a_scalar_device_written():
     sdfg = ordering_edge_after_a_kernel()
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
-    assert isinstance(sdfg.arrays['s'], data.Scalar), sdfg.arrays['s']
-    assert not [name for name in sdfg.arrays if name != 's' and name.endswith('_s')], list(sdfg.arrays)
+    assert isinstance(sdfg.arrays["s"], data.Scalar), sdfg.arrays["s"]
+    assert not [name for name in sdfg.arrays if name != "s" and name.endswith("_s")], list(sdfg.arrays)
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('host_read', [None, 'interstate', 'tasklet'])
+@pytest.mark.parametrize("host_read", [None, "interstate", "tasklet"])
 def test_the_table_filled_on_the_device_computes_what_numpy_computes(host_read):
     sdfg = fill_then_kernel(host_read)
     sdfg.apply_gpu_transformations()
@@ -175,5 +183,5 @@ def test_the_table_filled_on_the_device_computes_what_numpy_computes(host_read):
     sdfg(x=x, y=y, s=s, first=first)
     table = np.array([s if value is None else value for value in TABLE])
     np.testing.assert_array_equal(y, x * table[np.arange(N) % len(TABLE)])
-    if host_read == 'tasklet':
+    if host_read == "tasklet":
         np.testing.assert_array_equal(first, [s])

@@ -18,7 +18,7 @@ from dace import data as dt
 from dace.sdfg import nodes
 from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.symbolic import (SymbolicType, equalize_symbols_across, pystr_to_symbolic, serialization_symbol_dtypes)
+from dace.symbolic import SymbolicType, equalize_symbols_across, pystr_to_symbolic, serialization_symbol_dtypes
 
 
 def free_symbol_names(value) -> FrozenSet[str]:
@@ -46,7 +46,7 @@ def _free_symbol_names(value: str) -> FrozenSet[str]:
 def _expression_names(value: str) -> Optional[FrozenSet[str]]:
     """The names an expression reads, or None if it does not parse."""
     try:
-        tree = ast.parse(value.strip(), mode='eval')
+        tree = ast.parse(value.strip(), mode="eval")
     except (SyntaxError, ValueError):
         return None
     return frozenset(node.id for node in ast.walk(tree) if isinstance(node, ast.Name))
@@ -103,7 +103,7 @@ def reads_struct_member(value: str) -> bool:
 
     Memoized: pure in the string, and the fixed point re-asks the same handful of texts."""
     try:
-        tree = ast.parse(value.strip(), mode='eval')
+        tree = ast.parse(value.strip(), mode="eval")
     except (SyntaxError, ValueError):
         return False
     callees = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
@@ -130,7 +130,7 @@ def resolve_value(value, table: Dict[str, Any]):
     if not repl:
         return value
     try:
-        tree = ast.parse(value.strip(), mode='eval')
+        tree = ast.parse(value.strip(), mode="eval")
         return astutils.unparse(astutils.ASTFindReplace(repl).visit(tree))
     except Exception:
         return value
@@ -162,7 +162,7 @@ def loop_bound_symbols(loop: LoopRegion) -> Set[str]:
     update statements whole, LHS included, so a value known for an iteration variable would spell
     ``(- 1) = ((- 1) + 1)``."""
     bound = {s for e in loop.all_interstate_edges() for s in e.data.assignments.keys()}
-    for blk in itertools.chain((loop, ), loop.all_control_flow_blocks()):
+    for blk in itertools.chain((loop,), loop.all_control_flow_blocks()):
         if not isinstance(blk, LoopRegion):
             continue
         if blk.loop_variable:
@@ -264,11 +264,13 @@ def consistent_bindings(sd: SDFG) -> Dict[str, Optional[str]]:
     return bindings
 
 
-def resolve_bindings(expr: SymbolicType,
-                     sd: SDFG,
-                     rounds: int = 8,
-                     expand_data_reads: bool = False,
-                     bindings: Optional[Dict[str, Optional[str]]] = None) -> SymbolicType:
+def resolve_bindings(
+    expr: SymbolicType,
+    sd: SDFG,
+    rounds: int = 8,
+    expand_data_reads: bool = False,
+    bindings: Optional[Dict[str, Optional[str]]] = None,
+) -> SymbolicType:
     """``expr`` with every consistently-bound interstate symbol expanded into its RHS, to a fixed
     point (bounded by ``rounds``).
 
@@ -423,9 +425,11 @@ class SymbolPropagation(ppl.Pass):
         if self._before_free is not None:
             new_free: Set[str] = {str(s) for s in sdfg.free_symbols} - self._before_free
             if new_free:
-                raise ValueError(f"SymbolPropagation introduced free symbol(s) {sorted(new_free)}: a propagated "
-                                 f"value rendered to an unresolvable name. Symbol propagation must only eliminate "
-                                 f"symbols, never introduce them.")
+                raise ValueError(
+                    f"SymbolPropagation introduced free symbol(s) {sorted(new_free)}: a propagated "
+                    f"value rendered to an unresolvable name. Symbol propagation must only eliminate "
+                    f"symbols, never introduce them."
+                )
         self._before_free = self._invariant_sdfg = None  # dropped with the rewrite span it brackets
 
         return propagated if propagated else None
@@ -624,8 +628,9 @@ class SymbolPropagation(ppl.Pass):
                 self._combine_syms(new_in_syms, sym_table)
 
         # A nested start block inherits its parent's symbols; a nested SDFG has a symbol mapping.
-        if (parent.start_block == cfg_blk and not isinstance(parent, SDFG)) or (isinstance(parent, ConditionalBlock)
-                                                                                and cfg_blk in parent.sub_regions()):
+        if (parent.start_block == cfg_blk and not isinstance(parent, SDFG)) or (
+            isinstance(parent, ConditionalBlock) and cfg_blk in parent.sub_regions()
+        ):
             # Some shapes carry their own, so combine rather than assert.
             if new_in_syms:
                 self._combine_syms(new_in_syms, in_syms[parent])
@@ -772,8 +777,7 @@ class SymbolPropagation(ppl.Pass):
                 edge_free = {str(s) for s in edge.data.free_symbols}
                 edge_keys = set(edge.data.assignments.keys())
                 edge_subs = {
-                    s: v
-                    for s, v in new_out_syms.items() if s in edge_free and not (free_symbol_names(v) & edge_keys)
+                    s: v for s, v in new_out_syms.items() if s in edge_free and not (free_symbol_names(v) & edge_keys)
                 }
                 if edge_subs:
                     substituted = True

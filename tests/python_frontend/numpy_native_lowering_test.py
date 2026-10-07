@@ -8,6 +8,7 @@ come out right, which is exactly why this went unnoticed: the check has to be st
 ``callback_free`` is the assertion that matters; the value checks beside it pin the semantics that
 a shape-only test would let drift (an axis rolled the wrong way still has the right shape).
 """
+
 import numpy as np
 import pytest
 
@@ -17,20 +18,22 @@ from dace.sdfg import nodes as nd
 
 def callback_free(sdfg: dace.SDFG) -> bool:
     """No pyobject state and no tasklet calling back into the interpreter."""
-    if '__pystate' in sdfg.arrays:
+    if "__pystate" in sdfg.arrays:
         return False
     return not any(
-        isinstance(n, nd.Tasklet) and ('numpy_' in n.code.as_string or n.label.startswith('callback'))
-        for state in sdfg.states() for n in state.nodes())
+        isinstance(n, nd.Tasklet) and ("numpy_" in n.code.as_string or n.label.startswith("callback"))
+        for state in sdfg.states()
+        for n in state.nodes()
+    )
 
 
 def check(prog, want, **kwargs):
     """Parse (structural gate), then run (semantic gate)."""
     sdfg = prog.to_sdfg(simplify=False)
-    assert callback_free(sdfg), f'{prog.name} still lowers to a Python callback'
-    out = kwargs['out']
+    assert callback_free(sdfg), f"{prog.name} still lowers to a Python callback"
+    out = kwargs["out"]
     prog(**kwargs)
-    assert np.allclose(out, want), f'{prog.name}: {out} != {want}'
+    assert np.allclose(out, want), f"{prog.name}: {out} != {want}"
 
 
 def test_squeeze_drops_the_length_one_axis():
@@ -213,8 +216,9 @@ def test_two_pad_results_in_one_expression_keep_both_interiors():
     """``np.pad`` fills, then copies the interior, ordered by the same state boundary ``np.diag`` needs."""
 
     @dace.program
-    def prog_two_pad_results_in_one_expression_keep_both_interiors(a: dace.float64[4], b: dace.float64[4],
-                                                                   out: dace.float64[6]):
+    def prog_two_pad_results_in_one_expression_keep_both_interiors(
+        a: dace.float64[4], b: dace.float64[4], out: dace.float64[6]
+    ):
         out[:] = np.pad(a, 1) + np.pad(b, 1)
 
     rng = np.random.default_rng(0)
@@ -257,10 +261,12 @@ def test_a_method_reduction_does_not_shadow_the_function_a_tasklet_calls():
         out[:] = np.maximum(a - 0.5, 0.0) + s
 
     a = np.random.rand(5)
-    check(prog_a_method_reduction_does_not_shadow_the_function_a_tasklet_calls,
-          np.maximum(a - 0.5, 0.0) + a.max() + 1.0,
-          a=a,
-          out=np.zeros(5))
+    check(
+        prog_a_method_reduction_does_not_shadow_the_function_a_tasklet_calls,
+        np.maximum(a - 0.5, 0.0) + a.max() + 1.0,
+        a=a,
+        out=np.zeros(5),
+    )
 
 
 def test_tile_repeats_the_whole_array():
@@ -296,15 +302,15 @@ def test_squeeze_refuses_an_axis_that_is_not_one():
     def prog_squeeze_refuses_an_axis_that_is_not_one(a: dace.float64[4, 3], out: dace.float64[4]):
         out[:] = np.squeeze(a, 1)
 
-    with pytest.raises(Exception, match='squeeze'):
+    with pytest.raises(Exception, match="squeeze"):
         prog_squeeze_refuses_an_axis_that_is_not_one.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for name, fn in sorted(list(globals().items())):
-        if name.startswith('test_'):
+        if name.startswith("test_"):
             fn()
-            print(name, 'ok')
+            print(name, "ok")
 
 
 def test_prod_matches_numpy():
@@ -392,10 +398,12 @@ def test_count_nonzero_of_a_bool_array_counts_past_one_inside_a_loop():
         out[0] = total
 
     conv = np.array([True, False, False, True, False, True, False, False])
-    check(prog_count_nonzero_of_a_bool_array_counts_past_one_inside_a_loop,
-          3 * np.count_nonzero(~conv),
-          conv=conv,
-          out=np.zeros(1, dtype=np.int64))
+    check(
+        prog_count_nonzero_of_a_bool_array_counts_past_one_inside_a_loop,
+        3 * np.count_nonzero(~conv),
+        conv=conv,
+        out=np.zeros(1, dtype=np.int64),
+    )
 
 
 def test_average_matches_numpy():
@@ -478,9 +486,9 @@ def test_pad_refuses_an_edge_mode():
 
     @dace.program
     def prog_pad_refuses_an_edge_mode(a: dace.float64[4], out: dace.float64[8]):
-        out[:] = np.pad(a, 2, mode='edge')
+        out[:] = np.pad(a, 2, mode="edge")
 
-    with pytest.raises(Exception, match='pad'):
+    with pytest.raises(Exception, match="pad"):
         prog_pad_refuses_an_edge_mode.to_sdfg(simplify=False)
 
 
@@ -547,7 +555,7 @@ def test_meshgrid_xy_and_ij_differ():
 
     @dace.program
     def prog_ij(x: dace.float64[3], y: dace.float64[4], ox: dace.float64[3, 4], oy: dace.float64[3, 4]):
-        gx, gy = np.meshgrid(x, y, indexing='ij')
+        gx, gy = np.meshgrid(x, y, indexing="ij")
         ox[:] = gx
         oy[:] = gy
 
@@ -559,7 +567,7 @@ def test_meshgrid_xy_and_ij_differ():
     prog_xy(x=x, y=y, ox=ox, oy=oy)
     assert np.allclose(ox, wx) and np.allclose(oy, wy)
 
-    wx, wy = np.meshgrid(x, y, indexing='ij')
+    wx, wy = np.meshgrid(x, y, indexing="ij")
     ox, oy = np.zeros((3, 4)), np.zeros((3, 4))
     prog_ij(x=x, y=y, ox=ox, oy=oy)
     assert np.allclose(ox, wx) and np.allclose(oy, wy)

@@ -14,6 +14,7 @@ division already truncated -- and the call's ``double`` result makes a map's ran
 non-integer loop predicate: ``for (auto i = 0; i < ceil(...); ...)``, which gcc rejects with
 "invalid controlling predicate" instead of accepting the ``omp for``.
 """
+
 import math
 
 import numpy as np
@@ -24,9 +25,9 @@ import dace
 from dace.subsets import Range
 from dace.symbolic import int_ceil, int_floor, symbol, symstr, sympy_intdiv_fix
 
-N = symbol('N')
-M = symbol('M')
-T = symbol('T')
+N = symbol("N")
+M = symbol("M")
+T = symbol("T")
 
 #: All four combinations of an outer rounding over an inner one, with a bare symbol on top. The
 #: first two are what the deleted ``ceiling(a / int_ceil(c, d))`` and ``floor(a / int_floor(c, d))``
@@ -50,10 +51,10 @@ COMPOSITE_NUMERATOR = [
 ]
 
 #: Names the outer rounding then the inner one, so a failure says which pair broke.
-PAIR_IDS = ['ceil_over_ceil', 'floor_over_floor', 'ceil_over_floor', 'floor_over_ceil']
+PAIR_IDS = ["ceil_over_ceil", "floor_over_floor", "ceil_over_floor", "floor_over_ceil"]
 
 
-@pytest.mark.parametrize('expr,expected', SYMBOL_NUMERATOR, ids=PAIR_IDS)
+@pytest.mark.parametrize("expr,expected", SYMBOL_NUMERATOR, ids=PAIR_IDS)
 def test_a_rounding_denominator_is_recognized_by_class_not_by_name(expr, expected):
     """A bare symbol over a rounding call normalizes, whichever rounding sits on either side.
 
@@ -67,7 +68,7 @@ def test_a_rounding_denominator_is_recognized_by_class_not_by_name(expr, expecte
     assert not normalized.find(sympy.floor), normalized
 
 
-@pytest.mark.parametrize('expr,expected', COMPOSITE_NUMERATOR, ids=PAIR_IDS)
+@pytest.mark.parametrize("expr,expected", COMPOSITE_NUMERATOR, ids=PAIR_IDS)
 def test_a_composite_numerator_over_a_rounding_denominator_normalizes(expr, expected):
     """The same four pairs with a numerator the symbol-only Wild cannot take."""
     normalized = sympy_intdiv_fix(expr)
@@ -76,8 +77,11 @@ def test_a_composite_numerator_over_a_rounding_denominator_normalizes(expr, expe
     assert not normalized.find(sympy.floor), normalized
 
 
-@pytest.mark.parametrize('expr', [expr for expr, _ in SYMBOL_NUMERATOR + COMPOSITE_NUMERATOR],
-                         ids=[f'{i}_{n}' for n in ('sym', 'composite') for i in PAIR_IDS])
+@pytest.mark.parametrize(
+    "expr",
+    [expr for expr, _ in SYMBOL_NUMERATOR + COMPOSITE_NUMERATOR],
+    ids=[f"{i}_{n}" for n in ("sym", "composite") for i in PAIR_IDS],
+)
 def test_no_libm_rounding_call_reaches_cpp_for_an_integer_division(expr):
     """The emitted C++ is integer arithmetic end to end -- no ``ceil()`` / ``floor()`` call.
 
@@ -86,11 +90,11 @@ def test_no_libm_rounding_call_reaches_cpp_for_an_integer_division(expr):
     OpenMP refuses.
     """
     emitted = symstr(sympy_intdiv_fix(expr), cpp_mode=True)
-    assert 'ceil(' not in emitted.replace('int_ceil(', ''), emitted
-    assert 'floor(' not in emitted.replace('int_floor(', '').replace('py_floor(', ''), emitted
+    assert "ceil(" not in emitted.replace("int_ceil(", ""), emitted
+    assert "floor(" not in emitted.replace("int_floor(", "").replace("py_floor(", ""), emitted
 
 
-@pytest.mark.parametrize('expr', [sympy.floor(sympy.sin(N)), sympy.ceiling(sympy.sin(N))], ids=['floor', 'ceiling'])
+@pytest.mark.parametrize("expr", [sympy.floor(sympy.sin(N)), sympy.ceiling(sympy.sin(N))], ids=["floor", "ceiling"])
 def test_a_rounding_with_nothing_to_divide_by_is_not_an_integer_division(expr):
     """The ``b != 1`` guard on the denominator, which widening the Wild must not cost.
 
@@ -110,13 +114,13 @@ def test_a_rounding_with_nothing_to_divide_by_is_not_an_integer_division(expr):
 #: needs its sign to be known before ``(x + y - 1) / y`` is the ceiling, and a product denominator
 #: is split into a numerator that C then truncates on its own. Both are pre-existing.
 KNOWN_WRONG_DENOMINATORS = [
-    (sympy.ceiling(N / (M - 1)), 'Add denominator: N=5, M=4 counts 1 where the ceiling is 2'),
-    (sympy.ceiling(N / (M * T)), 'product denominator: N=3, M=2, T=1 counts 1 where the ceiling is 2'),
+    (sympy.ceiling(N / (M - 1)), "Add denominator: N=5, M=4 counts 1 where the ceiling is 2"),
+    (sympy.ceiling(N / (M * T)), "product denominator: N=3, M=2, T=1 counts 1 where the ceiling is 2"),
 ]
 
 
-@pytest.mark.parametrize('expr,witness', KNOWN_WRONG_DENOMINATORS, ids=['add_denominator', 'product_denominator'])
-@pytest.mark.xfail(strict=True, reason='known-wrong denominator shapes, see KNOWN_WRONG_DENOMINATORS')
+@pytest.mark.parametrize("expr,witness", KNOWN_WRONG_DENOMINATORS, ids=["add_denominator", "product_denominator"])
+@pytest.mark.xfail(strict=True, reason="known-wrong denominator shapes, see KNOWN_WRONG_DENOMINATORS")
 def test_a_composite_denominator_ceiling_reaches_cpp_as_integer_arithmetic(expr, witness):
     """What ``_print_ceiling`` documents as its precondition, and does not get.
 
@@ -128,8 +132,8 @@ def test_a_composite_denominator_ceiling_reaches_cpp_as_integer_arithmetic(expr,
     reports XPASS instead of passing unnoticed.
     """
     emitted = symstr(sympy_intdiv_fix(expr), cpp_mode=True)
-    assert 'ceil(' not in emitted.replace('int_ceil(', ''), f'{emitted} -- {witness}'
-    assert '/' not in emitted.split('int_ceil(', 1)[-1].split(',', 1)[0], f'{emitted} -- {witness}'
+    assert "ceil(" not in emitted.replace("int_ceil(", ""), f"{emitted} -- {witness}"
+    assert "/" not in emitted.split("int_ceil(", 1)[-1].split(",", 1)[0], f"{emitted} -- {witness}"
 
 
 def trip_count_sdfg(inner) -> dace.SDFG:
@@ -139,24 +143,24 @@ def trip_count_sdfg(inner) -> dace.SDFG:
     generation made of the expression -- a value assertion on the rewrite rather than on its text.
     """
     end = sympy_intdiv_fix(sympy.ceiling(N / inner(M, T)))
-    sdfg = dace.SDFG(f'trip_count_over_{inner.__name__}')
-    sdfg.add_array('out', [1], dace.int64)
-    for name in ('N', 'M', 'T'):
+    sdfg = dace.SDFG(f"trip_count_over_{inner.__name__}")
+    sdfg.add_array("out", [1], dace.int64)
+    for name in ("N", "M", "T"):
         sdfg.add_symbol(name, dace.int64)
     state = sdfg.add_state()
-    entry, exit_node = state.add_map('m', {'i': Range([(0, end - 1, 1)])})
-    tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1')
+    entry, exit_node = state.add_map("m", {"i": Range([(0, end - 1, 1)])})
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1")
     state.add_edge(entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(tasklet, 'o', exit_node, 'IN_out', dace.Memlet('out[0]', wcr='lambda a, b: a + b'))
-    exit_node.add_in_connector('IN_out')
-    exit_node.add_out_connector('OUT_out')
-    state.add_edge(exit_node, 'OUT_out', state.add_access('out'), None, dace.Memlet('out[0]', wcr='lambda a, b: a + b'))
+    state.add_edge(tasklet, "o", exit_node, "IN_out", dace.Memlet("out[0]", wcr="lambda a, b: a + b"))
+    exit_node.add_in_connector("IN_out")
+    exit_node.add_out_connector("OUT_out")
+    state.add_edge(exit_node, "OUT_out", state.add_access("out"), None, dace.Memlet("out[0]", wcr="lambda a, b: a + b"))
     sdfg.validate()
     return sdfg
 
 
-@pytest.mark.parametrize('inner', [int_ceil, int_floor], ids=['over_ceil', 'over_floor'])
-@pytest.mark.parametrize('n,m,t', [(13, 4, 2), (100, 7, 3), (5, 4, 2), (17, 5, 2)])
+@pytest.mark.parametrize("inner", [int_ceil, int_floor], ids=["over_ceil", "over_floor"])
+@pytest.mark.parametrize("n,m,t", [(13, 4, 2), (100, 7, 3), (5, 4, 2), (17, 5, 2)])
 def test_a_rounding_over_a_rounding_range_end_compiles_and_counts(inner, n, m, t):
     """End to end: the loop compiles as an ``omp for`` and runs the arithmetic trip count.
 
@@ -171,7 +175,7 @@ def test_a_rounding_over_a_rounding_range_end_compiles_and_counts(inner, n, m, t
     assert out[0] == math.ceil(n / divisor)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for case in SYMBOL_NUMERATOR:
         test_a_rounding_denominator_is_recognized_by_class_not_by_name(*case)
     for case in COMPOSITE_NUMERATOR:

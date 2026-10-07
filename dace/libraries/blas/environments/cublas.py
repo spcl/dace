@@ -5,7 +5,6 @@ import ctypes.util
 
 @dace.library.environment
 class cuBLAS:
-
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
@@ -15,7 +14,7 @@ class cuBLAS:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["../include/dace_cublas.h"], 'cuda': ["../include/dace_cublas.h"]}
+    headers = {"frame": ["../include/dace_cublas.h"], "cuda": ["../include/dace_cublas.h"]}
     state_fields = ["dace::blas::CublasHandle cublas_handle;"]
     init_code = ""
     finalize_code = ""
@@ -23,21 +22,24 @@ class cuBLAS:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 cublasHandle_t &__dace_cublas_handle = __state->cublas_handle.Get();
 dace::blas::CheckCublasError(cublasSetStream(__dace_cublas_handle, __dace_current_stream));\n"""
+        )
 
     @staticmethod
     def _find_library():
         # *nix-based search
-        blas_path = ctypes.util.find_library('cublas')
+        blas_path = ctypes.util.find_library("cublas")
         if blas_path:
             return [blas_path]
 
         # Windows-based search
         versions = (10, 11, 12)
         for version in versions:
-            blas_path = ctypes.util.find_library(f'cublas64_{version}')
+            blas_path = ctypes.util.find_library(f"cublas64_{version}")
             if blas_path:
                 return [blas_path]
         return []

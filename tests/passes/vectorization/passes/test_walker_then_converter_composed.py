@@ -18,25 +18,26 @@ After both passes run, the body NSDFG should have no raw tasklets
 remaining for the recognised shapes -- only ``Tile*`` lib nodes between
 the bridge AccessNodes.
 """
+
 import dace
 from dace.libraries.tileops import TileBinop, TileReduce, TileUnop
 from dace.memlet import Memlet
-from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (ConvertTaskletsToTileOps)
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.insert_tile_load_store import InsertTileLoadStore
 
 
 def _build_binop_kernel():
     """Body NSDFG: ``out_t = A[ii] + B[ii]``."""
     sdfg = dace.SDFG("compose_binop")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("B", (8, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("B", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_binop_kernel')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("B", (8, ), dace.float64, transient=False)
-    inner.add_array("out_t", (1, ), dace.float64, transient=True)
+    inner = dace.SDFG("body_build_binop_kernel")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("B", (8,), dace.float64, transient=False)
+    inner.add_array("out_t", (1,), dace.float64, transient=True)
     instate = inner.add_state("body")
     a_inner = instate.add_access("A")
     b_inner = instate.add_access("B")
@@ -58,13 +59,13 @@ def _build_binop_kernel():
 def _build_unop_kernel():
     """Body NSDFG: ``out_t = abs(A[ii])``."""
     sdfg = dace.SDFG("compose_unop")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_unop_kernel')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("out_t", (1, ), dace.float64, transient=True)
+    inner = dace.SDFG("body_build_unop_kernel")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("out_t", (1,), dace.float64, transient=True)
     instate = inner.add_state("body")
     a_inner = instate.add_access("A")
     t_inner = instate.add_access("out_t")
@@ -82,14 +83,14 @@ def _build_unop_kernel():
 def _build_reduction_kernel():
     """Body NSDFG: ``Acc[0] = Acc[0] + A[ii]``."""
     sdfg = dace.SDFG("compose_reduction")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("Acc", (1, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("Acc", (1,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_reduction_kernel')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("Acc", (1, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_reduction_kernel")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("Acc", (1,), dace.float64, transient=False)
     instate = inner.add_state("body")
     a_inner = instate.add_access("A")
     acc_inner_in = instate.add_access("Acc")
@@ -124,8 +125,8 @@ def test_walker_then_converter_binop_kernel():
     and the original raw tasklet is gone.
     """
     sdfg, inner = _build_binop_kernel()
-    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8,)).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0, "expected the raw tasklet to be gone"
     assert _count(body, TileBinop) == 1, "expected exactly one TileBinop"
@@ -134,8 +135,8 @@ def test_walker_then_converter_binop_kernel():
 def test_walker_then_converter_unop_kernel():
     """Compose passes on a unary kernel -> TileUnop, no raw tasklets."""
     sdfg, inner = _build_unop_kernel()
-    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8,)).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0
     assert _count(body, TileUnop) == 1
@@ -144,8 +145,8 @@ def test_walker_then_converter_unop_kernel():
 def test_walker_then_converter_reduction_kernel():
     """Compose passes on an in-place RMW reduction -> TileReduce, no raw tasklets."""
     sdfg, inner = _build_reduction_kernel()
-    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8,)).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0
     assert _count(body, TileReduce) == 1
@@ -165,27 +166,28 @@ def test_walker_extends_then_converter_replaces_all_recognised_tasklets():
         (_build_reduction_kernel, TileReduce),
     ):
         sdfg, inner = builder()
-        InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
-        ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+        InsertTileLoadStore(widths=(8,)).apply_pass(sdfg, {})
+        ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
         body = _body_state(inner)
-        assert _count(body, dace.nodes.Tasklet) == 0, (f"{builder.__name__}: expected no raw tasklets after "
-                                                       f"the composed walker+converter pipeline")
-        assert _count(
-            body,
-            expected_node_type) >= 1, (f"{builder.__name__}: expected a {expected_node_type.__name__} after conversion")
+        assert _count(body, dace.nodes.Tasklet) == 0, (
+            f"{builder.__name__}: expected no raw tasklets after the composed walker+converter pipeline"
+        )
+        assert _count(body, expected_node_type) >= 1, (
+            f"{builder.__name__}: expected a {expected_node_type.__name__} after conversion"
+        )
 
 
 def _build_full_io_binop_kernel():
     """Body NSDFG: ``B[ii] = A[ii] + A[ii]`` -- non-transient READ A and WRITE B together."""
     sdfg = dace.SDFG("compose_full_io")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("B", (8, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("B", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_full_io_binop_kernel')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("B", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_full_io_binop_kernel")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("B", (8,), dace.float64, transient=False)
     instate = inner.add_state("body")
     a_inner = instate.add_access("A")
     b_inner = instate.add_access("B")
@@ -213,9 +215,10 @@ def test_walker_extends_load_and_store_then_converter_replaces_tasklet():
     * exactly 1 TileBinop in the middle.
     """
     from dace.libraries.tileops import TileGather, TileScatter
+
     sdfg, inner = _build_full_io_binop_kernel()
-    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8,)).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body = _body_state(inner)
     assert _count(body, dace.nodes.Tasklet) == 0, "expected no raw tasklets after composed pipeline"
     assert _count(body, TileGather) >= 1, "expected at least one TileGather on the read boundary"

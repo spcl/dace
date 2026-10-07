@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``match_patterns`` skips a state that holds no node of a pattern's types before collapsing it: the
 matches are the ones a full scan finds, and a state with nothing to match is never collapsed."""
+
 from unittest import mock
 
 import dace
@@ -11,7 +12,7 @@ from dace.transformation.passes import pattern_matching
 def make_sdfg() -> dace.SDFG:
     """Four states: two tasklet-only states, then two states with one map each."""
     sdfg = dace.SDFG("pattern_type_prefilter")
-    sdfg.add_array("a", shape=(10, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(10,), dtype=dace.float64)
     sdfg.add_scalar("s", dtype=dace.float64, transient=True)
     previous = None
     for index in range(4):
@@ -23,20 +24,24 @@ def make_sdfg() -> dace.SDFG:
             tasklet = state.add_tasklet(f"t{index}", {}, {"__out"}, "__out = 1.0")
             state.add_edge(tasklet, "__out", state.add_write("s"), None, dace.Memlet("s[0]"))
         else:
-            state.add_mapped_tasklet(f"m{index}",
-                                     map_ranges={"__i": "0:10"},
-                                     inputs={},
-                                     outputs={"__out": dace.Memlet("a[__i]")},
-                                     code="__out = 2.0",
-                                     external_edges=True)
+            state.add_mapped_tasklet(
+                f"m{index}",
+                map_ranges={"__i": "0:10"},
+                inputs={},
+                outputs={"__out": dace.Memlet("a[__i]")},
+                code="__out = 2.0",
+                external_edges=True,
+            )
     sdfg.validate()
     return sdfg
 
 
 def matched(sdfg: dace.SDFG, node_match) -> list:
     """``(state label, matched map label)`` of every MapToForLoop match."""
-    return [(sdfg.cfg_list[m.cfg_id].node(m.state_id).label, m.map_entry.map.label)
-            for m in pattern_matching.match_patterns(sdfg, [MapToForLoop], node_match=node_match)]
+    return [
+        (sdfg.cfg_list[m.cfg_id].node(m.state_id).label, m.map_entry.map.label)
+        for m in pattern_matching.match_patterns(sdfg, [MapToForLoop], node_match=node_match)
+    ]
 
 
 def test_prefilter_finds_the_matches_of_a_full_scan():
@@ -58,8 +63,8 @@ def test_state_without_pattern_types_is_not_collapsed():
 
 
 def test_pattern_types_present_needs_every_pattern_node_type():
-    (_, _, map_pattern, _, _), = pattern_matching.get_transformation_metadata([MapToForLoop])[1]
-    (_, _, trivial_pattern, _, _), = pattern_matching.get_transformation_metadata([TrivialMapElimination])[1]
+    ((_, _, map_pattern, _, _),) = pattern_matching.get_transformation_metadata([MapToForLoop])[1]
+    ((_, _, trivial_pattern, _, _),) = pattern_matching.get_transformation_metadata([TrivialMapElimination])[1]
     assert pattern_matching.pattern_types_present(map_pattern, {dace.nodes.MapEntry, dace.nodes.Tasklet})
     assert not pattern_matching.pattern_types_present(map_pattern, {dace.nodes.Tasklet, dace.nodes.AccessNode})
     assert not pattern_matching.pattern_types_present(map_pattern, set())

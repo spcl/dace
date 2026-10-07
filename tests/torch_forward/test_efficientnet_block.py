@@ -2,8 +2,10 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("efficientnet_pytorch",
-                    reason="efficientnet_pytorch not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "efficientnet_pytorch",
+    reason="efficientnet_pytorch not installed. Please install with: pip install dace[ml-testing]",
+)
 import torch
 import numpy as np
 from dace.transformation.dataflow import TrivialMapElimination
@@ -35,14 +37,14 @@ def test_mbconv(use_cpp_dispatcher: bool, device):
 
     # Get the DaceModule
     sdfg_name = f"efficientnet_mbconv_{use_cpp_dispatcher}_{device}"
-    dace_model = DaceModule(dace_model,
-                            sdfg_name=sdfg_name,
-                            compile_torch_extension=use_cpp_dispatcher,
-                            cuda=is_gpu(device))
+    dace_model = DaceModule(
+        dace_model, sdfg_name=sdfg_name, compile_torch_extension=use_cpp_dispatcher, cuda=is_gpu(device)
+    )
     dace_model.model.load_state_dict(torch_model.state_dict())
 
-    for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
-                                                            torch_model.state_dict().items()):
+    for (dace_name, dace_value), (torch_name, value) in zip(
+        dace_model.model.state_dict().items(), torch_model.state_dict().items()
+    ):
         assert dace_name == torch_name, f"Parameter name mismatch: {dace_name} != {torch_name}"
         np.testing.assert_allclose(value.cpu(), dace_value.cpu(), err_msg=f"{dace_name} tensors do not match")
 
@@ -50,16 +52,18 @@ def test_mbconv(use_cpp_dispatcher: bool, device):
         dace_output = dace_model(dace_inputs)
 
     torch_output = torch_model(torch_inputs)
-    np.testing.assert_allclose(torch_output.detach().cpu(),
-                               dace_output.detach().cpu(),
-                               rtol=1e-3,
-                               atol=1e-3,
-                               err_msg="output tensors do not match")
+    np.testing.assert_allclose(
+        torch_output.detach().cpu(),
+        dace_output.detach().cpu(),
+        rtol=1e-3,
+        atol=1e-3,
+        err_msg="output tensors do not match",
+    )
 
     # check that the batch norm running means and so on are written out correctly
-    for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
-                                                            torch_model.state_dict().items()):
-
+    for (dace_name, dace_value), (torch_name, value) in zip(
+        dace_model.model.state_dict().items(), torch_model.state_dict().items()
+    ):
         assert dace_name == torch_name, f"Parameter name mismatch after inference: {dace_name} != {torch_name}"
         if "num_batches_tracked" in dace_name:
             # we don't update this parameter
@@ -86,14 +90,14 @@ def test_fast_mb(use_cpp_dispatcher: bool, device):
 
     # Get the DaceModule
     sdfg_name = f"efficientnet_fast_mbconv_{use_cpp_dispatcher}_{device}"
-    dace_model = DaceModule(dace_model,
-                            sdfg_name=sdfg_name,
-                            compile_torch_extension=use_cpp_dispatcher,
-                            cuda=is_gpu(device))
+    dace_model = DaceModule(
+        dace_model, sdfg_name=sdfg_name, compile_torch_extension=use_cpp_dispatcher, cuda=is_gpu(device)
+    )
     dace_model.model.load_state_dict(torch_model.state_dict())
 
-    for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
-                                                            torch_model.state_dict().items()):
+    for (dace_name, dace_value), (torch_name, value) in zip(
+        dace_model.model.state_dict().items(), torch_model.state_dict().items()
+    ):
         assert dace_name == torch_name, f"Parameter name mismatch: {dace_name} != {torch_name}"
         torch_tensors_close(dace_name, value, dace_value)
 
@@ -113,9 +117,9 @@ def test_fast_mb(use_cpp_dispatcher: bool, device):
     torch_tensors_close("output", torch_output, dace_output, rtol=1e-3, atol=1e-3)
 
     # check that the batch norm running means and so on are written out correctly
-    for (dace_name, dace_value), (torch_name, value) in zip(dace_model.model.state_dict().items(),
-                                                            torch_model.state_dict().items()):
-
+    for (dace_name, dace_value), (torch_name, value) in zip(
+        dace_model.model.state_dict().items(), torch_model.state_dict().items()
+    ):
         assert dace_name == torch_name, f"Parameter name mismatch after inference: {dace_name} != {torch_name}"
         if "num_batches_tracked" in dace_name:
             # we don't update this parameter

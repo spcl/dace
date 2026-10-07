@@ -17,18 +17,12 @@ def test_map_unroll():
     entry_inner, exit_inner = outer_state.add_map("map_inner", {"k": "0:2"})
     nsdfg = dace.SDFG("unroll_nested")
     nsdfg_node = outer_state.add_nested_sdfg(nsdfg, {"x"}, {"y"})
-    outer_state.add_memlet_path(read,
-                                entry_outer,
-                                entry_inner,
-                                nsdfg_node,
-                                dst_conn="x",
-                                memlet=dace.Memlet(f"input_array[i, k, j]"))
-    outer_state.add_memlet_path(nsdfg_node,
-                                exit_inner,
-                                exit_outer,
-                                write,
-                                src_conn="y",
-                                memlet=dace.Memlet(f"output_array[j, k, i]"))
+    outer_state.add_memlet_path(
+        read, entry_outer, entry_inner, nsdfg_node, dst_conn="x", memlet=dace.Memlet(f"input_array[i, k, j]")
+    )
+    outer_state.add_memlet_path(
+        nsdfg_node, exit_inner, exit_outer, write, src_conn="y", memlet=dace.Memlet(f"output_array[j, k, i]")
+    )
 
     nsdfg.add_array("x", [1], dace.int32)
     nsdfg.add_array("y", [1], dace.int32)
@@ -53,15 +47,18 @@ def test_map_unroll():
 
 def test_gpu_map_declined_unless_permissive():
     """A GPU map is declined by default (a device map IS the kernel launch) and offered under permissive."""
-    sdfg = dace.SDFG('gpu_unroll')
-    sdfg.add_array('A', [4], dace.float64, transient=True)
-    state = sdfg.add_state('main')
-    state.add_mapped_tasklet('fill',
-                             dict(i='0:4'), {},
-                             'out = 1.0',
-                             dict(out=dace.Memlet('A[i]')),
-                             schedule=dace.ScheduleType.GPU_Device,
-                             external_edges=True)
+    sdfg = dace.SDFG("gpu_unroll")
+    sdfg.add_array("A", [4], dace.float64, transient=True)
+    state = sdfg.add_state("main")
+    state.add_mapped_tasklet(
+        "fill",
+        dict(i="0:4"),
+        {},
+        "out = 1.0",
+        dict(out=dace.Memlet("A[i]")),
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
     entry = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry))
 
     assert not MapUnroll.can_be_applied_to(sdfg, map_entry=entry)

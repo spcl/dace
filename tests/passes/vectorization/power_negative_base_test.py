@@ -10,6 +10,7 @@ arc_distance). It now keeps ``**`` so the tile binop lowers it to ``std::pow``,
 which computes a negative base with an integer exponent correctly and matches
 numpy. A LITERAL integer exponent still takes the faster unrolled-multiply path.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -28,7 +29,7 @@ from dace.transformation.passes.vectorization.enums import ISA, RemainderStrateg
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import _expand_pow
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 #: The host's best runnable SIMD ISA (AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR); vectorization
 #: enforces arch-native, so a hardcoded AVX-512 would SIGILL-refuse on an AVX2-only or ARM host.
 HOST_ISA = detect_host_isa()
@@ -52,7 +53,7 @@ def test_expand_pow_literal_integer_exponent_still_unrolls():
 
 @dace.program
 def sin_squared(x: dace.float64[N], y: dace.float64[N]):
-    y[:] = np.sin(x)**2
+    y[:] = np.sin(x) ** 2
 
 
 @pytest.mark.parametrize("isa", [ISA.SCALAR, HOST_ISA])
@@ -62,12 +63,12 @@ def test_sin_squared_negative_base_vectorizes_without_nan(isa):
     n = 64  # divisible by 8: no remainder lanes
     x = np.linspace(-3.0, 3.0, n)  # sin(x) < 0 for x < 0
     assert (np.sin(x) < 0).any(), "test must exercise a negative base"
-    ref = np.sin(x)**2
+    ref = np.sin(x) ** 2
 
     sdfg = sin_squared.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=isa,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+        VectorizeConfig(widths=(8,), target_isa=isa, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     # A literal exponent (2) unrolls to a multiply (TileBinop '*'), never reaching a
     # tile-level 'pow'/'ipow' -- so the structural proof is that BOTH the sin unop and
@@ -84,5 +85,5 @@ def test_sin_squared_negative_base_vectorizes_without_nan(isa):
     assert np.allclose(y, ref, rtol=1e-9, atol=1e-12), f"{isa}: {y[:5]} != {ref[:5]}"
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-q', '-p', 'no:cacheprovider']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))

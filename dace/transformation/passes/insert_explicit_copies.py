@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
+
 import copy
 from typing import Any, Dict, Optional
 
@@ -35,8 +36,11 @@ def competing_writes(state: SDFGState, target: nodes.Node, edge, name: str, subs
     An overlap ``subsets.intersects`` cannot decide counts as one.
     """
     return [
-        other for other in state.in_edges(target)
-        if other is not edge and not other.data.is_empty() and other.data.data == name
+        other
+        for other in state.in_edges(target)
+        if other is not edge
+        and not other.data.is_empty()
+        and other.data.data == name
         and subsets.intersects(other.data.get_dst_subset(other, state) or other.data.subset, subset) is not False
     ]
 
@@ -101,8 +105,14 @@ def drop_scope_exit_alias(state: SDFGState, edge, inner: nodes.AccessNode) -> bo
     return True
 
 
-def order_against_competing_writes(state: SDFGState, libnode: CopyLibraryNode, source: nodes.Node, written: nodes.Node,
-                                   name: str, subset: subsets.Subset) -> None:
+def order_against_competing_writes(
+    state: SDFGState,
+    libnode: CopyLibraryNode,
+    source: nodes.Node,
+    written: nodes.Node,
+    name: str,
+    subset: subsets.Subset,
+) -> None:
     """Order a lifted copy against the competing writes its implicit form was ordered with.
 
     Copy-edge codegen emits a copy when its SOURCE node is visited, so the implicit copy landed before every
@@ -122,8 +132,11 @@ def order_against_competing_writes(state: SDFGState, libnode: CopyLibraryNode, s
     after_libnode = sdutils.find_downstream_nodes(libnode, state)
     for other in competing:
         # Another copy out of the same source, emitted ahead of this one, keeps landing first.
-        if (isinstance(other.src, CopyLibraryNode) and other.src not in after_libnode
-                and any(e.src is source for e in state.in_edges(other.src))):
+        if (
+            isinstance(other.src, CopyLibraryNode)
+            and other.src not in after_libnode
+            and any(e.src is source for e in state.in_edges(other.src))
+        ):
             state.add_edge(other.src, None, libnode, None, Memlet())
     after_source = sdutils.find_downstream_nodes(source, state)
     before_libnode = sdutils.find_upstream_nodes(libnode, state)
@@ -145,8 +158,9 @@ class InsertExplicitCopies(ppl.Pass):
     that write by an empty memlet, as copy-edge codegen ordered the implicit one."""
 
     # Other storages (TensorCore_*, FPGA_*, Snitch_*) use their own codegen ``copy_memory`` hook.
-    _STANDARD_STORAGES = (CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES
-                          | {dtypes.StorageType.Default, dtypes.StorageType.Register})
+    _STANDARD_STORAGES = (
+        CPU_RESIDENT_STORAGES | GPU_RESIDENT_STORAGES | {dtypes.StorageType.Default, dtypes.StorageType.Register}
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -187,12 +201,13 @@ class InsertExplicitCopies(ppl.Pass):
         connectors under exactly these names.
         """
         taken = [
-            name for name in (CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
+            name
+            for name in (CopyLibraryNode.INPUT_CONNECTOR_NAME, CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
             if name in sdfg.arrays and (connectors or sdfg.arrays[name].transient)
         ]
         if not taken:
             return
-        renames = {name: sdfg.find_new_name_avoiding_connectors(name.lstrip('_')) for name in taken}
+        renames = {name: sdfg.find_new_name_avoiding_connectors(name.lstrip("_")) for name in taken}
         sdfg.replace_dict(renames)
         # A non-transient is also the name of the nested SDFG node's connector, which the parent spells.
         node, parent = sdfg.parent_nsdfg_node, sdfg.parent
@@ -237,7 +252,7 @@ class InsertExplicitCopies(ppl.Pass):
                 continue
 
             # A reference-set edge assigns a POINTER; rewriting it would drop the ``set`` connector.
-            if edge.dst_conn == 'set':
+            if edge.dst_conn == "set":
                 continue
 
             src_desc = sdfg.arrays[src_node.data]
@@ -245,16 +260,18 @@ class InsertExplicitCopies(ppl.Pass):
 
             # A view's alias (view-defining) edge references the underlying buffer, not data -- skip.
             if any(
-                    isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
-                    for an in (src_node, dst_node)):
+                isinstance(sdfg.arrays[an.data], data.View) and sdutils.get_view_edge(state, an) is edge
+                for an in (src_node, dst_node)
+            ):
                 continue
 
-            if not isinstance(src_desc, (data.Array, data.Scalar)) \
-                    or not isinstance(dst_desc, (data.Array, data.Scalar)):
+            if not isinstance(src_desc, (data.Array, data.Scalar)) or not isinstance(
+                dst_desc, (data.Array, data.Scalar)
+            ):
                 continue
 
             # Custom-target storages are handled by their own codegen, not CopyLibraryNode.
-            if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
+            if src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES:
                 continue
 
             src_name = src_node.data
@@ -335,7 +352,7 @@ class InsertExplicitCopies(ppl.Pass):
             return False
         # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
         # ``set`` connector and leave the Reference unbound.
-        if edge.dst_conn == 'set':
+        if edge.dst_conn == "set":
             return False
         inner_desc = sdfg.arrays[inner_node.data]
         if isinstance(inner_desc, data.View):
@@ -363,9 +380,13 @@ class InsertExplicitCopies(ppl.Pass):
         # output edge for the generator's own conflict resolution to lower. Left implicit that shape
         # has no explicit spelling at all -- ``cpu.py`` falls back to ``dace::CopyND::Accumulate``.
         if edge.data.wcr is not None:
-            liftable = (not stage_in and not GPU_RESIDENT_STORAGES & {outer_desc.storage, inner_desc.storage}
-                        and all(sbs is None or sbs.num_elements_exact() == 1
-                                for sbs in (edge.data.subset, edge.data.other_subset)))
+            liftable = (
+                not stage_in
+                and not GPU_RESIDENT_STORAGES & {outer_desc.storage, inner_desc.storage}
+                and all(
+                    sbs is None or sbs.num_elements_exact() == 1 for sbs in (edge.data.subset, edge.data.other_subset)
+                )
+            )
             if not liftable:
                 return False
 
@@ -392,11 +413,15 @@ class InsertExplicitCopies(ppl.Pass):
             inner_subset = copy.deepcopy(inner_subset)
         # One container over one subset on both sides of the scope is the same memory: nothing moves,
         # and a node left for it would still be emitted as a copy onto itself.
-        if stage_in and outer.data == inner_node.data and inner_subset == outer_subset and drop_scope_alias(
-                state, edge, inner_node):
+        if (
+            stage_in
+            and outer.data == inner_node.data
+            and inner_subset == outer_subset
+            and drop_scope_alias(state, edge, inner_node)
+        ):
             return False
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
-        label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")
+        label = f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}"
         libnode = CopyLibraryNode(name=label)
         libnode.instrument = state.instrument
         state.add_node(libnode)
@@ -406,14 +431,14 @@ class InsertExplicitCopies(ppl.Pass):
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, inner_node, None, inner_memlet)
             _carry_write_ordering(state, inner_node, libnode)
             source, written, written_name, written_subset = map_node, inner_node, inner_node.data, inner_subset
-            boundary_conn = 'IN_' + edge.src_conn[len('OUT_'):]
+            boundary_conn = "IN_" + edge.src_conn[len("OUT_") :]
             boundary_edges = list(state.in_edges_by_connector(map_node, boundary_conn))
         else:
             map_node = edge.dst
             state.add_edge(inner_node, None, libnode, CopyLibraryNode.INPUT_CONNECTOR_NAME, inner_memlet)
             state.add_edge(libnode, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, map_node, edge.dst_conn, outer_side_memlet)
             source, written, written_name, written_subset = inner_node, map_node, outer.data, outer_subset
-            boundary_conn = 'OUT_' + edge.dst_conn[len('IN_'):]
+            boundary_conn = "OUT_" + edge.dst_conn[len("IN_") :]
             boundary_edges = list(state.out_edges_by_connector(map_node, boundary_conn))
         state.remove_edge(edge)
         order_against_competing_writes(state, libnode, source, written, written_name, written_subset)

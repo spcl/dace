@@ -413,7 +413,7 @@ def test_nested_loop_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_regular_loop()
     test_flipped()
     test_no_condition()

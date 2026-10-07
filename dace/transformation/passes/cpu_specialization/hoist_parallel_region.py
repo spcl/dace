@@ -88,13 +88,21 @@ safe for any dependence structure, and telling the two cases apart needs a predi
 point that do not exist yet (``dace/codegen/targets/cpu.py`` carries the matching
 ``TODO(later): barriers and map_header += " nowait"``).
 """
+
 from typing import Any, Dict, List, Optional, Set
 
 from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, LoopRegion,
-                             ReturnBlock, SDFGState)
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+)
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 
@@ -106,8 +114,11 @@ WORKSHARED = dtypes.ScheduleType.CPU_Multicore
 #: Transient lifetimes that keep ONE instance for the whole program, wherever the descriptor sits.
 #: A transient of any other lifetime that moves into the outlined nest is declared inside the
 #: parallel region and becomes thread-private -- condition (T).
-SHARED_LIFETIMES = (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.Global,
-                    dtypes.AllocationLifetime.External)
+SHARED_LIFETIMES = (
+    dtypes.AllocationLifetime.Persistent,
+    dtypes.AllocationLifetime.Global,
+    dtypes.AllocationLifetime.External,
+)
 
 
 def top_level_nodes(state: SDFGState) -> List[nodes.Node]:
@@ -154,7 +165,7 @@ def loop_local_transients(sdfg: SDFG, loop: LoopRegion) -> Set[str]:
 class HoistParallelRegion(ppl.Pass):
     """Wrap a sequential loop over parallel maps in one persistent OpenMP team."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes
@@ -219,8 +230,12 @@ class HoistParallelRegion(ppl.Pass):
             if not isinstance(block, SDFGState):
                 continue
             for edge in block.edges():
-                if (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
-                        and edge.data is not None and not edge.data.is_empty()):
+                if (
+                    isinstance(edge.src, nodes.AccessNode)
+                    and isinstance(edge.dst, nodes.AccessNode)
+                    and edge.data is not None
+                    and not edge.data.is_empty()
+                ):
                     return False
             for node in top_level_nodes(block):
                 if isinstance(node, (nodes.AccessNode, nodes.Tasklet)):
@@ -236,8 +251,11 @@ class HoistParallelRegion(ppl.Pass):
             if not isinstance(block, SDFGState):
                 continue
             for node in top_level_nodes(block):
-                if (isinstance(node, nodes.AccessNode) and node.data in privatized
-                        and sdfg.arrays[node.data].lifetime not in SHARED_LIFETIMES):
+                if (
+                    isinstance(node, nodes.AccessNode)
+                    and node.data in privatized
+                    and sdfg.arrays[node.data].lifetime not in SHARED_LIFETIMES
+                ):
                     return False
         return True
 
@@ -253,8 +271,8 @@ class HoistParallelRegion(ppl.Pass):
                     # A statement outside a worksharing construct would run once per THREAD. One
                     # iteration of ``omp for`` runs it once, on one thread, with the barrier kept.
                     if isinstance(node, nodes.Tasklet):
-                        xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, '_single')
+                        xfh.wrap_code_node_in_unit_map(block, node, WORKSHARED, "_single")
         # ``loop`` may not be a node of ``sdfg`` when nested -- use ``loop.parent_graph`` instead.
         state = xfh.nest_sdfg_subgraph(sdfg, SubgraphView(loop.parent_graph, [loop]), start=loop)
         nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
-        xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, '_team')
+        xfh.wrap_code_node_in_unit_map(state, nsdfg, dtypes.ScheduleType.CPU_Persistent, "_team")

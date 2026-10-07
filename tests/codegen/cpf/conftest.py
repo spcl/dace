@@ -17,6 +17,7 @@ without the feature existing yet:
 There is no ``cpf_available()`` skip gate: a skip that can fire on a healthy box reports green
 while verifying nothing. Tests arrive as the phases land, and each one asserts.
 """
+
 import ctypes
 import os
 import re
@@ -37,28 +38,28 @@ from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 #: C++ standard CPF output is emitted against. DaCe is >= C++20 everywhere.
-CXX_STANDARD = 'c++20'
+CXX_STANDARD = "c++20"
 #: C standard CPF's C output is emitted against.
-C_STANDARD = 'c23'
+C_STANDARD = "c23"
 
 #: ``language`` -> ``(standard, source suffix, environment variable naming the compiler, fallback
 #: compiler names)``. The two legs are built by DIFFERENT drivers on purpose: ``g++`` would accept
 #: much of the C output as C++ and hide exactly the constructs the C dialect exists to avoid.
 TOOLCHAINS = {
-    'c++': (CXX_STANDARD, '.cpp', 'CXX', ('g++', 'c++')),
-    'c': (C_STANDARD, '.c', 'CC', ('gcc', 'cc')),
+    "c++": (CXX_STANDARD, ".cpp", "CXX", ("g++", "c++")),
+    "c": (C_STANDARD, ".c", "CC", ("gcc", "cc")),
 }
 
 #: Flags every CPF translation unit is built with, before the language standard. Deliberately NO
 #: ``-I``: see the module docstring.
-BASE_FLAGS = ('-O2', '-fopenmp', '-fPIC', '-shared')
+BASE_FLAGS = ("-O2", "-fopenmp", "-fPIC", "-shared")
 #: Warning flags, kept apart from :data:`BASE_FLAGS` so the numeric gate and the zero-warning gate
 #: fail independently -- a warning must not be reported as "CPF produced wrong numbers".
 #: The conversion flags are in here rather than opt-in per test because an IMPLICIT conversion is
 #: what a self-contained render gets wrong silently: an extent reaching a ``size_t``, an int32
 #: symbol taken by a nested body, a double stored into an ``int64_t``. ``-Wall -Wextra`` diagnoses
 #: none of the three.
-WARNING_FLAGS = ('-Wall', '-Wextra', '-Wconversion', '-Wsign-conversion')
+WARNING_FLAGS = ("-Wall", "-Wextra", "-Wconversion", "-Wsign-conversion")
 
 #: Tokens CPF output must not contain, and what each one means when it appears. Checked as plain
 #: substrings/regexes on the emitted text: the compile in an empty directory catches a leaked
@@ -68,16 +69,18 @@ WARNING_FLAGS = ('-Wall', '-Wextra', '-Wconversion', '-Wsign-conversion')
 #: pattern that would also cover it (``dace::CopyND`` before ``dace::``, ``__dace_init_cuda``
 #: before ``__state``), and the failure message names the narrower cause.
 BANNED_PATTERNS = (
-    (re.compile(r'#\s*include\s*[<"][^>"]*dace/'), 'DaCe runtime header include'),
-    (re.compile(r'#\s*include\s*"'), 'quoted (relative) include -- CPF may only use system headers'),
-    (re.compile(r'CopyND'), 'dace::CopyND copy fallback'),
-    (re.compile(r'__dace_(init|exit)\w*'), 'DaCe init/exit entry point'),
-    (re.compile(r'\bdace\s*::'), 'DaCe runtime namespace reference'),
-    (re.compile(r'\bDACE_[A-Z]'), 'DaCe preprocessor macro'),
-    (re.compile(r'^[ \t]*#[ \t]*define\b', re.M), 'preprocessor macro definition'),
-    (re.compile(r'__state\b'), 'DaCe state-struct dereference'),
-    (re.compile(r'^(?!\s*//).*?\b(auto|__auto_type)\b',
-                re.M), 'deduced declaration (auto) instead of the resolved type'),
+    (re.compile(r'#\s*include\s*[<"][^>"]*dace/'), "DaCe runtime header include"),
+    (re.compile(r'#\s*include\s*"'), "quoted (relative) include -- CPF may only use system headers"),
+    (re.compile(r"CopyND"), "dace::CopyND copy fallback"),
+    (re.compile(r"__dace_(init|exit)\w*"), "DaCe init/exit entry point"),
+    (re.compile(r"\bdace\s*::"), "DaCe runtime namespace reference"),
+    (re.compile(r"\bDACE_[A-Z]"), "DaCe preprocessor macro"),
+    (re.compile(r"^[ \t]*#[ \t]*define\b", re.M), "preprocessor macro definition"),
+    (re.compile(r"__state\b"), "DaCe state-struct dereference"),
+    (
+        re.compile(r"^(?!\s*//).*?\b(auto|__auto_type)\b", re.M),
+        "deduced declaration (auto) instead of the resolved type",
+    ),
 )
 
 #: DaCe runtime functions the code generators emit UNQUALIFIED, so no ``dace::`` appears and the
@@ -87,27 +90,63 @@ BANNED_PATTERNS = (
 #: ``round``/``conj`` is ambiguous (``std::max`` is spelled the same after a ``using``), and
 #: flagging those would reject correct output. Every name here needs an CPF mapping -- a ``std::``
 #: equivalent, a rewritten expression, or an emitted inline definition.
-UNQUALIFIED_RUNTIME_FUNCTIONS = frozenset({
-    'Abs', 'Max', 'Min', 'ITE', 'ROUND', 'iround', 'ceiling', 'int_ceil', 'int_floor', 'int_floor_ni', 'reciprocal',
-    'sign', 'sgn', 'sign_numpy_2', 'heaviside', 'Mod', 'py_mod', 'c_mod', 'ftn_mod', 'ftn_modulo', 'py_floor',
-    'py_divmod', 'cpp_divmod', 'deg2rad', 'rad2deg', 'np_float_pow', 'np_frexp', 'np_modf', 'bitwise_and', 'bitwise_or',
-    'bitwise_xor', 'bitwise_invert', 'left_shift', 'right_shift', 'logical_left_shift', 'logical_right_shift'
-})
+UNQUALIFIED_RUNTIME_FUNCTIONS = frozenset(
+    {
+        "Abs",
+        "Max",
+        "Min",
+        "ITE",
+        "ROUND",
+        "iround",
+        "ceiling",
+        "int_ceil",
+        "int_floor",
+        "int_floor_ni",
+        "reciprocal",
+        "sign",
+        "sgn",
+        "sign_numpy_2",
+        "heaviside",
+        "Mod",
+        "py_mod",
+        "c_mod",
+        "ftn_mod",
+        "ftn_modulo",
+        "py_floor",
+        "py_divmod",
+        "cpp_divmod",
+        "deg2rad",
+        "rad2deg",
+        "np_float_pow",
+        "np_frexp",
+        "np_modf",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
+        "bitwise_invert",
+        "left_shift",
+        "right_shift",
+        "logical_left_shift",
+        "logical_right_shift",
+    }
+)
 
 #: A call to one of the above: the name at a word boundary, not already namespace-qualified, and
 #: not a declaration of the same name (CPF is allowed to EMIT an inline ``reciprocal`` of its own,
 #: which is exactly the fix -- so a preceding ``inline``/type keyword is not a violation).
-_UNQUALIFIED_CALL = re.compile(r'(?<![\w:.])(' + '|'.join(sorted(UNQUALIFIED_RUNTIME_FUNCTIONS)) + r')\s*\(')
+_UNQUALIFIED_CALL = re.compile(r"(?<![\w:.])(" + "|".join(sorted(UNQUALIFIED_RUNTIME_FUNCTIONS)) + r")\s*\(")
 
 #: What counts as CPF DEFINING one of those names rather than calling it: a C++ function definition
 #: (``static constexpr inline int64_t int_ceil(...)``) or a function-like macro of the same name. The
 #: C dialect's typed helpers (``cpf_int_ceil_int64``) carry the runtime name only after a ``_``, which
 #: the call pattern's lookbehind already does not match.
-_DEFINITION_OF = re.compile(r'(?:\b(?:inline|constexpr|static)\b[^;{()\n]*?|#\s*define\s+)'
-                            r'(?<![\w:.])(\w+)\s*\(')
+_DEFINITION_OF = re.compile(
+    r"(?:\b(?:inline|constexpr|static)\b[^;{()\n]*?|#\s*define\s+)"
+    r"(?<![\w:.])(\w+)\s*\("
+)
 
 
-def assert_no_unqualified_runtime_calls(code: str, label: str = 'cpf') -> None:
+def assert_no_unqualified_runtime_calls(code: str, label: str = "cpf") -> None:
     """Assert ``code`` calls no unqualified DaCe runtime function.
 
     Split out from :func:`assert_standalone` because these names carry no ``dace::`` marker: a leak
@@ -120,21 +159,23 @@ def assert_no_unqualified_runtime_calls(code: str, label: str = 'cpf') -> None:
         name = match.group(1)
         if name in defined:
             continue
-        raise AssertionError(f'{label}: CPF output calls the unqualified DaCe runtime function {name!r} at offset '
-                             f'{match.start()}; it is declared by the DaCe headers CPF does not include\n'
-                             f'{_context(code, match.start())}')
+        raise AssertionError(
+            f"{label}: CPF output calls the unqualified DaCe runtime function {name!r} at offset "
+            f"{match.start()}; it is declared by the DaCe headers CPF does not include\n"
+            f"{_context(code, match.start())}"
+        )
 
 
 #: Tokens the C output must not contain, on top of :data:`BANNED_PATTERNS`. Stated here as well as
 #: in ``dace.codegen.cpf.BANNED_C`` on purpose: this file is the acceptance spec, written from
 #: outside, and a table that forgot an entry cannot fool both.
 BANNED_PATTERNS_C = BANNED_PATTERNS + (
-    (re.compile(r'\bstd\s*::'), 'C++ standard-library symbol'),
-    (re.compile(r'\btemplate\s*<'), 'C++ template'),
-    (re.compile(r'extern\s*"C"'), 'C++ language linkage specifier'),
-    (re.compile(r'\bstatic_cast\s*<'), 'C++ static_cast'),
-    (re.compile(r'\bnew\s'), 'C++ new-expression'),
-    (re.compile(r'\bdelete\b'), 'C++ delete-expression'),
+    (re.compile(r"\bstd\s*::"), "C++ standard-library symbol"),
+    (re.compile(r"\btemplate\s*<"), "C++ template"),
+    (re.compile(r'extern\s*"C"'), "C++ language linkage specifier"),
+    (re.compile(r"\bstatic_cast\s*<"), "C++ static_cast"),
+    (re.compile(r"\bnew\s"), "C++ new-expression"),
+    (re.compile(r"\bdelete\b"), "C++ delete-expression"),
 )
 
 #: What a DEVICE rendering must not contain. The state-struct entry is dropped from
@@ -143,10 +184,10 @@ BANNED_PATTERNS_C = BANNED_PATTERNS + (
 #: one is still a leak, as are a ``dace/`` header, a ``dace::`` symbol and any ``#define``. Stated
 #: here as well as in ``dace.codegen.cpf.BANNED_DEVICE`` for the same reason the other two tables
 #: are: this file is the acceptance spec, written from outside.
-BANNED_PATTERNS_DEVICE = tuple(entry for entry in BANNED_PATTERNS if entry[1] != 'DaCe state-struct dereference')
+BANNED_PATTERNS_DEVICE = tuple(entry for entry in BANNED_PATTERNS if entry[1] != "DaCe state-struct dereference")
 
 
-def assert_standalone_device(code: str, label: str = 'cpf') -> None:
+def assert_standalone_device(code: str, label: str = "cpf") -> None:
     """Assert a DEVICE rendering carries none of the banned tokens.
 
     Separate from :func:`assert_standalone` rather than another ``language`` value, because the
@@ -156,8 +197,10 @@ def assert_standalone_device(code: str, label: str = 'cpf') -> None:
     """
     for pattern, meaning in BANNED_PATTERNS_DEVICE:
         match = pattern.search(code)
-        assert match is None, (f'{label}: CPF device output contains {meaning} -- {match.group(0)!r} at offset '
-                               f'{match.start()}\n{_context(code, match.start())}')
+        assert match is None, (
+            f"{label}: CPF device output contains {meaning} -- {match.group(0)!r} at offset "
+            f"{match.start()}\n{_context(code, match.start())}"
+        )
     assert_no_unqualified_runtime_calls(code, label)
     assert_device_preamble_covers_its_uses(code, label)
     assert_every_gpu_name_is_declared(code, label)
@@ -170,20 +213,23 @@ def assert_standalone_device(code: str, label: str = 'cpf') -> None:
 #: the frame text alone dropped the alias out from under it. The tests never noticed because none of
 #: them compiled that particular pairing, so the invariant is stated here instead of per test.
 DEVICE_PREAMBLE_USES = (
-    (re.compile(r'\bgpucub\s*::'), re.compile(r'^namespace gpucub\s*=', re.M), 'gpucub'),
-    (re.compile(r'\bcpf_gpu_atomic\s*\('), re.compile(r'void cpf_gpu_atomic\s*\(', re.M), 'cpf_gpu_atomic'),
-    (re.compile(r'\bcpf_kernel_launch_check\s*\('), re.compile(r'^static inline void cpf_kernel_launch_check\s*\(',
-                                                               re.M), 'cpf_kernel_launch_check'),
+    (re.compile(r"\bgpucub\s*::"), re.compile(r"^namespace gpucub\s*=", re.M), "gpucub"),
+    (re.compile(r"\bcpf_gpu_atomic\s*\("), re.compile(r"void cpf_gpu_atomic\s*\(", re.M), "cpf_gpu_atomic"),
+    (
+        re.compile(r"\bcpf_kernel_launch_check\s*\("),
+        re.compile(r"^static inline void cpf_kernel_launch_check\s*\(", re.M),
+        "cpf_kernel_launch_check",
+    ),
 )
 
 #: Every backend-neutral ``gpu*`` name left in the unit is a type or constant the core preamble
 #: declares; each ``gpu*`` CALL is written as its HIP function. Anything else is an undeclared
 #: identifier, which is what ``tsvc_2_s323`` hit on ``gpuMemcpyDeviceToHost`` while the whole suite
 #: stayed green.
-GPU_NAME = re.compile(r'\bgpu[A-Z]\w*')
+GPU_NAME = re.compile(r"\bgpu[A-Z]\w*")
 
 
-def assert_every_gpu_name_is_declared(code: str, label: str = 'cpf') -> None:
+def assert_every_gpu_name_is_declared(code: str, label: str = "cpf") -> None:
     """Assert each ``gpu*`` spelling the unit uses is one the unit also declares.
 
     :param code: the finished device rendering.
@@ -192,18 +238,20 @@ def assert_every_gpu_name_is_declared(code: str, label: str = 'cpf') -> None:
     declared = set()
     for line in code.splitlines():
         text = line.strip()
-        for lead in ('using ', 'static constexpr gpuError_t '):
+        for lead in ("using ", "static constexpr gpuError_t "):
             if text.startswith(lead):
-                rest = text[len(lead):].split('=')[0].split()[0].strip()
+                rest = text[len(lead) :].split("=")[0].split()[0].strip()
                 declared.add(rest)
     for hit in GPU_NAME.finditer(code):
         name = hit.group(0)
-        assert name in declared, (f'{label}: the unit uses {name} but never declares it -- the '
-                                  f'generator emits the backend-neutral spelling and a self-contained '
-                                  f'unit has to alias it\n{_context(code, hit.start())}')
+        assert name in declared, (
+            f"{label}: the unit uses {name} but never declares it -- the "
+            f"generator emits the backend-neutral spelling and a self-contained "
+            f"unit has to alias it\n{_context(code, hit.start())}"
+        )
 
 
-def assert_device_preamble_covers_its_uses(code: str, label: str = 'cpf') -> None:
+def assert_device_preamble_covers_its_uses(code: str, label: str = "cpf") -> None:
     """Assert every gated device-preamble block the unit USES is one the unit also DECLARES.
 
     :param code: the finished device rendering.
@@ -214,19 +262,20 @@ def assert_device_preamble_covers_its_uses(code: str, label: str = 'cpf') -> Non
         if hit is None:
             continue
         assert declaration.search(code) is not None, (
-            f'{label}: the unit calls {name} at offset {hit.start()} but never declares it -- the '
-            f'device preamble was selected without seeing that use\n{_context(code, hit.start())}')
+            f"{label}: the unit calls {name} at offset {hit.start()} but never declares it -- the "
+            f"device preamble was selected without seeing that use\n{_context(code, hit.start())}"
+        )
 
 
 def canonical_gpu_sdfg(program: Any, name: str) -> dace.SDFG:
     """``program`` canonicalized for the GPU pipeline, before the device move."""
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
-    canonicalize(sdfg, validate=True, validate_all=False, target='gpu')
+    canonicalize(sdfg, validate=True, validate_all=False, target="gpu")
     return sdfg
 
 
-def render_gpu(program: Any, name: str, language: str = 'hip') -> Tuple[dace.SDFG, str]:
+def render_gpu(program: Any, name: str, language: str = "hip") -> Tuple[dace.SDFG, str]:
     """``(sdfg, code)`` for a ``@dace.program`` taken through the GPU pipeline and rendered as ``language``.
 
     The pipeline is the documented order and all three steps matter here: ``canonicalize`` leaves
@@ -236,7 +285,7 @@ def render_gpu(program: Any, name: str, language: str = 'hip') -> Tuple[dace.SDF
     """
     sdfg = canonical_gpu_sdfg(program, name)
     offload_to_gpu(sdfg)
-    finalize_for_target(sdfg, 'gpu', validate=True)
+    finalize_for_target(sdfg, "gpu", validate=True)
     rendering = render(sdfg, language=language)
     return rendering.sdfg, rendering.code
 
@@ -245,27 +294,27 @@ def device_scan_sdfg(name: str, op: ScanOp, coefficients: bool = False, seed: bo
     """A ``Scan`` over DEVICE memory at host level, in the shape ``LoopToScan`` leaves on a GPU
     graph. ``seed`` puts the entry value in DEVICE memory, which is the case that used to break: a
     host expansion reads it, and a device-resident scalar cannot be read on the host."""
-    extent = dace.symbol('N')
+    extent = dace.symbol("N")
     sdfg = dace.SDFG(name)
     storage = dace.dtypes.StorageType.GPU_Global
-    for array in ('a', 'b') + (('c', ) if coefficients else ()):
+    for array in ("a", "b") + (("c",) if coefficients else ()):
         sdfg.add_array(array, [extent], dace.float64, storage=storage)
     state = sdfg.add_state()
-    node = Scan('sc', op=op, exclusive=not coefficients and not seed)
+    node = Scan("sc", op=op, exclusive=not coefficients and not seed)
     node.schedule = dace.dtypes.ScheduleType.GPU_Device
     state.add_node(node)
-    state.add_edge(state.add_read('a'), None, node, '_scan_in', dace.Memlet.from_array('a', sdfg.arrays['a']))
-    state.add_edge(node, '_scan_out', state.add_write('b'), None, dace.Memlet.from_array('b', sdfg.arrays['b']))
+    state.add_edge(state.add_read("a"), None, node, "_scan_in", dace.Memlet.from_array("a", sdfg.arrays["a"]))
+    state.add_edge(node, "_scan_out", state.add_write("b"), None, dace.Memlet.from_array("b", sdfg.arrays["b"]))
     if coefficients:
-        state.add_edge(state.add_read('c'), None, node, '_scan_coef', dace.Memlet.from_array('c', sdfg.arrays['c']))
+        state.add_edge(state.add_read("c"), None, node, "_scan_coef", dace.Memlet.from_array("c", sdfg.arrays["c"]))
     if seed:
-        sdfg.add_array('s', [1], dace.float64, storage=storage)
-        node.add_in_connector('_scan_init')
-        state.add_edge(state.add_read('s'), None, node, '_scan_init', dace.Memlet('s[0]'))
+        sdfg.add_array("s", [1], dace.float64, storage=storage)
+        node.add_in_connector("_scan_init")
+        state.add_edge(state.add_read("s"), None, node, "_scan_init", dace.Memlet("s[0]"))
     return sdfg
 
 
-def host_compiler(language: str = 'c++') -> str:
+def host_compiler(language: str = "c++") -> str:
     """The compiler CPF output for ``language`` is built with.
 
     Taken from ``CXX``/``CC`` when set, else the host compiler DaCe itself configures (C++ only),
@@ -274,41 +323,46 @@ def host_compiler(language: str = 'c++') -> str:
     """
     _, _, variable, fallbacks = TOOLCHAINS[language]
     candidate = os.environ.get(variable)
-    if not candidate and language == 'c++':
+    if not candidate and language == "c++":
         from dace.config import Config
-        candidate = Config.get('compiler', 'cpu', 'executable')
+
+        candidate = Config.get("compiler", "cpu", "executable")
     resolved = shutil.which(candidate) if candidate else None
     for fallback in fallbacks:
         if resolved is not None:
             break
         resolved = shutil.which(fallback)
-    assert resolved is not None, (f'no {language} compiler found (tried {candidate!r}, {fallbacks}); CPF output is '
-                                  'defined by what a bare host compiler accepts, so this box cannot test it')
+    assert resolved is not None, (
+        f"no {language} compiler found (tried {candidate!r}, {fallbacks}); CPF output is "
+        "defined by what a bare host compiler accepts, so this box cannot test it"
+    )
     return resolved
 
 
-def assert_standalone(code: str, label: str = 'cpf', language: str = 'c++') -> None:
+def assert_standalone(code: str, label: str = "cpf", language: str = "c++") -> None:
     """Assert ``code`` carries none of the banned tokens for ``language``.
 
     :param code: the emitted translation unit.
     :param label: prefix for the failure message (usually the kernel name).
     :param language: ``'c++'`` or ``'c'``; the C table bans the C++ constructs as well.
     """
-    for pattern, meaning in (BANNED_PATTERNS_C if language == 'c' else BANNED_PATTERNS):
+    for pattern, meaning in BANNED_PATTERNS_C if language == "c" else BANNED_PATTERNS:
         match = pattern.search(code)
-        assert match is None, (f'{label}: CPF output contains {meaning} -- {match.group(0)!r} at offset '
-                               f'{match.start()}\n{_context(code, match.start())}')
+        assert match is None, (
+            f"{label}: CPF output contains {meaning} -- {match.group(0)!r} at offset "
+            f"{match.start()}\n{_context(code, match.start())}"
+        )
     assert_no_unqualified_runtime_calls(code, label)
 
 
 def _context(code: str, offset: int, radius: int = 160) -> str:
     """The source line around ``offset``, for a failure message."""
-    start = code.rfind('\n', 0, max(0, offset - radius)) + 1
-    end = code.find('\n', offset + radius)
-    return code[start:end if end != -1 else len(code)]
+    start = code.rfind("\n", 0, max(0, offset - radius)) + 1
+    end = code.find("\n", offset + radius)
+    return code[start : end if end != -1 else len(code)]
 
 
-def compile_standalone(code: str, name: str = 'cpf_kernel', extra_flags: Any = (), language: str = 'c++') -> str:
+def compile_standalone(code: str, name: str = "cpf_kernel", extra_flags: Any = (), language: str = "c++") -> str:
     """Build ``code`` into a shared object and return its path.
 
     The translation unit is written into a FRESH temporary directory and compiled from there with
@@ -323,40 +377,46 @@ def compile_standalone(code: str, name: str = 'cpf_kernel', extra_flags: Any = (
     :raises AssertionError: if the compile fails; the message carries the compiler's own diagnostics.
     """
     standard, suffix, _, _ = TOOLCHAINS[language]
-    workdir = tempfile.mkdtemp(prefix=f'cpf_{name}_')
+    workdir = tempfile.mkdtemp(prefix=f"cpf_{name}_")
     source = os.path.join(workdir, name + suffix)
-    library = os.path.join(workdir, f'lib{name}.so')
-    with open(source, 'w') as handle:
+    library = os.path.join(workdir, f"lib{name}.so")
+    with open(source, "w") as handle:
         handle.write(code)
-    command = [host_compiler(language), '-std=' + standard, *BASE_FLAGS, *extra_flags, source, '-o', library]
+    command = [host_compiler(language), "-std=" + standard, *BASE_FLAGS, *extra_flags, source, "-o", library]
     proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
-    assert proc.returncode == 0, (f'{name}: CPF output does not build with a bare host compiler\n'
-                                  f'command: {" ".join(command)}\n{proc.stderr}')
+    assert proc.returncode == 0, (
+        f"{name}: CPF output does not build with a bare host compiler\ncommand: {' '.join(command)}\n{proc.stderr}"
+    )
     return library
 
 
-def compile_diagnostics(code: str, name: str = 'cpf_kernel', language: str = 'c++') -> str:
+def compile_diagnostics(code: str, name: str = "cpf_kernel", language: str = "c++") -> str:
     """Compiler stderr for ``code`` built with :data:`WARNING_FLAGS`.
 
     Separate from :func:`compile_standalone` so a zero-warning assertion reads as one, instead of
     riding on the numeric gate. Returns the raw stderr; empty means clean.
     """
     standard, suffix, _, _ = TOOLCHAINS[language]
-    workdir = tempfile.mkdtemp(prefix=f'cpf_warn_{name}_')
+    workdir = tempfile.mkdtemp(prefix=f"cpf_warn_{name}_")
     source = os.path.join(workdir, name + suffix)
-    with open(source, 'w') as handle:
+    with open(source, "w") as handle:
         handle.write(code)
     command = [
-        host_compiler(language), '-std=' + standard, *BASE_FLAGS, *WARNING_FLAGS, source, '-o',
-        os.path.join(workdir, f'lib{name}.so')
+        host_compiler(language),
+        "-std=" + standard,
+        *BASE_FLAGS,
+        *WARNING_FLAGS,
+        source,
+        "-o",
+        os.path.join(workdir, f"lib{name}.so"),
     ]
     proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
-    assert proc.returncode == 0, f'{name}: CPF output does not build\ncommand: {" ".join(command)}\n{proc.stderr}'
+    assert proc.returncode == 0, f"{name}: CPF output does not build\ncommand: {' '.join(command)}\n{proc.stderr}"
     shutil.rmtree(workdir, ignore_errors=True)
     return proc.stderr
 
 
-def build_standalone(code: str, name: str = 'cpf_kernel', language: str = 'c++') -> ctypes.CDLL:
+def build_standalone(code: str, name: str = "cpf_kernel", language: str = "c++") -> ctypes.CDLL:
     """Compile ``code`` and load the result. See :func:`compile_standalone` for the build rules."""
     return ctypes.CDLL(compile_standalone(code, name, language=language))
 
@@ -384,10 +444,9 @@ def entry_argtypes(sdfg: dace.SDFG, order: Optional[Sequence[str]] = None) -> Li
     return argtypes
 
 
-def call_standalone(library: ctypes.CDLL,
-                    sdfg: dace.SDFG,
-                    arguments: Dict[str, Any],
-                    order: Optional[Sequence[str]] = None) -> None:
+def call_standalone(
+    library: ctypes.CDLL, sdfg: dace.SDFG, arguments: Dict[str, Any], order: Optional[Sequence[str]] = None
+) -> None:
     """Invoke ``sdfg``'s CPF entry point in ``library`` with ``arguments``.
 
     Array arguments are numpy arrays, passed by data pointer (so the kernel writes in place);
@@ -402,15 +461,18 @@ def call_standalone(library: ctypes.CDLL,
     """
     arglist = sdfg.arglist()
     missing = sorted(set(arglist) - set(arguments))
-    assert not missing, f'{sdfg.name}: CPF call is missing arguments {missing}'
+    assert not missing, f"{sdfg.name}: CPF call is missing arguments {missing}"
     # An EXTRA name is the dangerous direction: a symbol the SDFG never used is absent from the
     # arglist, so it would be silently dropped and the kernel would run on an uninitialized extent.
     extra = sorted(set(arguments) - set(arglist))
-    assert not extra, (f'{sdfg.name}: {extra} are not in the SDFG arglist {list(arglist)} and would be dropped; '
-                       'a symbol the SDFG does not use never reaches the entry point')
+    assert not extra, (
+        f"{sdfg.name}: {extra} are not in the SDFG arglist {list(arglist)} and would be dropped; "
+        "a symbol the SDFG does not use never reaches the entry point"
+    )
     names = list(arglist) if order is None else list(order)
-    assert set(names) == set(arglist), (f'{sdfg.name}: the requested order {names} is not the arglist '
-                                        f'{list(arglist)}; the call would be shifted')
+    assert set(names) == set(arglist), (
+        f"{sdfg.name}: the requested order {names} is not the arglist {list(arglist)}; the call would be shifted"
+    )
     function = getattr(library, sdfg.name)
     function.argtypes = entry_argtypes(sdfg, order)
     function.restype = None
@@ -423,8 +485,9 @@ def call_standalone(library: ctypes.CDLL,
         else:
             array = np.ascontiguousarray(value)
             assert array is value or array.base is value or np.shares_memory(array, value), (
-                f'{sdfg.name}/{name}: argument was copied to make it contiguous, so writes would be lost; '
-                'pass a C-contiguous array')
+                f"{sdfg.name}/{name}: argument was copied to make it contiguous, so writes would be lost; "
+                "pass a C-contiguous array"
+            )
             values.append(ctypes.c_void_p(array.ctypes.data))
     function(*values)
 
@@ -432,22 +495,23 @@ def call_standalone(library: ctypes.CDLL,
 def tolerance_for(dtype) -> Any:
     """``(rtol, atol)`` matched to precision: fp64 tight, fp32 relaxed, ints exact."""
     dt_ = np.dtype(dtype)
-    if dt_.kind in 'iub':
+    if dt_.kind in "iub":
         return 0.0, 0.0
-    single = (dt_.kind == 'f' and dt_.itemsize <= 4) or (dt_.kind == 'c' and dt_.itemsize <= 8)
+    single = (dt_.kind == "f" and dt_.itemsize <= 4) or (dt_.kind == "c" and dt_.itemsize <= 8)
     return (1e-5, 1e-6) if single else (1e-9, 1e-11)
 
 
-def assert_matches(reference: Dict[str, np.ndarray], cpf: Dict[str, np.ndarray], label: str = 'cpf') -> None:
+def assert_matches(reference: Dict[str, np.ndarray], cpf: Dict[str, np.ndarray], label: str = "cpf") -> None:
     """Assert the CPF run reproduced ``reference`` (dtype-aware tolerance; exact for integers)."""
-    assert set(reference) == set(cpf), f'{label}: output-key mismatch {sorted(reference)} vs {sorted(cpf)}'
+    assert set(reference) == set(cpf), f"{label}: output-key mismatch {sorted(reference)} vs {sorted(cpf)}"
     for name, expected in reference.items():
         got = cpf[name]
-        assert expected.shape == got.shape, f'{label}/{name}: shape {expected.shape} vs {got.shape}'
+        assert expected.shape == got.shape, f"{label}/{name}: shape {expected.shape} vs {got.shape}"
         rtol, atol = tolerance_for(expected.dtype)
         assert np.allclose(expected, got, rtol=rtol, atol=atol, equal_nan=True), (
-            f'{label}/{name}: CPF output diverges from the SDFG, '
-            f'max|diff|={float(np.nanmax(np.abs(expected.astype(np.float64) - got.astype(np.float64)))):.3e}')
+            f"{label}/{name}: CPF output diverges from the SDFG, "
+            f"max|diff|={float(np.nanmax(np.abs(expected.astype(np.float64) - got.astype(np.float64)))):.3e}"
+        )
 
 
 def cast_extent_sdfg(name: str) -> dace.SDFG:
@@ -459,21 +523,21 @@ def cast_extent_sdfg(name: str) -> dace.SDFG:
     a comparison chain. A transient is what makes the helper exist -- its extent is an allocation
     count -- and two states keep the copy from being elided.
     """
-    extent = dace.symbolic.pystr_to_symbolic('int64(la) + int64(lb) + 1')
+    extent = dace.symbolic.pystr_to_symbolic("int64(la) + int64(lb) + 1")
     sdfg = dace.SDFG(name)
-    sdfg.add_array('a', [extent], dace.float64)
-    sdfg.add_array('out', [extent], dace.float64)
-    sdfg.add_transient('tmp', [extent], dace.float64)
-    scale = sdfg.add_state('scale')
-    entry, exit_node = scale.add_map('m', {'i': '0:%s' % extent})
-    tasklet = scale.add_tasklet('scale', {'x'}, {'y'}, 'y = x * 2.0')
-    scale.add_memlet_path(scale.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
-    scale.add_memlet_path(tasklet, exit_node, scale.add_write('tmp'), src_conn='y', memlet=dace.Memlet('tmp[i]'))
-    move = sdfg.add_state_after(scale, 'move')
-    entry, exit_node = move.add_map('m2', {'i': '0:%s' % extent})
-    tasklet = move.add_tasklet('move', {'x'}, {'y'}, 'y = x')
-    move.add_memlet_path(move.add_read('tmp'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('tmp[i]'))
-    move.add_memlet_path(tasklet, exit_node, move.add_write('out'), src_conn='y', memlet=dace.Memlet('out[i]'))
+    sdfg.add_array("a", [extent], dace.float64)
+    sdfg.add_array("out", [extent], dace.float64)
+    sdfg.add_transient("tmp", [extent], dace.float64)
+    scale = sdfg.add_state("scale")
+    entry, exit_node = scale.add_map("m", {"i": "0:%s" % extent})
+    tasklet = scale.add_tasklet("scale", {"x"}, {"y"}, "y = x * 2.0")
+    scale.add_memlet_path(scale.add_read("a"), entry, tasklet, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    scale.add_memlet_path(tasklet, exit_node, scale.add_write("tmp"), src_conn="y", memlet=dace.Memlet("tmp[i]"))
+    move = sdfg.add_state_after(scale, "move")
+    entry, exit_node = move.add_map("m2", {"i": "0:%s" % extent})
+    tasklet = move.add_tasklet("move", {"x"}, {"y"}, "y = x")
+    move.add_memlet_path(move.add_read("tmp"), entry, tasklet, dst_conn="x", memlet=dace.Memlet("tmp[i]"))
+    move.add_memlet_path(tasklet, exit_node, move.add_write("out"), src_conn="y", memlet=dace.Memlet("out[i]"))
     return sdfg
 
 
@@ -491,21 +555,23 @@ def wcr_sdfg(name: str, resolution: str, length: int = 32) -> dace.SDFG:
     :returns: the built SDFG, ready to render.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('a', [length], dace.float64)
-    sdfg.add_array('out', [length], dace.float64)
+    sdfg.add_array("a", [length], dace.float64)
+    sdfg.add_array("out", [length], dace.float64)
     state = sdfg.add_state()
-    entry, exit_node = state.add_map('m', {'i': f'0:{length}'})
-    tasklet = state.add_tasklet('t', {'x': None}, {'y': None}, 'y = x')
-    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='x', memlet=dace.Memlet('a[i]'))
-    state.add_memlet_path(tasklet,
-                          exit_node,
-                          state.add_write('out'),
-                          src_conn='y',
-                          memlet=dace.Memlet(data='out', subset='i', wcr=resolution))
+    entry, exit_node = state.add_map("m", {"i": f"0:{length}"})
+    tasklet = state.add_tasklet("t", {"x": None}, {"y": None}, "y = x")
+    state.add_memlet_path(state.add_read("a"), entry, tasklet, dst_conn="x", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(
+        tasklet,
+        exit_node,
+        state.add_write("out"),
+        src_conn="y",
+        memlet=dace.Memlet(data="out", subset="i", wcr=resolution),
+    )
     return sdfg
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope="session")
 def cxx() -> str:
     """The resolved host C++ compiler CPF output is built with."""
-    return host_compiler('c++')
+    return host_compiler("c++")

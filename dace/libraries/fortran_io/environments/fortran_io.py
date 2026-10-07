@@ -6,6 +6,7 @@ Compiles the shipped ``dace_fortran_io.f90`` wrappers into the program (via
 performs each transfer.  The C++ tasklets call the wrappers through the
 prototypes in ``dace_fortran_io.h``, found on the include path added here.
 """
+
 import os
 
 import dace.library
@@ -18,7 +19,6 @@ _LIB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 @dace.library.environment
 class FortranIO:
-
     cmake_minimum_version = None
     cmake_packages: List[str] = []
     cmake_variables: Dict[str, str] = {}

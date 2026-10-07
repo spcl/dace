@@ -2,11 +2,12 @@
 """A2 kernel_per_state + A3 line_graph + the A6 invariant guard: the
 fixture programs split into one kernel per state and stay bit-exact, the line graph comes back in
 dependency order, and every v1 refusal (multi-kernel state, branch, LoopRegion) is loud."""
+
 import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.transformation.layout.line_graph import (check_kernel_per_state, kernel_per_state, line_graph)
+from dace.transformation.layout.line_graph import check_kernel_per_state, kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
 
 from tests.transformations.layout import multinest_programs as fixtures
@@ -26,8 +27,7 @@ def kernel_output(kernel):
     """The single non-transient array a fixture kernel writes."""
     sdfg = kernel.state.sdfg
     written = {
-        n.data
-        for n in kernel.state.data_nodes() if kernel.state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient
+        n.data for n in kernel.state.data_nodes() if kernel.state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient
     }
     assert len(written) == 1, written
     return written.pop()
@@ -82,6 +82,7 @@ def make_loop(name):
 def loopy_sdfg():
     """pre (top) -> loop{ b1 -> b2 } -> post (top): a flat-body single loop."""
     from dace.transformation.layout.line_graph import loop_spans  # noqa: F401 (kept local to the fixture users)
+
     sdfg = dace.SDFG("loopy")
     for a in ("A", "B", "C", "D"):
         sdfg.add_array(a, [dace.symbol("N")], dace.float64)
@@ -103,6 +104,7 @@ def loopy_sdfg():
 def test_line_graph_admits_flat_body_loop():
     """A LoopRegion with a flat-line body is admitted: body kernels come back in order, tagged with the loop."""
     from dace.transformation.layout.line_graph import locked_transitions, loop_spans
+
     sdfg, loop = loopy_sdfg()
     kernels = line_graph(sdfg)
     assert [k.state.label for k in kernels] == ["pre", "b1", "b2", "post"]
@@ -165,8 +167,9 @@ def test_line_graph_refuses_bare_copy_state():
     sdfg.add_array("B", [8, 8], dace.float64)
     sdfg.add_array("C", [8, 8], dace.float64)
     state = sdfg.add_state("copy", is_start_block=True)
-    state.add_nedge(state.add_read("B"), state.add_write("C"),
-                    dace.Memlet(data="B", subset="0:8, 0:8", other_subset="0:8, 0:8"))
+    state.add_nedge(
+        state.add_read("B"), state.add_write("C"), dace.Memlet(data="B", subset="0:8, 0:8", other_subset="0:8, 0:8")
+    )
     sdfg.validate()
     with pytest.raises(NotImplementedError, match="non-map work"):
         line_graph(sdfg)
@@ -220,6 +223,7 @@ def test_two_loops_give_two_spans():
     a one-kernel span locks nothing, and the transition BETWEEN two loops must stay free (a layout may
     change there -- it is outside both bodies)."""
     from dace.transformation.layout.line_graph import locked_transitions, loop_spans
+
     sdfg, l1, l2 = two_loop_sdfg()
     kernels = line_graph(sdfg)
     assert [k.state.label for k in kernels] == ["pre", "c1", "c2", "c3"]
@@ -232,6 +236,7 @@ def test_empty_loop_body_contributes_nothing():
     """A LoopRegion with no blocks is walked and silently contributes no kernel -- pin it, so the
     'no kernels' outcome is a stated result rather than an accident of the empty-region early return."""
     from dace.transformation.layout.line_graph import loop_spans
+
     sdfg = dace.SDFG("empty_body")
     for a in ("A", "B"):
         sdfg.add_array(a, [dace.symbol("N")], dace.float64)
@@ -249,6 +254,7 @@ def test_inert_state_between_body_kernels_keeps_one_span():
     """A do-nothing state inside a loop body takes no kernel position, so the kernels around it stay
     consecutive and the span still covers both."""
     from dace.transformation.layout.line_graph import locked_transitions, loop_spans
+
     sdfg, loop = loopy_sdfg()
     b1 = next(b for b in loop.nodes() if b.label == "b1")
     b2 = next(b for b in loop.nodes() if b.label == "b2")
@@ -279,6 +285,7 @@ def test_relayout_state_in_loop_body_is_refused():
     sits between re-runs every iteration, unpriced. Refuse instead of silently mismodelling."""
     from dace.libraries.layout import add_layout_change
     from dace.libraries.layout.algebra import Permute
+
     sdfg = dace.SDFG("relayout_in_loop")
     sdfg.add_array("A", [8, 8], dace.float64)
     sdfg.add_array("B", [8, 8], dace.float64)
@@ -301,6 +308,7 @@ def test_conditional_block_is_refused():
     """The deferred-conditionals refusal has its own message and its own branch; both existing branch
     tests hit the DIFFERENT successor-count guard, so this path was unexercised."""
     from dace.sdfg.state import ConditionalBlock
+
     sdfg = dace.SDFG("conditional")
     sdfg.add_array("A", [dace.symbol("N")], dace.float64)
     sdfg.add_array("B", [dace.symbol("N")], dace.float64)
@@ -316,6 +324,7 @@ def test_conditional_block_is_refused():
 def test_conditional_block_in_loop_body_is_refused():
     """Same refusal one level down: the recursion into a loop body must not lose it."""
     from dace.sdfg.state import ConditionalBlock
+
     sdfg, loop = loopy_sdfg()
     b2 = next(b for b in loop.nodes() if b.label == "b2")
     cond = ConditionalBlock("cond")

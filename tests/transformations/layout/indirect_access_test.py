@@ -8,6 +8,7 @@ loop (``sym := col[i]`` on the loop's interstate edge, then ``x[sym]``) and name
 registered shuffle ``sigma``, composing ``sigma^-1`` onto the runtime index so
 ``x'[sigma^-1(col[i])] == x[col[i]]`` for any ``col``. Every candidate reproduces the numpy oracle;
 the sweep only picks the physical layout of ``x``."""
+
 import numpy
 import dace
 

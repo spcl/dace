@@ -57,6 +57,7 @@ test to it directly (that is npbench ``stockham_fft``'s 349,525-entry inner copy
 Setting the threshold to 0 turns rule 2 off, leaving only the nested-parallelism rule -- the A/B
 lever for measuring the cost model itself.
 """
+
 from typing import Any, Dict, List, Optional
 
 from dace.sdfg.narrowing import config_int
@@ -77,14 +78,14 @@ def min_work_per_region() -> int:
 
     :returns: ``compiler.cpu.parallel_min_work_per_region``; 0 disables the size rule.
     """
-    return config_int('compiler', 'cpu', 'parallel_min_work_per_region')
+    return config_int("compiler", "cpu", "parallel_min_work_per_region")
 
 
 @properties.make_properties
 class SequentializeUnprofitableParallelScopes(ppl.Pass):
     """Pin every CPU parallel scope the fork/join cost model refuses to ``Sequential``."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -138,8 +139,13 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
             elif isinstance(block, ControlFlowRegion):
                 self.visit_region(block, in_parallel)
 
-    def visit_scope(self, state: SDFGState, children: Dict[Any, List[nodes.Node]], entry: Optional[nodes.MapEntry],
-                    in_parallel: bool) -> None:
+    def visit_scope(
+        self,
+        state: SDFGState,
+        children: Dict[Any, List[nodes.Node]],
+        entry: Optional[nodes.MapEntry],
+        in_parallel: bool,
+    ) -> None:
         """Decide the nodes directly inside one scope, then descend into their scopes.
 
         :param state: the state holding the scope.
@@ -148,12 +154,14 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         :param in_parallel: whether a device-parallel map encloses this scope.
         """
         from dace.libraries.standard.helper import is_reentered_cpu_transfer
+
         for node in children[entry]:
             if isinstance(node, nodes.MapEntry):
                 self.visit_scope(state, children, node, self.decide_map(node, state.sdfg, in_parallel))
             elif isinstance(node, nodes.LibraryNode):
-                if node.schedule in CPU_PARALLEL_SCHEDULES and (in_parallel or is_reentered_cpu_transfer(
-                        node, state, loop_cache=self.loop_cache)):
+                if node.schedule in CPU_PARALLEL_SCHEDULES and (
+                    in_parallel or is_reentered_cpu_transfer(node, state, loop_cache=self.loop_cache)
+                ):
                     node.schedule = dtypes.ScheduleType.Sequential
                     self.pinned += 1
             elif isinstance(node, nodes.NestedSDFG) and node.sdfg is not None:
@@ -191,7 +199,7 @@ class SequentializeUnprofitableParallelScopes(ppl.Pass):
         :returns: ``symbolic.ask('negative', count - threshold)``, computed once per count.
         """
         if count not in self.below_threshold:
-            self.below_threshold[count] = symbolic.ask('negative', symbolic.simplify(count - self.threshold))
+            self.below_threshold[count] = symbolic.ask("negative", symbolic.simplify(count - self.threshold))
         return self.below_threshold[count]
 
     def worth_forking(self, count) -> bool:

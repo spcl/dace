@@ -16,7 +16,8 @@ import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import BranchMode, ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim, )
+    VectorizeCPUMultiDim,
+)
 from tests.corpus.tsvc import tsvc
 
 
@@ -45,17 +46,14 @@ def _k1_axpy_sdfg(name):
     """K=1 axpy ``C[i] = A[i] + B[i]`` (unique name per case for parallel runs)."""
     N = dace.symbol("N")
     sdfg = dace.SDFG(name)
-    sdfg.add_array("A", (N, ), dace.float64)
-    sdfg.add_array("B", (N, ), dace.float64)
-    sdfg.add_array("C", (N, ), dace.float64)
+    sdfg.add_array("A", (N,), dace.float64)
+    sdfg.add_array("B", (N,), dace.float64)
+    sdfg.add_array("C", (N,), dace.float64)
     state = sdfg.add_state("main")
     state.add_mapped_tasklet(
         "axpy",
         {"i": "0:N"},
-        {
-            "_a": dace.Memlet("A[i]"),
-            "_b": dace.Memlet("B[i]")
-        },
+        {"_a": dace.Memlet("A[i]"), "_b": dace.Memlet("B[i]")},
         "_c = _a + _b",
         {"_c": dace.Memlet("C[i]")},
         external_edges=True,
@@ -69,7 +67,7 @@ def test_k1_axpy_isa_backend(isa, flag, header):
     if flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_axpy_sdfg(f"e2e_k1_axpy_{isa.name.lower()}")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=isa)).apply_pass(sdfg, {})
     sdfg.validate()
     csdfg = sdfg.compile()
     cpp = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
@@ -102,8 +100,9 @@ def test_k1_mask_gen_isa_backend(isa, flag, header):
     if flag is not None and flag not in FLAGS:
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_axpy_sdfg(f"e2e_k1_maskgen_{isa.name.lower()}")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa,
-                                         remainder_strategy=RemainderStrategy.MASKED_TAIL)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8,), target_isa=isa, remainder_strategy=RemainderStrategy.MASKED_TAIL)
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     csdfg = sdfg.compile()
     cpp = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")
@@ -153,10 +152,10 @@ def test_k1_masked_ite_isa_backend(isa, flag, header):
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_masked_ite_sdfg(f"e2e_k1_maskite_{isa.name.lower()}")
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=isa,
-                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,), target_isa=isa, remainder_strategy=RemainderStrategy.MASKED_TAIL, branch_mode=BranchMode.MERGE
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     csdfg = sdfg.compile()
     cpp = os.path.join(sdfg.build_folder, "src", "cpu", sdfg.name + ".cpp")

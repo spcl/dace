@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the ``OutlineTopLevelNests`` pass: each top-level loop nest of the root SDFG becomes its
-    own ``no_inline`` nested SDFG, structurally loss-free and codegen-agnostic. """
+"""Tests for the ``OutlineTopLevelNests`` pass: each top-level loop nest of the root SDFG becomes its
+own ``no_inline`` nested SDFG, structurally loss-free and codegen-agnostic."""
 
 import numpy
 import pytest
@@ -10,7 +10,7 @@ from dace.sdfg import nodes
 from dace.sdfg.utils import inline_sdfgs
 from dace.transformation.passes.outline_top_level_nests import OutlineTopLevelNests, outline_top_level_nests
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -36,7 +36,7 @@ def top_level_nsdfgs(sdfg):
 
 def test_two_top_level_maps_are_outlined():
     sdfg = two_maps.to_sdfg(simplify=True)
-    assert not top_level_nsdfgs(sdfg), 'fixture should start with no nested SDFGs'
+    assert not top_level_nsdfgs(sdfg), "fixture should start with no nested SDFGs"
 
     count = OutlineTopLevelNests().apply_pass(sdfg, {})
 
@@ -46,7 +46,7 @@ def test_two_top_level_maps_are_outlined():
     for nsdfg in nsdfgs:
         assert nsdfg.no_inline is True
         assert nsdfg.unique_name
-    assert len({n.unique_name for n in nsdfgs}) == 2, 'unique_name must be distinct per nest'
+    assert len({n.unique_name for n in nsdfgs}) == 2, "unique_name must be distinct per nest"
 
 
 def test_connectors_and_symbols_preserved():
@@ -55,10 +55,10 @@ def test_connectors_and_symbols_preserved():
 
     interfaces = {frozenset(n.in_connectors): frozenset(n.out_connectors) for n in top_level_nsdfgs(sdfg)}
     # nest 1 reads A,B writes C; nest 2 reads C writes D.
-    assert frozenset({'A', 'B'}) in interfaces and interfaces[frozenset({'A', 'B'})] == frozenset({'C'})
-    assert frozenset({'C'}) in interfaces and interfaces[frozenset({'C'})] == frozenset({'D'})
+    assert frozenset({"A", "B"}) in interfaces and interfaces[frozenset({"A", "B"})] == frozenset({"C"})
+    assert frozenset({"C"}) in interfaces and interfaces[frozenset({"C"})] == frozenset({"D"})
     for nsdfg in top_level_nsdfgs(sdfg):
-        assert 'N' in nsdfg.symbol_mapping
+        assert "N" in nsdfg.symbol_mapping
 
 
 def test_idempotent():
@@ -69,15 +69,15 @@ def test_idempotent():
 
 
 def test_no_op_on_flat_sdfg():
-    sdfg = dace.SDFG('flat_no_op_on_flat_sdfg')
-    sdfg.add_array('A', [1], dace.float64)
+    sdfg = dace.SDFG("flat_no_op_on_flat_sdfg")
+    sdfg.add_array("A", [1], dace.float64)
     state = sdfg.add_state()
-    state.add_edge(state.add_read('A'), None, state.add_write('A'), None, dace.Memlet('A[0]'))
+    state.add_edge(state.add_read("A"), None, state.add_write("A"), None, dace.Memlet("A[0]"))
     assert OutlineTopLevelNests().apply_pass(sdfg, {}) is None
 
 
 def test_inlining_back_reproduces_the_original():
-    """The wrap is loss-free: clearing no_inline and inlining recovers a nest-free SDFG. """
+    """The wrap is loss-free: clearing no_inline and inlining recovers a nest-free SDFG."""
     sdfg = two_maps.to_sdfg(simplify=True)
     outline_top_level_nests(sdfg)
     assert top_level_nsdfgs(sdfg)
@@ -85,7 +85,7 @@ def test_inlining_back_reproduces_the_original():
     for nsdfg in top_level_nsdfgs(sdfg):
         nsdfg.no_inline = False  # InlineSDFG refuses no_inline nodes
     inline_sdfgs(sdfg)
-    assert not top_level_nsdfgs(sdfg), 'every outlined nest should inline back'
+    assert not top_level_nsdfgs(sdfg), "every outlined nest should inline back"
 
 
 def test_sequential_loop_region_is_outlined():
@@ -93,7 +93,8 @@ def test_sequential_loop_region_is_outlined():
     with its loop index pre-declared as a parent symbol so the outliner can type its symbolic out."""
     sdfg = seq_loop.to_sdfg(simplify=True)
     from dace.sdfg.state import LoopRegion
-    assert any(isinstance(b, LoopRegion) for b in sdfg.nodes()), 'fixture must have a top-level LoopRegion'
+
+    assert any(isinstance(b, LoopRegion) for b in sdfg.nodes()), "fixture must have a top-level LoopRegion"
 
     count = outline_top_level_nests(sdfg)
 
@@ -107,12 +108,12 @@ def test_sequential_loop_region_is_outlined():
     sdfg.validate()
     # The loop index must NOT leak out as a required argument: the outliner pre-declares it and maps
     # it (sym: sym), and unless that inbound mapping is dropped it becomes a spurious root free symbol.
-    assert 'i' not in {str(s) for s in sdfg.free_symbols}, 'loop index leaked as a required symbol'
+    assert "i" not in {str(s) for s in sdfg.free_symbols}, "loop index leaked as a required symbol"
     for nsdfg in nsdfgs:
-        assert 'i' not in nsdfg.symbol_mapping, 'loop index left in the nest symbol_mapping'
+        assert "i" not in nsdfg.symbol_mapping, "loop index left in the nest symbol_mapping"
 
 
-@pytest.mark.parametrize('outline', [False, True])
+@pytest.mark.parametrize("outline", [False, True])
 def test_loop_region_numerically_equivalent(outline):
     """The loop-region path must RUN, not just validate: a leaked loop-index argument makes the built
     SDFG demand an `i` no caller supplies. seq_loop is a carried-dependency prefix sum."""
@@ -125,9 +126,9 @@ def test_loop_region_numerically_equivalent(outline):
     assert numpy.allclose(B, numpy.cumsum(A))
 
 
-@pytest.mark.parametrize('outline', [False, True])
+@pytest.mark.parametrize("outline", [False, True])
 def test_numerically_equivalent(outline):
-    """ Outlined and non-outlined builds must produce identical results. """
+    """Outlined and non-outlined builds must produce identical results."""
     sdfg = two_maps.to_sdfg(simplify=True)
     if outline:
         assert outline_top_level_nests(sdfg) == 2
@@ -142,7 +143,7 @@ def test_numerically_equivalent(outline):
     assert numpy.allclose(D, (A + B) * 2.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_two_top_level_maps_are_outlined()
     test_connectors_and_symbols_preserved()
     test_idempotent()

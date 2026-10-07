@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``FuseConditions(matcher_order=True)`` fuses what the plain matcher fuses, in its order, without re-walking."""
+
 import copy
 
 import dace
@@ -34,8 +35,9 @@ def layout(sdfg: dace.SDFG) -> list:
         rows.append((type(region).__name__, region.label))
         if isinstance(region, ConditionalBlock):
             rows += [(c.as_string if c is not None else None, b.label) for c, b in region.branches]
-        rows += [(e.src.label, e.dst.label, e.data.condition.as_string, str(e.data.assignments))
-                 for e in region.edges()]
+        rows += [
+            (e.src.label, e.dst.label, e.data.condition.as_string, str(e.data.assignments)) for e in region.edges()
+        ]
     return rows
 
 
@@ -47,37 +49,37 @@ def test_matcher_order_fusion_is_the_plain_matchers_fusion():
     expected = PatternApplyOnceEverywhere([ConditionFusion()], validate=False).apply_pass(reference, {})
     fused = FuseConditions(matcher_order=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert fused == len(expected['ConditionFusion']), (fused, expected)
+    assert fused == len(expected["ConditionFusion"]), (fused, expected)
     assert layout(sdfg) == layout(reference)
 
 
 def guard_chain(region: ControlFlowRegion, count: int, fusable: bool, tag: str) -> None:
     """``count`` guards in a row in ``region``: all on one condition (they fuse into one), or each
     reading the symbol assigned on the edge into it (none fuses)."""
-    last = region.add_state(f'{tag}_entry', is_start_block=True)
+    last = region.add_state(f"{tag}_entry", is_start_block=True)
     for k in range(count):
-        guard = ConditionalBlock(f'{tag}{k}')
-        body = ControlFlowRegion(f'{tag}{k}_body')
-        body.add_state(f'{tag}{k}_state', is_start_block=True)
-        guard.add_branch(CodeBlock('n > 0' if fusable else f'{tag}{k} > 0'), body)
+        guard = ConditionalBlock(f"{tag}{k}")
+        body = ControlFlowRegion(f"{tag}{k}_body")
+        body.add_state(f"{tag}{k}_state", is_start_block=True)
+        guard.add_branch(CodeBlock("n > 0" if fusable else f"{tag}{k} > 0"), body)
         region.add_node(guard)
-        region.add_edge(last, guard, dace.InterstateEdge(assignments=None if fusable else {f'{tag}{k}': 'n'}))
+        region.add_edge(last, guard, dace.InterstateEdge(assignments=None if fusable else {f"{tag}{k}": "n"}))
         last = guard
 
 
 def refused_then_fusable(count: int) -> dace.SDFG:
     """A branch holding ``count`` guards that refuse to fuse, then a branch holding ``count`` that do."""
-    sdfg = dace.SDFG('refused_then_fusable')
-    sdfg.add_symbol('n', dace.int64)
-    entry = sdfg.add_state('entry', is_start_block=True)
+    sdfg = dace.SDFG("refused_then_fusable")
+    sdfg.add_symbol("n", dace.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
     last = entry
-    for tag, fusable in (('r', False), ('f', True)):
-        outer = ConditionalBlock(f'outer_{tag}')
-        branch = ControlFlowRegion(f'outer_{tag}_body')
+    for tag, fusable in (("r", False), ("f", True)):
+        outer = ConditionalBlock(f"outer_{tag}")
+        branch = ControlFlowRegion(f"outer_{tag}_body")
         guard_chain(branch, count, fusable, tag)
-        outer.add_branch(CodeBlock(f'outer_{tag} > 0'), branch)
+        outer.add_branch(CodeBlock(f"outer_{tag} > 0"), branch)
         sdfg.add_node(outer)
-        sdfg.add_edge(last, outer, dace.InterstateEdge(assignments={f'outer_{tag}': 'n'}))
+        sdfg.add_edge(last, outer, dace.InterstateEdge(assignments={f"outer_{tag}": "n"}))
         last = outer
     return sdfg
 
@@ -90,7 +92,7 @@ def probes_of(fusion, sdfg: dace.SDFG, monkeypatch) -> int:
         probes[0] += 1
         return original(self, graph, expr_index, sd, permissive)
 
-    monkeypatch.setattr(ConditionFusion, 'can_be_applied', counted)
+    monkeypatch.setattr(ConditionFusion, "can_be_applied", counted)
     fusion.apply_pass(sdfg, {})
     monkeypatch.undo()
     return probes[0]
@@ -101,8 +103,9 @@ def test_refused_candidates_are_not_probed_again_per_fusion(monkeypatch):
     again: 1.5M probes for 978 fusions on warpx_field_gather."""
     count = 12
     sdfg, reference = refused_then_fusable(count), refused_then_fusable(count)
-    plain = probes_of(PatternApplyOnceEverywhere([ConditionFusion()], validate=False, progress=False), reference,
-                      monkeypatch)
+    plain = probes_of(
+        PatternApplyOnceEverywhere([ConditionFusion()], validate=False, progress=False), reference, monkeypatch
+    )
     local = probes_of(FuseConditions(matcher_order=True), sdfg, monkeypatch)
     assert layout(sdfg) == layout(reference)
     assert plain >= 2 * count * count, plain
@@ -110,8 +113,8 @@ def test_refused_candidates_are_not_probed_again_per_fusion(monkeypatch):
 
 
 def test_an_sdfg_without_conditionals_is_left_alone():
-    sdfg = dace.SDFG('no_guards')
-    sdfg.add_state('only')
+    sdfg = dace.SDFG("no_guards")
+    sdfg.add_state("only")
     assert FuseConditions(matcher_order=True).apply_pass(sdfg, {}) is None
 
 
@@ -128,7 +131,7 @@ def test_the_walk_lists_no_region_tree_per_fusion(monkeypatch):
             walks.append(self)
         return original(self, recursive, load_ext, parent_first)
 
-    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'all_control_flow_regions', counted)
+    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, "all_control_flow_regions", counted)
     fused = FuseConditions(matcher_order=True).apply_pass(sdfg, {})
     monkeypatch.undo()
     assert fused and fused >= count - 1, fused

@@ -14,6 +14,7 @@ These tests pin BOTH halves of the contract: the value is preserved AND the
 generated code takes the tree-reduce path (reduction clause present on CPU,
 block reduce on GPU) with the guarded atomic gone.
 """
+
 import os
 
 # Steer Open MPI off UCX before dace's lazy ``from mpi4py import MPI`` so
@@ -32,18 +33,18 @@ import dace
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 
-N = dace.symbol('N')
-K = dace.symbol('K')
+N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 def _cpu_code(sdfg) -> str:
-    finalize_for_target(sdfg, 'cpu')
+    finalize_for_target(sdfg, "cpu")
     return "\n".join(c.clean_code for c in sdfg.generate_code())
 
 
 def _gpu_code(sdfg) -> str:
     offload_to_gpu(sdfg)  # the device move is a step of its own; finalize refuses a host SDFG
-    finalize_for_target(sdfg, 'gpu')
+    finalize_for_target(sdfg, "gpu")
     return "\n".join(c.clean_code for c in sdfg.generate_code())
 
 
@@ -84,16 +85,19 @@ def test_condsum_cpu_emits_reduction_clause_and_no_atomic():
     """``if a[i] > thresh: s += a[i]`` -> OMP ``reduction(+:...)`` on CPU, with
     NO ``reduce_atomic`` for the accumulation."""
     sdfg = condsum.to_sdfg(simplify=True)
-    canonicalize(sdfg,
-                 target='cpu',
-                 peel_limit=4,
-                 break_anti_dependence=True,
-                 interchange_carry_with_map=True,
-                 scatter_to_guarded_maps=True)
+    canonicalize(
+        sdfg,
+        target="cpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+    )
     code = _cpu_code(sdfg)
-    assert re.search(r'#pragma omp[^\n]*reduction\(', code), \
+    assert re.search(r"#pragma omp[^\n]*reduction\(", code), (
         "conditional sum should lower to an OpenMP reduction clause"
-    assert 'reduce_atomic' not in code, "the guarded atomic should be gone"
+    )
+    assert "reduce_atomic" not in code, "the guarded atomic should be gone"
 
 
 def test_condsum_cpu_value_preserving():
@@ -106,16 +110,17 @@ def test_condsum_cpu_value_preserving():
     expected = float(a[a > thresh].sum())
 
     sdfg = condsum.to_sdfg(simplify=True)
-    canonicalize(sdfg,
-                 target='cpu',
-                 peel_limit=4,
-                 break_anti_dependence=True,
-                 interchange_carry_with_map=True,
-                 scatter_to_guarded_maps=True)
+    canonicalize(
+        sdfg,
+        target="cpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+    )
     out = np.zeros(1)
     sdfg(a=a, thresh=thresh, out=out, N=n)
-    assert np.allclose(out[0], expected, rtol=1e-9, atol=1e-9, equal_nan=True), \
-        f"got {out[0]!r}, expected {expected!r}"
+    assert np.allclose(out[0], expected, rtol=1e-9, atol=1e-9, equal_nan=True), f"got {out[0]!r}, expected {expected!r}"
 
 
 def test_condsum_symbolic_threshold_cpu():
@@ -128,15 +133,17 @@ def test_condsum_symbolic_threshold_cpu():
     expected = float(a[a > k].sum())
 
     sdfg = condsum_sym.to_sdfg(simplify=True)
-    canonicalize(sdfg,
-                 target='cpu',
-                 peel_limit=4,
-                 break_anti_dependence=True,
-                 interchange_carry_with_map=True,
-                 scatter_to_guarded_maps=True)
+    canonicalize(
+        sdfg,
+        target="cpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+    )
     code = _cpu_code(sdfg)
-    assert re.search(r'#pragma omp[^\n]*reduction\(', code)
-    assert 'reduce_atomic' not in code
+    assert re.search(r"#pragma omp[^\n]*reduction\(", code)
+    assert "reduce_atomic" not in code
 
     out = np.zeros(1)
     free = {str(s) for s in sdfg.free_symbols}
@@ -157,15 +164,17 @@ def test_condprod_cpu_uses_multiplicative_identity():
     expected = float(np.prod(a[a > 1.0]))
 
     sdfg = condprod.to_sdfg(simplify=True)
-    canonicalize(sdfg,
-                 target='cpu',
-                 peel_limit=4,
-                 break_anti_dependence=True,
-                 interchange_carry_with_map=True,
-                 scatter_to_guarded_maps=True)
+    canonicalize(
+        sdfg,
+        target="cpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+    )
     code = _cpu_code(sdfg)
-    assert re.search(r'#pragma omp[^\n]*reduction\(\*', code), "expected a multiplicative reduction clause"
-    assert 'reduce_atomic' not in code
+    assert re.search(r"#pragma omp[^\n]*reduction\(\*", code), "expected a multiplicative reduction clause"
+    assert "reduce_atomic" not in code
 
     out = np.zeros(1)
     sdfg(a=a, out=out, N=n)
@@ -181,36 +190,41 @@ def test_condsum_gpu_emits_block_reduce():
     residual ``reduce_atomic`` is the per-block combine (identical to a plain
     reduction); assert the block reduce fired and no per-thread atomicAdd."""
     sdfg = condsum.to_sdfg(simplify=True)
-    canonicalize(sdfg,
-                 target='gpu',
-                 peel_limit=4,
-                 break_anti_dependence=True,
-                 interchange_carry_with_map=False,
-                 scatter_to_guarded_maps=True)
+    canonicalize(
+        sdfg,
+        target="gpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=False,
+        scatter_to_guarded_maps=True,
+    )
     code = _gpu_code(sdfg)
-    assert 'BlockReduce' in code, "conditional sum should lower to a GPU block reduce"
-    assert 'atomicAdd' not in code, "no per-passing-thread atomicAdd should remain"
+    assert "BlockReduce" in code, "conditional sum should lower to a GPU block reduce"
+    assert "atomicAdd" not in code, "no per-passing-thread atomicAdd should remain"
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('n', [1, 511, 512, 513, 100003])
+@pytest.mark.parametrize("n", [1, 511, 512, 513, 100003])
 def test_condsum_gpu_block_reduce_matches_numpy(n):
     """The block fold runs on the device: every thread, in range or not, reaches the barrier-using
     ``BlockReduce``, and one atomic per block commits -- across a partial trailing block too."""
     import cupy as cp
+
     sdfg = condsum.to_sdfg(simplify=True)
-    canonicalize(sdfg,
-                 target='gpu',
-                 peel_limit=4,
-                 break_anti_dependence=True,
-                 interchange_carry_with_map=False,
-                 scatter_to_guarded_maps=True)
-    assert 'BlockReduce' in _gpu_code(sdfg)
+    canonicalize(
+        sdfg,
+        target="gpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=False,
+        scatter_to_guarded_maps=True,
+    )
+    assert "BlockReduce" in _gpu_code(sdfg)
     a = np.random.default_rng(n).random(n)
     out = cp.zeros(1)
     sdfg(a=cp.asarray(a), thresh=0.5, out=out, N=n)
     assert np.isclose(float(out.get()[0]), a[a > 0.5].sum(), rtol=1e-12)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

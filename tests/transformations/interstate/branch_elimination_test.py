@@ -129,8 +129,9 @@ def weird_condition(a: dace.float64[N, N], b: dace.float64[N, N], ncldtop: dace.
 
 
 @dace.program
-def multi_state_branch_body(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N], d: dace.float64[N, N],
-                            s: dace.int64):
+def multi_state_branch_body(
+    a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N], d: dace.float64[N, N], s: dace.int64
+):
     for i, j in dace.map[0:N:1, 0:N:1]:
         if a[i, j] > 0.3:
             b[i + s, j + s] = 1.1
@@ -143,8 +144,9 @@ def multi_state_branch_body(a: dace.float64[N, N], b: dace.float64[N, N], c: dac
 
 
 @dace.program
-def nested_if(a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N], d: dace.float64[N, N],
-              s: dace.int64):
+def nested_if(
+    a: dace.float64[N, N], b: dace.float64[N, N], c: dace.float64[N, N], d: dace.float64[N, N], s: dace.int64
+):
     for i, j in dace.map[0:N:1, 0:N:1]:
         if a[i, j] > 0.3:
             if s == 0:
@@ -164,11 +166,12 @@ SN = dace.symbol("SN")
 
 
 @dace.program
-def condition_on_bounds(a: dace.float64[SN, SN], b: dace.float64[SN, SN], c: dace.float64[SN, SN],
-                        d: dace.float64[SN, SN], s: dace.int64):
+def condition_on_bounds(
+    a: dace.float64[SN, SN], b: dace.float64[SN, SN], c: dace.float64[SN, SN], d: dace.float64[SN, SN], s: dace.int64
+):
     for i in dace.map[0:2]:
         j = 1
-        c1 = (i < s)
+        c1 = i < s
         if c1:
             b[i, j] = 1.1 * c[i + 1, j] * a[i + 1, j]
             d[i, j] = 0.8 * c[i + 1, j] * a[i + 1, j]
@@ -392,8 +395,9 @@ def run_and_compare(
     c_copy_sdfg(**out_fused)
 
     branch_code = {n for n, g in copy_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
-    assert len(
-        branch_code) == num_expected_branches, f"(actual) len({branch_code}) != (desired) {num_expected_branches}"
+    assert len(branch_code) == num_expected_branches, (
+        f"(actual) len({branch_code}) != (desired) {num_expected_branches}"
+    )
 
     # Compare all arrays
     for name in arrays.keys():
@@ -449,14 +453,9 @@ def test_branch_dependent_value_write():
     b = np.random.rand(N, N)
     c = np.zeros((N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write,
-                    0,
-                    False,
-                    "branch_dependent_value_write_use_pass_false",
-                    a=a,
-                    b=b,
-                    c=c,
-                    d=d)
+    run_and_compare(
+        branch_dependent_value_write, 0, False, "branch_dependent_value_write_use_pass_false", a=a, b=b, c=c, d=d
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -473,14 +472,16 @@ def test_branch_dependent_value_write_two():
     b = np.zeros((N, N))
     c = np.zeros((N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write_two,
-                    0,
-                    False,
-                    "branch_dependent_value_write_two_use_pass_false",
-                    a=a,
-                    b=b,
-                    c=c,
-                    d=d)
+    run_and_compare(
+        branch_dependent_value_write_two,
+        0,
+        False,
+        "branch_dependent_value_write_two_use_pass_false",
+        a=a,
+        b=b,
+        c=c,
+        d=d,
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -488,13 +489,15 @@ def test_branch_dependent_value_write_single_branch():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.zeros((N, N))
-    run_and_compare(branch_dependent_value_write_single_branch,
-                    0,
-                    False,
-                    "branch_dependent_value_write_single_branch_use_pass_false",
-                    a=a,
-                    b=b,
-                    d=d)
+    run_and_compare(
+        branch_dependent_value_write_single_branch,
+        0,
+        False,
+        "branch_dependent_value_write_single_branch_use_pass_false",
+        a=a,
+        b=b,
+        d=d,
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -514,16 +517,18 @@ def test_multi_state_branch_body(use_pass_flag):
     b = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.zeros((N, N))
-    s = np.zeros((1, )).astype(np.int64)
-    run_and_compare(multi_state_branch_body,
-                    0 if use_pass_flag else 1,
-                    use_pass_flag,
-                    f"multistate_branch_body_{str(use_pass_flag).lower()}",
-                    a=a,
-                    b=b,
-                    c=c,
-                    d=d,
-                    s=s[0])
+    s = np.zeros((1,)).astype(np.int64)
+    run_and_compare(
+        multi_state_branch_body,
+        0 if use_pass_flag else 1,
+        use_pass_flag,
+        f"multistate_branch_body_{str(use_pass_flag).lower()}",
+        a=a,
+        b=b,
+        c=c,
+        d=d,
+        s=s[0],
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -532,7 +537,7 @@ def test_nested_if():
     b = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
-    s = np.zeros((1, )).astype(np.int64)
+    s = np.zeros((1,)).astype(np.int64)
     run_and_compare(nested_if, 0, False, "nested_if_use_pass_false", a=a, b=b, c=c, d=d, s=s[0])
 
 
@@ -572,7 +577,7 @@ def test_nested_if_two():
 def test_tasklets_in_if():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
-    c = np.zeros((1, ))
+    c = np.zeros((1,))
     d = np.zeros((N, N))
     run_and_compare(tasklets_in_if, 0, False, "tasklets_in_if_use_passfalse", a=a, b=b, d=d, c=c[0])
 
@@ -582,13 +587,15 @@ def test_branch_dependent_value_write_single_branch_nonzero_write():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
-    run_and_compare(branch_dependent_value_write_single_branch_nonzero_write,
-                    0,
-                    False,
-                    "branch_dependent_value_write_single_branch_nonzero_write_use_pass_false",
-                    a=a,
-                    b=b,
-                    d=d)
+    run_and_compare(
+        branch_dependent_value_write_single_branch_nonzero_write,
+        0,
+        False,
+        "branch_dependent_value_write_single_branch_nonzero_write_use_pass_false",
+        a=a,
+        b=b,
+        d=d,
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -596,13 +603,15 @@ def test_branch_dependent_value_write_with_transient_reuse():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 3.0], size=(N, N))
     c = np.random.choice([0.001, 3.0], size=(N, N))
-    run_and_compare(branch_dependent_value_write_with_transient_reuse,
-                    0,
-                    True,
-                    f"branch_dependent_value_write_with_transient_reuse",
-                    a=a,
-                    b=b,
-                    c=c)
+    run_and_compare(
+        branch_dependent_value_write_with_transient_reuse,
+        0,
+        True,
+        f"branch_dependent_value_write_with_transient_reuse",
+        a=a,
+        b=b,
+        c=c,
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -610,7 +619,9 @@ def test_single_branch_connectors():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
-    c = np.random.randn(1, )
+    c = np.random.randn(
+        1,
+    )
 
     sdfg = parsed_simplified(single_branch_connectors)
     sdfg.validate()
@@ -644,30 +655,20 @@ def test_single_branch_connectors():
 @temporarily_disable_autoopt_and_serialization
 def test_disjoint_subsets():
     if_cond_58 = np.array([1], dtype=np.int32)
-    A = np.random.choice([0.001, 3.0], size=(N, ))
+    A = np.random.choice([0.001, 3.0], size=(N,))
     B = np.random.randn(N, 3, 3)
     C = np.random.randn(N, 3, 3)
     E = np.random.choice([0.001, 3.0], size=(N, 3, 3))
-    run_and_compare(disjoint_subsets,
-                    0,
-                    False,
-                    "disjoint_subsets_use_pass_false",
-                    A=A,
-                    B=B,
-                    C=C,
-                    E=E,
-                    if_cond_58=if_cond_58[0])
+    run_and_compare(
+        disjoint_subsets, 0, False, "disjoint_subsets_use_pass_false", A=A, B=B, C=C, E=E, if_cond_58=if_cond_58[0]
+    )
 
 
 @dace.program
 def _multi_state_nested_if(
-    A: dace.float64[
-        N,
-    ],
+    A: dace.float64[N,],
     B: dace.float64[N, 3, 3],
-    C: dace.float64[
-        N,
-    ],
+    C: dace.float64[N,],
     if_cond_1: dace.float64,
     offset: dace.int64,
 ):
@@ -731,17 +732,19 @@ def test_try_clean():
 
     if_cond_1 = np.array([1.2], dtype=np.float64)
     offset = np.array([0], dtype=np.int64)
-    A = np.random.choice([0.001, 3.0], size=(N, ))
+    A = np.random.choice([0.001, 3.0], size=(N,))
     B = np.random.randn(N, 3, 3)
-    C = np.random.choice([0.001, 3.0], size=(N, ))
-    run_and_compare_sdfg(sdfg1,
-                         permissive=False,
-                         sdfg_name=f"multi_state_nested_if_sdfg",
-                         A=A,
-                         B=B,
-                         C=C,
-                         if_cond_1=if_cond_1[0],
-                         offset=offset[0])
+    C = np.random.choice([0.001, 3.0], size=(N,))
+    run_and_compare_sdfg(
+        sdfg1,
+        permissive=False,
+        sdfg_name=f"multi_state_nested_if_sdfg",
+        A=A,
+        B=B,
+        C=C,
+        if_cond_1=if_cond_1[0],
+        offset=offset[0],
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -759,21 +762,23 @@ def test_try_clean_as_pass():
 
     if_cond_1 = np.array([1.2], dtype=np.float64)
     offset = np.array([0], dtype=np.int64)
-    A = np.random.choice([0.001, 3.0], size=(N, ))
+    A = np.random.choice([0.001, 3.0], size=(N,))
     B = np.random.randn(N, 3, 3)
-    C = np.random.choice([0.001, 3.0], size=(N, ))
-    run_and_compare_sdfg(sdfg,
-                         permissive=False,
-                         sdfg_name=f"multi_state_nested_if_sdfg_try_clean_variant",
-                         A=A,
-                         B=B,
-                         C=C,
-                         if_cond_1=if_cond_1[0],
-                         offset=offset[0])
+    C = np.random.choice([0.001, 3.0], size=(N,))
+    run_and_compare_sdfg(
+        sdfg,
+        permissive=False,
+        sdfg_name=f"multi_state_nested_if_sdfg_try_clean_variant",
+        A=A,
+        B=B,
+        C=C,
+        if_cond_1=if_cond_1[0],
+        offset=offset[0],
+    )
 
 
 def _get_sdfg_with_interstate_array_condition():
-    sdfg = dace.SDFG('sd1_get_sdfg_with_interstate_array_condition')
+    sdfg = dace.SDFG("sd1_get_sdfg_with_interstate_array_condition")
     sdfg.add_array("llindex", (4, 4, 4), dtype=dace.int64)
     sdfg.add_array("zratio", (4, 4, 4), dtype=dace.float64)
     sdfg.add_array("zsolqa", (4, 4, 4), dtype=dace.float64)
@@ -885,16 +890,22 @@ def test_if_over_map():
     xform = branch_elimination.BranchElimination()
     xform.conditional = cblocks.pop()
     xform.parent_nsdfg_state = None
-    assert xform.can_be_applied(graph=xform.conditional.parent_graph,
-                                expr_index=0,
-                                sdfg=xform.conditional.parent_graph.sdfg) is False
+    assert (
+        xform.can_be_applied(
+            graph=xform.conditional.parent_graph, expr_index=0, sdfg=xform.conditional.parent_graph.sdfg
+        )
+        is False
+    )
 
     xform = branch_elimination.BranchElimination()
     xform.conditional = inner_cblocks.pop()
     xform.parent_nsdfg_state = _find_state(sdfg, xform.conditional.sdfg.parent_nsdfg_node)
-    assert xform.can_be_applied(graph=xform.conditional.parent_graph,
-                                expr_index=0,
-                                sdfg=xform.conditional.parent_graph.sdfg) is True
+    assert (
+        xform.can_be_applied(
+            graph=xform.conditional.parent_graph, expr_index=0, sdfg=xform.conditional.parent_graph.sdfg
+        )
+        is True
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -912,21 +923,30 @@ def test_if_over_map_with_top_level_tasklets():
     xform = branch_elimination.BranchElimination()
     xform.conditional = cblocks.pop()
     xform.parent_nsdfg_state = None
-    assert xform.can_be_applied(graph=xform.conditional.parent_graph,
-                                expr_index=0,
-                                sdfg=xform.conditional.parent_graph.sdfg) is False
+    assert (
+        xform.can_be_applied(
+            graph=xform.conditional.parent_graph, expr_index=0, sdfg=xform.conditional.parent_graph.sdfg
+        )
+        is False
+    )
 
     xform = branch_elimination.BranchElimination()
     xform.conditional = inner_cblocks.pop()
     xform.parent_nsdfg_state = None
-    assert xform.can_be_applied(graph=xform.conditional.parent_graph,
-                                expr_index=0,
-                                sdfg=xform.conditional.parent_graph.sdfg) is False
+    assert (
+        xform.can_be_applied(
+            graph=xform.conditional.parent_graph, expr_index=0, sdfg=xform.conditional.parent_graph.sdfg
+        )
+        is False
+    )
 
     xform.parent_nsdfg_state = _find_state(sdfg, xform.conditional.sdfg.parent_nsdfg_node)
-    assert xform.can_be_applied(graph=xform.conditional.parent_graph,
-                                expr_index=0,
-                                sdfg=xform.conditional.parent_graph.sdfg) is True
+    assert (
+        xform.can_be_applied(
+            graph=xform.conditional.parent_graph, expr_index=0, sdfg=xform.conditional.parent_graph.sdfg
+        )
+        is True
+    )
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -942,29 +962,33 @@ def test_can_be_applied_parameters_on_nested_sdfg():
     assert len(inner_cblocks) == 2
 
     full_inner_cblocks = {
-        n
-        for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock) and g is not None and g != g.sdfg
+        n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock) and g is not None and g != g.sdfg
     }
     assert len(full_inner_cblocks) == 1
 
     upper_inner_cblocks = {
-        n
-        for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock) and g is not None and g == g.sdfg
+        n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock) and g is not None and g == g.sdfg
     }
     assert len(upper_inner_cblocks) == 1
 
     xform = branch_elimination.BranchElimination()
     xform.conditional = full_inner_cblocks.pop()
 
-    assert xform.can_be_applied(graph=xform.conditional.parent_graph,
-                                expr_index=0,
-                                sdfg=xform.conditional.parent_graph.sdfg) is False
+    assert (
+        xform.can_be_applied(
+            graph=xform.conditional.parent_graph, expr_index=0, sdfg=xform.conditional.parent_graph.sdfg
+        )
+        is False
+    )
 
     xform.parent_nsdfg_state = _find_state(sdfg, xform.conditional.sdfg.parent_nsdfg_node)
 
-    assert xform.can_be_applied(graph=xform.conditional.parent_graph,
-                                expr_index=0,
-                                sdfg=xform.conditional.parent_graph.sdfg) is True
+    assert (
+        xform.can_be_applied(
+            graph=xform.conditional.parent_graph, expr_index=0, sdfg=xform.conditional.parent_graph.sdfg
+        )
+        is True
+    )
 
 
 @dace.program
@@ -998,7 +1022,9 @@ def test_non_trivial_subset_after_combine_tasklet():
     C = np.random.choice([0.001, 5.0], size=(N, N))
     D = np.random.choice([0.001, 5.0], size=(N, N))
     E = np.random.choice([0.001, 5.0], size=(N, N))
-    F = np.random.randn(1, )
+    F = np.random.randn(
+        1,
+    )
     G = np.random.choice([0.001, 5.0], size=(N, N))
     run_and_compare(
         non_trivial_subset_after_combine_tasklet,
@@ -1057,9 +1083,12 @@ def test_split_on_disjoint_subsets():
     A = np.random.choice([0.001, 5.0], size=(N, N, 2))
     B = np.random.choice([0.001, 5.0], size=(N, N))
     C = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     sdfg = parsed_simplified(split_on_disjoint_subsets)
 
     # Is disjoit subset needs to return true
@@ -1101,9 +1130,12 @@ def test_split_on_disjoint_subsets_nested():
     A = np.random.choice([0.001, 5.0], size=(N, N, 2))
     B = np.random.choice([0.001, 5.0], size=(N, N))
     C = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     sdfg = parsed_simplified(split_on_disjoint_subsets_nested)
 
     # Is disjoit subset needs to return true
@@ -1145,22 +1177,22 @@ def test_split_branches_substitutes_the_assignment_reaching_the_conditional():
     ``apply`` does, so both halves are written over the assigned expression and not over the symbol it was
     assigned to. Regression: the conditional itself was passed as the graph, which has no in-edges for itself,
     so the lookup found nothing and the halves kept the raw symbol."""
-    sdfg = dace.SDFG('split_branches_reaching_assignment')
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_symbol('flag', dace.int64)
-    sdfg.add_array('a', [2], dace.float64)
-    sdfg.add_array('b', [2], dace.float64)
-    start = sdfg.add_state('start', is_start_block=True)
-    cblock = ConditionalBlock('cblock', sdfg=sdfg, parent=sdfg)
+    sdfg = dace.SDFG("split_branches_reaching_assignment")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_symbol("flag", dace.int64)
+    sdfg.add_array("a", [2], dace.float64)
+    sdfg.add_array("b", [2], dace.float64)
+    start = sdfg.add_state("start", is_start_block=True)
+    cblock = ConditionalBlock("cblock", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cblock)
-    sdfg.add_edge(start, cblock, InterstateEdge(assignments={'flag': 'N > 4'}))
-    for cond, name in ((CodeBlock('flag'), 'a'), (None, 'b')):
-        body = ControlFlowRegion(f'body_{name}', sdfg=sdfg)
-        state = body.add_state(f'write_{name}', is_start_block=True)
-        tasklet = state.add_tasklet(f'set_{name}', set(), {'o'}, 'o = 1.0')
-        state.add_edge(tasklet, 'o', state.add_access(name), None, dace.Memlet(f'{name}[0]'))
+    sdfg.add_edge(start, cblock, InterstateEdge(assignments={"flag": "N > 4"}))
+    for cond, name in ((CodeBlock("flag"), "a"), (None, "b")):
+        body = ControlFlowRegion(f"body_{name}", sdfg=sdfg)
+        state = body.add_state(f"write_{name}", is_start_block=True)
+        tasklet = state.add_tasklet(f"set_{name}", set(), {"o"}, "o = 1.0")
+        state.add_edge(tasklet, "o", state.add_access(name), None, dace.Memlet(f"{name}[0]"))
         cblock.add_branch(cond, body)
-    end = sdfg.add_state('end')
+    end = sdfg.add_state("end")
     sdfg.add_edge(cblock, end, InterstateEdge())
 
     xform = branch_elimination.BranchElimination()
@@ -1168,8 +1200,8 @@ def test_split_branches_substitutes_the_assignment_reaching_the_conditional():
     first_if, second_if = xform._split_branches(cblock.parent_graph, cblock)
 
     sdfg.validate()
-    assert [cond.as_string for cond, _ in first_if.branches] == ['(N > 4)']
-    assert [cond.as_string for cond, _ in second_if.branches] == ['((N > 4) == 0)']
+    assert [cond.as_string for cond, _ in first_if.branches] == ["(N > 4)"]
+    assert [cond.as_string for cond, _ in second_if.branches] == ["((N > 4) == 0)"]
 
 
 @dace.program
@@ -1210,9 +1242,12 @@ def write_to_transient_two(
 def test_write_to_transient():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     run_and_compare(
         write_to_transient,
         0,
@@ -1228,9 +1263,12 @@ def test_write_to_transient():
 def test_write_to_transient_two():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     run_and_compare(
         write_to_transient_two,
         0,
@@ -1246,9 +1284,12 @@ def test_write_to_transient_two():
 def test_double_empty_state():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     sdfg = parsed_simplified(write_to_transient_two)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
@@ -1256,9 +1297,9 @@ def test_double_empty_state():
     sdfg.add_state_before(sdfg.start_block, label=f"empty_prepadding_{sdfg.label}", is_start_block=True)
 
     for nsdfg, parent_state in nested_sdfgs:
-        nsdfg.sdfg.add_state_before(nsdfg.sdfg.start_block,
-                                    label=f"empty_prepardding_{nsdfg.sdfg.label}",
-                                    is_start_block=True)
+        nsdfg.sdfg.add_state_before(
+            nsdfg.sdfg.start_block, label=f"empty_prepardding_{nsdfg.sdfg.label}", is_start_block=True
+        )
 
     run_and_compare_sdfg(
         sdfg,
@@ -1293,9 +1334,12 @@ def test_complicated_pattern_for_manual_clean_up_one():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
     C = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     sdfg = parsed_simplified(complicated_pattern_for_manual_clean_up_one)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
@@ -1307,9 +1351,17 @@ def test_complicated_pattern_for_manual_clean_up_one():
     scalar_names = {
         arr_name
         for arr_name, arr in sdfg.arrays.items()
-        if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and (arr.shape == [
-            1,
-        ] or arr.shape == (1, )))
+        if isinstance(arr, dace.data.Scalar)
+        or (
+            isinstance(arr, dace.data.Array)
+            and (
+                arr.shape
+                == [
+                    1,
+                ]
+                or arr.shape == (1,)
+            )
+        )
     }.difference({"zalfaw"})
     ssp.ignore = scalar_names
     ssp.apply_pass(sdfg, {})
@@ -1321,9 +1373,17 @@ def test_complicated_pattern_for_manual_clean_up_one():
         scalar_names = {
             arr_name
             for arr_name, arr in nsdfg.sdfg.arrays.items()
-            if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and (arr.shape == [
-                1,
-            ] or arr.shape == (1, )))
+            if isinstance(arr, dace.data.Scalar)
+            or (
+                isinstance(arr, dace.data.Array)
+                and (
+                    arr.shape
+                    == [
+                        1,
+                    ]
+                    or arr.shape == (1,)
+                )
+            )
         }.difference({"zalfaw"})
         ssp.ignore = scalar_names
         ssp.apply_pass(nsdfg.sdfg, {})
@@ -1339,7 +1399,8 @@ def test_complicated_pattern_for_manual_clean_up_one():
                 assert len(cb.branches) == 2
                 # Clean-up should be able to catch this pattern
                 xform.demote_branch_only_symbols_appearing_only_a_single_branch_to_scalars_and_try_fuse(
-                    graph=cb.parent_graph, sdfg=cb.sdfg)
+                    graph=cb.parent_graph, sdfg=cb.sdfg
+                )
                 (cond0, body0), (cond1, body1) = cb.branches[0:2]
                 assert len(body0.nodes()) == 1
                 assert len(body1.nodes()) == 1
@@ -1352,9 +1413,12 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_one():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
     C = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     sdfg = parsed_simplified(complicated_pattern_for_manual_clean_up_one)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
@@ -1366,9 +1430,17 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_one():
     scalar_names = {
         arr_name
         for arr_name, arr in sdfg.arrays.items()
-        if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and (arr.shape == [
-            1,
-        ] or arr.shape == (1, )))
+        if isinstance(arr, dace.data.Scalar)
+        or (
+            isinstance(arr, dace.data.Array)
+            and (
+                arr.shape
+                == [
+                    1,
+                ]
+                or arr.shape == (1,)
+            )
+        )
     }.difference({"zalfaw"})
     ssp.ignore = scalar_names
     ssp.apply_pass(sdfg, {})
@@ -1380,20 +1452,30 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_one():
         scalar_names = {
             arr_name
             for arr_name, arr in nsdfg.sdfg.arrays.items()
-            if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and (arr.shape == [
-                1,
-            ] or arr.shape == (1, )))
+            if isinstance(arr, dace.data.Scalar)
+            or (
+                isinstance(arr, dace.data.Array)
+                and (
+                    arr.shape
+                    == [
+                        1,
+                    ]
+                    or arr.shape == (1,)
+                )
+            )
         }.difference({"zalfaw"})
         ssp.ignore = scalar_names
         ssp.apply_pass(nsdfg.sdfg, {})
 
-    transformed_sdfg = run_and_compare_sdfg(sdfg,
-                                            permissive=True,
-                                            sdfg_name="try_clean_on_complicated_pattern_for_manual_cleanup_one",
-                                            a=A,
-                                            b=B,
-                                            c=C,
-                                            d=D[0])
+    transformed_sdfg = run_and_compare_sdfg(
+        sdfg,
+        permissive=True,
+        sdfg_name="try_clean_on_complicated_pattern_for_manual_cleanup_one",
+        a=A,
+        b=B,
+        c=C,
+        d=D[0],
+    )
 
     branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
@@ -1426,12 +1508,18 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_two():
     A = np.random.choice([0.001, 5.0], size=(N, N))
     B = np.random.choice([0.001, 5.0], size=(N, N))
     C = np.random.choice([0.001, 5.0], size=(N, N))
-    D = np.ones([
-        1,
-    ], dtype=np.float64)
-    E = np.ones([
-        1,
-    ], dtype=np.float64)
+    D = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
+    E = np.ones(
+        [
+            1,
+        ],
+        dtype=np.float64,
+    )
     sdfg = parsed_simplified(complicated_pattern_for_manual_clean_up_two)
 
     nested_sdfgs = {(n, g) for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)}
@@ -1443,9 +1531,17 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_two():
     scalar_names = {
         arr_name
         for arr_name, arr in sdfg.arrays.items()
-        if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and (arr.shape == [
-            1,
-        ] or arr.shape == (1, )))
+        if isinstance(arr, dace.data.Scalar)
+        or (
+            isinstance(arr, dace.data.Array)
+            and (
+                arr.shape
+                == [
+                    1,
+                ]
+                or arr.shape == (1,)
+            )
+        )
     }.difference({"zlcrit"})
     ssp.ignore = scalar_names
     ssp.apply_pass(sdfg, {})
@@ -1457,30 +1553,38 @@ def test_try_clean_on_complicated_pattern_for_manual_clean_up_two():
         scalar_names = {
             arr_name
             for arr_name, arr in nsdfg.sdfg.arrays.items()
-            if isinstance(arr, dace.data.Scalar) or (isinstance(arr, dace.data.Array) and (arr.shape == [
-                1,
-            ] or arr.shape == (1, )))
+            if isinstance(arr, dace.data.Scalar)
+            or (
+                isinstance(arr, dace.data.Array)
+                and (
+                    arr.shape
+                    == [
+                        1,
+                    ]
+                    or arr.shape == (1,)
+                )
+            )
         }.difference({"zlcrit"})
         ssp.ignore = scalar_names
         ssp.apply_pass(nsdfg.sdfg, {})
 
-    transformed_sdfg = run_and_compare_sdfg(sdfg,
-                                            permissive=True,
-                                            sdfg_name="try_clean_on_complicated_pattern_for_manual_cleanup_two",
-                                            a=A,
-                                            b=B,
-                                            c=C,
-                                            d=D[0],
-                                            e=E[0])
+    transformed_sdfg = run_and_compare_sdfg(
+        sdfg,
+        permissive=True,
+        sdfg_name="try_clean_on_complicated_pattern_for_manual_cleanup_two",
+        a=A,
+        b=B,
+        c=C,
+        d=D[0],
+        e=E[0],
+    )
 
     branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
 
 
 @dace.program
-def single_assignment(a: dace.float64[
-    N,
-], _if_cond_1: dace.float64):
+def single_assignment(a: dace.float64[N,], _if_cond_1: dace.float64):
     for i in dace.map[0:N]:
         if _if_cond_1 > 0.0:
             a[i] = 0.0
@@ -1497,26 +1601,26 @@ def single_assignment_cond_from_scalar(a: dace.float64[512]):
 @temporarily_disable_autoopt_and_serialization
 def test_single_assignment():
     if_cond_1 = np.array([1], dtype=np.float64)
-    A = np.ones(shape=(N, ), dtype=np.float64)
+    A = np.ones(shape=(N,), dtype=np.float64)
     run_and_compare(single_assignment, 0, True, "single_assignment", a=A, _if_cond_1=if_cond_1[0])
 
 
 @temporarily_disable_autoopt_and_serialization
 def test_single_assignment_cond_from_scalar():
-    A = np.ones(shape=(512, ), dtype=np.float64)
+    A = np.ones(shape=(512,), dtype=np.float64)
     before = parsed_simplified(single_assignment_cond_from_scalar)
     before.compile()
     run_and_compare(single_assignment_cond_from_scalar, 0, True, "single_assignment_cond_from_scalar", a=A)
 
 
 def _get_sdfg_with_condition_from_transient_scalar() -> dace.SDFG:
-    sdfg = dace.SDFG('sd1_get_sdfg_with_condition_from_transient_scalar')
+    sdfg = dace.SDFG("sd1_get_sdfg_with_condition_from_transient_scalar")
 
     sdfg.add_scalar("zacond_0", transient=True, dtype=dace.float64)
     sdfg.add_scalar("_if_cond_41", transient=True, dtype=dace.float64)
-    sdfg.add_array("zsolac", (N, ), dace.float64)
-    sdfg.add_array("zlcond2", (N, ), dace.float64)
-    sdfg.add_array("za", (N, ), dace.float64)
+    sdfg.add_array("zsolac", (N,), dace.float64)
+    sdfg.add_array("zlcond2", (N,), dace.float64)
+    sdfg.add_array("za", (N,), dace.float64)
     sdfg.add_symbol("_if_cond_42", dace.float64)
 
     s1 = sdfg.add_state("s1", is_start_block=True)
@@ -1538,10 +1642,9 @@ def _get_sdfg_with_condition_from_transient_scalar() -> dace.SDFG:
     # Calculate zacond_1 in s2
     # Calculate zsolac using zacond_0
 
-    t1 = s1.add_tasklet(name="t1",
-                        inputs={"_in1", "_in2"},
-                        outputs={"_out"},
-                        code="_out = ((_in1 < 0.3) and (_in2 < 0.5))")
+    t1 = s1.add_tasklet(
+        name="t1", inputs={"_in1", "_in2"}, outputs={"_out"}, code="_out = ((_in1 < 0.3) and (_in2 < 0.5))"
+    )
     s1.add_edge(s1.add_access("za"), None, t1, "_in1", dace.memlet.Memlet("za[4]"))
     s1.add_edge(s1.add_access("zlcond2"), None, t1, "_in2", dace.memlet.Memlet("zlcond2[4]"))
     s1.add_edge(t1, "_out", s1.add_access("_if_cond_41"), None, dace.memlet.Memlet("_if_cond_41[0]"))
@@ -1566,26 +1669,28 @@ def _get_sdfg_with_condition_from_transient_scalar() -> dace.SDFG:
 
 @temporarily_disable_autoopt_and_serialization
 def test_condition_from_transient_scalar():
-    zsolac = np.random.choice([8.0, 11.0], size=(N, ))
-    zlcond2 = np.random.choice([8.0, 11.0], size=(N, ))
-    za = np.random.choice([8.0, 11.0], size=(N, ))
-    _if_cond_42 = np.random.choice([8.0, 11.0], size=(1, ))
+    zsolac = np.random.choice([8.0, 11.0], size=(N,))
+    zlcond2 = np.random.choice([8.0, 11.0], size=(N,))
+    za = np.random.choice([8.0, 11.0], size=(N,))
+    _if_cond_42 = np.random.choice([8.0, 11.0], size=(1,))
     sdfg = _get_sdfg_with_condition_from_transient_scalar()
 
-    transformed_sdfg = run_and_compare_sdfg(sdfg,
-                                            permissive=False,
-                                            sdfg_name="condition_from_transient_scalar",
-                                            zsolac=zsolac,
-                                            zlcond2=zlcond2,
-                                            za=za,
-                                            _if_cond_42=_if_cond_42[0])
+    transformed_sdfg = run_and_compare_sdfg(
+        sdfg,
+        permissive=False,
+        sdfg_name="condition_from_transient_scalar",
+        zsolac=zsolac,
+        zlcond2=zlcond2,
+        za=za,
+        _if_cond_42=_if_cond_42[0],
+    )
 
     branch_code = {n for n, g in transformed_sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     assert len(branch_code) == 0, f"(actual) len({branch_code}) != (desired) {0}"
 
 
 def _get_disjoint_chain_sdfg() -> dace.SDFG:
-    sd1 = dace.SDFG('disjoint_chain_get_disjoint_chain_sdfg')
+    sd1 = dace.SDFG("disjoint_chain_get_disjoint_chain_sdfg")
     cb1 = ConditionalBlock("cond_if_cond_58", sdfg=sd1, parent=sd1)
     ss1 = sd1.add_state(label="pre", is_start_block=True)
     sd1.add_node(cb1, is_start_block=False)
@@ -1605,20 +1710,27 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
     )
     for arr_name, shape in [
         ("zsolqa", (N, 5, 5)),
-        ("zrainaut", (N, )),
-        ("zrainacc", (N, )),
-        ("ztp1", (N, )),
+        ("zrainaut", (N,)),
+        ("zrainacc", (N,)),
+        ("ztp1", (N,)),
     ]:
         sd1.add_array(arr_name, shape, dace.float64)
     sd1.add_scalar("rtt", dace.float64)
     sd1.add_symbol("_if_cond_58", dace.float64)
     sd1.add_symbol("_for_it_52", dace.int64)
-    sd1.add_edge(src=ss1, dst=cb1, data=InterstateEdge(assignments={
-        "_if_cond_58": "ztp1[_for_it_52] <= rtt",
-    }, ))
+    sd1.add_edge(
+        src=ss1,
+        dst=cb1,
+        data=InterstateEdge(
+            assignments={
+                "_if_cond_58": "ztp1[_for_it_52] <= rtt",
+            },
+        ),
+    )
 
     for state, d1_access_str, zsolqa_access_str, zsolqa_access_str_rev in [
-        (s1, "_for_it_52", "_for_it_52,3,0", "_for_it_52,0,3"), (s2, "_for_it_52", "_for_it_52,2,0", "_for_it_52,0,2")
+        (s1, "_for_it_52", "_for_it_52,3,0", "_for_it_52,0,3"),
+        (s2, "_for_it_52", "_for_it_52,2,0", "_for_it_52,0,2"),
     ]:
         zrainaut = state.add_access("zrainaut")
         zrainacc = state.add_access("zrainacc")
@@ -1627,14 +1739,30 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
         zsolqa3 = state.add_access("zsolqa")
         zsolqa4 = state.add_access("zsolqa")
         zsolqa5 = state.add_access("zsolqa")
-        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate([
-            ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
-            ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
-            ("_out = (-_in1) + _in2", zrainaut, d1_access_str, zsolqa3, zsolqa_access_str_rev, zsolqa4,
-             zsolqa_access_str_rev),
-            ("_out = (-_in1) + _in2", zrainacc, d1_access_str, zsolqa4, zsolqa_access_str_rev, zsolqa5,
-             zsolqa_access_str_rev),
-        ]):
+        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate(
+            [
+                ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
+                ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
+                (
+                    "_out = (-_in1) + _in2",
+                    zrainaut,
+                    d1_access_str,
+                    zsolqa3,
+                    zsolqa_access_str_rev,
+                    zsolqa4,
+                    zsolqa_access_str_rev,
+                ),
+                (
+                    "_out = (-_in1) + _in2",
+                    zrainacc,
+                    d1_access_str,
+                    zsolqa4,
+                    zsolqa_access_str_rev,
+                    zsolqa5,
+                    zsolqa_access_str_rev,
+                ),
+            ]
+        ):
             t1 = state.add_tasklet("t1", {"_in1", "_in2"}, {"_out"}, tasklet_code)
             state.add_edge(in1, None, t1, "_in1", dace.memlet.Memlet(f"{in1.data}[{instr1}]"))
             state.add_edge(in2, None, t1, "_in2", dace.memlet.Memlet(f"{in2.data}[{instr2}]"))
@@ -1642,31 +1770,45 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
 
     sd1.validate()
 
-    sd2 = dace.SDFG('sd2_get_disjoint_chain_sdfg')
+    sd2 = dace.SDFG("sd2_get_disjoint_chain_sdfg")
     p_s1 = sd2.add_state("p_s1", is_start_block=True)
 
     map_entry, map_exit = p_s1.add_map(name="map1", ndrange={"_for_it_52": dace.subsets.Range([(0, N - 1, 1)])})
-    nsdfg = p_s1.add_nested_sdfg(sdfg=sd1,
-                                 inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
-                                 outputs={"zsolqa"},
-                                 symbol_mapping={"_for_it_52": "_for_it_52"})
-    for arr_name, shape in [("zsolqa", (N, 5, 5)), ("zrainaut", (N, )), ("zrainacc", (N, )), ("ztp1", (N, ))]:
+    nsdfg = p_s1.add_nested_sdfg(
+        sdfg=sd1,
+        inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
+        outputs={"zsolqa"},
+        symbol_mapping={"_for_it_52": "_for_it_52"},
+    )
+    for arr_name, shape in [("zsolqa", (N, 5, 5)), ("zrainaut", (N,)), ("zrainacc", (N,)), ("ztp1", (N,))]:
         sd2.add_array(arr_name, shape, dace.float64)
     sd2.add_scalar("rtt", dace.float64)
     for input_name in {"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"}:
         a = p_s1.add_access(input_name)
-        p_s1.add_edge(a, None, map_entry, f"IN_{input_name}",
-                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
-        p_s1.add_edge(map_entry, f"OUT_{input_name}", nsdfg, input_name,
-                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
+        p_s1.add_edge(
+            a, None, map_entry, f"IN_{input_name}", dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name])
+        )
+        p_s1.add_edge(
+            map_entry,
+            f"OUT_{input_name}",
+            nsdfg,
+            input_name,
+            dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]),
+        )
         map_entry.add_in_connector(f"IN_{input_name}")
         map_entry.add_out_connector(f"OUT_{input_name}")
     for output_name in {"zsolqa"}:
         a = p_s1.add_access(output_name)
-        p_s1.add_edge(map_exit, f"OUT_{output_name}", a, None,
-                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
-        p_s1.add_edge(nsdfg, output_name, map_exit, f"IN_{output_name}",
-                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
+        p_s1.add_edge(
+            map_exit, f"OUT_{output_name}", a, None, dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name])
+        )
+        p_s1.add_edge(
+            nsdfg,
+            output_name,
+            map_exit,
+            f"IN_{output_name}",
+            dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]),
+        )
         map_exit.add_in_connector(f"IN_{output_name}")
         map_exit.add_out_connector(f"OUT_{output_name}")
 
@@ -1684,12 +1826,12 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
 @temporarily_disable_autoopt_and_serialization
 def test_disjoint_chain_split_branch_only(rtt_val):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
-    sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_{str(rtt_val).replace('.','_')}"
+    sdfg.name = f"disjoint_chain_split_branch_only_rtt_val_{str(rtt_val).replace('.', '_')}"
     zsolqa = np.random.choice([0.001, 5.0], size=(N, 5, 5))
-    zrainacc = np.random.choice([0.001, 5.0], size=(N, ))
-    zrainaut = np.random.choice([0.001, 5.0], size=(N, ))
-    ztp1 = np.random.choice([3.5, 5.0], size=(N, ))
-    rtt = np.random.choice([rtt_val], size=(1, ))
+    zrainacc = np.random.choice([0.001, 5.0], size=(N,))
+    zrainaut = np.random.choice([0.001, 5.0], size=(N,))
+    ztp1 = np.random.choice([3.5, 5.0], size=(N,))
+    rtt = np.random.choice([rtt_val], size=(1,))
 
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.name = sdfg.name + "_branch_eliminated"
@@ -1721,19 +1863,21 @@ def test_disjoint_chain_split_branch_only(rtt_val):
 def test_disjoint_chain(rtt_val):
     sdfg, _ = _get_disjoint_chain_sdfg()
     zsolqa = np.random.choice([0.001, 5.0], size=(N, 5, 5))
-    zrainacc = np.random.choice([0.001, 5.0], size=(N, ))
-    zrainaut = np.random.choice([0.001, 5.0], size=(N, ))
-    ztp1 = np.random.choice([3.5, 5.0], size=(N, ))
-    rtt = np.random.choice([rtt_val], size=(1, ))
+    zrainacc = np.random.choice([0.001, 5.0], size=(N,))
+    zrainaut = np.random.choice([0.001, 5.0], size=(N,))
+    ztp1 = np.random.choice([3.5, 5.0], size=(N,))
+    rtt = np.random.choice([rtt_val], size=(1,))
 
-    run_and_compare_sdfg(sdfg,
-                         permissive=False,
-                         sdfg_name=f"disjoint_chain_rtt_val_{str(rtt_val).replace('.', '_')}",
-                         zsolqa=zsolqa,
-                         zrainacc=zrainacc,
-                         zrainaut=zrainaut,
-                         ztp1=ztp1,
-                         rtt=rtt[0])
+    run_and_compare_sdfg(
+        sdfg,
+        permissive=False,
+        sdfg_name=f"disjoint_chain_rtt_val_{str(rtt_val).replace('.', '_')}",
+        zsolqa=zsolqa,
+        zrainacc=zrainacc,
+        zrainaut=zrainaut,
+        ztp1=ztp1,
+        rtt=rtt[0],
+    )
 
 
 @dace.program
@@ -1763,25 +1907,32 @@ def pattern_from_cloudsc_one(
 @pytest.mark.parametrize("c_val", [1.0])
 @temporarily_disable_autoopt_and_serialization
 def test_pattern_from_cloudsc_one(c_val):
-    A = np.random.choice([0.001, 5.0], size=(
-        2,
-        N,
-        N,
-    ))
+    A = np.random.choice(
+        [0.001, 5.0],
+        size=(
+            2,
+            N,
+            N,
+        ),
+    )
     B = np.random.choice([0.001, 5.0], size=(N, N))
-    C = np.array([c_val], )
+    C = np.array(
+        [c_val],
+    )
     D = np.random.choice([0.001, 5.0], size=(N, N))
     E = np.random.choice([0.001, 5.0], size=(N, N))
 
-    run_and_compare(pattern_from_cloudsc_one,
-                    0,
-                    True,
-                    f"pattern_from_cloudsc_one_c_val_{str(c_val).replace('.', '_')}",
-                    A=A,
-                    B=B,
-                    c=C[0],
-                    D=D,
-                    E=E)
+    run_and_compare(
+        pattern_from_cloudsc_one,
+        0,
+        True,
+        f"pattern_from_cloudsc_one_c_val_{str(c_val).replace('.', '_')}",
+        A=A,
+        B=B,
+        c=C[0],
+        D=D,
+        E=E,
+    )
 
 
 @dace.program
@@ -1803,10 +1954,13 @@ def map_param_usage(
 
 @temporarily_disable_autoopt_and_serialization
 def test_can_be_applied_on_map_param_usage():
-    A = np.random.choice([0.001, 5.0], size=(
-        N,
-        N,
-    ))
+    A = np.random.choice(
+        [0.001, 5.0],
+        size=(
+            N,
+            N,
+        ),
+    )
     B = np.random.choice([0.001, 5.0], size=(N, N))
     D = np.random.choice([0.001, 5.0], size=(N, N))
 
@@ -1824,15 +1978,15 @@ def test_can_be_applied_on_map_param_usage():
 
 
 def _get_safe_map_param_use_in_nested_sdfg() -> dace.SDFG:
-    inner_sdfg = dace.SDFG('inner_get_safe_map_param_use_in_nested_sdfg')
-    outer_sdfg = dace.SDFG('outer_get_safe_map_param_use_in_nested_sdfg')
+    inner_sdfg = dace.SDFG("inner_get_safe_map_param_use_in_nested_sdfg")
+    outer_sdfg = dace.SDFG("outer_get_safe_map_param_use_in_nested_sdfg")
 
     inner_symbol_mapping = {
         "_for_it_37": "_for_it_37",
     }
     for arr_name in ["zsolac", "zacust", "zfinalsum"]:
-        inner_sdfg.add_array(arr_name, (N, ), dace.float64)
-        outer_sdfg.add_array(arr_name, (N, ), dace.float64)
+        inner_sdfg.add_array(arr_name, (N,), dace.float64)
+        outer_sdfg.add_array(arr_name, (N,), dace.float64)
     inner_inputs = {"zsolac", "zacust", "zfinalsum"}
     inner_outputs = {"zacust", "zsolac"}
 
@@ -1858,28 +2012,50 @@ def _get_safe_map_param_use_in_nested_sdfg() -> dace.SDFG:
     i_s2.add_edge(t2, "_out", i_s2.add_access("zsolac"), None, dace.memlet.Memlet(f"zsolac[_for_it_37]"))
 
     o_s1 = outer_sdfg.add_state("o_s1", is_start_block=True)
-    nsdfg = o_s1.add_nested_sdfg(sdfg=inner_sdfg,
-                                 inputs=inner_inputs,
-                                 outputs=inner_outputs,
-                                 symbol_mapping=inner_symbol_mapping)
+    nsdfg = o_s1.add_nested_sdfg(
+        sdfg=inner_sdfg, inputs=inner_inputs, outputs=inner_outputs, symbol_mapping=inner_symbol_mapping
+    )
 
-    map_entry, map_exit = o_s1.add_map(name="m1", ndrange={
-        "_for_it_37": dace.subsets.Range([(0, N - 1, 1)]),
-    })
+    map_entry, map_exit = o_s1.add_map(
+        name="m1",
+        ndrange={
+            "_for_it_37": dace.subsets.Range([(0, N - 1, 1)]),
+        },
+    )
     for in_name in inner_inputs:
-        o_s1.add_edge(o_s1.add_access(in_name), None, map_entry, f"IN_{in_name}",
-                      dace.memlet.Memlet.from_array(in_name, o_s1.sdfg.arrays[in_name]))
+        o_s1.add_edge(
+            o_s1.add_access(in_name),
+            None,
+            map_entry,
+            f"IN_{in_name}",
+            dace.memlet.Memlet.from_array(in_name, o_s1.sdfg.arrays[in_name]),
+        )
         map_entry.add_in_connector(f"IN_{in_name}")
         map_entry.add_out_connector(f"OUT_{in_name}")
-        o_s1.add_edge(map_entry, f"OUT_{in_name}", nsdfg, in_name,
-                      dace.memlet.Memlet.from_array(in_name, o_s1.sdfg.arrays[in_name]))
+        o_s1.add_edge(
+            map_entry,
+            f"OUT_{in_name}",
+            nsdfg,
+            in_name,
+            dace.memlet.Memlet.from_array(in_name, o_s1.sdfg.arrays[in_name]),
+        )
     for out_name in inner_outputs:
-        o_s1.add_edge(nsdfg, out_name, map_exit, f"IN_{out_name}",
-                      dace.memlet.Memlet.from_array(out_name, o_s1.sdfg.arrays[out_name]))
+        o_s1.add_edge(
+            nsdfg,
+            out_name,
+            map_exit,
+            f"IN_{out_name}",
+            dace.memlet.Memlet.from_array(out_name, o_s1.sdfg.arrays[out_name]),
+        )
         map_exit.add_in_connector(f"IN_{out_name}")
         map_exit.add_out_connector(f"OUT_{out_name}")
-        o_s1.add_edge(map_exit, f"OUT_{out_name}", o_s1.add_access(out_name), None,
-                      dace.memlet.Memlet.from_array(out_name, o_s1.sdfg.arrays[out_name]))
+        o_s1.add_edge(
+            map_exit,
+            f"OUT_{out_name}",
+            o_s1.add_access(out_name),
+            None,
+            dace.memlet.Memlet.from_array(out_name, o_s1.sdfg.arrays[out_name]),
+        )
 
     outer_sdfg.validate()
     return outer_sdfg
@@ -1899,29 +2075,26 @@ def test_safe_map_param_use_in_nested_sdfg():
             assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=True)
 
     # "zsolac", "zacust", "zlfinalsum"
-    zsolac = np.random.choice([0.001, 5.0], size=(N, ))
-    zfinalsum = np.random.choice([0.001, 5.0], size=(N, ))
-    zacust = np.random.choice([0.001, 5.0], size=(N, ))
-    run_and_compare_sdfg(sdfg,
-                         False,
-                         f"safe_map_param_use_in_nested_sdfg",
-                         zsolac=zsolac,
-                         zfinalsum=zfinalsum,
-                         zacust=zacust)
+    zsolac = np.random.choice([0.001, 5.0], size=(N,))
+    zfinalsum = np.random.choice([0.001, 5.0], size=(N,))
+    zacust = np.random.choice([0.001, 5.0], size=(N,))
+    run_and_compare_sdfg(
+        sdfg, False, f"safe_map_param_use_in_nested_sdfg", zsolac=zsolac, zfinalsum=zfinalsum, zacust=zacust
+    )
 
 
 def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
-    inner_sdfg = dace.SDFG('inner_get_nsdfg_with_return')
-    outer_sdfg = dace.SDFG('outer_get_nsdfg_with_return')
+    inner_sdfg = dace.SDFG("inner_get_nsdfg_with_return")
+    outer_sdfg = dace.SDFG("outer_get_nsdfg_with_return")
 
     inner_symbol_mapping = {}
     for outer_arr_name in ["ztp"]:
         outer_sdfg.add_array(outer_arr_name, (N, N), dace.float64)
     for outer_scalar_name in ["rtt"]:
         outer_sdfg.add_scalar(outer_scalar_name, dace.float64)
-    outer_sdfg.add_array("zalfa_1", (1, ), dace.float64)
+    outer_sdfg.add_array("zalfa_1", (1,), dace.float64)
     if return_arr:
-        inner_sdfg.add_array("foedelta__ret", (1, ), dace.float64)
+        inner_sdfg.add_array("foedelta__ret", (1,), dace.float64)
     else:
         inner_sdfg.add_scalar("foedelta__ret", dace.float64)
     for inner_scalar_name in ["ptare_var_0", "rtt_var_1"]:
@@ -1965,17 +2138,18 @@ def _get_nsdfg_with_return(return_arr: bool) -> dace.SDFG:
     i_s2.add_edge(t4, "_out", i_s2.add_access("foedelta__ret"), None, dace.memlet.Memlet("foedelta__ret[0]"))
 
     o_s1 = outer_sdfg.add_state("o_s1", is_start_block=True)
-    nsdfg = o_s1.add_nested_sdfg(sdfg=inner_sdfg,
-                                 inputs=inner_inputs,
-                                 outputs=inner_outputs,
-                                 symbol_mapping=inner_symbol_mapping)
+    nsdfg = o_s1.add_nested_sdfg(
+        sdfg=inner_sdfg, inputs=inner_inputs, outputs=inner_outputs, symbol_mapping=inner_symbol_mapping
+    )
 
     for inner_name, (outer_name, access_str) in inner_to_outer_name_mapping_in.items():
-        o_s1.add_edge(o_s1.add_access(outer_name), None, nsdfg, inner_name,
-                      dace.memlet.Memlet(f"{outer_name}{access_str}"))
+        o_s1.add_edge(
+            o_s1.add_access(outer_name), None, nsdfg, inner_name, dace.memlet.Memlet(f"{outer_name}{access_str}")
+        )
     for inner_name, (outer_name, access_str) in inner_to_outer_name_mapping_out.items():
-        o_s1.add_edge(nsdfg, inner_name, o_s1.add_access(outer_name), None,
-                      dace.memlet.Memlet(f"{outer_name}{access_str}"))
+        o_s1.add_edge(
+            nsdfg, inner_name, o_s1.add_access(outer_name), None, dace.memlet.Memlet(f"{outer_name}{access_str}")
+        )
 
     convert_legacy_nested_sdfgs(outer_sdfg)
     outer_sdfg.validate()
@@ -2000,7 +2174,7 @@ def test_nested_sdfg_with_return(ret_arr):
             assert xform.can_be_applied(graph=g, expr_index=0, sdfg=g.sdfg, permissive=True)
 
     ztp = np.random.choice([0.001, 5.0], size=(N, N))
-    rtt = np.random.choice([10.0, 15.0], size=(1, ))
+    rtt = np.random.choice([10.0, 15.0], size=(1,))
     zalfa_1 = np.array([999.9])
     arrays = {"ztp": ztp, "rtt": rtt[0], "zalfa_1": zalfa_1}
 
@@ -2026,38 +2200,76 @@ def test_nested_sdfg_with_return(ret_arr):
 
 
 @dace.program
-def mid_sdfg(pap: dace.float64[N], ptsphy: dace.float64, r2es: dace.float64, r3ies: dace.float64, r4ies: dace.float64,
-             rcldtopcf: dace.float64, rd: dace.float64, rdepliqrefdepth: dace.float64, rdepliqrefrate: dace.float64,
-             rg: dace.float64, riceinit: dace.float64, rlmin: dace.float64, rlstt: dace.float64, rtt: dace.float64,
-             rv: dace.float64, za: dace.float64[N], zdp: dace.float64[N], zfokoop: dace.float64[N],
-             zicecld: dace.float64[N], zrho: dace.float64[N], ztp1: dace.float64[N], zcldtopdist: dace.float64[N],
-             zicenuclei: dace.float64[N], zqxfg: dace.float64[N], zsolqa: dace.float64[N]):
-    for it_47 in dace.map[
-            0:N:1,
-    ]:
+def mid_sdfg(
+    pap: dace.float64[N],
+    ptsphy: dace.float64,
+    r2es: dace.float64,
+    r3ies: dace.float64,
+    r4ies: dace.float64,
+    rcldtopcf: dace.float64,
+    rd: dace.float64,
+    rdepliqrefdepth: dace.float64,
+    rdepliqrefrate: dace.float64,
+    rg: dace.float64,
+    riceinit: dace.float64,
+    rlmin: dace.float64,
+    rlstt: dace.float64,
+    rtt: dace.float64,
+    rv: dace.float64,
+    za: dace.float64[N],
+    zdp: dace.float64[N],
+    zfokoop: dace.float64[N],
+    zicecld: dace.float64[N],
+    zrho: dace.float64[N],
+    ztp1: dace.float64[N],
+    zcldtopdist: dace.float64[N],
+    zicenuclei: dace.float64[N],
+    zqxfg: dace.float64[N],
+    zsolqa: dace.float64[N],
+):
+    for it_47 in dace.map[0:N:1,]:
         # Ice nucleation and deposition
         if ztp1[it_47] < rtt and zqxfg[it_47] > rlmin:
             # Calculate ice saturation vapor pressure
             tmp_arg_72 = (r3ies * (ztp1[it_47] - rtt)) / (ztp1[it_47] - r4ies)
             zicenuclei[it_47] = 2.0 * np.exp(tmp_arg_72)
             # Deposition calculation parameters
-            zadd = (1.6666666666667 * rlstt * (rlstt / ztp1[it_47]))
-            zbdd = (0.452488687782805 * pap[it_47] * rv * ztp1[it_47])
+            zadd = 1.6666666666667 * rlstt * (rlstt / ztp1[it_47])
+            zbdd = 0.452488687782805 * pap[it_47] * rv * ztp1[it_47]
             # Update mixing ratios
             zqxfg[it_47] = zqxfg[it_47] + zadd
             zsolqa[it_47] = zqxfg[it_47] + zbdd
 
 
 @dace.program
-def huge_sdfg(pap: dace.float64[N], ptsphy: dace.float64, r2es: dace.float64, r3ies: dace.float64, r4ies: dace.float64,
-              rcldtopcf: dace.float64, rd: dace.float64, rdepliqrefdepth: dace.float64, rdepliqrefrate: dace.float64,
-              rg: dace.float64, riceinit: dace.float64, rlmin: dace.float64, rlstt: dace.float64, rtt: dace.float64,
-              rv: dace.float64, za: dace.float64[N], zdp: dace.float64[N], zfokoop: dace.float64[N],
-              zicecld: dace.float64[N], zrho: dace.float64[N], ztp1: dace.float64[N], zcldtopdist: dace.float64[N],
-              zicenuclei: dace.float64[N], zqxfg: dace.float64[N], zsolqa: dace.float64[N]):
-    for it_47 in dace.map[
-            0:N:1,
-    ]:
+def huge_sdfg(
+    pap: dace.float64[N],
+    ptsphy: dace.float64,
+    r2es: dace.float64,
+    r3ies: dace.float64,
+    r4ies: dace.float64,
+    rcldtopcf: dace.float64,
+    rd: dace.float64,
+    rdepliqrefdepth: dace.float64,
+    rdepliqrefrate: dace.float64,
+    rg: dace.float64,
+    riceinit: dace.float64,
+    rlmin: dace.float64,
+    rlstt: dace.float64,
+    rtt: dace.float64,
+    rv: dace.float64,
+    za: dace.float64[N],
+    zdp: dace.float64[N],
+    zfokoop: dace.float64[N],
+    zicecld: dace.float64[N],
+    zrho: dace.float64[N],
+    ztp1: dace.float64[N],
+    zcldtopdist: dace.float64[N],
+    zicenuclei: dace.float64[N],
+    zqxfg: dace.float64[N],
+    zsolqa: dace.float64[N],
+):
+    for it_47 in dace.map[0:N:1,]:
         # Check if crossing cloud top threshold
         if za[it_47] < rcldtopcf and za[it_47] >= rcldtopcf:
             zcldtopdist[it_47] = 0.0
@@ -2085,7 +2297,7 @@ def huge_sdfg(pap: dace.float64[N], ptsphy: dace.float64, r2es: dace.float64, r3
             zadd = (1.6666666666667 * rlstt * (rlstt / (rv * ztp1[it_47]) - 1.0)) / ztp1[it_47]
             zbdd = (0.452488687782805 * pap[it_47] * rv * ztp1[it_47]) / zvpice
 
-            tmp_call_49 = (zicenuclei[it_47] / zrho[it_47])
+            tmp_call_49 = zicenuclei[it_47] / zrho[it_47]
             zcvds = (7.8 * tmp_call_49 * (zvpliq - zvpice)) / (zvpice * (zadd + zbdd))
 
             # Initial ice content
@@ -2114,20 +2326,20 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     """Generate test data for the loop body function"""
 
     data = {
-        'ptsphy': np.float64(36.0),  # timestep (s)
-        'r2es': np.float64(6.11),  # saturation vapor pressure constant (hPa)
-        'r3ies': np.float64(12.0),  # ice saturation constant
-        'r4ies': np.float64(15.5),  # ice saturation constant
-        'rcldtopcf': np.float64(16.8),  # cloud top threshold
-        'rd': np.float64(287.0),  # gas constant for dry air (J/kg/K)
-        'rdepliqrefdepth': np.float64(20.0),  # reference depth
-        'rdepliqrefrate': np.float64(17.3),  # reference rate
-        'rg': np.float64(9.81),  # gravity (m/s²)
-        'riceinit': np.float64(5.3),  # initial ice content (kg/m³)
-        'rlmin': np.float64(3.9),  # minimum liquid water (kg/m³)
-        'rlstt': np.float64(2.5e6),  # latent heat (J/kg)
-        'rtt': np.float64(273.15),  # triple point temperature (K)
-        'rv': np.float64(461.5),  # gas constant for water vapor (J/kg/K)
+        "ptsphy": np.float64(36.0),  # timestep (s)
+        "r2es": np.float64(6.11),  # saturation vapor pressure constant (hPa)
+        "r3ies": np.float64(12.0),  # ice saturation constant
+        "r4ies": np.float64(15.5),  # ice saturation constant
+        "rcldtopcf": np.float64(16.8),  # cloud top threshold
+        "rd": np.float64(287.0),  # gas constant for dry air (J/kg/K)
+        "rdepliqrefdepth": np.float64(20.0),  # reference depth
+        "rdepliqrefrate": np.float64(17.3),  # reference rate
+        "rg": np.float64(9.81),  # gravity (m/s²)
+        "riceinit": np.float64(5.3),  # initial ice content (kg/m³)
+        "rlmin": np.float64(3.9),  # minimum liquid water (kg/m³)
+        "rlstt": np.float64(2.5e6),  # latent heat (J/kg)
+        "rtt": np.float64(273.15),  # triple point temperature (K)
+        "rv": np.float64(461.5),  # gas constant for water vapor (J/kg/K)
     }
 
     # 1D arrays with safe ranges
@@ -2138,23 +2350,23 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
         return rng.uniform(low, high, size).astype(np.float64)
 
     # State variables (N = grid size)
-    data['pap'] = safe_uniform(1.0, 2.0, (N, ))  # pressure-like
-    data['za'] = safe_uniform(0.9, 1.5, (N, ))  # altitude/cloud-top
-    data['ztp1'] = safe_uniform(260.0, 280.0, (N, ))  # temperature near freezing
-    data['zqxfg'] = safe_uniform(5.0, 11.0, (N, ))  # mixing ratios
-    data['zsolqa'] = safe_uniform(5.0, 11.0, (N, ))  # ice tendencies
+    data["pap"] = safe_uniform(1.0, 2.0, (N,))  # pressure-like
+    data["za"] = safe_uniform(0.9, 1.5, (N,))  # altitude/cloud-top
+    data["ztp1"] = safe_uniform(260.0, 280.0, (N,))  # temperature near freezing
+    data["zqxfg"] = safe_uniform(5.0, 11.0, (N,))  # mixing ratios
+    data["zsolqa"] = safe_uniform(5.0, 11.0, (N,))  # ice tendencies
 
-    data['zdp'] = safe_uniform(0.5, 2.0, (N, ))  # layer depth
-    data['zfokoop'] = safe_uniform(0.95, 1.05, (N, ))  # correction factor
-    data['zicecld'] = safe_uniform(10.0, 11.0, (N, ))  # cloud ice
-    data['zrho'] = safe_uniform(0.9, 1.2, (N, ))  # density
-    data['zcldtopdist'] = safe_uniform(0.1, 1.0, (N, ))  # distance to cloud top
-    data['zicenuclei'] = safe_uniform(1e2, 1e4, (N, ))  # ice nuclei concentration
+    data["zdp"] = safe_uniform(0.5, 2.0, (N,))  # layer depth
+    data["zfokoop"] = safe_uniform(0.95, 1.05, (N,))  # correction factor
+    data["zicecld"] = safe_uniform(10.0, 11.0, (N,))  # cloud ice
+    data["zrho"] = safe_uniform(0.9, 1.2, (N,))  # density
+    data["zcldtopdist"] = safe_uniform(0.1, 1.0, (N,))  # distance to cloud top
+    data["zicenuclei"] = safe_uniform(1e2, 1e4, (N,))  # ice nuclei concentration
 
     sdfg = parsed_simplified(huge_sdfg)
     sdfg.name = f"huge_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}"
     sdfg.validate()
-    #it_23: dace.int64, it_47: dace.int64
+    # it_23: dace.int64, it_47: dace.int64
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.validate()
     ConstantPropagation().apply_pass(sdfg, {})
@@ -2199,20 +2411,20 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     """Generate test data for the loop body function"""
 
     data = {
-        'ptsphy': np.float64(36.0),  # timestep (s)
-        'r2es': np.float64(6.11),  # saturation vapor pressure constant (hPa)
-        'r3ies': np.float64(12.0),  # ice saturation constant
-        'r4ies': np.float64(15.5),  # ice saturation constant
-        'rcldtopcf': np.float64(16.8),  # cloud top threshold
-        'rd': np.float64(287.0),  # gas constant for dry air (J/kg/K)
-        'rdepliqrefdepth': np.float64(20.0),  # reference depth
-        'rdepliqrefrate': np.float64(17.3),  # reference rate
-        'rg': np.float64(9.81),  # gravity (m/s²)
-        'riceinit': np.float64(5.3),  # initial ice content (kg/m³)
-        'rlmin': np.float64(3.9),  # minimum liquid water (kg/m³)
-        'rlstt': np.float64(2.5e6),  # latent heat (J/kg)
-        'rtt': np.float64(273.15),  # triple point temperature (K)
-        'rv': np.float64(461.5),  # gas constant for water vapor (J/kg/K)
+        "ptsphy": np.float64(36.0),  # timestep (s)
+        "r2es": np.float64(6.11),  # saturation vapor pressure constant (hPa)
+        "r3ies": np.float64(12.0),  # ice saturation constant
+        "r4ies": np.float64(15.5),  # ice saturation constant
+        "rcldtopcf": np.float64(16.8),  # cloud top threshold
+        "rd": np.float64(287.0),  # gas constant for dry air (J/kg/K)
+        "rdepliqrefdepth": np.float64(20.0),  # reference depth
+        "rdepliqrefrate": np.float64(17.3),  # reference rate
+        "rg": np.float64(9.81),  # gravity (m/s²)
+        "riceinit": np.float64(5.3),  # initial ice content (kg/m³)
+        "rlmin": np.float64(3.9),  # minimum liquid water (kg/m³)
+        "rlstt": np.float64(2.5e6),  # latent heat (J/kg)
+        "rtt": np.float64(273.15),  # triple point temperature (K)
+        "rv": np.float64(461.5),  # gas constant for water vapor (J/kg/K)
     }
 
     # 1D arrays with safe ranges
@@ -2223,18 +2435,18 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
         return rng.uniform(low, high, size).astype(np.float64)
 
     # State variables (N = grid size)
-    data['pap'] = safe_uniform(1.0, 2.0, (N, ))  # pressure-like
-    data['za'] = safe_uniform(0.9, 1.5, (N, ))  # altitude/cloud-top
-    data['ztp1'] = safe_uniform(260.0, 280.0, (N, ))  # temperature near freezing
-    data['zqxfg'] = safe_uniform(5.0, 11.0, (N, ))  # mixing ratios
-    data['zsolqa'] = safe_uniform(5.0, 11.0, (N, ))  # ice tendencies
+    data["pap"] = safe_uniform(1.0, 2.0, (N,))  # pressure-like
+    data["za"] = safe_uniform(0.9, 1.5, (N,))  # altitude/cloud-top
+    data["ztp1"] = safe_uniform(260.0, 280.0, (N,))  # temperature near freezing
+    data["zqxfg"] = safe_uniform(5.0, 11.0, (N,))  # mixing ratios
+    data["zsolqa"] = safe_uniform(5.0, 11.0, (N,))  # ice tendencies
 
-    data['zdp'] = safe_uniform(0.5, 2.0, (N, ))  # layer depth
-    data['zfokoop'] = safe_uniform(0.95, 1.05, (N, ))  # correction factor
-    data['zicecld'] = safe_uniform(10.0, 11.0, (N, ))  # cloud ice
-    data['zrho'] = safe_uniform(0.9, 1.2, (N, ))  # density
-    data['zcldtopdist'] = safe_uniform(0.1, 1.0, (N, ))  # distance to cloud top
-    data['zicenuclei'] = safe_uniform(1e2, 1e4, (N, ))  # ice nuclei concentration
+    data["zdp"] = safe_uniform(0.5, 2.0, (N,))  # layer depth
+    data["zfokoop"] = safe_uniform(0.95, 1.05, (N,))  # correction factor
+    data["zicecld"] = safe_uniform(10.0, 11.0, (N,))  # cloud ice
+    data["zrho"] = safe_uniform(0.9, 1.2, (N,))  # density
+    data["zcldtopdist"] = safe_uniform(0.1, 1.0, (N,))  # distance to cloud top
+    data["zicenuclei"] = safe_uniform(1e2, 1e4, (N,))  # ice nuclei concentration
     sdfg = parsed_simplified(mid_sdfg)
     sdfg.name = f"mid_sdfg_with_log_exp_div_operator_{eps_operator_type_for_log_and_div}"
     copy_sdfg = copy.deepcopy(sdfg)
@@ -2243,7 +2455,7 @@ def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     sdfg.validate()
     copy_sdfg.validate()
 
-    #it_23: dace.int64, it_47: dace.int64
+    # it_23: dace.int64, it_47: dace.int64
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     sdfg.validate()
     ConstantPropagation().apply_pass(sdfg, {})
@@ -2308,8 +2520,9 @@ def test_loop_param_usage():
     for cblock in cblocks:
         xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
-        xform.parent_nsdfg_state = _find_state(
-            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        xform.parent_nsdfg_state = (
+            _find_state(sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        )
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is True
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
 
@@ -2326,12 +2539,14 @@ def test_can_be_applied_on_wcr_edge():
     for cblock in cblocks:
         xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
-        xform.parent_nsdfg_state = _find_state(
-            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        xform.parent_nsdfg_state = (
+            _find_state(sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        )
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is False
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is False
 
     from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+
     sdfg.apply_transformations_repeated(WCRToAugAssign)
     sdfg.validate()
     sdfg.compile()
@@ -2340,8 +2555,9 @@ def test_can_be_applied_on_wcr_edge():
     for cblock in cblocks:
         xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
-        xform.parent_nsdfg_state = _find_state(
-            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        xform.parent_nsdfg_state = (
+            _find_state(sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        )
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is True
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
 
@@ -2388,8 +2604,9 @@ def test_top_level_if():
     for cblock in cblocks:
         xform = branch_elimination.BranchElimination()
         xform.conditional = cblock
-        xform.parent_nsdfg_state = _find_state(
-            sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        xform.parent_nsdfg_state = (
+            _find_state(sdfg, cblock.sdfg.parent_nsdfg_node) if cblock.sdfg.parent_nsdfg_node is not None else None
+        )
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, False) is True
 
     eb = EliminateBranches()
@@ -2471,8 +2688,13 @@ ITERATIONS = dace.symbol("ITERATIONS")
 
 
 @dace.program
-def dace_s1161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64[LEN_1D], d: dace.float64[LEN_1D],
-               e: dace.float64[LEN_1D]):
+def dace_s1161(
+    a: dace.float64[LEN_1D],
+    b: dace.float64[LEN_1D],
+    c: dace.float64[LEN_1D],
+    d: dace.float64[LEN_1D],
+    e: dace.float64[LEN_1D],
+):
     for nl in range(ITERATIONS):
         for i in range(LEN_1D):
             if c[i] < 0.0:
@@ -2483,7 +2705,10 @@ def dace_s1161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
 
 def test_s1161():
     sdfg = parsed_simplified(dace_s1161)
-    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
+    from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
+        CleanAccessNodeToScalarSliceToTaskletPattern,
+    )
+
     CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
     be = branch_elimination.BranchElimination()
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -2555,17 +2780,17 @@ def test_can_be_applied_on_top_level_and_nested_conditional():
 
 def loop_guarded_by_its_unregistered_iterator() -> tuple[dace.SDFG, ConditionalBlock, dace.SDFGState]:
     """``for i in [0, 8): if i < 5: a[i] = 1.0``, with ``i`` bound by the loop and absent from ``sdfg.symbols``."""
-    sdfg = dace.SDFG('iterator_guard')
-    sdfg.add_array('a', [8], dace.float64)
-    loop = LoopRegion('L', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg = dace.SDFG("iterator_guard")
+    sdfg.add_array("a", [8], dace.float64)
+    loop = LoopRegion("L", "i < 8", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    guard = ConditionalBlock('guard', sdfg=sdfg)
+    guard = ConditionalBlock("guard", sdfg=sdfg)
     loop.add_node(guard, is_start_block=True)
-    branch = ControlFlowRegion('then', sdfg=sdfg)
-    guard.add_branch(CodeBlock('i < 5'), branch)
-    body = branch.add_state('write', is_start_block=True)
-    tasklet = body.add_tasklet('one', {}, {'o'}, 'o = 1.0')
-    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[i]'))
+    branch = ControlFlowRegion("then", sdfg=sdfg)
+    guard.add_branch(CodeBlock("i < 5"), branch)
+    body = branch.add_state("write", is_start_block=True)
+    tasklet = body.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("a"), None, dace.Memlet("a[i]"))
     sdfg.reset_cfg_list()
     return sdfg, guard, body
 
@@ -2574,13 +2799,11 @@ def test_a_guard_on_an_enclosing_loop_iterator_is_reported_as_iterator_dependent
     """The refusal ``can_be_applied`` bases on this: a missed iterator lets a guarded write run out of bounds."""
     sdfg, guard, _ = loop_guarded_by_its_unregistered_iterator()
     sut = branch_elimination.BranchElimination()
-    sut.setup_match(sdfg,
-                    guard.parent_graph.cfg_id,
-                    -1, {branch_elimination.BranchElimination.conditional: guard},
-                    0,
-                    override=True)
+    sut.setup_match(
+        sdfg, guard.parent_graph.cfg_id, -1, {branch_elimination.BranchElimination.conditional: guard}, 0, override=True
+    )
 
-    assert 'i' not in sdfg.symbols
+    assert "i" not in sdfg.symbols
     assert sut.condition_has_map_param()
 
 
@@ -2588,9 +2811,9 @@ def test_lowering_a_guard_assignment_never_registers_the_enclosing_iterator():
     sdfg, _, body = loop_guarded_by_its_unregistered_iterator()
     sut = branch_elimination.BranchElimination()
 
-    sut._move_interstate_assignment_to_state(body, 'i + 1', 'c', None, None)
+    sut._move_interstate_assignment_to_state(body, "i + 1", "c", None, None)
 
-    assert 'i' not in sdfg.symbols
+    assert "i" not in sdfg.symbols
 
 
 def test_symbol_read_check_handles_while_loop_without_init_or_update():

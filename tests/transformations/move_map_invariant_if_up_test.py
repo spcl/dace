@@ -5,6 +5,7 @@ Covers the single-map case, the map-chain case (the guard lands between the
 maps), and the negative cases where the guard is genuinely per-element and must
 stay put.
 """
+
 import copy
 
 import numpy as np
@@ -102,7 +103,7 @@ def test_symbolic_condition_leaves_every_map():
     """A guard reading only a free symbol is invariant w.r.t. both maps, so
     repeated application walks it clear of the whole chain -- one level per
     hoist, ending outside every map."""
-    K = dace.symbol('K')
+    K = dace.symbol("K")
 
     @dace.program
     def kern_symbolic_condition_leaves_every_map(b: dace.float64[N, N]):
@@ -173,7 +174,7 @@ def test_collapsed_map_checks_every_parameter():
 
 def test_collapsed_map_invariant_condition_hoists():
     """The same collapsed map with a genuinely invariant condition hoists."""
-    K = dace.symbol('K')
+    K = dace.symbol("K")
 
     @dace.program
     def kern_collapsed_map_invariant_condition_hoists(b: dace.float64[N, N]):
@@ -280,7 +281,7 @@ def test_require_full_hoist_refuses_a_partial_hoist():
 
 def test_require_full_hoist_takes_a_whole_chain_hoist():
     """GPU mode still accepts a guard invariant w.r.t. every enclosing map."""
-    K = dace.symbol('K')
+    K = dace.symbol("K")
 
     @dace.program
     def kern_require_full_hoist_takes_a_whole_chain_hoist(b: dace.float64[N, N]):
@@ -328,7 +329,7 @@ def test_does_not_ping_pong_with_move_if_into_map():
         if not pushed and not hoisted:
             break
     else:
-        pytest.fail('MoveIfIntoMap and MoveMapInvariantIfUp did not converge')
+        pytest.fail("MoveIfIntoMap and MoveMapInvariantIfUp did not converge")
 
     sdfg.validate()
     out = np.zeros((N, N))
@@ -351,7 +352,7 @@ def test_partial_hoist_over_a_branch_with_maps_is_refused():
     before = sdfg.to_json()
     # ``a[i]`` cannot clear ``map i``, and its branch holds ``map j``.
     assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
-    assert sdfg.to_json() == before, 'refusing must not mutate the graph'
+    assert sdfg.to_json() == before, "refusing must not mutate the graph"
 
 
 def test_unrelated_dataflow_in_the_state_blocks_the_hoist():
@@ -362,37 +363,37 @@ def test_unrelated_dataflow_in_the_state_blocks_the_hoist():
     false. Being an ``AccessNode`` is not enough; it has to be wired through
     the map.
     """
-    sdfg = dace.SDFG('unrelated')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('b', [N], dace.float64)
-    sdfg.add_array('c', [N], dace.float64)
-    sdfg.add_array('d', [N], dace.float64)
-    st = sdfg.add_state('main', is_start_block=True)
+    sdfg = dace.SDFG("unrelated")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("c", [N], dace.float64)
+    sdfg.add_array("d", [N], dace.float64)
+    st = sdfg.add_state("main", is_start_block=True)
 
     # Guarded map writing b from a.
-    inner = dace.SDFG('body_unrelated_dataflow_in_the_state_blocks_the_hoist')
-    inner.add_array('ai', [1], dace.float64)
-    inner.add_array('bo', [1], dace.float64)
-    cb = ConditionalBlock('guard')
+    inner = dace.SDFG("body_unrelated_dataflow_in_the_state_blocks_the_hoist")
+    inner.add_array("ai", [1], dace.float64)
+    inner.add_array("bo", [1], dace.float64)
+    cb = ConditionalBlock("guard")
     inner.add_node(cb, is_start_block=True)
-    region = dace.sdfg.state.ControlFlowRegion('then', sdfg=inner)
-    bs = region.add_state('w', is_start_block=True)
-    t = bs.add_tasklet('cp', {'i'}, {'o'}, 'o = i')
-    bs.add_edge(bs.add_access('ai'), None, t, 'i', dace.Memlet('ai[0]'))
-    bs.add_edge(t, 'o', bs.add_access('bo'), None, dace.Memlet('bo[0]'))
-    cb.add_branch(dace.properties.CodeBlock('K > 0'), region)
+    region = dace.sdfg.state.ControlFlowRegion("then", sdfg=inner)
+    bs = region.add_state("w", is_start_block=True)
+    t = bs.add_tasklet("cp", {"i"}, {"o"}, "o = i")
+    bs.add_edge(bs.add_access("ai"), None, t, "i", dace.Memlet("ai[0]"))
+    bs.add_edge(t, "o", bs.add_access("bo"), None, dace.Memlet("bo[0]"))
+    cb.add_branch(dace.properties.CodeBlock("K > 0"), region)
 
-    me, mx = st.add_map('m', dict(i='0:%d' % N))
-    nsdfg = st.add_nested_sdfg(inner, {'ai'}, {'bo'}, symbol_mapping={'K': 'K'})
-    st.add_memlet_path(st.add_access('a'), me, nsdfg, dst_conn='ai', memlet=dace.Memlet('a[i]'))
-    st.add_memlet_path(nsdfg, mx, st.add_access('b'), src_conn='bo', memlet=dace.Memlet('b[i]'))
+    me, mx = st.add_map("m", dict(i="0:%d" % N))
+    nsdfg = st.add_nested_sdfg(inner, {"ai"}, {"bo"}, symbol_mapping={"K": "K"})
+    st.add_memlet_path(st.add_access("a"), me, nsdfg, dst_conn="ai", memlet=dace.Memlet("a[i]"))
+    st.add_memlet_path(nsdfg, mx, st.add_access("b"), src_conn="bo", memlet=dace.Memlet("b[i]"))
 
     # Unrelated, unconditional copy in the SAME state: d[:] = c[:].
-    st.add_edge(st.add_access('c'), None, st.add_access('d'), None, dace.Memlet('c[0:%d]->[0:%d]' % (N, N)))
+    st.add_edge(st.add_access("c"), None, st.add_access("d"), None, dace.Memlet("c[0:%d]->[0:%d]" % (N, N)))
 
     before = sdfg.to_json()
-    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None, 'must not sweep unrelated dataflow into the guard'
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None, "must not sweep unrelated dataflow into the guard"
     assert sdfg.to_json() == before
 
 
@@ -414,7 +415,7 @@ def test_idempotent():
 
 def test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     """Each hoist and each inner-map isolation rebuilt the whole CFG list; the graph operations keep it."""
-    K = dace.symbol('K')
+    K = dace.symbol("K")
 
     @dace.program
     def kern_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(b: dace.float64[N, N]):
@@ -432,5 +433,5 @@ def test_hoisting_through_every_map_level_keeps_the_cfg_list_of_a_fresh_reset(mo
     sdfg.validate()
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

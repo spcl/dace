@@ -6,19 +6,28 @@ Rewrites ``map.range`` in place so the K innermost dims step by ``widths[k]``
 (one tile per iteration). Masked iteration handles partial tiles at the trip
 boundary; no main + remainder split.
 """
+
 from typing import Any
 
 import dace
 from dace import properties, subsets, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                   TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
-                                                                           map_tile_widths)
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
-                                                                            no_strided_map_param_in_surviving_condition,
-                                                                            tile_main_map_step_is_widths)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+    SCALAR_TAIL_MARKER,
+    TILE_K1_TAIL_MARKER,
+)
+from dace.transformation.passes.vectorization.utils.map_predicates import (
+    check_tile_widths,
+    is_vectorizable_map,
+    map_tile_widths,
+)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (
+    assert_invariant,
+    no_memlet_dim_mismatch,
+    no_strided_map_param_in_surviving_condition,
+    tile_main_map_step_is_widths,
+)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
@@ -39,7 +48,7 @@ class StrideMapByTileWidths(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
+    def __init__(self, widths: tuple[int, ...] = (8,)) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -112,7 +121,7 @@ class StrideMapByTileWidths(ppl.Pass):
                 continue
             # ``__tile_k1_tail`` maps = K=1 widths=(1,): stride stays 1 (a per-element single-lane loop).
             if n.map.label.endswith(TILE_K1_TAIL_MARKER):
-                map_widths = (1, )
+                map_widths = (1,)
             else:
                 map_widths = map_tile_widths(g, n, tuple(self.widths))
             if not map_widths:
@@ -120,10 +129,19 @@ class StrideMapByTileWidths(ppl.Pass):
             if self._stride_one(n, map_widths):
                 rewritten += 1
         K = len(self.widths)
-        assert_invariant(no_memlet_dim_mismatch(sdfg), "StrideMapByTileWidths",
-                         "memlet subset and other_subset have matching dimensionality")
-        assert_invariant(tile_main_map_step_is_widths(sdfg, K, tuple(self.widths)), "StrideMapByTileWidths",
-                         "TILE_MAIN map's last-K dim steps equal widths")
-        assert_invariant(no_strided_map_param_in_surviving_condition(sdfg, K), "StrideMapByTileWidths",
-                         "no strided map still guards its own param in a surviving conditional")
+        assert_invariant(
+            no_memlet_dim_mismatch(sdfg),
+            "StrideMapByTileWidths",
+            "memlet subset and other_subset have matching dimensionality",
+        )
+        assert_invariant(
+            tile_main_map_step_is_widths(sdfg, K, tuple(self.widths)),
+            "StrideMapByTileWidths",
+            "TILE_MAIN map's last-K dim steps equal widths",
+        )
+        assert_invariant(
+            no_strided_map_param_in_surviving_condition(sdfg, K),
+            "StrideMapByTileWidths",
+            "no strided map still guards its own param in a surviving conditional",
+        )
         return rewritten or None

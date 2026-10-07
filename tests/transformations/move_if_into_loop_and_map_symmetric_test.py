@@ -1,22 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Symmetric loop/map tests for pushing a scope-invariant guard inside.
+"""Symmetric loop/map tests for pushing a scope-invariant guard inside.
 
-    Each scenario is written twice, differing *only* in loop vs map:
+Each scenario is written twice, differing *only* in loop vs map:
 
-    * loop variant (``for k in range(N)``): the generalized ``MoveIfIntoLoop``
-      pushes the invariant guard into the loop directly.
-    * map variant (``for ... in dace.map[...]``): the same effect is obtained
-      by *reusing existing transformations* -- lower the map to loops
-      (``MapExpansion`` + ``MapToForLoop``), flatten the lowering's
-      NestedSDFG (``InlineMultistateSDFG``), push the guard in
-      (``MoveIfIntoLoop``), then recover parallelism (``LoopToMap``, which
-      MUST re-apply). This is exactly what the canonicalize pipeline does
-      internally; no transformation is modified.
+* loop variant (``for k in range(N)``): the generalized ``MoveIfIntoLoop``
+  pushes the invariant guard into the loop directly.
+* map variant (``for ... in dace.map[...]``): the same effect is obtained
+  by *reusing existing transformations* -- lower the map to loops
+  (``MapExpansion`` + ``MapToForLoop``), flatten the lowering's
+  NestedSDFG (``InlineMultistateSDFG``), push the guard in
+  (``MoveIfIntoLoop``), then recover parallelism (``LoopToMap``, which
+  MUST re-apply). This is exactly what the canonicalize pipeline does
+  internally; no transformation is modified.
 
-    Both variants assert the structural effect (no top-level
-    ``ConditionalBlock`` survives; the guard is duplicated inside, not
-    dropped) and end-to-end numerics vs a pure-numpy oracle for the guard
-    taken and not-taken.
+Both variants assert the structural effect (no top-level
+``ConditionalBlock`` survives; the guard is duplicated inside, not
+dropped) and end-to-end numerics vs a pure-numpy oracle for the guard
+taken and not-taken.
 """
 
 import numpy as np
@@ -31,8 +31,8 @@ from dace.transformation.interstate.multistate_inline import InlineMultistateSDF
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _top_conds(sdfg):
@@ -218,8 +218,9 @@ def test_prep_that_reads_loop_written_data_is_not_sunk():
     sdfg = s3_snapshot_prep.to_sdfg(simplify=True)
     before = len(_any_cond(sdfg))
     assert before >= 1, "the guard must survive parsing for this test to mean anything"
-    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None, ("MoveIfIntoLoop must decline: the prep state "
-                                                           "reads data the loop writes")
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None, (
+        "MoveIfIntoLoop must decline: the prep state reads data the loop writes"
+    )
     sdfg.validate()
 
     ways = ways0.copy()
@@ -227,7 +228,7 @@ def test_prep_that_reads_loop_written_data_is_not_sunk():
     assert np.array_equal(ways, _s3_oracle(items, m - 1, ways0, m)), "0/1 counts must survive the pass"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_s1_invariant_guard_loop()
     test_s1_invariant_guard_map()
     test_s2_gather_guard_loop()

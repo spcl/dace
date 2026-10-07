@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the NVIDIA cuTENSOR backend."""
+
 import ctypes.util
 
 import dace.library
@@ -18,7 +19,7 @@ class cuTensor:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["dace/dace_cutensor.h"], 'cuda': ["dace/dace_cutensor.h"]}
+    headers = {"frame": ["dace/dace_cutensor.h"], "cuda": ["dace/dace_cutensor.h"]}
     state_fields = ["dace::linalg::CuTensorHandle cutensor_handle;"]
     init_code = ""
     finalize_code = ""
@@ -32,11 +33,11 @@ class cuTensor:
     # bit patterns are NaN, which the GPU canonicalizes on multiply). Callers
     # fall back to the pure expansion for unsupported dtypes.
     TYPE_MAP = {
-        dace.float16: ('CUTENSOR_R_16F', 'CUTENSOR_COMPUTE_DESC_16F', '__half'),
-        dace.float32: ('CUTENSOR_R_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.float64: ('CUTENSOR_R_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
-        dace.complex64: ('CUTENSOR_C_32F', 'CUTENSOR_COMPUTE_DESC_32F', 'float'),
-        dace.complex128: ('CUTENSOR_C_64F', 'CUTENSOR_COMPUTE_DESC_64F', 'double'),
+        dace.float16: ("CUTENSOR_R_16F", "CUTENSOR_COMPUTE_DESC_16F", "__half"),
+        dace.float32: ("CUTENSOR_R_32F", "CUTENSOR_COMPUTE_DESC_32F", "float"),
+        dace.float64: ("CUTENSOR_R_64F", "CUTENSOR_COMPUTE_DESC_64F", "double"),
+        dace.complex64: ("CUTENSOR_C_32F", "CUTENSOR_COMPUTE_DESC_32F", "float"),
+        dace.complex128: ("CUTENSOR_C_64F", "CUTENSOR_COMPUTE_DESC_64F", "double"),
     }
 
     #: cuTENSOR contracts every type it permutes, so the contraction map is TYPE_MAP itself. In hipTensor
@@ -46,10 +47,13 @@ class cuTensor:
     @staticmethod
     def is_installed():
         """Whether the cuTENSOR library is on this host; without it canonicalize's GPU library list leaves it out."""
-        return ctypes.util.find_library('cutensor') is not None
+        return ctypes.util.find_library("cutensor") is not None
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 cutensorHandle_t &__dace_cutensor_handle = __state->cutensor_handle.Get();
 // cutensorSetStream(__dace_cutensor_handle, __dace_current_stream);\n"""
+        )

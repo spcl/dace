@@ -10,6 +10,7 @@ column-major) -- transparent, so every candidate reproduces the oracle.
 Source: Copeland & Khoshafian, SIGMOD'85 (DSM); Stonebraker et al., C-Store VLDB'05; Ailamaki et
 al., PAX VLDB'01.
 """
+
 import numpy
 import dace
 

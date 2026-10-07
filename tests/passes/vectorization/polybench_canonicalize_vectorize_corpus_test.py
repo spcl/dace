@@ -15,6 +15,7 @@ The canonicalized SDFG + inputs + reference are computed once per kernel and sha
 (``auto_optimize`` phases are intentionally omitted -- canon+vectorize is the
 must-pass path here.)
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -40,23 +41,26 @@ PHASES = ("canon", "canon_vec")
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
-UNTILED_KERNELS = frozenset({
-    "adi",
-    "atax",
-    "bicg",
-    "correlation",
-    "doitgen",
-    "k3mm",
-    "syr2k",
-    "syrk",
-    "trisolv",
-})
+UNTILED_KERNELS = frozenset(
+    {
+        "adi",
+        "atax",
+        "bicg",
+        "correlation",
+        "doitgen",
+        "k3mm",
+        "syr2k",
+        "syrk",
+        "trisolv",
+    }
+)
 
 
 def _cases():
     return [
         pytest.param(name, phase, id=f"{name}-{phase}", marks=pytest.mark.lapack if name in LAPACK_KERNELS else ())
-        for name in KERNELS for phase in PHASES
+        for name in KERNELS
+        for phase in PHASES
     ]
 
 
@@ -78,7 +82,7 @@ BASE: dict = {}
 
 def _multidim_pass(name):
     knobs = MULTIDIM_KNOBS[KERNELS.index(name) % len(MULTIDIM_KNOBS)]
-    return VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), **knobs))
+    return VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), **knobs))
 
 
 def _base(name):

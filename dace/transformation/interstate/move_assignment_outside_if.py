@@ -17,7 +17,6 @@ from dace.transformation import transformation
 
 @transformation.explicit_cf_compatible
 class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
-
     conditional = transformation.PatternNode(ConditionalBlock)
 
     @classmethod
@@ -31,8 +30,9 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
             return False
         fcond = self.conditional.branches[0][0]
         scond = self.conditional.branches[1][0]
-        if (fcond is None or (scond is not None and
-                              (pystr_to_symbolic(fcond.as_string)) != sp.Not(pystr_to_symbolic(scond.as_string)))):
+        if fcond is None or (
+            scond is not None and (pystr_to_symbolic(fcond.as_string)) != sp.Not(pystr_to_symbolic(scond.as_string))
+        ):
             return False
 
         # set of the variables which get a const value assigned
@@ -55,7 +55,7 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
                         for edge in state.out_edges(node):
                             if isinstance(edge.dst, nd.AccessNode):
                                 assigned_const.add(edge.dst.data)
-                                self.assign_context[edge.dst.data] = {'state': state, 'tasklet': node}
+                                self.assign_context[edge.dst.data] = {"state": state, "tasklet": node}
                 elif isinstance(node, nd.AccessNode):
                     if node.data not in access_nodes:
                         access_nodes[node.data] = []
@@ -87,12 +87,12 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # create a new state before the guard state where the zero assignment happens
-        new_assign_state = graph.add_state_before(self.conditional, label='const_assignment_state')
+        new_assign_state = graph.add_state_before(self.conditional, label="const_assignment_state")
 
         # Move all the Tasklets together with the AccessNode
         for value in self.write_only_values:
-            state: sd.SDFGState = self.assign_context[value]['state']
-            tasklet: nd.Tasklet = self.assign_context[value]['tasklet']
+            state: sd.SDFGState = self.assign_context[value]["state"]
+            tasklet: nd.Tasklet = self.assign_context[value]["tasklet"]
             new_assign_state.add_node(tasklet)
             for edge in state.out_edges(tasklet):
                 state.remove_edge(edge)

@@ -55,6 +55,7 @@ the resulting ``loop1 -> loop2`` adjacency -- decided on a throwaway deep copy s
 mutates the real SDFG. The pass itself never fuses; it only restores adjacency and leaves fusing to
 ``FuseLoops``/``LoopFusion``, the same division of labour ``SinkStateIntoLoop`` uses.
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
@@ -62,7 +63,15 @@ from dace import SDFG
 from dace import data as dt
 from dace.sdfg import nodes as nd
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
+from dace.sdfg.state import (
+    BreakBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+)
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.loop_fusion import LoopFusion
 from dace.transformation.passes.analysis.analysis import AccessSets
@@ -87,7 +96,7 @@ class ReorderStateForLoopFusion(ppl.Pass):
     Fires on neither condition alone, and refuses outright on anything undecidable -- see the module
     docstring for the full checklist."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -206,10 +215,12 @@ class ReorderStateForLoopFusion(ppl.Pass):
             return False
         sdfg = state.sdfg
         if ReorderStateForLoopFusion.has_side_effecting_code(
-                state, sdfg) or ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg):
+            state, sdfg
+        ) or ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg):
             return False  # item 11
         if ReorderStateForLoopFusion.nested_sdfgs_within(state) or ReorderStateForLoopFusion.nested_sdfgs_within(
-                second):  # item 5 (+6)
+            second
+        ):  # item 5 (+6)
             return False
         reads_s, writes_s = access_sets[state]
         reads_b, writes_b = access_sets[second]
@@ -266,4 +277,4 @@ class ReorderStateForLoopFusion(ppl.Pass):
         return False
 
 
-__all__ = ['ReorderStateForLoopFusion']
+__all__ = ["ReorderStateForLoopFusion"]

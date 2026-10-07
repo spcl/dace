@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Where ``OffloadToAccelerator`` places data and copies: one graph per defect, plus its numeric companion."""
+
 import numpy as np
 import pytest
 from ordered_set import OrderedSet
@@ -24,18 +25,23 @@ def host_tasklet_behind_an_interstate_read() -> dace.SDFG:
     for the second state -- and an edge node carries the same block object as the state node that
     follows it.
     """
-    sdfg = dace.SDFG('placement_host_tasklet_behind_an_interstate_read')
-    sdfg.add_array('A', [256], dace.float64)
-    sdfg.add_array('C', [256], dace.int64)
-    first = sdfg.add_state('device_work')
-    first.add_mapped_tasklet('scale', {'i': '0:256'}, {'inp': dace.Memlet('A[i]')},
-                             'out = inp * 2.0', {'out': dace.Memlet('A[i]')},
-                             external_edges=True)
-    second = sdfg.add_state('host_work')
-    tasklet = second.add_tasklet('bump', {'inp': None}, {'out': None}, 'out = inp + 1.0')
-    second.add_edge(second.add_read('A'), None, tasklet, 'inp', dace.Memlet('A[0]'))
-    second.add_edge(tasklet, 'out', second.add_write('A'), None, dace.Memlet('A[0]'))
-    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'k': 'C[0]'}))
+    sdfg = dace.SDFG("placement_host_tasklet_behind_an_interstate_read")
+    sdfg.add_array("A", [256], dace.float64)
+    sdfg.add_array("C", [256], dace.int64)
+    first = sdfg.add_state("device_work")
+    first.add_mapped_tasklet(
+        "scale",
+        {"i": "0:256"},
+        {"inp": dace.Memlet("A[i]")},
+        "out = inp * 2.0",
+        {"out": dace.Memlet("A[i]")},
+        external_edges=True,
+    )
+    second = sdfg.add_state("host_work")
+    tasklet = second.add_tasklet("bump", {"inp": None}, {"out": None}, "out = inp + 1.0")
+    second.add_edge(second.add_read("A"), None, tasklet, "inp", dace.Memlet("A[0]"))
+    second.add_edge(tasklet, "out", second.add_write("A"), None, dace.Memlet("A[0]"))
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "C[0]"}))
     sdfg.validate()
     return sdfg
 
@@ -50,30 +56,41 @@ def test_an_interstate_read_does_not_hand_the_next_state_the_device_name():
     sdfg = host_tasklet_behind_an_interstate_read()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
-    host_state = next(state for state in sdfg.states() if state.label == 'host_work')
+    host_state = next(state for state in sdfg.states() if state.label == "host_work")
     written = {edge.data.data for edge in host_state.edges() if not edge.data.is_empty()}
-    assert not [name for name in written if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global
-                ], (f'host tasklet left holding a device container: {written}')
+    assert not [name for name in written if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global], (
+        f"host tasklet left holding a device container: {written}"
+    )
 
 
 def two_host_tasklets_beside_a_kernel_then_an_interstate_read() -> dace.SDFG:
     """Two unconnected host tasklets get two size-1 wrappers that fuse; the next edge reads ``B[0]``."""
-    sdfg = dace.SDFG('placement_two_host_tasklets_beside_a_kernel_then_an_interstate_read')
-    for name, size in (('A', 16), ('B', 16), ('C', 1), ('D', 1), ('E', 16)):
+    sdfg = dace.SDFG("placement_two_host_tasklets_beside_a_kernel_then_an_interstate_read")
+    for name, size in (("A", 16), ("B", 16), ("C", 1), ("D", 1), ("E", 16)):
         sdfg.add_array(name, [size], dace.float64)
-    mixed = sdfg.add_state('mixed', is_start_block=True)
-    mixed.add_mapped_tasklet('double', {'i': '0:16'}, {'inp': dace.Memlet('A[i]')},
-                             'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
-                             external_edges=True)
-    for label, index, target, offset in (('first', 0, 'C', 1.0), ('second', 1, 'D', 2.0)):
-        tasklet = mixed.add_tasklet(label, {'inp'}, {'out'}, f'out = inp + {offset}')
-        mixed.add_edge(mixed.add_read('A'), None, tasklet, 'inp', dace.Memlet(f'A[{index}]'))
-        mixed.add_edge(tasklet, 'out', mixed.add_write(target), None, dace.Memlet(f'{target}[0]'))
-    after = sdfg.add_state('after')
-    after.add_mapped_tasklet('shift', {'i': '0:16'}, {'inp': dace.Memlet('B[i]')},
-                             'out = inp + k', {'out': dace.Memlet('E[i]')},
-                             external_edges=True)
-    sdfg.add_edge(mixed, after, dace.InterstateEdge(assignments={'k': 'B[0]'}))
+    mixed = sdfg.add_state("mixed", is_start_block=True)
+    mixed.add_mapped_tasklet(
+        "double",
+        {"i": "0:16"},
+        {"inp": dace.Memlet("A[i]")},
+        "out = inp * 2.0",
+        {"out": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    for label, index, target, offset in (("first", 0, "C", 1.0), ("second", 1, "D", 2.0)):
+        tasklet = mixed.add_tasklet(label, {"inp"}, {"out"}, f"out = inp + {offset}")
+        mixed.add_edge(mixed.add_read("A"), None, tasklet, "inp", dace.Memlet(f"A[{index}]"))
+        mixed.add_edge(tasklet, "out", mixed.add_write(target), None, dace.Memlet(f"{target}[0]"))
+    after = sdfg.add_state("after")
+    after.add_mapped_tasklet(
+        "shift",
+        {"i": "0:16"},
+        {"inp": dace.Memlet("B[i]")},
+        "out = inp + k",
+        {"out": dace.Memlet("E[i]")},
+        external_edges=True,
+    )
+    sdfg.add_edge(mixed, after, dace.InterstateEdge(assignments={"k": "B[0]"}))
     sdfg.validate()
     # What ``apply_gpu_storage`` does to a signature; the edge now reads device memory until copies exist.
     for desc in sdfg.arrays.values():
@@ -87,36 +104,38 @@ def test_fusing_the_wrappers_does_not_validate_before_the_copies_exist():
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
 
-    mixed = next(state for state in sdfg.states() if state.label == 'mixed')
+    mixed = next(state for state in sdfg.states() if state.label == "mixed")
     scopes = mixed.scope_dict()
     wrappers = {
         scopes[node]
-        for node in mixed.nodes() if isinstance(node, dace.nodes.Tasklet) and node.label in ('first', 'second')
+        for node in mixed.nodes()
+        if isinstance(node, dace.nodes.Tasklet) and node.label in ("first", "second")
     }
-    assert len(wrappers) == 1, f'the two size-1 wrappers were not fused: {wrappers}'
+    assert len(wrappers) == 1, f"the two size-1 wrappers were not fused: {wrappers}"
     assert next(iter(wrappers)).map.schedule == dtypes.ScheduleType.GPU_Device
-    edge = next(edge for edge in sdfg.all_interstate_edges() if edge.dst.label == 'after')
-    assert set(edge.data.used_arrays(sdfg.arrays)) == {'B_host'}, edge.data.assignments
+    edge = next(edge for edge in sdfg.all_interstate_edges() if edge.dst.label == "after")
+    assert set(edge.data.used_arrays(sdfg.arrays)) == {"B_host"}, edge.data.assignments
 
 
 @pytest.mark.gpu
 def test_the_fused_wrappers_compute_what_the_host_tasklets_computed():
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+
     sdfg = two_host_tasklets_beside_a_kernel_then_an_interstate_read()
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     host_a = np.random.default_rng(7).random(16)
     arrays = {
-        'A': cupy.asarray(host_a),
-        'B': cupy.zeros(16),
-        'C': cupy.zeros(1),
-        'D': cupy.zeros(1),
-        'E': cupy.zeros(16)
+        "A": cupy.asarray(host_a),
+        "B": cupy.zeros(16),
+        "C": cupy.zeros(1),
+        "D": cupy.zeros(1),
+        "E": cupy.zeros(16),
     }
     sdfg(**arrays)
-    assert np.allclose(arrays['B'].get(), host_a * 2.0)
-    assert np.allclose(arrays['C'].get(), [host_a[0] + 1.0])
-    assert np.allclose(arrays['D'].get(), [host_a[1] + 2.0])
-    assert np.allclose(arrays['E'].get(), host_a * 2.0 + host_a[0] * 2.0)
+    assert np.allclose(arrays["B"].get(), host_a * 2.0)
+    assert np.allclose(arrays["C"].get(), [host_a[0] + 1.0])
+    assert np.allclose(arrays["D"].get(), [host_a[1] + 2.0])
+    assert np.allclose(arrays["E"].get(), host_a * 2.0 + host_a[0] * 2.0)
 
 
 def fallback_arm_first_then_an_interstate_read() -> dace.SDFG:
@@ -124,40 +143,54 @@ def fallback_arm_first_then_an_interstate_read() -> dace.SDFG:
 
     Nothing before the edge touches ``A``, so only propagation carries its location to the edge.
     """
-    sdfg = dace.SDFG('placement_fallback_arm_first_then_an_interstate_read')
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_array('A', [4], dace.int64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('B', [16], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    start = sdfg.add_state('start', is_start_block=True)
+    sdfg = dace.SDFG("placement_fallback_arm_first_then_an_interstate_read")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [4], dace.int64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [16], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    start = sdfg.add_state("start", is_start_block=True)
 
-    dispatch = ConditionalBlock('dispatch')
-    fallback = ControlFlowRegion('fallback', sdfg=sdfg)
-    loop = LoopRegion('seq', 'i < 16', 'i', 'i = 0', 'i = i + 1')
+    dispatch = ConditionalBlock("dispatch")
+    fallback = ControlFlowRegion("fallback", sdfg=sdfg)
+    loop = LoopRegion("seq", "i < 16", "i", "i = 0", "i = i + 1")
     fallback.add_node(loop, is_start_block=True)
-    body = loop.add_state('body', is_start_block=True)
-    bump = body.add_tasklet('bump', {'inp': None}, {'out': None}, 'out = inp + 1.0')
-    body.add_edge(body.add_read('B'), None, bump, 'inp', dace.Memlet('B[i]'))
-    body.add_edge(bump, 'out', body.add_write('B'), None, dace.Memlet('B[i]'))
-    dispatch.add_branch(dace.properties.CodeBlock('N < 4'), fallback)
-    parallel = ControlFlowRegion('parallel', sdfg=sdfg)
-    parallel.add_state('par', is_start_block=True).add_mapped_tasklet('bump_all', {'i': '0:16'},
-                                                                      {'inp': dace.Memlet('B[i]')},
-                                                                      'out = inp + 1.0', {'out': dace.Memlet('B[i]')},
-                                                                      external_edges=True)
+    body = loop.add_state("body", is_start_block=True)
+    bump = body.add_tasklet("bump", {"inp": None}, {"out": None}, "out = inp + 1.0")
+    body.add_edge(body.add_read("B"), None, bump, "inp", dace.Memlet("B[i]"))
+    body.add_edge(bump, "out", body.add_write("B"), None, dace.Memlet("B[i]"))
+    dispatch.add_branch(dace.properties.CodeBlock("N < 4"), fallback)
+    parallel = ControlFlowRegion("parallel", sdfg=sdfg)
+    parallel.add_state("par", is_start_block=True).add_mapped_tasklet(
+        "bump_all",
+        {"i": "0:16"},
+        {"inp": dace.Memlet("B[i]")},
+        "out = inp + 1.0",
+        {"out": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
     dispatch.add_branch(None, parallel)
     sdfg.add_node(dispatch)
     sdfg.add_edge(start, dispatch, dace.InterstateEdge())
 
-    between = sdfg.add_state('between')
-    between.add_mapped_tasklet('double', {'i': '0:16'}, {'inp': dace.Memlet('B[i]')},
-                               'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
-                               external_edges=True)
+    between = sdfg.add_state("between")
+    between.add_mapped_tasklet(
+        "double",
+        {"i": "0:16"},
+        {"inp": dace.Memlet("B[i]")},
+        "out = inp * 2.0",
+        {"out": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
     sdfg.add_edge(dispatch, between, dace.InterstateEdge())
-    after = sdfg.add_state('after')
-    after.add_mapped_tasklet('shift', {'i': '0:16'}, {'inp': dace.Memlet('B[i]')},
-                             'out = inp + k', {'out': dace.Memlet('B[i]')},
-                             external_edges=True)
-    sdfg.add_edge(between, after, dace.InterstateEdge(assignments={'k': 'A[0]'}))
+    after = sdfg.add_state("after")
+    after.add_mapped_tasklet(
+        "shift",
+        {"i": "0:16"},
+        {"inp": dace.Memlet("B[i]")},
+        "out = inp + k",
+        {"out": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    sdfg.add_edge(between, after, dace.InterstateEdge(assignments={"k": "A[0]"}))
     return sdfg
 
 
@@ -173,22 +206,23 @@ def test_a_join_hands_on_the_locations_its_later_arm_carries():
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
 
-    edge = next(edge for edge in sdfg.all_interstate_edges() if edge.dst.label == 'after')
-    assert set(edge.data.used_arrays(sdfg.arrays)) == {'A_host'}, edge.data.assignments
-    assert copy_blocks_for(sdfg, 'A') == ['copy_A_to_host'], 'the host read needs exactly one copy of A'
+    edge = next(edge for edge in sdfg.all_interstate_edges() if edge.dst.label == "after")
+    assert set(edge.data.used_arrays(sdfg.arrays)) == {"A_host"}, edge.data.assignments
+    assert copy_blocks_for(sdfg, "A") == ["copy_A_to_host"], "the host read needs exactly one copy of A"
 
 
 @pytest.mark.gpu
 def test_a_join_hands_on_the_locations_its_later_arm_carries_and_computes():
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+
     b = np.arange(16, dtype=np.float64)
     sdfg = fallback_arm_first_then_an_interstate_read()
     sdfg.apply_gpu_transformations()
     compiled = sdfg.compile()
     for n in (2, 8):  # both arms of the guard
-        arrays = {'A': cupy.asarray([5, 0, 0, 0]), 'B': cupy.asarray(b)}
+        arrays = {"A": cupy.asarray([5, 0, 0, 0]), "B": cupy.asarray(b)}
         compiled(**arrays, N=n)
-        np.testing.assert_array_equal(arrays['B'].get(), (b + 1.0) * 2.0 + 5.0)
+        np.testing.assert_array_equal(arrays["B"].get(), (b + 1.0) * 2.0 + 5.0)
 
 
 def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
@@ -200,30 +234,35 @@ def free_computation_with_a_reading_and_a_sourceless_tasklet() -> dace.SDFG:
     them one region rather than two -- and what makes leaving one behind an invalid path rather
     than a missed wrap (tsvc s252's shape).
     """
-    sdfg = dace.SDFG('placement_free_computation_with_a_reading_and_a_sourceless_tasklet')
-    sdfg.add_array('A', [256], dace.float64)
-    sdfg.add_array('B', [256], dace.float64)
-    sdfg.add_scalar('half', dace.float64, transient=True)
-    sdfg.add_scalar('bias', dace.float64, transient=True)
-    state = sdfg.add_state('mixed')
+    sdfg = dace.SDFG("placement_free_computation_with_a_reading_and_a_sourceless_tasklet")
+    sdfg.add_array("A", [256], dace.float64)
+    sdfg.add_array("B", [256], dace.float64)
+    sdfg.add_scalar("half", dace.float64, transient=True)
+    sdfg.add_scalar("bias", dace.float64, transient=True)
+    state = sdfg.add_state("mixed")
 
-    state.add_mapped_tasklet('device', {'i': '0:256'}, {'inp': dace.Memlet('A[i]')},
-                             'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "device",
+        {"i": "0:256"},
+        {"inp": dace.Memlet("A[i]")},
+        "out = inp * 2.0",
+        {"out": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
 
-    scale = state.add_tasklet('scale', {'inp': None}, {'out': None}, 'out = inp * 0.5')
-    half = state.add_access('half')
-    state.add_edge(state.add_read('A'), None, scale, 'inp', dace.Memlet('A[0]'))
-    state.add_edge(scale, 'out', half, None, dace.Memlet('half[0]'))
+    scale = state.add_tasklet("scale", {"inp": None}, {"out": None}, "out = inp * 0.5")
+    half = state.add_access("half")
+    state.add_edge(state.add_read("A"), None, scale, "inp", dace.Memlet("A[0]"))
+    state.add_edge(scale, "out", half, None, dace.Memlet("half[0]"))
 
-    seed = state.add_tasklet('seed', {}, {'out': None}, 'out = 1.0')
-    bias = state.add_access('bias')
-    state.add_edge(seed, 'out', bias, None, dace.Memlet('bias[0]'))
+    seed = state.add_tasklet("seed", {}, {"out": None}, "out = 1.0")
+    bias = state.add_access("bias")
+    state.add_edge(seed, "out", bias, None, dace.Memlet("bias[0]"))
 
-    combine = state.add_tasklet('combine', {'lhs': None, 'rhs': None}, {'out': None}, 'out = lhs + rhs')
-    state.add_edge(half, None, combine, 'lhs', dace.Memlet('half[0]'))
-    state.add_edge(bias, None, combine, 'rhs', dace.Memlet('bias[0]'))
-    state.add_edge(combine, 'out', state.add_write('B'), None, dace.Memlet('B[0]'))
+    combine = state.add_tasklet("combine", {"lhs": None, "rhs": None}, {"out": None}, "out = lhs + rhs")
+    state.add_edge(half, None, combine, "lhs", dace.Memlet("half[0]"))
+    state.add_edge(bias, None, combine, "rhs", dace.Memlet("bias[0]"))
+    state.add_edge(combine, "out", state.add_write("B"), None, dace.Memlet("B[0]"))
     sdfg.validate()
     return sdfg
 
@@ -238,13 +277,13 @@ def test_a_wrapped_region_puts_every_root_under_its_entry():
     sdfg = free_computation_with_a_reading_and_a_sourceless_tasklet()
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
-    state = next(s for s in sdfg.states() if s.label == 'mixed')
+    state = next(s for s in sdfg.states() if s.label == "mixed")
     scopes = state.scope_dict()
-    wrapped = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.Tasklet) and n.label == 'seed')
-    assert scopes[wrapped] is not None, 'a tasklet that reads nothing was left outside its wrapper'
+    wrapped = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.Tasklet) and n.label == "seed")
+    assert scopes[wrapped] is not None, "a tasklet that reads nothing was left outside its wrapper"
 
 
-ROWS = dace.symbol('ROWS')
+ROWS = dace.symbol("ROWS")
 
 
 @dace.program
@@ -267,7 +306,7 @@ def test_a_copy_hands_its_destination_the_side_of_its_source():
     sdfg.validate()
     loop = next(b for b in sdfg.all_control_flow_blocks(recursive=True) if isinstance(b, LoopRegion))
     arm = loop.parent_graph
-    fills = [b for b in arm.predecessors(loop) if b.label == 'copy_u_to_host']
+    fills = [b for b in arm.predecessors(loop) if b.label == "copy_u_to_host"]
     assert fills, [b.label for b in arm.nodes()]
 
 
@@ -284,16 +323,21 @@ def test_a_copy_before_a_host_recurrence_computes_what_numpy_computes():
 
 def kernel_then_host_staging_copy() -> dace.SDFG:
     """A kernel writes ``A``; host code then copies ``A[0]`` into the host Scalar ``s``."""
-    sdfg = dace.SDFG('placement_kernel_then_host_staging_copy')
-    sdfg.add_array('A', [8], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    state = sdfg.add_state('main', is_start_block=True)
-    _, _, exit_node = state.add_mapped_tasklet('fill', {'i': '0:8'}, {},
-                                               'a = 1.0', {'a': dace.Memlet('A[i]')},
-                                               schedule=dtypes.ScheduleType.GPU_Device,
-                                               external_edges=True)
+    sdfg = dace.SDFG("placement_kernel_then_host_staging_copy")
+    sdfg.add_array("A", [8], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state("main", is_start_block=True)
+    _, _, exit_node = state.add_mapped_tasklet(
+        "fill",
+        {"i": "0:8"},
+        {},
+        "a = 1.0",
+        {"a": dace.Memlet("A[i]")},
+        schedule=dtypes.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
     written = state.out_edges(exit_node)[0].dst
-    state.add_edge(written, None, state.add_write('s'), None, dace.Memlet('A[0] -> [0]'))
+    state.add_edge(written, None, state.add_write("s"), None, dace.Memlet("A[0] -> [0]"))
     return sdfg
 
 
@@ -304,30 +348,35 @@ def kernel_writing_a_scalar_a_later_state_reads() -> dace.SDFG:
     writes comes with it. Nothing then crosses the ``MapExit``, which is the only boundary the
     placement analysis looked at.
     """
-    sdfg = dace.SDFG('placement_kernel_writing_a_scalar_a_later_state_reads')
-    sdfg.add_array('A', [256], dace.float64)
-    sdfg.add_array('B', [256], dace.float64)
-    sdfg.add_scalar('acc', dace.float64, transient=True)
+    sdfg = dace.SDFG("placement_kernel_writing_a_scalar_a_later_state_reads")
+    sdfg.add_array("A", [256], dace.float64)
+    sdfg.add_array("B", [256], dace.float64)
+    sdfg.add_scalar("acc", dace.float64, transient=True)
 
-    produce = sdfg.add_state('produce')
-    produce.add_mapped_tasklet('device', {'i': '0:256'}, {'inp': dace.Memlet('A[i]')},
-                               'out = inp * 2.0', {'out': dace.Memlet('B[i]')},
-                               external_edges=True)
-    pick = produce.add_tasklet('pick', {'inp': None}, {'out': None}, 'out = inp + 1.0')
-    acc = produce.add_access('acc')
-    produce.add_edge(produce.add_read('B'), None, pick, 'inp', dace.Memlet('B[0]'))
-    produce.add_edge(pick, 'out', acc, None, dace.Memlet('acc[0]'))
+    produce = sdfg.add_state("produce")
+    produce.add_mapped_tasklet(
+        "device",
+        {"i": "0:256"},
+        {"inp": dace.Memlet("A[i]")},
+        "out = inp * 2.0",
+        {"out": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
+    pick = produce.add_tasklet("pick", {"inp": None}, {"out": None}, "out = inp + 1.0")
+    acc = produce.add_access("acc")
+    produce.add_edge(produce.add_read("B"), None, pick, "inp", dace.Memlet("B[0]"))
+    produce.add_edge(pick, "out", acc, None, dace.Memlet("acc[0]"))
     # A second consumer INSIDE the region is what makes ``acc`` interior. Without it the access node
     # is the region's last node, the wrapper leaves it outside the ``MapExit``, and the old
     # boundary-only analysis already saw it -- so the shape under test would not be durbin's.
-    use = produce.add_tasklet('use', {'inp': None}, {'out': None}, 'out = inp * 3.0')
-    produce.add_edge(acc, None, use, 'inp', dace.Memlet('acc[0]'))
-    produce.add_edge(use, 'out', produce.add_write('B'), None, dace.Memlet('B[1]'))
+    use = produce.add_tasklet("use", {"inp": None}, {"out": None}, "out = inp * 3.0")
+    produce.add_edge(acc, None, use, "inp", dace.Memlet("acc[0]"))
+    produce.add_edge(use, "out", produce.add_write("B"), None, dace.Memlet("B[1]"))
 
-    consume = sdfg.add_state_after(produce, 'consume')
-    spread = consume.add_tasklet('spread', {'inp': None}, {'out': None}, 'out = inp')
-    consume.add_edge(consume.add_read('acc'), None, spread, 'inp', dace.Memlet('acc[0]'))
-    consume.add_edge(spread, 'out', consume.add_write('A'), None, dace.Memlet('A[0]'))
+    consume = sdfg.add_state_after(produce, "consume")
+    spread = consume.add_tasklet("spread", {"inp": None}, {"out": None}, "out = inp")
+    consume.add_edge(consume.add_read("acc"), None, spread, "inp", dace.Memlet("acc[0]"))
+    consume.add_edge(spread, "out", consume.add_write("A"), None, dace.Memlet("A[0]"))
     sdfg.validate()
     return sdfg
 
@@ -344,26 +393,28 @@ def test_a_scalar_a_kernel_writes_and_a_later_state_reads_is_device_resident():
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
 
-    written = [name for name, desc in sdfg.arrays.items() if name.startswith('acc') and desc.transient]
-    assert written, 'the scalar vanished, so this asserts nothing'
+    written = [name for name, desc in sdfg.arrays.items() if name.startswith("acc") and desc.transient]
+    assert written, "the scalar vanished, so this asserts nothing"
     resident = [name for name in written if sdfg.arrays[name].storage in GPU_RESIDENT_STORAGES]
-    assert resident, (f'no device copy of the kernel-written scalar: '
-                      f'{[(n, sdfg.arrays[n].storage.name) for n in written]}')
+    assert resident, (
+        f"no device copy of the kernel-written scalar: {[(n, sdfg.arrays[n].storage.name) for n in written]}"
+    )
 
     # Not filtered by ``obj.language``: the CUDA target names the device file's language after the
     # detected backend (``cu`` for CUDA, ``cpp`` for HIP -- ``dace/codegen/targets/cuda.py``), so a
     # language-specific filter here would only run on an NVIDIA host.
-    signatures = [line for obj in sdfg.generate_code() for line in obj.clean_code.splitlines() if '__global__' in line]
-    assert signatures, 'nothing was emitted as a kernel, so the signature asserts nothing'
-    by_value = [line for line in signatures for name in resident if f'double {name}' in line]
-    assert not by_value, f'a kernel takes a scalar it writes by value: {by_value}'
+    signatures = [line for obj in sdfg.generate_code() for line in obj.clean_code.splitlines() if "__global__" in line]
+    assert signatures, "nothing was emitted as a kernel, so the signature asserts nothing"
+    by_value = [line for line in signatures for name in resident if f"double {name}" in line]
+    assert not by_value, f"a kernel takes a scalar it writes by value: {by_value}"
 
 
 def copy_blocks_for(sdfg: dace.SDFG, name: str):
     """The copy states the pass inserted for ``name``, by the label ``create_interstate_copy`` gives."""
     return [
-        block.label for block in sdfg.all_control_flow_blocks()
-        if block.label.startswith('copy_') and f'copy_{name}_' in block.label
+        block.label
+        for block in sdfg.all_control_flow_blocks()
+        if block.label.startswith("copy_") and f"copy_{name}_" in block.label
     ]
 
 
@@ -375,29 +426,29 @@ def indirect_read_only_sdfg() -> dace.SDFG:
     PREVIOUS step's value, so it cannot be a map and it is host code. Nothing writes ``idx``, so the
     two sides can never disagree about it -- which is the whole reason one copy is enough.
     """
-    sdfg = dace.SDFG('placement_indirect_read_only')
-    sdfg.add_array('idx', [16], dace.int64, transient=False, storage=dace.StorageType.GPU_Global)
-    sdfg.add_array('data', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
-    sdfg.add_array('out', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
-    sdfg.add_scalar('cursor', dace.int64, transient=True)
-    sdfg.add_symbol('k', dace.int64)
+    sdfg = dace.SDFG("placement_indirect_read_only")
+    sdfg.add_array("idx", [16], dace.int64, transient=False, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("data", [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("out", [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    sdfg.add_scalar("cursor", dace.int64, transient=True)
+    sdfg.add_symbol("k", dace.int64)
 
-    parallel = sdfg.add_state('parallel', is_start_block=True)
-    entry, exit_ = parallel.add_map('gather', {'i': '0:16'}, schedule=dace.ScheduleType.GPU_Device)
-    gather = parallel.add_tasklet('gather', {'j': None, 'd': None}, {'o': None}, 'o = d * float(j)')
-    parallel.add_memlet_path(parallel.add_read('idx'), entry, gather, dst_conn='j', memlet=dace.Memlet('idx[i]'))
-    parallel.add_memlet_path(parallel.add_read('data'), entry, gather, dst_conn='d', memlet=dace.Memlet('data[i]'))
-    parallel.add_memlet_path(gather, exit_, parallel.add_write('out'), src_conn='o', memlet=dace.Memlet('out[i]'))
+    parallel = sdfg.add_state("parallel", is_start_block=True)
+    entry, exit_ = parallel.add_map("gather", {"i": "0:16"}, schedule=dace.ScheduleType.GPU_Device)
+    gather = parallel.add_tasklet("gather", {"j": None, "d": None}, {"o": None}, "o = d * float(j)")
+    parallel.add_memlet_path(parallel.add_read("idx"), entry, gather, dst_conn="j", memlet=dace.Memlet("idx[i]"))
+    parallel.add_memlet_path(parallel.add_read("data"), entry, gather, dst_conn="d", memlet=dace.Memlet("data[i]"))
+    parallel.add_memlet_path(gather, exit_, parallel.add_write("out"), src_conn="o", memlet=dace.Memlet("out[i]"))
 
     # The pointer chase: sequential by construction, and host code. Not a guarded fallback -- there
     # is no ConditionalBlock above it, so its reads of `idx` are reads every execution performs.
-    chase = LoopRegion('chase', 'k < 16', 'k', 'k = 0', 'k = k + 1')
+    chase = LoopRegion("chase", "k < 16", "k", "k = 0", "k = k + 1")
     sdfg.add_node(chase)
     sdfg.add_edge(parallel, chase, dace.InterstateEdge())
-    step = chase.add_state('step', is_start_block=True)
-    hop = step.add_tasklet('hop', {'j': None}, {'c': None}, 'c = j')
-    step.add_edge(step.add_read('idx'), None, hop, 'j', dace.Memlet('idx[k]'))
-    step.add_edge(hop, 'c', step.add_write('cursor'), None, dace.Memlet('cursor[0]'))
+    step = chase.add_state("step", is_start_block=True)
+    hop = step.add_tasklet("hop", {"j": None}, {"c": None}, "c = j")
+    step.add_edge(step.add_read("idx"), None, hop, "j", dace.Memlet("idx[k]"))
+    step.add_edge(hop, "c", step.add_write("cursor"), None, dace.Memlet("cursor[0]"))
     return sdfg
 
 
@@ -413,11 +464,11 @@ def test_a_read_only_array_both_sides_read_is_copied_exactly_once():
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
 
-    copies = copy_blocks_for(sdfg, 'idx')
-    assert len(copies) == 1, f'expected one copy of a read-only array, got {copies}'
-    assert copies[0].endswith('_to_host'), f'the copy must bring idx down to the host: {copies[0]}'
-    assert sdfg.arrays['idx'].storage == dace.StorageType.GPU_Global, 'the device side keeps the original'
-    assert sdfg.arrays['idx_host'].storage != dace.StorageType.GPU_Global, 'the host side must be host memory'
+    copies = copy_blocks_for(sdfg, "idx")
+    assert len(copies) == 1, f"expected one copy of a read-only array, got {copies}"
+    assert copies[0].endswith("_to_host"), f"the copy must bring idx down to the host: {copies[0]}"
+    assert sdfg.arrays["idx"].storage == dace.StorageType.GPU_Global, "the device side keeps the original"
+    assert sdfg.arrays["idx_host"].storage != dace.StorageType.GPU_Global, "the host side must be host memory"
 
 
 def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
@@ -430,17 +481,17 @@ def test_a_host_only_array_is_staged_once_each_way_and_not_wrapped():
     """
     sdfg = indirect_read_only_sdfg()
     # `total` is touched by the host loop alone: no map, no library node, nothing on the device.
-    sdfg.add_array('total', [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
-    step = next(state for state in sdfg.states() if state.label == 'step')
-    accumulate = step.add_tasklet('accumulate', {}, {'t': None}, 't = 1.0')
-    step.add_edge(accumulate, 't', step.add_write('total'), None, dace.Memlet('total[k]'))
+    sdfg.add_array("total", [16], dace.float64, transient=False, storage=dace.StorageType.GPU_Global)
+    step = next(state for state in sdfg.states() if state.label == "step")
+    accumulate = step.add_tasklet("accumulate", {}, {"t": None}, "t = 1.0")
+    step.add_edge(accumulate, "t", step.add_write("total"), None, dace.Memlet("total[k]"))
 
     sdfg.apply_gpu_transformations(validate=False, simplify=False)
     sdfg.validate()
 
-    copies = copy_blocks_for(sdfg, 'total')
-    assert len(copies) == 2, f'expected one copy each way for a written host-only array, got {copies}'
-    assert sorted(c.split('_')[-2] + '_' + c.split('_')[-1] for c in copies) == ['to_gpu', 'to_host']
+    copies = copy_blocks_for(sdfg, "total")
+    assert len(copies) == 2, f"expected one copy each way for a written host-only array, got {copies}"
+    assert sorted(c.split("_")[-2] + "_" + c.split("_")[-1] for c in copies) == ["to_gpu", "to_host"]
 
 
 def cpu_heap_sdfg() -> dace.SDFG:
@@ -449,13 +500,18 @@ def cpu_heap_sdfg() -> dace.SDFG:
     That is the storage ``auto_optimize(DeviceType.CPU)`` leaves behind, and the shape the rename
     below was blind to.
     """
-    sdfg = dace.SDFG('placement_cpu_heap_offload')
-    for name in ('A', 'B'):
+    sdfg = dace.SDFG("placement_cpu_heap_offload")
+    for name in ("A", "B"):
         sdfg.add_array(name, [32], dace.float64, storage=dace.dtypes.StorageType.CPU_Heap)
-    state = sdfg.add_state('compute')
-    state.add_mapped_tasklet('double', {'i': '0:32'}, {'a': dace.Memlet('A[i]')},
-                             'b = a * 2.0', {'b': dace.Memlet('B[i]')},
-                             external_edges=True)
+    state = sdfg.add_state("compute")
+    state.add_mapped_tasklet(
+        "double",
+        {"i": "0:32"},
+        {"a": dace.Memlet("A[i]")},
+        "b = a * 2.0",
+        {"b": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
     return sdfg
 
 
@@ -479,21 +535,24 @@ def test_a_device_access_to_a_cpu_heap_array_is_renamed_to_the_device_copy():
             if entry is None or entry.map.schedule not in dtypes.GPU_SCHEDULES:
                 continue
             assert sdfg.arrays[node.data].storage in GPU_RESIDENT_STORAGES, (
-                f'{node.data!r} is accessed inside a {entry.map.schedule} map but lives in '
-                f'{sdfg.arrays[node.data].storage}')
+                f"{node.data!r} is accessed inside a {entry.map.schedule} map but lives in "
+                f"{sdfg.arrays[node.data].storage}"
+            )
 
     kernel_writes = {
         edge.dst.data
         for state in sdfg.states()
         for edge in state.edges()
-        if isinstance(edge.src, dace.nodes.MapExit) and isinstance(edge.dst, dace.nodes.AccessNode)
+        if isinstance(edge.src, dace.nodes.MapExit)
+        and isinstance(edge.dst, dace.nodes.AccessNode)
         and state.entry_node(edge.src).map.schedule in dtypes.GPU_SCHEDULES
     }
-    assert kernel_writes, 'no kernel write to check'
+    assert kernel_writes, "no kernel write to check"
     for name in kernel_writes:
         assert sdfg.arrays[name].storage in GPU_RESIDENT_STORAGES, (
-            f'a GPU map writes {name!r}, which lives in {sdfg.arrays[name].storage}: the write never '
-            'reaches the device buffer that is copied back')
+            f"a GPU map writes {name!r}, which lives in {sdfg.arrays[name].storage}: the write never "
+            "reaches the device buffer that is copied back"
+        )
 
 
 #: Blocks in a chain, comfortably past CPython's 1000-frame default. CloudSC canonicalized for the
@@ -506,11 +565,11 @@ def ir_chain(length: int):
 
     The shape the IR pass builds for straight-line code: ``open -> s0 -> ... -> sN-1 -> close``.
     """
-    sdfg = dace.SDFG('placement_ir_chain')
-    region = sdfg.add_state('section')
+    sdfg = dace.SDFG("placement_ir_chain")
+    region = sdfg.add_state("section")
     open_node = OffloadingIRNode.new_open_node(region)
     states = [
-        OffloadingIRNode.new_state_node(sdfg.add_state(f's{i}'), OrderedSet(), OrderedSet()) for i in range(length)
+        OffloadingIRNode.new_state_node(sdfg.add_state(f"s{i}"), OrderedSet(), OrderedSet()) for i in range(length)
     ]
     previous = open_node
     for state in states:
@@ -548,10 +607,10 @@ def test_a_tail_contributes_none_of_its_remaining_siblings():
     which is what makes a branching section report one tail per arm rather than per edge. The
     iterative walk has to keep that, so a node with a close child and a further child contributes
     itself and nothing below that child."""
-    sdfg = dace.SDFG('placement_ir_branch')
-    open_node = OffloadingIRNode.new_open_node(sdfg.add_state('section'))
-    head = OffloadingIRNode.new_state_node(sdfg.add_state('head'), OrderedSet(), OrderedSet())
-    skipped = OffloadingIRNode.new_state_node(sdfg.add_state('skipped'), OrderedSet(), OrderedSet())
+    sdfg = dace.SDFG("placement_ir_branch")
+    open_node = OffloadingIRNode.new_open_node(sdfg.add_state("section"))
+    head = OffloadingIRNode.new_state_node(sdfg.add_state("head"), OrderedSet(), OrderedSet())
+    skipped = OffloadingIRNode.new_state_node(sdfg.add_state("skipped"), OrderedSet(), OrderedSet())
     open_node.append_node(head)
     head.append_node(open_node.close)
     head.append_node(skipped)
@@ -569,7 +628,7 @@ def test_a_cpu_heap_array_survives_the_round_trip():
     b = np.zeros(32, dtype=np.float64)
     sdfg(A=a, B=b)
 
-    assert np.allclose(b, a * 2.0), 'the device result never reached the host array'
+    assert np.allclose(b, a * 2.0), "the device result never reached the host array"
 
 
 def ordering_edge_after_a_kernel() -> dace.SDFG:
@@ -577,18 +636,23 @@ def ordering_edge_after_a_kernel() -> dace.SDFG:
 
     CloudSC's ``zpsupsatsrce`` orders some thirty reads this way, ``ptsphy`` among them.
     """
-    sdfg = dace.SDFG('placement_ordering_edge_after_a_kernel')
-    sdfg.add_array('A', [LENGTH], dace.float64)
-    sdfg.add_array('B', [LENGTH], dace.float64)
-    sdfg.add_scalar('s', dace.float64)
-    state = sdfg.add_state('ordered')
-    _, _, exit_a = state.add_mapped_tasklet('write_a', {'i': f'0:{LENGTH}'}, {},
-                                            'o = 1.0', {'o': dace.Memlet('A[i]')},
-                                            external_edges=True)
+    sdfg = dace.SDFG("placement_ordering_edge_after_a_kernel")
+    sdfg.add_array("A", [LENGTH], dace.float64)
+    sdfg.add_array("B", [LENGTH], dace.float64)
+    sdfg.add_scalar("s", dace.float64)
+    state = sdfg.add_state("ordered")
+    _, _, exit_a = state.add_mapped_tasklet(
+        "write_a", {"i": f"0:{LENGTH}"}, {}, "o = 1.0", {"o": dace.Memlet("A[i]")}, external_edges=True
+    )
     written = state.out_edges(exit_a)[0].dst
-    _, entry_b, _ = state.add_mapped_tasklet('scale_b', {'i': f'0:{LENGTH}'}, {'inp': dace.Memlet('s[0]')},
-                                             'o = inp * 2.0', {'o': dace.Memlet('B[i]')},
-                                             external_edges=True)
+    _, entry_b, _ = state.add_mapped_tasklet(
+        "scale_b",
+        {"i": f"0:{LENGTH}"},
+        {"inp": dace.Memlet("s[0]")},
+        "o = inp * 2.0",
+        {"o": dace.Memlet("B[i]")},
+        external_edges=True,
+    )
     state.add_nedge(written, state.in_edges(entry_b)[0].src, dace.Memlet())
     sdfg.validate()
     return sdfg
@@ -599,42 +663,42 @@ def test_an_ordering_edge_does_not_make_a_scalar_device_written():
     sdfg = ordering_edge_after_a_kernel()
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
-    assert isinstance(sdfg.arrays['s'], data.Scalar), sdfg.arrays['s']
-    assert not [name for name in sdfg.arrays if name != 's' and name.endswith('_s')], list(sdfg.arrays)
+    assert isinstance(sdfg.arrays["s"], data.Scalar), sdfg.arrays["s"]
+    assert not [name for name in sdfg.arrays if name != "s" and name.endswith("_s")], list(sdfg.arrays)
 
 
 def test_the_pass_reports_what_it_placed_on_the_device():
     """A Pipeline reads the result as "did anything change", so an offload must not answer None."""
     sdfg = cpu_heap_sdfg()
     placed = OffloadToAccelerator().apply_pass(sdfg, {})
-    assert placed is not None and {name.split('.', 1)[1] for name in placed} == {'A_gpu', 'B_gpu'}, placed
+    assert placed is not None and {name.split(".", 1)[1] for name in placed} == {"A_gpu", "B_gpu"}, placed
 
 
 def test_a_graph_with_nothing_to_offload_reports_no_change():
-    sdfg = dace.SDFG('host_only_a_graph_with_nothing_to_offload_reports_no_change')
-    sdfg.add_scalar('s', dace.float64)
-    state = sdfg.add_state('host')
-    one = state.add_tasklet('one', {}, {'o'}, 'o = 1.0')
-    state.add_edge(one, 'o', state.add_write('s'), None, dace.Memlet('s[0]'))
+    sdfg = dace.SDFG("host_only_a_graph_with_nothing_to_offload_reports_no_change")
+    sdfg.add_scalar("s", dace.float64)
+    state = sdfg.add_state("host")
+    one = state.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    state.add_edge(one, "o", state.add_write("s"), None, dace.Memlet("s[0]"))
     assert OffloadToAccelerator().apply_pass(sdfg, {}) is None
 
 
 def one_element_read_by_two_maps() -> dace.SDFG:
     """``s = A[3]`` on the host, then two maps that both read ``s``."""
-    sdfg = dace.SDFG('one_element_read_by_two_maps')
-    for name in 'ABC':
+    sdfg = dace.SDFG("one_element_read_by_two_maps")
+    for name in "ABC":
         sdfg.add_array(name, [LENGTH], dace.float64)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    state = sdfg.add_state('main')
-    source = state.add_read('A')
-    element = state.add_access('s')
-    state.add_edge(source, None, element, None, dace.Memlet('A[3] -> [0]'))
-    for name in 'BC':
-        entry, exit_node = state.add_map(f'scale_{name}', {'i': f'0:{LENGTH}'})
-        tasklet = state.add_tasklet(f'times_{name}', {'x': None, 'y': None}, {'o': None}, 'o = x * y')
-        state.add_memlet_path(element, entry, tasklet, dst_conn='x', memlet=dace.Memlet('s[0]'))
-        state.add_memlet_path(source, entry, tasklet, dst_conn='y', memlet=dace.Memlet('A[i]'))
-        state.add_memlet_path(tasklet, exit_node, state.add_write(name), src_conn='o', memlet=dace.Memlet(f'{name}[i]'))
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state("main")
+    source = state.add_read("A")
+    element = state.add_access("s")
+    state.add_edge(source, None, element, None, dace.Memlet("A[3] -> [0]"))
+    for name in "BC":
+        entry, exit_node = state.add_map(f"scale_{name}", {"i": f"0:{LENGTH}"})
+        tasklet = state.add_tasklet(f"times_{name}", {"x": None, "y": None}, {"o": None}, "o = x * y")
+        state.add_memlet_path(element, entry, tasklet, dst_conn="x", memlet=dace.Memlet("s[0]"))
+        state.add_memlet_path(source, entry, tasklet, dst_conn="y", memlet=dace.Memlet("A[i]"))
+        state.add_memlet_path(tasklet, exit_node, state.add_write(name), src_conn="o", memlet=dace.Memlet(f"{name}[i]"))
     sdfg.validate()
     return sdfg
 
@@ -645,34 +709,34 @@ def test_a_single_element_two_maps_read_stays_outside_both():
     sdfg = one_element_read_by_two_maps()
     OffloadToAccelerator().apply_pass(sdfg, {})
     sdfg.validate()
-    state = next(state for state in sdfg.states() if state.label == 'main')
+    state = next(state for state in sdfg.states() if state.label == "main")
     scopes = state.scope_dict()
     tasklets = {node.label: scopes[node].map.label for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)}
-    assert tasklets == {'times_B': 'scale_B', 'times_C': 'scale_C'}, tasklets
-    assert all(scopes[node] is None for node in state.data_nodes() if node.data == 's')
+    assert tasklets == {"times_B": "scale_B", "times_C": "scale_C"}, tasklets
+    assert all(scopes[node] is None for node in state.data_nodes() if node.data == "s")
 
 
 def per_iteration_scratch() -> dace.SDFG:
     """``tmp`` is written and read inside the scope of one map."""
-    sdfg = dace.SDFG('per_iteration_scratch')
-    sdfg.add_array('A', [LENGTH], dace.float64)
-    sdfg.add_array('B', [LENGTH], dace.float64)
-    sdfg.add_transient('tmp', [2], dace.float64)
-    state = sdfg.add_state('kernel')
-    entry, exit_node = state.add_map('twice', {'i': f'0:{LENGTH}'})
-    fill = state.add_tasklet('fill', {'a': None}, {'t': None}, 't = a')
-    scratch = state.add_access('tmp')
-    use = state.add_tasklet('use', {'t': None}, {'b': None}, 'b = 2 * t')
-    state.add_memlet_path(state.add_read('A'), entry, fill, dst_conn='a', memlet=dace.Memlet('A[i]'))
-    state.add_edge(fill, 't', scratch, None, dace.Memlet('tmp[0]'))
-    state.add_edge(scratch, None, use, 't', dace.Memlet('tmp[0]'))
-    state.add_memlet_path(use, exit_node, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    sdfg = dace.SDFG("per_iteration_scratch")
+    sdfg.add_array("A", [LENGTH], dace.float64)
+    sdfg.add_array("B", [LENGTH], dace.float64)
+    sdfg.add_transient("tmp", [2], dace.float64)
+    state = sdfg.add_state("kernel")
+    entry, exit_node = state.add_map("twice", {"i": f"0:{LENGTH}"})
+    fill = state.add_tasklet("fill", {"a": None}, {"t": None}, "t = a")
+    scratch = state.add_access("tmp")
+    use = state.add_tasklet("use", {"t": None}, {"b": None}, "b = 2 * t")
+    state.add_memlet_path(state.add_read("A"), entry, fill, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_edge(fill, "t", scratch, None, dace.Memlet("tmp[0]"))
+    state.add_edge(scratch, None, use, "t", dace.Memlet("tmp[0]"))
+    state.add_memlet_path(use, exit_node, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
     sdfg.validate()
     return sdfg
 
 
-ROWS = dace.symbol('ROWS')
-COLS = dace.symbol('COLS')
+ROWS = dace.symbol("ROWS")
+COLS = dace.symbol("COLS")
 
 
 @dace.program
@@ -719,13 +783,17 @@ def is_copy_state(sdfg: dace.SDFG, block: dace.sdfg.state.ControlFlowBlock) -> b
         return False
     gpu = dtypes.StorageType.GPU_Global
     return any(
-        (sdfg.arrays[e.src.data].storage is gpu) != (sdfg.arrays[e.dst.data].storage is gpu) for e in block.edges())
+        (sdfg.arrays[e.src.data].storage is gpu) != (sdfg.arrays[e.dst.data].storage is gpu) for e in block.edges()
+    )
 
 
 def copies_inside_loops(sdfg: dace.SDFG) -> list[str]:
     return [
-        b.label for loop in sdfg.all_control_flow_blocks(recursive=True) if isinstance(loop, LoopRegion)
-        for b in loop.all_control_flow_blocks(recursive=True) if is_copy_state(sdfg, b)
+        b.label
+        for loop in sdfg.all_control_flow_blocks(recursive=True)
+        if isinstance(loop, LoopRegion)
+        for b in loop.all_control_flow_blocks(recursive=True)
+        if is_copy_state(sdfg, b)
     ]
 
 
@@ -738,30 +806,24 @@ def offloaded_program(program: dace.frontend.python.parser.DaceProgram, pin: boo
 
 def kernel_with_a_one_iteration_inner_map() -> dace.SDFG:
     """A map whose body is a single-iteration map writing and reading the length-1 local ``acc``."""
-    sdfg = dace.SDFG('placement_kernel_with_a_one_iteration_inner_map')
-    sdfg.add_array('A', [256], dace.float64)
-    sdfg.add_array('B', [256], dace.float64)
-    sdfg.add_array('acc', [1], dace.float64, transient=True)
-    state = sdfg.add_state('kernel')
-    outer_entry, outer_exit = state.add_map('device', {'i': '0:256'})
-    inner_entry, inner_exit = state.add_map('once', {'k': '0:1'})
-    double = state.add_tasklet('double', {'inp': None}, {'out': None}, 'out = inp * 2.0')
-    acc = state.add_access('acc')
-    bump = state.add_tasklet('bump', {'inp': None}, {'out': None}, 'out = inp + 1.0')
-    state.add_memlet_path(state.add_read('A'),
-                          outer_entry,
-                          inner_entry,
-                          double,
-                          dst_conn='inp',
-                          memlet=dace.Memlet('A[i]'))
-    state.add_edge(double, 'out', acc, None, dace.Memlet('acc[0]'))
-    state.add_edge(acc, None, bump, 'inp', dace.Memlet('acc[0]'))
-    state.add_memlet_path(bump,
-                          inner_exit,
-                          outer_exit,
-                          state.add_write('B'),
-                          src_conn='out',
-                          memlet=dace.Memlet('B[i]'))
+    sdfg = dace.SDFG("placement_kernel_with_a_one_iteration_inner_map")
+    sdfg.add_array("A", [256], dace.float64)
+    sdfg.add_array("B", [256], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64, transient=True)
+    state = sdfg.add_state("kernel")
+    outer_entry, outer_exit = state.add_map("device", {"i": "0:256"})
+    inner_entry, inner_exit = state.add_map("once", {"k": "0:1"})
+    double = state.add_tasklet("double", {"inp": None}, {"out": None}, "out = inp * 2.0")
+    acc = state.add_access("acc")
+    bump = state.add_tasklet("bump", {"inp": None}, {"out": None}, "out = inp + 1.0")
+    state.add_memlet_path(
+        state.add_read("A"), outer_entry, inner_entry, double, dst_conn="inp", memlet=dace.Memlet("A[i]")
+    )
+    state.add_edge(double, "out", acc, None, dace.Memlet("acc[0]"))
+    state.add_edge(acc, None, bump, "inp", dace.Memlet("acc[0]"))
+    state.add_memlet_path(
+        bump, inner_exit, outer_exit, state.add_write("B"), src_conn="out", memlet=dace.Memlet("B[i]")
+    )
     sdfg.validate()
     return sdfg
 
@@ -771,13 +833,14 @@ def test_a_length_one_local_of_a_one_iteration_map_in_a_kernel_is_a_register():
     sdfg = kernel_with_a_one_iteration_inner_map()
     OffloadToAccelerator().apply_pass(sdfg, {})
     sdfg.validate()
-    assert sdfg.arrays['acc'].storage == dtypes.StorageType.Register
+    assert sdfg.arrays["acc"].storage == dtypes.StorageType.Register
     state = next(state for state in sdfg.states() if state.label == "kernel")
     kernels = [
-        n.map.label for n in state.nodes()
+        n.map.label
+        for n in state.nodes()
         if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dtypes.ScheduleType.GPU_Device
     ]
-    assert kernels == ['device'], kernels
+    assert kernels == ["device"], kernels
 
 
 @pytest.mark.gpu
@@ -793,18 +856,23 @@ def test_a_length_one_local_of_a_one_iteration_map_computes_what_numpy_computes(
 def host_accumulator_beside_a_kernel_in_a_loop(length: int) -> dace.SDFG:
     """npbench nbody's shape: a kernel on ``A`` and a host tasklet bumping ``PE``, every iteration of a loop,
     with both signature arrays handed over in device memory."""
-    sdfg = dace.SDFG(f'host_accumulator_beside_a_kernel_in_a_loop_{length}')
-    sdfg.add_array('A', [64], dace.float64)
-    sdfg.add_array('PE', [length], dace.float64)
-    loop = LoopRegion('steps', 't < 10', 't', 't = 0', 't = t + 1')
+    sdfg = dace.SDFG(f"host_accumulator_beside_a_kernel_in_a_loop_{length}")
+    sdfg.add_array("A", [64], dace.float64)
+    sdfg.add_array("PE", [length], dace.float64)
+    loop = LoopRegion("steps", "t < 10", "t", "t = 0", "t = t + 1")
     sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('body', is_start_block=True)
-    body.add_mapped_tasklet('scale', {'i': '0:64'}, {'a': dace.Memlet('A[i]')},
-                            'b = a * 0.5', {'b': dace.Memlet('A[i]')},
-                            external_edges=True)
-    bump = body.add_tasklet('bump', {'p': None}, {'q': None}, 'q = p + 1.0')
-    body.add_edge(body.add_read('PE'), None, bump, 'p', dace.Memlet('PE[0]'))
-    body.add_edge(bump, 'q', body.add_write('PE'), None, dace.Memlet('PE[0]'))
+    body = loop.add_state("body", is_start_block=True)
+    body.add_mapped_tasklet(
+        "scale",
+        {"i": "0:64"},
+        {"a": dace.Memlet("A[i]")},
+        "b = a * 0.5",
+        {"b": dace.Memlet("A[i]")},
+        external_edges=True,
+    )
+    bump = body.add_tasklet("bump", {"p": None}, {"q": None}, "q = p + 1.0")
+    body.add_edge(body.add_read("PE"), None, bump, "p", dace.Memlet("PE[0]"))
+    body.add_edge(bump, "q", body.add_write("PE"), None, dace.Memlet("PE[0]"))
     sdfg.validate()
     for desc in sdfg.arrays.values():
         desc.storage = dtypes.StorageType.GPU_Global
@@ -812,9 +880,10 @@ def host_accumulator_beside_a_kernel_in_a_loop(length: int) -> dace.SDFG:
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('length', [1, 4])
+@pytest.mark.parametrize("length", [1, 4])
 def test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(length):
     import cupy  # GPU-only dependency; a CPU collection of this file must not need it
+
     sdfg = host_accumulator_beside_a_kernel_in_a_loop(length)
     OffloadToAccelerator().apply_pass(sdfg, {})
     A = cupy.asarray(np.arange(64, dtype=np.float64))
@@ -826,30 +895,24 @@ def test_a_host_accumulator_beside_a_kernel_computes_what_numpy_computes(length)
 
 def kernel_with_a_shared_tile() -> dace.SDFG:
     """A block map stages ``A`` in the ``GPU_Shared`` transient ``tile``, and a second inner map reads it."""
-    sdfg = dace.SDFG('kernel_with_a_shared_tile')
-    sdfg.add_array('A', [64], dace.float64)
-    sdfg.add_array('B', [64], dace.float64)
-    sdfg.add_transient('tile', [32], dace.float64, storage=dtypes.StorageType.GPU_Shared)
-    state = sdfg.add_state('kernel')
-    blocks, blocks_exit = state.add_map('blocks', {'b': '0:2'})
-    load_entry, load_exit = state.add_map('load', {'t': '0:32'})
-    use_entry, use_exit = state.add_map('use', {'t': '0:32'})
-    load = state.add_tasklet('load', {'a': None}, {'o': None}, 'o = a')
-    use = state.add_tasklet('use', {'s': None}, {'o': None}, 'o = s * 2')
-    tile = state.add_access('tile')
-    state.add_memlet_path(state.add_read('A'),
-                          blocks,
-                          load_entry,
-                          load,
-                          dst_conn='a',
-                          memlet=dace.Memlet('A[b * 32 + t]'))
-    state.add_memlet_path(load, load_exit, tile, src_conn='o', memlet=dace.Memlet('tile[t]'))
-    state.add_memlet_path(tile, use_entry, use, dst_conn='s', memlet=dace.Memlet('tile[t]'))
-    state.add_memlet_path(use,
-                          use_exit,
-                          blocks_exit,
-                          state.add_write('B'),
-                          src_conn='o',
-                          memlet=dace.Memlet('B[b * 32 + t]'))
+    sdfg = dace.SDFG("kernel_with_a_shared_tile")
+    sdfg.add_array("A", [64], dace.float64)
+    sdfg.add_array("B", [64], dace.float64)
+    sdfg.add_transient("tile", [32], dace.float64, storage=dtypes.StorageType.GPU_Shared)
+    state = sdfg.add_state("kernel")
+    blocks, blocks_exit = state.add_map("blocks", {"b": "0:2"})
+    load_entry, load_exit = state.add_map("load", {"t": "0:32"})
+    use_entry, use_exit = state.add_map("use", {"t": "0:32"})
+    load = state.add_tasklet("load", {"a": None}, {"o": None}, "o = a")
+    use = state.add_tasklet("use", {"s": None}, {"o": None}, "o = s * 2")
+    tile = state.add_access("tile")
+    state.add_memlet_path(
+        state.add_read("A"), blocks, load_entry, load, dst_conn="a", memlet=dace.Memlet("A[b * 32 + t]")
+    )
+    state.add_memlet_path(load, load_exit, tile, src_conn="o", memlet=dace.Memlet("tile[t]"))
+    state.add_memlet_path(tile, use_entry, use, dst_conn="s", memlet=dace.Memlet("tile[t]"))
+    state.add_memlet_path(
+        use, use_exit, blocks_exit, state.add_write("B"), src_conn="o", memlet=dace.Memlet("B[b * 32 + t]")
+    )
     sdfg.validate()
     return sdfg

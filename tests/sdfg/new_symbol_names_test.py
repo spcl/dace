@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``new_symbol_names`` must name exactly what ``new_symbols`` defines, without inferring types."""
+
 import builtins
 
 import numpy as np
@@ -10,8 +11,8 @@ from dace import dtypes
 from dace.libraries.standard import Reduce
 from dace.sdfg import nodes
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def assert_names_match(sdfg: dace.SDFG) -> int:
@@ -45,7 +46,7 @@ def with_reduction(A: dace.float64[N, M], B: dace.float64[N]):
     B[:] = np.sum(A, axis=1)
 
 
-@pytest.mark.parametrize('program', [single_map, nested_maps, with_reduction])
+@pytest.mark.parametrize("program", [single_map, nested_maps, with_reduction])
 def test_new_symbol_names_matches_new_symbols(program):
     sdfg = program.to_sdfg(simplify=False)
     assert_names_match(sdfg)
@@ -56,7 +57,7 @@ def test_new_symbol_names_matches_new_symbols(program):
         for state in nested.states():
             for node in state.nodes():
                 if isinstance(node, Reduce):
-                    node.implementation = 'pure'
+                    node.implementation = "pure"
     # A reduction only becomes a map once its library node expands, as it does before code generation.
     sdfg.expand_library_nodes()
     assert assert_names_match(sdfg) > 0
@@ -64,43 +65,43 @@ def test_new_symbol_names_matches_new_symbols(program):
 
 def test_new_symbol_names_dynamic_map_range():
     """A dynamic scope input is a defined symbol, so it must be named too."""
-    sdfg = dace.SDFG('dynrange_new_symbol_names_dynamic_map_range')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_scalar('lim', dace.int32, transient=False)
+    sdfg = dace.SDFG("dynrange_new_symbol_names_dynamic_map_range")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_scalar("lim", dace.int32, transient=False)
     state = sdfg.add_state()
 
-    entry, exit_node = state.add_map('m', dict(i='0:N'))
-    entry.add_in_connector('dyn')
-    state.add_edge(state.add_access('lim'), None, entry, 'dyn', dace.Memlet('lim[0]'))
+    entry, exit_node = state.add_map("m", dict(i="0:N"))
+    entry.add_in_connector("dyn")
+    state.add_edge(state.add_access("lim"), None, entry, "dyn", dace.Memlet("lim[0]"))
 
-    tasklet = state.add_tasklet('t', {'a'}, {'b'}, 'b = a')
-    state.add_memlet_path(state.add_access('A'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i]'))
-    state.add_memlet_path(tasklet, exit_node, state.add_access('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    tasklet = state.add_tasklet("t", {"a"}, {"b"}, "b = a")
+    state.add_memlet_path(state.add_access("A"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_access("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
 
     names = entry.new_symbol_names(sdfg, state)
     assert names == set(entry.new_symbols(sdfg, state, {}).keys())
-    assert 'i' in names and 'dyn' in names
+    assert "i" in names and "dyn" in names
 
 
 def test_new_symbol_names_consume():
-    sdfg = dace.SDFG('consume')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_stream('S', dace.float64, transient=True)
+    sdfg = dace.SDFG("consume")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_stream("S", dace.float64, transient=True)
     state = sdfg.add_state()
 
-    entry, exit_node = state.add_consume('c', ('p', '4'))
-    tasklet = state.add_tasklet('t', {'a'}, {'b'}, 'b = a')
-    state.add_memlet_path(state.add_access('S'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('S[0]'))
-    state.add_memlet_path(tasklet, exit_node, state.add_access('A'), src_conn='b', memlet=dace.Memlet('A[p]'))
+    entry, exit_node = state.add_consume("c", ("p", "4"))
+    tasklet = state.add_tasklet("t", {"a"}, {"b"}, "b = a")
+    state.add_memlet_path(state.add_access("S"), entry, tasklet, dst_conn="a", memlet=dace.Memlet("S[0]"))
+    state.add_memlet_path(tasklet, exit_node, state.add_access("A"), src_conn="b", memlet=dace.Memlet("A[p]"))
 
     names = entry.new_symbol_names(sdfg, state)
     assert names == set(entry.new_symbols(sdfg, state, {}).keys())
-    assert 'p' in names
+    assert "p" in names
 
 
 def test_node_base_defines_nothing():
-    assert nodes.Tasklet('t').new_symbol_names(None, None) == set()
+    assert nodes.Tasklet("t").new_symbol_names(None, None) == set()
 
 
 def test_python_bool_normalizes_like_the_other_scalars():
@@ -112,21 +113,21 @@ def test_python_bool_normalizes_like_the_other_scalars():
 
 
 def test_scalar_widths_follow_the_configuration():
-    for setting, expected in (('python', (np.int64, np.float64)), ('c', (np.int32, np.float32))):
-        with dace.config.set_temporary('compiler', 'default_data_types', value=setting):
+    for setting, expected in (("python", (np.int64, np.float64)), ("c", (np.int32, np.float32))):
+        with dace.config.set_temporary("compiler", "default_data_types", value=setting):
             assert dtypes.typeclass(int).type is expected[0]
             assert dtypes.typeclass(float).type is expected[1]
 
 
 def test_unknown_configuration_still_builds_non_python_types():
     """Only Python's scalars consult the configuration; nothing else may start failing on it."""
-    with dace.config.set_temporary('compiler', 'default_data_types', value='nonsense'):
+    with dace.config.set_temporary("compiler", "default_data_types", value="nonsense"):
         with pytest.raises(NameError):
             dtypes.typeclass(int)
         assert dtypes.typeclass(np.float32).type is np.float32
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_new_symbol_names_matches_new_symbols(single_map)
     test_new_symbol_names_matches_new_symbols(nested_maps)
     test_new_symbol_names_matches_new_symbols(with_reduction)

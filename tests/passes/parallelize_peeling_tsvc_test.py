@@ -18,6 +18,7 @@ over a symbolic length ``N``) document which shapes peeling can and cannot help:
 
 All cases are value-preserving regardless of whether a map is produced.
 """
+
 import contextlib
 import os
 
@@ -31,7 +32,7 @@ from dace.transformation.passes import parallelize
 from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, DEFAULT_PEEL_LIMIT
 from dace.transformation.passes.simplify import SimplifyPass
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nloops(sdfg):
@@ -152,12 +153,12 @@ def test_peeling_unblocks_boundary_conditional():
                 A[N - 1] = A[N - 1] + 1.0
 
     base = front_conflict.to_sdfg(simplify=True)
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         base.apply_transformations_repeated(LoopToMap)
     assert _nmaps(base) == 0  # LoopToMap alone cannot parallelize it
 
     sdfg = front_conflict.to_sdfg(simplify=True)
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         BestEffortLoopPeeling(DEFAULT_PEEL_LIMIT).apply_pass(sdfg, {})
         # The peel leaves the remainder's ``i == 0`` guard behind; folding it is what makes the
         # remaining writes disjoint, so the prune is part of the claim, not incidental tidying.
@@ -176,7 +177,7 @@ def test_peeling_unblocks_boundary_conditional():
     assert np.allclose(ref_A, Ac)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_tsvc_s291_front_peeled_form_is_parallel()
     test_tsvc_s2244_back_peeled_form_is_parallel()
     test_tsvc_s121_antidependence_value_preserving()

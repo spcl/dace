@@ -6,6 +6,7 @@ methods, finest/coarsest digit selection, error paths, ``dim_sizes`` bookkeeping
 chaining, JSON serialization round-trips, and the digit index-expression lowering checked
 bit-exact against a numpy oracle. Everything here is pure-Python algebra (no SDFG compilation).
 """
+
 import json
 
 import numpy as np
@@ -13,12 +14,29 @@ import pytest
 import sympy
 
 from dace.symbolic import int_ceil
-from dace.libraries.layout.algebra import (Digit, LayoutMap, Permute, Block, Unblock, Pad, Shuffle, Zip, Unzip,
-                                           identity_map, compose_ops, simplify_ops, is_identity, physical_index_exprs,
-                                           op_to_dict, op_from_dict, ops_to_list, ops_from_list)
+from dace.libraries.layout.algebra import (
+    Digit,
+    LayoutMap,
+    Permute,
+    Block,
+    Unblock,
+    Pad,
+    Shuffle,
+    Zip,
+    Unzip,
+    identity_map,
+    compose_ops,
+    simplify_ops,
+    is_identity,
+    physical_index_exprs,
+    op_to_dict,
+    op_from_dict,
+    ops_to_list,
+    ops_from_list,
+)
 
-N = sympy.Symbol('N', nonnegative=True, integer=True)
-M = sympy.Symbol('M', nonnegative=True, integer=True)
+N = sympy.Symbol("N", nonnegative=True, integer=True)
+M = sympy.Symbol("M", nonnegative=True, integer=True)
 
 
 def packed_offset(m: LayoutMap, index_by_dim: dict) -> int:
@@ -42,7 +60,7 @@ def test_digit_coerces_fields_to_sympy():
     assert isinstance(d.stride, sympy.Basic) and isinstance(d.extent, sympy.Basic)
     assert d.stride == sympy.Integer(16) and d.extent == sympy.Integer(8)
     # A string radix is sympified too, and compares equal to the integer form.
-    assert Digit(1, '4', '32') == Digit(1, 4, 32)
+    assert Digit(1, "4", "32") == Digit(1, 4, 32)
 
 
 def test_identity_map_explicit_dims():
@@ -66,9 +84,9 @@ def test_inverse_methods_return_expected_ops():
     assert Block(3, 8).inverse() == Unblock(3, 8)
     assert Unblock(3, 8).inverse() == Block(3, 8)
     assert Pad(0, 8).inverse() == Pad(0, -8)
-    assert Shuffle(0, 'rcm').inverse() == Shuffle(0, 'rcm', inverted=True)
-    assert Zip(('re', 'im')).inverse() == Unzip(('re', 'im'))
-    assert Unzip(('re', 'im')).inverse() == Zip(('re', 'im'))
+    assert Shuffle(0, "rcm").inverse() == Shuffle(0, "rcm", inverted=True)
+    assert Zip(("re", "im")).inverse() == Unzip(("re", "im"))
+    assert Unzip(("re", "im")).inverse() == Zip(("re", "im"))
 
 
 def test_permute_inverse_roundtrips_layout():
@@ -125,33 +143,33 @@ def test_unblock_without_inner_digit_raises():
 
 def test_unblock_without_outer_partner_raises():
     # An inner-shaped digit with no coarser partner at stride*factor cannot be merged.
-    m = LayoutMap(dim_sizes={0: 4}, digits=(Digit(0, 1, 4), ))
+    m = LayoutMap(dim_sizes={0: 4}, digits=(Digit(0, 1, 4),))
     with pytest.raises(ValueError):
         Unblock(0, 4).apply(m)
 
 
 def test_zip_on_existing_struct_raises():
     with pytest.raises(ValueError):
-        compose_ops([Zip(('re', 'im')), Zip(('a', 'b'))], shape=[N])
+        compose_ops([Zip(("re", "im")), Zip(("a", "b"))], shape=[N])
 
 
 def test_unzip_field_mismatch_raises():
     with pytest.raises(ValueError):
-        compose_ops([Zip(('re', 'im')), Unzip(('a', 'b'))], shape=[N])
+        compose_ops([Zip(("re", "im")), Unzip(("a", "b"))], shape=[N])
 
 
 # element / shuffle semantics ---------------------------
 def test_zip_then_unzip_element_roundtrip():
-    zipped = compose_ops([Zip(('re', 'im'))], shape=[N])
-    assert zipped.element == ('re', 'im')
-    back = compose_ops([Unzip(('re', 'im'))], base=zipped)
+    zipped = compose_ops([Zip(("re", "im"))], shape=[N])
+    assert zipped.element == ("re", "im")
+    back = compose_ops([Unzip(("re", "im"))], base=zipped)
     assert back.element is None
 
 
 def test_shuffle_chain_accumulates_and_sorts_by_dim():
-    m = compose_ops([Shuffle(2, 'a'), Shuffle(0, 'b'), Shuffle(0, 'c')], shape=[N, M, N])
+    m = compose_ops([Shuffle(2, "a"), Shuffle(0, "b"), Shuffle(0, "c")], shape=[N, M, N])
     # Sorted by dim; same-dim tokens accumulate in application order.
-    assert m.shuffles == ((0, (('b', False), ('c', False))), (2, (('a', False), )))
+    assert m.shuffles == ((0, (("b", False), ("c", False))), (2, (("a", False),)))
 
 
 # simplify_ops peephole identities ---------------------------
@@ -160,7 +178,7 @@ def test_block_then_unblock_is_id_but_pads_when_indivisible():
     assert is_identity([Block(0, 16), Unblock(0, 16)])
     # ...but the *materialized* layout is padded up (ceil(100/16)*16 == 112 != 100).
     m = compose_ops([Block(0, 16), Unblock(0, 16)], shape=[100])
-    assert m.digits == (Digit(0, 1, 112), )
+    assert m.digits == (Digit(0, 1, 112),)
 
 
 def test_permute_then_inverse_is_id():
@@ -186,16 +204,18 @@ def test_pad_different_dims_do_not_fuse():
 
 
 def test_shuffle_inverse_is_id_but_variants_kept():
-    assert is_identity([Shuffle(0, 'rcm'), Shuffle(0, 'rcm', inverted=True)])
+    assert is_identity([Shuffle(0, "rcm"), Shuffle(0, "rcm", inverted=True)])
     # Different dim or different name must not cancel.
-    assert simplify_ops([Shuffle(0, 'rcm'), Shuffle(1, 'rcm', inverted=True)]) == \
-        [Shuffle(0, 'rcm'), Shuffle(1, 'rcm', inverted=True)]
-    assert not is_identity([Shuffle(0, 'a'), Shuffle(0, 'b', inverted=True)])
+    assert simplify_ops([Shuffle(0, "rcm"), Shuffle(1, "rcm", inverted=True)]) == [
+        Shuffle(0, "rcm"),
+        Shuffle(1, "rcm", inverted=True),
+    ]
+    assert not is_identity([Shuffle(0, "a"), Shuffle(0, "b", inverted=True)])
 
 
 def test_unzip_then_zip_is_id():
-    assert is_identity([Unzip(('re', 'im')), Zip(('re', 'im'))])
-    assert not is_identity([Unzip(('re', 'im')), Zip(('a', 'b'))])
+    assert is_identity([Unzip(("re", "im")), Zip(("re", "im"))])
+    assert not is_identity([Unzip(("re", "im")), Zip(("a", "b"))])
 
 
 def test_nested_cancellation_reaches_outer_pair():
@@ -208,7 +228,7 @@ def test_is_identity_exactness():
     assert is_identity([])
     assert simplify_ops([]) == []
     # Each single non-trivial op is NOT an identity.
-    for op in [Block(0, 8), Unblock(0, 8), Pad(0, 4), Permute((1, 0)), Shuffle(0, 'p'), Zip(('re', 'im'))]:
+    for op in [Block(0, 8), Unblock(0, 8), Pad(0, 4), Permute((1, 0)), Shuffle(0, "p"), Zip(("re", "im"))]:
         assert not is_identity([op])
     # A zero pad is a semantic no-op but does not structurally cancel on its own.
     assert not is_identity([Pad(0, 0)])
@@ -224,9 +244,9 @@ def test_ops_json_roundtrip_all_op_kinds():
         Block(1, 8),
         Unblock(1, 8),
         Pad(0, 12),
-        Shuffle(3, 'rcm', inverted=True),
-        Zip(('re', 'im')),
-        Unzip(('re', 'im')),
+        Shuffle(3, "rcm", inverted=True),
+        Zip(("re", "im")),
+        Unzip(("re", "im")),
     ]
     encoded = ops_to_list(ops)
     # The encoding must survive a real JSON serialize/deserialize (proves it is JSON-safe).
@@ -237,7 +257,7 @@ def test_ops_json_roundtrip_all_op_kinds():
 
 def test_op_to_dict_pad_amount_is_string_and_roundtrips():
     d = op_to_dict(Pad(0, 12))
-    assert d == {'op': 'Pad', 'dim': 0, 'amount': '12'}
+    assert d == {"op": "Pad", "dim": 0, "amount": "12"}
     assert op_from_dict(d) == Pad(0, 12)
 
 
@@ -248,7 +268,7 @@ def test_op_to_dict_unknown_op_raises():
 
 def test_op_from_dict_unknown_kind_raises():
     with pytest.raises(ValueError):
-        op_from_dict({'op': 'Nope'})
+        op_from_dict({"op": "Nope"})
 
 
 # digit index expression lowering (numpy oracle) ---------------------------
@@ -280,13 +300,13 @@ def test_physical_index_exprs_shapes_and_symbols():
     exprs = physical_index_exprs(m)
     assert len(exprs) == len(m.digits) == 2
     # The finest digit's expression carries a modulus by its (constant) extent.
-    idx = sympy.Symbol('__i0', nonnegative=True, integer=True)
+    idx = sympy.Symbol("__i0", nonnegative=True, integer=True)
     assert exprs[1] == idx % 16
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for name, fn in list(globals().items()):
-        if name.startswith('test_') and callable(fn):
+        if name.startswith("test_") and callable(fn):
             fn()
             print(f"ok  {name}")
     print("algebra extra tests PASS")

@@ -24,6 +24,7 @@ Each corpus file supplies its own loader (inputs / reference / run / compare)
 because npbench (numpy oracle) and polybench (value-preservation vs the
 untransformed baseline) differ.
 """
+
 import ast
 import inspect
 import textwrap
@@ -148,10 +149,9 @@ def base_pipeline(sdfg) -> None:
     """
     sdfg.simplify(validate=True, validate_all=True)
     sdfg.apply_transformations_repeated(LoopToMap, permissive=False, validate=True, validate_all=True)
-    sdfg.apply_transformations_repeated([MapFusionVertical, MapFusionHorizontal],
-                                        permissive=False,
-                                        validate=True,
-                                        validate_all=True)
+    sdfg.apply_transformations_repeated(
+        [MapFusionVertical, MapFusionHorizontal], permissive=False, validate=True, validate_all=True
+    )
     sdfg.simplify(validate=True, validate_all=True)
 
 
@@ -165,7 +165,7 @@ def select_widths(sdfg) -> Tuple[int, ...]:
     ``tsvc_canonicalize_vectorize_corpus_test.py``.
     """
     counts = [len(n.map.params) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)]
-    return (8, 8) if (counts and min(counts) >= 2) else (8, )
+    return (8, 8) if (counts and min(counts) >= 2) else (8,)
 
 
 def make_pass(widths: Tuple[int, ...], config: str) -> VectorizeCPUMultiDim:
@@ -177,7 +177,7 @@ def make_pass(widths: Tuple[int, ...], config: str) -> VectorizeCPUMultiDim:
     and branch mode.
     """
     return VectorizeCPUMultiDim(
-        VectorizeConfig(widths=widths,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
-                        validate_all=True,
-                        **CONFIGS[config]))
+        VectorizeConfig(
+            widths=widths, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE, validate_all=True, **CONFIGS[config]
+        )
+    )

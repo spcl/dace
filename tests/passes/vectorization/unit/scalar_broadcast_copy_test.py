@@ -17,6 +17,7 @@ orphaned ``_tile_iter_mask`` behind.
 The source of a bare copy into a global array must therefore become a real ``(W,)`` tile via a
 broadcast ``TileGather``, paired with the masked store that writes the window.
 """
+
 import numpy as np
 
 import dace
@@ -28,7 +29,7 @@ from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
 from tests.passes.vectorization.tile_assertions import masked_stores, sdfg_masked_stores
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -42,32 +43,32 @@ def _vectorized(tag):
     sdfg = broadcast_scalar.to_sdfg(simplify=True)
     sdfg.name = tag
     parallelize(sdfg, validate=True, validate_all=False)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg
 
 
 def test_lowers_to_a_broadcast_load_and_a_tile_store():
-    sdfg = _vectorized('bcast_copy_struct')
+    sdfg = _vectorized("bcast_copy_struct")
     loads = [n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather)]
     stores = sdfg_masked_stores(sdfg)
-    assert loads, 'the scalar source never became a tile'
-    assert all(ld.src_kind == 'Scalar' for ld in loads), [ld.src_kind for ld in loads]
-    assert stores, 'the tile is never stored back to the global array'
+    assert loads, "the scalar source never became a tile"
+    assert all(ld.src_kind == "Scalar" for ld in loads), [ld.src_kind for ld in loads]
+    assert stores, "the tile is never stored back to the global array"
 
 
 def test_the_stored_window_is_the_whole_tile():
     """The write subset must stay the per-tile window; collapsing it to a single element is the
     regression this guards (the dropped ``other_subset``)."""
-    sdfg = _vectorized('bcast_copy_window')
+    sdfg = _vectorized("bcast_copy_window")
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in masked_stores(state):
                 out = [e for e in state.out_edges(node) if e.src_conn == OUTPUT_CONNECTOR_NAME]
-                assert out, f'{node.label} has no {OUTPUT_CONNECTOR_NAME} edge'
+                assert out, f"{node.label} has no {OUTPUT_CONNECTOR_NAME} edge"
                 for edge in out:
                     sizes = edge.data.subset.size()
-                    assert any(str(s) == '8' for s in sizes), f'{node.label} stores {edge.data.subset}, not a tile'
+                    assert any(str(s) == "8" for s in sizes), f"{node.label} stores {edge.data.subset}, not a tile"
 
 
 def test_value_preserving():
@@ -77,11 +78,11 @@ def test_value_preserving():
     want = np.full(n, a[0])
 
     got = a.copy()
-    _vectorized('bcast_copy_value').compile()(a=got, N=n)
+    _vectorized("bcast_copy_value").compile()(a=got, N=n)
     assert np.array_equal(got, want)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_lowers_to_a_broadcast_load_and_a_tile_store()
     test_the_stored_window_is_the_whole_tile()
     test_value_preserving()

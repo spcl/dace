@@ -16,6 +16,7 @@ is a shape the tile pipeline already widens. Nothing here is vectorization-speci
 read that ``AccessNode`` analysis cannot see -- but it runs in the vectorizer because that is where
 the invisible read turns into a refusal.
 """
+
 import dataclasses
 from typing import Any, List, Type, Union
 
@@ -40,6 +41,7 @@ class StructuralSymbols:
     :func:`extend_structural_symbols` scans only what a rewrite added. A demotion adds a scalar, states, access
     nodes, tasklets and edges and removes or edits nothing the scan reads, so the extended set equals a rebuild.
     """
+
     names: set[str] = dataclasses.field(default_factory=set)
     arrays: dict[str, None] = dataclasses.field(default_factory=dict)
     regions: dict[AbstractControlFlowRegion, None] = dataclasses.field(default_factory=dict)
@@ -98,7 +100,7 @@ def data_reading_assigned_symbols(sd: SDFG) -> OrderedSet[str]:
 class DemoteDataReadingInterstateSymbols(ppl.Pass):
     """Demote every symbol an interstate assignment defines from array data to a scalar transient."""
 
-    CATEGORY: str = 'Vectorization'
+    CATEGORY: str = "Vectorization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -149,4 +151,4 @@ class DemoteDataReadingInterstateSymbols(ppl.Pass):
         return demoted or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Demoted {pass_retval} data-reading interstate symbols to scalars.'
+        return f"Demoted {pass_retval} data-reading interstate symbols to scalars."

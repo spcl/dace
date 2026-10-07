@@ -6,6 +6,7 @@ a conditional block, the outer guard can be pushed inside the inner map's body.
 This exposes the two maps to fusion/collapsing passes that otherwise refuse to
 cross the conditional block.
 """
+
 import copy
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -307,9 +308,15 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
 
         return True
 
-    def _rewrite_inner_sdfg(self, cond_block: ConditionalBlock, branch_cond: CodeBlock, enclosing_sdfg: sd.SDFG,
-                            inner_nsdfg: NestedSDFG, cond_free_syms: Set[str],
-                            moved_assignments: Dict[str, str]) -> Set[str]:
+    def _rewrite_inner_sdfg(
+        self,
+        cond_block: ConditionalBlock,
+        branch_cond: CodeBlock,
+        enclosing_sdfg: sd.SDFG,
+        inner_nsdfg: NestedSDFG,
+        cond_free_syms: Set[str],
+        moved_assignments: Dict[str, str],
+    ) -> Set[str]:
         """Wraps the body of one inner NestedSDFG in a copy of the moved
         condition and threads in the symbols/arrays it needs.
 
@@ -442,8 +449,9 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # the union of arrays that needed piping is rewired below.
         arrays_to_pipe: Set[str] = set()
         for _, _, inner_nsdfg in required(all_pieces):
-            arrays_to_pipe |= self._rewrite_inner_sdfg(cond_block, branch_cond, enclosing_sdfg, inner_nsdfg,
-                                                       cond_free_syms, moved_assignments)
+            arrays_to_pipe |= self._rewrite_inner_sdfg(
+                cond_block, branch_cond, enclosing_sdfg, inner_nsdfg, cond_free_syms, moved_assignments
+            )
 
         # Ask BEFORE the add: a derivable entry is left implicit, and ``add_node`` attaches
         # ``new_branch_state`` unwired, so until the rewiring lands the region has two source
@@ -471,10 +479,20 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
                     if "OUT_" + arr_name not in copied_entry.out_connectors:
                         copied_entry.add_out_connector("OUT_" + arr_name)
                     arr_read = new_branch_state.add_read(arr_name)
-                    new_branch_state.add_edge(arr_read, None, copied_entry, "IN_" + arr_name,
-                                              mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
-                    new_branch_state.add_edge(copied_entry, "OUT_" + arr_name, copied_nsdfg, arr_name,
-                                              mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]))
+                    new_branch_state.add_edge(
+                        arr_read,
+                        None,
+                        copied_entry,
+                        "IN_" + arr_name,
+                        mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]),
+                    )
+                    new_branch_state.add_edge(
+                        copied_entry,
+                        "OUT_" + arr_name,
+                        copied_nsdfg,
+                        arr_name,
+                        mm.Memlet.from_array(arr_name, enclosing_sdfg.arrays[arr_name]),
+                    )
 
         out_edges = list(enclosing_sdfg.out_edges(cond_block))
 
@@ -567,8 +585,12 @@ class MoveIfIntoMap(transformation.MultiStateTransformation):
         # by identity is what survives that.
         removed_start = False
         for s in states_to_try_remove:
-            if (s in enclosing_sdfg.nodes() and s.is_empty() and enclosing_sdfg.in_degree(s) == 0
-                    and enclosing_sdfg.out_degree(s) == 0):
+            if (
+                s in enclosing_sdfg.nodes()
+                and s.is_empty()
+                and enclosing_sdfg.in_degree(s) == 0
+                and enclosing_sdfg.out_degree(s) == 0
+            ):
                 removed_start = removed_start or s is start_before
                 enclosing_sdfg.remove_node(s)
         if removed_start:

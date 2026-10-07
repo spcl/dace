@@ -6,6 +6,7 @@ copy of the result into a length-1 output ``y``, both inside a nested SDFG. Wide
 boundary to the outer arrays used to keep ``Reduce.axes == [0]`` (now the length-1 row dim of
 ``a[jl, 0:M]``, so the reduce became a copy) and to leave the copy's implicit destination at ``s[0]``.
 """
+
 import numpy as np
 import pytest
 
@@ -16,7 +17,7 @@ from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
-L, M = dace.symbol('L'), dace.symbol('M')
+L, M = dace.symbol("L"), dace.symbol("M")
 
 
 @dace.program
@@ -30,9 +31,9 @@ def row_sums(a: dace.float64[L, M], s: dace.float64[L]):
 
 def vectorized_row_sums() -> dace.SDFG:
     sdfg = row_sums.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, target='gpu')
+    canonicalize(sdfg, validate=True, target="gpu")
     offload_to_gpu(sdfg)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg
 
@@ -42,7 +43,7 @@ def test_the_reduce_keeps_reducing_the_row_after_widening():
     reduces = [(n, st) for n, st in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
     assert reduces
     for node, state in reduces:
-        (edge, ) = state.in_edges(node)
+        (edge,) = state.in_edges(node)
         extents = edge.data.subset.size()
         # Under the No-View contract the input keeps its full rank (``a[i, 0:M]``), so a reduced axis may have
         # extent 1; what must hold is that the row axis, every axis wider than 1, is still reduced.
@@ -53,8 +54,12 @@ def test_the_reduce_keeps_reducing_the_row_after_widening():
 def test_the_result_copy_lands_on_its_row():
     sdfg = vectorized_row_sums()
     copies = [
-        e.data for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, dace.Memlet)
-        and isinstance(e.dst, dace.nodes.AccessNode) and e.dst.data == 's' and isinstance(e.src, dace.nodes.AccessNode)
+        e.data
+        for e, _ in sdfg.all_edges_recursive()
+        if isinstance(e.data, dace.Memlet)
+        and isinstance(e.dst, dace.nodes.AccessNode)
+        and e.dst.data == "s"
+        and isinstance(e.src, dace.nodes.AccessNode)
     ]
     assert copies
     assert all(m.other_subset is not None and m.other_subset.free_symbols for m in copies), [str(m) for m in copies]
@@ -63,6 +68,7 @@ def test_the_result_copy_lands_on_its_row():
 @pytest.mark.gpu
 def test_row_sums_on_the_device():
     import cupy
+
     sdfg = vectorized_row_sums()
     a = np.random.default_rng(0).random((33, 5))
     s = cupy.zeros(33)
@@ -70,5 +76,5 @@ def test_row_sums_on_the_device():
     np.testing.assert_allclose(s.get(), a.sum(axis=1), rtol=1e-12)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

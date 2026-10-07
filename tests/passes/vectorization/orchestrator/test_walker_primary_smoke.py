@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The walker-primary ``VectorizeCPUMultiDim`` pipeline on minimal kernels: it leaves an empty SDFG alone,
 vectorizes 1-D and 2-D copies into programs that still copy, and refuses tile ranks it does not support."""
+
 import numpy as np
 import pytest
 
@@ -29,11 +30,11 @@ def test_an_empty_sdfg_is_left_unchanged_and_reported_untiled():
     sdfg = dace.SDFG("vectorize_empty")
     sdfg.add_state("s")
     with pytest.warns(UserWarning, match="tiled nothing"):
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     assert [len(state.nodes()) for state in sdfg.states()] == [0]
 
 
-@pytest.mark.parametrize("shape,widths", [((16, ), (8, )), ((16, 32), (4, 8))], ids=["k1", "k2"])
+@pytest.mark.parametrize("shape,widths", [((16,), (8,)), ((16, 32), (4, 8))], ids=["k1", "k2"])
 def test_a_vectorized_copy_still_copies(shape, widths):
     sdfg = copy_kernel(f"vectorize_copy_k{len(widths)}", shape)
     VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
@@ -49,14 +50,19 @@ def test_a_tile_rank_outside_one_to_three_is_refused(widths, rank):
         VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR))
 
 
-@pytest.mark.parametrize("branch_mode,remainder", [(BranchMode.MERGE, RemainderStrategy.SCALAR_POSTAMBLE),
-                                                   (BranchMode.FP_FACTOR, RemainderStrategy.SCALAR_POSTAMBLE)],
-                         ids=["merge", "fp_factor"])
+@pytest.mark.parametrize(
+    "branch_mode,remainder",
+    [
+        (BranchMode.MERGE, RemainderStrategy.SCALAR_POSTAMBLE),
+        (BranchMode.FP_FACTOR, RemainderStrategy.SCALAR_POSTAMBLE),
+    ],
+    ids=["merge", "fp_factor"],
+)
 def test_every_branch_mode_runs_on_an_empty_sdfg(branch_mode, remainder):
     """``fp_factor`` needs K=1 and a scalar postamble; ``merge`` accepts any combination."""
     sdfg = dace.SDFG(f"vectorize_branch_{branch_mode.name.lower()}")
     sdfg.add_state("s")
-    config = VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, branch_mode=branch_mode, remainder_strategy=remainder)
+    config = VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR, branch_mode=branch_mode, remainder_strategy=remainder)
     with pytest.warns(UserWarning, match="tiled nothing"):
         VectorizeCPUMultiDim(config).apply_pass(sdfg, {})
     assert config.branch_mode is branch_mode
@@ -64,7 +70,7 @@ def test_every_branch_mode_runs_on_an_empty_sdfg(branch_mode, remainder):
 
 if __name__ == "__main__":
     test_an_empty_sdfg_is_left_unchanged_and_reported_untiled()
-    test_a_vectorized_copy_still_copies((16, ), (8, ))
+    test_a_vectorized_copy_still_copies((16,), (8,))
     test_a_vectorized_copy_still_copies((16, 32), (4, 8))
     test_a_tile_rank_outside_one_to_three_is_refused((), 0)
     test_a_tile_rank_outside_one_to_three_is_refused((8, 8, 8, 8), 4)

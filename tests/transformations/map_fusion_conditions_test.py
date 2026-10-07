@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Map fusion across guarded computations.
+"""Map fusion across guarded computations.
 
-    Branch-replicated fission produces several identical-condition guarded
-    maps. ``ConditionFusion`` merges the ConditionalBlocks but emits the full
-    cartesian product of branch combinations; ``LiftTrivialIf`` drops the
-    provably-unsatisfiable combinations (``c and not c``), after which the
-    co-located maps fuse. Each test pins the post-recipe map and conditional
-    counts and checks numerical equivalence (guard taken and not-taken)
-    against a deep-copied pre-pass run.
+Branch-replicated fission produces several identical-condition guarded
+maps. ``ConditionFusion`` merges the ConditionalBlocks but emits the full
+cartesian product of branch combinations; ``LiftTrivialIf`` drops the
+provably-unsatisfiable combinations (``c and not c``), after which the
+co-located maps fuse. Each test pins the post-recipe map and conditional
+counts and checks numerical equivalence (guard taken and not-taken)
+against a deep-copied pre-pass run.
 """
+
 import copy
 
 import numpy as np
@@ -25,8 +26,8 @@ from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -74,8 +75,8 @@ def three_guarded(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], C:
 def _with_M(sdfg):
     """A condition-only symbol is not auto-registered in ``sdfg.symbols``
     (frontend quirk); add it so the SDFG is callable."""
-    if 'M' not in sdfg.symbols:
-        sdfg.add_symbol('M', dace.int64)
+    if "M" not in sdfg.symbols:
+        sdfg.add_symbol("M", dace.int64)
     return sdfg
 
 
@@ -121,7 +122,7 @@ def test_two_identical_guards_fuse_to_one_map():
         assert len(_conds(sdfg)) == 1, f"guards not merged: {len(_conds(sdfg))}"
         # Identical guards must merge to the minimal predicate, not a
         # redundant ``(c) and (c)``.
-        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
+        assert all("and" not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B = np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, N=n, M=mval)
@@ -146,7 +147,7 @@ def test_two_maps_in_one_guard_fuse_to_one_map():
         sdfg = _with_M(if_two_maps_inside.to_sdfg(simplify=True))
         _fuse_recipe(sdfg)
         assert len(_maps(sdfg)) == 1 and len(_conds(sdfg)) == 1
-        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
+        assert all("and" not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B = np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, N=n, M=mval)
@@ -195,7 +196,7 @@ def test_three_identical_guards_fuse_to_one_map():
         _fuse_recipe(sdfg)
         assert len(_maps(sdfg)) == 1, f"maps not fused: {len(_maps(sdfg))}"
         assert len(_conds(sdfg)) == 1, f"guards not merged: {len(_conds(sdfg))}"
-        assert all('and' not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
+        assert all("and" not in c for c in _nonelse_conditions(sdfg)), _nonelse_conditions(sdfg)
 
         out_A, out_B, out_C = np.full(n, 9.0), np.full(n, 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), A=out_A, B=out_B, C=out_C, N=n, M=mval)

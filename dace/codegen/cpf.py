@@ -30,6 +30,7 @@ What CPF refuses, it refuses loudly -- see :func:`prepare`, and the standalone p
 ``framecode``. A rendering that quietly dropped an initializer, a caller-supplied buffer or a GPU
 kernel would still compile and still produce numbers, just not the SDFG's.
 """
+
 import contextlib
 import copy
 import os
@@ -56,18 +57,26 @@ from dace.optionals import required
 #: accelerator storages (GPU, SVE, Snitch) each need a compiler CPF does not invoke. An allowlist
 #: rather than a list of the refused ones because ``StorageType`` is extensible -- a storage
 #: registered by a backend CPF has never heard of must refuse, not slip through.
-HOST_STORAGE = frozenset({
-    dtypes.StorageType.Default, dtypes.StorageType.Register, dtypes.StorageType.CPU_Heap,
-    dtypes.StorageType.CPU_ThreadLocal
-})
+HOST_STORAGE = frozenset(
+    {
+        dtypes.StorageType.Default,
+        dtypes.StorageType.Register,
+        dtypes.StorageType.CPU_Heap,
+        dtypes.StorageType.CPU_ThreadLocal,
+    }
+)
 
 #: The schedules CPF can render, likewise an allowlist. ``CPU_Multicore`` is the OpenMP loop that
 #: makes the rendering parallel in the first place; the rest are the sequential and unspecified
 #: forms. Anything else (GPU device/thread-block, FPGA, SVE) needs another compiler.
-HOST_SCHEDULES = frozenset({
-    dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential, dtypes.ScheduleType.CPU_Multicore,
-    dtypes.ScheduleType.CPU_Persistent
-})
+HOST_SCHEDULES = frozenset(
+    {
+        dtypes.ScheduleType.Default,
+        dtypes.ScheduleType.Sequential,
+        dtypes.ScheduleType.CPU_Multicore,
+        dtypes.ScheduleType.CPU_Persistent,
+    }
+)
 
 #: Lifetimes whose buffer the ordinary generators park in the state struct, and what CPF turns each
 #: into. ``Persistent`` and ``Global`` outlive one call only so a repeated invocation can reuse the
@@ -84,127 +93,127 @@ HOST_SCHEDULES = frozenset({
 #: Keyed by class name. Every library node registered in the process must appear here (the suite
 #: asserts it), so a new node arrives with a description instead of rendering as anonymous loops.
 LIBRARY_NODE_DESCRIPTIONS: Dict[str, str] = {
-    'Abort': 'MPI_Abort: terminate the communicator',
-    'AllNode': 'all: true where every element along the reduced axes is true',
-    'Allgather': 'MPI_Allgather: gather from every rank to every rank',
-    'Allreduce': 'MPI_Allreduce: reduce across ranks, result on every rank',
-    'Alltoall': 'MPI_Alltoall: every rank exchanges a block with every rank',
-    'AnyNode': 'any: true where any element along the reduced axes is true',
-    'ArgMax': 'argmax: index (and value) of the largest element along the reduced axis',
-    'ArgMin': 'argmin: index (and value) of the smallest element along the reduced axis',
-    'ArgReduce': 'argument reduction: index of the element the reduction selected',
-    'Asum': 'BLAS asum: sum of absolute values of a vector',
-    'Axpy': 'BLAS axpy: y = alpha * x + y',
-    'BackwardPass': 'autodiff backward pass: the reverse-mode derivative of the forward subgraph',
-    'Barrier': 'MPI_Barrier: synchronize the communicator',
-    'BatchedMatMul': 'batched matrix product: one gemm per batch index',
-    'Bcast': 'MPI_Bcast: broadcast from the root rank',
-    'BlacsGridInit': 'Cblacs_gridinit: build a BLACS process grid on a communicator',
-    'BlockCyclicGather': 'gather block-cyclic (ScaLAPACK) distributed data',
-    'BlockCyclicScatter': 'scatter data in the block-cyclic (ScaLAPACK) distribution',
-    'BlockGather': 'gather block-distributed data onto one rank',
-    'BlockScatter': 'scatter data to ranks in blocks',
-    'Broadcast': 'broadcast: expand operands to a common shape',
-    'CSRMM': 'sparse CSR matrix times dense matrix',
-    'CSRMV': 'sparse CSR matrix times dense vector',
-    'CShift': 'circular shift along an axis',
-    'Cholesky': 'Cholesky factorization: A = L @ L^T',
-    'CodeLibraryNode': 'verbatim code supplied by the SDFG author',
-    'CommF2c': 'MPI_Comm_f2c: convert a Fortran communicator handle',
-    'CommRank': 'MPI_Comm_rank: this rank in the communicator',
-    'CommSize': 'MPI_Comm_size: number of ranks in the communicator',
-    'CommSplit': 'MPI_Comm_split: split the communicator',
-    'Copy': 'BLAS copy: y = x',
-    'CopyLibraryNode': 'copy: write one buffer into another',
-    'CountLibraryNode': 'count: number of elements satisfying the predicate',
-    'Dot': 'BLAS dot: inner product of two vectors',
-    'Dummy': 'MPI placeholder node carrying an ordering dependency',
-    'Eigh': 'eigh: eigenvalues and eigenvectors of a Hermitian matrix',
-    'Einsum': 'einsum: a contraction over the index expression',
-    'ExternalCall': 'external call: a nest run from its own SDFG or called in a separately compiled library',
-    'FFT': 'discrete Fourier transform',
-    'FFTInterpolate': 'Fourier interpolation: resample through the frequency domain',
-    'FillLibraryNode': 'fill: set every element to a constant',
-    'FindFirst': 'find-first: index of the first element satisfying the predicate',
-    'FortranIONode': 'Fortran I/O statement',
-    'Gather': 'MPI_Gather: collect from every rank onto the root',
-    'Gatherv': 'MPI_Gatherv: collect variable-sized blocks onto the root',
-    'Gearbox': 'gearbox: change the element width of a stream',
-    'Gemm': 'BLAS gemm: C = alpha * A @ B + beta * C',
-    'Gemv': 'BLAS gemv: y = alpha * A @ x + beta * y',
-    'Geqrf': 'LAPACK geqrf: QR factorization, Householder form',
-    'Ger': 'BLAS ger: A = alpha * x @ y^T + A (rank-1 update)',
-    'Getrf': 'LAPACK getrf: LU factorization with partial pivoting',
-    'Getri': 'LAPACK getri: matrix inverse from an LU factorization',
-    'Getrs': 'LAPACK getrs: solve A @ X = B from an LU factorization',
-    'IFFT': 'inverse discrete Fourier transform',
-    'Iamax': 'BLAS iamax: index of the largest absolute value in a vector',
-    'IntegerSort': 'integer sort: counting/radix sort of an integer key array',
-    'Inv': 'matrix inverse',
-    'Irecv': 'MPI_Irecv: non-blocking receive',
-    'Isend': 'MPI_Isend: non-blocking send',
-    'LayoutChange': 'layout change: rewrite the data into a different memory layout',
-    'MPINode': 'MPI operation',
-    'MaskedCopyLibraryNode': 'masked tile copy: load or store a tile under a per-lane mask',
-    'MatMul': 'matrix product, dispatched to gemm / gemv / batched gemm by operand rank',
-    'MergeLibraryNode': 'merge: select elementwise between operands by a condition',
-    'NamelistRead': 'Fortran namelist read',
-    'Norm2': 'norm2: Euclidean norm',
-    'Nrm2': 'BLAS nrm2: Euclidean norm of a vector',
-    'ONNXOp': 'ONNX operator',
-    'Orgqr': 'LAPACK orgqr: form Q explicitly from a Householder QR factorization',
-    'Pgemm': 'PBLAS pgemm: distributed matrix product',
-    'Pgemv': 'PBLAS pgemv: distributed matrix-vector product',
-    'Potrf': 'LAPACK potrf: Cholesky factorization of a positive-definite matrix',
-    'Potrs': 'LAPACK potrs: solve A @ X = B from a Cholesky factorization',
-    'Read': 'Fortran read statement',
-    'Recv': 'MPI_Recv: blocking receive',
-    'Redistribute': 'redistribute an array between two process grids',
-    'Scal': 'BLAS scal: x = alpha * x',
-    'Scan': 'scan: running (prefix) fold along an axis',
-    'Scatter': 'MPI_Scatter: distribute from the root to every rank',
-    'ScatterConflictCheck': 'scatter conflict check: detect indices written more than once',
-    'Send': 'MPI_Send: blocking send',
-    'Sendrecv': 'MPI_Sendrecv: paired send and receive',
-    'Solve': 'solve the linear system A @ X = B',
-    'Stencil': 'stencil: apply the given neighbourhood expression at every point',
-    'Swap': 'BLAS swap: exchange two vectors',
-    'Syevd': 'LAPACK syevd: eigendecomposition of a Hermitian matrix, divide and conquer',
-    'Symm': 'BLAS symm: C = alpha * A @ B + beta * C with A symmetric',
-    'Symmetrize': 'symmetrize: average a matrix with its transpose',
-    'Symv': 'BLAS symv: y = alpha * A @ x + beta * y with A symmetric',
-    'Syr2k': 'BLAS syr2k: C = alpha * (A @ B^T + B @ A^T) + beta * C (symmetric rank-2k update)',
-    'Syrk': 'BLAS syrk: C = alpha * A @ A^T + beta * C (symmetric rank-k update)',
-    'TensorDot': 'tensor contraction over the given axis pairs',
-    'TensorTranspose': 'tensor transpose: permute the axes',
-    'TileBinop': 'tile binary operation, elementwise over a tile',
-    'TileFMA': 'tile fused multiply-add',
-    'TileITE': 'tile select: elementwise choice between two tiles',
-    'TileIota': 'tile iota: fill a tile with its own indices',
-    'TileGather': 'tile gather: read a tile through index tiles, replicated, transposed or broadcast',
-    'TileMMA': 'tile matrix multiply-accumulate',
-    'TileMaskGen': 'tile mask: the predicate for a partial tile',
-    'TileOp': 'tile operation: a loop over the lanes of a tile',
-    'TileReduce': 'tile reduction',
-    'TileScatter': 'tile scatter: write a tile through index tiles, transposed or broadcast',
-    'TileUnop': 'tile unary operation, elementwise over a tile',
-    'Transpose': 'matrix transpose',
-    'Trmm': 'BLAS trmm: B = alpha * op(A) @ B with A triangular',
-    'Trmv': 'BLAS trmv: x = op(A) @ x with A triangular',
-    'Trsm': 'BLAS trsm: solve op(A) @ X = alpha * B with A triangular',
-    'Trsv': 'BLAS trsv: solve op(A) @ x = b with A triangular',
-    'UnregisteredLibraryNode': 'a library node whose implementing module is not installed',
-    'Wait': 'MPI_Wait: complete one non-blocking request',
-    'Waitall': 'MPI_Waitall: complete every non-blocking request',
-    'Write': 'Fortran write statement',
+    "Abort": "MPI_Abort: terminate the communicator",
+    "AllNode": "all: true where every element along the reduced axes is true",
+    "Allgather": "MPI_Allgather: gather from every rank to every rank",
+    "Allreduce": "MPI_Allreduce: reduce across ranks, result on every rank",
+    "Alltoall": "MPI_Alltoall: every rank exchanges a block with every rank",
+    "AnyNode": "any: true where any element along the reduced axes is true",
+    "ArgMax": "argmax: index (and value) of the largest element along the reduced axis",
+    "ArgMin": "argmin: index (and value) of the smallest element along the reduced axis",
+    "ArgReduce": "argument reduction: index of the element the reduction selected",
+    "Asum": "BLAS asum: sum of absolute values of a vector",
+    "Axpy": "BLAS axpy: y = alpha * x + y",
+    "BackwardPass": "autodiff backward pass: the reverse-mode derivative of the forward subgraph",
+    "Barrier": "MPI_Barrier: synchronize the communicator",
+    "BatchedMatMul": "batched matrix product: one gemm per batch index",
+    "Bcast": "MPI_Bcast: broadcast from the root rank",
+    "BlacsGridInit": "Cblacs_gridinit: build a BLACS process grid on a communicator",
+    "BlockCyclicGather": "gather block-cyclic (ScaLAPACK) distributed data",
+    "BlockCyclicScatter": "scatter data in the block-cyclic (ScaLAPACK) distribution",
+    "BlockGather": "gather block-distributed data onto one rank",
+    "BlockScatter": "scatter data to ranks in blocks",
+    "Broadcast": "broadcast: expand operands to a common shape",
+    "CSRMM": "sparse CSR matrix times dense matrix",
+    "CSRMV": "sparse CSR matrix times dense vector",
+    "CShift": "circular shift along an axis",
+    "Cholesky": "Cholesky factorization: A = L @ L^T",
+    "CodeLibraryNode": "verbatim code supplied by the SDFG author",
+    "CommF2c": "MPI_Comm_f2c: convert a Fortran communicator handle",
+    "CommRank": "MPI_Comm_rank: this rank in the communicator",
+    "CommSize": "MPI_Comm_size: number of ranks in the communicator",
+    "CommSplit": "MPI_Comm_split: split the communicator",
+    "Copy": "BLAS copy: y = x",
+    "CopyLibraryNode": "copy: write one buffer into another",
+    "CountLibraryNode": "count: number of elements satisfying the predicate",
+    "Dot": "BLAS dot: inner product of two vectors",
+    "Dummy": "MPI placeholder node carrying an ordering dependency",
+    "Eigh": "eigh: eigenvalues and eigenvectors of a Hermitian matrix",
+    "Einsum": "einsum: a contraction over the index expression",
+    "ExternalCall": "external call: a nest run from its own SDFG or called in a separately compiled library",
+    "FFT": "discrete Fourier transform",
+    "FFTInterpolate": "Fourier interpolation: resample through the frequency domain",
+    "FillLibraryNode": "fill: set every element to a constant",
+    "FindFirst": "find-first: index of the first element satisfying the predicate",
+    "FortranIONode": "Fortran I/O statement",
+    "Gather": "MPI_Gather: collect from every rank onto the root",
+    "Gatherv": "MPI_Gatherv: collect variable-sized blocks onto the root",
+    "Gearbox": "gearbox: change the element width of a stream",
+    "Gemm": "BLAS gemm: C = alpha * A @ B + beta * C",
+    "Gemv": "BLAS gemv: y = alpha * A @ x + beta * y",
+    "Geqrf": "LAPACK geqrf: QR factorization, Householder form",
+    "Ger": "BLAS ger: A = alpha * x @ y^T + A (rank-1 update)",
+    "Getrf": "LAPACK getrf: LU factorization with partial pivoting",
+    "Getri": "LAPACK getri: matrix inverse from an LU factorization",
+    "Getrs": "LAPACK getrs: solve A @ X = B from an LU factorization",
+    "IFFT": "inverse discrete Fourier transform",
+    "Iamax": "BLAS iamax: index of the largest absolute value in a vector",
+    "IntegerSort": "integer sort: counting/radix sort of an integer key array",
+    "Inv": "matrix inverse",
+    "Irecv": "MPI_Irecv: non-blocking receive",
+    "Isend": "MPI_Isend: non-blocking send",
+    "LayoutChange": "layout change: rewrite the data into a different memory layout",
+    "MPINode": "MPI operation",
+    "MaskedCopyLibraryNode": "masked tile copy: load or store a tile under a per-lane mask",
+    "MatMul": "matrix product, dispatched to gemm / gemv / batched gemm by operand rank",
+    "MergeLibraryNode": "merge: select elementwise between operands by a condition",
+    "NamelistRead": "Fortran namelist read",
+    "Norm2": "norm2: Euclidean norm",
+    "Nrm2": "BLAS nrm2: Euclidean norm of a vector",
+    "ONNXOp": "ONNX operator",
+    "Orgqr": "LAPACK orgqr: form Q explicitly from a Householder QR factorization",
+    "Pgemm": "PBLAS pgemm: distributed matrix product",
+    "Pgemv": "PBLAS pgemv: distributed matrix-vector product",
+    "Potrf": "LAPACK potrf: Cholesky factorization of a positive-definite matrix",
+    "Potrs": "LAPACK potrs: solve A @ X = B from a Cholesky factorization",
+    "Read": "Fortran read statement",
+    "Recv": "MPI_Recv: blocking receive",
+    "Redistribute": "redistribute an array between two process grids",
+    "Scal": "BLAS scal: x = alpha * x",
+    "Scan": "scan: running (prefix) fold along an axis",
+    "Scatter": "MPI_Scatter: distribute from the root to every rank",
+    "ScatterConflictCheck": "scatter conflict check: detect indices written more than once",
+    "Send": "MPI_Send: blocking send",
+    "Sendrecv": "MPI_Sendrecv: paired send and receive",
+    "Solve": "solve the linear system A @ X = B",
+    "Stencil": "stencil: apply the given neighbourhood expression at every point",
+    "Swap": "BLAS swap: exchange two vectors",
+    "Syevd": "LAPACK syevd: eigendecomposition of a Hermitian matrix, divide and conquer",
+    "Symm": "BLAS symm: C = alpha * A @ B + beta * C with A symmetric",
+    "Symmetrize": "symmetrize: average a matrix with its transpose",
+    "Symv": "BLAS symv: y = alpha * A @ x + beta * y with A symmetric",
+    "Syr2k": "BLAS syr2k: C = alpha * (A @ B^T + B @ A^T) + beta * C (symmetric rank-2k update)",
+    "Syrk": "BLAS syrk: C = alpha * A @ A^T + beta * C (symmetric rank-k update)",
+    "TensorDot": "tensor contraction over the given axis pairs",
+    "TensorTranspose": "tensor transpose: permute the axes",
+    "TileBinop": "tile binary operation, elementwise over a tile",
+    "TileFMA": "tile fused multiply-add",
+    "TileITE": "tile select: elementwise choice between two tiles",
+    "TileIota": "tile iota: fill a tile with its own indices",
+    "TileGather": "tile gather: read a tile through index tiles, replicated, transposed or broadcast",
+    "TileMMA": "tile matrix multiply-accumulate",
+    "TileMaskGen": "tile mask: the predicate for a partial tile",
+    "TileOp": "tile operation: a loop over the lanes of a tile",
+    "TileReduce": "tile reduction",
+    "TileScatter": "tile scatter: write a tile through index tiles, transposed or broadcast",
+    "TileUnop": "tile unary operation, elementwise over a tile",
+    "Transpose": "matrix transpose",
+    "Trmm": "BLAS trmm: B = alpha * op(A) @ B with A triangular",
+    "Trmv": "BLAS trmv: x = op(A) @ x with A triangular",
+    "Trsm": "BLAS trsm: solve op(A) @ X = alpha * B with A triangular",
+    "Trsv": "BLAS trsv: solve op(A) @ x = b with A triangular",
+    "UnregisteredLibraryNode": "a library node whose implementing module is not installed",
+    "Wait": "MPI_Wait: complete one non-blocking request",
+    "Waitall": "MPI_Waitall: complete every non-blocking request",
+    "Write": "Fortran write statement",
 }
 
 #: Descriptions for the one class name two libraries share. Looked up as ``<module>.<class>``,
 #: before :data:`LIBRARY_NODE_DESCRIPTIONS` -- which deliberately has NO ``Reduce`` entry, so
 #: neither meaning can be served to the other by a bare-name lookup.
 QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
-    'dace.libraries.mpi.nodes.reduce.Reduce': 'MPI_Reduce: reduce across ranks onto the root',
-    'dace.libraries.standard.nodes.reduce.Reduce': 'reduction over the given axes with the given operator',
+    "dace.libraries.mpi.nodes.reduce.Reduce": "MPI_Reduce: reduce across ranks onto the root",
+    "dace.libraries.standard.nodes.reduce.Reduce": "reduction over the given axes with the given operator",
 }
 
 #: Library-node implementations CPF selects, best first. The criterion is NOT the name ``pure`` and
@@ -221,7 +230,7 @@ QUALIFIED_DESCRIPTIONS: Dict[str, str] = {
 #: ``vectorized`` onto ``horizontal_reduce_*`` from ``dace/horizontal_reduce.h``. ``Auto`` is a
 #: per-node dispatcher that can land on those, so it is listed only for the nodes whose ``Auto``
 #: always renders (:data:`RENDERABLE_BY_NODE`).
-RENDERABLE_IMPLEMENTATIONS = ('pure', 'pure-seq', 'MappedTasklet')
+RENDERABLE_IMPLEMENTATIONS = ("pure", "pure-seq", "MappedTasklet")
 
 #: Per-node-type implementations that ARE renderable, tried ahead of the global list. The criterion
 #: is unchanged -- "expands to something a standalone unit can compile" -- but it is a property of
@@ -244,13 +253,13 @@ RENDERABLE_IMPLEMENTATIONS = ('pure', 'pure-seq', 'MappedTasklet')
 #: ``dace::CopyND`` branch needs a ``GPU_Shared`` endpoint, which :func:`prepare` has already
 #: refused by the time this runs.
 RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {
-    'ArgReduce': ('CPU', ),
-    'CopyLibraryNode': ('Auto', ),
-    'FillLibraryNode': ('Auto', ),
-    'FindFirst': ('CPU', ),
-    'IntegerSort': ('isocpp', ),
-    'Scan': ('CPU', ),
-    'ScatterConflictCheck': ('CPU', ),
+    "ArgReduce": ("CPU",),
+    "CopyLibraryNode": ("Auto",),
+    "FillLibraryNode": ("Auto",),
+    "FindFirst": ("CPU",),
+    "IntegerSort": ("isocpp",),
+    "Scan": ("CPU",),
+    "ScatterConflictCheck": ("CPU",),
 }
 
 #: Per-node-type implementations tried ahead of everything else when a DEVICE dialect renders a
@@ -270,7 +279,7 @@ RENDERABLE_BY_NODE: Dict[str, Tuple[str, ...]] = {
 #: what they reach: ``get_scratch``, ``find_first_index_device`` and ``inclusive_affine`` are
 #: inline definitions in :mod:`dace.cpf_lowering`, exactly as ``find_first_index`` and the scans are
 #: for the host.
-RENDERABLE_BY_NODE_DEVICE: Dict[str, Tuple[str, ...]] = {'FindFirst': ('CUDA', ), 'Scan': ('CUDA', )}
+RENDERABLE_BY_NODE_DEVICE: Dict[str, Tuple[str, ...]] = {"FindFirst": ("CUDA",), "Scan": ("CUDA",)}
 
 #: Consecutive rounds of :func:`force_renderable_expansions` that may leave the library-node census
 #: unchanged before it refuses. NOT a bound on total rounds: a state needs one round per node.
@@ -287,10 +296,14 @@ LIFETIME_DEMOTIONS = {
 DEVICE_STORAGE = frozenset({dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared})
 
 #: Likewise for schedules: the device map, its thread-block map, and the persistent form.
-DEVICE_SCHEDULES = frozenset({
-    dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-    dtypes.ScheduleType.GPU_Persistent
-})
+DEVICE_SCHEDULES = frozenset(
+    {
+        dtypes.ScheduleType.GPU_Device,
+        dtypes.ScheduleType.GPU_ThreadBlock,
+        dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+        dtypes.ScheduleType.GPU_Persistent,
+    }
+)
 
 
 def uses_device_code(sdfg: SDFG, dialect: Optional[cpf_lowering.Dialect] = None) -> List[str]:
@@ -316,13 +329,13 @@ def uses_device_code(sdfg: SDFG, dialect: Optional[cpf_lowering.Dialect] = None)
     found: List[str] = []
     for subsdfg, name, desc in sdfg.arrays_recursive():
         if desc.storage not in storages:
-            found.append(f'{subsdfg.name}.{name} is in {desc.storage.name} storage')
+            found.append(f"{subsdfg.name}.{name} is in {desc.storage.name} storage")
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode) and node.schedule not in schedules:
-                found.append(f'{state.label}/{node.label} has the {node.schedule.name} schedule')
+                found.append(f"{state.label}/{node.label} has the {node.schedule.name} schedule")
             elif isinstance(node, nodes.Tasklet) and node.language not in languages:
-                found.append(f'{state.label}/{node.label} is a {node.language.name} tasklet')
+                found.append(f"{state.label}/{node.label} is a {node.language.name} tasklet")
     return found
 
 
@@ -335,7 +348,7 @@ def description_of(node) -> Optional[str]:
     :returns: the description, or ``None`` if the node's class has none recorded.
     """
     cls = node if isinstance(node, type) else type(node)
-    qualified = f'{cls.__module__}.{cls.__name__}'
+    qualified = f"{cls.__module__}.{cls.__name__}"
     return QUALIFIED_DESCRIPTIONS.get(qualified) or LIBRARY_NODE_DESCRIPTIONS.get(cls.__name__)
 
 
@@ -361,9 +374,13 @@ def on_device_at_host_level(node: nodes.LibraryNode, state) -> bool:
     makes for the GPU pipeline and this reuses so the two cannot drift apart.
     """
     from dace.transformation.passes.canonicalize.finalize import libnode_is_device_code
+
     owner = state.sdfg
-    touches = any(owner.arrays[edge.data.data].storage in DEVICE_STORAGE for edge in state.all_edges(node)
-                  if edge.data is not None and edge.data.data in owner.arrays)
+    touches = any(
+        owner.arrays[edge.data.data].storage in DEVICE_STORAGE
+        for edge in state.all_edges(node)
+        if edge.data is not None and edge.data.data in owner.arrays
+    )
     return touches and not libnode_is_device_code(node, state, owner)
 
 
@@ -450,10 +467,12 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
         census = current
         if stalled > MAX_EXPANSION_STALLED_ROUNDS:
             # Observations only: naming a cause sent readers after a cycle that did not exist.
-            counted = ', '.join(f'{name} x{count}' for name, count in sorted(census.items()))
-            raise NotImplementedError(f'CPF stopped expanding library nodes: {stalled} consecutive rounds left '
-                                      f'the same nodes pending ({counted}). Expansion is making no progress; '
-                                      f'check whether one of these expands into a node of its own type.')
+            counted = ", ".join(f"{name} x{count}" for name, count in sorted(census.items()))
+            raise NotImplementedError(
+                f"CPF stopped expanding library nodes: {stalled} consecutive rounds left "
+                f"the same nodes pending ({counted}). Expansion is making no progress; "
+                f"check whether one of these expands into a node of its own type."
+            )
 
         # One per state, by graph insertion order -- GUIDs are fresh uuid4() per node
         # (dace/sdfg/graph.py) so sorting by them reorders randomly run to run.
@@ -490,7 +509,7 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
             # sequential Scan expansion says so). Folded into the description so the emitter's
             # once-per-origin dedupe covers both: a Scan expands into several maps, one trade.
             if node.specialization_hint:
-                description = f'{description}\n{node.specialization_hint}'
+                description = f"{description}\n{node.specialization_hint}"
             for produced in state.nodes():
                 if produced.guid in before:
                     continue
@@ -500,12 +519,12 @@ def force_renderable_expansions(sdfg: SDFG, provenance: Optional[Dict[str, Tuple
 
 #: The prefix DaCe gives a data container that carries a program's return value. A single return is
 #: ``__return``; a returned tuple is ``__return_0``, ``__return_1``, ... (``parser.py`` builds both).
-RETURN_PREFIX = '__return'
+RETURN_PREFIX = "__return"
 
 
 def is_return_name(name: str) -> bool:
     """Whether ``name`` is a return container's name."""
-    return name == RETURN_PREFIX or name.startswith(RETURN_PREFIX + '_')
+    return name == RETURN_PREFIX or name.startswith(RETURN_PREFIX + "_")
 
 
 def return_containers(sdfg: SDFG) -> List[Tuple[SDFG, str]]:
@@ -560,21 +579,27 @@ def refuse_by_value_returns(sdfg: SDFG) -> None:
     """
     for owner, name in return_containers(sdfg):
         desc = owner.arrays[name]
-        where = f'{sdfg.name}: the return container {name!r}'
+        where = f"{sdfg.name}: the return container {name!r}"
         if owner is not sdfg:
-            where = f'{sdfg.name}: the return container {name!r} of the nested SDFG {owner.name!r}'
+            where = f"{sdfg.name}: the return container {name!r} of the nested SDFG {owner.name!r}"
         if desc.transient:
-            raise NotImplementedError(f'CPF cannot render {where} is transient, so nothing outside the SDFG that '
-                                      'declares it can read the value it holds.')
+            raise NotImplementedError(
+                f"CPF cannot render {where} is transient, so nothing outside the SDFG that "
+                "declares it can read the value it holds."
+            )
         if owner is not sdfg:
             continue
         if isinstance(desc, dt.Scalar):
-            raise NotImplementedError(f'CPF cannot render {where} is a Scalar, which the entry signature passes BY '
-                                      "VALUE, so the result would be computed into the callee's copy and discarded. "
-                                      f'Promote {name!r} to a one-element array before rendering.')
+            raise NotImplementedError(
+                f"CPF cannot render {where} is a Scalar, which the entry signature passes BY "
+                "VALUE, so the result would be computed into the callee's copy and discarded. "
+                f"Promote {name!r} to a one-element array before rendering."
+            )
         if not isinstance(desc, dt.Array):
-            raise NotImplementedError(f'CPF cannot render {where} is a {type(desc).__name__}, which has no '
-                                      'plain-pointer spelling in the entry signature.')
+            raise NotImplementedError(
+                f"CPF cannot render {where} is a {type(desc).__name__}, which has no "
+                "plain-pointer spelling in the entry signature."
+            )
 
 
 def refuse_runtime_scopes(sdfg: SDFG) -> None:
@@ -595,14 +620,18 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.ConsumeEntry):
-                raise NotImplementedError(f'CPF cannot render {state.label}/{node.label}: a consume scope is driven '
-                                          'by the runtime class dace::Consume, whose queue and quiescence detection '
-                                          'CPF does not provide. Express the work as a map before rendering.')
+                raise NotImplementedError(
+                    f"CPF cannot render {state.label}/{node.label}: a consume scope is driven "
+                    "by the runtime class dace::Consume, whose queue and quiescence detection "
+                    "CPF does not provide. Express the work as a map before rendering."
+                )
     for subsdfg, name, desc in sdfg.arrays_recursive():
         if isinstance(desc, dt.Stream):
-            raise NotImplementedError(f'CPF cannot render {subsdfg.name}.{name}: a Stream is the runtime class '
-                                      'dace::Stream, a lock-free queue with no standalone spelling. Rewrite the '
-                                      'producer and consumer around an array before rendering.')
+            raise NotImplementedError(
+                f"CPF cannot render {subsdfg.name}.{name}: a Stream is the runtime class "
+                "dace::Stream, a lock-free queue with no standalone spelling. Rewrite the "
+                "producer and consumer around an array before rendering."
+            )
 
 
 def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
@@ -631,8 +660,10 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
     device = uses_device_code(sdfg)
     if device:
         raise NotImplementedError(
-            'CPF renders one translation unit, but ' + '; '.join(device) +
-            ". Render the CPU form of this SDFG, or the 'cuda' or 'hip' language for a device one.")
+            "CPF renders one translation unit, but "
+            + "; ".join(device)
+            + ". Render the CPU form of this SDFG, or the 'cuda' or 'hip' language for a device one."
+        )
     refuse_runtime_scopes(sdfg)
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
     refuse_by_value_returns(sdfg)
@@ -648,19 +679,19 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
 #: The qualifier run a generated helper is declared with, in any order and any subset: ``static
 #: constexpr inline`` for an ``<array>_idx`` index map, ``static consteval inline`` for an
 #: ``<array>_size`` extent, ``static DACE_HDFI constexpr`` for a device-callable one.
-_HELPER_QUALIFIERS = r'static(?:\s+(?:DACE_HDFI|constexpr|consteval|inline))+'
+_HELPER_QUALIFIERS = r"static(?:\s+(?:DACE_HDFI|constexpr|consteval|inline))+"
 
 #: A complete function definition on one line, which is the shape every generated helper has: the
 #: ``<array>_idx`` index maps and the ``<array>_size`` extents. Anchored on the closing brace so a
 #: PROTOTYPE (same prefix, ending in ``;``) never matches -- dropping a repeated declaration could
 #: remove the only one that precedes a use.
-ONE_LINE_DEFINITION = re.compile(_HELPER_QUALIFIERS + r'\b.*\}\s*$')
+ONE_LINE_DEFINITION = re.compile(_HELPER_QUALIFIERS + r"\b.*\}\s*$")
 
 #: An SDFG constant, which CPF emits as a namespace-scope ``constexpr`` OBJECT rather than a
 #: function -- so it ends in ``;`` and the closing-brace anchor above cannot see it. An initializer
 #: is required in the pattern because that is what distinguishes a definition from the declaration
 #: ``extern constexpr T name;``, which may repeat.
-CONSTANT_DEFINITION = re.compile(r'(?:static\s+)?constexpr\s+[\w:<>,\s*&]+\b\w+\s*=.*;\s*$')
+CONSTANT_DEFINITION = re.compile(r"(?:static\s+)?constexpr\s+[\w:<>,\s*&]+\b\w+\s*=.*;\s*$")
 
 #: The definitions :func:`merged_object` may drop a repeat of. Matched against the line as WRITTEN,
 #: with no leading whitespace allowed: generated code indents everything inside a function body, so
@@ -672,12 +703,12 @@ DUPLICABLE_DEFINITIONS = (ONE_LINE_DEFINITION, CONSTANT_DEFINITION)
 #: Source languages a GPU target emits its own translation unit in. CUDA emits ``cu``; HIP emits
 #: plain ``cpp``, because hipcc compiles ``.cpp`` -- the SAME language the frame carries. So the
 #: language alone cannot tell the two apart there, and :data:`DEVICE_TARGET_TYPES` is what does.
-DEVICE_LANGUAGES = ('cu', 'hip', 'hip.cpp')
+DEVICE_LANGUAGES = ("cu", "hip", "hip.cpp")
 
 #: Build subdirectories a GPU target emits into. MEASURED on gfx942: generate_code returns the
 #: frame at ``target_type=''`` and the device object at ``target_type='hip'``, both carrying
 #: ``language='cpp'``.
-DEVICE_TARGET_TYPES = ('cuda', 'hip')
+DEVICE_TARGET_TYPES = ("cuda", "hip")
 
 
 def is_device_object(obj: CodeObject) -> bool:
@@ -720,9 +751,11 @@ def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
         rest = [obj for obj in linkable if is_device_object(obj)]
         if len(frame) == 1:
             return merged_object(frame[0], rest)
-    extra = ', '.join(f'{obj.name}.{obj.language}' for obj in linkable)
-    raise NotImplementedError(f'CPF renders one translation unit, but {name} generated {len(linkable)}: '
-                              f'{extra}. Turn off the split-translation-unit codegen parameters.')
+    extra = ", ".join(f"{obj.name}.{obj.language}" for obj in linkable)
+    raise NotImplementedError(
+        f"CPF renders one translation unit, but {name} generated {len(linkable)}: "
+        f"{extra}. Turn off the split-translation-unit codegen parameters."
+    )
 
 
 def merged_object(frame: CodeObject, rest: List[CodeObject]) -> CodeObject:
@@ -754,9 +787,9 @@ def merged_object(frame: CodeObject, rest: List[CodeObject]) -> CodeObject:
                     continue
                 seen.add(line)
             kept.append(line)
-        chunks.append('\n'.join(kept))
+        chunks.append("\n".join(kept))
     merged = copy.copy(frame)
-    merged.code = '\n\n'.join(chunks)
+    merged.code = "\n\n".join(chunks)
     return merged
 
 
@@ -795,13 +828,14 @@ def readonly_entry_arrays(sdfg: SDFG, arglist: Optional[Dict[str, dt.Data]] = No
     """
     written = written_containers(sdfg)
     entry_arguments = sdfg.arglist() if arglist is None else arglist
-    return OrderedSet(name for name, desc in entry_arguments.items()
-                      if isinstance(desc, dt.Array) and name not in written)
+    return OrderedSet(
+        name for name, desc in entry_arguments.items() if isinstance(desc, dt.Array) and name not in written
+    )
 
 
 def entry_parameter_name(param: str) -> str:
     """The declared name in one entry-signature parameter (``float * __restrict__ a`` -> ``a``)."""
-    return param.strip().split()[-1].lstrip('*')
+    return param.strip().split()[-1].lstrip("*")
 
 
 def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: Optional[Dict[str, dt.Data]] = None) -> str:
@@ -827,7 +861,8 @@ def qualify_readonly_pointers(code: str, sdfg: SDFG, entry: str, arglist: Option
     if not readonly:
         return code
     return rewrite_entry_parameters(
-        code, entry, lambda params: [f'const {p}' if entry_parameter_name(p) in readonly else p for p in params])
+        code, entry, lambda params: [f"const {p}" if entry_parameter_name(p) in readonly else p for p in params]
+    )
 
 
 def rewrite_entry_parameters(code: str, entry: str, rewrite: Callable[[List[str]], List[str]]) -> str:
@@ -846,19 +881,21 @@ def rewrite_entry_parameters(code: str, entry: str, rewrite: Callable[[List[str]
     :returns: the unit with every declaration of ``entry`` rewritten.
     :raises NotImplementedError: if a parameter carries a nested parameter list.
     """
-    pattern = re.compile(r'\bvoid\s+%s\s*\(' % re.escape(entry))
+    pattern = re.compile(r"\bvoid\s+%s\s*\(" % re.escape(entry))
     out, cursor = [], 0
     for match in pattern.finditer(code):
         opened = match.end() - 1
-        closed = code.index(')', opened)
-        if '(' in code[opened + 1:closed]:
-            raise NotImplementedError(f'CPF cannot rewrite the entry signature of {entry}: a parameter carries a '
-                                      'nested parameter list, which this rewrite cannot split.')
-        params = [p.strip() for p in code[opened + 1:closed].split(',')]
-        out.append(code[cursor:opened + 1] + ', '.join(rewrite(params)))
+        closed = code.index(")", opened)
+        if "(" in code[opened + 1 : closed]:
+            raise NotImplementedError(
+                f"CPF cannot rewrite the entry signature of {entry}: a parameter carries a "
+                "nested parameter list, which this rewrite cannot split."
+            )
+        params = [p.strip() for p in code[opened + 1 : closed].split(",")]
+        out.append(code[cursor : opened + 1] + ", ".join(rewrite(params)))
         cursor = closed
     out.append(code[cursor:])
-    return ''.join(out)
+    return "".join(out)
 
 
 def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str:
@@ -889,8 +926,10 @@ def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str
     def to_order(params: List[str]) -> List[str]:
         by_name = {entry_parameter_name(p): p for p in params}
         if set(by_name) != set(wanted):
-            raise ValueError(f'CPF cannot render {entry} in the requested order: the entry takes '
-                             f'{sorted(by_name)} but the order names {sorted(wanted)}.')
+            raise ValueError(
+                f"CPF cannot render {entry} in the requested order: the entry takes "
+                f"{sorted(by_name)} but the order names {sorted(wanted)}."
+            )
         return [by_name[name] for name in wanted]
 
     return rewrite_entry_parameters(code, entry, to_order)
@@ -899,10 +938,10 @@ def reorder_entry_parameters(code: str, entry: str, order: Sequence[str]) -> str
 #: ``language`` argument -> the dialect that renders it. ``'c++'`` is the default and stays the
 #: historical behaviour exactly.
 LANGUAGES: Dict[str, cpf_lowering.Dialect] = {
-    'c++': cpf_lowering.Dialect.STANDALONE,
-    'c': cpf_lowering.Dialect.STANDALONE_C,
-    'hip': cpf_lowering.Dialect.STANDALONE_HIP,
-    'cuda': cpf_lowering.Dialect.STANDALONE_CUDA,
+    "c++": cpf_lowering.Dialect.STANDALONE,
+    "c": cpf_lowering.Dialect.STANDALONE_C,
+    "hip": cpf_lowering.Dialect.STANDALONE_HIP,
+    "cuda": cpf_lowering.Dialect.STANDALONE_CUDA,
 }
 
 
@@ -915,7 +954,7 @@ def dialect_for(language: str) -> cpf_lowering.Dialect:
     try:
         return LANGUAGES[language]
     except KeyError:
-        raise ValueError(f'CPF renders {sorted(LANGUAGES)}, not {language!r}') from None
+        raise ValueError(f"CPF renders {sorted(LANGUAGES)}, not {language!r}") from None
 
 
 def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STANDALONE) -> str:
@@ -932,31 +971,31 @@ def preamble(code: str, dialect: cpf_lowering.Dialect = cpf_lowering.Dialect.STA
     used = cpf_lowering.helpers_used(code, dialect)
     definitions = cpf_lowering.definitions_for(used, dialect)
     headers = cpf_lowering.headers_for(used, dialect)
-    lines = ['// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime.'] + CONTRACT_LINES
-    lines += [f'#include {header}' for header in headers]
+    lines = ["// Rendered by DaCe CPF (canonical parallel form): self-contained, no DaCe runtime."] + CONTRACT_LINES
+    lines += [f"#include {header}" for header in headers]
     if dialect is cpf_lowering.Dialect.STANDALONE_C:
         lines.append(cpf_lowering.C_UNDEF_LINE)
     if dialect in cpf_lowering.DEVICE_DIALECTS:
-        lines.append('')
-        lines.append('// What dace/dace.h would define for the device side.')
+        lines.append("")
+        lines.append("// What dace/dace.h would define for the device side.")
         # code PLUS the definitions: a scan expansion's inline helper is emitted BELOW this block
         # and calls ``gpucub::DeviceScan`` itself, so gating on ``code`` alone dropped the namespace
         # alias out from under it and the unit failed to compile on an undeclared ``gpucub``.
-        lines.append(cpf_lowering.device_preamble(code + '\n'.join(definitions), dialect))
+        lines.append(cpf_lowering.device_preamble(code + "\n".join(definitions), dialect))
     if definitions:
-        lines.append('')
-        lines.append('// Functions the DaCe runtime headers would otherwise provide.')
+        lines.append("")
+        lines.append("// Functions the DaCe runtime headers would otherwise provide.")
         lines.extend(definitions)
-    lines.append('')
-    return '\n'.join(lines)
+    lines.append("")
+    return "\n".join(lines)
 
 
 #: What the rendering already did and what is left, ahead of the per-loop verdicts it explains.
 CONTRACT_LINES = [
-    '// Already parallelized, with basic heuristics applied. Every loop names its class first:',
-    '//   parallel, sequential -- settled; their parallelism needs no further reasoning.',
-    '//   unsure               -- open; the only loops whose parallelism is worth reasoning about.',
-    '// Spend the effort on heuristic optimizations and restructuring.',
+    "// Already parallelized, with basic heuristics applied. Every loop names its class first:",
+    "//   parallel, sequential -- settled; their parallelism needs no further reasoning.",
+    "//   unsure               -- open; the only loops whose parallelism is worth reasoning about.",
+    "// Spend the effort on heuristic optimizations and restructuring.",
 ]
 
 #: What a finished rendering must not contain, and what each one means. CPF's own gate, checked on
@@ -970,22 +1009,24 @@ CONTRACT_LINES = [
 #: with no include path at all, which is the only check that cannot be fooled by a table that
 #: forgot an entry.
 BANNED: Tuple[Tuple[re.Pattern, str], ...] = (
-    (re.compile(r'#\s*include\s*[<"][^>"]*dace/'), 'a DaCe runtime header'),
-    (re.compile(r'#\s*include\s*"'), 'a quoted (build-tree-relative) include'),
-    (re.compile(r'CopyND'), 'a dace::CopyND copy -- insert explicit copies before rendering'),
-    (re.compile(r'__dace_(init|exit)\w*'), 'a DaCe init/exit entry point'),
-    (re.compile(r'\bdace\s*::'), 'a DaCe runtime symbol'),
-    (re.compile(r'\bDACE_[A-Z]'), 'a DaCe preprocessor macro'),
-    (re.compile(r'^[ \t]*#[ \t]*define\b', re.M), 'a preprocessor macro definition'),
-    (re.compile(r'__state\b'), 'a state-struct dereference'),
+    (re.compile(r'#\s*include\s*[<"][^>"]*dace/'), "a DaCe runtime header"),
+    (re.compile(r'#\s*include\s*"'), "a quoted (build-tree-relative) include"),
+    (re.compile(r"CopyND"), "a dace::CopyND copy -- insert explicit copies before rendering"),
+    (re.compile(r"__dace_(init|exit)\w*"), "a DaCe init/exit entry point"),
+    (re.compile(r"\bdace\s*::"), "a DaCe runtime symbol"),
+    (re.compile(r"\bDACE_[A-Z]"), "a DaCe preprocessor macro"),
+    (re.compile(r"^[ \t]*#[ \t]*define\b", re.M), "a preprocessor macro definition"),
+    (re.compile(r"__state\b"), "a state-struct dereference"),
 )
 
 #: The scalar type spellings a code generator writes a declarator with. Used to anchor the
 #: reference-parameter pattern below: a bare ``\w+\s*&\s*\w+`` would also match the bitwise
 #: ``exponent & 1)`` in CPF's own ``ipow``, and a gate with a false positive gets disabled.
-_C_DECLARED_TYPES = (r'(?:const\s+)?(?:unsigned\s+|signed\s+)?'
-                     r'(?:long\s+double|long\s+long|u?int(?:8|16|32|64)_t|double|float|bool|char|short|int|long)'
-                     r'(?:\s+_Complex)?')
+_C_DECLARED_TYPES = (
+    r"(?:const\s+)?(?:unsigned\s+|signed\s+)?"
+    r"(?:long\s+double|long\s+long|u?int(?:8|16|32|64)_t|double|float|bool|char|short|int|long)"
+    r"(?:\s+_Complex)?"
+)
 
 #: What a finished C rendering must not contain, on top of :data:`BANNED`. Every one of these is
 #: valid C++ that the C++ dialect emits on purpose, so a leak is a dialect branch that was missed
@@ -994,20 +1035,21 @@ _C_DECLARED_TYPES = (r'(?:const\s+)?(?:unsigned\s+|signed\s+)?'
 #: :data:`BANNED` because the unit DECLARES that struct, which carries the stream, rather than
 #: borrowing it (:func:`~dace.cpf_lowering.device_entry_prologue`). Every ``DACE_*`` spelling is
 #: written out by :func:`~dace.cpf_lowering.device_spell_out`, so one surviving is a leak here too.
-BANNED_DEVICE: Tuple[Tuple[re.Pattern, str],
-                     ...] = tuple(entry for entry in BANNED if entry[1] != 'a state-struct dereference')
+BANNED_DEVICE: Tuple[Tuple[re.Pattern, str], ...] = tuple(
+    entry for entry in BANNED if entry[1] != "a state-struct dereference"
+)
 
 BANNED_C: Tuple[Tuple[re.Pattern, str], ...] = BANNED + (
-    (re.compile(r'\bstd\s*::'), 'a C++ standard-library symbol'),
-    (re.compile(r'\btemplate\s*<'), 'a C++ template'),
-    (re.compile(r'extern\s*"C"'), 'a C++ language linkage specifier'),
-    (re.compile(r'\bstatic_cast\s*<'), 'a C++ static_cast'),
-    (re.compile(r'\bnew\s'), 'a C++ new-expression'),
-    (re.compile(r'\bdelete\b'), 'a C++ delete-expression'),
+    (re.compile(r"\bstd\s*::"), "a C++ standard-library symbol"),
+    (re.compile(r"\btemplate\s*<"), "a C++ template"),
+    (re.compile(r'extern\s*"C"'), "a C++ language linkage specifier"),
+    (re.compile(r"\bstatic_cast\s*<"), "a C++ static_cast"),
+    (re.compile(r"\bnew\s"), "a C++ new-expression"),
+    (re.compile(r"\bdelete\b"), "a C++ delete-expression"),
     # ``constexpr`` on an OBJECT is C23 and is how CPF emits an SDFG constant, so only the FUNCTION
     # form is banned: a qualifier run ending in a declarator with a parameter list.
-    (re.compile(r'\b(?:constexpr|consteval)\b[^;=\n]*\b\w+\s*\([^;]*\)\s*\{'), 'a constexpr/consteval function'),
-    (re.compile(_C_DECLARED_TYPES + r'\s*&\s*\w+\s*[,)]'), 'a C++ reference parameter'),
+    (re.compile(r"\b(?:constexpr|consteval)\b[^;=\n]*\b\w+\s*\([^;]*\)\s*\{"), "a constexpr/consteval function"),
+    (re.compile(_C_DECLARED_TYPES + r"\s*&\s*\w+\s*[,)]"), "a C++ reference parameter"),
 )
 
 
@@ -1029,11 +1071,12 @@ def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Di
         match = pattern.search(code)
         if match is None:
             continue
-        start = code.rfind('\n', 0, match.start()) + 1
-        end = code.find('\n', match.end())
-        line = code[start:end if end != -1 else len(code)].strip()
-        raise RuntimeError(f'CPF rendered {name} with {meaning} ({match.group(0)!r}), so the result is not '
-                           f'self-contained:\n    {line}')
+        start = code.rfind("\n", 0, match.start()) + 1
+        end = code.find("\n", match.end())
+        line = code[start : end if end != -1 else len(code)].strip()
+        raise RuntimeError(
+            f"CPF rendered {name} with {meaning} ({match.group(0)!r}), so the result is not self-contained:\n    {line}"
+        )
 
 
 #: Per HOST dialect: the language standard its output is defined against, the source suffix, the
@@ -1044,21 +1087,21 @@ def verify(code: str, name: str, dialect: cpf_lowering.Dialect = cpf_lowering.Di
 #: installed" into "this SDFG cannot be rendered" -- and a gate that quietly skips instead would be
 #: the very shape this one exists to close.
 COMPILE_CHECK_TOOLCHAINS: Dict[cpf_lowering.Dialect, Tuple[str, str, str, Tuple[str, ...]]] = {
-    cpf_lowering.Dialect.STANDALONE: ('c++20', '.cpp', 'CXX', ('g++', 'c++')),
-    cpf_lowering.Dialect.STANDALONE_C: ('c23', '.c', 'CC', ('gcc', 'cc')),
+    cpf_lowering.Dialect.STANDALONE: ("c++20", ".cpp", "CXX", ("g++", "c++")),
+    cpf_lowering.Dialect.STANDALONE_C: ("c23", ".c", "CC", ("gcc", "cc")),
 }
 
 #: What a ``'cuda'`` unit is built with besides the output flags. ``--expt-relaxed-constexpr`` is what
 #: DaCe's own CUDA build adds (``dace/codegen/CMakeLists.txt``): kernels call the ``constexpr`` index
 #: and runtime helpers, which nvcc otherwise treats as host-only. hipcc needs no such flag.
-CUDA_BUILD_FLAGS: Tuple[str, ...] = ('-std=c++20', '--expt-relaxed-constexpr')
+CUDA_BUILD_FLAGS: Tuple[str, ...] = ("-std=c++20", "--expt-relaxed-constexpr")
 
 #: What the gate compiles with. ``-fsyntax-only`` because the question is whether the TEXT is a
 #: valid translation unit, not how fast its object code is: it parses, resolves every name and
 #: type-checks, and skips optimization and object emission, which is where the time goes. NO
 #: ``-I``: a header the unit names must be a system header, which is half of what self-contained
 #: means. ``-fopenmp`` because the parallel form is OpenMP and its pragmas must parse.
-COMPILE_CHECK_FLAGS: Tuple[str, ...] = ('-fsyntax-only', '-fopenmp')
+COMPILE_CHECK_FLAGS: Tuple[str, ...] = ("-fsyntax-only", "-fopenmp")
 
 
 def compile_check_compiler(dialect: cpf_lowering.Dialect) -> Optional[str]:
@@ -1070,7 +1113,7 @@ def compile_check_compiler(dialect: cpf_lowering.Dialect) -> Optional[str]:
     _standard, _suffix, variable, fallbacks = COMPILE_CHECK_TOOLCHAINS[dialect]
     candidate = os.environ.get(variable)
     if not candidate and dialect is cpf_lowering.Dialect.STANDALONE:
-        candidate = Config.get('compiler', 'cpu', 'executable')
+        candidate = Config.get("compiler", "cpu", "executable")
     resolved = shutil.which(candidate) if candidate else None
     for fallback in fallbacks:
         if resolved is not None:
@@ -1102,21 +1145,25 @@ def compile_check(code: str, name: str, dialect: cpf_lowering.Dialect) -> None:
     standard, suffix, variable, fallbacks = toolchain
     compiler = compile_check_compiler(dialect)
     if compiler is None:
-        raise RuntimeError(f'CPF cannot check that {name} compiles: no {suffix[1:]} compiler found (tried '
-                           f'${variable} and {fallbacks}). A form that was never compiled must not be served as '
-                           'one that was, so the render refuses rather than hand back unchecked text.')
-    workdir = tempfile.mkdtemp(prefix=f'cpf_check_{name}_')
+        raise RuntimeError(
+            f"CPF cannot check that {name} compiles: no {suffix[1:]} compiler found (tried "
+            f"${variable} and {fallbacks}). A form that was never compiled must not be served as "
+            "one that was, so the render refuses rather than hand back unchecked text."
+        )
+    workdir = tempfile.mkdtemp(prefix=f"cpf_check_{name}_")
     try:
         source = os.path.join(workdir, name + suffix)
-        with open(source, 'w') as handle:
+        with open(source, "w") as handle:
             handle.write(code)
-        command = [compiler, '-std=' + standard, *COMPILE_CHECK_FLAGS, source]
+        command = [compiler, "-std=" + standard, *COMPILE_CHECK_FLAGS, source]
         proc = subprocess.run(command, cwd=workdir, capture_output=True, text=True)
         if proc.returncode == 0:
             return
-        first = next((line for line in proc.stderr.splitlines() if ' error' in line), proc.stderr.strip())
-        raise RuntimeError(f'CPF rendered {name} as text that does not compile, so the form would have been '
-                           f'served as good and found broken by whoever built it:\n    {first.strip()}')
+        first = next((line for line in proc.stderr.splitlines() if " error" in line), proc.stderr.strip())
+        raise RuntimeError(
+            f"CPF rendered {name} as text that does not compile, so the form would have been "
+            f"served as good and found broken by whoever built it:\n    {first.strip()}"
+        )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -1130,7 +1177,7 @@ def device_backend(dialect: cpf_lowering.Dialect) -> contextlib.AbstractContextM
     backend = cpf_lowering.DEVICE_BACKENDS.get(dialect)
     if backend is None:
         return contextlib.nullcontext()
-    return set_temporary('compiler', 'cuda', 'backend', value=backend)
+    return set_temporary("compiler", "cuda", "backend", value=backend)
 
 
 class Rendering(NamedTuple):
@@ -1146,6 +1193,7 @@ class Rendering(NamedTuple):
     ``arguments`` is the second half of that: it says what ORDER the rendered signature takes those
     parameters in, which is the arglist's order unless the caller supplied one of its own.
     """
+
     #: The self-contained translation unit.
     code: str
     #: The prepared copy that was rendered. Its ``arglist()`` names the entry point's parameters
@@ -1157,11 +1205,13 @@ class Rendering(NamedTuple):
     arguments: Tuple[str, ...]
 
 
-def render(sdfg: SDFG,
-           validate: bool = True,
-           language: str = 'c++',
-           order: Optional[Sequence[str]] = None,
-           check_compiles: bool = True) -> Rendering:
+def render(
+    sdfg: SDFG,
+    validate: bool = True,
+    language: str = "c++",
+    order: Optional[Sequence[str]] = None,
+    check_compiles: bool = True,
+) -> Rendering:
     """Render ``sdfg`` and return the text together with the SDFG it describes.
 
     :param sdfg: the SDFG to render. Not modified -- a copy is prepared and rendered.
@@ -1200,22 +1250,24 @@ def render(sdfg: SDFG,
         # ``prepare`` expands library nodes into loops and tasklets on this throwaway copy; nothing
         # CPF emits reads node.debuginfo, so the inspect.stack() walk behind it is pure overhead. No
         # history either: the first recorded expansion deep-copies the whole copy into ``orig_sdfg``.
-        with set_temporary('compiler', 'lineinfo', value='none'), set_temporary('store_history', value=False):
+        with set_temporary("compiler", "lineinfo", value="none"), set_temporary("store_history", value=False):
             prepare(prepared, provenance)
     # DACE_* environment variables outrank set_temporary, so a shell that pins the CPU generator to
     # ``legacy`` would silently render through the wrong one -- and the legacy generator emits
     # ``dace::CopyND`` and state-struct accesses that no dialect switch can take back. Refuse.
-    with set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'), device_backend(dialect):
-        selected = Config.get('compiler', 'cpu', 'implementation')
-        if selected != 'experimental_readable':
-            raise RuntimeError('CPF builds on the readable CPU code generator, but '
-                               f'compiler.cpu.implementation is pinned to {selected!r} (a DACE_* environment '
-                               'variable outranks the in-process setting). Unset it to render.')
+    with set_temporary("compiler", "cpu", "implementation", value="experimental_readable"), device_backend(dialect):
+        selected = Config.get("compiler", "cpu", "implementation")
+        if selected != "experimental_readable":
+            raise RuntimeError(
+                "CPF builds on the readable CPU code generator, but "
+                f"compiler.cpu.implementation is pinned to {selected!r} (a DACE_* environment "
+                "variable outranks the in-process setting). Unset it to render."
+            )
         with cpf_lowering.dialect_scope(dialect):
             with cpf_lowering.provenance_scope(provenance):
                 # Same reasoning as the prepare() call above: codegen's own lowering passes (copy
                 # lifting, library expansion) add nodes whose debuginfo nothing here reads.
-                with set_temporary('compiler', 'lineinfo', value='none'):
+                with set_temporary("compiler", "lineinfo", value="none"):
                     objects = codegen.generate_code(prepared, validate=validate)
                 body = frame_object(objects, sdfg.name).clean_code
                 # Type names reach the text from the entry signature and from declarations, neither
@@ -1231,7 +1283,7 @@ def render(sdfg: SDFG,
                 if dialect is cpf_lowering.Dialect.STANDALONE_C:
                     # ``__restrict__`` is the GNU spelling ``Data.as_arg`` emits because C++ has no
                     # ``restrict`` keyword. C does, and it is the one a C23 unit should carry.
-                    body = re.sub(r'\b__restrict__\b', 'restrict', body)
+                    body = re.sub(r"\b__restrict__\b", "restrict", body)
                 if dialect in cpf_lowering.DEVICE_DIALECTS:
                     # Last, because the passes above match the DaCe spellings the generator wrote.
                     body = cpf_lowering.device_spell_out(body, dialect)
@@ -1243,11 +1295,13 @@ def render(sdfg: SDFG,
     return Rendering(code, prepared, arguments)
 
 
-def cpf(sdfg: SDFG,
-        validate: bool = True,
-        language: str = 'c++',
-        order: Optional[Sequence[str]] = None,
-        check_compiles: bool = True) -> str:
+def cpf(
+    sdfg: SDFG,
+    validate: bool = True,
+    language: str = "c++",
+    order: Optional[Sequence[str]] = None,
+    check_compiles: bool = True,
+) -> str:
     """Render ``sdfg`` as one self-contained translation unit.
 
     The SDFG is copied first, so neither the lifetime demotions nor the code generator's own

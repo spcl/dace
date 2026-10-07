@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """NormalizeScheduleForLayout -- re-tile each top-level map to the block width its operands are laid out with, so the inner ``Mod(i, b)`` offset iterates contiguously. Run after applying a layout."""
+
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -37,7 +38,7 @@ class NormalizeScheduleForLayout(ppl.Pass):
                 continue
             for begin, end, _ in edge.data.subset.ranges:
                 # Only a POINT access (begin==end) is a genuine block offset; excludes propagated ranges for idempotence.
-                if not isinstance(begin, sympy.Basic) or str(dace.symbolic.simplify(end - begin)) != '0':
+                if not isinstance(begin, sympy.Basic) or str(dace.symbolic.simplify(end - begin)) != "0":
                     continue
                 for mod in begin.atoms(sympy.Mod, dace.symbolic.CMod):
                     base, modulus = mod.args
@@ -53,7 +54,7 @@ class NormalizeScheduleForLayout(ppl.Pass):
     def _already_tiled(self, me, widths: Dict[str, int]) -> bool:
         """True if some parameter already iterates exactly a ``0:b`` block tile (idempotence)."""
         for (b, e, s), p in zip(me.map.range.ranges, me.map.params):
-            if str(dace.symbolic.simplify(e - (widths[p] - 1))) == '0' and str(b) == '0' and str(s) == '1':
+            if str(dace.symbolic.simplify(e - (widths[p] - 1))) == "0" and str(b) == "0" and str(s) == "1":
                 return True
         return False
 
@@ -69,7 +70,7 @@ class NormalizeScheduleForLayout(ppl.Pass):
                 tile_sizes = tuple(widths[p] for p in me.map.params)
                 # Per-map override: divides_evenly can't hold globally if this map's extent isn't a multiple of its width.
                 divides = self._divides_evenly and not provably_indivisible(me, tile_sizes)
-                MapTiling.apply_to(sdfg, options={'tile_sizes': tile_sizes, 'divides_evenly': divides}, map_entry=me)
+                MapTiling.apply_to(sdfg, options={"tile_sizes": tile_sizes, "divides_evenly": divides}, map_entry=me)
                 count += 1
         return count
 

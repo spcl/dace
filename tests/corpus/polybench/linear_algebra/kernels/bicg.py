@@ -1,29 +1,35 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    M: 38,
-    N: 42,
-}, {
-    M: 116,
-    N: 124,
-}, {
-    M: 390,
-    N: 410,
-}, {
-    M: 1900,
-    N: 2100,
-}, {
-    M: 1800,
-    N: 2200,
-}]
+sizes = [
+    {
+        M: 38,
+        N: 42,
+    },
+    {
+        M: 116,
+        N: 124,
+    },
+    {
+        M: 390,
+        N: 410,
+    },
+    {
+        M: 1900,
+        N: 2100,
+    },
+    {
+        M: 1800,
+        N: 2200,
+    },
+]
 
 #: ported from the npbench bench_info paper row (M=18000, N=22000)
 paper_sizes = {M: 18000, N: 22000}
@@ -48,6 +54,7 @@ def bicg(A: datatype[N, M], s: datatype[M], q: datatype[N], p: datatype[M], r: d
     q[:] = A @ p
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(1, 's'), (2, 'q')], init_array, bicg)
+
+    polybench.main(sizes, args, [(1, "s"), (2, "q")], init_array, bicg)

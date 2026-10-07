@@ -35,6 +35,7 @@ the per-sibling guards, so they would execute unconditionally -- incorrect.
 The pass therefore refuses (no-op) on any region carrying an interstate-edge
 assignment and emits a loud warning so the dropped opportunity is visible.
 """
+
 import copy
 import warnings
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
@@ -44,7 +45,7 @@ from dace import Memlet, SDFG, subsets
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge, memlets_in_ast
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState)
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg import nodes, propagation
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.state_fusion import keep_start_block
@@ -73,7 +74,7 @@ def _linear_order(region: ControlFlowRegion) -> Optional[List]:
     if not blocks or len(edges) != len(blocks) - 1:
         return None
     for e in edges:
-        if e.data.condition.as_string not in ('1', 'True', '(1)'):
+        if e.data.condition.as_string not in ("1", "True", "(1)"):
             return None
     succ = {e.src: e.dst for e in edges}
     order = [region.start_block]
@@ -168,8 +169,9 @@ def upward_exposed_reads(st: SDFGState) -> set:
     """
     exposed = set()
     for n in st.data_nodes():
-        if (any(not e.data.is_empty() for e in st.out_edges(n))
-                and not any(not e.data.is_empty() for e in st.in_edges(n))):
+        if any(not e.data.is_empty() for e in st.out_edges(n)) and not any(
+            not e.data.is_empty() for e in st.in_edges(n)
+        ):
             exposed.add(n.data)
     return exposed
 
@@ -389,13 +391,15 @@ def _match_imperfect(sdfg: SDFG) -> Optional[Tuple[ConditionalBlock, CodeBlock, 
         if len(loops) == 1 and order[-1] is loops[0] and all(isinstance(b, SDFGState) for b in order[:-1]):
             continue
         if any(e.data.assignments for e in region.edges()):
-            warnings.warn("\n" + "!" * 78 + "\n"
-                          "MoveIfIntoLoop: refusing to distribute guard "
-                          f"{cond.as_string!r} over an imperfect nest in "
-                          f"{cb.label!r}: the branch carries an interstate-edge "
-                          "assignment that cannot be moved under the per-sibling "
-                          "guards and would execute UNCONDITIONALLY. Left unchanged.\n" + "!" * 78,
-                          stacklevel=2)
+            warnings.warn(
+                "\n" + "!" * 78 + "\n"
+                "MoveIfIntoLoop: refusing to distribute guard "
+                f"{cond.as_string!r} over an imperfect nest in "
+                f"{cb.label!r}: the branch carries an interstate-edge "
+                "assignment that cannot be moved under the per-sibling "
+                "guards and would execute UNCONDITIONALLY. Left unchanged.\n" + "!" * 78,
+                stacklevel=2,
+            )
             continue  # conservative: no inter-block interstate assignments
         cfree = {str(s) for s in cond.get_free_symbols()}
         # The guard's truth must be the same for every sibling: it must not
@@ -453,7 +457,8 @@ class MoveIfIntoLoop(ppl.Pass):
     sibling loop). Both are value-preserving for a single-branch no-else guard
     with a sibling-invariant condition.
     """
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -539,7 +544,7 @@ class MoveIfIntoLoop(ppl.Pass):
             new_loop.remove_node(b)
         new_loop.add_node(inner_cb, is_start_block=True, ensure_unique_name=True)
         if sunk:
-            new_loop.add_state_before(inner_cb, f'{new_loop.label}_prep', is_start_block=True, assignments=dict(sunk))
+            new_loop.add_state_before(inner_cb, f"{new_loop.label}_prep", is_start_block=True, assignments=dict(sunk))
 
         parent.add_node(new_loop, ensure_unique_name=True)
         for e in in_edges:
@@ -572,8 +577,10 @@ class MoveIfIntoLoop(ppl.Pass):
 
         # ``_guarded_loop`` / ``_trivial_guarded_loop`` copy each block, and ``cb`` is dropped below.
         order = _linear_order(region)
-        units = [(_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond))
-                 for b in required(order)]
+        units = [
+            (_guarded_loop(b, cond) if isinstance(b, LoopRegion) else _trivial_guarded_loop(b, cond))
+            for b in required(order)
+        ]
 
         for u in units:
             parent.add_node(u, ensure_unique_name=True)

@@ -3,6 +3,7 @@
 dependence-legal (no RAW/WAR/WAW against the second loop, no side effect) AND it actually unlocks
 ``LoopFusion`` on the resulting adjacency. Either condition failing alone must leave the SDFG untouched.
 """
+
 import copy
 from typing import Tuple
 from unittest import mock
@@ -21,16 +22,14 @@ N = 8
 
 
 def _loop(label: str, end: int) -> LoopRegion:
-    return LoopRegion(label,
-                      condition_expr=f"i < {end}",
-                      loop_var="i",
-                      initialize_expr="i = 1",
-                      update_expr="i = i + 1")
+    return LoopRegion(
+        label, condition_expr=f"i < {end}", loop_var="i", initialize_expr="i = 1", update_expr="i = i + 1"
+    )
 
 
-def _build(conflict: str = 'none',
-           loop2_end: int = N,
-           state_side_effects: bool = False) -> Tuple[dace.SDFG, LoopRegion, SDFGState, LoopRegion]:
+def _build(
+    conflict: str = "none", loop2_end: int = N, state_side_effects: bool = False
+) -> Tuple[dace.SDFG, LoopRegion, SDFGState, LoopRegion]:
     """``loop1{T[i]=T[i-1]+P[i]}`` ; ``state{...}`` ; ``loop2{U[i]=U[i-1]+Q[i]}``.
 
     The two loop bodies touch completely disjoint arrays (``P``/``T`` vs ``Q``/``U``), so once
@@ -53,14 +52,14 @@ def _build(conflict: str = 'none',
     body1.add_edge(acc1, "o", body1.add_access("T"), None, dace.Memlet("T[i]"))
 
     state = SDFGState("state")
-    if conflict == 'raw':  # state writes Q, which loop2 reads -> illegal
+    if conflict == "raw":  # state writes Q, which loop2 reads -> illegal
         touch = state.add_tasklet("touch", {}, {"o"}, "o = 5.0", side_effects=state_side_effects or None)
         state.add_edge(touch, "o", state.add_access("Q"), None, dace.Memlet("Q[0]"))
-    elif conflict == 'war':  # state reads U, which loop2 writes -> illegal
+    elif conflict == "war":  # state reads U, which loop2 writes -> illegal
         touch = state.add_tasklet("touch", {"v"}, {"o"}, "o = v", side_effects=state_side_effects or None)
         state.add_edge(state.add_access("U"), None, touch, "v", dace.Memlet("U[0]"))
         state.add_edge(touch, "o", state.add_access("M"), None, dace.Memlet("M[0]"))
-    elif conflict == 'waw':  # state writes U, which loop2 also writes -> illegal
+    elif conflict == "waw":  # state writes U, which loop2 also writes -> illegal
         touch = state.add_tasklet("touch", {}, {"o"}, "o = 9.0", side_effects=state_side_effects or None)
         state.add_edge(touch, "o", state.add_access("U"), None, dace.Memlet("U[0]"))
     else:
@@ -103,7 +102,7 @@ def _nloops(sdfg: dace.SDFG) -> int:
 def test_legal_reorder_that_unlocks_fusion_is_sunk_and_correct():
     """Disjoint state, same-range disjoint-array loops: the reorder is legal and, once first/second
     are adjacent, trivially fusable (no cross-body dependence at all)."""
-    sdfg, first, state, second = _build(conflict='none')
+    sdfg, first, state, second = _build(conflict="none")
     oracle = _run(copy.deepcopy(sdfg))
     assert state in sdfg.nodes(), "state starts as a sibling block of first/second"
 
@@ -132,7 +131,7 @@ def test_a_second_loop_with_side_effects_is_not_sunk_past():
     """A side-effecting node in loop2 is invisible to the name-level RAW/WAR/WAW checks -- by
     definition its effects are not the ones its memlets describe -- so it must refuse the reorder from
     ITS side too, not just when the side effect sits in the state being moved."""
-    sdfg, first, state, second = _build(conflict='none')
+    sdfg, first, state, second = _build(conflict="none")
     body2 = next(b for b in second.nodes() if isinstance(b, SDFGState))
     acc2 = next(n for n in body2.nodes() if isinstance(n, dace.sdfg.nodes.Tasklet))
     assert ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg) is False, "fixture must start effect-free"
@@ -196,7 +195,7 @@ def test_a_conflicting_state_is_not_sunk(conflict: str):
 
 def test_a_state_with_side_effects_is_not_sunk():
     """Even with disjoint data, a side-effecting state must not be reordered relative to loop2."""
-    sdfg, first, state, second = _build(conflict='none', state_side_effects=True)
+    sdfg, first, state, second = _build(conflict="none", state_side_effects=True)
 
     assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
@@ -207,7 +206,7 @@ def test_a_state_with_side_effects_is_not_sunk():
 def test_legal_reorder_but_loops_not_fusable_is_not_sunk():
     """The state/loop2 conflict checks all pass (disjoint data), but loop2's range differs from
     loop1's, so ``LoopFusion`` would refuse the resulting adjacency -- condition 2 must gate the sink."""
-    sdfg, first, state, second = _build(conflict='none', loop2_end=N - 2)
+    sdfg, first, state, second = _build(conflict="none", loop2_end=N - 2)
 
     assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
@@ -221,7 +220,7 @@ def test_a_view_touched_by_the_state_is_not_sunk():
     refuses anyway, because it never attempts to resolve what a View/Reference actually aliases -- two
     different names can be the same memory, and undecided is not legal.
     """
-    sdfg, first, state, second = _build(conflict='none')
+    sdfg, first, state, second = _build(conflict="none")
     sdfg.add_array("V", [N], dace.float64)
     sdfg.add_view("Valias", [N], dace.float64)
     touch = state.add_tasklet("touch_view", {}, {"o"}, "o = 5.0")
@@ -247,7 +246,7 @@ def test_a_loop2_with_an_early_exit_block_is_not_sunk():
     loop2, any execution taking the escape path would never reach the state at all -- refused on the
     block's mere presence, without trying to prove whether it is reachable.
     """
-    sdfg, first, state, second = _build(conflict='none')
+    sdfg, first, state, second = _build(conflict="none")
     brk = BreakBlock("brk")
     second.add_node(brk)
     body2 = next(b for b in second.nodes() if isinstance(b, SDFGState))
@@ -271,7 +270,7 @@ def test_an_edge_assignment_the_second_loop_consumes_is_not_sunk():
     bound stale/undefined -- refused by the same "no assignments, no condition on either edge" guard
     that also rules out a non-trivial condition on either side of the state.
     """
-    sdfg, first, state, second = _build(conflict='none')
+    sdfg, first, state, second = _build(conflict="none")
     sdfg.add_symbol("K", dace.int64)
     old_edge = sdfg.edges_between(state, second)[0]
     sdfg.remove_edge(old_edge)
@@ -295,7 +294,7 @@ def test_another_path_into_second_is_not_sunk():
     two predecessors. Reordering would run ``state`` after loop2 regardless of which path was taken,
     including the one that never used to run it at all -- refused.
     """
-    sdfg, first, state, second = _build(conflict='none')
+    sdfg, first, state, second = _build(conflict="none")
     extra = sdfg.add_state("extra")
     sdfg.add_edge(first, extra, InterstateEdge(condition="i == 999"))
     sdfg.add_edge(extra, second, InterstateEdge())
@@ -315,14 +314,14 @@ def test_non_vacuous_neutered_pass_would_fail_the_positive_assertions():
     """Prove the positive test is not vacuously true: with ``ReorderStateForLoopFusion`` neutered (stubbed to always
     return ``None``, exactly a `return None` no-op), the positive test's own load-bearing assertions --
     the sink firing, and ``FuseLoops`` then succeeding -- both fail."""
-    sdfg, first, state, second = _build(conflict='none')
+    sdfg, first, state, second = _build(conflict="none")
 
-    with mock.patch.object(ReorderStateForLoopFusion, 'apply_pass', return_value=None):
-        with pytest.raises(AssertionError, match=r'assert None == 1'):
+    with mock.patch.object(ReorderStateForLoopFusion, "apply_pass", return_value=None):
+        with pytest.raises(AssertionError, match=r"assert None == 1"):
             assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) == 1
 
     # The neutered pass touched nothing, so loop1/loop2 are still not adjacent -> fusion must refuse too.
-    with pytest.raises(AssertionError, match=r'assert None == 1'):
+    with pytest.raises(AssertionError, match=r"assert None == 1"):
         assert FuseLoops().apply_pass(sdfg, {}) == 1
     assert _nloops(sdfg) == 2, "loops must not have fused without the sink"
 

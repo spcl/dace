@@ -25,6 +25,7 @@ enumeration, e.g. ``[k.name for k in polybench.collect()]``,
 ``[c["name"] for c in npbench.collect()]``, ``[k.name for k in tsvc.collect()]``,
 and ``list(T25_PROGRAMS)`` (expect long build/compile times).
 """
+
 import copy
 
 import pytest
@@ -32,8 +33,13 @@ import pytest
 import dace
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
-                                             use_implementation)
+from tests.codegen.readable.conftest import (
+    EXPERIMENTAL,
+    LEGACY,
+    assert_outputs_equivalent,
+    run_isolated,
+    use_implementation,
+)
 from tests.corpus.npbench import npbench
 from tests.corpus.polybench import polybench
 from tests.corpus.tsvc import tsvc
@@ -54,8 +60,12 @@ def tsvc_2_5_short_name(program):
 #: bare-name -> tsvc_2_5 program object (its ``name`` carries the full module path).
 TSVC_2_5_PROGRAMS = {tsvc_2_5_short_name(program): program for program in tsvc_2_5.collect()}
 
-CASES = ([("poly", name) for name in POLYBENCH_KERNELS] + [("np", name) for name in NPBENCH_KERNELS] +
-         [("tsvc", name) for name in TSVC_KERNELS] + [("tsvc25", name) for name in TSVC_2_5_KERNELS])
+CASES = (
+    [("poly", name) for name in POLYBENCH_KERNELS]
+    + [("np", name) for name in NPBENCH_KERNELS]
+    + [("tsvc", name) for name in TSVC_KERNELS]
+    + [("tsvc25", name) for name in TSVC_2_5_KERNELS]
+)
 
 
 def apply_pipeline(sdfg, target):
@@ -63,6 +73,7 @@ def apply_pipeline(sdfg, target):
     length-1-array -> scalar (transient single-element buffers, incl. (1, 1) MapFusion
     scratch), applied to BOTH code generators so the comparison isolates the codegen."""
     from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+
     sdfg.simplify()
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.apply_transformations_repeated(MapFusion)
@@ -151,4 +162,5 @@ def test_corpus_equivalence(corpus, name, target, require_experimental):
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__, "-q"]))

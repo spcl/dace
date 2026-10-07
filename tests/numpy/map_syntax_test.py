@@ -3,7 +3,7 @@ import numpy as np
 import dace
 import pytest
 
-M, N, K = (dace.symbol(name) for name in ['M', 'N', 'K'])
+M, N, K = (dace.symbol(name) for name in ["M", "N", "K"])
 
 
 @dace.program
@@ -23,7 +23,7 @@ def test_copy3d():
     copy3d(A, B)
 
     diff = np.linalg.norm(B - A) / (M * N)
-    print('Difference:', diff)
+    print("Difference:", diff)
     assert diff < 1e-5
 
 
@@ -37,7 +37,7 @@ def test_map_python():
 
 
 def test_nested_map_with_indirection():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def indirect_to_indirect(arr1: dace.float64[N], ind: dace.int32[10], arr2: dace.float64[N]):
@@ -64,12 +64,12 @@ def test_nested_map_with_indirection():
 @pytest.mark.parametrize(["scope_type"], [["map"], ["for"]])
 @pytest.mark.parametrize(["scope_use_type"], [["scalar"], ["view"]])
 def test_nested_map_with_indirection_view(scope_type, scope_use_type):
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def indirect_to_indirectv(arr1: dace.float64[N], ind: dace.int32[10], arr2: dace.float64[N]):
         for i in dace.map[0:9]:
-            begin, end, end2, stride = ind[i], ind[i + 1:i + 2], ind[i + 1], 1
+            begin, end, end2, stride = ind[i], ind[i + 1 : i + 2], ind[i + 1], 1
             for _ in dace.map[0:1]:
                 if scope_use_type == "scalar":
                     if scope_type == "map":
@@ -122,7 +122,7 @@ def test_dynamic_map_range_scalar():
     assert np.allclose(B[:5], A[4] + 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_copy3d()
     test_map_python()
     test_nested_map_with_indirection()

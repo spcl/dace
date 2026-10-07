@@ -5,6 +5,7 @@ lu's two fused ``j`` loops become one guarded body, so ``LoopToMap`` nests it an
 would copy the inner ``k``-map WCR onto the NestedSDFG boundary. ``WavefrontSkew`` folds each such
 reduction into a transient scalar first, so no WCR leaves a NestedSDFG.
 """
+
 import numpy as np
 import pytest
 
@@ -13,7 +14,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -63,11 +64,12 @@ def illegal_wcr_sources(sdfg: dace.SDFG) -> list:
             for e in state.edges():
                 if e.data.wcr is None or isinstance(e.src, (nodes.Tasklet, nodes.MapExit)):
                     continue
-                if isinstance(e.src, nodes.AccessNode) and (e.src.data.startswith('_wcr_priv') or
-                                                            (e.src.desc(sd).transient
-                                                             and isinstance(e.src.desc(sd), dace.data.Scalar))):
+                if isinstance(e.src, nodes.AccessNode) and (
+                    e.src.data.startswith("_wcr_priv")
+                    or (e.src.desc(sd).transient and isinstance(e.src.desc(sd), dace.data.Scalar))
+                ):
                     continue
-                bad.append(f'{type(e.src).__name__} {e.src} -> {e.dst}: {e.data}')
+                bad.append(f"{type(e.src).__name__} {e.src} -> {e.dst}: {e.data}")
     return bad
 
 
@@ -77,23 +79,24 @@ def dataflow_nodes(sdfg: dace.SDFG) -> list:
 
 def is_skewed_into_nested_body(sdfg: dace.SDFG) -> bool:
     skewed = any(
-        isinstance(r, LoopRegion) and r.loop_variable.startswith('_skew_t_') for r in sdfg.all_control_flow_regions())
+        isinstance(r, LoopRegion) and r.loop_variable.startswith("_skew_t_") for r in sdfg.all_control_flow_regions()
+    )
     return skewed and any(isinstance(n, nodes.NestedSDFG) for n in dataflow_nodes(sdfg))
 
 
-@pytest.mark.parametrize('target', ['cpu', 'gpu'])
+@pytest.mark.parametrize("target", ["cpu", "gpu"])
 def test_skewed_lu_body_emits_no_nested_sdfg_wcr(target: str):
     sdfg = lu_small.to_sdfg(simplify=True)
     canonicalize(sdfg, target=target, validate=True)
     assert is_skewed_into_nested_body(sdfg)
     assert illegal_wcr_sources(sdfg) == []
     accumulators = [n.data for n in dataflow_nodes(sdfg) if isinstance(n, nodes.AccessNode)]
-    assert any(name.startswith('_priv_A') for name in accumulators)
+    assert any(name.startswith("_priv_A") for name in accumulators)
 
 
 def test_skewed_lu_matches_numpy_on_cpu():
     sdfg = lu_small.to_sdfg(simplify=True)
-    canonicalize(sdfg, target='cpu', validate=True)
+    canonicalize(sdfg, target="cpu", validate=True)
     n = 13
     rng = np.random.default_rng(0)
     a = rng.random((n, n)) + n * np.eye(n)

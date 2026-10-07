@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared base and helpers for the Fortran I/O library nodes."""
+
 from typing import List, Tuple
 
 from dace import data, dtypes
@@ -60,8 +61,7 @@ class FortranIONode(nodes.LibraryNode):
         else:
             edges = {e.src_conn: e for e in state.out_edges(self) if e.src_conn}
         items = []
-        for i in range(
-                self.num_items):  # type: ignore[attr-defined] # each concrete node declares ``num_items`` as a Property
+        for i in range(self.num_items):  # type: ignore[attr-defined] # each concrete node declares ``num_items`` as a Property
             conn = f"{prefix}{i}"
             edge = edges.get(conn)
             if edge is None:

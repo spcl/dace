@@ -1,35 +1,21 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-NX = dace.symbol('NX')
-NY = dace.symbol('NY')
-TMAX = dace.symbol('TMAX')
+NX = dace.symbol("NX")
+NY = dace.symbol("NY")
+TMAX = dace.symbol("TMAX")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    TMAX: 20,
-    NX: 20,
-    NY: 30
-}, {
-    TMAX: 40,
-    NX: 60,
-    NY: 80
-}, {
-    TMAX: 100,
-    NX: 200,
-    NY: 240
-}, {
-    TMAX: 500,
-    NX: 1000,
-    NY: 1200
-}, {
-    TMAX: 1000,
-    NX: 2000,
-    NY: 2600
-}]
+sizes = [
+    {TMAX: 20, NX: 20, NY: 30},
+    {TMAX: 40, NX: 60, NY: 80},
+    {TMAX: 100, NX: 200, NY: 240},
+    {TMAX: 500, NX: 1000, NY: 1200},
+    {TMAX: 1000, NX: 2000, NY: 2600},
+]
 #: ported from npbench bench_info fdtd_2d.json parameters.paper
 #: tsteps REDUCED to 100 (npbench's paper row said TMAX=500). tsteps is a pure outer repetition
 #: count for a stencil -- it multiplies total time without changing the per-step working set,
@@ -69,6 +55,7 @@ def fdtd2d(ex: datatype[NX, NY], ey: datatype[NX, NY], hz: datatype[NX, NY], _fi
         hz[:-1, :-1] -= 0.7 * (ex[:-1, 1:] - ex[:-1, :-1] + ey[1:, :-1] - ey[:-1, :-1])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(0, 'ex'), (1, 'ey'), (2, 'hz')], init_array, fdtd2d)
+
+    polybench.main(sizes, args, [(0, "ex"), (1, "ey"), (2, "hz")], init_array, fdtd2d)

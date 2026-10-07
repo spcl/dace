@@ -11,6 +11,7 @@ collide), so it stays bit-exact with the un-vectorized reference regardless of w
 This is the READ counterpart of the residue-scan seed ``a[i mod K]`` canon leaves beside its Scan
 libnode (tsvc_2_5 scan_strided_sym / scan_strided_2), isolated from any recurrence.
 """
+
 import numpy
 import pytest
 
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.tile_nodes
 
 @dace.program
 def modular_gather_read_1d(out: dace.float64[X], a: dace.float64[S]):
-    for i, in dace.map[0:X:1]:
+    for (i,) in dace.map[0:X:1]:
         out[i] = a[i % S]
 
 
@@ -39,7 +40,7 @@ def modular_gather_read_2d(out: dace.float64[Y, X], a: dace.float64[Y, S]):
 def square_gather_read_1d(out: dace.float64[X], a: dace.float64[S]):
     # ``(i * i) % S`` is non-affine (AFFINE-with-no-int-stride, wrapped) -> per-lane index
     # ``((i+l)**2) mod S``; kept in [0, S) so it stays in bounds for every i.
-    for i, in dace.map[0:X:1]:
+    for (i,) in dace.map[0:X:1]:
         out[i] = a[(i * i) % S]
 
 
@@ -50,14 +51,8 @@ def test_modular_gather_read_1d(branch_mode, remainder_strategy):
     xv, sv = 60, 3  # xv not a multiple of 8 -> remainder tile; sv < W -> cyclic wrap within a tile
     run_vectorization_test(
         dace_func=modular_gather_read_1d,
-        arrays={
-            "out": numpy.zeros(xv),
-            "a": numpy.random.random(sv)
-        },
-        params={
-            "X": xv,
-            "S": sv
-        },
+        arrays={"out": numpy.zeros(xv), "a": numpy.random.random(sv)},
+        params={"X": xv, "S": sv},
         vector_width=8,
         sdfg_name="modular_gather_read_1d",
         branch_mode=branch_mode,
@@ -72,15 +67,8 @@ def test_modular_gather_read_2d(branch_mode, remainder_strategy):
     yv, xv, sv = 8, 60, 3
     run_vectorization_test(
         dace_func=modular_gather_read_2d,
-        arrays={
-            "out": numpy.zeros((yv, xv)),
-            "a": numpy.random.random((yv, sv))
-        },
-        params={
-            "Y": yv,
-            "X": xv,
-            "S": sv
-        },
+        arrays={"out": numpy.zeros((yv, xv)), "a": numpy.random.random((yv, sv))},
+        params={"Y": yv, "X": xv, "S": sv},
         vector_width=8,
         sdfg_name="modular_gather_read_2d",
         branch_mode=branch_mode,
@@ -96,14 +84,8 @@ def test_square_gather_read_1d(branch_mode, remainder_strategy):
     xv, sv = 60, 5  # xv not a multiple of 8 -> remainder tile
     run_vectorization_test(
         dace_func=square_gather_read_1d,
-        arrays={
-            "out": numpy.zeros(xv),
-            "a": numpy.random.random(sv)
-        },
-        params={
-            "X": xv,
-            "S": sv
-        },
+        arrays={"out": numpy.zeros(xv), "a": numpy.random.random(sv)},
+        params={"X": xv, "S": sv},
         vector_width=8,
         sdfg_name="square_gather_read_1d",
         branch_mode=branch_mode,
@@ -117,12 +99,14 @@ def cmod_gather_read_sdfg() -> dace.SDFG:
     sdfg.add_array("out", [X], dace.float64)
     sdfg.add_array("a", [S], dace.float64)
     state = sdfg.add_state("body")
-    state.add_mapped_tasklet("copy",
-                             map_ranges={"i": "0:X"},
-                             inputs={"inp": dace.Memlet("a[CMod(i, S)]")},
-                             code="o = inp",
-                             outputs={"o": dace.Memlet("out[i]")},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "copy",
+        map_ranges={"i": "0:X"},
+        inputs={"inp": dace.Memlet("a[CMod(i, S)]")},
+        code="o = inp",
+        outputs={"o": dace.Memlet("out[i]")},
+        external_edges=True,
+    )
     return sdfg
 
 
@@ -136,14 +120,8 @@ def test_cmod_gather_read_1d(branch_mode, remainder_strategy):
     xv, sv = 60, 3
     vectorized = run_vectorization_test(
         dace_func=sdfg,
-        arrays={
-            "out": numpy.zeros(xv),
-            "a": numpy.random.random(sv)
-        },
-        params={
-            "X": xv,
-            "S": sv
-        },
+        arrays={"out": numpy.zeros(xv), "a": numpy.random.random(sv)},
+        params={"X": xv, "S": sv},
         vector_width=8,
         sdfg_name="cmod_gather_read_1d",
         from_sdfg=True,
@@ -151,7 +129,8 @@ def test_cmod_gather_read_1d(branch_mode, remainder_strategy):
         remainder_strategy=remainder_strategy,
     )
     lane_index_code = [
-        node.code.as_string for node, _ in vectorized.all_nodes_recursive()
+        node.code.as_string
+        for node, _ in vectorized.all_nodes_recursive()
         if isinstance(node, dace.nodes.Tasklet) and node.label.startswith(LANE_ID_MATERIALISER_PREFIX)
     ]
     assert lane_index_code, "the CMod index was not gathered through a per-lane index tile"

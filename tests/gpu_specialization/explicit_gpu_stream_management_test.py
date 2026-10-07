@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for explicit GPU stream assignment and sync-tasklet insertion."""
+
 import pytest
 
 import dace
@@ -13,8 +14,10 @@ from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import 
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
-from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (STREAM_CONNECTOR,
-                                                                               get_gpu_stream_array_name)
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
+    STREAM_CONNECTOR,
+    get_gpu_stream_array_name,
+)
 
 # These tests pin behaviour specific to :class:`PerComponentGPUStreamScheduler` (per-WCC streams,
 # end-of-state fused sync tasklets). The pipeline's default is now
@@ -30,7 +33,8 @@ _STREAM_VAR_PREFIX = STREAM_CONNECTOR
 
 def _sync_tasklets(state):
     return [
-        n for n in state.nodes()
+        n
+        for n in state.nodes()
         if isinstance(n, dace.nodes.Tasklet) and f"{backend}StreamSynchronize(" in n.code.as_string
     ]
 
@@ -42,8 +46,10 @@ def test_basic():
     that is a sink with correct input wiring."""
 
     @dace.program
-    def simple_copy(A: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global,
-                    B: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global):
+    def simple_copy(
+        A: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global,
+        B: dace.uint32[128] @ dace.dtypes.StorageType.GPU_Global,
+    ):
         for i in dace.map[0:128:1] @ dace.dtypes.ScheduleType.GPU_Device:
             B[i] = A[i]
 
@@ -88,7 +94,7 @@ def test_extended():
     sdfg = independent_copies_extended.to_sdfg()
     sdfg.apply_gpu_transformations()
     # Two components get two streams only when concurrency is unbounded; the scheduler reads the limit when built.
-    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=0):
+    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=0):
         GPUStreamPipeline(scheduling_strategy=PerComponentGPUStreamScheduler()).apply_pass(sdfg, {})
 
     state = sdfg.states()[0]
@@ -114,8 +120,9 @@ def test_extended():
         n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and f"{backend}MemcpyAsync(" in n.code.as_string
     ]
     for tasklet in memcopy_tasklets:
-        assert len(tasklet.in_connectors) == 2, ("Memcpy tasklets must have one connector for the GPU stream"
-                                                 " and one for the copy source/destination.")
+        assert len(tasklet.in_connectors) == 2, (
+            "Memcpy tasklets must have one connector for the GPU stream and one for the copy source/destination."
+        )
 
     sdfg.compile()
 
@@ -126,8 +133,9 @@ def test_stream_count_read_at_apply():
     """A strategy built before ``set_temporary`` still honors the stream count active at apply time."""
 
     @dace.program
-    def independent_copies_stream_count_read_at_apply(A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128],
-                                                      D: dace.uint32[128]):
+    def independent_copies_stream_count_read_at_apply(
+        A: dace.uint32[128], B: dace.uint32[128], C: dace.uint32[128], D: dace.uint32[128]
+    ):
         for i in dace.map[0:128:1]:
             B[i] = A[i]
         for i in dace.map[0:128:1]:
@@ -135,7 +143,7 @@ def test_stream_count_read_at_apply():
 
     sdfg = independent_copies_stream_count_read_at_apply.to_sdfg()
     sdfg.apply_gpu_transformations()
-    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=1):
+    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=1):
         gpu_stream_pipeline.apply_pass(sdfg, {})
     stream_ids = {n.gpu_stream_id for n in sdfg.states()[0].nodes() if n.gpu_stream_id is not None}
     assert stream_ids == {0}, f"One concurrent stream allowed, got stream ids {stream_ids}."
@@ -219,11 +227,12 @@ def test_three_kernels_dependent_and_independent():
     K3 gets its own stream; the state-end synchronization tasklet references
     both streams.
     """
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
-    def three_kernels(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N],
-                      E: dace.float64[N]):
+    def three_kernels(
+        A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N], E: dace.float64[N]
+    ):
         for i in dace.map[0:N]:
             B[i] = A[i] * 2.0
         for i in dace.map[0:N]:
@@ -231,7 +240,7 @@ def test_three_kernels_dependent_and_independent():
         for i in dace.map[0:N]:
             E[i] = D[i] * 3.0
 
-    with dace.config.set_temporary('compiler', 'cuda', 'max_concurrent_streams', value=0):
+    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=0):
         sdfg = three_kernels.to_sdfg(simplify=True)
         sdfg.apply_transformations_repeated(StateFusionExtended)
         sdfg.apply_gpu_transformations()
@@ -241,15 +250,18 @@ def test_three_kernels_dependent_and_independent():
 
         # Step 2: run the remaining stream-specialization passes.
         strategy = PerComponentGPUStreamScheduler()
-        Pipeline([
-            strategy,
-            GPUStreamWiring(strategy),
-        ]).apply_pass(sdfg, {})
+        Pipeline(
+            [
+                strategy,
+                GPUStreamWiring(strategy),
+            ]
+        ).apply_pass(sdfg, {})
 
         kernel_states = []
         for state in sdfg.states():
             maps = [
-                n for n in state.nodes()
+                n
+                for n in state.nodes()
                 if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
             ]
             if maps:
@@ -344,10 +356,12 @@ def test_single_copy_library_node():
     state.add_edge(cp, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
     strategy = PerComponentGPUStreamScheduler()
-    Pipeline([
-        strategy,
-        GPUStreamWiring(strategy),
-    ]).apply_pass(sdfg, {})
+    Pipeline(
+        [
+            strategy,
+            GPUStreamWiring(strategy),
+        ]
+    ).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays
     assert STREAM_CONNECTOR in cp.in_connectors, "CopyLibraryNode must have its STREAM_CONNECTOR in-connector wired"
@@ -376,10 +390,12 @@ def test_single_fill_library_node():
     state.add_edge(ms, FillLibraryNode.OUTPUT_CONNECTOR_NAME, b, None, dace.Memlet("B[0:128]"))
 
     strategy = PerComponentGPUStreamScheduler()
-    Pipeline([
-        strategy,
-        GPUStreamWiring(strategy),
-    ]).apply_pass(sdfg, {})
+    Pipeline(
+        [
+            strategy,
+            GPUStreamWiring(strategy),
+        ]
+    ).apply_pass(sdfg, {})
 
     assert _STREAM_ARRAY in sdfg.arrays
     assert STREAM_CONNECTOR in ms.in_connectors, "FillLibraryNode must have its STREAM_CONNECTOR in-connector wired"
@@ -419,16 +435,17 @@ def test_conditional_gpu_kernel_in_sequential_map():
     for sub_sdfg in sdfg.all_sdfgs_recursive():
         for state in sub_sdfg.states():
             for node in state.nodes():
-                if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device):
+                if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                     gpu_maps.append((sub_sdfg, state, node))
     assert gpu_maps, "Expected at least one GPU_Device MapEntry after apply_gpu_transformations"
 
     # Any SDFG that contains a GPU kernel must have the stream array declared.
     for sub_sdfg, _state, me in gpu_maps:
         assert _STREAM_ARRAY in sub_sdfg.arrays, (
-            f"Nested SDFG containing a GPU kernel must have '{_STREAM_ARRAY}' declared")
+            f"Nested SDFG containing a GPU kernel must have '{_STREAM_ARRAY}' declared"
+        )
         stream_conns = [c for c in me.in_connectors if c.startswith(_STREAM_VAR_PREFIX)]
-        assert len(stream_conns) == 1, (f"GPU MapEntry must have exactly one stream connector, got {stream_conns}")
+        assert len(stream_conns) == 1, f"GPU MapEntry must have exactly one stream connector, got {stream_conns}"
 
     # At least one sync tasklet was inserted somewhere in the hierarchy.
     any_sync = False
@@ -467,18 +484,21 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
 
     # Run the GPU stream pipeline on the un-expanded SDFG.
     strategy = PerComponentGPUStreamScheduler()
-    Pipeline([
-        strategy,
-        GPUStreamWiring(strategy),
-    ]).apply_pass(sdfg, {})
+    Pipeline(
+        [
+            strategy,
+            GPUStreamWiring(strategy),
+        ]
+    ).apply_pass(sdfg, {})
 
-    assert _STREAM_ARRAY in sdfg.arrays, ("Stream array must be present after the pipeline runs")
+    assert _STREAM_ARRAY in sdfg.arrays, "Stream array must be present after the pipeline runs"
     # The MatMul itself must have been wired with a ``stream`` in-connector
     # from a ``gpu_streams`` AccessNode (currently fails: scheduler ignores
     # generic GPU library nodes).
     assert STREAM_CONNECTOR in matmul.in_connectors, (
         "MatMul (a GPU library node) should be wired with a ``stream`` connector "
-        "by the stream pipeline before it is expanded")
+        "by the stream pipeline before it is expanded"
+    )
     matmul_stream_in = [e for e in state.in_edges(matmul) if e.dst_conn == STREAM_CONNECTOR]
     assert len(matmul_stream_in) == 1
     assert isinstance(matmul_stream_in[0].src, dace.nodes.AccessNode)
@@ -489,14 +509,15 @@ def test_libnode_expansion_propagates_stream_to_child_libnode():
 
     # Find the child library node that replaced MatMul.
     children = [n for n in state.nodes() if isinstance(n, dace.nodes.LibraryNode)]
-    assert len(children) == 1, (f"Expected exactly one child library node after MatMul.specialize, got {len(children)}")
+    assert len(children) == 1, f"Expected exactly one child library node after MatMul.specialize, got {len(children)}"
     child = children[0]
-    assert type(child).__name__.endswith("Gemm"), (f"Expected Gemm-family child, got {type(child).__name__}")
+    assert type(child).__name__.endswith("Gemm"), f"Expected Gemm-family child, got {type(child).__name__}"
 
     # The child must have inherited the parent's stream wiring.
     assert STREAM_CONNECTOR in child.in_connectors, (
         f"Child library node {type(child).__name__} (produced by expanding MatMul) "
-        f"must have a ``stream`` in-connector inherited from the parent")
+        f"must have a ``stream`` in-connector inherited from the parent"
+    )
     child_stream_in = [e for e in state.in_edges(child) if e.dst_conn == STREAM_CONNECTOR]
     assert len(child_stream_in) == 1
     assert isinstance(child_stream_in[0].src, dace.nodes.AccessNode)
@@ -528,22 +549,29 @@ def test_libnode_expansion_to_nested_sdfg_wires_inner_libnodes():
     # scheduler on the post-expansion shape.
     sdfg.expand_library_nodes(recursive=True)
     strategy = PerComponentGPUStreamScheduler()
-    Pipeline([
-        strategy,
-        GPUStreamWiring(strategy),
-    ]).apply_pass(sdfg, {})
+    Pipeline(
+        [
+            strategy,
+            GPUStreamWiring(strategy),
+        ]
+    ).apply_pass(sdfg, {})
 
     # Every runtime Tasklet (post-expansion) that takes a stream must have
     # its ``__stream`` connector wired to ``gpu_streams[<i>]``.
-    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (is_already_lowered_gpu_runtime_call)
+    from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import is_already_lowered_gpu_runtime_call
+
     runtime_tasklets = [
-        n for nsdfg in sdfg.all_sdfgs_recursive() for st in nsdfg.states() for n in st.nodes()
+        n
+        for nsdfg in sdfg.all_sdfgs_recursive()
+        for st in nsdfg.states()
+        for n in st.nodes()
         if is_already_lowered_gpu_runtime_call(n)
     ]
     assert runtime_tasklets, "Cholesky cuSolverDn expansion should leave at least one runtime call Tasklet."
     for t in runtime_tasklets:
         assert STREAM_CONNECTOR in t.in_connectors, (
-            f"Runtime tasklet {t.label} must have its ``__stream`` in-connector wired by the unified pipeline")
+            f"Runtime tasklet {t.label} must have its ``__stream`` in-connector wired by the unified pipeline"
+        )
 
 
 def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
@@ -551,33 +579,39 @@ def test_preexpanded_legacy_ambient_stream_tasklet_is_wired():
     (a libnode expanded before stream scheduling) gets an in-connector of that
     exact name wired, so the experimental codegen does not see an undeclared
     identifier."""
-    sdfg = dace.SDFG('legacy_ambient_stream')
-    sdfg.add_array('A', [128], dace.uint32, dace.dtypes.StorageType.GPU_Global)
-    sdfg.add_array('B', [128], dace.uint32, dace.dtypes.StorageType.GPU_Global)
-    state = sdfg.add_state('s')
-    a = state.add_read('A')
-    b = state.add_write('B')
+    sdfg = dace.SDFG("legacy_ambient_stream")
+    sdfg.add_array("A", [128], dace.uint32, dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [128], dace.uint32, dace.dtypes.StorageType.GPU_Global)
+    state = sdfg.add_state("s")
+    a = state.add_read("A")
+    b = state.add_write("B")
     in_conn = CopyLibraryNode.INPUT_CONNECTOR_NAME
     out_conn = CopyLibraryNode.OUTPUT_CONNECTOR_NAME
-    cp = state.add_tasklet('copy_A_to_B', {in_conn: None}, {out_conn: None},
-                           f'{common.get_gpu_backend()}MemcpyAsync({out_conn}, {in_conn}, 128 * sizeof(dace::uint), '
-                           f'{common.get_gpu_backend()}MemcpyDeviceToDevice, __dace_current_stream);',
-                           language=dace.Language.CPP)
+    cp = state.add_tasklet(
+        "copy_A_to_B",
+        {in_conn: None},
+        {out_conn: None},
+        f"{common.get_gpu_backend()}MemcpyAsync({out_conn}, {in_conn}, 128 * sizeof(dace::uint), "
+        f"{common.get_gpu_backend()}MemcpyDeviceToDevice, __dace_current_stream);",
+        language=dace.Language.CPP,
+    )
     cp.in_connectors = {in_conn: dace.pointer(dace.uint32)}
     cp.out_connectors = {out_conn: dace.pointer(dace.uint32)}
-    state.add_edge(a, None, cp, in_conn, dace.Memlet('A[0:128]'))
-    state.add_edge(cp, out_conn, b, None, dace.Memlet('B[0:128]'))
+    state.add_edge(a, None, cp, in_conn, dace.Memlet("A[0:128]"))
+    state.add_edge(cp, out_conn, b, None, dace.Memlet("B[0:128]"))
     sdfg.validate()
 
     gpu_stream_pipeline.apply_pass(sdfg, {})
 
-    assert cp.in_connectors.get('__dace_current_stream') == dace.dtypes.gpuStream_t, \
+    assert cp.in_connectors.get("__dace_current_stream") == dace.dtypes.gpuStream_t, (
         f"expected a ``__dace_current_stream`` gpuStream_t in-connector, got {dict(cp.in_connectors)}"
-    assert any(e.dst_conn == '__dace_current_stream' for e in state.in_edges(cp)), \
+    )
+    assert any(e.dst_conn == "__dace_current_stream" for e in state.in_edges(cp)), (
         "the ``__dace_current_stream`` connector must be fed by a wired gpu_streams edge"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_three_kernels_dependent_and_independent()
     test_empty_state()
     test_single_copy_library_node()

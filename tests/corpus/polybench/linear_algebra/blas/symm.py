@@ -2,10 +2,10 @@
 import dace
 import numpy as np
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -16,7 +16,7 @@ paper_sizes = {M: 1000, N: 1200}
 
 args = [([M, N], datatype), ([M, M], datatype), ([M, N], datatype), ([1], datatype), ([1], datatype)]
 
-outputs = [(0, 'C')]
+outputs = [(0, "C")]
 
 
 def init_array(C, A, B, alpha, beta, n, m):
@@ -40,7 +40,7 @@ def symm(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatyp
     # npbench formulation: symmetric-matrix multiply expressed with column slices + a
     # ``B[:i, j] @ A[i, :i]`` inner product (Dot library node). ``alpha``/``beta`` are 1-element
     # arrays in the corpus signature.
-    temp2 = np.zeros((N, ), dtype=C.dtype)
+    temp2 = np.zeros((N,), dtype=C.dtype)
     C *= beta[0]
     for i in range(M):
         for j in range(N):
@@ -49,6 +49,7 @@ def symm(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatyp
         C[i, :] += alpha[0] * B[i, :] * A[i, i] + alpha[0] * temp2
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     polybench.main(sizes, args, outputs, init_array, symm)

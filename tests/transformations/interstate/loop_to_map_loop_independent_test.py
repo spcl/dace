@@ -25,6 +25,7 @@ so it cannot be treated as one shared parameter of a cross-iteration comparison,
 fixed for the whole execution of the ``j`` loop and can. That is the ``varying`` guard inside
 ``_collision_forces_same_iteration``; the negative tests below are what pins it down.
 """
+
 import numpy as np
 
 import dace
@@ -32,10 +33,10 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 
-N = dace.symbol('N')
-C = dace.symbol('C')
-NB = dace.symbol('NB')
-V = dace.symbol('V')
+N = dace.symbol("N")
+C = dace.symbol("C")
+NB = dace.symbol("NB")
+V = dace.symbol("V")
 
 
 def maps_with_param(sdfg: dace.SDFG, param: str):
@@ -46,7 +47,9 @@ def maps_with_param(sdfg: dace.SDFG, param: str):
 def loops_with_var(sdfg: dace.SDFG, var: str):
     """LoopRegions whose loop variable is ``var``, across every (nested) SDFG."""
     return [
-        r for nested in sdfg.all_sdfgs_recursive() for r in nested.all_control_flow_regions()
+        r
+        for nested in sdfg.all_sdfgs_recursive()
+        for r in nested.all_control_flow_regions()
         if isinstance(r, LoopRegion) and r.loop_variable == var
     ]
 
@@ -81,8 +84,8 @@ def test_inner_axis_alias_at_distance_zero_maps():
     sdfg = transpose_add.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert maps_with_param(sdfg, 'j'), "inner axis j aliases only at distance 0 and must become a Map"
-    assert not loops_with_var(sdfg, 'j'), "inner axis j should no longer be a sequential loop"
+    assert maps_with_param(sdfg, "j"), "inner axis j aliases only at distance 0 and must become a Map"
+    assert not loops_with_var(sdfg, "j"), "inner axis j should no longer be a sequential loop"
 
     n = 9
     rng = np.random.default_rng(0)
@@ -120,8 +123,8 @@ def test_scaled_triangular_inner_axis_maps():
     sdfg = transpose_add_scaled_triangular.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert maps_with_param(sdfg, 'j'), "s114's inner axis j must become a Map"
-    assert not loops_with_var(sdfg, 'j')
+    assert maps_with_param(sdfg, "j"), "s114's inner axis j must become a Map"
+    assert not loops_with_var(sdfg, "j")
 
     n, nb, v = 16, 4, 4
     rng = np.random.default_rng(1)
@@ -148,8 +151,8 @@ def test_outer_transpose_axis_stays_sequential():
     sdfg = transpose_add.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert not maps_with_param(sdfg, 'i'), "carried outer transpose axis i must NOT become a Map"
-    assert loops_with_var(sdfg, 'i'), "carried outer transpose axis i must remain a sequential LoopRegion"
+    assert not maps_with_param(sdfg, "i"), "carried outer transpose axis i must NOT become a Map"
+    assert loops_with_var(sdfg, "i"), "carried outer transpose axis i must remain a sequential LoopRegion"
 
     n = 9
     rng = np.random.default_rng(2)
@@ -165,8 +168,8 @@ def test_outer_scaled_triangular_transpose_axis_stays_sequential():
     sdfg = transpose_add_scaled_triangular.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert not maps_with_param(sdfg, 'i'), "s114's outer axis i must NOT become a Map"
-    assert loops_with_var(sdfg, 'i')
+    assert not maps_with_param(sdfg, "i"), "s114's outer axis i must NOT become a Map"
+    assert loops_with_var(sdfg, "i")
 
     n, nb, v = 16, 4, 4
     rng = np.random.default_rng(3)
@@ -201,8 +204,8 @@ def test_shifted_transpose_carried_at_distance_one_stays_sequential():
     sdfg = transpose_shifted.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert not maps_with_param(sdfg, 'i'), "distance-1 carried dependence must NOT become a Map"
-    assert loops_with_var(sdfg, 'i'), "distance-1 carried dependence must remain a sequential LoopRegion"
+    assert not maps_with_param(sdfg, "i"), "distance-1 carried dependence must NOT become a Map"
+    assert loops_with_var(sdfg, "i"), "distance-1 carried dependence must remain a sequential LoopRegion"
 
     n, c = 8, 3
     a = np.random.default_rng(4).random((n, n))
@@ -211,7 +214,7 @@ def test_shifted_transpose_carried_at_distance_one_stays_sequential():
     assert np.allclose(a, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_inner_axis_alias_at_distance_zero_maps()
     test_scaled_triangular_inner_axis_maps()
     test_outer_transpose_axis_stays_sequential()

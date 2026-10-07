@@ -17,6 +17,7 @@ clamps must survive (canonicalize must not drop or reorder them in a way
 that changes results). Value-preserving against a numpy oracle that
 mirrors the same ``exp`` / ``sqrt`` / ``min`` / ``max`` chain.
 """
+
 import math
 
 import numpy as np
@@ -26,12 +27,13 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 
-NG = dace.symbol('NG')
+NG = dace.symbol("NG")
 
 
 @dace.program
-def two_stream_reftrans(od: dace.float64[NG], g1: dace.float64[NG], g2: dace.float64[NG], ref: dace.float64[NG],
-                        trans: dace.float64[NG]):
+def two_stream_reftrans(
+    od: dace.float64[NG], g1: dace.float64[NG], g2: dace.float64[NG], ref: dace.float64[NG], trans: dace.float64[NG]
+):
     """Per-g-point two-stream reflectance/transmittance with a small-``od``
     branch and saturation clamps. Fully parallel over ``jg``."""
     for jg in dace.map[0:NG]:
@@ -84,8 +86,8 @@ def test_two_stream_reftrans_value_preserving():
     ref = np.zeros(n)
     trans = np.zeros(n)
     sdfg(od=od, g1=g1, g2=g2, ref=ref, trans=trans, NG=n)
-    assert np.allclose(ref, exp_ref), 'two-stream reflectance mis-canonicalized'
-    assert np.allclose(trans, exp_trans), 'two-stream transmittance mis-canonicalized'
+    assert np.allclose(ref, exp_ref), "two-stream reflectance mis-canonicalized"
+    assert np.allclose(trans, exp_trans), "two-stream transmittance mis-canonicalized"
 
 
 def test_two_stream_reftrans_is_elementwise_map():
@@ -96,8 +98,8 @@ def test_two_stream_reftrans_is_elementwise_map():
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert n_maps >= 1, 'the parallel g-point body must keep a Map'
+    assert n_maps >= 1, "the parallel g-point body must keep a Map"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

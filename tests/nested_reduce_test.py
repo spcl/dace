@@ -6,22 +6,22 @@ from dace.memlet import Memlet
 
 def test_nested_reduction():
     # Create SDFG
-    sdfg = dace.SDFG('nested_reduction')
-    sdfg.add_array('A', (40, ), dace.float32)
-    sdfg.add_array('B', (20, ), dace.float32)
+    sdfg = dace.SDFG("nested_reduction")
+    sdfg.add_array("A", (40,), dace.float32)
+    sdfg.add_array("B", (20,), dace.float32)
 
     # Nodes
-    state = sdfg.add_state('a')
-    A = state.add_access('A')
-    B = state.add_access('B')
-    me, mx = state.add_map('mymap', dict(i='0:20'))
-    red = state.add_reduce('lambda a,b: a+b', None, 0)
+    state = sdfg.add_state("a")
+    A = state.add_access("A")
+    B = state.add_access("B")
+    me, mx = state.add_map("mymap", dict(i="0:20"))
+    red = state.add_reduce("lambda a,b: a+b", None, 0)
 
     # Edges
-    state.add_edge(A, None, me, None, Memlet.simple(A, '0:40'))
-    state.add_edge(me, None, red, '_in', Memlet.simple(A, '(2*i):(2*i+2)'))
-    state.add_edge(red, '_out', mx, None, Memlet.simple(B, 'i'))
-    state.add_edge(mx, None, B, None, Memlet.simple(B, '0:20'))
+    state.add_edge(A, None, me, None, Memlet.simple(A, "0:40"))
+    state.add_edge(me, None, red, "_in", Memlet.simple(A, "(2*i):(2*i+2)"))
+    state.add_edge(red, "_out", mx, None, Memlet.simple(B, "i"))
+    state.add_edge(mx, None, B, None, Memlet.simple(B, "0:20"))
     sdfg.fill_scope_connectors()
 
     Adata = np.random.rand(40).astype(np.float32)

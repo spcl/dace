@@ -7,6 +7,7 @@ shape of the ``add_fusion_barrier`` tasklet, the fact that a *middle* (non sourc
 is timed as compute rather than barriered, the ``InsertLayoutTiming`` pass metadata, the
 ``_report_total_ms`` reduction, and ``time_compute`` returning ``None`` when the SDFG carries no
 timers. Every SDFG that is executed is checked bit-exact against a numpy oracle."""
+
 import types
 
 import numpy
@@ -14,8 +15,13 @@ import numpy
 import dace
 from dace import nodes
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.layout.timing import (InsertLayoutTiming, add_fusion_barrier, is_copy_state, time_compute,
-                                               _report_total_ms)
+from dace.transformation.layout.timing import (
+    InsertLayoutTiming,
+    add_fusion_barrier,
+    is_copy_state,
+    time_compute,
+    _report_total_ms,
+)
 
 
 def _elementwise_state(sdfg: dace.SDFG, label: str, src: str, dst: str, code: str, n: int) -> dace.SDFGState:
@@ -54,10 +60,12 @@ def test_is_copy_state_parenthesized_copy_true():
 
 
 def test_is_copy_state_multiple_pure_copies_true():
-    state = _classify_state_with_tasklets([
-        ({"inp"}, {"out"}, "out = inp"),
-        ({"inp"}, {"out"}, "out = (inp)"),
-    ])
+    state = _classify_state_with_tasklets(
+        [
+            ({"inp"}, {"out"}, "out = inp"),
+            ({"inp"}, {"out"}, "out = (inp)"),
+        ]
+    )
     assert is_copy_state(state) is True
 
 
@@ -68,10 +76,12 @@ def test_is_copy_state_arithmetic_false():
 
 def test_is_copy_state_mixed_copy_and_arithmetic_false():
     # A single arithmetic tasklet among copies flips the whole state to non-copy (compute).
-    state = _classify_state_with_tasklets([
-        ({"inp"}, {"out"}, "out = inp"),
-        ({"inp"}, {"out"}, "out = inp + 1.0"),
-    ])
+    state = _classify_state_with_tasklets(
+        [
+            ({"inp"}, {"out"}, "out = inp"),
+            ({"inp"}, {"out"}, "out = inp + 1.0"),
+        ]
+    )
     assert is_copy_state(state) is False
 
 

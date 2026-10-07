@@ -5,14 +5,15 @@ Only the operator was registered, so ``np.matmul(a, b)`` raised "Function numpy.
 registered with an SDFG implementation" for code DaCe could already lower -- a refusal an author
 cannot see coming from the ``@`` form working. PEP 465 defines the two as the same operation.
 """
+
 import numpy as np
 
 import dace
 
-M = dace.symbol('M')
-N = dace.symbol('N')
-K = dace.symbol('K')
-B = dace.symbol('B')
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
+B = dace.symbol("B")
 
 
 @dace.program
@@ -53,7 +54,7 @@ def test_matmul_matrix_vector():
     rng = np.random.default_rng(42)
     a = rng.random((4, 5))
     b = rng.random(5)
-    res = np.zeros((4, ))
+    res = np.zeros((4,))
     matmul_matrix_vector(a=a, b=b, res=res, M=4, K=5)
     assert np.allclose(res, a @ b)
 
@@ -74,7 +75,7 @@ def test_matmul_agrees_with_the_operator_it_delegates_to():
     assert np.allclose(from_function, from_operator)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_matmul_2d()
     test_matmul_batched()
     test_matmul_matrix_vector()

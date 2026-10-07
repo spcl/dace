@@ -4,6 +4,7 @@
 Uses ``_ain`` / ``_aout`` for the matrix so input and output connectors
 stay distinct in codegen.
 """
+
 import copy
 
 import dace.library
@@ -20,7 +21,6 @@ from typing import List
 
 @dace.library.expansion
 class ExpandOrgqrOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -34,16 +34,13 @@ class ExpandOrgqrOpenBLAS(ExpandTransformation):
         std::memcpy(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}));
         _res = LAPACKE_{lap}orgqr(LAPACK_ROW_MAJOR, {m}, {n}, {k}, _aout, {lda_out}, _tau);
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandOrgqrMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -53,12 +50,19 @@ class ExpandOrgqrMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandOrgqrGPUSolver(ExpandTransformation):
-
     environments: List[type] = []
 
     @classmethod
-    def call(cls, func: str, ctype: str, m: symbolic.SymbolicType, n: symbolic.SymbolicType, k: symbolic.SymbolicType,
-             lda: symbolic.SymbolicType, dt: dtypes.typeclass) -> str:
+    def call(
+        cls,
+        func: str,
+        ctype: str,
+        m: symbolic.SymbolicType,
+        n: symbolic.SymbolicType,
+        k: symbolic.SymbolicType,
+        lda: symbolic.SymbolicType,
+        dt: dtypes.typeclass,
+    ) -> str:
         """The vendor call, spelled by the cuSOLVER / rocSOLVER subclass."""
         raise NotImplementedError
 
@@ -67,18 +71,20 @@ class ExpandOrgqrGPUSolver(ExpandTransformation):
         (desc_A, lda_in, lda_out, m, n), (desc_tau, k) = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dt)
-        func = func + 'orgqr'
-        code = cls.environments[0].handle_setup_code(node) + f"""
+        func = func + "orgqr"
+        code = (
+            cls.environments[0].handle_setup_code(node)
+            + f"""
             gpuMemcpyAsync(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}),
                             gpuMemcpyDeviceToDevice, __dace_current_stream);
-            """ + cls.call(func, cuda_type, m, n, k, lda_out, dt)
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+            """
+            + cls.call(func, cuda_type, m, n, k, lda_out, dt)
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
-        tasklet.out_connectors = {c: (dtypes.pointer(dtypes.int32) if c == '_res' else t) for c, t in conn.items()}
+        tasklet.out_connectors = {c: (dtypes.pointer(dtypes.int32) if c == "_res" else t) for c, t in conn.items()}
         return tasklet
 
 
@@ -128,12 +134,12 @@ class Orgqr(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandOrgqrOpenBLAS,
         "MKL": ExpandOrgqrMKL,
         "cuSolverDn": ExpandOrgqrCuSolverDn,
-        "rocSOLVER": ExpandOrgqrRocSolver
+        "rocSOLVER": ExpandOrgqrRocSolver,
     }
     default_implementation = None
 
     def __init__(self, name, **kwargs):
-        super().__init__(name, inputs=OrderedSet(('_ain', '_tau')), outputs=OrderedSet(('_aout', '_res')), **kwargs)
+        super().__init__(name, inputs=OrderedSet(("_ain", "_tau")), outputs=OrderedSet(("_aout", "_res")), **kwargs)
 
     def validate(self, sdfg, state):
         """:return: ``((desc_A, lda_in, lda_out, m, n), (desc_tau, k))``."""

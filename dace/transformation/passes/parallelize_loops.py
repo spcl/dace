@@ -16,8 +16,16 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.interstate.loop_to_map import (UNCOMPUTED, LiftContext, LiftInvariants, LoopFacts, LoopToMap,
-                                                        build_lift_context, build_lift_invariants, index_block_symbols)
+from dace.transformation.interstate.loop_to_map import (
+    UNCOMPUTED,
+    LiftContext,
+    LiftInvariants,
+    LoopFacts,
+    LoopToMap,
+    build_lift_context,
+    build_lift_invariants,
+    index_block_symbols,
+)
 
 
 def candidate_loops(sdfg: SDFG) -> List[LoopRegion]:
@@ -57,14 +65,16 @@ class LiftSite:
     inner_loops: List[LoopRegion]
 
     @staticmethod
-    def capture(loop: LoopRegion) -> 'LiftSite':
+    def capture(loop: LoopRegion) -> "LiftSite":
         region = loop.parent_graph
-        return LiftSite(level_order=list(cfg_analysis.blockorder_topological_sort(region, recursive=False)),
-                        subtree_size=1 + sum(1 for _ in cfg_analysis.blockorder_topological_sort(loop)),
-                        loop_states=OrderedSet(loop.states()),
-                        region_edges=Counter(k for e in region.edges() for k in e.data.assignments),
-                        loop_edges=edge_assignment_counts(loop),
-                        inner_loops=[r for r in candidate_loops(loop) if r is not loop])
+        return LiftSite(
+            level_order=list(cfg_analysis.blockorder_topological_sort(region, recursive=False)),
+            subtree_size=1 + sum(1 for _ in cfg_analysis.blockorder_topological_sort(loop)),
+            loop_states=OrderedSet(loop.states()),
+            region_edges=Counter(k for e in region.edges() for k in e.data.assignments),
+            loop_edges=edge_assignment_counts(loop),
+            inner_loops=[r for r in candidate_loops(loop) if r is not loop],
+        )
 
 
 def last_iteration(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
@@ -85,14 +95,15 @@ def lifted_blocks(site: LiftSite, loop: LoopRegion, region: ControlFlowRegion) -
     if not added or not all(isinstance(b, SDFGState) for b in added):
         return None
     k = next(i for i, b in enumerate(site.level_order) if b is loop)
-    expected = site.level_order[:k] + added + site.level_order[k + 1:]
+    expected = site.level_order[:k] + added + site.level_order[k + 1 :]
     if len(expected) != len(level_after) or any(a is not b for a, b in zip(expected, level_after)):
         return None
     return added
 
 
-def patch_context(ctx: LiftContext, sd: SDFG, loop: LoopRegion, region: ControlFlowRegion, site: LiftSite,
-                  added: List[SDFGState]) -> bool:
+def patch_context(
+    ctx: LiftContext, sd: SDFG, loop: LoopRegion, region: ControlFlowRegion, site: LiftSite, added: List[SDFGState]
+) -> bool:
     """Bring ``sd``'s context up to date after ``loop`` was lifted, instead of rebuilding it from the whole SDFG.
 
     Every field is what :func:`build_lift_context` would compute now: the loop's subtree leaves the
@@ -104,7 +115,7 @@ def patch_context(ctx: LiftContext, sd: SDFG, loop: LoopRegion, region: ControlF
     start = ctx.block_index.get(loop)
     if start is None:
         return False
-    ctx.block_order = ctx.block_order[:start] + added + ctx.block_order[start + site.subtree_size:]
+    ctx.block_order = ctx.block_order[:start] + added + ctx.block_order[start + site.subtree_size :]
     ctx.block_index = {block: i for i, block in enumerate(ctx.block_order)}
     for state in site.loop_states:
         for node in state.data_nodes():
@@ -127,8 +138,9 @@ def patch_context(ctx: LiftContext, sd: SDFG, loop: LoopRegion, region: ControlF
     return True
 
 
-def patch_candidates(candidates: List[LoopRegion], loop: LoopRegion, region: ControlFlowRegion, site: LiftSite,
-                     added: List[SDFGState]) -> List[LoopRegion]:
+def patch_candidates(
+    candidates: List[LoopRegion], loop: LoopRegion, region: ControlFlowRegion, site: LiftSite, added: List[SDFGState]
+) -> List[LoopRegion]:
     """``candidate_loops`` after ``loop`` was lifted: its inner loops now sit in the new nested SDFG, which
     the walk reaches through the lifted state -- the region's last block, so after the rest of the region."""
     gone = {id(loop)} | {id(r) for r in site.inner_loops}
@@ -138,7 +150,10 @@ def patch_candidates(candidates: List[LoopRegion], loop: LoopRegion, region: Con
     while insert < len(rest) and contains(region, rest[insert]):
         insert += 1
     moved = [
-        r for state in added for node in state.nodes() if isinstance(node, nodes.NestedSDFG) and node.sdfg
+        r
+        for state in added
+        for node in state.nodes()
+        if isinstance(node, nodes.NestedSDFG) and node.sdfg
         for r in candidate_loops(node.sdfg)
     ]
     return rest[:insert] + moved + rest[insert:]
@@ -193,15 +208,17 @@ class ParallelizeLoops(ppl.Pass):
     and propagates the whole SDFG once at the end.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
-    permissive = properties.Property(dtype=bool,
-                                     default=False,
-                                     desc='Probe loops in permissive mode, skipping the conservative refusals.')
-    propagate = properties.Property(dtype=bool,
-                                    default=True,
-                                    desc='Propagate memlets over the whole SDFG once, after the last lift. '
-                                    'Set False only if the caller propagates itself.')
+    permissive = properties.Property(
+        dtype=bool, default=False, desc="Probe loops in permissive mode, skipping the conservative refusals."
+    )
+    propagate = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Propagate memlets over the whole SDFG once, after the last lift. "
+        "Set False only if the caller propagates itself.",
+    )
 
     def __init__(self, permissive: bool = False, propagate: bool = True):
         self.permissive = permissive
@@ -240,11 +257,9 @@ class ParallelizeLoops(ppl.Pass):
         # enclosing authority (canonicalize's) already does, and keeps what a lift declares.
         scope = contextlib.nullcontext()
         if not symbolic.symbol_dtype_authority_active():
-            scope = symbolic.serialization_symbol_dtypes({
-                name: dtype
-                for nested in sdfg.all_sdfgs_recursive()
-                for name, dtype in nested.symbols.items()
-            })
+            scope = symbolic.serialization_symbol_dtypes(
+                {name: dtype for nested in sdfg.all_sdfgs_recursive() for name, dtype in nested.symbols.items()}
+            )
         with scope:
             for order in (loop_order_key, None):
                 applied += self.lift_fixpoint(sdfg, pipeline_results, order, contexts, invariants, loop_facts)
@@ -268,12 +283,14 @@ class ParallelizeLoops(ppl.Pass):
         self.finish(sdfg)
         return True
 
-    def lift(self,
-             xform: LoopToMap,
-             loop: LoopRegion,
-             pipeline_results: Dict[str, Any],
-             proven: bool = False,
-             before_apply: Optional[Callable[[], None]] = None) -> bool:
+    def lift(
+        self,
+        xform: LoopToMap,
+        loop: LoopRegion,
+        pipeline_results: Dict[str, Any],
+        proven: bool = False,
+        before_apply: Optional[Callable[[], None]] = None,
+    ) -> bool:
         """Probe ``loop`` against the CURRENT graph and lift it if ``LoopToMap`` accepts it.
 
         :param xform: the instance to match; its ``lift_context``, when set, supplies the shared analysis.
@@ -301,7 +318,8 @@ class ParallelizeLoops(ppl.Pass):
         xform.apply(graph, sd)
         for state in graph.states():
             lifted = [
-                node for node in state.nodes()
+                node
+                for node in state.nodes()
                 if isinstance(node, nodes.MapEntry) and node.map.params == [itervar] and node.map.range[0][1] == end
             ]
             for node in lifted:
@@ -323,8 +341,15 @@ class ParallelizeLoops(ppl.Pass):
         if self.propagate:
             propagate_memlets_sdfg(sdfg)
 
-    def lift_fixpoint(self, sdfg: SDFG, pipeline_results: Dict[str, Any], order, contexts: Dict[SDFG, LiftContext],
-                      invariants: Dict[SDFG, LiftInvariants], loop_facts: Dict[Any, LoopFacts]) -> int:
+    def lift_fixpoint(
+        self,
+        sdfg: SDFG,
+        pipeline_results: Dict[str, Any],
+        order,
+        contexts: Dict[SDFG, LiftContext],
+        invariants: Dict[SDFG, LiftInvariants],
+        loop_facts: Dict[Any, LoopFacts],
+    ) -> int:
         """Lift until no loop in ``sdfg`` is accepted any more, visiting loops in ``order``.
 
         :param order: sort key over the candidate loops, or ``None`` to keep graph order.
@@ -350,7 +375,7 @@ class ParallelizeLoops(ppl.Pass):
                 for loop in candidates:
                     if loop not in keys:
                         keys[loop] = order(loop)
-            for loop in (candidates if order is None else sorted(candidates, key=keys.__getitem__)):
+            for loop in candidates if order is None else sorted(candidates, key=keys.__getitem__):
                 sd = loop.sdfg
                 graph = loop.parent_graph
                 inv = invariants.get(sd)
@@ -366,7 +391,8 @@ class ParallelizeLoops(ppl.Pass):
                 mapping_keys = None if pnode is None else tuple(pnode.symbol_mapping.keys())
                 sites: List[LiftSite] = []
                 if not self.lift(
-                        xform, loop, pipeline_results, before_apply=lambda: sites.append(LiftSite.capture(loop))):
+                    xform, loop, pipeline_results, before_apply=lambda: sites.append(LiftSite.capture(loop))
+                ):
                     continue
                 applied += 1
                 lifted_one = True

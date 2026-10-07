@@ -1,23 +1,29 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    N: 40,
-}, {
-    N: 120,
-}, {
-    N: 400,
-}, {
-    N: 2000,
-}, {
-    N: 4000,
-}]
+sizes = [
+    {
+        N: 40,
+    },
+    {
+        N: 120,
+    },
+    {
+        N: 400,
+    },
+    {
+        N: 2000,
+    },
+    {
+        N: 4000,
+    },
+]
 
 #: ported from the npbench bench_info paper row
 paper_sizes = {N: 16000}
@@ -43,6 +49,7 @@ def mvt(x1: datatype[N], x2: datatype[N], y_1: datatype[N], y_2: datatype[N], A:
     x2 += y_2 @ A
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(0, 'x1'), (1, 'x2')], init_array, mvt)
+
+    polybench.main(sizes, args, [(0, "x1"), (1, "x2")], init_array, mvt)

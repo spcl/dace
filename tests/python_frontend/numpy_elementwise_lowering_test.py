@@ -6,6 +6,7 @@ Python interpreter, holds the GIL, cannot be scheduled on a device and blocks fu
 A callback returns the right numbers, so a numeric assertion alone says nothing about whether the
 call was lowered -- each test therefore pins the SDFG structure first and the values second.
 """
+
 import numpy as np
 import pytest
 
@@ -19,12 +20,13 @@ def callback_nodes(sdfg: dace.SDFG) -> list[str]:
     the tasklets that call back into it."""
     found = []
     for nested in sdfg.all_sdfgs_recursive():
-        found += [f'{nested.label}:__pystate' for name in nested.arrays if name == '__pystate']
+        found += [f"{nested.label}:__pystate" for name in nested.arrays if name == "__pystate"]
         for state in nested.states():
             for node in state.nodes():
-                if isinstance(node, nd.Tasklet) and ('numpy_' in node.code.as_string
-                                                     or node.label.startswith('callback')):
-                    found.append(f'{state.label}:{node.label}')
+                if isinstance(node, nd.Tasklet) and (
+                    "numpy_" in node.code.as_string or node.label.startswith("callback")
+                ):
+                    found.append(f"{state.label}:{node.label}")
     return found
 
 
@@ -33,8 +35,9 @@ def assert_native(sdfg: dace.SDFG) -> None:
 
 
 def tasklet_code(sdfg: dace.SDFG) -> str:
-    return '\n'.join(node.code.as_string for state in sdfg.states() for node in state.nodes()
-                     if isinstance(node, nd.Tasklet))
+    return "\n".join(
+        node.code.as_string for state in sdfg.states() for node in state.nodes() if isinstance(node, nd.Tasklet)
+    )
 
 
 def map_entries(sdfg: dace.SDFG) -> list[nd.MapEntry]:
@@ -182,8 +185,9 @@ def test_array_equal_mismatched_shapes_decided_while_parsing():
     """Shapes live on the descriptors, so the False is settled before any dataflow is built."""
 
     @dace.program
-    def prog_array_equal_mismatched_shapes_decided_while_parsing(a: dace.float64[6], b: dace.float64[5],
-                                                                 out: dace.bool[1]):
+    def prog_array_equal_mismatched_shapes_decided_while_parsing(
+        a: dace.float64[6], b: dace.float64[5], out: dace.bool[1]
+    ):
         out[0] = np.array_equal(a, b)
 
     sdfg = prog_array_equal_mismatched_shapes_decided_while_parsing.to_sdfg(simplify=False)
@@ -196,14 +200,14 @@ def test_array_equal_mismatched_shapes_decided_while_parsing():
 
 
 def test_array_equal_refuses_undecidable_symbolic_shapes():
-    N = dace.symbol('N')
-    M = dace.symbol('M')
+    N = dace.symbol("N")
+    M = dace.symbol("M")
 
     @dace.program
     def prog_array_equal_refuses_undecidable_symbolic_shapes(a: dace.float64[N], b: dace.float64[M], out: dace.bool[1]):
         out[0] = np.array_equal(a, b)
 
-    with pytest.raises(ValueError, match='cannot decide whether the symbolic shapes'):
+    with pytest.raises(ValueError, match="cannot decide whether the symbolic shapes"):
         prog_array_equal_refuses_undecidable_symbolic_shapes.to_sdfg(simplify=False)
 
 
@@ -277,7 +281,7 @@ def test_nan_to_num_refuses_complex():
     def prog_nan_to_num_refuses_complex(a: dace.complex128[4], out: dace.complex128[4]):
         out[:] = np.nan_to_num(a)
 
-    with pytest.raises(ValueError, match='no native path back into a complex value'):
+    with pytest.raises(ValueError, match="no native path back into a complex value"):
         prog_nan_to_num_refuses_complex.to_sdfg(simplify=False)
 
 
@@ -291,7 +295,7 @@ def test_i0_is_native():
     assert_native(sdfg)
     # Both Chebyshev branches must be in the emitted body, not just the small-argument one.
     body = tasklet_code(sdfg)
-    assert '__i0_s_res' in body and '__i0_l_res' in body
+    assert "__i0_s_res" in body and "__i0_l_res" in body
 
     a = np.array([0.0, 0.5, 1.0, -1.0, 4.0, 8.0, 8.5, 20.0, -30.0])
     out = np.zeros(9)
@@ -320,7 +324,7 @@ def test_i0_refuses_complex():
     def prog_i0_refuses_complex(a: dace.complex128[4], out: dace.complex128[4]):
         out[:] = np.i0(a)
 
-    with pytest.raises(ValueError, match='not defined for complex input'):
+    with pytest.raises(ValueError, match="not defined for complex input"):
         prog_i0_refuses_complex.to_sdfg(simplify=False)
 
 
@@ -363,7 +367,7 @@ def test_angle_is_native():
 
     sdfg = prog_angle_is_native.to_sdfg(simplify=False)
     assert_native(sdfg)
-    assert 'atan2' in tasklet_code(sdfg)
+    assert "atan2" in tasklet_code(sdfg)
 
     a = np.array([1 + 0j, 1 + 1j, -1 + 0j, -1 - 1j, 0 + 2j])
     out = np.zeros(5)
@@ -414,7 +418,7 @@ def test_iscomplexobj_resolves_while_parsing():
     assert_native(sdfg)
     assert map_entries(sdfg) == []
     read = {node.data for state in sdfg.states() for node in state.nodes() if isinstance(node, nd.AccessNode)}
-    assert 'a' not in read and 'b' not in read
+    assert "a" not in read and "b" not in read
 
     out = np.zeros(2, dtype=np.bool_)
     prog_iscomplexobj_resolves_while_parsing(np.zeros(4, dtype=np.complex128), np.zeros(4), out)
@@ -445,7 +449,7 @@ def test_real_if_close_refuses_complex():
     def prog_real_if_close_refuses_complex(a: dace.complex128[4], out: dace.complex128[4]):
         out[:] = np.real_if_close(a)
 
-    with pytest.raises(ValueError, match='result dtype is data-dependent'):
+    with pytest.raises(ValueError, match="result dtype is data-dependent"):
         prog_real_if_close_refuses_complex.to_sdfg(simplify=False)
 
 
@@ -458,13 +462,13 @@ def test_generated_code_never_enters_the_interpreter():
 
     sdfg = prog_generated_code_never_enters_the_interpreter.to_sdfg(simplify=False)
     assert_native(sdfg)
-    code = '\n'.join(obj.code for obj in sdfg.generate_code())
+    code = "\n".join(obj.code for obj in sdfg.generate_code())
     # The call form, not the bare name: the native ufunc tasklets are labelled ``_numpy_<name>_``.
-    for marker in ('__pystate', 'PyGILState', 'PyObject', 'numpy_sinc(', 'numpy_i0(', 'numpy_nan_to_num('):
+    for marker in ("__pystate", "PyGILState", "PyObject", "numpy_sinc(", "numpy_i0(", "numpy_nan_to_num("):
         assert marker not in code
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_isclose_is_native()
     test_isclose_equal_nan_is_native()
     test_isclose_against_a_constant_is_native()

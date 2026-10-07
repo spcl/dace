@@ -17,6 +17,7 @@ host scalar on the host and still lowers correctly. These tests cover the pure
 (CPU) reference expansion and the cuBLAS host- and device-pointer-mode paths,
 including a host scalar carried through ``apply_gpu_transformations``.
 """
+
 import numpy as np
 import pytest
 
@@ -61,6 +62,7 @@ def _build(implementation: str, coeff_kind: str, coeff_storage, mat_storage, nam
 
 def _to_device(a: np.ndarray):
     import cupy
+
     return cupy.asarray(a)
 
 
@@ -81,11 +83,13 @@ def _check(implementation: str, coeff_kind: str, coeff_storage, mat_storage, nam
     a_arg = _to_device(A) if mat_storage == GPU else A
     b_arg = _to_device(B) if mat_storage == GPU else B
     c_arg = _to_device(C) if mat_storage == GPU else C
-    sdfg(A=a_arg,
-         B=b_arg,
-         C=c_arg,
-         alpha_s=_coeff_arg(ALPHA, coeff_kind, coeff_storage),
-         beta_s=_coeff_arg(BETA, coeff_kind, coeff_storage))
+    sdfg(
+        A=a_arg,
+        B=b_arg,
+        C=c_arg,
+        alpha_s=_coeff_arg(ALPHA, coeff_kind, coeff_storage),
+        beta_s=_coeff_arg(BETA, coeff_kind, coeff_storage),
+    )
     out = c_arg.get() if mat_storage == GPU else c_arg
     assert np.allclose(out, C_ref, rtol=1e-5, atol=1e-6), np.max(np.abs(out - C_ref))
 

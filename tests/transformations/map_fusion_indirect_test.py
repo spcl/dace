@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Map fusion across indirect (gather/scatter) accesses.
+"""Map fusion across indirect (gather/scatter) accesses.
 
-    The canonicalization pipeline fissions an indirect map into independent
-    indirect maps (SplitStatements -> MapFission, carrying the
-    idx[i] indirection symbols into each split) and must then be able to
-    recombine them: horizontal fusion of independent gathers/scatters and
-    vertical fusion of an indirect producer into its consumer. Every test
-    checks the fused SDFG is a single map and numerically identical to a
-    deep-copied pre-fusion run.
+The canonicalization pipeline fissions an indirect map into independent
+indirect maps (SplitStatements -> MapFission, carrying the
+idx[i] indirection symbols into each split) and must then be able to
+recombine them: horizontal fusion of independent gathers/scatters and
+vertical fusion of an indirect producer into its consumer. Every test
+checks the fused SDFG is a single map and numerically identical to a
+deep-copied pre-fusion run.
 """
+
 import copy
 
 import numpy as np
@@ -24,7 +25,7 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepe
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -44,10 +45,11 @@ def two_gathers(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: d
 
 
 @dace.program
-def two_gather_stencils(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: dace.float64[N],
-                        e: dace.float64[N]):
+def two_gather_stencils(
+    a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: dace.float64[N], e: dace.float64[N]
+):
     # Indirect *stencil*: gathered base with structured neighbour offsets.
-    for i in dace.map[1:N - 1]:
+    for i in dace.map[1 : N - 1]:
         b[i] = a[idx[i] - 1] + a[idx[i]] + a[idx[i] + 1]
         e[i] = c[idx[i] - 1] + c[idx[i]] + c[idx[i] + 1]
 
@@ -77,11 +79,14 @@ def _fission_then_fuse(sdfg):
     return sdfg.apply_transformations_repeated([MapFusionVertical, MapFusionHorizontal])
 
 
-@pytest.mark.parametrize('prog,kind,interior', [
-    (two_gathers, 'gather', False),
-    (two_gather_stencils, 'gather_stencil', True),
-    (two_scatters, 'scatter', False),
-])
+@pytest.mark.parametrize(
+    "prog,kind,interior",
+    [
+        (two_gathers, "gather", False),
+        (two_gather_stencils, "gather_stencil", True),
+        (two_scatters, "scatter", False),
+    ],
+)
 def test_horizontal_fusion_recombines_indirect_maps(prog, kind, interior):
     """Two independent indirect maps fission then horizontally re-fuse into
     one map; value-preserving."""
@@ -89,8 +94,13 @@ def test_horizontal_fusion_recombines_indirect_maps(prog, kind, interior):
     np.random.seed(5)
     a = np.random.rand(n)
     c = np.random.rand(n)
-    idx = (np.random.randint(1, n - 1, size=n) if interior else
-           np.random.permutation(n) if kind == 'scatter' else np.random.randint(0, n, size=n)).astype(np.int32)
+    idx = (
+        np.random.randint(1, n - 1, size=n)
+        if interior
+        else np.random.permutation(n)
+        if kind == "scatter"
+        else np.random.randint(0, n, size=n)
+    ).astype(np.int32)
 
     base = prog.to_sdfg(simplify=True)
     assert _nmaps(base) == 1

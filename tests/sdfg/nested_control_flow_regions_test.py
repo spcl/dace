@@ -5,11 +5,11 @@ import dace
 
 
 def test_is_start_state_deprecation():
-    sdfg = dace.SDFG('deprecation_test')
+    sdfg = dace.SDFG("deprecation_test")
     with pytest.deprecated_call():
-        sdfg.add_state('state1', is_start_state=True)
-    sdfg2 = dace.SDFG('deprecation_test2')
-    state = dace.SDFGState('state2')
+        sdfg.add_state("state1", is_start_state=True)
+    sdfg2 = dace.SDFG("deprecation_test2")
+    state = dace.SDFGState("state2")
     with pytest.deprecated_call():
         sdfg2.add_node(state, is_start_state=True)
 
@@ -24,7 +24,7 @@ def test_cfg_list_is_rebuilt_on_deserialization():
     """
     from dace.transformation.interstate import InlineMultistateSDFG
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def inner(a: dace.float64[N], b: dace.float64[N]):
@@ -39,17 +39,17 @@ def test_cfg_list_is_rebuilt_on_deserialization():
     rebuilt = dace.SDFG.from_json(outer.to_sdfg(simplify=False).to_json())
 
     regions = list(rebuilt.all_control_flow_regions(recursive=True))
-    assert len(regions) > 1, 'the nested SDFGs must survive for this to test anything'
+    assert len(regions) > 1, "the nested SDFGs must survive for this to test anything"
     for region in regions:
-        assert rebuilt.cfg_list[region.cfg_id] is region, f'{region.label} does not round-trip'
+        assert rebuilt.cfg_list[region.cfg_id] is region, f"{region.label} does not round-trip"
 
     # With a stale list this raises inside `can_be_applied`; `match_exception` makes that fail here
     # instead of being printed and swallowed.
     with dace.config.temporary_config():
-        dace.Config.set('optimizer', 'match_exception', value=True)
+        dace.Config.set("optimizer", "match_exception", value=True)
         rebuilt.apply_transformations_repeated(InlineMultistateSDFG, validate=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_is_start_state_deprecation()
     test_cfg_list_is_rebuilt_on_deserialization()

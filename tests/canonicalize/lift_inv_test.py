@@ -17,6 +17,7 @@ OpenBLAS/MKL). LAPACK is an installed dependency of this suite (CI installs
 toolchain, so no marker or skip guards it: a build/link failure is a real
 failure and must go red.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -35,7 +36,7 @@ from dace.libraries.linalg.nodes.solve import Solve
 from dace.transformation.passes.canonicalize.lift_inv import LiftInv
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -73,8 +74,9 @@ def _n_maps(sdfg):
 
 
 def _n_loops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
-               if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(
+        1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    )
 
 
 def _well_conditioned(n, seed):
@@ -89,11 +91,11 @@ def test_solve_eye_lifts_standalone():
     sdfg = solve_eye.to_sdfg(simplify=True)
     assert _n_solve(sdfg) == 1
     lifted = LiftInv().apply_pass(sdfg, {})
-    assert lifted == 1, 'the solve-against-identity must lift'
-    assert _n_inv(sdfg) == 1, 'exactly one Inv node must appear'
-    assert _n_solve(sdfg) == 0, 'the Solve node must be gone'
-    assert _n_maps(sdfg) == 0, 'the identity-construction map must be gone'
-    assert _n_loops(sdfg) == 0, 'no loop should remain'
+    assert lifted == 1, "the solve-against-identity must lift"
+    assert _n_inv(sdfg) == 1, "exactly one Inv node must appear"
+    assert _n_solve(sdfg) == 0, "the Solve node must be gone"
+    assert _n_maps(sdfg) == 0, "the identity-construction map must be gone"
+    assert _n_loops(sdfg) == 0, "no loop should remain"
     sdfg.validate()
 
     n = 7
@@ -126,8 +128,8 @@ def test_solve_eye_lifts_via_canonicalize():
     pipeline replaces ``solve(A, eye)`` with an Inv node end-to-end."""
     sdfg = solve_eye.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _n_inv(sdfg) == 1, 'canonicalize must lift the inverse to one Inv node'
-    assert _n_solve(sdfg) == 0, 'the Solve node must be gone after canonicalize'
+    assert _n_inv(sdfg) == 1, "canonicalize must lift the inverse to one Inv node"
+    assert _n_solve(sdfg) == 0, "the Solve node must be gone after canonicalize"
     sdfg.validate()
 
     n = 8
@@ -142,7 +144,7 @@ def test_real_solve_not_lifted():
     a real solve, not an inverse. Left as a Solve; still runs correctly."""
     sdfg = real_solve.to_sdfg(simplify=True)
     lifted = LiftInv().apply_pass(sdfg, {})
-    assert not lifted, 'a non-identity RHS is a real solve, not an inverse'
+    assert not lifted, "a non-identity RHS is a real solve, not an inverse"
     assert _n_inv(sdfg) == 0
     assert _n_solve(sdfg) == 1
     sdfg.validate()
@@ -160,13 +162,13 @@ def test_shifted_diagonal_not_lifted():
     """``eye(N, N, 1)`` is a shifted diagonal, not the identity: no lift."""
     sdfg = shifted_diagonal.to_sdfg(simplify=True)
     lifted = LiftInv().apply_pass(sdfg, {})
-    assert not lifted, 'a shifted diagonal is not the identity'
+    assert not lifted, "a shifted diagonal is not the identity"
     assert _n_inv(sdfg) == 0
     assert _n_solve(sdfg) == 1
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_solve_eye_lifts_standalone()
     test_solve_identity_lifts_standalone()
     test_solve_eye_lifts_via_canonicalize()

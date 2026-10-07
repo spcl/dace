@@ -6,6 +6,7 @@ consumer maps fuse VERTICALLY, and independent maps over the same iteration spac
 sharing inputs fuse HORIZONTALLY. Every case checks value-preservation against a
 direct numpy reference; structural assertions pin the map-count reduction.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -45,8 +46,9 @@ def _check(prog, inputs, expected, horizontal=True, syms=None):
     work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in inputs.items()}
     sdfg(**work, **syms)
     for name, exp in expected.items():
-        assert np.allclose(work[name], exp, rtol=1e-10, atol=1e-12), \
-            f"{prog.name}/{name}: fused output diverged (max {np.max(np.abs(work[name]-exp)):.2e})"
+        assert np.allclose(work[name], exp, rtol=1e-10, atol=1e-12), (
+            f"{prog.name}/{name}: fused output diverged (max {np.max(np.abs(work[name] - exp)):.2e})"
+        )
     return before, after
 
 
@@ -62,11 +64,9 @@ def test_vertical_two_elementwise_chain():
         out[:] = tmp * 2.0
 
     a = np.random.default_rng(0).random(64)
-    before, after = _check(k_vertical_two_elementwise_chain, {
-        "a": a,
-        "out": np.zeros(64)
-    }, {"out": (a + 1.0) * 2.0},
-                           syms={"N": 64})
+    before, after = _check(
+        k_vertical_two_elementwise_chain, {"a": a, "out": np.zeros(64)}, {"out": (a + 1.0) * 2.0}, syms={"N": 64}
+    )
     assert before == 2 and after == 1
 
 
@@ -80,11 +80,12 @@ def test_vertical_three_elementwise_chain():
         out[:] = t2 - 2.0
 
     a = np.random.default_rng(1).random(64)
-    before, after = _check(k_vertical_three_elementwise_chain, {
-        "a": a,
-        "out": np.zeros(64)
-    }, {"out": (a + 1.0) * 3.0 - 2.0},
-                           syms={"N": 64})
+    before, after = _check(
+        k_vertical_three_elementwise_chain,
+        {"a": a, "out": np.zeros(64)},
+        {"out": (a + 1.0) * 3.0 - 2.0},
+        syms={"N": 64},
+    )
     assert before == 3 and after == 1
 
 
@@ -97,14 +98,12 @@ def test_vertical_2d_elementwise_chain():
         out[:] = tmp + 1.0
 
     a = np.random.default_rng(2).random((12, 20))
-    before, after = _check(k_vertical_2d_elementwise_chain, {
-        "a": a,
-        "out": np.zeros((12, 20))
-    }, {"out": a * a + 1.0},
-                           syms={
-                               "N": 12,
-                               "M": 20
-                           })
+    before, after = _check(
+        k_vertical_2d_elementwise_chain,
+        {"a": a, "out": np.zeros((12, 20))},
+        {"out": a * a + 1.0},
+        syms={"N": 12, "M": 20},
+    )
     assert before >= 2 and after < before
 
 
@@ -118,12 +117,9 @@ def test_vertical_binary_then_unary():
 
     rng = np.random.default_rng(3)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k_vertical_binary_then_unary, {
-        "a": a,
-        "b": b,
-        "out": np.zeros(64)
-    }, {"out": (a + b)**2},
-                           syms={"N": 64})
+    before, after = _check(
+        k_vertical_binary_then_unary, {"a": a, "b": b, "out": np.zeros(64)}, {"out": (a + b) ** 2}, syms={"N": 64}
+    )
     assert before == 2 and after == 1
 
 
@@ -137,13 +133,9 @@ def test_vertical_fma_chain():
 
     rng = np.random.default_rng(4)
     a, b, c = rng.random(64), rng.random(64), rng.random(64)
-    before, after = _check(k_vertical_fma_chain, {
-        "a": a,
-        "b": b,
-        "c": c,
-        "out": np.zeros(64)
-    }, {"out": a * b + c},
-                           syms={"N": 64})
+    before, after = _check(
+        k_vertical_fma_chain, {"a": a, "b": b, "c": c, "out": np.zeros(64)}, {"out": a * b + c}, syms={"N": 64}
+    )
     assert before == 2 and after == 1
 
 
@@ -177,16 +169,12 @@ def test_horizontal_shared_inputs():
 
     rng = np.random.default_rng(6)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k_horizontal_shared_inputs, {
-        "a": a,
-        "b": b,
-        "c": np.zeros(64),
-        "d": np.zeros(64)
-    }, {
-        "c": a + b,
-        "d": a * b
-    },
-                           syms={"N": 64})
+    before, after = _check(
+        k_horizontal_shared_inputs,
+        {"a": a, "b": b, "c": np.zeros(64), "d": np.zeros(64)},
+        {"c": a + b, "d": a * b},
+        syms={"N": 64},
+    )
     assert before == 2 and after == 1
 
 
@@ -200,17 +188,12 @@ def test_horizontal_three_way():
         d[:] = a - 3.0
 
     a = np.random.default_rng(7).random(64)
-    before, after = _check(k_horizontal_three_way, {
-        "a": a,
-        "b": np.zeros(64),
-        "c": np.zeros(64),
-        "d": np.zeros(64)
-    }, {
-        "b": a + 1.0,
-        "c": a * 2.0,
-        "d": a - 3.0
-    },
-                           syms={"N": 64})
+    before, after = _check(
+        k_horizontal_three_way,
+        {"a": a, "b": np.zeros(64), "c": np.zeros(64), "d": np.zeros(64)},
+        {"b": a + 1.0, "c": a * 2.0, "d": a - 3.0},
+        syms={"N": 64},
+    )
     assert before == 3 and after < before
 
 
@@ -226,11 +209,12 @@ def test_elementwise_then_reduction_value_preserving():
         out[0] = np.sum(t)
 
     a = np.random.default_rng(8).random(64)
-    before, after = _check(k_elementwise_then_reduction_value_preserving, {
-        "a": a,
-        "out": np.zeros(1)
-    }, {"out": np.array([np.sum((a + 1.0)**2)])},
-                           syms={"N": 64})
+    before, after = _check(
+        k_elementwise_then_reduction_value_preserving,
+        {"a": a, "out": np.zeros(1)},
+        {"out": np.array([np.sum((a + 1.0) ** 2)])},
+        syms={"N": 64},
+    )
     assert after <= before
 
 
@@ -244,12 +228,12 @@ def test_dot_product_chain_value_preserving():
 
     rng = np.random.default_rng(9)
     a, b = rng.random(128), rng.random(128)
-    before, after = _check(k_dot_product_chain_value_preserving, {
-        "a": a,
-        "b": b,
-        "out": np.zeros(1)
-    }, {"out": np.array([np.sum(a * b)])},
-                           syms={"N": 128})
+    before, after = _check(
+        k_dot_product_chain_value_preserving,
+        {"a": a, "b": b, "out": np.zeros(1)},
+        {"out": np.array([np.sum(a * b)])},
+        syms={"N": 128},
+    )
     assert after <= before
 
 
@@ -264,16 +248,12 @@ def test_mixed_vertical_and_horizontal():
 
     rng = np.random.default_rng(10)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k_mixed_vertical_and_horizontal, {
-        "a": a,
-        "b": b,
-        "c": np.zeros(64),
-        "d": np.zeros(64)
-    }, {
-        "c": (a + b) * 2.0,
-        "d": a - b
-    },
-                           syms={"N": 64})
+    before, after = _check(
+        k_mixed_vertical_and_horizontal,
+        {"a": a, "b": b, "c": np.zeros(64), "d": np.zeros(64)},
+        {"c": (a + b) * 2.0, "d": a - b},
+        syms={"N": 64},
+    )
     assert after < before
 
 
@@ -297,26 +277,20 @@ def test_incompatible_shapes_not_vertically_fused():
     matmul-free 1-D outer + inner elementwise still computes correctly."""
 
     @dace.program
-    def k_incompatible_shapes_not_vertically_fused(a: dace.float64[N], b: dace.float64[M], oa: dace.float64[N],
-                                                   ob: dace.float64[M]):
+    def k_incompatible_shapes_not_vertically_fused(
+        a: dace.float64[N], b: dace.float64[M], oa: dace.float64[N], ob: dace.float64[M]
+    ):
         oa[:] = a + 1.0
         ob[:] = b * 2.0
 
     rng = np.random.default_rng(12)
     a, b = rng.random(32), rng.random(48)
-    before, after = _check(k_incompatible_shapes_not_vertically_fused, {
-        "a": a,
-        "b": b,
-        "oa": np.zeros(32),
-        "ob": np.zeros(48)
-    }, {
-        "oa": a + 1.0,
-        "ob": b * 2.0
-    },
-                           syms={
-                               "N": 32,
-                               "M": 48
-                           })
+    before, after = _check(
+        k_incompatible_shapes_not_vertically_fused,
+        {"a": a, "b": b, "oa": np.zeros(32), "ob": np.zeros(48)},
+        {"oa": a + 1.0, "ob": b * 2.0},
+        syms={"N": 32, "M": 48},
+    )
     assert after == before  # different iteration spaces: not fused
 
 
@@ -330,11 +304,9 @@ def test_vertical_chain_value_preserving_across_sizes(n):
         out[:] = t + a
 
     a = np.random.default_rng(n).random(n)
-    _check(k_vertical_chain_value_preserving_across_sizes, {
-        "a": a,
-        "out": np.zeros(n)
-    }, {"out": a * a + a},
-           syms={"N": n})
+    _check(
+        k_vertical_chain_value_preserving_across_sizes, {"a": a, "out": np.zeros(n)}, {"out": a * a + a}, syms={"N": n}
+    )
 
 
 if __name__ == "__main__":

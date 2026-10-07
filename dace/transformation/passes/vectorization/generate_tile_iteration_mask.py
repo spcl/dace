@@ -7,6 +7,7 @@ The mask lives directly in the parent state (between ``MapEntry`` and
 the body) as a register transient, so downstream :class:`ConvertTaskletsToTileOps`
 can wire it into every lib node without crossing a NestedSDFG boundary.
 """
+
 from typing import Any
 
 import dace
@@ -20,13 +21,22 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
     TILE_K1_TAIL_MARKER,
 )
 from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
-from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_vectorizable_map,
-                                                                           map_body_nodes, map_tile_widths)
-from dace.transformation.passes.vectorization.utils.mask_scaffold import (prepend_dominating_init_state,
-                                                                          thread_symbols_into_nsdfg)
+from dace.transformation.passes.vectorization.utils.map_predicates import (
+    check_tile_widths,
+    is_vectorizable_map,
+    map_body_nodes,
+    map_tile_widths,
+)
+from dace.transformation.passes.vectorization.utils.mask_scaffold import (
+    prepend_dominating_init_state,
+    thread_symbols_into_nsdfg,
+)
 from dace.transformation.passes.vectorization.utils.name_schemes import TileNameScheme
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
-                                                                            tile_mask_gen_dominates_consumers)
+from dace.transformation.passes.vectorization.utils.pass_invariants import (
+    assert_invariant,
+    no_memlet_dim_mismatch,
+    tile_mask_gen_dominates_consumers,
+)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
 
@@ -51,7 +61,7 @@ class GenerateTileIterationMask(ppl.Pass):
         desc="Per-dim tile widths, innermost-last; length in {1, 2, 3}.",
     )
 
-    def __init__(self, widths: tuple[int, ...] = (8, )) -> None:
+    def __init__(self, widths: tuple[int, ...] = (8,)) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -81,8 +91,14 @@ class GenerateTileIterationMask(ppl.Pass):
         global_ubs = tuple(str(r[1] + 1) for r in ranges[-K:])
         return TileDimSpec(iter_vars=iter_vars, widths=widths, global_ubs=global_ubs)
 
-    def _attach_mask(self, resolver: scopes.ScopedSymbolResolver, parent_sdfg: dace.SDFG, parent_state: dace.SDFGState,
-                     map_entry: MapEntry, spec: TileDimSpec) -> bool:
+    def _attach_mask(
+        self,
+        resolver: scopes.ScopedSymbolResolver,
+        parent_sdfg: dace.SDFG,
+        parent_state: dace.SDFGState,
+        map_entry: MapEntry,
+        spec: TileDimSpec,
+    ) -> bool:
         # Add the mask transient + producer :class:`TileMaskGen` INSIDE the body NSDFG.
         # Scope membership, NOT ``all_nodes_between``: that walk discards its whole result on reaching a
         # node with no out-edge -- a write-only scratch scalar is exactly one -- and the mask was then
@@ -147,7 +163,8 @@ class GenerateTileIterationMask(ppl.Pass):
         # Ordered: this decides the order the symbols are added to the nested SDFG.
         iter_syms = dict.fromkeys(spec.iter_vars)
         ub_syms = dict.fromkeys(
-            sorted(str(s) for ub in spec.global_ubs for s in symbolic.pystr_to_symbolic(str(ub)).free_symbols))
+            sorted(str(s) for ub in spec.global_ubs for s in symbolic.pystr_to_symbolic(str(ub)).free_symbols)
+        )
         all_syms = iter_syms | ub_syms
         thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, all_syms, parent_sdfg, parent_state, resolver)
         resolver.invalidate_sdfg(inner_sdfg)  # the body's symbol table and start block both just changed
@@ -184,8 +201,14 @@ class GenerateTileIterationMask(ppl.Pass):
                 selected.append((g, n, spec))
         resolver = scopes.ScopedSymbolResolver()
         attached = sum(1 for g, n, spec in selected if self._attach_mask(resolver, g.sdfg, g, n, spec))
-        assert_invariant(no_memlet_dim_mismatch(sdfg), "GenerateTileIterationMask",
-                         "memlet subset and other_subset have matching dimensionality")
-        assert_invariant(tile_mask_gen_dominates_consumers(sdfg), "GenerateTileIterationMask",
-                         "every TileMaskGen lives in its SDFG start block (dominates masked consumers)")
+        assert_invariant(
+            no_memlet_dim_mismatch(sdfg),
+            "GenerateTileIterationMask",
+            "memlet subset and other_subset have matching dimensionality",
+        )
+        assert_invariant(
+            tile_mask_gen_dominates_consumers(sdfg),
+            "GenerateTileIterationMask",
+            "every TileMaskGen lives in its SDFG start block (dominates masked consumers)",
+        )
         return attached or None

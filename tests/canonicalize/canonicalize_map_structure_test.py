@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Structural outcome of the ``canonicalize`` pipeline: the number of
-    parallel ``Map`` scopes (and, where relevant, residual sequential
-    ``LoopRegion``s) after canonicalization, alongside numerical
-    equivalence against pure-numpy oracles.
+"""Structural outcome of the ``canonicalize`` pipeline: the number of
+parallel ``Map`` scopes (and, where relevant, residual sequential
+``LoopRegion``s) after canonicalization, alongside numerical
+equivalence against pure-numpy oracles.
 
-    Independent computations parallelize into separate maps; a loop-carried
-    (vertical) dependency stays a sequential loop while an independent
-    sibling becomes a map; producer/consumer through a transient stays two
-    maps. Map counts are pinned to the values the pipeline produces so a
-    parallelization/fission/fusion regression fails structurally, not only
-    numerically.
+Independent computations parallelize into separate maps; a loop-carried
+(vertical) dependency stays a sequential loop while an independent
+sibling becomes a map; producer/consumer through a transient stays two
+maps. Map counts are pinned to the values the pipeline produces so a
+parallelization/fission/fusion regression fails structurally, not only
+numerically.
 """
+
 import numpy as np
 import pytest
 
@@ -20,8 +21,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _nmaps(sdfg):
@@ -36,8 +37,11 @@ def _map_ranges(sdfg):
 
 def _wcr_signatures(sdfg):
     """``(container, wcr lambda)`` for every WCR edge in the SDFG."""
-    return {(e.data.data, e.data.wcr)
-            for e, _ in sdfg.all_edges_recursive() if isinstance(e.data, Memlet) and e.data.wcr is not None}
+    return {
+        (e.data.data, e.data.wcr)
+        for e, _ in sdfg.all_edges_recursive()
+        if isinstance(e.data, Memlet) and e.data.wcr is not None
+    }
 
 
 def _nloops(sdfg):
@@ -48,6 +52,7 @@ def _nloops(sdfg):
     keeps the carried-recurrence-stays-sequential assertions correct on
     the kernels that LoopToScan now reaches."""
     from dace.libraries.standard.nodes.scan import Scan
+
     nloop_regions = sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
     nscan = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
     return nloop_regions + nscan
@@ -77,13 +82,13 @@ def producer_consumer(a: dace.float64[N], b: dace.float64[N]):
 
 @dace.program
 def stencil1d(a: dace.float64[N], b: dace.float64[N]):
-    for i in dace.map[1:N - 1]:
+    for i in dace.map[1 : N - 1]:
         b[i] = a[i - 1] + a[i] + a[i + 1]
 
 
 @dace.program
 def jacobi2d(a: dace.float64[N, M], b: dace.float64[N, M]):
-    for i, j in dace.map[1:N - 1, 1:M - 1]:
+    for i, j in dace.map[1 : N - 1, 1 : M - 1]:
         b[i, j] = 0.25 * (a[i - 1, j] + a[i + 1, j] + a[i, j - 1] + a[i, j + 1])
 
 
@@ -151,7 +156,7 @@ def test_stencil_single_map():
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n)
     exp = np.zeros(n)
-    exp[1:n - 1] = a[0:n - 2] + a[1:n - 1] + a[2:n]
+    exp[1 : n - 1] = a[0 : n - 2] + a[1 : n - 1] + a[2:n]
     assert np.allclose(out, exp)
 
 
@@ -165,7 +170,9 @@ def test_jacobi2d_single_map():
     out = np.zeros((n, m))
     sdfg(a=a.copy(), b=out, N=n, M=m)
     exp = np.zeros((n, m))
-    exp[1:n - 1, 1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] + a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
+    exp[1 : n - 1, 1 : m - 1] = 0.25 * (
+        a[0 : n - 2, 1 : m - 1] + a[2:n, 1 : m - 1] + a[1 : n - 1, 0 : m - 2] + a[1 : n - 1, 2:m]
+    )
     assert np.allclose(out, exp)
 
 
@@ -178,8 +185,8 @@ def test_dependency_aware_split_one_map_one_loop():
     a, c = rng.random(n), rng.random(n)
     sdfg = dependent_plus_independent.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) == 1, f'expected the independent part as one map, got {_nmaps(sdfg)}'
-    assert _nloops(sdfg) >= 1, 'the carried recurrence must remain a sequential loop'
+    assert _nmaps(sdfg) == 1, f"expected the independent part as one map, got {_nmaps(sdfg)}"
+    assert _nloops(sdfg) >= 1, "the carried recurrence must remain a sequential loop"
 
     eb = np.zeros(n)
     eb[0] = 1.0
@@ -203,10 +210,11 @@ def _count_promoted_arith_symbols(sdfg, base: str) -> int:
     off the count must stay bounded by the number of distinct arithmetic
     bounds the source program actually uses."""
     import re
-    pat = re.compile(rf'^{re.escape(base)}_(plus|minus)_\d+(_\d+)?$')
+
+    pat = re.compile(rf"^{re.escape(base)}_(plus|minus)_\d+(_\d+)?$")
     syms = set(sdfg.symbols.keys())
     for n, _ in sdfg.all_nodes_recursive():
-        if hasattr(n, 'sdfg') and n.sdfg is not None and n.sdfg is not sdfg:
+        if hasattr(n, "sdfg") and n.sdfg is not None and n.sdfg is not sdfg:
             syms |= set(n.sdfg.symbols.keys())
     return sum(1 for s in syms if pat.match(s))
 
@@ -218,7 +226,7 @@ def mixed_direct_indirect_stencil(a: dace.float64[N, M], idx: dace.int32[N], b: 
     ``a[idx[i], j]`` is an indirect gather through ``idx``. Canonicalize
     must preserve both access shapes and not promote unrelated subexpressions
     into duplicate symbols."""
-    for i, j in dace.map[1:N - 1, 1:M - 1]:
+    for i, j in dace.map[1 : N - 1, 1 : M - 1]:
         b[i, j] = 0.25 * (a[i, j] + a[i, j - 1] + a[i, j + 1] + a[idx[i], j])
 
 
@@ -229,9 +237,9 @@ def test_mixed_direct_indirect_stencil_value_preserving():
     idx = rng.integers(0, n, size=n).astype(np.int32)
     sdfg = mixed_direct_indirect_stencil.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) == 1, f'the mixed stencil must stay one map, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 1, f"the mixed stencil must stay one map, got {_nmaps(sdfg)}"
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert len(entry.map.params) == 2, f'the (i, j) nest must stay collapsed, got {entry.map.params}'
+    assert len(entry.map.params) == 2, f"the (i, j) nest must stay collapsed, got {entry.map.params}"
     out = np.zeros((n, m))
     sdfg(a=a.copy(), idx=idx.copy(), b=out, N=n, M=m)
     exp = np.zeros((n, m))
@@ -249,7 +257,7 @@ def two_ranges_same_arith_bound(a: dace.float64[N], b: dace.float64[N], c: dace.
     canonicalize, that promotion happens once and is reused, not duplicated
     per loop -- ``_count_promoted_arith_symbols(sdfg, 'N')`` must stay
     small."""
-    for i in dace.map[0:N - 1]:
+    for i in dace.map[0 : N - 1]:
         b[i] = a[i] + a[i + 1]
     for i in dace.map[1:N]:
         c[i] = a[i] - a[i - 1]
@@ -268,10 +276,11 @@ def test_two_ranges_share_arith_bound_no_symbol_duplication():
     # Idempotence, not a hand-picked ceiling: a second canonicalize must mint no further
     # ``N_plus/minus`` symbol. A ceiling has to be re-baselined on any frontend rename; this
     # catches the actual defect (one fresh instance per pass) without pinning a magic number.
-    n_before = _count_promoted_arith_symbols(sdfg, 'N')
+    n_before = _count_promoted_arith_symbols(sdfg, "N")
     canonicalize(sdfg, validate=True)
-    assert _count_promoted_arith_symbols(sdfg, 'N') == n_before, \
+    assert _count_promoted_arith_symbols(sdfg, "N") == n_before, (
         f"canonicalize mints N_plus/minus symbols on every pass: {sorted(sdfg.symbols)}"
+    )
     ob, oc = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), b=ob, c=oc, N=n)
     exp_b, exp_c = np.zeros(n), np.zeros(n)
@@ -306,10 +315,11 @@ def test_guarded_arith_bound_clean_after_canonicalize():
     sdfg.validate()
     # Re-running canonicalize must reach a fixed point in symbol count: no
     # additional arith-bound symbol minted on each pass.
-    n_minus_before = _count_promoted_arith_symbols(sdfg, 'N')
+    n_minus_before = _count_promoted_arith_symbols(sdfg, "N")
     canonicalize(sdfg, validate=True)
-    assert _count_promoted_arith_symbols(sdfg, 'N') == n_minus_before, \
+    assert _count_promoted_arith_symbols(sdfg, "N") == n_minus_before, (
         "canonicalize is not idempotent on N_minus symbol count"
+    )
 
     for cv in (1, 0):
         sdfg_run = guarded_arith_bound.to_sdfg(simplify=True)
@@ -346,16 +356,19 @@ def test_stencil_reduction_mixed_value_preserving():
     a = rng.random((n, m))
     sdfg = stencil_reduction_mixed.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) == 2, f'expected a row map and a reduction map, got {_nmaps(sdfg)}'
-    assert _map_ranges(sdfg) == {'0:N', '1:M - 1'}, \
-        f'the row axis and the reduction axis must each be a map, got {_map_ranges(sdfg)}'
-    assert _wcr_signatures(sdfg) == {('s', 'lambda a,b: a + b')}, \
-        f'the carried j accumulation must survive as a sum WCR, got {_wcr_signatures(sdfg)}'
+    assert _nmaps(sdfg) == 2, f"expected a row map and a reduction map, got {_nmaps(sdfg)}"
+    assert _map_ranges(sdfg) == {"0:N", "1:M - 1"}, (
+        f"the row axis and the reduction axis must each be a map, got {_map_ranges(sdfg)}"
+    )
+    assert _wcr_signatures(sdfg) == {("s", "lambda a,b: a + b")}, (
+        f"the carried j accumulation must survive as a sum WCR, got {_wcr_signatures(sdfg)}"
+    )
     # Idempotence, not a hand-picked ceiling (see the sibling test above).
-    m_before = _count_promoted_arith_symbols(sdfg, 'M')
+    m_before = _count_promoted_arith_symbols(sdfg, "M")
     canonicalize(sdfg, validate=True)
-    assert _count_promoted_arith_symbols(sdfg, 'M') == m_before, \
+    assert _count_promoted_arith_symbols(sdfg, "M") == m_before, (
         f"canonicalize mints M_plus/minus symbols on every pass: {sorted(sdfg.symbols)}"
+    )
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n, M=m)
     exp = np.zeros(n)

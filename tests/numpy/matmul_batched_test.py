@@ -6,6 +6,7 @@ shape and not just NumPy's numbers. Batches it cannot express -- a leading dimen
 1, or batch ranks that differ -- must be refused, because the node walks the batch at a fixed stride
 and would otherwise read the smaller operand out of bounds and return a plausible wrong answer.
 """
+
 import numpy as np
 import pytest
 
@@ -124,7 +125,7 @@ def test_mismatched_batch_rank():
     res = bmm_rank(a=a, b=b)
     expected = a @ b
     assert res.shape == expected.shape
-    assert np.allclose(res, expected), f'max|diff| = {np.max(np.abs(res - expected))}'
+    assert np.allclose(res, expected), f"max|diff| = {np.max(np.abs(res - expected))}"
 
 
 def test_unequal_batch_size_refused():
@@ -134,11 +135,11 @@ def test_unequal_batch_size_refused():
     def bmm_unequal(a: dace.float64[BATCH, M, K], b: dace.float64[BATCH2, K, N]):
         return np.matmul(a, b)
 
-    with pytest.raises(DaceSyntaxError, match='do not broadcast'):
+    with pytest.raises(DaceSyntaxError, match="do not broadcast"):
         bmm_unequal.to_sdfg()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_batched_matmul_3d_3d()
     test_batched_matmul_4d_4d()
     test_batched_matmul_3d_2d()

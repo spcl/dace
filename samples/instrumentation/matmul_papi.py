@@ -5,9 +5,9 @@ import numpy as np
 
 import dace.codegen.instrumentation.papi as pp
 
-M = dace.symbol('M')
-K = dace.symbol('K')
-N = dace.symbol('N')
+M = dace.symbol("M")
+K = dace.symbol("K")
+N = dace.symbol("N")
 
 
 @dace.program
@@ -52,7 +52,7 @@ C = np.zeros((m, n), dtype=np.float32)
 ## 2. Instrumentation
 
 # set which events should be counted
-pp.PAPIInstrumentation._counters = {'PAPI_SP_OPS', 'PAPI_REF_CYC'}
+pp.PAPIInstrumentation._counters = {"PAPI_SP_OPS", "PAPI_REF_CYC"}
 
 ## 2.1 Run with whole sdfg instrumentation
 sdfg_complete_papi = copy.deepcopy(sdfg)
@@ -109,7 +109,7 @@ for sdfg_elem in report_complete_papi.counters:
             print(counter_name)
             sum = 0
             for thread_num in report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name]:
-                #And here we can actually then read the values
+                # And here we can actually then read the values
                 print(report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name][thread_num])
                 sum += report_complete_papi.counters[sdfg_elem][sdfg_scope][counter_name][thread_num][0]
             if counter_name == "PAPI_SP_OPS":

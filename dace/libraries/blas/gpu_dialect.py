@@ -13,6 +13,7 @@ cuBLAS is camel-case with upper-case enum constants (``cublasDgemv``, ``CUBLAS_O
 rocBLAS is snake_case throughout with lower-case enum values (``rocblas_dgemv``,
 ``rocblas_operation_transpose``), and the transpose flag is not even the same shape of token.
 """
+
 from typing import Callable, NamedTuple
 from dace.libraries.blas import blas_helpers
 
@@ -99,6 +100,8 @@ def host_scalar_mode(dialect: GpuBlasDialect, body: str) -> str:
     Both handles are created in DEVICE pointer mode (``dace_cublas.h`` / ``dace_rocblas.h``), so a
     call passing ``&alpha`` from the host stack has the GPU dereference a host address and fault.
     """
-    return (f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_host}));\n"
-            f"{body}\n"
-            f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_device}));\n")
+    return (
+        f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_host}));\n"
+        f"{body}\n"
+        f"{dialect.check_error}({dialect.set_pointer_mode}({dialect.handle}, {dialect.pointer_device}));\n"
+    )

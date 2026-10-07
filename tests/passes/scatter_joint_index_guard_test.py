@@ -13,6 +13,7 @@ slot -- and the existing one-dimensional conflict check runs on that key. A cond
 sends its masked-off iterations past the end of the target instead, one slot each, since an
 iteration that writes nothing may not be counted as colliding with one that does.
 """
+
 import numpy as np
 
 import dace
@@ -21,7 +22,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes import scatter_to_guarded_maps as sgm
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 
-M, N, K = (dace.symbol(s, dtype=dace.int64) for s in ('M', 'N', 'K'))
+M, N, K = (dace.symbol(s, dtype=dace.int64) for s in ("M", "N", "K"))
 
 
 @dace.program
@@ -31,16 +32,18 @@ def pair_scatter(out: dace.int64[M, N], xi: dace.int64[K], yi: dace.int64[K], va
 
 
 @dace.program
-def masked_pair_scatter(out: dace.int64[M, N], xi: dace.int64[K], yi: dace.int64[K], val: dace.int64[K],
-                        keep: dace.bool[K]):
+def masked_pair_scatter(
+    out: dace.int64[M, N], xi: dace.int64[K], yi: dace.int64[K], val: dace.int64[K], keep: dace.bool[K]
+):
     for j in range(K):
         if keep[j]:
             out[xi[j], yi[j]] = val[j]
 
 
 @dace.program
-def else_branch_pair_scatter(out: dace.int64[M, N], xi: dace.int64[K], yi: dace.int64[K], val: dace.int64[K],
-                             keep: dace.bool[K]):
+def else_branch_pair_scatter(
+    out: dace.int64[M, N], xi: dace.int64[K], yi: dace.int64[K], val: dace.int64[K], keep: dace.bool[K]
+):
     # The else branch runs when NO listed condition held, which the keyer does not reconstruct --
     # so this loop must be declined outright rather than keyed on a mask it cannot read.
     for j in range(K):
@@ -87,8 +90,8 @@ def test_a_pair_indexed_write_is_keyed_across_both_dimensions():
     an entry there would mean a per-array guard was still going to be emitted alongside."""
     _loops, idx_arrays, sliced, joint = sgm.detect_scatter_loops_and_idx_arrays(built(pair_scatter))
     assert idx_arrays == set() and sliced == []
-    assert [w.dim_exprs for _loop, w in joint] == [('xi[j]', 'yi[j]')]
-    assert [w.target for _loop, w in joint] == ['out']
+    assert [w.dim_exprs for _loop, w in joint] == [("xi[j]", "yi[j]")]
+    assert [w.target for _loop, w in joint] == ["out"]
     assert [w.mask_expr for _loop, w in joint] == [None]
 
 
@@ -96,7 +99,7 @@ def test_a_masked_write_carries_its_mask():
     """The guard needs the mask itself, not just the knowledge that one exists: keying a
     masked-off iteration onto the slot it would have written invents a collision."""
     _loops, _idx, _sliced, joint = sgm.detect_scatter_loops_and_idx_arrays(built(masked_pair_scatter))
-    assert [w.mask_expr for _loop, w in joint] == ['(keep[j])']
+    assert [w.mask_expr for _loop, w in joint] == ["(keep[j])"]
 
 
 def test_an_unreadable_mask_declines_the_loop():
@@ -176,11 +179,11 @@ def test_a_repeated_pair_routes_to_the_sequential_branch():
     # Structural first: four iterations over four threads can land on the right answer by luck, so
     # the dispatcher's existence is what says the collision was detected rather than survived.
     dispatch = [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
-    assert len(dispatch) == 1, 'the guard must emit exactly one parallel-vs-sequential dispatcher'
-    assert '_scatter_joint_key' in dispatch[0].branches[0][0].as_string
+    assert len(dispatch) == 1, "the guard must emit exactly one parallel-vs-sequential dispatcher"
+    assert "_scatter_joint_key" in dispatch[0].branches[0][0].as_string
     got = np.zeros((m, n), dtype=np.int64)
     sdfg(out=got, xi=xi, yi=yi, val=val, M=m, N=n, K=4)
-    assert np.array_equal(got, ref), 'the colliding run must fall back to the sequential branch'
+    assert np.array_equal(got, ref), "the colliding run must fall back to the sequential branch"
 
 
 def test_an_index_array_is_read_at_its_own_rank():
@@ -213,14 +216,17 @@ def test_the_key_fill_map_is_not_a_vectorizer_candidate():
     outright on a candidate map with fewer params than K, so this one has to opt out by name."""
     sdfg = built(pair_scatter)
     sgm.ScatterToGuardedMaps().apply_pass(sdfg, {})
-    fills = [(n, g) for n, g in sdfg.all_nodes_recursive()
-             if isinstance(n, nodes.MapEntry) and n.map.label.startswith('scatter_joint_key')]
-    assert len(fills) == 1, f'expected the one key-fill map; got {[n.map.label for n, _ in fills]}'
+    fills = [
+        (n, g)
+        for n, g in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.MapEntry) and n.map.label.startswith("scatter_joint_key")
+    ]
+    assert len(fills) == 1, f"expected the one key-fill map; got {[n.map.label for n, _ in fills]}"
     entry, state = fills[0]
     assert not is_vectorizable_map(state, entry, 2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_pair_indexed_write_is_keyed_across_both_dimensions()
     test_a_masked_write_carries_its_mask()
     test_an_unreadable_mask_declines_the_loop()

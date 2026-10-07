@@ -14,6 +14,7 @@ polybench ships no numpy oracle, so correctness = value-preservation: the run ou
 Idempotency = a SECOND ``NormalizeWCR`` application rewrites nothing (returns ``None``) and leaves a
 valid SDFG -- a normalized WCR must not re-trigger the pass.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")

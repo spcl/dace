@@ -8,39 +8,39 @@ set holds blocks rather than AccessNodes, so handing one back raised
 ``KeyError: AccessNode (...)``. Real CloudSC graphs hit this: the pass returned 15 SDFGStates
 alongside 5 ConditionalBlocks and a LoopRegion.
 """
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
-from dace.sdfg.analysis.writeset_underapproximation import (UnderapproximateWrites,
-                                                            _find_unconditionally_executed_states)
+from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites, _find_unconditionally_executed_states
 
 N = 8
 
 
 def build_conditional_with_nested_sdfg() -> dace.SDFG:
     """A ConditionalBlock at top level, with a nested SDFG that writes an array inside it."""
-    inner = dace.SDFG('inner_build_conditional_with_nested_sdfg')
-    inner.add_array('ia', [N], dace.float64)
-    istate = inner.add_state('iwrite', is_start_block=True)
-    itask = istate.add_tasklet('set', {}, {'o'}, 'o = 1.0')
-    istate.add_edge(itask, 'o', istate.add_access('ia'), None, dace.Memlet('ia[0]'))
+    inner = dace.SDFG("inner_build_conditional_with_nested_sdfg")
+    inner.add_array("ia", [N], dace.float64)
+    istate = inner.add_state("iwrite", is_start_block=True)
+    itask = istate.add_tasklet("set", {}, {"o"}, "o = 1.0")
+    istate.add_edge(itask, "o", istate.add_access("ia"), None, dace.Memlet("ia[0]"))
 
-    sdfg = dace.SDFG('cond_with_nsdfg')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_symbol('flag', dace.int32)
+    sdfg = dace.SDFG("cond_with_nsdfg")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_symbol("flag", dace.int32)
 
-    entry = sdfg.add_state('entry', is_start_block=True)
-    cb = ConditionalBlock('cb')
+    entry = sdfg.add_state("entry", is_start_block=True)
+    cb = ConditionalBlock("cb")
     sdfg.add_node(cb)
     sdfg.add_edge(entry, cb, dace.InterstateEdge())
 
-    branch = ControlFlowRegion('branch', sdfg=sdfg)
-    bstate = branch.add_state('bstate', is_start_block=True)
-    nsdfg = bstate.add_nested_sdfg(inner, {}, {'ia'})
-    bstate.add_edge(nsdfg, 'ia', bstate.add_access('a'), None, dace.Memlet('a[0:8]'))
-    cb.add_branch(CodeBlock('flag > 0'), branch)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    bstate = branch.add_state("bstate", is_start_block=True)
+    nsdfg = bstate.add_nested_sdfg(inner, {}, {"ia"})
+    bstate.add_edge(nsdfg, "ia", bstate.add_access("a"), None, dace.Memlet("a[0:8]"))
+    cb.add_branch(CodeBlock("flag > 0"), branch)
 
-    tail = sdfg.add_state('tail')
+    tail = sdfg.add_state("tail")
     sdfg.add_edge(cb, tail, dace.InterstateEdge())
     sdfg.validate()
     return sdfg
@@ -60,6 +60,6 @@ def test_underapproximate_writes_handles_regions():
     assert result is not None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_only_sdfg_states_are_returned()
     test_underapproximate_writes_handles_regions()

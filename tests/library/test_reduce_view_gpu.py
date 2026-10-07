@@ -6,6 +6,7 @@ directly on a strided / sliced / reshaped View -- on the GPU via the efficient
 ``GPUAuto`` device schedule (a strided reduction), never falling back to the pure
 expansion.
 """
+
 import warnings
 
 import numpy as np
@@ -23,14 +24,14 @@ def run_on_gpu(program, inputs: dict) -> tuple:
     set_fast_implementations(sdfg, dace.DeviceType.GPU)
     call = {k: v.copy() for k, v in inputs.items()}
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+        warnings.simplefilter("always")
         sdfg(**call)
     return call, caught
 
 
 def view_pure_fallback(caught) -> bool:
     """Whether a 'View -> Pure expansion' fallback warning was emitted."""
-    return any('View' in str(w.message) and 'Pure' in str(w.message) for w in caught)
+    return any("View" in str(w.message) and "Pure" in str(w.message) for w in caught)
 
 
 @dace.program
@@ -52,7 +53,7 @@ def reduce_strided_view_full(x: dace.float64[8, 16], s: dace.float64[1]):
 def reduce_pooling_windows(x: dace.float64[2, 8, 8, 3], y: dace.float64[2, 4, 4, 3]):
     for i in range(4):
         for j in range(4):
-            y[:, i, j, :] = np.max(x[:, 2 * i:2 * i + 2, 2 * j:2 * j + 2, :], axis=(1, 2))
+            y[:, i, j, :] = np.max(x[:, 2 * i : 2 * i + 2, 2 * j : 2 * j + 2, :], axis=(1, 2))
 
 
 def test_reduce_strided_view_cpu():
@@ -66,8 +67,8 @@ def test_reduce_strided_view_cpu():
 def test_reduce_strided_view_gpu():
     x = np.random.default_rng(0).random((8, 16))
     out, caught = run_on_gpu(reduce_strided_view, dict(x=x, y=np.zeros(8)))
-    assert not view_pure_fallback(caught), 'GPUAuto reduction fell back to Pure on a View input'
-    assert np.allclose(out['y'], np.sum(x[:, ::2], axis=1))
+    assert not view_pure_fallback(caught), "GPUAuto reduction fell back to Pure on a View input"
+    assert np.allclose(out["y"], np.sum(x[:, ::2], axis=1))
 
 
 @pytest.mark.gpu
@@ -75,7 +76,7 @@ def test_reduce_sliced_view_gpu():
     x = np.random.default_rng(0).random((8, 16))
     out, caught = run_on_gpu(reduce_sliced_view, dict(x=x, y=np.zeros(7)))
     assert not view_pure_fallback(caught)
-    assert np.allclose(out['y'], np.sum(x[1:8, 2:14], axis=1))
+    assert np.allclose(out["y"], np.sum(x[1:8, 2:14], axis=1))
 
 
 @pytest.mark.gpu
@@ -83,19 +84,19 @@ def test_reduce_strided_view_full_gpu():
     x = np.random.default_rng(0).random((8, 16))
     out, caught = run_on_gpu(reduce_strided_view_full, dict(x=x, s=np.zeros(1)))
     assert not view_pure_fallback(caught)
-    assert np.allclose(out['s'][0], np.sum(x[:, ::2]))
+    assert np.allclose(out["s"][0], np.sum(x[:, ::2]))
 
 
 @pytest.mark.gpu
 def test_reduce_over_pooling_windows_gpu():
     x = np.random.default_rng(0).random((2, 8, 8, 3))
     out, _ = run_on_gpu(reduce_pooling_windows, dict(x=x, y=np.zeros((2, 4, 4, 3))))
-    assert np.allclose(out['y'], x.reshape(2, 4, 2, 4, 2, 3).max(axis=(2, 4)))
+    assert np.allclose(out["y"], x.reshape(2, 4, 2, 4, 2, 3).max(axis=(2, 4)))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_reduce_strided_view_cpu()
     test_reduce_strided_view_gpu()
     test_reduce_sliced_view_gpu()
     test_reduce_strided_view_full_gpu()
-    print('ok')
+    print("ok")

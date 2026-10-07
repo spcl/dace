@@ -12,6 +12,7 @@ Complements ``layout_change_node_test.py`` by covering paths that file leaves un
   * the ``Pad`` op growing a dimension while copying the original region bit-exact;
   * the ``LayoutChange.validate`` guard rails (dtype / storage mismatch, missing input).
 """
+
 import numpy
 import pytest
 
@@ -144,16 +145,16 @@ def test_pad_grows_dimension_copies_region():
     sdfg, state = _fresh_sdfg()
     sdfg.add_array("A", [4], dace.float64)
     add_layout_change(sdfg, state, "A", "B", [Pad(0, 2)])
-    assert tuple(int(s) for s in sdfg.arrays["B"].shape) == (6, )
+    assert tuple(int(s) for s in sdfg.arrays["B"].shape) == (6,)
 
     sdfg.expand_library_nodes()
     sdfg.validate()
     A = numpy.arange(4, dtype=numpy.float64)
     sentinel = -7.0
-    B = numpy.full((6, ), sentinel)
+    B = numpy.full((6,), sentinel)
     sdfg(A=A.copy(), B=B)
     assert numpy.array_equal(B[:4], A)
-    assert numpy.array_equal(B[4:], numpy.full((2, ), sentinel))
+    assert numpy.array_equal(B[4:], numpy.full((2,), sentinel))
 
 
 def test_validate_rejects_dtype_mismatch():

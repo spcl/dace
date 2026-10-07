@@ -1,13 +1,14 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that ``LoopToMap`` parallelizes a loop only when its writes are
-    provably non-overlapping across iterations.
+"""Tests that ``LoopToMap`` parallelizes a loop only when its writes are
+provably non-overlapping across iterations.
 
-    Each iteration of a loop must write disjoint locations for the loop to be a
-    valid map. Two affine write subscripts ``a1*i + b1`` and ``a2*i + b2`` into
-    the same container collide on some pair of iterations if and only if
-    ``gcd(a1, a2)`` divides ``b2 - b1``; otherwise they are provably disjoint
-    for any iteration range.
+Each iteration of a loop must write disjoint locations for the loop to be a
+valid map. Two affine write subscripts ``a1*i + b1`` and ``a2*i + b2`` into
+the same container collide on some pair of iterations if and only if
+``gcd(a1, a2)`` divides ``b2 - b1``; otherwise they are provably disjoint
+for any iteration range.
 """
+
 import copy
 
 import numpy as np
@@ -17,12 +18,12 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.interstate import LoopToMap
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _has_map(sdfg: dace.SDFG) -> bool:
-    """ True if any state in the (recursively expanded) SDFG contains a Map. """
+    """True if any state in the (recursively expanded) SDFG contains a Map."""
     return any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
 
 
@@ -66,7 +67,7 @@ def _applies(program) -> int:
 
 
 def test_rejects_overlapping_writes():
-    """ ``A[5*i]`` and ``A[3*i]`` collide at ``A[15]`` (i=3 and i=5). """
+    """``A[5*i]`` and ``A[3*i]`` collide at ``A[15]`` (i=3 and i=5)."""
     sdfg = overlapping_writes.to_sdfg(simplify=False)
     assert sdfg.apply_transformations_repeated(LoopToMap) == 0
 
@@ -81,7 +82,7 @@ def test_rejects_overlapping_writes():
 
 
 def test_accepts_injective_write():
-    """ A single ``a*i + b`` write is injective in ``i`` and parallelizable. """
+    """A single ``a*i + b`` write is injective in ``i`` and parallelizable."""
     sdfg = injective_write.to_sdfg(simplify=False)
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
 
@@ -95,7 +96,7 @@ def test_accepts_injective_write():
 
 
 def test_accepts_disjoint_strides():
-    """ ``A[2*i]`` (even) and ``A[2*i+1]`` (odd) never collide, for any range. """
+    """``A[2*i]`` (even) and ``A[2*i+1]`` (odd) never collide, for any range."""
     sdfg = disjoint_stride_writes.to_sdfg(simplify=False)
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
 
@@ -110,12 +111,12 @@ def test_accepts_disjoint_strides():
 
 
 def test_rejects_shifted_writes():
-    """ ``A[i]`` and ``A[i+1]`` collide between consecutive iterations. """
+    """``A[i]`` and ``A[i+1]`` collide between consecutive iterations."""
     assert _applies(shifted_writes) == 0
 
 
 def test_accepts_disjoint_outer_dimension():
-    """ A provably disjoint leading dimension makes the whole access disjoint. """
+    """A provably disjoint leading dimension makes the whole access disjoint."""
     sdfg = disjoint_outer_dim.to_sdfg(simplify=False)
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
 
@@ -164,9 +165,9 @@ def nonlinear_mod_write(A: dace.int64[N]):
 
 
 def test_rejects_indirect_write_vs_affine():
-    """ ``A[idx[i]]`` could equal ``A[5*i]``; ``idx`` is not a known
-        permutation, so this is a possible cross-iteration write-write
-        dependence and the loop must stay sequential. """
+    """``A[idx[i]]`` could equal ``A[5*i]``; ``idx`` is not a known
+    permutation, so this is a possible cross-iteration write-write
+    dependence and the loop must stay sequential."""
     sdfg = indirect_write_vs_affine.to_sdfg(simplify=False)
     ref_sdfg = copy.deepcopy(sdfg)
     assert sdfg.apply_transformations_repeated(LoopToMap) == 0
@@ -184,8 +185,8 @@ def test_rejects_indirect_write_vs_affine():
 
 
 def test_rejects_indirect_read_vs_affine():
-    """ ``... = A[idx[i]]`` reads while ``A[3*i]`` writes the same container;
-        a RAW/WAR hazard the affine model cannot rule out. """
+    """``... = A[idx[i]]`` reads while ``A[3*i]`` writes the same container;
+    a RAW/WAR hazard the affine model cannot rule out."""
     sdfg = indirect_read_vs_affine.to_sdfg(simplify=False)
     ref_sdfg = copy.deepcopy(sdfg)
     assert sdfg.apply_transformations_repeated(LoopToMap) == 0
@@ -204,8 +205,8 @@ def test_rejects_indirect_read_vs_affine():
 
 
 def test_rejects_nonlinear_square_write():
-    """ ``A[i*i]`` is nonlinear in ``i`` and outside the affine model; with a
-        second write to ``A`` the loop must stay sequential. """
+    """``A[i*i]`` is nonlinear in ``i`` and outside the affine model; with a
+    second write to ``A`` the loop must stay sequential."""
     sdfg = nonlinear_square_write.to_sdfg(simplify=False)
     ref_sdfg = copy.deepcopy(sdfg)
     assert sdfg.apply_transformations_repeated(LoopToMap) == 0
@@ -220,8 +221,8 @@ def test_rejects_nonlinear_square_write():
 
 
 def test_rejects_nonlinear_mod_write():
-    """ ``A[i % 4]`` is nonlinear in ``i``; with a second write to ``A`` the
-        loop must stay sequential. """
+    """``A[i % 4]`` is nonlinear in ``i``; with a second write to ``A`` the
+    loop must stay sequential."""
     sdfg = nonlinear_mod_write.to_sdfg(simplify=False)
     ref_sdfg = copy.deepcopy(sdfg)
     assert sdfg.apply_transformations_repeated(LoopToMap) == 0
@@ -257,9 +258,9 @@ def shared_constant_dim_shifted(A: dace.int64[8, N + 1]):
 
 
 def test_accepts_shared_iteration_dimension():
-    """ ``A[0, M, i]`` and ``A[M, 0, i]`` share the loop variable ``i`` in their
-        last dimension, so each iteration owns column ``i`` and they never
-        collide across iterations -- parallelizable despite the opaque ``M``. """
+    """``A[0, M, i]`` and ``A[M, 0, i]`` share the loop variable ``i`` in their
+    last dimension, so each iteration owns column ``i`` and they never
+    collide across iterations -- parallelizable despite the opaque ``M``."""
     sdfg = shared_iteration_dim.to_sdfg(simplify=False)
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
     assert _has_map(sdfg)
@@ -275,9 +276,9 @@ def test_accepts_shared_iteration_dimension():
 
 
 def test_rejects_shared_constant_dimension_with_shift():
-    """ Guard: the shared dimension here is the *constant* ``M`` (no dependence
-        on ``i``), so it does not pin iterations together; ``A[M, i]`` and
-        ``A[M, i+1]`` still collide between consecutive iterations. """
+    """Guard: the shared dimension here is the *constant* ``M`` (no dependence
+    on ``i``), so it does not pin iterations together; ``A[M, i]`` and
+    ``A[M, i+1]`` still collide between consecutive iterations."""
     assert _applies(shared_constant_dim_shifted) == 0
 
 
@@ -288,8 +289,8 @@ def test_rejects_shared_constant_dimension_with_shift():
 # covariance pattern ``cov[i, j]`` / ``cov[j, i]``. Certified by the
 # whole-subset collision system (``_collision_forces_same_iteration``).
 
-_TP = dace.symbol('TP')
-_TC = dace.symbol('TC')
+_TP = dace.symbol("TP")
+_TC = dace.symbol("TC")
 
 
 @dace.program
@@ -314,11 +315,11 @@ def transpose_collision_scaled(A: dace.int64[2 * _TP, 2 * _TP]):
 
 
 def test_accepts_transpose_collision():
-    """ ``A[i, C]`` and ``A[C, i]`` collide only on the diagonal ``i == C`` of a
-        single iteration (covariance ``cov[i,j]`` / ``cov[j,i]``); the loop var
-        appears in different dimensions so no dim is individually disjoint, but
-        the collision system certifies ``p == q``. SHOULD parallelize and be
-        value-preserving. """
+    """``A[i, C]`` and ``A[C, i]`` collide only on the diagonal ``i == C`` of a
+    single iteration (covariance ``cov[i,j]`` / ``cov[j,i]``); the loop var
+    appears in different dimensions so no dim is individually disjoint, but
+    the collision system certifies ``p == q``. SHOULD parallelize and be
+    value-preserving."""
     sdfg = transpose_collision.to_sdfg(simplify=False)
     ref_sdfg = copy.deepcopy(sdfg)
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
@@ -333,9 +334,9 @@ def test_accepts_transpose_collision():
 
 
 def test_rejects_transpose_collision_shifted():
-    """ Guard: ``A[i, C]`` and ``A[C, i+1]`` collide at ``p == C``, ``q == C-1``
-        -- DIFFERENT iterations -- so the writes genuinely alias across
-        iterations and the loop must stay sequential. """
+    """Guard: ``A[i, C]`` and ``A[C, i+1]`` collide at ``p == C``, ``q == C-1``
+    -- DIFFERENT iterations -- so the writes genuinely alias across
+    iterations and the loop must stay sequential."""
     sdfg = transpose_collision_shifted.to_sdfg(simplify=False)
     ref_sdfg = copy.deepcopy(sdfg)
     assert sdfg.apply_transformations_repeated(LoopToMap) == 0
@@ -350,9 +351,9 @@ def test_rejects_transpose_collision_shifted():
 
 
 def test_rejects_transpose_collision_scaled():
-    """ Guard: ``A[i, C]`` and ``A[C, 2*i]`` collide at ``p == C``, ``q == C/2``
-        -- different iterations for even ``C`` -- so no single-iteration
-        certificate exists; the loop must stay sequential. """
+    """Guard: ``A[i, C]`` and ``A[C, 2*i]`` collide at ``p == C``, ``q == C/2``
+    -- different iterations for even ``C`` -- so no single-iteration
+    certificate exists; the loop must stay sequential."""
     sdfg = transpose_collision_scaled.to_sdfg(simplify=False)
     ref_sdfg = copy.deepcopy(sdfg)
     assert sdfg.apply_transformations_repeated(LoopToMap) == 0
@@ -367,8 +368,8 @@ def test_rejects_transpose_collision_scaled():
 
 
 def test_positive_control_disjoint_strides_becomes_map():
-    """ Positive control: ``A[2*i]`` / ``A[2*i+1]`` are affine and
-        gcd-disjoint, so the new fast path SHOULD parallelize (Map present). """
+    """Positive control: ``A[2*i]`` / ``A[2*i+1]`` are affine and
+    gcd-disjoint, so the new fast path SHOULD parallelize (Map present)."""
     sdfg = disjoint_stride_writes.to_sdfg(simplify=False)
     assert sdfg.apply_transformations_repeated(LoopToMap) >= 1
     assert _has_map(sdfg)
@@ -383,12 +384,17 @@ def test_positive_control_disjoint_strides_becomes_map():
     assert np.array_equal(a, ref)
 
 
-_CR_N = dace.symbol('CR_N')
+_CR_N = dace.symbol("CR_N")
 
 
 @dace.program
-def _forward_dep_recurrence(a: dace.float64[_CR_N], b: dace.float64[_CR_N], c: dace.float64[_CR_N],
-                            d: dace.float64[_CR_N], e: dace.float64[_CR_N]):
+def _forward_dep_recurrence(
+    a: dace.float64[_CR_N],
+    b: dace.float64[_CR_N],
+    c: dace.float64[_CR_N],
+    d: dace.float64[_CR_N],
+    e: dace.float64[_CR_N],
+):
     """Forward loop-carried dependency: ``a[i] = ... + a[i+1] * ...`` reads
     the value at a position another iteration WRITES. Mirrors the TSVC s243
     body."""
@@ -411,8 +417,9 @@ def test_loop_to_map_refuses_forward_carried_read():
     sdfg = _forward_dep_recurrence.to_sdfg(simplify=True)
     applied = sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert applied == 0, ('LoopToMap must refuse a forward-carried recurrence '
-                          f'(``a[i] = ... a[i+1]``); got applied={applied}.')
+    assert applied == 0, (
+        f"LoopToMap must refuse a forward-carried recurrence (``a[i] = ... a[i+1]``); got applied={applied}."
+    )
 
     n = 32
     rng = np.random.default_rng(0)
@@ -428,8 +435,8 @@ def test_loop_to_map_refuses_forward_carried_read():
         ra[i] = rb[i] + ra[i + 1] * d[i]
     sa, sb = a.copy(), b.copy()
     sdfg(a=sa, b=sb, c=c.copy(), d=d.copy(), e=e.copy(), CR_N=n)
-    assert np.allclose(sa, ra), f'a mismatch: max diff {np.abs(sa - ra).max():.2e}'
-    assert np.allclose(sb, rb), f'b mismatch: max diff {np.abs(sb - rb).max():.2e}'
+    assert np.allclose(sa, ra), f"a mismatch: max diff {np.abs(sa - ra).max():.2e}"
+    assert np.allclose(sb, rb), f"b mismatch: max diff {np.abs(sb - rb).max():.2e}"
 
 
 if __name__ == "__main__":

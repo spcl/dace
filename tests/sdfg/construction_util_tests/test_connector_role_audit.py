@@ -11,6 +11,7 @@ suffixes. These tests pin the four invariants:
 - no overlap between the two roles
 - no orphan declared connector
 """
+
 import dace
 import pytest
 from dace.sdfg.construction_utils import assert_connector_role_matches_edges
@@ -19,7 +20,7 @@ from dace.sdfg.construction_utils import assert_connector_role_matches_edges
 def _scalar_sdfg(name: str):
     sdfg = dace.SDFG(name)
     for n in ("a", "b", "c"):
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     return sdfg
 
 
@@ -73,7 +74,7 @@ def test_edge_landing_on_out_connector_is_rejected():
     connector. The helper's job is to catch this."""
     sdfg = dace.SDFG("bad_edge")
     for n in ("a", "out"):
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     state = sdfg.add_state("s", is_start_block=True)
     src = state.add_access("a")
     dst = state.add_access("out")
@@ -89,7 +90,7 @@ def test_edge_landing_on_out_connector_is_rejected():
 def test_edge_leaving_in_connector_is_rejected():
     sdfg = dace.SDFG("bad_edge2")
     for n in ("a", "out"):
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     state = sdfg.add_state("s", is_start_block=True)
     src = state.add_access("a")
     dst = state.add_access("out")
@@ -106,8 +107,8 @@ def test_helper_ignores_access_nodes_and_map_nodes():
     on AccessNodes, MapEntries, or other node kinds that legitimately have
     both in and out connectors with shared bases (``IN_x`` / ``OUT_x``)."""
     sdfg = dace.SDFG("ignored_kinds")
-    sdfg.add_array("arr", shape=(8, ), dtype=dace.float64)
-    sdfg.add_array("out", shape=(8, ), dtype=dace.float64)
+    sdfg.add_array("arr", shape=(8,), dtype=dace.float64)
+    sdfg.add_array("out", shape=(8,), dtype=dace.float64)
     state = sdfg.add_state("s", is_start_block=True)
     an = state.add_access("arr")
     on = state.add_access("out")
@@ -126,13 +127,13 @@ def test_helper_ignores_access_nodes_and_map_nodes():
 
 def test_passthrough_connector_on_nested_sdfg_is_validated():
     sdfg = dace.SDFG("nsdfg")
-    sdfg.add_array("a", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("c", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("c", shape=(1,), dtype=dace.float64)
     state = sdfg.add_state("s", is_start_block=True)
 
-    inner = dace.SDFG('inner_passthrough_connector_on_nested_sdfg_is_validated')
-    inner.add_array("a", shape=(1, ), dtype=dace.float64)
-    inner.add_array("c", shape=(1, ), dtype=dace.float64)
+    inner = dace.SDFG("inner_passthrough_connector_on_nested_sdfg_is_validated")
+    inner.add_array("a", shape=(1,), dtype=dace.float64)
+    inner.add_array("c", shape=(1,), dtype=dace.float64)
     inner_state = inner.add_state("is", is_start_block=True)
     ia = inner_state.add_access("a")
     ic = inner_state.add_access("c")

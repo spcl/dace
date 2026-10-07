@@ -2,7 +2,7 @@
 import dace
 import math
 
-N, M, K, L, unused = (dace.symbol(s) for s in 'NMKLU')
+N, M, K, L, unused = (dace.symbol(s) for s in "NMKLU")
 
 
 @dace.program
@@ -29,26 +29,26 @@ def test_single_state():
     sdfg.simplify()
     assert len(sdfg.nodes()) == 1
     state = sdfg.node(0)
-    assert state.free_symbols == {'M', 'N', 'K'}
+    assert state.free_symbols == {"M", "N", "K"}
 
 
 def test_state_subgraph():
-    sdfg = dace.SDFG('fsymtest2')
+    sdfg = dace.SDFG("fsymtest2")
     state = sdfg.add_state()
 
     # Add a nested SDFG
-    nsdfg = dace.SDFG('nsdfg')
+    nsdfg = dace.SDFG("nsdfg")
     nstate = nsdfg.add_state()
-    me, mx = state.add_map('map', dict(i='0:N'))
-    nsdfg = state.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping=dict(l=L / 2, i='i'))
+    me, mx = state.add_map("map", dict(i="0:N"))
+    nsdfg = state.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping=dict(l=L / 2, i="i"))
     state.add_nedge(me, nsdfg, dace.Memlet())
     state.add_nedge(nsdfg, mx, dace.Memlet())
 
     # Entire graph
-    assert state.free_symbols == {'L', 'N'}
+    assert state.free_symbols == {"L", "N"}
 
     # Try a subgraph containing only the map contents
-    assert state.scope_subgraph(me, include_entry=False, include_exit=False).free_symbols == {'L', 'i'}
+    assert state.scope_subgraph(me, include_entry=False, include_exit=False).free_symbols == {"L", "i"}
 
 
 def test_sdfg():
@@ -56,77 +56,80 @@ def test_sdfg():
     sdfg.simplify()
     # Test each state separately
     for state in sdfg.states():
-        assert (state.free_symbols == {'k', 'N', 'M', 'L'} or state.free_symbols == set())
+        assert state.free_symbols == {"k", "N", "M", "L"} or state.free_symbols == set()
     # The SDFG itself should have another free symbol
-    assert sdfg.free_symbols == {'K', 'M', 'N', 'L'}
+    assert sdfg.free_symbols == {"K", "M", "N", "L"}
 
 
 def test_constants():
     sdfg: dace.SDFG = fsymtest_multistate.to_sdfg()
     sdfg.simplify()
-    sdfg.add_constant('K', 5)
-    sdfg.add_constant('L', 20)
+    sdfg.add_constant("K", 5)
+    sdfg.add_constant("L", 20)
 
     for state in sdfg.states():
-        assert (state.free_symbols == {'k', 'N', 'M'} or state.free_symbols == set())
-    assert sdfg.free_symbols == {'M', 'N'}
+        assert state.free_symbols == {"k", "N", "M"} or state.free_symbols == set()
+    assert sdfg.free_symbols == {"M", "N"}
 
 
 def test_interstate_edge_symbols():
-    i, j, k = (dace.symbol(s) for s in 'ijk')
+    i, j, k = (dace.symbol(s) for s in "ijk")
 
-    edge = dace.InterstateEdge(assignments={'i': 'j + k'})
-    assert 'j' in edge.free_symbols
-    assert 'k' in edge.free_symbols
-    assert 'i' not in edge.free_symbols
+    edge = dace.InterstateEdge(assignments={"i": "j + k"})
+    assert "j" in edge.free_symbols
+    assert "k" in edge.free_symbols
+    assert "i" not in edge.free_symbols
 
-    edge = dace.InterstateEdge(assignments={'i': 'i+1'})
-    assert 'i' in edge.free_symbols
+    edge = dace.InterstateEdge(assignments={"i": "i+1"})
+    assert "i" in edge.free_symbols
 
-    edge = dace.InterstateEdge(condition='i < j', assignments={'i': '3'})
-    assert 'i' in edge.free_symbols
-    assert 'j' in edge.free_symbols
+    edge = dace.InterstateEdge(condition="i < j", assignments={"i": "3"})
+    assert "i" in edge.free_symbols
+    assert "j" in edge.free_symbols
 
-    edge = dace.InterstateEdge(assignments={'j': 'i + 1', 'i': '3'})
-    assert 'i' in edge.free_symbols
-    assert 'j' not in edge.free_symbols
+    edge = dace.InterstateEdge(assignments={"j": "i + 1", "i": "3"})
+    assert "i" in edge.free_symbols
+    assert "j" not in edge.free_symbols
 
 
 def test_nested_sdfg_free_symbols():
-    i, j, k = (dace.symbol(s) for s in 'ijk')
+    i, j, k = (dace.symbol(s) for s in "ijk")
 
-    outer_sdfg = dace.SDFG('outer')
-    outer_init_state = outer_sdfg.add_state('outer_init')
-    outer_guard_state = outer_sdfg.add_state('outer_guard')
-    outer_body_state_1 = outer_sdfg.add_state('outer_body_1')
-    outer_body_state_2 = outer_sdfg.add_state('outer_body_2')
-    outer_exit_state = outer_sdfg.add_state('outer_exit')
-    outer_sdfg.add_edge(outer_init_state, outer_guard_state, dace.InterstateEdge(assignments={'i': '0'}))
-    outer_sdfg.add_edge(outer_guard_state, outer_body_state_1,
-                        dace.InterstateEdge(condition='i < 10', assignments={'j': 'i + 1'}))
-    outer_sdfg.add_edge(outer_guard_state, outer_exit_state, dace.InterstateEdge(condition='i >= 10'))
-    outer_sdfg.add_edge(outer_body_state_1, outer_guard_state,
-                        dace.InterstateEdge(condition='j >= 10', assignments={'i': 'i + 1'}))
-    outer_sdfg.add_edge(outer_body_state_1, outer_body_state_2, dace.InterstateEdge(condition='j < 10'))
-    outer_sdfg.add_edge(outer_body_state_2, outer_body_state_1, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+    outer_sdfg = dace.SDFG("outer")
+    outer_init_state = outer_sdfg.add_state("outer_init")
+    outer_guard_state = outer_sdfg.add_state("outer_guard")
+    outer_body_state_1 = outer_sdfg.add_state("outer_body_1")
+    outer_body_state_2 = outer_sdfg.add_state("outer_body_2")
+    outer_exit_state = outer_sdfg.add_state("outer_exit")
+    outer_sdfg.add_edge(outer_init_state, outer_guard_state, dace.InterstateEdge(assignments={"i": "0"}))
+    outer_sdfg.add_edge(
+        outer_guard_state, outer_body_state_1, dace.InterstateEdge(condition="i < 10", assignments={"j": "i + 1"})
+    )
+    outer_sdfg.add_edge(outer_guard_state, outer_exit_state, dace.InterstateEdge(condition="i >= 10"))
+    outer_sdfg.add_edge(
+        outer_body_state_1, outer_guard_state, dace.InterstateEdge(condition="j >= 10", assignments={"i": "i + 1"})
+    )
+    outer_sdfg.add_edge(outer_body_state_1, outer_body_state_2, dace.InterstateEdge(condition="j < 10"))
+    outer_sdfg.add_edge(outer_body_state_2, outer_body_state_1, dace.InterstateEdge(assignments={"j": "j + 1"}))
 
-    inner_sdfg = dace.SDFG('inner')
-    inner_init_state = inner_sdfg.add_state('inner_init')
-    inner_guard_state = inner_sdfg.add_state('inner_guard')
-    inner_body_state = inner_sdfg.add_state('inner_body')
-    inner_exit_state = inner_sdfg.add_state('inner_exit')
-    inner_sdfg.add_edge(inner_init_state, inner_guard_state, dace.InterstateEdge(assignments={'k': 'j + 1'}))
-    inner_sdfg.add_edge(inner_guard_state, inner_body_state, dace.InterstateEdge(condition='k < 10'))
-    inner_sdfg.add_edge(inner_guard_state, inner_exit_state,
-                        dace.InterstateEdge(condition='k >= 10', assignments={'j': 'j + 1'}))
-    inner_sdfg.add_edge(inner_body_state, inner_guard_state, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+    inner_sdfg = dace.SDFG("inner")
+    inner_init_state = inner_sdfg.add_state("inner_init")
+    inner_guard_state = inner_sdfg.add_state("inner_guard")
+    inner_body_state = inner_sdfg.add_state("inner_body")
+    inner_exit_state = inner_sdfg.add_state("inner_exit")
+    inner_sdfg.add_edge(inner_init_state, inner_guard_state, dace.InterstateEdge(assignments={"k": "j + 1"}))
+    inner_sdfg.add_edge(inner_guard_state, inner_body_state, dace.InterstateEdge(condition="k < 10"))
+    inner_sdfg.add_edge(
+        inner_guard_state, inner_exit_state, dace.InterstateEdge(condition="k >= 10", assignments={"j": "j + 1"})
+    )
+    inner_sdfg.add_edge(inner_body_state, inner_guard_state, dace.InterstateEdge(assignments={"k": "k + 1"}))
 
-    outer_body_state_2.add_nested_sdfg(inner_sdfg, {}, {}, symbol_mapping={'j': 'j'})
+    outer_body_state_2.add_nested_sdfg(inner_sdfg, {}, {}, symbol_mapping={"j": "j"})
 
     assert not outer_sdfg.free_symbols
-    assert 'i' not in inner_sdfg.free_symbols
-    assert 'j' in inner_sdfg.free_symbols
-    assert 'k' not in inner_sdfg.free_symbols
+    assert "i" not in inner_sdfg.free_symbols
+    assert "j" in inner_sdfg.free_symbols
+    assert "k" not in inner_sdfg.free_symbols
 
 
 def _build_with_optional_unused_array(create_unused_transient: bool) -> dace.SDFG:
@@ -138,16 +141,21 @@ def _build_with_optional_unused_array(create_unused_transient: bool) -> dace.SDF
     :param create_unused_transient: If True, declare the unused ``x`` array.
     :returns: The constructed SDFG.
     """
-    sdfg = dace.SDFG('unused_transient')
+    sdfg = dace.SDFG("unused_transient")
     state = sdfg.add_state()
-    sdfg.add_array('a', (10, ), dace.float64, transient=False)
-    sdfg.add_array('b', (10, ), dace.float64, transient=False)
-    sdfg.add_symbol('x_shape', dace.int32)
+    sdfg.add_array("a", (10,), dace.float64, transient=False)
+    sdfg.add_array("b", (10,), dace.float64, transient=False)
+    sdfg.add_symbol("x_shape", dace.int32)
     if create_unused_transient:
-        sdfg.add_array('x', ('x_shape', ), dace.float32, transient=True)
-    state.add_mapped_tasklet('map', {'__i': '0:10'}, {'__in': dace.Memlet('a[__i]')},
-                             '__out = __in + 1.90', {'__out': dace.Memlet('b[__i]')},
-                             external_edges=True)
+        sdfg.add_array("x", ("x_shape",), dace.float32, transient=True)
+    state.add_mapped_tasklet(
+        "map",
+        {"__i": "0:10"},
+        {"__in": dace.Memlet("a[__i]")},
+        "__out = __in + 1.90",
+        {"__out": dace.Memlet("b[__i]")},
+        external_edges=True,
+    )
     return sdfg
 
 
@@ -161,13 +169,13 @@ def test_unused_array_does_not_leak_shape_symbol():
     without = _build_with_optional_unused_array(False)
     with_unused = _build_with_optional_unused_array(True)
 
-    assert 'x_shape' not in without.used_symbols(all_symbols=False)
-    assert 'x_shape' not in with_unused.used_symbols(all_symbols=False)
-    assert 'x_shape' not in with_unused.arglist()
+    assert "x_shape" not in without.used_symbols(all_symbols=False)
+    assert "x_shape" not in with_unused.used_symbols(all_symbols=False)
+    assert "x_shape" not in with_unused.arglist()
     assert list(without.arglist().keys()) == list(with_unused.arglist().keys())
     assert without.signature_arglist() == with_unused.signature_arglist()
     assert without.init_signature() == with_unused.init_signature()
-    assert 'x_shape' not in with_unused.init_signature()
+    assert "x_shape" not in with_unused.init_signature()
 
 
 def test_used_codeblock_array_keeps_shape_symbol():
@@ -181,29 +189,29 @@ def test_used_codeblock_array_keeps_shape_symbol():
     from dace.properties import CodeBlock
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
-    sdfg = dace.SDFG('used_codeblock_array')
-    sdfg.add_symbol('S', dace.int32)
-    sdfg.add_array('A', (10, 10), dace.int32, strides=(1, dace.symbol('S')))
-    sdfg.add_scalar('acc', dace.int32, transient=True)
+    sdfg = dace.SDFG("used_codeblock_array")
+    sdfg.add_symbol("S", dace.int32)
+    sdfg.add_array("A", (10, 10), dace.int32, strides=(1, dace.symbol("S")))
+    sdfg.add_scalar("acc", dace.int32, transient=True)
 
-    loop = LoopRegion('loop', condition_expr='k < 5', loop_var='k', initialize_expr='k = 0', update_expr='k = k + 1')
+    loop = LoopRegion("loop", condition_expr="k < 5", loop_var="k", initialize_expr="k = 0", update_expr="k = k + 1")
     sdfg.add_node(loop, is_start_block=True)
 
-    cb = ConditionalBlock('cb')
+    cb = ConditionalBlock("cb")
     loop.add_node(cb, is_start_block=True)
-    branch = ControlFlowRegion('branch', sdfg=sdfg)
-    cb.add_branch(CodeBlock('A[0, k] == 1'), branch)
+    branch = ControlFlowRegion("branch", sdfg=sdfg)
+    cb.add_branch(CodeBlock("A[0, k] == 1"), branch)
 
-    set_one = branch.add_state('set_one', is_start_block=True)
-    t1 = set_one.add_tasklet('t_set', {}, {'o'}, 'o = 1')
-    set_one.add_edge(t1, 'o', set_one.add_write('acc'), None, dace.Memlet('acc[0]'))
+    set_one = branch.add_state("set_one", is_start_block=True)
+    t1 = set_one.add_tasklet("t_set", {}, {"o"}, "o = 1")
+    set_one.add_edge(t1, "o", set_one.add_write("acc"), None, dace.Memlet("acc[0]"))
 
     sdfg.validate()
 
     # ``A`` is referenced only in the conditional guard, but it is genuinely
     # used; its stride symbol ``S`` must therefore be kept.
-    assert 'S' in sdfg.used_symbols(all_symbols=False)
-    assert 'S' in sdfg.init_signature()
+    assert "S" in sdfg.used_symbols(all_symbols=False)
+    assert "S" in sdfg.init_signature()
 
 
 def test_used_array_keeps_symbolic_extent():
@@ -214,36 +222,42 @@ def test_used_array_keeps_symbolic_extent():
     issue #2382 being too aggressive and dropping a genuinely needed extent
     symbol.
     """
-    n = dace.symbol('n')
-    s = dace.symbol('s')
+    n = dace.symbol("n")
+    s = dace.symbol("s")
 
-    sdfg = dace.SDFG('used_via_map')
-    sdfg.add_array('a', (n, ), dace.float64, strides=(s, ), transient=False)
-    sdfg.add_array('b', (n, ), dace.float64, transient=False)
+    sdfg = dace.SDFG("used_via_map")
+    sdfg.add_array("a", (n,), dace.float64, strides=(s,), transient=False)
+    sdfg.add_array("b", (n,), dace.float64, transient=False)
     state = sdfg.add_state()
-    state.add_mapped_tasklet('m', {'__i': '0:n'}, {'__in': dace.Memlet('a[__i]')},
-                             '__out = __in + 1.0', {'__out': dace.Memlet('b[__i]')},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "m",
+        {"__i": "0:n"},
+        {"__in": dace.Memlet("a[__i]")},
+        "__out = __in + 1.0",
+        {"__out": dace.Memlet("b[__i]")},
+        external_edges=True,
+    )
     sdfg.validate()
 
     used = sdfg.used_symbols(all_symbols=False)
-    assert 'n' in used
-    assert 's' in used
-    assert 'n' in sdfg.arglist()
-    assert 's' in sdfg.arglist()
+    assert "n" in used
+    assert "s" in used
+    assert "n" in sdfg.arglist()
+    assert "s" in sdfg.arglist()
 
 
-def conditional_block(condition: str, then_assignments: dict,
-                      else_assignments: dict) -> dace.sdfg.state.ConditionalBlock:
+def conditional_block(
+    condition: str, then_assignments: dict, else_assignments: dict
+) -> dace.sdfg.state.ConditionalBlock:
     """``if condition: <then_assignments> else: <else_assignments>``, each arm one interstate edge."""
-    sdfg = dace.SDFG('conditional_symbols')
-    for name in ('best', 'v', 'w'):
+    sdfg = dace.SDFG("conditional_symbols")
+    for name in ("best", "v", "w"):
         sdfg.add_symbol(name, dace.float64)
-    block = dace.sdfg.state.ConditionalBlock('if_region', sdfg=sdfg)
+    block = dace.sdfg.state.ConditionalBlock("if_region", sdfg=sdfg)
     for arm, (arm_condition, assignments) in enumerate(((condition, then_assignments), (None, else_assignments))):
-        body = dace.sdfg.state.ControlFlowRegion(f'arm_{arm}', sdfg=sdfg, parent=block)
-        first = body.add_state(f'arm_{arm}_first', is_start_block=True)
-        body.add_edge(first, body.add_state(f'arm_{arm}_second'), dace.InterstateEdge(assignments=assignments))
+        body = dace.sdfg.state.ControlFlowRegion(f"arm_{arm}", sdfg=sdfg, parent=block)
+        first = body.add_state(f"arm_{arm}_first", is_start_block=True)
+        body.add_edge(first, body.add_state(f"arm_{arm}_second"), dace.InterstateEdge(assignments=assignments))
         block.add_branch(None if arm_condition is None else dace.sdfg.state.CodeBlock(arm_condition), body)
     sdfg.add_node(block, is_start_block=True)
     return block
@@ -251,12 +265,12 @@ def conditional_block(condition: str, then_assignments: dict,
 
 def test_a_conditional_keeps_a_symbol_its_condition_reads_before_a_branch_assigns_it():
     """``if v > best: best = v`` reads ``best`` first; dropping that read hid a running max from LoopToMap."""
-    assert 'best' in conditional_block('v > best', {'best': 'v'}, {}).free_symbols
+    assert "best" in conditional_block("v > best", {"best": "v"}, {}).free_symbols
 
 
 def test_a_conditional_keeps_a_symbol_one_branch_reads_and_a_sibling_branch_assigns():
     """Only one branch runs, so a read in the else arm cannot see what the then arm assigned."""
-    assert 'best' in conditional_block('v > 0', {'best': 'v'}, {'w': 'best'}).free_symbols
+    assert "best" in conditional_block("v > 0", {"best": "v"}, {"w": "best"}).free_symbols
 
 
 def test_non_transient_shape_symbol_stays_in_the_signature():
@@ -268,19 +282,24 @@ def test_non_transient_shape_symbol_stays_in_the_signature():
     host-to-device copy needs the length) and brought it back. A caller holding the earlier
     signature could not call the later graph -- ``Missing program argument "LEN_1D"``.
     """
-    sdfg = dace.SDFG('interface_symbol')
-    sdfg.add_symbol('n', dace.int64)
-    sdfg.add_array('a', ('n', ), dace.float64, transient=False)
-    sdfg.add_array('b', ('n', ), dace.float64, transient=False)
+    sdfg = dace.SDFG("interface_symbol")
+    sdfg.add_symbol("n", dace.int64)
+    sdfg.add_array("a", ("n",), dace.float64, transient=False)
+    sdfg.add_array("b", ("n",), dace.float64, transient=False)
     state = sdfg.add_state()
     # A fixed trip count, so nothing in the BODY mentions ``n``; only the shapes do.
-    state.add_mapped_tasklet('map', {'__i': '0:10'}, {'__in': dace.Memlet('a[__i]')},
-                             '__out = __in + 1.0', {'__out': dace.Memlet('b[__i]')},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "map",
+        {"__i": "0:10"},
+        {"__in": dace.Memlet("a[__i]")},
+        "__out = __in + 1.0",
+        {"__out": dace.Memlet("b[__i]")},
+        external_edges=True,
+    )
 
-    assert 'n' not in sdfg.used_symbols(all_symbols=False), 'the body must not use it, or the test is vacuous'
-    assert 'n' in sdfg.interface_symbols()
-    assert 'n' in sdfg.arglist()
+    assert "n" not in sdfg.used_symbols(all_symbols=False), "the body must not use it, or the test is vacuous"
+    assert "n" in sdfg.interface_symbols()
+    assert "n" in sdfg.arglist()
 
 
 def test_descriptor_free_symbols_follow_a_reassigned_extent():
@@ -295,7 +314,7 @@ def test_descriptor_free_symbols_follow_a_reassigned_extent():
     assert array.free_symbols == {K}
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_single_state()
     test_state_subgraph()
     test_sdfg()

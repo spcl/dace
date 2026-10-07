@@ -33,6 +33,7 @@ Conservative -- only fires when:
 Anything else is a no-op. Linear-CFG assumption: the loop body is a plain
 linear chain; blocks may have parents (the pass recurses into all regions).
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -44,6 +45,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
+
 # Shared soundness kernel for the loop distribution below -- the same import route
 # ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
 from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups
@@ -92,7 +94,7 @@ def _linear_order(region: ControlFlowRegion) -> Optional[List]:
     if not blocks or len(edges) != len(blocks) - 1:
         return None
     for e in edges:
-        if e.data.condition.as_string not in ('1', 'True', '(1)'):
+        if e.data.condition.as_string not in ("1", "True", "(1)"):
             return None
     succ = {e.src: e.dst for e in edges}
     order = [region.start_block]
@@ -122,7 +124,7 @@ def _enclosing_loops(loop: LoopRegion, sdfg: SDFG) -> List[LoopRegion]:
     while g is not None and g is not sdfg:
         if isinstance(g, LoopRegion):
             out.append(g)
-        g = getattr(g, 'parent_graph', None)
+        g = getattr(g, "parent_graph", None)
     return out
 
 
@@ -200,8 +202,9 @@ def strippable_prep(loop: LoopRegion, hoisted: list[tuple[str, str]]) -> dict[st
     return {lhs: rhs for lhs, rhs in hoisted if lhs not in conflicting}
 
 
-def _hoistable(sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock,
-               require_full_hoist: bool) -> Optional[Tuple[CodeBlock, List[Tuple[str, str]]]]:
+def _hoistable(
+    sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock, require_full_hoist: bool
+) -> Optional[Tuple[CodeBlock, List[Tuple[str, str]]]]:
     """Whether the guard ``cb`` is loop-invariant enough to leave ``loop``.
 
     Judged on the WHOLE loop (every block, every iedge), so the answer stays
@@ -240,7 +243,7 @@ def _hoistable(sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock,
     for e in loop.edges():
         for lhs, rhs in e.data.assignments.items():
             rf = _free(rhs)
-            is_variant = (lvar in rf or bool(rf & loop_w) or lhs in loop_w - set(e.data.assignments))
+            is_variant = lvar in rf or bool(rf & loop_w) or lhs in loop_w - set(e.data.assignments)
             if not is_variant:
                 chain_assignments.append((lhs, rhs))
                 continue
@@ -280,9 +283,7 @@ def _hoistable(sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock,
 
 
 def match_loop(
-    sdfg: SDFG,
-    loop: LoopRegion,
-    require_full_hoist: bool = False
+    sdfg: SDFG, loop: LoopRegion, require_full_hoist: bool = False
 ) -> Optional[Tuple[LoopRegion, ConditionalBlock, CodeBlock, List[Tuple[str, str]]]]:
     """Match ``loop`` as a body ``[empty*; if c; empty*]`` with a loop-invariant
     condition (plus a hoistable invariant assignment chain and any
@@ -313,8 +314,7 @@ def match_loop(
 
 
 def find_match(
-    sdfg: SDFG,
-    require_full_hoist: bool = False
+    sdfg: SDFG, require_full_hoist: bool = False
 ) -> Optional[Tuple[LoopRegion, ConditionalBlock, CodeBlock, List[Tuple[str, str]]]]:
     """Find a loop that :func:`match_loop` matches."""
     for loop in sdfg.all_control_flow_regions(recursive=True):
@@ -357,8 +357,10 @@ def _split_guard_loop(sdfg: SDFG, require_full_hoist: bool) -> bool:
         # independence criterion only sees data containers, so refuse around anything
         # whose order relative to other side effects is observable.
         if any(
-                isinstance(n, nodes.CodeNode) and n.has_ordered_side_effects(st.sdfg) for st in loop.states()
-                for n in st.nodes()):
+            isinstance(n, nodes.CodeNode) and n.has_ordered_side_effects(st.sdfg)
+            for st in loop.states()
+            for n in st.nodes()
+        ):
             continue
         # Each per-group clone is re-homed, nested SDFGs included, as ``add_node`` claims it.
         LoopFission._fission_blocks(loop, groups)
@@ -383,10 +385,12 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         loop. A guard that would stall between not-perfectly-collapsed
         scopes is left where it is.
     """
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     require_full_hoist = properties.Property(
-        dtype=bool, default=False, desc="Only hoist if the guard can clear every enclosing loop; else do nothing.")
+        dtype=bool, default=False, desc="Only hoist if the guard can clear every enclosing loop; else do nothing."
+    )
 
     def __init__(self, require_full_hoist: bool = False):
         super().__init__()
@@ -458,7 +462,7 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         new_loop = copy.deepcopy(loop)
         # Find the corresponding cb in the deepcopy by label match.
         new_cb_candidates = [b for b in new_loop.nodes() if isinstance(b, ConditionalBlock) and b.label == cb.label]
-        assert len(new_cb_candidates) == 1, f'expected one ConditionalBlock named {cb.label!r} in deepcopy'
+        assert len(new_cb_candidates) == 1, f"expected one ConditionalBlock named {cb.label!r} in deepcopy"
         new_cb = new_cb_candidates[0]
         cb_pred_edges = list(new_loop.in_edges(new_cb))
         cb_succ_edges = list(new_loop.out_edges(new_cb))

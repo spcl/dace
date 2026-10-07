@@ -16,6 +16,7 @@ global ``atomicAdd`` per element, all to the same address, while
 ``DeviceReduce`` on CUDA).  Same shape as ``count_node`` and ``allany``,
 which reduce through a node for the same reason.
 """
+
 import dace
 import dace.library
 import dace.properties
@@ -25,6 +26,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
 from typing import List, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -53,11 +55,9 @@ class ExpandNorm2Pure(ExpandTransformation):
         # IS the outer one; the reduced/flat spellings below build a shape of their own, and a
         # stride list from a differently-ranked descriptor would be nonsense.
         out_matches = symbolic.shapes_equal(out_shape, desc_out.shape)
-        sdfg.add_array("_out",
-                       out_shape,
-                       dtype,
-                       strides=desc_out.strides if out_matches else None,
-                       storage=desc_out.storage)
+        sdfg.add_array(
+            "_out", out_shape, dtype, strides=desc_out.strides if out_matches else None, storage=desc_out.storage
+        )
         # The intermediates take the INPUT's storage rather than the default. A transient left at
         # ``Default`` under a GPU-scheduled expansion resolves to ``GPU_Shared``, and
         # ``ExpandReduceGPUAuto`` refuses anything but ``GPU_Global`` -- it falls back to the pure
@@ -83,15 +83,23 @@ class ExpandNorm2Pure(ExpandTransformation):
         # CUDA). A WCR on the square map would instead emit one global atomic per element, every one
         # of them contending for the same accumulator.
         reduce_state = sdfg.add_state_after(square_state, node.label + "_sumsq")
-        red = Reduce(name=node.label + "_sumsq_node",
-                     wcr="lambda a, b: a + b",
-                     axes=None if dim_zero is None else [dim_zero],
-                     identity=0)
+        red = Reduce(
+            name=node.label + "_sumsq_node",
+            wcr="lambda a, b: a + b",
+            axes=None if dim_zero is None else [dim_zero],
+            identity=0,
+        )
         reduce_state.add_node(red)
-        reduce_state.add_edge(reduce_state.add_read("_squares"), None, red, "_in",
-                              mm.Memlet.from_array("_squares", sdfg.arrays["_squares"]))
-        reduce_state.add_edge(red, "_out", reduce_state.add_access("_sumsq"), None,
-                              mm.Memlet.from_array("_sumsq", sdfg.arrays["_sumsq"]))
+        reduce_state.add_edge(
+            reduce_state.add_read("_squares"),
+            None,
+            red,
+            "_in",
+            mm.Memlet.from_array("_squares", sdfg.arrays["_squares"]),
+        )
+        reduce_state.add_edge(
+            red, "_out", reduce_state.add_access("_sumsq"), None, mm.Memlet.from_array("_sumsq", sdfg.arrays["_sumsq"])
+        )
 
         # Finalize: ``out = sqrt(sumsq)``.
         final_state = sdfg.add_state_after(reduce_state, node.label + "_sqrt")
@@ -134,10 +142,12 @@ class Norm2(dace.sdfg.nodes.LibraryNode):
     implementations = {"pure": ExpandNorm2Pure}
     default_implementation = "pure"
 
-    dim = dace.properties.Property(dtype=int,
-                                   default=None,
-                                   allow_none=True,
-                                   desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array.")
+    dim = dace.properties.Property(
+        dtype=int,
+        default=None,
+        allow_none=True,
+        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array.",
+    )
 
     def __init__(self, name, *, dim=None, **kwargs):
         super().__init__(name, inputs={"_x"}, outputs={"_out"}, **kwargs)
@@ -166,13 +176,13 @@ class Norm2(dace.sdfg.nodes.LibraryNode):
         return desc_x, desc_out, dim_zero
 
 
-@oprepo.replaces('dace.libraries.standard.norm2')
-@oprepo.replaces('dace.libraries.standard.Norm2')
-def norm2_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, out, *, dim=None):
+@oprepo.replaces("dace.libraries.standard.norm2")
+@oprepo.replaces("dace.libraries.standard.Norm2")
+def norm2_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, out, *, dim=None):
     x_in = state.add_read(x)
     w = state.add_write(out)
     node = Norm2("norm2", dim=dim)
     state.add_node(node)
-    state.add_edge(x_in, None, node, '_x', mm.Memlet(x))
-    state.add_edge(node, '_out', w, None, mm.Memlet(out))
+    state.add_edge(x_in, None, node, "_x", mm.Memlet(x))
+    state.add_edge(node, "_out", w, None, mm.Memlet(out))
     return []

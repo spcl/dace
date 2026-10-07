@@ -11,6 +11,7 @@ AST matcher only recognised the 2-input binop / 1-input bare-copy shapes, so a m
 must insert an explicit cast tasklet for a mismatched arm/value BEFORE the ITE / masked-write
 tasklet, exactly as it already does for a plain binop.
 """
+
 import dace
 from dace.transformation.passes.vectorization.resolve_mixed_dtype_binops import ResolveMixedDtypeBinops
 
@@ -34,14 +35,14 @@ def _build_ite_sdfg(t_dtype, e_dtype, out_dtype, ite_form: str):
     with ``T`` / ``E`` / ``A`` given INDEPENDENT dtypes -- the mismatch this pass must resolve
     before the tile converter locks one dtype per ``TileITE``."""
     sdfg = dace.SDFG(f"ite_mixed_dtype_{ite_form}")
-    sdfg.add_array("A", shape=(1, ), dtype=out_dtype)
-    sdfg.add_array("T", shape=(1, ), dtype=t_dtype)
-    sdfg.add_array("E", shape=(1, ), dtype=e_dtype)
-    sdfg.add_array("C", shape=(1, ), dtype=dace.bool_)
+    sdfg.add_array("A", shape=(1,), dtype=out_dtype)
+    sdfg.add_array("T", shape=(1,), dtype=t_dtype)
+    sdfg.add_array("E", shape=(1,), dtype=e_dtype)
+    sdfg.add_array("C", shape=(1,), dtype=dace.bool_)
     state = sdfg.add_state("only", is_start_block=True)
     rT, rE, rC = state.add_access("T"), state.add_access("E"), state.add_access("C")
     wA = state.add_access("A")
-    code = ("_o = ITE(_c, _t, _e)" if ite_form == "call" else "_o = _t if _c else _e")
+    code = "_o = ITE(_c, _t, _e)" if ite_form == "call" else "_o = _t if _c else _e"
     t = state.add_tasklet("ite_A", {"_c": None, "_t": None, "_e": None}, {"_o": None}, code)
     state.add_edge(rC, None, t, "_c", dace.Memlet("C[0]"))
     state.add_edge(rT, None, t, "_t", dace.Memlet("T[0]"))
@@ -78,20 +79,18 @@ def test_ite_call_form_both_arms_mismatched_get_cast():
 
 
 def test_python_ternary_form_mismatched_else_arm_gets_cast():
-    sdfg, state, t = _build_ite_sdfg(t_dtype=dace.float64,
-                                     e_dtype=dace.int32,
-                                     out_dtype=dace.float64,
-                                     ite_form="ternary")
+    sdfg, state, t = _build_ite_sdfg(
+        t_dtype=dace.float64, e_dtype=dace.int32, out_dtype=dace.float64, ite_form="ternary"
+    )
     count = ResolveMixedDtypeBinops().apply_pass(sdfg, {})
     assert count == 1
     _assert_arm_cast_to_output_dtype(sdfg, state, t, "_e", dace.float64)
 
 
 def test_ite_matching_dtypes_are_left_alone():
-    sdfg, state, t = _build_ite_sdfg(t_dtype=dace.float64,
-                                     e_dtype=dace.float64,
-                                     out_dtype=dace.float64,
-                                     ite_form="call")
+    sdfg, state, t = _build_ite_sdfg(
+        t_dtype=dace.float64, e_dtype=dace.float64, out_dtype=dace.float64, ite_form="call"
+    )
     count = ResolveMixedDtypeBinops().apply_pass(sdfg, {})
     assert count is None
     assert len(state.nodes()) == 5  # C, T, E, A access nodes + the one tasklet -- no cast inserted
@@ -102,9 +101,9 @@ def test_masked_write_mismatched_value_gets_cast():
     differs from the destination must be cast before the masked ``TileScatter`` lowering
     (``ConvertTaskletsToTileOps._convert_conditional_write``) copies it in raw."""
     sdfg = dace.SDFG("masked_write_mixed_dtype")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("V", shape=(1, ), dtype=dace.int32)
-    sdfg.add_array("C", shape=(1, ), dtype=dace.bool_)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("V", shape=(1,), dtype=dace.int32)
+    sdfg.add_array("C", shape=(1,), dtype=dace.bool_)
     state = sdfg.add_state("only", is_start_block=True)
     rV, rC = state.add_access("V"), state.add_access("C")
     wA = state.add_access("A")

@@ -10,7 +10,6 @@ from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class Model(nn.Module):
-
     def __init__(self, new_shape):
         super(Model, self).__init__()
         self.new_shape = new_shape
@@ -33,11 +32,13 @@ def test_reshape_module(device):
 
     # dummy_inputs triggers compilation at construction time, so build under the experimental backend.
     with experimental_cuda():
-        dace_model = DaceModule(ptmodel,
-                                sdfg_name=f"test_reshape_module_{device}",
-                                auto_optimize=False,
-                                dummy_inputs=(x, ),
-                                cuda=is_gpu(device))
+        dace_model = DaceModule(
+            ptmodel,
+            sdfg_name=f"test_reshape_module_{device}",
+            auto_optimize=False,
+            dummy_inputs=(x,),
+            cuda=is_gpu(device),
+        )
 
         dace_output = dace_model(x)
 

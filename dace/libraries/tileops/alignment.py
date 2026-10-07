@@ -6,6 +6,7 @@ place on an even element has nothing between ``half2`` and a per-element ``LDG.E
 offset of an access, the ranges of the enclosing maps and the divisibility guarantees the vectorizer records, and
 yields the alignment and the shift of the access from the aligned window the widened word covers.
 """
+
 import warnings
 from collections.abc import Iterable
 
@@ -148,7 +149,7 @@ def guarded_stride_divisors(sdfg: SDFG) -> dict[str, int]:
         for node in state.nodes():
             if not isinstance(node, Tasklet) or not node.label.startswith(STRIDE_GUARD_PREFIX):
                 continue
-            name, separator, modulus = node.label[len(STRIDE_GUARD_PREFIX):].rpartition("_")
+            name, separator, modulus = node.label[len(STRIDE_GUARD_PREFIX) :].rpartition("_")
             if separator and name and modulus.isdigit():
                 facts[name] = int(modulus)
     return facts
@@ -199,8 +200,9 @@ def base_offset_is_visible(sdfg: SDFG, name: str) -> bool:
         state = cur_sdfg.parent
         if nsdfg_node is None or state is None:
             return True
-        edges = ([e for e in state.in_edges(nsdfg_node) if e.dst_conn == cur_name] +
-                 [e for e in state.out_edges(nsdfg_node) if e.src_conn == cur_name])
+        edges = [e for e in state.in_edges(nsdfg_node) if e.dst_conn == cur_name] + [
+            e for e in state.out_edges(nsdfg_node) if e.src_conn == cur_name
+        ]
         if not edges:
             return False
         outer_names = set()
@@ -216,8 +218,9 @@ def base_offset_is_visible(sdfg: SDFG, name: str) -> bool:
     return True
 
 
-def linear_base_offset(node: Node, parent_state: SDFGState, parent_sdfg: SDFG,
-                       edge: MultiConnectorEdge[Memlet]) -> tuple[SymbolicType, SymbolicType, SymbolicType] | None:
+def linear_base_offset(
+    node: Node, parent_state: SDFGState, parent_sdfg: SDFG, edge: MultiConnectorEdge[Memlet]
+) -> tuple[SymbolicType, SymbolicType, SymbolicType] | None:
     """``(offset_at_tile_base, offset_at_param_ends, allocated_elements)``, or ``None``.
 
     The first expression has every enclosing map param replaced by ``start + step*k`` (``k`` a
@@ -270,8 +273,9 @@ def linear_base_offset(node: Node, parent_state: SDFGState, parent_sdfg: SDFG,
     return tuple(e.subs(subs) for e in (at_base, at_end, size))
 
 
-def add_stride_substitutions(subs: dict[SymbolicType, SymbolicType], facts: dict[str, int],
-                             exprs: Iterable[SymbolicType]) -> None:
+def add_stride_substitutions(
+    subs: dict[SymbolicType, SymbolicType], facts: dict[str, int], exprs: Iterable[SymbolicType]
+) -> None:
     """Fold the guarded stride-parity facts into ``subs`` as ``symbol -> modulus * t``.
 
     Same shape as :func:`even_extent_substitutions` and for the same reason: a residue modulo a
@@ -313,15 +317,23 @@ def declined(arr: Data, edge: MultiConnectorEdge[Memlet], elem_bytes: int, allow
     fire on every correct program.
     """
     if elem_bytes < 4 and allow_shift:
-        warnings.warn(f'"{edge.data.data}" ({arr.dtype}) is loaded/stored per element: its access could not be '
-                      f'placed on a {4 // elem_bytes}-element boundary. Sub-32-bit arrays need EVERY dimension '
-                      f'to be a multiple of {4 // elem_bytes} for the vectorized path -- pad the shape, or pin '
-                      f'the symbolic extents so their parity is decidable.')
+        warnings.warn(
+            f'"{edge.data.data}" ({arr.dtype}) is loaded/stored per element: its access could not be '
+            f"placed on a {4 // elem_bytes}-element boundary. Sub-32-bit arrays need EVERY dimension "
+            f"to be a multiple of {4 // elem_bytes} for the vectorized path -- pad the shape, or pin "
+            f"the symbolic extents so their parity is decidable."
+        )
     return elem_bytes, 0
 
 
-def array_align_shift(node: Node, parent_state: SDFGState, parent_sdfg: SDFG, edge: MultiConnectorEdge[Memlet],
-                      vlen: int, allow_shift: bool) -> tuple[int, int]:
+def array_align_shift(
+    node: Node,
+    parent_state: SDFGState,
+    parent_sdfg: SDFG,
+    edge: MultiConnectorEdge[Memlet],
+    vlen: int,
+    allow_shift: bool,
+) -> tuple[int, int]:
     """``(alignment bytes of the aligned base, element shift of the access from it)``.
 
     The tile side of a load/store is always DACE_ALIGN(64); the array side is a base pointer plus
@@ -370,13 +382,15 @@ def array_align_shift(node: Node, parent_state: SDFGState, parent_sdfg: SDFG, ed
     return chunk * elem_bytes, int(as_expr(shift))
 
 
-def align_template_arg(node: Node,
-                       parent_state: SDFGState,
-                       parent_sdfg: SDFG,
-                       edge: MultiConnectorEdge[Memlet],
-                       backend: str,
-                       vlen: int,
-                       allow_shift: bool = False) -> str:
+def align_template_arg(
+    node: Node,
+    parent_state: SDFGState,
+    parent_sdfg: SDFG,
+    edge: MultiConnectorEdge[Memlet],
+    backend: str,
+    vlen: int,
+    allow_shift: bool = False,
+) -> str:
     """``", <bytes>"`` or ``", <bytes>, <shift>"`` for a tile_load/tile_store template list.
 
     Only the CUDA header takes the trailing ``Align`` / ``Shift`` parameters, and only fp16 has a

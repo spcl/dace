@@ -1,5 +1,6 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``scattering_self_energies`` (dense_linear_algebra) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace as dc
 
@@ -8,22 +9,24 @@ dc_complex_float = dc.complex128
 
 
 def rng_complex(shape, rng, datatype):
-    return (rng.random(shape, dtype=datatype) + rng.random(shape, dtype=datatype) * 1j)
+    return rng.random(shape, dtype=datatype) + rng.random(shape, dtype=datatype) * 1j
 
 
-SIZES = {'Nkz': 2, 'NE': 4, 'Nqz': 2, 'Nw': 2, 'N3D': 2, 'NA': 6, 'NB': 2, 'Norb': 3}
-PAPER_SIZES = {'Nkz': 4, 'NE': 10, 'Nqz': 4, 'Nw': 3, 'N3D': 3, 'NA': 20, 'NB': 4, 'Norb': 4}
-INPUT_ARGS = ('Nkz', 'NE', 'Nqz', 'Nw', 'N3D', 'NA', 'NB', 'Norb')
-ARRAY_ARGS = ('neigh_idx', 'dH', 'G', 'D', 'Sigma')
+SIZES = {"Nkz": 2, "NE": 4, "Nqz": 2, "Nw": 2, "N3D": 2, "NA": 6, "NB": 2, "Norb": 3}
+PAPER_SIZES = {"Nkz": 4, "NE": 10, "Nqz": 4, "Nw": 3, "N3D": 3, "NA": 20, "NB": 4, "Norb": 4}
+INPUT_ARGS = ("Nkz", "NE", "Nqz", "Nw", "N3D", "NA", "NB", "Norb")
+ARRAY_ARGS = ("neigh_idx", "dH", "G", "D", "Sigma")
 SCALARS = {}
-OUTPUT_ARGS = ('Sigma', )
+OUTPUT_ARGS = ("Sigma",)
 
-NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (dc.symbol(s, dc.int64)
-                                       for s in ('NA', 'NB', 'Nkz', 'NE', 'Nqz', 'Nw', 'Norb', 'N3D'))
+NA, NB, Nkz, NE, Nqz, Nw, Norb, N3D = (
+    dc.symbol(s, dc.int64) for s in ("NA", "NB", "Nkz", "NE", "Nqz", "Nw", "Norb", "N3D")
+)
 
 
 def initialize(Nkz, NE, Nqz, Nw, N3D, NA, NB, Norb, datatype=np.float64):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     neigh_idx = np.ndarray([NA, NB], dtype=np.int32)
     for i in range(NA):
@@ -51,9 +54,13 @@ def reference(neigh_idx, dH, G, D, Sigma):
 
 
 @dc.program
-def kernel(neigh_idx: dc.int32[NA, NB], dH: dc_complex_float[NA, NB, N3D, Norb, Norb], G: dc_complex_float[Nkz, NE, NA,
-                                                                                                           Norb, Norb],
-           D: dc_complex_float[Nqz, Nw, NA, NB, N3D, N3D], Sigma: dc_complex_float[Nkz, NE, NA, Norb, Norb]):
+def kernel(
+    neigh_idx: dc.int32[NA, NB],
+    dH: dc_complex_float[NA, NB, N3D, Norb, Norb],
+    G: dc_complex_float[Nkz, NE, NA, Norb, Norb],
+    D: dc_complex_float[Nqz, Nw, NA, NB, N3D, N3D],
+    Sigma: dc_complex_float[Nkz, NE, NA, Norb, Norb],
+):
     for k in range(Nkz):
         for E in range(NE):
             for q in range(Nqz):
@@ -68,14 +75,16 @@ def kernel(neigh_idx: dc.int32[NA, NB], dH: dc_complex_float[NA, NB, N3D, Norb, 
                                         Sigma[k, E, a] += dHG @ dHD
 
 
-CORPUS = dict(name='scattering_self_energies',
-              dwarf='dense_linear_algebra',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="scattering_self_energies",
+    dwarf="dense_linear_algebra",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

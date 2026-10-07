@@ -4,13 +4,13 @@ import pytest
 
 import dace
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
 def cpp_float(A: dace.float32[1], B: dace.float32[2]):
 
-    @dace.tasklet('CPP')
+    @dace.tasklet("CPP")
     def asin():
         a << A[0]
         b0 >> B[0]
@@ -24,7 +24,7 @@ def cpp_float(A: dace.float32[1], B: dace.float32[2]):
 @dace.program
 def cpp_double(A: dace.float64[1], B: dace.float64[2]):
 
-    @dace.tasklet('CPP')
+    @dace.tasklet("CPP")
     def asin():
         a << A[0]
         b0 >> B[0]
@@ -60,18 +60,18 @@ def dace_64(A: dace.float64[1], B: dace.float64[2]):
 
 
 def test_math_precision():
-    in_32 = dace.ndarray((1, ), dace.float32)
-    in_64 = dace.ndarray((1, ), dace.float64)
+    in_32 = dace.ndarray((1,), dace.float32)
+    in_64 = dace.ndarray((1,), dace.float64)
     in_32[:] = [0.5]
     in_64[:] = [0.5]
 
-    cpp_out_32 = dace.ndarray((2, ), dace.float32)
-    cpp_out_64 = dace.ndarray((2, ), dace.float64)
+    cpp_out_32 = dace.ndarray((2,), dace.float32)
+    cpp_out_64 = dace.ndarray((2,), dace.float64)
     cpp_float(in_32, cpp_out_32)
     cpp_double(in_64, cpp_out_64)
 
-    dace_out_32 = dace.ndarray((2, ), dace.float32)
-    dace_out_64 = dace.ndarray((2, ), dace.float64)
+    dace_out_32 = dace.ndarray((2,), dace.float32)
+    dace_out_64 = dace.ndarray((2,), dace.float64)
     dace_32(in_32, dace_out_32)
     dace_64(in_64, dace_out_64)
 
@@ -120,22 +120,22 @@ def complex_math(a: dace.complex128[N], out: dace.complex128[16, N]):
 
 
 COMPLEX_MATH_ORACLES = {
-    'exp': np.exp,
-    'log': np.log,
-    'sqrt': np.sqrt,
-    'log10': np.log10,
-    'sin': np.sin,
-    'cos': np.cos,
-    'tan': np.tan,
-    'sinh': np.sinh,
-    'cosh': np.cosh,
-    'tanh': np.tanh,
-    'asin': np.arcsin,
-    'acos': np.arccos,
-    'atan': np.arctan,
-    'asinh': np.arcsinh,
-    'acosh': np.arccosh,
-    'atanh': np.arctanh,
+    "exp": np.exp,
+    "log": np.log,
+    "sqrt": np.sqrt,
+    "log10": np.log10,
+    "sin": np.sin,
+    "cos": np.cos,
+    "tan": np.tan,
+    "sinh": np.sinh,
+    "cosh": np.cosh,
+    "tanh": np.tanh,
+    "asin": np.arcsin,
+    "acos": np.arccos,
+    "atan": np.arctan,
+    "asinh": np.arcsinh,
+    "acosh": np.arccosh,
+    "atanh": np.arctanh,
 }
 
 
@@ -144,9 +144,9 @@ def test_complex_math_functions_on_the_gpu_match_numpy():
     """``dace::math`` forwards to ``std::``, which has no ``thrust::complex`` overloads."""
     sdfg = complex_math.to_sdfg()
     sdfg.apply_gpu_transformations()
-    cuda = '\n'.join(c.clean_code for c in sdfg.generate_code() if c.title == 'CUDA')
-    missing = [name for name in COMPLEX_MATH_ORACLES if f'dace::math::{name}(' not in cuda]
-    assert not missing, f'the device code does not call dace::math for {missing}'
+    cuda = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
+    missing = [name for name in COMPLEX_MATH_ORACLES if f"dace::math::{name}(" not in cuda]
+    assert not missing, f"the device code does not call dace::math for {missing}"
 
     n = 32
     rng = np.random.default_rng(20260914)

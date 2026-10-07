@@ -24,6 +24,7 @@ Legality (per array touched by both bodies, under the shared iterator):
   * output (write in both): illegal unless the two writes hit the same index.
 Symbolic / indirected / complex offsets are refused conservatively (v1).
 """
+
 from typing import Any, Dict, List, Optional, Type, Union
 
 from dace import SDFG
@@ -42,7 +43,8 @@ class FuseLoops(ppl.Pass):
     classes) and the merge itself live on ``LoopFusion`` -- this pass owns only the traversal, so the pass
     and the transformation can never disagree.
     """
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -101,4 +103,4 @@ class FuseLoops(ppl.Pass):
         return False
 
 
-__all__ = ['FuseLoops']
+__all__ = ["FuseLoops"]

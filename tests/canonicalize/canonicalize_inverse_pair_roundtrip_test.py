@@ -24,6 +24,7 @@ mean anything: when both directions no-op the input shape comes back
 unchanged, so the end state alone cannot tell a round trip from a pair of
 refusals.
 """
+
 import numpy as np
 import pytest
 
@@ -34,8 +35,8 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _nmaps(sdfg):
@@ -54,7 +55,9 @@ def conds_inside_loops(sdfg):
     """ConditionalBlocks nested anywhere inside a LoopRegion."""
     return sum(
         sum(1 for b in r.all_control_flow_blocks() if isinstance(b, ConditionalBlock))
-        for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
+        for r in sdfg.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion)
+    )
 
 
 # MoveIfIntoLoop <-> MoveLoopInvariantIfUp
@@ -76,7 +79,7 @@ def _guard_over_loop_oracle(a, act):
     return out
 
 
-@pytest.mark.parametrize('require_full_hoist', [True, False])
+@pytest.mark.parametrize("require_full_hoist", [True, False])
 def test_moveif_into_then_up_roundtrip(require_full_hoist):
     """Push the guard into the loop, then hoist it back out: the guard
     ends up wrapping the loop again (1 top-level ConditionalBlock), and
@@ -87,29 +90,30 @@ def test_moveif_into_then_up_roundtrip(require_full_hoist):
     a = rng.standard_normal(n)
 
     sdfg = guard_over_loop.to_sdfg(simplify=True)
-    assert len(_top_conds(sdfg)) == 1, 'the fixture must start with the guard above the loop'
+    assert len(_top_conds(sdfg)) == 1, "the fixture must start with the guard above the loop"
 
-    assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 1, 'the down direction refused'
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 1, "the down direction refused"
     sdfg.validate()
-    assert not _top_conds(sdfg), 'the guard did not leave the top level'
-    assert conds_inside_loops(sdfg) == 1, 'the guard did not land inside the loop'
+    assert not _top_conds(sdfg), "the guard did not leave the top level"
+    assert conds_inside_loops(sdfg) == 1, "the guard did not land inside the loop"
 
-    assert MoveLoopInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {}) == 1, \
-        'the up direction refused'
+    assert MoveLoopInvariantIfUp(require_full_hoist=require_full_hoist).apply_pass(sdfg, {}) == 1, (
+        "the up direction refused"
+    )
     sdfg.validate()
-    assert len(_top_conds(sdfg)) == 1, 'guard did not return to the top level after the round-trip'
-    assert conds_inside_loops(sdfg) == 0, 'a copy of the guard was left inside the loop'
+    assert len(_top_conds(sdfg)) == 1, "guard did not return to the top level after the round-trip"
+    assert conds_inside_loops(sdfg) == 0, "a copy of the guard was left inside the loop"
 
     for act in (1, 0):
         exp = _guard_over_loop_oracle(a, act)
         got = np.zeros(n)
         sdfg(a=a, b=got, act=np.array([act], np.int32), N=n)
-        assert np.allclose(got, exp), f'value mismatch act={act}'
+        assert np.allclose(got, exp), f"value mismatch act={act}"
         # Original (non-transformed) reference agrees.
         ref = np.zeros(n)
         base_run = guard_over_loop.to_sdfg(simplify=True)
         base_run(a=a, b=ref, act=np.array([act], np.int32), N=n)
-        assert np.allclose(got, ref), f'round-trip diverged from original act={act}'
+        assert np.allclose(got, ref), f"round-trip diverged from original act={act}"
 
 
 @dace.program
@@ -127,11 +131,11 @@ def test_moveif_up_hoists_the_guard_out_of_the_loop():
     a = rng.standard_normal(n)
 
     sdfg = loop_over_guard.to_sdfg(simplify=True)
-    assert conds_inside_loops(sdfg) == 1, 'the fixture must start with the guard inside the loop'
-    assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) == 1, 'the up direction refused'
+    assert conds_inside_loops(sdfg) == 1, "the fixture must start with the guard inside the loop"
+    assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) == 1, "the up direction refused"
     sdfg.validate()
-    assert len(_top_conds(sdfg)) == 1, 'the guard did not reach the top level'
-    assert conds_inside_loops(sdfg) == 0, 'a copy of the guard was left inside the loop'
+    assert len(_top_conds(sdfg)) == 1, "the guard did not reach the top level"
+    assert conds_inside_loops(sdfg) == 0, "a copy of the guard was left inside the loop"
 
     for act in (1, 0):
         got = np.zeros(n)
@@ -139,7 +143,7 @@ def test_moveif_up_hoists_the_guard_out_of_the_loop():
         ref = np.zeros(n)
         base = loop_over_guard.to_sdfg(simplify=True)
         base(a=a, b=ref, act=np.array([act], np.int32), N=n)
-        assert np.allclose(got, ref), f'hoist diverged act={act}'
+        assert np.allclose(got, ref), f"hoist diverged act={act}"
 
 
 def test_moveif_up_then_into_completes_the_roundtrip():
@@ -147,7 +151,7 @@ def test_moveif_up_then_into_completes_the_roundtrip():
     sdfg = loop_over_guard.to_sdfg(simplify=True)
     assert MoveLoopInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 1, 'the down direction refused on the hoisted form'
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 1, "the down direction refused on the hoisted form"
     sdfg.validate()
     assert not _top_conds(sdfg)
     assert conds_inside_loops(sdfg) == 1
@@ -175,21 +179,21 @@ def test_looptomap_then_maptoloop_then_looptomap():
     exp = a * 3.0 + 1.0
 
     sdfg = parallel_loop.to_sdfg(simplify=True)
-    assert _nmaps(sdfg) == 0 and _nloops(sdfg) == 1, 'the fixture must start as one sequential loop'
-    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, 'loop did not become a map'
+    assert _nmaps(sdfg) == 0 and _nloops(sdfg) == 1, "the fixture must start as one sequential loop"
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, "loop did not become a map"
     sdfg.validate()
     assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0
 
-    assert sdfg.apply_transformations_repeated(MapToForLoop) == 1, 'map did not become a loop'
+    assert sdfg.apply_transformations_repeated(MapToForLoop) == 1, "map did not become a loop"
     sdfg.validate()
-    assert _nmaps(sdfg) == 0, 'the intermediate must carry no map at all'
+    assert _nmaps(sdfg) == 0, "the intermediate must carry no map at all"
 
-    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, 'the re-lift refused'
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1, "the re-lift refused"
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, 'round-trip did not recover a parallel map'
+    assert _nmaps(sdfg) == 1, "round-trip did not recover a parallel map"
     got = np.zeros(n)
     sdfg(a=a, b=got, N=n)
-    assert np.allclose(got, exp), 'LoopToMap<->MapToForLoop round-trip changed values'
+    assert np.allclose(got, exp), "LoopToMap<->MapToForLoop round-trip changed values"
 
 
 # MapFission <-> MapFusion (vertical)
@@ -216,20 +220,20 @@ def test_mapfission_then_mapfusion_roundtrip():
     sdfg = two_stmt_map.to_sdfg(simplify=True)
     # Canonicalize folds the frontend's scalar copies before fission and fusion; so does this direct call.
     FoldScalarReadCopies().apply_pass(sdfg, {})
-    assert _nmaps(sdfg) == 1, 'the fixture must start as a single two-statement map'
+    assert _nmaps(sdfg) == 1, "the fixture must start as a single two-statement map"
     nfis = sdfg.apply_transformations_repeated(MapFission)
     sdfg.validate()
-    assert nfis >= 1, 'fission refused'
-    assert _nmaps(sdfg) >= 2, 'fission did not split the map'
+    assert nfis >= 1, "fission refused"
+    assert _nmaps(sdfg) >= 2, "fission did not split the map"
 
-    assert sdfg.apply_transformations_repeated(MapFusionVertical) >= 1, 'fusion refused'
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) >= 1, "fusion refused"
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'fusion did not recombine to a single map, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 1, f"fusion did not recombine to a single map, got {_nmaps(sdfg)}"
     got_b = np.zeros(n)
     got_c = np.zeros(n)
     sdfg(a=a, b=got_b, c=got_c, N=n)
-    assert np.allclose(got_b, exp_b) and np.allclose(got_c, exp_c), 'fission<->fusion round-trip changed values'
+    assert np.allclose(got_b, exp_b) and np.allclose(got_c, exp_c), "fission<->fusion round-trip changed values"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

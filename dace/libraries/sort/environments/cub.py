@@ -5,6 +5,7 @@
 no extra CMake package is needed beyond the existing CUDA setup. The environment
 declares the include and inherits the standard CUDA environment for the runtime.
 """
+
 import dace.library
 from dace.codegen import common
 from dace.libraries.standard.environments.cuda import CUDA
@@ -39,9 +40,9 @@ class CUB:
         ROCm include root the HIP language already carries, so the HIP build needs nothing here --
         and naming a CUDAToolkit variable that was never resolved would expand to nothing useful.
         """
-        if common.get_gpu_backend() == 'hip':
+        if common.get_gpu_backend() == "hip":
             return []
-        return ['${CUDAToolkit_INCLUDE_DIRS}', '${CUDAToolkit_INCLUDE_DIRS}/cccl']
+        return ["${CUDAToolkit_INCLUDE_DIRS}", "${CUDAToolkit_INCLUDE_DIRS}/cccl"]
 
     cmake_libraries: List[str] = []
     cmake_compile_flags: List[str] = []
@@ -54,8 +55,8 @@ class CUB:
     # per backend and defines the ``gpucub`` namespace every expansion emits, which is what lets one
     # expansion serve both instead of a hand-maintained AMD copy of each.
     headers = {
-        'frame': ['dace/cub_scratch.cuh'],
-        'cuda': ['dace/cuda/gpucub.cuh', 'dace/cub_scratch.cuh', 'dace/cub_compat.cuh'],
+        "frame": ["dace/cub_scratch.cuh"],
+        "cuda": ["dace/cuda/gpucub.cuh", "dace/cub_scratch.cuh", "dace/cub_compat.cuh"],
     }
     state_fields: List[str] = []
     init_code = ""
@@ -88,7 +89,7 @@ class SortScratch:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers: Dict[str, List[str]] = {'frame': []}
+    headers: Dict[str, List[str]] = {"frame": []}
     state_fields: List[str] = []
     init_code = f"::dace::cub::get_scratch<::dace::cub::SortTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::SortTag>();"
@@ -116,7 +117,7 @@ class ScanScratch:
     #: kernels the strided path launches. The host translation unit never sees either -- both
     #: carry ``__global__`` symbols, and the affine header includes ``cub/cub.cuh``, which the
     #: host compiler cannot parse.
-    headers = {'frame': [], 'cuda': ['dace/cuda/scan_affine.cuh', 'dace/cuda/scan.cuh']}
+    headers = {"frame": [], "cuda": ["dace/cuda/scan_affine.cuh", "dace/cuda/scan.cuh"]}
     state_fields: List[str] = []
     init_code = f"::dace::cub::get_scratch<::dace::cub::ScanTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::ScanTag>();"
@@ -144,7 +145,7 @@ class BlockCollectives:
 
     #: CUDA unit only, for the same reason ScanScratch gives: the header includes ``cub/cub.cuh``,
     #: which the host compiler cannot parse.
-    headers = {'frame': [], 'cuda': ['dace/cuda/scan.cuh']}
+    headers = {"frame": [], "cuda": ["dace/cuda/scan.cuh"]}
     state_fields: List[str] = []
     init_code = ""
     finalize_code = ""
@@ -169,7 +170,7 @@ class ReduceScratch:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers: Dict[str, List[str]] = {'frame': []}
+    headers: Dict[str, List[str]] = {"frame": []}
     state_fields: List[str] = []
     init_code = f"::dace::cub::get_scratch<::dace::cub::ReduceTag>({_CUB_INITIAL_BYTES_PER_STREAM}ull, 0);"
     finalize_code = "::dace::cub::release_scratch<::dace::cub::ReduceTag>();"
@@ -202,9 +203,11 @@ class DetectScratch:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': [], 'cuda': ['dace/cuda/detect.cuh']}
+    headers = {"frame": [], "cuda": ["dace/cuda/detect.cuh"]}
     state_fields: List[str] = []
     init_code = "::dace::cub::get_scratch<::dace::cub::DetectFlagTag>(sizeof(unsigned long long), 0);"
-    finalize_code = ("::dace::cub::release_scratch<::dace::cub::DetectFlagTag>();\n"
-                     "::dace::cub::release_scratch<::dace::cub::DetectOwnerTag>();")
+    finalize_code = (
+        "::dace::cub::release_scratch<::dace::cub::DetectFlagTag>();\n"
+        "::dace::cub::release_scratch<::dace::cub::DetectOwnerTag>();"
+    )
     dependencies = [CUB]

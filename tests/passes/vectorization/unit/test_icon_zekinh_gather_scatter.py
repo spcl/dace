@@ -66,19 +66,26 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
       scalars -- scalar-load -> scalar chains stay python scalar tasklets (user
       direction 2026-06-15); they touch no tile, so are not counted.
     """
-    return sum(1 for n, parent in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n)
-               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
+    return sum(
+        1
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet)
+        and not is_assign_tasklet(n)
+        and not n.label.startswith("tile_runtime")
+        and tasklet_reads_or_writes_tile(parent, n, WIDTHS)
+    )
 
 
 def _count_tile_gathers(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, node_state in sdfg.all_nodes_recursive()
-               if (isinstance(n, TileGather) and tuple(n.gather_dims)))
+    return sum(
+        1 for n, node_state in sdfg.all_nodes_recursive() if (isinstance(n, TileGather) and tuple(n.gather_dims))
+    )
 
 
 def _count_tile_scatters(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, node_state in sdfg.all_nodes_recursive()
-               if (isinstance(n, TileScatter) and tuple(n.gather_dims)))
+    return sum(
+        1 for n, node_state in sdfg.all_nodes_recursive() if (isinstance(n, TileScatter) and tuple(n.gather_dims))
+    )
 
 
 def test_icon_zekinh_gather_scatter_descent_to_tile_only():
@@ -97,17 +104,21 @@ def test_icon_zekinh_gather_scatter_descent_to_tile_only():
             branch_mode=BranchMode.MERGE,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
-        )).apply_pass(sdfg, {})
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
 
     n_tasklet = _count_tasklets(sdfg)
     n_gather = _count_tile_gathers(sdfg)
     n_scatter = _count_tile_scatters(sdfg)
-    assert n_tasklet == 0, (f"icon_zekinh_gather_scatter must lower to tile lib nodes only at the K-dim "
-                            f"layer; got {n_tasklet} raw Tasklet nodes after the descent.")
-    assert n_gather >= 1, (f"The mixed-gather source must yield at least one TileGather (gather); got {n_gather}.")
-    assert n_scatter >= 1, (f"The mixed-scatter destination must yield at least one TileScatter (scatter); "
-                            f"got {n_scatter}.")
+    assert n_tasklet == 0, (
+        f"icon_zekinh_gather_scatter must lower to tile lib nodes only at the K-dim "
+        f"layer; got {n_tasklet} raw Tasklet nodes after the descent."
+    )
+    assert n_gather >= 1, f"The mixed-gather source must yield at least one TileGather (gather); got {n_gather}."
+    assert n_scatter >= 1, (
+        f"The mixed-scatter destination must yield at least one TileScatter (scatter); got {n_scatter}."
+    )
 
 
 if __name__ == "__main__":

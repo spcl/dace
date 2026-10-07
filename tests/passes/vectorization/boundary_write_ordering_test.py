@@ -13,6 +13,7 @@ edge survived, anchored on nothing, and the corners came out zero because execut
 to node insertion order. These tests pin the ordering both right at the nesting and end to end
 through canonicalize + vectorize.
 """
+
 import copy
 
 import numpy as np
@@ -130,16 +131,18 @@ def _assert_lid_ordered_after_columns(sdfg, phase):
     for lid in lids:
         target = _ordering_target(state, lid)
         ordering = [e for e in state.in_edges(target) if e.data.is_empty()]
-        assert ordering, (f"{phase}: the lid scope {lid} lost its ordering edge; nothing keeps it "
-                          f"after the column zeroing it overlaps at the corners")
+        assert ordering, (
+            f"{phase}: the lid scope {lid} lost its ordering edge; nothing keeps it "
+            f"after the column zeroing it overlaps at the corners"
+        )
         for column in columns:
             if column is lid:
                 continue
-            assert _reaches(
-                state, column,
-                target), (f"{phase}: no happens-before from the column scope {column} to the lid scope {lid}. "
-                          f"The ordering edges into the lid start at {[e.src for e in ordering]}, which the "
-                          f"column scope no longer reaches, so the corners race.")
+            assert _reaches(state, column, target), (
+                f"{phase}: no happens-before from the column scope {column} to the lid scope {lid}. "
+                f"The ordering edges into the lid start at {[e.src for e in ordering]}, which the "
+                f"column scope no longer reaches, so the corners race."
+            )
 
 
 def test_canonicalized_boundary_orders_lid_after_columns():
@@ -173,10 +176,13 @@ def test_boundary_corners_survive_canonicalize_vectorize(target_isa):
     """End to end: the corners the lid overwrites must stay 1.0 after canonicalize + vectorize."""
     sdfg = _canonical()
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=target_isa,
-                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,),
+            target_isa=target_isa,
+            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
     sdfg.name = f"{sdfg.name}_{target_isa.name.lower()}"
     sdfg.validate()
 
@@ -204,10 +210,13 @@ def test_a_folded_write_hands_its_ordering_to_the_node_that_absorbed_it():
     """
     sdfg = _canonical()
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.MASKED_TAIL,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
 
     stranded = []
     for nested in sdfg.all_sdfgs_recursive():
@@ -218,8 +227,10 @@ def test_a_folded_write_hands_its_ordering_to_the_node_that_absorbed_it():
                 orders = [e for e in state.out_edges(node) if e.data.is_empty()]
                 if orders and not state.in_edges(node):
                     stranded.append((state.label, node.data, [str(e.dst) for e in orders]))
-    assert not stranded, (f"ordering edges anchored on unwritten access nodes: {stranded}. "
-                          f"Whatever they order is free to run before the write they stand for.")
+    assert not stranded, (
+        f"ordering edges anchored on unwritten access nodes: {stranded}. "
+        f"Whatever they order is free to run before the write they stand for."
+    )
 
 
 def test_boundary_corners_match_canonical_only():

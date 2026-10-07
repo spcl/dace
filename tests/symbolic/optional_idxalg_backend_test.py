@@ -7,6 +7,7 @@ runs in a subprocess because the backend is chosen once at import, and idxalg is
 made genuinely unimportable via a ``sys.meta_path`` finder that raises -- merely
 checking ``sys.modules`` would pass even when idxalg is installed.
 """
+
 import os
 import subprocess
 import sys
@@ -55,7 +56,9 @@ def test_default_backend_works_without_idxalg_installed():
         import dace.symbolic as dsym
         assert dsym.symstr(dsym.pystr_to_symbolic("(N-1)//8"))
         print("OK")
-        """, "sympy")
+        """,
+        "sympy",
+    )
     assert result.returncode == 0, f"DaCe must import without idxalg:\n{result.stderr}"
     assert "OK" in result.stdout
 
@@ -73,7 +76,9 @@ def test_idxalg_opt_in_without_package_fails_loudly():
             print("RAISED")
         else:
             print("FELL_BACK")
-        """, "idxalg")
+        """,
+        "idxalg",
+    )
     assert result.returncode == 0, result.stderr
     assert "RAISED" in result.stdout, f"expected a loud failure, not a silent sympy fallback: {result.stdout}"
 

@@ -8,6 +8,7 @@ iteration: polybench nussinov read ``seq`` on the host inside its ``j`` loop and
 iteration, 6.4 million pageable copies per call at N=3591 (400 s against a 22 s kernel). Neither
 side ever writes ``seq``, so every copy after the first carries the bytes already there.
 """
+
 import collections
 
 import numpy as np
@@ -17,7 +18,7 @@ import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.offloading import OffloadToAccelerator
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -80,19 +81,20 @@ def seq_copies(sdfg: dace.SDFG) -> collections.Counter:
         if not (isinstance(state, dace.SDFGState) and isinstance(node, dace.nodes.AccessNode)):
             continue
         for edge in state.out_edges(node):
-            if isinstance(edge.dst, dace.nodes.AccessNode) and {node.data, edge.dst.data} == {'seq', 'seq_host'}:
+            if isinstance(edge.dst, dace.nodes.AccessNode) and {node.data, edge.dst.data} == {"seq", "seq_host"}:
                 region = state.parent_graph
-                found[(node.data, edge.dst.data, 'top' if region is sdfg else region.label)] += 1
+                found[(node.data, edge.dst.data, "top" if region is sdfg else region.label)] += 1
     return found
 
 
 def test_a_container_nothing_writes_is_filled_once_at_the_entry():
-    assert seq_copies(offloaded()) == collections.Counter({('seq', 'seq_host', 'top'): 1})
+    assert seq_copies(offloaded()) == collections.Counter({("seq", "seq_host", "top"): 1})
 
 
 @pytest.mark.gpu
 def test_the_offloaded_recurrence_computes_what_numpy_computes():
     import cupy
+
     sdfg = offloaded()
     rng = np.random.default_rng(0)
     seq = rng.integers(0, 4, size=40).astype(np.int32)

@@ -1,4 +1,5 @@
 """Unit tests for :class:`ExpandNestedSDFGInputs`."""
+
 import copy
 
 import dace
@@ -11,14 +12,14 @@ from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNeste
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 K = 4
 
 
 @dace.program
 def _jacobi2d_map_tile(a: dace.float64[N, M], b: dace.float64[N, M]):
-    for ii, jj in dace.map[0:N - 2:K, 0:M - 2:K]:
+    for ii, jj in dace.map[0 : N - 2 : K, 0 : M - 2 : K]:
         for i, j in dace.map[0:K, 0:K]:
             b[ii + i + 1, jj + j + 1] = a[ii + i + 1, jj + j + 1] * 2.0
 
@@ -40,6 +41,7 @@ def test_widens_narrowed_inedges_to_full_array():
     """Every in/out edge of the top-level NSDFG must read the full outer
     array after ``ExpandNestedSDFGInputs``."""
     from dace import subsets
+
     sdfg = _build_map_to_for_loop_test_sdfg()
     n_before = _count_nsdfgs(sdfg)
     assert n_before > 0
@@ -56,8 +58,9 @@ def test_widens_narrowed_inedges_to_full_array():
                 if e.data is None or e.data.data is None:
                     continue
                 full = subsets.Range.from_array(sdfg.arrays[e.data.data])
-                assert e.data.subset == full, \
-                    f'NSDFG in-edge for {e.data.data!r} should be full {full}; got {e.data.subset}'
+                assert e.data.subset == full, (
+                    f"NSDFG in-edge for {e.data.data!r} should be full {full}; got {e.data.subset}"
+                )
 
 
 def test_apply_preserves_numerics_via_inline():
@@ -84,7 +87,7 @@ def test_apply_preserves_numerics_via_inline():
     ref = b.copy()
     copy.deepcopy(_jacobi2d_map_tile.to_sdfg(simplify=True))(a=a.copy(), b=ref, N=n, M=m)
     sdfg(a=a, b=b, N=n, M=m)
-    assert np.allclose(b, ref), f'max diff: {np.abs(b - ref).max():.3e}'
+    assert np.allclose(b, ref), f"max diff: {np.abs(b - ref).max():.3e}"
 
 
 @dace.program
@@ -105,7 +108,7 @@ def test_uncollapse_multidim_condition_keeps_all_map_dims():
     fails. Only the codeblock/interstate path was wrong; the memlet path was already correct."""
     sdfg = _masked_power.to_sdfg(simplify=True)
     applied = PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
-    assert applied, 'expected ExpandNestedSDFGInputs to widen the collapsed mask'
+    assert applied, "expected ExpandNestedSDFGInputs to widen the collapsed mask"
     sdfg.validate()
 
     # The interstate assignment reading the mask must index EVERY map dim.
@@ -118,12 +121,13 @@ def test_uncollapse_multidim_condition_keeps_all_map_dims():
             for cfg in n.sdfg.all_control_flow_regions():
                 for e in cfg.edges():
                     for var, expr in (e.data.assignments or {}).items():
-                        if 'I' in expr:  # the widened mask read
+                        if "I" in expr:  # the widened mask read
                             for p in params:
-                                assert p in expr, \
-                                    f'mask assignment {var}={expr!r} dropped map dim {p!r} (params {params})'
+                                assert p in expr, (
+                                    f"mask assignment {var}={expr!r} dropped map dim {p!r} (params {params})"
+                                )
                             checked = True
-    assert checked, 'no mask interstate assignment found to check'
+    assert checked, "no mask interstate assignment found to check"
 
     # Bit-exact vs the numpy reference (a dropped dim would gather the wrong lanes).
     n = 12
@@ -134,7 +138,7 @@ def test_uncollapse_multidim_condition_keeps_all_map_dims():
     ref = A.copy()
     np.power(ref, -1.5, out=ref, where=mask)
     sdfg(A=got, I=mask, N=n)
-    assert np.allclose(got, ref), f'masked power diverged: max diff {np.abs(got - ref).max():.3e}'
+    assert np.allclose(got, ref), f"masked power diverged: max diff {np.abs(got - ref).max():.3e}"
 
 
 def test_refuses_inside_map_scope():
@@ -154,7 +158,7 @@ def test_refuses_inside_map_scope():
     before = _count_nsdfgs(sdfg)
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
     after = _count_nsdfgs(sdfg)
-    assert before == after, 'pass must not touch Map-scoped NSDFGs'
+    assert before == after, "pass must not touch Map-scoped NSDFGs"
 
 
 def test_introduced_symbol_picks_up_outer_type():
@@ -177,19 +181,24 @@ def test_introduced_symbol_picks_up_outer_type():
                     continue
                 inner_t = n.sdfg.symbols[sym]
                 if sym in sdfg.symbols:
-                    assert inner_t == sdfg.symbols[sym], \
-                        f'symbol {sym!r}: inner type {inner_t} != outer type {sdfg.symbols[sym]}'
+                    assert inner_t == sdfg.symbols[sym], (
+                        f"symbol {sym!r}: inner type {inner_t} != outer type {sdfg.symbols[sym]}"
+                    )
 
 
-NB = dace.symbol('NB')
-NLEV = dace.symbol('NLEV')
-NPROMA = dace.symbol('NPROMA')
+NB = dace.symbol("NB")
+NLEV = dace.symbol("NLEV")
+NPROMA = dace.symbol("NPROMA")
 
 
 @dace.program
-def _icon_zekinh_gather_kernel(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int32[NB, NPROMA, 3],
-                               edge_blk: dace.int32[NB, NPROMA, 3], z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
-                               z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def _icon_zekinh_gather_kernel(
+    e_bln: dace.float64[NB, 3, NPROMA],
+    edge_idx: dace.int32[NB, NPROMA, 3],
+    edge_blk: dace.int32[NB, NPROMA, 3],
+    z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
+    z_ekinh: dace.float64[NB, NLEV, NPROMA],
+):
     """Minimal ICON velocity_zekinh-style data-dependent gather kernel.
 
     The 3-edge bilinear gather (``z_kin_hor_e[edge_blk[..], jk, edge_idx[..]]``)
@@ -200,7 +209,7 @@ def _icon_zekinh_gather_kernel(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dac
     for jb in range(NB):
         for jk in range(NLEV):
             for jc in range(NPROMA):
-                z_ekinh[jb, jk, jc] = (e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]])
+                z_ekinh[jb, jk, jc] = e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]]
 
 
 def test_widens_icon_zekinh_gather_inmap_nsdfg():
@@ -222,6 +231,7 @@ def test_widens_icon_zekinh_gather_inmap_nsdfg():
       the matched node's ``args`` splatted positionally.
     """
     from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+
     sdfg = _icon_zekinh_gather_kernel.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap, permissive=False, validate=False)
     sdfg.apply_transformations_repeated(RefineNestedAccess, permissive=False, validate=False)
@@ -274,14 +284,16 @@ def test_icon_zekinh_gather_numerics_via_expand_then_inline():
 
     # Reference: unmodified SDFG
     ref_sdfg = _icon_zekinh_gather_kernel.to_sdfg(simplify=True)
-    ref_sdfg(e_bln=e_bln.copy(),
-             edge_idx=edge_idx.copy(),
-             edge_blk=edge_blk.copy(),
-             z_kin_hor_e=z_kin_hor_e.copy(),
-             z_ekinh=ref_out,
-             NB=nb,
-             NLEV=nlev,
-             NPROMA=nproma)
+    ref_sdfg(
+        e_bln=e_bln.copy(),
+        edge_idx=edge_idx.copy(),
+        edge_blk=edge_blk.copy(),
+        z_kin_hor_e=z_kin_hor_e.copy(),
+        z_ekinh=ref_out,
+        NB=nb,
+        NLEV=nlev,
+        NPROMA=nproma,
+    )
 
     # Transformed: LoopToMap + Expand + Inline
     tsdfg = _icon_zekinh_gather_kernel.to_sdfg(simplify=True)
@@ -290,15 +302,17 @@ def test_icon_zekinh_gather_numerics_via_expand_then_inline():
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(tsdfg, {})
     PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(tsdfg, {})
     tsdfg.validate()
-    tsdfg(e_bln=e_bln.copy(),
-          edge_idx=edge_idx.copy(),
-          edge_blk=edge_blk.copy(),
-          z_kin_hor_e=z_kin_hor_e.copy(),
-          z_ekinh=test_out,
-          NB=nb,
-          NLEV=nlev,
-          NPROMA=nproma)
-    assert np.allclose(test_out, ref_out), f'max diff: {np.abs(test_out - ref_out).max():.3e}'
+    tsdfg(
+        e_bln=e_bln.copy(),
+        edge_idx=edge_idx.copy(),
+        edge_blk=edge_blk.copy(),
+        z_kin_hor_e=z_kin_hor_e.copy(),
+        z_ekinh=test_out,
+        NB=nb,
+        NLEV=nlev,
+        NPROMA=nproma,
+    )
+    assert np.allclose(test_out, ref_out), f"max diff: {np.abs(test_out - ref_out).max():.3e}"
 
 
 @dace.program
@@ -317,6 +331,7 @@ def test_scatter_no_conflict_widens_and_validates():
     """Indirect store ``a[idx[i]]`` -- ExpandNestedSDFGInputs must widen
     the scatter pattern and keep the inner subscript intact."""
     from dace.transformation.dataflow.map_for_loop import MapToForLoop
+
     sdfg = _scatter_no_conflict_kernel.to_sdfg(simplify=True)
     PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
@@ -328,6 +343,7 @@ def test_scatter_no_conflict_numerics_via_expand_then_inline():
     """End-to-end: scatter with permutation indices (zero conflicts) --
     the post-rewrite SDFG must match an untransformed reference run."""
     from dace.transformation.dataflow.map_for_loop import MapToForLoop
+
     n = 64
     rng = np.random.default_rng(0xBAD1DEA)
     idx = rng.permutation(n).astype(np.int32)
@@ -342,7 +358,7 @@ def test_scatter_no_conflict_numerics_via_expand_then_inline():
     PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(tsdfg, {})
     tsdfg.validate()
     tsdfg(a=test_a, b=b.copy(), idx=idx.copy(), N=n)
-    assert np.allclose(test_a, ref_a), f'max diff: {np.abs(test_a - ref_a).max():.3e}'
+    assert np.allclose(test_a, ref_a), f"max diff: {np.abs(test_a - ref_a).max():.3e}"
 
 
 def test_widened_shape_introduces_symbol_already_in_inner_table():
@@ -368,7 +384,7 @@ def test_widened_shape_introduces_symbol_already_in_inner_table():
     # for it. The inner SDFG accepts a connector "A_conn" whose shape is (N, N) -- which
     # will trip the "Missing symbols on nested SDFG" check unless symbol_mapping
     # auto-propagates N.
-    inner = dace.SDFG('inner_widened_shape_introduces_symbol_already_in_inner_table')
+    inner = dace.SDFG("inner_widened_shape_introduces_symbol_already_in_inner_table")
     inner.add_symbol("N", dace.int64)
     inner.add_array("A_conn", (N_sym, N_sym), dace.float64)
     inner.add_state("body")
@@ -387,8 +403,9 @@ def test_widened_shape_introduces_symbol_already_in_inner_table():
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
 
     # After expansion: A_conn's shape is (N, N) referencing N. symbol_mapping MUST bind N.
-    assert "N" in nsdfg.symbol_mapping, \
+    assert "N" in nsdfg.symbol_mapping, (
         f"N should be auto-propagated to symbol_mapping; got {dict(nsdfg.symbol_mapping)}"
+    )
     # Validation must succeed (the original bug raised here).
     sdfg.validate()
 
@@ -405,12 +422,12 @@ def test_conditional_block_else_branch_not_dereferenced():
     from dace.properties import CodeBlock as PropCodeBlock
 
     sdfg = dace.SDFG("cond_else_repro")
-    sdfg.add_array("A", (10, ), dace.float64)
+    sdfg.add_array("A", (10,), dace.float64)
     state = sdfg.add_state("s")
     a_an = state.add_access("A")
 
-    inner = dace.SDFG('inner_conditional_block_else_branch_not_dereferenced')
-    inner.add_array("A_conn", (1, ), dace.float64)  # narrowed -> pass must widen to trigger apply()
+    inner = dace.SDFG("inner_conditional_block_else_branch_not_dereferenced")
+    inner.add_array("A_conn", (1,), dace.float64)  # narrowed -> pass must widen to trigger apply()
 
     cb = ConditionalBlock("cb", sdfg=inner, parent=inner)
     inner.add_node(cb, is_start_block=True)
@@ -446,7 +463,7 @@ def test_scalar_source_not_subscripted_in_interstate_assignment():
     sdfg = dace.SDFG("scalar_in_iedge")
     N_sym = dace.symbol("N", dtype=dace.int64)
     sdfg.add_symbol("N", dace.int64)
-    sdfg.add_array("A", (N_sym, ), dace.float64)
+    sdfg.add_array("A", (N_sym,), dace.float64)
     sdfg.add_scalar("c1", dace.float64)
     sdfg.add_scalar("c2", dace.float64)
     state = sdfg.add_state("s")
@@ -456,8 +473,8 @@ def test_scalar_source_not_subscripted_in_interstate_assignment():
 
     # Inner NSDFG: has its own c1, c2 connectors and an interstate edge that
     # references c1, c2 by bare name (the @dace.program shape).
-    inner = dace.SDFG('inner_scalar_source_not_subscripted_in_interstate_assignment')
-    inner.add_array("A_conn", (1, ), dace.float64)  # length-1 connector for outer A
+    inner = dace.SDFG("inner_scalar_source_not_subscripted_in_interstate_assignment")
+    inner.add_array("A_conn", (1,), dace.float64)  # length-1 connector for outer A
     inner.add_scalar("c1", dace.float64)
     inner.add_scalar("c2", dace.float64)
     s_init = inner.add_state("init")
@@ -494,7 +511,7 @@ def test_constant_write_at_window_start_is_offset_like_any_relative_index():
     sdfg.add_array("A", (5, 5, 3), dace.float64)
     state = sdfg.add_state("s")
 
-    inner = dace.SDFG('inner_constant_write_at_window_start_is_offset_like_any_relative_index')
+    inner = dace.SDFG("inner_constant_write_at_window_start_is_offset_like_any_relative_index")
     inner.add_array("A_conn", (1, 2, 1), dace.float64)
     body = inner.add_state("body")
     for value, index in ((1.0, "0, 0, 0"), (2.0, "0, 1, 0")):
@@ -520,7 +537,7 @@ def test_constant_write_at_window_start_is_offset_like_any_relative_index():
 
 @dace.program
 def _inplace_tile_rmw(a: dace.float64[N, M], b: dace.float64[N, M]):
-    for ii, jj in dace.map[0:N - 2:K, 0:M - 2:K]:
+    for ii, jj in dace.map[0 : N - 2 : K, 0 : M - 2 : K]:
         for i, j in dace.map[0:K, 0:K]:
             a[ii + i + 1, jj + j + 1] = a[ii + i + 1, jj + j + 1] * 2.0 + b[ii + i + 1, jj + j + 1]
 
@@ -540,6 +557,7 @@ def test_inplace_same_array_read_and_write_no_double_offset():
     # Sanity: at least one top-level NSDFG binds outer ``a`` on both an in- and
     # out-edge (the in-place shape this test exists to cover).
     from dace import subsets
+
     saw_inplace = False
     for state in sdfg.states():
         for nd in state.nodes():
@@ -602,6 +620,7 @@ def _nest_then_expand(sdfg):
     at which a gather/scatter index array must be threaded into the body."""
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
     from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
     NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
@@ -665,44 +684,46 @@ def flux_reread_body():
     written rows are copied to ``snap``. ``rf`` row 0 is seeded in the same state, so the map reads it
     through the MapEntry as well as through the in-scope access node. The result node is added first:
     once it loses its producer it is a source, and the copy out of it is emitted before the map."""
-    sdfg = dace.SDFG('flux_reread')
-    for name in ('lf', 'rf'):
+    sdfg = dace.SDFG("flux_reread")
+    for name in ("lf", "rf"):
         sdfg.add_array(name, [FLUX_ROWS + 1, FLUX_COLS], dace.float64)
-    sdfg.add_array('seed', [FLUX_COLS], dace.float64)
-    sdfg.add_array('snap', [FLUX_ROWS, FLUX_COLS], dace.float64)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    st = sdfg.add_state('main')
-    result = st.add_access('rf')
-    snap = st.add_write('snap')
-    seeded = st.add_access('rf')
-    st.add_nedge(st.add_read('seed'), seeded, dace.Memlet(f'seed[0:{FLUX_COLS}]', other_subset=f'0, 0:{FLUX_COLS}'))
-    ome, omx = st.add_map('rows', {'jk': f'1:{FLUX_ROWS + 1}'})
-    ime, imx = st.add_map('cols', {'jl': f'0:{FLUX_COLS}'}, schedule=dace.ScheduleType.Sequential)
-    first = st.add_tasklet('first', {'_in': None, '_row0': None}, {'_out': None}, '_out = _in + _row0')
-    mid = st.add_access('rf')
-    reread = st.add_tasklet('reread', {'_in': None}, {'_out': None}, '_out = _in')
-    scalar = st.add_access('s')
-    update = st.add_tasklet('update', {'_in': None}, {'_out': None}, '_out = _in * 2.0 + 1.0')
-    st.add_memlet_path(st.add_read('lf'), ome, ime, first, dst_conn='_in', memlet=dace.Memlet('lf[jk - 1, jl]'))
-    st.add_memlet_path(seeded, ome, ime, first, dst_conn='_row0', memlet=dace.Memlet('rf[0, jl]'))
-    st.add_edge(first, '_out', mid, None, dace.Memlet('rf[jk, jl]'))
-    st.add_edge(mid, None, reread, '_in', dace.Memlet('rf[jk, jl]'))
-    st.add_edge(reread, '_out', scalar, None, dace.Memlet('s[0]'))
-    st.add_edge(scalar, None, update, '_in', dace.Memlet('s[0]'))
-    st.add_memlet_path(update, imx, omx, result, src_conn='_out', memlet=dace.Memlet('rf[jk, jl]'))
-    st.add_nedge(result, snap,
-                 dace.Memlet(f'rf[1:{FLUX_ROWS + 1}, 0:{FLUX_COLS}]', other_subset=f'0:{FLUX_ROWS}, 0:{FLUX_COLS}'))
+    sdfg.add_array("seed", [FLUX_COLS], dace.float64)
+    sdfg.add_array("snap", [FLUX_ROWS, FLUX_COLS], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    st = sdfg.add_state("main")
+    result = st.add_access("rf")
+    snap = st.add_write("snap")
+    seeded = st.add_access("rf")
+    st.add_nedge(st.add_read("seed"), seeded, dace.Memlet(f"seed[0:{FLUX_COLS}]", other_subset=f"0, 0:{FLUX_COLS}"))
+    ome, omx = st.add_map("rows", {"jk": f"1:{FLUX_ROWS + 1}"})
+    ime, imx = st.add_map("cols", {"jl": f"0:{FLUX_COLS}"}, schedule=dace.ScheduleType.Sequential)
+    first = st.add_tasklet("first", {"_in": None, "_row0": None}, {"_out": None}, "_out = _in + _row0")
+    mid = st.add_access("rf")
+    reread = st.add_tasklet("reread", {"_in": None}, {"_out": None}, "_out = _in")
+    scalar = st.add_access("s")
+    update = st.add_tasklet("update", {"_in": None}, {"_out": None}, "_out = _in * 2.0 + 1.0")
+    st.add_memlet_path(st.add_read("lf"), ome, ime, first, dst_conn="_in", memlet=dace.Memlet("lf[jk - 1, jl]"))
+    st.add_memlet_path(seeded, ome, ime, first, dst_conn="_row0", memlet=dace.Memlet("rf[0, jl]"))
+    st.add_edge(first, "_out", mid, None, dace.Memlet("rf[jk, jl]"))
+    st.add_edge(mid, None, reread, "_in", dace.Memlet("rf[jk, jl]"))
+    st.add_edge(reread, "_out", scalar, None, dace.Memlet("s[0]"))
+    st.add_edge(scalar, None, update, "_in", dace.Memlet("s[0]"))
+    st.add_memlet_path(update, imx, omx, result, src_conn="_out", memlet=dace.Memlet("rf[jk, jl]"))
+    st.add_nedge(
+        result, snap, dace.Memlet(f"rf[1:{FLUX_ROWS + 1}, 0:{FLUX_COLS}]", other_subset=f"0:{FLUX_ROWS}, 0:{FLUX_COLS}")
+    )
     sdfg.validate()
     return sdfg
 
 
 def nest_and_expand_flux_body():
     from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
+
     sdfg = flux_reread_body()
     NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True).apply_pass(sdfg, {})
     nsdfg = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
     state = sdfg.states()[0]
-    written = [e for e in state.out_edges(nsdfg) if e.data.data == 'rf']
+    written = [e for e in state.out_edges(nsdfg) if e.data.data == "rf"]
     assert len(written) == 2, f"fixture must bind 'rf' through two out-connectors, got {written}"
     PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
     sdfg.validate()
@@ -715,16 +736,16 @@ def map_node(state, kind, label):
 
 def test_a_folded_write_connector_keeps_the_path_that_leaves_the_map():
     sdfg, state = nest_and_expand_flux_body()
-    exit_data = [e.data.data for e in state.out_edges(map_node(state, nodes.MapExit, 'rows'))]
-    assert exit_data == ['rf'], f"the map's write of 'rf' no longer leaves the map: {exit_data}"
+    exit_data = [e.data.data for e in state.out_edges(map_node(state, nodes.MapExit, "rows"))]
+    assert exit_data == ["rf"], f"the map's write of 'rf' no longer leaves the map: {exit_data}"
 
 
 def test_a_folded_read_connector_keeps_the_path_that_enters_the_map():
     """The row-0 seed is written in the same state; without the MapEntry path the map is no longer
     ordered after it."""
     sdfg, state = nest_and_expand_flux_body()
-    entry_data = sorted(e.data.data for e in state.in_edges(map_node(state, nodes.MapEntry, 'rows')))
-    assert entry_data == ['lf', 'rf'], f"the map's read of 'rf' no longer enters the map: {entry_data}"
+    entry_data = sorted(e.data.data for e in state.in_edges(map_node(state, nodes.MapEntry, "rows")))
+    assert entry_data == ["lf", "rf"], f"the map's read of 'rf' no longer enters the map: {entry_data}"
 
 
 def test_a_copy_out_after_folded_connectors_sees_the_map_result():

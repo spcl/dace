@@ -9,6 +9,7 @@ vectorization pipeline. Covers the cases that previously bit
   the regex hack the pass used to carry could not classify these reliably.
 - Boundary cases (empty base, non-digit suffix, no suffix at all).
 """
+
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
@@ -100,10 +101,10 @@ def test_parse_accepts_chunked_form():
 
 def test_parse_chunks_decomposes_full_chain():
     assert LaneIdScheme.parse_chunks("a") is None
-    assert LaneIdScheme.parse_chunks("a_lane0id_3") == ("a", ((0, 3), ))
+    assert LaneIdScheme.parse_chunks("a_lane0id_3") == ("a", ((0, 3),))
     assert LaneIdScheme.parse_chunks("a_lane0id_3_lane1id_5") == ("a", ((0, 3), (1, 5)))
     # Mixed chunked-and-legacy chain: legacy treated as dim 0 chunk.
-    assert LaneIdScheme.parse_chunks("a_laneid_3") == ("a", ((0, 3), ))
+    assert LaneIdScheme.parse_chunks("a_laneid_3") == ("a", ((0, 3),))
 
 
 def test_is_lane_fanned_covers_both_forms():

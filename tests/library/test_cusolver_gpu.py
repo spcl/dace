@@ -16,6 +16,7 @@ run on the GPU after ``apply_gpu_transformations``:
 Every kernel is additionally checked under both the legacy and the experimental (readable) CPU/host
 code generator, which are meant to be orthogonal to the GPU library lowering.
 """
+
 import copy
 
 import numpy as np

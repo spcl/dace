@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Two map-nests with different inner guards under canonicalization.
+"""Two map-nests with different inner guards under canonicalization.
 
-    ``map i: if i: map j: A`` and ``map i: map j: if j: B`` -- distinct
-    index-dependent guards on the same N x M iteration space. The guards
-    must survive, each still depending on its own map index (so neither can
-    be hoisted past the map that defines that index), and the result must be
-    value-preserving. The ideal -- full cross-nest collapse to a single
-    ``map[i, j]`` carrying both ``if i: A`` and ``if j: B`` -- is reached:
-    the two nests fuse into one 2D map and ``ConditionFusion`` then folds
-    the two now-consecutive guards into ONE ``ConditionalBlock`` whose
-    branches are their cross product.
+``map i: if i: map j: A`` and ``map i: map j: if j: B`` -- distinct
+index-dependent guards on the same N x M iteration space. The guards
+must survive, each still depending on its own map index (so neither can
+be hoisted past the map that defines that index), and the result must be
+value-preserving. The ideal -- full cross-nest collapse to a single
+``map[i, j]`` carrying both ``if i: A`` and ``if j: B`` -- is reached:
+the two nests fuse into one 2D map and ``ConditionFusion`` then folds
+the two now-consecutive guards into ONE ``ConditionalBlock`` whose
+branches are their cross product.
 """
+
 import numpy as np
 import pytest
 
@@ -19,8 +20,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -54,12 +55,12 @@ def _guard_symbols(sdfg):
     mappings so they are comparable with the enclosing map's parameters."""
     rename = {
         k: str(v)
-        for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG) for k, v in n.symbol_mapping.items()
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.NestedSDFG)
+        for k, v in n.symbol_mapping.items()
     }
     return {
-        rename.get(s, s)
-        for cb in _conds(sdfg)
-        for c, _ in cb.branches if c is not None for s in c.get_free_symbols()
+        rename.get(s, s) for cb in _conds(sdfg) for c, _ in cb.branches if c is not None for s in c.get_free_symbols()
     }
 
 
@@ -111,10 +112,12 @@ def test_coexisting_index_guards_collapse_to_single_nest():
     cbs = _conds(sdfg)
     assert len(cbs) == 1, f"the collapsed nest must carry one merged guard, got {len(cbs)}"
     assert len(cbs[0].branches) == 3, f"cross product of the two guards minus the empty case: {len(cbs[0].branches)}"
-    assert _guard_symbols(sdfg) == _map_params(sdfg), \
+    assert _guard_symbols(sdfg) == _map_params(sdfg), (
         f"both guards must survive on their own index: {_guard_symbols(sdfg)} vs {_map_params(sdfg)}"
-    assert not [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)], \
+    )
+    assert not [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)], (
         "an index-dependent guard was hoisted to SDFG top level"
+    )
 
     # Value-preserving against the pure-numpy oracle.
     oA, oB = np.full((n, m), 7.0), np.full((n, m), 5.0)

@@ -1,5 +1,6 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``nbody`` (n_body_methods) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace as dc
 
@@ -12,19 +13,20 @@ dc_complex_float = dc.complex128
 # fp32 operation-order differences between numpy and the SDFG diverge fast over many
 # steps; a few timesteps keep the correctness check meaningful and stable (the same
 # small Nt feeds the numpy reference and the SDFG).
-SIZES = {'N': 25, 'tEnd': 2.0, 'dt': 0.05, 'softening': 0.1, 'G': 1.0, 'Nt': 3}
+SIZES = {"N": 25, "tEnd": 2.0, "dt": 0.05, "softening": 0.1, "G": 1.0, "Nt": 3}
 # Nt = ceil(tEnd/dt) at the paper N/tEnd/dt, unlike the S row's stability-driven override above.
-PAPER_SIZES = {'N': 100, 'tEnd': 10.0, 'dt': 0.01, 'softening': 0.1, 'G': 1.0, 'Nt': 1000}
-INPUT_ARGS = ('N', 'tEnd', 'dt')
-ARRAY_ARGS = ('mass', 'pos', 'vel')
+PAPER_SIZES = {"N": 100, "tEnd": 10.0, "dt": 0.01, "softening": 0.1, "G": 1.0, "Nt": 1000}
+INPUT_ARGS = ("N", "tEnd", "dt")
+ARRAY_ARGS = ("mass", "pos", "vel")
 SCALARS = {}
-OUTPUT_ARGS = ('pos', 'vel')
+OUTPUT_ARGS = ("pos", "vel")
 
-N, Nt = (dc.symbol(s, dtype=dc.int64) for s in ('N', 'Nt'))
+N, Nt = (dc.symbol(s, dtype=dc.int64) for s in ("N", "Nt"))
 
 
 def initialize(N, tEnd, dt, datatype=np.float64):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     mass = 20.0 * np.ones((N, 1), dtype=datatype) / N
     pos = rng.random((N, 3), dtype=datatype)
@@ -42,8 +44,8 @@ def getAcc_np(pos, mass, G, softening):
     dx = x.T - x
     dy = y.T - y
     dz = z.T - z
-    inv_r3 = (dx**2 + dy**2 + dz**2 + softening**2)
-    inv_r3[inv_r3 > 0] = inv_r3[inv_r3 > 0]**(-1.5)
+    inv_r3 = dx**2 + dy**2 + dz**2 + softening**2
+    inv_r3[inv_r3 > 0] = inv_r3[inv_r3 > 0] ** (-1.5)
     ax = G * (dx * inv_r3) @ mass
     ay = G * (dy * inv_r3) @ mass
     az = G * (dz * inv_r3) @ mass
@@ -161,14 +163,16 @@ def kernel(mass: dc_float[N], pos: dc_float[N, 3], vel: dc_float[N, 3], dt: dc_f
     return (pos, vel)
 
 
-CORPUS = dict(name='nbody',
-              dwarf='n_body_methods',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="nbody",
+    dwarf="n_body_methods",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

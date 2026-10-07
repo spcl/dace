@@ -12,6 +12,7 @@ which widens those scalar connectors to whole-array descriptors; the tasklet's i
 is converted to a dataflow read -- an input connector fed by the single element ``A[offset]`` -- so
 the explicit-map integer kernel lowers correctly. These tests exercise that fix: int64 / int32
 elementwise, under Permute, Block, and combined Block+Permute, all bit-exact (integer array_equal)."""
+
 import itertools
 
 import numpy
@@ -41,8 +42,8 @@ PROGRAMS = {numpy.int64: make_mul(dace.int64), numpy.int32: make_mul(dace.int32)
 
 def _inputs(npdt, n, seed):
     rng = numpy.random.default_rng(seed)
-    A = rng.integers(-5, 6, size=(n, ) * 3).astype(npdt)
-    B = rng.integers(-5, 6, size=(n, ) * 3).astype(npdt)
+    A = rng.integers(-5, 6, size=(n,) * 3).astype(npdt)
+    B = rng.integers(-5, 6, size=(n,) * 3).astype(npdt)
     return A, B, (A * B)
 
 
@@ -69,7 +70,7 @@ def test_int_permute(npdt, perm):
     sdfg = PROGRAMS[npdt].to_sdfg(simplify=True)
     prepare_for_layout(sdfg, validate=False)
     PermuteDimensions(permute_map={"A": list(perm)}, add_permute_maps=True).apply_pass(sdfg, {})
-    C = numpy.zeros((n, ) * 3, dtype=npdt)
+    C = numpy.zeros((n,) * 3, dtype=npdt)
     sdfg(A=A.copy(), B=B.copy(), C=C, N=n)
     assert numpy.array_equal(C, ref)
 
@@ -89,7 +90,7 @@ def test_int_block(npdt, blocked_dim, factor):
     shp = tuple(int(dace.symbolic.evaluate(s, {N: n})) for s in sdfg.arrays["A"].shape)
     A_packed = _block_pack(A, blocked_dim, factor)
     assert A_packed.shape == shp
-    C = numpy.zeros((n, ) * 3, dtype=npdt)
+    C = numpy.zeros((n,) * 3, dtype=npdt)
     sdfg(A=A_packed, B=B.copy(), C=C, N=n)
     assert numpy.array_equal(C, ref)
 
@@ -108,7 +109,7 @@ def test_int_block_then_permute(npdt):
     shp = tuple(int(dace.symbolic.evaluate(s, {N: n})) for s in sdfg.arrays["A"].shape)
     A_packed = _block_pack(A, 0, 2)
     assert A_packed.shape == shp
-    C = numpy.zeros((n, ) * 3, dtype=npdt)
+    C = numpy.zeros((n,) * 3, dtype=npdt)
     sdfg(A=A_packed, B=B.copy(), C=C, N=n)
     assert numpy.array_equal(C, ref)
 

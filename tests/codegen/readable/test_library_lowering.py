@@ -17,6 +17,7 @@ today and activates when the readable generator lands.
 This is a working skeleton with concrete cases; extend ``CPU_BLAS_CASES`` (and add
 ``gemv`` / ``syrk`` / batched forms) as coverage grows.
 """
+
 import numpy as np
 import pytest
 
@@ -24,8 +25,13 @@ import dace
 import dace.libraries.blas as blas
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.fill import FillLibraryNode
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
-                                             use_implementation)
+from tests.codegen.readable.conftest import (
+    EXPERIMENTAL,
+    LEGACY,
+    assert_outputs_equivalent,
+    run_isolated,
+    use_implementation,
+)
 
 N = dace.symbol("N")
 #: Small square/vector size -- tiny SDFGs, fast to build and compile.
@@ -161,6 +167,7 @@ def expand_and_run_gpu_libnode(build_sdfg, inputs, implementation):
 def test_copy_libnode_gpu_lowering(require_experimental):
     """``CopyLibraryNode`` on GPU lowers identically under both generators."""
     import cupy as cp
+
     inputs = {"src": cp.asarray(np.random.default_rng(0).random(64)), "dst": cp.zeros(64, dtype=cp.float64)}
     legacy = expand_and_run_gpu_libnode(build_gpu_copy_sdfg, inputs, LEGACY)
     experimental = expand_and_run_gpu_libnode(build_gpu_copy_sdfg, inputs, EXPERIMENTAL)
@@ -171,6 +178,7 @@ def test_copy_libnode_gpu_lowering(require_experimental):
 def test_memset_libnode_gpu_lowering(require_experimental):
     """``FillLibraryNode`` on GPU lowers identically under both generators."""
     import cupy as cp
+
     inputs = {"B": cp.ones(200, dtype=cp.float64)}
     legacy = expand_and_run_gpu_libnode(build_gpu_memset_sdfg, inputs, LEGACY)
     experimental = expand_and_run_gpu_libnode(build_gpu_memset_sdfg, inputs, EXPERIMENTAL)
@@ -179,4 +187,5 @@ def test_memset_libnode_gpu_lowering(require_experimental):
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__, "-q"]))

@@ -7,8 +7,15 @@ from dace.ordered import OrderedSet
 from dace.sdfg import nodes
 from dace.sdfg.graph import Edge
 from dace.sdfg.replace import replace_in_codeblock
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
-                             LoopRegion, ReturnBlock)
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ContinueBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+)
 from dace.utils import find_new_name
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
@@ -20,7 +27,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
     Perform an SSA transformation on all symbols in the SDFG in a strict manner, i.e., without introducing phi nodes.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes | ppl.Modifies.States
@@ -82,7 +89,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
             return results
 
     def report(self, pass_retval: Any) -> Optional[str]:
-        return f'Renamed {len(pass_retval)} symbols: {pass_retval}.'
+        return f"Renamed {len(pass_retval)} symbols: {pass_retval}."
 
 
 #: A program point of the flattened control flow: ``(kind, block_or_edge)``.
@@ -100,8 +107,8 @@ class FlatControlFlow:
     def __init__(self, sdfg: SDFG):
         self.succ: Dict[Point, List[Point]] = defaultdict(list)
         self.reads: Dict[Point, Set[str]] = {}
-        self.entry: Point = ('rin', sdfg)
-        self.exit: Point = ('rout', sdfg)
+        self.entry: Point = ("rin", sdfg)
+        self.exit: Point = ("rout", sdfg)
         self.add_region(sdfg, None)
 
     def link(self, src: Point, dst: Point):
@@ -109,41 +116,44 @@ class FlatControlFlow:
 
     def add_region(self, region: ControlFlowRegion, loop: Optional[LoopRegion]):
         if region.number_of_nodes() == 0:
-            self.link(('rin', region), ('rout', region))
+            self.link(("rin", region), ("rout", region))
             return
-        self.link(('rin', region), ('in', region.start_block))
+        self.link(("rin", region), ("in", region.start_block))
         for block in region.nodes():
             self.add_block(block, loop)
             if region.out_degree(block) == 0 and not isinstance(block, (BreakBlock, ContinueBlock, ReturnBlock)):
-                self.link(('out', block), ('rout', region))
+                self.link(("out", block), ("rout", region))
         for edge in region.edges():
-            self.link(('out', edge.src), ('edge', edge))
-            self.link(('edge', edge), ('in', edge.dst))
-            self.reads[('edge', edge)] = edge.data.read_symbols()
+            self.link(("out", edge.src), ("edge", edge))
+            self.link(("edge", edge), ("in", edge.dst))
+            self.reads[("edge", edge)] = edge.data.read_symbols()
 
     def add_block(self, block: ControlFlowBlock, loop: Optional[LoopRegion]):
-        entry, leave = ('in', block), ('out', block)
+        entry, leave = ("in", block), ("out", block)
         if isinstance(block, SDFGState):
             self.reads[entry] = block.used_symbols(all_symbols=True)
             self.link(entry, leave)
         elif isinstance(block, BreakBlock):
-            self.link(entry, ('out', loop))
+            self.link(entry, ("out", loop))
         elif isinstance(block, ContinueBlock):
-            self.link(entry, ('latch', loop))
+            self.link(entry, ("latch", loop))
         elif isinstance(block, ReturnBlock):
             self.link(entry, self.exit)
         elif isinstance(block, ConditionalBlock):
             self.reads[entry] = {s for cond, _ in block.branches if cond is not None for s in cond.get_free_symbols()}
             for _, branch in block.branches:
-                self.link(entry, ('rin', branch))
+                self.link(entry, ("rin", branch))
                 self.add_region(branch, loop)
-                self.link(('rout', branch), leave)
+                self.link(("rout", branch), leave)
             if all(cond is not None for cond, _ in block.branches):
                 self.link(entry, leave)
         elif isinstance(block, LoopRegion):
-            head, latch, body_in, body_out = ('head', block), ('latch', block), ('rin', block), ('rout', block)
-            for point, code in ((entry, block.init_statement), (head, block.loop_condition), (latch,
-                                                                                              block.update_statement)):
+            head, latch, body_in, body_out = ("head", block), ("latch", block), ("rin", block), ("rout", block)
+            for point, code in (
+                (entry, block.init_statement),
+                (head, block.loop_condition),
+                (latch, block.update_statement),
+            ):
                 self.reads[point] = code.get_free_symbols() if code is not None else set()
             if not block.inverted:
                 chain = [entry, head, body_in], [body_out, latch, head]
@@ -157,9 +167,9 @@ class FlatControlFlow:
             self.link(head, leave)
             self.add_region(block, block)
         else:
-            self.link(entry, ('rin', block))
+            self.link(entry, ("rin", block))
             self.add_region(block, loop)
-            self.link(('rout', block), leave)
+            self.link(("rout", block), leave)
 
     def reaching(self, gen: Dict[Point, int], incoming: int) -> Dict[Point, Set[int]]:
         """Definitions live on entry to each point; ``incoming`` stands for the value held at SDFG entry."""
@@ -193,7 +203,7 @@ class SymbolSSA(ppl.Pass):
     symbols an edge both assigns and reads in another assignment are left alone.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes
@@ -228,8 +238,11 @@ class SymbolSSA(ppl.Pass):
                 assignments = edge.data.assignments
                 for name in assignments:
                     defs[name].append(edge)
-                    if any(name in symbolic.free_symbols_and_functions(rhs) for other, rhs in assignments.items()
-                           if other != name):
+                    if any(
+                        name in symbolic.free_symbols_and_functions(rhs)
+                        for other, rhs in assignments.items()
+                        if other != name
+                    ):
                         blocked.add(name)
         return {name: edges for name, edges in defs.items() if len(edges) > 1 and name not in blocked}
 
@@ -258,7 +271,7 @@ class SymbolSSA(ppl.Pass):
         taken = self.taken_names(sdfg)
         for name, defs in candidates.items():
             incoming = len(defs)
-            arriving = flat.reaching({('edge', edge): index for index, edge in enumerate(defs)}, incoming)
+            arriving = flat.reaching({("edge", edge): index for index, edge in enumerate(defs)}, incoming)
             parent = list(range(len(defs) + 1))
 
             def find(i: int) -> int:
@@ -304,7 +317,7 @@ class SymbolSSA(ppl.Pass):
     def rename_use(point: Point, name: str, new_name: str):
         kind, obj = point
         repl = {name: new_name}
-        if kind == 'edge':
+        if kind == "edge":
             obj.data.replace_dict(repl, replace_keys=False)
         elif isinstance(obj, SDFGState):
             obj.replace_dict(repl)
@@ -313,8 +326,8 @@ class SymbolSSA(ppl.Pass):
                 if cond is not None:
                     replace_in_codeblock(cond, repl)
         else:
-            code = {'in': obj.init_statement, 'head': obj.loop_condition, 'latch': obj.update_statement}[kind]
+            code = {"in": obj.init_statement, "head": obj.loop_condition, "latch": obj.update_statement}[kind]
             replace_in_codeblock(code, repl)
 
 
-__all__ = ['FlatControlFlow', 'StrictSymbolSSA', 'SymbolSSA']
+__all__ = ["FlatControlFlow", "StrictSymbolSSA", "SymbolSSA"]

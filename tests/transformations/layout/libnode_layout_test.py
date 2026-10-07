@@ -14,12 +14,13 @@ This file adds the missing end-to-end coverage:
     a transpose, which the copy libnode cannot express (it asks for a Transpose libnode). That case
     is an xfail: the missing P3 rule is Copy->TensorTranspose (the analog of Gemm->TensorDot).
 """
+
 import numpy
 import pytest
 import dace
 
 from dace.libraries.blas.nodes.einsum import Einsum
-from dace.transformation.layout.rewrite_libnodes import (transform_einsum, RewriteCopyForLayout, copy_permutation_axes)
+from dace.transformation.layout.rewrite_libnodes import transform_einsum, RewriteCopyForLayout, copy_permutation_axes
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.prepare import prepare_for_layout
 

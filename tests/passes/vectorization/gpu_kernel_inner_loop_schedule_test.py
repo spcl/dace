@@ -6,6 +6,7 @@ The vectorizer used to run its own ``ParallelizeLoops``, which made a map of a `
 ``gpu_block_size`` the offload had chosen, which the GPU code generator refuses (fp64 x 2 CloudSC).
 Parallelization is now the caller's recipe, so the loop reaches codegen untouched.
 """
+
 import numpy as np
 import pytest
 
@@ -16,7 +17,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
 from dace.transformation.passes.vectorization.enums import ISA
 
-N, M = dace.symbol('N'), dace.symbol('M')
+N, M = dace.symbol("N"), dace.symbol("M")
 
 
 @dace.program
@@ -29,12 +30,12 @@ def scale_rows(a: dace.float64[N, M], b: dace.float64[N, M]):
 def vectorized_kernel():
     """``scale_rows`` offloaded as one kernel with a set block size, then vectorized fp64 x 2."""
     sdfg = scale_rows.to_sdfg(simplify=True)
-    for name in ('a', 'b'):
+    for name in ("a", "b"):
         sdfg.arrays[name].storage = dace.StorageType.GPU_Global
     kernel = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
     kernel.map.schedule = dace.ScheduleType.GPU_Device
     kernel.map.gpu_block_size = [256, 1, 1]
-    VectorizeMultiDim(VectorizeConfig(widths=(2, ), target_isa=ISA.SCALAR, device=DeviceType.GPU)).apply_pass(sdfg, {})
+    VectorizeMultiDim(VectorizeConfig(widths=(2,), target_isa=ISA.SCALAR, device=DeviceType.GPU)).apply_pass(sdfg, {})
     return sdfg, kernel
 
 
@@ -49,6 +50,7 @@ def test_a_loop_inside_a_kernel_stays_a_loop():
 @pytest.mark.gpu
 def test_a_vectorized_kernel_with_an_inner_loop_computes_the_values():
     import cupy
+
     sdfg, _ = vectorized_kernel()
     a = np.random.default_rng(0).random((64, 37))
     b = cupy.zeros((64, 37))

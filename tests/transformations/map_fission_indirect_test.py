@@ -1,20 +1,21 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" MapFission on indirect-access maps.
+"""MapFission on indirect-access maps.
 
-    The dace frontend lowers ``for i: A[i]=B[idx[i]]; C[i]=D[idx[i]]`` to a
-    map whose body is one ``NestedSDFG`` whose ``idx[i]`` indirection is an
-    interstate-edge symbol assignment depending on the map iterator.
-    ``MapFission`` refuses to split that in place (it cannot hoist the
-    assignment out of the fissioned maps). ``SplitStatements``
-    replicates the NestedSDFG per independent output group first -- the
-    deep-copy carries every interstate-edge indirection-symbol assignment
-    and the index inputs into each clone -- after which ordinary
-    ``MapFission`` splits the map into one map per independent output.
+The dace frontend lowers ``for i: A[i]=B[idx[i]]; C[i]=D[idx[i]]`` to a
+map whose body is one ``NestedSDFG`` whose ``idx[i]`` indirection is an
+interstate-edge symbol assignment depending on the map iterator.
+``MapFission`` refuses to split that in place (it cannot hoist the
+assignment out of the fissioned maps). ``SplitStatements``
+replicates the NestedSDFG per independent output group first -- the
+deep-copy carries every interstate-edge indirection-symbol assignment
+and the index inputs into each clone -- after which ordinary
+``MapFission`` splits the map into one map per independent output.
 
-    Every test checks numerical equivalence against a deep-copied pre-pass
-    run, and that the split actually happened (applied when possible) or
-    provably did not (single group / coupled outputs -> still correct).
+Every test checks numerical equivalence against a deep-copied pre-pass
+run, and that the split actually happened (applied when possible) or
+provably did not (single group / coupled outputs -> still correct).
 """
+
 import copy
 
 import numpy as np
@@ -25,8 +26,8 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.dataflow.map_fission import MapFission
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _nmaps(sdfg):
@@ -48,8 +49,9 @@ def scatter_two(a: dace.float64[N], idx: dace.int32[N], b: dace.float64[N], c: d
 
 
 @dace.program
-def semi_indirect_two(a: dace.float64[N, M], col: dace.int32[M], b: dace.float64[N, M], c: dace.float64[N, M],
-                      e: dace.float64[N, M]):
+def semi_indirect_two(
+    a: dace.float64[N, M], col: dace.int32[M], b: dace.float64[N, M], c: dace.float64[N, M], e: dace.float64[N, M]
+):
     # dim 0 structured, dim 1 gathered through ``col``.
     for i, j in dace.map[0:N, 0:M]:
         b[i, j] = a[i, col[j]]

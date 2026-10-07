@@ -1,24 +1,27 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``resnet`` (ml) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace as dc
 
 dc_float = dc.float64
 dc_complex_float = dc.complex128
 
-SIZES = {'N': 8, 'W': 14, 'H': 14, 'C1': 32, 'C2': 8}
-PAPER_SIZES = {'N': 8, 'W': 56, 'H': 56, 'C1': 256, 'C2': 64}
-INPUT_ARGS = ('N', 'W', 'H', 'C1', 'C2')
-ARRAY_ARGS = ('input', 'conv1', 'conv2', 'conv3', 'out')
+SIZES = {"N": 8, "W": 14, "H": 14, "C1": 32, "C2": 8}
+PAPER_SIZES = {"N": 8, "W": 56, "H": 56, "C1": 256, "C2": 64}
+INPUT_ARGS = ("N", "W", "H", "C1", "C2")
+ARRAY_ARGS = ("input", "conv1", "conv2", "conv3", "out")
 SCALARS = {}
-OUTPUT_ARGS = ('out', )
+OUTPUT_ARGS = ("out",)
 
-N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
-                                           for s in ('N', 'H', 'W', 'C1', 'C2', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5'))
+N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (
+    dc.symbol(s, dtype=dc.int64) for s in ("N", "H", "W", "C1", "C2", "S0", "S1", "S2", "S3", "S4", "S5")
+)
 
 
 def initialize(N, W, H, C1, C2, datatype=np.float64):
     from numpy.random import default_rng
+
     rng = default_rng(42)
     input = rng.random((N, H, W, C1), dtype=datatype)
     conv1 = rng.random((1, 1, C1, C2), dtype=datatype)
@@ -44,7 +47,7 @@ def conv2d_np(input, weights):
     for i in range(H_out):
         for j in range(W_out):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + K, j:j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
+                input[:, i : i + K, j : j + K, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
     return output
@@ -79,8 +82,9 @@ def conv2d(input: dc_float[S0, S1, S2, S3], weights: dc_float[S4, S4, S3, S5]):
     output = np.ndarray((S0, S1 - S4 + 1, S2 - S4 + 1, S5), dtype=dc_float)
     for i in range(S1 - S4 + 1):
         for j in range(S2 - S4 + 1):
-            output[:, i, j, :] = np.sum(input[:, i:i + S4, j:j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :],
-                                        axis=(1, 2, 3))
+            output[:, i, j, :] = np.sum(
+                input[:, i : i + S4, j : j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :], axis=(1, 2, 3)
+            )
     return output
 
 
@@ -94,8 +98,12 @@ def batchnorm2d(x: dc_float[S0, S1, S2, S3]):
 
 
 @dc.program
-def resnet_basicblock(input: dc_float[N, H, W, C1], conv1: dc_float[1, 1, C1, C2], conv2: dc_float[3, 3, C2, C2],
-                      conv3: dc_float[1, 1, C2, C1]):
+def resnet_basicblock(
+    input: dc_float[N, H, W, C1],
+    conv1: dc_float[1, 1, C1, C2],
+    conv2: dc_float[3, 3, C2, C2],
+    conv3: dc_float[1, 1, C2, C1],
+):
     padded = np.zeros((N, H + 2, W + 2, C2), dtype=dc_float)
     padded[:, 1:-1, 1:-1, :] = conv2d(input, conv1)
     x = batchnorm2d(padded)
@@ -109,11 +117,16 @@ def resnet_basicblock(input: dc_float[N, H, W, C1], conv1: dc_float[1, 1, C1, C2
 
 
 @dc.program
-def kernel(out: dc_float[N, H, W, C1], input: dc_float[N, H, W, C1], conv1: dc_float[1, 1, C1, C2],
-           conv2: dc_float[3, 3, C2, C2], conv3: dc_float[1, 1, C2, C1]):
+def kernel(
+    out: dc_float[N, H, W, C1],
+    input: dc_float[N, H, W, C1],
+    conv1: dc_float[1, 1, C1, C2],
+    conv2: dc_float[3, 3, C2, C2],
+    conv3: dc_float[1, 1, C2, C1],
+):
     padded = np.ndarray((N, H + 2, W + 2, C2), dtype=dc_float)
     padded[:] = 0
-    padded[:, 1:H + 1, 1:W + 1, :] = conv2d(input, conv1)
+    padded[:, 1 : H + 1, 1 : W + 1, :] = conv2d(input, conv1)
     x = batchnorm2d(padded)
     x1 = relu(x)
     x2 = conv2d(x1, conv2)
@@ -124,14 +137,16 @@ def kernel(out: dc_float[N, H, W, C1], input: dc_float[N, H, W, C1], conv1: dc_f
     return relu(x6 + input)
 
 
-CORPUS = dict(name='resnet',
-              dwarf='ml',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="resnet",
+    dwarf="ml",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

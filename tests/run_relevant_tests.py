@@ -44,12 +44,14 @@ GROUPS: list[tuple[str, list[str]]] = [
 ]
 
 # pytest's short-summary tail line: "= 220 passed, 2 skipped, 137 xfailed in 250.81s ="
-SUMMARY_RE = re.compile(r"(?P<passed>\d+)\s+passed"
-                        r"|(?P<failed>\d+)\s+failed"
-                        r"|(?P<errors>\d+)\s+error"
-                        r"|(?P<skipped>\d+)\s+skipped"
-                        r"|(?P<xfailed>\d+)\s+xfailed"
-                        r"|(?P<xpassed>\d+)\s+xpassed")
+SUMMARY_RE = re.compile(
+    r"(?P<passed>\d+)\s+passed"
+    r"|(?P<failed>\d+)\s+failed"
+    r"|(?P<errors>\d+)\s+error"
+    r"|(?P<skipped>\d+)\s+skipped"
+    r"|(?P<xfailed>\d+)\s+xfailed"
+    r"|(?P<xpassed>\d+)\s+xpassed"
+)
 
 
 def parse_summary(stdout: str) -> dict[str, int]:
@@ -112,17 +114,21 @@ def main(argv: list[str]) -> int:
     print(f"{'group'.ljust(width)}  pass  fail  err  skip  xfail  xpass   time(s)  exit")
     print("-" * 78)
     for label, c, t, rc in rows:
-        print(f"{label.ljust(width)}  {c['passed']:4d}  {c['failed']:4d}  "
-              f"{c['errors']:3d}  {c['skipped']:4d}  {c['xfailed']:5d}  "
-              f"{c['xpassed']:5d}   {t:7.1f}  {rc:4d}")
+        print(
+            f"{label.ljust(width)}  {c['passed']:4d}  {c['failed']:4d}  "
+            f"{c['errors']:3d}  {c['skipped']:4d}  {c['xfailed']:5d}  "
+            f"{c['xpassed']:5d}   {t:7.1f}  {rc:4d}"
+        )
     print("-" * 78)
-    print(f"{'TOTAL'.ljust(width)}  {totals['passed']:4d}  {totals['failed']:4d}  "
-          f"{totals['errors']:3d}  {totals['skipped']:4d}  {totals['xfailed']:5d}  "
-          f"{totals['xpassed']:5d}")
+    print(
+        f"{'TOTAL'.ljust(width)}  {totals['passed']:4d}  {totals['failed']:4d}  "
+        f"{totals['errors']:3d}  {totals['skipped']:4d}  {totals['xfailed']:5d}  "
+        f"{totals['xpassed']:5d}"
+    )
     print("=" * 78)
 
     # Exit non-zero if any group failed or had unexpected XPASS.
-    bad = totals['failed'] + totals['errors'] + totals['xpassed']
+    bad = totals["failed"] + totals["errors"] + totals["xpassed"]
     return 1 if bad else 0
 
 

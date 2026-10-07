@@ -43,6 +43,7 @@ honour. Real-world patterns this pipeline does not yet handle
 cleanly are documented as ``strict=True`` xfails with precise
 reasons.
 """
+
 import numpy as np
 import pytest
 
@@ -52,8 +53,8 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _nmaps(sdfg):
@@ -70,6 +71,7 @@ def _ncond_blocks(sdfg):
 
 def _nreduce(sdfg):
     from dace.libraries.standard.nodes.reduce import Reduce
+
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
 
 
@@ -78,10 +80,17 @@ def _nreduce(sdfg):
 
 
 @dace.program
-def icon_solve_nonhydro_shape(z_exner_ex_pr: dace.float64[N, M], z_exner_ic: dace.float64[N, M],
-                              z_dexner_dz_c: dace.float64[N, M], exner: dace.float64[N, M],
-                              exner_ref_mc: dace.float64[N, M], exner_exfac: dace.float64[N, M],
-                              wgtfac_c: dace.float64[N, M], inv_ddqz_z_full: dace.float64[N, M], istep: dace.int32):
+def icon_solve_nonhydro_shape(
+    z_exner_ex_pr: dace.float64[N, M],
+    z_exner_ic: dace.float64[N, M],
+    z_dexner_dz_c: dace.float64[N, M],
+    exner: dace.float64[N, M],
+    exner_ref_mc: dace.float64[N, M],
+    exner_exfac: dace.float64[N, M],
+    wgtfac_c: dace.float64[N, M],
+    inv_ddqz_z_full: dace.float64[N, M],
+    istep: dace.int32,
+):
     """ICON solve_nonhydro shape: per-row (= per-jb) range over ``N``
     columns, with an invariant ``IF istep == 1`` guard wrapping a
     sequence of three inner ``jk, jc`` style nests over the row's
@@ -97,12 +106,14 @@ def icon_solve_nonhydro_shape(z_exner_ex_pr: dace.float64[N, M], z_exner_ic: dac
             for jk in range(0, M):
                 for jc in range(start, end):
                     z_exner_ex_pr[jc, jk] = (1.0 + exner_exfac[jc, jk]) * (
-                        exner[jc, jk] - exner_ref_mc[jc, jk]) - exner_exfac[jc, jk] * z_exner_ex_pr[jc, jk]
+                        exner[jc, jk] - exner_ref_mc[jc, jk]
+                    ) - exner_exfac[jc, jk] * z_exner_ex_pr[jc, jk]
             # sibling 2: 2D, shared jc range, reads z_exner_ex_pr
             for jk in range(1, M):
                 for jc in range(start, end):
-                    z_exner_ic[jc, jk] = (wgtfac_c[jc, jk] * z_exner_ex_pr[jc, jk] +
-                                          (1.0 - wgtfac_c[jc, jk]) * z_exner_ex_pr[jc, jk - 1])
+                    z_exner_ic[jc, jk] = (
+                        wgtfac_c[jc, jk] * z_exner_ex_pr[jc, jk] + (1.0 - wgtfac_c[jc, jk]) * z_exner_ex_pr[jc, jk - 1]
+                    )
             # sibling 3: 2D, shared jc range, reads z_exner_ic -- fusable with sibling 2
             for jk in range(1, M - 1):
                 for jc in range(start, end):
@@ -110,16 +121,16 @@ def icon_solve_nonhydro_shape(z_exner_ex_pr: dace.float64[N, M], z_exner_ic: dac
 
 
 def _icon_solve_nonhydro_oracle(arr_in, istep):
-    n = arr_in['z_exner_ex_pr'].shape[0]
-    m = arr_in['z_exner_ex_pr'].shape[1]
-    z_exner_ex_pr = arr_in['z_exner_ex_pr'].copy()
-    z_exner_ic = arr_in['z_exner_ic'].copy()
-    z_dexner_dz_c = arr_in['z_dexner_dz_c'].copy()
-    exner = arr_in['exner']
-    exner_ref_mc = arr_in['exner_ref_mc']
-    exner_exfac = arr_in['exner_exfac']
-    wgtfac_c = arr_in['wgtfac_c']
-    inv_ddqz_z_full = arr_in['inv_ddqz_z_full']
+    n = arr_in["z_exner_ex_pr"].shape[0]
+    m = arr_in["z_exner_ex_pr"].shape[1]
+    z_exner_ex_pr = arr_in["z_exner_ex_pr"].copy()
+    z_exner_ic = arr_in["z_exner_ic"].copy()
+    z_dexner_dz_c = arr_in["z_dexner_dz_c"].copy()
+    exner = arr_in["exner"]
+    exner_ref_mc = arr_in["exner_ref_mc"]
+    exner_exfac = arr_in["exner_exfac"]
+    wgtfac_c = arr_in["wgtfac_c"]
+    inv_ddqz_z_full = arr_in["inv_ddqz_z_full"]
     for jb in range(0, n):
         start = jb // 4
         end = m
@@ -127,11 +138,13 @@ def _icon_solve_nonhydro_oracle(arr_in, istep):
             for jk in range(0, m):
                 for jc in range(start, end):
                     z_exner_ex_pr[jc, jk] = (1.0 + exner_exfac[jc, jk]) * (
-                        exner[jc, jk] - exner_ref_mc[jc, jk]) - exner_exfac[jc, jk] * z_exner_ex_pr[jc, jk]
+                        exner[jc, jk] - exner_ref_mc[jc, jk]
+                    ) - exner_exfac[jc, jk] * z_exner_ex_pr[jc, jk]
             for jk in range(1, m):
                 for jc in range(start, end):
-                    z_exner_ic[jc, jk] = (wgtfac_c[jc, jk] * z_exner_ex_pr[jc, jk] +
-                                          (1.0 - wgtfac_c[jc, jk]) * z_exner_ex_pr[jc, jk - 1])
+                    z_exner_ic[jc, jk] = (
+                        wgtfac_c[jc, jk] * z_exner_ex_pr[jc, jk] + (1.0 - wgtfac_c[jc, jk]) * z_exner_ex_pr[jc, jk - 1]
+                    )
             for jk in range(1, m - 1):
                 for jc in range(start, end):
                     z_dexner_dz_c[jc, jk] = (z_exner_ic[jc, jk] - z_exner_ic[jc, jk + 1]) * inv_ddqz_z_full[jc, jk]
@@ -139,14 +152,16 @@ def _icon_solve_nonhydro_oracle(arr_in, istep):
 
 
 def _icon_solve_nonhydro_args(n, m, rng):
-    return dict(z_exner_ex_pr=rng.standard_normal((n, m)),
-                z_exner_ic=rng.standard_normal((n, m)),
-                z_dexner_dz_c=rng.standard_normal((n, m)),
-                exner=rng.standard_normal((n, m)),
-                exner_ref_mc=rng.standard_normal((n, m)),
-                exner_exfac=rng.standard_normal((n, m)),
-                wgtfac_c=rng.uniform(0.1, 0.9, (n, m)),
-                inv_ddqz_z_full=rng.uniform(0.5, 2.0, (n, m)))
+    return dict(
+        z_exner_ex_pr=rng.standard_normal((n, m)),
+        z_exner_ic=rng.standard_normal((n, m)),
+        z_dexner_dz_c=rng.standard_normal((n, m)),
+        exner=rng.standard_normal((n, m)),
+        exner_ref_mc=rng.standard_normal((n, m)),
+        exner_exfac=rng.standard_normal((n, m)),
+        wgtfac_c=rng.uniform(0.1, 0.9, (n, m)),
+        inv_ddqz_z_full=rng.uniform(0.5, 2.0, (n, m)),
+    )
 
 
 def test_icon_solve_nonhydro_shape_structure():
@@ -169,24 +184,25 @@ def test_icon_solve_nonhydro_shape_structure():
     sdfg = icon_solve_nonhydro_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 3, f'expected 3 collapsed inner maps after canonicalize, got {_nmaps(sdfg)}'
-    assert _nloops(sdfg) == 1, (f'expected exactly 1 surviving LoopRegion (outer jb with per-iteration bound), '
-                                f'got {_nloops(sdfg)}')
+    assert _nmaps(sdfg) == 3, f"expected 3 collapsed inner maps after canonicalize, got {_nmaps(sdfg)}"
+    assert _nloops(sdfg) == 1, (
+        f"expected exactly 1 surviving LoopRegion (outer jb with per-iteration bound), got {_nloops(sdfg)}"
+    )
     # MoveLoopInvariantIfUp (terminal, require_full_hoist) lifts the
     # invariant ``IF istep == 1`` guard to the SDFG top level, past the
     # per-jb loop, even though the loop body carries the per-jb iedge
     # assignment ``start = jb // 4`` (dead outside the guard branch).
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    assert len(top_conds) == 1, (f'IF istep == 1 must be hoisted to SDFG top level; got {len(top_conds)} '
-                                 f'top-level conditional block(s)')
-    assert any('istep' in b[0].as_string for b in top_conds[0].branches), \
-        'top-level conditional does not test istep'
+    assert len(top_conds) == 1, (
+        f"IF istep == 1 must be hoisted to SDFG top level; got {len(top_conds)} top-level conditional block(s)"
+    )
+    assert any("istep" in b[0].as_string for b in top_conds[0].branches), "top-level conditional does not test istep"
     # Refusal contract: no top-level iedge assigns ``jb`` or anything
     # whose RHS reads ``jb`` (jb is undeclared at SDFG root).
     for e in sdfg.edges():
         for lhs, rhs in e.data.assignments.items():
             rhs_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}
-            assert 'jb' not in rhs_syms, f'per-jb expression {lhs} = {rhs} leaked to SDFG root'
+            assert "jb" not in rhs_syms, f"per-jb expression {lhs} = {rhs} leaked to SDFG root"
 
 
 def test_icon_solve_nonhydro_shape_e2e():
@@ -200,9 +216,9 @@ def test_icon_solve_nonhydro_shape_e2e():
         sdfg.validate()
         got = {k: v.copy() for k, v in args.items()}
         sdfg(**got, istep=np.int32(istep), N=n, M=m)
-        assert np.allclose(got['z_exner_ex_pr'], exp_ex), f'z_exner_ex_pr istep={istep}'
-        assert np.allclose(got['z_exner_ic'], exp_ic), f'z_exner_ic istep={istep}'
-        assert np.allclose(got['z_dexner_dz_c'], exp_dz), f'z_dexner_dz_c istep={istep}'
+        assert np.allclose(got["z_exner_ex_pr"], exp_ex), f"z_exner_ex_pr istep={istep}"
+        assert np.allclose(got["z_exner_ic"], exp_ic), f"z_exner_ic istep={istep}"
+        assert np.allclose(got["z_dexner_dz_c"], exp_dz), f"z_dexner_dz_c istep={istep}"
 
 
 # ICON velocity_advection: per-jb bound + IF istep == 1 guard around two
@@ -211,10 +227,16 @@ def test_icon_solve_nonhydro_shape_e2e():
 
 
 @dace.program
-def icon_velocity_advection_istep_shape(z_ekinh: dace.float64[N, M], z_w_concorr_mc: dace.float64[N, M],
-                                        w_concorr_c: dace.float64[N, M], kin_hor_e: dace.float64[N, M],
-                                        w_concorr_me: dace.float64[N, M], wgtfac_c: dace.float64[N, M],
-                                        istep: dace.int32, nflatlev: dace.int32):
+def icon_velocity_advection_istep_shape(
+    z_ekinh: dace.float64[N, M],
+    z_w_concorr_mc: dace.float64[N, M],
+    w_concorr_c: dace.float64[N, M],
+    kin_hor_e: dace.float64[N, M],
+    w_concorr_me: dace.float64[N, M],
+    wgtfac_c: dace.float64[N, M],
+    istep: dace.int32,
+    nflatlev: dace.int32,
+):
     """velocity_advection shape: per-row bound + always-on first inner
     nest + ``IF istep == 1`` guard around two subsequent sibling
     inner ``jk, jc`` nests over the same jc range. The guard is
@@ -234,18 +256,20 @@ def icon_velocity_advection_istep_shape(z_ekinh: dace.float64[N, M], z_w_concorr
                     z_w_concorr_mc[jc, jk] = 0.5 * w_concorr_me[jc, jk]
             for jk in range(nflatlev, M):
                 for jc in range(start, end):
-                    w_concorr_c[jc, jk] = (wgtfac_c[jc, jk] * z_w_concorr_mc[jc, jk] +
-                                           (1.0 - wgtfac_c[jc, jk]) * z_w_concorr_mc[jc, jk - 1])
+                    w_concorr_c[jc, jk] = (
+                        wgtfac_c[jc, jk] * z_w_concorr_mc[jc, jk]
+                        + (1.0 - wgtfac_c[jc, jk]) * z_w_concorr_mc[jc, jk - 1]
+                    )
 
 
 def _icon_velocity_advection_oracle(args, istep, nflatlev):
-    n, m = args['z_ekinh'].shape
-    z_ekinh = args['z_ekinh'].copy()
-    z_w_concorr_mc = args['z_w_concorr_mc'].copy()
-    w_concorr_c = args['w_concorr_c'].copy()
-    kin_hor_e = args['kin_hor_e']
-    w_concorr_me = args['w_concorr_me']
-    wgtfac_c = args['wgtfac_c']
+    n, m = args["z_ekinh"].shape
+    z_ekinh = args["z_ekinh"].copy()
+    z_w_concorr_mc = args["z_w_concorr_mc"].copy()
+    w_concorr_c = args["w_concorr_c"].copy()
+    kin_hor_e = args["kin_hor_e"]
+    w_concorr_me = args["w_concorr_me"]
+    wgtfac_c = args["wgtfac_c"]
     for jb in range(n):
         start = jb // 4
         end = m
@@ -258,8 +282,10 @@ def _icon_velocity_advection_oracle(args, istep, nflatlev):
                     z_w_concorr_mc[jc, jk] = 0.5 * w_concorr_me[jc, jk]
             for jk in range(nflatlev, m):
                 for jc in range(start, end):
-                    w_concorr_c[jc, jk] = (wgtfac_c[jc, jk] * z_w_concorr_mc[jc, jk] +
-                                           (1.0 - wgtfac_c[jc, jk]) * z_w_concorr_mc[jc, jk - 1])
+                    w_concorr_c[jc, jk] = (
+                        wgtfac_c[jc, jk] * z_w_concorr_mc[jc, jk]
+                        + (1.0 - wgtfac_c[jc, jk]) * z_w_concorr_mc[jc, jk - 1]
+                    )
     return z_ekinh, z_w_concorr_mc, w_concorr_c
 
 
@@ -281,18 +307,18 @@ def test_icon_velocity_advection_istep_shape_structure():
     sdfg = icon_velocity_advection_istep_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 3, f'expected 3 collapsed inner maps, got {_nmaps(sdfg)}'
-    assert _nloops(sdfg) == 2, f'expected 2 surviving LoopRegions, got {_nloops(sdfg)}'
+    assert _nmaps(sdfg) == 3, f"expected 3 collapsed inner maps, got {_nmaps(sdfg)}"
+    assert _nloops(sdfg) == 2, f"expected 2 surviving LoopRegions, got {_nloops(sdfg)}"
     # The invariant ``IF istep == 1`` guard is hoisted to the SDFG top level.
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    assert len(top_conds) == 1, (f'IF istep == 1 must be hoisted to SDFG top level; got {len(top_conds)} '
-                                 f'top-level conditional block(s)')
-    assert any('istep' in b[0].as_string for b in top_conds[0].branches), \
-        'top-level conditional does not test istep'
+    assert len(top_conds) == 1, (
+        f"IF istep == 1 must be hoisted to SDFG top level; got {len(top_conds)} top-level conditional block(s)"
+    )
+    assert any("istep" in b[0].as_string for b in top_conds[0].branches), "top-level conditional does not test istep"
     for e in sdfg.edges():
         for lhs, rhs in e.data.assignments.items():
             rhs_syms = {str(s) for s in dace.symbolic.pystr_to_symbolic(rhs).free_symbols}
-            assert 'jb' not in rhs_syms, f'per-jb expression {lhs} = {rhs} leaked to SDFG root'
+            assert "jb" not in rhs_syms, f"per-jb expression {lhs} = {rhs} leaked to SDFG root"
 
 
 def test_icon_velocity_advection_istep_shape_e2e():
@@ -300,21 +326,23 @@ def test_icon_velocity_advection_istep_shape_e2e():
     rng = np.random.default_rng(103)
     nflatlev = 2
     for istep in (1, 0):
-        args = dict(z_ekinh=rng.standard_normal((n, m)),
-                    z_w_concorr_mc=rng.standard_normal((n, m)),
-                    w_concorr_c=rng.standard_normal((n, m)),
-                    kin_hor_e=rng.standard_normal((n, m)),
-                    w_concorr_me=rng.standard_normal((n, m)),
-                    wgtfac_c=rng.uniform(0.1, 0.9, (n, m)))
+        args = dict(
+            z_ekinh=rng.standard_normal((n, m)),
+            z_w_concorr_mc=rng.standard_normal((n, m)),
+            w_concorr_c=rng.standard_normal((n, m)),
+            kin_hor_e=rng.standard_normal((n, m)),
+            w_concorr_me=rng.standard_normal((n, m)),
+            wgtfac_c=rng.uniform(0.1, 0.9, (n, m)),
+        )
         exp_ek, exp_wmc, exp_wcc = _icon_velocity_advection_oracle(args, istep, nflatlev)
         sdfg = icon_velocity_advection_istep_shape.to_sdfg(simplify=True)
         canonicalize(sdfg, validate=True)
         sdfg.validate()
         got = {k: v.copy() for k, v in args.items()}
         sdfg(**got, istep=np.int32(istep), nflatlev=np.int32(nflatlev), N=n, M=m)
-        assert np.allclose(got['z_ekinh'], exp_ek), f'z_ekinh istep={istep}'
-        assert np.allclose(got['z_w_concorr_mc'], exp_wmc), f'z_w_concorr_mc istep={istep}'
-        assert np.allclose(got['w_concorr_c'], exp_wcc), f'w_concorr_c istep={istep}'
+        assert np.allclose(got["z_ekinh"], exp_ek), f"z_ekinh istep={istep}"
+        assert np.allclose(got["z_w_concorr_mc"], exp_wmc), f"z_w_concorr_mc istep={istep}"
+        assert np.allclose(got["w_concorr_c"], exp_wcc), f"w_concorr_c istep={istep}"
 
 
 # CLOUDSC IPHASE(JM) per-JM phase guards. Distilled from
@@ -324,8 +352,13 @@ def test_icon_velocity_advection_istep_shape_e2e():
 
 
 @dace.program
-def cloudsc_iphase_shape(tendency_t: dace.float64[N], tendency_cld: dace.float64[N, M], fluxq: dace.float64[N, M],
-                         psupsatsrc: dace.float64[N, M], iphase: dace.int32[M]):
+def cloudsc_iphase_shape(
+    tendency_t: dace.float64[N],
+    tendency_cld: dace.float64[N, M],
+    fluxq: dace.float64[N, M],
+    psupsatsrc: dace.float64[N, M],
+    iphase: dace.int32[M],
+):
     """Per-JM phase guards: each JM iteration has 4 sibling JL loops,
     two of them guarded by ``IF IPHASE(JM) == 1`` and
     ``IF IPHASE(JM) == 2``. ``IPHASE(JM)`` is a JM-dependent INTEGER
@@ -346,13 +379,13 @@ def cloudsc_iphase_shape(tendency_t: dace.float64[N], tendency_cld: dace.float64
 
 
 def _cloudsc_iphase_oracle(args):
-    n = args['tendency_t'].shape[0]
-    m = args['fluxq'].shape[1]
-    tendency_t = args['tendency_t'].copy()
-    tendency_cld = args['tendency_cld'].copy()
-    fluxq = args['fluxq'].copy()
-    psupsatsrc = args['psupsatsrc']
-    iphase = args['iphase']
+    n = args["tendency_t"].shape[0]
+    m = args["fluxq"].shape[1]
+    tendency_t = args["tendency_t"].copy()
+    tendency_cld = args["tendency_cld"].copy()
+    fluxq = args["fluxq"].copy()
+    psupsatsrc = args["psupsatsrc"]
+    iphase = args["iphase"]
     for jm in range(m):
         for jl in range(n):
             fluxq[jl, jm] = psupsatsrc[jl, jm] + 1.0
@@ -384,31 +417,37 @@ def test_cloudsc_iphase_shape_structure():
     sdfg = cloudsc_iphase_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nloops(sdfg) == 1, (f'outer JM stays sequential (multi-statement reduction, not isolated '
-                                f'pre-fission); got {_nloops(sdfg)} loops')
-    assert _ncond_blocks(sdfg) == 2, (f'both IPHASE phase guards must survive (correct refusal); '
-                                      f'got {_ncond_blocks(sdfg)} conditionals')
-    assert _nmaps(sdfg) == 3, (f'the four JL statements must land in exactly three maps -- the two '
-                               f'phase-guarded accumulations share one; got {_nmaps(sdfg)}')
+    assert _nloops(sdfg) == 1, (
+        f"outer JM stays sequential (multi-statement reduction, not isolated pre-fission); got {_nloops(sdfg)} loops"
+    )
+    assert _ncond_blocks(sdfg) == 2, (
+        f"both IPHASE phase guards must survive (correct refusal); got {_ncond_blocks(sdfg)} conditionals"
+    )
+    assert _nmaps(sdfg) == 3, (
+        f"the four JL statements must land in exactly three maps -- the two "
+        f"phase-guarded accumulations share one; got {_nmaps(sdfg)}"
+    )
 
 
 def test_cloudsc_iphase_shape_e2e():
     n, m = 8, 5
     rng = np.random.default_rng(104)
-    args = dict(tendency_t=rng.standard_normal(n),
-                tendency_cld=rng.standard_normal((n, m)),
-                fluxq=rng.standard_normal((n, m)),
-                psupsatsrc=rng.standard_normal((n, m)),
-                iphase=np.array([0, 1, 2, 1, 0], dtype=np.int32))
+    args = dict(
+        tendency_t=rng.standard_normal(n),
+        tendency_cld=rng.standard_normal((n, m)),
+        fluxq=rng.standard_normal((n, m)),
+        psupsatsrc=rng.standard_normal((n, m)),
+        iphase=np.array([0, 1, 2, 1, 0], dtype=np.int32),
+    )
     exp_t, exp_cld, exp_fq = _cloudsc_iphase_oracle(args)
     sdfg = cloudsc_iphase_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     got = {k: v.copy() for k, v in args.items()}
     sdfg(**got, N=n, M=m)
-    assert np.allclose(got['tendency_t'], exp_t)
-    assert np.allclose(got['tendency_cld'], exp_cld)
-    assert np.allclose(got['fluxq'], exp_fq)
+    assert np.allclose(got["tendency_t"], exp_t)
+    assert np.allclose(got["tendency_cld"], exp_cld)
+    assert np.allclose(got["fluxq"], exp_fq)
 
 
 # CLOUDSC KLEV+1 promoted upper-bound. Distilled from cloudsc.F90:2795.
@@ -418,8 +457,9 @@ def test_cloudsc_iphase_shape_e2e():
 
 
 @dace.program
-def cloudsc_klev_plus_1_shape(pfplsl: dace.float64[N, M], zpfplsx_qr: dace.float64[N, M],
-                              zpfplsx_ql: dace.float64[N, M], klev: dace.int32):
+def cloudsc_klev_plus_1_shape(
+    pfplsl: dace.float64[N, M], zpfplsx_qr: dace.float64[N, M], zpfplsx_ql: dace.float64[N, M], klev: dace.int32
+):
     """``DO JK = 1, KLEV + 1`` -- the upper bound is the frontend-
     promoted ``klev + 1`` expression. Through the canonicalize
     pipeline, the promoted symbol's iedge assignment must end up
@@ -455,17 +495,19 @@ def test_cloudsc_klev_plus_1_shape_structure():
     sdfg = cloudsc_klev_plus_1_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'expected one collapsed 2D map, got {_nmaps(sdfg)}'
-    assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
+    assert _nmaps(sdfg) == 1, f"expected one collapsed 2D map, got {_nmaps(sdfg)}"
+    assert _nloops(sdfg) == 0, f"no LoopRegion should remain, got {_nloops(sdfg)}"
     # The alias is fully substituted: ``klev_plus_1`` MUST NOT survive as an
     # iedge LHS, but ``klev`` MUST appear in the collapsed Map's range.
     root_keys = {lhs for e in sdfg.edges() for lhs in e.data.assignments}
-    assert not any('klev_plus_1' in k for k in root_keys), \
-        f'klev_plus_1 alias should be folded and its iedge dropped; got {root_keys}'
+    assert not any("klev_plus_1" in k for k in root_keys), (
+        f"klev_plus_1 alias should be folded and its iedge dropped; got {root_keys}"
+    )
     map_entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     range_strs = {str(r) for r in map_entry.map.range}
-    assert any('klev' in s for s in range_strs), \
-        f'collapsed Map jk range should reference klev directly; got {range_strs}'
+    assert any("klev" in s for s in range_strs), (
+        f"collapsed Map jk range should reference klev directly; got {range_strs}"
+    )
 
 
 def test_cloudsc_klev_plus_1_shape_e2e():
@@ -514,16 +556,23 @@ def test_zqtmst_invariant_scalar_shape_structure():
     sdfg = zqtmst_invariant_scalar_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'expected one collapsed 2D map, got {_nmaps(sdfg)}'
-    assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
+    assert _nmaps(sdfg) == 1, f"expected one collapsed 2D map, got {_nmaps(sdfg)}"
+    assert _nloops(sdfg) == 0, f"no LoopRegion should remain, got {_nloops(sdfg)}"
     # Whoever reads ``ptsphy`` is the reciprocal, whatever the division is spelled like. A
     # per-iteration recompute puts that reader under a MapEntry; the hoisted one sits at top level.
-    readers = [(state, node) for state in sdfg.states() for node in state.nodes() if isinstance(node, nodes.Tasklet)
-               for e in state.in_edges(node) if e.data is not None and e.data.data == 'ptsphy']
-    assert readers, 'no tasklet reads ptsphy at all -- the reciprocal vanished'
+    readers = [
+        (state, node)
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, nodes.Tasklet)
+        for e in state.in_edges(node)
+        if e.data is not None and e.data.data == "ptsphy"
+    ]
+    assert readers, "no tasklet reads ptsphy at all -- the reciprocal vanished"
     for state, tasklet in readers:
-        assert state.entry_node(tasklet) is None, \
-            f'the reciprocal runs per iteration: {tasklet.label} is inside {state.entry_node(tasklet)}'
+        assert state.entry_node(tasklet) is None, (
+            f"the reciprocal runs per iteration: {tasklet.label} is inside {state.entry_node(tasklet)}"
+        )
 
 
 def test_zqtmst_invariant_scalar_shape_e2e():
@@ -545,8 +594,9 @@ def test_zqtmst_invariant_scalar_shape_e2e():
 
 
 @dace.program
-def cloudsc_zqpretot_data_guard_shape(zcovptot: dace.float64[N], zqpretot: dace.float64[N], zpfplsx: dace.float64[N, M],
-                                      zepsec: dace.float64):
+def cloudsc_zqpretot_data_guard_shape(
+    zcovptot: dace.float64[N], zqpretot: dace.float64[N], zpfplsx: dace.float64[N, M], zepsec: dace.float64
+):
     """Per-JL accumulator + per-JL data-guarded reset. The data
     guard reads ``zqpretot[jl]``; the conditional zero-write to
     ``zcovptot[jl]`` is per-JL. Cascade-up must be a no-op."""
@@ -559,11 +609,11 @@ def cloudsc_zqpretot_data_guard_shape(zcovptot: dace.float64[N], zqpretot: dace.
 
 
 def _zqpretot_oracle(args, zepsec):
-    n = args['zcovptot'].shape[0]
-    m = args['zpfplsx'].shape[1]
-    zcovptot = args['zcovptot'].copy()
-    zqpretot = args['zqpretot'].copy()
-    zpfplsx = args['zpfplsx']
+    n = args["zcovptot"].shape[0]
+    m = args["zpfplsx"].shape[1]
+    zcovptot = args["zcovptot"].copy()
+    zqpretot = args["zqpretot"].copy()
+    zpfplsx = args["zpfplsx"]
     for jl in range(n):
         zqpretot[jl] = 0.0
         for jm in range(m):
@@ -592,29 +642,31 @@ def test_cloudsc_zqpretot_data_guard_shape_structure():
     sdfg = cloudsc_zqpretot_data_guard_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'expected the JL nest as one Map, got {_nmaps(sdfg)} maps'
-    assert _nreduce(sdfg) == 1, f'inner JM accumulator must lift to a Reduce node, got {_nreduce(sdfg)}'
-    assert _nloops(sdfg) == 0, (f'both the JL nest and the JM reduction should parallelize, '
-                                f'got {_nloops(sdfg)} residual loops')
-    assert _ncond_blocks(sdfg) == 1, (f'data-dependent guard must survive (correct refusal); '
-                                      f'got {_ncond_blocks(sdfg)} conditionals')
+    assert _nmaps(sdfg) == 1, f"expected the JL nest as one Map, got {_nmaps(sdfg)} maps"
+    assert _nreduce(sdfg) == 1, f"inner JM accumulator must lift to a Reduce node, got {_nreduce(sdfg)}"
+    assert _nloops(sdfg) == 0, (
+        f"both the JL nest and the JM reduction should parallelize, got {_nloops(sdfg)} residual loops"
+    )
+    assert _ncond_blocks(sdfg) == 1, (
+        f"data-dependent guard must survive (correct refusal); got {_ncond_blocks(sdfg)} conditionals"
+    )
 
 
 def test_cloudsc_zqpretot_data_guard_shape_e2e():
     n, m = 10, 4
     zepsec = 1e-6
     rng = np.random.default_rng(107)
-    args = dict(zcovptot=rng.standard_normal(n),
-                zqpretot=rng.standard_normal(n),
-                zpfplsx=rng.standard_normal((n, m)) * 1e-7)
+    args = dict(
+        zcovptot=rng.standard_normal(n), zqpretot=rng.standard_normal(n), zpfplsx=rng.standard_normal((n, m)) * 1e-7
+    )
     exp_cv, exp_qp = _zqpretot_oracle(args, zepsec)
     sdfg = cloudsc_zqpretot_data_guard_shape.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     got = {k: v.copy() for k, v in args.items()}
     sdfg(**got, zepsec=np.float64(zepsec), N=n, M=m)
-    assert np.allclose(got['zcovptot'], exp_cv)
-    assert np.allclose(got['zqpretot'], exp_qp)
+    assert np.allclose(got["zcovptot"], exp_cv)
+    assert np.allclose(got["zqpretot"], exp_qp)
 
 
 # CLOUDSC config-flag chain ``IF (NSSOPT == 0) THEN ... ELSEIF
@@ -653,14 +705,14 @@ def test_cloudsc_nssopt_config_chain_shape_hoists_the_invariant_guard():
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     top_level = [b for b in sdfg.nodes() if isinstance(b, ConditionalBlock)]
-    assert len(top_level) == 1, f'the invariant ladder did not reach the top level: {sdfg.nodes()}'
-    assert len(top_level[0].branches) == 3, f'the three-arm ladder lost an arm: {len(top_level[0].branches)}'
-    assert _ncond_blocks(sdfg) == 1, 'a per-iteration copy of the guard survived inside the nest'
-    assert _nmaps(sdfg) == 3, f'each arm must keep its own collapsed 2D map; got {_nmaps(sdfg)}'
-    assert _nloops(sdfg) == 0, f'no LoopRegion should remain, got {_nloops(sdfg)}'
+    assert len(top_level) == 1, f"the invariant ladder did not reach the top level: {sdfg.nodes()}"
+    assert len(top_level[0].branches) == 3, f"the three-arm ladder lost an arm: {len(top_level[0].branches)}"
+    assert _ncond_blocks(sdfg) == 1, "a per-iteration copy of the guard survived inside the nest"
+    assert _nmaps(sdfg) == 3, f"each arm must keep its own collapsed 2D map; got {_nmaps(sdfg)}"
+    assert _nloops(sdfg) == 0, f"no LoopRegion should remain, got {_nloops(sdfg)}"
 
 
-@pytest.mark.parametrize('nssopt', [0, 1, 2])
+@pytest.mark.parametrize("nssopt", [0, 1, 2])
 def test_cloudsc_nssopt_config_chain_shape_e2e(nssopt):
     n, m = 8, 6
     rng = np.random.default_rng(108)
@@ -690,7 +742,7 @@ def _run_canonicalize_pre_parallelize(kernel):
     turned the fully-parallel inner nests into Maps, leaving the per-``jb`` loop
     with its still-invariant ``istep`` guard for MLIU to hoist."""
     sdfg = kernel.to_sdfg(simplify=True)
-    last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == 'parallelize')
+    last_parallelize = max(i for i, (label, _) in enumerate(CANONICALIZE_STAGES) if label == "parallelize")
     for _label, factory in CANONICALIZE_STAGES[:last_parallelize]:
         for unit in factory():
             unit.apply_pass(sdfg, {})
@@ -703,30 +755,34 @@ def test_icon_solve_nonhydro_istep_hoist_standalone_mliu():
     dead-outside-branch extension. Locks the extended-match contract
     irrespective of where MLIU sits in the pipeline."""
     from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+
     sdfg = _run_canonicalize_pre_parallelize(icon_solve_nonhydro_shape)
     result = MoveLoopInvariantIfUp().apply_pass(sdfg, {})
-    assert result and result >= 1, 'MLIU must hoist the istep guard'
+    assert result and result >= 1, "MLIU must hoist the istep guard"
     sdfg.validate()
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    assert len(top_conds) == 1, f'istep guard must be at SDFG top level; got {len(top_conds)} top conds'
+    assert len(top_conds) == 1, f"istep guard must be at SDFG top level; got {len(top_conds)} top conds"
     top_branch_conds = [b[0].as_string for b in top_conds[0].branches]
-    assert any('istep' in c for c in top_branch_conds), \
-        f'top-level conditional does not test istep; branches={top_branch_conds}'
+    assert any("istep" in c for c in top_branch_conds), (
+        f"top-level conditional does not test istep; branches={top_branch_conds}"
+    )
 
 
 def test_icon_velocity_advection_istep_hoist_standalone_mliu():
     """Same standalone contract for velocity_advection's istep guard."""
     from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
+
     sdfg = _run_canonicalize_pre_parallelize(icon_velocity_advection_istep_shape)
     result = MoveLoopInvariantIfUp().apply_pass(sdfg, {})
-    assert result and result >= 1, 'MLIU must hoist the istep guard'
+    assert result and result >= 1, "MLIU must hoist the istep guard"
     sdfg.validate()
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    assert len(top_conds) == 1, f'istep guard must be at SDFG top level; got {len(top_conds)} top conds'
+    assert len(top_conds) == 1, f"istep guard must be at SDFG top level; got {len(top_conds)} top conds"
     top_branch_conds = [b[0].as_string for b in top_conds[0].branches]
-    assert any('istep' in c for c in top_branch_conds), \
-        f'top-level conditional does not test istep; branches={top_branch_conds}'
+    assert any("istep" in c for c in top_branch_conds), (
+        f"top-level conditional does not test istep; branches={top_branch_conds}"
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

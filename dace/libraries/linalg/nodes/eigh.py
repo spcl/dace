@@ -6,6 +6,7 @@ the triangle named by ``lower`` is read, as numpy's ``UPLO`` does. The vendor ex
 ``?syevd`` / ``?heevd`` (:class:`~dace.libraries.lapack.nodes.syevd.Syevd`); ``pure`` is a cyclic
 Jacobi sweep for a build with no LAPACK at all.
 """
+
 import copy
 from typing import Any, List, NamedTuple
 
@@ -39,36 +40,38 @@ REAL_TYPE: dict[dtypes.typeclass, dtypes.typeclass] = {
 
 class Operand(NamedTuple):
     """One connector of an ``Eigh`` node, as its expansion must declare it."""
+
     dtype: dtypes.typeclass
     storage: dtypes.StorageType
     shape: list
     strides: list
 
 
-def drop_unused_outputs(node: 'Eigh', state: SDFGState, sdfg: SDFG) -> None:
+def drop_unused_outputs(node: "Eigh", state: SDFGState, sdfg: SDFG) -> None:
     """Make each output nothing reads a transient of ``sdfg`` and drop it from ``node``.
 
     Dead-dataflow elimination removes the write of an unread eigenvector matrix (``eigvalsh``, or
     ``w, _ = eigh(a)``), but every expansion still has to produce it.
     """
     used = {e.src_conn for e in state.out_edges(node)}
-    for conn in ('_w', '_v'):
+    for conn in ("_w", "_v"):
         if conn not in used:
             sdfg.arrays[conn].transient = True
             node.remove_out_connector(conn)
 
 
-def add_transpose(state: SDFGState, name: str, src: dace.sdfg.nodes.AccessNode, dst: dace.sdfg.nodes.AccessNode,
-                  implementation: str) -> None:
+def add_transpose(
+    state: SDFGState, name: str, src: dace.sdfg.nodes.AccessNode, dst: dace.sdfg.nodes.AccessNode, implementation: str
+) -> None:
     """``dst = src^T`` between two access nodes, on the vendor BLAS of the GPU solver ``implementation``."""
     src_desc, dst_desc = src.desc(state.sdfg), dst.desc(state.sdfg)
     transpose = Transpose(name, dtype=src_desc.dtype)
     transpose.implementation = SOLVER_BLAS[implementation]
-    state.add_edge(src, None, transpose, '_inp', Memlet.from_array(src.data, src_desc))
-    state.add_edge(transpose, '_out', dst, None, Memlet.from_array(dst.data, dst_desc))
+    state.add_edge(src, None, transpose, "_inp", Memlet.from_array(src.data, src_desc))
+    state.add_edge(transpose, "_out", dst, None, Memlet.from_array(dst.data, dst_desc))
 
 
-def make_vendor_sdfg(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, implementation: str) -> SDFG:
+def make_vendor_sdfg(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, implementation: str) -> SDFG:
     """The eigensolve as one ``Syevd`` node, with the layout staging each implementation needs.
 
     LAPACKE reads the row-major operand directly, so the matrix is copied into ``_v`` and solved in
@@ -80,29 +83,29 @@ def make_vendor_sdfg(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, i
     a_op, w_op, v_op = node.validate(parent_sdfg, parent_state)
     dtype, storage = a_op.dtype, a_op.storage
     sdfg = dace.SDFG(f"{node.label}_sdfg")
-    a_arr = sdfg.add_array('_a', a_op.shape, dtype, strides=a_op.strides, storage=storage)
-    w_arr = sdfg.add_array('_w', w_op.shape, w_op.dtype, strides=w_op.strides, storage=w_op.storage)
-    v_arr = sdfg.add_array('_v', v_op.shape, dtype, strides=v_op.strides, storage=v_op.storage)
-    info_arr = sdfg.add_array('_info', [1], dace.int32, transient=True, storage=host_accessible_info_storage(storage))
+    a_arr = sdfg.add_array("_a", a_op.shape, dtype, strides=a_op.strides, storage=storage)
+    w_arr = sdfg.add_array("_w", w_op.shape, w_op.dtype, strides=w_op.strides, storage=w_op.storage)
+    v_arr = sdfg.add_array("_v", v_op.shape, dtype, strides=v_op.strides, storage=v_op.storage)
+    info_arr = sdfg.add_array("_info", [1], dace.int32, transient=True, storage=host_accessible_info_storage(storage))
     drop_unused_outputs(node, parent_state, sdfg)
     state = sdfg.add_state(f"{node.label}_state")
 
-    syevd = Syevd('syevd', lower=node.lower)
+    syevd = Syevd("syevd", lower=node.lower)
     syevd.implementation = implementation
-    a, v = state.add_read('_a'), state.add_write('_v')
+    a, v = state.add_read("_a"), state.add_write("_v")
     if implementation in GPU_SOLVERS:
-        work_arr = sdfg.add_array('_vt', a_op.shape, dtype, transient=True, storage=storage)
-        work_in, work_out = state.add_access('_vt'), state.add_access('_vt')
-        add_transpose(state, 'AT', a, work_in, implementation)
-        add_transpose(state, 'VT', work_out, v, implementation)
+        work_arr = sdfg.add_array("_vt", a_op.shape, dtype, transient=True, storage=storage)
+        work_in, work_out = state.add_access("_vt"), state.add_access("_vt")
+        add_transpose(state, "AT", a, work_in, implementation)
+        add_transpose(state, "VT", work_out, v, implementation)
     else:
         work_arr = v_arr
-        work_in, work_out = state.add_access('_v'), v
+        work_in, work_out = state.add_access("_v"), v
         state.add_nedge(a, work_in, Memlet.from_array(*a_arr))
-    state.add_edge(work_in, None, syevd, '_xin', Memlet.from_array(*work_arr))
-    state.add_edge(syevd, '_xout', work_out, None, Memlet.from_array(*work_arr))
-    state.add_edge(syevd, '_evals', state.add_write('_w'), None, Memlet.from_array(*w_arr))
-    state.add_edge(syevd, '_res', state.add_write('_info'), None, Memlet.from_array(*info_arr))
+    state.add_edge(work_in, None, syevd, "_xin", Memlet.from_array(*work_arr))
+    state.add_edge(syevd, "_xout", work_out, None, Memlet.from_array(*work_arr))
+    state.add_edge(syevd, "_evals", state.add_write("_w"), None, Memlet.from_array(*w_arr))
+    state.add_edge(syevd, "_res", state.add_write("_info"), None, Memlet.from_array(*info_arr))
     return sdfg
 
 
@@ -165,7 +168,7 @@ def ascending_sort(dtype: dtypes.typeclass, wtype: dtypes.typeclass, n: symbolic
 
 def jacobi_program(dtype: dtypes.typeclass, wtype: dtypes.typeclass, n: symbolic.SymbolicType, lower: bool) -> Any:
     """``eigh`` of an ``n`` x ``n`` matrix by cyclic Jacobi, as a program over ``_a``, ``_w``, ``_v``."""
-    tolerance = float(np.finfo(wtype.type).eps)**2
+    tolerance = float(np.finfo(wtype.type).eps) ** 2
     rotate = jacobi_rotation(dtype, n)
     sort_ascending = ascending_sort(dtype, wtype, n)
 
@@ -218,54 +221,50 @@ class ExpandEighPure(ExpandTransformation):
     environments: List[type] = []
 
     @staticmethod
-    def expansion(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
+    def expansion(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
         a_op, w_op, v_op = node.validate(parent_sdfg, parent_state)
         dtype, wtype = a_op.dtype, w_op.dtype
         n = a_op.shape[0]
         nsdfg = jacobi_program(dtype, wtype, n, node.lower).to_sdfg(simplify=True)
-        restride(nsdfg, (('_a', a_op.shape, a_op.strides), ('_v', v_op.shape, v_op.strides)), dtype)
-        restride(nsdfg, (('_w', w_op.shape, w_op.strides), ), wtype)
+        restride(nsdfg, (("_a", a_op.shape, a_op.strides), ("_v", v_op.shape, v_op.strides)), dtype)
+        restride(nsdfg, (("_w", w_op.shape, w_op.strides),), wtype)
         drop_unused_outputs(node, parent_state, nsdfg)
         return nsdfg
 
 
 @dace.library.expansion
 class ExpandEighOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
-    def expansion(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
+    def expansion(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
         return make_vendor_sdfg(node, parent_state, parent_sdfg, "OpenBLAS")
 
 
 @dace.library.expansion
 class ExpandEighMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
+    def expansion(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
         return make_vendor_sdfg(node, parent_state, parent_sdfg, "MKL")
 
 
 @dace.library.expansion
 class ExpandEighCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
-    def expansion(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
+    def expansion(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
         return make_vendor_sdfg(node, parent_state, parent_sdfg, "cuSolverDn")
 
 
 @dace.library.expansion
 class ExpandEighRocSolver(ExpandTransformation):
-
     environments = [environments.rocsolver.rocSOLVER]
 
     @staticmethod
-    def expansion(node: 'Eigh', parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
+    def expansion(node: "Eigh", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> SDFG:
         return make_vendor_sdfg(node, parent_state, parent_sdfg, "rocSOLVER")
 
 
@@ -278,7 +277,7 @@ class Eigh(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandEighOpenBLAS,
         "MKL": ExpandEighMKL,
         "cuSolverDn": ExpandEighCuSolverDn,
-        "rocSOLVER": ExpandEighRocSolver
+        "rocSOLVER": ExpandEighRocSolver,
     }
     default_implementation = None
 

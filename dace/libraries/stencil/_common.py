@@ -21,9 +21,8 @@ def dim_to_abs_val(input, _dimensions, sdfg):
     dimensions = [dace.symbolic.resolve_symbol_to_constant(x, sdfg) for x in _dimensions]
     for i, dim in enumerate(dimensions[1:]):
         if dim is None:
-            raise ValueError(f"Shape size \"{_dimensions[i + 1]}\" must "
-                             f"evaluate to a constant.")
-    vec = [functools.reduce(operator.mul, dimensions[i + 1:], 1) for i in range(len(dimensions))]
+            raise ValueError(f'Shape size "{_dimensions[i + 1]}" must evaluate to a constant.')
+    vec = [functools.reduce(operator.mul, dimensions[i + 1 :], 1) for i in range(len(dimensions))]
     return functools.reduce(operator.add, map(operator.mul, input, vec), 0)
 
 
@@ -36,11 +35,13 @@ def make_iterators(dimensions, halo_sizes=None, parameters=None, vector_length=1
             return ""
 
     if parameters is None:
-        iterators = collections.OrderedDict([("i" + str(i), "0:" + str(d) + add_halo(i))
-                                             for i, d in enumerate(dimensions)])
+        iterators = collections.OrderedDict(
+            [("i" + str(i), "0:" + str(d) + add_halo(i)) for i, d in enumerate(dimensions)]
+        )
     else:
-        iterators = collections.OrderedDict([(parameters[i], "0:" + str(d) + add_halo(i))
-                                             for i, d in enumerate(dimensions)])
+        iterators = collections.OrderedDict(
+            [(parameters[i], "0:" + str(d) + add_halo(i)) for i, d in enumerate(dimensions)]
+        )
     if vector_length > 1:
         iterators[parameters[-1]] += "/{}".format(vector_length)
     return iterators
@@ -58,8 +59,7 @@ def check_stencil_shape(shape: Tuple, other: Tuple):
         # Compared by NAME: one extent reaches the two sides through different rewrites and arrives
         # as two spellings that raw ``!=`` calls unequal, rejecting sizes that match.
         if not symbolic.shapes_equal(shape, other):
-            raise ValueError(f"Inconsistent input sizes: {shape} "
-                             f"vs. {other}")
+            raise ValueError(f"Inconsistent input sizes: {shape} vs. {other}")
     else:
         # Allow lower-dimensional accesses
         pass
@@ -76,9 +76,11 @@ def connector_shape(edge, desc) -> List:
     """
     shape = edge.data.subset.size()
     if not datacore.strides_equal(datacore.packed_c_strides(shape), desc.strides):
-        raise NotImplementedError(f"Stencil connector '{edge.dst_conn or edge.src_conn}' moves "
-                                  f"{tuple(shape)}, which is not contiguous in {tuple(desc.shape)} "
-                                  f"with strides {tuple(desc.strides)}.")
+        raise NotImplementedError(
+            f"Stencil connector '{edge.dst_conn or edge.src_conn}' moves "
+            f"{tuple(shape)}, which is not contiguous in {tuple(desc.shape)} "
+            f"with strides {tuple(desc.strides)}."
+        )
     return shape
 
 
@@ -146,8 +148,7 @@ def parse_accesses(code, outputs: List[str]):
             offset = _offset
         else:
             if _offset != offset:
-                raise ValueError(f"Inconsistent output offset for "
-                                 f"{node.label}: {offset} and {_offset}")
+                raise ValueError(f"Inconsistent output offset for {node.label}: {offset} and {_offset}")
 
     # If the offset is non-zero, rerun the converter to adjust
     if offset is not None and any(o != 0 for o in offset):
@@ -194,8 +195,7 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc, ite
         # Loop over each access to this data
         for indices, memlet_name in accesses.items():
             if len(indices) != num_dims:
-                raise ValueError(f"Access {field_name}[{indices}] inconsistent "
-                                 f"with iterator mapping {iterators}.")
+                raise ValueError(f"Access {field_name}[{indices}] inconsistent with iterator mapping {iterators}.")
             cond = set()
             cond_global = set()
             # Loop over each index of this access
@@ -251,8 +251,9 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc, ite
                     oob_cond |= cond_global
                 else:
                     raise ValueError(f"Unsupported boundary condition type: {btype}")
-                boundary_code += ("{} = {} if {} else _{}\n".format(memlet_name, boundary_val,
-                                                                    " or ".join(sorted(cond)), memlet_name))
+                boundary_code += "{} = {} if {} else _{}\n".format(
+                    memlet_name, boundary_val, " or ".join(sorted(cond)), memlet_name
+                )
     return boundary_code, oob_cond
 
 
@@ -267,10 +268,10 @@ def validate_vector_lengths(vector_lengths, iterator_mapping):
         dim_mask = iterator_mapping[field_name]
         if dim_mask[-1] == True:
             if vector_length != expected:
-                raise ValueError(f"Field {field_name} has vectorization width "
-                                 f"{vector_length}, expected {expected}.")
+                raise ValueError(f"Field {field_name} has vectorization width {vector_length}, expected {expected}.")
         else:
             if vector_length != 1:
-                raise ValueError(f"Field {field_name} cannot be vectorized, "
-                                 "because it doesn't read the innermost dimension.")
+                raise ValueError(
+                    f"Field {field_name} cannot be vectorized, because it doesn't read the innermost dimension."
+                )
     return expected

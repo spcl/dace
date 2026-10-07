@@ -16,6 +16,7 @@ TSVC s471 is the shape::
 ``b`` is read then written in the same iteration, and the ordering edges that sequence the two
 statements ran into ``d`` and ``e``. Rebuilt as data they became ``b -> d`` and ``b -> e``.
 """
+
 import numpy as np
 import pytest
 
@@ -26,12 +27,13 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
-def read_then_overwrite(x: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N],
-                        e: dace.float64[N]):
+def read_then_overwrite(
+    x: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]
+):
     for i in range(N):
         x[i] = b[i] + d[i] * d[i]
         b[i] = c[i] + d[i] * e[i]
@@ -41,21 +43,21 @@ def _vectorized(tag):
     sdfg = read_then_overwrite.to_sdfg(simplify=True)
     sdfg.name = tag
     canonicalize(sdfg, validate=True, peel_limit=4)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg
 
 
 def test_read_only_inputs_are_never_written():
     """The validator's own rule, asserted directly: nothing writes ``d`` or ``e``."""
-    sdfg = _vectorized('bypass_dep_struct')
+    sdfg = _vectorized("bypass_dep_struct")
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
-                if not isinstance(node, nd.AccessNode) or node.data not in ('d', 'e'):
+                if not isinstance(node, nd.AccessNode) or node.data not in ("d", "e"):
                     continue
                 real = [ed for ed in state.in_edges(node) if ed.data is not None and not ed.data.is_empty()]
-                assert not real, f'write to read-only input {node.data} in {state.label}: {[str(r.data) for r in real]}'
+                assert not real, f"write to read-only input {node.data} in {state.label}: {[str(r.data) for r in real]}"
 
 
 def test_value_preserving():
@@ -65,12 +67,12 @@ def test_value_preserving():
     want_x = b + d * d
     want_b = c + d * e
 
-    sdfg = _vectorized('bypass_dep_value')
+    sdfg = _vectorized("bypass_dep_value")
     got_x, got_b = np.zeros(n), b.copy()
     sdfg.compile()(x=got_x, b=got_b, c=c, d=d, e=e, N=n)
     assert np.allclose(got_x, want_x, rtol=1e-12, atol=1e-12)
     assert np.allclose(got_b, want_b, rtol=1e-12, atol=1e-12)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

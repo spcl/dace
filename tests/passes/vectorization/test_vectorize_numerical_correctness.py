@@ -20,6 +20,7 @@ trivially matches its own reference). ``_vectorize`` therefore also returns the
 pristine pre-pass SDFG, so each test can assert the tile-op count went from the
 empty-bracket 0 to a nonzero count -- proof that vectorization actually ran.
 """
+
 import copy
 
 import numpy as np
@@ -36,8 +37,7 @@ M = 64  # exact multiple of every tested width (2 / 4)
 def _vectorize(prog, isa=ISA.SCALAR, width=4, assume_even=False):
     sdfg = prog.to_sdfg(simplify=True)
     pristine = copy.deepcopy(sdfg)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(width, ), target_isa=isa,
-                                         assume_even=assume_even)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(width,), target_isa=isa, assume_even=assume_even)).apply_pass(sdfg, {})
     return sdfg, pristine
 
 
@@ -135,21 +135,24 @@ def _u_tan(A: dace.float32[M], C: dace.float32[M]):
         C[i] = np.tan(A[i])
 
 
-@pytest.mark.parametrize("prog,ref", [
-    (_u_sin, np.sin),
-    (_u_cos, np.cos),
-    (_u_exp, np.exp),
-    (_u_log, np.log),
-    (_u_sqrt, np.sqrt),
-    (_u_tanh, np.tanh),
-    (_u_tan, np.tan),
-])
+@pytest.mark.parametrize(
+    "prog,ref",
+    [
+        (_u_sin, np.sin),
+        (_u_cos, np.cos),
+        (_u_exp, np.exp),
+        (_u_log, np.log),
+        (_u_sqrt, np.sqrt),
+        (_u_tanh, np.tanh),
+        (_u_tan, np.tan),
+    ],
+)
 def test_transcendental_unop(prog, ref):
     rng = np.random.default_rng(42)
     sdfg, pristine = _vectorize(prog, width=4)
     _assert_really_vectorized(sdfg, pristine)
     # Domain (0.2, 1.0): valid for log/sqrt and away from tan's asymptotes.
-    A = (rng.random(M).astype(np.float32) * 0.8 + 0.2)
+    A = rng.random(M).astype(np.float32) * 0.8 + 0.2
     C = np.zeros(M, np.float32)
     sdfg(A=A, C=C)
     assert np.allclose(C, ref(A), rtol=1e-4, atol=1e-5), np.nanmax(np.abs(C - ref(A)))
@@ -176,7 +179,7 @@ def test_min_max_constant():
 # 2-D stencil
 @dace.program
 def _jacobi2d(A: dace.float32[M, M], B: dace.float32[M, M]):
-    for i, j in dace.map[1:M - 1, 1:M - 1]:
+    for i, j in dace.map[1 : M - 1, 1 : M - 1]:
         B[i, j] = dace.float32(0.2) * (A[i, j] + A[i, j - 1] + A[i, j + 1] + A[i + 1, j] + A[i - 1, j])
 
 
@@ -209,10 +212,11 @@ def test_fp16_matches_numpy():
     B = rng.random(M).astype(np.float16)
     C = np.zeros(M, np.float16)
     sdfg(A=A, B=B, C=C)
-    ref = (np.float16(0.5) * A + B)
+    ref = np.float16(0.5) * A + B
     # fp16 ops round each step; numpy does the same per-element, so this is tight.
-    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), \
-        np.max(np.abs(C.astype(np.float32) - ref.astype(np.float32)))
+    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), np.max(
+        np.abs(C.astype(np.float32) - ref.astype(np.float32))
+    )
 
 
 def test_constant_adopts_input_precision():

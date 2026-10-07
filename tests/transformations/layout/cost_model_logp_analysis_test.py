@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """LogP cost analysis read directly off an SDFG loop nest: latency and bandwidth per iteration, local
 memory free, and a layout change visible in the predicted time. Pure/symbolic -- no measurement."""
+
 import dace
 import sympy as sp
 
@@ -38,15 +39,15 @@ def test_latency_and_bandwidth_per_iteration_are_both_reported():
     assert _at(cost.latency_per_iter()) > 0
     assert _at(cost.bandwidth_per_iter()) > 0
     # three contiguous arrays: ~1/8 block each per iter, so latency ~ 3 * (1/8) * L
-    assert _at(cost.latency_per_iter()) == \
-        __import__("pytest").approx(3 * (1.0 / 8.0) * P.L, rel=0.02)
+    assert _at(cost.latency_per_iter()) == __import__("pytest").approx(3 * (1.0 / 8.0) * P.L, rel=0.02)
 
 
 def test_time_per_iter_is_latency_plus_bandwidth():
     _, st, me = _build((N, 1))
     cost = analyze_loop_nest(st, me, P, block_bytes=64)
     assert _at(cost.time_per_iter()) == __import__("pytest").approx(
-        _at(cost.latency_per_iter()) + _at(cost.bandwidth_per_iter()))
+        _at(cost.latency_per_iter()) + _at(cost.bandwidth_per_iter())
+    )
 
 
 def test_layout_change_moves_the_predicted_cost():
@@ -94,6 +95,7 @@ def test_regime_from_the_schedule():
     """A parallel map saturates the channels (bandwidth-bound); a Sequential map is serialized to one
     request at a time (latency-bound). This is how the analysis reports which bound a nest hits."""
     import dace as _dace
+
     sdfg = _dace.SDFG("reg")
     sdfg.add_array("A", [N, N], _dace.float64)
     sdfg.add_array("C", [N, N], _dace.float64)
@@ -129,6 +131,7 @@ def test_sequential_affine_nest_gets_prefetch_inclusive_concurrency():
     DEFEATS by design. The knee (core_mlp) is the right C only for prefetch-hostile patterns, whose
     callers pass concurrency explicitly."""
     import dace as _dace
+
     sdfg = _dace.SDFG("seq_mlp")
     sdfg.add_array("A", [N, N], _dace.float64)
     sdfg.add_array("C", [N, N], _dace.float64)
@@ -141,14 +144,9 @@ def test_sequential_affine_nest_gets_prefetch_inclusive_concurrency():
     assert cost.concurrency == P.core_stream_mlp == P.bw_core * P.L / P.line_bytes
     assert cost.concurrency > P.core_mlp > 1.0  # stream > demand-miss knee > chain
     # the demand-miss knee stays available for prefetch-hostile callers, measured or defaulted
-    p_measured = LogGP(L=P.L,
-                       o=0.0,
-                       g=P.g,
-                       G=P.G,
-                       line_bytes=64,
-                       bw_saturated=P.bw_saturated,
-                       bw_core=P.bw_core,
-                       c_core=8.0)
+    p_measured = LogGP(
+        L=P.L, o=0.0, g=P.g, G=P.G, line_bytes=64, bw_saturated=P.bw_saturated, bw_core=P.bw_core, c_core=8.0
+    )
     assert p_measured.core_mlp == 8.0
     assert analyze_loop_nest(st, me, p_measured, block_bytes=64, concurrency=p_measured.core_mlp).concurrency == 8.0
 
@@ -201,14 +199,16 @@ def test_gpu_sector_granularity_changes_the_message_count():
     assert _at(sector.latency_per_iter()) > _at(line.latency_per_iter())
 
 
-GPU = LogGP(L=500e-9,
-            o=0.0,
-            g=1e-9,
-            G=gap_from_bandwidth(1000e9),
-            line_bytes=128,
-            bw_saturated=1000e9,
-            bw_core=1000e9,
-            sector_bytes=32)
+GPU = LogGP(
+    L=500e-9,
+    o=0.0,
+    g=1e-9,
+    G=gap_from_bandwidth(1000e9),
+    line_bytes=128,
+    bw_saturated=1000e9,
+    bw_core=1000e9,
+    sector_bytes=32,
+)
 
 
 def test_request_and_transfer_granularities_are_split_when_p_carries_both():
@@ -263,6 +263,7 @@ def test_populated_cores_refine_the_saturated_assumption():
     n_cores * core_mlp instead of blanket inf. The honest number on this box: 16 cores x 8
     outstanding = 128 < BDP ~148 -- even all cores do not QUITE saturate, which inf hides."""
     import dace as _dace
+
     sdfg = _dace.SDFG("cores")
     sdfg.add_array("A", [N, N], _dace.float64)
     sdfg.add_array("C", [N, N], _dace.float64)
@@ -272,14 +273,9 @@ def test_populated_cores_refine_the_saturated_assumption():
     st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=_dace.Memlet("A[i,j]"))
     st.add_memlet_path(t, mx, st.add_write("C"), src_conn="c", memlet=_dace.Memlet("C[i,j]"))
 
-    p_measured = LogGP(L=P.L,
-                       o=0.0,
-                       g=P.g,
-                       G=P.G,
-                       line_bytes=64,
-                       bw_saturated=P.bw_saturated,
-                       bw_core=P.bw_core,
-                       c_core=8.0)
+    p_measured = LogGP(
+        L=P.L, o=0.0, g=P.g, G=P.G, line_bytes=64, bw_saturated=P.bw_saturated, bw_core=P.bw_core, c_core=8.0
+    )
     saturated = analyze_loop_nest(st, me, p_measured, block_bytes=64)
     populated = analyze_loop_nest(st, me, p_measured, block_bytes=64, n_cores=16)
     assert saturated.concurrency == float("inf")
@@ -316,6 +312,7 @@ def test_gpu_occupancy_is_the_unit_count():
     request GPU BDP and lands latency-regime -- the model catches an occupancy shortfall that the
     blanket saturated assumption hides. n_cores generalizes to n_units."""
     import dace as _dace
+
     sdfg = _dace.SDFG("gpu_occ")
     sdfg.add_array("A", [N, N], _dace.float64)
     sdfg.add_array("C", [N, N], _dace.float64)
@@ -326,15 +323,17 @@ def test_gpu_occupancy_is_the_unit_count():
     st.add_memlet_path(t, mx, st.add_write("C"), src_conn="c", memlet=_dace.Memlet("C[i,j]"))
 
     # per-warp outstanding ~4 (in-order lanes; scoreboard slots), measured by a multi-warp P-chase
-    gpu = LogGP(L=GPU.L,
-                o=0.0,
-                g=GPU.g,
-                G=GPU.G,
-                line_bytes=128,
-                bw_saturated=GPU.bw_saturated,
-                bw_core=GPU.bw_core,
-                sector_bytes=32,
-                c_core=4.0)
+    gpu = LogGP(
+        L=GPU.L,
+        o=0.0,
+        g=GPU.g,
+        G=GPU.G,
+        line_bytes=128,
+        bw_saturated=GPU.bw_saturated,
+        bw_core=GPU.bw_core,
+        sector_bytes=32,
+        c_core=4.0,
+    )
     bdp = analyze_loop_nest(st, me, gpu).bandwidth_delay_product()
     assert bdp == __import__("pytest").approx(500e-9 * 1000e9 / 128)  # ~3906 requests
 

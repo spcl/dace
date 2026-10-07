@@ -6,6 +6,7 @@ answer it the same way, so both call :func:`write_subset_is_injective`: the WCR-
 check (``dace/transformation/dataflow/wcr_conversion.py``) and the vectorizer's scatter-store gate
 (``map_predicates.map_body_is_tile_lowerable``).
 """
+
 import sympy
 
 from dace import data as dt
@@ -36,9 +37,10 @@ def write_subset_is_injective(write_subset: subsets.Range, params: list[str], no
     by_name = {str(sym): sym for rng in ranges for bound in rng for sym in as_basic(bound).free_symbols}
     loop_syms = {name: by_name.get(name, symbolic.pystr_to_symbolic(name)) for name in params}
     covered = set()
-    for (begin, end, _step) in ranges:
+    for begin, end, _step in ranges:
         varying = [
-            name for name, sym in loop_syms.items()
+            name
+            for name, sym in loop_syms.items()
             if sym in as_basic(begin).free_symbols or sym in as_basic(end).free_symbols
         ]
         if begin != end:
@@ -65,6 +67,7 @@ def guarded_nonzero_symbols(block) -> frozenset:
     :returns: the guarded names.
     """
     from dace.sdfg.state import ConditionalBlock
+
     names = set()
     while block is not None:
         parent = block.parent_graph
@@ -73,16 +76,14 @@ def guarded_nonzero_symbols(block) -> frozenset:
                 if region is not block or condition is None:
                     continue
                 expr = symbolic.pystr_to_symbolic(condition.as_string)
-                for term in (expr.args if isinstance(expr, sympy.And) else (expr, )):
+                for term in expr.args if isinstance(expr, sympy.And) else (expr,):
                     if isinstance(term, sympy.Ne):
                         lhs, rhs = term.args
                         side = lhs if rhs == 0 else rhs if lhs == 0 else None
                         if side is not None and side.is_Symbol:
                             names.add(str(side))
                 reassigned = {
-                    name
-                    for edge in region.all_interstate_edges(recursive=True)
-                    for name in edge.data.assignments
+                    name for edge in region.all_interstate_edges(recursive=True) for name in edge.data.assignments
                 }
                 names -= reassigned
         block = parent
@@ -103,7 +104,7 @@ def equalized_range(write_subset: subsets.Range) -> subsets.Range:
     :returns: an equivalent range whose bounds are parsed sympy expressions over merged symbols.
     """
     bounds = symbolic.equalize_symbols_across(*(as_expr(str(bound)) for rng in write_subset.ranges for bound in rng))
-    return subsets.Range([bounds[d:d + 3] for d in range(0, len(bounds), 3)])
+    return subsets.Range([bounds[d : d + 3] for d in range(0, len(bounds), 3)])
 
 
 def scatter_write_is_injective(write_subset: subsets.Range, lane_var: str, desc: dt.Data) -> bool:

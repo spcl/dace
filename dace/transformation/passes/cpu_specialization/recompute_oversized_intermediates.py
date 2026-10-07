@@ -27,6 +27,7 @@ A DEVICE SPECIALIZATION, not a canonical form: which side of the recompute/mater
 is a property of the host's cache, so this runs in the CPU lowering band and the canonical graph
 keeps its materialized intermediates.
 """
+
 from typing import Any, Dict, Optional
 
 from dace import SDFG, data, properties, symbolic
@@ -71,8 +72,11 @@ class OversizedIntermediateOTFFusion(OTFMapFusion):
         # stencil_3d, the surviving access node came out ``in=0, out=6`` and the kernel returned
         # uninitialized memory. The SDFG still validates, so nothing downstream catches it.
         readers = sum(
-            1 for state in sdfg.states() for node in state.nodes()
-            if isinstance(node, nodes.AccessNode) and node.data == self.array.data and state.out_degree(node) > 0)
+            1
+            for state in sdfg.states()
+            for node in state.nodes()
+            if isinstance(node, nodes.AccessNode) and node.data == self.array.data and state.out_degree(node) > 0
+        )
         if readers != 1:
             return False
         return intermediate_outgrows_cache(sdfg, self.array.data)
@@ -87,8 +91,9 @@ class OversizedIntermediateOTFFusion(OTFMapFusion):
         """
         name = self.array.data
         super().apply(graph, sdfg)
-        if any(node.data == name for state in sdfg.states() for node in state.nodes()
-               if isinstance(node, nodes.AccessNode)):
+        if any(
+            node.data == name for state in sdfg.states() for node in state.nodes() if isinstance(node, nodes.AccessNode)
+        ):
             return
         sdfg.remove_data(name, validate=False)
 
@@ -97,7 +102,7 @@ class OversizedIntermediateOTFFusion(OTFMapFusion):
 class RecomputeOversizedIntermediates(ppl.Pass):
     """Fuse every producer map whose intermediate does not fit in the host's last-level cache."""
 
-    CATEGORY: str = 'CPU Specialization'
+    CATEGORY: str = "CPU Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.Descriptors
@@ -111,7 +116,7 @@ class RecomputeOversizedIntermediates(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Apply to fixpoint; returns how many chains were collapsed, or ``None``."""
         # ``cpu_specialize`` validates once at its end; a validation per pass would walk the SDFG again.
-        applied = sdfg.apply_transformations_repeated(OversizedIntermediateOTFFusion,
-                                                      validate=False,
-                                                      validate_all=False)
+        applied = sdfg.apply_transformations_repeated(
+            OversizedIntermediateOTFFusion, validate=False, validate_all=False
+        )
         return applied or None

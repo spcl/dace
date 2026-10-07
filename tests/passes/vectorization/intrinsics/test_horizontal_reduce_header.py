@@ -5,6 +5,7 @@ The vectorized reduction expansion emits ``horizontal_reduce_<op><T, W>(buf)`` t
 scalar. This test compiles the header with ``g++`` and checks every op against a reference fold, including the odd-width
 and width-1 edges.
 """
+
 import subprocess
 import textwrap
 from pathlib import Path
@@ -57,7 +58,8 @@ def test_scalar_horizontal_reduce_compiles_and_is_correct(tmp_path):
     assert "ALL OK" in run_res.stdout, run_res.stdout
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import tempfile
+
     with tempfile.TemporaryDirectory() as directory:
         test_scalar_horizontal_reduce_compiles_and_is_correct(Path(directory))

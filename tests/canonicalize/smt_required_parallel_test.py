@@ -32,6 +32,7 @@ runtime trap emitted by ``AssumeSymbolConstraints``, the same way ``ScatterToGua
 (``assume_no_conflicts``) and ``ParallelizeUnderConstraint`` (``assume_constraint``) already
 turn an unprovable precondition into a checked one.
 """
+
 import re
 
 import numpy as np
@@ -42,24 +43,30 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
-K = dace.symbol('K')
+N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 def cpu_canon(sdfg: dace.SDFG) -> dace.SDFG:
-    canonicalize(sdfg,
-                 target='cpu',
-                 break_anti_dependence=True,
-                 interchange_carry_with_map=True,
-                 scatter_to_guarded_maps=True,
-                 validate_all=False)
+    canonicalize(
+        sdfg,
+        target="cpu",
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+        validate_all=False,
+    )
     return sdfg
 
 
 def residual_loops(sdfg: dace.SDFG) -> int:
     """Sequential LoopRegions, counted across nested SDFGs (Maps live there too)."""
-    return sum(1 for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions()
-               if isinstance(cfr, LoopRegion) and cfr.loop_variable)
+    return sum(
+        1
+        for sd in sdfg.all_sdfgs_recursive()
+        for cfr in sd.all_control_flow_regions()
+        if isinstance(cfr, LoopRegion) and cfr.loop_variable
+    )
 
 
 # #
@@ -100,7 +107,7 @@ def test_guarded_poly_indirection_is_value_preserving():
     sdfg = cpu_canon(guarded_poly_indirection.to_sdfg(simplify=True))
     got = a.copy()
     sdfg(A=got, IDX=idx.copy(), N=n)
-    assert np.allclose(got, expected), 'canonicalize must preserve the guarded indirection'
+    assert np.allclose(got, expected), "canonicalize must preserve the guarded indirection"
 
 
 def test_guarded_poly_indirection_parallelizes():
@@ -156,7 +163,7 @@ def test_unique_scatter_is_value_preserving():
     sdfg = cpu_canon(unique_scatter.to_sdfg(simplify=True))
     got = a.copy()
     sdfg(A=got, B=b.copy(), IDX=idx.copy(), N=n)
-    assert np.allclose(got, expected), 'canonicalize must preserve the scatter'
+    assert np.allclose(got, expected), "canonicalize must preserve the scatter"
 
 
 def test_unique_scatter_already_parallelizes_under_a_runtime_contract():
@@ -165,7 +172,7 @@ def test_unique_scatter_already_parallelizes_under_a_runtime_contract():
     precondition, then check the precondition at runtime" contract an SMT oracle would feed.
     Recorded here so the SMT work does not re-solve a solved case."""
     sdfg = cpu_canon(unique_scatter.to_sdfg(simplify=True))
-    assert residual_loops(sdfg) == 0, 'the guarded-scatter path should already parallelize this'
+    assert residual_loops(sdfg) == 0, "the guarded-scatter path should already parallelize this"
 
 
 def test_duplicate_indices_take_the_sequential_fallback():
@@ -191,8 +198,12 @@ def test_duplicate_indices_take_the_sequential_fallback():
 def guard_check_nodes(sdfg: dace.SDFG) -> list:
     """Every ``ScatterConflictCheck`` libnode in the tree -- the guard's compute half."""
     from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
+
     return [
-        n for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+        n
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes()
         if isinstance(n, ScatterConflictCheck)
     ]
 
@@ -203,8 +214,11 @@ def guard_trap_tasklets(sdfg: dace.SDFG) -> list:
     Matched on the count symbol rather than on ``std::abort``, which the unrelated
     nonnegative-symbol assumption tasklet also emits."""
     return [
-        n for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and '__scatter_guard_check_' in n.code.as_string
+        n
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and "__scatter_guard_check_" in n.code.as_string
     ]
 
 
@@ -213,17 +227,21 @@ def test_overwriting_scatter_keeps_the_whole_guard():
     Map and the original loop, pinned sequential, at run time: no trap, no ``std::abort``."""
     sdfg = cpu_canon(overwriting_scatter.to_sdfg(simplify=True))
     loops = [
-        cfr for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions()
+        cfr
+        for sd in sdfg.all_sdfgs_recursive()
+        for cfr in sd.all_control_flow_regions()
         if isinstance(cfr, LoopRegion) and cfr.loop_variable
     ]
-    assert loops and all(loop.pinned_sequential for loop in loops), \
-        'every loop left must be the pinned fallback; any other would make the guard vacuous'
+    assert loops and all(loop.pinned_sequential for loop in loops), (
+        "every loop left must be the pinned fallback; any other would make the guard vacuous"
+    )
     checks = guard_check_nodes(sdfg)
-    assert len(checks) == 1, f'expected one conflict check, got {[n.label for n in checks]}'
-    assert not guard_trap_tasklets(sdfg), 'a collision takes the fallback, it must not abort'
-    code = '\n'.join(c.code for c in sdfg.generate_code())
-    assert re.search(r'if \(\(?__scatter_guard_check_\w+ > 0\)?\)', code), \
-        'the dispatch must survive to codegen, not just to the SDFG'
+    assert len(checks) == 1, f"expected one conflict check, got {[n.label for n in checks]}"
+    assert not guard_trap_tasklets(sdfg), "a collision takes the fallback, it must not abort"
+    code = "\n".join(c.code for c in sdfg.generate_code())
+    assert re.search(r"if \(\(?__scatter_guard_check_\w+ > 0\)?\)", code), (
+        "the dispatch must survive to codegen, not just to the SDFG"
+    )
 
 
 def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():
@@ -236,11 +254,12 @@ def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():
     it and the same unguarded Map becomes a race. The numbers are asserted against the
     duplicate-index reference so the exemption can never be widened into a wrong answer."""
     sdfg = cpu_canon(unique_scatter.to_sdfg(simplify=True))
-    assert not guard_check_nodes(sdfg), 'an accumulation must not pay for a conflict check'
-    assert not guard_trap_tasklets(sdfg), 'an accumulation must not be able to abort'
-    code = '\n'.join(c.code for c in sdfg.generate_code())
-    assert 'reduce_atomic' in code or re.search(r'reduction\(\+:A\[', code), \
-        'the exemption is sound only while the combine is race-free'
+    assert not guard_check_nodes(sdfg), "an accumulation must not pay for a conflict check"
+    assert not guard_trap_tasklets(sdfg), "an accumulation must not be able to abort"
+    code = "\n".join(c.code for c in sdfg.generate_code())
+    assert "reduce_atomic" in code or re.search(r"reduction\(\+:A\[", code), (
+        "the exemption is sound only while the combine is race-free"
+    )
 
     n = 8
     idx = np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64)  # deliberately NOT a permutation
@@ -250,7 +269,7 @@ def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():
         expected[idx[k]] += b[k]
     got = np.zeros(n)
     sdfg(A=got, B=b.copy(), IDX=idx.copy(), N=n)
-    assert np.allclose(got, expected), 'every duplicate must still fold into its slot'
+    assert np.allclose(got, expected), "every duplicate must still fold into its slot"
 
 
 # #
@@ -264,8 +283,9 @@ def test_accumulating_scatter_is_exempt_and_stays_right_under_duplicates():
 
 
 @dace.program
-def hybrid_sparse(y: dace.float64[N], val: dace.float64[N], x: dace.float64[N], col: dace.int64[N],
-                  row_ptr: dace.int64[N + 1]):
+def hybrid_sparse(
+    y: dace.float64[N], val: dace.float64[N], x: dace.float64[N], col: dace.int64[N], row_ptr: dace.int64[N + 1]
+):
     for i in range(N):
         acc = 0.0
         for k in range(row_ptr[i], row_ptr[i + 1]):
@@ -291,7 +311,7 @@ def test_hybrid_sparse_is_value_preserving():
     sdfg = cpu_canon(hybrid_sparse.to_sdfg(simplify=True))
     got = np.zeros(n)
     sdfg(y=got, val=val.copy(), x=x.copy(), col=col.copy(), row_ptr=row_ptr.copy(), N=n, K=ksplit)
-    assert np.allclose(got, expected), 'the conditional recurrence must be preserved'
+    assert np.allclose(got, expected), "the conditional recurrence must be preserved"
 
 
 def test_hybrid_sparse_partitions_at_k():
@@ -313,7 +333,7 @@ def test_hybrid_sparse_partitions_at_k():
 # the nest is reducible -- but only once ``i < j`` is modelled formally. This is the shape
 # where the solver found 6 reducible loops that the shipped heuristics missed.
 
-M = dace.symbol('M')
+M = dace.symbol("M")
 
 
 @dace.program
@@ -335,7 +355,7 @@ def test_triangular_update_is_value_preserving():
     sdfg = cpu_canon(triangular_update.to_sdfg(simplify=True))
     got = a.copy()
     sdfg(A=got, M=m)
-    assert np.allclose(got, expected), 'the triangular update must be preserved'
+    assert np.allclose(got, expected), "the triangular update must be preserved"
 
 
 def test_triangular_update_already_parallelizes():
@@ -371,7 +391,7 @@ def test_quadratic_scatter_is_value_preserving():
     sdfg = cpu_canon(quadratic_scatter.to_sdfg(simplify=True))
     got = np.zeros(n * n)
     sdfg(A=got, B=b.copy(), N=n)
-    assert np.allclose(got, expected), 'the quadratic scatter must be preserved'
+    assert np.allclose(got, expected), "the quadratic scatter must be preserved"
 
 
 def test_quadratic_scatter_parallelizes():
@@ -400,18 +420,24 @@ def test_colliding_scatter_stays_sequential():
     """The refusal itself, now that the ``min()``-subscript crash is gone: the write to A stays in
     a sequential LoopRegion and no Map anywhere in the tree carries it."""
     sdfg = cpu_canon(colliding_scatter.to_sdfg(simplify=True))
-    assert residual_loops(sdfg) >= 1, 'a colliding scatter must never be parallelized'
-    writers = [(sd, st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.data_nodes()
-               if n.data == 'A' and st.in_degree(n) > 0]
-    assert writers, 'the scatter must still write A somewhere'
+    assert residual_loops(sdfg) >= 1, "a colliding scatter must never be parallelized"
+    writers = [
+        (sd, st, n)
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.data_nodes()
+        if n.data == "A" and st.in_degree(n) > 0
+    ]
+    assert writers, "the scatter must still write A somewhere"
     for sd, st, node in writers:
         scopes = st.scope_dict()
-        assert scopes[node] is None, f'the colliding write to A landed inside a Map scope in {sd.label}.{st.label}'
+        assert scopes[node] is None, f"the colliding write to A landed inside a Map scope in {sd.label}.{st.label}"
         loops = [
-            cfr for cfr in sd.all_control_flow_regions()
+            cfr
+            for cfr in sd.all_control_flow_regions()
             if isinstance(cfr, LoopRegion) and cfr.loop_variable and st in cfr.all_control_flow_blocks()
         ]
-        assert loops, f'the colliding write in {sd.label}.{st.label} must stay under a sequential loop'
+        assert loops, f"the colliding write in {sd.label}.{st.label} must stay under a sequential loop"
 
 
 def test_colliding_scatter_is_value_preserving():
@@ -427,8 +453,8 @@ def test_colliding_scatter_is_value_preserving():
     sdfg(A=got, B=b.copy(), N=n)
     # Pure copies: the sequential form reproduces the reference bit for bit, and any racing
     # reorder of the colliding slots would show up here as a wrong-but-close value.
-    assert np.array_equal(got, expected), 'last write must win, in iteration order'
+    assert np.array_equal(got, expected), "last write must win, in iteration order"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

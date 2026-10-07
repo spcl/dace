@@ -23,6 +23,7 @@ shift, so ``z3.LShR`` is the only correct encoding of ``>>`` here -- z3's ``>>``
 would smear the sign bit through every CRC step. Encode wide enough that the body's own masks, not
 the width, do the truncating.
 """
+
 import ast
 from typing import Any, Dict, Optional
 
@@ -31,6 +32,7 @@ from dace.optionals import required
 
 try:
     import z3
+
     HAS_Z3 = True
 except Exception:
     z3 = None  # type: ignore
@@ -40,24 +42,16 @@ except Exception:
 DEFAULT_WIDTH = 64
 
 BINOPS = {
-    ast.BitAnd:
-    lambda a, b: a & b,
-    ast.BitOr:
-    lambda a, b: a | b,
-    ast.BitXor:
-    lambda a, b: a ^ b,
-    ast.LShift:
-    lambda a, b: a << b,
+    ast.BitAnd: lambda a, b: a & b,
+    ast.BitOr: lambda a, b: a | b,
+    ast.BitXor: lambda a, b: a ^ b,
+    ast.LShift: lambda a, b: a << b,
     # Logical, not arithmetic: Python shifts a non-negative int in zeros, z3's ``>>`` shifts in the
     # sign bit. On a CRC the difference is every iteration after the first.
-    ast.RShift:
-    lambda a, b: required(z3).LShR(a, b),
-    ast.Add:
-    lambda a, b: a + b,
-    ast.Sub:
-    lambda a, b: a - b,
-    ast.Mult:
-    lambda a, b: a * b,
+    ast.RShift: lambda a, b: required(z3).LShR(a, b),
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
 }
 
 COMPARES = {

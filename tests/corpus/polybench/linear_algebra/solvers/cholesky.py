@@ -2,9 +2,9 @@
 import dace
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -40,22 +40,23 @@ def cholesky(A: datatype[N, N]):
     # input) untouched, so copy back only the lower triangle to preserve that exact convention.
     L = np.linalg.cholesky(A)
     for i in dace.map[0:N]:
-        for j in dace.map[0:i + 1]:
+        for j in dace.map[0 : i + 1]:
             A[i, j] = L[i, j]
 
 
 def print_result(filename, *args, n=None, **kwargs):
-    with open(filename, 'w') as fp:
+    with open(filename, "w") as fp:
         fp.write("==BEGIN DUMP_ARRAYS==\n")
-        fp.write("begin dump: %s\n" % 'A')
+        fp.write("begin dump: %s\n" % "A")
         for i in range(0, n):
             for j in range(0, i + 1):
                 fp.write("{:.7f} ".format(args[0][i, j]))
             fp.write("\n")
-        fp.write("\nend   dump: %s\n" % 'A')
+        fp.write("\nend   dump: %s\n" % "A")
         fp.write("==END   DUMP_ARRAYS==\n")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     polybench.main(sizes, args, print_result, init_array, cholesky)

@@ -8,10 +8,10 @@ from dace.frontend.python.common import DaceSyntaxError
 
 @dace.program
 def single_target(a: dace.float32[1]):
-    b = dace.ndarray((1, ), dtype=dace.float32)
-    if (a[0] < 0):
+    b = dace.ndarray((1,), dtype=dace.float32)
+    if a[0] < 0:
         b = 0
-    elif (a[0] < 1):
+    elif a[0] < 1:
         b = 1
     else:
         b = a
@@ -19,10 +19,10 @@ def single_target(a: dace.float32[1]):
 
 
 def test_single_target():
-    a = np.zeros((1, ), dtype=np.float32)
+    a = np.zeros((1,), dtype=np.float32)
     a[0] = np.pi
     b = single_target(a=a)
-    assert (b[0] == np.float32(np.pi))
+    assert b[0] == np.float32(np.pi)
 
 
 @dace.program
@@ -32,10 +32,10 @@ def single_target_parentheses(a: dace.float32[1]):
 
 
 def test_single_target_parentheses():
-    a = np.zeros((1, ), dtype=np.float32)
+    a = np.zeros((1,), dtype=np.float32)
     a[0] = np.pi
     b = single_target_parentheses(a=a)
-    assert (b[0] == np.float32(np.pi))
+    assert b[0] == np.float32(np.pi)
 
 
 @dace.program
@@ -45,11 +45,11 @@ def multiple_targets(a: dace.float32[1]):
 
 
 def test_multiple_targets():
-    a = np.zeros((1, ), dtype=np.float32)
+    a = np.zeros((1,), dtype=np.float32)
     a[0] = np.pi
     b, c = multiple_targets(a=a)
-    assert (b[0] == np.float32(np.pi))
-    assert (c[0] == np.float32(2) * np.float32(np.pi))
+    assert b[0] == np.float32(np.pi)
+    assert c[0] == np.float32(2) * np.float32(np.pi)
 
 
 @dace.program
@@ -59,11 +59,11 @@ def multiple_targets_parentheses(a: dace.float32[1]):
 
 
 def test_multiple_targets_parentheses():
-    a = np.zeros((1, ), dtype=np.float32)
+    a = np.zeros((1,), dtype=np.float32)
     a[0] = np.pi
     b, c = multiple_targets_parentheses(a=a)
-    assert (b[0] == np.float32(np.pi))
-    assert (c[0] == np.float32(2) * np.float32(np.pi))
+    assert b[0] == np.float32(np.pi)
+    assert c[0] == np.float32(2) * np.float32(np.pi)
 
 
 @dace.program
@@ -73,12 +73,12 @@ def multiple_targets_unpacking(a: dace.float32[2]):
 
 
 def test_multiple_targets_unpacking():
-    a = np.zeros((2, ), dtype=np.float32)
+    a = np.zeros((2,), dtype=np.float32)
     a[0] = np.pi
     a[1] = 2 * np.pi
     b, c = multiple_targets_unpacking(a=a)
-    assert (b[0] == a[0])
-    assert (c[0] == a[1])
+    assert b[0] == a[0]
+    assert c[0] == a[1]
 
 
 @dace.program
@@ -127,13 +127,13 @@ def nested_multiple_targets(a: dace.float32[1]):
 
 
 def test_nested_multiple_targets():
-    a = np.zeros((1, ), dtype=np.float32)
+    a = np.zeros((1,), dtype=np.float32)
     a[0] = np.pi
     b, c, d, e = nested_multiple_targets(a=a)
-    assert (b[0] == np.float32(np.pi))
-    assert (c[0] == np.float32(2) * np.float32(np.pi))
-    assert (d[0] == np.float32(3) * np.float32(np.pi))
-    assert (e[0] == np.float32(4) * np.float32(np.pi))
+    assert b[0] == np.float32(np.pi)
+    assert c[0] == np.float32(2) * np.float32(np.pi)
+    assert d[0] == np.float32(3) * np.float32(np.pi)
+    assert e[0] == np.float32(4) * np.float32(np.pi)
 
 
 @dace.program
@@ -142,20 +142,20 @@ def starred_target(a: dace.float32[1]):
     return b, c, d, e
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_starred_target():
-    a = np.zeros((1, ), dtype=np.float32)
+    a = np.zeros((1,), dtype=np.float32)
     a[0] = np.pi
     b, c, d, e = starred_target(a=a)
-    assert (b[0] == np.float32(np.pi))
-    assert (c[0] == np.float32(2) * np.float32(np.pi))
-    assert (c[1] == np.float32(3) * np.float32(np.pi))
-    assert (c[2] == np.float32(4) * np.float32(np.pi))
-    assert (d[0] == np.float32(5) * np.float32(np.pi))
-    assert (e[0] == np.float32(6) * np.float32(np.pi))
+    assert b[0] == np.float32(np.pi)
+    assert c[0] == np.float32(2) * np.float32(np.pi)
+    assert c[1] == np.float32(3) * np.float32(np.pi)
+    assert c[2] == np.float32(4) * np.float32(np.pi)
+    assert d[0] == np.float32(5) * np.float32(np.pi)
+    assert e[0] == np.float32(6) * np.float32(np.pi)
 
 
-mystruct = dace.struct('mystruct', a=dace.int32, b=dace.float32)
+mystruct = dace.struct("mystruct", a=dace.int32, b=dace.float32)
 
 
 @dace.program
@@ -164,12 +164,12 @@ def attribute_reference(a: mystruct[1]):
     a.b[0] = 6
 
 
-@pytest.mark.skip('Syntax is not yet supported')
+@pytest.mark.skip("Syntax is not yet supported")
 def test_attribute_reference():
-    a = np.ndarray((1, ), dtype=np.dtype(mystruct.as_ctypes()))
+    a = np.ndarray((1,), dtype=np.dtype(mystruct.as_ctypes()))
     attribute_reference(a=a)
-    assert (a[0]['a'] == np.int32(5))
-    assert (a[0]['b'] == np.float32(6))
+    assert a[0]["a"] == np.int32(5)
+    assert a[0]["b"] == np.float32(6)
 
 
 @dace.program
@@ -180,7 +180,7 @@ def ann_assign_supported_type():
 
 def test_ann_assign_supported_type():
     a = ann_assign_supported_type()
-    assert (a.dtype == np.uint16)
+    assert a.dtype == np.uint16
 
 
 def test_assignment_to_nonexistent_variable():
@@ -211,7 +211,6 @@ def test_assign_return_symbols():
 def test_assign_to_compiletime_scalar():
 
     class MyScalar:
-
         def __init__(self) -> None:
             self.scalar = 5
 
@@ -227,7 +226,6 @@ def test_assign_to_compiletime_scalar():
 def test_augassign_to_compiletime_scalar():
 
     class MyScalar:
-
         def __init__(self) -> None:
             self.scalar = 5
 
@@ -251,10 +249,10 @@ def test_scalar_assignment_copies():
         out[1] = b
 
     sdfg = plain.to_sdfg(simplify=False)
-    assert 'a' in sdfg.arrays and 'b' in sdfg.arrays
-    assert sdfg.arrays['a'] is not sdfg.arrays['b']
+    assert "a" in sdfg.arrays and "b" in sdfg.arrays
+    assert sdfg.arrays["a"] is not sdfg.arrays["b"]
 
-    out = np.zeros((2, ), dtype=np.float64)
+    out = np.zeros((2,), dtype=np.float64)
     plain(out=out)
     assert np.allclose(out, [1.0, 2.0])
 
@@ -272,10 +270,10 @@ def test_scalar_chained_assignment_copies():
         out[0] = s0 + s1
 
     sdfg = chained.to_sdfg(simplify=False)
-    assert {'tmp', 's0', 's1'}.issubset(sdfg.arrays.keys())
+    assert {"tmp", "s0", "s1"}.issubset(sdfg.arrays.keys())
 
     a = np.arange(1.0, 9.0)
-    out = np.zeros((1, ), dtype=np.float64)
+    out = np.zeros((1,), dtype=np.float64)
     chained(a=a, out=out)
     assert np.allclose(out[0], a.sum())
 
@@ -300,9 +298,9 @@ def test_scalar_assignment_branch_dispatch():
         out[5] = rp2
 
     sdfg = branches.to_sdfg(simplify=False)
-    assert {'rp0', 'rp1', 'rp2', 'pc'}.issubset(sdfg.arrays.keys())
+    assert {"rp0", "rp1", "rp2", "pc"}.issubset(sdfg.arrays.keys())
 
-    out = np.zeros((6, ), dtype=np.float64)
+    out = np.zeros((6,), dtype=np.float64)
     branches(out=out)
     assert np.allclose(out, [10.0, 20.0, 30.0, 10.0, 20.0, 30.0])
 
@@ -311,7 +309,7 @@ def test_array_assignment_aliases():
 
     @dace.program
     def aliasing(out: dace.float64[4]):
-        a = np.zeros((4, ), dtype=np.float64)
+        a = np.zeros((4,), dtype=np.float64)
         b = a
         b[0] = 1.0
         out[:] = a
@@ -320,7 +318,7 @@ def test_array_assignment_aliases():
     # Both names share a single container, as they do in NumPy
     assert len([n for n, desc in sdfg.arrays.items() if desc.transient]) == 1
 
-    out = np.ones((4, ), dtype=np.float64)
+    out = np.ones((4,), dtype=np.float64)
     aliasing(out=out)
     assert np.allclose(out, [1.0, 0.0, 0.0, 0.0])
 

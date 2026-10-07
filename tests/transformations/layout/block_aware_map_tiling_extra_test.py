@@ -14,6 +14,7 @@ int_floor-free case). Here we exercise, at the level of the pass itself:
 
 Each compiled case is checked bit-exact against a NumPy oracle.
 """
+
 import copy
 
 import numpy
@@ -119,7 +120,7 @@ def test_perfect_match_emits_no_modulo_or_int_floor():
 
     sdfg = copy.deepcopy(original)
     sdfg.name = "vadd_perfect"
-    count = BlockAwareMapTiling(tile_sizes=(16, ), divides_evenly=True).apply_pass(sdfg, {})
+    count = BlockAwareMapTiling(tile_sizes=(16,), divides_evenly=True).apply_pass(sdfg, {})
     assert count == 1
     sdfg.validate()
 
@@ -216,7 +217,7 @@ def test_non_dividing_factor_uses_remainder_guard():
 
     sdfg = copy.deepcopy(original)
     sdfg.name = "vadd_remainder"
-    count = BlockAwareMapTiling(tile_sizes=(8, ), divides_evenly=False).apply_pass(sdfg, {})
+    count = BlockAwareMapTiling(tile_sizes=(8,), divides_evenly=False).apply_pass(sdfg, {})
     assert count == 1
     sdfg.validate()
 
@@ -244,7 +245,7 @@ def test_idempotent_when_tile_equals_extent():
 
     sdfg = copy.deepcopy(original)
     sdfg.name = "vadd64_idem"
-    pass_obj = BlockAwareMapTiling(tile_sizes=(64, ))
+    pass_obj = BlockAwareMapTiling(tile_sizes=(64,))
 
     first = pass_obj.apply_pass(sdfg, {})
     assert first == 1
@@ -289,13 +290,13 @@ def test_divides_evenly_is_not_asserted_on_a_map_that_provably_is_not():
     N = dace.symbol("N")
 
     def map_entry(ranges):
-        sdfg = dace.SDFG('g_divides_evenly_is_not_asserted_on_a_map_that_provably_is_not')
+        sdfg = dace.SDFG("g_divides_evenly_is_not_asserted_on_a_map_that_provably_is_not")
         state = sdfg.add_state("s", is_start_block=True)
         me, _ = state.add_map("m", ranges)
         return me
 
-    assert provably_indivisible(map_entry({"i": "0:10"}), (8, )) is True  # proof: 10 % 8 == 2
-    assert provably_indivisible(map_entry({"i": "0:16"}), (8, )) is False  # proof: divides
-    assert provably_indivisible(map_entry({"i": "0:N"}), (8, )) is False  # unprovable -> trust caller
+    assert provably_indivisible(map_entry({"i": "0:10"}), (8,)) is True  # proof: 10 % 8 == 2
+    assert provably_indivisible(map_entry({"i": "0:16"}), (8,)) is False  # proof: divides
+    assert provably_indivisible(map_entry({"i": "0:N"}), (8,)) is False  # unprovable -> trust caller
     # any indivisible dimension is enough
     assert provably_indivisible(map_entry({"i": "0:16", "j": "0:10"}), (8, 8)) is True

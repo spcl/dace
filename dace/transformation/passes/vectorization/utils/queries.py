@@ -5,6 +5,7 @@ Read-only query helpers used by the vectorization pipeline.
 These helpers do not mutate the SDFG; they extract access subsets used by the
 emission and prep passes.
 """
+
 import dace
 
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset

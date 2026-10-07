@@ -36,7 +36,7 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 
-N = dace.symbol('N', nonnegative=True)
+N = dace.symbol("N", nonnegative=True)
 
 
 def _order(sdfg):
@@ -154,14 +154,16 @@ def _control_tokens(sdfg, variable):
         for blk in region.nodes():
             if isinstance(blk, LoopRegion):
                 if blk.loop_variable == variable:
-                    text = ' '.join(code.as_string
-                                    for code in (blk.init_statement, blk.loop_condition, blk.update_statement)
-                                    if code is not None)
-                    found.append(set(re.findall(r'\b[A-Za-z_]\w*\b', text)))
+                    text = " ".join(
+                        code.as_string
+                        for code in (blk.init_statement, blk.loop_condition, blk.update_statement)
+                        if code is not None
+                    )
+                    found.append(set(re.findall(r"\b[A-Za-z_]\w*\b", text)))
                 walk(blk)
 
     walk(sdfg)
-    assert len(found) == 1, f'expected exactly one loop over {variable}, found {len(found)}'
+    assert len(found) == 1, f"expected exactly one loop over {variable}, found {len(found)}"
     return found[0]
 
 
@@ -175,24 +177,24 @@ def test_trapezoid_bound_on_bubbled_axis_is_interchanged():
     _ref_triangular_i_k(a_ref, bb, n)
 
     sdfg = triangular_i_k.to_sdfg(simplify=True)
-    assert _order(sdfg) == ['i', 'j', 'k']
-    assert 'i' in _control_tokens(sdfg, 'k'), 'the k bound must start out referencing i'
+    assert _order(sdfg) == ["i", "j", "k"]
+    assert "i" in _control_tokens(sdfg, "k"), "the k bound must start out referencing i"
 
     applied = LoopStridePermutation().apply_pass(sdfg, {})
-    assert applied, 'a trapezoidal pair is interchangeable and must not be refused'
+    assert applied, "a trapezoidal pair is interchangeable and must not be refused"
     # Unit-stride i innermost, and the j-carried recurrence pushed outermost, where it is safe.
-    assert _order(sdfg) == ['j', 'k', 'i']
+    assert _order(sdfg) == ["j", "k", "i"]
     # The dependence between the two bounds must have MOVED, not merely been renamed: a metadata
     # swap that left `k in range(i, N)` under an i loop would enumerate a different set.
-    assert 'i' not in _control_tokens(sdfg, 'k'), 'the k bound must no longer reference i'
-    assert 'k' in _control_tokens(sdfg, 'i'), 'the rebuilt i bound must be capped by k'
+    assert "i" not in _control_tokens(sdfg, "k"), "the k bound must no longer reference i"
+    assert "k" in _control_tokens(sdfg, "i"), "the rebuilt i bound must be capped by k"
 
     a_got = a0.copy()
     sdfg(a=a_got, b=bb.copy(), N=n)
     assert np.array_equal(a_ref, a_got)
 
 
-@pytest.mark.parametrize('n', [1, 2, 5, 13])
+@pytest.mark.parametrize("n", [1, 2, 5, 13])
 def test_trapezoid_interchange_preserves_the_iteration_set(n):
     """The rewritten bounds must enumerate the same set at sizes the N=8 case cannot distinguish."""
     rng = np.random.default_rng(n)
@@ -236,12 +238,12 @@ def test_legal_doall_interchange_is_bit_exact():
     sdfg = legal_doall_3d.to_sdfg(simplify=True)
     applied = LoopStridePermutation().apply_pass(sdfg, {})
     assert applied == 1
-    assert _order(sdfg)[-1] == 'i', "unit-stride i must be innermost"
+    assert _order(sdfg)[-1] == "i", "unit-stride i must be innermost"
 
     a_got = a0.copy()
     sdfg(a=a_got, b=bb.copy(), N=n)
     assert np.array_equal(a_ref, a_got), "a legal DOALL interchange must be bit-exact vs the sequential reference"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

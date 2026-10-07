@@ -8,6 +8,7 @@ tasklets become ``TileBinop`` nodes.
 FMA rounds once vs. two roundings for plain ``a*b + c``, differing by up to 1 ULP from
 NumPy. OFF by default; enabled via ``VectorizeConfig.fuse_multiply_add``.
 """
+
 import ast
 
 from typing import Any
@@ -36,7 +37,7 @@ def _binop_tasklet(tasklet: nodes.Tasklet, op: str) -> tuple[str, list[str]] | N
     if out_conn != next(iter(tasklet.out_connectors)):
         return None
     rhs = node.value
-    pyop = ast.Mult if op == '*' else ast.Add
+    pyop = ast.Mult if op == "*" else ast.Add
     if not (isinstance(rhs, ast.BinOp) and isinstance(rhs.op, pyop)):
         return None
     if not (isinstance(rhs.left, ast.Name) and isinstance(rhs.right, ast.Name)):
@@ -55,7 +56,7 @@ class FuseMultiplyAdd(ppl.Pass):
     Off by default (1-ULP result change); gated on ``VectorizeConfig.fuse_multiply_add``,
     runs before tasklets lower to tile ops."""
 
-    CATEGORY: str = 'Vectorization'
+    CATEGORY: str = "Vectorization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -74,7 +75,7 @@ class FuseMultiplyAdd(ppl.Pass):
     def _fuse_in_state(self, sdfg: dace.SDFG, state: SDFGState) -> int:
         fused = 0
         for mul in [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and is_vectorizable_tasklet(state, n)]:
-            m = _binop_tasklet(mul, '*')
+            m = _binop_tasklet(mul, "*")
             if m is None:
                 continue
             mul_out_conn, mul_ins = m
@@ -96,7 +97,7 @@ class FuseMultiplyAdd(ppl.Pass):
             add = add_edge.dst
             if not isinstance(add, nodes.Tasklet):
                 continue
-            a = _binop_tasklet(add, '+')
+            a = _binop_tasklet(add, "+")
             if a is None:
                 continue
             add_out_conn, add_ins = a
@@ -110,22 +111,33 @@ class FuseMultiplyAdd(ppl.Pass):
             fused += 1
         return fused
 
-    def _rewrite(self, sdfg: dace.SDFG, state: SDFGState, mul: nodes.Tasklet, mul_ins: list[str],
-                 prod: nodes.AccessNode, add: nodes.Tasklet, add_out_conn: str, addend_conn: str) -> None:
+    def _rewrite(
+        self,
+        sdfg: dace.SDFG,
+        state: SDFGState,
+        mul: nodes.Tasklet,
+        mul_ins: list[str],
+        prod: nodes.AccessNode,
+        add: nodes.Tasklet,
+        add_out_conn: str,
+        addend_conn: str,
+    ) -> None:
         # Replace the mul -> prod -> add chain with one fma tasklet.
         a_edge = next(e for e in state.in_edges(mul) if e.dst_conn == mul_ins[0])
         b_edge = next(e for e in state.in_edges(mul) if e.dst_conn == mul_ins[1])
         c_edge = next(e for e in state.in_edges(add) if e.dst_conn == addend_conn)
         out_edge = next(e for e in state.out_edges(add) if e.src_conn == add_out_conn)
 
-        fma = state.add_tasklet(name='fma',
-                                inputs=OrderedSet(('__in1', '__in2', '__in3')),
-                                outputs={'__out'},
-                                code='__out = fma(__in1, __in2, __in3)')
-        state.add_edge(a_edge.src, a_edge.src_conn, fma, '__in1', dace.Memlet.from_memlet(a_edge.data))
-        state.add_edge(b_edge.src, b_edge.src_conn, fma, '__in2', dace.Memlet.from_memlet(b_edge.data))
-        state.add_edge(c_edge.src, c_edge.src_conn, fma, '__in3', dace.Memlet.from_memlet(c_edge.data))
-        state.add_edge(fma, '__out', out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
+        fma = state.add_tasklet(
+            name="fma",
+            inputs=OrderedSet(("__in1", "__in2", "__in3")),
+            outputs={"__out"},
+            code="__out = fma(__in1, __in2, __in3)",
+        )
+        state.add_edge(a_edge.src, a_edge.src_conn, fma, "__in1", dace.Memlet.from_memlet(a_edge.data))
+        state.add_edge(b_edge.src, b_edge.src_conn, fma, "__in2", dace.Memlet.from_memlet(b_edge.data))
+        state.add_edge(c_edge.src, c_edge.src_conn, fma, "__in3", dace.Memlet.from_memlet(c_edge.data))
+        state.add_edge(fma, "__out", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))
 
         # Drop fused nodes + the now-orphaned intermediate transient.
         state.remove_node(mul)

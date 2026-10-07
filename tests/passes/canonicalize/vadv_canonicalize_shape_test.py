@@ -17,6 +17,7 @@ is addressed by ``other_subset``. Without collapsing that opposite side the edge
 keeps its pre-scalarization RANK and validation rejects it with
 "Memlet other_subset does not match node dimension (expected 1, got 2)".
 """
+
 import numpy as np
 import pytest
 
@@ -26,14 +27,16 @@ from dace.transformation.passes.length_one_array_scalar_conversion import Conver
 from tests.corpus.npbench.structured_grids import vadv
 
 #: The numerical corpus gate's canonicalize configuration (canonicalize_numerical_corpus_test.CPU).
-CPU = dict(target='cpu',
-           peel_limit=4,
-           break_anti_dependence=True,
-           interchange_carry_with_map=True,
-           scatter_to_guarded_maps=True)
+CPU = dict(
+    target="cpu",
+    peel_limit=4,
+    break_anti_dependence=True,
+    interchange_carry_with_map=True,
+    scatter_to_guarded_maps=True,
+)
 
 #: Kernel argument order, matching ``vadv.initialize``'s positional return.
-ARGS = ('utens_stage', 'u_stage', 'wcon', 'u_pos', 'utens', 'dtr_stage')
+ARGS = ("utens_stage", "u_stage", "wcon", "u_pos", "utens", "dtr_stage")
 
 #: fp64 corpus tolerance (npbench._tol_for). vadv is FP-reassociation sensitive
 #: (the inner k-sweep is a Thomas solve), so the gate's own criterion is used
@@ -43,15 +46,15 @@ RTOL, ATOL = 1e-9, 1e-11
 
 def _inputs(I, J, K):
     """``(arrays_dict, reference_utens_stage)`` for one dataset size."""
-    arrays = dict(zip(ARGS, vadv.CORPUS['initialize'](I, J, K)))
+    arrays = dict(zip(ARGS, vadv.CORPUS["initialize"](I, J, K)))
     work = {n: (v.copy() if isinstance(v, np.ndarray) else v) for n, v in arrays.items()}
-    vadv.CORPUS['reference'](**work)
-    return arrays, work['utens_stage']
+    vadv.CORPUS["reference"](**work)
+    return arrays, work["utens_stage"]
 
 
 def _canonicalized(tag):
-    sdfg = vadv.CORPUS['program'].to_sdfg(simplify=True)
-    sdfg.name = f'vadv_{tag}'
+    sdfg = vadv.CORPUS["program"].to_sdfg(simplify=True)
+    sdfg.name = f"vadv_{tag}"
     canonicalize(sdfg, validate=True, **CPU)
     return sdfg
 
@@ -59,21 +62,21 @@ def _canonicalized(tag):
 def test_canonicalize_preserves_array_shapes():
     """Canonicalize changes no surviving array's shape -- in particular ``wcon``
     keeps ``I + 1`` and the ``(I, J)`` slice transients do not grow to ``(I + 1, J)``."""
-    sdfg = vadv.CORPUS['program'].to_sdfg(simplify=True)
+    sdfg = vadv.CORPUS["program"].to_sdfg(simplify=True)
     before = {name: tuple(str(d) for d in desc.shape) for name, desc in sdfg.arrays.items()}
-    sdfg.name = 'vadv_shape_preserved'
+    sdfg.name = "vadv_shape_preserved"
     canonicalize(sdfg, validate=True, **CPU)
     after = {name: tuple(str(d) for d in desc.shape) for name, desc in sdfg.arrays.items()}
 
     drifted = {name: (before[name], after[name]) for name in before if name in after and before[name] != after[name]}
-    assert not drifted, f'canonicalize changed vadv array shapes: {drifted}'
-    assert after['wcon'] == ('I + 1', 'J', 'K'), f"wcon lost its asymmetric leading dim: {after['wcon']}"
+    assert not drifted, f"canonicalize changed vadv array shapes: {drifted}"
+    assert after["wcon"] == ("I + 1", "J", "K"), f"wcon lost its asymmetric leading dim: {after['wcon']}"
 
 
 def test_canonicalize_validates_and_leaves_no_oversized_subset():
     """The canonicalized SDFG validates: every memlet subset stays inside its array,
     so no ``wcon`` window was propagated with the parent ``I + 1`` extent."""
-    _canonicalized('validates').validate()
+    _canonicalized("validates").validate()
 
 
 def test_scalarized_single_element_scratch_validates():
@@ -83,21 +86,21 @@ def test_scalarized_single_element_scratch_validates():
     with ``InvalidSDFGEdgeError: Memlet other_subset does not match node dimension
     (expected 1, got 2)`` on the ``(1, 1)`` MapFusion scratch.
     """
-    sdfg = _canonicalized('single_element')
+    sdfg = _canonicalized("single_element")
     scalarized = ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
-    assert scalarized, 'expected canonicalize to leave single-element scratch for scalarization'
+    assert scalarized, "expected canonicalize to leave single-element scratch for scalarization"
     sdfg.validate()
 
 
-@pytest.mark.parametrize('size', [(32, 32, 32), (33, 32, 30)])
+@pytest.mark.parametrize("size", [(32, 32, 32), (33, 32, 30)])
 def test_canonicalize_matches_reference(size):
     """End-to-end value check at an even and an ODD ``I`` (an odd ``I`` pairs a
     255-style window with a 256-style parent axis)."""
     I, J, K = size
     arrays, ref = _inputs(I, J, K)
-    sdfg = _canonicalized(f'ref_{I}_{J}_{K}')
-    finalize_for_target(sdfg, 'cpu')
+    sdfg = _canonicalized(f"ref_{I}_{J}_{K}")
+    finalize_for_target(sdfg, "cpu")
 
     work = {n: (v.copy() if isinstance(v, np.ndarray) else v) for n, v in arrays.items()}
     sdfg.compile()(**work, I=I, J=J, K=K)
-    assert np.allclose(work['utens_stage'], ref, rtol=RTOL, atol=ATOL)
+    assert np.allclose(work["utens_stage"], ref, rtol=RTOL, atol=ATOL)

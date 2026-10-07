@@ -166,12 +166,14 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
     # Setup SDFG with array A that is too big to be allocated on the stack.
     sdfg = SDFG("test")
     array_a_alignment = 128
-    _, a_desc = sdfg.add_array(name="A",
-                               shape=(10000, ),
-                               dtype=dtypes.float64,
-                               storage=dtypes.StorageType.Register,
-                               transient=True,
-                               alignment=array_a_alignment)
+    _, a_desc = sdfg.add_array(
+        name="A",
+        shape=(10000,),
+        dtype=dtypes.float64,
+        storage=dtypes.StorageType.Register,
+        transient=True,
+        alignment=array_a_alignment,
+    )
     state = sdfg.add_state("state", is_start_block=True)
     read = state.add_access("A")
     tasklet = state.add_tasklet("dummy", {"a"}, {}, "a = 1")
@@ -192,8 +194,9 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
         # new/delete forms, earlier standards the plain ones.
         if use_aligned_operator_new(a_desc):
             # The count is a literal under the legacy codegen and a size helper under the readable one.
-            assert re.search(rf"A = dace::aligned_new_array<double>\([^;]*, {array_a_alignment}\);", code), \
+            assert re.search(rf"A = dace::aligned_new_array<double>\([^;]*, {array_a_alignment}\);", code), (
                 "A is allocated on the heap."
+            )
             assert f"dace::aligned_delete_array(A, {array_a_alignment})" in code, "A is deallocated from the heap."
         else:
             assert "A = new double" in code, "A is allocated on the heap."
@@ -208,32 +211,32 @@ def test_at_multiplies_the_coordinate_by_the_array_stride():
 def test_pointer_argument_keeps_a_decimal_literal():
     # The dot-to-arrow rewrite for struct members must not reach a decimal literal in the index
     # expression a pointer argument carries: `&A[(0.5 * j)]` became `&A[(0->5 * j)]`.
-    N = symbol('N')
-    nsdfg = SDFG('inner')
-    nsdfg.add_array('a', [1], dtypes.float64)
+    N = symbol("N")
+    nsdfg = SDFG("inner")
+    nsdfg.add_array("a", [1], dtypes.float64)
     nstate = nsdfg.add_state()
-    tasklet = nstate.add_tasklet('z', {}, {'o'}, 'o = 1.0')
-    nstate.add_edge(tasklet, 'o', nstate.add_write('a'), None, Memlet('a[0]'))
+    tasklet = nstate.add_tasklet("z", {}, {"o"}, "o = 1.0")
+    nstate.add_edge(tasklet, "o", nstate.add_write("a"), None, Memlet("a[0]"))
 
-    sdfg = SDFG('pointer_decimal')
-    sdfg.add_symbol('N', dtypes.int64)
-    sdfg.add_array('A', [N], dtypes.float64)
+    sdfg = SDFG("pointer_decimal")
+    sdfg.add_symbol("N", dtypes.int64)
+    sdfg.add_array("A", [N], dtypes.float64)
     state = sdfg.add_state()
-    entry, exit = state.add_map('m', dict(j='0:N'))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping=dict(N='N', j='j'))
+    entry, exit = state.add_map("m", dict(j="0:N"))
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {"a"}, symbol_mapping=dict(N="N", j="j"))
     state.add_nedge(entry, nsdfg_node, Memlet())
-    state.add_memlet_path(nsdfg_node, exit, state.add_write('A'), src_conn='a', memlet=Memlet('A[0.5*j]'))
+    state.add_memlet_path(nsdfg_node, exit, state.add_write("A"), src_conn="a", memlet=Memlet("A[0.5*j]"))
     nsdfg_node.integrate_into_parent()
 
     # Only the legacy generator keeps the nested SDFG as a call, so only there does a pointer
     # argument carry the index. experimental_readable inlines it and indexes through A_idx.
-    with config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+    with config.set_temporary("compiler", "cpu", "implementation", value="legacy"):
         code = codegen.generate_code(sdfg)[0].clean_code
-    assert '&A[(0.5 * j)]' in code
-    assert '0->5' not in code
+    assert "&A[(0.5 * j)]" in code
+    assert "0->5" not in code
 
     # The rewrite must leave the literal alone on the default path too, wherever it lands.
-    assert '0->5' not in codegen.generate_code(sdfg)[0].clean_code
+    assert "0->5" not in codegen.generate_code(sdfg)[0].clean_code
 
 
 def test_at_multiplies_the_coordinate_by_the_array_stride():
@@ -241,7 +244,7 @@ def test_at_multiplies_the_coordinate_by_the_array_stride():
     assert Range([(0, 19, 2)]).at([1], [4]) == 8
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_reshape_strides_multidim_array_all_dims_unit()
     test_reshape_strides_multidim_array_some_dims_unit()
     test_reshape_strides_multidim_array_different_shape()

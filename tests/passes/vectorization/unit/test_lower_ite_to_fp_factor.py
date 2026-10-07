@@ -8,6 +8,7 @@ float/complex one is left intact, because the blend evaluates BOTH arms and
 A surviving ``ITE`` lowers via a real select instead. The pass is purely a
 code-text rewrite -- connectors and edges are unchanged.
 """
+
 import numpy as np
 
 import dace
@@ -15,7 +16,8 @@ from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-    SameWriteSetIfElseToITECFG, )
+    SameWriteSetIfElseToITECFG,
+)
 
 
 def _build_ite_tasklet_sdfg(ite_code: str, dtype=dace.int64):
@@ -25,10 +27,10 @@ def _build_ite_tasklet_sdfg(ite_code: str, dtype=dace.int64):
     ``int64`` -- the dtype the pass blends (see the module docstring).
     """
     sdfg = dace.SDFG("lower_ite_test")
-    sdfg.add_array("A", shape=(1, ), dtype=dtype)
-    sdfg.add_array("T", shape=(1, ), dtype=dtype)
-    sdfg.add_array("E", shape=(1, ), dtype=dtype)
-    sdfg.add_array("C", shape=(1, ), dtype=dace.bool_)
+    sdfg.add_array("A", shape=(1,), dtype=dtype)
+    sdfg.add_array("T", shape=(1,), dtype=dtype)
+    sdfg.add_array("E", shape=(1,), dtype=dtype)
+    sdfg.add_array("C", shape=(1,), dtype=dace.bool_)
 
     state = sdfg.add_state("only", is_start_block=True)
     rT = state.add_access("T")
@@ -73,11 +75,13 @@ def test_float_non_finite_unselected_arm_does_not_poison_result():
     sdfg = _build_ite_tasklet_sdfg("_o = ITE(_c, _t, _e)", dtype=dace.float64)
     LowerITEToFpFactor().apply_pass(sdfg, {})
     csdfg = sdfg.compile()
-    A = np.zeros((1, ), dtype=np.float64)
-    csdfg(A=A,
-          T=np.array([np.inf], dtype=np.float64),
-          E=np.array([3.0], dtype=np.float64),
-          C=np.array([False], dtype=np.bool_))
+    A = np.zeros((1,), dtype=np.float64)
+    csdfg(
+        A=A,
+        T=np.array([np.inf], dtype=np.float64),
+        E=np.array([3.0], dtype=np.float64),
+        C=np.array([False], dtype=np.bool_),
+    )
     assert A[0] == 3.0, f"unselected inf arm poisoned the result: got {A[0]}"
 
 
@@ -101,9 +105,9 @@ def test_handles_symbol_cond_in_ite_call():
     ``ITE(c0 == 1, ...)``. The pass should rewrite this just like the
     in-connector form."""
     sdfg = dace.SDFG("lower_ite_sym_cond")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.int64)
-    sdfg.add_array("T", shape=(1, ), dtype=dace.int64)
-    sdfg.add_array("E", shape=(1, ), dtype=dace.int64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.int64)
+    sdfg.add_array("T", shape=(1,), dtype=dace.int64)
+    sdfg.add_array("E", shape=(1,), dtype=dace.int64)
     sdfg.add_symbol("c0", dace.int64)
     state = sdfg.add_state("only", is_start_block=True)
     rT = state.add_access("T")
@@ -138,8 +142,8 @@ def test_numerical_equivalence_against_branch_reference():
     The arms here are ``float64``, so the ITE is left intact and lowered by a select;
     the numerics must match either way, which is what this pins."""
     sdfg = dace.SDFG("end_to_end_lower_ite")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     exit_state = sdfg.add_state("exit")
@@ -175,7 +179,7 @@ def test_numerical_equivalence_against_branch_reference():
     csdfg = sdfg.compile()
     for c in (True, False):
         for b in (-2.0, 0.5, 7.0):
-            A = np.zeros((1, ), dtype=np.float64)
+            A = np.zeros((1,), dtype=np.float64)
             B = np.array([b], dtype=np.float64)
             csdfg(A=A, B=B, c=c)
             expected = reference(c, B)

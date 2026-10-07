@@ -13,6 +13,7 @@ Fires only when it enables widening: a genuine multi-element array slot, an asso
 recurrence that reads the accumulator in the body is not a map-exit WCR and never matches; the
 rewrite is value-preserving, also for zero iterations.
 """
+
 from typing import Any, Tuple
 
 from dace import SDFG, data
@@ -24,14 +25,19 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
-    privatize_reduction_accumulator, )
+    privatize_reduction_accumulator,
+)
 from dace.transformation.passes.vectorization.utils.map_predicates import map_body_nodes
 from dace.sdfg.narrowing import as_map_entry
 
 #: Reduction ops the tile widener + ``TileReduce`` fold. A ``ReductionType.Custom`` WCR
 #: (non-associative ``-`` / ``/``) is not a foldable reduction, so it is never rewritten.
-_FOLDABLE_OPS: Tuple[ReductionType,
-                     ...] = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max)
+_FOLDABLE_OPS: Tuple[ReductionType, ...] = (
+    ReductionType.Sum,
+    ReductionType.Product,
+    ReductionType.Min,
+    ReductionType.Max,
+)
 
 
 @xf.explicit_cf_compatible
@@ -44,8 +50,13 @@ class PrepareReductionForWidening(ppl.Pass):
     """
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets | ppl.Modifies.States
-                | ppl.Modifies.Descriptors)
+        return (
+            ppl.Modifies.CFG
+            | ppl.Modifies.Nodes
+            | ppl.Modifies.Memlets
+            | ppl.Modifies.States
+            | ppl.Modifies.Descriptors
+        )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return bool(modified & ppl.Modifies.CFG)
@@ -82,8 +93,9 @@ class PrepareReductionForWidening(ppl.Pass):
             return False
         return all(str(step) == "1" for _, _, step in as_map_entry(map_entry).map.range)
 
-    def _is_array_slot_reduction(self, state: SDFGState, map_exit: nodes.MapExit,
-                                 iedge: MultiConnectorEdge[Memlet]) -> bool:
+    def _is_array_slot_reduction(
+        self, state: SDFGState, map_exit: nodes.MapExit, iedge: MultiConnectorEdge[Memlet]
+    ) -> bool:
         # True iff ``iedge`` is a foldable WCR reduction into a genuine multi-element array slot -- the shape the
         # widener bails on and this pass privatizes.
         if iedge.data is None or iedge.data.wcr is None:

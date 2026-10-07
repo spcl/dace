@@ -41,6 +41,7 @@ This pass operationalises that contract end-to-end:
 The ordering is intentional: guards are emitted *before* permissive lifts, so on
 collision the abort fires before any consumer reads the corrupted output.
 """
+
 import ast
 import copy
 from typing import Dict, List, NamedTuple, Optional, Set, Tuple
@@ -54,8 +55,11 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegio
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.passes.scatter_conflict_guard import (ScatterIndexSlice, build_guard_states,
-                                                               insert_scatter_guard)
+from dace.transformation.passes.scatter_conflict_guard import (
+    ScatterIndexSlice,
+    build_guard_states,
+    insert_scatter_guard,
+)
 from dace.transformation.passes.vectorization.utils.map_predicates import NO_VECTORIZE_MARKER
 from dace.optionals import required
 from dace.sdfg.narrowing import as_expr
@@ -86,7 +90,7 @@ class ScatterToGuardedMaps(ppl.Pass):
     idempotent on already-lifted Maps.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     emit_unparallelized_else_branch = properties.Property(
         dtype=bool,
@@ -177,7 +181,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                 if trap_sym is not None:
                     dup_count_syms[idx_name] = trap_sym
             except ValueError as exc:
-                if 'already exists' not in str(exc):
+                if "already exists" not in str(exc):
                     raise
 
         # A rank>=2 idx array classified to a single contiguous varying dimension: guarded at
@@ -197,17 +201,19 @@ class ScatterToGuardedMaps(ppl.Pass):
             if idx_name not in host_sdfg.arrays:
                 host_region, host_sdfg = owner_sdfg, owner_sdfg
             try:
-                trap_sym = insert_scatter_guard(host_sdfg,
-                                                idx_name,
-                                                emit_trap=not self.emit_unparallelized_else_branch,
-                                                index_slice=index_slice,
-                                                region=host_region)
+                trap_sym = insert_scatter_guard(
+                    host_sdfg,
+                    idx_name,
+                    emit_trap=not self.emit_unparallelized_else_branch,
+                    index_slice=index_slice,
+                    region=host_region,
+                )
                 if trap_sym is not None:
                     sliced_dup_syms[(id(loop), idx_name)] = trap_sym
                     # The dispatcher reading the count sits in owner_sdfg, below the hoisted guard.
                     pass_symbol_down_to(owner_sdfg, host_sdfg, trap_sym)
             except ValueError as exc:
-                if 'already exists' not in str(exc):
+                if "already exists" not in str(exc):
                     raise
 
         for loop in scatter_loops:
@@ -219,7 +225,7 @@ class ScatterToGuardedMaps(ppl.Pass):
             if self.emit_unparallelized_else_branch and joint_dup_syms.get(id(loop)):
                 # A joint key already answers for every dimension of this loop's writes, so its
                 # counts alone decide the branch -- the per-array symbols below are empty here.
-                cond = ' + '.join(joint_dup_syms[id(loop)]) + ' > 0'
+                cond = " + ".join(joint_dup_syms[id(loop)]) + " > 0"
                 anchor = joint_anchors.get(id(loop), loop)
                 _wrap_loop_in_dispatcher(required(anchor).parent_graph, loop, cond, anchor)
                 continue
@@ -234,7 +240,7 @@ class ScatterToGuardedMaps(ppl.Pass):
                 loop_idx_syms = [dup_count_syms[i] for i in loop_idx if i in dup_count_syms]
                 loop_idx_syms += [sliced_dup_syms[(id(loop), i)] for i in loop_idx if (id(loop), i) in sliced_dup_syms]
                 if loop_idx_syms:
-                    cond = ' + '.join(loop_idx_syms) + ' > 0'
+                    cond = " + ".join(loop_idx_syms) + " > 0"
                     _wrap_loop_in_dispatcher(parent, loop, cond)
                     continue
 
@@ -369,8 +375,12 @@ def nested_write_is_accumulation(nsdfg_node: nodes.NestedSDFG, out_conn: str) ->
     :returns: True iff ``out_conn`` is written at least once and every such write is a WCR.
     """
     writes = [
-        e.data for st in nsdfg_node.sdfg.states() for dn in st.data_nodes() if dn.data == out_conn
-        for e in st.in_edges(dn) if e.data is not None and not e.data.is_empty()
+        e.data
+        for st in nsdfg_node.sdfg.states()
+        for dn in st.data_nodes()
+        if dn.data == out_conn
+        for e in st.in_edges(dn)
+        if e.data is not None and not e.data.is_empty()
     ]
     return bool(writes) and all(not indirect_write_needs_injectivity(m) for m in writes)
 
@@ -384,8 +394,9 @@ def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
     return set(_scatter_idx_targets_for_loop(region, sdfg))
 
 
-def _scatter_idx_targets_for_loop(region: LoopRegion,
-                                  sdfg: SDFG) -> Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]]:
+def _scatter_idx_targets_for_loop(
+    region: LoopRegion, sdfg: SDFG
+) -> Dict[str, Tuple[Set[str], Optional[ScatterIndexSlice]]]:
     """Map each scatter index-array name driving an indirect WRITE in ``region`` to the arrays
     it writes through, plus (for a rank>=2 index array) the 1-D window the guard should scan.
 
@@ -459,8 +470,9 @@ def _scatter_idx_targets_for_loop(region: LoopRegion,
     return result
 
 
-def _classify_index_slice(desc: data.Array, dim_nodes: List[ast.AST],
-                          region: LoopRegion) -> Optional[ScatterIndexSlice]:
+def _classify_index_slice(
+    desc: data.Array, dim_nodes: List[ast.AST], region: LoopRegion
+) -> Optional[ScatterIndexSlice]:
     """Classify a rank>=2 index-array subscript ``arr[dim_nodes...]`` against ``region``'s loop
     variable: accepted iff exactly one dimension is affine in the loop variable and every other
     dimension is loop-invariant. ``ScatterConflictCheck`` scans its input through a flat
@@ -472,8 +484,7 @@ def _classify_index_slice(desc: data.Array, dim_nodes: List[ast.AST],
         return None
     loop_var = region.loop_variable
     varying = [
-        d for d, node in enumerate(dim_nodes) if loop_var in {n.id
-                                                              for n in ast.walk(node) if isinstance(n, ast.Name)}
+        d for d, node in enumerate(dim_nodes) if loop_var in {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
     ]
     if len(varying) != 1:
         return None
@@ -499,7 +510,7 @@ def _classify_index_slice(desc: data.Array, dim_nodes: List[ast.AST],
     extent = symbolic.simplify(symbolic.int_floor(end - init, lstride) + 1)
     offset = symbolic.simplify(coeff * init + const)
     fixed: Dict[int, str] = {d: astutils.unparse(node) for d, node in enumerate(dim_nodes) if d != dim}
-    return ScatterIndexSlice(dim=dim, offset=str(offset), extent=str(extent), stride='1', fixed=fixed)
+    return ScatterIndexSlice(dim=dim, offset=str(offset), extent=str(extent), stride="1", fixed=fixed)
 
 
 class JointScatterWrite(NamedTuple):
@@ -509,6 +520,7 @@ class JointScatterWrite(NamedTuple):
     of index-array reads (``Xi_0[j]``); ``mask_expr`` is the read deciding whether the write happens
     at all, ``None`` for an unconditional one.
     """
+
     target: str
     dim_exprs: Tuple[str, ...]
     mask_expr: Optional[str]
@@ -517,8 +529,8 @@ class JointScatterWrite(NamedTuple):
 def joint_key_read_arrays(write: JointScatterWrite) -> Set[str]:
     """Every array name subscripted inside ``write``'s index and mask expressions."""
     names: Set[str] = set()
-    for expr in write.dim_exprs + ((write.mask_expr, ) if write.mask_expr else ()):
-        for node in ast.walk(ast.parse(expr, mode='eval')):
+    for expr in write.dim_exprs + ((write.mask_expr,) if write.mask_expr else ()):
+        for node in ast.walk(ast.parse(expr, mode="eval")):
             if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
                 names.add(node.value.id)
     return names
@@ -534,6 +546,7 @@ class JointGuardPlan(NamedTuple):
     is paired with its own radix, so the flat position stays a bijection, which is all a key used
     only for equality needs.
     """
+
     host_sdfg: SDFG
     host_region: ControlFlowRegion
     anchor: ControlFlowBlock
@@ -603,7 +616,7 @@ def joint_guard_plan(root: SDFG, loop: LoopRegion, write: JointScatterWrite) -> 
         return plan
 
     free: Set[str] = set()
-    for expr in write.dim_exprs + ((write.mask_expr, ) if write.mask_expr else ()):
+    for expr in write.dim_exprs + ((write.mask_expr,) if write.mask_expr else ()):
         free |= {str(sym) for sym in symbolic.pystr_to_symbolic(expr).free_symbols}
     free.discard(loop.loop_variable)
 
@@ -637,8 +650,12 @@ def point_index_expressions(subset) -> Optional[List[str]]:
     """Per-dimension index of a subset addressing exactly one element, or ``None`` if it spans."""
     exprs: List[str] = []
     for rb, re_, _ in subset.ndrange():
-        if symbolic.simplify(
-                as_expr(symbolic.pystr_to_symbolic(str(rb))) - as_expr(symbolic.pystr_to_symbolic(str(re_)))) != 0:
+        if (
+            symbolic.simplify(
+                as_expr(symbolic.pystr_to_symbolic(str(rb))) - as_expr(symbolic.pystr_to_symbolic(str(re_)))
+            )
+            != 0
+        ):
             return None
         exprs.append(str(rb))
     return exprs
@@ -653,15 +670,14 @@ def substitute_indirect_bindings(expr: str, bindings: Dict[str, Tuple[str, List[
     """
 
     class Expand(ast.NodeTransformer):
-
         def visit_Name(self, node: ast.Name):
             binding = bindings.get(node.id)
             if binding is None:
                 return node
             arr, dim_nodes = binding
-            return ast.parse(f"{arr}[{', '.join(astutils.unparse(d) for d in dim_nodes)}]", mode='eval').body
+            return ast.parse(f"{arr}[{', '.join(astutils.unparse(d) for d in dim_nodes)}]", mode="eval").body
 
-    return astutils.unparse(Expand().visit(ast.parse(expr, mode='eval').body))
+    return astutils.unparse(Expand().visit(ast.parse(expr, mode="eval").body))
 
 
 def region_assigned_symbols(region: LoopRegion) -> Set[str]:
@@ -676,10 +692,9 @@ def key_map_can_read(expr: str, sdfg: SDFG, loop_var: str, varying: Set[str]) ->
     still for the loop's whole execution, since the key map has no access to a value that a body
     interstate edge recomputes on the way to the write.
     """
-    tree = ast.parse(expr, mode='eval').body
+    tree = ast.parse(expr, mode="eval").body
     subscripted = {
-        node.value.id
-        for node in ast.walk(tree) if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+        node.value.id for node in ast.walk(tree) if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
     }
     for node in ast.walk(tree):
         if not isinstance(node, ast.Name) or node.id in subscripted or node.id == loop_var:
@@ -689,8 +704,9 @@ def key_map_can_read(expr: str, sdfg: SDFG, loop_var: str, varying: Set[str]) ->
     return True
 
 
-def enclosing_branch_condition(block, region: LoopRegion,
-                               bindings: Dict[str, Tuple[str, List[ast.AST]]]) -> Tuple[Optional[str], bool]:
+def enclosing_branch_condition(
+    block, region: LoopRegion, bindings: Dict[str, Tuple[str, List[ast.AST]]]
+) -> Tuple[Optional[str], bool]:
     """The condition gating ``block`` inside ``region``, rewritten into index-array reads.
 
     A masked-off iteration writes nothing, so it must not be keyed onto a slot another iteration
@@ -711,7 +727,7 @@ def enclosing_branch_condition(block, region: LoopRegion,
         cur = parent
     if not conds:
         return None, True
-    return ' and '.join(f'({c})' for c in conds), True
+    return " and ".join(f"({c})" for c in conds), True
 
 
 def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> Optional[List[JointScatterWrite]]:
@@ -743,8 +759,10 @@ def joint_scatter_writes_for_loop(region: LoopRegion, sdfg: SDFG) -> Optional[Li
                 subset = e.data.dst_subset if e.data.dst_subset is not None else e.data.subset
                 if subset is None or len(subset) != len(desc.shape):
                     continue
-                if not (any(str(s) in bindings
-                            for s in subset.free_symbols) or _inline_indirect_idx_arrays(subset, loop_var, sdfg)):
+                if not (
+                    any(str(s) in bindings for s in subset.free_symbols)
+                    or _inline_indirect_idx_arrays(subset, loop_var, sdfg)
+                ):
                     continue  # a plain affine write -- the existing rules decide it
                 raw = point_index_expressions(subset)
                 if raw is None:
@@ -787,8 +805,9 @@ def flat_index_bound(desc: data.Array) -> symbolic.SymbolicType:
     return symbolic.simplify(1 + sum((s - 1) * st for s, st in zip(desc.shape, desc.strides)))
 
 
-def joint_scatter_key(plan: JointGuardPlan, loop: LoopRegion,
-                      write: JointScatterWrite) -> Optional[Tuple[str, symbolic.SymbolicType]]:
+def joint_scatter_key(
+    plan: JointGuardPlan, loop: LoopRegion, write: JointScatterWrite
+) -> Optional[Tuple[str, symbolic.SymbolicType]]:
     """Materialize the flat target slot ``loop`` writes on each iteration, and return it.
 
     The key array is what the existing one-dimensional conflict check then runs on: two entries are
@@ -819,14 +838,13 @@ def joint_scatter_key(plan: JointGuardPlan, loop: LoopRegion,
     entries = trip
     for _param, extent in plan.map_dims:
         entries = symbolic.simplify(entries * extent)
-    key_name, _ = sdfg.add_array(f"_scatter_joint_key_{write.target}", [entries],
-                                 dtypes.int64,
-                                 transient=True,
-                                 find_new_name=True)
+    key_name, _ = sdfg.add_array(
+        f"_scatter_joint_key_{write.target}", [entries], dtypes.int64, transient=True, find_new_name=True
+    )
     parent = plan.host_region
-    fill_state = parent.add_state_before(plan.anchor,
-                                         f"_scatter_joint_key_fill_{key_name}",
-                                         is_start_block=plan.anchor is parent.start_block)
+    fill_state = parent.add_state_before(
+        plan.anchor, f"_scatter_joint_key_fill_{key_name}", is_start_block=plan.anchor is parent.start_block
+    )
 
     # Every index read becomes one tasklet connector, so the body stays pure arithmetic on scalars
     # and can be a Python tasklet (a C++ one is only allowed inside a library-node expansion).
@@ -838,7 +856,6 @@ def joint_scatter_key(plan: JointGuardPlan, loop: LoopRegion,
     def to_connectors(expr: str) -> str:
 
         class Pull(ast.NodeTransformer):
-
             def visit_Subscript(self, node: ast.Subscript):
                 self.generic_visit(node)
                 if not (isinstance(node.value, ast.Name) and node.value.id in sdfg.arrays):
@@ -850,44 +867,51 @@ def joint_scatter_key(plan: JointGuardPlan, loop: LoopRegion,
                 key = (node.value.id, tuple(astutils.unparse(d) for d in dims))
                 return ast.Name(id=conns.setdefault(key, f"__ji{len(conns)}"), ctx=ast.Load())
 
-        return astutils.unparse(Pull().visit(ast.parse(expr, mode='eval').body))
+        return astutils.unparse(Pull().visit(ast.parse(expr, mode="eval").body))
 
-    linear = ' + '.join(f"({to_connectors(x)}) * ({desc.strides[d]})" for d, x in enumerate(write.dim_exprs))
+    linear = " + ".join(f"({to_connectors(x)}) * ({desc.strides[d]})" for d, x in enumerate(write.dim_exprs))
     # One point per (crossed map point, iteration), addressed row-major with the iteration
     # innermost. With nothing crossed this is just ``__jk``, the un-hoisted key.
     ranges = {param: f"0:{extent}" for param, extent in plan.map_dims}
-    ranges['__jk'] = f"0:{trip}"
-    slot = symbolic.pystr_to_symbolic('__jk')
+    ranges["__jk"] = f"0:{trip}"
+    slot = symbolic.pystr_to_symbolic("__jk")
     span = trip
     for param, extent in reversed(plan.map_dims):
         slot = slot + symbolic.pystr_to_symbolic(param) * span
         span = symbolic.simplify(span * extent)
     # A masked-off point still needs a slot of its own, past every real one.
-    code = (f"__out = {linear}"
-            if write.mask_expr is None else f"__out = ({linear}) if ({to_connectors(write.mask_expr)}) "
-            f"else ({domain} + {symbolic.symstr(slot)})")
+    code = (
+        f"__out = {linear}"
+        if write.mask_expr is None
+        else f"__out = ({linear}) if ({to_connectors(write.mask_expr)}) else ({domain} + {symbolic.symstr(slot)})"
+    )
 
     # Scaffolding, not compute: flat and program-sized, so a K-dim tiling has nothing to say about
     # it. The guard's other pieces are already invisible to the vectorizer (library-node check,
     # C++ trap); this one is an ordinary Python map and needs the marker to say so.
     entry, exit_node = fill_state.add_map(f"scatter_joint_key_{key_name}{NO_VECTORIZE_MARKER}", ranges)
-    tasklet = fill_state.add_tasklet(f"scatter_joint_key_{key_name}", dict.fromkeys(conns.values()), {'__out': None},
-                                     code)
+    tasklet = fill_state.add_tasklet(
+        f"scatter_joint_key_{key_name}", dict.fromkeys(conns.values()), {"__out": None}, code
+    )
     # ``__jk`` counts iterations; the index expressions are written in the loop variable.
     iteration = symbolic.pystr_to_symbolic(f"({init}) + __jk * ({lstride})")
     loop_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
     for (arr, idx_exprs), conn in conns.items():
         at = [symbolic.pystr_to_symbolic(e).subs({loop_sym: iteration}) for e in idx_exprs]
-        fill_state.add_memlet_path(replicate_read(sdfg, loop, fill_state, arr),
-                                   entry,
-                                   tasklet,
-                                   dst_conn=conn,
-                                   memlet=mm.Memlet(data=arr, subset=subsets.Range([(a, a, 1) for a in at])))
-    fill_state.add_memlet_path(tasklet,
-                               exit_node,
-                               fill_state.add_write(key_name),
-                               src_conn='__out',
-                               memlet=mm.Memlet(data=key_name, subset=subsets.Range([(slot, slot, 1)])))
+        fill_state.add_memlet_path(
+            replicate_read(sdfg, loop, fill_state, arr),
+            entry,
+            tasklet,
+            dst_conn=conn,
+            memlet=mm.Memlet(data=arr, subset=subsets.Range([(a, a, 1) for a in at])),
+        )
+    fill_state.add_memlet_path(
+        tasklet,
+        exit_node,
+        fill_state.add_write(key_name),
+        src_conn="__out",
+        memlet=mm.Memlet(data=key_name, subset=subsets.Range([(slot, slot, 1)])),
+    )
 
     return key_name, (domain if write.mask_expr is None else symbolic.simplify(domain + entries))
 
@@ -911,11 +935,9 @@ def guard_joint_scatter_write(root: SDFG, loop: LoopRegion, write: JointScatterW
         return None
     key_name, bound = built
     parent, anchor = plan.host_region, plan.anchor
-    check_state, trap_state, count_name, trap_sym = build_guard_states(plan.host_sdfg,
-                                                                       key_name,
-                                                                       emit_trap=emit_trap,
-                                                                       region=parent,
-                                                                       domain=bound)
+    check_state, trap_state, count_name, trap_sym = build_guard_states(
+        plan.host_sdfg, key_name, emit_trap=emit_trap, region=parent, domain=bound
+    )
     # ``joint_scatter_key`` already put the fill immediately before ``anchor``; splice the check
     # (and trap) into that one edge, so the order is fill -> check -> [trap] -> anchor.
     for e in list(parent.in_edges(anchor)):
@@ -963,7 +985,7 @@ def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> Op
     name, and the subscript that makes it a scatter sits one hop upstream -- this follows that hop.
     """
     try:
-        tree = ast.parse(rhs, mode='eval').body
+        tree = ast.parse(rhs, mode="eval").body
     except (SyntaxError, ValueError, TypeError):
         return None
     if not isinstance(tree, ast.Name):
@@ -985,7 +1007,7 @@ def resolve_staged_scalar_source(rhs: str, region: LoopRegion, sdfg: SDFG) -> Op
                 dims = point_index_expressions(src_subset)
                 if dims is None:
                     continue
-                return e.src.data, [ast.parse(d, mode='eval').body for d in dims]
+                return e.src.data, [ast.parse(d, mode="eval").body for d in dims]
     return None
 
 
@@ -1066,7 +1088,7 @@ def _resolve_indirect_source(rhs_str: str, loop_var: str, sdfg: SDFG) -> Optiona
     out.
     """
     try:
-        tree = ast.parse(str(rhs_str), mode='eval').body
+        tree = ast.parse(str(rhs_str), mode="eval").body
     except (SyntaxError, ValueError, TypeError):
         return None
     if not isinstance(tree, ast.Subscript):
@@ -1098,7 +1120,7 @@ def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Dict[str, 
     """
     arrays: Dict[str, List[ast.AST]] = {}
     try:
-        tree = ast.parse(str(subset), mode='eval').body
+        tree = ast.parse(str(subset), mode="eval").body
     except (SyntaxError, ValueError, TypeError):
         return arrays
     for node in ast.walk(tree):
@@ -1154,8 +1176,12 @@ def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> dict
                 if ie.dst_conn not in idx_conns or not isinstance(ie.src, nodes.AccessNode):
                     continue
                 src_desc = sdfg.arrays.get(ie.src.data)
-                if (src_desc is None or src_desc.transient or not isinstance(src_desc, data.Array)
-                        or not is_integer_dtype(src_desc.dtype)):
+                if (
+                    src_desc is None
+                    or src_desc.transient
+                    or not isinstance(src_desc, data.Array)
+                    or not is_integer_dtype(src_desc.dtype)
+                ):
                     continue
                 if ie.data is None or ie.data.subset is None:
                     continue
@@ -1189,7 +1215,7 @@ def _write_index_input_connectors(nsdfg_node: nodes.NestedSDFG, out_conn: str) -
             if lhs not in index_symbols:
                 continue
             try:
-                tree = ast.parse(str(rhs), mode='eval').body
+                tree = ast.parse(str(rhs), mode="eval").body
             except SyntaxError:
                 continue
             if isinstance(tree, ast.Subscript) and isinstance(tree.value, ast.Name) and tree.value.id in in_conns:
@@ -1215,19 +1241,20 @@ def privatize_clone_local_transients(owner_sdfg: SDFG, loop: LoopRegion, clone: 
     loop_names = {n.data for st in loop_states for n in st.data_nodes() if owner_sdfg.arrays[n.data].transient}
     outside_names = {
         n.data
-        for st in owner_sdfg.states() if st not in loop_states and st not in clone_states for n in st.data_nodes()
+        for st in owner_sdfg.states()
+        if st not in loop_states and st not in clone_states
+        for n in st.data_nodes()
     }
     repl: Dict[str, str] = {}
     for name in sorted(loop_names - outside_names):
-        repl[name] = owner_sdfg.add_datadesc(name + '_seq', copy.deepcopy(owner_sdfg.arrays[name]), find_new_name=True)
+        repl[name] = owner_sdfg.add_datadesc(name + "_seq", copy.deepcopy(owner_sdfg.arrays[name]), find_new_name=True)
     if repl:
         clone.replace_dict(repl)
 
 
-def _wrap_loop_in_dispatcher(parent,
-                             loop: LoopRegion,
-                             condition_expr: str,
-                             block: ControlFlowBlock | None = None) -> None:
+def _wrap_loop_in_dispatcher(
+    parent, loop: LoopRegion, condition_expr: str, block: ControlFlowBlock | None = None
+) -> None:
     """Replace ``loop`` in ``parent`` with a ``ConditionalBlock`` that picks
     between a sequential clone (taken when ``condition_expr`` is true -- the
     "collision detected, fall back" branch) and a parallelised lift of the
@@ -1257,7 +1284,7 @@ def _wrap_loop_in_dispatcher(parent,
 
     in_edges = list(parent.in_edges(block))
     out_edges = list(parent.out_edges(block))
-    was_start = getattr(parent, 'start_block', None) is block
+    was_start = getattr(parent, "start_block", None) is block
 
     # Pin the fallback so no later parallelizer re-lifts it, and so a parallelism
     # counter can treat this guarded region as fully parallel (the pinned clone is
@@ -1268,20 +1295,20 @@ def _wrap_loop_in_dispatcher(parent,
     loop.pinned_sequential = True
     sequential_clone = _copy.deepcopy(block)
     loop.pinned_sequential = was_pinned
-    sequential_clone.label = block.label + '_seq_fallback'
+    sequential_clone.label = block.label + "_seq_fallback"
     if isinstance(sequential_clone, SDFGState):
         # A copied state's nested sdfgs cannot find the sdfg above them on their own.
         for node in sequential_clone.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 node.sdfg.parent_sdfg = parent.sdfg
 
-    cb = ConditionalBlock(loop.label + '_dispatch')
+    cb = ConditionalBlock(loop.label + "_dispatch")
     parent.add_node(cb, is_start_block=was_start, ensure_unique_name=True)  # derived label; wired by object ref
 
-    seq_branch = ControlFlowRegion(loop.label + '_seq_branch', sdfg=parent.sdfg)
+    seq_branch = ControlFlowRegion(loop.label + "_seq_branch", sdfg=parent.sdfg)
     seq_branch.add_node(sequential_clone, is_start_block=True)
 
-    par_branch = ControlFlowRegion(loop.label + '_par_branch', sdfg=parent.sdfg)
+    par_branch = ControlFlowRegion(loop.label + "_par_branch", sdfg=parent.sdfg)
     par_branch.add_node(block, is_start_block=True)
     parent.remove_node(block)
 
@@ -1298,6 +1325,7 @@ def _wrap_loop_in_dispatcher(parent,
 
     # Lift the loop inside the False branch to a Map.
     from dace.transformation.passes.parallelize_loops import ParallelizeLoops  # avoid an import cycle
+
     root = parent.sdfg
     while root.parent_sdfg is not None:
         root = root.parent_sdfg
@@ -1305,8 +1333,9 @@ def _wrap_loop_in_dispatcher(parent,
         # The clone brought its own nested sdfgs along.
         root.reset_cfg_list()
     try:
-        ParallelizeLoops(propagate=False).parallelize_loop(root, loop,
-                                                           proven=True)  # ScatterToGuardedMaps propagates once
+        ParallelizeLoops(propagate=False).parallelize_loop(
+            root, loop, proven=True
+        )  # ScatterToGuardedMaps propagates once
     except Exception:
         # If the lift fails on the parallel branch the sequential clone in the
         # other branch still produces the right result; codegen will compile
@@ -1315,6 +1344,10 @@ def _wrap_loop_in_dispatcher(parent,
 
 
 __all__ = [
-    'ScatterToGuardedMaps', 'detect_scatter_idx_arrays', 'detect_scatter_loops_and_idx_arrays',
-    'indirect_write_needs_injectivity', 'nested_write_is_accumulation', 'scatter_target_arrays'
+    "ScatterToGuardedMaps",
+    "detect_scatter_idx_arrays",
+    "detect_scatter_loops_and_idx_arrays",
+    "indirect_write_needs_injectivity",
+    "nested_write_is_accumulation",
+    "scatter_target_arrays",
 ]

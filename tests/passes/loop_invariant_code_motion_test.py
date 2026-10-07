@@ -6,6 +6,7 @@ SDFG, and compares the result against a pure-Python reference implementing
 the same computation. This catches both structural regressions and
 semantics-breaking hoists.
 """
+
 import math
 import numpy as np
 import pytest
@@ -23,11 +24,13 @@ K = dace.symbol("K")
 
 
 def _build_loop(sdfg: dace.SDFG, loop_var: str, end_sym: str, label: str = "loop") -> LoopRegion:
-    loop = LoopRegion(label,
-                      condition_expr=f"{loop_var} < {end_sym}",
-                      loop_var=loop_var,
-                      initialize_expr=f"{loop_var} = 0",
-                      update_expr=f"{loop_var} = {loop_var} + 1")
+    loop = LoopRegion(
+        label,
+        condition_expr=f"{loop_var} < {end_sym}",
+        loop_var=loop_var,
+        initialize_expr=f"{loop_var} = 0",
+        update_expr=f"{loop_var} = {loop_var} + 1",
+    )
     sdfg.add_node(loop, is_start_block=True)
     return loop
 
@@ -39,7 +42,8 @@ def _state_tasklets(state):
 def _preheaders(sdfg: dace.SDFG, loop: LoopRegion):
     parent = loop.parent_graph
     return [
-        e.src for e in parent.in_edges(loop)
+        e.src
+        for e in parent.in_edges(loop)
         if hasattr(e.src, "label") and e.src.label.startswith(f"{loop.label}_licm_preheader")
     ]
 
@@ -275,8 +279,9 @@ def test_hoisted_chain_producer_and_consumer_stay_connected():
     assert len(pre) == 1
     u_nodes = [n for n in pre[0].nodes() if isinstance(n, nodes.AccessNode) and n.data == "u"]
     assert len(u_nodes) == 1, f"transient u split into {len(u_nodes)} disconnected preheader nodes"
-    assert pre[0].in_degree(u_nodes[0]) == 1 and pre[0].out_degree(u_nodes[0]) >= 1, \
+    assert pre[0].in_degree(u_nodes[0]) == 1 and pre[0].out_degree(u_nodes[0]) >= 1, (
         "preheader u must be both written (producer) and read (consumer)"
+    )
 
     # DCE must not be able to strand the read: the value is correct after simplify.
     SimplifyPass().apply_pass(sdfg, {})
@@ -323,7 +328,8 @@ def test_map_scope_pure_tasklet_hoisted():
     sdict = state.scope_dict()
     assert not any(t.label == "add" for t in state.nodes() if isinstance(t, nodes.Tasklet) and sdict.get(t) is me)
     assert any(
-        t.label.startswith("add") for t in state.nodes() if isinstance(t, nodes.Tasklet) and sdict.get(t) is None)
+        t.label.startswith("add") for t in state.nodes() if isinstance(t, nodes.Tasklet) and sdict.get(t) is None
+    )
 
     def py_ref(a, b, outp, N):
         for i in range(N):
@@ -465,14 +471,9 @@ def test_middle_child_hoist_keeps_body_chain_connected():
                 a[i] = b[i] + 1.0
             d[nl] = 2.0
 
-    _run_and_check(sdfg,
-                   py_ref,
-                   a=np.zeros(4),
-                   b=np.arange(4, dtype=np.float64),
-                   c=np.zeros(3),
-                   d=np.zeros(3),
-                   N=4,
-                   K=3)
+    _run_and_check(
+        sdfg, py_ref, a=np.zeros(4), b=np.arange(4, dtype=np.float64), c=np.zeros(3), d=np.zeros(3), N=4, K=3
+    )
 
 
 # 7. WCR output: never hoisted (observable side effect).
@@ -1052,14 +1053,9 @@ def test_llvm_expr_reassociate_four_operand_chain_hoisted():
         for j in range(N):
             outp[j] = s
 
-    _run_and_check(sdfg,
-                   py_ref,
-                   a=np.array([1.0]),
-                   b=np.array([2.0]),
-                   c=np.array([3.0]),
-                   d=np.array([4.0]),
-                   outp=np.zeros(5),
-                   N=5)
+    _run_and_check(
+        sdfg, py_ref, a=np.array([1.0]), b=np.array([2.0]), c=np.array([3.0]), d=np.array([4.0]), outp=np.zeros(5), N=5
+    )
 
 
 def test_llvm_infinite_loops_style_while_loop_hoisted():
@@ -1077,11 +1073,9 @@ def test_llvm_infinite_loops_style_while_loop_hoisted():
 
     # Plain loop region with symbolic counter ``i`` initialized outside the
     # loop; update is done inside by an interstate edge (while-style).
-    loop = LoopRegion("while_loop",
-                      condition_expr="i < N",
-                      loop_var="i",
-                      initialize_expr="i = 0",
-                      update_expr="i = i + 1")
+    loop = LoopRegion(
+        "while_loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state("body", is_start_block=True)
     ar = body.add_read("a")
@@ -1219,6 +1213,7 @@ def test_map_invariant_scalar_read_hoist_uses_inner_memlet():
     whole-array memlet -- the latter fed the scalar-copy tasklet a pointer and
     produced a malformed ``_out = _in`` that failed to compile."""
     from dace.transformation.interstate import LoopToMap
+
     n = 64
     rng = np.random.default_rng(0)
     base = {name: rng.random(n) for name in "abc"}

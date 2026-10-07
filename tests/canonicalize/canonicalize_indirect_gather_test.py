@@ -18,6 +18,7 @@ Both contracts are primarily numerical (value-preserving vs the original
 SDFG); structural assertions pin the parallel ``jc`` Map and, for the twin
 case, that the two writes share a Map scope.
 """
+
 import numpy as np
 import pytest
 
@@ -25,7 +26,7 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')  # number of cells (parallel)
+N = dace.symbol("N")  # number of cells (parallel)
 
 
 def _nmaps(sdfg):
@@ -40,7 +41,7 @@ def indirect_gather_3nbr(field: dace.float64[N], idx: dace.int32[N, 3], w: dace.
     """``out[jc] = sum_k w[jc, k] * field[idx[jc, k]]`` -- 3-neighbor
     gather via an index table. Parallel over ``jc``."""
     for jc in dace.map[0:N]:
-        out[jc] = (w[jc, 0] * field[idx[jc, 0]] + w[jc, 1] * field[idx[jc, 1]] + w[jc, 2] * field[idx[jc, 2]])
+        out[jc] = w[jc, 0] * field[idx[jc, 0]] + w[jc, 1] * field[idx[jc, 1]] + w[jc, 2] * field[idx[jc, 2]]
 
 
 def _gather_oracle(field, idx, w):
@@ -67,7 +68,7 @@ def test_indirect_gather_3nbr_value_preserving():
     sdfg.validate()
     out = np.zeros(n)
     sdfg(field=field, idx=idx, w=w, out=out, N=n)
-    assert np.allclose(out, exp), 'indirect gather mis-canonicalized'
+    assert np.allclose(out, exp), "indirect gather mis-canonicalized"
 
 
 def test_indirect_gather_3nbr_keeps_parallel_map():
@@ -76,26 +77,35 @@ def test_indirect_gather_3nbr_keeps_parallel_map():
     sdfg = indirect_gather_3nbr.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'the parallel jc gather must be exactly one Map, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 1, f"the parallel jc gather must be exactly one Map, got {_nmaps(sdfg)}"
     entry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert len(entry.map.params) == 1 and str(entry.map.range) == '0:N', (
-        f'the surviving map must span the jc axis, got {entry.map.params} over {entry.map.range}')
+    assert len(entry.map.params) == 1 and str(entry.map.range) == "0:N", (
+        f"the surviving map must span the jc axis, got {entry.map.params} over {entry.map.range}"
+    )
 
 
 # Twin reduction sharing one neighbour stencil
 
 
 @dace.program
-def twin_reduction_shared_stencil(mass_fl: dace.float64[N], theta_fl: dace.float64[N], idx: dace.int32[N, 3],
-                                  gfac: dace.float64[N, 3], div_mass: dace.float64[N], div_theta: dace.float64[N]):
+def twin_reduction_shared_stencil(
+    mass_fl: dace.float64[N],
+    theta_fl: dace.float64[N],
+    idx: dace.int32[N, 3],
+    gfac: dace.float64[N, 3],
+    div_mass: dace.float64[N],
+    div_theta: dace.float64[N],
+):
     """Two accumulators over the SAME 3-edge index-table stencil
     (``mo_solve_nonhydro.f90`` flux-divergence). Both are parallel over
     ``jc`` and share ``idx`` / ``gfac`` -- a fusion candidate."""
     for jc in dace.map[0:N]:
-        div_mass[jc] = (mass_fl[idx[jc, 0]] * gfac[jc, 0] + mass_fl[idx[jc, 1]] * gfac[jc, 1] +
-                        mass_fl[idx[jc, 2]] * gfac[jc, 2])
-        div_theta[jc] = (theta_fl[idx[jc, 0]] * gfac[jc, 0] + theta_fl[idx[jc, 1]] * gfac[jc, 1] +
-                         theta_fl[idx[jc, 2]] * gfac[jc, 2])
+        div_mass[jc] = (
+            mass_fl[idx[jc, 0]] * gfac[jc, 0] + mass_fl[idx[jc, 1]] * gfac[jc, 1] + mass_fl[idx[jc, 2]] * gfac[jc, 2]
+        )
+        div_theta[jc] = (
+            theta_fl[idx[jc, 0]] * gfac[jc, 0] + theta_fl[idx[jc, 1]] * gfac[jc, 1] + theta_fl[idx[jc, 2]] * gfac[jc, 2]
+        )
 
 
 def _twin_oracle(mass_fl, theta_fl, idx, gfac):
@@ -122,8 +132,8 @@ def test_twin_reduction_value_preserving():
     dm = np.zeros(n)
     dt = np.zeros(n)
     sdfg(mass_fl=mass_fl, theta_fl=theta_fl, idx=idx, gfac=gfac, div_mass=dm, div_theta=dt, N=n)
-    assert np.allclose(dm, exp_m), 'div_mass mis-canonicalized'
-    assert np.allclose(dt, exp_t), 'div_theta mis-canonicalized'
+    assert np.allclose(dm, exp_m), "div_mass mis-canonicalized"
+    assert np.allclose(dt, exp_t), "div_theta mis-canonicalized"
 
 
 def test_twin_reduction_fuses_to_one_map():
@@ -133,8 +143,8 @@ def test_twin_reduction_fuses_to_one_map():
     sdfg = twin_reduction_shared_stencil.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'twin reduction should fuse to a single jc map, got {_nmaps(sdfg)}'
+    assert _nmaps(sdfg) == 1, f"twin reduction should fuse to a single jc map, got {_nmaps(sdfg)}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

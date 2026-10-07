@@ -8,6 +8,7 @@ both halves: the by-value path for host memory, the pointer path (``POINTER_MODE
 cuBLAS, a seed pointer the scan's own input iterator dereferences in the kernel for cub) for device
 memory.
 """
+
 import numpy as np
 import pytest
 
@@ -21,43 +22,43 @@ N = 32
 
 def syrk_with_runtime_alpha(storage: dtypes.StorageType) -> tuple:
     """A ``Syrk`` whose alpha and beta arrive through connectors backed by ``storage``."""
-    sdfg = dace.SDFG(f'syrk_alpha_{storage.name}')
-    sdfg.add_array('A', [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('C', [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('alpha', [1], dace.float64, storage=storage)
-    sdfg.add_array('beta', [1], dace.float64, storage=storage)
+    sdfg = dace.SDFG(f"syrk_alpha_{storage.name}")
+    sdfg.add_array("A", [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("C", [N, N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("alpha", [1], dace.float64, storage=storage)
+    sdfg.add_array("beta", [1], dace.float64, storage=storage)
     state = sdfg.add_state()
-    node = Syrk('syrk', alpha=1, beta=1)
-    node.implementation = 'cuBLAS'
-    for conn in ('_a', '_c', '_alpha', '_beta'):
+    node = Syrk("syrk", alpha=1, beta=1)
+    node.implementation = "cuBLAS"
+    for conn in ("_a", "_c", "_alpha", "_beta"):
         node.add_in_connector(conn)
-    node.add_out_connector('_c')
+    node.add_out_connector("_c")
     state.add_node(node)
-    state.add_edge(state.add_read('A'), None, node, '_a', dace.Memlet('A[0:N, 0:N]'.replace('N', str(N))))
-    state.add_edge(state.add_read('C'), None, node, '_c', dace.Memlet(f'C[0:{N}, 0:{N}]'))
-    state.add_edge(state.add_read('alpha'), None, node, '_alpha', dace.Memlet('alpha[0]'))
-    state.add_edge(state.add_read('beta'), None, node, '_beta', dace.Memlet('beta[0]'))
-    state.add_edge(node, '_c', state.add_write('C'), None, dace.Memlet(f'C[0:{N}, 0:{N}]'))
+    state.add_edge(state.add_read("A"), None, node, "_a", dace.Memlet("A[0:N, 0:N]".replace("N", str(N))))
+    state.add_edge(state.add_read("C"), None, node, "_c", dace.Memlet(f"C[0:{N}, 0:{N}]"))
+    state.add_edge(state.add_read("alpha"), None, node, "_alpha", dace.Memlet("alpha[0]"))
+    state.add_edge(state.add_read("beta"), None, node, "_beta", dace.Memlet("beta[0]"))
+    state.add_edge(node, "_c", state.add_write("C"), None, dace.Memlet(f"C[0:{N}, 0:{N}]"))
     sdfg.validate()
     return sdfg, state, node
 
 
 def scan_with_seed(storage: dtypes.StorageType) -> tuple:
     """An inclusive ``Scan`` whose seed is backed by ``storage``."""
-    sdfg = dace.SDFG(f'scan_seed_{storage.name}')
-    sdfg.add_array('A', [N], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('B', [N], dace.float64, storage=dtypes.StorageType.GPU_Global)
-    sdfg.add_array('seed', [1], dace.float64, storage=storage)
+    sdfg = dace.SDFG(f"scan_seed_{storage.name}")
+    sdfg.add_array("A", [N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("B", [N], dace.float64, storage=dtypes.StorageType.GPU_Global)
+    sdfg.add_array("seed", [1], dace.float64, storage=storage)
     state = sdfg.add_state()
-    node = Scan('scan', op=ScanOp.SUM, exclusive=False)
-    node.implementation = 'CUDA'
-    for conn in (INPUT_CONNECTOR_NAME, '_scan_init'):
+    node = Scan("scan", op=ScanOp.SUM, exclusive=False)
+    node.implementation = "CUDA"
+    for conn in (INPUT_CONNECTOR_NAME, "_scan_init"):
         node.add_in_connector(conn)
     node.add_out_connector(OUTPUT_CONNECTOR_NAME)
     state.add_node(node)
-    state.add_edge(state.add_read('A'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'A[0:{N}]'))
-    state.add_edge(state.add_read('seed'), None, node, '_scan_init', dace.Memlet('seed[0]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('B'), None, dace.Memlet(f'B[0:{N}]'))
+    state.add_edge(state.add_read("A"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"A[0:{N}]"))
+    state.add_edge(state.add_read("seed"), None, node, "_scan_init", dace.Memlet("seed[0]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("B"), None, dace.Memlet(f"B[0:{N}]"))
     sdfg.validate()
     return sdfg, state, node
 
@@ -73,23 +74,23 @@ def expanded_code(sdfg: dace.SDFG) -> str:
     parts = [node.code.as_string for node, _ in sdfg.all_nodes_recursive() if isinstance(node, dace.sdfg.nodes.Tasklet)]
     for nested in sdfg.all_sdfgs_recursive():
         parts.extend(block.as_string for block in nested.global_code.values())
-    return '\n'.join(parts)
+    return "\n".join(parts)
 
 
 def test_a_host_coefficient_is_read_by_value():
     """Nothing to copy: the value is right there, so the call takes a host pointer to a local."""
     sdfg, _, _ = syrk_with_runtime_alpha(dtypes.StorageType.CPU_Heap)
     code = expanded_code(sdfg)
-    assert 'CUBLAS_POINTER_MODE_HOST' in code
-    assert '&__alpha' in code, 'the host path should point at its own local'
+    assert "CUBLAS_POINTER_MODE_HOST" in code
+    assert "&__alpha" in code, "the host path should point at its own local"
 
 
 def test_a_device_coefficient_is_read_where_it_lies():
     """Copying it back would cost a transfer and a sync; cuBLAS can dereference it itself."""
     sdfg, _, _ = syrk_with_runtime_alpha(dtypes.StorageType.GPU_Global)
     code = expanded_code(sdfg)
-    assert 'CUBLAS_POINTER_MODE_DEVICE' in code
-    assert '&__alpha' not in code, 'a device coefficient must not be dereferenced by the host'
+    assert "CUBLAS_POINTER_MODE_DEVICE" in code
+    assert "&__alpha" not in code, "a device coefficient must not be dereferenced by the host"
 
 
 def test_a_device_coefficient_reaches_the_tasklet_as_a_pointer():
@@ -97,8 +98,8 @@ def test_a_device_coefficient_reaches_the_tasklet_as_a_pointer():
     sdfg, _, _ = syrk_with_runtime_alpha(dtypes.StorageType.GPU_Global)
     sdfg.expand_library_nodes()
     tasklets = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.Tasklet)]
-    typed = [t.in_connectors['__alpha_in'] for t in tasklets if '__alpha_in' in t.in_connectors]
-    assert typed, 'the coefficient connector went missing'
+    typed = [t.in_connectors["__alpha_in"] for t in tasklets if "__alpha_in" in t.in_connectors]
+    assert typed, "the coefficient connector went missing"
     assert all(isinstance(t, dtypes.pointer) for t in typed), typed
     sdfg.validate()
 
@@ -106,7 +107,7 @@ def test_a_device_coefficient_reaches_the_tasklet_as_a_pointer():
 def test_a_host_seed_goes_to_cub_by_value():
     sdfg, _, _ = scan_with_seed(dtypes.StorageType.CPU_Heap)
     code = expanded_code(sdfg)
-    assert 'FutureValue' not in code, 'a host seed needs no future'
+    assert "FutureValue" not in code, "a host seed needs no future"
 
 
 def test_a_device_seed_is_read_inside_the_kernel():
@@ -114,23 +115,24 @@ def test_a_device_seed_is_read_inside_the_kernel():
     still writing it; rocPRIM reads a ``FutureValue`` on the host, which needs a host round trip."""
     sdfg, _, _ = scan_with_seed(dtypes.StorageType.GPU_Global)
     code = expanded_code(sdfg)
-    assert 'const double* seed;' in code, code[:600]
-    assert 'static_cast<double>(*seed)' in code, code[:600]
+    assert "const double* seed;" in code, code[:600]
+    assert "static_cast<double>(*seed)" in code, code[:600]
     sdfg.validate()
 
 
-@pytest.mark.parametrize('storage', [dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global])
+@pytest.mark.parametrize("storage", [dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global])
 def test_a_seeded_scan_calls_only_what_every_backend_has(storage):
     """``DeviceScan::InclusiveScanInit`` exists only from CUB 2.0 / hipCUB on ROCm 7: on ROCm 6.3 every
     seeded scan failed to compile (nine LLR kernels on the canon GPU column)."""
     sdfg, _, _ = scan_with_seed(storage)
     code = expanded_code(sdfg)
-    assert 'InclusiveScanInit' not in code and 'FutureValue' not in code, code[:600]
+    assert "InclusiveScanInit" not in code and "FutureValue" not in code, code[:600]
 
 
 @pytest.mark.gpu
 def test_a_seeded_device_scan_adds_the_seed_once():
     import cupy
+
     sdfg, _, _ = scan_with_seed(dtypes.StorageType.GPU_Global)
     a = np.arange(1, N + 1, dtype=np.float64)
     b = cupy.zeros(N)

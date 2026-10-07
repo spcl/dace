@@ -21,12 +21,14 @@ shares the same refusal (via ``condition_guards_iteration_symbol``), so the hole
 end-to-end. That is pinned by ``test_branch_normalization_also_refuses_iteration_guard`` at the
 bottom; the numeric end-to-end contract lives in ``branch_norm_iteration_guard_test.py``.
 """
+
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
-    SameWriteSetIfElseToITECFG, )
+    SameWriteSetIfElseToITECFG,
+)
 
 N = dace.symbol("N", nonnegative=True)
 
@@ -61,8 +63,8 @@ def _build_loop_guard_sdfg(cond: str, read_subset: str, assignments=None) -> dac
     :returns: the constructed SDFG.
     """
     sdfg = dace.SDFG("loop_symbol_guard")
-    sdfg.add_array("a", shape=(N, ), dtype=dace.float64)
-    sdfg.add_array("s", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(N,), dtype=dace.float64)
+    sdfg.add_array("s", shape=(1,), dtype=dace.float64)
 
     loop = LoopRegion("loop", loop_var="i", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
@@ -82,8 +84,8 @@ def _build_map_param_guard_sdfg() -> dace.SDFG:
     :returns: ``(outer, inner)`` -- the map SDFG and the nested body SDFG holding the guard.
     """
     inner = dace.SDFG("map_body")
-    inner.add_array("a", shape=(N, ), dtype=dace.float64)
-    inner.add_array("s", shape=(1, ), dtype=dace.float64)
+    inner.add_array("a", shape=(N,), dtype=dace.float64)
+    inner.add_array("s", shape=(1,), dtype=dace.float64)
     inner.add_symbol("i", dace.int64)
     inner.add_state("head", is_start_block=True)
     cb = ConditionalBlock("cb", sdfg=inner, parent=inner)
@@ -92,8 +94,8 @@ def _build_map_param_guard_sdfg() -> dace.SDFG:
     _add_guarded_arm(inner, cb, "i < N - 1", "i + 1")
 
     outer = dace.SDFG("map_param_guard")
-    outer.add_array("a", shape=(N, ), dtype=dace.float64)
-    outer.add_array("s", shape=(1, ), dtype=dace.float64)
+    outer.add_array("a", shape=(N,), dtype=dace.float64)
+    outer.add_array("s", shape=(1,), dtype=dace.float64)
     state = outer.add_state("map_state", is_start_block=True)
     me, mx = state.add_map("outer_map", {"i": f"0:{N}"})
     nsdfg = state.add_nested_sdfg(inner, {"a", "s"}, {"s"}, symbol_mapping={"i": "i", "N": N})
@@ -176,8 +178,8 @@ def test_no_enclosing_iteration_scope_still_rewritten():
     """Over-refusal control: a guard naming a plain SDFG symbol outside any loop/map is
     not an iteration guard."""
     sdfg = dace.SDFG("no_scope")
-    sdfg.add_array("a", shape=(N, ), dtype=dace.float64)
-    sdfg.add_array("s", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(N,), dtype=dace.float64)
+    sdfg.add_array("s", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("k", dace.int64)
     sdfg.add_state("head", is_start_block=True)
     cb = ConditionalBlock("cb", sdfg=sdfg, parent=sdfg)

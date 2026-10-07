@@ -6,6 +6,7 @@ Links ``libfftw3`` (double precision) and ``libfftw3f`` (single precision). A di
 the ``ldconfig`` cache. A spack or module install keeps both under its own prefix, found through
 :data:`FFTW_ENV_VARS`, the ``CPATH`` / ``LIBRARY_PATH`` / ``LD_LIBRARY_PATH`` search paths, or spack.
 """
+
 import ctypes.util
 import functools
 import glob
@@ -16,27 +17,28 @@ from dace.libraries.blas.environments.openblas import spack_install_prefix
 from typing import Dict, List
 
 #: Environment variables that may name an FFTW install prefix (``include`` + ``lib`` under it).
-FFTW_ENV_VARS = ('FFTW_ROOT', 'FFTW_DIR', 'FFTW3_DIR', 'FFTW_HOME')
+FFTW_ENV_VARS = ("FFTW_ROOT", "FFTW_DIR", "FFTW3_DIR", "FFTW_HOME")
 
 #: The two precisions the expansions call into, ``fftw_*`` and ``fftwf_*``.
-FFTW_LIBRARIES = ('fftw3', 'fftw3f')
+FFTW_LIBRARIES = ("fftw3", "fftw3f")
 
 #: Where a distro install keeps ``fftw3.h``, on the compiler's default include path.
-SYSTEM_INCLUDE_DIRS = ('/usr/include', '/usr/local/include')
+SYSTEM_INCLUDE_DIRS = ("/usr/include", "/usr/local/include")
 
 
 def prefix_libraries(prefix: str) -> list[str]:
     """Full paths of :data:`FFTW_LIBRARIES` under ``prefix``; ``[]`` without its header or its double library."""
-    if not os.path.isfile(os.path.join(prefix, 'include', 'fftw3.h')):
+    if not os.path.isfile(os.path.join(prefix, "include", "fftw3.h")):
         return []
     found = []
     for lib in FFTW_LIBRARIES:
         hits = sorted(
-            glob.glob(os.path.join(prefix, 'lib', f'lib{lib}.so*')) +
-            glob.glob(os.path.join(prefix, 'lib64', f'lib{lib}.so*')))
+            glob.glob(os.path.join(prefix, "lib", f"lib{lib}.so*"))
+            + glob.glob(os.path.join(prefix, "lib64", f"lib{lib}.so*"))
+        )
         if hits:
             found.append(hits[0])
-        elif lib == 'fftw3':
+        elif lib == "fftw3":
             return []
     return found
 
@@ -44,9 +46,9 @@ def prefix_libraries(prefix: str) -> list[str]:
 def search_path_prefixes() -> list[str]:
     """Candidate install prefixes: the explicit env vars, then the parents of every search-path entry."""
     candidates = [os.environ[var] for var in FFTW_ENV_VARS if os.environ.get(var)]
-    for var in ('CPATH', 'LIBRARY_PATH', 'LD_LIBRARY_PATH'):
+    for var in ("CPATH", "LIBRARY_PATH", "LD_LIBRARY_PATH"):
         candidates += [
-            os.path.dirname(entry.rstrip('/')) for entry in os.environ.get(var, '').split(os.pathsep) if entry
+            os.path.dirname(entry.rstrip("/")) for entry in os.environ.get(var, "").split(os.pathsep) if entry
         ]
     return candidates
 
@@ -63,15 +65,15 @@ def fftw_install() -> tuple[str | None, tuple[str, ...]]:
     for prefix in search_path_prefixes():
         libraries = prefix_libraries(prefix)
         if libraries:
-            return os.path.join(prefix, 'include'), tuple(libraries)
-    if any(os.path.isfile(os.path.join(d, 'fftw3.h')) for d in SYSTEM_INCLUDE_DIRS):
+            return os.path.join(prefix, "include"), tuple(libraries)
+    if any(os.path.isfile(os.path.join(d, "fftw3.h")) for d in SYSTEM_INCLUDE_DIRS):
         libraries = tuple(path for path in map(ctypes.util.find_library, FFTW_LIBRARIES) if path)
         if libraries:
             return None, libraries
-    prefix = spack_install_prefix('fftw')
+    prefix = spack_install_prefix("fftw")
     libraries = prefix_libraries(prefix) if prefix else []
     if libraries:
-        return os.path.join(prefix, 'include'), tuple(libraries)
+        return os.path.join(prefix, "include"), tuple(libraries)
     return None, ()
 
 

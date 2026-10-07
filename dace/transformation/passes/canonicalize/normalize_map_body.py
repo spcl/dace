@@ -15,6 +15,7 @@ the now-consecutive same-condition guards, and the guard can hoist. The canonica
 target form is ``map_consists_of_single_nsdfg_or_no_nsdfg``: a map body is either
 all tasklets (no control flow, left untouched) or exactly one NestedSDFG.
 """
+
 import copy
 from collections import Counter
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -29,8 +30,9 @@ from dace.transformation.passes.analysis import map_scope
 from dace.optionals import required
 
 
-def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry,
-                     order_of: Callable[[SDFGState], Dict[nodes.Node, int]]) -> List[nodes.NestedSDFG]:
+def _map_body_nsdfgs(
+    state: SDFGState, map_entry: nodes.MapEntry, order_of: Callable[[SDFGState], Dict[nodes.Node, int]]
+) -> List[nodes.NestedSDFG]:
     """The NestedSDFG nodes in ``map_entry``'s OWN scope, in dependency
     (topological) order so a producer is always merged before its consumer.
 
@@ -51,8 +53,9 @@ def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry,
 def _map_body_size(state: SDFGState, map_entry: nodes.MapEntry) -> int:
     """Body nodes excluding inner scope entries/exits. Counts scope MEMBERS: a body holding a
     write-only scratch scalar used to count 0 here, and 0 reads as "already a lone NestedSDFG"."""
-    return sum(1 for n in map_scope.map_body_nodes(state, map_entry)
-               if not isinstance(n, (nodes.MapEntry, nodes.MapExit)))
+    return sum(
+        1 for n in map_scope.map_body_nodes(state, map_entry) if not isinstance(n, (nodes.MapEntry, nodes.MapExit))
+    )
 
 
 def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> Dict[str, str]:
@@ -75,8 +78,9 @@ def _uniquify_data_against(inner: SDFG, taken_data: Iterable[str]) -> Dict[str, 
     return drepl
 
 
-def shared_carrier_connectors(state: SDFGState, keep: nodes.NestedSDFG,
-                              drop: nodes.NestedSDFG) -> Optional[Dict[str, Tuple[str, nodes.AccessNode]]]:
+def shared_carrier_connectors(
+    state: SDFGState, keep: nodes.NestedSDFG, drop: nodes.NestedSDFG
+) -> Optional[Dict[str, Tuple[str, nodes.AccessNode]]]:
     """Connectors of ``drop`` that read a container ``keep`` writes, or ``None`` to refuse the merge.
 
     ``MapFusion`` leaves a producer and its consumer as siblings wired through one outer AccessNode

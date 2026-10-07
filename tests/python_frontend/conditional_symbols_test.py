@@ -3,15 +3,16 @@
 Tests that free symbols which only appear inside the condition of an ``if`` statement (or ``while`` loop) are
 registered as SDFG symbols, so that they are part of the SDFG's argument list.
 """
+
 import numpy as np
 import pytest
 from typing import Optional
 
 import dace
 
-N = dace.symbol('N')
-M = dace.symbol('M')
-K = dace.symbol('K', dtype=dace.int64)
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K", dtype=dace.int64)
 
 
 def test_symbol_only_in_if_condition():
@@ -23,9 +24,9 @@ def test_symbol_only_in_if_condition():
                 B[i] = A[i] * 2.0
 
     sdfg = symbol_only_in_if_condition.to_sdfg(simplify=True)
-    assert 'M' in sdfg.symbols
-    assert sdfg.symbols['M'] == M.dtype
-    assert 'M' in sdfg.arglist()
+    assert "M" in sdfg.symbols
+    assert sdfg.symbols["M"] == M.dtype
+    assert "M" in sdfg.arglist()
 
     A = np.arange(16, dtype=np.float64)
     B = np.zeros(16, dtype=np.float64)
@@ -46,8 +47,8 @@ def test_symbol_only_in_if_condition_dtype():
             A[:] = 2.0
 
     sdfg = symbol_only_in_if_condition_dtype.to_sdfg(simplify=True)
-    assert 'K' in sdfg.symbols
-    assert sdfg.symbols['K'] == dace.int64
+    assert "K" in sdfg.symbols
+    assert sdfg.symbols["K"] == dace.int64
 
     A = np.zeros(8, dtype=np.float64)
     sdfg(A=A, N=8, K=5)
@@ -69,7 +70,7 @@ def test_symbol_only_in_elif_condition():
                 A[i] = 2.0
 
     sdfg = symbol_only_in_elif_condition.to_sdfg(simplify=True)
-    assert 'M' in sdfg.symbols
+    assert "M" in sdfg.symbols
 
     A = np.zeros(10, dtype=np.float64)
     sdfg(A=A, N=10, M=6)
@@ -87,7 +88,7 @@ def test_symbol_only_in_while_condition():
             i += 1
 
     sdfg = symbol_only_in_while_condition.to_sdfg(simplify=True)
-    assert 'M' in sdfg.symbols
+    assert "M" in sdfg.symbols
 
     A = np.zeros(10, dtype=np.float64)
     sdfg(A=A, N=10, M=4)
@@ -119,14 +120,14 @@ def test_none_comparison_in_if_condition():
             A[:] = B
 
     sdfg = none_comparison_in_if_condition.to_sdfg(simplify=False)
-    assert 'NoneSymbol' not in sdfg.symbols
-    assert 'NoneSymbol' not in sdfg.arglist()
+    assert "NoneSymbol" not in sdfg.symbols
+    assert "NoneSymbol" not in sdfg.arglist()
 
 
 @dace.program
 def size_of_a_scalar_sized_slice(a: dace.float64[20], out: dace.float64[20]):
     na = int(a[0])
-    off = a[:na - 1]
+    off = a[: na - 1]
     if off.size:
         out[0] = 1.0
 
@@ -141,7 +142,7 @@ def test_a_branch_on_the_size_of_a_scalar_sized_slice_is_not_an_undefined_variab
     assert out[0] == 1.0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symbol_only_in_if_condition()
     test_symbol_only_in_if_condition_dtype()
     test_symbol_only_in_elif_condition()

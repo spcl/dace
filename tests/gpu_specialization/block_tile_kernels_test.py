@@ -5,6 +5,7 @@ An inner reduction folds with ``gpucub::BlockReduce``, an in-kernel ``Dot`` / ``
 block collective, and a host map that only launched device work becomes the kernel. The structural checks
 need no GPU; the numeric ones run on the device, at sizes that leave the last block partial.
 """
+
 import numpy as np
 import pytest
 
@@ -13,7 +14,7 @@ from dace import dtypes
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-M, N, K, NB, NNZ = (dace.symbol(s) for s in ('M', 'N', 'K', 'NB', 'NNZ'))
+M, N, K, NB, NNZ = (dace.symbol(s) for s in ("M", "N", "K", "NB", "NNZ"))
 SIZES = [(1, 1, 1, 1), (37, 300, 5, 3), (257, 513, 129, 2)]
 
 
@@ -82,8 +83,13 @@ def accumulate_outside(A: dace.float64[M, N], total: dace.float64[1]):
 
 
 @dace.program
-def spmv(A_data: dace.float64[NNZ], A_indices: dace.uint32[NNZ], A_indptr: dace.uint32[M + 1], x: dace.float64[N],
-         y: dace.float64[M]):
+def spmv(
+    A_data: dace.float64[NNZ],
+    A_indices: dace.uint32[NNZ],
+    A_indptr: dace.uint32[M + 1],
+    x: dace.float64[N],
+    y: dace.float64[M],
+):
     for i in range(M):
         start = dace.define_local_scalar(dace.uint32)
         stop = dace.define_local_scalar(dace.uint32)
@@ -96,15 +102,16 @@ def spmv(A_data: dace.float64[NNZ], A_indices: dace.uint32[NNZ], A_indptr: dace.
 
 def canonical_gpu(program) -> dace.SDFG:
     sdfg = program.to_sdfg(simplify=True)
-    canonicalize(sdfg, target='gpu')
+    canonicalize(sdfg, target="gpu")
     offload_to_gpu(sdfg)
-    finalize_for_target(sdfg, 'gpu')
+    finalize_for_target(sdfg, "gpu")
     return sdfg
 
 
 def maps_by_schedule(sdfg: dace.SDFG, schedule: dtypes.ScheduleType) -> list:
     return [
-        node for node, parent in sdfg.all_nodes_recursive()
+        node
+        for node, parent in sdfg.all_nodes_recursive()
         if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == schedule
     ]
 
@@ -112,29 +119,32 @@ def maps_by_schedule(sdfg: dace.SDFG, schedule: dtypes.ScheduleType) -> list:
 def library_nodes(sdfg: dace.SDFG) -> dict:
     return {
         type(node).__name__: node
-        for node, parent in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.LibraryNode)
+        for node, parent in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.LibraryNode)
     }
 
 
-@pytest.mark.parametrize('program', [matvec, gemm_loops])
+@pytest.mark.parametrize("program", [matvec, gemm_loops])
 def test_an_inner_reduction_runs_across_the_lanes_of_one_block(program):
     sdfg = canonical_gpu(program)
     kernels = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)
     lanes = maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)
     assert len(kernels) == 1 and kernels[0].map.gpu_block_size is None
     assert len(lanes) == 1 and lanes[0].map.range.size() == [256]
-    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
-    assert 'gpucub::BlockReduce' in code, 'the lane partials must fold with the block collective'
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "gpucub::BlockReduce" in code, "the lane partials must fold with the block collective"
 
 
 def test_a_host_map_that_only_launches_device_work_is_the_kernel():
     sdfg = canonical_gpu(rowsum)
     assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)) == 1
-    assert library_nodes(sdfg)['Reduce'].implementation == 'CUDA (block strided)'
+    assert library_nodes(sdfg)["Reduce"].implementation == "CUDA (block strided)"
 
 
-@pytest.mark.parametrize('program, node, implementation', [(batched_dot, 'Dot', 'CUDA (block strided)'),
-                                                           (batched_gemm, 'Gemm', 'CUDA (block strided)')])
+@pytest.mark.parametrize(
+    "program, node, implementation",
+    [(batched_dot, "Dot", "CUDA (block strided)"), (batched_gemm, "Gemm", "CUDA (block strided)")],
+)
 def test_a_library_node_inside_a_kernel_takes_its_block_collective(program, node, implementation):
     sdfg = canonical_gpu(program)
     assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)) == 1
@@ -148,10 +158,10 @@ def test_a_dot_over_a_gathered_row_fuses_into_one_block_reduction():
     assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_Device)) == 1
     assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)) == 1
     assert not library_nodes(sdfg)
-    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
-    assert 'gpucub::BlockReduce' in code
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "gpucub::BlockReduce" in code
     # Lanes start at ``__tid``; a ``stop - start - __tid`` bound underflows with unsigned row pointers.
-    assert '- __tid' not in code
+    assert "- __tid" not in code
 
 
 def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barriers():
@@ -159,16 +169,18 @@ def test_an_in_place_update_outside_the_inner_map_runs_on_lane_zero_between_barr
     sdfg = canonical_gpu(subtract_rowsum)
     assert len(maps_by_schedule(sdfg, dtypes.ScheduleType.GPU_ThreadBlock)) == 1
     guards = [
-        b for nested in sdfg.all_sdfgs_recursive() for b in nested.all_control_flow_blocks()
+        b
+        for nested in sdfg.all_sdfgs_recursive()
+        for b in nested.all_control_flow_blocks()
         if isinstance(b, dace.sdfg.state.ConditionalBlock)
     ]
-    assert [c.as_string for g in guards for c, body in g.branches] == ['(__tid == 0)']
+    assert [c.as_string for g in guards for c, body in g.branches] == ["(__tid == 0)"]
     barriers = [
-        n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == 'lane_barrier'
+        n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == "lane_barrier"
     ]
     assert len(barriers) == 2
-    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
-    assert code.count('__syncthreads();') >= 2
+    code = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert code.count("__syncthreads();") >= 2
 
 
 def test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iteration():
@@ -178,9 +190,10 @@ def test_a_body_that_accumulates_outside_the_inner_map_keeps_one_thread_per_iter
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('m, n, k, nb', SIZES)
+@pytest.mark.parametrize("m, n, k, nb", SIZES)
 def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
     import cupy as cp
+
     rng = np.random.default_rng(m + n)
     A, x, b = rng.random((m, n)), rng.random(n), rng.random(m)
 
@@ -218,14 +231,17 @@ def test_the_block_lowerings_compute_what_numpy_does(m, n, k, nb):
     np.testing.assert_allclose(BC.get(), BA @ BB, rtol=1e-12)
 
     import scipy.sparse
-    mat = scipy.sparse.random(m, n, density=0.3, format='csr', random_state=m)
+
+    mat = scipy.sparse.random(m, n, density=0.3, format="csr", random_state=m)
     y = cp.zeros(m)
-    canonical_gpu(spmv)(A_data=cp.asarray(mat.data),
-                        A_indices=cp.asarray(mat.indices.astype(np.uint32)),
-                        A_indptr=cp.asarray(mat.indptr.astype(np.uint32)),
-                        x=cp.asarray(x),
-                        y=y,
-                        M=m,
-                        N=n,
-                        NNZ=mat.nnz)
+    canonical_gpu(spmv)(
+        A_data=cp.asarray(mat.data),
+        A_indices=cp.asarray(mat.indices.astype(np.uint32)),
+        A_indptr=cp.asarray(mat.indptr.astype(np.uint32)),
+        x=cp.asarray(x),
+        y=y,
+        M=m,
+        N=n,
+        NNZ=mat.nnz,
+    )
     np.testing.assert_allclose(y.get(), mat @ x, rtol=1e-12)

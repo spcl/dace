@@ -7,6 +7,7 @@ over adjacent index ranges (``[A, B)`` then ``[B, C)``) into one loop over
 tiled reduction lifts to a single ``Reduce`` (exact) instead of two un-chained
 ``Reduce`` nodes writing the same accumulator (half-sum).
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -26,7 +27,7 @@ from dace.transformation.passes.canonicalize.fuse_consecutive_loops import FuseC
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -75,13 +76,15 @@ def _lu_view_and_copy_tie(A: dace.float64[N, N]):
 
 
 def _nloops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
-               if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(
+        1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    )
 
 
 def _nreduces(sdfg):
-    return sum(1 for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, nodes.LibraryNode) and 'Reduce' in type(n).__name__)
+    return sum(
+        1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode) and "Reduce" in type(n).__name__
+    )
 
 
 def _prep(prog):
@@ -108,7 +111,7 @@ def test_fuses_two_adjacent_reduction_loops():
     a = rng.standard_normal(n)
     out = np.zeros(1)
     sdfg(a=a.copy(), out=out, N=n)
-    assert np.isclose(out[0], np.sum(a)), f'got {out[0]} expected {np.sum(a)}'
+    assert np.isclose(out[0], np.sum(a)), f"got {out[0]} expected {np.sum(a)}"
 
 
 def test_end_to_end_single_reduce_and_exact():
@@ -125,7 +128,7 @@ def test_end_to_end_single_reduce_and_exact():
     a = rng.standard_normal(n)
     out = np.zeros(1)
     sdfg(a=a.copy(), out=out, N=n)
-    assert np.isclose(out[0], np.sum(a)), f'got {out[0]} expected {np.sum(a)}'
+    assert np.isclose(out[0], np.sum(a)), f"got {out[0]} expected {np.sum(a)}"
 
 
 def test_different_accumulators_not_fused():
@@ -170,7 +173,7 @@ def test_view_and_plain_copy_edge_tie_does_not_raise_typeerror():
     ``TypeError: '<' not supported between instances of 'NoneType' and 'str'``."""
     sdfg = _lu_view_and_copy_tie.to_sdfg(simplify=True)
     sdfg.validate()
-    canonicalize(sdfg, target='cpu')
+    canonicalize(sdfg, target="cpu")
     sdfg.validate()
 
 
@@ -182,14 +185,13 @@ def test_bodies_differing_only_in_a_copy_memlets_destination_are_not_fused():
     from dace.sdfg.state import LoopRegion
 
     def make_loop(label, lo, hi, dst):
-        loop = LoopRegion(label,
-                          condition_expr=f"i < {hi}",
-                          loop_var="i",
-                          initialize_expr=f"i = {lo}",
-                          update_expr="i = i + 1")
+        loop = LoopRegion(
+            label, condition_expr=f"i < {hi}", loop_var="i", initialize_expr=f"i = {lo}", update_expr="i = i + 1"
+        )
         st = loop.add_state("body", is_start_block=True)
-        st.add_edge(st.add_access("A"), None, st.add_access("B"), None,
-                    dace.Memlet(data="A", subset="i, 0:2", other_subset=dst))
+        st.add_edge(
+            st.add_access("A"), None, st.add_access("B"), None, dace.Memlet(data="A", subset="i, 0:2", other_subset=dst)
+        )
         return loop
 
     sdfg = dace.SDFG("fuse_other_subset")

@@ -1,5 +1,6 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``mandelbrot2`` (map_reduce) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace
 import dace as dc
@@ -7,23 +8,23 @@ import dace as dc
 dc_float = dc.float64
 dc_complex_float = dc.complex128
 
-SIZES = {'xmin': -2.0, 'xmax': 0.5, 'XN': 200, 'ymin': -1.25, 'ymax': 1.25, 'YN': 200, 'maxiter': 40, 'horizon': 2.0}
+SIZES = {"xmin": -2.0, "xmax": 0.5, "XN": 200, "ymin": -1.25, "ymax": 1.25, "YN": 200, "maxiter": 40, "horizon": 2.0}
 PAPER_SIZES = {
-    'xmin': -2.25,
-    'xmax': 0.75,
-    'XN': 1000,
-    'ymin': -1.25,
-    'ymax': 1.25,
-    'YN': 1000,
-    'maxiter': 200,
-    'horizon': 2.0
+    "xmin": -2.25,
+    "xmax": 0.75,
+    "XN": 1000,
+    "ymin": -1.25,
+    "ymax": 1.25,
+    "YN": 1000,
+    "maxiter": 200,
+    "horizon": 2.0,
 }
-INPUT_ARGS = ('XN', 'YN')
-ARRAY_ARGS = ('Z_out', 'N_out')
+INPUT_ARGS = ("XN", "YN")
+ARRAY_ARGS = ("Z_out", "N_out")
 SCALARS = {}
-OUTPUT_ARGS = ('Z_out', 'N_out')
+OUTPUT_ARGS = ("Z_out", "N_out")
 
-XN, YN, M, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'M', 'N'])
+XN, YN, M, N = (dc.symbol(s, dtype=dc.int64) for s in ["XN", "YN", "M", "N"])
 
 
 def initialize(XN, YN):
@@ -64,8 +65,8 @@ def kernel(xmin: dc_float, xmax: dc_float, ymin: dc_float, ymax: dc_float, maxit
     Xi = np.ndarray((XN, YN), dtype=np.int64)
     Yi = np.ndarray((XN, YN), dtype=np.int64)
     mgrid(Xi, Yi)
-    X = np.ndarray((XN, ), dtype=dc_float)
-    Y = np.ndarray((YN, ), dtype=dc_float)
+    X = np.ndarray((XN,), dtype=dc_float)
+    Y = np.ndarray((YN,), dtype=dc_float)
     linspace(xmin, xmax, X)
     linspace(ymin, ymax, Y)
     C = np.ndarray((XN, YN), dtype=dc_complex_float)
@@ -73,11 +74,11 @@ def kernel(xmin: dc_float, xmax: dc_float, ymin: dc_float, ymax: dc_float, maxit
         C[i, j] = X[i] + Y[j] * 1j
     N_ = np.zeros(C.shape, dtype=np.int64)
     Z_ = np.zeros(C.shape, dtype=dc_complex_float)
-    Xiv = np.reshape(Xi, (XN * YN, ))
-    Yiv = np.reshape(Yi, (XN * YN, ))
-    Cv = np.reshape(C, (XN * YN, ))
+    Xiv = np.reshape(Xi, (XN * YN,))
+    Yiv = np.reshape(Yi, (XN * YN,))
+    Cv = np.reshape(C, (XN * YN,))
     Z = np.zeros(Cv.shape, dc_complex_float)
-    I = np.ndarray((XN * YN, ), dtype=np.bool_)
+    I = np.ndarray((XN * YN,), dtype=np.bool_)
     length = XN * YN
     k = 0
     while length > 0 and k < maxiter:
@@ -104,14 +105,16 @@ def kernel(xmin: dc_float, xmax: dc_float, ymin: dc_float, ymax: dc_float, maxit
     return (Z_.T, N_.T)
 
 
-CORPUS = dict(name='mandelbrot2',
-              dwarf='map_reduce',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="mandelbrot2",
+    dwarf="map_reduce",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

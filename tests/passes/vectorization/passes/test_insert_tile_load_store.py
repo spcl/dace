@@ -13,6 +13,7 @@ on simple Python kernels. Each test confirms:
 * CONSTANT (loop-invariant) edges stay direct -- no lib node, no Python
   assignment tasklet inserted.
 """
+
 import numpy as np
 
 import dace
@@ -24,7 +25,8 @@ from tests.passes.vectorization.tile_assertions import masked_loads, masked_stor
 from dace.transformation.passes.vectorization.nest_innermost_map_body import NestInnermostMapBodyIntoNSDFG
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-    StageGlobalArrayThroughScalars, )
+    StageGlobalArrayThroughScalars,
+)
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from dace.transformation.passes.vectorization.insert_tile_load_store import (
     InsertTileLoadStore,
@@ -41,8 +43,8 @@ def _stage_widen_insert(prog):
     NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs)
     StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
-    WidenAccesses(widths=(8, )).apply_pass(sdfg, {})
-    InsertTileLoadStore(widths=(8, )).apply_pass(sdfg, {})
+    WidenAccesses(widths=(8,)).apply_pass(sdfg, {})
+    InsertTileLoadStore(widths=(8,)).apply_pass(sdfg, {})
     body_state = None
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
@@ -141,7 +143,7 @@ def test_stage_writes_skips_ordering_edge_as_representative():
     skip staging entirely -- the real `A[i:i+4]` write is silently left as a bare
     Tasklet -> AccessNode edge instead of being routed through a masked store.
     """
-    inner_sdfg = dace.SDFG('body_stage_writes_skips_ordering_edge_as_representative')
+    inner_sdfg = dace.SDFG("body_stage_writes_skips_ordering_edge_as_representative")
     inner_sdfg.add_array("A", [16], dace.float64)
     state = inner_sdfg.add_state("s")
 
@@ -153,8 +155,8 @@ def test_stage_writes_skips_ordering_edge_as_representative():
     # The real per-tile write, inserted SECOND.
     state.add_edge(producer, "_out", an_a, None, dace.Memlet("A[i:i+4]"))
 
-    pas = InsertTileLoadStore(widths=(4, ))
-    staged = pas._stage_writes_in_state(state, inner_sdfg, ("i", ), None)
+    pas = InsertTileLoadStore(widths=(4,))
+    staged = pas._stage_writes_in_state(state, inner_sdfg, ("i",), None)
 
     assert staged == 1, "the real A[i:i+4] write must be staged despite the ordering in-edge"
     tile_stores = masked_stores(state)
@@ -170,7 +172,7 @@ def test_assert_post_stage_invariants_allows_ordering_edge_between_globals():
     trip the design 3.8.3 (2) "AN -> AN survivor" check. Only a REAL AN->AN data copy
     that is neither a Scalar bridge nor a transient->output writeback is a violation.
     """
-    sdfg = dace.SDFG('body_assert_post_stage_invariants_allows_ordering_edge_between_globals')
+    sdfg = dace.SDFG("body_assert_post_stage_invariants_allows_ordering_edge_between_globals")
     sdfg.add_array("A", [16], dace.float64)
     state = sdfg.add_state("s")
 
@@ -188,7 +190,7 @@ def test_resize_scalar_chain_preserves_ordering_edge():
     first-state write ordered before a second-state write -- must be left alone, not
     turned into a malformed memlet (subset set, data still None).
     """
-    inner_sdfg = dace.SDFG('body_resize_scalar_chain_preserves_ordering_edge')
+    inner_sdfg = dace.SDFG("body_resize_scalar_chain_preserves_ordering_edge")
     inner_sdfg.add_array("tile_src", [4], dace.float64, transient=True)
     inner_sdfg.add_scalar("s1", dace.float64, transient=True)
     inner_sdfg.add_scalar("sink", dace.float64, transient=True)
@@ -204,7 +206,7 @@ def test_resize_scalar_chain_preserves_ordering_edge():
     sink_an = state.add_access("sink")
     state.add_nedge(s1_an, sink_an, dace.Memlet())
 
-    pas = InsertTileLoadStore(widths=(4, ))
+    pas = InsertTileLoadStore(widths=(4,))
     n_resized = pas._resize_scalar_chain_downstream_of_tiles(state)
 
     assert n_resized == 1
@@ -234,7 +236,7 @@ def test_writes_to_two_elements_of_one_access_node_get_one_store_each():
     """Each write keeps its own element: one masked store per written element, fed only by that element's source."""
     sdfg, state = zsolqa_updates_into_one_access_node()
 
-    staged = InsertTileLoadStore(widths=(8, ))._stage_writes_in_state(state, sdfg, ("i", ), None)
+    staged = InsertTileLoadStore(widths=(8,))._stage_writes_in_state(state, sdfg, ("i",), None)
 
     assert staged == 2
     written = {}
@@ -243,13 +245,13 @@ def test_writes_to_two_elements_of_one_access_node_get_one_store_each():
         sources = [e.src.data for e in state.in_edges(bridge)]
         elements = [str(e.data.subset) for e in state.out_edges(store)]
         written[tuple(elements)] = sources
-    assert written == {("0, 4, i:i + 8", ): ["B"], ("4, 0, i:i + 8", ): ["C"]}
+    assert written == {("0, 4, i:i + 8",): ["B"], ("4, 0, i:i + 8",): ["C"]}
 
 
 def test_writes_to_two_elements_of_one_access_node_both_reach_the_array():
     """Numbers: after staging and running, ``A[0, 4]`` holds ``B``, ``A[4, 0]`` holds ``C``, the rest is untouched."""
     sdfg, state = zsolqa_updates_into_one_access_node()
-    InsertTileLoadStore(widths=(8, ))._stage_writes_in_state(state, sdfg, ("i", ), None)
+    InsertTileLoadStore(widths=(8,))._stage_writes_in_state(state, sdfg, ("i",), None)
     sdfg.expand_library_nodes()
     sdfg.validate()
     rng = np.random.default_rng(0)
@@ -263,7 +265,7 @@ def test_writes_to_two_elements_of_one_access_node_both_reach_the_array():
     np.testing.assert_array_equal(A, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_linear_kernel_emits_masked_load_and_store()
     test_two_lane_dep_reads_emit_two_masked_loads()
     test_constant_read_no_masked_load()

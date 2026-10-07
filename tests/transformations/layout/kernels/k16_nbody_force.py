@@ -18,6 +18,7 @@ reproduces the SoA oracle; the sweep only picks the physical order. ``soft`` avo
 singularity. Source: npbench ``nbody`` (all-pairs ``getAcc`` kernel); Cabana AoS/SoA (Slattery et al.,
 JOSS'22); SC26 layout paper (Permute over an O(N^2) reduction).
 """
+
 import numpy
 import dace
 
@@ -30,8 +31,13 @@ SOFT = 1e-3  # softening: (r^2 + soft)^(3/2) so the i==j self-term stays finite
 
 
 @dace.program
-def nbody_force(pos: dace.float64[N, 3], vel: dace.float64[N, 3], mass: dace.float64[N], out_vel: dace.float64[N, 3],
-                out_pos: dace.float64[N, 3]):
+def nbody_force(
+    pos: dace.float64[N, 3],
+    vel: dace.float64[N, 3],
+    mass: dace.float64[N],
+    out_vel: dace.float64[N, 3],
+    out_pos: dace.float64[N, 3],
+):
     """One force step. The (i, j) pairwise accumulation is a WCR sum-reduction over j (both are map
     dims so ``pos``'s Permute stays transparent, k10-style); then a per-body drift/kick update."""
     acc = numpy.zeros((N, 3), dace.float64)
@@ -39,7 +45,7 @@ def nbody_force(pos: dace.float64[N, 3], vel: dace.float64[N, 3], mass: dace.flo
         dx = pos[j, 0] - pos[i, 0]
         dy = pos[j, 1] - pos[i, 1]
         dz = pos[j, 2] - pos[i, 2]
-        inv = 1.0 / (dx * dx + dy * dy + dz * dz + SOFT)**1.5  # 1 / r^3
+        inv = 1.0 / (dx * dx + dy * dy + dz * dz + SOFT) ** 1.5  # 1 / r^3
         acc[i, 0] += mass[j] * dx * inv
         acc[i, 1] += mass[j] * dy * inv
         acc[i, 2] += mass[j] * dz * inv
@@ -54,7 +60,7 @@ def nbody_force(pos: dace.float64[N, 3], vel: dace.float64[N, 3], mass: dace.flo
 
 def oracle(pos, vel, mass):
     diff = pos[None, :, :] - pos[:, None, :]  # diff[i, j] = pos[j] - pos[i]
-    inv = (numpy.square(diff).sum(-1) + SOFT)**-1.5  # (N, N) = 1 / r^3
+    inv = (numpy.square(diff).sum(-1) + SOFT) ** -1.5  # (N, N) = 1 / r^3
     acc = (mass[None, :, None] * diff * inv[:, :, None]).sum(1)  # sum over j
     out_vel = vel + DT * acc
     out_pos = pos + DT * out_vel
@@ -77,12 +83,14 @@ def run_closure(inputs, n):
     def run(sdfg):
         out_vel = numpy.zeros((n, 3))
         out_pos = numpy.zeros((n, 3))
-        sdfg(pos=inputs["pos"].copy(),
-             vel=inputs["vel"].copy(),
-             mass=inputs["mass"].copy(),
-             out_vel=out_vel,
-             out_pos=out_pos,
-             N=n)
+        sdfg(
+            pos=inputs["pos"].copy(),
+            vel=inputs["vel"].copy(),
+            mass=inputs["mass"].copy(),
+            out_vel=out_vel,
+            out_pos=out_pos,
+            N=n,
+        )
         return {"out_vel": out_vel, "out_pos": out_pos}
 
     return run

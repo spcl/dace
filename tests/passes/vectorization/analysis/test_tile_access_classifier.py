@@ -6,6 +6,7 @@ per special composition (diagonal, transpose). The classifier is a pure
 function; tests construct ``Range`` objects directly and assert on the
 returned ``TileAccess`` record.
 """
+
 import pytest
 
 import dace
@@ -29,9 +30,13 @@ def _R(*ranges):
             step = 1
         else:
             lo, hi, step = r
-        out.append((symbolic.pystr_to_symbolic(str(lo)) if isinstance(lo, str) else lo,
-                    symbolic.pystr_to_symbolic(str(hi)) if isinstance(hi, str) else hi,
-                    symbolic.pystr_to_symbolic(str(step)) if isinstance(step, str) else step))
+        out.append(
+            (
+                symbolic.pystr_to_symbolic(str(lo)) if isinstance(lo, str) else lo,
+                symbolic.pystr_to_symbolic(str(hi)) if isinstance(hi, str) else hi,
+                symbolic.pystr_to_symbolic(str(step)) if isinstance(step, str) else step,
+            )
+        )
     return Range(out)
 
 
@@ -69,9 +74,9 @@ def test_per_dim_structured_identity():
 def test_per_dim_structured_with_offset():
     """``iter_var + c`` is still STRUCTURED_1 (offset captured)."""
     r = _R(("i + 1", "i + 1"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.STRUCTURED_1, )
-    assert ta.dim_strides == (1, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.STRUCTURED_1,)
+    assert ta.dim_strides == (1,)
     # offset is symbolic 1
     assert int(ta.dim_offset[0]) == 1
 
@@ -79,9 +84,9 @@ def test_per_dim_structured_with_offset():
 def test_per_dim_affine_strided():
     """Non-unit coefficient -> AFFINE (dim_stride=coeff)."""
     r = _R(("2*i", "2*i"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.AFFINE, )
-    assert ta.dim_strides == (2, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.AFFINE,)
+    assert ta.dim_strides == (2,)
     assert ta.kind == TileAccessKind.AFFINE
 
 
@@ -111,8 +116,8 @@ def test_per_dim_gather_resolves_index_access_node():
     st = sdfg.add_state()
     st.add_access("idx")  # the AccessNode for idx
     r = _R(("idx[i]", "idx[i]"))
-    ta = classify_tile_access(r, iter_vars=("i", ), inner_sdfg=sdfg)
-    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    ta = classify_tile_access(r, iter_vars=("i",), inner_sdfg=sdfg)
+    assert ta.per_dim_kind == (PerDimKind.GATHER,)
     assert ta.gather_index_per_dim[0] is not None
     assert ta.gather_index_per_dim[0].data == "idx"
 
@@ -154,7 +159,7 @@ def test_whole_subset_kind_broadcast_when_all_broadcast():
 def test_diagonal_iter_var_in_multiple_dims():
     """Same iter-var as direct symbol in >=2 dims -> diagonal flag set."""
     r = _R(("i", "i"), ("i", "i"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
+    ta = classify_tile_access(r, iter_vars=("i",))
     assert "i" in ta.diagonal
     assert ta.diagonal["i"] == (0, 1)
 
@@ -229,7 +234,7 @@ def test_non_affine_iter_var_expression_is_gather():
     is what distinguishes it from a data-dependent ``a[idx[i]]`` gather.
     ``int_floor`` / ``int_ceil`` patterns are recognised separately as REPLICATE."""
     r = _R(("i ** 2", "i ** 2"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
+    ta = classify_tile_access(r, iter_vars=("i",))
     assert ta.per_dim_kind[0] == PerDimKind.GATHER
     assert ta.dim_strides[0] is None
     assert ta.gather_index_per_dim[0] is None
@@ -243,9 +248,9 @@ def test_replicate_int_floor_factor_2():
     sharing: every 2 lanes read the same source element). The codegen
     loads W/2 elements and group-broadcasts each twice."""
     r = _R(("i // 2", "i // 2"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.REPLICATE, )
-    assert ta.replicate_factor_per_dim == (2, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.REPLICATE,)
+    assert ta.replicate_factor_per_dim == (2,)
     # REPLICATE shares the STRUCTURED whole-subset bucket: it's a
     # perfectly regular access, just with grouped lanes.
     assert ta.kind == TileAccessKind.STRUCTURED
@@ -254,25 +259,25 @@ def test_replicate_int_floor_factor_2():
 def test_replicate_int_floor_factor_4():
     """``arr[i // 4]`` -> REPLICATE with factor=4."""
     r = _R(("i // 4", "i // 4"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.REPLICATE, )
-    assert ta.replicate_factor_per_dim == (4, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.REPLICATE,)
+    assert ta.replicate_factor_per_dim == (4,)
 
 
 def test_replicate_int_floor_explicit_form():
     """``int_floor(i, 2)`` (the user-facing function form) -> same
     REPLICATE classification as the ``i // 2`` Python-operator form."""
     r = _R(("int_floor(i, 2)", "int_floor(i, 2)"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.REPLICATE, )
-    assert ta.replicate_factor_per_dim == (2, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.REPLICATE,)
+    assert ta.replicate_factor_per_dim == (2,)
 
 
 def test_replicate_int_ceil():
     """``int_ceil(i, 2)`` -> GATHER: the replicated box reads ``floor`` lanes."""
     r = _R(("int_ceil(i, 2)", "int_ceil(i, 2)"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.GATHER,)
 
 
 @pytest.mark.parametrize("index", ["(i + 1) // 2", "(3 * i) // 2"])
@@ -280,8 +285,8 @@ def test_replicate_int_floor_affine_inner(index: str) -> None:
     """``arr[(i + 1) // 2]`` / ``arr[(3 * i) // 2]`` -> GATHER: the replicated box is ``i // 2`` shifted
     by whole groups only."""
     r = _R((index, index))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.GATHER,)
 
 
 def test_replicate_factor_recorded_on_structured_dims_too():
@@ -311,8 +316,8 @@ def test_replicate_data_dependent_falls_to_gather():
     inside the floor; the gather machinery handles it). REPLICATE
     detection requires the dividend to be AFFINE in the iter-var."""
     r = _R(("int_floor(idx[i], 2)", "int_floor(idx[i], 2)"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    ta = classify_tile_access(r, iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.GATHER,)
 
 
 def test_replicate_symbolic_divisor_stays_replicate_with_runtime_check():
@@ -321,7 +326,7 @@ def test_replicate_symbolic_divisor_stays_replicate_with_runtime_check():
     replacing the prior compile-time refusal). Floats are still refused
     outright -- access expressions are integer-valued by contract."""
     r = _R(("i // K", "i // K"))
-    ta = classify_tile_access(r, iter_vars=("i", ))
+    ta = classify_tile_access(r, iter_vars=("i",))
     assert ta.per_dim_kind[0] == PerDimKind.REPLICATE
     assert ta.replicate_factor_per_dim[0] is not None
 
@@ -331,6 +336,7 @@ def test_replicate_float_divisor_refused():
     refuses (no silent truncation to int) so the dim falls to AFFINE/GATHER."""
     import sympy
     from dace.transformation.passes.vectorization.utils.tile_access import _detect_replicate_factor
+
     # _detect_replicate_factor should refuse a float divisor.
     expr = sympy.Function("int_floor")(sympy.Symbol("i"), sympy.Float(2.5))
     assert _detect_replicate_factor(expr, "i") is None
@@ -342,11 +348,11 @@ def test_c_modulo_with_an_unknown_sign_dividend_falls_back_to_gather(index):
     expr = symbolic.pystr_to_symbolic(index)
     assert isinstance(expr, symbolic.CMod)
     assert _detect_modular_factor(expr, "i") is None
-    ta = classify_tile_access(_R((index, index)), iter_vars=("i", ))
-    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    ta = classify_tile_access(_R((index, index)), iter_vars=("i",))
+    assert ta.per_dim_kind == (PerDimKind.GATHER,)
     assert ta.kind == TileAccessKind.GATHER
-    assert ta.dim_iter_var == (None, )
-    assert ta.dim_strides == (None, )
+    assert ta.dim_iter_var == (None,)
+    assert ta.dim_strides == (None,)
 
 
 def test_c_modulo_with_a_nonnegative_dividend_folds_to_the_modular_pattern():
@@ -355,8 +361,8 @@ def test_c_modulo_with_a_nonnegative_dividend_folds_to_the_modular_pattern():
     expr = symbolic.CMod(symbolic.symbol("nonneg_i", nonnegative=True), 5)
     assert isinstance(expr, symbolic.MODULO_FUNCTIONS["Mod"])
     assert _detect_modular_factor(expr, "nonneg_i") == 5
-    ta = classify_tile_access(Range([(expr, expr, 1)]), iter_vars=("nonneg_i", ))
-    assert ta.per_dim_kind == (PerDimKind.GATHER, )
+    ta = classify_tile_access(Range([(expr, expr, 1)]), iter_vars=("nonneg_i",))
+    assert ta.per_dim_kind == (PerDimKind.GATHER,)
     assert ta.kind == TileAccessKind.GATHER
 
 

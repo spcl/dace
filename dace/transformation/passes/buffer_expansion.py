@@ -26,6 +26,7 @@ C-contiguous (row-major) array, appended (last axis) for a Fortran-contiguous (c
 array. A 1-D array's packing is ambiguous (its single stride is ``1`` in both orders), so it
 follows the majority packing of the SDFG's multi-dimensional arrays.
 """
+
 import contextlib
 import functools
 import io
@@ -39,8 +40,8 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
 #: Storage-order tag for the new dimension's placement.
-_C_ORDER = 'C'
-_F_ORDER = 'F'
+_C_ORDER = "C"
+_F_ORDER = "F"
 
 #: Array lifetimes we may re-shape (allocated per scope / per SDFG call, so a private
 #: copy per iteration is sound). Persistent/Global arrays outlive the call and are left alone.
@@ -50,12 +51,14 @@ _REINDEXABLE_LIFETIMES = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLife
 @dataclass(slots=True)
 class LoopDominators:
     """``all_dominators(loop)``, computed on first need and shared by every buffer asked about one unmutated loop."""
+
     loop: LoopRegion
     computed: Optional[Dict[Any, Set[Any]]] = None
 
     def get(self) -> Dict[Any, Set[Any]]:
         if self.computed is None:
             from dace.sdfg.analysis import cfg as cfg_analysis  # avoid an import cycle
+
             self.computed = cfg_analysis.all_dominators(self.loop)
         return self.computed
 
@@ -115,7 +118,7 @@ class BufferExpansion(ppl.Pass):
     then becomes parallelizable.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets
@@ -143,7 +146,7 @@ class BufferExpansion(ppl.Pass):
         if not pass_retval:
             return None
         arrays = sum(len(v) for v in pass_retval.values())
-        return f'BufferExpansion: expanded {arrays} buffer(s) to unblock {len(pass_retval)} loop(s)'
+        return f"BufferExpansion: expanded {arrays} buffer(s) to unblock {len(pass_retval)} loop(s)"
 
     # core
 
@@ -214,8 +217,12 @@ class BufferExpansion(ppl.Pass):
         """
         reindexable = {
             name
-            for name, desc in sdfg.arrays.items() if isinstance(desc, data.Array) and not isinstance(desc, data.View)
-            and desc.transient and desc.lifetime in _REINDEXABLE_LIFETIMES and len(desc.shape) >= 1
+            for name, desc in sdfg.arrays.items()
+            if isinstance(desc, data.Array)
+            and not isinstance(desc, data.View)
+            and desc.transient
+            and desc.lifetime in _REINDEXABLE_LIFETIMES
+            and len(desc.shape) >= 1
         }
         index: Dict[str, Set[SDFGState]] = {}
         if not reindexable:
@@ -227,8 +234,12 @@ class BufferExpansion(ppl.Pass):
         return index
 
     @staticmethod
-    def _has_candidate_buffer(loop_states: Set[SDFGState], write_index: Dict[str, Set[SDFGState]],
-                              access_states: Dict[str, Set[SDFGState]], interstate_syms: Set[str]) -> bool:
+    def _has_candidate_buffer(
+        loop_states: Set[SDFGState],
+        write_index: Dict[str, Set[SDFGState]],
+        access_states: Dict[str, Set[SDFGState]],
+        interstate_syms: Set[str],
+    ) -> bool:
         """Whether ``loop_states`` could hold a privatizable buffer -- the cheap gate on the probe.
 
         True iff some reindexable transient is written inside the loop *and* used only inside it: the
@@ -241,8 +252,9 @@ class BufferExpansion(ppl.Pass):
         the probe on it changes only which loops are probed, never which are expanded.
         """
         for name, write_states in write_index.items():
-            if not write_states.isdisjoint(loop_states) \
-                    and BufferExpansion._is_loop_local(loop_states, name, access_states, interstate_syms):
+            if not write_states.isdisjoint(loop_states) and BufferExpansion._is_loop_local(
+                loop_states, name, access_states, interstate_syms
+            ):
                 return True
         return False
 
@@ -272,6 +284,7 @@ class BufferExpansion(ppl.Pass):
     def _loop_mappable(sdfg: SDFG, loop: LoopRegion) -> bool:
         """Whether ``LoopToMap`` would parallelize ``loop`` right now (refusals silenced)."""
         from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
+
         with contextlib.redirect_stdout(io.StringIO()):
             return LoopToMap.can_be_applied_to(sdfg, loop=loop)
 
@@ -300,12 +313,14 @@ class BufferExpansion(ppl.Pass):
 
     # buffer detection
 
-    def _privatizable_buffers(self,
-                              sdfg: SDFG,
-                              loop: LoopRegion,
-                              access_states: Optional[Dict[str, Set[SDFGState]]] = None,
-                              interstate_syms: Optional[Set[str]] = None,
-                              loop_states: Optional[Set[SDFGState]] = None) -> List[str]:
+    def _privatizable_buffers(
+        self,
+        sdfg: SDFG,
+        loop: LoopRegion,
+        access_states: Optional[Dict[str, Set[SDFGState]]] = None,
+        interstate_syms: Optional[Set[str]] = None,
+        loop_states: Optional[Set[SDFGState]] = None,
+    ) -> List[str]:
         """Transient arrays in ``loop`` that are safe to privatize by expansion.
 
         A buffer qualifies when it is a transient array used only inside ``loop``, has no
@@ -374,8 +389,9 @@ class BufferExpansion(ppl.Pass):
         return False
 
     @staticmethod
-    def _is_loop_local(loop_states: Set[SDFGState], name: str, access_states: Dict[str, Set[SDFGState]],
-                       interstate_syms: Set[str]) -> bool:
+    def _is_loop_local(
+        loop_states: Set[SDFGState], name: str, access_states: Dict[str, Set[SDFGState]], interstate_syms: Set[str]
+    ) -> bool:
         """True if ``name`` is accessed only within ``loop_states`` (not live in/out of the loop).
 
         Uses the precomputed per-SDFG indices: ``name`` is loop-local iff every state that
@@ -569,10 +585,12 @@ class BufferExpansion(ppl.Pass):
         new_shape.insert(axis, size)
         new_offset = list(desc.offset)
         new_offset.insert(axis, 0)
-        desc.set_shape(new_shape,
-                       strides=self._contiguous_strides(new_shape, order),
-                       total_size=_prod(new_shape),
-                       offset=new_offset)
+        desc.set_shape(
+            new_shape,
+            strides=self._contiguous_strides(new_shape, order),
+            total_size=_prod(new_shape),
+            offset=new_offset,
+        )
 
         edits: List[Tuple[Any, str, Any]] = []
         seen: Set[int] = set()
@@ -584,15 +602,19 @@ class BufferExpansion(ppl.Pass):
                 # ``subset`` addresses ``memlet.data``, ``other_subset`` the opposite endpoint. On a
                 # self-copy ``A -> A`` BOTH sides address ``name``, so both must gain the new index;
                 # an if/elif keyed on the data name rewrites one and leaves the other at the old rank.
-                self_copy = (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
-                             and edge.src.data == name and edge.dst.data == name)
+                self_copy = (
+                    isinstance(edge.src, nodes.AccessNode)
+                    and isinstance(edge.dst, nodes.AccessNode)
+                    and edge.src.data == name
+                    and edge.dst.data == name
+                )
                 rewrote = False
                 if memlet.data == name and memlet.subset is not None:
-                    edits.append((memlet, 'subset', memlet.subset))
+                    edits.append((memlet, "subset", memlet.subset))
                     memlet.subset = _insert_index(memlet.subset, index, axis)
                     rewrote = True
                 if memlet.other_subset is not None and self._touches(edge, name) and (self_copy or not rewrote):
-                    edits.append((memlet, 'other_subset', memlet.other_subset))
+                    edits.append((memlet, "other_subset", memlet.other_subset))
                     memlet.other_subset = _insert_index(memlet.other_subset, index, axis)
                     rewrote = True
                 if rewrote:
@@ -602,14 +624,15 @@ class BufferExpansion(ppl.Pass):
     @staticmethod
     def _touches(edge, name: str) -> bool:
         """True if either endpoint of ``edge`` is an AccessNode for ``name``."""
-        return ((isinstance(edge.src, nodes.AccessNode) and edge.src.data == name)
-                or (isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name))
+        return (isinstance(edge.src, nodes.AccessNode) and edge.src.data == name) or (
+            isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == name
+        )
 
     @staticmethod
     def _contiguous_strides(shape, order: str):
         """Packed strides for ``shape`` in C (row-major) or Fortran (column-major) order."""
         if order == _C_ORDER:
-            return [_prod(shape[i + 1:]) for i in range(len(shape))]
+            return [_prod(shape[i + 1 :]) for i in range(len(shape))]
         return [_prod(shape[:i]) for i in range(len(shape))]
 
     # layout

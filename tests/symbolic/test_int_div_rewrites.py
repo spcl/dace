@@ -6,6 +6,7 @@ folded a unit denominator. That asymmetry leaked: ``strides_from_layout`` pads w
 ``alignment=1``, so every symbolic descriptor came back carrying an ``int_ceil(N, 1)`` that never
 folded back to ``N``. Both functions now share the unit-denominator and exact-division rules.
 """
+
 import re
 
 import numpy as np
@@ -14,14 +15,13 @@ import sympy
 
 import dace
 from dace import dtypes
-from dace.symbolic import (deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, symstr,
-                           sympy_intdiv_fix)
+from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symbol, symstr, sympy_intdiv_fix
 
-N = pystr_to_symbolic('N')
-M = pystr_to_symbolic('M')
+N = pystr_to_symbolic("N")
+M = pystr_to_symbolic("M")
 #: A stride and a trip count, carrying the assumptions an extent normally arrives with.
-P = symbol('P', dtype=dtypes.int64, positive=True)
-K = symbol('K', dtype=dtypes.int64, nonnegative=True)
+P = symbol("P", dtype=dtypes.int64, positive=True)
+K = symbol("K", dtype=dtypes.int64, nonnegative=True)
 
 
 def test_unit_denominator_folds_away():
@@ -31,7 +31,7 @@ def test_unit_denominator_folds_away():
     assert int_ceil(N * M + 3, 1) == N * M + 3
 
 
-@pytest.mark.parametrize('fn', [int_floor, int_ceil])
+@pytest.mark.parametrize("fn", [int_floor, int_ceil])
 def test_exact_division_yields_the_quotient(fn):
     """Exact division is not a rounding operation, so neither node should survive it.
 
@@ -43,7 +43,7 @@ def test_exact_division_yields_the_quotient(fn):
     assert fn(12 * N + 6, 3) == 4 * N + 2
 
 
-@pytest.mark.parametrize('fn', [int_floor, int_ceil])
+@pytest.mark.parametrize("fn", [int_floor, int_ceil])
 def test_inexact_division_is_left_symbolic(fn):
     """A numerator that may leave a remainder must keep the rounding node."""
     assert fn(N, 8).func is fn
@@ -52,19 +52,19 @@ def test_inexact_division_is_left_symbolic(fn):
     assert fn(N, M).func is fn
 
 
-@pytest.mark.parametrize('rounding', [sympy.floor, sympy.ceiling])
+@pytest.mark.parametrize("rounding", [sympy.floor, sympy.ceiling])
 def test_rounding_of_a_non_integer_expression_is_kept(rounding):
     """A rounding call with nothing to divide by must survive the rewrite."""
-    x = sympy.Symbol('x')
+    x = sympy.Symbol("x")
     expr = rounding(sympy.sin(x))
     assert sympy_intdiv_fix(expr) == expr
 
 
-@pytest.mark.parametrize('rounding,call', [(sympy.floor, 'floor'), (sympy.ceiling, 'ceil')])
+@pytest.mark.parametrize("rounding,call", [(sympy.floor, "floor"), (sympy.ceiling, "ceil")])
 def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, call):
     """The kept rounding must reach C++ as the matching math-library call."""
-    x = pystr_to_symbolic('x')
-    assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == '(%s(sin(x)))' % call
+    x = pystr_to_symbolic("x")
+    assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == "(%s(sin(x)))" % call
 
 
 def test_ceiling_of_index_arithmetic_is_integer_typed():
@@ -75,11 +75,11 @@ def test_ceiling_of_index_arithmetic_is_integer_typed():
     rejects the enclosing ``omp for`` outright with "invalid controlling predicate" -- npbench's
     ``stockham_fft``, whose radix extent is ``R ** (K - 1)``.
     """
-    r = symbol('R', dtype=dtypes.int64)
-    k = symbol('K', dtype=dtypes.int64)
-    emitted = symstr(sympy.ceiling(r**(k - 1)), cpp_mode=True)
-    assert '(int64_t)' in emitted, emitted
-    assert 'ceil(' in emitted, emitted
+    r = symbol("R", dtype=dtypes.int64)
+    k = symbol("K", dtype=dtypes.int64)
+    emitted = symstr(sympy.ceiling(r ** (k - 1)), cpp_mode=True)
+    assert "(int64_t)" in emitted, emitted
+    assert "ceil(" in emitted, emitted
 
 
 def test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating():
@@ -88,8 +88,8 @@ def test_ceiling_of_a_float_valued_call_on_integer_symbols_stays_floating():
     Every atom of ``sin(n)`` is an integer symbol and the value is a double, so reading the atoms
     would type this one as an index and truncate it.
     """
-    n = symbol('n', dtype=dtypes.int64)
-    assert symstr(sympy.ceiling(sympy.sin(n)), cpp_mode=True) == '(ceil(sin(n)))'
+    n = symbol("n", dtype=dtypes.int64)
+    assert symstr(sympy.ceiling(sympy.sin(n)), cpp_mode=True) == "(ceil(sin(n)))"
 
 
 def test_ceiling_of_an_integer_prints_as_its_argument():
@@ -101,25 +101,25 @@ def test_ceiling_of_an_integer_prints_as_its_argument():
     ``double``, and the runtime's ``ceiling`` is only overloaded for ``int``, ``float``
     and ``double``, which leaves a 64-bit or unsigned argument ambiguous.
     """
-    stored = deserialize_symbolic('ceiling(__int_floor($N, 2))')
+    stored = deserialize_symbolic("ceiling(__int_floor($N, 2))")
     assert isinstance(stored, sympy.ceiling)
     assert stored.args[0].is_integer
 
-    assert symstr(stored, cpp_mode=True) == '(py_floor(N, 2))'
+    assert symstr(stored, cpp_mode=True) == "(py_floor(N, 2))"
 
 
-@pytest.mark.parametrize('rounding,name', [(sympy.floor, 'int_floor'), (sympy.ceiling, 'int_ceil')])
+@pytest.mark.parametrize("rounding,name", [(sympy.floor, "int_floor"), (sympy.ceiling, "int_ceil")])
 def test_division_by_an_integer_still_rewrites(rounding, name):
     """The integer-division rewrite is unchanged where a real denominator is present."""
     assert sympy_intdiv_fix(rounding(N / 8)).func.__name__ == name
 
 
-@pytest.mark.parametrize('x,y,expected', [(17, 8, 3), (16, 8, 2), (1, 8, 1), (0, 8, 0)])
+@pytest.mark.parametrize("x,y,expected", [(17, 8, 3), (16, 8, 2), (1, 8, 1), (0, 8, 0)])
 def test_numeric_operands_fold(x, y, expected):
     assert int_ceil(x, y) == expected
 
 
-@pytest.mark.parametrize('fn', [int_floor, int_ceil])
+@pytest.mark.parametrize("fn", [int_floor, int_ceil])
 def test_a_divisor_that_may_be_zero_is_not_folded(fn):
     """Folding ``i // i`` to 1 asserts ``i != 0``, which nothing established.
 
@@ -127,14 +127,14 @@ def test_a_divisor_that_may_be_zero_is_not_folded(fn):
     index still being IN the dimension it parsed -- so the fold does not merely over-claim, it
     breaks a consumer that has no way to see what was lost.
     """
-    i = pystr_to_symbolic('i')
+    i = pystr_to_symbolic("i")
     assert fn(i, i).func is fn
     assert fn(i, i).free_symbols == {i}
     # The same numerator over a divisor that cannot be zero is exact, and does fold.
     assert fn(P, P) == 1
 
 
-@pytest.mark.parametrize('fn', [int_floor, int_ceil])
+@pytest.mark.parametrize("fn", [int_floor, int_ceil])
 def test_exact_division_reaches_a_symbolic_divisor(fn):
     """sympy cancels a monomial against a monomial but never a sum, so the terms are divided one at
     a time. Exactness needs no assumption beyond a nonzero divisor: nothing is rounded."""
@@ -144,7 +144,7 @@ def test_exact_division_reaches_a_symbolic_divisor(fn):
     assert fn(P * (K - 1) + P, P) == K
 
 
-@pytest.mark.parametrize('fn,folded', [(int_floor, K), (int_ceil, K + 1)])
+@pytest.mark.parametrize("fn,folded", [(int_floor, K), (int_ceil, K + 1)])
 def test_an_inexact_split_needs_the_assumptions_that_make_truncation_flooring(fn, folded):
     """Pulling the divisible terms out and leaving the remainder is an identity about FLOOR, and
     these emit C ``/``, which truncates toward zero. The two agree on a nonnegative numerator over a
@@ -175,14 +175,14 @@ def test_a_strided_slice_extent_folds_to_its_trip_count():
 
 def divide_in_a_program(name: str, numerator: str, p: int) -> int:
     """The value the GENERATED program computes for ``int_floor(numerator, P)``."""
-    sdfg = dace.SDFG(f'intdiv_{name}')
-    sdfg.add_symbol('P', dace.int64)
-    sdfg.add_symbol('r', dace.int64)
-    sdfg.add_array('out', [1], dace.int64)
+    sdfg = dace.SDFG(f"intdiv_{name}")
+    sdfg.add_symbol("P", dace.int64)
+    sdfg.add_symbol("r", dace.int64)
+    sdfg.add_array("out", [1], dace.int64)
     entry, body = sdfg.add_state(), sdfg.add_state()
-    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments={'r': f'int_floor({numerator}, P)'}))
-    tasklet = body.add_tasklet('write', {}, {'o'}, 'o = r')
-    body.add_edge(tasklet, 'o', body.add_write('out'), None, dace.Memlet('out[0]'))
+    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments={"r": f"int_floor({numerator}, P)"}))
+    tasklet = body.add_tasklet("write", {}, {"o"}, "o = r")
+    body.add_edge(tasklet, "o", body.add_write("out"), None, dace.Memlet("out[0]"))
 
     out = np.zeros(1, dtype=np.int64)
     sdfg(out=out, P=p)
@@ -194,12 +194,12 @@ def test_int_floor_floors_in_the_generated_code():
     numerator rounds down. That is why the split is gated on the numerator being nonnegative rather
     than taken unconditionally: C integer division, which the generated code uses where the operands are
     provably nonnegative, truncates."""
-    assert divide_in_a_program('negative', '3 - 2*P', 5) == -2, 'int_floor floors'
+    assert divide_in_a_program("negative", "3 - 2*P", 5) == -2, "int_floor floors"
     # Positive control: where truncation and flooring agree, the same path must still be right.
-    assert divide_in_a_program('positive', '2*P + 3', 5) == 2
+    assert divide_in_a_program("positive", "2*P + 3", 5) == 2
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_unit_denominator_folds_away()
     for fn in (int_floor, int_ceil):
         test_exact_division_yields_the_quotient(fn)
@@ -222,12 +222,12 @@ def test_a_stored_rounding_over_an_integer_folds_in_the_normalizer_not_only_the_
     and symbol comparison all read the EXPRESSION, and they were seeing a rounding that is the
     identity. Folding it in the normalizer gives every consumer the same view.
     """
-    for text in ('ceiling(__int_floor($N, 2) + 1)', 'floor(__int_floor($N, 2) + 1)'):
+    for text in ("ceiling(__int_floor($N, 2) + 1)", "floor(__int_floor($N, 2) + 1)"):
         stored = deserialize_symbolic(text)
         assert stored.args[0].is_integer, text
         folded = sympy_intdiv_fix(stored)
-        assert not folded.find(sympy.ceiling), f'{text} -> {folded}'
-        assert not folded.find(sympy.floor), f'{text} -> {folded}'
+        assert not folded.find(sympy.ceiling), f"{text} -> {folded}"
+        assert not folded.find(sympy.floor), f"{text} -> {folded}"
 
 
 def test_a_stored_floor_over_an_integer_does_not_reach_cpp_as_a_floating_call():
@@ -237,9 +237,9 @@ def test_a_stored_floor_over_an_integer_does_not_reach_cpp_as_a_floating_call():
     ``floor(...)`` -- a double where an integer extent belongs, and the same non-integer loop
     predicate that makes OpenMP reject an ``omp for``.
     """
-    emitted = symstr(deserialize_symbolic('floor(__int_floor($N, 2) + 1)'), cpp_mode=True)
-    assert not re.search(r'(?<![\w])floor\(', emitted), emitted
-    assert '/' in emitted or 'py_floor(' in emitted, emitted
+    emitted = symstr(deserialize_symbolic("floor(__int_floor($N, 2) + 1)"), cpp_mode=True)
+    assert not re.search(r"(?<![\w])floor\(", emitted), emitted
+    assert "/" in emitted or "py_floor(" in emitted, emitted
 
 
 def test_a_constant_remainder_folds_over_a_provably_nonnegative_numerator():

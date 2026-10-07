@@ -89,6 +89,7 @@ A no-op when the body is a single block, when a body edge carries an assignment
 (a cross-loop induction variable such as TSVC ``s126``'s ``k``, which cloning
 the loop would increment once per clone), or when the groups do not separate.
 """
+
 from typing import Any, List, Type, Union
 
 from dace import SDFG, properties
@@ -113,8 +114,12 @@ LoopHeader = tuple[str | None, str | None, str | None, str | None]
 def loop_header(loop: LoopRegion) -> LoopHeader:
     """Everything ``TrivialLoopElimination.can_be_applied`` reads off ``loop``."""
     init, condition, update = loop.init_statement, loop.loop_condition, loop.update_statement
-    return (loop.loop_variable, None if init is None else init.as_string,
-            None if condition is None else condition.as_string, None if update is None else update.as_string)
+    return (
+        loop.loop_variable,
+        None if init is None else init.as_string,
+        None if condition is None else condition.as_string,
+        None if update is None else update.as_string,
+    )
 
 
 def trivial_loop_accepts(xform: TrivialLoopElimination, region: ControlFlowRegion, loop: LoopRegion) -> bool:
@@ -123,14 +128,15 @@ def trivial_loop_accepts(xform: TrivialLoopElimination, region: ControlFlowRegio
         xform.setup_match(region.sdfg, -1, -1, {TrivialLoopElimination.loop: loop}, 0, override=True)
         return bool(xform.can_be_applied(region, 0, region.sdfg, permissive=False))
     except Exception as err:
-        if Config.get_bool('optimizer', 'match_exception'):
+        if Config.get_bool("optimizer", "match_exception"):
             raise
-        print(f'WARNING: TrivialLoopElimination::can_be_applied triggered a {type(err).__name__} exception: {err}')
+        print(f"WARNING: TrivialLoopElimination::can_be_applied triggered a {type(err).__name__} exception: {err}")
         return False
 
 
-def first_trivial_loop(sdfg: SDFG, xform: TrivialLoopElimination,
-                       verdicts: dict[LoopHeader, bool]) -> tuple[ControlFlowRegion, LoopRegion] | None:
+def first_trivial_loop(
+    sdfg: SDFG, xform: TrivialLoopElimination, verdicts: dict[LoopHeader, bool]
+) -> tuple[ControlFlowRegion, LoopRegion] | None:
     """The first loop the pattern matcher would apply ``TrivialLoopElimination`` to, in its order."""
     for region in sdfg.all_control_flow_regions(recursive=True):
         for block in region.nodes():
@@ -201,8 +207,11 @@ def level_parallel(blocks: list[ControlFlowBlock], loop_var: str | None, arrays:
             writes[name] = writes.get(name, True) and aligned
         for name, aligned in block_reads.items():
             reads[name] = reads.get(name, True) and aligned
-    return all(aligned and reads.get(name, True) for name, aligned in writes.items()
-               if name in arrays and not arrays[name].transient)
+    return all(
+        aligned and reads.get(name, True)
+        for name, aligned in writes.items()
+        if name in arrays and not arrays[name].transient
+    )
 
 
 def parallel_level_diagnostic(loop: LoopRegion, groups: list[list[ControlFlowBlock]]) -> tuple[int, int]:
@@ -242,7 +251,7 @@ def distribute_loops(sdfg: SDFG, diagnostics: list[tuple[str, int, int]] | None 
             if groups is None:
                 continue
             if diagnostics is not None:
-                diagnostics.append((loop.label, ) + parallel_level_diagnostic(loop, groups))
+                diagnostics.append((loop.label,) + parallel_level_diagnostic(loop, groups))
             # ``add_node`` re-homes each per-group ``copy.deepcopy(loop)`` clone, nested SDFGs included.
             LoopFission._fission_blocks(loop, groups)
             count += 1
@@ -270,15 +279,17 @@ class PerfectLoopNesting(ppl.Pass):
     guard destroys the sequential-fusion locality the outer level otherwise has.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
-    target = properties.Property(dtype=str,
-                                 default='cpu',
-                                 choices=['cpu', 'gpu'],
-                                 desc="Target policy: 'gpu' also sinks outer statements into the inner "
-                                 "loop to expose the outer axis; 'cpu' distributes only.")
+    target = properties.Property(
+        dtype=str,
+        default="cpu",
+        choices=["cpu", "gpu"],
+        desc="Target policy: 'gpu' also sinks outer statements into the inner "
+        "loop to expose the outer axis; 'cpu' distributes only.",
+    )
 
-    def __init__(self, target: str = 'cpu') -> None:
+    def __init__(self, target: str = "cpu") -> None:
         super().__init__()
         self.target = target
 
@@ -306,7 +317,7 @@ class PerfectLoopNesting(ppl.Pass):
                 changed = True
             # Sink LAST in the round: give the distribution the first chance to separate the
             # statements outright, and only sink what is still stuck in an imperfect nest.
-            if self.target == 'gpu' and sift_imperfect_nests(sdfg):
+            if self.target == "gpu" and sift_imperfect_nests(sdfg):
                 changed = True
             if not changed:
                 break
@@ -320,4 +331,4 @@ class PerfectLoopNesting(ppl.Pass):
         return rounds or None
 
 
-__all__ = ['PerfectLoopNesting', 'distribute_loops', 'level_parallel', 'parallel_level_diagnostic']
+__all__ = ["PerfectLoopNesting", "distribute_loops", "level_parallel", "parallel_level_diagnostic"]

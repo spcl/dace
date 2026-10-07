@@ -14,8 +14,14 @@ from dace.sdfg import nodes
 from dace.libraries.tileops.kinds import SCALAR, SYMBOL, TILE, VALID_KINDS
 from dace.libraries.tileops.expansions import ExpandTilePure
 from dace.libraries.tileops.nodes.tile_op import TileOp
-from dace.libraries.tileops.lanes import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
-                                          resolve_gather_deps, tile_offset)
+from dace.libraries.tileops.lanes import (
+    GATHER_INDEX_DTYPES,
+    gather_lane_offset,
+    nested_loops,
+    offset_via_strides,
+    resolve_gather_deps,
+    tile_offset,
+)
 from dace.libraries.tileops.operands import scalar_operand_ref
 from dace.libraries.tileops.validation import validate_mask_descriptor_lock, validate_packed_layout
 from dace.optionals import required
@@ -102,8 +108,7 @@ class TileScatter(TileOp):
         dtype=str,
         allow_none=True,
         default=None,
-        desc="Symbolic expression embedded inline when ``src_kind=='Symbol'``; "
-        "ignored otherwise.",
+        desc="Symbolic expression embedded inline when ``src_kind=='Symbol'``; ignored otherwise.",
     )
     wcr = properties.Property(
         dtype=str,
@@ -126,17 +131,19 @@ class TileScatter(TileOp):
         "store.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, ...],
-                 dim_strides: tuple[int, ...] | None = None,
-                 dst_dims: tuple[int, ...] | None = None,
-                 has_mask: bool = False,
-                 src_kind: str = TILE,
-                 src_expr: str | None = None,
-                 wcr: str | None = None,
-                 gather_dims: tuple[int, ...] | None = None,
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        dim_strides: tuple[int, ...] | None = None,
+        dst_dims: tuple[int, ...] | None = None,
+        has_mask: bool = False,
+        src_kind: str = TILE,
+        src_expr: str | None = None,
+        wcr: str | None = None,
+        gather_dims: tuple[int, ...] | None = None,
+        location: str | None = None,
+    ):
         """Construct a ``TileScatter`` node.
 
         :param name: Node label.
@@ -168,19 +175,23 @@ class TileScatter(TileOp):
         # ``dst_ndim`` depends on the wired ``_dst`` connector descriptor (design section 9.3).
         g = tuple(gather_dims) if gather_dims else ()
         if g != tuple(sorted(g)) or len(set(g)) != len(g) or any(d < 0 for d in g):
-            raise ValueError(f"TileScatter: gather_dims must be a sorted tuple of unique non-negative "
-                             f"dest-dim indices; got {g!r}")
+            raise ValueError(
+                f"TileScatter: gather_dims must be a sorted tuple of unique non-negative dest-dim indices; got {g!r}"
+            )
         # Zero-stride collapse guard, narrowed to exempt SCATTER tile dims (see
         # :func:`stride_dim_may_scatter`). A zero on a scatter dim addresses per-lane via
         # ``_idx_<d>`` (legal, symmetric to ``TileGather``); a zero on a non-scatter dim collapses
         # ``W_p`` lanes onto one address and races without ``wcr``. The exact per-dim mapping when
         # ``dst_dims is None`` defers to ``validate()`` (needs ``dst_ndim``).
-        if not wcr and any(s == 0 and not stride_dim_may_scatter(p, dst_dims, g)
-                           for p, s in enumerate(resolved_dim_strides)):
-            raise ValueError(f"TileScatter: dim_strides {resolved_dim_strides!r} has a 0 on a non-scatter tile "
-                             "dim (collapse-out / broadcast write); WCR is required to avoid races. Pass "
-                             "``wcr='lambda a, b: a + b'`` (or another reduction lambda) when collapsing tile "
-                             "dims to a shared destination, or wire the dim as a scatter (gather_dims + _idx).")
+        if not wcr and any(
+            s == 0 and not stride_dim_may_scatter(p, dst_dims, g) for p, s in enumerate(resolved_dim_strides)
+        ):
+            raise ValueError(
+                f"TileScatter: dim_strides {resolved_dim_strides!r} has a 0 on a non-scatter tile "
+                "dim (collapse-out / broadcast write); WCR is required to avoid races. Pass "
+                "``wcr='lambda a, b: a + b'`` (or another reduction lambda) when collapsing tile "
+                "dims to a shared destination, or wire the dim as a scatter (gather_dims + _idx)."
+            )
         # ``Symbol`` source has no ``_src`` connector — the literal is
         # embedded inline at expansion time. ``Tile`` and ``Scalar`` both
         # read through ``_src``.
@@ -225,9 +236,11 @@ class TileScatter(TileOp):
             dst_arr = sdfg.arrays[required(out_e["_dst"].data.data)]
             dst_ndim = len(dst_arr.shape)
             if any(d >= dst_ndim for d in self.gather_dims):
-                raise ValueError(f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
-                                 f"dest ndim {dst_ndim} (dest '{out_e['_dst'].data.data}' shape "
-                                 f"{tuple(dst_arr.shape)})")
+                raise ValueError(
+                    f"{self.label}: gather_dims {tuple(self.gather_dims)} contains an index >= "
+                    f"dest ndim {dst_ndim} (dest '{out_e['_dst'].data.data}' shape "
+                    f"{tuple(dst_arr.shape)})"
+                )
         for d in self.gather_dims:
             conn = f"_idx_{d}"
             if conn not in in_e:
@@ -235,12 +248,15 @@ class TileScatter(TileOp):
             desc = sdfg.arrays[required(in_e[conn].data.data)]
             shape = tuple(desc.shape)
             if resolve_gather_deps(shape, widths) is None:
-                raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
-                                 f"product of widths {widths} for any sorted subset of tile dims "
-                                 f"(design section 9.2)")
+                raise ValueError(
+                    f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
+                    f"product of widths {widths} for any sorted subset of tile dims "
+                    f"(design section 9.2)"
+                )
             if desc.dtype not in GATHER_INDEX_DTYPES:
-                raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
-                                 f"{GATHER_INDEX_DTYPES} (design section 10.4)")
+                raise ValueError(
+                    f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in {GATHER_INDEX_DTYPES} (design section 10.4)"
+                )
         # Zero-stride collapse guard (precise; design section 3.5 + 5.1). A zero ``dim_strides[p]``
         # is legal only when tile dim ``p`` scatters -- its dest dim is in ``gather_dims`` so the
         # per-lane address comes from ``_idx_<d>``. On any other dim a zero stride collapses all
@@ -248,8 +264,9 @@ class TileScatter(TileOp):
         # innermost K dest dims; ``dst_ndim`` is read from the wired ``_dst`` edge here.
         if not self.wcr:
             K = len(widths)
-            resolved_dst = (list(self.dst_dims) if self.dst_dims else list(
-                range(len(dst_arr.shape) - K, len(dst_arr.shape))))
+            resolved_dst = (
+                list(self.dst_dims) if self.dst_dims else list(range(len(dst_arr.shape) - K, len(dst_arr.shape)))
+            )
             g_set = set(self.gather_dims)
             collapsed = [p for p, s in enumerate(self.dim_strides) if s == 0 and resolved_dst[p] not in g_set]
             if collapsed:
@@ -257,7 +274,8 @@ class TileScatter(TileOp):
                     f"{self.label}: dim_strides {tuple(self.dim_strides)} has a 0 on non-scatter tile "
                     f"dim(s) {collapsed} (dest dims {[resolved_dst[p] for p in collapsed]} not in gather_dims "
                     f"{tuple(self.gather_dims)}); a collapse-out / broadcast write races without WCR. Provide "
-                    f"``wcr`` or wire the dim as a scatter (gather_dims + _idx).")
+                    f"``wcr`` or wire the dim as a scatter (gather_dims + _idx)."
+                )
         # Full-tile write contract (per user direction 2026-06-09): the destination memlet's
         # per-dim subset extents must match ``widths`` exactly under the ``dst_dims`` permutation.
         # Anything else -- partial-tile writes, single-element writes, scalar writes to global --
@@ -288,8 +306,8 @@ class TileScatter(TileOp):
                 # symbols first, so a genuine full tile reads equal and only a real partial-tile size
                 # trips the guard.
                 if actual is None or any(
-                        dace.symbolic.inequal_symbols(sympy.sympify(a), sympy.sympify(e))
-                        for a, e in zip(actual, expected)):
+                    dace.symbolic.inequal_symbols(sympy.sympify(a), sympy.sympify(e)) for a, e in zip(actual, expected)
+                ):
                     raise NotImplementedError(
                         f"{self.label}: non-full-tile structured store -- dest memlet "
                         f"subset sizes {subset_sizes} on dims {dims} != widths {expected}. Per user "
@@ -297,10 +315,12 @@ class TileScatter(TileOp):
                         f"writes to a global array raise NotImplementedError until the reduction "
                         f"(scalar transient -> single element) and single-element tile-load paths "
                         f"are designed. Use a scalar transient + TileReduce for accumulator stores; "
-                        f"single-element writes are deferred.")
+                        f"single-element writes are deferred."
+                    )
 
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         from dace.symbolic import symstr
+
         widths = list(self.widths)
         K = len(widths)
         dst_edge = next(e for e in state.out_edges(self) if e.src_conn == "_dst")
@@ -327,8 +347,10 @@ class TileScatter(TileOp):
                 idx_shape = tuple(required(sdfg.arrays[required(edge.data.data)]).shape)
                 deps_d = resolve_gather_deps(idx_shape, widths)
                 if deps_d is None:
-                    raise ValueError(f"{self.label}: cannot resolve deps for '{conn}' shape "
-                                     f"{idx_shape} against widths {tuple(widths)}")
+                    raise ValueError(
+                        f"{self.label}: cannot resolve deps for '{conn}' shape "
+                        f"{idx_shape} against widths {tuple(widths)}"
+                    )
                 gather_idx_ref[k] = gather_lane_offset(deps_d, widths, conn)
             dst_to_tile = {dims[d]: d for d in range(K)}
             parts = []

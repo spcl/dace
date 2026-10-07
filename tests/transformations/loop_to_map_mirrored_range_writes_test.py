@@ -11,6 +11,7 @@ iteration meet only at the diagonal element ``(i, i)``, inside that iteration.
 The write/write pair and the read/write pair are separate refusals in ``can_be_applied``, and this
 file pins both plus the negative that keeps the certificate honest.
 """
+
 import numpy as np
 
 import dace
@@ -19,12 +20,12 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.analysis import smt_dependence
 
-M = dace.symbol('M')
+M = dace.symbol("M")
 
 #: ``z3-solver`` is a hard dependency of this branch (``pyproject.toml`` marks it "Not optional":
 #: LoopToMap and the canonicalize parallelization band query the oracle), so an absent solver is a
 #: broken install, not a reason to report green.
-assert smt_dependence.has_z3(), 'z3-solver is a required dependency but the SMT oracle is unavailable'
+assert smt_dependence.has_z3(), "z3-solver is a required dependency but the SMT oracle is unavailable"
 
 
 def has_map(sdfg: dace.SDFG) -> bool:
@@ -91,7 +92,7 @@ def test_mirrored_triangular_ranges_keep_their_values():
     assert np.allclose(got, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_mirrored_triangular_ranges_parallelize()
     test_mirrored_full_ranges_are_refused()
     test_mirrored_triangular_ranges_keep_their_values()

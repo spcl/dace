@@ -1,10 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileReduce``: a reduction inside a tile, along one axis or over all of it."""
+
 import dace
 from dace import cpf_lowering, library, properties
 from dace.sdfg import nodes
 
-from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.environments import (
+    TileOpsAVX2,
+    TileOpsAVX512,
+    TileOpsCUDA,
+    TileOpsNeon,
+    TileOpsScalar,
+    TileOpsSVE,
+)
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import require_k1
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
@@ -122,13 +130,15 @@ class TileReduce(TileOp):
         desc="Whether the ``_mask`` input connector gates the lanes.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, ...],
-                 op: str = "+",
-                 axis: int | None = None,
-                 has_mask: bool = False,
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        op: str = "+",
+        axis: int | None = None,
+        has_mask: bool = False,
+        location: str | None = None,
+    ):
         if op not in REDUCE_OPS:
             raise ValueError(f"TileReduce: unknown op {op!r}; allowed: {REDUCE_OPS}")
         if not 1 <= len(widths) <= 3:
@@ -176,8 +186,10 @@ class TileReduce(TileOp):
             reduce_offset = tile_offset(kept_widths, [f"__l{dim}" for dim in kept])
             init_offset = tile_offset(kept_widths)
             combined = combine_expr(self.op, f"_dst[{reduce_offset}]", f"_src[{source_offset}]", ctype)
-            code = (f"{nested_loops(kept_widths, f'_dst[{init_offset}] = {identity};')}\n"
-                    f"{nested_loops(widths, f'{gate}_dst[{reduce_offset}] = {combined};')}")
+            code = (
+                f"{nested_loops(kept_widths, f'_dst[{init_offset}] = {identity};')}\n"
+                f"{nested_loops(widths, f'{gate}_dst[{reduce_offset}] = {combined};')}"
+            )
         return nodes.Tasklet(
             label=f"{self.label}_pure",
             inputs=dict.fromkeys(["_src", "_mask"] if self.has_mask else ["_src"]),

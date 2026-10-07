@@ -43,6 +43,7 @@ re-routes the addend through a body-local scratch, and inserts a plain tasklet t
 computes ``oc_out = oc_in OP addend``. The new output is write-only and the boundary
 edge becomes a plain copy, so the pass is idempotent.
 """
+
 import ast
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
@@ -59,7 +60,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.privatize_scatter_reduction import is_data_dependent_scatter_sink
 
 #: Reduction op -> the augassign op it normalizes to (``-`` accumulates like ``+``).
-_WCR_OP = {'+': '+', '-': '+', '*': '*', 'min': 'min', 'max': 'max'}
+_WCR_OP = {"+": "+", "-": "+", "*": "*", "min": "min", "max": "max"}
 
 
 def _op_from_wcr(wcr: str) -> Optional[str]:
@@ -70,16 +71,16 @@ def _op_from_wcr(wcr: str) -> Optional[str]:
     left untouched.
     """
     try:
-        tree = ast.parse(wcr.strip(), mode='eval').body
+        tree = ast.parse(wcr.strip(), mode="eval").body
     except SyntaxError:
         return None
     if not isinstance(tree, ast.Lambda):
         return None
     body = tree.body
     if isinstance(body, ast.BinOp):
-        opmap = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*'}
+        opmap = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*"}
         return _WCR_OP.get(opmap.get(type(body.op)))
-    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ('min', 'max'):
+    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ("min", "max"):
         return _WCR_OP.get(body.func.id)
     return None
 
@@ -92,29 +93,29 @@ def _binop_expr_from_wcr(wcr: str) -> Optional[str]:
     return ``None`` so the read-write rewrite refuses them.
     """
     try:
-        tree = ast.parse(wcr.strip(), mode='eval').body
+        tree = ast.parse(wcr.strip(), mode="eval").body
     except SyntaxError:
         return None
     if not isinstance(tree, ast.Lambda):
         return None
     body = tree.body
     if isinstance(body, ast.BinOp):
-        opmap = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*'}
+        opmap = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*"}
         return opmap.get(type(body.op))
-    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ('min', 'max'):
+    if isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ("min", "max"):
         return body.func.id
     return None
 
 
 def _rmw_tasklet_code(op: str) -> str:
     """Return a plain tasklet expression that computes ``old OP addend``."""
-    if op in ('+', '-', '*'):
-        return f'__out = __old {op} __addend'
-    if op == 'min':
-        return '__out = min(__old, __addend)'
-    if op == 'max':
-        return '__out = max(__old, __addend)'
-    raise ValueError(f'unsupported read-modify-write op {op!r}')
+    if op in ("+", "-", "*"):
+        return f"__out = __old {op} __addend"
+    if op == "min":
+        return "__out = min(__old, __addend)"
+    if op == "max":
+        return "__out = max(__old, __addend)"
+    raise ValueError(f"unsupported read-modify-write op {op!r}")
 
 
 def _identity_value(op: str, dtype: dtypes.typeclass):
@@ -124,15 +125,15 @@ def _identity_value(op: str, dtype: dtypes.typeclass):
     seed would be silently wrong once truncated to an integer accumulator).
     """
     is_int = numpy.issubdtype(dtype.type, numpy.integer)
-    if op == '+':
+    if op == "+":
         return 0 if is_int else 0.0
-    if op == '*':
+    if op == "*":
         return 1 if is_int else 1.0
-    if op == 'min':
-        return int(numpy.iinfo(dtype.type).max) if is_int else float('inf')
-    if op == 'max':
-        return int(numpy.iinfo(dtype.type).min) if is_int else float('-inf')
-    raise ValueError(f'unknown op {op!r}')
+    if op == "min":
+        return int(numpy.iinfo(dtype.type).max) if is_int else float("inf")
+    if op == "max":
+        return int(numpy.iinfo(dtype.type).min) if is_int else float("-inf")
+    raise ValueError(f"unknown op {op!r}")
 
 
 @transformation.explicit_cf_compatible
@@ -160,7 +161,7 @@ class NormalizeWCR(ppl.Pass):
     scalar rewrite is always on.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def __init__(self, extract_slice_wcr: bool = False):
         super().__init__()
@@ -185,31 +186,31 @@ class NormalizeWCR(ppl.Pass):
 
     def _full_subset(self, desc: data.Data) -> str:
         if isinstance(desc, data.Scalar):
-            return '0'
-        return ', '.join(f'0:{s}' for s in desc.shape)
+            return "0"
+        return ", ".join(f"0:{s}" for s in desc.shape)
 
     def _seed_state(self, nsdfg: SDFG, priv: str, desc: data.Data, op: str) -> None:
         """Seed ``priv`` to ``op``'s identity in a fresh start state of ``nsdfg``."""
         val = _identity_value(op, desc.dtype)
-        st = nsdfg.add_state_before(nsdfg.start_block, label='_nnr_seed', is_start_block=True)
+        st = nsdfg.add_state_before(nsdfg.start_block, label="_nnr_seed", is_start_block=True)
         w = st.add_write(priv)
-        if isinstance(desc, data.Scalar) or tuple(desc.shape) == (1, ):
-            t = st.add_tasklet('_nnr_seed', {}, {'__out'}, f'__out = {val}')
-            st.add_edge(t, '__out', w, None, Memlet(data=priv, subset='0'))
+        if isinstance(desc, data.Scalar) or tuple(desc.shape) == (1,):
+            t = st.add_tasklet("_nnr_seed", {}, {"__out"}, f"__out = {val}")
+            st.add_edge(t, "__out", w, None, Memlet(data=priv, subset="0"))
             return
         # Array accumulator (scatter reduction): fill every element with the identity.
-        me, mx = st.add_map('_nnr_seed', {f'_nnr_i{d}': f'0:{s}' for d, s in enumerate(desc.shape)})
-        t = st.add_tasklet('_nnr_seed', {}, {'__out'}, f'__out = {val}')
-        idx = ', '.join(f'_nnr_i{d}' for d in range(len(desc.shape)))
+        me, mx = st.add_map("_nnr_seed", {f"_nnr_i{d}": f"0:{s}" for d, s in enumerate(desc.shape)})
+        t = st.add_tasklet("_nnr_seed", {}, {"__out"}, f"__out = {val}")
+        idx = ", ".join(f"_nnr_i{d}" for d in range(len(desc.shape)))
         st.add_edge(me, None, t, None, Memlet())
-        st.add_memlet_path(t, mx, w, src_conn='__out', memlet=Memlet(data=priv, subset=idx))
+        st.add_memlet_path(t, mx, w, src_conn="__out", memlet=Memlet(data=priv, subset=idx))
 
     def _copyback_state(self, nsdfg: SDFG, priv: str, oc: str, desc: data.Data) -> None:
         """Copy ``priv -> oc`` (plain) in a fresh state after every current sink block."""
         sink = nsdfg.sink_nodes()
         sub = self._full_subset(desc)
         for term in sink:
-            st = nsdfg.add_state_after(term, label='_nnr_copyback')
+            st = nsdfg.add_state_after(term, label="_nnr_copyback")
             r = st.add_read(priv)
             w = st.add_write(oc)
             st.add_nedge(r, w, Memlet(data=priv, subset=sub, other_subset=sub))
@@ -242,9 +243,16 @@ class NormalizeWCR(ppl.Pass):
         wcr_state = None
         for ist in inner.states():
             for e in ist.edges():
-                if (e.data is not None and e.data.wcr is not None and e.data.data == oc and e.data.subset is not None
-                        and e.data.subset.num_elements() == 1 and isinstance(e.dst, nodes.AccessNode)
-                        and e.dst.data == oc and ist.out_degree(e.dst) == 0):
+                if (
+                    e.data is not None
+                    and e.data.wcr is not None
+                    and e.data.data == oc
+                    and e.data.subset is not None
+                    and e.data.subset.num_elements() == 1
+                    and isinstance(e.dst, nodes.AccessNode)
+                    and e.dst.data == oc
+                    and ist.out_degree(e.dst) == 0
+                ):
                     if wcr_edge is not None:
                         return False  # more than one write-only reduction sink -> not this shape
                     wcr_edge, wcr_state = e, ist
@@ -299,7 +307,7 @@ class NormalizeWCR(ppl.Pass):
             wcr_state.remove_edge(wcr_edge)
         else:
             priv_desc = self._seed_desc(oc_desc)
-            priv = inner.add_datadesc(f'_nnr_priv_{oc}', priv_desc, find_new_name=True)
+            priv = inner.add_datadesc(f"_nnr_priv_{oc}", priv_desc, find_new_name=True)
             priv_node = wcr_state.add_access(priv)
             new_data = copy.deepcopy(wcr_edge.data)
             new_data.data = priv
@@ -317,7 +325,7 @@ class NormalizeWCR(ppl.Pass):
         # (see NormalizeWCRSource). Insert a per-iteration private AccessNode between the
         # NestedSDFG output and the MapExit so the reduction is AccessNode-sourced.
         out_priv_desc = self._seed_desc(oc_desc)
-        out_priv = state.sdfg.add_datadesc(f'_nnr_out_{oc}', out_priv_desc, find_new_name=True)
+        out_priv = state.sdfg.add_datadesc(f"_nnr_out_{oc}", out_priv_desc, find_new_name=True)
         out_priv_node = state.add_access(out_priv)
         state.add_edge(nsdfg, oc, out_priv_node, None, Memlet(data=out_priv, subset=self._full_subset(out_priv_desc)))
         acc_node = None
@@ -327,7 +335,7 @@ class NormalizeWCR(ppl.Pass):
                 acc_node = e.dst
         state.add_edge(out_priv_node, None, out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
         state.remove_edge(out_edge)
-        if op in ('min', 'max') and acc_node is not None:
+        if op in ("min", "max") and acc_node is not None:
             self._ensure_outer_seed(state.sdfg, acc_node.data, op)
         return True
 
@@ -356,8 +364,12 @@ class NormalizeWCR(ppl.Pass):
             for e in ist.edges():
                 if e is wcr_edge:
                     continue
-                if (e.data is not None and e.data.data == oc and isinstance(e.dst, nodes.AccessNode)
-                        and e.dst.data == oc):
+                if (
+                    e.data is not None
+                    and e.data.data == oc
+                    and isinstance(e.dst, nodes.AccessNode)
+                    and e.dst.data == oc
+                ):
                     return False
         return True
 
@@ -373,21 +385,26 @@ class NormalizeWCR(ppl.Pass):
             return
         for st in sdfg.states():
             for e in st.edges():
-                if (e.data is not None and e.data.data == acc and e.data.wcr is None
-                        and isinstance(e.dst, nodes.AccessNode) and e.dst.data == acc):
+                if (
+                    e.data is not None
+                    and e.data.data == acc
+                    and e.data.wcr is None
+                    and isinstance(e.dst, nodes.AccessNode)
+                    and e.dst.data == acc
+                ):
                     return
         val = _identity_value(op, desc.dtype)
-        seed = sdfg.add_state_before(sdfg.start_block, label='_nnr_outer_seed', is_start_block=True)
+        seed = sdfg.add_state_before(sdfg.start_block, label="_nnr_outer_seed", is_start_block=True)
         w = seed.add_write(acc)
-        if isinstance(desc, data.Scalar) or tuple(desc.shape) == (1, ):
-            t = seed.add_tasklet('_nnr_outer_seed', {}, {'__out'}, f'__out = {val}')
-            seed.add_edge(t, '__out', w, None, Memlet(data=acc, subset='0'))
+        if isinstance(desc, data.Scalar) or tuple(desc.shape) == (1,):
+            t = seed.add_tasklet("_nnr_outer_seed", {}, {"__out"}, f"__out = {val}")
+            seed.add_edge(t, "__out", w, None, Memlet(data=acc, subset="0"))
         else:
-            me, mx = seed.add_map('_nnr_outer_seed', {f'_nnr_i{d}': f'0:{s}' for d, s in enumerate(desc.shape)})
-            t = seed.add_tasklet('_nnr_outer_seed', {}, {'__out'}, f'__out = {val}')
-            idx = ', '.join(f'_nnr_i{d}' for d in range(len(desc.shape)))
+            me, mx = seed.add_map("_nnr_outer_seed", {f"_nnr_i{d}": f"0:{s}" for d, s in enumerate(desc.shape)})
+            t = seed.add_tasklet("_nnr_outer_seed", {}, {"__out"}, f"__out = {val}")
+            idx = ", ".join(f"_nnr_i{d}" for d in range(len(desc.shape)))
             seed.add_edge(me, None, t, None, Memlet())
-            seed.add_memlet_path(t, mx, w, src_conn='__out', memlet=Memlet(data=acc, subset=idx))
+            seed.add_memlet_path(t, mx, w, src_conn="__out", memlet=Memlet(data=acc, subset=idx))
 
     def _fresh_symbol(self, sdfg: SDFG, base: str) -> str:
         """A map-parameter name unused as a symbol/free-symbol in ``sdfg``."""
@@ -395,7 +412,7 @@ class NormalizeWCR(ppl.Pass):
         name, i = base, 0
         while name in used:
             i += 1
-            name = f'{base}_{i}'
+            name = f"{base}_{i}"
         return name
 
     def _find_inner_scatter(self, inner: SDFG, oc: str) -> Optional[Tuple]:
@@ -406,9 +423,14 @@ class NormalizeWCR(ppl.Pass):
         for ist in inner.states():
             for tasklet in [n for n in ist.nodes() if isinstance(n, nodes.Tasklet)]:
                 for oe in ist.out_edges(tasklet):
-                    if (oe.data is not None and oe.data.data == oc and oe.data.wcr is not None
-                            and oe.data.subset is not None and oe.data.subset.num_elements() == 1
-                            and isinstance(oe.dst, nodes.MapExit)):
+                    if (
+                        oe.data is not None
+                        and oe.data.data == oc
+                        and oe.data.wcr is not None
+                        and oe.data.subset is not None
+                        and oe.data.subset.num_elements() == 1
+                        and isinstance(oe.dst, nodes.MapExit)
+                    ):
                         ime = ist.entry_node(oe.dst)
                         if len(ime.map.params) != 1:
                             return None
@@ -423,8 +445,13 @@ class NormalizeWCR(ppl.Pass):
         the graph untouched.
         """
         out_edge = next((oe for oe in state.out_edges(nsdfg) if oe.src_conn == oc), None)
-        if (out_edge is None or out_edge.data.wcr is None or out_edge.data.subset is None
-                or out_edge.data.subset.num_elements() == 1 or not isinstance(out_edge.dst, nodes.MapExit)):
+        if (
+            out_edge is None
+            or out_edge.data.wcr is None
+            or out_edge.data.subset is None
+            or out_edge.data.subset.num_elements() == 1
+            or not isinstance(out_edge.dst, nodes.MapExit)
+        ):
             return False
         if _op_from_wcr(out_edge.data.wcr) is None:
             return False
@@ -435,8 +462,14 @@ class NormalizeWCR(ppl.Pass):
         outer_me = state.entry_node(nsdfg)
         outer_mx = state.exit_node(outer_me)
         dest = out_edge.data.data
-        dest_an = next((oe.dst for oe in state.out_edges(outer_mx)
-                        if oe.data is not None and oe.data.data == dest and isinstance(oe.dst, nodes.AccessNode)), None)
+        dest_an = next(
+            (
+                oe.dst
+                for oe in state.out_edges(outer_mx)
+                if oe.data is not None and oe.data.data == dest and isinstance(oe.dst, nodes.AccessNode)
+            ),
+            None,
+        )
         if dest_an is None:
             return False
         # Every tasklet input must trace to a direct nsdfg boundary connector fed by a
@@ -454,10 +487,11 @@ class NormalizeWCR(ppl.Pass):
             plan.append((ie, ext, top_in[ext.data.data]))
 
         # mutate: clone the scatter map to the outer scope
-        ksym, nksym = symbol(iparam), symbol(self._fresh_symbol(state.sdfg, '_wcr_' + iparam))
-        new_me, new_mx = state.add_map('extract_' + oc, {str(nksym): str(ime.map.range)})
-        new_t = state.add_tasklet('extract_' + oc, tasklet.in_connectors.keys(), tasklet.out_connectors.keys(),
-                                  tasklet.code.as_string)
+        ksym, nksym = symbol(iparam), symbol(self._fresh_symbol(state.sdfg, "_wcr_" + iparam))
+        new_me, new_mx = state.add_map("extract_" + oc, {str(nksym): str(ime.map.range)})
+        new_t = state.add_tasklet(
+            "extract_" + oc, tasklet.in_connectors.keys(), tasklet.out_connectors.keys(), tasklet.code.as_string
+        )
         # The connectors are the containers (the nested SDFG contract): an inner memlet already indexes the outer
         # container and only takes its name.
         for ie, ext, top_src in plan:
@@ -481,21 +515,18 @@ class NormalizeWCR(ppl.Pass):
                 # Non-scatter co-output (e.g. a scalar reduction sharing the tasklet) is
                 # recomputed into a dead scalar; DCE prunes it.
                 inner_desc = nsdfg.sdfg.arrays[oe.data.data]
-                dname, _ = state.sdfg.add_scalar('_wcrdead_' + oe.src_conn,
-                                                 inner_desc.dtype,
-                                                 transient=True,
-                                                 find_new_name=True)
-                state.add_memlet_path(new_t,
-                                      new_mx,
-                                      state.add_access(dname),
-                                      src_conn=oe.src_conn,
-                                      memlet=Memlet(data=dname, subset='0'))
+                dname, _ = state.sdfg.add_scalar(
+                    "_wcrdead_" + oe.src_conn, inner_desc.dtype, transient=True, find_new_name=True
+                )
+                state.add_memlet_path(
+                    new_t, new_mx, state.add_access(dname), src_conn=oe.src_conn, memlet=Memlet(data=dname, subset="0")
+                )
 
         # Redirect the trapped nsdfg slice output to a dead transient (mirror dest's
         # descriptor so no inner-only symbol leaks into the shape); drop the slice WCR.
         dead_desc = copy.deepcopy(state.sdfg.arrays[dest])
         dead_desc.transient = True
-        dead = state.sdfg.add_datadesc('_wcrdead_' + dest, dead_desc, find_new_name=True)
+        dead = state.sdfg.add_datadesc("_wcrdead_" + dest, dead_desc, find_new_name=True)
         redir = copy.deepcopy(out_edge.data)
         redir.data = dead
         redir.wcr = None
@@ -504,7 +535,7 @@ class NormalizeWCR(ppl.Pass):
         state.add_edge(nsdfg, oc, state.add_access(dead), None, redir)
         # If the slice used a dedicated MapExit connector (now unfed), drop it + its pair.
         if dst_conn is not None and not any(e.dst_conn == dst_conn for e in state.in_edges(outer_mx)):
-            out_conn = 'OUT_' + dst_conn[3:] if dst_conn.startswith('IN_') else None
+            out_conn = "OUT_" + dst_conn[3:] if dst_conn.startswith("IN_") else None
             for oe in list(state.out_edges(outer_mx)):
                 if oe.src_conn == out_conn:
                     state.remove_edge(oe)
@@ -545,13 +576,22 @@ class NormalizeWCR(ppl.Pass):
 
         # (a) The body writes the connector array `oc` exactly once, through a scalar WCR edge. Any other
         # write would lose its output connector once `oc` becomes input-only.
-        writes = [(e, ist) for ist in inner.states() for e in ist.edges()
-                  if isinstance(e.dst, nodes.AccessNode) and e.dst.data == oc and not e.data.is_empty()]
+        writes = [
+            (e, ist)
+            for ist in inner.states()
+            for e in ist.edges()
+            if isinstance(e.dst, nodes.AccessNode) and e.dst.data == oc and not e.data.is_empty()
+        ]
         if len(writes) != 1:
             return False
         wcr_edge, wcr_state = writes[0]
-        if (wcr_edge.data.wcr is None or wcr_edge.data.data != oc or wcr_edge.data.subset is None
-                or wcr_edge.data.subset.num_elements() != 1 or wcr_state.out_degree(wcr_edge.dst) != 0):
+        if (
+            wcr_edge.data.wcr is None
+            or wcr_edge.data.data != oc
+            or wcr_edge.data.subset is None
+            or wcr_edge.data.subset.num_elements() != 1
+            or wcr_state.out_degree(wcr_edge.dst) != 0
+        ):
             return False
 
         op = _binop_expr_from_wcr(wcr_edge.data.wcr)
@@ -580,8 +620,7 @@ class NormalizeWCR(ppl.Pass):
         selecting = {
             inner
             for inner, outer in nsdfg.symbol_mapping.items()
-            if {str(s)
-                for s in symbolic.pystr_to_symbolic(str(outer)).free_symbols} & params
+            if {str(s) for s in symbolic.pystr_to_symbolic(str(outer)).free_symbols} & params
         }
         if not {str(s) for s in wcr_edge.data.subset.free_symbols} & selecting:
             return False
@@ -589,12 +628,12 @@ class NormalizeWCR(ppl.Pass):
         # Rewrite the body: explicit plain read-modify-write of the one element the WCR updates. The connector
         # is the container, so that element is the WCR edge's subset, not element 0.
         element = wcr_edge.data.subset
-        addend, _ = inner.add_scalar(f'_nnr_addend_{oc}', oc_desc.dtype, transient=True, find_new_name=True)
+        addend, _ = inner.add_scalar(f"_nnr_addend_{oc}", oc_desc.dtype, transient=True, find_new_name=True)
 
         # Fresh output connector array (non-transient, because it is a connector).
         out_desc = copy.deepcopy(oc_desc)
         out_desc.transient = False
-        out_conn_name = inner.add_datadesc(f'_nnr_rwout_{oc}', out_desc, find_new_name=True)
+        out_conn_name = inner.add_datadesc(f"_nnr_rwout_{oc}", out_desc, find_new_name=True)
         nsdfg.remove_out_connector(oc)
         nsdfg.add_out_connector(out_conn_name, out_desc.dtype)
 
@@ -604,17 +643,16 @@ class NormalizeWCR(ppl.Pass):
         out_node = wcr_state.add_write(out_conn_name)
 
         # Reroute the addend source onto the scratch.
-        wcr_state.add_edge(src, src_conn, addend_node, None, Memlet(data=addend, subset='0'))
+        wcr_state.add_edge(src, src_conn, addend_node, None, Memlet(data=addend, subset="0"))
 
         # New tasklet: __out = __old OP __addend (plain).
         dtype = oc_desc.dtype
-        rmw = wcr_state.add_tasklet('_nnr_rmw', {
-            '__old': dtype,
-            '__addend': dtype
-        }, {'__out': dtype}, _rmw_tasklet_code(op))
-        wcr_state.add_edge(old_node, None, rmw, '__old', Memlet(data=oc, subset=copy.deepcopy(element)))
-        wcr_state.add_edge(addend_node, None, rmw, '__addend', Memlet(data=addend, subset='0'))
-        wcr_state.add_edge(rmw, '__out', out_node, None, Memlet(data=out_conn_name, subset=copy.deepcopy(element)))
+        rmw = wcr_state.add_tasklet(
+            "_nnr_rmw", {"__old": dtype, "__addend": dtype}, {"__out": dtype}, _rmw_tasklet_code(op)
+        )
+        wcr_state.add_edge(old_node, None, rmw, "__old", Memlet(data=oc, subset=copy.deepcopy(element)))
+        wcr_state.add_edge(addend_node, None, rmw, "__addend", Memlet(data=addend, subset="0"))
+        wcr_state.add_edge(rmw, "__out", out_node, None, Memlet(data=out_conn_name, subset=copy.deepcopy(element)))
 
         # Remove the old redundant WCR edge and its sink if orphaned.
         old_sink = wcr_edge.dst
@@ -662,4 +700,4 @@ class NormalizeWCR(ppl.Pass):
         if n == 0:
             return None
         sdfg.validate()
-        return {'normalized_nested_reductions': {str(n)}}
+        return {"normalized_nested_reductions": {str(n)}}

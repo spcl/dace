@@ -92,16 +92,19 @@ def replace_in_code(block: CodeBlock, repldict: Dict[str, str]) -> CodeBlock:
         block = copy.deepcopy(block)
         replace_in_codeblock(block, repldict)
         return block
-    code = re.sub(r'(?<![.>:])\b\w+\b', lambda m: f'({repldict[m[0]]})' if m[0] in repldict else m[0], block.as_string)
+    code = re.sub(r"(?<![.>:])\b\w+\b", lambda m: f"({repldict[m[0]]})" if m[0] in repldict else m[0], block.as_string)
     return CodeBlock(code, block.language)
 
 
 def tasklets_assign(node_list: Iterable[dace.nodes.Node], names: Iterable[str]) -> bool:
     """Whether a Python tasklet in ``node_list`` assigns one of ``names``, which a substitution would break."""
     return any(
-        isinstance(a, ast.Name) and isinstance(a.ctx, ast.Store) and a.id in names for n in node_list
-        if isinstance(n, dace.nodes.Tasklet) and n.code.language == dace.dtypes.Language.Python for stmt in n.code.code
-        for a in ast.walk(stmt))
+        isinstance(a, ast.Name) and isinstance(a.ctx, ast.Store) and a.id in names
+        for n in node_list
+        if isinstance(n, dace.nodes.Tasklet) and n.code.language == dace.dtypes.Language.Python
+        for stmt in n.code.code
+        for a in ast.walk(stmt)
+    )
 
 
 def repl_tasklets_on_node_list(node_list: Iterable[dace.nodes.Node], repldict: Dict[str, str]) -> None:
@@ -195,7 +198,7 @@ def add_to_rhs(expr: str, add_expr: dace.symbolic.SymExpr) -> str:
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class OffsetLoopsAndMaps(ppl.Pass):
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     offset_expr = Property(dtype=str, default="0")
     begin_expr = Property(dtype=str, default="0")
@@ -204,12 +207,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
     normalize_loops = Property(dtype=bool, default=False)
     squeeze = Property(dtype=bool, default=False)
 
-    def __init__(self,
-                 offset_expr: str,
-                 begin_expr: Union[str, None],
-                 convert_leq_to_lt: bool = True,
-                 normalize_loops: bool = False,
-                 squeeze: bool = False):
+    def __init__(
+        self,
+        offset_expr: str,
+        begin_expr: Union[str, None],
+        convert_leq_to_lt: bool = True,
+        normalize_loops: bool = False,
+        squeeze: bool = False,
+    ):
         self.offset_expr = offset_expr
         if begin_expr is None:
             self.do_not_check_begin = True
@@ -232,8 +237,9 @@ class OffsetLoopsAndMaps(ppl.Pass):
     # per scope instead of over the whole SDFG; it lives at module level so both callers reach it
     # without touching another pass's privates. These methods stay as the pass-facing spelling.
 
-    def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: Dict[str,
-                                                                               str]) -> Optional[dace.memlet.Memlet]:
+    def _create_new_memlet(
+        self, edge_data: dace.memlet.Memlet, repldict: Dict[str, str]
+    ) -> Optional[dace.memlet.Memlet]:
         """Create a new memlet with substituted subset ranges."""
         return create_new_memlet(edge_data, repldict)
 
@@ -268,12 +274,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
     def _repl_tasklets_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
         repl_tasklets_recursive(cfg, repldict)
 
-    def _repl_tasklets_on_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node],
-                                    repldict: Dict[str, str]) -> None:
+    def _repl_tasklets_on_node_list(
+        self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict: Dict[str, str]
+    ) -> None:
         repl_tasklets_on_node_list(nodes, repldict)
 
-    def _repl_tasklets_recursive_from_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node],
-                                                repldict: Dict[str, str]) -> None:
+    def _repl_tasklets_recursive_from_node_list(
+        self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict: Dict[str, str]
+    ) -> None:
         repl_tasklets_on_node_list(nodes, repldict)
 
         for node in nodes:
@@ -282,15 +290,16 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
     def _token_match(self, code: str, src: str) -> bool:
         # Split while keeping delimiters
-        tokens = re.split(r'(\s+|[()\[\]])', code)
+        tokens = re.split(r"(\s+|[()\[\]])", code)
         # Replace tokens that exactly match src
         tokens = [token for token in tokens if token.strip() == src]
 
         # Recombine everything
         return len(tokens) != 0
 
-    def _repl_for_regions_recursive(self, root: ControlFlowRegion, cfg: ControlFlowRegion, repldict: Dict[str,
-                                                                                                          str]) -> None:
+    def _repl_for_regions_recursive(
+        self, root: ControlFlowRegion, cfg: ControlFlowRegion, repldict: Dict[str, str]
+    ) -> None:
         repl_for_regions_recursive(root, cfg, repldict)
 
     def _repl_if_blocks_recursive(self, cfg: ControlFlowRegion, repldict: Dict[str, str]) -> None:
@@ -319,14 +328,18 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     continue
                 # The begin expression matches apply offset
                 init_lhs, init_rhs = node.init_statement.as_string.split("=")
-                if self.do_not_check_begin or _get_expr_from_str(init_rhs) == _get_expr_from_str(
-                        self.begin_expr) or str(init_rhs) == str(self.begin_expr):
+                if (
+                    self.do_not_check_begin
+                    or _get_expr_from_str(init_rhs) == _get_expr_from_str(self.begin_expr)
+                    or str(init_rhs) == str(self.begin_expr)
+                ):
                     init_expr_str = f"(({init_rhs}) + {self.offset_expr})"
                     init_expr = _get_expr_from_str(init_expr_str)
                     new_init_statement = symstr(init_expr)
                     node.init_statement = CodeBlock(f"{init_lhs} = {new_init_statement}")
-                    new_loop_condition = self._add_to_rhs(node.loop_condition.as_string,
-                                                          _get_expr_from_str(self.offset_expr), cfg.sdfg)
+                    new_loop_condition = self._add_to_rhs(
+                        node.loop_condition.as_string, _get_expr_from_str(self.offset_expr), cfg.sdfg
+                    )
                     node.loop_condition = CodeBlock(new_loop_condition)
 
                     # Try normalize after update
@@ -351,16 +364,23 @@ class OffsetLoopsAndMaps(ppl.Pass):
                         repldict = dict()
                         multipliers = []
                         for (b, e, s), param in zip(state_node.map.range, state_node.map.params):
-                            if self.do_not_check_begin or b == _get_expr_from_str(self.begin_expr) or str(b) == str(
-                                    self.begin_expr):
+                            if (
+                                self.do_not_check_begin
+                                or b == _get_expr_from_str(self.begin_expr)
+                                or str(b) == str(self.begin_expr)
+                            ):
                                 has_matches = True
 
                                 b_expr = as_basic(
                                     dace.symbolic.SymExpr(
-                                        symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
+                                        symstr(b) + " + " + symstr(_get_expr_from_str(self.offset_expr))
+                                    )
+                                ).simplify()
                                 e_expr = as_basic(
                                     dace.symbolic.SymExpr(
-                                        symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr)))).simplify()
+                                        symstr(e) + " + " + symstr(_get_expr_from_str(self.offset_expr))
+                                    )
+                                ).simplify()
                                 s_expr = as_basic(dace.symbolic.SymExpr(symstr(s))).simplify()
                                 prev_s_expr = s_expr
                                 if self.squeeze:
@@ -445,7 +465,9 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # canonicalize pipeline's ordering. (``create_new_memlet`` now substitutes
         # ``other_subset`` as well, so this is a shape choice, no longer a workaround.)
         from dace.transformation.passes.insert_unit_copy_assign_tasklets import (
-            InsertAssignTaskletsForUnitCopies, )
+            InsertAssignTaskletsForUnitCopies,
+        )
+
         unit_copies = InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, pipeline_results or {})
 
         # Do it for LoopRegions and Maps
@@ -456,8 +478,11 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # Simplify <= loop conditions to use < if set
         if self.convert_leq_to_lt:
             for n, g in sdfg.all_nodes_recursive():
-                if (isinstance(n, LoopRegion) and n.loop_condition is not None
-                        and n.loop_condition.language == dace.dtypes.Language.Python):
+                if (
+                    isinstance(n, LoopRegion)
+                    and n.loop_condition is not None
+                    and n.loop_condition.language == dace.dtypes.Language.Python
+                ):
                     old_condition = n.loop_condition.as_string
                     expr = dace.symbolic.SymExpr(n.loop_condition.as_string)
                     if isinstance(expr, sympy.core.relational.Relational) and isinstance(expr, sympy.LessThan):
@@ -474,8 +499,11 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
         # Try to simplify loop init statements, expressions such as ((-1) + 1)
         for n, g in sdfg.all_nodes_recursive():
-            if (isinstance(n, LoopRegion) and n.init_statement is not None
-                    and n.init_statement.language == dace.dtypes.Language.Python):
+            if (
+                isinstance(n, LoopRegion)
+                and n.init_statement is not None
+                and n.init_statement.language == dace.dtypes.Language.Python
+            ):
                 old_init = n.init_statement.as_string
                 try:
                     expr_str = self._split_expr_str_opt_rhs(n.init_statement.as_string, " = ")

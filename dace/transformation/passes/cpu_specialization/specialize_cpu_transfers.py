@@ -22,24 +22,27 @@ access-node-to-access-node edges into copy library nodes and before they are exp
 host-resident transfers are touched, so a GPU graph passing through the same codegen preamble is
 left alone.
 """
+
 from typing import Any, Dict, Optional
 
 from dace import SDFG, data, dtypes, properties, symbolic
 from dace.transformation import pass_pipeline as ppl
 
 #: Storages a host ``memcpy`` / ``memset`` may dereference, and the only ones this pass decides.
-HOST_STORAGES = frozenset({
-    dtypes.StorageType.CPU_Heap,
-    dtypes.StorageType.CPU_Pinned,
-    dtypes.StorageType.CPU_ThreadLocal,
-    dtypes.StorageType.Default,
-})
+HOST_STORAGES = frozenset(
+    {
+        dtypes.StorageType.CPU_Heap,
+        dtypes.StorageType.CPU_Pinned,
+        dtypes.StorageType.CPU_ThreadLocal,
+        dtypes.StorageType.Default,
+    }
+)
 
 #: Schedules that still mean "this transfer opens its own parallel region".
 PARALLEL_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore)
 
 #: Implementations that still mean "nobody has chosen yet".
-UNCHOSEN = (None, 'Auto')
+UNCHOSEN = (None, "Auto")
 
 
 def packed_same_layout(inp: data.Data, out: data.Data) -> bool:
@@ -49,8 +52,9 @@ def packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     :param out: destination descriptor.
     :returns: ``True`` for both C-contiguous or both Fortran-contiguous.
     """
-    return ((inp.is_packed_c_strides() and out.is_packed_c_strides())
-            or (inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()))
+    return (inp.is_packed_c_strides() and out.is_packed_c_strides()) or (
+        inp.is_packed_fortran_strides() and out.is_packed_fortran_strides()
+    )
 
 
 def copy_endpoints(node, state):
@@ -95,8 +99,7 @@ def copy_is_one_memcpy(node, state) -> bool:
         return False
     if any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())):
         return False
-    return (in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out)
-            and packed_same_layout(inp, out))
+    return in_subset.is_contiguous_subset(inp) and out_subset.is_contiguous_subset(out) and packed_same_layout(inp, out)
 
 
 def memset_is_host(node, state) -> bool:
@@ -125,7 +128,7 @@ def memset_is_one_memset(node, state) -> bool:
 class SpecializeCpuTransfers(ppl.Pass):
     """Sequentialize re-entered host transfers, then collapse the contiguous ones to libc calls."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -146,6 +149,7 @@ class SpecializeCpuTransfers(ppl.Pass):
         from dace.libraries.standard.helper import is_reentered_cpu_transfer
         from dace.libraries.standard.nodes.copy import CopyLibraryNode
         from dace.libraries.standard.nodes.fill import FillLibraryNode
+
         changed = 0
         # One pass's worth of enclosing-loop trip-count verdicts: many transfers share the same
         # loop nest, and the pass does not touch LoopRegion bounds, so a verdict computed for one
@@ -163,9 +167,9 @@ class SpecializeCpuTransfers(ppl.Pass):
             if node.schedule != dtypes.ScheduleType.Sequential or node.implementation not in UNCHOSEN:
                 continue
             if is_copy and copy_is_one_memcpy(node, state):
-                node.implementation = 'MemcpyCPU'
+                node.implementation = "MemcpyCPU"
                 changed += 1
             elif not is_copy and memset_is_one_memset(node, state):
-                node.implementation = 'CPU'
+                node.implementation = "CPU"
                 changed += 1
         return changed or None

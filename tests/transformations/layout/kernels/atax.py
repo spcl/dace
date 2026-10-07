@@ -21,6 +21,7 @@ Reduction (not BLAS gemv) form so the layout is honest -- BLAS packs operands in
 hide it. Sibling of k04 mvt (two nests, shared ``A`` read both ways); here the two nests are chained
 through the transient ``tmp`` instead of writing two independent outputs.
 """
+
 import numpy
 import dace
 
@@ -31,7 +32,7 @@ M, N = dace.symbol("M"), dace.symbol("N")
 
 @dace.program
 def atax(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[N]):
-    tmp = numpy.zeros((M, ), dace.float64)  # zeroed transient: fully accumulated before it is read
+    tmp = numpy.zeros((M,), dace.float64)  # zeroed transient: fully accumulated before it is read
     for i, j in dace.map[0:M, 0:N] @ dace.ScheduleType.Sequential:
         tmp[i] += A[i, j] * x[j]
     for i, j in dace.map[0:M, 0:N] @ dace.ScheduleType.Sequential:

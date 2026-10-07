@@ -10,6 +10,7 @@ neighbor access -- SplitDimensions blocks the offset indices ``x[i-1]``/``x[i+1]
 
 Source: Henretty et al., CC'11 (data-layout transformation for SIMD stencils).
 """
+
 import numpy
 import dace
 
@@ -21,7 +22,7 @@ W0, W1, W2 = 0.25, 0.5, 0.25
 
 @dace.program
 def stencil(x: dace.float64[N], y: dace.float64[N]):
-    for i in dace.map[1:N - 1] @ dace.ScheduleType.Sequential:
+    for i in dace.map[1 : N - 1] @ dace.ScheduleType.Sequential:
         y[i] = W0 * x[i - 1] + W1 * x[i] + W2 * x[i + 1]
 
 

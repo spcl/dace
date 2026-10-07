@@ -14,15 +14,18 @@ These tests pin the detector contract:
 * ``not`` -> :class:`TileUnop` ``op='not'`` (lowers to C ``!``)
 * ``@`` (matmul) -> refused (not a per-lane elementwise op)
 """
+
 import dace
 import pytest
 
-from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (ConvertTaskletsToTileOps,
-                                                                                   _normalize_python_tasklet_body)
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (
+    ConvertTaskletsToTileOps,
+    _normalize_python_tasklet_body,
+)
 
 
 def _tasklet(in_conns, out_conn, code):
-    sdfg = dace.SDFG('t_tasklet')
+    sdfg = dace.SDFG("t_tasklet")
     state = sdfg.add_state("s", is_start_block=True)
     return state.add_tasklet("tk", set(in_conns), {out_conn}, code)
 
@@ -34,7 +37,8 @@ def _tasklet(in_conns, out_conn, code):
         ("_o = _c_0 and _c_1", "_o = _c_0 && _c_1"),
         ("_o = (not _c_0)", "_o = (not _c_0)"),  # not is unary; left for _detect_unop
         ("_o = horizontal_or", "_o = horizontal_or"),  # word-boundary: substring 'or' untouched
-    ])
+    ],
+)
 def test_normalize_python_tasklet_body(body, expected):
     assert _normalize_python_tasklet_body(body) == expected
 
@@ -75,7 +79,8 @@ def test_tile_unop_not_constructs_and_lowers_to_bang():
     """``TileUnop(op='not')`` is a valid node and its op-char is ``!``."""
     from dace.libraries.tileops import TileUnop
     from dace.libraries.tileops.ops import UNARY_ISA_CODES
-    u = TileUnop(name="n", widths=(8, ), op="not", kind_a="Tile")
+
+    u = TileUnop(name="n", widths=(8,), op="not", kind_a="Tile")
     assert u.op == "not"
     assert UNARY_ISA_CODES["not"] == "!"
 
@@ -84,13 +89,14 @@ def _state_with_mask_edge(mask_dtype):
     """Build a state with a TileBinop whose ``_mask`` connector is fed by an
     array of ``mask_dtype``."""
     from dace.libraries.tileops import TileBinop
-    sdfg = dace.SDFG('m_state_with_mask_edge')
+
+    sdfg = dace.SDFG("m_state_with_mask_edge")
     sdfg.add_array("a", [8], dtype=dace.float64, transient=True)
     sdfg.add_array("b", [8], dtype=dace.float64, transient=True)
     sdfg.add_array("c", [8], dtype=dace.float64, transient=True)
     sdfg.add_array("msk", [8], dtype=mask_dtype, transient=True)
     st = sdfg.add_state("s", is_start_block=True)
-    binop = TileBinop(name="bp", widths=(8, ), op="+", has_mask=True)
+    binop = TileBinop(name="bp", widths=(8,), op="+", has_mask=True)
     st.add_node(binop)
     st.add_edge(st.add_access("a"), None, binop, "_a", dace.Memlet("a[0:8]"))
     st.add_edge(st.add_access("b"), None, binop, "_b", dace.Memlet("b[0:8]"))
@@ -101,12 +107,14 @@ def _state_with_mask_edge(mask_dtype):
 
 def test_mask_connectors_are_bool_accepts_bool():
     from dace.transformation.passes.vectorization.utils.pass_invariants import mask_connectors_are_bool
+
     sdfg = _state_with_mask_edge(dace.bool_)
     assert mask_connectors_are_bool(sdfg) is None
 
 
 def test_mask_connectors_are_bool_rejects_non_bool():
     from dace.transformation.passes.vectorization.utils.pass_invariants import mask_connectors_are_bool
+
     sdfg = _state_with_mask_edge(dace.float64)
     violation = mask_connectors_are_bool(sdfg)
     assert violation is not None
@@ -115,12 +123,13 @@ def test_mask_connectors_are_bool_rejects_non_bool():
 
 def _state_with_logical_binop(a_dtype, b_dtype, c_dtype, op="||"):
     from dace.libraries.tileops import TileBinop
+
     sdfg = dace.SDFG("lb")
     sdfg.add_array("a", [8], dtype=a_dtype, transient=True)
     sdfg.add_array("b", [8], dtype=b_dtype, transient=True)
     sdfg.add_array("c", [8], dtype=c_dtype, transient=True)
     st = sdfg.add_state("s", is_start_block=True)
-    binop = TileBinop(name="lbp", widths=(8, ), op=op)
+    binop = TileBinop(name="lbp", widths=(8,), op=op)
     st.add_node(binop)
     st.add_edge(st.add_access("a"), None, binop, "_a", dace.Memlet("a[0:8]"))
     st.add_edge(st.add_access("b"), None, binop, "_b", dace.Memlet("b[0:8]"))
@@ -130,17 +139,22 @@ def _state_with_logical_binop(a_dtype, b_dtype, c_dtype, op="||"):
 
 def test_logical_binops_are_bool_accepts_all_bool():
     from dace.transformation.passes.vectorization.utils.pass_invariants import logical_binops_are_bool
+
     sdfg = _state_with_logical_binop(dace.bool_, dace.bool_, dace.bool_, "||")
     assert logical_binops_are_bool(sdfg) is None
 
 
-@pytest.mark.parametrize("a,b,c", [
-    (dace.float64, dace.bool_, dace.bool_),
-    (dace.bool_, dace.int64, dace.bool_),
-    (dace.bool_, dace.bool_, dace.float64),
-])
+@pytest.mark.parametrize(
+    "a,b,c",
+    [
+        (dace.float64, dace.bool_, dace.bool_),
+        (dace.bool_, dace.int64, dace.bool_),
+        (dace.bool_, dace.bool_, dace.float64),
+    ],
+)
 def test_logical_binops_are_bool_rejects_non_bool(a, b, c):
     from dace.transformation.passes.vectorization.utils.pass_invariants import logical_binops_are_bool
+
     sdfg = _state_with_logical_binop(a, b, c, "&&")
     violation = logical_binops_are_bool(sdfg)
     assert violation is not None
@@ -151,16 +165,18 @@ def test_no_bool_cast_in_comparison_codegen():
     """A ``double > Symbol`` comparison must NOT emit a ``(bool)`` cast of the
     symbol operand; it casts to the operand (double) dtype instead."""
     from dace.libraries.tileops import TileBinop
-    sdfg = dace.SDFG('cmp_no_bool_cast_in_comparison_codegen')
+
+    sdfg = dace.SDFG("cmp_no_bool_cast_in_comparison_codegen")
     sdfg.add_symbol("RLMIN", dace.float64)
     sdfg.add_array("a", [8], dtype=dace.float64, transient=True)
     sdfg.add_array("c", [8], dtype=dace.bool_, transient=True)
     st = sdfg.add_state("s", is_start_block=True)
-    binop = TileBinop(name="cmp", widths=(8, ), op=">", kind_a="Tile", kind_b="Symbol", expr_b="RLMIN")
+    binop = TileBinop(name="cmp", widths=(8,), op=">", kind_a="Tile", kind_b="Symbol", expr_b="RLMIN")
     st.add_node(binop)
     st.add_edge(st.add_access("a"), None, binop, "_a", dace.Memlet("a[0:8]"))
     st.add_edge(binop, "_c", st.add_access("c"), None, dace.Memlet("c[0:8]"))
     from dace.libraries.tileops.nodes.tile_binop import ExpandTileBinopPure
+
     tasklet = ExpandTileBinopPure.expansion(binop, st, sdfg)
     code = tasklet.code.as_string
     assert "(bool)" not in code, f"comparison codegen emitted a (bool) cast: {code!r}"

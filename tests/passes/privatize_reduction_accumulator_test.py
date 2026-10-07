@@ -6,6 +6,7 @@ inside a parallel map) into WCR-on-scalar + init + writeback. The resulting
 SDFG has a transient ``Scalar`` accumulator the OMP codegen can name in a
 ``reduction(op:scalar)`` clause.
 """
+
 import numpy as np
 
 import dace
@@ -46,6 +47,7 @@ def _count_wcr_edges(sdfg: dace.SDFG):
             if desc is None:
                 continue
             from dace import data
+
             if isinstance(desc, data.Scalar):
                 wcr_scalar += 1
             else:
@@ -86,6 +88,7 @@ def test_array_slot_dot_product_privatized():
     priv_arrays = sorted(k for k in sdfg.arrays if k.startswith("_priv_"))
     assert len(priv_arrays) == 1, priv_arrays
     from dace import data
+
     assert isinstance(sdfg.arrays[priv_arrays[0]], data.Scalar)
 
     # Numerical correctness.
@@ -203,7 +206,8 @@ def test_targeted_helper_rewrites_single_wcr_edge():
     one specific edge.
     """
     from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
-        privatize_reduction_accumulator, )
+        privatize_reduction_accumulator,
+    )
 
     sdfg = _build_wcr_map(_array_slot_dot)
 
@@ -233,8 +237,9 @@ def test_targeted_helper_rewrites_single_wcr_edge():
     sdfg.validate()
     # The rewrite added a transient scalar; the original array's descriptor stays.
     new_arrays = set(sdfg.arrays.keys()) - arrays_before
-    assert any(n.startswith("_priv_")
-               for n in new_arrays), (f"expected a ``_priv_*`` scalar descriptor to appear; new arrays: {new_arrays}")
+    assert any(n.startswith("_priv_") for n in new_arrays), (
+        f"expected a ``_priv_*`` scalar descriptor to appear; new arrays: {new_arrays}"
+    )
 
     # Numerical sanity: re-run the SDFG and confirm the dot product still matches.
     n = 64
@@ -253,7 +258,8 @@ def test_targeted_helper_refuses_non_wcr_edge():
     non-matches.
     """
     from dace.transformation.passes.canonicalize.privatize_reduction_accumulator import (
-        privatize_reduction_accumulator, )
+        privatize_reduction_accumulator,
+    )
 
     sdfg = _build_wcr_map(_array_slot_dot)
     # Pick a MapExit and an OUT-edge of it -- not a WCR IN-edge, so the
@@ -340,10 +346,15 @@ def test_in_state_seed_is_written_before_the_reduction_map():
     s_init = state.add_access("s")
     state.add_edge(seed, "__o", s_init, None, dace.Memlet("s[0]"))
     s_out = state.add_write("s")
-    _, me, _ = state.add_mapped_tasklet("acc", {"i": "0:8"}, {"__a": dace.Memlet("a[i]")},
-                                        "__o = __a", {"__o": dace.Memlet("s[0]", wcr="lambda x, y: x + y")},
-                                        output_nodes={"s": s_out},
-                                        external_edges=True)
+    _, me, _ = state.add_mapped_tasklet(
+        "acc",
+        {"i": "0:8"},
+        {"__a": dace.Memlet("a[i]")},
+        "__o = __a",
+        {"__o": dace.Memlet("s[0]", wcr="lambda x, y: x + y")},
+        output_nodes={"s": s_out},
+        external_edges=True,
+    )
     state.add_nedge(s_init, me, dace.Memlet())
     double = state.add_tasklet("double", {"__s"}, {"__c"}, "__c = __s * 2.0")
     state.add_edge(s_out, None, double, "__s", dace.Memlet("s[0]"))

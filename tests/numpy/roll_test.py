@@ -6,6 +6,7 @@ sign is the whole risk in this replacement: getting it backwards yields an array
 shape, dtype and even the right multiset of values, so only a value comparison against numpy --
 and the structural assertion on the node's own ``shift`` property -- can catch it.
 """
+
 import numpy as np
 import pytest
 
@@ -143,10 +144,14 @@ def test_roll_of_a_strided_view_keeps_the_view_strides():
     sdfg = prog_roll_of_a_strided_view_keeps_the_view_strides.to_sdfg(simplify=False)
     assert any(isinstance(v, CShift) for v, _ in sdfg.all_nodes_recursive()), "roll must lower to CShift"
     sdfg.expand_library_nodes()
-    inner = next(v.sdfg for v, _ in sdfg.all_nodes_recursive()
-                 if isinstance(v, dace.sdfg.nodes.NestedSDFG) and "_x" in v.sdfg.arrays)
-    assert list(inner.arrays["_x"].strides) == [n, 2], \
-        f'_x must carry the view strides, got {list(inner.arrays["_x"].strides)}'
+    inner = next(
+        v.sdfg
+        for v, _ in sdfg.all_nodes_recursive()
+        if isinstance(v, dace.sdfg.nodes.NestedSDFG) and "_x" in v.sdfg.arrays
+    )
+    assert list(inner.arrays["_x"].strides) == [n, 2], (
+        f"_x must carry the view strides, got {list(inner.arrays['_x'].strides)}"
+    )
 
 
 def test_roll_of_a_strided_view_computes_the_right_values():
@@ -163,7 +168,7 @@ def test_roll_of_a_strided_view_computes_the_right_values():
     assert np.allclose(out, np.roll(a[:, 0:n:2], -1, axis=1)), f"{out[0]} != {np.roll(a[:, 0:n:2], -1, axis=1)[0]}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_roll_1d_forward()
     test_roll_1d_backward()
     test_roll_1d_zero_is_a_copy()

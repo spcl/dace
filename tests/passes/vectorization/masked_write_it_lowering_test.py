@@ -10,6 +10,7 @@ lowers ``IT`` to a masked ``TileScatter`` (the ``cond`` gates the store; inactiv
 are left untouched). This test pins both the structural rewrite and the end-to-end
 numerics against NumPy.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -35,7 +36,7 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 
 from tests.passes.vectorization.tile_assertions import assert_tiled
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 #: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
 #: would SIGILL-refuse on an AVX2-only or ARM host.
 HOST_ISA = detect_host_isa()
@@ -84,14 +85,16 @@ def test_masked_write_bare_if_becomes_it():
     survivors = _bare_if_tasklets(sdfg)
     assert not survivors, f"bare-if tasklets survived: {[t.code.as_string for t in survivors]}"
     it_tasklets = [
-        t for t, _ in sdfg.all_nodes_recursive()
+        t
+        for t, _ in sdfg.all_nodes_recursive()
         if isinstance(t, nd.Tasklet) and t.code.language == dace.dtypes.Language.Python and "IT(" in t.code.as_string
     ]
     assert it_tasklets, "expected an ``IT(...)`` conditional-write tasklet"
     for t in it_tasklets:
         # Write-only: the IT rewrite must NOT introduce an old-value self-read connector.
-        assert not any(c.endswith("_old") for c in t.in_connectors), \
+        assert not any(c.endswith("_old") for c in t.in_connectors), (
             f"IT tasklet must not read the destination's old value: {sorted(t.in_connectors)}"
+        )
         assert t.code.as_string.strip().startswith(next(iter(t.out_connectors)) + " = IT(")
     sdfg.validate()
 
@@ -112,11 +115,10 @@ def test_masked_const_write_matches_numpy(isa, remainder):
     scalar/masked tail) bit-exact vs NumPy, at a non-tile-divisible size."""
     sdfg = _base(masked_zero)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=isa,
-                        remainder_strategy=remainder,
-                        branch_mode=BranchMode.MERGE,
-                        validate_all=True)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,), target_isa=isa, remainder_strategy=remainder, branch_mode=BranchMode.MERGE, validate_all=True
+        )
+    ).apply_pass(sdfg, {})
     assert_tiled(sdfg, _base(masked_zero))
     rng = np.random.default_rng(0)
     Nval = 37
@@ -137,11 +139,10 @@ def test_masked_value_write_matches_numpy(isa, remainder):
     iteration mask on the remainder store."""
     sdfg = _base(masked_val)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ),
-                        target_isa=isa,
-                        remainder_strategy=remainder,
-                        branch_mode=BranchMode.MERGE,
-                        validate_all=True)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8,), target_isa=isa, remainder_strategy=remainder, branch_mode=BranchMode.MERGE, validate_all=True
+        )
+    ).apply_pass(sdfg, {})
     assert_tiled(sdfg, _base(masked_val))
     rng = np.random.default_rng(1)
     Nval = 37
@@ -173,7 +174,7 @@ def test_a_masked_overwrite_read_again_keeps_the_old_value_on_unwritten_lanes():
     """CloudSC's ``if zlfinalsum < zepsec: zacust = 0; zsolac = zsolac + zacust``: the accumulate reads the
     overwritten element, so the lanes the condition leaves unwritten must still see the old value."""
     sdfg = canonical_overwrite_then_accumulate()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=HOST_ISA, validate=True)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=HOST_ISA, validate=True)).apply_pass(sdfg, {})
     assert_tiled(sdfg, canonical_overwrite_then_accumulate())
     rng = np.random.default_rng(4)
     Nval = 37
@@ -187,22 +188,22 @@ def test_a_masked_overwrite_read_again_keeps_the_old_value_on_unwritten_lanes():
 
 def blend_over_an_element_the_body_already_updated() -> dace.SDFG:
     """``out[i] = out[i] + 2 x[i]`` into an access node, then ``out[i] = ITE(c[i] < -0.5, 3 x[i], <that node>)``."""
-    sdfg = dace.SDFG('blend_over_an_updated_element')
-    for name in ('c', 'x', 'out'):
+    sdfg = dace.SDFG("blend_over_an_updated_element")
+    for name in ("c", "x", "out"):
         sdfg.add_array(name, [N], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i='0:N'))
-    x = state.add_read('x')
-    first = state.add_tasklet('first', {'a', 'o'}, {'r'}, 'r = o + a * 2.0')
-    state.add_memlet_path(x, me, first, dst_conn='a', memlet=dace.Memlet('x[i]'))
-    state.add_memlet_path(state.add_read('out'), me, first, dst_conn='o', memlet=dace.Memlet('out[i]'))
-    updated = state.add_access('out')
-    state.add_edge(first, 'r', updated, None, dace.Memlet('out[i]'))
-    blend = state.add_tasklet('blend', {'_c', '_t', '_e'}, {'_o'}, '_o = ITE(_c, _t, _e)')
-    state.add_memlet_path(state.add_read('c'), me, blend, dst_conn='_c', memlet=dace.Memlet('c[i]'))
-    state.add_memlet_path(x, me, blend, dst_conn='_t', memlet=dace.Memlet('x[i]'))
-    state.add_edge(updated, None, blend, '_e', dace.Memlet('out[i]'))
-    state.add_memlet_path(blend, mx, state.add_write('out'), src_conn='_o', memlet=dace.Memlet('out[i]'))
+    me, mx = state.add_map("m", dict(i="0:N"))
+    x = state.add_read("x")
+    first = state.add_tasklet("first", {"a", "o"}, {"r"}, "r = o + a * 2.0")
+    state.add_memlet_path(x, me, first, dst_conn="a", memlet=dace.Memlet("x[i]"))
+    state.add_memlet_path(state.add_read("out"), me, first, dst_conn="o", memlet=dace.Memlet("out[i]"))
+    updated = state.add_access("out")
+    state.add_edge(first, "r", updated, None, dace.Memlet("out[i]"))
+    blend = state.add_tasklet("blend", {"_c", "_t", "_e"}, {"_o"}, "_o = ITE(_c, _t, _e)")
+    state.add_memlet_path(state.add_read("c"), me, blend, dst_conn="_c", memlet=dace.Memlet("c[i]"))
+    state.add_memlet_path(x, me, blend, dst_conn="_t", memlet=dace.Memlet("x[i]"))
+    state.add_edge(updated, None, blend, "_e", dace.Memlet("out[i]"))
+    state.add_memlet_path(blend, mx, state.add_write("out"), src_conn="_o", memlet=dace.Memlet("out[i]"))
     sdfg.validate()
     return sdfg
 
@@ -215,24 +216,24 @@ def test_a_blend_over_an_element_the_body_already_updated_stays_a_blend():
     NormalizeMaskedWriteTasklets().apply_pass(sdfg, {})
     sdfg.validate()
 
-    blend = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet) and n.label == 'blend')
-    assert 'ITE(' in blend.code.as_string, blend.code.as_string
+    blend = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet) and n.label == "blend")
+    assert "ITE(" in blend.code.as_string, blend.code.as_string
     state = next(s for s in sdfg.states() if blend in s.nodes())
-    assert [e.dst_conn for e in state.in_edges(blend) if e.dst_conn == '_e'] == ['_e']
+    assert [e.dst_conn for e in state.in_edges(blend) if e.dst_conn == "_e"] == ["_e"]
 
 
 def blend_on_a_symbol_condition() -> dace.SDFG:
     """``out[i] = ITE(flag, x[i], out[i])`` with ``flag`` a bool symbol, CloudSC's ``llfall_index_2_0`` select."""
-    sdfg = dace.SDFG('blend_on_a_symbol_condition')
-    for name in ('x', 'out'):
+    sdfg = dace.SDFG("blend_on_a_symbol_condition")
+    for name in ("x", "out"):
         sdfg.add_array(name, [N], dace.float64)
-    sdfg.add_symbol('flag', dace.bool_)
+    sdfg.add_symbol("flag", dace.bool_)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i='0:N'))
-    blend = state.add_tasklet('blend', {'_t', '_e'}, {'_o'}, '_o = ITE(flag, _t, _e)')
-    state.add_memlet_path(state.add_read('x'), me, blend, dst_conn='_t', memlet=dace.Memlet('x[i]'))
-    state.add_memlet_path(state.add_read('out'), me, blend, dst_conn='_e', memlet=dace.Memlet('out[i]'))
-    state.add_memlet_path(blend, mx, state.add_write('out'), src_conn='_o', memlet=dace.Memlet('out[i]'))
+    me, mx = state.add_map("m", dict(i="0:N"))
+    blend = state.add_tasklet("blend", {"_t", "_e"}, {"_o"}, "_o = ITE(flag, _t, _e)")
+    state.add_memlet_path(state.add_read("x"), me, blend, dst_conn="_t", memlet=dace.Memlet("x[i]"))
+    state.add_memlet_path(state.add_read("out"), me, blend, dst_conn="_e", memlet=dace.Memlet("out[i]"))
+    state.add_memlet_path(blend, mx, state.add_write("out"), src_conn="_o", memlet=dace.Memlet("out[i]"))
     sdfg.validate()
     return sdfg
 
@@ -244,15 +245,15 @@ def test_a_blend_on_a_symbol_condition_stays_a_blend():
     NormalizeMaskedWriteTasklets().apply_pass(sdfg, {})
     sdfg.validate()
 
-    blend = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet) and n.label == 'blend')
-    assert blend.code.as_string.strip() == '_o = ITE(flag, _t, _e)', blend.code.as_string
+    blend = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet) and n.label == "blend")
+    assert blend.code.as_string.strip() == "_o = ITE(flag, _t, _e)", blend.code.as_string
 
 
-@pytest.mark.parametrize('flag', [False, True])
+@pytest.mark.parametrize("flag", [False, True])
 def test_a_blend_on_a_symbol_condition_tiles_and_matches_numpy(flag):
     """The symbol-condition blend tiles (``TileITE`` with an inline predicate) and keeps the NumPy result."""
     sdfg = blend_on_a_symbol_condition()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=HOST_ISA, validate=True)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=HOST_ISA, validate=True)).apply_pass(sdfg, {})
     assert_tiled(sdfg, blend_on_a_symbol_condition())
     rng = np.random.default_rng(5)
     Nval = 37
@@ -262,5 +263,5 @@ def test_a_blend_on_a_symbol_condition_tiles_and_matches_numpy(flag):
     assert np.array_equal(out, expected), f"{out[:6]} != {expected[:6]}"
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-q', '-p', 'no:cacheprovider']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))

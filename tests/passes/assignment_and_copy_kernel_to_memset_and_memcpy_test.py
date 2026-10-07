@@ -4,6 +4,7 @@
 Verifies the lifting of in-map memset / element-wise-copy patterns to ``FillLibraryNode``
 and ``CopyLibraryNode`` instances, across pure / CPU / CUDA expansion variants.
 """
+
 import functools
 import dace
 from dace.sdfg.dealias import convert_legacy_nested_sdfgs
@@ -13,7 +14,9 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.properties import CodeBlock
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import AssignmentAndCopyKernelToMemsetAndMemcpy
+from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
+    AssignmentAndCopyKernelToMemsetAndMemcpy,
+)
 from dace.transformation.passes.canonicalize.fold_scalar_read_copies import FoldScalarReadCopies
 
 # Global dimension size for all test arrays
@@ -24,10 +27,15 @@ EXPANSION_TYPES = ["pure", "CPU", pytest.param("CUDA", marks=pytest.mark.gpu)]
 # runtime calls and cannot execute from device code, so nesting a memset/memcpy library node
 # inside a GPU kernel has no valid CUDA expansion.
 EXPANSION_TYPES_CPU_ONLY = [
-    "pure", "CPU",
-    pytest.param("CUDA",
-                 marks=pytest.mark.skip(reason="nested memset/memcpy inside a GPU kernel is unsupported: "
-                                        "cudaMemsetAsync/cudaMemcpyAsync cannot be called from device code"))
+    "pure",
+    "CPU",
+    pytest.param(
+        "CUDA",
+        marks=pytest.mark.skip(
+            reason="nested memset/memcpy inside a GPU kernel is unsupported: "
+            "cudaMemsetAsync/cudaMemcpyAsync cannot be called from device code"
+        ),
+    ),
 ]
 
 
@@ -35,6 +43,7 @@ EXPANSION_TYPES_CPU_ONLY = [
 def xp(expansion_type):
     if expansion_type == "CUDA":
         import cupy
+
         return cupy
     return numpy
 
@@ -56,11 +65,10 @@ def _get_sdfg(
     map_entry, map_exit = state.add_map(
         name="memcpy_memset_map",
         ndrange={
-            "i":
-            dace.subsets.Range([(0, DIM_SIZE - 1,
-                                 1)]) if not subset_in_first_dim else dace.subsets.Range([(2, DIM_SIZE - 1, 1)]),
-            "j":
-            dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
+            "i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)])
+            if not subset_in_first_dim
+            else dace.subsets.Range([(2, DIM_SIZE - 1, 1)]),
+            "j": dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
         },
     )
 
@@ -103,8 +111,11 @@ def _get_sdfg(
                 None,
                 map_entry,
                 f"IN_{in_name}",
-                dace.memlet.Memlet(f"{in_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]"
-                                   if subset_in_first_dim else f"{in_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
+                dace.memlet.Memlet(
+                    f"{in_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]"
+                    if subset_in_first_dim
+                    else f"{in_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"
+                ),
             )
             map_entry.add_in_connector(f"IN_{in_name}")
             map_entry.add_out_connector(f"OUT_{in_name}")
@@ -179,8 +190,11 @@ def _get_sdfg(
             f"OUT_{out_name}",
             state.add_access(out_name),
             None,
-            dace.memlet.Memlet(f"{out_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]"
-                               if subset_in_first_dim else f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
+            dace.memlet.Memlet(
+                f"{out_name}[2:{DIM_SIZE}, 0:{DIM_SIZE}]"
+                if subset_in_first_dim
+                else f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"
+            ),
         )
         map_exit.add_in_connector(f"IN_{out_name}")
         map_exit.add_out_connector(f"OUT_{out_name}")
@@ -271,27 +285,34 @@ def _expand_and_validate(sdfg: dace.SDFG, expansion_type: str):
 
 
 @dace.program
-def double_memset_with_dynamic_connectors(kfdia: dace.int32, kidia: dace.int32, llindex3: dace.float64[D, D],
-                                          zsinksum: dace.float64[D]):
-    for i, j in dace.map[0:D:1, kidia - 1:kfdia:]:
+def double_memset_with_dynamic_connectors(
+    kfdia: dace.int32, kidia: dace.int32, llindex3: dace.float64[D, D], zsinksum: dace.float64[D]
+):
+    for i, j in dace.map[0:D:1, kidia - 1 : kfdia :]:
         llindex3[i, j] = 0.0
-    for j in dace.map[kidia - 1:kfdia:1]:
+    for j in dace.map[kidia - 1 : kfdia : 1]:
         zsinksum[j] = 0.0
 
 
 @dace.program
-def double_memcpy_with_dynamic_connectors(kfdia: dace.int32, kidia: dace.int32, llindex3_in: dace.float64[D, D],
-                                          zsinksum_in: dace.float64[D], llindex3_out: dace.float64[D, D],
-                                          zsinksum_out: dace.float64[D]):
-    for i, j in dace.map[0:D:1, kidia - 1:kfdia:]:
+def double_memcpy_with_dynamic_connectors(
+    kfdia: dace.int32,
+    kidia: dace.int32,
+    llindex3_in: dace.float64[D, D],
+    zsinksum_in: dace.float64[D],
+    llindex3_out: dace.float64[D, D],
+    zsinksum_out: dace.float64[D],
+):
+    for i, j in dace.map[0:D:1, kidia - 1 : kfdia :]:
         llindex3_out[i, j] = llindex3_in[i, j]
-    for j in dace.map[kidia - 1:kfdia:1]:
+    for j in dace.map[kidia - 1 : kfdia : 1]:
         zsinksum_out[j] = zsinksum_in[j]
 
 
 @dace.program
-def nested_memset_maps_with_dynamic_connectors(kidia: dace.int64, kfdia: dace.int64, llindex: dace.float64[5, 5, D],
-                                               zsinksum: dace.float64[5, D]):
+def nested_memset_maps_with_dynamic_connectors(
+    kidia: dace.int64, kfdia: dace.int64, llindex: dace.float64[5, 5, D], zsinksum: dace.float64[5, D]
+):
     for i in dace.map[0:5]:
         sym_kidia = kidia
         sym_kfdia = kfdia
@@ -302,9 +323,14 @@ def nested_memset_maps_with_dynamic_connectors(kidia: dace.int64, kfdia: dace.in
 
 
 @dace.program
-def nested_memcpy_maps_with_dynamic_connectors(kidia: dace.int64, kfdia: dace.int64, llindex_in: dace.float64[5, 5, D],
-                                               zsinksum_in: dace.float64[5, D], llindex_out: dace.float64[5, 5, D],
-                                               zsinksum_out: dace.float64[5, D]):
+def nested_memcpy_maps_with_dynamic_connectors(
+    kidia: dace.int64,
+    kfdia: dace.int64,
+    llindex_in: dace.float64[5, 5, D],
+    zsinksum_in: dace.float64[5, D],
+    llindex_out: dace.float64[5, 5, D],
+    zsinksum_out: dace.float64[5, D],
+):
     for i in dace.map[0:5]:
         sym_kidia = kidia
         sym_kfdia = kfdia
@@ -315,8 +341,9 @@ def nested_memcpy_maps_with_dynamic_connectors(kidia: dace.int64, kfdia: dace.in
 
 
 @dace.program
-def nested_memcpy_maps_with_dimension_change(kidia: dace.int64, kfdia: dace.int64, zcovptot: dace.float64[D],
-                                             pcovptot: dace.float64[D, D]):
+def nested_memcpy_maps_with_dimension_change(
+    kidia: dace.int64, kfdia: dace.int64, zcovptot: dace.float64[D], pcovptot: dace.float64[D, D]
+):
     for i in range(D):
         sym_kidia = kidia
         sym_kfdia = kfdia
@@ -378,6 +405,7 @@ def test_nested_memset_maps_with_dynamic_connectors(expansion_type, xp):
     _set_lib_node_type(sdfg, expansion_type)
     sdfg.expand_library_nodes(recursive=True)
     from dace.sdfg import infer_types
+
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.validate()
     sdfg(llindex=A_IN, zsinksum=B_IN, kidia=0, kfdia=DIM_SIZE, D=DIM_SIZE)
@@ -458,13 +486,9 @@ def test_double_memcpy_with_dynamic_connectors(expansion_type, xp):
     sdfg.expand_library_nodes(recursive=True)
     sdfg.validate()
     _expand_and_validate(sdfg, expansion_type)
-    sdfg(llindex3_in=A_IN,
-         zsinksum_in=B_IN,
-         llindex3_out=A_OUT,
-         zsinksum_out=B_OUT,
-         D=DIM_SIZE,
-         kfdia=1,
-         kidia=DIM_SIZE)
+    sdfg(
+        llindex3_in=A_IN, zsinksum_in=B_IN, llindex3_out=A_OUT, zsinksum_out=B_OUT, D=DIM_SIZE, kfdia=1, kidia=DIM_SIZE
+    )
 
     assert xp.all(B_IN == B_OUT)
     assert xp.all(A_IN == A_OUT)
@@ -622,8 +646,9 @@ def test_mixed_overapprox(expansion_type, xp):
     assert xp.allclose(A_IN[2:10, 0:10], A_OUT[2:10, 0:10])
 
 
-def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_range: bool = True,
-                                                                 fortran_strides: bool = True):
+def _get_nested_memcpy_with_dimension_change_and_fortran_strides(
+    full_inner_range: bool = True, fortran_strides: bool = True
+):
     sdfg = dace.SDFG("nested_memcpy_with_dimension_change_and_fortran_strides")
     inner_sdfg = dace.SDFG(name="inner_sdfg")
 
@@ -636,15 +661,17 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
     for sd in [sdfg, inner_sdfg]:
         for scl_name in scl_names:
             sd.add_scalar(name=scl_name, dtype=dace.int64)
-        for arr_name, shape, strides in [("zcovptot", (D, ), (1, )),
-                                         ("pcovptot", (D, D), (1, D) if fortran_strides else (D, 1))]:
+        for arr_name, shape, strides in [
+            ("zcovptot", (D,), (1,)),
+            ("pcovptot", (D, D), (1, D) if fortran_strides else (D, 1)),
+        ]:
             if not full_inner_range and arr_name == "pcovptot" and sd == inner_sdfg:
                 sd.add_array(
                     name=arr_name,
-                    shape=(D, ),
+                    shape=(D,),
                     dtype=dace.float64,
                     transient=False,
-                    strides=(1, ) if fortran_strides else (D, ),
+                    strides=(1,) if fortran_strides else (D,),
                 )
             else:
                 sd.add_array(
@@ -655,21 +682,20 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
                     strides=strides,
                 )
 
-    for_cfg = LoopRegion(label="for1",
-                         condition_expr=CodeBlock("_for_it_0 < D"),
-                         loop_var="_for_it_0",
-                         initialize_expr=CodeBlock("_for_it_0 = 0"),
-                         update_expr=CodeBlock("_for_it_0 = _for_it_0 + 1"))
+    for_cfg = LoopRegion(
+        label="for1",
+        condition_expr=CodeBlock("_for_it_0 < D"),
+        loop_var="_for_it_0",
+        initialize_expr=CodeBlock("_for_it_0 = 0"),
+        update_expr=CodeBlock("_for_it_0 = _for_it_0 + 1"),
+    )
     sdfg.add_node(for_cfg, True)
     inner_state = for_cfg.add_state(label="s1", is_start_block=True)
     nsdfg_node = inner_state.add_nested_sdfg(
         sdfg=inner_sdfg,
         inputs={"kfdia", "kidia", "zcovptot"},
         outputs={"pcovptot"},
-        symbol_mapping={
-            "_for_it_0": "_for_it_0",
-            "D": "D"
-        },
+        symbol_mapping={"_for_it_0": "_for_it_0", "D": "D"},
         name="inner_sdfg_node",
     )
     assert "_for_it_0" in inner_sdfg.symbols
@@ -680,13 +706,22 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
     inner_inner_state = inner_sdfg.add_state(label="s2", is_start_block=True)
 
     for in_name in {"kfdia", "kidia", "zcovptot"}:
-        inner_state.add_edge(inner_state.add_access(in_name), None, nsdfg_node, in_name,
-                             dace.memlet.Memlet.from_array(in_name, sdfg.arrays[in_name]))
+        inner_state.add_edge(
+            inner_state.add_access(in_name),
+            None,
+            nsdfg_node,
+            in_name,
+            dace.memlet.Memlet.from_array(in_name, sdfg.arrays[in_name]),
+        )
 
     for out_name in {"pcovptot"}:
         inner_state.add_edge(
-            nsdfg_node, out_name, inner_state.add_access(out_name), None,
-            dace.memlet.Memlet("pcovptot[0:D, _for_it_0]" if not full_inner_range else "pcovptot[0:D, 0:D]"))
+            nsdfg_node,
+            out_name,
+            inner_state.add_access(out_name),
+            None,
+            dace.memlet.Memlet("pcovptot[0:D, _for_it_0]" if not full_inner_range else "pcovptot[0:D, 0:D]"),
+        )
 
     inner_inner_state.add_mapped_tasklet(
         name="cpy",
@@ -711,17 +746,19 @@ def _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_rang
     [(True, True, 1), (False, True, 1), (True, False, 0), (False, False, 0)],
 )
 @temporarily_disable_autoopt_and_serialization
-def test_nested_memcpy_with_dimension_change_and_strides(expansion_type, xp, full_inner_range, fortran_strides,
-                                                         expected_memcpy):
-    sdfg = _get_nested_memcpy_with_dimension_change_and_fortran_strides(full_inner_range=full_inner_range,
-                                                                        fortran_strides=fortran_strides)
+def test_nested_memcpy_with_dimension_change_and_strides(
+    expansion_type, xp, full_inner_range, fortran_strides, expected_memcpy
+):
+    sdfg = _get_nested_memcpy_with_dimension_change_and_fortran_strides(
+        full_inner_range=full_inner_range, fortran_strides=fortran_strides
+    )
     _prepare_sdfg(sdfg, expansion_type, f"full_inner_range_{full_inner_range}_fortran_strides_{fortran_strides}")
 
     AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == expected_memcpy
     assert _get_num_memset_library_nodes(sdfg) == 0
 
-    A_IN = xp.fromfunction(lambda x: x, (DIM_SIZE, ), dtype=xp.float64).copy()
+    A_IN = xp.fromfunction(lambda x: x, (DIM_SIZE,), dtype=xp.float64).copy()
     B_IN = xp.fromfunction(lambda x, y: x * DIM_SIZE + y, (DIM_SIZE, DIM_SIZE), dtype=xp.float64).copy()
     # The array's memory order has to be the one pcovptot declares; a C array bound to the
     # Fortran-strided descriptor is read transposed, which the call now refuses.
@@ -751,7 +788,8 @@ def test_transpose_map_is_not_lifted_to_memcpy():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 0, (
         "Transpose pattern (in subset [i, j], out subset [j, i]) was incorrectly "
-        "lifted to a CopyLibraryNode -- the pass treats permutation as pure copy.")
+        "lifted to a CopyLibraryNode -- the pass treats permutation as pure copy."
+    )
 
 
 def test_inkernel_memset_is_not_lifted():
@@ -771,7 +809,8 @@ def test_inkernel_memset_is_not_lifted():
     assert _get_num_memset_library_nodes(sdfg) == 0, (
         "An in-kernel memset (Sequential map inside GPU_Device) was lifted to a "
         "FillLibraryNode -- but cudaMemsetAsync is host-only and cannot run from "
-        "device code. The pass should skip maps nested in any GPU scope.")
+        "device code. The pass should skip maps nested in any GPU scope."
+    )
 
 
 def test_single_element_memset_is_not_lifted():
@@ -787,7 +826,8 @@ def test_single_element_memset_is_not_lifted():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 0, (
         "A single-element memset was lifted to a FillLibraryNode; the pure "
-        "expansion would collapse to an empty map and crash propagation.")
+        "expansion would collapse to an empty map and crash propagation."
+    )
 
 
 def test_single_element_memcpy_is_not_lifted():
@@ -803,7 +843,8 @@ def test_single_element_memcpy_is_not_lifted():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 0, (
         "A single-element memcpy was lifted to a CopyLibraryNode; the pure "
-        "expansion would collapse to an empty map and crash propagation.")
+        "expansion would collapse to an empty map and crash propagation."
+    )
 
 
 def test_shared_passthrough_connector_blocks_lift():
@@ -833,7 +874,8 @@ def test_shared_passthrough_connector_blocks_lift():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memset_library_nodes(sdfg) == 0, (
         "Memset over a shared MapExit passthrough connector was lifted to a "
-        "FillLibraryNode; this severs the compute tasklet's data path.")
+        "FillLibraryNode; this severs the compute tasklet's data path."
+    )
     # SDFG should still be valid (no orphan connectors / edges left behind).
     sdfg.validate()
 
@@ -843,29 +885,29 @@ def test_lift_drops_dynamic_range_connector_with_arbitrary_name():
     # (not the auto-generated ``__map_*`` prefix). The libnode doesn't iterate
     # so the dynamic input must not be propagated; otherwise the libnode ends
     # up with a dangling connector that codegen later trips on.
-    Ub = dace.symbol('Ub')
-    sdfg = dace.SDFG('arbitrary_dyn_conn')
-    sdfg.add_array('src', [DIM_SIZE, DIM_SIZE], dace.float64)
-    sdfg.add_array('dst', [DIM_SIZE, DIM_SIZE], dace.float64)
-    sdfg.add_scalar('upper_bound', dace.int32)
-    state = sdfg.add_state('s')
-    src = state.add_access('src')
-    dst = state.add_access('dst')
-    ub = state.add_access('upper_bound')
+    Ub = dace.symbol("Ub")
+    sdfg = dace.SDFG("arbitrary_dyn_conn")
+    sdfg.add_array("src", [DIM_SIZE, DIM_SIZE], dace.float64)
+    sdfg.add_array("dst", [DIM_SIZE, DIM_SIZE], dace.float64)
+    sdfg.add_scalar("upper_bound", dace.int32)
+    state = sdfg.add_state("s")
+    src = state.add_access("src")
+    dst = state.add_access("dst")
+    ub = state.add_access("upper_bound")
 
-    me, mx = state.add_map('cpy_map', {'i': '0:Ub', 'j': '0:Ub'})
-    me.add_in_connector('Ub_in')
-    state.add_edge(ub, None, me, 'Ub_in', dace.Memlet('upper_bound[0]'))
+    me, mx = state.add_map("cpy_map", {"i": "0:Ub", "j": "0:Ub"})
+    me.add_in_connector("Ub_in")
+    state.add_edge(ub, None, me, "Ub_in", dace.Memlet("upper_bound[0]"))
 
-    t = state.add_tasklet('copy_t', {'_in'}, {'_out'}, '_out = _in')
-    state.add_memlet_path(src, me, t, dst_conn='_in', memlet=dace.Memlet('src[i, j]'))
-    state.add_memlet_path(t, mx, dst, src_conn='_out', memlet=dace.Memlet('dst[i, j]'))
+    t = state.add_tasklet("copy_t", {"_in"}, {"_out"}, "_out = _in")
+    state.add_memlet_path(src, me, t, dst_conn="_in", memlet=dace.Memlet("src[i, j]"))
+    state.add_memlet_path(t, mx, dst, src_conn="_out", memlet=dace.Memlet("dst[i, j]"))
 
     AssignmentAndCopyKernelToMemsetAndMemcpy(overapproximate_first_dimensions=True).apply_pass(sdfg, {})
     sdfg.validate()
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, CopyLibraryNode):
-            assert 'Ub_in' not in n.in_connectors
+            assert "Ub_in" not in n.in_connectors
 
 
 # A dynamic map-range bound (a scalar fed into the map entry) becomes a symbol
@@ -879,7 +921,7 @@ def test_lift_drops_dynamic_range_connector_with_arbitrary_name():
 
 @dace.program
 def _memset_1d_dynamic_bound(kfdia: dace.int32, kidia: dace.int32, zsinksum: dace.float64[D]):
-    for j in dace.map[kidia - 1:kfdia:1]:
+    for j in dace.map[kidia - 1 : kfdia : 1]:
         zsinksum[j] = 0.0
 
 
@@ -984,15 +1026,18 @@ def _sdfg_with_shared_input_connector() -> dace.SDFG:
     for name in ("A_IN", "A_OUT", "C_OUT"):
         sdfg.add_array(name=name, shape=(DIM_SIZE, DIM_SIZE), dtype=dace.float64, transient=False)
 
-    map_entry, map_exit = state.add_map(name="shared_map",
-                                        ndrange={
-                                            "i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
-                                            "j": dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
-                                        })
+    map_entry, map_exit = state.add_map(
+        name="shared_map",
+        ndrange={
+            "i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
+            "j": dace.subsets.Range([(0, DIM_SIZE - 1, 1)]),
+        },
+    )
     map_entry.add_in_connector("IN_1")
     map_entry.add_out_connector("OUT_1")
-    state.add_edge(state.add_access("A_IN"), None, map_entry, "IN_1",
-                   dace.memlet.Memlet(f"A_IN[0:{DIM_SIZE}, 0:{DIM_SIZE}]"))
+    state.add_edge(
+        state.add_access("A_IN"), None, map_entry, "IN_1", dace.memlet.Memlet(f"A_IN[0:{DIM_SIZE}, 0:{DIM_SIZE}]")
+    )
 
     # Path 1: the element-wise copy the pass lifts to a CopyLibraryNode.
     copy_tasklet = state.add_tasklet(name="copy", inputs={"_in"}, outputs={"_out"}, code="_out = _in")
@@ -1006,8 +1051,13 @@ def _sdfg_with_shared_input_connector() -> dace.SDFG:
         map_exit.add_in_connector(f"IN_{conn}")
         map_exit.add_out_connector(f"OUT_{conn}")
         state.add_edge(tasklet, "_out", map_exit, f"IN_{conn}", dace.memlet.Memlet(f"{out_name}[i, j]"))
-        state.add_edge(map_exit, f"OUT_{conn}", state.add_access(out_name), None,
-                       dace.memlet.Memlet(f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"))
+        state.add_edge(
+            map_exit,
+            f"OUT_{conn}",
+            state.add_access(out_name),
+            None,
+            dace.memlet.Memlet(f"{out_name}[0:{DIM_SIZE}, 0:{DIM_SIZE}]"),
+        )
     sdfg.validate()
     return sdfg
 
@@ -1033,8 +1083,12 @@ def test_lifting_a_copy_keeps_a_connector_its_other_edge_still_uses():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
     assert _get_num_memcpy_library_nodes(sdfg) == 0, "a shared entry passthrough must block the lift"
 
-    orphaned = [(str(e.src), e.src_conn, str(e.dst)) for st in sdfg.states() for e in st.edges()
-                if e.src_conn is not None and e.src_conn not in e.src.out_connectors]
+    orphaned = [
+        (str(e.src), e.src_conn, str(e.dst))
+        for st in sdfg.states()
+        for e in st.edges()
+        if e.src_conn is not None and e.src_conn not in e.src.out_connectors
+    ]
     assert not orphaned, f"edges left on a deleted out-connector: {orphaned}"
     sdfg.validate()
 
@@ -1087,7 +1141,7 @@ def _sdfg_with_a_sibling_ordering_edge(ordered: bool) -> dace.SDFG:
     sdfg = dace.SDFG(f"sibling_ordering_{'dep' if ordered else 'free'}")
     state = sdfg.add_state("body", is_start_block=True)
     for name in ("A_OUT", "B_IN", "B_OUT"):
-        sdfg.add_array(name=name, shape=(DIM_SIZE, ), dtype=dace.float64, transient=False)
+        sdfg.add_array(name=name, shape=(DIM_SIZE,), dtype=dace.float64, transient=False)
 
     map_entry, map_exit = state.add_map(name="body_map", ndrange={"i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)])})
 
@@ -1109,8 +1163,13 @@ def _sdfg_with_a_sibling_ordering_edge(ordered: bool) -> dace.SDFG:
         map_exit.add_in_connector(f"IN_{out_name}")
         map_exit.add_out_connector(f"OUT_{out_name}")
         state.add_edge(tasklet, "_out", map_exit, f"IN_{out_name}", dace.memlet.Memlet(f"{out_name}[i]"))
-        state.add_edge(map_exit, f"OUT_{out_name}", state.add_access(out_name), None,
-                       dace.memlet.Memlet(f"{out_name}[0:{DIM_SIZE}]"))
+        state.add_edge(
+            map_exit,
+            f"OUT_{out_name}",
+            state.add_access(out_name),
+            None,
+            dace.memlet.Memlet(f"{out_name}[0:{DIM_SIZE}]"),
+        )
     sdfg.validate()
     return sdfg
 
@@ -1133,8 +1192,9 @@ def test_a_body_ordering_edge_blocks_the_lift():
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
 
     assert _get_num_memset_library_nodes(sdfg) == 0, "a body ordering edge must block the lift"
-    assert [(e.src.label, e.dst.label) for e in state.edges()
-            if e.data.is_empty() and e.src is fill] == [("fill", "bump")]
+    assert [(e.src.label, e.dst.label) for e in state.edges() if e.data.is_empty() and e.src is fill] == [
+        ("fill", "bump")
+    ]
     sdfg.validate()
 
     A_OUT = numpy.ones(DIM_SIZE)
@@ -1169,16 +1229,18 @@ def sdfg_with_independent_memset_maps(map_count: int) -> dace.SDFG:
     state = sdfg.add_state("body", is_start_block=True)
     for k in range(map_count):
         name = f"A{k}"
-        sdfg.add_array(name=name, shape=(DIM_SIZE, ), dtype=dace.float64, transient=False)
-        map_entry, map_exit = state.add_map(name=f"zero_{name}",
-                                            ndrange={"i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)])})
+        sdfg.add_array(name=name, shape=(DIM_SIZE,), dtype=dace.float64, transient=False)
+        map_entry, map_exit = state.add_map(
+            name=f"zero_{name}", ndrange={"i": dace.subsets.Range([(0, DIM_SIZE - 1, 1)])}
+        )
         fill = state.add_tasklet(name=f"fill_{name}", inputs={}, outputs={"out": None}, code="out = 0.0")
         state.add_edge(map_entry, None, fill, None, dace.memlet.Memlet(None))
         map_exit.add_in_connector(f"IN_{name}")
         map_exit.add_out_connector(f"OUT_{name}")
         state.add_edge(fill, "out", map_exit, f"IN_{name}", dace.memlet.Memlet(f"{name}[i]"))
-        state.add_edge(map_exit, f"OUT_{name}", state.add_access(name), None,
-                       dace.memlet.Memlet(f"{name}[0:{DIM_SIZE}]"))
+        state.add_edge(
+            map_exit, f"OUT_{name}", state.add_access(name), None, dace.memlet.Memlet(f"{name}[0:{DIM_SIZE}]")
+        )
     sdfg.validate()
     return sdfg
 
@@ -1193,7 +1255,8 @@ def test_lifted_memsets_follow_map_order_not_memory_addresses():
         state = sdfg.states()[0]
         AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
         orders.append(
-            [state.out_edges(node)[0].dst.data for node in state.nodes() if isinstance(node, FillLibraryNode)])
+            [state.out_edges(node)[0].dst.data for node in state.nodes() if isinstance(node, FillLibraryNode)]
+        )
     assert orders == [[f"A{k}" for k in range(8)]] * 12, orders
 
 
@@ -1205,12 +1268,14 @@ def test_a_copy_tasklet_writing_through_a_wcr_is_not_lifted_as_a_copy():
     sdfg.add_array("a", [n], dace.float64)
     sdfg.add_array("c", [n], dace.float64)
     state = sdfg.add_state()
-    state.add_mapped_tasklet("scale",
-                             dict(i=f"0:{n}"),
-                             dict(__in=dace.Memlet("c[i]")),
-                             "__out = __in",
-                             dict(__out=dace.Memlet("a[i]", wcr="lambda x, y: x * y")),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "scale",
+        dict(i=f"0:{n}"),
+        dict(__in=dace.Memlet("c[i]")),
+        "__out = __in",
+        dict(__out=dace.Memlet("a[i]", wcr="lambda x, y: x * y")),
+        external_edges=True,
+    )
     sdfg.validate()
 
     AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})

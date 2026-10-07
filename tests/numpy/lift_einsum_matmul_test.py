@@ -12,6 +12,7 @@ cheap pre-check for the heavier numerical corpus sweep. Exercises the runtime
 scalar coefficient path (gemm/2mm ``alpha`` -> the Einsum ``_alpha`` connector)
 and the fresh-accumulator beta path (3mm).
 """
+
 import numpy as np
 import pytest
 
@@ -23,18 +24,19 @@ from dace.transformation.passes.vectorization.enums import ISA, RemainderStrateg
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
-M = dace.symbol('M')
-K = dace.symbol('K')
-N = dace.symbol('N')
-L = dace.symbol('L')
-P = dace.symbol('P')
-NB = dace.symbol('NB')
+M = dace.symbol("M")
+K = dace.symbol("K")
+N = dace.symbol("N")
+L = dace.symbol("L")
+P = dace.symbol("P")
+NB = dace.symbol("NB")
 
 
 # C = alpha*A@B + beta*C  (alpha/beta are runtime data scalars)
 @dace.program
-def gemm(C: dace.float64[M, N], A: dace.float64[M, K], B: dace.float64[K, N], alpha: dace.float64[1],
-         beta: dace.float64[1]):
+def gemm(
+    C: dace.float64[M, N], A: dace.float64[M, K], B: dace.float64[K, N], alpha: dace.float64[1], beta: dace.float64[1]
+):
 
     @dace.map
     def mult_c(i: _[0:M], j: _[0:N]):
@@ -54,8 +56,14 @@ def gemm(C: dace.float64[M, N], A: dace.float64[M, K], B: dace.float64[K, N], al
 
 # D = alpha*(A@B)@C + beta*D
 @dace.program
-def k2mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[N, L], D: dace.float64[M, L],
-         alpha: dace.float64[1], beta: dace.float64[1]):
+def k2mm(
+    A: dace.float64[M, K],
+    B: dace.float64[K, N],
+    C: dace.float64[N, L],
+    D: dace.float64[M, L],
+    alpha: dace.float64[1],
+    beta: dace.float64[1],
+):
     tmp = dace.define_local([M, N], dtype=dace.float64)
 
     @dace.map
@@ -144,8 +152,9 @@ def gemv_acc(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[M]):
 
 # G = (A@B)@(C@D)  (no alpha/beta; all fresh accumulators -> beta=0)
 @dace.program
-def k3mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[N, P], D: dace.float64[P, L],
-         G: dace.float64[M, L]):
+def k3mm(
+    A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[N, P], D: dace.float64[P, L], G: dace.float64[M, L]
+):
     E = dace.define_local([M, N], dtype=dace.float64)
     F = dace.define_local([N, L], dtype=dace.float64)
 
@@ -219,37 +228,37 @@ def test_batched_accumulate_via_canon(prog, seed: int):
     nb, m, k, n = 3, 6, 8, 5
     rng = np.random.default_rng(seed)
     inp = dict(C=rng.random((nb, m, n)), A=rng.random((nb, m, k)), Bt=rng.random((nb, k, n)))
-    expected = inp['C'] + (inp['A'] @ inp['Bt']) if prog is bmm_acc else inp['A'] @ inp['Bt']
+    expected = inp["C"] + (inp["A"] @ inp["Bt"]) if prog is bmm_acc else inp["A"] @ inp["Bt"]
 
     sdfg = prog.to_sdfg(simplify=True)
-    sdfg = finalize_for_target(canonicalize(sdfg, validate=True, target='cpu'), 'cpu')
+    sdfg = finalize_for_target(canonicalize(sdfg, validate=True, target="cpu"), "cpu")
     sdfg.validate()
-    _run(sdfg, inp, dict(NB=nb, M=m, K=k, N=n), 'C', expected)
+    _run(sdfg, inp, dict(NB=nb, M=m, K=k, N=n), "C", expected)
 
 
 def _gemm_case():
     m, k, n = 20, 30, 25
     rng = np.random.default_rng(1)
-    inp = dict(C=rng.random((m, n)),
-               A=rng.random((m, k)),
-               B=rng.random((k, n)),
-               alpha=np.array([1.5]),
-               beta=np.array([1.2]))
-    exp = inp['alpha'][0] * (inp['A'] @ inp['B']) + inp['beta'][0] * inp['C']
-    return gemm, inp, dict(M=m, K=k, N=n), 'C', exp, 1
+    inp = dict(
+        C=rng.random((m, n)), A=rng.random((m, k)), B=rng.random((k, n)), alpha=np.array([1.5]), beta=np.array([1.2])
+    )
+    exp = inp["alpha"][0] * (inp["A"] @ inp["B"]) + inp["beta"][0] * inp["C"]
+    return gemm, inp, dict(M=m, K=k, N=n), "C", exp, 1
 
 
 def _k2mm_case():
     m, k, n, l = 16, 22, 18, 24
     rng = np.random.default_rng(2)
-    inp = dict(A=rng.random((m, k)),
-               B=rng.random((k, n)),
-               C=rng.random((n, l)),
-               D=rng.random((m, l)),
-               alpha=np.array([1.5]),
-               beta=np.array([1.2]))
-    exp = inp['alpha'][0] * ((inp['A'] @ inp['B']) @ inp['C']) + inp['beta'][0] * inp['D']
-    return k2mm, inp, dict(M=m, K=k, N=n, L=l), 'D', exp, 2
+    inp = dict(
+        A=rng.random((m, k)),
+        B=rng.random((k, n)),
+        C=rng.random((n, l)),
+        D=rng.random((m, l)),
+        alpha=np.array([1.5]),
+        beta=np.array([1.2]),
+    )
+    exp = inp["alpha"][0] * ((inp["A"] @ inp["B"]) @ inp["C"]) + inp["beta"][0] * inp["D"]
+    return k2mm, inp, dict(M=m, K=k, N=n, L=l), "D", exp, 2
 
 
 def _k3mm_case():
@@ -259,55 +268,53 @@ def _k3mm_case():
     # identity 3rd-arg, so the SDFG accumulates onto G's incoming value (beta=1) --
     # zero it so accumulate == overwrite, isolating what k3mm tests: the 3-einsum
     # chain (A@B)@(C@D). (Overwrite-on-prefilled is covered by gemm_ovr's setzero.)
-    inp = dict(A=rng.random((m, k)),
-               B=rng.random((k, n)),
-               C=rng.random((n, p)),
-               D=rng.random((p, l)),
-               G=np.zeros((m, l)))
-    exp = (inp['A'] @ inp['B']) @ (inp['C'] @ inp['D'])
-    return k3mm, inp, dict(M=m, K=k, N=n, P=p, L=l), 'G', exp, 3
+    inp = dict(
+        A=rng.random((m, k)), B=rng.random((k, n)), C=rng.random((n, p)), D=rng.random((p, l)), G=np.zeros((m, l))
+    )
+    exp = (inp["A"] @ inp["B"]) @ (inp["C"] @ inp["D"])
+    return k3mm, inp, dict(M=m, K=k, N=n, P=p, L=l), "G", exp, 3
 
 
 def _gemm_acc_case():
     m, k, n = 20, 30, 25
     rng = np.random.default_rng(4)
     inp = dict(C=rng.random((m, n)), A=rng.random((m, k)), B=rng.random((k, n)))
-    exp = inp['C'] + (inp['A'] @ inp['B'])  # beta=1: accumulate onto caller's C
-    return gemm_acc, inp, dict(M=m, K=k, N=n), 'C', exp, 1
+    exp = inp["C"] + (inp["A"] @ inp["B"])  # beta=1: accumulate onto caller's C
+    return gemm_acc, inp, dict(M=m, K=k, N=n), "C", exp, 1
 
 
 def _gemm_ovr_case():
     m, k, n = 20, 30, 25
     rng = np.random.default_rng(5)
     inp = dict(C=rng.random((m, n)), A=rng.random((m, k)), B=rng.random((k, n)))
-    exp = inp['A'] @ inp['B']  # beta=0: overwrite, ignore incoming C
-    return gemm_ovr, inp, dict(M=m, K=k, N=n), 'C', exp, 1
+    exp = inp["A"] @ inp["B"]  # beta=0: overwrite, ignore incoming C
+    return gemm_ovr, inp, dict(M=m, K=k, N=n), "C", exp, 1
 
 
 def _gemv_case():
     m, n = 16, 20
     rng = np.random.default_rng(6)
     inp = dict(A=rng.random((m, n)), x=rng.random(n), y=np.zeros(m))
-    exp = inp['A'] @ inp['x']  # setzero -> beta=0 overwrite
-    return gemv, inp, dict(M=m, N=n), 'y', exp, 1
+    exp = inp["A"] @ inp["x"]  # setzero -> beta=0 overwrite
+    return gemv, inp, dict(M=m, N=n), "y", exp, 1
 
 
 def _gemv_acc_case():
     m, n = 16, 20
     rng = np.random.default_rng(7)
     inp = dict(A=rng.random((m, n)), x=rng.random(n), y=rng.random(m))
-    exp = inp['y'] + inp['A'] @ inp['x']  # beta=1 accumulate onto the meaningful prior y
-    return gemv_acc, inp, dict(M=m, N=n), 'y', exp, 1
+    exp = inp["y"] + inp["A"] @ inp["x"]  # beta=1 accumulate onto the meaningful prior y
+    return gemv_acc, inp, dict(M=m, N=n), "y", exp, 1
 
 
 _CASES = {
-    'gemm': _gemm_case,
-    'k2mm': _k2mm_case,
-    'k3mm': _k3mm_case,
-    'gemm_acc': _gemm_acc_case,
-    'gemm_ovr': _gemm_ovr_case,
-    'gemv': _gemv_case,
-    'gemv_acc': _gemv_acc_case,
+    "gemm": _gemm_case,
+    "k2mm": _k2mm_case,
+    "k3mm": _k3mm_case,
+    "gemm_acc": _gemm_acc_case,
+    "gemm_ovr": _gemm_ovr_case,
+    "gemv": _gemv_case,
+    "gemv_acc": _gemv_acc_case,
 }
 
 
@@ -334,7 +341,7 @@ def _mark_setzero(sdfg, data):
 def test_lift_direct(name):
     prog, inp, syms, out_name, expected, n_contractions = _CASES[name]()
     sdfg = prog.to_sdfg(simplify=True)
-    if name in ('gemm_ovr', 'gemv'):  # model the zero-init accumulator (setzero -> beta=0)
+    if name in ("gemm_ovr", "gemv"):  # model the zero-init accumulator (setzero -> beta=0)
         _mark_setzero(sdfg, out_name)
     sdfg.apply_transformations_repeated(LiftEinsum)
     n_einsum = sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum))
@@ -355,7 +362,7 @@ def test_lift_idempotent(name):
     corrupt the graph."""
     prog, inp, syms, out_name, expected, n_contractions = _CASES[name]()
     sdfg = prog.to_sdfg(simplify=True)
-    if name == 'gemm_ovr':
+    if name == "gemm_ovr":
         _mark_setzero(sdfg, out_name)
     first = sdfg.apply_transformations_repeated(LiftEinsum)
     n_after_first = sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum))
@@ -380,32 +387,33 @@ def test_vectorize_on_prelifted(name):
     Models the standalone-after-canonicalize path -- the vectorizer must not assume
     it is the one that lifts, nor break on an already-lifted graph."""
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+
     prog, inp, syms, out_name, expected, n_contractions = _CASES[name]()
-    if name == 'gemm_ovr':
-        pytest.skip('gemm_ovr setzero injection is a direct-lift mechanism test')
+    if name == "gemm_ovr":
+        pytest.skip("gemm_ovr setzero injection is a direct-lift mechanism test")
     sdfg = prog.to_sdfg(simplify=True)
     # Pre-lift: the contractions are Einsum nodes BEFORE the vectorizer runs.
     sdfg.apply_transformations_repeated(LiftEinsum)
     assert sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum)) == n_contractions
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+        VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     _run(sdfg, inp, syms, out_name, expected)
 
 
 @pytest.mark.parametrize("name", list(_CASES))
 def test_lift_via_canon(name):
-    if name in ('gemm_ovr', 'gemv'):
+    if name in ("gemm_ovr", "gemv"):
         # The ``setzero`` beta=0 trigger is a direct-lift mechanism test; the canon-path
         # beta=0 (overwrite) case is covered by k3mm (fresh transient) / gemv_acc.
-        pytest.skip('setzero injection is a direct-lift test')
+        pytest.skip("setzero injection is a direct-lift test")
     prog, inp, syms, out_name, expected, _ = _CASES[name]()
     sdfg = prog.to_sdfg(simplify=True)
-    sdfg = finalize_for_target(canonicalize(sdfg, validate=True, target='cpu'), 'cpu')
+    sdfg = finalize_for_target(canonicalize(sdfg, validate=True, target="cpu"), "cpu")
     sdfg.validate()
     _run(sdfg, inp, syms, out_name, expected)
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-q', '-p', 'no:cacheprovider']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))

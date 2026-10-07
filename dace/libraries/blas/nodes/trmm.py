@@ -3,6 +3,7 @@
 
 Uses separate ``_Bin`` and ``_Bout`` connectors (see :class:`Trsm`).
 """
+
 import copy
 
 import dace.library
@@ -16,24 +17,32 @@ from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
 from typing import List, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
 
 def _cblas_flags(node):
-    return ('CblasLeft' if not node.side else 'CblasRight', 'CblasUpper' if node.uplo else 'CblasLower',
-            'CblasTrans' if node.transA else 'CblasNoTrans', 'CblasUnit' if node.unit_diag else 'CblasNonUnit')
+    return (
+        "CblasLeft" if not node.side else "CblasRight",
+        "CblasUpper" if node.uplo else "CblasLower",
+        "CblasTrans" if node.transA else "CblasNoTrans",
+        "CblasUnit" if node.unit_diag else "CblasNonUnit",
+    )
 
 
 def _gpu_flags(node, dialect):
     """(side, uplo, trans, diag): column-major sees A^T and B^T, and (op(A) B)^T = B^T op(A)^T."""
-    return (dialect.side(not node.side), dialect.fill(not node.uplo), dialect.op('T' if node.transA else 'N'),
-            dialect.diag(node.unit_diag))
+    return (
+        dialect.side(not node.side),
+        dialect.fill(not node.uplo),
+        dialect.op("T" if node.transA else "N"),
+        dialect.diag(node.unit_diag),
+    )
 
 
 @dace.library.expansion
 class ExpandTrmmOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -48,16 +57,13 @@ class ExpandTrmmOpenBLAS(ExpandTransformation):
         std::memcpy(_Bout, _Bin, sizeof({dt.ctype}) * ({m}) * ({ldb_in}));
         cblas_{prefix}trmm(CblasRowMajor, {side}, {uplo}, {trans}, {diag}, {m}, {n}, ({dt.ctype})({a}), _A, {lda}, _Bout, {ldb_out});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandTrmmMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -67,7 +73,6 @@ class ExpandTrmmMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandTrmmGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -80,15 +85,15 @@ class ExpandTrmmGPUBLAS(ExpandTransformation):
         a = node.alpha
         code = cls.environments[0].handle_setup_code(node)
         code += gpu_dialect.host_scalar_mode(
-            cls.dialect, f"""
+            cls.dialect,
+            f"""
         {dt.ctype} __alpha = ({dt.ctype})({a});
-        {cls.dialect.check_error}({cls.dialect.func(func, 'trmm')}({cls.dialect.handle}, {side}, {uplo}, {trans}, {diag}, {n}, {m}, &__alpha, _A, {lda}, _Bin, {ldb_in}, _Bout, {ldb_out}));
-        """)
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        {cls.dialect.check_error}({cls.dialect.func(func, "trmm")}({cls.dialect.handle}, {side}, {uplo}, {trans}, {diag}, {n}, {m}, &__alpha, _A, {lda}, _Bin, {ldb_in}, _Bout, {ldb_out}));
+        """,
+        )
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
@@ -111,20 +116,20 @@ class Trmm(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandTrmmOpenBLAS,
         "MKL": ExpandTrmmMKL,
         "cuBLAS": ExpandTrmmCuBLAS,
-        "rocBLAS": ExpandTrmmRocBLAS
+        "rocBLAS": ExpandTrmmRocBLAS,
     }
     default_implementation = None
 
-    side = dace.properties.Property(dtype=bool,
-                                    default=False,
-                                    desc="False: B := alpha op(A) B; True: B := alpha B op(A)")
+    side = dace.properties.Property(
+        dtype=bool, default=False, desc="False: B := alpha op(A) B; True: B := alpha B op(A)"
+    )
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True for upper triangular A")
     transA = dace.properties.Property(dtype=bool, default=False, desc="True to use A^T")
     unit_diag = dace.properties.Property(dtype=bool, default=False, desc="True for implicit unit diagonal")
     alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     def __init__(self, name, side=False, uplo=False, transA=False, unit_diag=False, alpha=1, **kwargs):
-        super().__init__(name, inputs=OrderedSet(('_A', '_Bin')), outputs={"_Bout"}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(("_A", "_Bin")), outputs={"_Bout"}, **kwargs)
         self.side, self.uplo, self.transA, self.unit_diag, self.alpha = side, uplo, transA, unit_diag, alpha
 
     def validate(self, sdfg, state):
@@ -149,26 +154,28 @@ class Trmm(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_B, ldb_in), ldb_out, m, n
 
 
-@oprepo.replaces('dace.libraries.blas.trmm')
-@oprepo.replaces('dace.libraries.blas.Trmm')
-def trmm_libnode(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 A,
-                 B,
-                 result=None,
-                 side=False,
-                 uplo=False,
-                 transA=False,
-                 unit_diag=False,
-                 alpha=1):
+@oprepo.replaces("dace.libraries.blas.trmm")
+@oprepo.replaces("dace.libraries.blas.Trmm")
+def trmm_libnode(
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    A,
+    B,
+    result=None,
+    side=False,
+    uplo=False,
+    transA=False,
+    unit_diag=False,
+    alpha=1,
+):
     """Build a :class:`Trmm` node. ``result`` defaults to ``B``."""
     result = result if result is not None else B
     A_in, B_in = state.add_read(A), state.add_read(B)
     B_out = state.add_write(result)
-    libnode = Trmm('trmm', side=side, uplo=uplo, transA=transA, unit_diag=unit_diag, alpha=alpha)
+    libnode = Trmm("trmm", side=side, uplo=uplo, transA=transA, unit_diag=unit_diag, alpha=alpha)
     state.add_node(libnode)
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(B_in, None, libnode, '_Bin', mm.Memlet(B))
-    state.add_edge(libnode, '_Bout', B_out, None, mm.Memlet(result))
+    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
+    state.add_edge(B_in, None, libnode, "_Bin", mm.Memlet(B))
+    state.add_edge(libnode, "_Bout", B_out, None, mm.Memlet(result))
     return []

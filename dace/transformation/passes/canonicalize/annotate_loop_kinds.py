@@ -26,6 +26,7 @@ and the pipeline's own decision cannot disagree.
 A hint is a NOTE. Nothing in the pipeline dispatches on these strings, ``hint_comment`` drops them
 outside a standalone rendering, and this pass changes no graph.
 """
+
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import re
@@ -51,46 +52,60 @@ from dace.sdfg.narrowing import as_basic, as_range, free_symbols
 # wavefront axis, an inner tile) follows the class word as a qualifier, never replaces it.
 
 #: A Map. Data-parallel by construction, whatever schedule it ends up carrying.
-PARALLEL = ('parallel -- the iterations are independent\n'
-            'settled: proven, no need to re-check; focus: schedule, tiling, vectorization, fusion, data layout')
+PARALLEL = (
+    "parallel -- the iterations are independent\n"
+    "settled: proven, no need to re-check; focus: schedule, tiling, vectorization, fusion, data layout"
+)
 
 #: A loop whose carried dependence was proven. ``{reason}`` is the carrying ACCESS, since that is
 #: the part a reader acts on -- the prose around it repeated on every such loop and said the same
 #: thing each time.
-SEQUENTIAL_PROVEN = ('sequential -- carried: {reason}\n'
-                     'settled: proven, {why}; focus: restructure around the dependence (reorder, block, rewrite as '
-                     'a scan or reduction), or optimize the work inside')
+SEQUENTIAL_PROVEN = (
+    "sequential -- carried: {reason}\n"
+    "settled: proven, {why}; focus: restructure around the dependence (reorder, block, rewrite as "
+    "a scan or reduction), or optimize the work inside"
+)
 
 #: A loop the dependence test declined to answer, or never examined. NOT the same fact as the line
 #: above: not proven, and the wording has to keep saying so in one word.
-UNSURE = ('unsure -- {reason}\n'
-          'open: not proven either way; kept sequential to be safe, and may well be parallel -- a fact about the '
-          'indices (a bound, a permutation) settles it')
+UNSURE = (
+    "unsure -- {reason}\n"
+    "open: not proven either way; kept sequential to be safe, and may well be parallel -- a fact about the "
+    "indices (a bound, a permutation) settles it"
+)
 
 #: The ``UNSURE`` reason of a loop the dependence test does not apply to (it has no single counter).
-NEVER_EXAMINED = 'never examined for dependences'
+NEVER_EXAMINED = "never examined for dependences"
 
 #: A loop the dependence test finds independent that an earlier pass pinned sequential anyway (the
 #: fallback arm of a specialization). Rendered without a pragma, so it must not read as parallel.
-SEQUENTIAL_PINNED = ('sequential -- pinned by an earlier pass; the dependence test finds the iterations independent\n'
-                     'settled: the pass keeps the order on purpose (such as the fallback arm of a specialization)')
+SEQUENTIAL_PINNED = (
+    "sequential -- pinned by an earlier pass; the dependence test finds the iterations independent\n"
+    "settled: the pass keeps the order on purpose (such as the fallback arm of a specialization)"
+)
 
 #: The untiled skew: a sequential diagonal over a parallel front. The second line is the only
 #: advice a reader can act on -- which of the two correct shapes to run -- so it survives the cut
 #: while the restatement of what a skew is does not.
-WAVEFRONT_DIAGONAL = ('sequential -- wavefront diagonal {skew}: the skew put every dependence on this axis\n'
-                      'alternative: the unskewed nest, sequential in both axes -- worth timing on CPU, '
-                      'rarely on GPU')
-WAVEFRONT_FRONT = 'parallel -- wavefront front {skew}: at a fixed diagonal the points are independent'
+WAVEFRONT_DIAGONAL = (
+    "sequential -- wavefront diagonal {skew}: the skew put every dependence on this axis\n"
+    "alternative: the unskewed nest, sequential in both axes -- worth timing on CPU, "
+    "rarely on GPU"
+)
+WAVEFRONT_FRONT = "parallel -- wavefront front {skew}: at a fixed diagonal the points are independent"
 
 #: The tiled skew: a sequential tile diagonal over a parallel tile column over a sequential interior.
-WAVEFRONT_TILE_DIAGONAL = ('sequential -- wavefront tile diagonal {skew} {tile}: the tile diagonal carries '
-                           'every dependence\n'
-                           'alternatives: the element diagonal, or the unskewed nest -- all three bit-identical; '
-                           'a bigger tile trades kernel launches for block-local barriers')
-WAVEFRONT_TILE_COLUMN = 'parallel -- wavefront tile column {tile}: the tiles on one diagonal are independent'
-WAVEFRONT_TILE_INTERIOR = ('sequential -- inner tile of a wavefront {tile}: the original order is kept verbatim, '
-                           'so the tiled result is bit-identical')
+WAVEFRONT_TILE_DIAGONAL = (
+    "sequential -- wavefront tile diagonal {skew} {tile}: the tile diagonal carries "
+    "every dependence\n"
+    "alternatives: the element diagonal, or the unskewed nest -- all three bit-identical; "
+    "a bigger tile trades kernel launches for block-local barriers"
+)
+WAVEFRONT_TILE_COLUMN = "parallel -- wavefront tile column {tile}: the tiles on one diagonal are independent"
+WAVEFRONT_TILE_INTERIOR = (
+    "sequential -- inner tile of a wavefront {tile}: the original order is kept verbatim, "
+    "so the tiled result is bit-identical"
+)
 
 
 def skew_label(a: int, b: int, u: str, v: str) -> str:
@@ -102,15 +117,15 @@ def skew_label(a: int, b: int, u: str, v: str) -> str:
     """
 
     def term(coeff: int, name: str) -> str:
-        return name if abs(coeff) == 1 else f'{abs(coeff)}*{name}'
+        return name if abs(coeff) == 1 else f"{abs(coeff)}*{name}"
 
-    lead = f'-{term(a, u)}' if a < 0 else term(a, u)
-    return f'(t = {lead} {"-" if b < 0 else "+"} {term(b, v)})'
+    lead = f"-{term(a, u)}" if a < 0 else term(a, u)
+    return f"(t = {lead} {'-' if b < 0 else '+'} {term(b, v)})"
 
 
 def tile_label(bi: int, bj: int) -> str:
     """The tile extent the diagonal walks -- the number that trades kernel launches for barriers."""
-    return f'[{bi}x{bj}]'
+    return f"[{bi}x{bj}]"
 
 
 def refusal_reason(loop: LoopRegion) -> Optional[str]:
@@ -122,8 +137,9 @@ def refusal_reason(loop: LoopRegion) -> Optional[str]:
     does not touch it.
     """
     if not loop.loop_variable:
-        return ''
+        return ""
     from dace.transformation.interstate.loop_to_map import LoopToMap
+
     probe = LoopToMap()
     probe.loop = loop
     pinned = loop.pinned_sequential
@@ -133,29 +149,29 @@ def refusal_reason(loop: LoopRegion) -> Optional[str]:
     except Exception:
         # A comment must not be able to fail the compilation that asked for it. Nothing downstream
         # reads a hint, so a probe with no answer leaves the loop unsure and says so.
-        return ''
+        return ""
     finally:
         loop.pinned_sequential = pinned
-    return None if applicable else (probe.last_refusal_reason or '')
+    return None if applicable else (probe.last_refusal_reason or "")
 
 
 #: ``LoopToMap``'s refusal, as ``<kind> conflict on <array> within the loop body - src_subset=<subset>``.
-REFUSAL_SHAPE = re.compile(r'(\w+)-after-(\w+) conflict on (\w+).*?src_subset=(.*)$', re.S)
+REFUSAL_SHAPE = re.compile(r"(\w+)-after-(\w+) conflict on (\w+).*?src_subset=(.*)$", re.S)
 
 #: The three conflict kinds, as the two-letter names a reader of dependence analysis already has.
-CONFLICT_ABBREV = {('read', 'write'): 'RAW', ('write', 'read'): 'WAR', ('write', 'write'): 'WAW'}
+CONFLICT_ABBREV = {("read", "write"): "RAW", ("write", "read"): "WAR", ("write", "write"): "WAW"}
 
 #: What each proven conflict means for the order, in the words a reader of the loop needs.
 CONFLICT_MEANING = {
-    'RAW': 'an iteration reads what an earlier one wrote',
-    'WAR': 'an iteration overwrites what an earlier one still has to read',
-    'WAW': 'two iterations write the same element and the last write must win',
+    "RAW": "an iteration reads what an earlier one wrote",
+    "WAR": "an iteration overwrites what an earlier one still has to read",
+    "WAW": "two iterations write the same element and the last write must win",
 }
 
 
 def proven_why(access: str) -> str:
     """The order a proven conflict requires, from the kind ``access`` starts with (``RAW on ...``)."""
-    return CONFLICT_MEANING.get(access.split(' ', 1)[0], 'one iteration depends on another one')
+    return CONFLICT_MEANING.get(access.split(" ", 1)[0], "one iteration depends on another one")
 
 
 def carrying_access(reason: str) -> str:
@@ -171,8 +187,8 @@ def carrying_access(reason: str) -> str:
     if hit is None:
         return reason
     first, second, array, subset = hit.groups()
-    kind = CONFLICT_ABBREV.get((first, second), f'{first}-after-{second}')
-    return f'{kind} on {array}[{subset.strip()}]'
+    kind = CONFLICT_ABBREV.get((first, second), f"{first}-after-{second}")
+    return f"{kind} on {array}[{subset.strip()}]"
 
 
 #: Array name -> (outer array, element offset in the loop's names) for every array the body can see.
@@ -181,6 +197,7 @@ ArrayBindings = Dict[str, Tuple[str, Tuple[sympy.Expr, ...]]]
 
 class Access(NamedTuple):
     """One element access in a loop body, in the loop SDFG's names: ``array[index]``."""
+
     array: str
     write: bool
     index: Tuple[sympy.Expr, ...]
@@ -189,6 +206,7 @@ class Access(NamedTuple):
 class Body(NamedTuple):
     """What :func:`walk_body` collects: element accesses, names that vary within one iteration, the
     params of maps, and whether some map range moves with the loop."""
+
     accesses: List[Access]
     varying: OrderedSet[str]
     params: OrderedSet[str]
@@ -204,8 +222,9 @@ def as_loop_names(expr: symbolic.SymbolicType, mapping: Dict[str, sympy.Expr]) -
     return symbolic.pystr_to_symbolic(str(expr))
 
 
-def point_index(subset: Optional[Subset], mapping: Dict[str, sympy.Expr],
-                offset: Tuple[sympy.Expr, ...]) -> Optional[Tuple[sympy.Expr, ...]]:
+def point_index(
+    subset: Optional[Subset], mapping: Dict[str, sympy.Expr], offset: Tuple[sympy.Expr, ...]
+) -> Optional[Tuple[sympy.Expr, ...]]:
     """The single element ``subset`` names, in the loop's names, or ``None`` for a range."""
     if subset is None or (offset and len(offset) != as_range(subset).dims()):
         return None
@@ -218,15 +237,18 @@ def point_index(subset: Optional[Subset], mapping: Dict[str, sympy.Expr],
     return tuple(index)
 
 
-def edge_accesses(edge: MultiConnectorEdge[Memlet], state: SDFGState, arrays: ArrayBindings,
-                  mapping: Dict[str, sympy.Expr]) -> List[Access]:
+def edge_accesses(
+    edge: MultiConnectorEdge[Memlet], state: SDFGState, arrays: ArrayBindings, mapping: Dict[str, sympy.Expr]
+) -> List[Access]:
     """The element reads and writes ``edge`` makes: into or out of a tasklet, or an array copy."""
     memlet = edge.data
     if memlet.is_empty() or memlet.wcr is not None:
         return []
     if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode):
-        sides = [(edge.src.data, memlet.get_src_subset(edge, state), False),
-                 (edge.dst.data, memlet.get_dst_subset(edge, state), True)]
+        sides = [
+            (edge.src.data, memlet.get_src_subset(edge, state), False),
+            (edge.dst.data, memlet.get_dst_subset(edge, state), True),
+        ]
     elif isinstance(edge.dst, nodes.Tasklet):
         sides = [(memlet.data, memlet.subset, False)]
     elif isinstance(edge.src, nodes.Tasklet):
@@ -244,8 +266,9 @@ def edge_accesses(edge: MultiConnectorEdge[Memlet], state: SDFGState, arrays: Ar
     return found
 
 
-def nested_bindings(state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindings,
-                    mapping: Dict[str, sympy.Expr]) -> Tuple[ArrayBindings, Dict[str, sympy.Expr]]:
+def nested_bindings(
+    state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindings, mapping: Dict[str, sympy.Expr]
+) -> Tuple[ArrayBindings, Dict[str, sympy.Expr]]:
     """The arrays and symbols ``node``'s body sees, rebound to the loop's names.
 
     An inner array binds only when its connector's outer subset has the inner rank; its element
@@ -266,8 +289,13 @@ def nested_bindings(state: SDFGState, node: nodes.NestedSDFG, arrays: ArrayBindi
     return inner_arrays, inner_mapping
 
 
-def walk_body(sdfg_or_region: ControlFlowRegion, arrays: ArrayBindings, mapping: Dict[str, sympy.Expr],
-              loop_variable: str, body: Body) -> None:
+def walk_body(
+    sdfg_or_region: ControlFlowRegion,
+    arrays: ArrayBindings,
+    mapping: Dict[str, sympy.Expr],
+    loop_variable: str,
+    body: Body,
+) -> None:
     """Fill ``body`` from everything under ``sdfg_or_region``, through nested SDFGs."""
     for region in sdfg_or_region.all_control_flow_regions():
         if isinstance(region, LoopRegion) and region.loop_variable:
@@ -337,7 +365,7 @@ def proven_carrying_access(loop: LoopRegion) -> Optional[str]:
             distance = carried_distance(write, read, loop_var)
             if distance is None or distance == 0 or distance % stride != 0:
                 continue
-            kind = 'RAW' if distance / stride > 0 else 'WAR'
+            kind = "RAW" if distance / stride > 0 else "WAR"
             return f"{kind} on {read.array}[{', '.join(str(e) for e in read.index)}]"
     return None
 
@@ -370,7 +398,7 @@ class AnnotateLoopKinds(ppl.Pass):
     (``WavefrontSkew``).
     """
 
-    CATEGORY: str = 'Analysis'
+    CATEGORY: str = "Analysis"
 
     def modifies(self) -> ppl.Modifies:
         # Comments only. No pass reads a hint, so nothing needs rerunning because one appeared.
@@ -384,7 +412,7 @@ class AnnotateLoopKinds(ppl.Pass):
         labelled = 0
         for node, parent_graph in list(sdfg.all_nodes_recursive()):
             # A blank hint renders as nothing, so it is no label either.
-            if not isinstance(node, (nodes.MapEntry, LoopRegion)) or (node.specialization_hint or '').strip():
+            if not isinstance(node, (nodes.MapEntry, LoopRegion)) or (node.specialization_hint or "").strip():
                 continue
             node.specialization_hint = PARALLEL if isinstance(node, nodes.MapEntry) else loop_hint(node)
             labelled += 1

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``NormalizeFloorDivision``: residual sympy floor() must not reach codegen."""
+
 import numpy as np
 import pytest
 import sympy
@@ -46,11 +47,9 @@ def test_pass_rewrites_map_ranges_memlets_and_shapes():
     entry.map.range = Range([((i + 1) // 2, N - 1, 1)])
     tasklet = state.add_tasklet("t", {"inp"}, {"out"}, "out = inp + 1.0")
     read, write = state.add_read("a"), state.add_write("a")
-    state.add_memlet_path(read,
-                          entry,
-                          tasklet,
-                          dst_conn="inp",
-                          memlet=dace.Memlet(data="a", subset=Range.from_indices([i // 2])))
+    state.add_memlet_path(
+        read, entry, tasklet, dst_conn="inp", memlet=dace.Memlet(data="a", subset=Range.from_indices([i // 2]))
+    )
     state.add_memlet_path(tasklet, exit_node, write, src_conn="out", memlet=dace.Memlet("a[i]"))
 
     assert NormalizeFloorDivision().apply_pass(sdfg, {}) >= 3

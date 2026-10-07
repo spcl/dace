@@ -11,20 +11,23 @@ repeated one and merge the two back. ``append`` is ``concatenate``, which alread
 The assertions are structural first -- a numeric check alone passes just as well through a
 callback, which is exactly how this went unnoticed.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg import nodes as nd
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def callback_tasklets(sdfg: dace.SDFG) -> list:
     """Tasklets whose code calls back into the Python interpreter."""
     return [
-        n.label for _, state in enumerate(sdfg.states()) for n in state.nodes()
-        if isinstance(n, nd.Tasklet) and 'numpy_' in n.code.as_string
+        n.label
+        for _, state in enumerate(sdfg.states())
+        for n in state.nodes()
+        if isinstance(n, nd.Tasklet) and "numpy_" in n.code.as_string
     ]
 
 
@@ -40,8 +43,8 @@ def test_repeat_lowers_to_a_broadcast_library_node():
 
     sdfg = prog_repeat_lowers_to_a_broadcast_library_node.to_sdfg(simplify=False)
     assert callback_tasklets(sdfg) == []
-    assert '__pystate' not in sdfg.arrays
-    assert 'Broadcast' in libnode_names(sdfg)
+    assert "__pystate" not in sdfg.arrays
+    assert "Broadcast" in libnode_names(sdfg)
 
 
 def test_repeat_matches_numpy():
@@ -94,7 +97,7 @@ def test_append_lowers_without_a_callback():
 
     sdfg = prog_append_lowers_without_a_callback.to_sdfg(simplify=False)
     assert callback_tasklets(sdfg) == []
-    assert '__pystate' not in sdfg.arrays
+    assert "__pystate" not in sdfg.arrays
 
 
 def test_append_matches_numpy():
@@ -116,8 +119,9 @@ def test_append_along_an_axis_matches_numpy():
     rng = np.random.default_rng(42)
 
     @dace.program
-    def prog_append_along_an_axis_matches_numpy(a: dace.float64[N, 3], b: dace.float64[N, 3], out: dace.float64[2 * N,
-                                                                                                                3]):
+    def prog_append_along_an_axis_matches_numpy(
+        a: dace.float64[N, 3], b: dace.float64[N, 3], out: dace.float64[2 * N, 3]
+    ):
         out[:] = np.append(a, b, axis=0)
 
     a, b = rng.random((4, 3)), rng.random((4, 3))
@@ -133,11 +137,11 @@ def test_repeat_refuses_a_per_element_repeat_count():
     def prog_repeat_refuses_a_per_element_repeat_count(a: dace.float64[N], r: dace.int64[N], out: dace.float64[2 * N]):
         out[:] = np.repeat(a, r)
 
-    with pytest.raises(Exception, match='repeat'):
+    with pytest.raises(Exception, match="repeat"):
         prog_repeat_refuses_a_per_element_repeat_count.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_repeat_lowers_to_a_broadcast_library_node()
     test_repeat_matches_numpy()
     test_repeat_along_an_axis_matches_numpy()

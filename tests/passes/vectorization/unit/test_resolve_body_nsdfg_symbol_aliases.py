@@ -7,6 +7,7 @@ Tile walker keys per-lane classification off the OUTER iter-var names, so an ali
 inner access mis-classifies as loop-invariant -> scalar broadcast. Resolver inlines
 the bare-symbol rename into the inner SDFG -> body references outer iter-var directly.
 """
+
 import dace
 from dace import symbolic
 from dace.transformation.passes.vectorization.vectorize_multi_dim import _resolve_body_nsdfg_symbol_aliases
@@ -32,8 +33,9 @@ def _build_aliased_body_sdfg():
     ist.add_edge(t, "b", wb, None, dace.Memlet("B[_loop_it_2]"))
 
     me, mx = state.add_map("m", {"_loop_it_0": "0:8"})
-    nsdfg = state.add_nested_sdfg(inner, {"A"}, {"B"},
-                                  symbol_mapping={"_loop_it_2": symbolic.pystr_to_symbolic("_loop_it_0")})
+    nsdfg = state.add_nested_sdfg(
+        inner, {"A"}, {"B"}, symbol_mapping={"_loop_it_2": symbolic.pystr_to_symbolic("_loop_it_0")}
+    )
     a_out = state.add_access("A")
     b_out = state.add_access("B")
     state.add_memlet_path(a_out, me, nsdfg, dst_conn="A", memlet=dace.Memlet("A[0:8]"))
@@ -75,12 +77,15 @@ def test_resolve_alias_leaves_offset_and_identity_mappings_untouched():
     ra = ist.add_access("A")
     t = ist.add_tasklet("r", {"a"}, set(), "pass")
     ist.add_edge(ra, None, t, "a", dace.Memlet("A[ii]"))
-    nsdfg = state.add_nested_sdfg(inner, {"A"},
-                                  set(),
-                                  symbol_mapping={
-                                      "ii": symbolic.pystr_to_symbolic("_loop_it_0 + 1"),
-                                      "_loop_it_0": symbolic.pystr_to_symbolic("_loop_it_0"),
-                                  })
+    nsdfg = state.add_nested_sdfg(
+        inner,
+        {"A"},
+        set(),
+        symbol_mapping={
+            "ii": symbolic.pystr_to_symbolic("_loop_it_0 + 1"),
+            "_loop_it_0": symbolic.pystr_to_symbolic("_loop_it_0"),
+        },
+    )
     me, mx = state.add_map("m", {"_loop_it_0": "0:8"})
     a_out = state.add_access("A")
     state.add_memlet_path(a_out, me, nsdfg, dst_conn="A", memlet=dace.Memlet("A[0:8]"))

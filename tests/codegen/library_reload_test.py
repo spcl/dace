@@ -14,6 +14,7 @@ Separately, ``is_library_loaded`` asked its question with ``dlopen(RTLD_NOLOAD)`
 reference on a library that IS loaded, and never gave it back -- one probe pinned the library for
 the life of the process.
 """
+
 import ctypes
 import pathlib
 
@@ -38,15 +39,16 @@ def test_probing_whether_a_library_is_loaded_does_not_pin_it():
     dll = ReloadableDLL(str(library))
     dll.load()
     name = ctypes.c_char_p(dll._library_filename.encode())
-    assert dll._stub.is_library_loaded(name) == 1, 'the library did not load, so nothing is tested'
+    assert dll._stub.is_library_loaded(name) == 1, "the library did not load, so nothing is tested"
 
     for _ in range(5):
         dll._stub.is_library_loaded(name)
     stub = dll._stub  # unload() drops the handle, and the question outlives it
     dll.unload()
 
-    assert stub.is_library_loaded(name) == 0, \
-        'the library is still mapped after its one load was undone: each probe took a reference'
+    assert stub.is_library_loaded(name) == 0, (
+        "the library is still mapped after its one load was undone: each probe took a reference"
+    )
 
 
 def test_a_folder_reused_by_another_program_runs_the_new_code():
@@ -62,24 +64,25 @@ def test_a_folder_reused_by_another_program_runs_the_new_code():
         for i in dace.map[0:8]:
             B[i] = A[i] + 100.0
 
-    shared_name = 'same_name_two_programs'
+    shared_name = "same_name_two_programs"
     a = first.to_sdfg()
     a.name = shared_name
     b = second.to_sdfg()
     b.name = shared_name
-    assert a.build_folder == b.build_folder, 'the premise of this test is that they share a folder'
+    assert a.build_folder == b.build_folder, "the premise of this test is that they share a folder"
 
     A = np.arange(8, dtype=np.float64)
     out_a = np.zeros(8)
     a(A=A, B=out_a)
-    assert np.allclose(out_a, A + 1.0), 'the first program did not run, so nothing is tested'
+    assert np.allclose(out_a, A + 1.0), "the first program did not run, so nothing is tested"
 
     out_b = np.zeros(8)
     b(A=A, B=out_b)
-    assert np.allclose(out_b, A + 100.0), \
+    assert np.allclose(out_b, A + 100.0), (
         f"the second program ran the first one's code: got {out_b}, wanted {A + 100.0}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_probing_whether_a_library_is_loaded_does_not_pin_it()
     test_a_folder_reused_by_another_program_runs_the_new_code()

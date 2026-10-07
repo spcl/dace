@@ -9,6 +9,7 @@ to unit copies keeps the rewrite a value-preserving scalar assignment and
 removes ``other_subset`` from such edges so subset-substituting passes (e.g.
 ``NormalizeLoopsAndMaps``) never have to reason about copy memlets.
 """
+
 import copy as _copy
 from typing import Any, Dict, Optional
 
@@ -40,7 +41,8 @@ def _is_unit_subset(subset: Optional[subsets.Subset]) -> bool:
 @transformation.explicit_cf_compatible
 class InsertAssignTaskletsForUnitCopies(ppl.Pass):
     """Rewrite single-element ``AccessNode -> AccessNode`` copies as assign tasklets."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -104,10 +106,12 @@ class InsertAssignTaskletsForUnitCopies(ppl.Pass):
             # the endpoint's (single-element) array exactly as before.
             src_side = mem.get_src_subset(edge, state)
             dst_side = mem.get_dst_subset(edge, state)
-            src_subset = (_copy.deepcopy(src_side)
-                          if src_side is not None else subsets.Range.from_array(sdfg.arrays[src_an.data]))
-            dst_subset = (_copy.deepcopy(dst_side)
-                          if dst_side is not None else subsets.Range.from_array(sdfg.arrays[dst_an.data]))
+            src_subset = (
+                _copy.deepcopy(src_side) if src_side is not None else subsets.Range.from_array(sdfg.arrays[src_an.data])
+            )
+            dst_subset = (
+                _copy.deepcopy(dst_side) if dst_side is not None else subsets.Range.from_array(sdfg.arrays[dst_an.data])
+            )
             tasklet = state.add_tasklet(
                 name=f"_assign_{src_an.data}_to_{dst_an.data}",
                 inputs={"_in"},

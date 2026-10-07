@@ -18,6 +18,7 @@ is what accepts one, that the accepted cut needs no runtime guard, and that it p
 BOTH parities of the trip count -- the odd case puts the loop's fixpoint iteration inside the split
 and is the one an off-by-one would corrupt.
 """
+
 import copy
 
 import numpy as np
@@ -28,9 +29,9 @@ from dace import symbolic
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.parallelization_prep import BestEffortLoopPeeling, mappable_count_upper_bound
 
-N = dace.symbol('N', nonnegative=True)
-K = dace.symbol('K', nonnegative=True)
-LEN_1D = dace.symbol('LEN_1D', nonnegative=True)
+N = dace.symbol("N", nonnegative=True)
+K = dace.symbol("K", nonnegative=True)
+LEN_1D = dace.symbol("LEN_1D", nonnegative=True)
 
 
 @dace.program
@@ -75,7 +76,7 @@ def test_split_point_below_loop_start_does_not_invent_an_iteration():
 
     got = a0.copy()
     sdfg.compile()(a=got, b=b.copy(), N=n, K=k)
-    assert np.array_equal(got, ref), f'a[0] must stay {ref[0]!r} (the loop starts at 1), got {got[0]!r}'
+    assert np.array_equal(got, ref), f"a[0] must stay {ref[0]!r} (the loop starts at 1), got {got[0]!r}"
 
 
 def test_split_point_inside_the_range_is_still_value_preserving():
@@ -125,8 +126,8 @@ def test_crossover_candidates_are_the_floor_and_ceil_of_the_direction_flip():
     loop = _loops(sdfg)[0]
     points = BestEffortLoopPeeling(peel_limit=4).direction_flip_split_points(loop)
     assert points == [
-        symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D') - 1, 2),
-        symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2)
+        symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D") - 1, 2),
+        symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2),
     ], points
 
 
@@ -141,9 +142,9 @@ def test_measurement_picks_the_bracket_that_unblocks_both_halves():
     x, middle_singleton, _guarded = found
     # A direction-flip crossover is one iteration wide, so this is the carve-a-singleton family,
     # not the two-way range-guard split (715dfeb83).
-    assert middle_singleton is True, 'crossover split must carve the single fixpoint iteration'
-    assert x == symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2), x
-    assert peel._split_range_relations(loop, x) == frozenset(), 'the split must need no runtime guard'
+    assert middle_singleton is True, "crossover split must carve the single fixpoint iteration"
+    assert x == symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2), x
+    assert peel._split_range_relations(loop, x) == frozenset(), "the split must need no runtime guard"
 
 
 def test_a_singleton_only_split_is_not_counted_as_a_win():
@@ -157,9 +158,9 @@ def test_a_singleton_only_split_is_not_counted_as_a_win():
     mini, _ = peel._isolate_loop(_loops(sdfg)[0], sdfg)
     assert mini is not None
     cand = copy.deepcopy(mini)
-    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.pystr_to_symbolic('K'))
+    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.pystr_to_symbolic("K"))
     peel._clean_peeled_remainder(cand)
-    assert peel._mappable_loop_count(cand) == 0, 'a provably-single-iteration segment is not parallelism'
+    assert peel._mappable_loop_count(cand) == 0, "a provably-single-iteration segment is not parallelism"
 
 
 def test_the_accepted_split_counts_both_range_segments():
@@ -169,9 +170,9 @@ def test_the_accepted_split_counts_both_range_segments():
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     peel = BestEffortLoopPeeling(peel_limit=4)
     mini, _ = peel._isolate_loop(_loops(sdfg)[0], sdfg)
-    assert peel._mappable_loop_count(copy.deepcopy(mini)) == 0, 'the unsplit loop parallelizes nothing'
+    assert peel._mappable_loop_count(copy.deepcopy(mini)) == 0, "the unsplit loop parallelizes nothing"
     cand = copy.deepcopy(mini)
-    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2))
+    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2))
     peel._clean_peeled_remainder(cand)
     assert peel._mappable_loop_count(cand) == 2
 
@@ -189,7 +190,7 @@ def test_no_crossover_means_the_pass_refuses_and_leaves_the_loop_alone():
     assert [(l.label, l.init_statement.as_string, l.loop_condition.as_string) for l in _loops(sdfg)] == before
 
 
-@pytest.mark.parametrize('n', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 64, 65, 128, 129])
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 64, 65, 128, 129])
 def test_crossover_split_is_bit_exact_at_both_parities(n):
     """The split is a pure REGROUPING of the same iterations in the same order, so it must
     reproduce the unsplit SDFG BIT-EXACTLY -- not merely closely. An odd ``n`` puts the loop's
@@ -200,7 +201,7 @@ def test_crossover_split_is_bit_exact_at_both_parities(n):
     split_sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     assert BestEffortLoopPeeling(peel_limit=4).apply_pass(split_sdfg, {}) == 1
     split_sdfg.validate()
-    assert len(_loops(split_sdfg)) == 3, 'expected [start, x-1] + {x} + [x+1, end]'
+    assert len(_loops(split_sdfg)) == 3, "expected [start, x-1] + {x} + [x+1, end]"
 
     rng = np.random.default_rng(n)
     a0, b0, c0 = rng.random(max(n, 1))[:n], rng.random(max(n, 1))[:n], rng.random(max(n, 1))[:n]
@@ -208,8 +209,8 @@ def test_crossover_split_is_bit_exact_at_both_parities(n):
     ref_sdfg.compile()(a=ra, b=rb, c=c0.copy(), LEN_1D=n)
     ga, gb = a0.copy(), b0.copy()
     split_sdfg.compile()(a=ga, b=gb, c=c0.copy(), LEN_1D=n)
-    assert np.array_equal(ga, ra), f'a differs at n={n}'
-    assert np.array_equal(gb, rb), f'b differs at n={n}'
+    assert np.array_equal(ga, ra), f"a differs at n={n}"
+    assert np.array_equal(gb, rb), f"b differs at n={n}"
 
 
 def test_split_point_past_loop_end_does_not_run_past_the_end():
@@ -236,22 +237,22 @@ def test_split_point_provably_past_the_end_is_refused():
     ``start <= x <= end``; a PROVABLY out-of-range point must be refused, not emitted -- the middle
     singleton would fabricate an iteration the loop never runs (cloudsc: a phantom ``{end + 1}``
     segment whose body reads past the array once TrivialLoopElimination splices it)."""
-    sdfg = dace.SDFG('split_past_end')
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_array('a', [dace.symbol('K')], dace.float64)
-    loop = LoopRegion('l', 'i < K', 'i', 'i = 0', 'i = i + 1')
+    sdfg = dace.SDFG("split_past_end")
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_array("a", [dace.symbol("K")], dace.float64)
+    loop = LoopRegion("l", "i < K", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('body')
-    tasklet = body.add_tasklet('w', set(), {'o'}, 'o = 1.0')
-    body.add_edge(tasklet, 'o', body.add_write('a'), None, dace.Memlet('a[i]'))
+    body = loop.add_state("body")
+    tasklet = body.add_tasklet("w", set(), {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("a"), None, dace.Memlet("a[i]"))
     sdfg.validate()
 
-    x = symbolic.pystr_to_symbolic('K')  # end is K - 1: provably past the last iteration
+    x = symbolic.pystr_to_symbolic("K")  # end is K - 1: provably past the last iteration
     assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, x)
     assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, x, middle_singleton=False)
-    assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, symbolic.pystr_to_symbolic('-1'))
+    assert not BestEffortLoopPeeling()._split_loop_at(sdfg, loop, symbolic.pystr_to_symbolic("-1"))
     sdfg.validate()
-    assert _loops(sdfg) == [loop], 'a refused split must leave the loop alone'
+    assert _loops(sdfg) == [loop], "a refused split must leave the loop alone"
 
 
 def test_split_search_bound_never_undercounts_a_candidate():
@@ -263,10 +264,10 @@ def test_split_search_bound_never_undercounts_a_candidate():
     assert peel._mappable_loop_count(copy.deepcopy(mini), verdicts) == 0
     verdicts.pop(_loops(mini)[0].label)
     cand = copy.deepcopy(mini)
-    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2))
+    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic("LEN_1D"), 2))
     peel._clean_peeled_remainder(cand)
     labels = [l.label for l in _loops(cand)]
     bound = mappable_count_upper_bound(cand, verdicts)
     count = peel._mappable_loop_count(cand, dict(verdicts))
-    assert [l.label for l in _loops(cand)] == labels, 'the count prep must not add, drop or relabel a loop'
+    assert [l.label for l in _loops(cand)] == labels, "the count prep must not add, drop or relabel a loop"
     assert (bound, count) == (3, 2)

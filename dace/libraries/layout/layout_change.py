@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``LayoutChange`` library node: relayouts ``_inp`` to ``_out`` via a layout-algebra op sequence; pure uses a mapped tasklet, cuTENSOR/HPTT use TensorTranspose for a pure permutation (else pure)."""
+
 import json
 from typing import List, Optional, Tuple
 
@@ -18,9 +19,9 @@ def _as_permutation(out_map, logical_shape) -> Optional[Tuple[int, ...]]:
         return None
     perm = []
     for dg in out_map.digits:
-        if str(dg.stride) != '1':
+        if str(dg.stride) != "1":
             return None
-        if str(dace.symbolic.simplify(dg.extent - logical_shape[dg.dim])) != '0':
+        if str(dace.symbolic.simplify(dg.extent - logical_shape[dg.dim])) != "0":
             return None
         perm.append(dg.dim)
     if sorted(perm) != list(range(ndim)):
@@ -160,30 +161,31 @@ class LayoutChange(nodes.LibraryNode):
         return in_desc, out_desc
 
 
-def add_layout_change(sdfg: dace.SDFG,
-                      state: dace.SDFGState,
-                      in_name: str,
-                      out_name: str,
-                      ops: List,
-                      create_output: bool = True) -> LayoutChange:
+def add_layout_change(
+    sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: List, create_output: bool = True
+) -> LayoutChange:
     """Add a LayoutChange node relaying in_name to out_name; create_output=False reuses the existing descriptor."""
     in_desc = sdfg.arrays[in_name]
     _, _, out_shape = relayout_map(list(in_desc.shape), ops)
     if not create_output:
         existing = sdfg.arrays[out_name]
         if [str(s) for s in existing.shape] != [str(s) for s in out_shape]:
-            raise ValueError(f"add_layout_change: existing '{out_name}' has shape {existing.shape}, "
-                             f"but the op sequence yields {out_shape}")
+            raise ValueError(
+                f"add_layout_change: existing '{out_name}' has shape {existing.shape}, "
+                f"but the op sequence yields {out_shape}"
+            )
     else:
         if out_name in sdfg.arrays:
             sdfg.remove_data(out_name, validate=False)
-        sdfg.add_array(name=out_name,
-                       shape=out_shape,
-                       dtype=in_desc.dtype,
-                       storage=in_desc.storage,
-                       transient=in_desc.transient,
-                       lifetime=in_desc.lifetime,
-                       find_new_name=False)
+        sdfg.add_array(
+            name=out_name,
+            shape=out_shape,
+            dtype=in_desc.dtype,
+            storage=in_desc.storage,
+            transient=in_desc.transient,
+            lifetime=in_desc.lifetime,
+            find_new_name=False,
+        )
 
     node = LayoutChange(f"relayout_{in_name}_to_{out_name}", ops=ops)
     rin = state.add_read(in_name)

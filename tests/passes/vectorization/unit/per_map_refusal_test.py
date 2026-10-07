@@ -5,6 +5,7 @@ The vectorizer used to restore the whole SDFG on any refusal, so one un-tileable
 (a fused riming + melting map) took its other ~500 maps down with it: 13,691 tile ops became 0.
 The gate is patched here so the refused map is known; which gate fires is not the property.
 """
+
 import warnings
 
 import numpy as np
@@ -16,12 +17,14 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization import vectorize_multi_dim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
-from dace.transformation.passes.vectorization.utils.map_predicates import (NO_VECTORIZE_MARKER,
-                                                                           innermost_enclosing_map_label)
+from dace.transformation.passes.vectorization.utils.map_predicates import (
+    NO_VECTORIZE_MARKER,
+    innermost_enclosing_map_label,
+)
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -45,8 +48,8 @@ def refuse_once(label: str):
 
     def gate(sdfg: dace.SDFG, widths):
         for node, _ in sdfg.all_nodes_recursive():
-            if isinstance(node, nodes.NestedSDFG) and innermost_enclosing_map_label(node.sdfg) == (label, ):
-                return node.sdfg.start_block, f'test refusal of {label}'
+            if isinstance(node, nodes.NestedSDFG) and innermost_enclosing_map_label(node.sdfg) == (label,):
+                return node.sdfg.start_block, f"test refusal of {label}"
         return None
 
     return gate
@@ -55,36 +58,41 @@ def refuse_once(label: str):
 def labels_starting_with(sdfg: dace.SDFG, label: str) -> tuple[str, ...]:
     """Current labels of the maps descended from ``label`` -- marked, or renamed by tiling."""
     return tuple(
-        sorted({
-            n.map.label
-            for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry) and n.map.label.startswith(label)
-        }))
+        sorted(
+            {
+                n.map.label
+                for n, _ in sdfg.all_nodes_recursive()
+                if isinstance(n, nodes.MapEntry) and n.map.label.startswith(label)
+            }
+        )
+    )
 
 
 def refuse_always(sdfg: dace.SDFG, widths):
     """A stand-in gate that refuses on every attempt; paired with :func:`labels_starting_with`."""
-    return sdfg.start_block, 'test refusal on every attempt'
+    return sdfg.start_block, "test refusal on every attempt"
 
 
 def vectorized(monkeypatch, always: bool):
     sdfg = two_maps.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    label = label_of_map_writing(sdfg, 'b')
+    label = label_of_map_writing(sdfg, "b")
     if always:
-        monkeypatch.setattr(vectorize_multi_dim, 'lane_varying_interstate_guard', refuse_always)
-        monkeypatch.setattr(vectorize_multi_dim, 'innermost_enclosing_map_label',
-                            lambda graph: labels_starting_with(graph, label))
+        monkeypatch.setattr(vectorize_multi_dim, "lane_varying_interstate_guard", refuse_always)
+        monkeypatch.setattr(
+            vectorize_multi_dim, "innermost_enclosing_map_label", lambda graph: labels_starting_with(graph, label)
+        )
     else:
-        monkeypatch.setattr(vectorize_multi_dim, 'lane_varying_interstate_guard', refuse_once(label))
+        monkeypatch.setattr(vectorize_multi_dim, "lane_varying_interstate_guard", refuse_once(label))
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=detect_host_isa())).apply_pass(sdfg, {})
-    messages = [str(w.message) for w in caught if 'VectorizeMultiDim' in str(w.message)]
+        warnings.simplefilter("always")
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=detect_host_isa())).apply_pass(sdfg, {})
+    messages = [str(w.message) for w in caught if "VectorizeMultiDim" in str(w.message)]
     return sdfg, label, messages
 
 
 def tile_nodes(sdfg: dace.SDFG) -> list:
-    return [n for n, _ in sdfg.all_nodes_recursive() if type(n).__name__.startswith('Tile')]
+    return [n for n, _ in sdfg.all_nodes_recursive() if type(n).__name__.startswith("Tile")]
 
 
 def check_numbers(sdfg: dace.SDFG) -> None:
@@ -98,18 +106,18 @@ def check_numbers(sdfg: dace.SDFG) -> None:
 
 def test_a_refused_map_stays_scalar_while_the_other_map_tiles(monkeypatch):
     sdfg, label, messages = vectorized(monkeypatch, always=False)
-    assert not any('refusing to vectorize' in m for m in messages), messages
-    assert any('leaving map(s)' in m and label in m for m in messages), messages
-    assert label_of_map_writing(sdfg, 'b') == label + NO_VECTORIZE_MARKER
-    assert tile_nodes(sdfg), 'the map nobody refused was not tiled'
+    assert not any("refusing to vectorize" in m for m in messages), messages
+    assert any("leaving map(s)" in m and label in m for m in messages), messages
+    assert label_of_map_writing(sdfg, "b") == label + NO_VECTORIZE_MARKER
+    assert tile_nodes(sdfg), "the map nobody refused was not tiled"
     check_numbers(sdfg)
 
 
 def test_a_map_refused_again_after_marking_refuses_the_whole_sdfg(monkeypatch):
     """Each retry must mark a new map, or the orchestrator would retry forever."""
     sdfg, _, messages = vectorized(monkeypatch, always=True)
-    assert any('refusing to vectorize' in m for m in messages), messages
-    assert tile_nodes(sdfg) == [], 'a whole-SDFG refusal must hand back the untiled input'
+    assert any("refusing to vectorize" in m for m in messages), messages
+    assert tile_nodes(sdfg) == [], "a whole-SDFG refusal must hand back the untiled input"
     check_numbers(sdfg)
 
 
@@ -118,16 +126,19 @@ def test_a_refusal_naming_a_tiled_region_marks_the_map_it_was_split_from(monkeyp
     a label the pristine snapshot does not have: nothing was marked and all ~500 maps were refused."""
     sdfg = two_maps.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    label = label_of_map_writing(sdfg, 'b')
-    monkeypatch.setattr(vectorize_multi_dim, 'lane_varying_interstate_guard', refuse_once(label))
+    label = label_of_map_writing(sdfg, "b")
+    monkeypatch.setattr(vectorize_multi_dim, "lane_varying_interstate_guard", refuse_once(label))
     real = vectorize_multi_dim.innermost_enclosing_map_label
-    monkeypatch.setattr(vectorize_multi_dim, 'innermost_enclosing_map_label',
-                        lambda graph: tuple(f'{one}{TILE_MAIN_MARKER}' for one in real(graph)))
+    monkeypatch.setattr(
+        vectorize_multi_dim,
+        "innermost_enclosing_map_label",
+        lambda graph: tuple(f"{one}{TILE_MAIN_MARKER}" for one in real(graph)),
+    )
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=detect_host_isa())).apply_pass(sdfg, {})
-    messages = [str(w.message) for w in caught if 'VectorizeMultiDim' in str(w.message)]
-    assert not any('refusing to vectorize' in m for m in messages), messages
-    assert label_of_map_writing(sdfg, 'b') == label + NO_VECTORIZE_MARKER
-    assert tile_nodes(sdfg), 'the map nobody refused was not tiled'
+        warnings.simplefilter("always")
+        VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=detect_host_isa())).apply_pass(sdfg, {})
+    messages = [str(w.message) for w in caught if "VectorizeMultiDim" in str(w.message)]
+    assert not any("refusing to vectorize" in m for m in messages), messages
+    assert label_of_map_writing(sdfg, "b") == label + NO_VECTORIZE_MARKER
+    assert tile_nodes(sdfg), "the map nobody refused was not tiled"
     check_numbers(sdfg)

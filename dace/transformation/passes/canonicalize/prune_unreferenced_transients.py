@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Drop transient descriptors that nothing in their own SDFG names any more."""
+
 import re
 from typing import Any, Dict, Optional, Set
 
@@ -20,12 +21,12 @@ def code_text(block: Any) -> str:
     pass reads the raw text instead, which sees it whatever the language.
     """
     if block is None:
-        return ''
+        return ""
     code = block.code if isinstance(block, properties.CodeBlock) else block
     if isinstance(code, str):
         return code
     if isinstance(code, (list, tuple)):
-        return '\n'.join(str(c) for c in code)
+        return "\n".join(str(c) for c in code)
     return str(code)
 
 
@@ -63,7 +64,7 @@ def referenced_names(sdfg: SDFG) -> Set[str]:
             text.extend((cfr.loop_condition, cfr.init_statement, cfr.update_statement))
         elif isinstance(cfr, ConditionalBlock):
             text.extend(cond for cond, region in cfr.branches)
-    used |= set(re.findall(r'[A-Za-z_]\w*', '\n'.join(code_text(t) for t in text if t is not None)))
+    used |= set(re.findall(r"[A-Za-z_]\w*", "\n".join(code_text(t) for t in text if t is not None)))
     return used
 
 
@@ -79,7 +80,7 @@ class PruneUnreferencedTransients(ppl.Pass):
     serialized SDFG in between.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
@@ -99,8 +100,8 @@ class PruneUnreferencedTransients(ppl.Pass):
                 if isinstance(desc, data.Structure) and len(desc.members) > 0:
                     continue
                 sd.remove_data(name, validate=False)
-                removed.add(f'{sd.label}.{name}')
+                removed.add(f"{sd.label}.{name}")
         return set(removed) or None
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Pruned {len(pass_retval)} unreferenced transients: {sorted(pass_retval)}.'
+        return f"Pruned {len(pass_retval)} unreferenced transients: {sorted(pass_retval)}."

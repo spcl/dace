@@ -11,6 +11,7 @@ call it uniquely indexed by ``i``. tsvc_2_5 ``wf_diff_skew`` was lifted and prod
 The loop below carries ``(1, 0)`` and ``(1, -1)``: row ``i`` reads row ``i-1``. It is a genuine
 wavefront and no amount of memlet precision makes it a DOALL.
 """
+
 import numpy as np
 
 import dace
@@ -18,7 +19,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -39,10 +40,10 @@ def test_the_carrying_loop_survives_canonicalization():
     sdfg.simplify()
     canonicalize(sdfg, validate_all=False)
     loops = residual_loops(sdfg)
-    assert len(loops) == 1, f'expected the wavefront axis to stay sequential, got {[c.label for c in loops]}'
+    assert len(loops) == 1, f"expected the wavefront axis to stay sequential, got {[c.label for c in loops]}"
     start = loop_analysis.get_init_assignment(loops[0])
     end = loop_analysis.get_loop_end(loops[0])
-    assert (str(start), str(end)) == ('1', 'N - 1'), f'the surviving loop is not the outer sweep: {start}..{end}'
+    assert (str(start), str(end)) == ("1", "N - 1"), f"the surviving loop is not the outer sweep: {start}..{end}"
 
 
 def test_the_wavefront_keeps_its_values():
@@ -63,6 +64,6 @@ def test_the_wavefront_keeps_its_values():
     assert np.allclose(got, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_carrying_loop_survives_canonicalization()
     test_the_wavefront_keeps_its_values()

@@ -14,6 +14,7 @@ stage that is 396 states and 368 applications, i.e. 165494 graph collapses to fi
 and it is 31% of the whole canonicalization. Six WCR edges are cheaper to look at than one
 isomorphism.
 """
+
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
@@ -70,11 +71,14 @@ def wcr_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]]:
                 # exit is the WCR-free precise write. The transformation checks both.
                 for inner in state.in_edges(src):
                     if isinstance(inner.src, nodes.Tasklet):
-                        yield 4, {
-                            WCRToAugAssign.tasklet: inner.src,
-                            WCRToAugAssign.map_exit: src,
-                            WCRToAugAssign.output: dst
-                        }
+                        yield (
+                            4,
+                            {
+                                WCRToAugAssign.tasklet: inner.src,
+                                WCRToAugAssign.map_exit: src,
+                                WCRToAugAssign.output: dst,
+                            },
+                        )
         elif isinstance(dst, nodes.MapExit):
             assert edge.data.data is not None, "an edge into a map exit carries a value"
             for out in _exit_outputs(state, dst, edge.data.data):
@@ -128,7 +132,8 @@ def apply_at_candidates(sdfg: SDFG, xform_type: type, candidates: CandidateFn) -
 @transformation.explicit_cf_compatible
 class RevertNonReductionWCR(ppl.Pass):
     """Apply ``WCRToAugAssign`` at every WCR site it accepts, to a fixpoint."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets | ppl.Modifies.Descriptors

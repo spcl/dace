@@ -2,9 +2,9 @@
 import dace
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.int32
 
 # Dataset sizes
@@ -31,10 +31,11 @@ def floyd_warshall(path: datatype[N, N]):
         path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     if polybench:
-        polybench.main(sizes, args, [(0, 'path')], init_array, floyd_warshall)
+        polybench.main(sizes, args, [(0, "path")], init_array, floyd_warshall)
     else:
         init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         floyd_warshall(*args)

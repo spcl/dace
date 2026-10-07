@@ -10,6 +10,7 @@ for a test. ``nclv``/``ncldq*`` (the cloud-species count/indices, 5-wide) and
 specifically since that is the function this test is meant to cover) are small and
 representative without exploding compile time.
 """
+
 import time
 from typing import Dict, Tuple, Union
 
@@ -20,9 +21,9 @@ from dace.transformation.interstate import LoopUnroll
 from tests.corpus.cloudsc.generate_data_for_cloudsc import CLOUDSC_SYMBOLS
 
 #: Shape/index symbols baked in via SDFG.specialize (compile-time constants).
-SPECIALIZED_SYMBOLS = ('nclv', 'ncldql', 'ncldqi', 'ncldqr', 'ncldqs', 'ncldqv')
+SPECIALIZED_SYMBOLS = ("nclv", "ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv")
 #: Scalar arguments baked in via specialize_scalar (the function this benchmark covers).
-SPECIALIZED_SCALARS = ('kidia', 'kfdia')
+SPECIALIZED_SCALARS = ("kidia", "kfdia")
 
 
 def run_simplify(sdfg: dace.SDFG, backend: str) -> float:
@@ -32,7 +33,7 @@ def run_simplify(sdfg: dace.SDFG, backend: str) -> float:
     :param backend: ``'networkx'`` or ``'rustworkx'``.
     :returns: Elapsed seconds.
     """
-    with dace.config.set_temporary('graph', 'backend', value=backend):
+    with dace.config.set_temporary("graph", "backend", value=backend):
         t0 = time.perf_counter()
         sdfg.simplify()
         t1 = time.perf_counter()
@@ -48,7 +49,7 @@ def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
     :param backend: ``'networkx'`` or ``'rustworkx'``.
     :returns: ``(elapsed_seconds, loop_unroll_applications)``.
     """
-    with dace.config.set_temporary('graph', 'backend', value=backend):
+    with dace.config.set_temporary("graph", "backend", value=backend):
         t0 = time.perf_counter()
         sdfg.specialize({name: CLOUDSC_SYMBOLS[name] for name in SPECIALIZED_SYMBOLS})
         specialize_scalars(sdfg, {name: CLOUDSC_SYMBOLS[name] for name in SPECIALIZED_SCALARS})
@@ -71,12 +72,13 @@ def run_pipeline(sdfg: dace.SDFG, backend: str) -> Dict[str, float]:
     simplify_time = run_simplify(sdfg, backend)
     pass_time, applied = specialize_and_unroll(sdfg, backend)
     if applied == 0:
-        raise RuntimeError(f'backend={backend!r}: LoopUnroll found nothing to unroll after simplify')
-    return {'simplify': simplify_time, 'config_prop_loopunroll': pass_time}
+        raise RuntimeError(f"backend={backend!r}: LoopUnroll found nothing to unroll after simplify")
+    return {"simplify": simplify_time, "config_prop_loopunroll": pass_time}
 
 
-def filtered_inputs(sdfg: dace.SDFG, inputs: Dict[str, Union['object', int,
-                                                             float]]) -> Dict[str, Union['object', int, float]]:
+def filtered_inputs(
+    sdfg: dace.SDFG, inputs: Dict[str, Union["object", int, float]]
+) -> Dict[str, Union["object", int, float]]:
     """Restrict a generated CloudSC input dict to the names ``sdfg`` actually still
     expects. ``specialize``/``specialize_scalar`` can remove a symbol/scalar from the
     compiled call signature entirely, so a stale full input dict (built once, shared

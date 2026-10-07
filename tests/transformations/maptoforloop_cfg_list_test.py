@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """MapToForLoop leaves the CFG list exactly as a fresh rebuild would, and rebuilds it only where its
 own steps do not: the inline that flattens the loop already ends with a rebuild."""
+
 from unittest import mock
 
 import dace
@@ -10,20 +11,22 @@ from dace.transformation.dataflow import MapToForLoop
 
 def two_map_sdfg() -> dace.SDFG:
     """Two states, each with a 1-D map writing ``a``."""
-    sdfg = dace.SDFG('maptoforloop_cfg_list')
-    sdfg.add_array('a', [10], dace.float64)
+    sdfg = dace.SDFG("maptoforloop_cfg_list")
+    sdfg.add_array("a", [10], dace.float64)
     previous = None
     for index in range(2):
-        state = sdfg.add_state(f's{index}', is_start_block=(previous is None))
+        state = sdfg.add_state(f"s{index}", is_start_block=(previous is None))
         if previous is not None:
             sdfg.add_edge(previous, state, dace.InterstateEdge())
         previous = state
-        state.add_mapped_tasklet(f'm{index}',
-                                 map_ranges={'i': '0:10'},
-                                 inputs={},
-                                 outputs={'__out': dace.Memlet('a[i]')},
-                                 code=f'__out = {index + 1}.0',
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            f"m{index}",
+            map_ranges={"i": "0:10"},
+            inputs={},
+            outputs={"__out": dace.Memlet("a[i]")},
+            code=f"__out = {index + 1}.0",
+            external_edges=True,
+        )
     sdfg.validate()
     return sdfg
 
@@ -50,7 +53,7 @@ def test_cfg_list_is_current_after_each_lowering():
 def test_inlined_lowering_does_not_rebuild_after_the_inline():
     sdfg = two_map_sdfg()
     original = AbstractControlFlowRegion.reset_cfg_list
-    with mock.patch.object(AbstractControlFlowRegion, 'reset_cfg_list', autospec=True, side_effect=original) as spy:
+    with mock.patch.object(AbstractControlFlowRegion, "reset_cfg_list", autospec=True, side_effect=original) as spy:
         assert sdfg.apply_transformations(MapToForLoop, validate=False) == 1
     # nest_state_subgraph (nested SDFG added + its own rebuild), the loop region added to the nested
     # SDFG, and the region the inline hoists plus the inline's closing rebuild; nothing after that.
@@ -58,6 +61,6 @@ def test_inlined_lowering_does_not_rebuild_after_the_inline():
     assert sdfg.cfg_list == fresh_cfg_list(sdfg)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cfg_list_is_current_after_each_lowering()
     test_inlined_lowering_does_not_rebuild_after_the_inline()

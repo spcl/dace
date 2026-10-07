@@ -8,6 +8,7 @@ and the rewrite was applied twice: sigma^{-1} composed on itself, a pad added tw
 split again. Each transform's own suite passes the array as input-only (distinct in/out names), so
 none of them covered this. Bit-exactness cannot catch a doubled pad either -- it is a descriptor
 inconsistency -- so these assert on the descriptors and memlets directly."""
+
 import dace
 import sympy as sp
 
@@ -25,9 +26,9 @@ except Exception:  # already registered by another test module
     pass
 
 
-def _readwrite_nested(shape=(N, ), name="X"):
+def _readwrite_nested(shape=(N,), name="X"):
     """An SDFG whose array flows into a NestedSDFG as BOTH input and output (one inner name)."""
-    inner = dace.SDFG('inner_rw_readwrite_nested')
+    inner = dace.SDFG("inner_rw_readwrite_nested")
     inner.add_array(name, list(shape), dace.float64)
     ist = inner.add_state("i", is_start_block=True)
     params = {f"i{d}": f"0:{s}" for d, s in enumerate(shape)}
@@ -71,7 +72,7 @@ def test_shuffle_composes_the_inverse_once_on_a_readwrite_nested_array():
 
 def test_split_dimensions_splits_a_readwrite_nested_array_once():
     """A second recursion would split the already-split index again."""
-    outer, inner = _readwrite_nested(shape=(N, ))
+    outer, inner = _readwrite_nested(shape=(N,))
     SplitDimensions(split_map={"X": ([True], [8])}).apply_pass(outer, {})
     # the inner descriptor gained exactly one dimension (rank 1 -> 2), not two
     assert len(inner.arrays["X"].shape) == 2, f"inner rank {len(inner.arrays['X'].shape)} != 2"
@@ -80,7 +81,7 @@ def test_split_dimensions_splits_a_readwrite_nested_array_once():
 
 def test_unblock_reverses_a_readwrite_nested_array_once():
     """Block then Unblock must round-trip the read-write nested array back to its original rank."""
-    outer, inner = _readwrite_nested(shape=(N, ))
+    outer, inner = _readwrite_nested(shape=(N,))
     SplitDimensions(split_map={"X": ([True], [8])}).apply_pass(outer, {})
     UnblockDimensions(unblock_map={"X": ([True], [8])}).apply_pass(outer, {})
     assert len(outer.arrays["X"].shape) == 1

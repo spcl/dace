@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests WCRToAugAssign. """
+"""Tests WCRToAugAssign."""
 
 import dace
 import numpy as np
@@ -14,7 +14,7 @@ def test_tasklet():
 
     @dace.program
     def test():
-        a = np.zeros((10, ))
+        a = np.zeros((10,))
         for i in dace.map[1:9]:
             a[i - 1] += 1
         return a
@@ -24,14 +24,14 @@ def test_tasklet():
 
     val = sdfg()
     ref = test.f()
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 def test_mapped_tasklet():
 
     @dace.program
     def test():
-        a = np.zeros((10, ))
+        a = np.zeros((10,))
         for i in dace.map[1:9]:
             a[i - 1] += 1
         return a
@@ -41,7 +41,7 @@ def test_mapped_tasklet():
 
     val = sdfg()
     ref = test.f()
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 def test_noncommutative_operand_order():
@@ -52,20 +52,18 @@ def test_noncommutative_operand_order():
     the conversion's soundness gate allows it inside the parallel Map.
     """
     N = 16
-    sdfg = dace.SDFG('wcr_sub_order')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('v', [N], dace.float64)
+    sdfg = dace.SDFG("wcr_sub_order")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("v", [N], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i=f'0:{N}'))
-    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp')
-    v_node = state.add_read('v')
-    a_node = state.add_write('a')
-    state.add_memlet_path(v_node, me, tasklet, dst_conn='inp', memlet=dace.Memlet('v[i]'))
-    state.add_memlet_path(tasklet,
-                          mx,
-                          a_node,
-                          src_conn='out',
-                          memlet=dace.Memlet(data='a', subset='i', wcr='lambda a, b: a - b'))
+    me, mx = state.add_map("m", dict(i=f"0:{N}"))
+    tasklet = state.add_tasklet("t", {"inp"}, {"out"}, "out = inp")
+    v_node = state.add_read("v")
+    a_node = state.add_write("a")
+    state.add_memlet_path(v_node, me, tasklet, dst_conn="inp", memlet=dace.Memlet("v[i]"))
+    state.add_memlet_path(
+        tasklet, mx, a_node, src_conn="out", memlet=dace.Memlet(data="a", subset="i", wcr="lambda a, b: a - b")
+    )
 
     rng = np.random.default_rng(0)
     a0 = rng.random(N)
@@ -90,17 +88,17 @@ def test_scalar_source_multidim_target_subset():
     (expected 1, got 2)``. The soundness check is that the reverted SDFG validates
     and preserves the value (``aa[2, 3] += src``).
     """
-    sdfg = dace.SDFG('wcr_scalar_src_md')
-    sdfg.add_array('aa', [4, 4], dace.float64)
-    sdfg.add_scalar('src', dace.float64, transient=True)
+    sdfg = dace.SDFG("wcr_scalar_src_md")
+    sdfg.add_array("aa", [4, 4], dace.float64)
+    sdfg.add_scalar("src", dace.float64, transient=True)
     state = sdfg.add_state()
-    producer = state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
-    src = state.add_access('src')
-    aa = state.add_write('aa')
-    state.add_edge(producer, 'o', src, None, dace.Memlet('src[0]'))
+    producer = state.add_tasklet("produce", {}, {"o"}, "o = 1.0")
+    src = state.add_access("src")
+    aa = state.add_write("aa")
+    state.add_edge(producer, "o", src, None, dace.Memlet("src[0]"))
     # WCR source is the scalar ``src``; target is the 2-D element aa[2, 3]
     # (``other_subset`` unset -- the shape NormalizeWCRSource + LoopToMap produce).
-    state.add_edge(src, None, aa, None, dace.Memlet(data='aa', subset='2, 3', wcr='lambda a, b: a + b'))
+    state.add_edge(src, None, aa, None, dace.Memlet(data="aa", subset="2, 3", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
     applied = sdfg.apply_transformations(WCRToAugAssign)
@@ -123,28 +121,33 @@ def test_slice_source_offset_wcr():
     destination's ``i`` -- regression for the offset bug where the map param indexed both the
     write and the read by the destination's range (reading ``B[0:n]``)."""
     n, k = 6, 2
-    sdfg = dace.SDFG('wcr_slice_offset')
-    sdfg.add_array('A', [n], dace.float64)
-    sdfg.add_array('B', [n + k], dace.float64)
+    sdfg = dace.SDFG("wcr_slice_offset")
+    sdfg.add_array("A", [n], dace.float64)
+    sdfg.add_array("B", [n + k], dace.float64)
     state = sdfg.add_state()
-    rb = state.add_read('B')
-    wa = state.add_write('A')
-    state.add_edge(rb, None, wa, None,
-                   dace.Memlet(data='A', subset=f'0:{n}', other_subset=f'{k}:{k + n}', wcr='lambda a, b: a + b'))
+    rb = state.add_read("B")
+    wa = state.add_write("A")
+    state.add_edge(
+        rb,
+        None,
+        wa,
+        None,
+        dace.Memlet(data="A", subset=f"0:{n}", other_subset=f"{k}:{k + n}", wcr="lambda a, b: a + b"),
+    )
     sdfg.validate()
 
     applied = sdfg.apply_transformations(WCRToAugAssign)
-    assert applied == 1, 'the slice WCR (matching extent, shifted source) must revert'
+    assert applied == 1, "the slice WCR (matching extent, shifted source) must revert"
     sdfg.validate()
-    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges()), 'WCR must be gone after revert'
+    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges()), "WCR must be gone after revert"
 
     rng = np.random.default_rng(1)
     A0 = rng.random(n)
     B = rng.random(n + k)
-    ref = A0 + B[k:k + n]
+    ref = A0 + B[k : k + n]
     got = A0.copy()
     sdfg(A=got, B=B)
-    assert np.allclose(got, ref), f'A[i] += B[k+i]; got {got}, ref {ref}'
+    assert np.allclose(got, ref), f"A[i] += B[k+i]; got {got}, ref {ref}"
 
 
 def test_symbolic_overapproximated_wcr_refused_no_typeerror():
@@ -160,30 +163,33 @@ def test_symbolic_overapproximated_wcr_refused_no_typeerror():
     Calls ``can_be_applied`` directly so the pre-fix ``TypeError`` would propagate
     (the framework's ``apply_transformations`` wrapper otherwise hides it).
     """
-    npt = dace.symbol('npt')
-    sdfg = dace.SDFG('wcr_symbolic_overapprox')
-    sdfg.add_array('hist', [npt], dace.float64)
-    sdfg.add_scalar('v', dace.float64, transient=True)
+    npt = dace.symbol("npt")
+    sdfg = dace.SDFG("wcr_symbolic_overapprox")
+    sdfg.add_array("hist", [npt], dace.float64)
+    sdfg.add_scalar("v", dace.float64, transient=True)
     state = sdfg.add_state()
-    prod = state.add_tasklet('p', {}, {'o'}, 'o = 1.0')
-    vnode = state.add_access('v')
-    hist = state.add_write('hist')
-    state.add_edge(prod, 'o', vnode, None, dace.Memlet('v[0]'))
+    prod = state.add_tasklet("p", {}, {"o"}, "o = 1.0")
+    vnode = state.add_access("v")
+    hist = state.add_write("hist")
+    state.add_edge(prod, "o", vnode, None, dace.Memlet("v[0]"))
     # Over-approximated dynamic scatter: subset 0:npt (npt elements), volume 1.
-    m = dace.Memlet(data='hist', subset=f'0:{npt}', wcr='lambda a, b: a + b')
+    m = dace.Memlet(data="hist", subset=f"0:{npt}", wcr="lambda a, b: a + b")
     m.volume = 1
     m.dynamic = True
     state.add_edge(vnode, None, hist, None, m)
 
     # expr_index 2 == ``inp -[wcr]-> output`` (AccessNode -> AccessNode).
     xform = WCRToAugAssign()
-    xform.setup_match(sdfg,
-                      sdfg.cfg_id,
-                      sdfg.node_id(state), {
-                          WCRToAugAssign.inp: state.node_id(vnode),
-                          WCRToAugAssign.output: state.node_id(hist),
-                      },
-                      expr_index=2)
+    xform.setup_match(
+        sdfg,
+        sdfg.cfg_id,
+        sdfg.node_id(state),
+        {
+            WCRToAugAssign.inp: state.node_id(vnode),
+            WCRToAugAssign.output: state.node_id(hist),
+        },
+        expr_index=2,
+    )
     # Must return False without raising (pre-fix this raised the symbolic TypeError).
     assert xform.can_be_applied(state, 2, sdfg) is False
 
@@ -197,30 +203,30 @@ def test_mapexit_wcr_injective_reverts():
     param and the tasklet already reads ``A[j]`` back, so the WCR is a spurious atomic over a
     conflict-free store and must revert to a plain indexed write."""
     N = 8
-    sdfg = dace.SDFG('mapexit_wcr_inj')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
+    sdfg = dace.SDFG("mapexit_wcr_inj")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(j=f'0:{N}'))
-    tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 + __in2)')
-    a_read = state.add_read('A')
-    b_read = state.add_read('B')
-    a_write = state.add_write('A')
+    me, mx = state.add_map("m", dict(j=f"0:{N}"))
+    tasklet = state.add_tasklet("augassign", {"__in1", "__in2"}, {"__out"}, "__out = (__in1 + __in2)")
+    a_read = state.add_read("A")
+    b_read = state.add_read("B")
+    a_write = state.add_write("A")
     # tasklet reads the destination element A[j] back (__in1) + the incoming operand B[j] (__in2)
-    state.add_memlet_path(a_read, me, tasklet, dst_conn='__in1', memlet=dace.Memlet('A[j]'))
-    state.add_memlet_path(b_read, me, tasklet, dst_conn='__in2', memlet=dace.Memlet('B[j]'))
+    state.add_memlet_path(a_read, me, tasklet, dst_conn="__in1", memlet=dace.Memlet("A[j]"))
+    state.add_memlet_path(b_read, me, tasklet, dst_conn="__in2", memlet=dace.Memlet("B[j]"))
     # inner edge: precise A[j], NO WCR
-    mx.add_in_connector('IN_A')
-    mx.add_out_connector('OUT_A')
-    state.add_edge(tasklet, '__out', mx, 'IN_A', dace.Memlet('A[j]'))
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(tasklet, "__out", mx, "IN_A", dace.Memlet("A[j]"))
     # outer edge: over-approximated A[0:N], the WCR lives HERE
-    state.add_edge(mx, 'OUT_A', a_write, None, dace.Memlet(data='A', subset=f'0:{N}', wcr='lambda a, b: a + b'))
+    state.add_edge(mx, "OUT_A", a_write, None, dace.Memlet(data="A", subset=f"0:{N}", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
     applied = sdfg.apply_transformations(WCRToAugAssign)
-    assert applied == 1, 'the injective map-exit WCR must revert'
+    assert applied == 1, "the injective map-exit WCR must revert"
     sdfg.validate()
-    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges()), 'WCR must be gone after revert'
+    assert all(e.data.wcr is None for s in sdfg.states() for e in s.edges()), "WCR must be gone after revert"
 
     rng = np.random.default_rng(3)
     A0 = rng.random(N)
@@ -228,7 +234,7 @@ def test_mapexit_wcr_injective_reverts():
     ref = A0 + B  # A[j] = A[j] + B[j]
     got = A0.copy()
     sdfg(A=got, B=B)
-    assert np.allclose(got, ref), f'A[j] += B[j]; got {got}, ref {ref}'
+    assert np.allclose(got, ref), f"A[j] += B[j]; got {got}, ref {ref}"
 
 
 def test_mapexit_wcr_reduction_kept():
@@ -237,26 +243,26 @@ def test_mapexit_wcr_reduction_kept():
     not an injective store. Reverting to a plain store would introduce a data race, so the
     injectivity gate keeps the WCR (later lowered to an OMP reduction / atomic)."""
     N = 8
-    sdfg = dace.SDFG('mapexit_wcr_reduce')
-    sdfg.add_array('acc', [1], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
+    sdfg = dace.SDFG("mapexit_wcr_reduce")
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(j=f'0:{N}'))
-    tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 + __in2)')
-    acc_read = state.add_read('acc')
-    b_read = state.add_read('B')
-    acc_write = state.add_write('acc')
-    state.add_memlet_path(acc_read, me, tasklet, dst_conn='__in1', memlet=dace.Memlet('acc[0]'))
-    state.add_memlet_path(b_read, me, tasklet, dst_conn='__in2', memlet=dace.Memlet('B[j]'))
-    mx.add_in_connector('IN_A')
-    mx.add_out_connector('OUT_A')
-    state.add_edge(tasklet, '__out', mx, 'IN_A', dace.Memlet('acc[0]'))
-    state.add_edge(mx, 'OUT_A', acc_write, None, dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    me, mx = state.add_map("m", dict(j=f"0:{N}"))
+    tasklet = state.add_tasklet("augassign", {"__in1", "__in2"}, {"__out"}, "__out = (__in1 + __in2)")
+    acc_read = state.add_read("acc")
+    b_read = state.add_read("B")
+    acc_write = state.add_write("acc")
+    state.add_memlet_path(acc_read, me, tasklet, dst_conn="__in1", memlet=dace.Memlet("acc[0]"))
+    state.add_memlet_path(b_read, me, tasklet, dst_conn="__in2", memlet=dace.Memlet("B[j]"))
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(tasklet, "__out", mx, "IN_A", dace.Memlet("acc[0]"))
+    state.add_edge(mx, "OUT_A", acc_write, None, dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
     applied = sdfg.apply_transformations(WCRToAugAssign)
-    assert applied == 0, 'a constant-target (reduction) map-exit WCR must NOT revert'
-    assert any(e.data.wcr is not None for s in sdfg.states() for e in s.edges()), 'reduction WCR must be kept'
+    assert applied == 0, "a constant-target (reduction) map-exit WCR must NOT revert"
+    assert any(e.data.wcr is not None for s in sdfg.states() for e in s.edges()), "reduction WCR must be kept"
 
 
 def _nested_rmw_sdfg(n: int, extra_fold: bool) -> dace.SDFG:
@@ -264,36 +270,38 @@ def _nested_rmw_sdfg(n: int, extra_fold: bool) -> dace.SDFG:
     chunked body has once ``MapToForLoop`` has lowered the sweep, which is where ``AugAssignToWCR``
     sees a FREE tasklet and lifts the in-place RMW. ``extra_fold`` adds a second, genuine reduction
     into ``A[0]`` under the SAME operator, so the array keeps a WCR writer of its own."""
-    body = dace.SDFG('body')
-    body.add_array('A', [n], dace.float64)
-    body.add_array('C', [n], dace.float64)
-    loop = LoopRegion('sweep', f'j < {n}', 'j', 'j = 0', 'j = j + 1')
+    body = dace.SDFG("body")
+    body.add_array("A", [n], dace.float64)
+    body.add_array("C", [n], dace.float64)
+    loop = LoopRegion("sweep", f"j < {n}", "j", "j = 0", "j = j + 1")
     body.add_node(loop, is_start_block=True)
-    sweep = loop.add_state('rmw', is_start_block=True)
-    rmw = sweep.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 * __in2)')
-    sweep.add_edge(sweep.add_read('A'), None, rmw, '__in1', dace.Memlet('A[j]'))
-    sweep.add_edge(sweep.add_read('C'), None, rmw, '__in2', dace.Memlet('C[j]'))
-    sweep.add_edge(rmw, '__out', sweep.add_write('A'), None, dace.Memlet('A[j]'))
+    sweep = loop.add_state("rmw", is_start_block=True)
+    rmw = sweep.add_tasklet("augassign", {"__in1", "__in2"}, {"__out"}, "__out = (__in1 * __in2)")
+    sweep.add_edge(sweep.add_read("A"), None, rmw, "__in1", dace.Memlet("A[j]"))
+    sweep.add_edge(sweep.add_read("C"), None, rmw, "__in2", dace.Memlet("C[j]"))
+    sweep.add_edge(rmw, "__out", sweep.add_write("A"), None, dace.Memlet("A[j]"))
     if extra_fold:
-        fold_state = body.add_state('fold')
+        fold_state = body.add_state("fold")
         body.add_edge(loop, fold_state, dace.InterstateEdge())
-        fme, fmx = fold_state.add_map('fold', dict(k=f'0:{n}'))
-        fold = fold_state.add_tasklet('fold', {'__in2'}, {'__out'}, '__out = __in2')
-        fold_state.add_memlet_path(fold_state.add_read('C'), fme, fold, dst_conn='__in2', memlet=dace.Memlet('C[k]'))
-        fold_state.add_memlet_path(fold,
-                                   fmx,
-                                   fold_state.add_write('A'),
-                                   src_conn='__out',
-                                   memlet=dace.Memlet(data='A', subset='0', wcr='lambda a, b: a * b'))
+        fme, fmx = fold_state.add_map("fold", dict(k=f"0:{n}"))
+        fold = fold_state.add_tasklet("fold", {"__in2"}, {"__out"}, "__out = __in2")
+        fold_state.add_memlet_path(fold_state.add_read("C"), fme, fold, dst_conn="__in2", memlet=dace.Memlet("C[k]"))
+        fold_state.add_memlet_path(
+            fold,
+            fmx,
+            fold_state.add_write("A"),
+            src_conn="__out",
+            memlet=dace.Memlet(data="A", subset="0", wcr="lambda a, b: a * b"),
+        )
 
-    sdfg = dace.SDFG(f'nested_rmw_{"fold" if extra_fold else "plain"}_{n}')
-    sdfg.add_array('A', [n], dace.float64)
-    sdfg.add_array('C', [n], dace.float64)
-    state = sdfg.add_state('outer')
-    nsdfg = state.add_nested_sdfg(body, {'A', 'C'}, {'A'})
-    state.add_edge(state.add_read('A'), None, nsdfg, 'A', dace.Memlet(f'A[0:{n}]'))
-    state.add_edge(state.add_read('C'), None, nsdfg, 'C', dace.Memlet(f'C[0:{n}]'))
-    state.add_edge(nsdfg, 'A', state.add_write('A'), None, dace.Memlet(f'A[0:{n}]'))
+    sdfg = dace.SDFG(f"nested_rmw_{'fold' if extra_fold else 'plain'}_{n}")
+    sdfg.add_array("A", [n], dace.float64)
+    sdfg.add_array("C", [n], dace.float64)
+    state = sdfg.add_state("outer")
+    nsdfg = state.add_nested_sdfg(body, {"A", "C"}, {"A"})
+    state.add_edge(state.add_read("A"), None, nsdfg, "A", dace.Memlet(f"A[0:{n}]"))
+    state.add_edge(state.add_read("C"), None, nsdfg, "C", dace.Memlet(f"C[0:{n}]"))
+    state.add_edge(nsdfg, "A", state.add_write("A"), None, dace.Memlet(f"A[0:{n}]"))
     sdfg.validate()
     return sdfg
 
@@ -301,8 +309,12 @@ def _nested_rmw_sdfg(n: int, extra_fold: bool) -> dace.SDFG:
 def _boundary_wcrs(sdfg: dace.SDFG, data: str) -> int:
     """WCR edges writing ``data`` in the OUTERMOST SDFG only -- the boundary a nested body's
     reduction is stamped onto, not the in-body edges that carry it."""
-    return sum(1 for s in sdfg.states() for e in s.edges()
-               if e.data is not None and e.data.wcr is not None and e.data.data == data)
+    return sum(
+        1
+        for s in sdfg.states()
+        for e in s.edges()
+        if e.data is not None and e.data.wcr is not None and e.data.data == data
+    )
 
 
 def test_nested_boundary_wcr_is_cleared_on_revert():
@@ -314,22 +326,25 @@ def test_nested_boundary_wcr_is_cleared_on_revert():
     n = 16
     sdfg = _nested_rmw_sdfg(n, extra_fold=False)
 
-    assert PatternMatchAndApplyRepeated([AugAssignToWCR()]).apply_pass(sdfg, {}), 'the in-place RMW must lift'
-    assert _boundary_wcrs(sdfg, 'A') == 1, 'AugAssignToWCR stamps the enclosing NestedSDFG boundary'
+    assert PatternMatchAndApplyRepeated([AugAssignToWCR()]).apply_pass(sdfg, {}), "the in-place RMW must lift"
+    assert _boundary_wcrs(sdfg, "A") == 1, "AugAssignToWCR stamps the enclosing NestedSDFG boundary"
 
-    assert PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {}), 'the injective WCR must revert'
+    assert PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {}), "the injective WCR must revert"
     sdfg.validate()
-    assert _boundary_wcrs(sdfg, 'A') == 0, 'the boundary stamp must go with the WCR it mirrors'
+    assert _boundary_wcrs(sdfg, "A") == 0, "the boundary stamp must go with the WCR it mirrors"
     assert not [
-        e for sd in sdfg.all_sdfgs_recursive() for s in sd.states()
-        for e in s.edges() if e.data is not None and e.data.wcr is not None
-    ], 'no WCR survives the revert'
+        e
+        for sd in sdfg.all_sdfgs_recursive()
+        for s in sd.states()
+        for e in s.edges()
+        if e.data is not None and e.data.wcr is not None
+    ], "no WCR survives the revert"
 
     rng = np.random.default_rng(7)
     a0, c = rng.random(n), rng.random(n)
     got = a0.copy()
     sdfg(A=got, C=c)
-    assert np.allclose(got, a0 * c), f'A[j] *= C[j]; got {got}, ref {a0 * c}'
+    assert np.allclose(got, a0 * c), f"A[j] *= C[j]; got {got}, ref {a0 * c}"
 
 
 def test_nested_boundary_wcr_survives_a_second_reducer():
@@ -341,16 +356,20 @@ def test_nested_boundary_wcr_survives_a_second_reducer():
     sdfg = _nested_rmw_sdfg(n, extra_fold=True)
 
     assert PatternMatchAndApplyRepeated([AugAssignToWCR()]).apply_pass(sdfg, {})
-    assert _boundary_wcrs(sdfg, 'A') == 1
+    assert _boundary_wcrs(sdfg, "A") == 1
 
     PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
     sdfg.validate()
     inner = [
-        e for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg for s in sd.states() for e in s.edges()
-        if e.data is not None and e.data.wcr is not None and e.data.data == 'A'
+        e
+        for sd in sdfg.all_sdfgs_recursive()
+        if sd is not sdfg
+        for s in sd.states()
+        for e in s.edges()
+        if e.data is not None and e.data.wcr is not None and e.data.data == "A"
     ]
-    assert inner, 'the constant-target fold into A[0] is a real reduction and must keep its WCR'
-    assert _boundary_wcrs(sdfg, 'A') == 1, 'the boundary still carries that reduction'
+    assert inner, "the constant-target fold into A[0] is a real reduction and must keep its WCR"
+    assert _boundary_wcrs(sdfg, "A") == 1, "the boundary still carries that reduction"
 
     rng = np.random.default_rng(11)
     a0, c = rng.random(n), rng.random(n)
@@ -358,25 +377,32 @@ def test_nested_boundary_wcr_survives_a_second_reducer():
     ref[0] *= c.prod()
     got = a0.copy()
     sdfg(A=got, C=c)
-    assert np.allclose(got, ref), f'got {got}, ref {ref}'
+    assert np.allclose(got, ref), f"got {got}, ref {ref}"
 
 
 def tasklet_to_tasklet_data_edges(sdfg: dace.SDFG) -> list:
     """Edges carrying a data memlet straight from one tasklet to another, at every nesting depth."""
-    return [(sub.label, st.label, e.src.label, e.dst.label, e.data.data) for sub in sdfg.all_sdfgs_recursive()
-            for st in sub.states() for e in st.edges() if isinstance(e.src, nodes.Tasklet)
-            and isinstance(e.dst, nodes.Tasklet) and e.data is not None and e.data.data is not None]
+    return [
+        (sub.label, st.label, e.src.label, e.dst.label, e.data.data)
+        for sub in sdfg.all_sdfgs_recursive()
+        for st in sub.states()
+        for e in st.edges()
+        if isinstance(e.src, nodes.Tasklet)
+        and isinstance(e.dst, nodes.Tasklet)
+        and e.data is not None
+        and e.data.data is not None
+    ]
 
 
 def assert_every_memlet_is_carried(sdfg: dace.SDFG) -> None:
     """No data memlet runs tasklet-to-tasklet, and every container a memlet names still exists."""
     stray = tasklet_to_tasklet_data_edges(sdfg)
-    assert not stray, f'data memlet between two tasklets: {stray}'
+    assert not stray, f"data memlet between two tasklets: {stray}"
     for sub in sdfg.all_sdfgs_recursive():
         for st in sub.states():
             for e in st.edges():
                 if e.data is not None and e.data.data is not None:
-                    assert e.data.data in sub.arrays, f'{sub.label}: memlet names a missing container: {e.data.data}'
+                    assert e.data.data in sub.arrays, f"{sub.label}: memlet names a missing container: {e.data.data}"
     sdfg.validate()
 
 
@@ -390,7 +416,7 @@ def test_augassign_operand_is_routed_through_an_access_node():
 
     @dace.program
     def rmw():
-        a = np.zeros((10, ))
+        a = np.zeros((10,))
         for i in dace.map[1:9]:
             a[i - 1] += 1
         return a
@@ -404,20 +430,18 @@ def test_augassign_operand_is_routed_through_an_access_node():
 def test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node():
     """Same invariant for the map-exit branch of ``apply``, which mints its own operand scalar."""
     N = 16
-    sdfg = dace.SDFG('wcr_mapexit_operand')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('v', [N], dace.float64)
+    sdfg = dace.SDFG("wcr_mapexit_operand")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("v", [N], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i=f'0:{N}'))
-    tasklet = state.add_tasklet('t', {'inp': None}, {'out': None}, 'out = inp')
-    v_node = state.add_read('v')
-    a_node = state.add_write('a')
-    state.add_memlet_path(v_node, me, tasklet, dst_conn='inp', memlet=dace.Memlet('v[i]'))
-    state.add_memlet_path(tasklet,
-                          mx,
-                          a_node,
-                          src_conn='out',
-                          memlet=dace.Memlet(data='a', subset='i', wcr='lambda a, b: a - b'))
+    me, mx = state.add_map("m", dict(i=f"0:{N}"))
+    tasklet = state.add_tasklet("t", {"inp": None}, {"out": None}, "out = inp")
+    v_node = state.add_read("v")
+    a_node = state.add_write("a")
+    state.add_memlet_path(v_node, me, tasklet, dst_conn="inp", memlet=dace.Memlet("v[i]"))
+    state.add_memlet_path(
+        tasklet, mx, a_node, src_conn="out", memlet=dace.Memlet(data="a", subset="i", wcr="lambda a, b: a - b")
+    )
 
     assert sdfg.apply_transformations(WCRToAugAssign) == 1
     assert_every_memlet_is_carried(sdfg)
@@ -426,10 +450,10 @@ def test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node():
     a0, v0 = rng.random(N), rng.random(N)
     a = a0.copy()
     sdfg(a=a, v=v0.copy())
-    assert np.allclose(a, a0 - v0), f'got {a[:3]}'
+    assert np.allclose(a, a0 - v0), f"got {a[:3]}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_tasklet()
     test_mapped_tasklet()
     test_noncommutative_operand_order()
@@ -455,11 +479,17 @@ def test_the_output_binding_must_name_the_array_the_wcr_edge_writes():
     """
     from dace.transformation.passes.canonicalize import canonicalize
 
-    KLEV, KLON = dace.symbol('KLEV'), dace.symbol('KLON')
+    KLEV, KLON = dace.symbol("KLEV"), dace.symbol("KLON")
 
     @dace.program
-    def flux(a: dace.float64[KLEV + 1, KLON], b: dace.float64[KLEV + 1, KLON], c: dace.float64[KLEV + 1, KLON],
-             d: dace.float64[KLEV + 1, KLON], inc: dace.float64[KLEV, KLON], gd: dace.float64[KLEV, KLON]):
+    def flux(
+        a: dace.float64[KLEV + 1, KLON],
+        b: dace.float64[KLEV + 1, KLON],
+        c: dace.float64[KLEV + 1, KLON],
+        d: dace.float64[KLEV + 1, KLON],
+        inc: dace.float64[KLEV, KLON],
+        gd: dace.float64[KLEV, KLON],
+    ):
         for jl in range(KLON):
             a[0, jl] = 0.0
             b[0, jl] = 0.0
@@ -477,7 +507,7 @@ def test_the_output_binding_must_name_the_array_the_wcr_edge_writes():
                 d[jk + 1, jl] = d[jk + 1, jl] + gd[jk, jl]
 
     sdfg = flux.to_sdfg(simplify=False)
-    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
     sdfg.validate()
     # Every memlet must name the container its endpoints hold.
     for nested in sdfg.all_sdfgs_recursive():
@@ -487,8 +517,10 @@ def test_the_output_binding_must_name_the_array_the_wcr_edge_writes():
                     continue
                 ends = [n.data for n in (edge.src, edge.dst) if isinstance(n, dace.nodes.AccessNode)]
                 if ends:
-                    assert edge.data.data in ends, (f'memlet {edge.data.data} on an edge between '
-                                                    f'{type(edge.src).__name__}/{type(edge.dst).__name__} {ends}')
+                    assert edge.data.data in ends, (
+                        f"memlet {edge.data.data} on an edge between "
+                        f"{type(edge.src).__name__}/{type(edge.dst).__name__} {ends}"
+                    )
 
 
 def test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load():
@@ -506,11 +538,15 @@ def test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load():
     import numpy as np
     from dace.transformation.passes.canonicalize import canonicalize
 
-    KLEV, KLON = dace.symbol('KLEV'), dace.symbol('KLON')
+    KLEV, KLON = dace.symbol("KLEV"), dace.symbol("KLON")
 
     @dace.program
-    def scan2d(a: dace.float64[KLEV + 1, KLON], b: dace.float64[KLEV + 1, KLON], inc: dace.float64[KLEV, KLON],
-               gd: dace.float64[KLEV, KLON]):
+    def scan2d(
+        a: dace.float64[KLEV + 1, KLON],
+        b: dace.float64[KLEV + 1, KLON],
+        inc: dace.float64[KLEV, KLON],
+        gd: dace.float64[KLEV, KLON],
+    ):
         for jl in range(KLON):
             a[0, jl] = 0.0
             b[0, jl] = 0.0
@@ -534,13 +570,13 @@ def test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load():
             ref_b[jk + 1, jl] += inc[jk, jl] * gd[jk, jl]
 
     sdfg = scan2d.to_sdfg(simplify=False)
-    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
 
     got_a = np.zeros((klev + 1, klon))
     got_b = np.zeros((klev + 1, klon))
     sdfg(a=got_a, b=got_b, inc=inc.copy(), gd=gd.copy(), KLEV=klev, KLON=klon)
-    assert np.allclose(got_a, ref_a), f'self-seeded scan wrong: max|d|={np.max(np.abs(got_a - ref_a)):.3e}'
-    assert np.allclose(got_b, ref_b), f'cross-seeded scan wrong: max|d|={np.max(np.abs(got_b - ref_b)):.3e}'
+    assert np.allclose(got_a, ref_a), f"self-seeded scan wrong: max|d|={np.max(np.abs(got_a - ref_a)):.3e}"
+    assert np.allclose(got_b, ref_b), f"cross-seeded scan wrong: max|d|={np.max(np.abs(got_b - ref_b)):.3e}"
 
 
 def test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts():
@@ -548,22 +584,20 @@ def test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts():
     -(a-b)-> outer exit -(a-b)-> A``. No pattern reached an output two map exits away, so the WCR survived and the
     multi-dim vectorizer refused the whole kernel over a loose WCR in the body."""
     M, N = 5, 7
-    sdfg = dace.SDFG('wcr_nested_map_exit_chain')
-    sdfg.add_array('A', [M, N], dace.float64)
-    sdfg.add_array('q', [M], dace.float64)
-    sdfg.add_scalar('priv', dace.float64, transient=True)
+    sdfg = dace.SDFG("wcr_nested_map_exit_chain")
+    sdfg.add_array("A", [M, N], dace.float64)
+    sdfg.add_array("q", [M], dace.float64)
+    sdfg.add_scalar("priv", dace.float64, transient=True)
     state = sdfg.add_state()
-    ome, omx = state.add_map('outer', dict(i=f'0:{N}'))
-    ime, imx = state.add_map('inner', dict(j=f'0:{M}'))
-    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp * 2.0')
-    state.add_memlet_path(state.add_read('q'), ome, ime, tasklet, dst_conn='inp', memlet=dace.Memlet('q[j]'))
-    priv = state.add_access('priv')
-    state.add_edge(tasklet, 'out', priv, None, dace.Memlet('priv[0]'))
-    state.add_memlet_path(priv,
-                          imx,
-                          omx,
-                          state.add_write('A'),
-                          memlet=dace.Memlet(data='A', subset='j, i', wcr='lambda a, b: a - b'))
+    ome, omx = state.add_map("outer", dict(i=f"0:{N}"))
+    ime, imx = state.add_map("inner", dict(j=f"0:{M}"))
+    tasklet = state.add_tasklet("t", {"inp"}, {"out"}, "out = inp * 2.0")
+    state.add_memlet_path(state.add_read("q"), ome, ime, tasklet, dst_conn="inp", memlet=dace.Memlet("q[j]"))
+    priv = state.add_access("priv")
+    state.add_edge(tasklet, "out", priv, None, dace.Memlet("priv[0]"))
+    state.add_memlet_path(
+        priv, imx, omx, state.add_write("A"), memlet=dace.Memlet(data="A", subset="j, i", wcr="lambda a, b: a - b")
+    )
     propagate_memlets_sdfg(sdfg)
     sdfg.validate()
 

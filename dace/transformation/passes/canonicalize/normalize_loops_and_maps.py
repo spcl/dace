@@ -9,6 +9,7 @@ sets the range to ``0:(e-b)//s:1``. ``LoopRegion`` counters are normalized the
 same way. The substitution is value-preserving, so the SDFG result is
 unchanged. It reuses ``OffsetLoopsAndMaps``' tasklet token-replacement helpers.
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -36,7 +37,7 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
     value-preserving.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def __init__(self) -> None:
         # Identity offset/begin: this pass overrides ``apply_pass`` entirely
@@ -52,8 +53,9 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
     def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
         return []
 
-    def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: Dict[str,
-                                                                               str]) -> Optional[dace.memlet.Memlet]:
+    def _create_new_memlet(
+        self, edge_data: dace.memlet.Memlet, repldict: Dict[str, str]
+    ) -> Optional[dace.memlet.Memlet]:
         """Subset-substitute a memlet via proper dace symbols.
 
         Overrides the base, which sympifies string values and so mis-parses a
@@ -74,10 +76,16 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         def _r(sub: Optional[Subset]) -> Optional[dace.subsets.Range]:
             if sub is None:
                 return None
-            return dace.subsets.Range([
-                (b.subs(sd) if isinstance(b, sympy.Basic) else b, e.subs(sd) if isinstance(e, sympy.Basic) else e,
-                 s.subs(sd) if isinstance(s, sympy.Basic) else s) for b, e, s in sub.ndrange()
-            ])
+            return dace.subsets.Range(
+                [
+                    (
+                        b.subs(sd) if isinstance(b, sympy.Basic) else b,
+                        e.subs(sd) if isinstance(e, sympy.Basic) else e,
+                        s.subs(sd) if isinstance(s, sympy.Basic) else s,
+                    )
+                    for b, e, s in sub.ndrange()
+                ]
+            )
 
         m = copy.deepcopy(edge_data)
         m.subset = _r(m.subset)
@@ -134,8 +142,9 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
             # else entirely. Missing it made ChunkAntiDependence's in-chunk sweep start at the chunk
             # ORDINAL (s212, wrong values in the first chunk's worth of elements).
             if isinstance(n, nodes.MapEntry) and n is not me:
-                n.map.range = dace.subsets.Range([(_subs(rb), _subs(re), _subs(rs))
-                                                  for rb, re, rs in n.map.range.ranges])
+                n.map.range = dace.subsets.Range(
+                    [(_subs(rb), _subs(re), _subs(rs)) for rb, re, rs in n.map.range.ranges]
+                )
             if isinstance(n, nodes.NestedSDFG):
                 new_mapping = {}
                 for k, v in n.symbol_mapping.items():

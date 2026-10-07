@@ -12,6 +12,7 @@ the augmented assignment into one, and LoopToMap then lifted the scan into a map
 validated and miscompiled -- 4095 of 4096 elements wrong at 8 threads
 (``observed out[:8]: [0. 5. 23. 79. 80. 84. 85. 90.]``, expected ``[0. 1. 2. 3. 4. 5. 6. 7.]``).
 """
+
 import numpy as np
 import pytest
 
@@ -23,7 +24,7 @@ from dace.transformation.dataflow import AugAssignToWCR
 from dace.transformation.interstate import LoopToMap
 
 N = 4
-Nsym = dace.symbol('Nsym', dtype=dace.int64)
+Nsym = dace.symbol("Nsym", dtype=dace.int64)
 
 
 @dace.program
@@ -41,32 +42,33 @@ def reduction(B: dace.float64[Nsym], acc: dace.float64[1]):
 
 def build_prefix_scan(use_wcr: bool) -> dace.SDFG:
     """Hand-built twin of :func:`prefix_scan`, with and without the WCR on the accumulation."""
-    sdfg = dace.SDFG('prefix_scan_' + ('wcr' if use_wcr else 'plain'))
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_array('acc', [1], dace.float64)
-    sdfg.add_array('out', [N], dace.float64)
-    sdfg.add_symbol('i', dace.int64)
+    sdfg = dace.SDFG("prefix_scan_" + ("wcr" if use_wcr else "plain"))
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
 
-    loop = LoopRegion('loop', f'i < {N}', 'i', 'i = 0', 'i = i + 1')
+    loop = LoopRegion("loop", f"i < {N}", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
 
-    read = loop.add_state('read', is_start_block=True)
-    copy_out = read.add_tasklet('copy_out', {'a'}, {'o'}, 'o = a')
-    read.add_edge(read.add_access('acc'), None, copy_out, 'a', Memlet('acc[0]'))
-    read.add_edge(copy_out, 'o', read.add_access('out'), None, Memlet('out[i]'))
+    read = loop.add_state("read", is_start_block=True)
+    copy_out = read.add_tasklet("copy_out", {"a"}, {"o"}, "o = a")
+    read.add_edge(read.add_access("acc"), None, copy_out, "a", Memlet("acc[0]"))
+    read.add_edge(copy_out, "o", read.add_access("out"), None, Memlet("out[i]"))
 
-    accumulate = loop.add_state('accumulate')
+    accumulate = loop.add_state("accumulate")
     loop.add_edge(read, accumulate, dace.InterstateEdge())
     if use_wcr:
-        add = accumulate.add_tasklet('add', {'b'}, {'o'}, 'o = b')
-        accumulate.add_edge(accumulate.add_access('B'), None, add, 'b', Memlet('B[i]'))
-        accumulate.add_edge(add, 'o', accumulate.add_access('acc'), None,
-                            Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+        add = accumulate.add_tasklet("add", {"b"}, {"o"}, "o = b")
+        accumulate.add_edge(accumulate.add_access("B"), None, add, "b", Memlet("B[i]"))
+        accumulate.add_edge(
+            add, "o", accumulate.add_access("acc"), None, Memlet(data="acc", subset="0", wcr="lambda a, b: a + b")
+        )
     else:
-        add = accumulate.add_tasklet('add', {'a': None, 'b': None}, {'o'}, 'o = a + b')
-        accumulate.add_edge(accumulate.add_access('B'), None, add, 'b', Memlet('B[i]'))
-        accumulate.add_edge(accumulate.add_access('acc'), None, add, 'a', Memlet('acc[0]'))
-        accumulate.add_edge(add, 'o', accumulate.add_access('acc'), None, Memlet('acc[0]'))
+        add = accumulate.add_tasklet("add", {"a": None, "b": None}, {"o"}, "o = a + b")
+        accumulate.add_edge(accumulate.add_access("B"), None, add, "b", Memlet("B[i]"))
+        accumulate.add_edge(accumulate.add_access("acc"), None, add, "a", Memlet("acc[0]"))
+        accumulate.add_edge(add, "o", accumulate.add_access("acc"), None, Memlet("acc[0]"))
     sdfg.validate()
     return sdfg
 
@@ -89,26 +91,26 @@ def test_loop_to_map_refuses_a_wcr_carried_scan_end_to_end():
     """The reachable path: ``@dace.program`` -> ``AugAssignToWCR`` -> ``LoopToMap``."""
     sdfg = prefix_scan.to_sdfg(simplify=True)
     assert sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False) == 1
-    assert _wcr_memlets(sdfg), 'the test needs AugAssignToWCR to have produced the WCR accumulation'
+    assert _wcr_memlets(sdfg), "the test needs AugAssignToWCR to have produced the WCR accumulation"
 
     applied = sdfg.apply_transformations_repeated(LoopToMap, validate=False)
 
-    assert applied == 0, 'LoopToMap parallelized a prefix scan whose WCR accumulator is read back'
-    assert len(_loops(sdfg)) == 1, 'the sequential loop must survive as a LoopRegion'
-    assert not _maps_over(sdfg, 'i'), 'no map may range over the carrying iteration variable'
+    assert applied == 0, "LoopToMap parallelized a prefix scan whose WCR accumulator is read back"
+    assert len(_loops(sdfg)) == 1, "the sequential loop must survive as a LoopRegion"
+    assert not _maps_over(sdfg, "i"), "no map may range over the carrying iteration variable"
 
 
-@pytest.mark.parametrize('use_wcr', [False, True])
+@pytest.mark.parametrize("use_wcr", [False, True])
 def test_loop_to_map_refuses_a_hand_built_wcr_carried_scan(use_wcr):
     sdfg = build_prefix_scan(use_wcr)
     before = sdfg.to_json()
 
     applied = sdfg.apply_transformations_repeated(LoopToMap, validate=False)
 
-    assert applied == 0, 'LoopToMap parallelized a prefix scan whose accumulator is read back'
-    assert len(_loops(sdfg)) == 1, 'the sequential loop must survive as a LoopRegion'
-    assert not _maps_over(sdfg, 'i'), 'no map may range over the carrying iteration variable'
-    assert sdfg.to_json() == before, 'a transformation that does not apply must not mutate the SDFG'
+    assert applied == 0, "LoopToMap parallelized a prefix scan whose accumulator is read back"
+    assert len(_loops(sdfg)) == 1, "the sequential loop must survive as a LoopRegion"
+    assert not _maps_over(sdfg, "i"), "no map may range over the carrying iteration variable"
+    assert sdfg.to_json() == before, "a transformation that does not apply must not mutate the SDFG"
 
 
 def test_loop_to_map_still_lifts_a_plain_wcr_reduction():
@@ -118,9 +120,9 @@ def test_loop_to_map_still_lifts_a_plain_wcr_reduction():
 
     applied = sdfg.apply_transformations_repeated(LoopToMap, validate=False)
 
-    assert applied == 1, 'LoopToMap must still parallelize a plain WCR reduction'
-    assert not _loops(sdfg), 'the loop must be gone'
-    assert _maps_over(sdfg, 'i'), 'a map over i must have replaced it'
+    assert applied == 1, "LoopToMap must still parallelize a plain WCR reduction"
+    assert not _loops(sdfg), "the loop must be gone"
+    assert _maps_over(sdfg, "i"), "a map over i must have replaced it"
 
 
 def test_wcr_prefix_scan_computes_the_sequential_result():
@@ -138,5 +140,5 @@ def test_wcr_prefix_scan_computes_the_sequential_result():
     assert np.allclose(acc, b.sum())
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

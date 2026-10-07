@@ -15,6 +15,7 @@ connectors are pointers and ``_out = _in`` is a no-op that silently drops the
 copy, so those are left as real (``CopyNDDynamic``) copies. A View's defining
 edge is never split. GPU storage/device-scope handling is intentionally omitted.
 """
+
 import copy
 from typing import Any, Dict, Optional
 
@@ -27,10 +28,9 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import _is_unit_subset
 
 
-def _outer_side_memlet(sdfg: SDFG,
-                       outer_an: nodes.AccessNode,
-                       boundary_memlet: Memlet,
-                       wcr: Optional[Any] = None) -> Memlet:
+def _outer_side_memlet(
+    sdfg: SDFG, outer_an: nodes.AccessNode, boundary_memlet: Memlet, wcr: Optional[Any] = None
+) -> Memlet:
     """Build the memlet for the boundary edge after the local AccessNode stops being an endpoint.
 
     The split rewires the boundary edge onto the inserted tasklet, so its memlet has to name the
@@ -54,7 +54,8 @@ def _outer_side_memlet(sdfg: SDFG,
 @transformation.explicit_cf_compatible
 class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
     """Insert ``_out = _in`` tasklets at map-boundary staging edges."""
-    CATEGORY: str = 'Vectorization'
+
+    CATEGORY: str = "Vectorization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -100,8 +101,9 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             # array onto the view's shape) is the view's DEFINING edge, not a copy
             # to split; inserting a tasklet here breaks get_view_edge ("Ambiguous
             # or invalid edge to/from a View access node").
-            if (isinstance(sdfg.arrays[e.src.data], dace.data.View)
-                    or isinstance(sdfg.arrays[e.dst.data], dace.data.View)):
+            if isinstance(sdfg.arrays[e.src.data], dace.data.View) or isinstance(
+                sdfg.arrays[e.dst.data], dace.data.View
+            ):
                 continue
             if e.data.other_subset is None:
                 continue
@@ -136,16 +138,22 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 code="_out = _in",
             )
             state.remove_edge(edge)
-            state.add_edge(src_an, edge.src_conn, tasklet, "_in",
-                           Memlet(data=src_an.data, subset=copy.deepcopy(src_subset)))
+            state.add_edge(
+                src_an, edge.src_conn, tasklet, "_in", Memlet(data=src_an.data, subset=copy.deepcopy(src_subset))
+            )
             # Preserve the original edge's WCR on the OUTPUT side. The split
             # turns ``AccessNode -[wcr]-> AccessNode`` into ``... -> tasklet
             # -[wcr]-> AccessNode``; the WCR semantics still apply at the
             # write into ``dst_an``. Dropping the WCR here corrupts reductions
             # (LoopToReduce's wcr-scalar emit lands the WCR on the
             # AccessNode-to-AccessNode edge that this method splits).
-            state.add_edge(tasklet, "_out", dst_an, edge.dst_conn,
-                           Memlet(data=dst_an.data, subset=copy.deepcopy(dst_subset), wcr=mem.wcr))
+            state.add_edge(
+                tasklet,
+                "_out",
+                dst_an,
+                edge.dst_conn,
+                Memlet(data=dst_an.data, subset=copy.deepcopy(dst_subset), wcr=mem.wcr),
+            )
             count += 1
         return count
 
@@ -166,9 +174,9 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             if e.data.is_empty():
                 continue
             if isinstance(e.src, nodes.MapEntry) and isinstance(e.dst, nodes.AccessNode):
-                direction = 'in'
+                direction = "in"
             elif isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.MapExit):
-                direction = 'out'
+                direction = "out"
             else:
                 continue
             # A View AccessNode's boundary edge (``MapEntry -> View`` stage-in or
@@ -178,7 +186,7 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             # on both sides, so ``get_view_edge`` can no longer identify the
             # defining edge ("Ambiguous or invalid edge to/from a View access
             # node"). Mirrors the guard in ``_replace_other_subset_an_edges``.
-            scope_an = e.dst if direction == 'in' else e.src
+            scope_an = e.dst if direction == "in" else e.src
             if isinstance(sdfg.arrays[scope_an.data], dace.data.View):
                 continue
             # The staging split copies the FULL local array via an ``_out = _in``
@@ -192,14 +200,16 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             # stage-out edges (``... -> MapExit``). A WCR-carrying stage-in
             # edge (``MapEntry -> AccessNode``) has no defined meaning — fail
             # loudly rather than silently strip the WCR.
-            if direction == 'in' and e.data.wcr is not None:
-                raise ValueError(f"InsertAssignTaskletsAtMapBoundary: stage-in edge "
-                                 f"{e.src} -> {e.dst} (data {e.data.data!r}) carries WCR "
-                                 f"{e.data.wcr!r}; WCR is only valid on stage-out edges "
-                                 f"into MapExit.")
+            if direction == "in" and e.data.wcr is not None:
+                raise ValueError(
+                    f"InsertAssignTaskletsAtMapBoundary: stage-in edge "
+                    f"{e.src} -> {e.dst} (data {e.data.data!r}) carries WCR "
+                    f"{e.data.wcr!r}; WCR is only valid on stage-out edges "
+                    f"into MapExit."
+                )
 
             mpath = state.memlet_path(e)
-            outer_an = mpath[0].src if direction == 'in' else mpath[-1].dst
+            outer_an = mpath[0].src if direction == "in" else mpath[-1].dst
             if not isinstance(outer_an, nodes.AccessNode):
                 continue
             # The boundary memlet normally names the OUTER container, but it may name the
@@ -212,7 +222,8 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             # memlet does not carry -- it is recoverable only when the outer container is a
             # single element too. Leave a wider one unsplit rather than invent an element.
             if e.data.data != outer_an.data and not _is_unit_subset(
-                    dace.subsets.Range.from_array(sdfg.arrays[outer_an.data])):
+                dace.subsets.Range.from_array(sdfg.arrays[outer_an.data])
+            ):
                 continue
 
             edges_to_process.append((direction, e, outer_an))
@@ -223,16 +234,18 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 continue
 
             outer_memlet: Memlet = edge.data
-            if direction == 'in':
+            if direction == "in":
                 scope_node = edge.src  # innermost MapEntry
                 local_an = edge.dst  # AccessNode inside the scope
                 local_desc = sdfg.arrays[local_an.data]
                 local_memlet = Memlet(data=local_an.data, subset=dace.subsets.Range.from_array(local_desc))
                 outer_copy = _outer_side_memlet(sdfg, outer_an, outer_memlet)
-                tasklet = state.add_tasklet(name=f"_assign_in_{outer_an.data}_to_{local_an.data}",
-                                            inputs={"_in"},
-                                            outputs={"_out"},
-                                            code="_out = _in")
+                tasklet = state.add_tasklet(
+                    name=f"_assign_in_{outer_an.data}_to_{local_an.data}",
+                    inputs={"_in"},
+                    outputs={"_out"},
+                    code="_out = _in",
+                )
                 state.remove_edge(edge)
                 state.add_edge(scope_node, edge.src_conn, tasklet, "_in", outer_copy)
                 state.add_edge(tasklet, "_out", local_an, None, local_memlet)
@@ -248,10 +261,12 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
                 # corrupts reductions whose privatised scalar reaches the map
                 # exit via an AccessNode-to-MapExit edge with WCR.
                 outer_copy = _outer_side_memlet(sdfg, outer_an, outer_memlet, wcr=outer_memlet.wcr)
-                tasklet = state.add_tasklet(name=f"_assign_out_{local_an.data}_to_{outer_an.data}",
-                                            inputs={"_in"},
-                                            outputs={"_out"},
-                                            code="_out = _in")
+                tasklet = state.add_tasklet(
+                    name=f"_assign_out_{local_an.data}_to_{outer_an.data}",
+                    inputs={"_in"},
+                    outputs={"_out"},
+                    code="_out = _in",
+                )
                 state.remove_edge(edge)
                 state.add_edge(local_an, None, tasklet, "_in", local_memlet)
                 state.add_edge(tasklet, "_out", scope_node, edge.dst_conn, outer_copy)

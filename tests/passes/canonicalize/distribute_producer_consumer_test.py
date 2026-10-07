@@ -8,6 +8,7 @@ dependence. Legality follows Allen & Kennedy loop-distribution (no dependence
 edge may run from a later group to an earlier group). Cases mirror that catalog:
 aligned producer->consumer SPLITS; scalar recurrence and backward deps REFUSE.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -26,8 +27,8 @@ from dace.transformation.passes.canonicalize.pipeline import _build_stages
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 def _to_loops(prog):
@@ -39,15 +40,16 @@ def _to_loops(prog):
     """
     sdfg = prog.to_sdfg(simplify=True)
     for label, unit in _build_stages():
-        if label == 'distribute':
+        if label == "distribute":
             break
         unit.apply_pass(sdfg, {})
     return sdfg
 
 
 def _nloops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
-               if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(
+        1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    )
 
 
 def _run_full(prog, **kw):
@@ -87,20 +89,20 @@ def test_atax_matvecs_distribute_and_lift():
     sdfg = _to_loops(atax_loops)
     before = _nloops(sdfg)
     assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
-    assert _nloops(sdfg) == before + 1, 'the coupled for-i loop must split into two'
+    assert _nloops(sdfg) == before + 1, "the coupled for-i loop must split into two"
     sdfg.validate()
 
     mm, nn = 38, 42
     rng = np.random.default_rng(0)
     A = rng.standard_normal((mm, nn))
-    x = rng.standard_normal((nn, ))
+    x = rng.standard_normal((nn,))
     yref = (A @ x) @ A
 
     y = np.zeros(nn)
     lifted = _run_full(atax_loops, A=A.copy(), x=x.copy(), y=y, M=mm, N=nn)
-    assert np.allclose(y, yref), 'distribution + lift must be value-preserving'
+    assert np.allclose(y, yref), "distribution + lift must be value-preserving"
     libs = {type(n).__name__ for n, _ in lifted.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)}
-    assert 'Einsum' in libs, 'a split matvec should lift to an Einsum node'
+    assert "Einsum" in libs, "a split matvec should lift to an Einsum node"
 
 
 def test_forward_aligned_producer_consumer_splits():
@@ -123,7 +125,7 @@ def test_forward_aligned_producer_consumer_splits():
     mm, nn = 12, 9
     rng = np.random.default_rng(1)
     A = rng.standard_normal((mm, nn))
-    x = rng.standard_normal((nn, ))
+    x = rng.standard_normal((nn,))
     ref = np.zeros(mm)
     two_matvec.to_sdfg(simplify=True)(A=A.copy(), x=x.copy(), y=ref, M=mm, N=nn)
     got = np.zeros(mm)
@@ -158,14 +160,14 @@ def test_scalar_carried_recurrence_refuses():
     # Either the body is a single state (out of block-level scope -> None) or the
     # scalar's non-per-iteration write blocks the split. Both are a no-op here.
     if result is not None:
-        pytest.fail('scalar recurrence must not be distributed')
+        pytest.fail("scalar recurrence must not be distributed")
 
     mm = 7
-    a = np.random.default_rng(2).standard_normal((mm, ))
+    a = np.random.default_rng(2).standard_normal((mm,))
     ref = np.cumsum(a)
     got = np.zeros(mm)
     _run_full(cross_i_scalar, a=a.copy(), b=got, M=mm)
-    assert np.allclose(got, ref), 'running-sum semantics must be preserved'
+    assert np.allclose(got, ref), "running-sum semantics must be preserved"
 
 
 def test_backward_dependence_refuses():
@@ -184,13 +186,13 @@ def test_backward_dependence_refuses():
     groups_split = DistributeProducerConsumerLoop().apply_pass(sdfg, {})
 
     mm = 6
-    a = np.random.default_rng(3).standard_normal((mm, ))
+    a = np.random.default_rng(3).standard_normal((mm,))
     b0 = np.zeros(mm)
     ref_a, ref_b = a.copy(), b0.copy()
     war.to_sdfg(simplify=True)(a=ref_a, b=ref_b, M=mm)
     ga, gb = a.copy(), np.zeros(mm)
     _run_full(war, a=ga, b=gb, M=mm)
-    assert np.allclose(ga, ref_a) and np.allclose(gb, ref_b), 'WAR case must stay value-preserving'
+    assert np.allclose(ga, ref_a) and np.allclose(gb, ref_b), "WAR case must stay value-preserving"
 
 
 def test_mask_read_through_an_interstate_edge_refuses():
@@ -203,8 +205,8 @@ def test_mask_read_through_an_interstate_edge_refuses():
     against the mask left by the producer loop's LAST iteration instead of its own, which is a
     silent wrong answer: npbench mandelbrot1 reported an integer mismatch and nothing else.
     """
-    M = dace.symbol('M', dtype=dace.int64)
-    K = dace.symbol('K', dtype=dace.int64)
+    M = dace.symbol("M", dtype=dace.int64)
+    K = dace.symbol("K", dtype=dace.int64)
 
     @dace.program
     def mask_loop(Z: dace.float64[M], C: dace.float64[M], NN: dace.int64[M]):
@@ -218,15 +220,23 @@ def test_mask_read_through_an_interstate_edge_refuses():
                     NN[i] = n
 
     sdfg = mask_loop.to_sdfg(simplify=True)
-    before = len([
-        r for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions(recursive=True)
-        if isinstance(r, LoopRegion)
-    ])
-    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) is None, 'the mask must keep its readers'
-    after = len([
-        r for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions(recursive=True)
-        if isinstance(r, LoopRegion)
-    ])
+    before = len(
+        [
+            r
+            for sd in sdfg.all_sdfgs_recursive()
+            for r in sd.all_control_flow_regions(recursive=True)
+            if isinstance(r, LoopRegion)
+        ]
+    )
+    assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) is None, "the mask must keep its readers"
+    after = len(
+        [
+            r
+            for sd in sdfg.all_sdfgs_recursive()
+            for r in sd.all_control_flow_regions(recursive=True)
+            if isinstance(r, LoopRegion)
+        ]
+    )
     assert after == before
 
     # Values, on inputs whose mask CHANGES per iteration -- with a constant mask both orders agree
@@ -246,7 +256,7 @@ def test_mask_read_through_an_interstate_edge_refuses():
         for i in range(6):
             if m[i]:
                 ref_nn[i] = n
-    assert np.array_equal(nn, ref_nn), f'{nn} != {ref_nn}'
+    assert np.array_equal(nn, ref_nn), f"{nn} != {ref_nn}"
     assert np.allclose(z, ref_z)
 
 
@@ -261,7 +271,7 @@ def test_distribution_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_atax_matvecs_distribute_and_lift()
     test_forward_aligned_producer_consumer_splits()
     test_scalar_carried_recurrence_refuses()

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the AMD hipSPARSE backend."""
+
 import ctypes.util
 import os
 import pathlib
@@ -29,7 +30,7 @@ class hipSPARSE:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': ["../include/dace_hipsparse.h"], 'cuda': ["../include/dace_hipsparse.h"]}
+    headers = {"frame": ["../include/dace_hipsparse.h"], "cuda": ["../include/dace_hipsparse.h"]}
     state_fields = ["dace::sparse::HipsparseHandle hipsparse_handle;"]
     init_code = ""
     finalize_code = ""
@@ -51,10 +52,13 @@ class hipSPARSE:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 hipsparseHandle_t &__dace_hipsparse_handle = __state->hipsparse_handle.Get();
 hipsparseSetStream(__dace_hipsparse_handle, __dace_current_stream);\n"""
+        )
 
     @staticmethod
     def is_installed():
-        return ctypes.util.find_library('hipsparse') is not None
+        return ctypes.util.find_library("hipsparse") is not None

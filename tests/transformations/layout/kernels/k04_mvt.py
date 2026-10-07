@@ -12,6 +12,7 @@ the oracle.
 Source: Pouchet & Yuki, PolyBench/C 4.2; Ziogas et al., NPBench (ICS'21). Reduction (not BLAS gemv)
 form so the layout is honest -- BLAS packs operands internally and would hide it.
 """
+
 import numpy
 import dace
 

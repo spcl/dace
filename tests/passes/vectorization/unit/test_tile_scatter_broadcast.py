@@ -32,7 +32,8 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from tests.passes.vectorization.helpers.tile_probe import tasklet_reads_or_writes_tile
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim, )
+    VectorizeCPUMultiDim,
+)
 
 KLEV = dace.symbol("KLEV")
 KLON = dace.symbol("KLON")
@@ -88,15 +89,21 @@ def tasklet_count(sdfg: dace.SDFG) -> int:
     Excluded as legitimate: trivial assigns, ``tile_runtime_*`` trip guards, and
     the scalar ``__tile_k1_tail`` remainder (scalar-load -> scalar python
     tasklets, user direction 2026-06-15) -- none of those touch a tile."""
-    return sum(1 for n, parent in sdfg.all_nodes_recursive()
-               if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n)
-               and not n.label.startswith("tile_runtime") and tasklet_reads_or_writes_tile(parent, n, WIDTHS))
+    return sum(
+        1
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet)
+        and not is_assign_tasklet(n)
+        and not n.label.startswith("tile_runtime")
+        and tasklet_reads_or_writes_tile(parent, n, WIDTHS)
+    )
 
 
 def test_tile_scatter_symbol_broadcast_minimal():
     """Constructing a ``TileScatter(src_kind='Symbol')`` declares no
     ``_src`` connector and embeds the literal in ``src_expr``."""
     from dace.libraries.tileops import TileScatter
+
     node = TileScatter("ts_sym", widths=(8, 8), src_kind="Symbol", src_expr="0.0")
     assert "_src" not in node.in_connectors, "Symbol-source TileScatter must not declare ``_src``"
     assert "_dst" in node.out_connectors
@@ -107,8 +114,9 @@ def test_tile_scatter_symbol_requires_expr():
     """``src_kind='Symbol'`` without a ``src_expr`` raises at
     construction (loud failure)."""
     from dace.libraries.tileops import TileScatter
+
     with pytest.raises(ValueError, match="src_expr"):
-        TileScatter("ts_sym_bad", widths=(8, ), src_kind="Symbol")
+        TileScatter("ts_sym_bad", widths=(8,), src_kind="Symbol")
 
 
 def test_tidy_branch_emits_zero_cpp_tasklets():
@@ -131,18 +139,21 @@ def test_tidy_branch_emits_zero_cpp_tasklets():
             branch_mode=BranchMode.MERGE,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
-        )).apply_pass(sdfg, {})
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
 
     n_tasklets = tasklet_count(sdfg)
     n_tile = tile_lib_node_count(sdfg)
-    assert n_tasklets == 0, (f"tidy_branch must emit zero CPP tasklets after the descent — every store "
-                             f"should be a tile lib node; got {n_tasklets} Tasklet nodes (and {n_tile} "
-                             f"tile lib nodes).")
+    assert n_tasklets == 0, (
+        f"tidy_branch must emit zero CPP tasklets after the descent — every store "
+        f"should be a tile lib node; got {n_tasklets} Tasklet nodes (and {n_tile} "
+        f"tile lib nodes)."
+    )
     assert n_tile > 0, f"tile lib nodes must be present pre-expansion; got {n_tile}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_tile_scatter_symbol_broadcast_minimal()
     test_tile_scatter_symbol_requires_expr()
     test_tidy_branch_emits_zero_cpp_tasklets()

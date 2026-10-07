@@ -82,30 +82,31 @@ COEF_CONNECTOR_NAME = "_scan_coef"
 
 def in_connector(chain: int = 0) -> str:
     """Input connector of scan chain ``chain`` (chain 0 keeps the bare name)."""
-    return INPUT_CONNECTOR_NAME if chain == 0 else f'{INPUT_CONNECTOR_NAME}_{chain}'
+    return INPUT_CONNECTOR_NAME if chain == 0 else f"{INPUT_CONNECTOR_NAME}_{chain}"
 
 
 def out_connector(chain: int = 0) -> str:
     """Output connector of scan chain ``chain``."""
-    return OUTPUT_CONNECTOR_NAME if chain == 0 else f'{OUTPUT_CONNECTOR_NAME}_{chain}'
+    return OUTPUT_CONNECTOR_NAME if chain == 0 else f"{OUTPUT_CONNECTOR_NAME}_{chain}"
 
 
 def coef_connector(chain: int = 0) -> str:
     """Coefficient-input connector name for ``chain`` (affine scans only)."""
-    return COEF_CONNECTOR_NAME if chain == 0 else f'{COEF_CONNECTOR_NAME}_{chain}'
+    return COEF_CONNECTOR_NAME if chain == 0 else f"{COEF_CONNECTOR_NAME}_{chain}"
 
 
 def init_connector(chain: int = 0) -> str:
     """Optional init connector of scan chain ``chain``."""
-    return INIT_CONNECTOR_NAME if chain == 0 else f'{INIT_CONNECTOR_NAME}_{chain}'
+    return INIT_CONNECTOR_NAME if chain == 0 else f"{INIT_CONNECTOR_NAME}_{chain}"
 
 
 class ScanOp(enum.Enum):
     """Associative binary operations supported by the :class:`Scan` libnode."""
-    SUM = 'sum'
-    PRODUCT = 'product'
-    MIN = 'min'
-    MAX = 'max'
+
+    SUM = "sum"
+    PRODUCT = "product"
+    MIN = "min"
+    MAX = "max"
     #: ``out[k] = c[k] * out[k-1] + d[k]`` -- a first-order LINEAR recurrence. The four ops above
     #: carry a value; this one carries the affine map ``x -> a*x + b``, and its monoid is map
     #: composition. It is a scan in every structural sense (associative, fixed-width carry, same
@@ -117,27 +118,27 @@ class ScanOp(enum.Enum):
     #: for a nonlinear ``f`` is still associative under composition, but the carry is then the
     #: whole function and there is nothing of bounded width to scan over; ``LoopToScan``'s matcher
     #: proves linearity symbolically before it ever builds these buffers.
-    AFFINE = 'affine'
+    AFFINE = "affine"
 
 
 #: Map op enum to the suffix of the OpenMP-scan function in ``dace/scan.hpp``.
 #: The ``CPU`` expansion emits ``dace::scan::inclusive_<suffix>`` / ``exclusive_<suffix>``.
 _OP_TO_OMP_SUFFIX = {
-    ScanOp.SUM: 'sum',
-    ScanOp.PRODUCT: 'product',
-    ScanOp.MIN: 'min',
-    ScanOp.MAX: 'max',
-    ScanOp.AFFINE: 'affine',
+    ScanOp.SUM: "sum",
+    ScanOp.PRODUCT: "product",
+    ScanOp.MIN: "min",
+    ScanOp.MAX: "max",
+    ScanOp.AFFINE: "affine",
 }
 
 #: Map op enum to the OpenMP reduction identifier used by the ``reduction(inscan, <id>: ...)``
 #: clause the multi-chain expansion emits. All four are OpenMP built-ins, so no
 #: ``declare reduction`` is needed.
 _OP_TO_OMP_REDUCTION = {
-    ScanOp.SUM: '+',
-    ScanOp.PRODUCT: '*',
-    ScanOp.MIN: 'min',
-    ScanOp.MAX: 'max',
+    ScanOp.SUM: "+",
+    ScanOp.PRODUCT: "*",
+    ScanOp.MIN: "min",
+    ScanOp.MAX: "max",
 }
 
 #: Map op enum to the CUB-side binary functor for ``gpucub::DeviceScan::InclusiveScan``.
@@ -146,10 +147,10 @@ _OP_TO_OMP_REDUCTION = {
 #: ``gpucub::Min`` / ``gpucub::Max``) and 13 (CCCL 3.x dropped those in favour of
 #: ``cuda::std::plus`` + device lambdas).
 _OP_TO_CUB = {
-    ScanOp.SUM: 'DACE_CUB_SUM_OP',
-    ScanOp.PRODUCT: 'DACE_CUB_MUL_OP',
-    ScanOp.MIN: 'DACE_CUB_MIN_OP',
-    ScanOp.MAX: 'DACE_CUB_MAX_OP',
+    ScanOp.SUM: "DACE_CUB_SUM_OP",
+    ScanOp.PRODUCT: "DACE_CUB_MUL_OP",
+    ScanOp.MIN: "DACE_CUB_MIN_OP",
+    ScanOp.MAX: "DACE_CUB_MAX_OP",
 }
 
 #: Fold identity per op as a C++ expression at element type ``{ct}``. The blocked
@@ -157,24 +158,20 @@ _OP_TO_CUB = {
 #: runtime's neutral elements, which are what OpenMP seeds a reduction private copy
 #: to, so a block that the fold skips cannot move the result.
 _OP_TO_FOLD_IDENTITY = {
-    ScanOp.SUM: 'static_cast<{ct}>(0)',
-    ScanOp.PRODUCT: 'static_cast<{ct}>(1)',
-    ScanOp.MIN: '::dace::scan::detail::min_identity<{ct}>()',
-    ScanOp.MAX: '::dace::scan::detail::max_identity<{ct}>()',
+    ScanOp.SUM: "static_cast<{ct}>(0)",
+    ScanOp.PRODUCT: "static_cast<{ct}>(1)",
+    ScanOp.MIN: "::dace::scan::detail::min_identity<{ct}>()",
+    ScanOp.MAX: "::dace::scan::detail::max_identity<{ct}>()",
 }
 
 #: Default identity literal for ``exclusive`` scans, per op.
 _OP_TO_IDENTITY_CPP = {
-    ScanOp.SUM:
-    '0',
-    ScanOp.PRODUCT:
-    '1',
+    ScanOp.SUM: "0",
+    ScanOp.PRODUCT: "1",
     # ``min``/``max`` have no universal identity in C++ literal form -- callers must
     # supply ``identity`` explicitly for exclusive ``min``/``max`` scans.
-    ScanOp.MIN:
-    None,
-    ScanOp.MAX:
-    None,
+    ScanOp.MIN: None,
+    ScanOp.MAX: None,
 }
 
 
@@ -188,50 +185,69 @@ def _validate_chain(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain:
     out_edges = [e for e in state.out_edges(node) if e.src_conn == out_conn]
     init_edges = [e for e in state.in_edges(node) if e.dst_conn == init_conn]
     if len(in_edges) != 1 or len(out_edges) != 1:
-        raise ValueError(f"Scan node {node.label} expects exactly one ``{in_conn}`` "
-                         f"in-edge and one ``{out_conn}`` out-edge.")
+        raise ValueError(
+            f"Scan node {node.label} expects exactly one ``{in_conn}`` in-edge and one ``{out_conn}`` out-edge."
+        )
     if len(init_edges) > 1:
-        raise ValueError(f"Scan node {node.label}: ``{init_conn}`` is optional but at "
-                         f"most one in-edge is allowed; got {len(init_edges)}.")
+        raise ValueError(
+            f"Scan node {node.label}: ``{init_conn}`` is optional but at "
+            f"most one in-edge is allowed; got {len(init_edges)}."
+        )
     in_desc = sdfg.arrays[required(in_edges[0].data.data)]
     out_desc = sdfg.arrays[required(out_edges[0].data.data)]
     if not isinstance(in_desc, dace.data.Array) or not isinstance(out_desc, dace.data.Array):
-        raise ValueError(f"Scan requires Array inputs/outputs; got {type(in_desc).__name__} -> "
-                         f"{type(out_desc).__name__}.")
+        raise ValueError(
+            f"Scan requires Array inputs/outputs; got {type(in_desc).__name__} -> {type(out_desc).__name__}."
+        )
     if in_desc.dtype != out_desc.dtype and not widening_is_value_preserving(in_desc.dtype, out_desc.dtype):
-        raise ValueError(f"Scan input/output dtype mismatch: {in_desc.dtype} vs {out_desc.dtype}. Only a "
-                         f"value-preserving integer WIDENING is allowed, and only on the unit-stride "
-                         f"single-chain host expansions.")
+        raise ValueError(
+            f"Scan input/output dtype mismatch: {in_desc.dtype} vs {out_desc.dtype}. Only a "
+            f"value-preserving integer WIDENING is allowed, and only on the unit-stride "
+            f"single-chain host expansions."
+        )
     coef_edges = [e for e in state.in_edges(node) if e.dst_conn == coef_connector(chain)]
     if node.op is ScanOp.AFFINE:
         if len(coef_edges) != 1:
-            raise ValueError(f"Scan node {node.label}: ``op=AFFINE`` requires exactly one "
-                             f"``{coef_connector(chain)}`` in-edge; got {len(coef_edges)}.")
+            raise ValueError(
+                f"Scan node {node.label}: ``op=AFFINE`` requires exactly one "
+                f"``{coef_connector(chain)}`` in-edge; got {len(coef_edges)}."
+            )
         coef_desc = sdfg.arrays[required(coef_edges[0].data.data)]
         if not isinstance(coef_desc, dace.data.Array):
-            raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` must be an Array; "
-                             f"got {type(coef_desc).__name__}.")
+            raise ValueError(
+                f"Scan node {node.label}: ``{coef_connector(chain)}`` must be an Array; got {type(coef_desc).__name__}."
+            )
         # The ACCUMULATOR's type: the coefficient multiplies the carry, so a coefficient in a
         # different type would silently pick the promotion C++ happens to give it.
         if coef_desc.dtype != out_desc.dtype:
-            raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` dtype "
-                             f"{coef_desc.dtype} must match output dtype {out_desc.dtype}.")
-        if symbolic.equal(
-                required(coef_edges[0].data.subset).num_elements(),
-                required(in_edges[0].data.subset).num_elements()) is False:
-            raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` spans "
-                             f"{required(coef_edges[0].data.subset).num_elements()} elements against "
-                             f"``{in_conn}``'s {required(in_edges[0].data.subset).num_elements()}.")
+            raise ValueError(
+                f"Scan node {node.label}: ``{coef_connector(chain)}`` dtype "
+                f"{coef_desc.dtype} must match output dtype {out_desc.dtype}."
+            )
+        if (
+            symbolic.equal(
+                required(coef_edges[0].data.subset).num_elements(), required(in_edges[0].data.subset).num_elements()
+            )
+            is False
+        ):
+            raise ValueError(
+                f"Scan node {node.label}: ``{coef_connector(chain)}`` spans "
+                f"{required(coef_edges[0].data.subset).num_elements()} elements against "
+                f"``{in_conn}``'s {required(in_edges[0].data.subset).num_elements()}."
+            )
     elif coef_edges:
-        raise ValueError(f"Scan node {node.label}: ``{coef_connector(chain)}`` is wired but "
-                         f"``op`` is {node.op.value!r}, not AFFINE.")
+        raise ValueError(
+            f"Scan node {node.label}: ``{coef_connector(chain)}`` is wired but ``op`` is {node.op.value!r}, not AFFINE."
+        )
     if init_edges:
         init_desc = sdfg.arrays[required(init_edges[0].data.data)]
         # The OUTPUT dtype, not the input's: ``_scan_init`` is the accumulator's entry value, and
         # the accumulator is the output element type (identical to the input's unless widening).
         if init_desc.dtype != out_desc.dtype:
-            raise ValueError(f"Scan node {node.label}: ``{init_conn}`` dtype "
-                             f"{init_desc.dtype} must match output dtype {out_desc.dtype}.")
+            raise ValueError(
+                f"Scan node {node.label}: ``{init_conn}`` dtype "
+                f"{init_desc.dtype} must match output dtype {out_desc.dtype}."
+            )
     return in_desc, out_desc, in_edges[0], out_edges[0], (init_edges[0] if init_edges else None)
 
 
@@ -253,10 +269,17 @@ def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace
     schedule, one OpenMP region), so they must agree on element count and dtype --
     they are lowered as list items of a single ``reduction(inscan, ...)`` clause.
     """
-    if segmented(node) and (node.chains != 1 or node.exclusive or node.op is ScanOp.AFFINE or _has_init(node)
-                            or not symbolic.equal_valued(1, node.stride)):
-        raise ValueError(f"Scan node {node.label}: ``segments`` != 1 needs an inclusive, single-chain, unit-stride, "
-                         f"unseeded scan that is not AFFINE.")
+    if segmented(node) and (
+        node.chains != 1
+        or node.exclusive
+        or node.op is ScanOp.AFFINE
+        or _has_init(node)
+        or not symbolic.equal_valued(1, node.stride)
+    ):
+        raise ValueError(
+            f"Scan node {node.label}: ``segments`` != 1 needs an inclusive, single-chain, unit-stride, "
+            f"unseeded scan that is not AFFINE."
+        )
     first = None
     for chain in range(node.chains):
         in_desc, out_desc, in_edge, out_edge, _ = _validate_chain(node, state, sdfg, chain)
@@ -264,14 +287,20 @@ def _validate_inputs_and_outputs(node: "Scan", state: dace.SDFGState, sdfg: dace
             first = (in_desc, out_desc, in_edge, out_edge)
             continue
         if in_desc.dtype != first[0].dtype or out_desc.dtype != first[1].dtype:
-            raise ValueError(f"Scan node {node.label}: chain {chain} dtypes {in_desc.dtype} -> "
-                             f"{out_desc.dtype} differ from chain 0's {first[0].dtype} -> "
-                             f"{first[1].dtype}; chains share one scan loop.")
-        if symbolic.equal(required(in_edge.data.subset).num_elements(),
-                          required(first[2].data.subset).num_elements()) is False:
-            raise ValueError(f"Scan node {node.label}: chain {chain} spans "
-                             f"{required(in_edge.data.subset).num_elements()} elements against chain 0's "
-                             f"{required(first[2].data.subset).num_elements()}; chains share one scan loop.")
+            raise ValueError(
+                f"Scan node {node.label}: chain {chain} dtypes {in_desc.dtype} -> "
+                f"{out_desc.dtype} differ from chain 0's {first[0].dtype} -> "
+                f"{first[1].dtype}; chains share one scan loop."
+            )
+        if (
+            symbolic.equal(required(in_edge.data.subset).num_elements(), required(first[2].data.subset).num_elements())
+            is False
+        ):
+            raise ValueError(
+                f"Scan node {node.label}: chain {chain} spans "
+                f"{required(in_edge.data.subset).num_elements()} elements against chain 0's "
+                f"{required(first[2].data.subset).num_elements()}; chains share one scan loop."
+            )
     return first
 
 
@@ -295,8 +324,9 @@ def widening_is_value_preserving(in_dtype, out_dtype) -> bool:
         return False
     if out_dtype.bytes <= in_dtype.bytes:
         return False
-    return not (numpy.issubdtype(in_dtype.type, numpy.signedinteger)
-                and numpy.issubdtype(out_dtype.type, numpy.unsignedinteger))
+    return not (
+        numpy.issubdtype(in_dtype.type, numpy.signedinteger) and numpy.issubdtype(out_dtype.type, numpy.unsignedinteger)
+    )
 
 
 def refuse_widening(node: "Scan", in_desc, out_desc, shape: str) -> None:
@@ -309,8 +339,9 @@ def refuse_widening(node: "Scan", in_desc, out_desc, shape: str) -> None:
     Refuse loudly; a silent narrow accumulator is a wrong answer, not a slow one.
     """
     if in_desc.dtype != out_desc.dtype:
-        raise NotImplementedError(f"Scan {node.label}: a widening scan ({in_desc.dtype} -> {out_desc.dtype}) "
-                                  f"is not supported with {shape}.")
+        raise NotImplementedError(
+            f"Scan {node.label}: a widening scan ({in_desc.dtype} -> {out_desc.dtype}) is not supported with {shape}."
+        )
 
 
 def refuse_affine_shape(node: "Scan", shape: str) -> None:
@@ -363,7 +394,7 @@ def _is_length_one(node: "Scan", state: dace.SDFGState) -> bool:
     codegen's scalar-typing of single-element subsets."""
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME]
     n = symbolic.simplify(required(in_edges[0].data.subset).num_elements())
-    return getattr(n, 'is_Integer', False) and int(as_expr(n)) == 1
+    return getattr(n, "is_Integer", False) and int(as_expr(n)) == 1
 
 
 def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
@@ -377,18 +408,23 @@ def _degenerate_single_element_tasklet(node: "Scan", in_desc) -> nodes.Tasklet:
     if node.exclusive:
         # Treat the identity as a Python literal; the codegen casts via the connector
         # type (a scalar of ``in_desc.dtype``).
-        seed_py = node.identity if node.identity is not None else (0 if node.op is ScanOp.SUM else
-                                                                   (1 if node.op is ScanOp.PRODUCT else None))
+        seed_py = (
+            node.identity
+            if node.identity is not None
+            else (0 if node.op is ScanOp.SUM else (1 if node.op is ScanOp.PRODUCT else None))
+        )
         if seed_py is None:
             raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
         code = f"{OUTPUT_CONNECTOR_NAME} = {seed_py}"
     else:
         code = f"{OUTPUT_CONNECTOR_NAME} = {INPUT_CONNECTOR_NAME}"
-    return nodes.Tasklet(node.name,
-                         inputs={INPUT_CONNECTOR_NAME: None},
-                         outputs={OUTPUT_CONNECTOR_NAME: None},
-                         code=code,
-                         language=dace.Language.Python)
+    return nodes.Tasklet(
+        node.name,
+        inputs={INPUT_CONNECTOR_NAME: None},
+        outputs={OUTPUT_CONNECTOR_NAME: None},
+        code=code,
+        language=dace.Language.Python,
+    )
 
 
 def _identity_expr(node: "Scan", acc_desc) -> str:
@@ -405,8 +441,10 @@ def _identity_expr(node: "Scan", acc_desc) -> str:
     if literal is None:
         literal = _OP_TO_IDENTITY_CPP[node.op]
         if literal is None:
-            raise ValueError(f"Scan op {node.op.value!r} has no universal identity in C++ literal form; "
-                             f"set ``identity`` explicitly when using ``exclusive=True``.")
+            raise ValueError(
+                f"Scan op {node.op.value!r} has no universal identity in C++ literal form; "
+                f"set ``identity`` explicitly when using ``exclusive=True``."
+            )
     # ALWAYS cast, including a user-supplied identity. Beyond avoiding signed/unsigned warnings, the
     # cast is what pins the accumulator's width: ``gpucub::DeviceScan::ExclusiveScan`` deduces ``AccumT``
     # from the init value, so a bare ``0`` would make an int8 -> int64 scan accumulate in ``int``.
@@ -416,10 +454,10 @@ def _identity_expr(node: "Scan", acc_desc) -> str:
 def _combine_expr(op: ScanOp, ctype: str, a: str, b: str) -> str:
     """C++ expression for ``a OP b`` at element type ``ctype``."""
     if op is ScanOp.SUM:
-        return f'{a} + {b}'
+        return f"{a} + {b}"
     if op is ScanOp.PRODUCT:
-        return f'{a} * {b}'
-    return f'std::{"min" if op is ScanOp.MIN else "max"}<{ctype}>({a}, {b})'
+        return f"{a} * {b}"
+    return f"std::{'min' if op is ScanOp.MIN else 'max'}<{ctype}>({a}, {b})"
 
 
 def _chain_seed_expr(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain: int, ctype: str) -> str:
@@ -435,14 +473,14 @@ def _chain_seed_expr(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, chain
     if init_edge is not None:
         return init_connector(chain)
     if node.identity is not None or node.op in (ScanOp.SUM, ScanOp.PRODUCT):
-        return f'static_cast<{ctype}>({node.identity if node.identity is not None else _OP_TO_IDENTITY_CPP[node.op]})'
+        return f"static_cast<{ctype}>({node.identity if node.identity is not None else _OP_TO_IDENTITY_CPP[node.op]})"
     if node.exclusive:
         raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
-    return f'{in_connector(chain)}[0]'
+    return f"{in_connector(chain)}[0]"
 
 
 #: Compound assignment per op, for the ``declare reduction`` combiner below.
-_OP_TO_COMPOUND = {ScanOp.SUM: '+=', ScanOp.PRODUCT: '*='}
+_OP_TO_COMPOUND = {ScanOp.SUM: "+=", ScanOp.PRODUCT: "*="}
 
 
 def _multi_chain_udr(op: ScanOp, dtype, ctype: str) -> str:
@@ -458,17 +496,20 @@ def _multi_chain_udr(op: ScanOp, dtype, ctype: str) -> str:
     (``detail::min_identity`` / ``max_identity``) already refuses it with a ``static_assert``.
     """
     if dtype not in (dace.complex64, dace.complex128):
-        return ''
+        return ""
     compound = _OP_TO_COMPOUND.get(op)
     if compound is None:
-        return ''
+        return ""
     ident = _OP_TO_IDENTITY_CPP[op]
-    return (f'#pragma omp declare reduction({_OP_TO_OMP_REDUCTION[op]} : {ctype} : omp_out {compound} omp_in) '
-            f'initializer(omp_priv = {ctype}({ident}))')
+    return (
+        f"#pragma omp declare reduction({_OP_TO_OMP_REDUCTION[op]} : {ctype} : omp_out {compound} omp_in) "
+        f"initializer(omp_priv = {ctype}({ident}))"
+    )
 
 
-def _multi_chain_parallel_code(node: "Scan", ctype: str, n_expr: str, accs, acc_list: str, seeds, first: str,
-                               second: str, scan_kind: str, udr: str) -> str:
+def _multi_chain_parallel_code(
+    node: "Scan", ctype: str, n_expr: str, accs, acc_list: str, seeds, first: str, second: str, scan_kind: str, udr: str
+) -> str:
     """Blocked three-phase body for ``chains > 1``, K chains wide.
 
     Same algorithm as ``dace::scan::detail::blocked_scan``; it cannot BE that
@@ -484,76 +525,97 @@ def _multi_chain_parallel_code(node: "Scan", ctype: str, n_expr: str, accs, acc_
     the fold pass below it are inside its scope.
     """
     k = node.chains
-    d = '::dace::scan::detail'
+    d = "::dace::scan::detail"
     op = _OP_TO_OMP_REDUCTION[node.op]
     ident = _OP_TO_FOLD_IDENTITY[node.op].format(ct=ctype)
-    sums = [f'__s{c}' for c in range(k)]
-    alls = [f'__all{c}' for c in range(k)]
-    carries = [f'__carry{c}' for c in range(k)]
-    offs = [f'__off{c}' for c in range(k)]
-    call_offs = ', '.join(offs)
-    call_carries = ', '.join(carries)
-    call_seeds = ', '.join(seeds)
-    return '\n'.join([
-        '{',
-    ] + ([udr] if udr else []) + [
-        f'const long __n = static_cast<long>({n_expr});',
-        'if (__n > 0) {',
-        'auto __scan_block = [&](long __lo, long __hi, ' + ', '.join(f'{ctype} {a}' for a in accs) + ') {',
-        f'    #pragma omp simd reduction(inscan, {op}:{acc_list})',
-        '    for (long __i = __lo; __i < __hi; ++__i) {',
-        first,
-        f'        #pragma omp scan {scan_kind}({acc_list})',
-        second,
-        '    }',
-        '};',
-        f'const int __want = {d}::team_size();',
-        # No size test: the multi-chain shape follows the single-chain one, where whether a
-        # scan earns a team is decided ONCE at compile time against the host's calibrated
-        # break-even, not re-tested on every call. ``__want > 1`` is not a threshold.
-        'if (__want > 1) {',
-        f'    {d}::TeamSlot<{ctype}, {k}> __tot[{d}::MAX_TEAM];',
-        '    #pragma omp parallel num_threads(__want)',
-        '    {',
-        f'        const long __team = {d}::team_count();',
-        f'        const long __me = {d}::team_rank();',
-        f'        const long __per = {d}::block_span(__n, __team, static_cast<long>({k} * sizeof({ctype})));',
-        '        const long __tile = __per * __team;',
-    ] + [f'        {ctype} {carries[c]} = {seeds[c]};' for c in range(k)] + [
-        '        for (long __base = 0; __base < __n; __base += __tile) {',
-        '            const long __end = (__base + __tile < __n) ? __base + __tile : __n;',
-        '            const long __lo = (__base + __me * __per < __end) ? __base + __me * __per : __end;',
-        '            const long __hi = (__lo + __per < __end) ? __lo + __per : __end;',
-        '            if (__team > 1) {',
-    ] + [f'                {ctype} {sums[c]} = {ident};' for c in range(k)] + [
-        f'                #pragma omp simd reduction({op}:{", ".join(sums)})',
-        '                for (long __i = __lo; __i < __hi; ++__i) {',
-    ] + [
-        f'                    {sums[c]} = {_combine_expr(node.op, ctype, sums[c], f"{in_connector(c)}[__i]")};'
-        for c in range(k)
-    ] + ['                }'] + [f'                __tot[__me].v[{c}] = {sums[c]};' for c in range(k)] + [
-        '                #pragma omp barrier',
-    ] + [f'                {ctype} {offs[c]} = {carries[c]}, {alls[c]} = {carries[c]};' for c in range(k)] + [
-        '                for (long __q = 0; __q < __team; ++__q) {',
-        '                    if (__q == __me) {',
-    ] + [f'                        {offs[c]} = {alls[c]};' for c in range(k)] + ['                    }'] + [
-        f'                    {alls[c]} = {_combine_expr(node.op, ctype, alls[c], f"__tot[__q].v[{c}]")};'
-        for c in range(k)
-    ] + ['                }'] + [
-        f'                __scan_block(__lo, __hi, {call_offs});',
-    ] + [f'                {carries[c]} = {alls[c]};' for c in range(k)] + [
-        '                #pragma omp barrier',
-        '            } else {',
-        f'                __scan_block(__lo, __hi, {call_carries});',
-        '            }',
-        '        }',
-        '    }',
-        '} else {',
-        f'    __scan_block(0, __n, {call_seeds});',
-        '}',
-        '}',
-        '}',
-    ])
+    sums = [f"__s{c}" for c in range(k)]
+    alls = [f"__all{c}" for c in range(k)]
+    carries = [f"__carry{c}" for c in range(k)]
+    offs = [f"__off{c}" for c in range(k)]
+    call_offs = ", ".join(offs)
+    call_carries = ", ".join(carries)
+    call_seeds = ", ".join(seeds)
+    return "\n".join(
+        [
+            "{",
+        ]
+        + ([udr] if udr else [])
+        + [
+            f"const long __n = static_cast<long>({n_expr});",
+            "if (__n > 0) {",
+            "auto __scan_block = [&](long __lo, long __hi, " + ", ".join(f"{ctype} {a}" for a in accs) + ") {",
+            f"    #pragma omp simd reduction(inscan, {op}:{acc_list})",
+            "    for (long __i = __lo; __i < __hi; ++__i) {",
+            first,
+            f"        #pragma omp scan {scan_kind}({acc_list})",
+            second,
+            "    }",
+            "};",
+            f"const int __want = {d}::team_size();",
+            # No size test: the multi-chain shape follows the single-chain one, where whether a
+            # scan earns a team is decided ONCE at compile time against the host's calibrated
+            # break-even, not re-tested on every call. ``__want > 1`` is not a threshold.
+            "if (__want > 1) {",
+            f"    {d}::TeamSlot<{ctype}, {k}> __tot[{d}::MAX_TEAM];",
+            "    #pragma omp parallel num_threads(__want)",
+            "    {",
+            f"        const long __team = {d}::team_count();",
+            f"        const long __me = {d}::team_rank();",
+            f"        const long __per = {d}::block_span(__n, __team, static_cast<long>({k} * sizeof({ctype})));",
+            "        const long __tile = __per * __team;",
+        ]
+        + [f"        {ctype} {carries[c]} = {seeds[c]};" for c in range(k)]
+        + [
+            "        for (long __base = 0; __base < __n; __base += __tile) {",
+            "            const long __end = (__base + __tile < __n) ? __base + __tile : __n;",
+            "            const long __lo = (__base + __me * __per < __end) ? __base + __me * __per : __end;",
+            "            const long __hi = (__lo + __per < __end) ? __lo + __per : __end;",
+            "            if (__team > 1) {",
+        ]
+        + [f"                {ctype} {sums[c]} = {ident};" for c in range(k)]
+        + [
+            f"                #pragma omp simd reduction({op}:{', '.join(sums)})",
+            "                for (long __i = __lo; __i < __hi; ++__i) {",
+        ]
+        + [
+            f"                    {sums[c]} = {_combine_expr(node.op, ctype, sums[c], f'{in_connector(c)}[__i]')};"
+            for c in range(k)
+        ]
+        + ["                }"]
+        + [f"                __tot[__me].v[{c}] = {sums[c]};" for c in range(k)]
+        + [
+            "                #pragma omp barrier",
+        ]
+        + [f"                {ctype} {offs[c]} = {carries[c]}, {alls[c]} = {carries[c]};" for c in range(k)]
+        + [
+            "                for (long __q = 0; __q < __team; ++__q) {",
+            "                    if (__q == __me) {",
+        ]
+        + [f"                        {offs[c]} = {alls[c]};" for c in range(k)]
+        + ["                    }"]
+        + [
+            f"                    {alls[c]} = {_combine_expr(node.op, ctype, alls[c], f'__tot[__q].v[{c}]')};"
+            for c in range(k)
+        ]
+        + ["                }"]
+        + [
+            f"                __scan_block(__lo, __hi, {call_offs});",
+        ]
+        + [f"                {carries[c]} = {alls[c]};" for c in range(k)]
+        + [
+            "                #pragma omp barrier",
+            "            } else {",
+            f"                __scan_block(__lo, __hi, {call_carries});",
+            "            }",
+            "        }",
+            "    }",
+            "} else {",
+            f"    __scan_block(0, __n, {call_seeds});",
+            "}",
+            "}",
+            "}",
+        ]
+    )
 
 
 def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, parallel: bool) -> nodes.Tasklet:
@@ -578,58 +640,73 @@ def _multi_chain_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, p
     dtype = required(_validate_inputs_and_outputs(node, state, sdfg))[0].dtype
     ctype = dtype.ctype
     if not symbolic.equal_valued(1, node.stride):
-        raise NotImplementedError("Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
-                                  "Scan libnode per strided chain.")
+        raise NotImplementedError(
+            "Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one Scan libnode per strided chain."
+        )
     k = node.chains
     n_expr = _resolve_length(node, state, sdfg)
-    accs = [f'__acc{c}' for c in range(k)]
-    acc_list = ', '.join(accs)
+    accs = [f"__acc{c}" for c in range(k)]
+    acc_list = ", ".join(accs)
     seeds = [_chain_seed_expr(node, state, sdfg, c, ctype) for c in range(k)]
 
-    updates = '\n'.join(f'        {accs[c]} = {_combine_expr(node.op, ctype, accs[c], f"{in_connector(c)}[__i]")};'
-                        for c in range(k))
-    stores = '\n'.join(f'        {out_connector(c)}[__i] = {accs[c]};' for c in range(k))
+    updates = "\n".join(
+        f"        {accs[c]} = {_combine_expr(node.op, ctype, accs[c], f'{in_connector(c)}[__i]')};" for c in range(k)
+    )
+    stores = "\n".join(f"        {out_connector(c)}[__i] = {accs[c]};" for c in range(k))
     if node.exclusive:
         first, second = stores, updates
-        scan_kind = 'exclusive'
+        scan_kind = "exclusive"
     else:
         first, second = updates, stores
-        scan_kind = 'inclusive'
+        scan_kind = "inclusive"
     if not parallel:
         # Sequential shape: the plain loop, no pragmas, no blocking. ``min``/``max``
         # seed from the chain's first element, so an empty range must not run at all.
-        decls = '\n'.join(f'    {ctype} {accs[c]} = {seeds[c]};' for c in range(k))
-        code = (f'{{\n'
-                f'    const long __n = static_cast<long>({n_expr});\n'
-                f'    if (__n > 0) {{\n'
-                f'{decls}\n'
-                f'    for (long __i = 0; __i < __n; ++__i) {{\n'
-                f'{first}\n'
-                f'{second}\n'
-                f'    }}\n'
-                f'    }}\n'
-                f'}}')
+        decls = "\n".join(f"    {ctype} {accs[c]} = {seeds[c]};" for c in range(k))
+        code = (
+            f"{{\n"
+            f"    const long __n = static_cast<long>({n_expr});\n"
+            f"    if (__n > 0) {{\n"
+            f"{decls}\n"
+            f"    for (long __i = 0; __i < __n; ++__i) {{\n"
+            f"{first}\n"
+            f"{second}\n"
+            f"    }}\n"
+            f"    }}\n"
+            f"}}"
+        )
     else:
-        code = _multi_chain_parallel_code(node, ctype, n_expr, accs, acc_list, seeds, first, second, scan_kind,
-                                          _multi_chain_udr(node.op, dtype, ctype))
+        code = _multi_chain_parallel_code(
+            node,
+            ctype,
+            n_expr,
+            accs,
+            acc_list,
+            seeds,
+            first,
+            second,
+            scan_kind,
+            _multi_chain_udr(node.op, dtype, ctype),
+        )
     inputs = {in_connector(c): None for c in range(node.chains)}
     inputs.update({init_connector(c): None for c in range(node.chains) if init_connector(c) in node.in_connectors})
-    return nodes.Tasklet(node.name,
-                         inputs=inputs,
-                         outputs={out_connector(c): None
-                                  for c in range(node.chains)},
-                         code=code,
-                         language=dace.Language.CPP)
+    return nodes.Tasklet(
+        node.name,
+        inputs=inputs,
+        outputs={out_connector(c): None for c in range(node.chains)},
+        code=code,
+        language=dace.Language.CPP,
+    )
 
 
 #: Map op enum to the identity the header's single-block scan is seeded with when the caller
 #: supplies none. ``min``/``max`` have no C++ literal identity, so the header's own neutral
 #: elements are named instead of a number.
 _OP_TO_SEED_CPP = {
-    ScanOp.SUM: '{ct}(0)',
-    ScanOp.PRODUCT: '{ct}(1)',
-    ScanOp.MIN: '::dace::scan::detail::min_identity<{ct}>()',
-    ScanOp.MAX: '::dace::scan::detail::max_identity<{ct}>()',
+    ScanOp.SUM: "{ct}(0)",
+    ScanOp.PRODUCT: "{ct}(1)",
+    ScanOp.MIN: "::dace::scan::detail::min_identity<{ct}>()",
+    ScanOp.MAX: "::dace::scan::detail::max_identity<{ct}>()",
 }
 
 
@@ -648,17 +725,21 @@ def affine_scan_body(node: "Scan", ctype: str, n_expr: str, parallel: bool) -> s
     stride_expr = sym2cpp(node.stride)
     if not symbolic.equal_valued(1, node.stride):
         return strided_affine_scan_body(node, ctype, n_expr, stride_expr, parallel)
-    seed = INIT_CONNECTOR_NAME if _has_init(node) else f'static_cast<{ctype}>(0)'
+    seed = INIT_CONNECTOR_NAME if _has_init(node) else f"static_cast<{ctype}>(0)"
     if parallel:
-        return (f'::dace::scan::inclusive_affine({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, '
-                f'{OUTPUT_CONNECTOR_NAME}, static_cast<long>({n_expr}), {seed});')
-    return (f'{{ const long _n = static_cast<long>({n_expr});\n'
-            f'  {ctype} _acc = {seed};\n'
-            f'  for (long _k = 0; _k < _n; ++_k) {{\n'
-            f'      _acc = {COEF_CONNECTOR_NAME}[_k] * _acc + {INPUT_CONNECTOR_NAME}[_k];\n'
-            f'      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n'
-            f'  }}\n'
-            f'}}')
+        return (
+            f"::dace::scan::inclusive_affine({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, "
+            f"{OUTPUT_CONNECTOR_NAME}, static_cast<long>({n_expr}), {seed});"
+        )
+    return (
+        f"{{ const long _n = static_cast<long>({n_expr});\n"
+        f"  {ctype} _acc = {seed};\n"
+        f"  for (long _k = 0; _k < _n; ++_k) {{\n"
+        f"      _acc = {COEF_CONNECTOR_NAME}[_k] * _acc + {INPUT_CONNECTOR_NAME}[_k];\n"
+        f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
+        f"  }}\n"
+        f"}}"
+    )
 
 
 def strided_affine_scan_body(node: "Scan", ctype: str, n_expr: str, stride_expr: str, parallel: bool) -> str:
@@ -682,25 +763,29 @@ def strided_affine_scan_body(node: "Scan", ctype: str, n_expr: str, stride_expr:
     """
     if _has_init(node):
         seeds = INIT_CONNECTOR_NAME
-        seed_of = f'{INIT_CONNECTOR_NAME}[_r]'
+        seed_of = f"{INIT_CONNECTOR_NAME}[_r]"
     else:
         # No seed wired: every class enters at the monoid's identity, as the contiguous form does.
-        seeds = f'::dace::scan::detail::zero_seeds<{ctype}>()'
-        seed_of = f'static_cast<{ctype}>(0)'
+        seeds = f"::dace::scan::detail::zero_seeds<{ctype}>()"
+        seed_of = f"static_cast<{ctype}>(0)"
     if parallel:
-        return (f'::dace::scan::inclusive_affine_strided({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, '
-                f'{OUTPUT_CONNECTOR_NAME}, static_cast<long>({n_expr}), '
-                f'static_cast<long>({stride_expr}), {seeds});')
-    return (f'{{ const long _n = static_cast<long>({n_expr});\n'
-            f'  const long _s = static_cast<long>({stride_expr});\n'
-            f'  for (long _r = 0; _r < _s && _r < _n; ++_r) {{\n'
-            f'      {ctype} _acc = {seed_of};\n'
-            f'      for (long _k = _r; _k < _n; _k += _s) {{\n'
-            f'          _acc = {COEF_CONNECTOR_NAME}[_k] * _acc + {INPUT_CONNECTOR_NAME}[_k];\n'
-            f'          {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n'
-            f'      }}\n'
-            f'  }}\n'
-            f'}}')
+        return (
+            f"::dace::scan::inclusive_affine_strided({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, "
+            f"{OUTPUT_CONNECTOR_NAME}, static_cast<long>({n_expr}), "
+            f"static_cast<long>({stride_expr}), {seeds});"
+        )
+    return (
+        f"{{ const long _n = static_cast<long>({n_expr});\n"
+        f"  const long _s = static_cast<long>({stride_expr});\n"
+        f"  for (long _r = 0; _r < _s && _r < _n; ++_r) {{\n"
+        f"      {ctype} _acc = {seed_of};\n"
+        f"      for (long _k = _r; _k < _n; _k += _s) {{\n"
+        f"          _acc = {COEF_CONNECTOR_NAME}[_k] * _acc + {INPUT_CONNECTOR_NAME}[_k];\n"
+        f"          {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
+        f"      }}\n"
+        f"  }}\n"
+        f"}}"
+    )
 
 
 def degenerate_affine_tasklet(node: "Scan") -> nodes.Tasklet:
@@ -711,28 +796,33 @@ def degenerate_affine_tasklet(node: "Scan") -> nodes.Tasklet:
     same way (:func:`_degenerate_single_element_tasklet`); affine needs its own because the
     answer is an expression over two inputs rather than a copy.
     """
-    seed = INIT_CONNECTOR_NAME if _has_init(node) else '0'
+    seed = INIT_CONNECTOR_NAME if _has_init(node) else "0"
     inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None}
     if _has_init(node):
         inputs[INIT_CONNECTOR_NAME] = None
-    return nodes.Tasklet(node.name,
-                         inputs=inputs,
-                         outputs={OUTPUT_CONNECTOR_NAME: None},
-                         code=f'{OUTPUT_CONNECTOR_NAME} = {COEF_CONNECTOR_NAME} * {seed} + {INPUT_CONNECTOR_NAME}',
-                         language=dace.Language.Python)
+    return nodes.Tasklet(
+        node.name,
+        inputs=inputs,
+        outputs={OUTPUT_CONNECTOR_NAME: None},
+        code=f"{OUTPUT_CONNECTOR_NAME} = {COEF_CONNECTOR_NAME} * {seed} + {INPUT_CONNECTOR_NAME}",
+        language=dace.Language.Python,
+    )
 
 
-def affine_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc, n_expr: str,
-                   parallel: bool) -> nodes.Tasklet:
+def affine_tasklet(
+    node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc, n_expr: str, parallel: bool
+) -> nodes.Tasklet:
     """Assemble the affine-scan tasklet with its coefficient (and optional init) connectors."""
     inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None}
     if _has_init(node):
         inputs[INIT_CONNECTOR_NAME] = None
-    return nodes.Tasklet(node.name,
-                         inputs=inputs,
-                         outputs={OUTPUT_CONNECTOR_NAME: None},
-                         code=affine_scan_body(node, out_desc.dtype.ctype, n_expr, parallel),
-                         language=dace.Language.CPP)
+    return nodes.Tasklet(
+        node.name,
+        inputs=inputs,
+        outputs={OUTPUT_CONNECTOR_NAME: None},
+        code=affine_scan_body(node, out_desc.dtype.ctype, n_expr, parallel),
+        language=dace.Language.CPP,
+    )
 
 
 def refuse_unsupported_affine_flags(node: "Scan") -> None:
@@ -740,9 +830,9 @@ def refuse_unsupported_affine_flags(node: "Scan") -> None:
     if node.op is not ScanOp.AFFINE:
         return
     if node.exclusive:
-        refuse_affine_shape(node, '``exclusive=True``')
+        refuse_affine_shape(node, "``exclusive=True``")
     if node.chains > 1:
-        refuse_affine_shape(node, '``chains > 1``')
+        refuse_affine_shape(node, "``chains > 1``")
 
 
 def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) -> str:
@@ -767,27 +857,30 @@ def single_block_scan_call(op: ScanOp, exclusive: bool, n_expr: str, seed: str) 
     :param seed: C++ expression the accumulator starts at; it takes part in the prefix.
     :returns: the tasklet body.
     """
-    kind = 'excl' if exclusive else 'incl'
-    fn = f'::dace::scan::detail::scan_{kind}_{_OP_TO_OMP_SUFFIX[op]}'
-    return (f'{fn}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, 0L, '
-            f'static_cast<long>({n_expr}), {seed});')
+    kind = "excl" if exclusive else "incl"
+    fn = f"::dace::scan::detail::scan_{kind}_{_OP_TO_OMP_SUFFIX[op]}"
+    return f"{fn}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, 0L, static_cast<long>({n_expr}), {seed});"
 
 
 #: The trade a Scan records: canonicalization takes the parallel form.
-PARALLEL_SCAN_HINT = ('parallel scan; canonicalization takes the parallel form.\n'
-                      'Alternative: a sequential loop over parallel maps.\n'
-                      'CPU: the loop is worth trying -- the scan does more work, and the loop '
-                      'may already saturate the memory system.\n'
-                      'GPU: the scan is usually the better of the two.\n'
-                      'Both are correct. Measure before choosing.')
+PARALLEL_SCAN_HINT = (
+    "parallel scan; canonicalization takes the parallel form.\n"
+    "Alternative: a sequential loop over parallel maps.\n"
+    "CPU: the loop is worth trying -- the scan does more work, and the loop "
+    "may already saturate the memory system.\n"
+    "GPU: the scan is usually the better of the two.\n"
+    "Both are correct. Measure before choosing."
+)
 
 #: The same trade after a sequential expansion: the emitted scan is one loop.
-SEQUENTIAL_SCAN_HINT = ('sequential scan; this expansion runs the recurrence as one loop.\n'
-                        'Alternative: the parallel scan canonicalization chose.\n'
-                        'CPU: the loop is usually the better of the two -- the scan does more work, and the loop '
-                        'may already saturate the memory system.\n'
-                        'GPU: the parallel scan is usually the better of the two.\n'
-                        'Both are correct. Measure before choosing.')
+SEQUENTIAL_SCAN_HINT = (
+    "sequential scan; this expansion runs the recurrence as one loop.\n"
+    "Alternative: the parallel scan canonicalization chose.\n"
+    "CPU: the loop is usually the better of the two -- the scan does more work, and the loop "
+    "may already saturate the memory system.\n"
+    "GPU: the parallel scan is usually the better of the two.\n"
+    "Both are correct. Measure before choosing."
+)
 
 
 @library.expansion
@@ -798,7 +891,7 @@ class ExpandSequential(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
-        refuse_segments(node, 'sequential')
+        refuse_segments(node, "sequential")
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         # The hint is read after expansion (``dace.codegen.cpf``); a comment claiming the parallel
@@ -806,24 +899,24 @@ class ExpandSequential(ExpandTransformation):
         if node.specialization_hint == PARALLEL_SCAN_HINT:
             node.specialization_hint = SEQUENTIAL_SCAN_HINT
         if node.op is ScanOp.AFFINE:
-            refuse_widening(node, in_desc, out_desc, 'op=AFFINE')
+            refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
                 return degenerate_affine_tasklet(node)
             return affine_tasklet(node, state, sdfg, out_desc, _resolve_length(node, state, sdfg), parallel=False)
         if node.chains > 1:
-            refuse_widening(node, in_desc, out_desc, 'chains > 1')
+            refuse_widening(node, in_desc, out_desc, "chains > 1")
             return _multi_chain_tasklet(node, state, sdfg, parallel=False)
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
         # The ACCUMULATOR's type, which is the output's: a widening scan reads a narrower input.
         ctype = out_desc.dtype.ctype
-        combined = _combine_expr(node.op, ctype, '_acc', f'{INPUT_CONNECTOR_NAME}[_j]')
+        combined = _combine_expr(node.op, ctype, "_acc", f"{INPUT_CONNECTOR_NAME}[_j]")
         stride_expr = sym2cpp(node.stride)
         is_stride_one = symbolic.equal_valued(1, node.stride)
 
         if not is_stride_one:
-            refuse_widening(node, in_desc, out_desc, 'stride > 1')
+            refuse_widening(node, in_desc, out_desc, "stride > 1")
             # No ``inscan`` here: the reduction spans one canonical loop, and a strided scan is one
             # independent chain PER RESIDUE CLASS, so the vectorizable axis is across classes -- not
             # the axis the dependence runs along. The classes stay scalar.
@@ -832,18 +925,20 @@ class ExpandSequential(ExpandTransformation):
             # Outer loop over residue classes ``_k in [0, s)``; inner sequential scan.
             # Initialise the accumulator from the first valid input in each class so we
             # don't need a per-op identity literal (matches the residue-class oracle).
-            body = (f"{{ long _s = (long)({stride_expr}); long _n = (long)({n_expr});\n"
-                    f"  if (_s <= 0) std::abort();\n"
-                    f"  for (long _k = 0; _k < _s; ++_k) {{\n"
-                    f"      if (_k >= _n) continue;\n"
-                    f"      {ctype} _acc = {INPUT_CONNECTOR_NAME}[_k];\n"
-                    f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
-                    f"      for (long _j = _k + _s; _j < _n; _j += _s) {{\n"
-                    f"          _acc = {combined};\n"
-                    f"          {OUTPUT_CONNECTOR_NAME}[_j] = _acc;\n"
-                    f"      }}\n"
-                    f"  }}\n"
-                    f"}}")
+            body = (
+                f"{{ long _s = (long)({stride_expr}); long _n = (long)({n_expr});\n"
+                f"  if (_s <= 0) std::abort();\n"
+                f"  for (long _k = 0; _k < _s; ++_k) {{\n"
+                f"      if (_k >= _n) continue;\n"
+                f"      {ctype} _acc = {INPUT_CONNECTOR_NAME}[_k];\n"
+                f"      {OUTPUT_CONNECTOR_NAME}[_k] = _acc;\n"
+                f"      for (long _j = _k + _s; _j < _n; _j += _s) {{\n"
+                f"          _acc = {combined};\n"
+                f"          {OUTPUT_CONNECTOR_NAME}[_j] = _acc;\n"
+                f"      }}\n"
+                f"  }}\n"
+                f"}}"
+            )
         elif node.exclusive:
             body = single_block_scan_call(node.op, True, n_expr, _identity_expr(node, out_desc))
         elif _has_init(node):
@@ -867,20 +962,20 @@ class ExpandSequential(ExpandTransformation):
 #: ``acc OP x`` in a Python tasklet, per op. ``min`` / ``max`` spell ``std::min`` / ``std::max``'s own
 #: comparison, which also keeps a widening accumulator's type out of template deduction.
 COMBINE_PY = {
-    ScanOp.SUM: '{a} + {x}',
-    ScanOp.PRODUCT: '{a} * {x}',
-    ScanOp.MIN: '{x} if {x} < {a} else {a}',
-    ScanOp.MAX: '{x} if {a} < {x} else {a}',
-    ScanOp.AFFINE: 'c * {a} + {x}',
+    ScanOp.SUM: "{a} + {x}",
+    ScanOp.PRODUCT: "{a} * {x}",
+    ScanOp.MIN: "{x} if {x} < {a} else {a}",
+    ScanOp.MAX: "{x} if {a} < {x} else {a}",
+    ScanOp.AFFINE: "c * {a} + {x}",
 }
 #: Loop variables of the ``pure`` scan: the position, and the residue class of a strided scan.
-SCAN_INDEX = 'scan_k'
-CLASS_INDEX = 'scan_r'
+SCAN_INDEX = "scan_k"
+CLASS_INDEX = "scan_r"
 
 
 def accumulator(nsdfg: dace.SDFG, chain: int) -> str:
     """The chain's accumulator, a transient scalar of the OUTPUT type, which a widening scan reads into."""
-    name = f'acc_{chain}'
+    name = f"acc_{chain}"
     nsdfg.add_scalar(name, nsdfg.arrays[out_connector(chain)].dtype, transient=True)
     return name
 
@@ -889,24 +984,24 @@ def seed_state(nsdfg: dace.SDFG, chain: int, acc: str, seed: str, at: str) -> da
     """``acc = seed``, where ``seed`` is a literal, ``'init'`` (the chain's ``_scan_init[at]``) or ``'first'``
     (the chain's input at ``at``)."""
     reads = {}
-    if seed == 'init':
-        reads['x'] = Memlet(f'{init_connector(chain)}[{at}]')
-    elif seed == 'first':
-        reads['x'] = Memlet(element(nsdfg, in_connector(chain), at))
-    code = f'a = x' if reads else f'a = {seed}'
-    return tasklet_state(nsdfg, f'seed_{chain}', code, reads, {'a': Memlet(f'{acc}[0]')})
+    if seed == "init":
+        reads["x"] = Memlet(f"{init_connector(chain)}[{at}]")
+    elif seed == "first":
+        reads["x"] = Memlet(element(nsdfg, in_connector(chain), at))
+    code = f"a = x" if reads else f"a = {seed}"
+    return tasklet_state(nsdfg, f"seed_{chain}", code, reads, {"a": Memlet(f"{acc}[0]")})
 
 
 def position_loop(nsdfg: dace.SDFG, node: "Scan", chain: int, acc: str, bounds: Tuple[str, str, str]) -> LoopRegion:
     """One pass of the recurrence over positions ``range(*bounds)``, writing every prefix to the output."""
-    combined = COMBINE_PY[node.op].format(a='a', x='x')
-    code = f'y = a\nna = {combined}' if node.exclusive else f'na = {combined}\ny = na'
-    reads = {'x': Memlet(element(nsdfg, in_connector(chain), SCAN_INDEX)), 'a': Memlet(f'{acc}[0]')}
+    combined = COMBINE_PY[node.op].format(a="a", x="x")
+    code = f"y = a\nna = {combined}" if node.exclusive else f"na = {combined}\ny = na"
+    reads = {"x": Memlet(element(nsdfg, in_connector(chain), SCAN_INDEX)), "a": Memlet(f"{acc}[0]")}
     if node.op is ScanOp.AFFINE:
-        reads['c'] = Memlet(element(nsdfg, coef_connector(chain), SCAN_INDEX))
-    writes = {'na': Memlet(f'{acc}[0]'), 'y': Memlet(element(nsdfg, out_connector(chain), SCAN_INDEX))}
-    loop = counted_loop(f'scan_{chain}', SCAN_INDEX, *bounds)
-    chain_blocks(loop, [tasklet_state(nsdfg, f'step_{chain}', code, reads, writes)])
+        reads["c"] = Memlet(element(nsdfg, coef_connector(chain), SCAN_INDEX))
+    writes = {"na": Memlet(f"{acc}[0]"), "y": Memlet(element(nsdfg, out_connector(chain), SCAN_INDEX))}
+    loop = counted_loop(f"scan_{chain}", SCAN_INDEX, *bounds)
+    chain_blocks(loop, [tasklet_state(nsdfg, f"step_{chain}", code, reads, writes)])
     return loop
 
 
@@ -915,9 +1010,9 @@ def chain_seed(node: "Scan", chain: int) -> str:
     -- inclusive ``min`` / ``max`` with neither -- the first element, which the combine then leaves alone."""
     # a single exclusive chain seeds from its identity, not its init, exactly as the sequential loop does
     if _has_init(node, chain) and not (node.chains == 1 and node.exclusive):
-        return 'init'
+        return "init"
     if node.op is ScanOp.AFFINE:
-        return '0'
+        return "0"
     if node.identity is not None:
         return str(node.identity)
     literal = _OP_TO_IDENTITY_CPP[node.op]
@@ -925,23 +1020,33 @@ def chain_seed(node: "Scan", chain: int) -> str:
         return literal
     if node.exclusive:
         raise ValueError(f"Scan op {node.op.value!r} has no universal identity; set ``identity`` explicitly.")
-    return 'first'
+    return "first"
 
 
 def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopRegion:
     """The strided scan: one independent chain per residue class of the position modulo the stride. A scalar
     op seeds each class from its first element, the affine one from its ``_scan_init`` entry or zero."""
     stride = symbolic.symstr(node.stride)
-    classes = LoopRegion('classes', f'{CLASS_INDEX} < {stride} and {CLASS_INDEX} < {n}', CLASS_INDEX,
-                         f'{CLASS_INDEX} = 0', f'{CLASS_INDEX} = {CLASS_INDEX} + 1')
+    classes = LoopRegion(
+        "classes",
+        f"{CLASS_INDEX} < {stride} and {CLASS_INDEX} < {n}",
+        CLASS_INDEX,
+        f"{CLASS_INDEX} = 0",
+        f"{CLASS_INDEX} = {CLASS_INDEX} + 1",
+    )
     if node.op is ScanOp.AFFINE:
-        seed = seed_state(nsdfg, 0, acc, 'init' if _has_init(node) else '0', CLASS_INDEX)
+        seed = seed_state(nsdfg, 0, acc, "init" if _has_init(node) else "0", CLASS_INDEX)
         chain_blocks(classes, [seed, position_loop(nsdfg, node, 0, acc, (CLASS_INDEX, n, stride))])
         return classes
-    seed = seed_state(nsdfg, 0, acc, 'first', CLASS_INDEX)
-    first = tasklet_state(nsdfg, 'first', 'y = a', {'a': Memlet(f'{acc}[0]')},
-                          {'y': Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, CLASS_INDEX))})
-    rest = position_loop(nsdfg, node, 0, acc, (f'{CLASS_INDEX} + {stride}', n, stride))
+    seed = seed_state(nsdfg, 0, acc, "first", CLASS_INDEX)
+    first = tasklet_state(
+        nsdfg,
+        "first",
+        "y = a",
+        {"a": Memlet(f"{acc}[0]")},
+        {"y": Memlet(element(nsdfg, OUTPUT_CONNECTOR_NAME, CLASS_INDEX))},
+    )
+    rest = position_loop(nsdfg, node, 0, acc, (f"{CLASS_INDEX} + {stride}", n, stride))
     chain_blocks(classes, [seed, first, rest])
     return classes
 
@@ -949,17 +1054,17 @@ def residue_classes(nsdfg: dace.SDFG, node: "Scan", acc: str, n: str) -> LoopReg
 def pure_scan_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
     """The scan as SDFG components; every refusal and the abort on a non-positive stride match
     :class:`ExpandSequential`."""
-    nsdfg = dace.SDFG(f'{node.label}_pure')
+    nsdfg = dace.SDFG(f"{node.label}_pure")
     for edge in [*state.in_edges(node), *state.out_edges(node)]:
         operand_array(nsdfg, edge.dst_conn if edge.dst is node else edge.src_conn, edge, sdfg)
     n = symbolic.symstr(
-        required(next(e for e in state.in_edges(node)
-                      if e.dst_conn == INPUT_CONNECTOR_NAME).data.subset).num_elements())
+        required(next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.subset).num_elements()
+    )
     if not symbolic.equal_valued(1, node.stride):
         blocks = []
         if node.op is not ScanOp.AFFINE:
-            check = dace.SDFGState('check_stride', sdfg=nsdfg)
-            add_abort_guard(check, 'check_stride', f'{symbolic.symstr(node.stride)} <= 0')
+            check = dace.SDFGState("check_stride", sdfg=nsdfg)
+            add_abort_guard(check, "check_stride", f"{symbolic.symstr(node.stride)} <= 0")
             blocks.append(check)
         chain_blocks(nsdfg, [*blocks, residue_classes(nsdfg, node, accumulator(nsdfg, 0), n)])
         return nsdfg
@@ -967,7 +1072,7 @@ def pure_scan_sdfg(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace
     for chain in range(node.chains):
         acc = accumulator(nsdfg, chain)
         seed = chain_seed(node, chain)
-        blocks += [seed_state(nsdfg, chain, acc, seed, '0'), position_loop(nsdfg, node, chain, acc, ('0', n, '1'))]
+        blocks += [seed_state(nsdfg, chain, acc, seed, "0"), position_loop(nsdfg, node, chain, acc, ("0", n, "1"))]
     chain_blocks(nsdfg, blocks)
     return nsdfg
 
@@ -982,7 +1087,7 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> Union[nodes.Tasklet, dace.SDFG]:
-        refuse_segments(node, 'pure')
+        refuse_segments(node, "pure")
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         if node.specialization_hint == PARALLEL_SCAN_HINT:
@@ -990,18 +1095,20 @@ class ExpandPure(ExpandTransformation):
         strided = not symbolic.equal_valued(1, node.stride)
         # the same refusals, in the same order, as ExpandSequential
         if node.op is ScanOp.AFFINE:
-            refuse_widening(node, in_desc, out_desc, 'op=AFFINE')
+            refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
                 return degenerate_affine_tasklet(node)
         elif node.chains > 1:
-            refuse_widening(node, in_desc, out_desc, 'chains > 1')
+            refuse_widening(node, in_desc, out_desc, "chains > 1")
             if strided:
-                raise NotImplementedError("Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
-                                          "Scan libnode per strided chain.")
+                raise NotImplementedError(
+                    "Scan: ``chains > 1`` with ``stride > 1`` is not supported; emit one "
+                    "Scan libnode per strided chain."
+                )
         elif _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         elif strided:
-            refuse_widening(node, in_desc, out_desc, 'stride > 1')
+            refuse_widening(node, in_desc, out_desc, "stride > 1")
             if node.exclusive:
                 raise NotImplementedError("Scan(pure): exclusive with stride > 1 is not supported.")
         return pure_scan_sdfg(node, state, sdfg)
@@ -1033,25 +1140,26 @@ class ExpandCPU(ExpandTransformation):
 
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
-        refuse_segments(node, 'CPU')
+        refuse_segments(node, "CPU")
         refuse_unsupported_affine_flags(node)
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         # SCOPE decides the shape, not ``node.schedule``: that is storage-derived, so a Scan
         # nested in a parallel map (directly, or one level down through a NestedSDFG) arrives
         # carrying ``CPU_Multicore``. A re-entered node opens no region of its own.
         from dace.transformation.auto.auto_optimize import libnode_is_sequential
+
         if libnode_is_sequential(node, state, sdfg):
             # Already inside an OpenMP region or a loop: take the sequential naked-loop shape.
             return ExpandSequential.expansion(node, state, sdfg)
         if node.op is ScanOp.AFFINE:
-            refuse_widening(node, in_desc, out_desc, 'op=AFFINE')
+            refuse_widening(node, in_desc, out_desc, "op=AFFINE")
             if _is_length_one(node, state):
                 return degenerate_affine_tasklet(node)
             return affine_tasklet(node, state, sdfg, out_desc, _resolve_length(node, state, sdfg), parallel=True)
         if node.chains > 1:
             # K independent chains, ONE ``inscan`` loop == one fork/join. See
             # :func:`_multi_chain_tasklet` for the OpenMP-spec argument.
-            refuse_widening(node, in_desc, out_desc, 'chains > 1')
+            refuse_widening(node, in_desc, out_desc, "chains > 1")
             return _multi_chain_tasklet(node, state, sdfg, parallel=True)
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
@@ -1061,27 +1169,33 @@ class ExpandCPU(ExpandTransformation):
         is_stride_one = symbolic.equal_valued(1, node.stride)
 
         if not is_stride_one:
-            refuse_widening(node, in_desc, out_desc, 'stride > 1')
+            refuse_widening(node, in_desc, out_desc, "stride > 1")
             if node.exclusive:
                 raise NotImplementedError("Scan: ``exclusive=True`` with ``stride > 1`` is not yet supported.")
             if _has_init(node):
                 raise NotImplementedError("Scan: ``_scan_init`` with ``stride > 1`` is not yet supported.")
-            call = (f"::dace::scan::strided_inclusive_{suffix}("
-                    f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}));")
+            call = (
+                f"::dace::scan::strided_inclusive_{suffix}("
+                f"{INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, ({n_expr}), ({stride_expr}));"
+            )
         elif node.exclusive:
             seed = _identity_expr(node, out_desc)
-            call = (f"::dace::scan::exclusive_{suffix}("
-                    f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
-                    f"{OUTPUT_CONNECTOR_NAME}, {seed});")
+            call = (
+                f"::dace::scan::exclusive_{suffix}("
+                f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
+                f"{OUTPUT_CONNECTOR_NAME}, {seed});"
+            )
         else:
             # A wired ``_scan_init`` is just the accumulator's starting value, which the
             # runtime's seeded overload takes directly -- it is the SAME blocked parallel
             # scan, not the sequential ``std::inclusive_scan`` this used to fall back to.
             # The seed is always spelled, typed at the output: CPF re-spells this call by its four arguments.
             init = INIT_CONNECTOR_NAME if _has_init(node) else _OP_TO_SEED_CPP[node.op].format(ct=out_desc.dtype.ctype)
-            call = (f"::dace::scan::inclusive_{suffix}("
-                    f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
-                    f"{OUTPUT_CONNECTOR_NAME}, {init});")
+            call = (
+                f"::dace::scan::inclusive_{suffix}("
+                f"{INPUT_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME} + ({n_expr}), "
+                f"{OUTPUT_CONNECTOR_NAME}, {init});"
+            )
         inputs = {INPUT_CONNECTOR_NAME: None}
         if _has_init(node):
             inputs[INIT_CONNECTOR_NAME] = None
@@ -1107,8 +1221,9 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
     launch, and a host-readable one has no device address to hand over.
     """
     coef = coef_desc(node, state, sdfg)
-    in_desc = sdfg.arrays[required(
-        next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.data)]
+    in_desc = sdfg.arrays[
+        required(next(e for e in state.in_edges(node) if e.dst_conn == INPUT_CONNECTOR_NAME).data.data)
+    ]
     e_ctype = out_desc.dtype.base_type.ctype
     c_ctype = coef.dtype.base_type.ctype
     d_ctype = in_desc.dtype.base_type.ctype
@@ -1116,32 +1231,36 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
     seed = seed_desc(node, state, sdfg, 0) if _has_init(node) else None
     on_device = seed is not None and seed.storage in GPU_RESIDENT_STORAGES
     s_ctype = seed.dtype.base_type.ctype if seed is not None else e_ctype
-    seed_ptr = init_connector(0) if on_device else f'static_cast<const {s_ctype}*>(nullptr)'
+    seed_ptr = init_connector(0) if on_device else f"static_cast<const {s_ctype}*>(nullptr)"
     live_seed_value = seed is not None and not on_device
-    seed_val = f'static_cast<{e_ctype}>({init_connector(0)})' if live_seed_value else f'static_cast<{e_ctype}>(0)'
+    seed_val = f"static_cast<{e_ctype}>({init_connector(0)})" if live_seed_value else f"static_cast<{e_ctype}>(0)"
 
-    wrapper = f'__dace_scan_affine_{global_code_id(sdfg, state, node)}'
-    params = (f'const {c_ctype}* __sc_c, const {d_ctype}* __sc_d, const {s_ctype}* __sc_seed_ptr, '
-              f'{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, gpuStream_t __sc_stream')
-    prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
-    sdfg.append_global_code(prototype + '\n')
+    wrapper = f"__dace_scan_affine_{global_code_id(sdfg, state, node)}"
+    params = (
+        f"const {c_ctype}* __sc_c, const {d_ctype}* __sc_d, const {s_ctype}* __sc_seed_ptr, "
+        f"{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, gpuStream_t __sc_stream"
+    )
+    prototype = f"DACE_EXPORTED gpuError_t {wrapper}({params});"
+    sdfg.append_global_code(prototype + "\n")
     sdfg.append_global_code(
-        f'{prototype}\n'
-        f'gpuError_t {wrapper}({params}) {{\n'
-        f'    return ::dace::cuda_scan::inclusive_affine<{e_ctype}, {c_ctype}, {d_ctype}, {s_ctype}>(\n'
-        f'        __sc_c, __sc_d, __sc_seed_ptr, __sc_seed_val, __sc_out, __sc_n, __sc_stream);\n'
-        f'}}\n', 'cuda')
+        f"{prototype}\n"
+        f"gpuError_t {wrapper}({params}) {{\n"
+        f"    return ::dace::cuda_scan::inclusive_affine<{e_ctype}, {c_ctype}, {d_ctype}, {s_ctype}>(\n"
+        f"        __sc_c, __sc_d, __sc_seed_ptr, __sc_seed_val, __sc_out, __sc_n, __sc_stream);\n"
+        f"}}\n",
+        "cuda",
+    )
 
     inputs = {INPUT_CONNECTOR_NAME: None, COEF_CONNECTOR_NAME: None}
     if _has_init(node):
         inputs[init_connector(0)] = dtypes.pointer(required(seed).dtype.base_type) if on_device else None
-    code = (f'DACE_GPU_CHECK({wrapper}({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {seed_ptr}, {seed_val}, '
-            f'{OUTPUT_CONNECTOR_NAME}, ({_resolve_length(node, state, sdfg)}), __dace_current_stream));')
-    return nodes.Tasklet(node.name,
-                         inputs=inputs,
-                         outputs={OUTPUT_CONNECTOR_NAME: None},
-                         code=code,
-                         language=dace.Language.CPP)
+    code = (
+        f"DACE_GPU_CHECK({wrapper}({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {seed_ptr}, {seed_val}, "
+        f"{OUTPUT_CONNECTOR_NAME}, ({_resolve_length(node, state, sdfg)}), __dace_current_stream));"
+    )
+    return nodes.Tasklet(
+        node.name, inputs=inputs, outputs={OUTPUT_CONNECTOR_NAME: None}, code=code, language=dace.Language.CPP
+    )
 
 
 def batched_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, out_desc) -> nodes.Tasklet:
@@ -1171,25 +1290,31 @@ def batched_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, o
         raise NotImplementedError("Scan(CUDA, strided): ``_scan_init`` is not yet supported.")
     ctype = out_desc.dtype.base_type.ctype
     suffix = _OP_TO_OMP_SUFFIX[node.op]
-    kind, count = ('segmented', node.segments) if segmented(node) else ('strided', node.stride)
-    wrapper = f'__dace_scan_{kind}_{global_code_id(sdfg, state, node)}'
-    params = f'const {ctype}* __sc_in, {ctype}* __sc_out, long __sc_n, long __sc_s, gpuStream_t __sc_stream'
-    prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
-    sdfg.append_global_code(prototype + '\n')
+    kind, count = ("segmented", node.segments) if segmented(node) else ("strided", node.stride)
+    wrapper = f"__dace_scan_{kind}_{global_code_id(sdfg, state, node)}"
+    params = f"const {ctype}* __sc_in, {ctype}* __sc_out, long __sc_n, long __sc_s, gpuStream_t __sc_stream"
+    prototype = f"DACE_EXPORTED gpuError_t {wrapper}({params});"
+    sdfg.append_global_code(prototype + "\n")
     sdfg.append_global_code(
-        f'{prototype}\n'
-        f'gpuError_t {wrapper}({params}) {{\n'
-        f'    return ::dace::cuda_scan::{kind}_inclusive_{suffix}<{ctype}>('
-        f'__sc_in, __sc_out, __sc_n, __sc_s, __sc_stream);\n'
-        f'}}\n', 'cuda')
-    code = (f'DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, '
-            f'(long)({_resolve_length(node, state, sdfg)}), (long)({sym2cpp(count)}), '
-            f'__dace_current_stream));')
-    return nodes.Tasklet(node.name,
-                         inputs={INPUT_CONNECTOR_NAME: None},
-                         outputs={OUTPUT_CONNECTOR_NAME: None},
-                         code=code,
-                         language=dace.Language.CPP)
+        f"{prototype}\n"
+        f"gpuError_t {wrapper}({params}) {{\n"
+        f"    return ::dace::cuda_scan::{kind}_inclusive_{suffix}<{ctype}>("
+        f"__sc_in, __sc_out, __sc_n, __sc_s, __sc_stream);\n"
+        f"}}\n",
+        "cuda",
+    )
+    code = (
+        f"DACE_GPU_CHECK({wrapper}({INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, "
+        f"(long)({_resolve_length(node, state, sdfg)}), (long)({sym2cpp(count)}), "
+        f"__dace_current_stream));"
+    )
+    return nodes.Tasklet(
+        node.name,
+        inputs={INPUT_CONNECTOR_NAME: None},
+        outputs={OUTPUT_CONNECTOR_NAME: None},
+        code=code,
+        language=dace.Language.CPP,
+    )
 
 
 #: Threads per block for the in-kernel collectives. Four wavefronts on CDNA (64 wide), eight warps
@@ -1250,6 +1375,7 @@ class ExpandCUDABlock(ExpandTransformation):
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> dace.SDFG:
         if not ExpandCUDABlock.environments:
             from dace.libraries.sort.environments.cub import BlockCollectives
+
             ExpandCUDABlock.environments = [BlockCollectives]
         in_desc, out_desc, in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         reason = block_refusal(node)
@@ -1257,42 +1383,51 @@ class ExpandCUDABlock(ExpandTransformation):
             raise NotImplementedError(f"Scan(CUDA (block)): {reason}")
         # The collective accumulates in ONE type, the array's; a widening scan would accumulate at
         # the input's width and lose the range the wider output was asked for.
-        refuse_widening(node, in_desc, out_desc, 'the CUDA (block) expansion')
+        refuse_widening(node, in_desc, out_desc, "the CUDA (block) expansion")
 
         n_expr = _resolve_length(node, state, sdfg)
         stride_expr = sym2cpp(node.stride)
         ctype = out_desc.dtype.base_type.ctype
-        op_functor = f'::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>'
+        op_functor = f"::dace::cuda_scan::detail::Scan{node.op.value.capitalize()}<{ctype}>"
         identity = _OP_TO_IDENTITY_CPP[node.op]
 
         n_sym = required(in_edge.data.subset).num_elements()
-        nsdfg = dace.SDFG(node.label + '_block')
+        nsdfg = dace.SDFG(node.label + "_block")
         nsdfg.add_array(INPUT_CONNECTOR_NAME, [n_sym], in_desc.dtype, storage=in_desc.storage)
         nsdfg.add_array(OUTPUT_CONNECTOR_NAME, [n_sym], out_desc.dtype, storage=out_desc.storage)
-        nstate = nsdfg.add_state(node.label + '_block_state')
+        nstate = nsdfg.add_state(node.label + "_block_state")
         read = nstate.add_read(INPUT_CONNECTOR_NAME)
         write = nstate.add_write(OUTPUT_CONNECTOR_NAME)
-        code = (f'::dace::cuda_scan::detail::block_inclusive_scan_strided'
-                f'<{ctype}, {op_functor}, {BLOCK_COLLECTIVE_THREADS}>('
-                f'__bsin, __bsout, '
-                f'(long)({n_expr}), (long)({stride_expr}), {op_functor}(), '
-                f'static_cast<{ctype}>({identity}));')
-        tasklet = nstate.add_tasklet(node.label + '_block_scan',
-                                     inputs={'__bsin': dtypes.pointer(in_desc.dtype.base_type)},
-                                     outputs={'__bsout': dtypes.pointer(out_desc.dtype.base_type)},
-                                     code=code,
-                                     language=dace.Language.CPP)
-        entry, exit_node = nstate.add_map(node.label + '_block_lanes', {'__lane': f'0:{BLOCK_COLLECTIVE_THREADS}'},
-                                          schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+        code = (
+            f"::dace::cuda_scan::detail::block_inclusive_scan_strided"
+            f"<{ctype}, {op_functor}, {BLOCK_COLLECTIVE_THREADS}>("
+            f"__bsin, __bsout, "
+            f"(long)({n_expr}), (long)({stride_expr}), {op_functor}(), "
+            f"static_cast<{ctype}>({identity}));"
+        )
+        tasklet = nstate.add_tasklet(
+            node.label + "_block_scan",
+            inputs={"__bsin": dtypes.pointer(in_desc.dtype.base_type)},
+            outputs={"__bsout": dtypes.pointer(out_desc.dtype.base_type)},
+            code=code,
+            language=dace.Language.CPP,
+        )
+        entry, exit_node = nstate.add_map(
+            node.label + "_block_lanes",
+            {"__lane": f"0:{BLOCK_COLLECTIVE_THREADS}"},
+            schedule=dtypes.ScheduleType.GPU_ThreadBlock,
+        )
         # EVERY lane sees the WHOLE range -- the map does not partition the data, it only supplies
         # the threads. Slicing by ``__lane`` here would hand each thread its own scan.
-        whole = dace.Memlet.simple(INPUT_CONNECTOR_NAME, f'0:{sym2cpp(n_sym)}')
-        nstate.add_memlet_path(read, entry, tasklet, dst_conn='__bsin', memlet=whole)
-        nstate.add_memlet_path(tasklet,
-                               exit_node,
-                               write,
-                               src_conn='__bsout',
-                               memlet=dace.Memlet.simple(OUTPUT_CONNECTOR_NAME, f'0:{sym2cpp(n_sym)}'))
+        whole = dace.Memlet.simple(INPUT_CONNECTOR_NAME, f"0:{sym2cpp(n_sym)}")
+        nstate.add_memlet_path(read, entry, tasklet, dst_conn="__bsin", memlet=whole)
+        nstate.add_memlet_path(
+            tasklet,
+            exit_node,
+            write,
+            src_conn="__bsout",
+            memlet=dace.Memlet.simple(OUTPUT_CONNECTOR_NAME, f"0:{sym2cpp(n_sym)}"),
+        )
         return nsdfg
 
 
@@ -1317,6 +1452,7 @@ class ExpandCUDA(ExpandTransformation):
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         if not ExpandCUDA.environments:
             from dace.libraries.sort.environments.cub import ScanScratch
+
             ExpandCUDA.environments = [ScanScratch]
         in_desc, out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
         if node.op is ScanOp.AFFINE:
@@ -1330,7 +1466,7 @@ class ExpandCUDA(ExpandTransformation):
         # deduces from the input iterator, and a device-resident seed arrives as a ``FutureValue`` of
         # the seed's own type -- so that shape still refuses rather than accumulate narrow.
         if not node.exclusive:
-            refuse_widening(node, in_desc, out_desc, 'the CUDA expansion without an exclusive seed')
+            refuse_widening(node, in_desc, out_desc, "the CUDA expansion without an exclusive seed")
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
@@ -1357,13 +1493,13 @@ class ExpandCUDA(ExpandTransformation):
         blocks = []
         for chain in range(node.chains):
             in_conn, out_conn = in_connector(chain), out_connector(chain)
-            seed_param, seed_expr, seed_actual, seed_prologue = '', '', '', ''
+            seed_param, seed_expr, seed_actual, seed_prologue = "", "", "", ""
             if node.exclusive:
                 # The OUTPUT descriptor, not the input: this argument is what fixes cub's accumulator
                 # width, and on a widening scan the accumulator is the output's type.
                 seed_expr = _identity_expr(node, out_desc)
-                call = 'ExclusiveScan'
-                extra = f', {seed_expr}'
+                call = "ExclusiveScan"
+                extra = f", {seed_expr}"
             elif _has_init(node, chain):
                 # Inclusive scan with a seed ``s`` is the plain inclusive scan of ``in`` with
                 # ``s op in[0]`` in place of ``in[0]``. A transform iterator computes that element as
@@ -1375,70 +1511,80 @@ class ExpandCUDA(ExpandTransformation):
                 desc = seed_desc(node, state, sdfg, chain)
                 seed_ctype = required(desc).dtype.base_type.ctype
                 on_device = desc is not None and desc.storage in GPU_RESIDENT_STORAGES
-                seed_param = f', const {seed_ctype}* __sc_init' if on_device else f', {seed_ctype} __sc_init'
-                seed_value = '*seed' if on_device else 'seed'
-                seed_field = f'const {seed_ctype}* seed' if on_device else f'{seed_ctype} seed'
-                first = f'{idstr}_c{chain}_seeded'
+                seed_param = f", const {seed_ctype}* __sc_init" if on_device else f", {seed_ctype} __sc_init"
+                seed_value = "*seed" if on_device else "seed"
+                seed_field = f"const {seed_ctype}* seed" if on_device else f"{seed_ctype} seed"
+                first = f"{idstr}_c{chain}_seeded"
                 sdfg.append_global_code(
-                    f'struct {first} {{\n'
-                    f'    const {in_ctype}* in;\n'
-                    f'    {seed_field};\n'
-                    f'    __host__ __device__ __forceinline__ {out_ctype} operator()(long long i) const {{\n'
-                    f'        {out_ctype} v = static_cast<{out_ctype}>(in[i]);\n'
-                    f'        return i == 0 ? {op_cub}(static_cast<{out_ctype}>({seed_value}), v) : v;\n'
-                    f'    }}\n'
-                    f'}};\n', 'cuda')
+                    f"struct {first} {{\n"
+                    f"    const {in_ctype}* in;\n"
+                    f"    {seed_field};\n"
+                    f"    __host__ __device__ __forceinline__ {out_ctype} operator()(long long i) const {{\n"
+                    f"        {out_ctype} v = static_cast<{out_ctype}>(in[i]);\n"
+                    f"        return i == 0 ? {op_cub}(static_cast<{out_ctype}>({seed_value}), v) : v;\n"
+                    f"    }}\n"
+                    f"}};\n",
+                    "cuda",
+                )
                 # CCCL 3 (CUDA 13) dropped cub's iterators, so CUDA spells the pair with thrust; hipCUB
                 # keeps its own and rejects thrust's iterator category.
-                functor = f'{first}{{__sc_in, __sc_init}}'
+                functor = f"{first}{{__sc_in, __sc_init}}"
                 sdfg.append_global_code(
-                    '#if !defined(__HIPCC__)\n'
-                    '#include <thrust/iterator/counting_iterator.h>\n'
-                    '#include <thrust/iterator/transform_iterator.h>\n'
-                    '#endif\n', 'cuda')
-                count = '::gpucub::CountingInputIterator<long long>'
-                seed_prologue = (f'#if defined(__HIPCC__)\n'
-                                 f'    ::gpucub::TransformInputIterator<{out_ctype}, {first}, {count}> '
-                                 f'__sc_items({count}(0), {functor});\n'
-                                 f'#else\n'
-                                 f'    thrust::transform_iterator<{first}, thrust::counting_iterator<long long>, '
-                                 f'{out_ctype}> __sc_items(thrust::counting_iterator<long long>(0), {functor});\n'
-                                 f'#endif\n')
-                seed_actual = f', {init_connector(chain)}'
-                call = 'InclusiveScan'
-                extra = ''
-                scan_input = '__sc_items'
+                    "#if !defined(__HIPCC__)\n"
+                    "#include <thrust/iterator/counting_iterator.h>\n"
+                    "#include <thrust/iterator/transform_iterator.h>\n"
+                    "#endif\n",
+                    "cuda",
+                )
+                count = "::gpucub::CountingInputIterator<long long>"
+                seed_prologue = (
+                    f"#if defined(__HIPCC__)\n"
+                    f"    ::gpucub::TransformInputIterator<{out_ctype}, {first}, {count}> "
+                    f"__sc_items({count}(0), {functor});\n"
+                    f"#else\n"
+                    f"    thrust::transform_iterator<{first}, thrust::counting_iterator<long long>, "
+                    f"{out_ctype}> __sc_items(thrust::counting_iterator<long long>(0), {functor});\n"
+                    f"#endif\n"
+                )
+                seed_actual = f", {init_connector(chain)}"
+                call = "InclusiveScan"
+                extra = ""
+                scan_input = "__sc_items"
             else:
-                call = 'InclusiveScan'
-                extra = ''
+                call = "InclusiveScan"
+                extra = ""
             if not _has_init(node, chain) or node.exclusive:
-                scan_input = '__sc_in'
+                scan_input = "__sc_in"
 
-            wrapper = f'__dace_scan_{idstr}_c{chain}'
-            params = (f'const {in_ctype}* __sc_in, {out_ctype}* __sc_out{seed_param}, '
-                      f'long long __sc_n, gpuStream_t __sc_stream')
-            prototype = f'DACE_EXPORTED gpuError_t {wrapper}({params});'
-            args = f'{scan_input}, __sc_out, {op_cub}{extra}, __sc_n, __sc_stream'
-            sdfg.append_global_code(prototype + '\n')
+            wrapper = f"__dace_scan_{idstr}_c{chain}"
+            params = (
+                f"const {in_ctype}* __sc_in, {out_ctype}* __sc_out{seed_param}, "
+                f"long long __sc_n, gpuStream_t __sc_stream"
+            )
+            prototype = f"DACE_EXPORTED gpuError_t {wrapper}({params});"
+            args = f"{scan_input}, __sc_out, {op_cub}{extra}, __sc_n, __sc_stream"
+            sdfg.append_global_code(prototype + "\n")
             sdfg.append_global_code(
-                f'{prototype}\n'
-                f'gpuError_t {wrapper}({params}) {{\n'
-                f'{seed_prologue}'
-                f'    size_t _sc_needed = 0;\n'
-                f'    gpuError_t _sc_status = ::gpucub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n'
-                f'    if (_sc_status != gpuSuccess) return _sc_status;\n'
-                f'    void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>('
-                f'_sc_needed, __sc_stream, &_sc_status);\n'
+                f"{prototype}\n"
+                f"gpuError_t {wrapper}({params}) {{\n"
+                f"{seed_prologue}"
+                f"    size_t _sc_needed = 0;\n"
+                f"    gpuError_t _sc_status = ::gpucub::DeviceScan::{call}(nullptr, _sc_needed, {args});\n"
+                f"    if (_sc_status != gpuSuccess) return _sc_status;\n"
+                f"    void* _sc_scratch = ::dace::cub::get_scratch<::dace::cub::ScanTag>("
+                f"_sc_needed, __sc_stream, &_sc_status);\n"
                 # CUB reads a null workspace as "report the size and return", leaving the output
                 # UNTOUCHED -- a failed allocation has to surface as an error, not as a buffer
                 # that was silently never scanned.
-                f'    if (_sc_scratch == nullptr) return _sc_status != gpuSuccess ? _sc_status : '
-                f'gpuErrorMemoryAllocation;\n'
-                f'    return ::gpucub::DeviceScan::{call}(_sc_scratch, _sc_needed, {args});\n'
-                f'}}\n',
-                'cuda')
-            blocks.append(f'DACE_GPU_CHECK({wrapper}({in_conn}, {out_conn}{seed_actual}, '
-                          f'({n_expr}), __dace_current_stream));')
+                f"    if (_sc_scratch == nullptr) return _sc_status != gpuSuccess ? _sc_status : "
+                f"gpuErrorMemoryAllocation;\n"
+                f"    return ::gpucub::DeviceScan::{call}(_sc_scratch, _sc_needed, {args});\n"
+                f"}}\n",
+                "cuda",
+            )
+            blocks.append(
+                f"DACE_GPU_CHECK({wrapper}({in_conn}, {out_conn}{seed_actual}, ({n_expr}), __dace_current_stream));"
+            )
         inputs = {in_connector(c): None for c in range(node.chains)}
         # A device-resident seed reaches ``FutureValue`` as a POINTER; a scalar connector would be
         # dereferenced by the host code issuing the launch, which validation rejects.
@@ -1451,9 +1597,8 @@ class ExpandCUDA(ExpandTransformation):
         return nodes.Tasklet(
             node.name,
             inputs=inputs,
-            outputs={out_connector(c): None
-                     for c in range(node.chains)},
-            code='\n'.join(blocks),
+            outputs={out_connector(c): None for c in range(node.chains)},
+            code="\n".join(blocks),
             language=dace.Language.CPP,
         )
 
@@ -1516,39 +1661,47 @@ class Scan(nodes.LibraryNode):
 
     op = EnumProperty(dtype=ScanOp, default=ScanOp.SUM, desc="Associative binary op for the scan.")
     exclusive = Property(dtype=bool, default=False, desc="If True, output an exclusive scan (out[0] = identity).")
-    identity = Property(dtype=object,
-                        default=None,
-                        allow_none=True,
-                        desc="Exclusive-scan identity element. Required for MIN/MAX exclusive scans.")
-    chains = Property(dtype=int,
-                      default=1,
-                      desc="Number of INDEPENDENT scan chains carried by this node. Chain ``c > 0`` "
-                      "uses the suffixed connectors ``_scan_in_c`` / ``_scan_out_c`` / ``_scan_init_c``; "
-                      "chain 0 keeps the bare names. All chains share op, exclusivity, stride and "
-                      "element count, and the parallel CPU expansion lowers them as list items of ONE "
-                      "``reduction(inscan, op: ...)`` clause -- K carry chains, one fork/join, one pass "
-                      "over the index space. Unit stride only.")
+    identity = Property(
+        dtype=object,
+        default=None,
+        allow_none=True,
+        desc="Exclusive-scan identity element. Required for MIN/MAX exclusive scans.",
+    )
+    chains = Property(
+        dtype=int,
+        default=1,
+        desc="Number of INDEPENDENT scan chains carried by this node. Chain ``c > 0`` "
+        "uses the suffixed connectors ``_scan_in_c`` / ``_scan_out_c`` / ``_scan_init_c``; "
+        "chain 0 keeps the bare names. All chains share op, exclusivity, stride and "
+        "element count, and the parallel CPU expansion lowers them as list items of ONE "
+        "``reduction(inscan, op: ...)`` clause -- K carry chains, one fork/join, one pass "
+        "over the index space. Unit stride only.",
+    )
 
-    stride = SymbolicProperty(default=1,
-                              allow_none=False,
-                              desc="Per-element stride for the scan recurrence. Default ``1`` is the "
-                              "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
-                              "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
-                              "independent scans. The parallel CPU expansion splits the residue classes "
-                              "across ONE parallel region and walks the strided space in place (no packed "
-                              "copy and no region per class). "
-                              "The expansion emits a runtime ``s > 0`` ``std::abort()`` check; passing a "
-                              "non-positive stride at runtime terminates the program before the scan "
-                              "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "
-                              "are not yet supported.")
+    stride = SymbolicProperty(
+        default=1,
+        allow_none=False,
+        desc="Per-element stride for the scan recurrence. Default ``1`` is the "
+        "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
+        "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
+        "independent scans. The parallel CPU expansion splits the residue classes "
+        "across ONE parallel region and walks the strided space in place (no packed "
+        "copy and no region per class). "
+        "The expansion emits a runtime ``s > 0`` ``std::abort()`` check; passing a "
+        "non-positive stride at runtime terminates the program before the scan "
+        "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "
+        "are not yet supported.",
+    )
 
-    segments = SymbolicProperty(default=1,
-                                allow_none=False,
-                                desc="Number of equal CONSECUTIVE segments the input is cut into, each scanned on "
-                                "its own: ``out[r*L + k] = in[r*L] OP ... OP in[r*L + k]`` for ``L = N / segments``. "
-                                "The default ``1`` is one scan over the whole input. ``segments > 1`` batches the "
-                                "rows of a map of scans into one invocation; it is inclusive, single-chain, "
-                                "unit-stride, unseeded and not AFFINE, and only the ``CUDA`` expansion lowers it.")
+    segments = SymbolicProperty(
+        default=1,
+        allow_none=False,
+        desc="Number of equal CONSECUTIVE segments the input is cut into, each scanned on "
+        "its own: ``out[r*L + k] = in[r*L] OP ... OP in[r*L + k]`` for ``L = N / segments``. "
+        "The default ``1`` is one scan over the whole input. ``segments > 1`` batches the "
+        "rows of a map of scans into one invocation; it is inclusive, single-chain, "
+        "unit-stride, unseeded and not AFFINE, and only the ``CUDA`` expansion lowers it.",
+    )
 
     implementations = {
         "CPU": ExpandCPU,
@@ -1557,16 +1710,18 @@ class Scan(nodes.LibraryNode):
         "pure": ExpandPure,
         "Auto": ExpandAuto,
     }
-    default_implementation = 'Auto'
+    default_implementation = "Auto"
 
-    def __init__(self,
-                 name: str = 'Scan',
-                 op: ScanOp = ScanOp.SUM,
-                 exclusive: bool = False,
-                 identity=None,
-                 chains: int = 1,
-                 *args,
-                 **kwargs):
+    def __init__(
+        self,
+        name: str = "Scan",
+        op: ScanOp = ScanOp.SUM,
+        exclusive: bool = False,
+        identity=None,
+        chains: int = 1,
+        *args,
+        **kwargs,
+    ):
         # ``_scan_coef`` is part of the node's shape, not an optional extra like ``_scan_init``:
         # an affine scan with no coefficients is not a scan of some other kind, it is unwired.
         conns = {in_connector(c): None for c in range(chains)}

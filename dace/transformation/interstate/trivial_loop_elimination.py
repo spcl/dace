@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Eliminates trivial loop """
+"""Eliminates trivial loop"""
 
 from dace import sdfg as sd, symbolic
 from dace.sdfg import utils as sdutil
@@ -82,8 +82,8 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
             # exit binding -- a for-loop that fails its first condition check still executed the
             # init, so downstream reads of the iterator see ``start``. Bound on its own edge so the
             # init expression reads pre-edge values, exactly as the loop would have evaluated it.
-            head = graph.add_state(loop.label + '_zero_trip', is_start_block=graph.start_block is loop)
-            tail = graph.add_state(loop.label + '_zero_trip_exit')
+            head = graph.add_state(loop.label + "_zero_trip", is_start_block=graph.start_block is loop)
+            tail = graph.add_state(loop.label + "_zero_trip_exit")
             for e in graph.in_edges(loop):
                 graph.add_edge(e.src, head, e.data)
             graph.add_edge(head, tail, InterstateEdge(assignments={itervar: str(start)}))
@@ -118,7 +118,7 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
             graph.add_node(block, ensure_unique_name=True)
         for e in graph.in_edges(loop):
             graph.add_edge(e.src, loop.start_block, e.data)
-        sink = graph.add_state(loop.label + '_sink')
+        sink = graph.add_state(loop.label + "_sink")
         for n in loop.sink_nodes():
             graph.add_edge(n, sink, InterstateEdge())
         for e in graph.out_edges(loop):
@@ -137,6 +137,7 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         # now, scoped to the spliced blocks plus one level of the parent (for a conditional that
         # was spliced in directly) -- not a whole-graph pass.
         from dace.transformation.passes.lift_trivial_if import LiftTrivialIf  # avoid import loop
+
         lift = LiftTrivialIf()
         for block in spliced:
             if isinstance(block, ControlFlowRegion) and block.parent_graph is graph:

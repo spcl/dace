@@ -6,6 +6,7 @@ loop-carried dependence (or the direction of the only possible dependence).
 When z3 is unavailable, every query returns ``None`` and callers fall back to
 their existing safe refusal.
 """
+
 from typing import Any, Dict, List, Optional
 
 import sympy as sp
@@ -16,6 +17,7 @@ from dace.optionals import required
 
 try:
     import z3
+
     _HAS_Z3 = True
 except Exception:
     z3 = None  # type: ignore
@@ -35,7 +37,7 @@ DEFAULT_RLIMIT = 50_000_000
 def bounded_solver(rlimit: int = DEFAULT_RLIMIT) -> Any:
     """A z3 solver limited to ``rlimit`` resource units, with no wall-clock limit."""
     solver = required(z3).Solver()
-    solver.set('rlimit', rlimit)
+    solver.set("rlimit", rlimit)
     return solver
 
 
@@ -226,18 +228,18 @@ def _bool_to_z3(expr: sp.Basic, sym_cache: Dict[str, Any], arr_cache: Dict[str, 
     # keeps ``AND`` / ``OR`` / ``NOT`` as function nodes rather than folding them to sympy's,
     # so a guard collected off a ConditionalBlock arrives in this form and used to fall through
     # to ``None`` here -- silently disarming every guard-dependent proof.
-    func = str(expr.func) if isinstance(expr, sp.Basic) else ''
-    if func in ('AND', 'OR'):
+    func = str(expr.func) if isinstance(expr, sp.Basic) else ""
+    if func in ("AND", "OR"):
         args = [_bool_to_z3(a, sym_cache, arr_cache) for a in expr.args]
         if any(a is None for a in args):
             return None
-        joiner = required(z3).And if func == 'AND' else required(z3).Or
+        joiner = required(z3).And if func == "AND" else required(z3).Or
         out = args[0]
         for a in args[1:]:
             out = joiner(out, a)
         return out
 
-    if func == 'NOT':
+    if func == "NOT":
         arg = _bool_to_z3(expr.args[0], sym_cache, arr_cache)
         return None if arg is None else required(z3).Not(arg)
 
@@ -347,13 +349,15 @@ def _domain_assumptions(start: Any, end: Any, step: Any) -> sp.Basic:
     return sp.And(sp.LessThan(start, end + 1), sp.StrictGreaterThan(step_expr, 0))
 
 
-def prove_injective_write(write_expr: sp.Basic,
-                          itervar: str,
-                          start: Any,
-                          end: Any,
-                          step: Any = 1,
-                          domain_assumptions: Optional[sp.Basic] = None,
-                          rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
+def prove_injective_write(
+    write_expr: sp.Basic,
+    itervar: str,
+    start: Any,
+    end: Any,
+    step: Any = 1,
+    domain_assumptions: Optional[sp.Basic] = None,
+    rlimit: int = DEFAULT_RLIMIT,
+) -> Optional[bool]:
     """Prove that distinct iterations write to distinct locations.
 
     :param write_expr: The write-index expression in terms of ``itervar``.
@@ -365,8 +369,8 @@ def prove_injective_write(write_expr: sp.Basic,
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
 
-    i1 = required(z3).Int(f'{itervar}_1')
-    i2 = required(z3).Int(f'{itervar}_2')
+    i1 = required(z3).Int(f"{itervar}_1")
+    i2 = required(z3).Int(f"{itervar}_2")
     sym_cache[itervar] = i1
     w1 = _sympy_to_z3(write_expr, sym_cache, arr_cache)
     sym_cache[itervar] = i2
@@ -388,14 +392,16 @@ def prove_injective_write(write_expr: sp.Basic,
     return prove_unsat(antecedent, consequent, rlimit)
 
 
-def prove_disjoint_write_ranges(lo_expr: sp.Basic,
-                                hi_expr: sp.Basic,
-                                itervar: str,
-                                start: Any,
-                                end: Any,
-                                step: Any = 1,
-                                domain_assumptions: Optional[sp.Basic] = None,
-                                rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
+def prove_disjoint_write_ranges(
+    lo_expr: sp.Basic,
+    hi_expr: sp.Basic,
+    itervar: str,
+    start: Any,
+    end: Any,
+    step: Any = 1,
+    domain_assumptions: Optional[sp.Basic] = None,
+    rlimit: int = DEFAULT_RLIMIT,
+) -> Optional[bool]:
     """Prove that distinct iterations write to non-overlapping RANGES.
 
     The range form of :func:`prove_injective_write`: an iteration writes the inclusive interval
@@ -419,8 +425,8 @@ def prove_disjoint_write_ranges(lo_expr: sp.Basic,
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
 
-    i1 = required(z3).Int(f'{itervar}_1')
-    i2 = required(z3).Int(f'{itervar}_2')
+    i1 = required(z3).Int(f"{itervar}_1")
+    i2 = required(z3).Int(f"{itervar}_2")
     sym_cache[itervar] = i1
     lo1 = _sympy_to_z3(lo_expr, sym_cache, arr_cache)
     hi1 = _sympy_to_z3(hi_expr, sym_cache, arr_cache)
@@ -444,14 +450,16 @@ def prove_disjoint_write_ranges(lo_expr: sp.Basic,
     return prove_unsat(antecedent, consequent, rlimit)
 
 
-def prove_disjoint_access_boxes(box1: List[Any],
-                                box2: List[Any],
-                                itervar: str,
-                                start: Any,
-                                end: Any,
-                                step: Any = 1,
-                                domain_assumptions: Optional[sp.Basic] = None,
-                                rlimit: int = DEFAULT_RLIMIT) -> Optional[bool]:
+def prove_disjoint_access_boxes(
+    box1: List[Any],
+    box2: List[Any],
+    itervar: str,
+    start: Any,
+    end: Any,
+    step: Any = 1,
+    domain_assumptions: Optional[sp.Basic] = None,
+    rlimit: int = DEFAULT_RLIMIT,
+) -> Optional[bool]:
     """Prove that two MULTI-DIMENSIONAL range accesses never touch the same element on
     two different iterations.
 
@@ -493,8 +501,8 @@ def prove_disjoint_access_boxes(box1: List[Any],
     # z3 constant on both sides -- a per-call cache would compare two unrelated uninterpreted terms.
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
-    i1 = required(z3).Int(f'{itervar}_1')
-    i2 = required(z3).Int(f'{itervar}_2')
+    i1 = required(z3).Int(f"{itervar}_1")
+    i2 = required(z3).Int(f"{itervar}_2")
     intersects = []
     for (lo1, hi1), (lo2, hi2) in zip(box1, box2):
         sym_cache[itervar] = i1
@@ -523,15 +531,17 @@ def prove_disjoint_access_boxes(box1: List[Any],
     return prove_unsat(antecedent, required(z3).Not(required(z3).And(*intersects)), rlimit)
 
 
-def _overlap_pair(write_expr: sp.Basic,
-                  read_expr: sp.Basic,
-                  read_guard: Optional[sp.Basic],
-                  itervar: str,
-                  start: Any,
-                  end: Any,
-                  step: Any,
-                  order: str,
-                  domain_assumptions: Optional[sp.Basic] = None) -> Optional[bool]:
+def _overlap_pair(
+    write_expr: sp.Basic,
+    read_expr: sp.Basic,
+    read_guard: Optional[sp.Basic],
+    itervar: str,
+    start: Any,
+    end: Any,
+    step: Any,
+    order: str,
+    domain_assumptions: Optional[sp.Basic] = None,
+) -> Optional[bool]:
     """Prove/disprove an overlap of the requested order.
 
     ``order`` is ``'raw'`` (a write iteration precedes a read iteration),
@@ -542,8 +552,8 @@ def _overlap_pair(write_expr: sp.Basic,
     sym_cache: Dict[str, Any] = {}
     arr_cache: Dict[str, Any] = {}
 
-    i_w = required(z3).Int(f'{itervar}_w')
-    i_r = required(z3).Int(f'{itervar}_r')
+    i_w = required(z3).Int(f"{itervar}_w")
+    i_r = required(z3).Int(f"{itervar}_r")
     sym_cache[itervar] = i_w
     wz = _sympy_to_z3(write_expr, sym_cache, arr_cache)
     sym_cache[itervar] = i_r
@@ -556,9 +566,9 @@ def _overlap_pair(write_expr: sp.Basic,
     if not bounds:
         return None
 
-    if order == 'raw':
+    if order == "raw":
         order_cons = i_w < i_r
-    elif order == 'raw_le':
+    elif order == "raw_le":
         order_cons = i_w <= i_r
     else:
         order_cons = i_w > i_r
@@ -572,14 +582,16 @@ def _overlap_pair(write_expr: sp.Basic,
     return prove_unsat(antecedent, consequent, rlimit=DEFAULT_RLIMIT)
 
 
-def prove_read_ahead(read_expr: sp.Basic,
-                     write_expr: sp.Basic,
-                     itervar: str,
-                     start: Any,
-                     end: Any,
-                     step: Any = 1,
-                     read_guard: Optional[sp.Basic] = None,
-                     domain_assumptions: Optional[sp.Basic] = None) -> Optional[bool]:
+def prove_read_ahead(
+    read_expr: sp.Basic,
+    write_expr: sp.Basic,
+    itervar: str,
+    start: Any,
+    end: Any,
+    step: Any = 1,
+    read_guard: Optional[sp.Basic] = None,
+    domain_assumptions: Optional[sp.Basic] = None,
+) -> Optional[bool]:
     """Prove that a read only ever touches elements no iteration up to and including its own
     has written -- the precondition for breaking an anti-dependence by snapshotting.
 
@@ -592,17 +604,19 @@ def prove_read_ahead(read_expr: sp.Basic,
     """
     if not _HAS_Z3:
         return None
-    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'raw_le', domain_assumptions)
+    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, "raw_le", domain_assumptions)
 
 
-def prove_no_write_after_read(read_expr: sp.Basic,
-                              write_expr: sp.Basic,
-                              itervar: str,
-                              start: Any,
-                              end: Any,
-                              step: Any = 1,
-                              read_guard: Optional[sp.Basic] = None,
-                              domain_assumptions: Optional[sp.Basic] = None) -> Optional[bool]:
+def prove_no_write_after_read(
+    read_expr: sp.Basic,
+    write_expr: sp.Basic,
+    itervar: str,
+    start: Any,
+    end: Any,
+    step: Any = 1,
+    read_guard: Optional[sp.Basic] = None,
+    domain_assumptions: Optional[sp.Basic] = None,
+) -> Optional[bool]:
     """Prove that no iteration AFTER the reader's own writes the element it reads.
 
     The other half of :func:`prove_read_ahead`, which covers the iterations up to and including
@@ -614,17 +628,19 @@ def prove_no_write_after_read(read_expr: sp.Basic,
     """
     if not _HAS_Z3:
         return None
-    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'war', domain_assumptions)
+    return _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, "war", domain_assumptions)
 
 
-def classify_read_write_pair(read_expr: sp.Basic,
-                             write_expr: sp.Basic,
-                             itervar: str,
-                             start: Any,
-                             end: Any,
-                             step: Any = 1,
-                             read_guard: Optional[sp.Basic] = None,
-                             domain_assumptions: Optional[sp.Basic] = None) -> Optional[str]:
+def classify_read_write_pair(
+    read_expr: sp.Basic,
+    write_expr: sp.Basic,
+    itervar: str,
+    start: Any,
+    end: Any,
+    step: Any = 1,
+    read_guard: Optional[sp.Basic] = None,
+    domain_assumptions: Optional[sp.Basic] = None,
+) -> Optional[str]:
     """Classify a single read/write pair as ``'WAR'``, ``'RAW'``, ``'none'``,
     or ``None`` (inconclusive).
 
@@ -639,29 +655,31 @@ def classify_read_write_pair(read_expr: sp.Basic,
     if not _HAS_Z3:
         return None
 
-    no_overlap_raw = _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'raw',
-                                   domain_assumptions)
-    no_overlap_war = _overlap_pair(write_expr, read_expr, read_guard, itervar, start, end, step, 'war',
-                                   domain_assumptions)
+    no_overlap_raw = _overlap_pair(
+        write_expr, read_expr, read_guard, itervar, start, end, step, "raw", domain_assumptions
+    )
+    no_overlap_war = _overlap_pair(
+        write_expr, read_expr, read_guard, itervar, start, end, step, "war", domain_assumptions
+    )
 
     if no_overlap_raw is True and no_overlap_war is True:
-        return 'none'
+        return "none"
     if no_overlap_raw is False:
-        return 'RAW'
+        return "RAW"
     if no_overlap_raw is True:
         # No RAW can occur, so any remaining alias is at worst a WAR.
-        return 'WAR'
+        return "WAR"
     return None
 
 
 __all__ = [
-    'has_z3',
-    'prove_injective_write',
-    'prove_disjoint_write_ranges',
-    'prove_read_ahead',
-    'prove_no_write_after_read',
-    'classify_read_write_pair',
+    "has_z3",
+    "prove_injective_write",
+    "prove_disjoint_write_ranges",
+    "prove_read_ahead",
+    "prove_no_write_after_read",
+    "classify_read_write_pair",
     # Re-exported from ``sdfg.analysis.cfg``: the branch guards a read executes under are a
     # plain control-flow fact, shared with the polyhedral engine in ``wavefront_skew``.
-    'collect_enclosing_conditions',
+    "collect_enclosing_conditions",
 ]

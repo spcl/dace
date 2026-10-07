@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``IvSubstitutionFissionFixpoint`` settles its ``SimplifyPass`` to the graph the full fixpoint reaches."""
+
 import copy
 
 import dace
 from dace.transformation.passes.canonicalize.pipeline import IvSubstitutionFissionFixpoint
 from dace.transformation.passes.simplify import SimplifyPass
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -22,7 +23,7 @@ def constant_dead_branch(a: dace.float64[N], b: dace.float64[N]):
 
 def strip_debuginfo(node: object) -> object:
     if isinstance(node, dict):
-        return {key: strip_debuginfo(value) for key, value in node.items() if key != 'debuginfo'}
+        return {key: strip_debuginfo(value) for key, value in node.items() if key != "debuginfo"}
     if isinstance(node, list):
         return [strip_debuginfo(value) for value in node]
     return node

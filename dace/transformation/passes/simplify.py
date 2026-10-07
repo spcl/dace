@@ -64,42 +64,44 @@ class SimplifyPass(ppl.FixedPointPipeline):
     A pipeline that simplifies an SDFG by applying a series of simplification passes.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    validate = properties.Property(dtype=bool,
-                                   default=False,
-                                   category='Diagnostics',
-                                   desc='Whether to validate the SDFG at the end of the pipeline.')
-    validate_all = properties.Property(dtype=bool,
-                                       default=False,
-                                       category='Diagnostics',
-                                       desc='Whether to validate the SDFG after each pass.')
-    skip = properties.SetProperty(element_type=str,
-                                  default=set(),
-                                  category='Applicability',
-                                  desc='Set of pass names to skip.')
-    verbose = properties.Property(dtype=bool,
-                                  default=False,
-                                  category='Diagnostics',
-                                  desc='Whether to print reports after every pass.')
+    validate = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Diagnostics",
+        desc="Whether to validate the SDFG at the end of the pipeline.",
+    )
+    validate_all = properties.Property(
+        dtype=bool, default=False, category="Diagnostics", desc="Whether to validate the SDFG after each pass."
+    )
+    skip = properties.SetProperty(
+        element_type=str, default=set(), category="Applicability", desc="Set of pass names to skip."
+    )
+    verbose = properties.Property(
+        dtype=bool, default=False, category="Diagnostics", desc="Whether to print reports after every pass."
+    )
 
-    no_inline_function_call_regions = properties.Property(dtype=bool,
-                                                          default=False,
-                                                          category='Applicability',
-                                                          desc='Whether to prevent inlining function call regions.')
-    no_inline_named_regions = properties.Property(dtype=bool,
-                                                  default=False,
-                                                  category='Applicability',
-                                                  desc='Whether to prevent inlining named control flow regions.')
+    no_inline_function_call_regions = properties.Property(
+        dtype=bool, default=False, category="Applicability", desc="Whether to prevent inlining function call regions."
+    )
+    no_inline_named_regions = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Whether to prevent inlining named control flow regions.",
+    )
 
-    def __init__(self,
-                 validate: bool = False,
-                 validate_all: bool = False,
-                 skip: Optional[Set[str]] = None,
-                 verbose: bool = False,
-                 no_inline_function_call_regions: bool = False,
-                 no_inline_named_regions: bool = False,
-                 pass_options: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        validate: bool = False,
+        validate_all: bool = False,
+        skip: Optional[Set[str]] = None,
+        verbose: bool = False,
+        no_inline_function_call_regions: bool = False,
+        no_inline_named_regions: bool = False,
+        pass_options: Optional[Dict[str, Any]] = None,
+    ):
         if skip:
             passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
         else:
@@ -109,7 +111,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self.validate = validate
         self.validate_all = validate_all
         self.skip = skip or set()
-        if config.Config.get('debugprint') == 'verbose':
+        if config.Config.get("debugprint") == "verbose":
             self.verbose = True
         else:
             self.verbose = verbose
@@ -118,10 +120,10 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self.no_inline_named_regions = no_inline_named_regions
 
         pass_opts = {
-            'InlineControlFlowRegions.no_inline_function_call_regions': self.no_inline_function_call_regions,
-            'InlineControlFlowRegions.no_inline_named_regions': self.no_inline_named_regions,
+            "InlineControlFlowRegions.no_inline_function_call_regions": self.no_inline_function_call_regions,
+            "InlineControlFlowRegions.no_inline_named_regions": self.no_inline_named_regions,
             # The fixed point would peel a loop body's dead chain one link per round of every pass.
-            'DeadDataflowElimination.converge_self_reaching_states': True,
+            "DeadDataflowElimination.converge_self_reaching_states": True,
         }
         if pass_options:
             pass_opts.update(pass_options)
@@ -134,14 +136,19 @@ class SimplifyPass(ppl.FixedPointPipeline):
         """
         if sdfg.root_sdfg.using_explicit_control_flow:
             if not p.__explicit_cf_compatible__:
-                warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
-                              'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
-                              'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +
-                              'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                              'please annotate it with the class decorator ' +
-                              '`@dace.transformation.explicit_cf_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                              'for more information.')
+                warnings.warn(
+                    p.__class__.__name__
+                    + " is not being applied due to incompatibility with "
+                    + "experimental control flow blocks. If the SDFG does not contain experimental blocks, "
+                    + "ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to "
+                    + "True. If "
+                    + p.__class__.__name__
+                    + " is compatible with experimental blocks, "
+                    + "please annotate it with the class decorator "
+                    + "`@dace.transformation.explicit_cf_compatible`. see "
+                    + "`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` "
+                    + "for more information."
+                )
                 return None
 
         if type(p) in _recursive_passes:  # If pass needs to run recursively, do so and modify return value
@@ -165,8 +172,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
                     rep = []
                     for sdid, subret in ret.items():
                         if subret is not None:
-                            rep.append(f'SDFG {sdid}: ' + p.report(subret))
-                    rep = '\n'.join(rep)
+                            rep.append(f"SDFG {sdid}: " + p.report(subret))
+                    rep = "\n".join(rep)
 
                 if rep:
                     print(rep)

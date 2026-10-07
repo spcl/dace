@@ -7,6 +7,7 @@ with ``target='gpu'``, and asserts both the resulting CFG structure and bit-exac
 against a deep copy of the pre-sift SDFG. Refusal tests assert the pass is a no-op and that
 the (unchanged) SDFG still matches its sequential oracle.
 """
+
 import copy
 import os
 
@@ -27,8 +28,8 @@ from dace.transformation.passes.canonicalize.perfect_loop_nesting import Perfect
 from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
 from tests.cfg_tree import assert_tree_matches_a_reset, spy_on_resets
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _loops(sdfg):
@@ -39,11 +40,11 @@ def _conds(sdfg):
     return [c for c in sdfg.all_control_flow_regions(recursive=True) if isinstance(c, ConditionalBlock)]
 
 
-def _inner_loop(sdfg, var='j'):
+def _inner_loop(sdfg, var="j"):
     return next(l for l in _loops(sdfg) if l.loop_variable == var)
 
 
-def _outer_loop(sdfg, var='i'):
+def _outer_loop(sdfg, var="i"):
     return next(l for l in _loops(sdfg) if l.loop_variable == var)
 
 
@@ -115,35 +116,35 @@ def _build_interstate_sdfg() -> dace.SDFG:
     The ``t = 2*i`` assignment lives on the internal pre edge; the sift must carry it into the
     ``j == 0`` guard together with the state that reads it.
     """
-    sdfg = dace.SDFG('istate_kern')
-    sdfg.add_array('a', [N, 5], dace.float64)
-    sdfg.add_array('b', [N, 5], dace.float64)
-    sdfg.add_array('s', [N], dace.float64, transient=True)
-    sdfg.add_symbol('t', dace.float64)
+    sdfg = dace.SDFG("istate_kern")
+    sdfg.add_array("a", [N, 5], dace.float64)
+    sdfg.add_array("b", [N, 5], dace.float64)
+    sdfg.add_array("s", [N], dace.float64, transient=True)
+    sdfg.add_symbol("t", dace.float64)
 
-    outer = LoopRegion('i_loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    outer = LoopRegion("i_loop", "i < N", "i", "i = 0", "i = i + 1")
     sdfg.add_node(outer, is_start_block=True)
 
-    pre_head = outer.add_state('pre_head', is_start_block=True)
-    pre_state = outer.add_state('pre_state')
-    ar = pre_state.add_read('a')
-    sw = pre_state.add_write('s')
-    ptk = pre_state.add_tasklet('pre', {'inp'}, {'out'}, 'out = inp + t')
-    pre_state.add_edge(ar, None, ptk, 'inp', dace.Memlet('a[i, 0]'))
-    pre_state.add_edge(ptk, 'out', sw, None, dace.Memlet('s[i]'))
+    pre_head = outer.add_state("pre_head", is_start_block=True)
+    pre_state = outer.add_state("pre_state")
+    ar = pre_state.add_read("a")
+    sw = pre_state.add_write("s")
+    ptk = pre_state.add_tasklet("pre", {"inp"}, {"out"}, "out = inp + t")
+    pre_state.add_edge(ar, None, ptk, "inp", dace.Memlet("a[i, 0]"))
+    pre_state.add_edge(ptk, "out", sw, None, dace.Memlet("s[i]"))
 
-    inner = LoopRegion('j_loop', 'j < 5', 'j', 'j = 0', 'j = j + 1')
-    body = inner.add_state('body', is_start_block=True)
-    ba = body.add_read('a')
-    bs = body.add_read('s')
-    bw = body.add_write('b')
-    btk = body.add_tasklet('body', {'ina', 'ins'}, {'out'}, 'out = ina + ins')
-    body.add_edge(ba, None, btk, 'ina', dace.Memlet('a[i, j]'))
-    body.add_edge(bs, None, btk, 'ins', dace.Memlet('s[i]'))
-    body.add_edge(btk, 'out', bw, None, dace.Memlet('b[i, j]'))
+    inner = LoopRegion("j_loop", "j < 5", "j", "j = 0", "j = j + 1")
+    body = inner.add_state("body", is_start_block=True)
+    ba = body.add_read("a")
+    bs = body.add_read("s")
+    bw = body.add_write("b")
+    btk = body.add_tasklet("body", {"ina", "ins"}, {"out"}, "out = ina + ins")
+    body.add_edge(ba, None, btk, "ina", dace.Memlet("a[i, j]"))
+    body.add_edge(bs, None, btk, "ins", dace.Memlet("s[i]"))
+    body.add_edge(btk, "out", bw, None, dace.Memlet("b[i, j]"))
 
     outer.add_node(inner)
-    outer.add_edge(pre_head, pre_state, dace.InterstateEdge(assignments={'t': '2*i'}))
+    outer.add_edge(pre_head, pre_state, dace.InterstateEdge(assignments={"t": "2*i"}))
     outer.add_edge(pre_state, inner, dace.InterstateEdge())
     return sdfg
 
@@ -166,8 +167,8 @@ def test_pre_only_sift():
     outer, inner = _outer_loop(sdfg), _inner_loop(sdfg)
     assert list(outer.nodes()) == [inner]  # exactly one child
     assert isinstance(inner.start_block, ConditionalBlock)  # pre-guard is the first inner block
-    assert _cond_string(inner.start_block) == '(j == 0)'
-    assert _region_writes(inner.start_block.branches[0][1], 's')  # the s[i]=... statement sifted in
+    assert _cond_string(inner.start_block) == "(j == 0)"
+    assert _region_writes(inner.start_block.branches[0][1], "s")  # the s[i]=... statement sifted in
     assert len(_conds(sdfg)) == 1
 
     out_b, out_s = np.zeros((n, 5)), np.zeros(n)
@@ -193,8 +194,8 @@ def test_post_only_sift():
     inner = _inner_loop(sdfg)
     sinks = inner.sink_nodes()
     assert len(sinks) == 1 and isinstance(sinks[0], ConditionalBlock)  # post-guard is the last block
-    assert _cond_string(sinks[0]) == '(j == 4)'
-    assert _region_writes(sinks[0].branches[0][1], 'c')
+    assert _cond_string(sinks[0]) == "(j == 4)"
+    assert _region_writes(sinks[0].branches[0][1], "c")
     assert not isinstance(inner.start_block, ConditionalBlock)  # no pre-guard
     assert len(_conds(sdfg)) == 1
 
@@ -216,9 +217,9 @@ def test_pre_and_post_sift():
     sdfg.validate()
 
     inner = _inner_loop(sdfg)
-    assert isinstance(inner.start_block, ConditionalBlock) and _cond_string(inner.start_block) == '(j == 0)'
+    assert isinstance(inner.start_block, ConditionalBlock) and _cond_string(inner.start_block) == "(j == 0)"
     sinks = inner.sink_nodes()
-    assert len(sinks) == 1 and isinstance(sinks[0], ConditionalBlock) and _cond_string(sinks[0]) == '(j == 4)'
+    assert len(sinks) == 1 and isinstance(sinks[0], ConditionalBlock) and _cond_string(sinks[0]) == "(j == 4)"
     assert len(_conds(sdfg)) == 2
 
     out = np.zeros(n)
@@ -257,10 +258,10 @@ def test_interstate_assignment_sifts_with_statement():
 
     # Both the assignment and the writing state live inside the j == 0 guard.
     guard = _inner_loop(sdfg).start_block
-    assert isinstance(guard, ConditionalBlock) and _cond_string(guard) == '(j == 0)'
+    assert isinstance(guard, ConditionalBlock) and _cond_string(guard) == "(j == 0)"
     region = guard.branches[0][1]
-    assert any('t' in e.data.assignments for e in region.edges())
-    assert _region_writes(region, 's')
+    assert any("t" in e.data.assignments for e in region.edges())
+    assert _region_writes(region, "s")
 
     out = np.zeros((n, 5))
     sdfg(a=a.copy(), b=out, N=n)
@@ -293,7 +294,7 @@ def test_cpu_target_noop():
 
     sdfg = _pre_and_post.to_sdfg(simplify=True)
     conds_before = len(_conds(sdfg))
-    PerfectLoopNesting(target='cpu').apply_pass(sdfg, {})
+    PerfectLoopNesting(target="cpu").apply_pass(sdfg, {})
     sdfg.validate()
     assert len(_conds(sdfg)) == conds_before  # no boundary guard was introduced
 
@@ -341,7 +342,7 @@ def test_new_start_block_set_correctly():
 
     inner = _inner_loop(sdfg)
     start = inner.start_block
-    assert isinstance(start, ConditionalBlock) and _cond_string(start) == '(j == 0)'
+    assert isinstance(start, ConditionalBlock) and _cond_string(start) == "(j == 0)"
 
     sdfg.simplify()  # dominator / dead-state analysis: must not raise on a mis-set start block
     sdfg.validate()
@@ -371,20 +372,20 @@ def test_perfect_loop_nesting_drives_the_sink_on_gpu_only():
 
     gpu = _pre_and_post.to_sdfg(simplify=True)
     guards_before = len(_conds(gpu))
-    assert PerfectLoopNesting(target='gpu').apply_pass(gpu, {})
+    assert PerfectLoopNesting(target="gpu").apply_pass(gpu, {})
     gpu.validate()
-    assert len(_conds(gpu)) == guards_before + 2, 'the pre and the post each get a boundary guard'
+    assert len(_conds(gpu)) == guards_before + 2, "the pre and the post each get a boundary guard"
     out = np.zeros(n)
     gpu(a=a.copy(), c=out, N=n)
     assert np.allclose(out, ref)
 
     cpu = _pre_and_post.to_sdfg(simplify=True)
-    PerfectLoopNesting(target='cpu').apply_pass(cpu, {})
+    PerfectLoopNesting(target="cpu").apply_pass(cpu, {})
     cpu.validate()
     assert len(_conds(cpu)) == guards_before
 
 
-@pytest.mark.parametrize('target', ['cpu', 'gpu'])
+@pytest.mark.parametrize("target", ["cpu", "gpu"])
 def test_aligned_pre_shape_is_distributed_not_sunk(target):
     """When the pre statement and the inner body meet at the SAME parent index -- ``s[i]`` written
     then ``s[i]`` read -- the distribution separates them into two perfect nests on either target,
@@ -400,8 +401,8 @@ def test_aligned_pre_shape_is_distributed_not_sunk(target):
     guards_before = len(_conds(sdfg))
     assert PerfectLoopNesting(target=target).apply_pass(sdfg, {})
     sdfg.validate()
-    assert len(_conds(sdfg)) == guards_before, 'a distributed nest needs no boundary guard'
-    assert len(_loops(sdfg)) == 3, 'one bare-statement nest plus the two levels of the inner nest'
+    assert len(_conds(sdfg)) == guards_before, "a distributed nest needs no boundary guard"
+    assert len(_loops(sdfg)) == 3, "one bare-statement nest plus the two levels of the inner nest"
 
     out_b, out_s = np.zeros((n, 5)), np.zeros(n)
     sdfg(a=a.copy(), b=out_b, s=out_s, N=n)
@@ -427,5 +428,5 @@ def test_sifting_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):
     sdfg.validate()
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

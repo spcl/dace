@@ -17,7 +17,7 @@ def test_set_by_view():
     set_by_view(val)
     ref = np.arange(10)
     set_by_view.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -31,7 +31,7 @@ def test_set_by_view_1():
     set_by_view_1(val)
     ref = np.arange(10)
     set_by_view_1.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -45,7 +45,7 @@ def test_set_by_view_2():
     set_by_view_2(val)
     ref = np.arange(10)
     set_by_view_2.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -59,7 +59,7 @@ def test_set_by_view_3():
     set_by_view_3(val)
     ref = np.arange(10)
     set_by_view_3.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 @dace.program
@@ -70,7 +70,7 @@ def set_by_view_4(A: dace.float64[10]):
 
 
 def test_set_by_view_4():
-    A = np.ones((10, ), dtype=np.float64)
+    A = np.ones((10,), dtype=np.float64)
 
     set_by_view_4(A)
 
@@ -91,7 +91,7 @@ def set_by_view_5(A: dace.float64[10]):
 
 
 def test_set_by_view_5():
-    A = np.ones((10, ), dtype=np.float64)
+    A = np.ones((10,), dtype=np.float64)
 
     set_by_view_5(A)
 
@@ -111,7 +111,7 @@ def test_is_a_copy():
     is_a_copy(val)
     ref = np.arange(10)
     is_a_copy.f(ref)
-    assert (np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 def test_needs_view():
@@ -129,8 +129,9 @@ def test_needs_view():
     sdfg = selfcopy.to_sdfg()
     for s in sdfg.all_sdfgs_recursive():
         assert not any(
-            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3, )
-            for d in s.arrays.values())
+            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3,)
+            for d in s.arrays.values()
+        )
 
 
 def test_needs_copy():
@@ -149,8 +150,9 @@ def test_needs_copy():
     found_copy = False
     for s in sdfg.all_sdfgs_recursive():
         found_copy |= any(
-            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3, )
-            for d in s.arrays.values())
+            isinstance(d, data.Array) and not isinstance(d, data.View) and d.transient and d.shape == (3,)
+            for d in s.arrays.values()
+        )
     assert found_copy
 
 
@@ -184,21 +186,21 @@ def test_strided_copy():
 
 
 def test_strided_copy_symbolic_0():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def strided_copy_symbolic_0(dst: dace.uint32[N], src: dace.uint32[2 * N]):
-        dst[0:N:2] = src[0:2 * N:4]
+        dst[0:N:2] = src[0 : 2 * N : 4]
 
-    _test_strided_copy_program(strided_copy_symbolic_0, symbols={'N': 20})
+    _test_strided_copy_program(strided_copy_symbolic_0, symbols={"N": 20})
 
 
 def test_strided_copy_symbolic_1():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def strided_copy_symbolic_1(dst: dace.uint32[N], src: dace.uint32[2 * N]):
-        dst[0:N:2] = src[4 * N - 1:-1:-4]
+        dst[0:N:2] = src[4 * N - 1 : -1 : -4]
 
     with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
         # This should raise an error because of the negative stride in the source.
@@ -206,23 +208,23 @@ def test_strided_copy_symbolic_1():
 
 
 def test_strided_copy_symbolic_2():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def strided_copy_symbolic_2(dst: dace.uint32[20], src: dace.uint32[40]):
-        dst[0:20:N] = src[0:40:2 * N]
+        dst[0:20:N] = src[0 : 40 : 2 * N]
 
-    _test_strided_copy_program(strided_copy_symbolic_2, symbols={'N': 2})
+    _test_strided_copy_program(strided_copy_symbolic_2, symbols={"N": 2})
 
 
 def test_strided_copy_symbolic_3():
-    M, N = (dace.symbol(s) for s in ('M', 'N'))
+    M, N = (dace.symbol(s) for s in ("M", "N"))
 
     @dace.program
     def strided_copy_symbolic_3(dst: dace.uint32[M], src: dace.uint32[2 * M]):
-        dst[0:M:N] = src[0:2 * M:2 * N]
+        dst[0:M:N] = src[0 : 2 * M : 2 * N]
 
-    _test_strided_copy_program(strided_copy_symbolic_3, symbols={'M': 20, 'N': 2})
+    _test_strided_copy_program(strided_copy_symbolic_3, symbols={"M": 20, "N": 2})
 
 
 def test_strided_copy_map_0():
@@ -240,31 +242,31 @@ def test_strided_copy_map_1():
     @dace.program
     def strided_copy_map_1(dst: dace.uint32[20], src: dace.uint32[40]):
         for i in dace.map[0:2]:
-            dst[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+            dst[i * 10 : (i + 1) * 10 : 2] = src[i * 20 : (i + 1) * 20 : 4]
 
     _test_strided_copy_program(strided_copy_map_1)
 
 
 def test_strided_copy_map_symbolic_0():
-    M, N = (dace.symbol(s) for s in ('M', 'N'))
+    M, N = (dace.symbol(s) for s in ("M", "N"))
 
     @dace.program
     def strided_copy_map_symbolic_0(dst: dace.uint32[M], src: dace.uint32[2 * M]):
         for i in dace.map[0:M:N]:
             dst[i] = src[i * 2]
 
-    _test_strided_copy_program(strided_copy_map_symbolic_0, symbols={'M': 20, 'N': 2})
+    _test_strided_copy_program(strided_copy_map_symbolic_0, symbols={"M": 20, "N": 2})
 
 
 def test_strided_copy_map_symbolic_1():
-    M, N = (dace.symbol(s) for s in ('M', 'N'))
+    M, N = (dace.symbol(s) for s in ("M", "N"))
 
     @dace.program
     def strided_copy_map_symbolic_1(dst: dace.uint32[2 * M], src: dace.uint32[4 * M]):
         for i in dace.map[0:2]:
-            dst[i * M:(i + 1) * M:N] = src[i * 2 * M:(i + 1) * 2 * M:2 * N]
+            dst[i * M : (i + 1) * M : N] = src[i * 2 * M : (i + 1) * 2 * M : 2 * N]
 
-    _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={'M': 10, 'N': 2})
+    _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={"M": 10, "N": 2})
 
 
 @dace.program
@@ -283,7 +285,7 @@ def test_rebind_view_to_the_same_slice():
     """
     sdfg = rebind_same_view.to_sdfg(simplify=False)
     # The no-op rebind must not mint a second descriptor for v; both writes go through the one view.
-    assert [n for n in sdfg.arrays if n == 'v' or n.startswith('v_')] == ['v']
+    assert [n for n in sdfg.arrays if n == "v" or n.startswith("v_")] == ["v"]
 
     val = np.arange(10)
     sdfg(A=val)
@@ -321,7 +323,7 @@ def test_rebind_view_to_a_different_slice_is_still_refused():
         v = A[0:8]
         v += 2
 
-    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='Cannot reassign View'):
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="Cannot reassign View"):
         rebind_other_view.to_sdfg(simplify=False)
 
 
@@ -367,13 +369,18 @@ def test_real_of_a_view_used_twice_computes_what_numpy_computes():
     out = np.zeros((4, 2))
     real_of_a_view_twice.to_sdfg(simplify=False).validate()
     real_of_a_view_twice(psi=psi, out=out)
-    assert np.allclose(out, np.real(psi[:4, 1:3])**2)
+    assert np.allclose(out, np.real(psi[:4, 1:3]) ** 2)
 
 
-@pytest.mark.parametrize('program, reference, dtype', [(imag_of_a_view, np.imag, np.float64),
-                                                       (abs_of_a_view, np.abs, np.float64),
-                                                       (flip_of_a_view, np.flip, np.complex128),
-                                                       (triu_of_a_view, np.triu, np.complex128)])
+@pytest.mark.parametrize(
+    "program, reference, dtype",
+    [
+        (imag_of_a_view, np.imag, np.float64),
+        (abs_of_a_view, np.abs, np.float64),
+        (flip_of_a_view, np.flip, np.complex128),
+        (triu_of_a_view, np.triu, np.complex128),
+    ],
+)
 def test_a_new_array_built_from_a_view_is_a_plain_array(program, reference, dtype):
     """Every replacement that sizes its result like its operand made a View of nothing from a view operand."""
     psi = complex_grid()
@@ -383,8 +390,8 @@ def test_a_new_array_built_from_a_view_is_a_plain_array(program, reference, dtyp
     assert np.allclose(out, reference(psi[:4, 1:3]))
 
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -406,9 +413,9 @@ def rebind_slice_of_a_named_view(A: dace.int64[10]):
 
 @dace.program
 def rebind_symbolic_slice(A: dace.int64[N]):
-    v = A[1:N - 1]
+    v = A[1 : N - 1]
     v += 1
-    v = A[1:N - 1]
+    v = A[1 : N - 1]
     v += 2
 
 
@@ -416,7 +423,7 @@ def rebind_symbolic_slice(A: dace.int64[N]):
 def rebind_negative_and_symbolic_bound(A: dace.int64[N]):
     v = A[1:-1]
     v += 1
-    v = A[1:N - 1]
+    v = A[1 : N - 1]
     v += 2
 
 
@@ -463,9 +470,9 @@ def rebind_chained_to_another_outer_slice(A: dace.int64[10]):
 
 @dace.program
 def rebind_symbolic_slice_of_another_extent(A: dace.int64[N]):
-    v = A[0:N - 1]
+    v = A[0 : N - 1]
     v += 1
-    v = A[0:N - 2]
+    v = A[0 : N - 2]
     v += 2
 
 
@@ -486,43 +493,43 @@ def rebind_other_stride(A: dace.int64[10]):
 
 
 SAME_ELEMENTS = [
-    pytest.param(rebind_chained_slices, slice(2, 4), id='chained_slices'),
-    pytest.param(rebind_slice_of_a_named_view, slice(2, 4), id='slice_of_a_named_view'),
-    pytest.param(rebind_symbolic_slice, slice(1, 9), id='symbolic_slice'),
-    pytest.param(rebind_negative_and_symbolic_bound, slice(1, 9), id='negative_and_symbolic_bound'),
-    pytest.param(rebind_strided_slice, slice(1, 9, 2), id='strided_slice'),
+    pytest.param(rebind_chained_slices, slice(2, 4), id="chained_slices"),
+    pytest.param(rebind_slice_of_a_named_view, slice(2, 4), id="slice_of_a_named_view"),
+    pytest.param(rebind_symbolic_slice, slice(1, 9), id="symbolic_slice"),
+    pytest.param(rebind_negative_and_symbolic_bound, slice(1, 9), id="negative_and_symbolic_bound"),
+    pytest.param(rebind_strided_slice, slice(1, 9, 2), id="strided_slice"),
 ]
 
 OTHER_ELEMENTS = [
-    pytest.param(rebind_same_size_elsewhere, id='same_size_elsewhere'),
-    pytest.param(rebind_same_slice_of_another_array, id='same_slice_of_another_array'),
-    pytest.param(rebind_chained_to_another_inner_slice, id='chained_to_another_inner_slice'),
-    pytest.param(rebind_chained_to_another_outer_slice, id='chained_to_another_outer_slice'),
-    pytest.param(rebind_symbolic_slice_of_another_extent, id='symbolic_slice_of_another_extent'),
-    pytest.param(rebind_slice_of_another_symbolic_array, id='slice_of_another_symbolic_array'),
-    pytest.param(rebind_other_stride, id='other_stride'),
+    pytest.param(rebind_same_size_elsewhere, id="same_size_elsewhere"),
+    pytest.param(rebind_same_slice_of_another_array, id="same_slice_of_another_array"),
+    pytest.param(rebind_chained_to_another_inner_slice, id="chained_to_another_inner_slice"),
+    pytest.param(rebind_chained_to_another_outer_slice, id="chained_to_another_outer_slice"),
+    pytest.param(rebind_symbolic_slice_of_another_extent, id="symbolic_slice_of_another_extent"),
+    pytest.param(rebind_slice_of_another_symbolic_array, id="slice_of_another_symbolic_array"),
+    pytest.param(rebind_other_stride, id="other_stride"),
 ]
 
 
-@pytest.mark.parametrize('program, viewed', SAME_ELEMENTS)
+@pytest.mark.parametrize("program, viewed", SAME_ELEMENTS)
 def test_rebind_view_to_a_slice_that_sees_the_same_elements(program, viewed):
     sdfg = program.to_sdfg(simplify=False)
-    assert [n for n in sdfg.arrays if n == 'v' or n.startswith('v_')] == ['v']
+    assert [n for n in sdfg.arrays if n == "v" or n.startswith("v_")] == ["v"]
     val = np.arange(10)
-    program(A=val, **({'N': 10} if 'N' in sdfg.free_symbols else {}))
+    program(A=val, **({"N": 10} if "N" in sdfg.free_symbols else {}))
     ref = np.arange(10)
     ref[viewed] += 3
     assert np.array_equal(val, ref)
 
 
-@pytest.mark.parametrize('program', OTHER_ELEMENTS)
+@pytest.mark.parametrize("program", OTHER_ELEMENTS)
 def test_rebind_view_to_a_slice_that_sees_other_elements_is_refused(program):
     """Views of the same size, or of the same slice of another array, are still different views."""
-    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='Cannot reassign View'):
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="Cannot reassign View"):
         program.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_set_by_view()
     test_set_by_view_1()
     test_set_by_view_2()
@@ -540,9 +547,12 @@ if __name__ == '__main__':
     for param in OTHER_ELEMENTS:
         test_rebind_view_to_a_slice_that_sees_other_elements_is_refused(*param.values)
     test_real_of_a_view_used_twice_computes_what_numpy_computes()
-    for program, reference, dtype in [(imag_of_a_view, np.imag, np.float64), (abs_of_a_view, np.abs, np.float64),
-                                      (flip_of_a_view, np.flip, np.complex128),
-                                      (triu_of_a_view, np.triu, np.complex128)]:
+    for program, reference, dtype in [
+        (imag_of_a_view, np.imag, np.float64),
+        (abs_of_a_view, np.abs, np.float64),
+        (flip_of_a_view, np.flip, np.complex128),
+        (triu_of_a_view, np.triu, np.complex128),
+    ]:
         test_a_new_array_built_from_a_view_is_a_plain_array(program, reference, dtype)
 
     test_strided_copy()

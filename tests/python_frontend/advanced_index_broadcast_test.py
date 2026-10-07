@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that a broadcast advanced index reaches the memlet as an expression, not a symbol name. """
+"""Tests that a broadcast advanced index reaches the memlet as an expression, not a symbol name."""
+
 import numpy as np
 
 import dace as dc
 
-N = dc.symbol('N', dtype=dc.int64, positive=True)
+N = dc.symbol("N", dtype=dc.int64, positive=True)
 
 
 def test_an_open_mesh_gather_indexes_a_size_one_dimension():
@@ -45,6 +46,6 @@ def test_a_one_dimensional_gather_still_indexes_by_symbol():
     assert np.array_equal(out, field[idx]), (out, field[idx])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_an_open_mesh_gather_indexes_a_size_one_dimension()
     test_a_one_dimensional_gather_still_indexes_by_symbol()

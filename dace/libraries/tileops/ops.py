@@ -9,6 +9,7 @@ vector-math library can still vectorize its ``std::`` call.
 The codes are single characters because that is what the headers switch on. The binary and the unary table are
 separate namespaces, so ``'l'`` is ``<=`` in one and ``log`` in the other.
 """
+
 from dataclasses import dataclass
 
 import dace
@@ -17,6 +18,7 @@ import dace
 @dataclass(frozen=True, slots=True)
 class BinaryOp:
     """Per-lane C++ ``prefix lhs infix rhs suffix`` and the op code of the ISA headers."""
+
     prefix: str
     infix: str
     suffix: str
@@ -30,6 +32,7 @@ class BinaryOp:
 @dataclass(frozen=True, slots=True)
 class UnaryOp:
     """Per-lane C++ ``prefix operand suffix`` and the op code of the ISA headers."""
+
     prefix: str
     suffix: str
     isa_code: str | None = None

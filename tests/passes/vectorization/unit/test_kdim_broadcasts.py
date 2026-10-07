@@ -60,8 +60,10 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     kernels) are infrastructure, not compute, so they are excluded exactly as the
     ``tile_runtime`` divisibility trip guards are."""
     return sum(
-        1 for n, parent in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n) and not is_assumption_guard_block(parent))
+        1
+        for n, parent in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.Tasklet) and not is_assign_tasklet(n) and not is_assumption_guard_block(parent)
+    )
 
 
 def _count_lib_nodes_by_type(sdfg: dace.SDFG, cls) -> int:
@@ -87,7 +89,8 @@ def _vectorize_k2(sdfg: dace.SDFG) -> None:
             branch_mode=BranchMode.MERGE,
             scalar_remainder_emit="tile_k1",
             expand_tile_nodes=False,
-        )).apply_pass(sdfg, {})
+        )
+    ).apply_pass(sdfg, {})
 
 
 # shapes
@@ -180,8 +183,9 @@ def _fully_structured_2d(a: dace.float64[NK, NJ], c: dace.float64[NK, NJ]):
 
 
 @dace.program
-def _fully_unstructured_separable(a: dace.float64[NK, NJ], idx_k: dace.int32[NK], idx_j: dace.int32[NJ],
-                                  c: dace.float64[NK, NJ]):
+def _fully_unstructured_separable(
+    a: dace.float64[NK, NJ], idx_k: dace.int32[NK], idx_j: dace.int32[NJ], c: dace.float64[NK, NJ]
+):
     """Fully unstructured separable: ``a[idx_k[jk], idx_j[jc]]``.
 
     Both dims data-dependent, but the index sources factor cleanly: one
@@ -282,9 +286,9 @@ def test_col_structured_descent_to_tile_only():
     loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [1, 0], f"expected dim_strides=(1, 0), got {loads[0].dim_strides}"
-    assert list(loads[0].replicate_factor_per_dim) == [
-        2, 8
-    ], f"a[jk // 2] must replicate factor 2 on jk, got {loads[0].replicate_factor_per_dim}"
+    assert list(loads[0].replicate_factor_per_dim) == [2, 8], (
+        f"a[jk // 2] must replicate factor 2 on jk, got {loads[0].replicate_factor_per_dim}"
+    )
 
 
 def test_row_gather_descent_to_tile_only():
@@ -309,9 +313,9 @@ def test_row_structured_descent_to_tile_only():
     loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [0, 1], f"expected dim_strides=(0, 1), got {loads[0].dim_strides}"
-    assert list(loads[0].replicate_factor_per_dim) == [
-        8, 2
-    ], f"a[jc // 2] must replicate factor 2 on jc, got {loads[0].replicate_factor_per_dim}"
+    assert list(loads[0].replicate_factor_per_dim) == [8, 2], (
+        f"a[jc // 2] must replicate factor 2 on jc, got {loads[0].replicate_factor_per_dim}"
+    )
 
 
 def test_fully_structured_2d_descent_to_tile_only():
@@ -324,9 +328,9 @@ def test_fully_structured_2d_descent_to_tile_only():
     loads = tile_loads(sdfg)
     assert len(loads) == 1
     assert list(loads[0].dim_strides) == [1, 1], f"expected dim_strides=(1, 1), got {loads[0].dim_strides}"
-    assert list(loads[0].replicate_factor_per_dim) == [
-        2, 1
-    ], f"a[jk // 2, jc] must replicate factor 2 on jk only, got {loads[0].replicate_factor_per_dim}"
+    assert list(loads[0].replicate_factor_per_dim) == [2, 1], (
+        f"a[jk // 2, jc] must replicate factor 2 on jk only, got {loads[0].replicate_factor_per_dim}"
+    )
 
 
 def test_fully_unstructured_separable_descent_to_tile_only():
@@ -352,8 +356,9 @@ def test_fully_unstructured_2d_index_descent_to_tile_only():
     idx_loads = sdfg_masked_loads(sdfg)
     assert len(gathers) == 1, f"expected exactly one gather TileGather, got {gathers}"
     assert list(gathers[0].gather_dims) == [0], f"expected gather_dims=(0,), got {gathers[0].gather_dims}"
-    assert len(idx_loads) == 1 and list(
-        idx_loads[0].widths) == [8, 8], f"a single 2-D index tile must feed the gather, got {idx_loads}"
+    assert len(idx_loads) == 1 and list(idx_loads[0].widths) == [8, 8], (
+        f"a single 2-D index tile must feed the gather, got {idx_loads}"
+    )
 
 
 def test_all_kdim_broadcast_shapes_match_numpy():
@@ -386,27 +391,30 @@ def test_all_kdim_broadcast_shapes_match_numpy():
     idx_k = rng.integers(0, n, size=n).astype(np.int32)
     np.testing.assert_allclose(run(_col_gather, a=a_col, idx=idx_k), np.broadcast_to(a_col[idx_k][:, None], (n, m)))
 
-    np.testing.assert_allclose(run(_col_structured, a=a_col), np.broadcast_to(a_col[np.arange(n) // 2][:, None],
-                                                                              (n, m)))
+    np.testing.assert_allclose(
+        run(_col_structured, a=a_col), np.broadcast_to(a_col[np.arange(n) // 2][:, None], (n, m))
+    )
 
     idx_j = rng.integers(0, m, size=m).astype(np.int32)
     np.testing.assert_allclose(run(_row_gather, a=a_row, idx=idx_j), np.broadcast_to(a_row[idx_j][None, :], (n, m)))
 
-    np.testing.assert_allclose(run(_row_structured, a=a_row), np.broadcast_to(a_row[np.arange(m) // 2][None, :],
-                                                                              (n, m)))
+    np.testing.assert_allclose(
+        run(_row_structured, a=a_row), np.broadcast_to(a_row[np.arange(m) // 2][None, :], (n, m))
+    )
 
     np.testing.assert_allclose(run(_fully_structured_2d, a=a_2d), a_2d[np.arange(n) // 2, :])
 
     idx_ik = rng.integers(0, n, size=n).astype(np.int32)
     idx_ij = rng.integers(0, m, size=m).astype(np.int32)
-    np.testing.assert_allclose(run(_fully_unstructured_separable, a=a_2d, idx_k=idx_ik, idx_j=idx_ij),
-                               a_2d[np.ix_(idx_ik, idx_ij)])
+    np.testing.assert_allclose(
+        run(_fully_unstructured_separable, a=a_2d, idx_k=idx_ik, idx_j=idx_ij), a_2d[np.ix_(idx_ik, idx_ij)]
+    )
 
     idx_2d = rng.integers(0, n, size=(n, m)).astype(np.int32)
     np.testing.assert_allclose(run(_fully_unstructured_2d_index, a=a_col, idx=idx_2d), a_col[idx_2d])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_scalar_broadcast_descent_to_tile_only()
     test_col_broadcast_descent_to_tile_only()
     test_row_broadcast_descent_to_tile_only()

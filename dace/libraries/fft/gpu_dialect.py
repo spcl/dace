@@ -7,6 +7,7 @@ name for name behind its own prefix (``cufftMakePlanMany64`` / ``hipfftMakePlanM
 ``CUFFT_Z2Z`` / ``HIPFFT_Z2Z``) with one exception: the inverse direction is ``CUFFT_INVERSE``
 in cuFFT and ``HIPFFT_BACKWARD`` in hipFFT.
 """
+
 from typing import NamedTuple
 
 
@@ -23,6 +24,6 @@ class GpuFftDialect(NamedTuple):
     inverse: str
 
 
-CUFFT = GpuFftDialect(name='cuFFT', api='cufft', enum='CUFFT_', inverse='CUFFT_INVERSE')
+CUFFT = GpuFftDialect(name="cuFFT", api="cufft", enum="CUFFT_", inverse="CUFFT_INVERSE")
 
-HIPFFT = GpuFftDialect(name='hipFFT', api='hipfft', enum='HIPFFT_', inverse='HIPFFT_BACKWARD')
+HIPFFT = GpuFftDialect(name="hipFFT", api="hipfft", enum="HIPFFT_", inverse="HIPFFT_BACKWARD")

@@ -11,6 +11,7 @@ A nonzero info code -- an illegal argument, or a tridiagonal eigensolve that did
 raised as ``std::runtime_error`` by the expansion itself, so no caller can read eigenvectors that
 were never computed. On the device that check costs one stream synchronization.
 """
+
 import copy
 from typing import Any, List
 
@@ -27,44 +28,43 @@ from dace.optionals import required
 from dace.sdfg.narrowing import as_range
 
 #: The eigenvalue type of each vendor matrix type: the real type underneath a complex one.
-REAL_CTYPE = {'cuComplex': 'float', 'cuDoubleComplex': 'double'}
+REAL_CTYPE = {"cuComplex": "float", "cuDoubleComplex": "double"}
 
 
 def lapack_driver(dtype: dtypes.typeclass) -> str:
     """``syevd`` for a real ``dtype``, ``heevd`` for a complex one."""
-    return 'heevd' if dtype in (dtypes.complex64, dtypes.complex128) else 'syevd'
+    return "heevd" if dtype in (dtypes.complex64, dtypes.complex128) else "syevd"
 
 
 def info_error(func: str, info: str) -> str:
     """C++ statement raising a nonzero info code ``info`` of solver call ``func``."""
-    return (f'if ({info} != 0) throw std::runtime_error(std::string("{func} failed with info ") + '
-            f'std::to_string({info}));\n')
+    return (
+        f'if ({info} != 0) throw std::runtime_error(std::string("{func} failed with info ") + '
+        f"std::to_string({info}));\n"
+    )
 
 
 @dace.library.expansion
 class ExpandSyevdOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
-    def expansion(node: 'Syevd', parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> dace.sdfg.nodes.Tasklet:
+    def expansion(node: "Syevd", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any) -> dace.sdfg.nodes.Tasklet:
         dtype, n, lda = node.validate(parent_sdfg, parent_state)
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = {"c": "(lapack_complex_float*)", "z": "(lapack_complex_double*)"}.get(lapack_dtype, "")
-        func = f'LAPACKE_{lapack_dtype}{lapack_driver(dtype)}'
+        func = f"LAPACKE_{lapack_dtype}{lapack_driver(dtype)}"
         uplo = "'L'" if node.lower else "'U'"
-        code = (f"_res = {func}(LAPACK_ROW_MAJOR, 'V', {uplo}, {n}, {cast}_xin, {lda}, _evals);\n" +
-                info_error(func, '_res'))
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        code = f"_res = {func}(LAPACK_ROW_MAJOR, 'V', {uplo}, {n}, {cast}_xin, {lda}, _evals);\n" + info_error(
+            func, "_res"
+        )
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandSyevdMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -85,22 +85,24 @@ class ExpandSyevdGPUSolver(ExpandTransformation):
     environments: List[type] = []
 
     @classmethod
-    def expansion(cls, node: 'Syevd', parent_state: SDFGState, parent_sdfg: SDFG,
-                  **kwargs: Any) -> dace.sdfg.nodes.Tasklet:
+    def expansion(
+        cls, node: "Syevd", parent_state: SDFGState, parent_sdfg: SDFG, **kwargs: Any
+    ) -> dace.sdfg.nodes.Tasklet:
         dtype, n, lda = node.validate(parent_sdfg, parent_state)
         letter, ctype, _ = blas_helpers.cublas_type_metadata(dtype)
         func = letter + lapack_driver(dtype)
         matrix = f"{cls.fill_enum(node.lower)}, {n}, ({cls.cast_ctype(ctype)}*)_xin, {lda}"
-        code = (cls.environments[0].handle_setup_code(node) + cls.call(func, ctype, matrix, n) +
-                'DACE_GPU_CHECK(gpuStreamSynchronize(__dace_current_stream));\n' + info_error(func, '*_res'))
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (
+            cls.environments[0].handle_setup_code(node)
+            + cls.call(func, ctype, matrix, n)
+            + "DACE_GPU_CHECK(gpuStreamSynchronize(__dace_current_stream));\n"
+            + info_error(func, "*_res")
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         tasklet.out_connectors = {
-            c: (dtypes.pointer(dtypes.int32) if c == '_res' else t)
-            for c, t in tasklet.out_connectors.items()
+            c: (dtypes.pointer(dtypes.int32) if c == "_res" else t) for c, t in tasklet.out_connectors.items()
         }
         return tasklet
 
@@ -176,7 +178,7 @@ class Syevd(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandSyevdOpenBLAS,
         "MKL": ExpandSyevdMKL,
         "cuSolverDn": ExpandSyevdCuSolverDn,
-        "rocSOLVER": ExpandSyevdRocSolver
+        "rocSOLVER": ExpandSyevdRocSolver,
     }
     default_implementation = None
 

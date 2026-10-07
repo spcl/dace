@@ -5,6 +5,7 @@ Covers TSVC ``s3111`` (the conditional ``+=`` accumulator) and the refusal
 contracts (non-accumulator conditional bodies, multi-write true-branches,
 unsupported ops, etc.).
 """
+
 import copy
 import numpy as np
 import pytest
@@ -26,7 +27,7 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
     assert_tree_consistent(sdfg)
 
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _num_loops(sdfg):
@@ -66,10 +67,11 @@ def test_tsvc_s3111_conditional_sum():
 
     # The guard is folded into the accumulated value: no ConditionalBlock left.
     assert not any(
-        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
+        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions()
+    )
     # The unconditional masked-reduction tasklets replace the guarded update.
     bodies = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.Tasklet)]
-    assert any('if ' in b and 'else' in b for b in bodies), "expected a masked (ternary) tasklet"
+    assert any("if " in b and "else" in b for b in bodies), "expected a masked (ternary) tasklet"
 
     n = 32
     rng = np.random.default_rng(3111)
@@ -94,9 +96,10 @@ def test_no_positives_returns_zero():
         b[0] = sum_val
 
     sdfg = kernel_no_positives_returns_zero.to_sdfg(simplify=True)
-    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, 'the rewrite refused; the original loop also sums'
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, "the rewrite refused; the original loop also sums"
     assert not any(
-        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
+        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions()
+    )
     sdfg.apply_transformations_repeated(LoopToMap, validate=False)
 
     a = -np.abs(np.random.default_rng(0).standard_normal(8))  # all negative
@@ -119,9 +122,10 @@ def test_all_positives_acts_like_unconditional_sum():
         b[0] = sum_val
 
     sdfg = kernel_all_positives_acts_like_unconditional_sum.to_sdfg(simplify=True)
-    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, 'the rewrite refused; the original loop also sums'
+    assert LoopToConditionalReduce().apply_pass(sdfg, {}) == 1, "the rewrite refused; the original loop also sums"
     assert not any(
-        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions())
+        isinstance(r, ConditionalBlock) for sd in sdfg.all_sdfgs_recursive() for r in sd.all_control_flow_regions()
+    )
     sdfg.apply_transformations_repeated(LoopToMap, validate=False)
 
     a = np.abs(np.random.default_rng(1).standard_normal(16))  # all positive
@@ -174,7 +178,8 @@ def test_argument_written_before_the_guarded_accumulate_keeps_its_last_taken_val
 
     @dace.program
     def kernel_argument_written_before_the_guarded_accumulate_keeps_its_last_taken_value(
-            a: dace.float64[N], c: dace.float64[1], b: dace.float64[1]):
+        a: dace.float64[N], c: dace.float64[1], b: dace.float64[1]
+    ):
         s = 0.0
         for i in range(N):
             if a[i] > 0.0:
@@ -247,5 +252,5 @@ def test_doesnt_lift_a_break_loop():
     assert res is None
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

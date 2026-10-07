@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests custom SDFG-convertible objects. """
+"""Tests custom SDFG-convertible objects."""
+
 import dace
 import numpy as np
 from dace.frontend.python.common import SDFGConvertible
@@ -11,7 +12,7 @@ def test_daceprogram_constants_in_signature():
 
     @dace.program
     def convertible(grid: dace.compiletime, arr: dace.float64[10]):
-        arr[grid.start:grid.end] = 7.0
+        arr[grid.start : grid.end] = 7.0
 
     grid = SimpleNamespace(start=2, end=-2)
 
@@ -19,25 +20,24 @@ def test_daceprogram_constants_in_signature():
     def program(grid: dace.compiletime, arr: dace.float64[10]):
         convertible(grid, arr)
 
-    A = np.ones((10, ))
+    A = np.ones((10,))
     program(grid, A)
-    assert np.allclose(A[grid.start:grid.end], 7.0)
+    assert np.allclose(A[grid.start : grid.end], 7.0)
 
 
 def test_constants_in_signature():
 
     class AConvertible(SDFGConvertible):
-
         def __sdfg__(self, grid, arr):
 
             @dace.program
             def func(_: dace.compiletime, arr: dace.float64[10]):
-                arr[grid.start:grid.end] = 7.0
+                arr[grid.start : grid.end] = 7.0
 
             return func.to_sdfg(grid, arr)
 
         def __sdfg_signature__(self):
-            return (['grid', 'arr'], ['grid'])
+            return (["grid", "arr"], ["grid"])
 
         def __sdfg_closure__(self, reevaluate=None):
             return {}
@@ -49,27 +49,26 @@ def test_constants_in_signature():
     def program(grid: dace.compiletime, arr: dace.float64[10]):
         convertible(grid, arr)
 
-    A = np.ones((10, ))
+    A = np.ones((10,))
     program(grid, A)
-    assert np.allclose(A[grid.start:grid.end], 7.0)
+    assert np.allclose(A[grid.start : grid.end], 7.0)
 
 
-@pytest.mark.parametrize(('raise_error', 'nested_decorator'), [(False, True), (False, True)])
+@pytest.mark.parametrize(("raise_error", "nested_decorator"), [(False, True), (False, True)])
 def test_nested_convertible_parse_fail(raise_error, nested_decorator):
     raised_exception = None
 
     class AConvertible(SDFGConvertible):
-
         def __call__(self, arr):
             nonlocal raised_exception
-            raised_exception = FileNotFoundError('Expected')
+            raised_exception = FileNotFoundError("Expected")
             raise raised_exception
 
         def __sdfg__(self, arr):
-            raise RuntimeError('Expected')
+            raise RuntimeError("Expected")
 
         def __sdfg_signature__(self):
-            return (['arr'], [])
+            return (["arr"], [])
 
         def __sdfg_closure__(self, reevaluate=None):
             return {}
@@ -86,10 +85,10 @@ def test_nested_convertible_parse_fail(raise_error, nested_decorator):
     def program(arr: dace.float64[10]):
         program2(arr)
 
-    A = np.ones((10, ))
+    A = np.ones((10,))
 
     if raise_error:
-        with dace.config.set_temporary('frontend', 'raise_nested_parsing_errors', value=True):
+        with dace.config.set_temporary("frontend", "raise_nested_parsing_errors", value=True):
             with pytest.raises(RuntimeError):
                 program(A)
     else:
@@ -103,7 +102,7 @@ def test_nested_convertible_parse_fail(raise_error, nested_decorator):
                     raise raised_exception
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_daceprogram_constants_in_signature()
     test_constants_in_signature()
     test_nested_convertible_parse_fail(False, False)

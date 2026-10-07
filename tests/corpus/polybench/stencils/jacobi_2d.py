@@ -1,29 +1,20 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-N = dace.symbol('N')
-tsteps = dace.symbol('tsteps')
+N = dace.symbol("N")
+tsteps = dace.symbol("tsteps")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    tsteps: 20,
-    N: 30
-}, {
-    tsteps: 40,
-    N: 90
-}, {
-    tsteps: 100,
-    N: 250
-}, {
-    tsteps: 500,
-    N: 1300
-}, {
-    tsteps: 1000,
-    N: 2800
-}]
+sizes = [
+    {tsteps: 20, N: 30},
+    {tsteps: 40, N: 90},
+    {tsteps: 100, N: 250},
+    {tsteps: 500, N: 1300},
+    {tsteps: 1000, N: 2800},
+]
 #: ported from npbench bench_info jacobi_2d.json parameters.paper
 #: tsteps REDUCED to 100 (npbench's paper row said tsteps=1000). tsteps is a pure outer repetition
 #: count for a stencil -- it multiplies total time without changing the per-step working set,
@@ -34,12 +25,12 @@ sizes = [{
 paper_sizes = {tsteps: 100, N: 2800}
 args = [
     ([N, N], datatype),
-    ([N, N], datatype)  #, N, tsteps
+    ([N, N], datatype),  # , N, tsteps
 ]
 
 
 @dace.program
-def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  #, N, tsteps):
+def jacobi2d(A: datatype[N, N], B: datatype[N, N]):  # , N, tsteps):
     # npbench formulation: slice-vectorized 5-point Jacobi sweeps.
     for t in range(1, tsteps):
         B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
@@ -53,10 +44,11 @@ def init_array(A, B, n, tsteps):
             B[i, j] = datatype(i * (j + 3) + 3) / n
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     if polybench:
-        polybench.main(sizes, args, [(0, 'A')], init_array, jacobi2d)
+        polybench.main(sizes, args, [(0, "A")], init_array, jacobi2d)
     else:
         init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         jacobi2d(*args)

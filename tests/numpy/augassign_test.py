@@ -108,13 +108,13 @@ BITWISE_AUGASSIGNS = (augbitand, augbitor, augbitxor, auglshift, augrshift)
 
 # The augassign path builds its tasklet directly instead of going through the operator
 # replacements, so it used to accept these and only fail in the C++ compiler.
-@pytest.mark.parametrize('kernel', BITWISE_AUGASSIGNS, ids=lambda k: k.__name__)
+@pytest.mark.parametrize("kernel", BITWISE_AUGASSIGNS, ids=lambda k: k.__name__)
 def test_bitwise_augassign_float_rejected(kernel):
     with pytest.raises(TypeError):
         dace.program(kernel).to_sdfg(simplify=False, A=np.ones((5, 5), np.float64), B=np.ones((5, 5), np.float64))
 
 
-@pytest.mark.parametrize('kernel', BITWISE_AUGASSIGNS, ids=lambda k: k.__name__)
+@pytest.mark.parametrize("kernel", BITWISE_AUGASSIGNS, ids=lambda k: k.__name__)
 def test_bitwise_augassign_signed_uint64_rejected(kernel):
     with pytest.raises(TypeError):
         dace.program(kernel).to_sdfg(simplify=False, A=np.ones((5, 5), np.uint64), B=np.ones((5, 5), np.int32))
@@ -129,7 +129,7 @@ def test_bitwise_augassign_float_literal_rejected():
         dace.program(auglshift_by_literal).to_sdfg(simplify=False, A=np.ones((5, 5), np.float64))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Generate with cat augassign_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_augadd()
     test_augsub()

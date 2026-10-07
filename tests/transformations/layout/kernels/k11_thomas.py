@@ -14,6 +14,7 @@ temporaries stay (K, NB) in both, so only the coefficient reads differ.
 Source: Laszlo, Giles, Appleyard, ACM TOMS 42(4) 2016 (cuThomasBatch convention); Zaengl et al.,
 QJRMS'15 (ICON vertical solvers).
 """
+
 import numpy
 import dace
 
@@ -23,8 +24,13 @@ K, NB = dace.symbol("K"), dace.symbol("NB")
 
 
 @dace.program
-def thomas(a: dace.float64[K, NB], b: dace.float64[K, NB], c: dace.float64[K, NB], d: dace.float64[K, NB],
-           x: dace.float64[K, NB]):
+def thomas(
+    a: dace.float64[K, NB],
+    b: dace.float64[K, NB],
+    c: dace.float64[K, NB],
+    d: dace.float64[K, NB],
+    x: dace.float64[K, NB],
+):
     cp = numpy.empty((K, NB), dace.float64)
     dp = numpy.empty((K, NB), dace.float64)
     for j in dace.map[0:NB]:

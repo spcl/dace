@@ -45,9 +45,9 @@ def resolve_comm(node: nodes.Node, state: Any) -> str:
     connector name (or ``"MPI_COMM_WORLD"``); the C tasklet emits it verbatim
     into the ``MPI_*`` call and DaCe codegen substitutes the connector's value.
     """
-    if input_descriptor_name(node, state, '_comm'):
+    if input_descriptor_name(node, state, "_comm"):
         return "_comm"
-    if input_descriptor_name(node, state, '_grid'):
+    if input_descriptor_name(node, state, "_grid"):
         return "_grid"
     return "MPI_COMM_WORLD"
 

@@ -29,6 +29,7 @@ furthest good checkpoint and resumes past it (the multi-minute ``simplify`` / bu
 ``numeric_check`` is the reference-compare closure from :func:`make_numeric_check` (self-contained --
 no dace-fortran); ``None`` = structural-only (fast, no per-phase compile+run).
 """
+
 import contextlib
 import copy
 import functools
@@ -57,10 +58,10 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApply
 Stage = Tuple[str, Callable[[dace.SDFG], None]]
 Phase = Tuple[str, List[Stage]]
 
-VARIANTS: Tuple[str, ...] = ('parallelize', 'canon_cpu', 'canon_gpu')
+VARIANTS: Tuple[str, ...] = ("parallelize", "canon_cpu", "canon_gpu")
 
 #: Numeric-check regimes; parameters resolved lazily by :func:`_regime_params`.
-_REGIME_NAMES: Tuple[str, ...] = ('ieee', 'o3')
+_REGIME_NAMES: Tuple[str, ...] = ("ieee", "o3")
 
 
 def _regime_params(regime: str) -> Tuple[str, bool, float, float]:
@@ -76,9 +77,10 @@ def _regime_params(regime: str) -> Tuple[str, bool, float, float]:
     ``-fno-fast-math -ffp-contract=off`` so the compiler contributes no reassociation of its own;
     ``o3`` lets it, hence the looser reassociation bound."""
     from tests.corpus.cloudsc.generate_data_for_cloudsc import IEEE_CPU_ARGS, O3_CPU_ARGS
+
     return {
-        'ieee': (IEEE_CPU_ARGS, False, 1e-16, 1e-15),
-        'o3': (O3_CPU_ARGS, False, 1e-16, 1e-12),
+        "ieee": (IEEE_CPU_ARGS, False, 1e-16, 1e-15),
+        "o3": (O3_CPU_ARGS, False, 1e-16, 1e-12),
     }[regime]
 
 
@@ -86,7 +88,7 @@ def _regime_params(regime: str) -> Tuple[str, bool, float, float]:
 #: tolerance goes relaxed on the first hit and STAYS relaxed (sticky) -- ``start`` and ``normalize``
 #: (value-preserving; on cloudsc the BLAS/IV lifts there no-op) stay bit-exact, ``loop_to_x`` onward
 #: (reduction/scan lifts, then loops->maps, then fusion) gets the reduction tolerance.
-_REASSOC_PHASES = frozenset({'loop_to_x', 'parallelize', 'finalize'})
+_REASSOC_PHASES = frozenset({"loop_to_x", "parallelize", "finalize"})
 
 
 def specialize_stage(constants: Optional[Dict[str, int]]) -> List[Stage]:
@@ -97,7 +99,7 @@ def specialize_stage(constants: Optional[Dict[str, int]]) -> List[Stage]:
         free = {str(s) for s in sdfg.free_symbols}
         specialize_symbols(sdfg, {n: v for n, v in consts.items() if n in sdfg.symbols or n in free})
 
-    return [('specialize', apply)]
+    return [("specialize", apply)]
 
 
 def pretreat_stages() -> List[Stage]:
@@ -108,7 +110,7 @@ def pretreat_stages() -> List[Stage]:
     documents that its caller must simplify beforehand; this IS that step. Value-preserving, so the
     per-phase numeric_check still holds."""
 
-    return [('simplify', simplify_sdfg), ('state_fusion_extended', state_fusion_extended)]
+    return [("simplify", simplify_sdfg), ("state_fusion_extended", state_fusion_extended)]
 
 
 def simplify_sdfg(sdfg: dace.SDFG) -> None:
@@ -118,6 +120,7 @@ def simplify_sdfg(sdfg: dace.SDFG) -> None:
 def state_fusion_extended(sdfg: dace.SDFG) -> None:
     """Fuse states with happens-before, to convergence."""
     from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+
     sdfg.apply_transformations_repeated(StateFusionExtended, validate=False, validate_all=False)
 
 
@@ -126,7 +129,7 @@ def state_fusion_extended(sdfg: dace.SDFG) -> None:
 #: graph is an empirical question, not one to settle by naming: the CPU recipe's materialized
 #: intermediates and its different fusion/collapse choices can win on the device too. All three are
 #: benchmarked and the best is kept, so excluding one a priori would prejudge the answer.
-OFFLOAD_PHASE: str = 'offload'
+OFFLOAD_PHASE: str = "offload"
 OFFLOAD_VARIANTS: Tuple[str, ...] = VARIANTS
 
 #: Device-side FP flags for the offload phase's numeric run, prepended to the configured CUDA args.
@@ -137,11 +140,11 @@ OFFLOAD_VARIANTS: Tuple[str, ...] = VARIANTS
 #: nvcc's defaults on costs ~2.5e-12 worst relative error and 19 non-bit-exact output arrays, turning
 #: them off gives ~2.5e-13 over 11 arrays with 8 more coming out bit-exact. This matches the two legs'
 #: build regimes; it does NOT relax anybody's tolerance -- the caller's ``numeric_check`` still decides.
-STRICT_FP_CUDA_ARGS: str = '-fmad=false --prec-div=true --prec-sqrt=true'
+STRICT_FP_CUDA_ARGS: str = "-fmad=false --prec-div=true --prec-sqrt=true"
 
 #: The HIP counterpart: amdclang contracts to FMA in device code by default, and its FP64 division
 #: and square root are already correctly rounded.
-STRICT_FP_HIP_ARGS: str = '-ffp-contract=off'
+STRICT_FP_HIP_ARGS: str = "-ffp-contract=off"
 
 
 @contextlib.contextmanager
@@ -149,9 +152,9 @@ def strict_fp_device_build():
     """Build device code under the host reference's strict FP rules, on the experimental backend,
     for whichever GPU backend is active: nvcc flags go in ``compiler.cuda.args``, amdclang flags in
     ``compiler.cuda.hip_args``."""
-    key, strict = ('hip_args', STRICT_FP_HIP_ARGS) if get_gpu_backend() == 'hip' else ('args', STRICT_FP_CUDA_ARGS)
-    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
-        with set_temporary('compiler', 'cuda', key, value=f'{strict} {dace.Config.get("compiler", "cuda", key)}'):
+    key, strict = ("hip_args", STRICT_FP_HIP_ARGS) if get_gpu_backend() == "hip" else ("args", STRICT_FP_CUDA_ARGS)
+    with set_temporary("compiler", "cuda", "implementation", value="experimental"):
+        with set_temporary("compiler", "cuda", key, value=f"{strict} {dace.Config.get('compiler', 'cuda', key)}"):
             yield
 
 
@@ -161,12 +164,11 @@ def strict_fp_device_build():
 #: ``<compiler.cpu.args> <CMAKE_CXX_FLAGS_$<CONFIG>>``, so the build type's level comes LAST and wins.
 #: Note what is absent: the shipped default adds ``-fno-signed-zeros -freciprocal-math``, which are
 #: fast-math components under another name. The perf leg does not get to be faster by being sloppier.
-STRICT_FP_CPU_ARGS: str = ('-fPIC -Wall -Wextra -fno-fast-math -ffp-contract=off '
-                           '-Wno-unused-parameter -Wno-unused-label')
+STRICT_FP_CPU_ARGS: str = "-fPIC -Wall -Wextra -fno-fast-math -ffp-contract=off -Wno-unused-parameter -Wno-unused-label"
 
 #: Perf leg: identical FP semantics, plus the ISA the host actually has. Pair with
 #: ``build_type='Release'``; the numeric leg pairs the same args with ``'Debug'``.
-PERF_CPU_ARGS: str = f'{STRICT_FP_CPU_ARGS} -march=native'
+PERF_CPU_ARGS: str = f"{STRICT_FP_CPU_ARGS} -march=native"
 
 
 def load_offload_pass() -> Callable[[dace.SDFG], None]:
@@ -176,10 +178,11 @@ def load_offload_pass() -> Callable[[dace.SDFG], None]:
     :func:`_regime_params` defers its ``tests.corpus.cloudsc`` import."""
     try:
         from tests.corpus.cloudsc.offload_cloudsc_to_gpu import offload_cloudsc_to_gpu
+
         return offload_cloudsc_to_gpu
     except ImportError:
-        path = Path(__file__).resolve().parent / 'offload_cloudsc_to_gpu.py'
-        spec = importlib.util.spec_from_file_location('cloudsc_offload_to_gpu', path)
+        path = Path(__file__).resolve().parent / "offload_cloudsc_to_gpu.py"
+        spec = importlib.util.spec_from_file_location("cloudsc_offload_to_gpu", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module.offload_cloudsc_to_gpu
@@ -193,7 +196,7 @@ def offload_stage() -> List[Stage]:
     def apply(sdfg):
         load_offload_pass()(sdfg)
 
-    return [('offload_to_gpu', apply)]
+    return [("offload_to_gpu", apply)]
 
 
 def generate_cuda_code(sdfg: dace.SDFG) -> int:
@@ -212,13 +215,13 @@ def generate_cuda_code(sdfg: dace.SDFG) -> int:
     the experimental backend is what gives CLOUDSC the schedule it wants: every kernel on stream 0
     with a single terminal sync, where legacy spreads the same graph over four streams.
     """
-    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+    with set_temporary("compiler", "cuda", "implementation", value="experimental"):
         objects = generate_code(copy.deepcopy(sdfg))
     # Selected by target, not extension: the HIP backend writes its device code to a ``.cpp`` object.
-    cuda = [obj for obj in objects if obj.title == 'CUDA']
-    assert cuda, 'GPU codegen emitted no device code object -- the graph is not device-scheduled'
-    kernels = sum(obj.clean_code.count('__global__') for obj in cuda)
-    assert kernels > 0, 'GPU codegen emitted a device code object with no __global__ kernel'
+    cuda = [obj for obj in objects if obj.title == "CUDA"]
+    assert cuda, "GPU codegen emitted no device code object -- the graph is not device-scheduled"
+    kernels = sum(obj.clean_code.count("__global__") for obj in cuda)
+    assert kernels > 0, "GPU codegen emitted a device code object with no __global__ kernel"
     return kernels
 
 
@@ -248,11 +251,11 @@ def gpu_is_runnable() -> bool:
         probe.apply_gpu_transformations()
         inp = numpy.arange(32, dtype=numpy.float64)
         out = numpy.zeros(32, dtype=numpy.float64)
-        with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        with set_temporary("compiler", "cuda", "implementation", value="experimental"):
             probe(inp=inp, out=out)
         return bool(numpy.array_equal(out, inp * 2.0))
     except Exception as exc:
-        print(f'gpu_is_runnable: no usable GPU ({type(exc).__name__}: {exc})')
+        print(f"gpu_is_runnable: no usable GPU ({type(exc).__name__}: {exc})")
         return False
 
 
@@ -274,14 +277,18 @@ def check_offload_phase(sdfg: dace.SDFG, numeric_check: Optional[Callable[[dace.
     """
     kernels = generate_cuda_code(sdfg)
     if numeric_check is None or not gpu_is_runnable():
-        reason = 'no numeric_check wired' if numeric_check is None else 'no usable GPU on this host'
-        print(f'    numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE ({reason}) -- STRUCTURAL ONLY: '
-              f'validate() + CUDA codegen, {kernels} __global__ kernel(s), experimental backend.')
+        reason = "no numeric_check wired" if numeric_check is None else "no usable GPU on this host"
+        print(
+            f"    numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE ({reason}) -- STRUCTURAL ONLY: "
+            f"validate() + CUDA codegen, {kernels} __global__ kernel(s), experimental backend."
+        )
         return False
     with strict_fp_device_build():
         numeric_check(sdfg, OFFLOAD_PHASE)
-    print(f'    numeric[{OFFLOAD_PHASE}]: VERIFIED ON DEVICE -- the offloaded graph ran on the GPU and '
-          f'matched the reference ({kernels} __global__ kernel(s), experimental backend, strict-FP).')
+    print(
+        f"    numeric[{OFFLOAD_PHASE}]: VERIFIED ON DEVICE -- the offloaded graph ran on the GPU and "
+        f"matched the reference ({kernels} __global__ kernel(s), experimental backend, strict-FP)."
+    )
     return True
 
 
@@ -289,7 +296,8 @@ def is_device_scheduled(sdfg: dace.SDFG) -> bool:
     """True iff any map in ``sdfg``, at any nesting depth, is scheduled onto the GPU."""
     return any(
         isinstance(node, nodes.MapEntry) and node.map.schedule in dtypes.GPU_SCHEDULES
-        for node, _ in sdfg.all_nodes_recursive())
+        for node, _ in sdfg.all_nodes_recursive()
+    )
 
 
 def map_entries(sdfg: dace.SDFG) -> List[nodes.MapEntry]:
@@ -300,7 +308,7 @@ def map_entries(sdfg: dace.SDFG) -> List[nodes.MapEntry]:
 def omp_parallel_for_count(sdfg: dace.SDFG) -> int:
     """``#pragma omp parallel for`` occurrences in the generated host code. A Map codegen declines to
     emit a pragma for is a silent serialization, so a Map count alone proves nothing."""
-    return sum(obj.code.count('#pragma omp parallel for') for obj in generate_code(sdfg) if obj.language == 'cpp')
+    return sum(obj.code.count("#pragma omp parallel for") for obj in generate_code(sdfg) if obj.language == "cpp")
 
 
 def _stage_pass_names(unit) -> set:
@@ -322,32 +330,32 @@ def _stage_pass_names(unit) -> set:
 #: :data:`_REASSOC_PHASES` tolerance boundary. ``FindSingleUseData`` is FuseMaps's declared
 #: dependency and rides along inside its Pipeline.
 _PARALLELIZE_PHASE: Dict[str, str] = {
-    'ShortLoopUnroll': 'unroll',
+    "ShortLoopUnroll": "unroll",
     # Runs immediately after the unroll and repairs it (one name carrying N values), so it
     # belongs to that phase rather than opening one of its own. A pure renaming: bit-exact
     # side of the tolerance boundary.
-    'SymbolSSA': 'unroll',
-    'UniqueLoopIterators': 'unique_iterators',
-    'SimplifyPass': 'simplify',
-    'PrivatizeScalars': 'privatize',
-    'ParallelizeLoops': 'parallelize',
+    "SymbolSSA": "unroll",
+    "UniqueLoopIterators": "unique_iterators",
+    "SimplifyPass": "simplify",
+    "PrivatizeScalars": "privatize",
+    "ParallelizeLoops": "parallelize",
     # Close the new map bodies' induction variables and settle the CFG: value-preserving parallelize tail.
-    'IvSubstitutionFissionFixpoint': 'parallelize',
-    'StructuralCleanup': 'parallelize',
-    'FuseStates': 'fuse',
-    'FuseMaps': 'fuse',
-    'FuseLoops': 'fuse',
-    'FuseConditions': 'fuse',
-    'FindSingleUseData': 'fuse',
+    "IvSubstitutionFissionFixpoint": "parallelize",
+    "StructuralCleanup": "parallelize",
+    "FuseStates": "fuse",
+    "FuseMaps": "fuse",
+    "FuseLoops": "fuse",
+    "FuseConditions": "fuse",
+    "FindSingleUseData": "fuse",
 }
 
 
 def _parallelize_phase_of(names: set) -> str:
     """Classify a parallelize-pipeline pass into a phase label."""
     unknown = names - set(_PARALLELIZE_PHASE)
-    assert not unknown, f'parallelize stage {sorted(unknown)} is unclassified -- add it to _PARALLELIZE_PHASE'
+    assert not unknown, f"parallelize stage {sorted(unknown)} is unclassified -- add it to _PARALLELIZE_PHASE"
     phases = {_PARALLELIZE_PHASE[n] for n in names}
-    assert len(phases) == 1, f'parallelize stage {sorted(names)} spans phases {sorted(phases)}'
+    assert len(phases) == 1, f"parallelize stage {sorted(names)} spans phases {sorted(phases)}"
     return phases.pop()
 
 
@@ -360,7 +368,7 @@ def _parallelize_phases() -> List[Phase]:
     for unit in stages:
         names = _stage_pass_names(unit)
         phase = _parallelize_phase_of(names)
-        label = next(iter(names)) if len(names) == 1 else '+'.join(sorted(names))
+        label = next(iter(names)) if len(names) == 1 else "+".join(sorted(names))
         # Carry the phase label as the group key; keep the transform name for per-stage reporting.
         flat.append((phase, (label, lambda sdfg, u=unit: u.apply_pass(sdfg, {}))))
     # Group by the phase key (first element), preserving the (label, fn) stage tuples.
@@ -382,62 +390,62 @@ def _parallelize_phases() -> List[Phase]:
 #: silently misfiled.
 _CANON_SUPER_PHASE: Dict[str, str] = {
     # normalize: clean + semantic lifts + lower-to-loops + reduce-prep -> canonical loop form.
-    'clean': 'normalize',
-    'loop_to_symm': 'normalize',
-    'lift_inv': 'normalize',
-    'privatize_scatter': 'normalize',
-    'normalize_reduction': 'normalize',
-    'loop_to_rank_k_update': 'normalize',
-    'prep': 'normalize',
-    'lift_reduce': 'normalize',
-    'lower': 'normalize',
-    'reroll': 'normalize',
-    'reduce': 'normalize',
-    'index_subsets': 'normalize',
-    'distribute': 'normalize',
-    'loop_to_symmetrize': 'normalize',
+    "clean": "normalize",
+    "loop_to_symm": "normalize",
+    "lift_inv": "normalize",
+    "privatize_scatter": "normalize",
+    "normalize_reduction": "normalize",
+    "loop_to_rank_k_update": "normalize",
+    "prep": "normalize",
+    "lift_reduce": "normalize",
+    "lower": "normalize",
+    "reroll": "normalize",
+    "reduce": "normalize",
+    "index_subsets": "normalize",
+    "distribute": "normalize",
+    "loop_to_symmetrize": "normalize",
     # loop_to_x (Loop2X): parallelization-prep (peel/break/fission/stride) + the reduction/scan lifts.
-    'rotate': 'loop_to_x',
-    'peel': 'loop_to_x',
-    'break_antidep': 'loop_to_x',
-    'move_if_into_loop': 'loop_to_x',
-    'fission': 'loop_to_x',
-    'loop_stride_permutation': 'loop_to_x',
-    'fuse_consecutive_loops': 'loop_to_x',
-    'lift_copy_loops': 'loop_to_x',
-    'loop_to_x': 'loop_to_x',
-    'loop_to_scan': 'loop_to_x',
+    "rotate": "loop_to_x",
+    "peel": "loop_to_x",
+    "break_antidep": "loop_to_x",
+    "move_if_into_loop": "loop_to_x",
+    "fission": "loop_to_x",
+    "loop_stride_permutation": "loop_to_x",
+    "fuse_consecutive_loops": "loop_to_x",
+    "lift_copy_loops": "loop_to_x",
+    "loop_to_x": "loop_to_x",
+    "loop_to_scan": "loop_to_x",
     # parallelize (Loop2Map): loops -> maps, scatter guards, post-l2m fusion / interchange / collapse.
-    'parallelize': 'parallelize',
-    'parallelize_guarded': 'parallelize',
-    'reduction_to_wcr_map': 'parallelize',
-    'scatter': 'parallelize',
-    'post_l2m': 'parallelize',
-    'loop_fuse': 'parallelize',
-    'lift_copy': 'parallelize',
-    'interchange': 'parallelize',
-    'reorder': 'parallelize',
-    'collapse': 'parallelize',
+    "parallelize": "parallelize",
+    "parallelize_guarded": "parallelize",
+    "reduction_to_wcr_map": "parallelize",
+    "scatter": "parallelize",
+    "post_l2m": "parallelize",
+    "loop_fuse": "parallelize",
+    "lift_copy": "parallelize",
+    "interchange": "parallelize",
+    "reorder": "parallelize",
+    "collapse": "parallelize",
     # ``coalesce`` runs between ``post_l2m`` and ``loop_fuse`` (pipeline.py ``_coalesce``): graph
     # prep for maximal fusion once loops are maps, so it belongs to the same super-phase as its
     # neighbours rather than opening a new checkpoint boundary.
-    'coalesce': 'parallelize',
+    "coalesce": "parallelize",
     # finalize: map fusion + einsum lift + guard hoist + WCR normalize + terminal simplify / parallelize.
-    'fuse': 'finalize',
-    'lift': 'finalize',
-    'licm': 'finalize',
-    'hoist_guards': 'finalize',
-    'normalize_wcr': 'finalize',
-    'revert_nonreduction_wcr': 'finalize',
-    'relax_powers': 'finalize',
-    'end': 'finalize',
-    'fuse_final': 'finalize',
+    "fuse": "finalize",
+    "lift": "finalize",
+    "licm": "finalize",
+    "hoist_guards": "finalize",
+    "normalize_wcr": "finalize",
+    "revert_nonreduction_wcr": "finalize",
+    "relax_powers": "finalize",
+    "end": "finalize",
+    "fuse_final": "finalize",
 }
 #: Recurring value-preserving structural-fixup labels that inherit the currently-open super-phase.
-_CANON_GLUE = frozenset({'cascade_iedges_up', 'ssa', 'untrivialize'})
+_CANON_GLUE = frozenset({"cascade_iedges_up", "ssa", "untrivialize"})
 
 #: The four canon super-phases, in pipeline order.
-_CANON_ORDER: Tuple[str, ...] = ('normalize', 'loop_to_x', 'parallelize', 'finalize')
+_CANON_ORDER: Tuple[str, ...] = ("normalize", "loop_to_x", "parallelize", "finalize")
 
 
 def _canon_coarse_phases(target: str, assume_parallel_guards: bool) -> List[Phase]:
@@ -447,15 +455,15 @@ def _canon_coarse_phases(target: str, assume_parallel_guards: bool) -> List[Phas
     Sound max-parallelism defaults (peel_limit=4, break_anti_dependence=True)."""
     phases: List[Phase] = []
     current = _CANON_ORDER[0]
-    for label, unit in _build_stages(target=target,
-                                     peel_limit=4,
-                                     break_anti_dependence=True,
-                                     assume_parallel_guards=assume_parallel_guards):
+    for label, unit in _build_stages(
+        target=target, peel_limit=4, break_anti_dependence=True, assume_parallel_guards=assume_parallel_guards
+    ):
         if label in _CANON_GLUE:
             super_phase = current  # inherit the open region so recurring glue doesn't split a phase
         else:
             assert label in _CANON_SUPER_PHASE, (
-                f'canon stage {label!r} is unclassified -- add it to _CANON_SUPER_PHASE or _CANON_GLUE')
+                f"canon stage {label!r} is unclassified -- add it to _CANON_SUPER_PHASE or _CANON_GLUE"
+            )
             super_phase = _CANON_SUPER_PHASE[label]
         current = super_phase
         stage = (label, lambda sdfg, u=unit: u.apply_pass(sdfg, {}))
@@ -466,10 +474,12 @@ def _canon_coarse_phases(target: str, assume_parallel_guards: bool) -> List[Phas
     return phases
 
 
-def variant_phases(variant: str,
-                   constants: Optional[Dict[str, int]] = None,
-                   assume_parallel_guards: bool = False,
-                   offload: bool = False) -> List[Phase]:
+def variant_phases(
+    variant: str,
+    constants: Optional[Dict[str, int]] = None,
+    assume_parallel_guards: bool = False,
+    offload: bool = False,
+) -> List[Phase]:
     """The full ordered phase list for ``variant``.
 
     ``parallelize`` starts at the specialization alone and then runs its own phases (unroll /
@@ -479,17 +489,17 @@ def variant_phases(variant: str,
 
     ``offload`` appends the terminal :data:`OFFLOAD_PHASE` for the :data:`OFFLOAD_VARIANTS`; every
     earlier phase is byte-identical to the ``offload=False`` plan."""
-    if variant == 'parallelize':
-        phases: List[Phase] = [('start', specialize_stage(constants))]
+    if variant == "parallelize":
+        phases: List[Phase] = [("start", specialize_stage(constants))]
         phases += _parallelize_phases()
-    elif variant == 'canon_cpu':
-        phases = [('start', specialize_stage(constants) + pretreat_stages())]
-        phases += _canon_coarse_phases('cpu', assume_parallel_guards)
-    elif variant == 'canon_gpu':
-        phases = [('start', specialize_stage(constants) + pretreat_stages())]
-        phases += _canon_coarse_phases('gpu', assume_parallel_guards)
+    elif variant == "canon_cpu":
+        phases = [("start", specialize_stage(constants) + pretreat_stages())]
+        phases += _canon_coarse_phases("cpu", assume_parallel_guards)
+    elif variant == "canon_gpu":
+        phases = [("start", specialize_stage(constants) + pretreat_stages())]
+        phases += _canon_coarse_phases("gpu", assume_parallel_guards)
     else:
-        raise ValueError(f'unknown variant {variant!r}; expected one of {VARIANTS}')
+        raise ValueError(f"unknown variant {variant!r}; expected one of {VARIANTS}")
     if offload and variant in OFFLOAD_VARIANTS:
         phases.append((OFFLOAD_PHASE, offload_stage()))
     return phases
@@ -515,27 +525,26 @@ def run_candidate(sdfg: dace.SDFG, inputs: Dict, cpu_args: str, sequential: bool
     graph would quietly demote every kernel back to the host -- the run would then pass while proving
     nothing about the GPU."""
     saved_name = sdfg.name
-    sdfg.name = f'cloudsc_e2e_{tag}'
+    sdfg.name = f"cloudsc_e2e_{tag}"
     if sequential and not is_device_scheduled(sdfg):
         from tests.corpus.cloudsc.generate_data_for_cloudsc import make_sequential
+
         make_sequential(sdfg)
     needed = set(sdfg.arglist().keys()) | {str(s) for s in sdfg.free_symbols}
     args = {k: v for k, v in copy.deepcopy(inputs).items() if k in needed}
-    saved_args = dace.Config.get('compiler', 'cpu', 'args')
+    saved_args = dace.Config.get("compiler", "cpu", "args")
     try:
-        dace.Config.set('compiler', 'cpu', 'args', value=cpu_args)
+        dace.Config.set("compiler", "cpu", "args", value=cpu_args)
         sdfg(**args)
     finally:
-        dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
+        dace.Config.set("compiler", "cpu", "args", value=saved_args)
         sdfg.name = saved_name
     return args
 
 
-def benchmark_candidate(sdfg: dace.SDFG,
-                        call_kwargs: Dict,
-                        reps: int = 5,
-                        warmup: int = 1,
-                        tag: str = 'bench') -> Dict[str, float]:
+def benchmark_candidate(
+    sdfg: dace.SDFG, call_kwargs: Dict, reps: int = 5, warmup: int = 1, tag: str = "bench"
+) -> Dict[str, float]:
     """Wall-clock one call of a FINAL ``sdfg``; return ``{'median', 'min', 'max', 'reps'}`` in seconds.
 
     Builds ONCE and then calls the compiled object ``warmup + reps`` times, so the number excludes
@@ -555,7 +564,7 @@ def benchmark_candidate(sdfg: dace.SDFG,
     honest end-to-end figure, and the one a user of the artifact actually waits for.
     """
     saved_name = sdfg.name
-    sdfg.name = f'cloudsc_bench_{tag}'
+    sdfg.name = f"cloudsc_bench_{tag}"
     samples: List[float] = []
     try:
         compiled = sdfg.compile()
@@ -569,24 +578,25 @@ def benchmark_candidate(sdfg: dace.SDFG,
     finally:
         sdfg.name = saved_name
     samples.sort()
-    return {'median': samples[len(samples) // 2], 'min': samples[0], 'max': samples[-1], 'reps': float(len(samples))}
+    return {"median": samples[len(samples) // 2], "min": samples[0], "max": samples[-1], "reps": float(len(samples))}
 
 
-def build_reference_outputs(reference: dace.SDFG, regime: str = 'ieee', seed: int = 0) -> Tuple[Dict, Dict]:
+def build_reference_outputs(reference: dace.SDFG, regime: str = "ieee", seed: int = 0) -> Tuple[Dict, Dict]:
     """Run the un-transformed ``reference`` ONCE under ``regime``; return ``(inputs, reference_out)``.
     ``inputs`` is the pristine seeded input dict (candidates are re-driven on private copies of it);
     ``reference_out`` is the reference's mutated output buffers. Shareable across variants so the raw
     cloudsc compiles+runs a single time for the whole matrix."""
     from tests.corpus.cloudsc.generate_data_for_cloudsc import generate_cloudsc_inputs, make_sequential
+
     cpu_args, sequential, _strict, _relaxed = _regime_params(regime)
     if sequential:
         make_sequential(reference)
     inputs = generate_cloudsc_inputs(reference, seed=seed)
-    reference_out = run_candidate(reference, inputs, cpu_args, sequential, tag=f'{regime}_ref')
+    reference_out = run_candidate(reference, inputs, cpu_args, sequential, tag=f"{regime}_ref")
     return inputs, reference_out
 
 
-def numeric_check_from(inputs: Dict, reference_out: Dict, regime: str = 'ieee') -> Callable[[dace.SDFG, str], None]:
+def numeric_check_from(inputs: Dict, reference_out: Dict, regime: str = "ieee") -> Callable[[dace.SDFG, str], None]:
     """A ``check(sdfg, phase_name)`` closure over a prebuilt reference (see
     :func:`build_reference_outputs`): re-drives ``sdfg`` on the identical inputs and compares every
     output array to ``reference_out``, so a divergence is pinned to the exact phase that introduced
@@ -594,29 +604,31 @@ def numeric_check_from(inputs: Dict, reference_out: Dict, regime: str = 'ieee') 
     ``ieee``) on value-preserving phases and goes relaxed -- and stays relaxed -- from the first
     reassociating phase (see :data:`_REASSOC_PHASES`)."""
     from tests.corpus.cloudsc.generate_data_for_cloudsc import compare_outputs
+
     cpu_args, sequential, strict_tol, relaxed_tol = _regime_params(regime)
-    state = {'relaxed': False}
+    state = {"relaxed": False}
 
     def check(sdfg: dace.SDFG, phase_name: str) -> None:
         if phase_name in _REASSOC_PHASES:
-            state['relaxed'] = True
-        tol = relaxed_tol if state['relaxed'] else strict_tol
+            state["relaxed"] = True
+        tol = relaxed_tol if state["relaxed"] else strict_tol
         # ``sequential`` mutates schedules -- run on a copy so the live candidate is untouched; ``o3``
         # (parallel) does not mutate, so run it in place (cheap).
         target = copy.deepcopy(sdfg) if sequential else sdfg
-        out = run_candidate(target, inputs, cpu_args, sequential, tag=f'{regime}_{phase_name}')
+        out = run_candidate(target, inputs, cpu_args, sequential, tag=f"{regime}_{phase_name}")
         report = compare_outputs(out, reference_out, rtol=tol, atol=tol)
         worst = max(((ma, mr) for ma, mr, _ in report.values()), default=(0.0, 0.0))
         bad = {name: (ma, mr) for name, (ma, mr, ok) in report.items() if not ok}
         if bad:
-            raise AssertionError(f'{phase_name}: outputs diverge from the un-transformed reference '
-                                 f'(tol={tol:.0e}): {bad}')
-        print(f'    numeric[{phase_name}]: worst |abs|={worst[0]:.2e} |rel|={worst[1]:.2e} tol={tol:.0e} OK')
+            raise AssertionError(
+                f"{phase_name}: outputs diverge from the un-transformed reference (tol={tol:.0e}): {bad}"
+            )
+        print(f"    numeric[{phase_name}]: worst |abs|={worst[0]:.2e} |rel|={worst[1]:.2e} tol={tol:.0e} OK")
 
     return check
 
 
-def make_numeric_check(reference: dace.SDFG, regime: str = 'ieee', seed: int = 0) -> Callable[[dace.SDFG, str], None]:
+def make_numeric_check(reference: dace.SDFG, regime: str = "ieee", seed: int = 0) -> Callable[[dace.SDFG, str], None]:
     """Convenience wrapper: build the reference output from ``reference`` and return the per-phase
     check closure in one call (see :func:`build_reference_outputs` + :func:`numeric_check_from`)."""
     inputs, reference_out = build_reference_outputs(reference, regime=regime, seed=seed)
@@ -628,13 +640,13 @@ def _plan_signature(phases: List[Phase], constants: Optional[Dict[str, int]] = N
     Baked into checkpoint filenames so a changed pipeline -- or a different constant baking (e.g.
     ``nclv=5`` vs ``nclv=3``, which leaves the plan shape identical) -- mints fresh checkpoints
     instead of resuming from a stale ``.sdfgz``."""
-    plan = '|'.join(f'{name}:{len(stages)}' for name, stages in phases)
-    consts = ','.join(f'{k}={v}' for k, v in sorted((constants or {}).items()))
-    return hashlib.sha1(f'{plan}#{consts}'.encode()).hexdigest()[:8]
+    plan = "|".join(f"{name}:{len(stages)}" for name, stages in phases)
+    consts = ",".join(f"{k}={v}" for k, v in sorted((constants or {}).items()))
+    return hashlib.sha1(f"{plan}#{consts}".encode()).hexdigest()[:8]
 
 
 def _checkpoint_path(dump_dir: Path, tag: str, sig: str, idx: int, phase_name: str) -> Path:
-    return dump_dir / f'{tag}__{sig}__p{idx:02d}__{phase_name}.sdfgz'
+    return dump_dir / f"{tag}__{sig}__p{idx:02d}__{phase_name}.sdfgz"
 
 
 def load_checkpoint(ckpt: Path) -> dace.SDFG:
@@ -645,7 +657,7 @@ def load_checkpoint(ckpt: Path) -> dace.SDFG:
     that lost elements loads "fine" and its hash looks like any other. Resuming from that is worse
     than recomputing, and ``testing.deserialize_exception`` is exactly the knob that turns the
     warn-and-continue into a raise."""
-    with set_temporary('testing', 'deserialize_exception', value=True):
+    with set_temporary("testing", "deserialize_exception", value=True):
         return dace.SDFG.from_file(str(ckpt))
 
 
@@ -660,15 +672,17 @@ def _checkpoint_matches(ckpt: Path, sdfg: dace.SDFG) -> bool:
         return False
 
 
-def run_pipeline(sdfg: dace.SDFG,
-                 variant: str,
-                 dump_dir: Path,
-                 constants: Optional[Dict[str, int]] = None,
-                 tag: Optional[str] = None,
-                 numeric_check: Optional[Callable[[dace.SDFG, str], None]] = None,
-                 assume_parallel_guards: bool = False,
-                 resume: bool = True,
-                 offload: bool = False) -> dace.SDFG:
+def run_pipeline(
+    sdfg: dace.SDFG,
+    variant: str,
+    dump_dir: Path,
+    constants: Optional[Dict[str, int]] = None,
+    tag: Optional[str] = None,
+    numeric_check: Optional[Callable[[dace.SDFG, str], None]] = None,
+    assume_parallel_guards: bool = False,
+    resume: bool = True,
+    offload: bool = False,
+) -> dace.SDFG:
     """Drive ``variant`` on ``sdfg`` to maximum parallelism, phase by phase.
 
     At each phase boundary: apply the phase's stages, validate once, run ``numeric_check(sdfg,
@@ -686,7 +700,7 @@ def run_pipeline(sdfg: dace.SDFG,
     ``validate()`` + CUDA codegen where there is not, with the printed line naming which. The plan
     signature covers the phase, so offload checkpoints never collide with the non-offload ones.
     """
-    tag = tag or f'{variant}_{sdfg.name}'
+    tag = tag or f"{variant}_{sdfg.name}"
     dump_dir.mkdir(parents=True, exist_ok=True)
     phases = variant_phases(variant, constants, assume_parallel_guards=assume_parallel_guards, offload=offload)
     sig = _plan_signature(phases, constants)
@@ -706,17 +720,16 @@ def run_pipeline(sdfg: dace.SDFG,
                 if numeric_check is not None:
                     numeric_check(sdfg, phases[i][0])
                 start = i + 1
-                print(f'{tag}: resumed from checkpoint p{i + 1:02d}_{phases[i][0]} ({ckpt.name})')
+                print(f"{tag}: resumed from checkpoint p{i + 1:02d}_{phases[i][0]} ({ckpt.name})")
                 break
             except Exception as exc:  # truncated / stale / lossy / no longer numeric -- try an earlier one
-                print(f'{tag}: checkpoint {ckpt.name} unusable ({type(exc).__name__}: {exc}); '
-                      'trying an earlier one')
+                print(f"{tag}: checkpoint {ckpt.name} unusable ({type(exc).__name__}: {exc}); trying an earlier one")
 
     timings: List[Tuple[str, float, float]] = []
     for idx in range(start, len(phases)):
         phase_name, stages = phases[idx]
         t0 = time.perf_counter()
-        with contextlib.redirect_stdout(open(os.devnull, 'w')):
+        with contextlib.redirect_stdout(open(os.devnull, "w")):
             for _label, apply_fn in stages:
                 apply_fn(sdfg)
         t1 = time.perf_counter()
@@ -736,23 +749,24 @@ def run_pipeline(sdfg: dace.SDFG,
             try:
                 sdfg.save(str(ckpt), compress=True)
             except Exception as exc:
-                print(f'{tag}/p{idx + 1:02d}_{phase_name}: checkpoint save skipped '
-                      f'({type(exc).__name__}: {exc})')
-        timings.append((f'p{idx + 1:02d}_{phase_name}', t1 - t0, t2 - t1))
-        print(f'{tag}/p{idx + 1:02d}_{phase_name}: apply={t1 - t0:.2f}s validate={t2 - t1:.2f}s '
-              f'stages={len(stages)} states={sdfg.number_of_nodes()} + saved')
+                print(f"{tag}/p{idx + 1:02d}_{phase_name}: checkpoint save skipped ({type(exc).__name__}: {exc})")
+        timings.append((f"p{idx + 1:02d}_{phase_name}", t1 - t0, t2 - t1))
+        print(
+            f"{tag}/p{idx + 1:02d}_{phase_name}: apply={t1 - t0:.2f}s validate={t2 - t1:.2f}s "
+            f"stages={len(stages)} states={sdfg.number_of_nodes()} + saved"
+        )
 
     if numeric_check is None:
-        print(f'{tag}/END: structural-only (no numeric_check wired)')
+        print(f"{tag}/END: structural-only (no numeric_check wired)")
     top = sorted(timings, key=lambda r: r[1] + r[2], reverse=True)[:8]
-    print(f'{tag}/TIMING top-{len(top)} slowest (apply+validate):')
+    print(f"{tag}/TIMING top-{len(top)} slowest (apply+validate):")
     for name, ap, va in top:
-        print(f'    {name}: {ap + va:.2f}s (apply={ap:.2f} validate={va:.2f})')
+        print(f"    {name}: {ap + va:.2f}s (apply={ap:.2f} validate={va:.2f})")
     return sdfg
 
 
 def dump_root() -> Path:
-    return Path(os.environ.get('CLOUDSC_E2E_DUMP', str(Path.home() / '.cache' / 'cloudsc_e2e')))
+    return Path(os.environ.get("CLOUDSC_E2E_DUMP", str(Path.home() / ".cache" / "cloudsc_e2e")))
 
 
 def _main() -> int:
@@ -760,43 +774,48 @@ def _main() -> int:
     from tests.corpus.cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg, CLOUDSC_SYMBOLS
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--variant', choices=VARIANTS, default='parallelize', help='canon_* are heavy (many phases)')
-    ap.add_argument('--numeric', action='store_true', help='wire per-phase numeric check vs the un-transformed ref')
-    ap.add_argument('--regime', choices=list(_REGIME_NAMES), default='ieee', help='numeric-check build regime')
-    ap.add_argument('--no-resume', dest='resume', action='store_false', help='ignore saved checkpoints')
-    ap.add_argument('--assume-parallel-guards', action='store_true', help='drop runtime guards (unsound, max maps)')
-    ap.add_argument('--offload',
-                    action='store_true',
-                    help=f'append the GPU-offload phase ({", ".join(OFFLOAD_VARIANTS)} only); numeric-checked '
-                    'on the device where a GPU is usable, validate+CUDA-codegen checked where it is not')
+    ap.add_argument("--variant", choices=VARIANTS, default="parallelize", help="canon_* are heavy (many phases)")
+    ap.add_argument("--numeric", action="store_true", help="wire per-phase numeric check vs the un-transformed ref")
+    ap.add_argument("--regime", choices=list(_REGIME_NAMES), default="ieee", help="numeric-check build regime")
+    ap.add_argument("--no-resume", dest="resume", action="store_false", help="ignore saved checkpoints")
+    ap.add_argument("--assume-parallel-guards", action="store_true", help="drop runtime guards (unsound, max maps)")
+    ap.add_argument(
+        "--offload",
+        action="store_true",
+        help=f"append the GPU-offload phase ({', '.join(OFFLOAD_VARIANTS)} only); numeric-checked "
+        "on the device where a GPU is usable, validate+CUDA-codegen checked where it is not",
+    )
     args = ap.parse_args()
 
-    constants = {k: CLOUDSC_SYMBOLS[k] for k in ('nclv', ) if k in CLOUDSC_SYMBOLS}
+    constants = {k: CLOUDSC_SYMBOLS[k] for k in ("nclv",) if k in CLOUDSC_SYMBOLS}
 
     numeric = None
     if args.numeric:
         # Build once, persist, reload twice: one instance drives the reference run, one the pipeline
         # (the multi-minute simplify=False parse is not repeated).
-        ref_path = dump_root() / 'cloudsc_nosimplify.sdfgz'
+        ref_path = dump_root() / "cloudsc_nosimplify.sdfgz"
         ref_path.parent.mkdir(parents=True, exist_ok=True)
         build_cloudsc_sdfg(simplify=False).save(str(ref_path), compress=True)
         numeric = make_numeric_check(load_checkpoint(ref_path), regime=args.regime, seed=0)
-        sdfg = uniquely_named(load_checkpoint(ref_path), 'cloudsc_python')
+        sdfg = uniquely_named(load_checkpoint(ref_path), "cloudsc_python")
     else:
-        sdfg = uniquely_named(build_cloudsc_sdfg(simplify=False), 'cloudsc_python')
+        sdfg = uniquely_named(build_cloudsc_sdfg(simplify=False), "cloudsc_python")
 
-    run_pipeline(sdfg,
-                 args.variant,
-                 dump_root(),
-                 constants=constants,
-                 tag=f'{args.variant}_python',
-                 numeric_check=numeric,
-                 assume_parallel_guards=args.assume_parallel_guards,
-                 resume=args.resume,
-                 offload=args.offload)
+    run_pipeline(
+        sdfg,
+        args.variant,
+        dump_root(),
+        constants=constants,
+        tag=f"{args.variant}_python",
+        numeric_check=numeric,
+        assume_parallel_guards=args.assume_parallel_guards,
+        resume=args.resume,
+        offload=args.offload,
+    )
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
+
     sys.exit(_main())

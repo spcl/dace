@@ -8,6 +8,7 @@ result (``0 * inf`` is NaN, and IEEE-754 propagates NaN through every operation,
 so no arithmetic form can sanitize it afterwards). Integers have no inf/nan, so
 the blend is exact there; a float/complex output keeps its ``ITE`` call and is
 lowered by a real select instead. See :meth:`_ITEToFpFactor.visit_Call`."""
+
 import ast
 
 from typing import Any

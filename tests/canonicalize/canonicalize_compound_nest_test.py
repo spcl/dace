@@ -38,6 +38,7 @@ The interesting interactions:
 Each test is value-preserving against a pure-numpy oracle and asserts
 the structural contract canonicalize is expected to deliver today.
 """
+
 import numpy as np
 import pytest
 
@@ -47,7 +48,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -75,15 +76,17 @@ def top_level_expressions(sdfg) -> list[tuple[str, set]]:
     """``(label, free symbols)`` for every expression evaluated at SDFG scope: interstate-edge
     assignments and the ranges of top-level maps. Both are outside every loop, so an iterator
     name appearing here is a bound that escaped its loop."""
-    found = [(f'iedge {lhs} = {rhs}', {str(x)
-                                       for x in dace.symbolic.pystr_to_symbolic(rhs).free_symbols})
-             for e in sdfg.edges() for lhs, rhs in e.data.assignments.items()]
+    found = [
+        (f"iedge {lhs} = {rhs}", {str(x) for x in dace.symbolic.pystr_to_symbolic(rhs).free_symbols})
+        for e in sdfg.edges()
+        for lhs, rhs in e.data.assignments.items()
+    ]
     for blk in sdfg.nodes():
         if not isinstance(blk, SDFGState):
             continue
         for n in blk.nodes():
             if isinstance(n, nodes.MapEntry):
-                found.append((f'map {n.map.params} range {n.map.range}', {str(x) for x in n.map.range.free_symbols}))
+                found.append((f"map {n.map.params} range {n.map.range}", {str(x) for x in n.map.range.free_symbols}))
     return found
 
 
@@ -141,7 +144,7 @@ def test_compound_nest_loops_value_preserving():
         out = np.zeros((n, n, n))
         sdfg(arr=arr, out=out, x=np.int32(x), N=n)
         exp = _compound_oracle(arr, x)
-        assert np.allclose(out, exp), f'x={x} mismatch'
+        assert np.allclose(out, exp), f"x={x} mismatch"
 
 
 def test_compound_nest_loops_per_i_bounds_not_hoisted():
@@ -150,14 +153,14 @@ def test_compound_nest_loops_per_i_bounds_not_hoisted():
     canonicalize(sdfg, validate=True)
     iters = iterator_names(sdfg)
     inspected = top_level_expressions(sdfg)
-    assert inspected, 'nothing evaluated at SDFG scope -- the leak check would pass on an empty SDFG'
+    assert inspected, "nothing evaluated at SDFG scope -- the leak check would pass on an empty SDFG"
     leaked = [label for label, syms in inspected if syms & set(iters)]
-    assert not leaked, f'per-i bound leaked to SDFG top level: {leaked}'
+    assert not leaked, f"per-i bound leaked to SDFG top level: {leaked}"
     # The inner ``beg:beg+2`` nests have a constant extent, so canonicalize unrolls them away:
     # the outer ``i`` is the only iteration left and it carries no bound symbol of its own.
-    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f'maps={_nmaps(sdfg)} loops={_nloops(sdfg)}'
+    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f"maps={_nmaps(sdfg)} loops={_nloops(sdfg)}"
     outer = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
-    assert str(outer.map.range) == '0:N', f'the surviving map must span the i axis, got {outer.map.range}'
+    assert str(outer.map.range) == "0:N", f"the surviving map must span the i axis, got {outer.map.range}"
 
 
 # Map variant (``dace.map``)
@@ -197,7 +200,7 @@ def test_compound_nest_maps_value_preserving():
         out = np.zeros((n, n, n))
         sdfg(arr=arr, out=out, x=np.int32(x), N=n)
         exp = _compound_oracle(arr, x)
-        assert np.allclose(out, exp), f'x={x} mismatch'
+        assert np.allclose(out, exp), f"x={x} mismatch"
 
 
 def test_compound_nest_maps_outer_map_survives():
@@ -206,14 +209,14 @@ def test_compound_nest_maps_outer_map_survives():
     away, so the ``i`` map is the only map left."""
     sdfg = compound_nest_maps.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f'maps={_nmaps(sdfg)} loops={_nloops(sdfg)}'
+    assert _nmaps(sdfg) == 1 and _nloops(sdfg) == 0, f"maps={_nmaps(sdfg)} loops={_nloops(sdfg)}"
     top_maps = [
         n for blk in sdfg.nodes() if isinstance(blk, SDFGState) for n in blk.nodes() if isinstance(n, nodes.MapEntry)
     ]
-    assert len(top_maps) == 1, f'exactly one map at SDFG scope, got {len(top_maps)}'
-    assert str(top_maps[0].map.range) == '0:N', f'the outer map must span the i axis, got {top_maps[0].map.range}'
+    assert len(top_maps) == 1, f"exactly one map at SDFG scope, got {len(top_maps)}"
+    assert str(top_maps[0].map.range) == "0:N", f"the outer map must span the i axis, got {top_maps[0].map.range}"
     leaked = [label for label, syms in top_level_expressions(sdfg) if syms & set(iterator_names(sdfg))]
-    assert not leaked, f'per-i bound leaked to SDFG top level: {leaked}'
+    assert not leaked, f"per-i bound leaked to SDFG top level: {leaked}"
 
 
 # Slimmer reproducer focused on cascade-up + MoveIfIntoLoop interaction
@@ -261,8 +264,8 @@ def test_guarded_nest_with_per_i_bounds_value_preserving():
         out = np.zeros((n, n))
         sdfg(arr=arr, out=out, x=np.int32(x), N=n)
         exp = _guarded_oracle(arr, x)
-        assert np.allclose(out, exp), f'x={x} mismatch'
+        assert np.allclose(out, exp), f"x={x} mismatch"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

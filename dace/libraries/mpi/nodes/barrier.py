@@ -10,7 +10,6 @@ from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_
 
 @dace.library.expansion
 class ExpandBarrierMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -29,11 +28,13 @@ class ExpandBarrierMPI(ExpandTransformation):
         code = f"""
             {init}
             MPI_Barrier({comm});"""
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+        )
         return tasklet
 
 

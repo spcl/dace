@@ -1,15 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the single-shot ``parallelize`` pipeline (reduction-aware
 loop-to-map). SDFGs are produced through the DaCe Python frontend."""
+
 import numpy as np
 
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.sdfg import nodes
-from dace.transformation.passes import (ParallelizePipeline, parallelize, BestEffortLoopPeeling, ShortLoopUnroll)
+from dace.transformation.passes import ParallelizePipeline, parallelize, BestEffortLoopPeeling, ShortLoopUnroll
 from dace.transformation.passes.parallelization_prep import loop_body_census
 
-M, N = (dace.symbol(s) for s in ('M', 'N'))
+M, N = (dace.symbol(s) for s in ("M", "N"))
 
 
 def _num_maps(sdfg: dace.SDFG) -> int:
@@ -141,7 +142,7 @@ def test_short_loop_unroll_leaves_a_loop_rolled_when_its_body_holds_a_map():
 
     sdfg = rows.to_sdfg(simplify=True)
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
-    assert len(loops) == 1 and loop_body_census(loops[0])[1], 'the fixture must be a short loop over a map body'
+    assert len(loops) == 1 and loop_body_census(loops[0])[1], "the fixture must be a short loop over a map body"
     assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) is None
     assert _num_loops(sdfg) == 1
 
@@ -156,19 +157,22 @@ def test_short_loop_unroll_leaves_a_loop_rolled_when_its_body_exceeds_the_taskle
 
     @dace.program
     def short_reduce_short_loop_unroll_leaves_a_loop_rolled_when_its_body_exceeds_the_tasklet_budget(
-            A: dace.float64[5], B: dace.float64[1]):
+        A: dace.float64[5], B: dace.float64[1]
+    ):
         acc = 0.0
         for j in range(5):
             acc += A[j]
         B[0] = acc
 
     bounded = short_reduce_short_loop_unroll_leaves_a_loop_rolled_when_its_body_exceeds_the_tasklet_budget.to_sdfg(
-        simplify=True)
+        simplify=True
+    )
     assert ShortLoopUnroll(unroll_limit=8, unroll_tasklet_budget=0).apply_pass(bounded, {}) is None
     assert _num_loops(bounded) == 1  # at least one tasklet > a zero budget -> left rolled, graph untouched
 
     within = short_reduce_short_loop_unroll_leaves_a_loop_rolled_when_its_body_exceeds_the_tasklet_budget.to_sdfg(
-        simplify=True)
+        simplify=True
+    )
     ShortLoopUnroll(unroll_limit=8, unroll_tasklet_budget=100).apply_pass(within, {})
     assert _num_loops(within) == 0  # a small map-free body still unrolls
 
@@ -194,11 +198,14 @@ def test_short_loop_unroll_fuses_once_per_level_of_innermost_loops(monkeypatch):
         B[0] = acc
 
     sdfg = nest.to_sdfg(simplify=True)
-    assert _num_loops(sdfg) == 3, 'the fixture must be one short loop holding two sibling short loops'
+    assert _num_loops(sdfg) == 3, "the fixture must be one short loop holding two sibling short loops"
     fusions = []
     original = parallelization_prep._local_state_fusion
-    monkeypatch.setattr(parallelization_prep, '_local_state_fusion',
-                        lambda graph, region: fusions.append(region) or original(graph, region))
+    monkeypatch.setattr(
+        parallelization_prep,
+        "_local_state_fusion",
+        lambda graph, region: fusions.append(region) or original(graph, region),
+    )
     assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 3
     assert _num_loops(sdfg) == 0
     assert len(fusions) == 2, len(fusions)  # one per level: the two siblings, then the outer loop
@@ -278,7 +285,7 @@ def test_parallelize_peel_mechanism_value_preserving():
         for i in range(N):
             B[i] = A[i] * 3.0
 
-    for direction in ('front', 'back', 'both'):
+    for direction in ("front", "back", "both"):
         sdfg = scale_parallelize_peel_mechanism_value_preserving.to_sdfg(simplify=True)
         peeled = BestEffortLoopPeeling()._peel_loops(sdfg, count=2, direction=direction)
         assert peeled == 1, direction
@@ -351,10 +358,10 @@ def test_short_loop_unroll_fully_unrolls_a_three_level_tile_nest():
     assert _num_loops(sdfg) == 3
     per_body = _num_tasklets(sdfg)
 
-    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 3, 'all three levels must unroll'
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 3, "all three levels must unroll"
     sdfg.validate()
-    assert _num_loops(sdfg) == 0, 'full unroll must leave no residual loop'
-    assert _num_tasklets(sdfg) == 8 * per_body, f'expected 8 body copies, got {_num_tasklets(sdfg) / per_body}'
+    assert _num_loops(sdfg) == 0, "full unroll must leave no residual loop"
+    assert _num_tasklets(sdfg) == 8 * per_body, f"expected 8 body copies, got {_num_tasklets(sdfg) / per_body}"
 
     rng = np.random.default_rng(9)
     b = rng.standard_normal(64)
@@ -372,7 +379,8 @@ def test_short_loop_unroll_unrolls_the_constant_levels_under_a_symbolic_outer_ti
 
     @dace.program
     def tiled_short_loop_unroll_unrolls_the_constant_levels_under_a_symbolic_outer_tile(
-            a: dace.float64[N], b: dace.float64[N]):
+        a: dace.float64[N], b: dace.float64[N]
+    ):
         for i in range(0, N, 16):
             for ii in range(i, i + 16, 4):
                 for iii in range(ii, ii + 4):
@@ -381,11 +389,11 @@ def test_short_loop_unroll_unrolls_the_constant_levels_under_a_symbolic_outer_ti
     sdfg = tiled_short_loop_unroll_unrolls_the_constant_levels_under_a_symbolic_outer_tile.to_sdfg(simplify=True)
     per_body = _num_tasklets(sdfg)
 
-    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 2, 'both constant levels must unroll'
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) == 2, "both constant levels must unroll"
     sdfg.validate()
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
-    assert len(loops) == 1 and loops[0].loop_variable == 'i', 'only the symbolic outer tile may survive'
-    assert _num_tasklets(sdfg) == 16 * per_body, f'expected 16 body copies, got {_num_tasklets(sdfg) / per_body}'
+    assert len(loops) == 1 and loops[0].loop_variable == "i", "only the symbolic outer tile may survive"
+    assert _num_tasklets(sdfg) == 16 * per_body, f"expected 16 body copies, got {_num_tasklets(sdfg) / per_body}"
 
     rng = np.random.default_rng(10)
     b = rng.standard_normal(64)
@@ -411,12 +419,12 @@ def test_untile_before_unroll_leaves_the_unroll_nothing_to_re_bake():
 
     sdfg = tiled_untile_before_unroll_leaves_the_unroll_nothing_to_re_bake.to_sdfg(simplify=True)
     per_body = _num_tasklets(sdfg)
-    assert UntileLoops().apply_pass(sdfg, {}) == 2, 'the 3-level cascade must collapse twice'
+    assert UntileLoops().apply_pass(sdfg, {}) == 2, "the 3-level cascade must collapse twice"
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
-    assert len(loops) == 1 and loops[0].loop_variable.startswith('_untile_k_')
+    assert len(loops) == 1 and loops[0].loop_variable.startswith("_untile_k_")
 
-    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) is None, 'nothing left to unroll'
-    assert _num_tasklets(sdfg) == per_body, 'the body must not be duplicated'
+    assert ShortLoopUnroll(unroll_limit=8).apply_pass(sdfg, {}) is None, "nothing left to unroll"
+    assert _num_tasklets(sdfg) == per_body, "the body must not be duplicated"
     assert _num_loops(sdfg) == 1
 
     rng = np.random.default_rng(11)
@@ -426,7 +434,7 @@ def test_untile_before_unroll_leaves_the_unroll_nothing_to_re_bake():
     assert np.allclose(a, b * 2.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_parallelize_independent_loop_maps_value_preserving()
     test_parallelize_rowsum_reduction_value_preserving()
     test_parallelize_runs_once_idempotent()

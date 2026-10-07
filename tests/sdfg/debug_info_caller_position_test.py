@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """A node added without explicit line info records its caller's line and file, as
 ``inspect.getframeinfo`` reports them, and resolves each call site only once."""
+
 import inspect
 import sys
 from unittest import mock

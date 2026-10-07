@@ -80,8 +80,10 @@ def restride(nsdfg, connectors, dtype):
             # The caller passed a slice of a higher-rank array whose descriptor was never squeezed
             # down to the connector's rank, so which strides belong to the slice is not recoverable
             # here. Refuse: reading it as contiguous would be numeric garbage, not an error.
-            raise NotImplementedError('%s is a rank-%d slice of a rank-%d container; pass it as an array of its '
-                                      'own rank.' % (name, len(shape), len(strides)))
+            raise NotImplementedError(
+                "%s is a rank-%d slice of a rank-%d container; pass it as an array of its "
+                "own rank." % (name, len(shape), len(strides))
+            )
         transient = nsdfg.arrays[name].transient
         nsdfg.remove_data(name, validate=False)
         nsdfg.add_array(name, shape, dtype=dtype, strides=strides, transient=transient)
@@ -98,11 +100,23 @@ GPU_SOLVERS = ("cuSolverDn", "rocSOLVER")
 SOLVER_BLAS = {"cuSolverDn": "cuBLAS", "rocSOLVER": "rocBLAS"}
 
 
-def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
+def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
-    (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides, out_shape, out_dtype, out_strides, n, rhs,
-     storage) = arr_desc
+    (
+        ain_shape,
+        ain_dtype,
+        ain_strides,
+        bin_shape,
+        bin_dtype,
+        bin_strides,
+        out_shape,
+        out_dtype,
+        out_strides,
+        n,
+        rhs,
+        storage,
+    ) = arr_desc
 
     # ``validate`` squeezes the memlets, so an (n, 1) right-hand side arrives here rank-1 like a
     # plain vector. One column is contiguous in either layout, so it is staged as a rank-1
@@ -111,63 +125,62 @@ def _make_sdfg_getrs(node: 'Solve', parent_state, parent_sdfg, implementation):
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
-    ain_arr = sdfg.add_array('_ain', ain_shape, dtype=ain_dtype, strides=ain_strides)
-    ainout_arr = sdfg.add_array('_ainout', [n, n], dtype=ain_dtype, transient=True, storage=storage)
-    bin_arr = sdfg.add_array('_bin', bin_shape, dtype=bin_dtype, strides=bin_strides)
+    ain_arr = sdfg.add_array("_ain", ain_shape, dtype=ain_dtype, strides=ain_strides)
+    ainout_arr = sdfg.add_array("_ainout", [n, n], dtype=ain_dtype, transient=True, storage=storage)
+    bin_arr = sdfg.add_array("_bin", bin_shape, dtype=bin_dtype, strides=bin_strides)
     if single_rhs:
         binout_shape = [n]
     elif implementation in GPU_SOLVERS:
         binout_shape = [rhs, n]
     else:
         binout_shape = [n, rhs]
-    binout_arr = sdfg.add_array('_binout', binout_shape, dtype=out_dtype, transient=True, storage=storage)
-    bout_arr = sdfg.add_array('_bout', out_shape, dtype=out_dtype, strides=out_strides)
-    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True, storage=storage)
+    binout_arr = sdfg.add_array("_binout", binout_shape, dtype=out_dtype, transient=True, storage=storage)
+    bout_arr = sdfg.add_array("_bout", out_shape, dtype=out_dtype, strides=out_strides)
+    ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True, storage=storage)
     # cuSOLVER writes ``devInfo`` through a raw pointer; the status scalar is host-checkable, so it
     # must live in host-accessible (pinned) memory instead of the input's GPU_Global storage.
-    info_arr = sdfg.add_array('_info', [1],
-                              dtype=dace.int32,
-                              transient=True,
-                              storage=host_accessible_info_storage(storage))
+    info_arr = sdfg.add_array(
+        "_info", [1], dtype=dace.int32, transient=True, storage=host_accessible_info_storage(storage)
+    )
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
-    getrf_node = Getrf('getrf')
+    getrf_node = Getrf("getrf")
     getrf_node.implementation = implementation
-    getrs_node = Getrs('getrs')
+    getrs_node = Getrs("getrs")
     getrs_node.implementation = implementation
 
-    ain = state.add_read('_ain')
-    ainout1 = state.add_read('_ainout')
-    ainout2 = state.add_access('_ainout')
-    bin = state.add_read('_bin')
-    binout1 = state.add_read('_binout')
-    binout2 = state.add_read('_binout')
-    bout = state.add_access('_bout')
+    ain = state.add_read("_ain")
+    ainout1 = state.add_read("_ainout")
+    ainout2 = state.add_access("_ainout")
+    bin = state.add_read("_bin")
+    binout1 = state.add_read("_binout")
+    binout2 = state.add_read("_binout")
+    bout = state.add_access("_bout")
     if implementation in GPU_SOLVERS:
-        transpose_ain = Transpose('AT', dtype=ain_dtype)
+        transpose_ain = Transpose("AT", dtype=ain_dtype)
         transpose_ain.implementation = SOLVER_BLAS[implementation]
-        state.add_edge(ain, None, transpose_ain, '_inp', Memlet.from_array(*ain_arr))
-        state.add_edge(transpose_ain, '_out', ainout1, None, Memlet.from_array(*ainout_arr))
+        state.add_edge(ain, None, transpose_ain, "_inp", Memlet.from_array(*ain_arr))
+        state.add_edge(transpose_ain, "_out", ainout1, None, Memlet.from_array(*ainout_arr))
     else:
         state.add_nedge(ain, ainout1, Memlet.from_array(*ain_arr))
 
     if implementation in GPU_SOLVERS and not single_rhs:
-        transpose_bin = Transpose('bT', dtype=bin_dtype)
+        transpose_bin = Transpose("bT", dtype=bin_dtype)
         transpose_bin.implementation = SOLVER_BLAS[implementation]
-        state.add_edge(bin, None, transpose_bin, '_inp', Memlet.from_array(*bin_arr))
-        state.add_edge(transpose_bin, '_out', binout1, None, Memlet.from_array(*binout_arr))
-        transpose_out = Transpose('XT', dtype=bin_dtype)
+        state.add_edge(bin, None, transpose_bin, "_inp", Memlet.from_array(*bin_arr))
+        state.add_edge(transpose_bin, "_out", binout1, None, Memlet.from_array(*binout_arr))
+        transpose_out = Transpose("XT", dtype=bin_dtype)
         transpose_out.implementation = SOLVER_BLAS[implementation]
-        state.add_edge(binout2, None, transpose_out, '_inp', Memlet.from_array(*binout_arr))
-        state.add_edge(transpose_out, '_out', bout, None, Memlet.from_array(*bout_arr))
+        state.add_edge(binout2, None, transpose_out, "_inp", Memlet.from_array(*binout_arr))
+        state.add_edge(transpose_out, "_out", bout, None, Memlet.from_array(*bout_arr))
     else:
         state.add_nedge(bin, binout1, Memlet.from_array(*bin_arr))
         state.add_nedge(binout2, bout, Memlet.from_array(*bout_arr))
 
-    ipiv = state.add_access('_pivots')
-    info1 = state.add_write('_info')
-    info2 = state.add_write('_info')
+    ipiv = state.add_access("_pivots")
+    info1 = state.add_write("_info")
+    info2 = state.add_write("_info")
 
     state.add_memlet_path(ainout1, getrf_node, dst_conn="_xin", memlet=Memlet.from_array(*ainout_arr))
     state.add_memlet_path(getrf_node, info1, src_conn="_res", memlet=Memlet.from_array(*info_arr))
@@ -195,8 +208,9 @@ class ExpandSolvePure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        (shape_ain, dtype, strides_ain, shape_bin, _, strides_bin, shape_out, _, strides_out, n, rhs,
-         _) = node.validate(parent_sdfg, parent_state)
+        (shape_ain, dtype, strides_ain, shape_bin, _, strides_bin, shape_out, _, strides_out, n, rhs, _) = (
+            node.validate(parent_sdfg, parent_state)
+        )
 
         gesv_core = gesv_core_program(dtype, n, rhs)
 
@@ -229,14 +243,16 @@ class ExpandSolvePure(ExpandTransformation):
         # ``to_sdfg`` gives the connectors contiguous strides, but they are VIEWS of the caller's
         # containers and may be strided slices of a larger array. Restating them is what makes the
         # expansion read the same elements the vendor path does.
-        restride(nsdfg, (('_ain', shape_ain, strides_ain), ('_bin', shape_bin, strides_bin),
-                         ('_bout', shape_out, strides_out)), dtype)
+        restride(
+            nsdfg,
+            (("_ain", shape_ain, strides_ain), ("_bin", shape_bin, strides_bin), ("_bout", shape_out, strides_out)),
+            dtype,
+        )
         return nsdfg
 
 
 @dace.library.expansion
 class ExpandSolveOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -246,7 +262,6 @@ class ExpandSolveOpenBLAS(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandSolveMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -256,7 +271,6 @@ class ExpandSolveMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandSolveCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -266,7 +280,6 @@ class ExpandSolveCuSolverDn(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandSolveRocSolver(ExpandTransformation):
-
     environments = [environments.rocsolver.rocSOLVER]
 
     @staticmethod
@@ -276,31 +289,40 @@ class ExpandSolveRocSolver(ExpandTransformation):
 
 @dace.library.node
 class Solve(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "pure": ExpandSolvePure,
         "OpenBLAS": ExpandSolveOpenBLAS,
         "MKL": ExpandSolveMKL,
         "cuSolverDn": ExpandSolveCuSolverDn,
-        "rocSOLVER": ExpandSolveRocSolver
+        "rocSOLVER": ExpandSolveRocSolver,
     }
     default_implementation = None
 
-    overwrite = dace.properties.Property(dtype=bool, default=False, category='Semantics')
+    overwrite = dace.properties.Property(dtype=bool, default=False, category="Semantics")
 
     # Object fields
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(('_ain', '_bin')), outputs={"_bout"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(("_ain", "_bin")), outputs={"_bout"}, **kwargs)
         # NOTE: We currently do not support overwrite == True
         self.overwrite = False
 
     def validate(
         self, sdfg: SDFG, state: SDFGState
-    ) -> tuple[list[symbolic.SymbolicType], dace.dtypes.typeclass, list[symbolic.SymbolicType],
-               list[symbolic.SymbolicType], dace.dtypes.typeclass, list[symbolic.SymbolicType],
-               list[symbolic.SymbolicType], dace.dtypes.typeclass, list[symbolic.SymbolicType], symbolic.SymbolicType,
-               symbolic.SymbolicType, dace.dtypes.StorageType]:
+    ) -> tuple[
+        list[symbolic.SymbolicType],
+        dace.dtypes.typeclass,
+        list[symbolic.SymbolicType],
+        list[symbolic.SymbolicType],
+        dace.dtypes.typeclass,
+        list[symbolic.SymbolicType],
+        list[symbolic.SymbolicType],
+        dace.dtypes.typeclass,
+        list[symbolic.SymbolicType],
+        symbolic.SymbolicType,
+        symbolic.SymbolicType,
+        dace.dtypes.StorageType,
+    ]:
         """
         :return: A tuple containing shapes, dtypes, strides, sizes, and storage:
                  (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides,
@@ -336,20 +358,17 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         squeezed_out = copy.deepcopy(out_memlet.subset)
         dims_out = squeezed_out.squeeze()
 
-        if (desc_ain.dtype.base_type != desc_out.dtype.base_type
-                or desc_ain.dtype.base_type != desc_bin.dtype.base_type):
+        if desc_ain.dtype.base_type != desc_out.dtype.base_type or desc_ain.dtype.base_type != desc_bin.dtype.base_type:
             raise ValueError("Basetype of inputs and output must be equal!")
 
-        if (len(squeezed_ain.size()) != 2 or len(squeezed_bin.size()) > 2 or len(squeezed_out.size()) > 2):
-            raise ValueError("linalg.solve only supported with first input a "
-                             " matrix and second input vector or matrix")
+        if len(squeezed_ain.size()) != 2 or len(squeezed_bin.size()) > 2 or len(squeezed_out.size()) > 2:
+            raise ValueError("linalg.solve only supported with first input a  matrix and second input vector or matrix")
 
         shape_ain = squeezed_ain.size()
         shape_bin = squeezed_bin.size()
         shape_out = squeezed_out.size()
         if shape_ain[0] != shape_ain[1]:
-            raise ValueError("linalg.solve only supported with first input a "
-                             "square matrix")
+            raise ValueError("linalg.solve only supported with first input a square matrix")
         if shape_ain[-1] != shape_bin[0]:
             raise ValueError("A column must be equal to B rows")
         if not np.array_equal(shape_bin, shape_out):
@@ -366,5 +385,17 @@ class Solve(dace.sdfg.nodes.LibraryNode):
 
         # A single right-hand side is a VECTOR, whose squeezed shape has no second entry; it is one
         # column. Reading shape_out[1] unconditionally raised IndexError for that case.
-        return (shape_ain, desc_ain.dtype, strides_ain, shape_bin, desc_bin.dtype, strides_bin, shape_out,
-                desc_out.dtype, strides_out, shape_out[0], shape_out[1] if len(shape_out) > 1 else 1, desc_ain.storage)
+        return (
+            shape_ain,
+            desc_ain.dtype,
+            strides_ain,
+            shape_bin,
+            desc_bin.dtype,
+            strides_bin,
+            shape_out,
+            desc_out.dtype,
+            strides_out,
+            shape_out[0],
+            shape_out[1] if len(shape_out) > 1 else 1,
+            desc_ain.storage,
+        )

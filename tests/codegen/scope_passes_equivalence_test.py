@@ -15,12 +15,12 @@ import pytest
 from dace.codegen import codegen
 from dace.sdfg.state import LoopRegion
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def generated(sdfg: dace.SDFG) -> str:
-    return '\n'.join(obj.clean_code for obj in codegen.generate_code(sdfg))
+    return "\n".join(obj.clean_code for obj in codegen.generate_code(sdfg))
 
 
 def assert_codegen_unchanged(build):
@@ -40,7 +40,7 @@ def assert_codegen_unchanged(build):
     finally:
         framecode.DaCeCodeGenerator.symbols_defined_at = original
 
-    assert with_passes == fallback, 'generated code differs between the pass and the fallback path'
+    assert with_passes == fallback, "generated code differs between the pass and the fallback path"
     return with_passes
 
 
@@ -63,19 +63,19 @@ def test_transients_across_states():
     """Exercises the State-lifetime branch: a transient used in one state vs several."""
 
     def build():
-        sdfg = dace.SDFG('multi')
-        sdfg.add_array('A', [N], dace.float64)
-        sdfg.add_array('B', [N], dace.float64)
-        sdfg.add_transient('once', [N], dace.float64, lifetime=dace.AllocationLifetime.State)
-        sdfg.add_transient('twice', [N], dace.float64, lifetime=dace.AllocationLifetime.State)
+        sdfg = dace.SDFG("multi")
+        sdfg.add_array("A", [N], dace.float64)
+        sdfg.add_array("B", [N], dace.float64)
+        sdfg.add_transient("once", [N], dace.float64, lifetime=dace.AllocationLifetime.State)
+        sdfg.add_transient("twice", [N], dace.float64, lifetime=dace.AllocationLifetime.State)
 
-        s1 = sdfg.add_state('s1', is_start_block=True)
-        s1.add_nedge(s1.add_access('A'), s1.add_access('once'), dace.Memlet('A[0:N]'))
-        s1.add_nedge(s1.add_access('once'), s1.add_access('twice'), dace.Memlet('once[0:N]'))
+        s1 = sdfg.add_state("s1", is_start_block=True)
+        s1.add_nedge(s1.add_access("A"), s1.add_access("once"), dace.Memlet("A[0:N]"))
+        s1.add_nedge(s1.add_access("once"), s1.add_access("twice"), dace.Memlet("once[0:N]"))
 
-        s2 = sdfg.add_state('s2')
+        s2 = sdfg.add_state("s2")
         sdfg.add_edge(s1, s2, dace.InterstateEdge())
-        s2.add_nedge(s2.add_access('twice'), s2.add_access('B'), dace.Memlet('twice[0:N]'))
+        s2.add_nedge(s2.add_access("twice"), s2.add_access("B"), dace.Memlet("twice[0:N]"))
         return sdfg
 
     assert_codegen_unchanged(build)
@@ -101,21 +101,21 @@ def test_loop_region_states_are_reached():
     """States live inside control-flow regions, not only at the top level of the SDFG."""
 
     def build():
-        sdfg = dace.SDFG('inloop')
-        sdfg.add_array('A', [N], dace.float64)
-        sdfg.add_transient('acc', [1], dace.float64)
-        loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+        sdfg = dace.SDFG("inloop")
+        sdfg.add_array("A", [N], dace.float64)
+        sdfg.add_transient("acc", [1], dace.float64)
+        loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
         sdfg.add_node(loop, is_start_block=True)
-        body = loop.add_state('body', is_start_block=True)
-        tasklet = body.add_tasklet('w', {}, {'o'}, 'o = 1.0')
-        body.add_edge(tasklet, 'o', body.add_access('acc'), None, dace.Memlet('acc[0]'))
-        body.add_nedge(body.add_access('acc'), body.add_access('A'), dace.Memlet('acc[0] -> [i]'))
+        body = loop.add_state("body", is_start_block=True)
+        tasklet = body.add_tasklet("w", {}, {"o"}, "o = 1.0")
+        body.add_edge(tasklet, "o", body.add_access("acc"), None, dace.Memlet("acc[0]"))
+        body.add_nedge(body.add_access("acc"), body.add_access("A"), dace.Memlet("acc[0] -> [i]"))
         return sdfg
 
     assert_codegen_unchanged(build)
 
 
-@pytest.mark.parametrize('simplify', [False, True])
+@pytest.mark.parametrize("simplify", [False, True])
 def test_nested_sdfg(simplify):
 
     def build():
@@ -135,7 +135,7 @@ def test_nested_sdfg(simplify):
     assert_codegen_unchanged(build)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_maps()
     test_transients_across_states()
     test_scope_lifetime_inside_map()

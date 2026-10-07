@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class cuSPARSE:
-
     cmake_minimum_version = None
     cmake_packages = ["CUDA"]
     cmake_variables = {}
@@ -14,7 +13,7 @@ class cuSPARSE:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = {'frame': ["../include/dace_cusparse.h"], 'cuda': ["../include/dace_cusparse.h"]}
+    headers = {"frame": ["../include/dace_cusparse.h"], "cuda": ["../include/dace_cusparse.h"]}
     state_fields = ["dace::sparse::CusparseHandle cusparse_handle;"]
     init_code = ""
     finalize_code = ""
@@ -22,6 +21,9 @@ class cuSPARSE:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 cusparseHandle_t &__dace_cusparse_handle = __state->cusparse_handle.Get();
 cusparseSetStream(__dace_cusparse_handle, __dace_current_stream);\n"""
+        )

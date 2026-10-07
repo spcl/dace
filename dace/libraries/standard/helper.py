@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for the standard library node expansions."""
+
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import dace
@@ -11,15 +12,19 @@ from dace.sdfg.scope import is_in_scope
 CURRENT_STREAM_NAME = "__dace_current_stream"
 
 # Register is intentionally in neither set: resolves by scope (GPU register vs. host stack slot).
-GPU_RESIDENT_STORAGES = frozenset({
-    dtypes.StorageType.GPU_Global,
-    dtypes.StorageType.GPU_Shared,
-})
-CPU_RESIDENT_STORAGES = frozenset({
-    dtypes.StorageType.CPU_Heap,
-    dtypes.StorageType.CPU_Pinned,
-    dtypes.StorageType.CPU_ThreadLocal,
-})
+GPU_RESIDENT_STORAGES = frozenset(
+    {
+        dtypes.StorageType.GPU_Global,
+        dtypes.StorageType.GPU_Shared,
+    }
+)
+CPU_RESIDENT_STORAGES = frozenset(
+    {
+        dtypes.StorageType.CPU_Heap,
+        dtypes.StorageType.CPU_Pinned,
+        dtypes.StorageType.CPU_ThreadLocal,
+    }
+)
 
 
 def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageType:
@@ -39,8 +44,8 @@ def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageT
 
 
 def collapse_shape_and_strides(
-        subset: dace.subsets.Range,
-        strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    subset: dace.subsets.Range, strides: List[dace.symbolic.SymExpr]
+) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
     """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
 
     A tiled dimension (``b:e:step:tile``) addresses ``tile`` contiguous elements per step, which no
@@ -69,8 +74,8 @@ def collapse_shape_and_strides(
 
 
 def collapse_to_elements(
-        subset: dace.subsets.Range,
-        strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    subset: dace.subsets.Range, strides: List[dace.symbolic.SymExpr]
+) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
     """:func:`collapse_shape_and_strides` for an expansion that writes element by element. A single-element
     subset collapses to zero dimensions; this helper returns one length-1 dimension for it, so the expansion
     has an index to write through."""
@@ -86,7 +91,7 @@ def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> b
     :param num_elements: total contiguous element count (constant or symbolic).
     :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
     """
-    threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
+    threshold = int(dace.Config.get("compiler", "cpu", "parallel_transfer_min_elements"))
     try:
         return int(dace.symbolic.simplify(num_elements)) >= threshold
     except (TypeError, ValueError):
@@ -103,12 +108,17 @@ def is_in_parallel_scope(node: nodes.LibraryNode, parent_state: dace.SDFGState) 
     :param parent_state: state containing ``node``.
     :returns: ``True`` if a parallel map scope encloses the node, at any nesting depth.
     """
-    return is_in_scope(parent_state.sdfg, parent_state, node,
-                       [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default])
+    return is_in_scope(
+        parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default]
+    )
 
 
-def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
-                  select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str], library_cls: type):
+def auto_dispatch(
+    node: nodes.LibraryNode,
+    parent_state: dace.SDFGState,
+    select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str],
+    library_cls: type,
+):
     """Dispatch a library node's ``'Auto'`` implementation to the one ``select_fn`` picks, setting
     ``node.implementation`` so introspection reflects what was chosen.
 
@@ -119,7 +129,7 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
     :returns: whatever the resolved expansion returns.
     """
     impl_name = select_fn(node, parent_state)
-    assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
+    assert impl_name != "Auto", f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)
 
@@ -134,15 +144,15 @@ def select_implementation_by_schedule(node: nodes.LibraryNode, parent_state: dac
     :returns: a key of the node's ``implementations``.
     """
     if node.schedule in dtypes.ALL_GPU_SCHEDULES:
-        name = 'CUDA'
+        name = "CUDA"
     elif node.schedule in (dtypes.ScheduleType.Sequential, dtypes.ScheduleType.Default):
-        name = 'pure'
+        name = "pure"
     else:
-        name = 'CPU'
+        name = "CPU"
     implementations = type(node).implementations
     if name in implementations:
         return name
-    return 'pure' if 'pure' in implementations else 'CPU'
+    return "pure" if "pure" in implementations else "CPU"
 
 
 def schedule_dispatch(auto_cls: type, node: nodes.LibraryNode, parent_state: dace.SDFGState):
@@ -184,24 +194,25 @@ def is_short_loop(loop, cache: Optional[Dict[int, bool]] = None) -> bool:
         if cached is not None:
             return cached
     from dace.transformation.passes.analysis import loop_analysis
+
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride is None:
         verdict = False
-    elif dace.symbolic.ask('positive', dace.symbolic.simplify(stride)) is not True:
+    elif dace.symbolic.ask("positive", dace.symbolic.simplify(stride)) is not True:
         verdict = False
     else:
         trips = dace.symbolic.int_floor(end - start, stride) + 1
-        verdict = dace.symbolic.ask('negative', dace.symbolic.simplify(trips - REENTRY_SHORT_LOOP_TRIPS)) is True
+        verdict = dace.symbolic.ask("negative", dace.symbolic.simplify(trips - REENTRY_SHORT_LOOP_TRIPS)) is True
     if cache is not None:
         cache[id(loop)] = verdict
     return verdict
 
 
-def is_reentered_cpu_transfer(node: nodes.LibraryNode,
-                              state: dace.SDFGState,
-                              loop_cache: Optional[Dict[int, bool]] = None) -> bool:
+def is_reentered_cpu_transfer(
+    node: nodes.LibraryNode, state: dace.SDFGState, loop_cache: Optional[Dict[int, bool]] = None
+) -> bool:
     """Whether an enclosing parallel map or long loop re-enters ``node``, so its own OpenMP region
     would be re-opened on every entry.
 
@@ -219,6 +230,7 @@ def is_reentered_cpu_transfer(node: nodes.LibraryNode,
     """
     from dace.sdfg.state import LoopRegion
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
     for scope in get_parent_map_and_loop_scopes(state.sdfg, node, state):
         if isinstance(scope, nodes.MapEntry):
             if scope.map.schedule != dtypes.ScheduleType.Sequential:
@@ -228,10 +240,12 @@ def is_reentered_cpu_transfer(node: nodes.LibraryNode,
     return False
 
 
-def cpu_transfer_parallelizes(node: nodes.LibraryNode,
-                              state: dace.SDFGState,
-                              num_elements: dace.symbolic.SymbolicType,
-                              loop_cache: Optional[Dict[int, bool]] = None) -> bool:
+def cpu_transfer_parallelizes(
+    node: nodes.LibraryNode,
+    state: dace.SDFGState,
+    num_elements: dace.symbolic.SymbolicType,
+    loop_cache: Optional[Dict[int, bool]] = None,
+) -> bool:
     """Whether a CPU transfer of ``num_elements`` at ``node`` keeps its own OpenMP region.
 
     Both reasons to take it away: provably too small to amortize a fork/join, or re-entered by an
@@ -245,7 +259,8 @@ def cpu_transfer_parallelizes(node: nodes.LibraryNode,
     :returns: ``True`` to keep the parallel element map, ``False`` to sequentialize it.
     """
     return is_parallel_cpu_transfer_size(num_elements) and not is_reentered_cpu_transfer(
-        node, state, loop_cache=loop_cache)
+        node, state, loop_cache=loop_cache
+    )
 
 
 def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = None) -> List[str]:
@@ -262,21 +277,26 @@ def broadcast_indices(shape: Sequence, result: Sequence, axis: Optional[int] = N
 
     shape = list(shape)
     if all(extent == 1 for extent in shape):
-        return ['0'] * len(shape)
+        return ["0"] * len(shape)
     if axis is not None:
         shape.insert(axis, 1)
         if len(shape) != len(result):
-            raise ValueError(f'a spread adds one axis, so rank {len(shape) - 1} cannot become rank {len(result)}')
+            raise ValueError(f"a spread adds one axis, so rank {len(shape) - 1} cannot become rank {len(result)}")
     try:
         indices = broadcast_together(result, shape, unidirectional=True)[4]
     except IndexError as ex:
-        raise ValueError(f'cannot broadcast shape {tuple(shape)} to {tuple(result)}') from ex
-    indices = indices.split(', ') if indices else []
-    return indices if axis is None else indices[:axis] + indices[axis + 1:]
+        raise ValueError(f"cannot broadcast shape {tuple(shape)} to {tuple(result)}") from ex
+    indices = indices.split(", ") if indices else []
+    return indices if axis is None else indices[:axis] + indices[axis + 1 :]
 
 
-def broadcast_map_expansion(label: str, parent_sdfg: dace.SDFG, inputs: Dict[str, Tuple[dace.Memlet, Optional[int]]],
-                            output: Tuple[str, dace.Memlet], code: str) -> dace.SDFG:
+def broadcast_map_expansion(
+    label: str,
+    parent_sdfg: dace.SDFG,
+    inputs: Dict[str, Tuple[dace.Memlet, Optional[int]]],
+    output: Tuple[str, dace.Memlet],
+    code: str,
+) -> dace.SDFG:
     """Expand an element-wise library node into one map over its output.
 
     Every operand keeps its own layout and is read by :func:`broadcast_indices`. The tasklet connector of a
@@ -289,8 +309,8 @@ def broadcast_map_expansion(label: str, parent_sdfg: dace.SDFG, inputs: Dict[str
     """
     out_conn, out_memlet = output
     result = out_memlet.subset.size()
-    params = [f'__i{d}' for d in range(len(result))]
-    sdfg = dace.SDFG(f'{label}_sdfg')
+    params = [f"__i{d}" for d in range(len(result))]
+    sdfg = dace.SDFG(f"{label}_sdfg")
 
     def operand(conn: str, memlet: dace.Memlet, indices: List[str]) -> dace.Memlet:
         desc = parent_sdfg.arrays[memlet.data]
@@ -299,14 +319,15 @@ def broadcast_map_expansion(label: str, parent_sdfg: dace.SDFG, inputs: Dict[str
         return dace.Memlet(f"{conn}[{', '.join(indices)}]")
 
     tasklet_inputs = {
-        f'{conn}_v': operand(conn, memlet, broadcast_indices(memlet.subset.size(), result, axis))
+        f"{conn}_v": operand(conn, memlet, broadcast_indices(memlet.subset.size(), result, axis))
         for conn, (memlet, axis) in inputs.items()
     }
-    sdfg.add_state().add_mapped_tasklet(f'{label}_tasklet', {
-        p: f'0:{n}'
-        for p, n in zip(params, result)
-    },
-                                        tasklet_inputs,
-                                        code, {f'{out_conn}_v': operand(out_conn, out_memlet, params)},
-                                        external_edges=True)
+    sdfg.add_state().add_mapped_tasklet(
+        f"{label}_tasklet",
+        {p: f"0:{n}" for p, n in zip(params, result)},
+        tasklet_inputs,
+        code,
+        {f"{out_conn}_v": operand(out_conn, out_memlet, params)},
+        external_edges=True,
+    )
     return sdfg

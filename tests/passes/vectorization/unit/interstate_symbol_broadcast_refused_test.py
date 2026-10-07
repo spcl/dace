@@ -19,6 +19,7 @@ The over-refusal control matters as much as the refusal: an interstate assignmen
 LOOP-INVARIANT element (``alpha = c[0]``) is a genuine broadcast and must still tile, or the guard
 would have bought correctness by disabling vectorization wholesale.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -41,7 +42,7 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 W = 8
 #: Host's best runnable SIMD ISA -- vectorization enforces arch-native, so a pinned AVX-512 would
 #: SIGILL on an AVX2-only or ARM host.
@@ -109,11 +110,14 @@ def vectorized(prog, tag):
     sdfg.name = tag
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(W, ),
-                        validate_all=True,
-                        target_isa=HOST_ISA,
-                        remainder_strategy=RemainderStrategy.FULL_MASK,
-                        branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(W,),
+            validate_all=True,
+            target_isa=HOST_ISA,
+            remainder_strategy=RemainderStrategy.FULL_MASK,
+            branch_mode=BranchMode.MERGE,
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
     return sdfg
 
@@ -134,8 +138,9 @@ def comparison_operand_loads(sdfg: dace.SDFG) -> list[tuple[str, list[str]]]:
         while producers and all(isinstance(p, nd.AccessNode) for p in producers):
             producers = [e.src for p in producers for e in state.in_edges(p)]
         loads = [p for p in producers if isinstance(p, (MaskedCopyLibraryNode, TileGather))]
-        sources = sorted(e.data.data for load in loads for e in state.in_edges(load)
-                         if e.dst_conn in ("_src", INPUT_CONNECTOR_NAME))
+        sources = sorted(
+            e.data.data for load in loads for e in state.in_edges(load) if e.dst_conn in ("_src", INPUT_CONNECTOR_NAME)
+        )
         found.append((node.kind_a, sources))
     return found
 
@@ -151,30 +156,31 @@ def run(sdfg, kwargs, buf, ref, label):
     worse failure mode than the crash it would be guarding against.
     """
     sdfg.compile()(**kwargs)
-    assert np.allclose(buf, ref, rtol=1e-12, atol=1e-12), \
-        f'{label}: max|diff|={np.nanmax(np.abs(np.asarray(buf) - np.asarray(ref))):.3e}'
+    assert np.allclose(buf, ref, rtol=1e-12, atol=1e-12), (
+        f"{label}: max|diff|={np.nanmax(np.abs(np.asarray(buf) - np.asarray(ref))):.3e}"
+    )
 
 
-@pytest.mark.parametrize('n', [64, 61])
+@pytest.mark.parametrize("n", [64, 61])
 def test_pack_matches_numpy(n):
     """Numeric contract. ``n=61`` is deliberately NOT a multiple of ``W``: the tile base then walks
     off the lane-0 element the broadcast used, so a regression drifts on the ragged case too."""
     rng = np.random.default_rng(1234)
     a, b = rng.random(n), rng.random(n) - 0.5
     ref = pack_reference(a, b, n)
-    sdfg = vectorized(pack_kernel, f'pack_{n}')
+    sdfg = vectorized(pack_kernel, f"pack_{n}")
     work = a.copy()
-    run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f'pack n={n}')
+    run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f"pack n={n}")
 
 
-@pytest.mark.parametrize('n', [64, 61])
+@pytest.mark.parametrize("n", [64, 61])
 def test_expand_matches_numpy(n):
     rng = np.random.default_rng(4321)
     a, b = rng.random(n) - 0.5, rng.random(n)
     ref = expand_reference(a, b, n)
-    sdfg = vectorized(expand_kernel, f'expand_{n}')
+    sdfg = vectorized(expand_kernel, f"expand_{n}")
     work = a.copy()
-    run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f'expand n={n}')
+    run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f"expand n={n}")
 
 
 def test_pack_is_race_free_across_threads():
@@ -188,44 +194,44 @@ def test_pack_is_race_free_across_threads():
     rng = np.random.default_rng(1234)
     a, b = rng.random(n), rng.random(n) - 0.5
     ref = pack_reference(a, b, n)
-    program = vectorized(pack_kernel, 'pack_threads').compile()
+    program = vectorized(pack_kernel, "pack_threads").compile()
     set_openmp_thread_count(4)
     for run_index in range(runs):
         work = a.copy()
         program(a=work, b=b.copy(), N=n)
-        assert np.allclose(work, ref, rtol=1e-12, atol=1e-12), f'run {run_index} of {runs} lost a compacted element'
+        assert np.allclose(work, ref, rtol=1e-12, atol=1e-12), f"run {run_index} of {runs} lost a compacted element"
 
 
 def test_pack_mask_compares_every_lane_of_b():
     """Structural half: the mask map tiles, and its predicate compares ``b`` loaded per lane. The
     broadcast this guards against read ``b`` at the TILE BASE only, so all 8 lanes shared lane 0's
     verdict -- that form has no per-lane load feeding the comparison."""
-    sdfg = vectorized(pack_kernel, 'pack_struct')
+    sdfg = vectorized(pack_kernel, "pack_struct")
 
-    assert str(W) in map_steps(sdfg), 'the pack mask map did not tile'
+    assert str(W) in map_steps(sdfg), "the pack mask map did not tile"
     # Every tiled comparison, the mask map's and the scatter map's since the compaction rank's
     # gather lowers, compares a per-lane load.
     comparisons = comparison_operand_loads(sdfg)
-    assert comparisons and all(c == ('Tile', ['b']) for c in comparisons), comparisons
+    assert comparisons and all(c == ("Tile", ["b"]) for c in comparisons), comparisons
 
 
 def test_expand_mask_compares_every_lane_of_a():
     """Structural half for TSVC s342: the mask map feeding the gather index tiles, and its predicate
     compares ``a`` loaded per lane, the same contract the pack (s341) kernel gets."""
-    sdfg = vectorized(expand_kernel, 'expand_struct')
+    sdfg = vectorized(expand_kernel, "expand_struct")
 
-    assert str(W) in map_steps(sdfg), 'the expand mask map did not tile'
+    assert str(W) in map_steps(sdfg), "the expand mask map did not tile"
     # Every tiled comparison, the mask map's and the scatter map's since the compaction rank's
     # gather lowers, compares a per-lane load.
     comparisons = comparison_operand_loads(sdfg)
-    assert comparisons and all(c == ('Tile', ['a']) for c in comparisons), comparisons
+    assert comparisons and all(c == ("Tile", ["a"]) for c in comparisons), comparisons
 
 
 def test_invariant_interstate_symbol_still_tiles():
     """Over-refusal control: ``alpha = c[0]`` names no iter_var and its interstate definition does
     not reach one, so it is a genuine uniform broadcast and the map must still be strided."""
-    steps = map_steps(vectorized(invariant_symbol_kernel, 'invariant_sym'))
-    assert steps and str(W) in steps, f'loop-invariant interstate symbol blocked tiling; map steps were {steps}'
+    steps = map_steps(vectorized(invariant_symbol_kernel, "invariant_sym"))
+    assert steps and str(W) in steps, f"loop-invariant interstate symbol blocked tiling; map steps were {steps}"
 
 
 def test_invariant_interstate_symbol_matches_numpy():
@@ -233,12 +239,12 @@ def test_invariant_interstate_symbol_matches_numpy():
     rng = np.random.default_rng(99)
     a, b, c = rng.random(n), rng.random(n), rng.random(n)
     ref = invariant_reference(a, b, c, n)
-    sdfg = vectorized(invariant_symbol_kernel, 'invariant_sym_num')
+    sdfg = vectorized(invariant_symbol_kernel, "invariant_sym_num")
     work = a.copy()
-    run(sdfg, dict(a=work, b=b.copy(), c=c.copy(), N=n), work, ref, 'invariant symbol')
+    run(sdfg, dict(a=work, b=b.copy(), c=c.copy(), N=n), work, ref, "invariant symbol")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_pack_matches_numpy(64)
     test_pack_matches_numpy(61)
     test_expand_matches_numpy(64)

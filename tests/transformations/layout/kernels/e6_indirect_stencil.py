@@ -38,6 +38,7 @@ MPI-M," QJRMS 141, 2015 (dynamical core, edge/cell/vertex connectivity); M. Gior
 ICON-A model for direct QBO simulations on GPUs," GMD 2022 ((nproma, nlev) vs level-contiguous order);
 SC26 layout paper Listing 2 (E6_VelocityTendencies indirect stencil), connectivity AoS/SoA decision.
 """
+
 import numpy
 import dace
 
@@ -47,16 +48,24 @@ NC, NV, NE, NL = dace.symbol("NC"), dace.symbol("NV"), dace.symbol("NE"), dace.s
 
 
 @dace.program
-def indirect_stencil(w: dace.float64[NC, NL], z_w_v: dace.float64[NV, NL], cell_idx: dace.int64[NE, 2],
-                     vert_idx: dace.int64[NE, 2], vn_ie: dace.float64[NE, NL], z_vt_ie: dace.float64[NE, NL],
-                     inv_dual: dace.float64[NE], inv_primal: dace.float64[NE], tangent: dace.float64[NE],
-                     out: dace.float64[NE, NL]):
+def indirect_stencil(
+    w: dace.float64[NC, NL],
+    z_w_v: dace.float64[NV, NL],
+    cell_idx: dace.int64[NE, 2],
+    vert_idx: dace.int64[NE, 2],
+    vn_ie: dace.float64[NE, NL],
+    z_vt_ie: dace.float64[NE, NL],
+    inv_dual: dace.float64[NE],
+    inv_primal: dace.float64[NE],
+    tangent: dace.float64[NE],
+    out: dace.float64[NE, NL],
+):
     """One velocity-tendency edge stencil: gather two cell columns of ``w`` and two vertex columns of
     ``z_w_v`` through the connectivity tables, combine per (edge, level). Pure elementwise (no WCR)."""
     for je, jk in dace.map[0:NE, 0:NL] @ dace.ScheduleType.Sequential:
-        out[je, jk] = (vn_ie[je, jk] * inv_dual[je] * (w[cell_idx[je, 0], jk] - w[cell_idx[je, 1], jk]) +
-                       z_vt_ie[je, jk] * inv_primal[je] * tangent[je] *
-                       (z_w_v[vert_idx[je, 0], jk] - z_w_v[vert_idx[je, 1], jk]))
+        out[je, jk] = vn_ie[je, jk] * inv_dual[je] * (w[cell_idx[je, 0], jk] - w[cell_idx[je, 1], jk]) + z_vt_ie[
+            je, jk
+        ] * inv_primal[je] * tangent[je] * (z_w_v[vert_idx[je, 0], jk] - z_w_v[vert_idx[je, 1], jk])
 
 
 def oracle(w, z_w_v, cell_idx, vert_idx, vn_ie, z_vt_ie, inv_dual, inv_primal, tangent):
@@ -64,7 +73,7 @@ def oracle(w, z_w_v, cell_idx, vert_idx, vn_ie, z_vt_ie, inv_dual, inv_primal, t
     per-edge scalars over the level axis, elementwise combine."""
     w0, w1 = w[cell_idx[:, 0], :], w[cell_idx[:, 1], :]
     zw0, zw1 = z_w_v[vert_idx[:, 0], :], z_w_v[vert_idx[:, 1], :]
-    out = (vn_ie * inv_dual[:, None] * (w0 - w1) + z_vt_ie * inv_primal[:, None] * tangent[:, None] * (zw0 - zw1))
+    out = vn_ie * inv_dual[:, None] * (w0 - w1) + z_vt_ie * inv_primal[:, None] * tangent[:, None] * (zw0 - zw1)
     return {"out": out}
 
 

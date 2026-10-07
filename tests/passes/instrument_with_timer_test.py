@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests wall-clock instrumentation of an SDFG with a steady-clock timer. """
+"""Tests wall-clock instrumentation of an SDFG with a steady-clock timer."""
+
 import time
 from typing import Tuple
 
@@ -24,7 +25,7 @@ def heavy(a: dace.float64[BIG], out: dace.float64[BIG]):
 def instrument(prog: dace.frontend.python.parser.DaceProgram) -> dace.SDFG:
     """Build ``prog``'s SDFG, instrument it and check it still validates."""
     sdfg = prog.to_sdfg(simplify=True)
-    assert InstrumentWithTimer().apply_pass(sdfg, {}) == 'time_ns'
+    assert InstrumentWithTimer().apply_pass(sdfg, {}) == "time_ns"
     sdfg.validate()
     return sdfg
 
@@ -73,13 +74,13 @@ def test_second_application_refused():
 
 def test_descriptors():
     sdfg = instrument(add_one)
-    assert not sdfg.arrays['time_ns'].transient
-    assert 'time_ns' in sdfg.arglist()
-    assert sdfg.arrays['time_start'].transient
-    assert sdfg.arrays['time_start'].shape == (1, )
+    assert not sdfg.arrays["time_ns"].transient
+    assert "time_ns" in sdfg.arglist()
+    assert sdfg.arrays["time_start"].transient
+    assert sdfg.arrays["time_start"].shape == (1,)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_trivial_roundtrip()
     test_measures_real_work()
     test_second_application_refused()

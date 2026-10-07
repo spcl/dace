@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Stop canonicalization on control flow that ``ControlFlowRaising`` could not structure."""
+
 from typing import Any, Dict, Optional
 
 from dace import SDFG
@@ -13,7 +14,7 @@ class RequireStructuredControlFlow(ppl.Pass):
     Canonicalization runs ``ControlFlowRaising`` right before this check and supports nothing else.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -22,5 +23,5 @@ class RequireStructuredControlFlow(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
-        sdutil.require_structured_control_flow(sdfg, 'Canonicalization')
+        sdutil.require_structured_control_flow(sdfg, "Canonicalization")
         return None

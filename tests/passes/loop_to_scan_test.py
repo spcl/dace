@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`~dace.transformation.passes.loop_to_scan.LoopToScan`."""
+
 import copy
 import re
 
@@ -24,7 +25,7 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
     assert_tree_consistent(sdfg)
 
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _num_loops(sdfg):
@@ -126,7 +127,7 @@ def test_inclusive_max_1d():
     assert np.allclose(out, expected)
 
 
-@pytest.mark.parametrize('stride', [2, 3, 4, 5])
+@pytest.mark.parametrize("stride", [2, 3, 4, 5])
 def test_refuses_non_unit_offset_modified_residue_class_scan(stride):
     """``out[i+S] = out[i] + delta[i]`` for ``S >= 2`` -- stride-``S`` residue-class scan.
     Libnode runs the ``S`` independent class scans in parallel; seed-add Map fans the
@@ -138,7 +139,7 @@ def test_refuses_non_unit_offset_modified_residue_class_scan(stride):
             out[i + stride] = out[i] + delta[i]
 
     sdfg = stride_scan.to_sdfg(simplify=True)
-    sdfg.name = f'stride_scan_{stride}'
+    sdfg.name = f"stride_scan_{stride}"
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
@@ -154,8 +155,7 @@ def test_refuses_non_unit_offset_modified_residue_class_scan(stride):
     for i in range(n):
         expected[i + stride] = expected[i] + delta[i]
     sdfg(out=out, delta=delta, N=n)
-    assert np.allclose(out, expected), \
-        f'stride-{stride} scan mismatch: got {out}, expected {expected}'
+    assert np.allclose(out, expected), f"stride-{stride} scan mismatch: got {out}, expected {expected}"
 
 
 def test_tsvc_s1221_residue_class_scan_inplace():
@@ -184,7 +184,7 @@ def test_tsvc_s1221_residue_class_scan_inplace():
     for i in range(4, n):
         expected[i] = expected[i - 4] + a[i]
     sdfg(a=a.copy(), b=b, N=n)
-    assert np.allclose(b, expected), f's1221 mismatch: got {b}, expected {expected}'
+    assert np.allclose(b, expected), f"s1221 mismatch: got {b}, expected {expected}"
 
 
 def test_subtraction_lifts_through_the_affine_monoid_not_a_scalar_op():
@@ -234,8 +234,9 @@ def test_refuses_delta_reads_carry_array():
     sdfg = s2111.to_sdfg(simplify=True)
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
-    assert _num_scan_nodes(sdfg) == 0, ('LoopToScan must refuse the s2111 shape because the '
-                                        "'delta' aa[j-1, i] is another read of the carry array.")
+    assert _num_scan_nodes(sdfg) == 0, (
+        "LoopToScan must refuse the s2111 shape because the 'delta' aa[j-1, i] is another read of the carry array."
+    )
 
 
 def test_extra_non_transient_write_survives_the_lift():
@@ -269,7 +270,7 @@ def test_extra_non_transient_write_survives_the_lift():
     aux = np.full(n, -99.0)
     sdfg(out=got, delta=delta, aux=aux, N=n)
     assert np.allclose(got, want, rtol=0, atol=1e-13)
-    assert np.array_equal(aux, delta * 2.0), 'the unrelated per-iteration output was dropped'
+    assert np.array_equal(aux, delta * 2.0), "the unrelated per-iteration output was dropped"
 
 
 def test_refuses_double_buffer_ring_carry():
@@ -281,7 +282,7 @@ def test_refuses_double_buffer_ring_carry():
 
     @dace.program
     def ring(A: dace.float64[N], OUT: dace.float64[N]):
-        ZP = np.zeros((2, ))
+        ZP = np.zeros((2,))
         ZP[0] = A[0]
         for i in range(N - 1):
             c = ZP[i % 2] + A[i]
@@ -291,7 +292,7 @@ def test_refuses_double_buffer_ring_carry():
     sdfg = ring.to_sdfg(simplify=True)
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
-    assert _num_scan_nodes(sdfg) == 0, 'double-buffer ring must not lift to Scan'
+    assert _num_scan_nodes(sdfg) == 0, "double-buffer ring must not lift to Scan"
 
 
 def test_tsvc_s111_inclusive_sum():
@@ -350,7 +351,7 @@ def test_tsvc_s221_v2_computed_delta_two_arrays():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, 'v2 computed-delta scan should match.'
+    assert res == 1, "v2 computed-delta scan should match."
 
     n = 10
     rng = np.random.default_rng(221)
@@ -362,7 +363,7 @@ def test_tsvc_s221_v2_computed_delta_two_arrays():
     for i in range(1, n + 1):
         expected[i] = expected[i - 1] + a[i] + d[i]
     sdfg(a=a, b=b, d=d, N=n)
-    assert np.allclose(b, expected), f'max diff {np.max(np.abs(b - expected))}'
+    assert np.allclose(b, expected), f"max diff {np.max(np.abs(b - expected))}"
 
 
 def test_tsvc_s242_literal_augmented_carry_modified_from_refusal():
@@ -530,41 +531,39 @@ def test_multi_state_body_with_empty_wrappers():
     (advances the iterator). v1 refused on ``len(blocks) != 1``; the relaxation ignores
     empty wrapper states and drives the match from the single content state.
     """
-    sdfg = dace.SDFG('scan_multi_state')
-    sdfg.add_array('out', [N + 1], dace.float64)
-    sdfg.add_array('delta', [N], dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
+    sdfg = dace.SDFG("scan_multi_state")
+    sdfg.add_array("out", [N + 1], dace.float64)
+    sdfg.add_array("delta", [N], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
 
-    loop = LoopRegion('scan_loop',
-                      initialize_expr='i = 0',
-                      condition_expr='i < N',
-                      update_expr='i = i + 1',
-                      loop_var='i')
+    loop = LoopRegion(
+        "scan_loop", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
 
     # Three body states: empty pre, content body, empty post -- exactly the cloudsc
     # for_1133 shape (with an iedge assignment on the pre->body edge).
-    pre = loop.add_state('pre', is_start_block=True)
-    body = loop.add_state('body')
-    post = loop.add_state('post')
-    loop.add_edge(pre, body, dace.InterstateEdge(assignments={'np1': '(N + 1)'}))
+    pre = loop.add_state("pre", is_start_block=True)
+    body = loop.add_state("body")
+    post = loop.add_state("post")
+    loop.add_edge(pre, body, dace.InterstateEdge(assignments={"np1": "(N + 1)"}))
     loop.add_edge(body, post, dace.InterstateEdge())
 
-    rd = body.add_read('out')
-    wt = body.add_write('out')
-    dd = body.add_read('delta')
-    t = body.add_tasklet('add', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
-    body.add_edge(rd, None, t, '_a', dace.Memlet(data='out', subset='i'))
-    body.add_edge(dd, None, t, '_d', dace.Memlet(data='delta', subset='i'))
-    body.add_edge(t, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+    rd = body.add_read("out")
+    wt = body.add_write("out")
+    dd = body.add_read("delta")
+    t = body.add_tasklet("add", {"_a", "_d"}, {"_o"}, "_o = _a + _d")
+    body.add_edge(rd, None, t, "_a", dace.Memlet(data="out", subset="i"))
+    body.add_edge(dd, None, t, "_d", dace.Memlet(data="delta", subset="i"))
+    body.add_edge(t, "_o", wt, None, dace.Memlet(data="out", subset="i + 1"))
 
     sdfg.validate()
     assert _num_loops(sdfg) == 1
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, 'Multi-state body with empty wrappers should match the v1 scan template.'
+    assert res == 1, "Multi-state body with empty wrappers should match the v1 scan template."
     assert _num_scan_nodes(sdfg) == 1
 
     n = 16
@@ -576,41 +575,41 @@ def test_multi_state_body_with_empty_wrappers():
     for i in range(n):
         expected[i + 1] = expected[i] + delta[i]
     sdfg(out=out, delta=delta, N=n)
-    assert np.allclose(out, expected), f'multi-state scan returned {out[:5]}, expected {expected[:5]}'
+    assert np.allclose(out, expected), f"multi-state scan returned {out[:5]}, expected {expected[:5]}"
 
 
 def test_accepts_two_content_state_body_via_v5_fuser():
     """Two content states joined by a trivial iedge. v5's body-local state fuser merges
     them (aliasing same-data AccessNodes so RAW order is preserved), then the matcher
     proceeds. Regression: pre-v5 this stayed sequential (cloudsc ``pfsqrf`` fusion path)."""
-    sdfg = dace.SDFG('scan_two_content_states')
-    sdfg.add_array('out', [N + 1], dace.float64)
-    sdfg.add_array('delta', [N], dace.float64)
-    sdfg.add_scalar('_tmp', dace.float64, transient=True)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop', initialize_expr='i = 0', condition_expr='i < N', update_expr='i = i + 1', loop_var='i')
+    sdfg = dace.SDFG("scan_two_content_states")
+    sdfg.add_array("out", [N + 1], dace.float64)
+    sdfg.add_array("delta", [N], dace.float64)
+    sdfg.add_scalar("_tmp", dace.float64, transient=True)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i")
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
-    s1 = loop.add_state('s1', is_start_block=True)
-    s2 = loop.add_state('s2')
+    s1 = loop.add_state("s1", is_start_block=True)
+    s2 = loop.add_state("s2")
     loop.add_edge(s1, s2, dace.InterstateEdge())
     # s1 has nodes; s2 also has nodes -- two content states.
-    dd = s1.add_read('delta')
-    tw = s1.add_write('_tmp')
-    s1.add_nedge(dd, tw, dace.Memlet(data='delta', subset='i', other_subset='0'))
-    rd = s2.add_read('out')
-    rt = s2.add_read('_tmp')
-    wt = s2.add_write('out')
-    t = s2.add_tasklet('add', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
-    s2.add_edge(rd, None, t, '_a', dace.Memlet(data='out', subset='i'))
-    s2.add_edge(rt, None, t, '_d', dace.Memlet(data='_tmp', subset='0'))
-    s2.add_edge(t, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+    dd = s1.add_read("delta")
+    tw = s1.add_write("_tmp")
+    s1.add_nedge(dd, tw, dace.Memlet(data="delta", subset="i", other_subset="0"))
+    rd = s2.add_read("out")
+    rt = s2.add_read("_tmp")
+    wt = s2.add_write("out")
+    t = s2.add_tasklet("add", {"_a", "_d"}, {"_o"}, "_o = _a + _d")
+    s2.add_edge(rd, None, t, "_a", dace.Memlet(data="out", subset="i"))
+    s2.add_edge(rt, None, t, "_d", dace.Memlet(data="_tmp", subset="0"))
+    s2.add_edge(t, "_o", wt, None, dace.Memlet(data="out", subset="i + 1"))
     sdfg.validate()
 
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, f'two-content-state body should fuse + match; got {res}'
+    assert res == 1, f"two-content-state body should fuse + match; got {res}"
     assert _num_scan_nodes(sdfg) == 1
 
 
@@ -633,7 +632,7 @@ def test_v4_multi_array_independent_scans():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 2, f'expected two Scan rewrites; got {res}'
+    assert res == 2, f"expected two Scan rewrites; got {res}"
     assert _num_scan_nodes(sdfg) == 2
 
     n = 16
@@ -649,8 +648,7 @@ def test_v4_multi_array_independent_scans():
         ea[i + 1] = ea[i] + da[i]
         eb[i + 1] = eb[i] * db[i]
     sdfg(a=a, b=b, da=da, db=db, N=n)
-    assert np.allclose(a, ea) and np.allclose(b, eb), \
-        f'multi-array scan diverged: a={a}, ea={ea}; b={b}, eb={eb}'
+    assert np.allclose(a, ea) and np.allclose(b, eb), f"multi-array scan diverged: a={a}, ea={ea}; b={b}, eb={eb}"
 
 
 def test_v4_five_array_pfsqrf_pattern():
@@ -659,9 +657,18 @@ def test_v4_five_array_pfsqrf_pattern():
     op = SUM). Matcher returns 5 ``_Scan`` infos; rewrite emits 5 Scan libnodes."""
 
     @dace.program
-    def five_scans(s1: dace.float64[N + 1], s2: dace.float64[N + 1], s3: dace.float64[N + 1], s4: dace.float64[N + 1],
-                   s5: dace.float64[N + 1], d1: dace.float64[N], d2: dace.float64[N], d3: dace.float64[N],
-                   d4: dace.float64[N], d5: dace.float64[N]):
+    def five_scans(
+        s1: dace.float64[N + 1],
+        s2: dace.float64[N + 1],
+        s3: dace.float64[N + 1],
+        s4: dace.float64[N + 1],
+        s5: dace.float64[N + 1],
+        d1: dace.float64[N],
+        d2: dace.float64[N],
+        d3: dace.float64[N],
+        d4: dace.float64[N],
+        d5: dace.float64[N],
+    ):
         for i in range(N):
             s1[i + 1] = s1[i] + d1[i]
             s2[i + 1] = s2[i] + d2[i]
@@ -673,7 +680,7 @@ def test_v4_five_array_pfsqrf_pattern():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 5, f'expected five Scan rewrites for the pfsqrf pattern; got {res}'
+    assert res == 5, f"expected five Scan rewrites for the pfsqrf pattern; got {res}"
     assert _num_scan_nodes(sdfg) == 5
 
     n = 12
@@ -688,7 +695,7 @@ def test_v4_five_array_pfsqrf_pattern():
             es[k][i + 1] = es[k][i] + d[k][i]
     sdfg(s1=s[0], s2=s[1], s3=s[2], s4=s[3], s5=s[4], d1=d[0], d2=d[1], d3=d[2], d4=d[3], d5=d[4], N=n)
     for k in range(5):
-        assert np.allclose(s[k], es[k]), f's{k+1} diverged: {s[k]} vs {es[k]}'
+        assert np.allclose(s[k], es[k]), f"s{k + 1} diverged: {s[k]} vs {es[k]}"
 
 
 def test_v5_state_fusion_preprocess_unblocks_multi_state_body():
@@ -697,39 +704,40 @@ def test_v5_state_fusion_preprocess_unblocks_multi_state_body():
     them; the matcher then sees a single-content-state body. cloudsc ``pfsqrf`` inner loop
     (``for_1134``): ``UnaryOp_1135`` + ``assign_1143_12`` joined this way.
     """
-    sdfg = dace.SDFG('scan_two_state_body')
-    sdfg.add_array('out', [N + 1], dace.float64)
-    sdfg.add_array('delta', [N], dace.float64)
-    sdfg.add_scalar('_tmp', dace.float64, transient=True)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop', initialize_expr='i = 0', condition_expr='i < N', update_expr='i = i + 1', loop_var='i')
+    sdfg = dace.SDFG("scan_two_state_body")
+    sdfg.add_array("out", [N + 1], dace.float64)
+    sdfg.add_array("delta", [N], dace.float64)
+    sdfg.add_scalar("_tmp", dace.float64, transient=True)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i")
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
 
     # State 1: copy delta[i] into a transient scalar -- StateFusion can fuse this
     # with state 2 because the iedge is trivial and the transient is per-iteration.
-    s1 = loop.add_state('compute_tmp', is_start_block=True)
-    s2 = loop.add_state('apply')
+    s1 = loop.add_state("compute_tmp", is_start_block=True)
+    s2 = loop.add_state("apply")
     loop.add_edge(s1, s2, dace.InterstateEdge())
 
-    dd = s1.add_read('delta')
-    tw = s1.add_write('_tmp')
-    s1.add_nedge(dd, tw, dace.Memlet(data='delta', subset='i', other_subset='0'))
+    dd = s1.add_read("delta")
+    tw = s1.add_write("_tmp")
+    s1.add_nedge(dd, tw, dace.Memlet(data="delta", subset="i", other_subset="0"))
 
-    rd = s2.add_read('out')
-    rt = s2.add_read('_tmp')
-    wt = s2.add_write('out')
-    t = s2.add_tasklet('scan_step', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
-    s2.add_edge(rd, None, t, '_a', dace.Memlet(data='out', subset='i'))
-    s2.add_edge(rt, None, t, '_d', dace.Memlet(data='_tmp', subset='0'))
-    s2.add_edge(t, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+    rd = s2.add_read("out")
+    rt = s2.add_read("_tmp")
+    wt = s2.add_write("out")
+    t = s2.add_tasklet("scan_step", {"_a", "_d"}, {"_o"}, "_o = _a + _d")
+    s2.add_edge(rd, None, t, "_a", dace.Memlet(data="out", subset="i"))
+    s2.add_edge(rt, None, t, "_d", dace.Memlet(data="_tmp", subset="0"))
+    s2.add_edge(t, "_o", wt, None, dace.Memlet(data="out", subset="i + 1"))
     sdfg.validate()
 
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, ('v5: StateFusion preprocess should fuse the two-state body, then '
-                      f'the scan matcher accepts; got {res}')
+    assert res == 1, (
+        f"v5: StateFusion preprocess should fuse the two-state body, then the scan matcher accepts; got {res}"
+    )
     assert _num_scan_nodes(sdfg) == 1
 
     n = 14
@@ -741,7 +749,7 @@ def test_v5_state_fusion_preprocess_unblocks_multi_state_body():
     for i in range(n):
         expected[i + 1] = expected[i] + delta[i]
     sdfg(out=out, delta=delta, N=n)
-    assert np.allclose(out, expected), f'two-state-body scan diverged: {out} vs {expected}'
+    assert np.allclose(out, expected), f"two-state-body scan diverged: {out} vs {expected}"
 
 
 def test_v5_multi_write_an_per_carrier_in_fused_body():
@@ -753,40 +761,42 @@ def test_v5_multi_write_an_per_carrier_in_fused_body():
     scan-carry write (loop-var-indexed subset matching the recurrence) and ignore the
     side-effect write.
     """
-    sdfg = dace.SDFG('multi_write_an_fused')
-    sdfg.add_array('out', [N + 1], dace.float64)
-    sdfg.add_array('delta', [N], dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop', initialize_expr='i = 0', condition_expr='i < N', update_expr='i = i + 1', loop_var='i')
+    sdfg = dace.SDFG("multi_write_an_fused")
+    sdfg.add_array("out", [N + 1], dace.float64)
+    sdfg.add_array("delta", [N], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1", loop_var="i")
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
 
-    s1 = loop.add_state('side_effect', is_start_block=True)
-    s2 = loop.add_state('scan_step')
+    s1 = loop.add_state("side_effect", is_start_block=True)
+    s2 = loop.add_state("scan_step")
     loop.add_edge(s1, s2, dace.InterstateEdge())
 
     # State 1: write a side-effect to out[i] (mimics the cloudsc pre-scan compute).
-    t1 = s1.add_tasklet('side', {'_d'}, {'_o'}, '_o = _d * 0.5')
-    dd = s1.add_read('delta')
-    ow1 = s1.add_write('out')
-    s1.add_edge(dd, None, t1, '_d', dace.Memlet(data='delta', subset='i'))
-    s1.add_edge(t1, '_o', ow1, None, dace.Memlet(data='out', subset='i'))
+    t1 = s1.add_tasklet("side", {"_d"}, {"_o"}, "_o = _d * 0.5")
+    dd = s1.add_read("delta")
+    ow1 = s1.add_write("out")
+    s1.add_edge(dd, None, t1, "_d", dace.Memlet(data="delta", subset="i"))
+    s1.add_edge(t1, "_o", ow1, None, dace.Memlet(data="out", subset="i"))
 
     # State 2: the scan step. Reads out[i], writes out[i+1].
-    rd = s2.add_read('out')
-    wt = s2.add_write('out')
-    dd2 = s2.add_read('delta')
-    t2 = s2.add_tasklet('scan_step', {'_a', '_d'}, {'_o'}, '_o = _a + _d')
-    s2.add_edge(rd, None, t2, '_a', dace.Memlet(data='out', subset='i'))
-    s2.add_edge(dd2, None, t2, '_d', dace.Memlet(data='delta', subset='i'))
-    s2.add_edge(t2, '_o', wt, None, dace.Memlet(data='out', subset='i + 1'))
+    rd = s2.add_read("out")
+    wt = s2.add_write("out")
+    dd2 = s2.add_read("delta")
+    t2 = s2.add_tasklet("scan_step", {"_a", "_d"}, {"_o"}, "_o = _a + _d")
+    s2.add_edge(rd, None, t2, "_a", dace.Memlet(data="out", subset="i"))
+    s2.add_edge(dd2, None, t2, "_d", dace.Memlet(data="delta", subset="i"))
+    s2.add_edge(t2, "_o", wt, None, dace.Memlet(data="out", subset="i + 1"))
     sdfg.validate()
 
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, ('Multi-write-AN per carrier in the fused body: matcher should pick the scan-'
-                      f'carry write (out[i+1]) and ignore the side-effect write (out[i]); got {res}')
+    assert res == 1, (
+        "Multi-write-AN per carrier in the fused body: matcher should pick the scan-"
+        f"carry write (out[i+1]) and ignore the side-effect write (out[i]); got {res}"
+    )
     assert _num_scan_nodes(sdfg) == 1
 
 
@@ -807,12 +817,12 @@ def test_v6_negative_write_offset_scan_with_outer_axis():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, (f'k_w = -1 scan with outer axis should match; got {res}')
+    assert res == 1, f"k_w = -1 scan with outer axis should match; got {res}"
     assert _num_scan_nodes(sdfg) == 1
 
 
-KLEV = dace.symbol('KLEV')
-KLON = dace.symbol('KLON')
+KLEV = dace.symbol("KLEV")
+KLON = dace.symbol("KLON")
 
 
 @dace.program
@@ -832,14 +842,16 @@ def test_cloudsc_for_1133_shape_nested_inner_loopregion():
     ``[trip, inner_size]`` delta buffer + a ``Map[(i, j)]`` seed-add. Matches oracle.
     """
     import numpy as np
+
     sdfg = _pfsqrf_2d_nested.to_sdfg(simplify=True)
     # Nested (vector) scan lift is opt-in (the default keeps the inner map -- see
     # the ``lift_nested_scan`` Property); this test exercises the lift path.
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should lift the for_1133 prefix-sum shape; got '
-                                          f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should lift the for_1133 prefix-sum shape; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
     KL, KO = 5, 4
@@ -852,8 +864,9 @@ def test_cloudsc_for_1133_shape_nested_inner_loopregion():
             p_ref[jk, jl] = p_ref[jk - 1, jl] + d[jk, jl]
     p_test = p_init.copy()
     sdfg(pfsqrf=p_test, delta=d, KLEV=KL, KLON=KO)
-    assert np.allclose(p_test, p_ref), (f'Vector-scan rewrite must match the sequential oracle; max diff '
-                                        f'{np.abs(p_test - p_ref).max()}')
+    assert np.allclose(p_test, p_ref), (
+        f"Vector-scan rewrite must match the sequential oracle; max diff {np.abs(p_test - p_ref).max()}"
+    )
 
 
 def _build_for_1133_post_l2m_sdfg():
@@ -861,13 +874,15 @@ def _build_for_1133_post_l2m_sdfg():
     ``LoopRegion[jk]`` containing a single state with the inner column
     ``Map[jl]`` that ``LoopToMap`` has already lifted."""
     from dace.transformation.interstate.loop_to_map import LoopToMap
+
     sdfg = _pfsqrf_2d_nested.to_sdfg(simplify=True)
-    inner = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable == 'jl')
+    inner = next(r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable == "jl")
     xform = LoopToMap()
     xform.loop = inner
     xform.expr_index = 0
-    assert xform.can_be_applied(inner.parent_graph, 0, sdfg, permissive=False), \
-        'inner jl-loop must be parallel for this test fixture'
+    assert xform.can_be_applied(inner.parent_graph, 0, sdfg, permissive=False), (
+        "inner jl-loop must be parallel for this test fixture"
+    )
     xform.apply(inner.parent_graph, sdfg)
     sdfg.validate()
     return sdfg
@@ -888,15 +903,16 @@ def test_cloudsc_for_1133_detection_off_keeps_post_l2m_shape():
     inner parallel ``Map`` stay in place, and no Scan libnode is emitted.
     Numerics still match (the SDFG just executes the original nested loop)."""
     import numpy as np
+
     sdfg = _build_for_1133_post_l2m_sdfg()
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan(interchange_carry_with_map=False).apply_pass(sdfg, {})
     sdfg.validate()
     n_loops = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
     n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry))
-    assert n_loops == 1, f'outer carry LoopRegion must be preserved when knob is off; got {n_loops} LoopRegions'
-    assert n_maps == 1, f'inner parallel Map must be preserved when knob is off; got {n_maps} MapEntries'
-    assert _num_scan_nodes(sdfg) == 0, 'no Scan libnode must be emitted when knob is off'
+    assert n_loops == 1, f"outer carry LoopRegion must be preserved when knob is off; got {n_loops} LoopRegions"
+    assert n_maps == 1, f"inner parallel Map must be preserved when knob is off; got {n_maps} MapEntries"
+    assert _num_scan_nodes(sdfg) == 0, "no Scan libnode must be emitted when knob is off"
 
     KL, KO = 6, 4
     rng = np.random.default_rng(1133)
@@ -905,8 +921,9 @@ def test_cloudsc_for_1133_detection_off_keeps_post_l2m_shape():
     p_ref = _for_1133_oracle(KL, KO, p_init, d)
     p_got = p_init.copy()
     sdfg(pfsqrf=p_got, delta=d.copy(), KLEV=KL, KLON=KO)
-    assert np.allclose(p_got, p_ref), \
-        f'post-L2M execution must match the oracle even without the interchange; max diff {np.abs(p_got - p_ref).max()}'
+    assert np.allclose(p_got, p_ref), (
+        f"post-L2M execution must match the oracle even without the interchange; max diff {np.abs(p_got - p_ref).max()}"
+    )
 
 
 def test_cloudsc_for_1133_detection_on_interchanges_to_map_over_scan():
@@ -925,28 +942,34 @@ def test_cloudsc_for_1133_detection_on_interchanges_to_map_over_scan():
       * numeric match vs the sequential oracle.
     """
     import numpy as np
+
     sdfg = _build_for_1133_post_l2m_sdfg()
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
     sdfg.validate()
     n_loops_top = sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion))
     n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry))
-    assert n_loops_top == 0, f'outer carry LoopRegion must be gone from the top SDFG; got {n_loops_top}'
-    assert n_maps == 1, f'exactly one MapEntry (the interchanged parallel axis) must remain; got {n_maps}'
+    assert n_loops_top == 0, f"outer carry LoopRegion must be gone from the top SDFG; got {n_loops_top}"
+    assert n_maps == 1, f"exactly one MapEntry (the interchanged parallel axis) must remain; got {n_maps}"
     assert _num_scan_nodes(sdfg) == 1 or _num_scan_nodes(sdfg) == 0
-    assert _num_scan_nodes(sdfg) == 0, \
-        f'NO Scan libnode must be emitted by the buffer-free interchange path; got {_num_scan_nodes(sdfg)}'
+    assert _num_scan_nodes(sdfg) == 0, (
+        f"NO Scan libnode must be emitted by the buffer-free interchange path; got {_num_scan_nodes(sdfg)}"
+    )
     # No interchange-introduced buffers anywhere in the SDFG.
-    bad_transients = [(sd.name, name) for sd in sdfg.all_sdfgs_recursive() for name, desc in sd.arrays.items()
-                      if getattr(desc, 'transient', False) and name.startswith('_interchange_')]
-    assert not bad_transients, f'no per-column buffer must be introduced; got {bad_transients}'
+    bad_transients = [
+        (sd.name, name)
+        for sd in sdfg.all_sdfgs_recursive()
+        for name, desc in sd.arrays.items()
+        if getattr(desc, "transient", False) and name.startswith("_interchange_")
+    ]
+    assert not bad_transients, f"no per-column buffer must be introduced; got {bad_transients}"
     # Inner sequential LoopRegion must now live inside the Map-body NSDFG.
     inner_loops = []
     for sd in sdfg.all_sdfgs_recursive():
         if sd is sdfg:
             continue
         inner_loops += [n for n in sd.all_control_flow_regions() if isinstance(n, LoopRegion)]
-    assert len(inner_loops) == 1, f'exactly one inner LoopRegion (sequential carry) expected; got {len(inner_loops)}'
+    assert len(inner_loops) == 1, f"exactly one inner LoopRegion (sequential carry) expected; got {len(inner_loops)}"
 
     KL, KO = 6, 4
     rng = np.random.default_rng(1133)
@@ -955,8 +978,9 @@ def test_cloudsc_for_1133_detection_on_interchanges_to_map_over_scan():
     p_ref = _for_1133_oracle(KL, KO, p_init, d)
     p_got = p_init.copy()
     sdfg(pfsqrf=p_got, delta=d.copy(), KLEV=KL, KLON=KO)
-    assert np.allclose(p_got, p_ref), \
-        f'interchange (buffer-free) must match the oracle; max diff {np.abs(p_got - p_ref).max()}'
+    assert np.allclose(p_got, p_ref), (
+        f"interchange (buffer-free) must match the oracle; max diff {np.abs(p_got - p_ref).max()}"
+    )
 
 
 def test_cloudsc_for_1133_shape_after_inner_l2m():
@@ -968,8 +992,9 @@ def test_cloudsc_for_1133_shape_after_inner_l2m():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should lift the for_1133 prefix-sum shape once the inner '
-                                          f'column loop is a Map; got res={res}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should lift the for_1133 prefix-sum shape once the inner column loop is a Map; got res={res}."
+    )
     # The buffer-free interchange path emits 0 Scan libnodes.
     assert _num_scan_nodes(sdfg) == 0
 
@@ -982,12 +1007,13 @@ def test_cloudsc_for_1133_interchange_survives_symbol_mapping_alias():
     fully removes the binding, instead of deleting by a guessed key and leaving the old
     one stale."""
     import numpy as np
+
     sdfg = _build_for_1133_post_l2m_sdfg()
     LiftPreprocess().apply_pass(sdfg, {})
     nsdfg_node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.NestedSDFG))
-    assert 'jk' in nsdfg_node.symbol_mapping, 'fixture must bind the carry axis by name jk before aliasing it'
-    nsdfg_node.symbol_mapping['jk_alias'] = nsdfg_node.symbol_mapping.pop('jk')
-    nsdfg_node.sdfg.replace('jk', 'jk_alias')
+    assert "jk" in nsdfg_node.symbol_mapping, "fixture must bind the carry axis by name jk before aliasing it"
+    nsdfg_node.symbol_mapping["jk_alias"] = nsdfg_node.symbol_mapping.pop("jk")
+    nsdfg_node.sdfg.replace("jk", "jk_alias")
 
     res = LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
     sdfg.validate()
@@ -997,11 +1023,11 @@ def test_cloudsc_for_1133_interchange_survives_symbol_mapping_alias():
     # every NestedSDFG in the rewritten graph.
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, dace.sdfg.nodes.NestedSDFG):
-            assert 'jk_alias' not in n.symbol_mapping, 'stale alias key must not survive the rewrite'
-            assert 'jk' not in n.symbol_mapping, 'carry axis is now the inner loop var, not a symbol_mapping entry'
+            assert "jk_alias" not in n.symbol_mapping, "stale alias key must not survive the rewrite"
+            assert "jk" not in n.symbol_mapping, "carry axis is now the inner loop var, not a symbol_mapping entry"
     # arglist() walks every symbol_mapping value; a stale entry pointing at the removed
     # outer symbol used to raise KeyError('jk') here.
-    assert set(sdfg.arglist().keys()) == {'delta', 'pfsqrf', 'KLEV', 'KLON'}
+    assert set(sdfg.arglist().keys()) == {"delta", "pfsqrf", "KLEV", "KLON"}
 
     KL, KO = 6, 4
     rng = np.random.default_rng(1133)
@@ -1010,8 +1036,9 @@ def test_cloudsc_for_1133_interchange_survives_symbol_mapping_alias():
     p_ref = _for_1133_oracle(KL, KO, p_init, d)
     p_got = p_init.copy()
     sdfg(pfsqrf=p_got, delta=d.copy(), KLEV=KL, KLON=KO)
-    assert np.allclose(p_got, p_ref), \
-        f'aliased-key interchange must still match the oracle; max diff {np.abs(p_got - p_ref).max()}'
+    assert np.allclose(p_got, p_ref), (
+        f"aliased-key interchange must still match the oracle; max diff {np.abs(p_got - p_ref).max()}"
+    )
 
 
 # Refusal-mode probes for the cloudsc pfsqXf shapes. Each exercises ONE failure gate
@@ -1025,7 +1052,7 @@ def test_outer_body_with_extra_content_state_alongside_inner_loop():
     preparing a transient slice (cloudsc frontend materializes per-iter slices in their
     own state). The extra state writes only a transient (``tmp``), so the matcher accepts
     once descent tolerates extra content states."""
-    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+    KLEV, KLON = (dace.symbol(s) for s in ["KLEV", "KLON"])
     import numpy as _np
 
     @dace.program
@@ -1042,8 +1069,10 @@ def test_outer_body_with_extra_content_state_alongside_inner_loop():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should lift the for_1133 shape even with extra body states; got '
-                                          f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should lift the for_1133 shape even with extra body states; got "
+        f"res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
 
@@ -1052,7 +1081,7 @@ def test_inner_loop_with_multi_state_body():
     level (split into separate frontend states pre-simplify). ``_fuse_body_states``
     + the existing transient-chain walk together handle the post-simplify shape.
     Positive lockdown: confirms the matcher accepts the multi-statement inner."""
-    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+    KLEV, KLON = (dace.symbol(s) for s in ["KLEV", "KLON"])
 
     @dace.program
     def multi_inner(arr: dace.float64[KLEV, KLON], delta: dace.float64[KLEV, KLON]):
@@ -1066,8 +1095,10 @@ def test_inner_loop_with_multi_state_body():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should lift the shape even when the inner body is multi-state; '
-                                          f'got res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should lift the shape even when the inner body is multi-state; "
+        f"got res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
 
@@ -1076,7 +1107,7 @@ def test_carrier_with_extra_constant_axis_besides_inner_var():
     index), one is the outer scan axis (``jk``), one is the inner Map axis
     (``jl``). The cloudsc pfsqXf are scoped per-species; the species index
     is a constant non-scan axis the matcher must accept."""
-    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+    KLEV, KLON = (dace.symbol(s) for s in ["KLEV", "KLON"])
 
     @dace.program
     def per_species(arr: dace.float64[3, KLEV, KLON], delta: dace.float64[3, KLEV, KLON]):
@@ -1089,8 +1120,10 @@ def test_carrier_with_extra_constant_axis_besides_inner_var():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should lift a 3-D carrier with one constant non-scan axis; got '
-                                          f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should lift a 3-D carrier with one constant non-scan axis; got "
+        f"res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
 
@@ -1098,7 +1131,7 @@ def test_carrier_read_through_two_hop_transient_chain():
     """Synthesize a 2-hop transient slice on the carrier read side. Hard to
     force naturally from the Python frontend; this test uses an explicit
     SDFG-level helper to plant the second-hop transient."""
-    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+    KLEV, KLON = (dace.symbol(s) for s in ["KLEV", "KLON"])
 
     @dace.program
     def two_hop(arr: dace.float64[KLEV, KLON], delta: dace.float64[KLEV, KLON]):
@@ -1112,15 +1145,17 @@ def test_carrier_read_through_two_hop_transient_chain():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should walk through a 2-hop transient slice chain; got '
-                                          f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should walk through a 2-hop transient slice chain; got "
+        f"res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
 
 def test_carrier_with_computed_delta_chain():
     """Delta is a computed expression (multiply + add) of two arrays rather than a direct
     single-array read. cloudsc pfsqXf: ``delta = (zqxn2d[i] - zqx0[i]) * zgdph_r``."""
-    KLEV = dace.symbol('KLEV')
+    KLEV = dace.symbol("KLEV")
 
     @dace.program
     def computed_delta(out: dace.float64[KLEV], a: dace.float64[KLEV], b: dace.float64[KLEV], c: dace.float64[KLEV]):
@@ -1131,8 +1166,9 @@ def test_carrier_with_computed_delta_chain():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should accept a computed-expression delta; got '
-                                          f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should accept a computed-expression delta; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
 
@@ -1140,11 +1176,15 @@ def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
     """Mimics the Fortran cloudsc ``DO JK ...`` body producing ``for_1133``: per-level
     slice-copy then per-species accumulation. FaCe-emitted cloudsc SDFG shape -- a
     5-array prefix-sum on (jl, jk) with a computed delta over jm."""
-    KLEV, KLON, NCLV = (dace.symbol(s) for s in ['KLEV', 'KLON', 'NCLV'])
+    KLEV, KLON, NCLV = (dace.symbol(s) for s in ["KLEV", "KLON", "NCLV"])
 
     @dace.program
-    def cloudsc_like(pfsqif: dace.float64[KLON, KLEV + 1], zqxn2d: dace.float64[KLON, NCLV],
-                     zqx0: dace.float64[KLON, NCLV], zgdph_r: dace.float64):
+    def cloudsc_like(
+        pfsqif: dace.float64[KLON, KLEV + 1],
+        zqxn2d: dace.float64[KLON, NCLV],
+        zqx0: dace.float64[KLON, NCLV],
+        zgdph_r: dace.float64,
+    ):
         for jk in range(1, KLEV + 1):
             # Slice-copy: carry level-1 value forward
             for jl in range(KLON):
@@ -1158,8 +1198,10 @@ def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should lift the cloudsc-like for_1133 body shape; got '
-                                          f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should lift the cloudsc-like for_1133 body shape; got "
+        f"res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
     klev, klon, nclv = 8, 4, 3
@@ -1176,8 +1218,9 @@ def test_cloudsc_for_1133_shape_reverse_engineered_from_fortran():
             for jl in range(klon):
                 expected[jl, jk] = expected[jl, jk] + (zqxn2d[jl, jm] - zqx0[jl, jm]) * zgdph_r
     sdfg(pfsqif=pfsqif, zqxn2d=zqxn2d, zqx0=zqx0, zgdph_r=zgdph_r, KLEV=klev, KLON=klon, NCLV=nclv)
-    assert np.allclose(pfsqif, expected), (f'Composite-body scan numerics must match the sequential oracle; '
-                                           f'max diff = {np.abs(pfsqif - expected).max()}')
+    assert np.allclose(pfsqif, expected), (
+        f"Composite-body scan numerics must match the sequential oracle; max diff = {np.abs(pfsqif - expected).max()}"
+    )
 
 
 def test_backward_stride_minus_one_prefix_sum():
@@ -1195,8 +1238,10 @@ def test_backward_stride_minus_one_prefix_sum():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is not None and res >= 1, (f'LoopToScan should accept a backward-stride (-1) prefix sum; got '
-                                          f'res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+    assert res is not None and res >= 1, (
+        f"LoopToScan should accept a backward-stride (-1) prefix sum; got "
+        f"res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
     n = 16
@@ -1207,8 +1252,9 @@ def test_backward_stride_minus_one_prefix_sum():
     for jm in range(n, 0, -1):
         expected[jm - 1] = expected[jm] + delta[jm]
     sdfg(acc=acc, delta=delta, N=n)
-    assert np.allclose(acc, expected), (f'Backward-stride scan numerics must match the sequential oracle; '
-                                        f'max diff = {np.abs(acc - expected).max()}')
+    assert np.allclose(acc, expected), (
+        f"Backward-stride scan numerics must match the sequential oracle; max diff = {np.abs(acc - expected).max()}"
+    )
 
 
 def test_multi_slot_carrier_is_refused_not_miscompiled():
@@ -1220,7 +1266,7 @@ def test_multi_slot_carrier_is_refused_not_miscompiled():
     oracle). LoopToScan must REFUSE the multi-slot shape (leave sequential) even with
     ``lift_nested_scan=True``. Guards the silent miscompile: old code lifted (3 Scan
     libnodes) and diverged; correct = no lift + values equal the oracle."""
-    KLEV, KLON = (dace.symbol(s) for s in ['KLEV', 'KLON'])
+    KLEV, KLON = (dace.symbol(s) for s in ["KLEV", "KLON"])
 
     @dace.program
     def multi_slot(zvqx: dace.float64[5, KLEV, KLON], delta: dace.float64[KLEV, KLON]):
@@ -1235,7 +1281,7 @@ def test_multi_slot_carrier_is_refused_not_miscompiled():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(lift_nested_scan=True).apply_pass(sdfg, {})
     sdfg.validate()
-    assert not res, f'multi-slot carrier must be refused (unsound rewrite), got res={res}'
+    assert not res, f"multi-slot carrier must be refused (unsound rewrite), got res={res}"
     assert _num_scan_nodes(sdfg) == 0
 
     # Numerical correctness: the un-lifted (sequential) SDFG matches the oracle.
@@ -1251,7 +1297,7 @@ def test_multi_slot_carrier_is_refused_not_miscompiled():
             ref[2, jk, jl] = ref[2, jk - 1, jl] + delta[jk, jl] * 0.3
     got = zvqx.copy()
     sdfg(zvqx=got, delta=delta, KLEV=klev, KLON=klon)
-    assert np.allclose(got[:3], ref[:3]), f'max-diff {np.abs(got[:3] - ref[:3]).max()}'
+    assert np.allclose(got[:3], ref[:3]), f"max-diff {np.abs(got[:3] - ref[:3]).max()}"
 
 
 def test_scan_with_conditional_body_descends_into_if():
@@ -1274,8 +1320,9 @@ def test_scan_with_conditional_body_descends_into_if():
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res is not None and res >= 1, (
-        f'LoopToScan should lift the conditional scan shape by descending into '
-        f'the if/else branches; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}.')
+        f"LoopToScan should lift the conditional scan shape by descending into "
+        f"the if/else branches; got res={res}, scan libnodes={_num_scan_nodes(sdfg)}."
+    )
     assert _num_scan_nodes(sdfg) >= 1
 
     n = 16
@@ -1291,8 +1338,10 @@ def test_scan_with_conditional_body_descends_into_if():
         else:
             expected[i + 1] = expected[i]
     sdfg(out=out, delta=delta, mask=mask, N=n)
-    assert np.allclose(out, expected), (f'Conditional-carry numerics must match the sequential oracle; got {out}, '
-                                        f'expected {expected}, max-diff {np.abs(out - expected).max()}')
+    assert np.allclose(out, expected), (
+        f"Conditional-carry numerics must match the sequential oracle; got {out}, "
+        f"expected {expected}, max-diff {np.abs(out - expected).max()}"
+    )
 
 
 # Scalar-carry prefix scan (TSVC s3112 family).
@@ -1493,7 +1542,7 @@ def test_scalar_carry_acc_not_used_post_loop_no_writeback():
     # Inspect: the rewrite added the scan state, plus whichever staging states its buffers
     # needed. The writeback state name suffix is ``_scan_acc_post`` -- absent here.
     state_labels = {s.label for s in sdfg.states()}
-    assert not any('_scan_acc_post' in lbl for lbl in state_labels)
+    assert not any("_scan_acc_post" in lbl for lbl in state_labels)
 
 
 def test_scalar_carry_preserves_iedge_assignments_on_loop_boundary():
@@ -1512,13 +1561,14 @@ def test_scalar_carry_preserves_iedge_assignments_on_loop_boundary():
 
     sdfg = kernel.to_sdfg(simplify=True)
     # Attach a trivial assignment to the iedge feeding the loop.
-    loop = next(r for r in sdfg.all_control_flow_regions()
-                if isinstance(r, dace.sdfg.state.LoopRegion) and r.loop_variable)
+    loop = next(
+        r for r in sdfg.all_control_flow_regions() if isinstance(r, dace.sdfg.state.LoopRegion) and r.loop_variable
+    )
     parent = loop.parent_graph
     in_edges = list(parent.in_edges(loop))
-    assert in_edges, 'test fixture: loop should have at least one in-edge'
+    assert in_edges, "test fixture: loop should have at least one in-edge"
     # Add a marker assignment to the first in-edge.
-    in_edges[0].data.assignments['_marker_pre_loop'] = '42'
+    in_edges[0].data.assignments["_marker_pre_loop"] = "42"
     loop_label = loop.label
 
     LiftPreprocess().apply_pass(sdfg, {})
@@ -1531,16 +1581,16 @@ def test_scalar_carry_preserves_iedge_assignments_on_loop_boundary():
     # states around the libnode, which would leave a name-based lookup asserting on a state
     # the rewrite is entitled not to emit.
     chain = [s for s in sdfg.states() if s.label.startswith(loop_label)]
-    assert chain, f'the rewrite should have left states named after {loop_label}'
+    assert chain, f"the rewrite should have left states named after {loop_label}"
     heads = [s for s in chain if any(e.src not in chain for e in sdfg.in_edges(s))]
-    assert len(heads) == 1, f'expected exactly one entry into the scan chain, got {[s.label for s in heads]}'
+    assert len(heads) == 1, f"expected exactly one entry into the scan chain, got {[s.label for s in heads]}"
     head_in_edges = list(sdfg.in_edges(heads[0]))
-    found = any(e.data.assignments.get('_marker_pre_loop') == '42' for e in head_in_edges)
-    assert found, 'iedge assignment ``_marker_pre_loop=42`` lost during rewrite'
+    found = any(e.data.assignments.get("_marker_pre_loop") == "42" for e in head_in_edges)
+    assert found, "iedge assignment ``_marker_pre_loop=42`` lost during rewrite"
 
 
-_LS_N = dace.symbol('LS_N')
-_LS_K = dace.symbol('LS_K')
+_LS_N = dace.symbol("LS_N")
+_LS_K = dace.symbol("LS_K")
 
 
 @dace.program
@@ -1570,7 +1620,7 @@ def _scan_libnodes(sdfg: dace.SDFG) -> int:
     each accepted recurrence into one such node."""
     n = 0
     for node, _ in sdfg.all_nodes_recursive():
-        if type(node).__name__ == 'Scan':
+        if type(node).__name__ == "Scan":
             n += 1
     return n
 
@@ -1589,8 +1639,10 @@ def test_refuses_when_carrier_has_sibling_seed_write_forward():
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _scan_libnodes(sdfg) == 0, ('LoopToScan must refuse a recurrence whose carrier has a sibling seed write; '
-                                       f'got {_scan_libnodes(sdfg)} Scan libnodes')
+    assert _scan_libnodes(sdfg) == 0, (
+        "LoopToScan must refuse a recurrence whose carrier has a sibling seed write; "
+        f"got {_scan_libnodes(sdfg)} Scan libnodes"
+    )
 
     rng = np.random.default_rng(21)
     fall = rng.uniform(0.0, 1.0, (n, k))
@@ -1602,7 +1654,7 @@ def test_refuses_when_carrier_has_sibling_seed_write_forward():
         expected[ii, 0] = fall[ii, 0]
         for kk in range(1, k):
             expected[ii, kk] = expected[ii, kk - 1] * 0.9 + fall[ii, kk]
-    assert np.allclose(flux, expected), (f'value mismatch: max diff {np.abs(flux - expected).max():.2e}')
+    assert np.allclose(flux, expected), f"value mismatch: max diff {np.abs(flux - expected).max():.2e}"
 
 
 def test_refuses_when_carrier_has_sibling_seed_write_backward():
@@ -1617,8 +1669,9 @@ def test_refuses_when_carrier_has_sibling_seed_write_backward():
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _scan_libnodes(sdfg) == 0, (f'LoopToScan must refuse the backward recurrence with outside seed; '
-                                       f'got {_scan_libnodes(sdfg)} Scan libnodes')
+    assert _scan_libnodes(sdfg) == 0, (
+        f"LoopToScan must refuse the backward recurrence with outside seed; got {_scan_libnodes(sdfg)} Scan libnodes"
+    )
 
     rng = np.random.default_rng(31)
     rhs = rng.standard_normal((n, k))
@@ -1630,7 +1683,7 @@ def test_refuses_when_carrier_has_sibling_seed_write_backward():
         expected[ii, k - 1] = rhs[ii, k - 1]
         for kk in range(k - 2, -1, -1):
             expected[ii, kk] = rhs[ii, kk] - 0.5 * expected[ii, kk + 1]
-    assert np.allclose(x, expected), f'value mismatch: max diff {np.abs(x - expected).max():.2e}'
+    assert np.allclose(x, expected), f"value mismatch: max diff {np.abs(x - expected).max():.2e}"
 
 
 @dace.program
@@ -1656,8 +1709,9 @@ def _stride2_prefix_scan_with_in_kernel_1d_seed(a: dace.float64[N], x: dace.floa
         a[i] = a[i - 2] + x[i]
 
 
-@pytest.mark.parametrize('prog,seed_len', [(_prefix_scan_with_in_kernel_1d_seed, 1),
-                                           (_stride2_prefix_scan_with_in_kernel_1d_seed, 2)])
+@pytest.mark.parametrize(
+    "prog,seed_len", [(_prefix_scan_with_in_kernel_1d_seed, 1), (_stride2_prefix_scan_with_in_kernel_1d_seed, 2)]
+)
 def test_lifts_forward_flat_1d_scan_with_in_kernel_seed(prog, seed_len):
     """A forward FLAT 1-D scan whose seed is written in a sibling block DOES lift
     (contrast the refused per-row 2-D seed shapes): the flat seed-add reads the
@@ -1670,7 +1724,7 @@ def test_lifts_forward_flat_1d_scan_with_in_kernel_seed(prog, seed_len):
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _scan_libnodes(sdfg) == 1, (f'expected one (stride-{seed_len}) Scan libnode, got {_scan_libnodes(sdfg)}')
+    assert _scan_libnodes(sdfg) == 1, f"expected one (stride-{seed_len}) Scan libnode, got {_scan_libnodes(sdfg)}"
 
     n = 16
     rng = np.random.default_rng(7)
@@ -1682,7 +1736,7 @@ def test_lifts_forward_flat_1d_scan_with_in_kernel_seed(prog, seed_len):
     for i in range(seed_len, n):
         expected[i] = expected[i - seed_len] + x[i]
     sdfg(a=a, x=x.copy(), N=n)
-    assert np.allclose(a, expected), f'value mismatch: max diff {np.abs(a - expected).max():.2e}'
+    assert np.allclose(a, expected), f"value mismatch: max diff {np.abs(a - expected).max():.2e}"
 
 
 @dace.program
@@ -1709,8 +1763,9 @@ def test_refuses_multi_step_recurrence_with_multiple_carrier_reads():
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _scan_libnodes(sdfg) == 0, (f'LoopToScan must refuse a 2-step recurrence; '
-                                       f'got {_scan_libnodes(sdfg)} Scan libnodes')
+    assert _scan_libnodes(sdfg) == 0, (
+        f"LoopToScan must refuse a 2-step recurrence; got {_scan_libnodes(sdfg)} Scan libnodes"
+    )
 
     rng = np.random.default_rng(7)
     a = rng.standard_normal(n)
@@ -1723,7 +1778,7 @@ def test_refuses_multi_step_recurrence_with_multiple_carrier_reads():
     expected[n - 2] = 0.7
     for i in range(n - 3, -1, -1):
         expected[i] = 0.5 * expected[i + 1] + 0.25 * expected[i + 2] + a[i]
-    assert np.allclose(b, expected), f'value mismatch: max diff {np.abs(b - expected).max():.2e}'
+    assert np.allclose(b, expected), f"value mismatch: max diff {np.abs(b - expected).max():.2e}"
 
 
 def test_fuse_body_states_refuses_carry_through_state_boundary():
@@ -1756,9 +1811,11 @@ def test_fuse_body_states_refuses_carry_through_state_boundary():
 
     sa = a0.copy()
     sdfg(a=sa, b=b.copy(), c=c.copy(), LEN_1D=n)
-    assert np.allclose(sa, a_exp), ('s252 carry broke after canonicalize: ``_fuse_body_states`` must '
-                                    'refuse the body merge when the inter-state edge orders a carrier '
-                                    'read before its write')
+    assert np.allclose(sa, a_exp), (
+        "s252 carry broke after canonicalize: ``_fuse_body_states`` must "
+        "refuse the body merge when the inter-state edge orders a carrier "
+        "read before its write"
+    )
 
 
 @dace.program
@@ -1783,8 +1840,9 @@ def test_nested_scan_keeps_map_inside_by_default():
 
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
-    assert _num_scan_nodes(sdfg) == 0, ('the carry loop wrapping a parallelizable inner loop must NOT '
-                                        'be lifted by default (keep the map inside)')
+    assert _num_scan_nodes(sdfg) == 0, (
+        "the carry loop wrapping a parallelizable inner loop must NOT be lifted by default (keep the map inside)"
+    )
     got = aa0.copy()
     sdfg(aa=got, bb=bb.copy(), N=16)
     assert np.allclose(got, ref)
@@ -1800,8 +1858,8 @@ def test_nested_scan_lifts_with_knob():
     assert _num_scan_nodes(sdfg) >= 1, "a Scan libnode is emitted when the knob opts in"
 
 
-N_SS = dace.symbol('N_SS')
-K_SS = dace.symbol('K_SS')
+N_SS = dace.symbol("N_SS")
+K_SS = dace.symbol("K_SS")
 
 
 @dace.program
@@ -1824,27 +1882,28 @@ def test_symbolic_stride_scan_specializes_if_scan_else_seq():
     sdfg.validate()
 
     cbs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
-    assert len(cbs) == 1, f'expected exactly one specialization conditional, got {len(cbs)}'
+    assert len(cbs) == 1, f"expected exactly one specialization conditional, got {len(cbs)}"
     (cond, par_region), (else_cond, seq_region) = cbs[0].branches
-    assert cond is not None and else_cond is None, 'branches must be (K >= 1 -> scan, else -> sequential)'
-    assert 'K_SS' in cond.as_string and '>= 1' in cond.as_string, f'guard must be K >= 1: {cond.as_string!r}'
+    assert cond is not None and else_cond is None, "branches must be (K >= 1 -> scan, else -> sequential)"
+    assert "K_SS" in cond.as_string and ">= 1" in cond.as_string, f"guard must be K >= 1: {cond.as_string!r}"
     # True branch: the residue-class Scan pipeline. Else branch: the pinned loop.
-    assert _num_scan_nodes(par_region) == 1, 'the K >= 1 branch must hold exactly one residue-class Scan libnode'
-    assert _num_scan_nodes(seq_region) == 0, 'the else branch must keep the sequential loop (no Scan)'
+    assert _num_scan_nodes(par_region) == 1, "the K >= 1 branch must hold exactly one residue-class Scan libnode"
+    assert _num_scan_nodes(seq_region) == 0, "the else branch must keep the sequential loop (no Scan)"
     seq_loops = [
         r for r in seq_region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
     ]
-    assert seq_loops and all(l.pinned_sequential for l in seq_loops), \
-        'the else-branch fallback loop must be pinned sequential'
+    assert seq_loops and all(l.pinned_sequential for l in seq_loops), (
+        "the else-branch fallback loop must be pinned sequential"
+    )
 
 
-@pytest.mark.parametrize('k', [0, 1, 2, 3, 5])
+@pytest.mark.parametrize("k", [0, 1, 2, 3, 5])
 def test_symbolic_stride_scan_value_exact(k):
     """Bit-exact vs the sequential recurrence for several strides -- including the
     degenerate ``K = 0`` that must take the sequential else-branch (a residue-class
     scan with stride 0 is undefined; the fallback computes ``a[i] += x[i]``)."""
     sdfg = _symbolic_stride_scan.to_sdfg(simplify=True)
-    sdfg.name = f'symbolic_stride_scan_k{k}'
+    sdfg.name = f"symbolic_stride_scan_k{k}"
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
 
@@ -1858,7 +1917,7 @@ def test_symbolic_stride_scan_value_exact(k):
     exp = a0.copy()
     for i in range(k, n):
         exp[i] = exp[i - k] + x[i]
-    assert np.allclose(got, exp), f'value mismatch at K={k}: max diff {np.abs(got - exp).max():.2e}'
+    assert np.allclose(got, exp), f"value mismatch at K={k}: max diff {np.abs(got - exp).max():.2e}"
 
 
 @dace.program
@@ -1894,16 +1953,16 @@ def test_forward_shift_half_scan_drops_provable_stride_guard():
     sdfg.validate()
 
     cbs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
-    assert not cbs, f'provable-DOALL guard must be dropped; found {len(cbs)} specialization conditional(s)'
-    assert _num_loops(sdfg) == 0, 'the sequential loop (and its pinned fallback) must be gone'
-    assert _num_scan_nodes(sdfg) == 0, 'a bare Map must be emitted, never an unconditional Scan (aborts at stride<=0)'
+    assert not cbs, f"provable-DOALL guard must be dropped; found {len(cbs)} specialization conditional(s)"
+    assert _num_loops(sdfg) == 0, "the sequential loop (and its pinned fallback) must be gone"
+    assert _num_scan_nodes(sdfg) == 0, "a bare Map must be emitted, never an unconditional Scan (aborts at stride<=0)"
     maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)]
-    assert len(maps) == 1, f'expected exactly one unconditional Map, got {len(maps)}'
+    assert len(maps) == 1, f"expected exactly one unconditional Map, got {len(maps)}"
     pinned = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.pinned_sequential]
-    assert not pinned, 'no pinned sequential fallback may survive once the guard is discharged'
+    assert not pinned, "no pinned sequential fallback may survive once the guard is discharged"
 
 
-@pytest.mark.parametrize('n', [0, 1, 2, 3, 8, 15, 64])
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 8, 15, 64])
 def test_forward_shift_half_scan_value_exact(n):
     """Bit-exact vs the sequential loop across sizes, including the empty ``N=0/1`` cases
     where the discharged stride (``N//2 == 0``) would have failed the ``>= 1`` guard. The
@@ -1911,7 +1970,7 @@ def test_forward_shift_half_scan_value_exact(n):
     cases that make the closure sound, and the ones that ABORT if the bare form is lowered
     to an unconditional residue-class Scan instead of a Map."""
     sdfg = _forward_shift_half_scan.to_sdfg(simplify=True)
-    sdfg.name = f'forward_shift_half_scan_n{n}'
+    sdfg.name = f"forward_shift_half_scan_n{n}"
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
 
@@ -1924,7 +1983,7 @@ def test_forward_shift_half_scan_value_exact(n):
     exp = a0.copy()
     for i in range(n // 2):
         exp[i + (n // 2)] = exp[i] + b[i]
-    assert np.allclose(got, exp), f'value mismatch at N={n}: max diff {np.abs(got - exp).max():.2e}'
+    assert np.allclose(got, exp), f"value mismatch at N={n}: max diff {np.abs(got - exp).max():.2e}"
 
 
 def _carried_writes_in_loops(sdfg, name):
@@ -1959,12 +2018,11 @@ def test_masked_conditional_scan_lifts_and_neutralizes_else_branch():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, f'expected one masked-scan rewrite; got {res}'
+    assert res == 1, f"expected one masked-scan rewrite; got {res}"
     assert _num_scan_nodes(sdfg) == 1
     # The fix: the loop body no longer carries a write to ``out`` (delta-build
     # only). ``out`` is written solely by the post-loop seed-add Map.
-    assert _carried_writes_in_loops(sdfg, 'out') == 0, \
-        'else-branch recurrence write to `out` was not neutralized'
+    assert _carried_writes_in_loops(sdfg, "out") == 0, "else-branch recurrence write to `out` was not neutralized"
 
     n = 32
     rng = np.random.default_rng(7)
@@ -1975,10 +2033,10 @@ def test_masked_conditional_scan_lifts_and_neutralizes_else_branch():
     for i in range(1, n):
         exp[i] = exp[i - 1] + (delta[i] if mask[i] > 0 else 0.0)
     sdfg(out=out, delta=delta, mask=mask, N=n)
-    assert np.allclose(out, exp), f'masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
+    assert np.allclose(out, exp), f"masked scan diverged: max diff {np.abs(out - exp).max():.2e}"
 
 
-@pytest.mark.parametrize('op', ['min', 'max'])
+@pytest.mark.parametrize("op", ["min", "max"])
 def test_a_guarded_running_min_ignores_skipped_elements_instead_of_folding_zero(op):
     """Masked running min/max (min/max variant of ``test_masked_conditional_scan_lifts_and_
     neutralizes_else_branch``): ``if mask[i]>0: out[i] = min(out[i-1], delta[i]) else:
@@ -1991,7 +2049,7 @@ def test_a_guarded_running_min_ignores_skipped_elements_instead_of_folding_zero(
     shape limitation unrelated to this bug -- verified on both origin/extended and this
     fix, plain unmasked ``out[i+1] = min(out[i], delta[i])`` over int64 also refuses)."""
 
-    if op == 'min':
+    if op == "min":
 
         @dace.program
         def masked_scan(out: dace.float64[N], delta: dace.float64[N], mask: dace.int64[N]):
@@ -2014,14 +2072,14 @@ def test_a_guarded_running_min_ignores_skipped_elements_instead_of_folding_zero(
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, f'expected one masked min/max scan rewrite; got {res}'
-    assert _scan_ops(sdfg) == [ScanOp.MIN if op == 'min' else ScanOp.MAX]
+    assert res == 1, f"expected one masked min/max scan rewrite; got {res}"
+    assert _scan_ops(sdfg) == [ScanOp.MIN if op == "min" else ScanOp.MAX]
 
     n = 32
     rng = np.random.default_rng(7)
     mask = (rng.standard_normal(n) > 0.0).astype(np.int64)
     mask[0] = 1  # seed iteration always active
-    if op == 'min':
+    if op == "min":
         # All-positive data: a correct running min never sees 0, so folding the masked
         # slot to 0 instead of +inf is visible as an incorrect downward clamp.
         delta = rng.uniform(0.1, 5.0, size=n)
@@ -2035,11 +2093,11 @@ def test_a_guarded_running_min_ignores_skipped_elements_instead_of_folding_zero(
         out[0] = delta.min() - 1.0
 
     exp = out.copy()
-    fold = min if op == 'min' else max
+    fold = min if op == "min" else max
     for i in range(1, n):
         exp[i] = fold(exp[i - 1], delta[i]) if mask[i] > 0 else exp[i - 1]
     sdfg(out=out, delta=delta, mask=mask, N=n)
-    np.testing.assert_allclose(out, exp, err_msg='masked min/max scan folded a skipped element to 0')
+    np.testing.assert_allclose(out, exp, err_msg="masked min/max scan folded a skipped element to 0")
 
 
 def test_masked_scan_with_a_non_hold_sibling_is_refused():
@@ -2065,9 +2123,9 @@ def test_masked_scan_with_a_non_hold_sibling_is_refused():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert not res, f'a non-hold sibling must refuse the lift; got {res} rewrites'
+    assert not res, f"a non-hold sibling must refuse the lift; got {res} rewrites"
     assert _num_scan_nodes(sdfg) == 0
-    assert _num_loops(sdfg) == 1, 'the loop must survive as the sequential recurrence'
+    assert _num_loops(sdfg) == 1, "the loop must survive as the sequential recurrence"
 
     n = 32
     rng = np.random.default_rng(11)
@@ -2078,7 +2136,7 @@ def test_masked_scan_with_a_non_hold_sibling_is_refused():
     for i in range(1, n):
         exp[i] = exp[i - 1] + delta[i] if mask[i] > 0 else delta[i]
     sdfg(out=out, delta=delta, mask=mask, N=n)
-    assert np.allclose(out, exp), f'refused masked scan diverged: max diff {np.abs(out - exp).max():.2e}'
+    assert np.allclose(out, exp), f"refused masked scan diverged: max diff {np.abs(out - exp).max():.2e}"
 
 
 def test_multi_slot_same_array_five_carries():
@@ -2103,24 +2161,24 @@ def test_multi_slot_same_array_five_carries():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, f'expected one multi-slot loop rewrite; got {res}'
-    assert _num_scan_nodes(sdfg) == 1, f'expected ONE fused Scan libnode; got {_num_scan_nodes(sdfg)}'
+    assert res == 1, f"expected one multi-slot loop rewrite; got {res}"
+    assert _num_scan_nodes(sdfg) == 1, f"expected ONE fused Scan libnode; got {_num_scan_nodes(sdfg)}"
     scan = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
-    assert scan.chains == 5, f'expected five scan chains on the fused libnode; got {scan.chains}'
+    assert scan.chains == 5, f"expected five scan chains on the fused libnode; got {scan.chains}"
     for c in range(5):
-        assert in_connector(c) in scan.in_connectors, f'chain {c} input connector missing'
-        assert out_connector(c) in scan.out_connectors, f'chain {c} output connector missing'
-        assert init_connector(c) in scan.in_connectors, f'chain {c} seed rides no init connector'
-    assert _carried_writes_in_loops(sdfg, 'acc') == 0, 'a per-slot recurrence write to `acc` survived'
+        assert in_connector(c) in scan.in_connectors, f"chain {c} input connector missing"
+        assert out_connector(c) in scan.out_connectors, f"chain {c} output connector missing"
+        assert init_connector(c) in scan.in_connectors, f"chain {c} seed rides no init connector"
+    assert _carried_writes_in_loops(sdfg, "acc") == 0, "a per-slot recurrence write to `acc` survived"
 
     # The point of the fusion: ONE fork/join and ONE ``omp scan`` directive carrying
     # all five accumulators, not five regions with five rounds of intermediate traffic.
     src = "\n".join(c.clean_code for c in sdfg.generate_code())
-    n_parallel = len(re.findall(r'#\s*pragma\s+omp\s+parallel', src))
-    assert n_parallel == 1, f'expected ONE parallel region; got {n_parallel}\n{src}'
-    scan_pragmas = re.findall(r'#\s*pragma\s+omp\s+scan\s+inclusive\(([^)]*)\)', src)
-    assert len(scan_pragmas) == 1, f'expected ONE omp scan directive; got {len(scan_pragmas)}'
-    assert len(scan_pragmas[0].split(',')) == 5, f'expected five inscan list items; got {scan_pragmas[0]!r}'
+    n_parallel = len(re.findall(r"#\s*pragma\s+omp\s+parallel", src))
+    assert n_parallel == 1, f"expected ONE parallel region; got {n_parallel}\n{src}"
+    scan_pragmas = re.findall(r"#\s*pragma\s+omp\s+scan\s+inclusive\(([^)]*)\)", src)
+    assert len(scan_pragmas) == 1, f"expected ONE omp scan directive; got {len(scan_pragmas)}"
+    assert len(scan_pragmas[0].split(",")) == 5, f"expected five inscan list items; got {scan_pragmas[0]!r}"
 
     n = 24
     rng = np.random.default_rng(909)
@@ -2131,7 +2189,7 @@ def test_multi_slot_same_array_five_carries():
         for r in range(5):
             exp[r, i] = exp[r, i - 1] + delta[r, i]
     sdfg(acc=acc, delta=delta, N=n)
-    assert np.allclose(acc, exp), f'multi-slot scan diverged: max diff {np.abs(acc - exp).max():.2e}'
+    assert np.allclose(acc, exp), f"multi-slot scan diverged: max diff {np.abs(acc - exp).max():.2e}"
 
 
 def test_linear_recurrence_lifts_as_affine_never_as_a_product_scan():
@@ -2166,7 +2224,7 @@ def test_linear_recurrence_lifts_as_affine_never_as_a_product_scan():
         want[i] = want[i - 1] * x[i] + x[i]
     got = seed.copy()
     sdfg(out=got, x=x, N=n)
-    assert np.allclose(got, want), f'max|diff| = {np.max(np.abs(got - want)):.3e}'
+    assert np.allclose(got, want), f"max|diff| = {np.max(np.abs(got - want)):.3e}"
 
 
 def test_delta_may_be_a_computed_expression():
@@ -2195,12 +2253,13 @@ def test_delta_may_be_a_computed_expression():
         want[i] = want[i - 1] + x[i] * y[i] + x[i] * z[i]
     got = seed.copy()
     sdfg(out=got, x=x, y=y, z=z, N=n)
-    assert np.allclose(got, want), f'max|diff| = {np.max(np.abs(got - want)):.3e}'
+    assert np.allclose(got, want), f"max|diff| = {np.max(np.abs(got - want)):.3e}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
-    sys.exit(pytest.main([__file__, '-v']))
+
+    sys.exit(pytest.main([__file__, "-v"]))
 
 
 def test_scan_survives_two_sided_carry_copy_memlet():
@@ -2237,8 +2296,13 @@ def test_scan_survives_two_sided_carry_copy_memlet():
 
 def _loops_inside_nested_sdfgs(sdfg):
     """``[(loop.label, owner.name)]`` for every named loop that lives in a NestedSDFG."""
-    return [(r.label, sd.name) for sd in sdfg.all_sdfgs_recursive() if sd.parent_sdfg is not None
-            for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    return [
+        (r.label, sd.name)
+        for sd in sdfg.all_sdfgs_recursive()
+        if sd.parent_sdfg is not None
+        for r in sd.all_control_flow_regions()
+        if isinstance(r, LoopRegion) and r.loop_variable
+    ]
 
 
 def _misowned_memlet_data(sdfg):
@@ -2257,8 +2321,13 @@ def _misowned_memlet_data(sdfg):
 
 def _scan_owners(sdfg):
     """``[(scan.label, owner.name)]`` for every Scan libnode, paired with the SDFG holding it."""
-    return [(n.label, sd.name) for sd in sdfg.all_sdfgs_recursive() for state in sd.states() for n in state.nodes()
-            if isinstance(n, Scan)]
+    return [
+        (n.label, sd.name)
+        for sd in sdfg.all_sdfgs_recursive()
+        for state in sd.states()
+        for n in state.nodes()
+        if isinstance(n, Scan)
+    ]
 
 
 def _nest_carry_loop_in_a_wrapper(inner, name):
@@ -2272,14 +2341,15 @@ def _nest_carry_loop_in_a_wrapper(inner, name):
     nothing. A nesting the test builds itself cannot be taken away by a pass.
     """
     outer = dace.SDFG(name)
-    outer.add_array('out', [N + 1], dace.float64)
-    outer.add_array('delta', [N], dace.float64)
-    state = outer.add_state('call_inner')
-    nsdfg = state.add_nested_sdfg(inner, {'out': None, 'delta': None}, {'out': None}, symbol_mapping={'N': N})
-    state.add_edge(state.add_access('out'), None, nsdfg, 'out', dace.Memlet.from_array('out', outer.arrays['out']))
-    state.add_edge(state.add_access('delta'), None, nsdfg, 'delta',
-                   dace.Memlet.from_array('delta', outer.arrays['delta']))
-    state.add_edge(nsdfg, 'out', state.add_access('out'), None, dace.Memlet.from_array('out', outer.arrays['out']))
+    outer.add_array("out", [N + 1], dace.float64)
+    outer.add_array("delta", [N], dace.float64)
+    state = outer.add_state("call_inner")
+    nsdfg = state.add_nested_sdfg(inner, {"out": None, "delta": None}, {"out": None}, symbol_mapping={"N": N})
+    state.add_edge(state.add_access("out"), None, nsdfg, "out", dace.Memlet.from_array("out", outer.arrays["out"]))
+    state.add_edge(
+        state.add_access("delta"), None, nsdfg, "delta", dace.Memlet.from_array("delta", outer.arrays["delta"])
+    )
+    state.add_edge(nsdfg, "out", state.add_access("out"), None, dace.Memlet.from_array("out", outer.arrays["out"]))
     outer.validate()
     return outer
 
@@ -2311,10 +2381,10 @@ def test_scan_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
     for i in range(n):
         expected[i + 1] = expected[i] + delta[i]
 
-    sdfg = _nest_carry_loop_in_a_wrapper(carry.to_sdfg(simplify=True), 'lift_inside_nested_sdfg')
+    sdfg = _nest_carry_loop_in_a_wrapper(carry.to_sdfg(simplify=True), "lift_inside_nested_sdfg")
     # The nesting is built above rather than waited for, but assert it anyway: an add_nested_sdfg
     # that flattened the wrapper would empty this test out just as quietly as the pass did.
-    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the carry loop -- the ownership bug cannot be hit'
+    assert _loops_inside_nested_sdfgs(sdfg), "fixture no longer nests the carry loop -- the ownership bug cannot be hit"
 
     InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
     LiftPreprocess().apply_pass(sdfg, {})
@@ -2322,37 +2392,35 @@ def test_scan_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
     sdfg.validate()
 
     owners = _scan_owners(sdfg)
-    assert len(owners) == 1, f'expected exactly one lifted Scan, got {owners}'
+    assert len(owners) == 1, f"expected exactly one lifted Scan, got {owners}"
     scan_owner = owners[0][1]
-    assert scan_owner != sdfg.name, (f'the carry loop lives in the NestedSDFG but its Scan landed in the parent: '
-                                     f'{owners}')
-    assert not _misowned_memlet_data(sdfg), (f'memlets name data their own SDFG lacks: '
-                                             f'{_misowned_memlet_data(sdfg)}')
-    stray = [a for a in sdfg.arrays if a.startswith('_scan_')]
+    assert scan_owner != sdfg.name, (
+        f"the carry loop lives in the NestedSDFG but its Scan landed in the parent: {owners}"
+    )
+    assert not _misowned_memlet_data(sdfg), f"memlets name data their own SDFG lacks: {_misowned_memlet_data(sdfg)}"
+    stray = [a for a in sdfg.arrays if a.startswith("_scan_")]
     assert not stray, f"the lift minted its scan buffers in the parent's descriptor repository: {stray}"
 
     out = np.zeros(n + 1)
     sdfg(out=out, delta=delta, N=n)
-    assert np.allclose(out, expected), 'the lifted scan diverged from the sequential oracle'
+    assert np.allclose(out, expected), "the lifted scan diverged from the sequential oracle"
 
     # Same nesting through the full pipeline, twice: the vectorizer runs a canonicalize at its own
     # entry, so any caller that already canonicalized canonicalizes twice. This used to raise.
-    sdfg = _nest_carry_loop_in_a_wrapper(carry.to_sdfg(simplify=True), 'canonicalize_nested_carry')
+    sdfg = _nest_carry_loop_in_a_wrapper(carry.to_sdfg(simplify=True), "canonicalize_nested_carry")
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
-    assert not _misowned_memlet_data(sdfg), (f'memlets name data their own SDFG lacks: '
-                                             f'{_misowned_memlet_data(sdfg)}')
+    assert not _misowned_memlet_data(sdfg), f"memlets name data their own SDFG lacks: {_misowned_memlet_data(sdfg)}"
     out = np.zeros(n + 1)
     sdfg(out=out, delta=delta, N=n)
-    assert np.allclose(out, expected), 'first canonicalize diverged from the sequential oracle'
+    assert np.allclose(out, expected), "first canonicalize diverged from the sequential oracle"
 
-    canonicalize(sdfg, semantic_lifting=False, target='cpu')
+    canonicalize(sdfg, semantic_lifting=False, target="cpu")
     sdfg.validate()
-    assert not _misowned_memlet_data(sdfg), (f'memlets name data their own SDFG lacks: '
-                                             f'{_misowned_memlet_data(sdfg)}')
+    assert not _misowned_memlet_data(sdfg), f"memlets name data their own SDFG lacks: {_misowned_memlet_data(sdfg)}"
 
     out = np.zeros(n + 1)
     sdfg(out=out, delta=delta, N=n)
-    assert np.allclose(out, expected), 'second canonicalize diverged from the sequential oracle'
+    assert np.allclose(out, expected), "second canonicalize diverged from the sequential oracle"
 
 
 def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
@@ -2378,7 +2446,7 @@ def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
     LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _num_scan_nodes(sdfg) == 0, 'a two-step recurrence is not a scan, whichever side the memlet names'
+    assert _num_scan_nodes(sdfg) == 0, "a two-step recurrence is not a scan, whichever side the memlet names"
 
     rng = np.random.default_rng(0)
     n = 64
@@ -2388,7 +2456,7 @@ def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
         expected[i] = expected[i] + expected[i - 1] * b[i] + expected[i - 2] * c[i]
     a = a0.copy()
     sdfg(a=a, b=b, c=c, N=n)
-    assert np.allclose(a, expected), f'second-order recurrence diverged: max diff {np.abs(a - expected).max():.2e}'
+    assert np.allclose(a, expected), f"second-order recurrence diverged: max diff {np.abs(a - expected).max():.2e}"
 
 
 # the carry at a SYMBOLIC distance
@@ -2400,7 +2468,7 @@ def test_refuses_second_order_recurrence_behind_two_sided_copy_memlets():
 
 def _distance_program():
     """The llr ``versioned_distance_update`` shape: affine in the carry, symbolic in the distance."""
-    N, K = dace.symbol('N'), dace.symbol('K')
+    N, K = dace.symbol("N"), dace.symbol("K")
 
     @dace.program
     def vdu(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
@@ -2420,9 +2488,9 @@ def test_a_symbolic_carry_distance_lifts_to_a_strided_affine_scan():
     assert LoopToScan().apply_pass(sdfg, {})
 
     scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
-    assert len(scans) == 1, f'expected one affine scan, got {scans}'
+    assert len(scans) == 1, f"expected one affine scan, got {scans}"
     assert scans[0].op is ScanOp.AFFINE
-    assert str(scans[0].stride) == 'K', f'the scan must carry the distance, not assume 1: {scans[0].stride}'
+    assert str(scans[0].stride) == "K", f"the scan must carry the distance, not assume 1: {scans[0].stride}"
 
 
 def test_the_three_distance_cases_are_split_under_a_runtime_test():
@@ -2436,14 +2504,17 @@ def test_the_three_distance_cases_are_split_under_a_runtime_test():
     LoopToScan().apply_pass(sdfg, {})
 
     conditions = [
-        c.as_string for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock) for c, _ in b.branches
+        c.as_string
+        for b in sdfg.all_control_flow_blocks()
+        if isinstance(b, ConditionalBlock)
+        for c, _ in b.branches
         if c is not None
     ]
-    assert any('K >= 1' in c for c in conditions), f'no scan guard among {conditions}'
-    assert any('K == 0' in c for c in conditions), f'no zero-distance branch among {conditions}'
+    assert any("K >= 1" in c for c in conditions), f"no scan guard among {conditions}"
+    assert any("K == 0" in c for c in conditions), f"no zero-distance branch among {conditions}"
 
 
-@pytest.mark.parametrize('k', (1, 2, 5, 64, 251, 0))
+@pytest.mark.parametrize("k", (1, 2, 5, 64, 251, 0))
 def test_the_strided_affine_scan_matches_the_sequential_recurrence(k):
     """The numbers, at every distance the branch structure has to cover -- including the K == 0
     arm, where the substituted clone must compute ``a[i] = 0.75*a[i] + b[i]*c[i]`` and not a scan."""
@@ -2464,7 +2535,7 @@ def test_the_strided_affine_scan_matches_the_sequential_recurrence(k):
 
     got = start.copy()
     compiled(a=got, b=b, c=c, N=n, K=k)
-    assert np.allclose(got, reference, rtol=0, atol=1e-11), f'K={k}: max |err| {np.max(np.abs(got - reference))}'
+    assert np.allclose(got, reference, rtol=0, atol=1e-11), f"K={k}: max |err| {np.max(np.abs(got - reference))}"
 
 
 def test_an_affine_operand_that_is_already_a_slice_is_not_copied():
@@ -2478,7 +2549,7 @@ def test_an_affine_operand_that_is_already_a_slice_is_not_copied():
     from dace.libraries.standard.nodes.scan import Scan
     from dace.transformation.passes.lift_preprocess import LiftPreprocess
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def decay(y: dace.float64[N], c: dace.float64[N], x: dace.float64[N]):
@@ -2490,15 +2561,17 @@ def test_an_affine_operand_that_is_already_a_slice_is_not_copied():
     assert LoopToScan().apply_pass(sdfg, {})
     sdfg.simplify()
 
-    copied = [name for name in sdfg.arrays if name.startswith('_scan_in') or name.startswith('_scan_coef')]
-    assert not copied, f'both operands are slices, so nothing should be copied: {copied}'
+    copied = [name for name in sdfg.arrays if name.startswith("_scan_in") or name.startswith("_scan_coef")]
+    assert not copied, f"both operands are slices, so nothing should be copied: {copied}"
 
     scan = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
     wired = {
         edge.dst_conn: edge.data.data
-        for state in sdfg.states() if scan in state.nodes() for edge in state.in_edges(scan)
+        for state in sdfg.states()
+        if scan in state.nodes()
+        for edge in state.in_edges(scan)
     }
-    assert wired.get('_scan_in') == 'x' and wired.get('_scan_coef') == 'c', wired
+    assert wired.get("_scan_in") == "x" and wired.get("_scan_coef") == "c", wired
 
 
 def test_a_computed_affine_operand_still_gets_its_buffer():
@@ -2506,7 +2579,7 @@ def test_a_computed_affine_operand_still_gets_its_buffer():
     that build is what leaves the loop data-parallel."""
     from dace.transformation.passes.lift_preprocess import LiftPreprocess
 
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def computed(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
@@ -2517,7 +2590,7 @@ def test_a_computed_affine_operand_still_gets_its_buffer():
     LiftPreprocess().apply_pass(sdfg, {})
     assert LoopToScan().apply_pass(sdfg, {})
 
-    assert any(name.startswith('_scan_in') for name in sdfg.arrays), 'the computed delta needs a buffer'
+    assert any(name.startswith("_scan_in") for name in sdfg.arrays), "the computed delta needs a buffer"
 
 
 def test_a_read_ahead_is_refused_rather_than_guarded():
@@ -2533,16 +2606,16 @@ def test_a_read_ahead_is_refused_rather_than_guarded():
     from dace import symbolic
     from dace.transformation.passes.loop_to_scan import carry_distance_kind
 
-    N, M, K = (symbolic.symbol(s) for s in ('N', 'M', 'K'))
+    N, M, K = (symbolic.symbol(s) for s in ("N", "M", "K"))
     for distance in (-symbolic.int_floor(N, 2), -symbolic.int_floor(N, M), -N, -K, 0, -1):
-        assert carry_distance_kind(distance) is None, f'{distance} is not a carry, but was not refused'
+        assert carry_distance_kind(distance) is None, f"{distance} is not a carry, but was not refused"
 
     # The converse must survive: a distance whose sign is genuinely unknown still owes its guard,
     # and a known positive one is a scan outright.
-    assert carry_distance_kind(K) == 'guard'
-    assert carry_distance_kind(symbolic.int_floor(N, M)) == 'guard'
-    assert carry_distance_kind(1) == 'scan'
-    assert carry_distance_kind(5) == 'scan'
+    assert carry_distance_kind(K) == "guard"
+    assert carry_distance_kind(symbolic.int_floor(N, M)) == "guard"
+    assert carry_distance_kind(1) == "scan"
+    assert carry_distance_kind(5) == "scan"
 
 
 def test_loop_to_scan_doesnt_lift_break_loop():
@@ -2564,4 +2637,4 @@ def test_loop_to_scan_doesnt_lift_break_loop():
     before = sdfg.to_json()
     res = LoopToScan().apply_pass(sdfg, {})
     assert res is None
-    assert sdfg.to_json() == before, 'LoopToScan refused the loop but still mutated the SDFG'
+    assert sdfg.to_json() == before, "LoopToScan refused the loop but still mutated the SDFG"

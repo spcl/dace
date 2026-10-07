@@ -12,24 +12,25 @@ The order is pinned too. Symbols are folded before the state machine is rewritte
 ``StateFusionExtended`` applies once everywhere rather than to a fixpoint -- the helper is meant
 to be cheap per boundary and run often, not to converge at each of ~15 boundaries.
 """
+
 import dace
 from dace.transformation.passes.canonicalize.pipeline import _structural_cleanup
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 #: The reserved symbol whose only reference is a transient's shape.
-NUM_THREADS = '__dace_num_threads'
+NUM_THREADS = "__dace_num_threads"
 
 
 def _shape_only_symbol_sdfg() -> dace.SDFG:
     """An SDFG whose ``__dace_num_threads`` is referenced by nothing but a transient's shape."""
-    sdfg = dace.SDFG('shape_only_symbol')
+    sdfg = dace.SDFG("shape_only_symbol")
     sdfg.add_symbol(NUM_THREADS, dace.int32)
-    sdfg.add_array('a', [16], dace.float64)
-    sdfg.add_transient('seam', [dace.symbol(NUM_THREADS, dtype=dace.int32) + 1], dace.float64)
-    state = sdfg.add_state('s')
-    tasklet = state.add_tasklet('copy', {'i'}, {'o'}, 'o = i')
-    state.add_edge(state.add_read('a'), None, tasklet, 'i', dace.Memlet('a[0]'))
-    state.add_edge(tasklet, 'o', state.add_write('a'), None, dace.Memlet('a[1]'))
+    sdfg.add_array("a", [16], dace.float64)
+    sdfg.add_transient("seam", [dace.symbol(NUM_THREADS, dtype=dace.int32) + 1], dace.float64)
+    state = sdfg.add_state("s")
+    tasklet = state.add_tasklet("copy", {"i"}, {"o"}, "o = i")
+    state.add_edge(state.add_read("a"), None, tasklet, "i", dace.Memlet("a[0]"))
+    state.add_edge(tasklet, "o", state.add_write("a"), None, dace.Memlet("a[1]"))
     return sdfg
 
 
@@ -44,12 +45,12 @@ def test_shape_only_symbol_survives_the_prune():
     sdfg = _shape_only_symbol_sdfg()
     assert RemoveUnusedSymbols().apply_pass(sdfg, {}) is None
     assert NUM_THREADS in sdfg.symbols
-    assert str(sdfg.arrays['seam'].shape[0]) == f'{NUM_THREADS} + 1'
+    assert str(sdfg.arrays["seam"].shape[0]) == f"{NUM_THREADS} + 1"
 
 
 def test_shape_only_symbol_survives_the_whole_cleanup():
     """The prune does not run alone -- the rest of the boundary must not strip it either."""
     sdfg = _shape_only_symbol_sdfg()
-    for _label, unit in _structural_cleanup('t'):
+    for _label, unit in _structural_cleanup("t"):
         unit.apply_pass(sdfg, {})
     assert NUM_THREADS in sdfg.symbols

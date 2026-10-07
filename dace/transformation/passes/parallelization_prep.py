@@ -18,6 +18,7 @@ Transformation classes are imported lazily inside the methods: importing them at
 module load would cycle (this package is imported by the transformations those
 imports pull in).
 """
+
 import ast
 import copy
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Set
@@ -26,21 +27,27 @@ import sympy
 
 from dace import properties, symbolic
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState,
-                             enclosing_region_symbols)
+from dace.sdfg.state import (
+    BreakBlock,
+    ConditionalBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+    enclosing_region_symbols,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.optionals import required
 from dace.sdfg.narrowing import as_basic, as_expr, config_int
 
 #: Default trip-count threshold below which a constant-trip loop is unrolled
 #: (``optimizer.canonicalization.unroll_limit``).
-DEFAULT_UNROLL_LIMIT = config_int('optimizer', 'canonicalization', 'unroll_limit')
-DEFAULT_UNROLL_TASKLET_BUDGET = config_int('optimizer', 'canonicalization', 'unroll_tasklet_budget')
+DEFAULT_UNROLL_LIMIT = config_int("optimizer", "canonicalization", "unroll_limit")
+DEFAULT_UNROLL_TASKLET_BUDGET = config_int("optimizer", "canonicalization", "unroll_tasklet_budget")
 #: Default maximum number of iterations peeled (per side) when searching for a
 #: peel that unblocks parallelization (``optimizer.canonicalization.peel_limit``).
-DEFAULT_PEEL_LIMIT = config_int('optimizer', 'canonicalization', 'peel_limit')
+DEFAULT_PEEL_LIMIT = config_int("optimizer", "canonicalization", "peel_limit")
 #: Modulo spellings the peel rewrite folds; ``CMod`` only over a nonnegative band.
-_MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'ftn_modulo', 'CMod'})
+_MODULO_FUNC_NAMES = frozenset({"Mod", "py_mod", "ftn_modulo", "CMod"})
 #: "not built yet", distinct from a built-but-absent value.
 _UNBUILT = object()
 
@@ -99,7 +106,7 @@ def _retyped(expr, sdfg, scoped: Optional[Dict[str, Any]] = None):
         declared = scoped[sym.name] if scoped is not None and sym.name in scoped else sdfg.symbols.get(sym.name)
         if declared is None or declared == sym.dtype:
             continue
-        kept = {k: v for k, v in sym.assumptions0.items() if k in ('nonnegative', 'positive', 'integer')}
+        kept = {k: v for k, v in sym.assumptions0.items() if k in ("nonnegative", "positive", "integer")}
         repl[sym] = symbolic.symbol(sym.name, dtype=declared, **kept)
     return expr.subs(repl) if repl else expr
 
@@ -121,7 +128,7 @@ def _unified(expr, *context):
         return expr
     widest: Dict[str, Any] = {}
     for other in context:
-        for sym in getattr(other, 'free_symbols', ()):
+        for sym in getattr(other, "free_symbols", ()):
             if not isinstance(sym, symbolic.symbol):
                 continue
             best = widest.get(sym.name)
@@ -151,9 +158,10 @@ def _is_zero(expr) -> bool:
 def _unique_block_label(sdfg: SDFG, base: str) -> str:
     """A control-flow-block label not currently used anywhere in ``sdfg``."""
     import itertools
+
     existing = {b.label for b in sdfg.all_control_flow_blocks()}
     for n in itertools.count():
-        cand = f'{base}_p{n}'
+        cand = f"{base}_p{n}"
         if cand not in existing:
             return cand
 
@@ -167,6 +175,7 @@ def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> Optional[int]:
     embed the pass, not part of that fix. With the bail in place the ``+ 1`` below is only ever reached
     for a positive stride, where it is the correct inclusive-end adjustment."""
     from dace.transformation.passes.analysis import loop_analysis
+
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
     stride = loop_analysis.get_loop_stride(loop)
@@ -239,6 +248,7 @@ def _local_state_fusion(sdfg: SDFG, region) -> int:
     of the SDFG untouched. Interstate matching ignores ``apply_transformations``' ``states=`` filter,
     so drive the fusion on each adjacent pair directly. Returns the number fused."""
     from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+
     fused = 0
     # Collected ONCE. State fusion merges two states inside a region; it neither creates nor
     # removes a control-flow region, so this list -- and each region's ``cfg_id`` below -- stays
@@ -314,21 +324,23 @@ class ShortLoopUnroll(ppl.Pass):
     nodes that every later canonicalize stage walked. Inner loops do not block an unroll; CloudSC's species
     loops hold symbolic inner loops, and at most 80 tasklets."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     unroll_limit = properties.Property(
         dtype=int,
         default=DEFAULT_UNROLL_LIMIT,
-        desc='Fully unroll constant-trip loops with at most this many iterations (0 disables).')
+        desc="Fully unroll constant-trip loops with at most this many iterations (0 disables).",
+    )
 
     unroll_tasklet_budget = properties.Property(
         dtype=int,
         default=DEFAULT_UNROLL_TASKLET_BUDGET,
-        desc='Leave a loop rolled when its body holds a map or more than this many tasklets.')
+        desc="Leave a loop rolled when its body holds a map or more than this many tasklets.",
+    )
 
-    def __init__(self,
-                 unroll_limit: int = DEFAULT_UNROLL_LIMIT,
-                 unroll_tasklet_budget: int = DEFAULT_UNROLL_TASKLET_BUDGET):
+    def __init__(
+        self, unroll_limit: int = DEFAULT_UNROLL_LIMIT, unroll_tasklet_budget: int = DEFAULT_UNROLL_TASKLET_BUDGET
+    ):
         self.unroll_limit = unroll_limit
         self.unroll_tasklet_budget = unroll_tasklet_budget
 
@@ -362,6 +374,7 @@ class ShortLoopUnroll(ppl.Pass):
         skips the per-apply full-SDFG propagation; the pass propagates once at its end.
         """
         from dace.transformation.interstate.loop_unroll import LoopUnroll
+
         try:
             if not LoopUnroll.can_be_applied_to(sdfg=loop.sdfg, loop=loop):
                 return None
@@ -431,6 +444,7 @@ class ShortLoopUnroll(ppl.Pass):
         if unrolled:
             # Propagate once, at the end of the pass (not per-apply).
             from dace.sdfg.propagation import propagate_memlets_sdfg
+
             propagate_memlets_sdfg(sdfg)
             return unrolled
         return 0 if partial else None
@@ -457,14 +471,15 @@ class BestEffortLoopPeeling(ppl.Pass):
     ``can_be_applied_to``, never applying it. The actual parallelization is the pipeline's job.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     peel_limit = properties.Property(
         dtype=int,
         default=DEFAULT_PEEL_LIMIT,
-        desc='Bounds the wrapping-modulo peel to 1..peel_limit iterations (front/back/both), keeping '
-        'the smallest peel that folds the wrap away. Also underwrites the split range proofs: a loop '
-        'worth peeling by k <= peel_limit is assumed to run more than peel_limit times (0 disables).')
+        desc="Bounds the wrapping-modulo peel to 1..peel_limit iterations (front/back/both), keeping "
+        "the smallest peel that folds the wrap away. Also underwrites the split range proofs: a loop "
+        "worth peeling by k <= peel_limit is assumed to run more than peel_limit times (0 disables).",
+    )
 
     def __init__(self, peel_limit: int = DEFAULT_PEEL_LIMIT):
         self.peel_limit = peel_limit
@@ -488,10 +503,11 @@ class BestEffortLoopPeeling(ppl.Pass):
         """
         from dace.transformation.interstate.loop_peeling import LoopPeeling
         from dace.transformation.passes.analysis import loop_analysis
+
         # ``verify=False`` below skips LoopUnroll's own refusal of a loop with a break or continue.
         if loop_analysis.loop_jumps(loop):
             return False
-        sides = {'front': [True], 'back': [False], 'both': [True, False]}[direction]
+        sides = {"front": [True], "back": [False], "both": [True, False]}[direction]
         # A loop short enough to be fully consumed by the peel is the unroll
         # pass's job, not peeling's.
         trip = _constant_trip_count(loop, sdfg)
@@ -507,13 +523,9 @@ class BestEffortLoopPeeling(ppl.Pass):
                     loop.label = _unique_block_label(loop.sdfg, loop.label)
                 # Properties must go through ``options=`` -- bare kwargs are not
                 # applied, leaving ``count`` at LoopUnroll's default 0 (a no-op).
-                LoopPeeling().apply_to(sdfg=loop.sdfg,
-                                       loop=loop,
-                                       verify=False,
-                                       options={
-                                           'count': count,
-                                           'begin': begin
-                                       })
+                LoopPeeling().apply_to(
+                    sdfg=loop.sdfg, loop=loop, verify=False, options={"count": count, "begin": begin}
+                )
                 did = True
             except Exception:
                 continue
@@ -534,8 +546,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         ``(None, None)`` if the nest cannot be isolated cleanly."""
         import dace
         from dace import serialize
+
         try:
-            mini = dace.SDFG(sdfg.name + '_peelprobe')
+            mini = dace.SDFG(sdfg.name + "_peelprobe")
             for sname, stype in sdfg.symbols.items():
                 mini.add_symbol(sname, stype)
             # Arrays referenced by the loop body and its interstate edges.
@@ -556,11 +569,9 @@ class BestEffortLoopPeeling(ppl.Pass):
             # symbolic-property deserializer refuses without it); a loop with a
             # symbolic subset such as ``a[N // 2]`` (``int_floor``) would otherwise
             # fail the round-trip and the nest be wrongly treated as un-isolable.
-            mini_loop = serialize.from_json(serialize.to_json(loop),
-                                            context={
-                                                'sdfg': mini,
-                                                'version': dace.__version__
-                                            })
+            mini_loop = serialize.from_json(
+                serialize.to_json(loop), context={"sdfg": mini, "version": dace.__version__}
+            )
             mini.add_node(mini_loop, is_start_block=True)
             mini.validate()
             return mini, mini_loop
@@ -759,8 +770,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
             w = _as_symbolic(wb)
             r = _as_symbolic(rb)
-            if not _is_zero(as_expr(_as_symbolic(we)) -
-                            as_expr(w)) or not _is_zero(as_expr(_as_symbolic(re_)) - as_expr(r)):
+            if not _is_zero(as_expr(_as_symbolic(we)) - as_expr(w)) or not _is_zero(
+                as_expr(_as_symbolic(re_)) - as_expr(r)
+            ):
                 return ()  # a multi-element range in this dim is not a clean point access
             # Each side's OWN spelling of the loop variable: a differently-assumed instance is a
             # different sympy symbol, against which ``coeff`` silently answers 0.
@@ -874,13 +886,15 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return None  # non-loop-var dimension does not match -> no collision
         return sol
 
-    def _split_loop_at(self,
-                       sdfg: SDFG,
-                       loop: LoopRegion,
-                       x,
-                       middle_singleton: bool = True,
-                       clamp: FrozenSet[str] = frozenset(),
-                       reuse_loop: bool = False) -> bool:
+    def _split_loop_at(
+        self,
+        sdfg: SDFG,
+        loop: LoopRegion,
+        x,
+        middle_singleton: bool = True,
+        clamp: FrozenSet[str] = frozenset(),
+        reuse_loop: bool = False,
+    ) -> bool:
         """Index-set-split ``loop`` at iteration ``x`` into range segments, each a
         clone of the body wired in sequence in place of the loop. Unit stride only;
         returns whether it split.
@@ -921,6 +935,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
         from dace.transformation.passes.analysis import loop_analysis
+
         # A break leaves only its own segment, and every segment after it would still run.
         if any(isinstance(block, BreakBlock) for block in loop_analysis.loop_jumps(loop)):
             return False
@@ -981,8 +996,8 @@ class BestEffortLoopPeeling(ppl.Pass):
             before = clone_segment()
             # [start, x-1]; clamped to ``end + 1`` where ``x <= end`` is not provable, so an ``x``
             # past the end makes this segment exactly the original loop instead of overrunning it.
-            hi = f'min(({x}), ({end}) + 1)' if 'before' in clamp else f'({x})'
-            before.loop_condition = CodeBlock(f'{ivar} < {hi}')
+            hi = f"min(({x}), ({end}) + 1)" if "before" in clamp else f"({x})"
+            before.loop_condition = CodeBlock(f"{ivar} < {hi}")
             chain.append(before)
         if middle_singleton:
             # {x} intersected with [start, end]: at most a single iteration
@@ -991,18 +1006,18 @@ class BestEffortLoopPeeling(ppl.Pass):
             # iteration the loop never had. Nobody maps a singleton, so the min/max costs no
             # parallelism -- unlike the range segments, whose bounds must stay bare for
             # ``LoopToMap`` and are guarded by :meth:`_split_range_relations` instead.
-            at.init_statement = CodeBlock(f'{ivar} = max(({x}), ({start}))')
-            at.loop_condition = CodeBlock(f'{ivar} < min(({x}), ({end})) + 1')
+            at.init_statement = CodeBlock(f"{ivar} = max(({x}), ({start}))")
+            at.loop_condition = CodeBlock(f"{ivar} < min(({x}), ({end})) + 1")
             chain.append(at)
             if want_after:
                 after = clone_segment(last=True)  # [x+1, end], original condition
-                lo = f'max(({x}) + 1, ({start}))' if 'after' in clamp else f'({x}) + 1'
-                after.init_statement = CodeBlock(f'{ivar} = {lo}')
+                lo = f"max(({x}) + 1, ({start}))" if "after" in clamp else f"({x}) + 1"
+                after.init_statement = CodeBlock(f"{ivar} = {lo}")
                 chain.append(after)
         else:
             after = clone_segment(last=True)  # [x, end]: x joins the second half, original condition
-            lo = f'max(({x}), ({start}))' if 'after' in clamp else f'({x})'
-            after.init_statement = CodeBlock(f'{ivar} = {lo}')
+            lo = f"max(({x}), ({start}))" if "after" in clamp else f"({x})"
+            after.init_statement = CodeBlock(f"{ivar} = {lo}")
             chain.append(after)
 
         # A reused loop took its own edges with it; otherwise each edge moves over before the loop goes.
@@ -1044,15 +1059,16 @@ class BestEffortLoopPeeling(ppl.Pass):
         to prove). ``None`` means the bounds are unreadable and the caller must not split."""
         import sympy
         from dace.transformation.passes.analysis import loop_analysis
+
         sides = self._split_sides_needing_clamp(loop, x)
         if sides is None:
             return None  # bounds unreadable -> membership cannot even be stated
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         relations = set()
-        if 'before' in sides:
+        if "before" in sides:
             relations.add(sympy.LessThan(x, end))  # a `before` segment exists -> it must not overrun
-        if 'after' in sides:
+        if "after" in sides:
             relations.add(sympy.LessThan(start, x))  # an `after` segment exists -> it must not underrun
         return frozenset(relations)
 
@@ -1064,15 +1080,16 @@ class BestEffortLoopPeeling(ppl.Pass):
         that wants the bound left bare -- guarding the whole split with the membership relation
         (:meth:`_split_range_relations`). ``None`` when the bounds are unreadable."""
         from dace.transformation.passes.analysis import loop_analysis
+
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         if start is None or end is None:
             return None
         sides = set()
         if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x, start, end):
-            sides.add('before')
+            sides.add("before")
         if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start, start, end):
-            sides.add('after')
+            sides.add("after")
         return frozenset(sides)
 
     def _nonneg_in_loop(self, loop: LoopRegion, expr, start, end) -> bool:
@@ -1097,6 +1114,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         if self._provably_nonneg(expr):
             return True
         import sympy
+
         trip = symbolic.simplify(end - start + 1)
         if isinstance(trip, sympy.Symbol) and self._nonneg_assuming_large_modulus(expr, trip) is not None:
             return True
@@ -1106,13 +1124,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         # bounds. See :meth:`_provably_nonneg_symbolic`.
         return self._provably_nonneg_symbolic(expr)
 
-    def _specialize_index_set_split(self,
-                                    sdfg: SDFG,
-                                    loop: LoopRegion,
-                                    x,
-                                    relations,
-                                    middle_singleton: bool = True,
-                                    guarded: bool = False) -> None:
+    def _specialize_index_set_split(
+        self, sdfg: SDFG, loop: LoopRegion, x, relations, middle_singleton: bool = True, guarded: bool = False
+    ) -> None:
         """Replace ``loop`` with the index-set split at ``x``, in place.
 
         The split regroups the same iterations only inside the range (see :meth:`_split_loop_at`),
@@ -1139,10 +1153,11 @@ class BestEffortLoopPeeling(ppl.Pass):
             return
         # Avoid an import loop: loop_specialization imports this module's peeling helpers.
         from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+
         # A ``CodeBlock`` condition is PYTHON (``and``, not ``&&``), and the relation is rendered by
         # sympy's own printer -- not ``sym2cpp``, whose C ``/`` would turn an ``N // 2`` split point
         # into a true division. ``int_floor`` and friends round-trip through ``pystr_to_symbolic``.
-        condition = ' and '.join(f'({r})' for r in sorted(relations, key=str))
+        condition = " and ".join(f"({r})" for r in sorted(relations, key=str))
 
         def parallelize(par_loop, par_region, _owner):
             if self._split_loop_at(sdfg, par_loop, x, middle_singleton=middle_singleton):
@@ -1159,6 +1174,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         guard true for ONE iteration wants that iteration carved out (``middle_singleton``), a guard
         true over a RUN wants the two-way split that keeps the run whole."""
         from dace.transformation.interstate.loop_to_map import LoopToMap, loop_varying_symbols
+
         # Cheap structural gate FIRST: a loop with no ``if i == x`` equality guard and no
         # broadcast-conflict split point has no split candidate, so a split can never unblock it --
         # skip the can_be_applied probe AND the isolate-and-search (behaviour-identical: both paths
@@ -1212,14 +1228,15 @@ class BestEffortLoopPeeling(ppl.Pass):
             # the bare bound unlocks strictly more maps, the guarded emission is worth its
             # sequential fallback; when it unlocks the same, clamping is free and keeps the
             # fallback copy out (measured: the fallback doubled hybrid_sparse's residual loops).
-            for guarded in (False, True) if clamp else (False, ):
+            for guarded in (False, True) if clamp else (False,):
                 cand = copy.deepcopy(mini)
                 cloops = _loops(cand)
                 if not cloops:
                     continue
                 sides = frozenset() if guarded else clamp
-                if not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton, clamp=sides,
-                                           reuse_loop=True):
+                if not self._split_loop_at(
+                    cand, cloops[0], x, middle_singleton=singleton, clamp=sides, reuse_loop=True
+                ):
                     continue
                 self._clean_peeled_remainder(cand)
                 # Skipping a candidate that cannot beat the best is what a count <= best_count does anyway.
@@ -1319,6 +1336,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         non-negative coefficient and ``o = m - 1`` for a negative one (the latter is what
         needs ``o < m``), then checked at the smallest admissible ``m``."""
         import sympy
+
         s = symbolic.simplify(x)
         if as_basic(s).is_number:
             return frozenset() if s >= 0 else None
@@ -1360,6 +1378,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         ``block``, with inclusive bounds. Empty for a peeled iteration region (no
         enclosing loop), whose body holds a fixed, already-substituted index."""
         from dace.transformation.passes.analysis import loop_analysis
+
         ranges: Dict[Any, Any] = {}
         graph = block.parent_graph
         seen = set()
@@ -1372,10 +1391,11 @@ class BestEffortLoopPeeling(ppl.Pass):
                     owner = graph.sdfg
                     scoped = enclosing_region_symbols(graph, owner.symbols)
                     scoped.update(graph.new_symbols(scoped))
-                    ranges[_retyped(symbolic.pystr_to_symbolic(graph.loop_variable), owner,
-                                    scoped)] = (_retyped(_as_symbolic(start), owner,
-                                                         scoped), _retyped(_as_symbolic(end), owner, scoped))
-            graph = getattr(graph, 'parent_graph', None)
+                    ranges[_retyped(symbolic.pystr_to_symbolic(graph.loop_variable), owner, scoped)] = (
+                        _retyped(_as_symbolic(start), owner, scoped),
+                        _retyped(_as_symbolic(end), owner, scoped),
+                    )
+            graph = getattr(graph, "parent_graph", None)
         return ranges
 
     @staticmethod
@@ -1385,9 +1405,10 @@ class BestEffortLoopPeeling(ppl.Pass):
         call (see :data:`_MODULO_FUNC_NAMES`) -- else ``None``. Lets the rewrite
         accept whichever spelling defines the modulo."""
         import sympy
+
         if isinstance(node, sympy.Mod) and len(node.args) == 2:
             return node.args[0], node.args[1]
-        name = getattr(getattr(node, 'func', None), '__name__', None)
+        name = getattr(getattr(node, "func", None), "__name__", None)
         if name in _MODULO_FUNC_NAMES and len(node.args) == 2:
             return node.args[0], node.args[1]
         return None
@@ -1460,6 +1481,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         # whole range. Peeling/splitting shifts the argument by a bounded number of
         # strides, so the band index is within +/-(peel_limit + 1).
         import sympy
+
         # C's ``%`` agrees with the floored band only where the argument is nonnegative.
         first_band = 0 if isinstance(mod, symbolic.CMod) else -(self.peel_limit + 1)
         for t in range(first_band, self.peel_limit + 2):
@@ -1478,6 +1500,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         single-entry range box :meth:`_modulo_to_affine` reduces a modulo argument
         over; empty if the bounds are not recoverable."""
         from dace.transformation.passes.analysis import loop_analysis
+
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         if start is None or end is None or not loop.loop_variable:
@@ -1486,8 +1509,10 @@ class BestEffortLoopPeeling(ppl.Pass):
         scoped = enclosing_region_symbols(loop, owner.symbols)
         scoped.update(loop.new_symbols(scoped))
         return {
-            _retyped(symbolic.pystr_to_symbolic(loop.loop_variable), owner, scoped):
-            (_retyped(_as_symbolic(start), owner, scoped), _retyped(_as_symbolic(end), owner, scoped))
+            _retyped(symbolic.pystr_to_symbolic(loop.loop_variable), owner, scoped): (
+                _retyped(_as_symbolic(start), owner, scoped),
+                _retyped(_as_symbolic(end), owner, scoped),
+            )
         }
 
     def _affine_body_modulos(self, loop: LoopRegion, ranges: Optional[Dict[Any, Any]] = None):
@@ -1500,11 +1525,12 @@ class BestEffortLoopPeeling(ppl.Pass):
         ``ranges`` is ``loop``'s own range box (:meth:`_loop_own_ranges`); callers that already
         hold it pass it in, since recovering it re-reads and re-parses the loop bounds."""
         from dace import subsets
+
         if ranges is None:
             ranges = self._loop_own_ranges(loop)
         if not ranges:
             return
-        (ivar, _), = ranges.items()
+        ((ivar, _),) = ranges.items()
         for st in loop.states():
             for e in st.edges():
                 if e.data is None:
@@ -1526,8 +1552,10 @@ class BestEffortLoopPeeling(ppl.Pass):
                                     continue
                                 a = as_expr(arg).coeff(iv, 1)
                                 b = arg - a * iv
-                                if (symbolic.free_symbol_like(a, ivar) is not None
-                                        or symbolic.free_symbol_like(b, ivar) is not None):
+                                if (
+                                    symbolic.free_symbol_like(a, ivar) is not None
+                                    or symbolic.free_symbol_like(b, ivar) is not None
+                                ):
                                     continue  # arg not affine in the loop variable
                                 yield mod, arg, m, a, symbolic.simplify(b)
 
@@ -1561,7 +1589,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         ranges = self._loop_own_ranges(loop)
         if not ranges:
             return []
-        (ivar, (start, end)), = ranges.items()
+        ((ivar, (start, end)),) = ranges.items()
         points = []
         for _mod, _arg, m, a, b in self._affine_body_modulos(loop, ranges):
             if not (required(a).is_number and _is_zero(required(a) * a - 1)):
@@ -1596,7 +1624,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         # Smallest peel first (count ascending, single-side before both) so the
         # correctness fix touches as few iterations as possible.
         for count in range(1, self.peel_limit + 1):
-            for direction in ('front', 'back', 'both'):
+            for direction in ("front", "back", "both"):
                 cand = copy.deepcopy(mini)
                 cloops = _loops(cand)
                 if not cloops:
@@ -1669,6 +1697,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         the branch rather than aborting)."""
         import sympy
         from dace import subsets
+
         for st in sdfg.states():
             ranges = self._enclosing_loop_ranges(st)
             repl: Dict[Any, Any] = {}
@@ -1723,6 +1752,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
         from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
+
         PrivatizeScalars().apply_pass(candidate, {})
         SymbolPropagation().apply_pass(candidate, {})
         ConstantPropagation().apply_pass(candidate, {})
@@ -1772,6 +1802,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         lift, and there is none here. Falls back to the per-call form if the context cannot be built,
         so a graph the analysis chokes on is scored exactly as before rather than not at all."""
         from dace.transformation.interstate.loop_to_map import LoopToMap, build_lift_context, build_lift_invariants
+
         try:
             ctx = build_lift_context(candidate, build_lift_invariants(candidate))
         except Exception:
@@ -1829,12 +1860,9 @@ class BestEffortLoopPeeling(ppl.Pass):
             relations = self._split_range_relations(loop, x)
             if relations is None:
                 continue
-            self._specialize_index_set_split(sdfg,
-                                             loop,
-                                             x,
-                                             relations,
-                                             middle_singleton=middle_singleton,
-                                             guarded=guarded)
+            self._specialize_index_set_split(
+                sdfg, loop, x, relations, middle_singleton=middle_singleton, guarded=guarded
+            )
             applied += 1
         # 2. Peel a genuinely-wrapping body modulo to its floor-correct affine form,
         #    even for loops LoopToMap already maps (the wrap-around access otherwise
@@ -1881,11 +1909,12 @@ class BestEffortLoopPeeling(ppl.Pass):
         """
         from dace.codegen.common import sym2cpp
         from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+
         if not relations:
             if self._split_loop_at(sdfg, loop, x, middle_singleton=False):
                 self._clean_peeled_remainder(sdfg)
             return
-        condition = ' && '.join(sym2cpp(r) for r in sorted(relations, key=str))
+        condition = " && ".join(sym2cpp(r) for r in sorted(relations, key=str))
 
         def _parallelize(par_loop, par_region, _owner):
             if self._split_loop_at(sdfg, par_loop, x, middle_singleton=False):

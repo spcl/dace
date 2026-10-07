@@ -45,6 +45,7 @@ single-branch (no-else) :class:`ConditionalBlock` placed as the first (pre) / la
 block of the inner body, and the interstate-edge data (conditions **and** assignments) that
 fed the moved blocks is re-emitted inside the guarded region so nothing is silently dropped.
 """
+
 import copy
 from typing import Dict, List, Optional, Tuple
 
@@ -54,7 +55,7 @@ from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.subsets import Subset
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
+from dace.transformation.passes.analysis.loop_analysis import get_init_assignment, get_loop_end, get_loop_stride
 from dace.transformation.passes.move_if_into_loop import _linear_order
 from dace.sdfg.narrowing import as_basic, as_expr
 from dace.optionals import required
@@ -188,7 +189,7 @@ def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState]
         inner = inner_loops[0]
         idx = order.index(inner)
         pre = order[:idx]
-        post = order[idx + 1:]
+        post = order[idx + 1 :]
         if not pre and not post:
             continue  # already perfect
         if any(not isinstance(b, SDFGState) for b in pre + post):
@@ -256,9 +257,9 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
         # them at the boundary iteration via a trailing empty state inside the guard.
         e_into = edge_of[(pre[-1], inner)]
         if e_into.data.assignments:
-            pairs.append((SDFGState('pre_guard_tail'), copy.deepcopy(e_into.data)))
-        pre_region = _assemble_region(pairs, 'pre_guard_body')
-        pre_if = ConditionalBlock('pre_guard')
+            pairs.append((SDFGState("pre_guard_tail"), copy.deepcopy(e_into.data)))
+        pre_region = _assemble_region(pairs, "pre_guard_body")
+        pre_if = ConditionalBlock("pre_guard")
         pre_if.add_branch(CodeBlock(pre_pred), pre_region)
 
     post_if = None
@@ -268,14 +269,14 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
         # via a leading empty state inside the guard.
         e_outof = edge_of[(inner, post[0])]
         if e_outof.data.assignments:
-            pairs = [(SDFGState('post_guard_lead'), None), (post_copies[0], copy.deepcopy(e_outof.data))]
+            pairs = [(SDFGState("post_guard_lead"), None), (post_copies[0], copy.deepcopy(e_outof.data))]
         else:
             pairs = [(post_copies[0], None)]
         for k in range(1, len(post)):
             e = edge_of[(post[k - 1], post[k])]
             pairs.append((post_copies[k], copy.deepcopy(e.data)))
-        post_region = _assemble_region(pairs, 'post_guard_body')
-        post_if = ConditionalBlock('post_guard')
+        post_region = _assemble_region(pairs, "post_guard_body")
+        post_if = ConditionalBlock("post_guard")
         post_if.add_branch(CodeBlock(post_pred), post_region)
 
     old_start = inner.start_block
@@ -322,4 +323,4 @@ def sift_imperfect_nests(sdfg: SDFG) -> int:
     return count
 
 
-__all__ = ['sift_imperfect_nests']
+__all__ = ["sift_imperfect_nests"]

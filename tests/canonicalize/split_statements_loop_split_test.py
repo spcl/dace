@@ -17,6 +17,7 @@ with no ``LoopFission`` involved.
 The refusals are checked on the SDFG HASH, not just on the return value: the outlining is not free
 to undo, so every refusal has to be decided before the loop is touched.
 """
+
 import copy
 import os
 import subprocess
@@ -28,22 +29,25 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.canonicalize.split_statements import (SplitStatements, local_transient_index,
-                                                                      loop_local_transients)
+from dace.transformation.passes.canonicalize.split_statements import (
+    SplitStatements,
+    local_transient_index,
+    loop_local_transients,
+)
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
-def _loop_sdfg(name, arrays=('a', 'b', 'x', 'y')):
+def _loop_sdfg(name, arrays=("a", "b", "x", "y")):
     """``for i in range(1, N)`` over ``arrays``, with an empty FLAT body state."""
     sdfg = dace.SDFG(name)
     for nm in arrays:
         sdfg.add_array(nm, [N], dace.float64)
-    loop = LoopRegion('loop', 'i < N', 'i', 'i = 1', 'i = i + 1')
+    loop = LoopRegion("loop", "i < N", "i", "i = 1", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    return sdfg, loop, loop.add_state('body', is_start_block=True)
+    return sdfg, loop, loop.add_state("body", is_start_block=True)
 
 
 def carry_loop(name, shared_temp=False, ordering_edge=False):
@@ -55,26 +59,26 @@ def carry_loop(name, shared_temp=False, ordering_edge=False):
         two chains when they reuse one temporary name.
     """
     sdfg, _loop, st = _loop_sdfg(name)
-    sdfg.add_scalar('s1', dace.float64, transient=True)
+    sdfg.add_scalar("s1", dace.float64, transient=True)
 
-    t0 = st.add_tasklet('t0', {'inp'}, {'out'}, 'out = inp')
-    ws1 = st.add_access('s1')
-    st.add_edge(st.add_read('x'), None, t0, 'inp', dace.Memlet('x[i]'))
-    st.add_edge(t0, 'out', ws1, None, dace.Memlet('s1'))
+    t0 = st.add_tasklet("t0", {"inp"}, {"out"}, "out = inp")
+    ws1 = st.add_access("s1")
+    st.add_edge(st.add_read("x"), None, t0, "inp", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", ws1, None, dace.Memlet("s1"))
 
-    tadd = st.add_tasklet('_Add_', {'prev', 'sv'}, {'out'}, 'out = prev + sv')
-    st.add_edge(st.add_read('a'), None, tadd, 'prev', dace.Memlet('a[i - 1]'))
-    st.add_edge(ws1, None, tadd, 'sv', dace.Memlet('s1'))
-    st.add_edge(tadd, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    tadd = st.add_tasklet("_Add_", {"prev", "sv"}, {"out"}, "out = prev + sv")
+    st.add_edge(st.add_read("a"), None, tadd, "prev", dace.Memlet("a[i - 1]"))
+    st.add_edge(ws1, None, tadd, "sv", dace.Memlet("s1"))
+    st.add_edge(tadd, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
 
-    ry = st.add_read('y')
+    ry = st.add_read("y")
     if shared_temp:
-        tmul = st.add_tasklet('_Mult_', {'yy', 'sv'}, {'out'}, 'out = yy * sv')
-        st.add_edge(ws1, None, tmul, 'sv', dace.Memlet('s1'))
+        tmul = st.add_tasklet("_Mult_", {"yy", "sv"}, {"out"}, "out = yy * sv")
+        st.add_edge(ws1, None, tmul, "sv", dace.Memlet("s1"))
     else:
-        tmul = st.add_tasklet('_Mult_', {'yy'}, {'out'}, 'out = yy * 2.0')
-    st.add_edge(ry, None, tmul, 'yy', dace.Memlet('y[i]'))
-    st.add_edge(tmul, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+        tmul = st.add_tasklet("_Mult_", {"yy"}, {"out"}, "out = yy * 2.0")
+    st.add_edge(ry, None, tmul, "yy", dace.Memlet("y[i]"))
+    st.add_edge(tmul, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
     if ordering_edge:
         st.add_nedge(tadd, ry, dace.Memlet())
     return sdfg
@@ -97,9 +101,9 @@ def _split(sdfg):
 def _run(sdfg, n=32):
     """Compile and run over fixed inputs; returns the two written arrays."""
     rng = np.random.default_rng(7)
-    args = {'a': rng.random(n), 'b': np.zeros(n), 'x': rng.random(n), 'y': rng.random(n)}
+    args = {"a": rng.random(n), "b": np.zeros(n), "x": rng.random(n), "y": rng.random(n)}
     sdfg.compile()(**args, N=n)
-    return args['a'], args['b']
+    return args["a"], args["b"]
 
 
 def run_arrays(sdfg, n=32, seed=7):
@@ -118,7 +122,7 @@ def assert_matches_fused(split, fused):
     """The distributed loops must compute what the one fused loop computed, bit for bit."""
     want, got = run_arrays(fused), run_arrays(split)
     for name, expected in want.items():
-        assert np.array_equal(got[name], expected), f'{name} diverges from the fused loop'
+        assert np.array_equal(got[name], expected), f"{name} diverges from the fused loop"
 
 
 def _refuses(sdfg):
@@ -130,53 +134,47 @@ def _refuses(sdfg):
 
 def test_loop_temporaries_are_the_transients_nothing_outside_the_loop_observes():
     """``t`` lives in ``first`` only, ``c`` is its condition, ``z`` is unused; ``u`` and ``e`` escape."""
-    sdfg = dace.SDFG('loop_temporaries')
-    for nm in ('z', 'c', 'e', 'u', 't'):
+    sdfg = dace.SDFG("loop_temporaries")
+    for nm in ("z", "c", "e", "u", "t"):
         sdfg.add_scalar(nm, dace.int64, transient=True)
-    first = LoopRegion('first',
-                       condition_expr='i < N + c',
-                       loop_var='i',
-                       initialize_expr='i = 0',
-                       update_expr='i = i + 1',
-                       sdfg=sdfg)
-    second = LoopRegion('second',
-                        condition_expr='j < N',
-                        loop_var='j',
-                        initialize_expr='j = 0',
-                        update_expr='j = j + 1',
-                        sdfg=sdfg)
+    first = LoopRegion(
+        "first", condition_expr="i < N + c", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1", sdfg=sdfg
+    )
+    second = LoopRegion(
+        "second", condition_expr="j < N", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1", sdfg=sdfg
+    )
     sdfg.add_node(first, is_start_block=True)
     sdfg.add_node(second)
-    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'k': 'e'}))
-    first_body = first.add_state('first_body', is_start_block=True)
-    for nm in ('t', 'u', 'e'):
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"k": "e"}))
+    first_body = first.add_state("first_body", is_start_block=True)
+    for nm in ("t", "u", "e"):
         first_body.add_access(nm)
-    second.add_state('second_body', is_start_block=True).add_access('u')
+    second.add_state("second_body", is_start_block=True).add_access("u")
 
     index = local_transient_index(sdfg)
-    assert list(loop_local_transients(first, sdfg, index)) == ['z', 'c', 't']
-    assert list(loop_local_transients(second, sdfg, index)) == ['z']
-    assert list(loop_local_transients(first, sdfg)) == ['z', 'c', 't']
+    assert list(loop_local_transients(first, sdfg, index)) == ["z", "c", "t"]
+    assert list(loop_local_transients(second, sdfg, index)) == ["z"]
+    assert list(loop_local_transients(first, sdfg)) == ["z", "c", "t"]
 
 
 # The flat loop is distributed into one loop per statement.
 def test_flat_loop_splits_into_two_loops():
     """One loop in, two loops out -- the carry and the parallel statement, each self-contained."""
-    sdfg = carry_loop('flat_split')
+    sdfg = carry_loop("flat_split")
     assert len(_loops(sdfg)) == 1
     assert not [n for l in _loops(sdfg) for s in l.states() for n in s.nodes() if isinstance(n, nodes.NestedSDFG)]
 
     assert _split(sdfg) == 1
     loops = _loops(sdfg)
     assert len(loops) == 2
-    assert sorted(_written(sdfg, l) for l in loops) == [['a'], ['b']]
+    assert sorted(_written(sdfg, l) for l in loops) == [["a"], ["b"]]
     sdfg.validate()
 
 
 def test_flat_loop_split_preserves_values():
     """The real gate: two loops compute exactly what the one loop computed."""
-    ref_a, ref_b = _run(carry_loop('flat_ref'))
-    sdfg = carry_loop('flat_cand')
+    ref_a, ref_b = _run(carry_loop("flat_ref"))
+    sdfg = carry_loop("flat_cand")
     assert _split(sdfg) == 1
     got_a, got_b = _run(sdfg)
     assert np.array_equal(got_a, ref_a)
@@ -188,15 +186,15 @@ def test_ordering_edge_does_not_merge_the_loop_groups():
 
     It rides along verbatim inside whichever clone holds both its endpoints.
     """
-    sdfg = carry_loop('flat_order', ordering_edge=True)
+    sdfg = carry_loop("flat_order", ordering_edge=True)
     assert _split(sdfg) == 1
     assert len(_loops(sdfg)) == 2
     sdfg.validate()
 
 
 def test_ordering_edge_loop_split_preserves_values():
-    ref_a, ref_b = _run(carry_loop('flat_order_ref', ordering_edge=True))
-    sdfg = carry_loop('flat_order_cand', ordering_edge=True)
+    ref_a, ref_b = _run(carry_loop("flat_order_ref", ordering_edge=True))
+    sdfg = carry_loop("flat_order_cand", ordering_edge=True)
     assert _split(sdfg) == 1
     got_a, got_b = _run(sdfg)
     assert np.array_equal(got_a, ref_a)
@@ -210,7 +208,7 @@ def test_shared_temp_is_recomputed_in_each_loop():
     already recurses into the region being outlined), and left there both loops would write the one
     outer ``s1``. It is moved inside instead, so each loop derives its own from ``x``.
     """
-    sdfg = carry_loop('flat_shared', shared_temp=True)
+    sdfg = carry_loop("flat_shared", shared_temp=True)
     assert _split(sdfg) == 1
     loops = _loops(sdfg)
     assert len(loops) == 2
@@ -224,8 +222,8 @@ def test_shared_temp_is_recomputed_in_each_loop():
 
 
 def test_shared_temp_loop_split_preserves_values():
-    ref_a, ref_b = _run(carry_loop('flat_shared_ref', shared_temp=True))
-    sdfg = carry_loop('flat_shared_cand', shared_temp=True)
+    ref_a, ref_b = _run(carry_loop("flat_shared_ref", shared_temp=True))
+    sdfg = carry_loop("flat_shared_cand", shared_temp=True)
     assert _split(sdfg) == 1
     got_a, got_b = _run(sdfg)
     assert np.array_equal(got_a, ref_a)
@@ -238,47 +236,47 @@ def test_three_parallel_outputs_stay_in_one_loop():
     The split exists to free parallel work from a sequential recurrence, not to give every
     statement a loop: three full-length sweeps where one does is pure cost.
     """
-    sdfg, _loop, st = _loop_sdfg('flat_three', arrays=('a', 'b', 'c', 'x'))
-    for out in ('a', 'b', 'c'):
-        t = st.add_tasklet('t_' + out, {'xx'}, {'out'}, 'out = xx * 2.0')
-        st.add_edge(st.add_read('x'), None, t, 'xx', dace.Memlet('x[i]'))
-        st.add_edge(t, 'out', st.add_write(out), None, dace.Memlet(f'{out}[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_three", arrays=("a", "b", "c", "x"))
+    for out in ("a", "b", "c"):
+        t = st.add_tasklet("t_" + out, {"xx"}, {"out"}, "out = xx * 2.0")
+        st.add_edge(st.add_read("x"), None, t, "xx", dace.Memlet("x[i]"))
+        st.add_edge(t, "out", st.add_write(out), None, dace.Memlet(f"{out}[i]"))
     assert _refuses(sdfg)
 
 
-def _carry(st, out, src='x'):
-    t = st.add_tasklet('add_' + out, {'prev', 'xx'}, {'o'}, 'o = prev + xx')
-    st.add_edge(st.add_read(out), None, t, 'prev', dace.Memlet(f'{out}[i - 1]'))
-    st.add_edge(st.add_read(src), None, t, 'xx', dace.Memlet(f'{src}[i]'))
-    st.add_edge(t, 'o', st.add_write(out), None, dace.Memlet(f'{out}[i]'))
+def _carry(st, out, src="x"):
+    t = st.add_tasklet("add_" + out, {"prev", "xx"}, {"o"}, "o = prev + xx")
+    st.add_edge(st.add_read(out), None, t, "prev", dace.Memlet(f"{out}[i - 1]"))
+    st.add_edge(st.add_read(src), None, t, "xx", dace.Memlet(f"{src}[i]"))
+    st.add_edge(t, "o", st.add_write(out), None, dace.Memlet(f"{out}[i]"))
 
 
-def _parallel(st, out, src='x'):
-    t = st.add_tasklet('mul_' + out, {'xx'}, {'o'}, 'o = xx * 2.0')
-    st.add_edge(st.add_read(src), None, t, 'xx', dace.Memlet(f'{src}[i]'))
-    st.add_edge(t, 'o', st.add_write(out), None, dace.Memlet(f'{out}[i]'))
+def _parallel(st, out, src="x"):
+    t = st.add_tasklet("mul_" + out, {"xx"}, {"o"}, "o = xx * 2.0")
+    st.add_edge(st.add_read(src), None, t, "xx", dace.Memlet(f"{src}[i]"))
+    st.add_edge(t, "o", st.add_write(out), None, dace.Memlet(f"{out}[i]"))
 
 
 def test_carry_plus_two_parallel_yields_exactly_two_loops():
     """ONE loop for the recurrence and ONE for all the parallel work -- not one loop per output."""
-    sdfg, _loop, st = _loop_sdfg('flat_carry_two_par', arrays=('a', 'b', 'c', 'x'))
-    _carry(st, 'a')
-    _parallel(st, 'b')
-    _parallel(st, 'c')
+    sdfg, _loop, st = _loop_sdfg("flat_carry_two_par", arrays=("a", "b", "c", "x"))
+    _carry(st, "a")
+    _parallel(st, "b")
+    _parallel(st, "c")
     assert _split(sdfg) == 1
-    assert sorted(_written(sdfg, l) for l in _loops(sdfg)) == [['a'], ['b', 'c']]
+    assert sorted(_written(sdfg, l) for l in _loops(sdfg)) == [["a"], ["b", "c"]]
     sdfg.validate()
 
 
 def test_two_recurrences_share_one_loop_and_the_parallel_work_is_peeled():
     """Two carries stay TOGETHER: they are both sequential, so separating them buys no parallelism
     and costs a second full-length sweep. Only the parallel statement is peeled off."""
-    sdfg, _loop, st = _loop_sdfg('flat_two_carries', arrays=('a', 'b', 'c', 'x'))
-    _carry(st, 'a')
-    _carry(st, 'b')
-    _parallel(st, 'c')
+    sdfg, _loop, st = _loop_sdfg("flat_two_carries", arrays=("a", "b", "c", "x"))
+    _carry(st, "a")
+    _carry(st, "b")
+    _parallel(st, "c")
     assert _split(sdfg) == 1
-    assert sorted(_written(sdfg, l) for l in _loops(sdfg)) == [['a', 'b'], ['c']]
+    assert sorted(_written(sdfg, l) for l in _loops(sdfg)) == [["a", "b"], ["c"]]
     sdfg.validate()
 
 
@@ -290,43 +288,43 @@ def test_only_recurrences_leaves_the_loop_alone():
     ``canonicalize_reroll_unrolled_test.py::test_unroll_reduction_11_accs_value_and_reduce``, where
     an eleven-way split also brought back the half-sum the re-roll exists to avoid.
     """
-    sdfg, _loop, st = _loop_sdfg('flat_only_carries', arrays=('a', 'b', 'x'))
-    _carry(st, 'a')
-    _carry(st, 'b')
+    sdfg, _loop, st = _loop_sdfg("flat_only_carries", arrays=("a", "b", "x"))
+    _carry(st, "a")
+    _carry(st, "b")
     assert _refuses(sdfg)
 
 
 def nested_carry(name):
     """An outer ``j`` loop wrapping the straight-line ``i`` loop -- the split target is inner."""
     sdfg = dace.SDFG(name)
-    for nm in ('a', 'b', 'x', 'y'):
+    for nm in ("a", "b", "x", "y"):
         sdfg.add_array(nm, [M, N], dace.float64)
-    outer = LoopRegion('outer', 'j < M', 'j', 'j = 0', 'j = j + 1')
+    outer = LoopRegion("outer", "j < M", "j", "j = 0", "j = j + 1")
     sdfg.add_node(outer, is_start_block=True)
-    inner = LoopRegion('inner', 'i < N', 'i', 'i = 1', 'i = i + 1')
+    inner = LoopRegion("inner", "i < N", "i", "i = 1", "i = i + 1")
     outer.add_node(inner, is_start_block=True)
-    st = inner.add_state('body', is_start_block=True)
-    tadd = st.add_tasklet('_Add_', {'prev', 'xx'}, {'out'}, 'out = prev + xx')
-    st.add_edge(st.add_read('a'), None, tadd, 'prev', dace.Memlet('a[j, i - 1]'))
-    st.add_edge(st.add_read('x'), None, tadd, 'xx', dace.Memlet('x[j, i]'))
-    st.add_edge(tadd, 'out', st.add_write('a'), None, dace.Memlet('a[j, i]'))
-    tmul = st.add_tasklet('_Mult_', {'yy'}, {'out'}, 'out = yy * 2.0')
-    st.add_edge(st.add_read('y'), None, tmul, 'yy', dace.Memlet('y[j, i]'))
-    st.add_edge(tmul, 'out', st.add_write('b'), None, dace.Memlet('b[j, i]'))
+    st = inner.add_state("body", is_start_block=True)
+    tadd = st.add_tasklet("_Add_", {"prev", "xx"}, {"out"}, "out = prev + xx")
+    st.add_edge(st.add_read("a"), None, tadd, "prev", dace.Memlet("a[j, i - 1]"))
+    st.add_edge(st.add_read("x"), None, tadd, "xx", dace.Memlet("x[j, i]"))
+    st.add_edge(tadd, "out", st.add_write("a"), None, dace.Memlet("a[j, i]"))
+    tmul = st.add_tasklet("_Mult_", {"yy"}, {"out"}, "out = yy * 2.0")
+    st.add_edge(st.add_read("y"), None, tmul, "yy", dace.Memlet("y[j, i]"))
+    st.add_edge(tmul, "out", st.add_write("b"), None, dace.Memlet("b[j, i]"))
     return sdfg
 
 
 def _run_2d(sdfg, m=8, n=16):
     rng = np.random.default_rng(3)
-    args = {'a': rng.random((m, n)), 'b': np.zeros((m, n)), 'x': rng.random((m, n)), 'y': rng.random((m, n))}
+    args = {"a": rng.random((m, n)), "b": np.zeros((m, n)), "x": rng.random((m, n)), "y": rng.random((m, n))}
     sdfg.compile()(**args, M=m, N=n)
-    return args['a'], args['b']
+    return args["a"], args["b"]
 
 
 def test_inner_loop_of_a_nest_splits_and_preserves_values():
     """The outer loop is refused (its body is not a single state); the inner one distributes."""
-    ref_a, ref_b = _run_2d(nested_carry('nest_ref'))
-    sdfg = nested_carry('nest_cand')
+    ref_a, ref_b = _run_2d(nested_carry("nest_ref"))
+    sdfg = nested_carry("nest_cand")
     assert _split(sdfg) == 1
     assert len(_loops(sdfg)) == 3  # the outer loop plus the two it now contains
     sdfg.validate()
@@ -338,31 +336,31 @@ def test_inner_loop_of_a_nest_splits_and_preserves_values():
 def ordered_rmw_loop(name):
     """``a[i] = a[i-1] + x[i]; b[i] = a[i-1] * 2``: the split must order the writer of ``a`` first."""
     sdfg, _loop, st = _loop_sdfg(name)
-    ra = st.add_read('a')
-    tadd = st.add_tasklet('_Add_', {'prev', 'xx'}, {'out'}, 'out = prev + xx')
-    st.add_edge(ra, None, tadd, 'prev', dace.Memlet('a[i - 1]'))
-    st.add_edge(st.add_read('x'), None, tadd, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(tadd, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
-    tmul = st.add_tasklet('_Mult_', {'av'}, {'out'}, 'out = av * 2.0')
-    st.add_edge(ra, None, tmul, 'av', dace.Memlet('a[i - 1]'))
-    st.add_edge(tmul, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    ra = st.add_read("a")
+    tadd = st.add_tasklet("_Add_", {"prev", "xx"}, {"out"}, "out = prev + xx")
+    st.add_edge(ra, None, tadd, "prev", dace.Memlet("a[i - 1]"))
+    st.add_edge(st.add_read("x"), None, tadd, "xx", dace.Memlet("x[i]"))
+    st.add_edge(tadd, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    tmul = st.add_tasklet("_Mult_", {"av"}, {"out"}, "out = av * 2.0")
+    st.add_edge(ra, None, tmul, "av", dace.Memlet("a[i - 1]"))
+    st.add_edge(tmul, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
     return sdfg
 
 
-@pytest.mark.parametrize('build', [carry_loop, nested_carry, ordered_rmw_loop])
+@pytest.mark.parametrize("build", [carry_loop, nested_carry, ordered_rmw_loop])
 def test_loop_split_keeps_the_cfg_list_in_place(monkeypatch, build):
     """Outlining, cloning and inlining back rebuilt the CFG list of the whole tree three times per split."""
-    sdfg = build('split_cfg_list')
+    sdfg = build("split_cfg_list")
     resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
     assert _split(sdfg) == 1
-    assert '_split_one_loop' not in resets, resets
+    assert "_split_one_loop" not in resets, resets
     assert_cfg_list_as_after_a_reset(sdfg)
     sdfg.validate()
 
 
 def test_loop_split_is_idempotent():
     """Every loop the split leaves behind writes ONE output, so a second run has nothing to do."""
-    sdfg = carry_loop('flat_idem')
+    sdfg = carry_loop("flat_idem")
     assert _split(sdfg) == 1
     before = sdfg.hash_sdfg()
     assert _split(sdfg) is None
@@ -387,13 +385,11 @@ def test_loop_split_is_deterministic():
     way there would show up here as a different hash.
     """
     hashes = []
-    for seed in ('0', '12345'):
-        env = {**os.environ, 'PYTHONHASHSEED': seed}
-        out = subprocess.run([sys.executable, '-c', _DETERMINISM, __file__],
-                             capture_output=True,
-                             text=True,
-                             check=True,
-                             env=env)
+    for seed in ("0", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        out = subprocess.run(
+            [sys.executable, "-c", _DETERMINISM, __file__], capture_output=True, text=True, check=True, env=env
+        )
         hashes.append(out.stdout.strip().splitlines()[-1])
     assert hashes[0] == hashes[1]
 
@@ -407,21 +403,21 @@ def test_rmw_read_by_another_group_is_ordered_writer_first():
     ``i-1`` and never touched again, so the value ``b`` wants is already final by the time the
     carry loop ends. Writer first, and the numbers say so.
     """
-    sdfg, _loop, st = _loop_sdfg('flat_cross_rmw')
-    ra = st.add_read('a')
-    tadd = st.add_tasklet('_Add_', {'prev', 'xx'}, {'out'}, 'out = prev + xx')
-    st.add_edge(ra, None, tadd, 'prev', dace.Memlet('a[i - 1]'))
-    st.add_edge(st.add_read('x'), None, tadd, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(tadd, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
-    tmul = st.add_tasklet('_Mult_', {'av'}, {'out'}, 'out = av * 2.0')
-    st.add_edge(ra, None, tmul, 'av', dace.Memlet('a[i - 1]'))
-    st.add_edge(tmul, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_cross_rmw")
+    ra = st.add_read("a")
+    tadd = st.add_tasklet("_Add_", {"prev", "xx"}, {"out"}, "out = prev + xx")
+    st.add_edge(ra, None, tadd, "prev", dace.Memlet("a[i - 1]"))
+    st.add_edge(st.add_read("x"), None, tadd, "xx", dace.Memlet("x[i]"))
+    st.add_edge(tadd, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    tmul = st.add_tasklet("_Mult_", {"av"}, {"out"}, "out = av * 2.0")
+    st.add_edge(ra, None, tmul, "av", dace.Memlet("a[i - 1]"))
+    st.add_edge(tmul, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
 
     fused = copy.deepcopy(sdfg)
-    assert _split(sdfg) == 1, 'the ordered split must fire'
+    assert _split(sdfg) == 1, "the ordered split must fire"
     loops = _loops(sdfg)
     assert len(loops) == 2
-    assert [_written(sdfg, l) for l in loops] == [['a'], ['b']], 'the writer of a must run first'
+    assert [_written(sdfg, l) for l in loops] == [["a"], ["b"]], "the writer of a must run first"
     sdfg.validate()
     assert_matches_fused(sdfg, fused)
 
@@ -433,19 +429,19 @@ def test_write_read_across_groups_is_ordered_writer_first():
     loop had written by then" hold the same value at every index the reader touches. Only the
     sibling split, which cannot order anything, has to refuse this.
     """
-    sdfg, _loop, st = _loop_sdfg('flat_war', arrays=('b', 'c', 'x'))
-    t0 = st.add_tasklet('t0', {'xx'}, {'out'}, 'out = xx')
-    st.add_edge(st.add_read('x'), None, t0, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(t0, 'out', st.add_write('c'), None, dace.Memlet('c[i]'))
-    t1 = st.add_tasklet('t1', {'cc'}, {'out'}, 'out = cc')
-    st.add_edge(st.add_read('c'), None, t1, 'cc', dace.Memlet('c[i - 1]'))
-    st.add_edge(t1, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_war", arrays=("b", "c", "x"))
+    t0 = st.add_tasklet("t0", {"xx"}, {"out"}, "out = xx")
+    st.add_edge(st.add_read("x"), None, t0, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", st.add_write("c"), None, dace.Memlet("c[i]"))
+    t1 = st.add_tasklet("t1", {"cc"}, {"out"}, "out = cc")
+    st.add_edge(st.add_read("c"), None, t1, "cc", dace.Memlet("c[i - 1]"))
+    st.add_edge(t1, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
 
     fused = copy.deepcopy(sdfg)
-    assert _split(sdfg) == 1, 'the ordered split must fire'
+    assert _split(sdfg) == 1, "the ordered split must fire"
     loops = _loops(sdfg)
     assert len(loops) == 2
-    assert [_written(sdfg, l) for l in loops] == [['c'], ['b']], 'the writer of c must run first'
+    assert [_written(sdfg, l) for l in loops] == [["c"], ["b"]], "the writer of c must run first"
     sdfg.validate()
     assert_matches_fused(sdfg, fused)
 
@@ -459,25 +455,25 @@ def test_three_groups_are_ordered_by_topological_sort():
     leaves ``d``, then ``a``, then ``b`` -- an order two groups cannot express, which is the whole
     point of sorting the constraints instead of flipping a bit.
     """
-    sdfg, _loop, st = _loop_sdfg('flat_three_groups', arrays=('a', 'b', 'd', 'x', 'y', 'z', 'w'))
-    t_a = st.add_tasklet('_Add_', {'bb', 'xx'}, {'out'}, 'out = bb + xx')
-    st.add_edge(st.add_read('b'), None, t_a, 'bb', dace.Memlet('b[i]'))
-    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i - 1]'))
-    t_d = st.add_tasklet('_Mult_', {'aa', 'yy'}, {'out'}, 'out = aa * yy')
-    st.add_edge(st.add_read('a'), None, t_d, 'aa', dace.Memlet('a[i]'))
-    st.add_edge(st.add_read('y'), None, t_d, 'yy', dace.Memlet('y[i]'))
-    st.add_edge(t_d, 'out', st.add_write('d'), None, dace.Memlet('d[i]'))
-    t_b = st.add_tasklet('_Mult_b', {'zz', 'ww'}, {'out'}, 'out = zz * ww')
-    st.add_edge(st.add_read('z'), None, t_b, 'zz', dace.Memlet('z[i]'))
-    st.add_edge(st.add_read('w'), None, t_b, 'ww', dace.Memlet('w[i]'))
-    st.add_edge(t_b, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_three_groups", arrays=("a", "b", "d", "x", "y", "z", "w"))
+    t_a = st.add_tasklet("_Add_", {"bb", "xx"}, {"out"}, "out = bb + xx")
+    st.add_edge(st.add_read("b"), None, t_a, "bb", dace.Memlet("b[i]"))
+    st.add_edge(st.add_read("x"), None, t_a, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t_a, "out", st.add_write("a"), None, dace.Memlet("a[i - 1]"))
+    t_d = st.add_tasklet("_Mult_", {"aa", "yy"}, {"out"}, "out = aa * yy")
+    st.add_edge(st.add_read("a"), None, t_d, "aa", dace.Memlet("a[i]"))
+    st.add_edge(st.add_read("y"), None, t_d, "yy", dace.Memlet("y[i]"))
+    st.add_edge(t_d, "out", st.add_write("d"), None, dace.Memlet("d[i]"))
+    t_b = st.add_tasklet("_Mult_b", {"zz", "ww"}, {"out"}, "out = zz * ww")
+    st.add_edge(st.add_read("z"), None, t_b, "zz", dace.Memlet("z[i]"))
+    st.add_edge(st.add_read("w"), None, t_b, "ww", dace.Memlet("w[i]"))
+    st.add_edge(t_b, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
 
     fused = copy.deepcopy(sdfg)
-    assert _split(sdfg) == 1, 'the ordered split must fire'
+    assert _split(sdfg) == 1, "the ordered split must fire"
     loops = _loops(sdfg)
-    assert len(loops) == 3, 'one loop per group, not the two the pairwise rule could emit'
-    assert [_written(sdfg, l) for l in loops] == [['d'], ['a'], ['b']]
+    assert len(loops) == 3, "one loop per group, not the two the pairwise rule could emit"
+    assert [_written(sdfg, l) for l in loops] == [["d"], ["a"], ["b"]]
     sdfg.validate()
     assert_matches_fused(sdfg, fused)
 
@@ -490,21 +486,21 @@ def test_elementwise_rmw_is_not_a_recurrence():
     sequential; reading ``a`` as carried too leaves no free group and refuses the split, which is
     exactly the parallel work worth peeling (TSVC ``s222``).
     """
-    sdfg, _loop, st = _loop_sdfg('flat_elementwise_rmw', arrays=('a', 'e', 'x', 'y'))
-    t_a = st.add_tasklet('_Add_', {'aa', 'xx'}, {'out'}, 'out = aa + xx')
-    st.add_edge(st.add_read('a'), None, t_a, 'aa', dace.Memlet('a[i]'))
-    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
-    t_e = st.add_tasklet('_Mult_', {'ee', 'yy'}, {'out'}, 'out = ee * yy')
-    st.add_edge(st.add_read('e'), None, t_e, 'ee', dace.Memlet('e[i - 1]'))
-    st.add_edge(st.add_read('y'), None, t_e, 'yy', dace.Memlet('y[i]'))
-    st.add_edge(t_e, 'out', st.add_write('e'), None, dace.Memlet('e[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_elementwise_rmw", arrays=("a", "e", "x", "y"))
+    t_a = st.add_tasklet("_Add_", {"aa", "xx"}, {"out"}, "out = aa + xx")
+    st.add_edge(st.add_read("a"), None, t_a, "aa", dace.Memlet("a[i]"))
+    st.add_edge(st.add_read("x"), None, t_a, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t_a, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    t_e = st.add_tasklet("_Mult_", {"ee", "yy"}, {"out"}, "out = ee * yy")
+    st.add_edge(st.add_read("e"), None, t_e, "ee", dace.Memlet("e[i - 1]"))
+    st.add_edge(st.add_read("y"), None, t_e, "yy", dace.Memlet("y[i]"))
+    st.add_edge(t_e, "out", st.add_write("e"), None, dace.Memlet("e[i]"))
 
     fused = copy.deepcopy(sdfg)
-    assert _split(sdfg) == 1, 'the split must peel the elementwise statement off the recurrence'
+    assert _split(sdfg) == 1, "the split must peel the elementwise statement off the recurrence"
     loops = _loops(sdfg)
     assert len(loops) == 2
-    assert sorted(w for l in loops for w in _written(sdfg, l)) == ['a', 'e']
+    assert sorted(w for l in loops for w in _written(sdfg, l)) == ["a", "e"]
     sdfg.validate()
     assert_matches_fused(sdfg, fused)
 
@@ -516,14 +512,14 @@ def test_opposite_pulling_constraints_are_refused():
     rule names the reader. The two constraints form a cycle, and a cycle is not an order: the loop
     stands as it was. Sorting the constraints must not degenerate into picking one of them.
     """
-    sdfg, _loop, st = _loop_sdfg('flat_cycle')
-    t_a = st.add_tasklet('_Add_', {'bb', 'xx'}, {'out'}, 'out = bb + xx')
-    st.add_edge(st.add_read('b'), None, t_a, 'bb', dace.Memlet('b[i + 1]'))
-    st.add_edge(st.add_read('x'), None, t_a, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(t_a, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
-    t_b = st.add_tasklet('_Mult_', {'aa'}, {'out'}, 'out = aa * 2.0')
-    st.add_edge(st.add_read('a'), None, t_b, 'aa', dace.Memlet('a[i + 1]'))
-    st.add_edge(t_b, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_cycle")
+    t_a = st.add_tasklet("_Add_", {"bb", "xx"}, {"out"}, "out = bb + xx")
+    st.add_edge(st.add_read("b"), None, t_a, "bb", dace.Memlet("b[i + 1]"))
+    st.add_edge(st.add_read("x"), None, t_a, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t_a, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    t_b = st.add_tasklet("_Mult_", {"aa"}, {"out"}, "out = aa * 2.0")
+    st.add_edge(st.add_read("a"), None, t_b, "aa", dace.Memlet("a[i + 1]"))
+    st.add_edge(t_b, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
 
     assert _refuses(sdfg)
 
@@ -534,57 +530,57 @@ def test_scalar_rotation_is_refused():
     Each clone gets a private ``s`` and its own dead-code pruning, so the clone that consumes the
     rotation would lose the statement that produces it.
     """
-    sdfg, _loop, st = _loop_sdfg('flat_rotation', arrays=('a', 'b', 'x'))
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    tb = st.add_tasklet('tb', {'sv'}, {'out'}, 'out = sv')
-    st.add_edge(st.add_read('s'), None, tb, 'sv', dace.Memlet('s'))
-    st.add_edge(tb, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
-    ts = st.add_tasklet('ts', {'xx'}, {'out'}, 'out = xx')
-    st.add_edge(st.add_read('x'), None, ts, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(ts, 'out', st.add_write('s'), None, dace.Memlet('s'))
-    ta = st.add_tasklet('ta', {'xx'}, {'out'}, 'out = xx * 2.0')
-    st.add_edge(st.add_read('x'), None, ta, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(ta, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_rotation", arrays=("a", "b", "x"))
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    tb = st.add_tasklet("tb", {"sv"}, {"out"}, "out = sv")
+    st.add_edge(st.add_read("s"), None, tb, "sv", dace.Memlet("s"))
+    st.add_edge(tb, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
+    ts = st.add_tasklet("ts", {"xx"}, {"out"}, "out = xx")
+    st.add_edge(st.add_read("x"), None, ts, "xx", dace.Memlet("x[i]"))
+    st.add_edge(ts, "out", st.add_write("s"), None, dace.Memlet("s"))
+    ta = st.add_tasklet("ta", {"xx"}, {"out"}, "out = xx * 2.0")
+    st.add_edge(st.add_read("x"), None, ta, "xx", dace.Memlet("x[i]"))
+    st.add_edge(ta, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
     assert _refuses(sdfg)
 
 
 def test_wcr_output_is_refused():
     """A reduction store is not replicable per group."""
-    sdfg, _loop, st = _loop_sdfg('flat_wcr')
-    t0 = st.add_tasklet('t0', {'xx'}, {'out'}, 'out = xx')
-    st.add_edge(st.add_read('x'), None, t0, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(t0, 'out', st.add_write('a'), None, dace.Memlet('a[0]', wcr='lambda p, q: p + q'))
-    t1 = st.add_tasklet('t1', {'yy'}, {'out'}, 'out = yy * 2.0')
-    st.add_edge(st.add_read('y'), None, t1, 'yy', dace.Memlet('y[i]'))
-    st.add_edge(t1, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_wcr")
+    t0 = st.add_tasklet("t0", {"xx"}, {"out"}, "out = xx")
+    st.add_edge(st.add_read("x"), None, t0, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", st.add_write("a"), None, dace.Memlet("a[0]", wcr="lambda p, q: p + q"))
+    t1 = st.add_tasklet("t1", {"yy"}, {"out"}, "out = yy * 2.0")
+    st.add_edge(st.add_read("y"), None, t1, "yy", dace.Memlet("y[i]"))
+    st.add_edge(t1, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
     assert _refuses(sdfg)
 
 
 def test_data_dependent_trip_count_is_refused():
     """Both loops must sweep the SAME iteration space, so the condition may not read an array."""
-    sdfg = dace.SDFG('flat_while')
-    for nm in ('a', 'b', 'x', 'y'):
+    sdfg = dace.SDFG("flat_while")
+    for nm in ("a", "b", "x", "y"):
         sdfg.add_array(nm, [N], dace.float64)
-    sdfg.add_scalar('g', dace.float64)
-    loop = LoopRegion('loop', 'g > 0.0', 'i', 'i = 1', 'i = i + 1')
+    sdfg.add_scalar("g", dace.float64)
+    loop = LoopRegion("loop", "g > 0.0", "i", "i = 1", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    st = loop.add_state('body', is_start_block=True)
-    t0 = st.add_tasklet('t0', {'xx'}, {'out'}, 'out = xx')
-    st.add_edge(st.add_read('x'), None, t0, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(t0, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
-    t1 = st.add_tasklet('t1', {'yy'}, {'out'}, 'out = yy * 2.0')
-    st.add_edge(st.add_read('y'), None, t1, 'yy', dace.Memlet('y[i]'))
-    st.add_edge(t1, 'out', st.add_write('b'), None, dace.Memlet('b[i]'))
+    st = loop.add_state("body", is_start_block=True)
+    t0 = st.add_tasklet("t0", {"xx"}, {"out"}, "out = xx")
+    st.add_edge(st.add_read("x"), None, t0, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    t1 = st.add_tasklet("t1", {"yy"}, {"out"}, "out = yy * 2.0")
+    st.add_edge(st.add_read("y"), None, t1, "yy", dace.Memlet("y[i]"))
+    st.add_edge(t1, "out", st.add_write("b"), None, dace.Memlet("b[i]"))
     assert _refuses(sdfg)
 
 
 def test_counter_read_after_the_loop_is_refused():
     """The outlining exports such a counter as an extra scalar output the clones cannot share."""
-    sdfg = carry_loop('flat_exported_counter')
-    after = sdfg.add_state('after')
+    sdfg = carry_loop("flat_exported_counter")
+    after = sdfg.add_state("after")
     sdfg.add_edge(_loops(sdfg)[0], after, dace.InterstateEdge())
-    t = after.add_tasklet('t', {}, {'out'}, 'out = i')
-    after.add_edge(t, 'out', after.add_write('b'), None, dace.Memlet('b[0]'))
+    t = after.add_tasklet("t", {}, {"out"}, "out = i")
+    after.add_edge(t, "out", after.add_write("b"), None, dace.Memlet("b[0]"))
     assert _refuses(sdfg)
 
 
@@ -595,44 +591,44 @@ def test_s2710_shaped_guarded_rmw_stays_refused():
     if-arm's update to ``a`` flips ``a[i] > b[i]`` and the else-arm's store to ``b`` then fires on
     if-arm lanes. The body is not a single state, so the loop path never even starts.
     """
-    sdfg = dace.SDFG('flat_guarded_rmw')
-    for nm in ('a', 'b', 'x'):
+    sdfg = dace.SDFG("flat_guarded_rmw")
+    for nm in ("a", "b", "x"):
         sdfg.add_array(nm, [N], dace.float64)
-    sdfg.add_scalar('g', dace.float64, transient=True)
-    loop = LoopRegion('loop', 'i < N', 'i', 'i = 1', 'i = i + 1')
+    sdfg.add_scalar("g", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 1", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
 
-    pre = loop.add_state('guard', is_start_block=True)
-    tg = pre.add_tasklet('g', {'av', 'bv'}, {'out'}, 'out = 1.0 if av > bv else 0.0')
-    pre.add_edge(pre.add_read('a'), None, tg, 'av', dace.Memlet('a[i]'))
-    pre.add_edge(pre.add_read('b'), None, tg, 'bv', dace.Memlet('b[i]'))
-    pre.add_edge(tg, 'out', pre.add_write('g'), None, dace.Memlet('g'))
+    pre = loop.add_state("guard", is_start_block=True)
+    tg = pre.add_tasklet("g", {"av", "bv"}, {"out"}, "out = 1.0 if av > bv else 0.0")
+    pre.add_edge(pre.add_read("a"), None, tg, "av", dace.Memlet("a[i]"))
+    pre.add_edge(pre.add_read("b"), None, tg, "bv", dace.Memlet("b[i]"))
+    pre.add_edge(tg, "out", pre.add_write("g"), None, dace.Memlet("g"))
 
-    cond = ConditionalBlock('arms')
+    cond = ConditionalBlock("arms")
     loop.add_node(cond)
     loop.add_edge(pre, cond, dace.InterstateEdge())
-    then_body = ControlFlowRegion('then_body', sdfg=sdfg)
-    st_then = then_body.add_state('t', is_start_block=True)
-    ta = st_then.add_tasklet('ta', {'av', 'xv'}, {'out'}, 'out = av + xv')
-    st_then.add_edge(st_then.add_read('a'), None, ta, 'av', dace.Memlet('a[i]'))
-    st_then.add_edge(st_then.add_read('x'), None, ta, 'xv', dace.Memlet('x[i]'))
-    st_then.add_edge(ta, 'out', st_then.add_write('a'), None, dace.Memlet('a[i]'))
-    cond.add_branch(dace.properties.CodeBlock('g > 0.0'), then_body)
-    else_body = ControlFlowRegion('else_body', sdfg=sdfg)
-    st_else = else_body.add_state('e', is_start_block=True)
-    tb = st_else.add_tasklet('tb', {'bv'}, {'out'}, 'out = bv * 2.0')
-    st_else.add_edge(st_else.add_read('b'), None, tb, 'bv', dace.Memlet('b[i]'))
-    st_else.add_edge(tb, 'out', st_else.add_write('b'), None, dace.Memlet('b[i]'))
+    then_body = ControlFlowRegion("then_body", sdfg=sdfg)
+    st_then = then_body.add_state("t", is_start_block=True)
+    ta = st_then.add_tasklet("ta", {"av", "xv"}, {"out"}, "out = av + xv")
+    st_then.add_edge(st_then.add_read("a"), None, ta, "av", dace.Memlet("a[i]"))
+    st_then.add_edge(st_then.add_read("x"), None, ta, "xv", dace.Memlet("x[i]"))
+    st_then.add_edge(ta, "out", st_then.add_write("a"), None, dace.Memlet("a[i]"))
+    cond.add_branch(dace.properties.CodeBlock("g > 0.0"), then_body)
+    else_body = ControlFlowRegion("else_body", sdfg=sdfg)
+    st_else = else_body.add_state("e", is_start_block=True)
+    tb = st_else.add_tasklet("tb", {"bv"}, {"out"}, "out = bv * 2.0")
+    st_else.add_edge(st_else.add_read("b"), None, tb, "bv", dace.Memlet("b[i]"))
+    st_else.add_edge(tb, "out", st_else.add_write("b"), None, dace.Memlet("b[i]"))
     cond.add_branch(None, else_body)
 
     assert _refuses(sdfg)
 
 
 def test_single_output_loop_is_left_alone():
-    sdfg, _loop, st = _loop_sdfg('flat_one_output', arrays=('a', 'x'))
-    t0 = st.add_tasklet('t0', {'xx'}, {'out'}, 'out = xx * 2.0')
-    st.add_edge(st.add_read('x'), None, t0, 'xx', dace.Memlet('x[i]'))
-    st.add_edge(t0, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    sdfg, _loop, st = _loop_sdfg("flat_one_output", arrays=("a", "x"))
+    t0 = st.add_tasklet("t0", {"xx"}, {"out"}, "out = xx * 2.0")
+    st.add_edge(st.add_read("x"), None, t0, "xx", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
     assert _refuses(sdfg)
 
 
@@ -651,7 +647,7 @@ def test_canonicalize_still_parallelizes_the_motivating_kernel():
 
     n = 32
     rng = np.random.default_rng(7)
-    base = {'a': rng.random(n), 'b': np.zeros(n), 'x': rng.random(n), 'y': rng.random(n)}
+    base = {"a": rng.random(n), "b": np.zeros(n), "x": rng.random(n), "y": rng.random(n)}
     ref = {k: v.copy() for k, v in base.items()}
     kern.to_sdfg(simplify=True).compile()(**ref, N=n)
 
@@ -661,16 +657,16 @@ def test_canonicalize_still_parallelizes_the_motivating_kernel():
     assert [n for s in sdfg.states() for n in s.nodes() if isinstance(n, nodes.MapEntry)]
     got = {k: v.copy() for k, v in base.items()}
     sdfg.compile()(**got, N=n)
-    assert np.allclose(got['a'], ref['a'])
-    assert np.allclose(got['b'], ref['b'])
+    assert np.allclose(got["a"], ref["a"])
+    assert np.allclose(got["b"], ref["b"])
 
 
 def test_split_loops_knob_off_leaves_the_loop_alone():
-    sdfg = carry_loop('flat_knob_off')
+    sdfg = carry_loop("flat_knob_off")
     before = sdfg.hash_sdfg()
     assert SplitStatements(split_loops=False).apply_pass(sdfg, {}) is None
     assert sdfg.hash_sdfg() == before
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

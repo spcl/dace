@@ -31,6 +31,7 @@ Out of scope:
   through the new positive-iterator form.
 * While loops (no ``loop_variable``).
 """
+
 from typing import Any, Dict, Optional
 
 import dace
@@ -43,7 +44,7 @@ from dace.transformation.passes.canonicalize.fresh_names import lowest_free_suff
 from dace.sdfg.narrowing import as_basic
 
 #: Prefix for the fresh positive-direction iterator the rewrite introduces.
-POS_ITER_PREFIX = '_loop_pos_'
+POS_ITER_PREFIX = "_loop_pos_"
 
 
 def _is_negative(value: symbolic.SymbolicType) -> bool:
@@ -60,7 +61,7 @@ def _is_negative(value: symbolic.SymbolicType) -> bool:
 class NormalizeNegativeStride(ppl.Pass):
     """Rewrite negative-stride loops into positive-stride form with rebinding."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Symbols
@@ -97,7 +98,7 @@ class NormalizeNegativeStride(ppl.Pass):
             return False
 
         old_var = loop.loop_variable
-        new_var = f"{POS_ITER_PREFIX}{lowest_free_suffix(sdfg, (POS_ITER_PREFIX, ), with_free_symbols=True)}"
+        new_var = f"{POS_ITER_PREFIX}{lowest_free_suffix(sdfg, (POS_ITER_PREFIX,), with_free_symbols=True)}"
         # Declare the new iterator. Inherit the old variable's dtype where
         # known so downstream type-inference doesn't have to redo the work.
         new_var_dtype = sdfg.symbols.get(old_var, dace.int64)
@@ -133,4 +134,4 @@ class NormalizeNegativeStride(ppl.Pass):
         return True
 
 
-__all__ = ['NormalizeNegativeStride']
+__all__ = ["NormalizeNegativeStride"]

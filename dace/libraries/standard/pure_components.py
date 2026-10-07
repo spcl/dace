@@ -5,6 +5,7 @@ A ``pure`` expansion built from states, loops and Python tasklets is readable by
 compiles through the C++ generator like any other SDFG, and a tool that walks the graph (a Python emitter, an
 analysis) needs no knowledge of the library. These helpers keep such expansions short.
 """
+
 import copy
 from typing import Dict, Iterable, Optional
 
@@ -39,11 +40,11 @@ def element(nsdfg: dace.SDFG, name: str, position: str) -> str:
     """The memlet text of element ``position`` of array ``name`` counted in row-major order, the order the C++
     lowerings walk an operand through one pointer."""
     shape = nsdfg.arrays[name].shape
-    index = [f'{position}']
+    index = [f"{position}"]
     for extent in reversed(shape[1:]):
         extent_text = symbolic.symstr(extent, cpp_mode=False)
-        index[0:1] = [f'({index[0]}) // ({extent_text})', f'({index[0]}) % ({extent_text})']
-    return f'{name}[{", ".join(index)}]'
+        index[0:1] = [f"({index[0]}) // ({extent_text})", f"({index[0]}) % ({extent_text})"]
+    return f"{name}[{', '.join(index)}]"
 
 
 def chain(region: ControlFlowRegion, blocks: Iterable[ControlFlowBlock]) -> None:
@@ -56,13 +57,14 @@ def chain(region: ControlFlowRegion, blocks: Iterable[ControlFlowBlock]) -> None
         previous = block
 
 
-def counted_loop(label: str, var: str, start: str, stop: str, step: str = '1') -> LoopRegion:
+def counted_loop(label: str, var: str, start: str, stop: str, step: str = "1") -> LoopRegion:
     """``for var in range(start, stop, step)`` with a positive ``step``, as a loop region."""
-    return LoopRegion(label, f'{var} < {stop}', var, f'{var} = {start}', f'{var} = {var} + {step}')
+    return LoopRegion(label, f"{var} < {stop}", var, f"{var} = {start}", f"{var} = {var} + {step}")
 
 
-def tasklet_state(sdfg: dace.SDFG, label: str, code: str, reads: Dict[str, Memlet],
-                  writes: Dict[str, Memlet]) -> dace.SDFGState:
+def tasklet_state(
+    sdfg: dace.SDFG, label: str, code: str, reads: Dict[str, Memlet], writes: Dict[str, Memlet]
+) -> dace.SDFGState:
     """A detached state of ``sdfg`` holding one Python tasklet; ``reads`` and ``writes`` map each connector to
     the memlet it moves, whose data names the access node."""
     state = dace.SDFGState(label, sdfg=sdfg)

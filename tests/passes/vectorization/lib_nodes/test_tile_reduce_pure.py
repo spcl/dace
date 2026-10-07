@@ -10,6 +10,7 @@ SDFG variant.
 Single vectorization config is sufficient since the reduction emission is
 invariant across knobs (the lib node owns the per-arch lowering).
 """
+
 import numpy as np
 
 import dace
@@ -40,13 +41,15 @@ def _build_reduce_sdfg(widths, op: str, axis, has_mask: bool, dtype=dace.float64
     """Build a minimal SDFG: SRC tile (+ optional MASK) -> TileReduce -> DST."""
     K = len(widths)
     if axis is None:
-        dst_shape = (1, )
+        dst_shape = (1,)
     else:
-        dst_shape = tuple(w for d, w in enumerate(widths) if d != axis) or (1, )
+        dst_shape = tuple(w for d, w in enumerate(widths) if d != axis) or (1,)
     op_tag = {"+": "add", "*": "mul", "min": "min", "max": "max"}[op]
-    sdfg = dace.SDFG(f"tile_reduce_pure_{'x'.join(str(w) for w in widths)}_{op_tag}_"
-                     f"{'full' if axis is None else f'ax{axis}'}_"
-                     f"{'m' if has_mask else 'nm'}")
+    sdfg = dace.SDFG(
+        f"tile_reduce_pure_{'x'.join(str(w) for w in widths)}_{op_tag}_"
+        f"{'full' if axis is None else f'ax{axis}'}_"
+        f"{'m' if has_mask else 'nm'}"
+    )
     sdfg.add_array("SRC", widths, dtype, transient=False)
     sdfg.add_array("DST", dst_shape, dtype, transient=False)
     if has_mask:
@@ -89,14 +92,14 @@ def _run_reduce(widths, op, axis, has_mask, seed, mask_arr=None):
 
 def test_k1_sum_full():
     """Sum-reduce a K=1 tile to a scalar."""
-    SRC, DST, _ = _run_reduce(widths=(8, ), op="+", axis=None, has_mask=False, seed=1)
+    SRC, DST, _ = _run_reduce(widths=(8,), op="+", axis=None, has_mask=False, seed=1)
     ref = _np_reduce("+", SRC, axis=None)
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
 
 def test_k1_max_full():
     """Max-reduce a K=1 tile to a scalar."""
-    SRC, DST, _ = _run_reduce(widths=(8, ), op="max", axis=None, has_mask=False, seed=2)
+    SRC, DST, _ = _run_reduce(widths=(8,), op="max", axis=None, has_mask=False, seed=2)
     ref = _np_reduce("max", SRC, axis=None)
     np.testing.assert_allclose(DST.flatten(), [ref], rtol=1e-12, atol=1e-12)
 
@@ -124,7 +127,7 @@ def test_k2_prod_full():
 def test_k2_sum_axis0():
     """Sum-reduce a K=2 tile along axis 0 — output shape (W1,)."""
     SRC, DST, dst_shape = _run_reduce(widths=(4, 8), op="+", axis=0, has_mask=False, seed=5)
-    assert dst_shape == (8, )
+    assert dst_shape == (8,)
     ref = _np_reduce("+", SRC, axis=0)
     np.testing.assert_allclose(DST, ref, rtol=1e-12, atol=1e-12)
 
@@ -132,7 +135,7 @@ def test_k2_sum_axis0():
 def test_k2_sum_axis1():
     """Sum-reduce a K=2 tile along axis 1 — output shape (W0,)."""
     SRC, DST, dst_shape = _run_reduce(widths=(4, 8), op="+", axis=1, has_mask=False, seed=6)
-    assert dst_shape == (4, )
+    assert dst_shape == (4,)
     ref = _np_reduce("+", SRC, axis=1)
     np.testing.assert_allclose(DST, ref, rtol=1e-12, atol=1e-12)
 
@@ -142,9 +145,9 @@ def test_k2_sum_axis1():
 
 def test_k1_sum_full_masked():
     """Masked sum reduction: inactive lanes contribute the ``+`` identity (0)."""
-    widths = (8, )
+    widths = (8,)
     rng = np.random.default_rng(seed=21)
-    M = (rng.random(widths) > 0.5)
+    M = rng.random(widths) > 0.5
     SRC, DST, _ = _run_reduce(widths=widths, op="+", axis=None, has_mask=True, seed=21, mask_arr=M)
     masked_src = np.where(M, SRC, IDENT["+"])
     ref = _np_reduce("+", masked_src, axis=None)
@@ -155,7 +158,7 @@ def test_k2_sum_full_masked():
     """Masked sum reduction on a K=2 tile to a scalar."""
     widths = (4, 8)
     rng = np.random.default_rng(seed=22)
-    M = (rng.random(widths) > 0.3)
+    M = rng.random(widths) > 0.3
     SRC, DST, _ = _run_reduce(widths=widths, op="+", axis=None, has_mask=True, seed=22, mask_arr=M)
     masked_src = np.where(M, SRC, IDENT["+"])
     ref = _np_reduce("+", masked_src, axis=None)
@@ -167,9 +170,9 @@ def test_k2_sum_axis0_masked():
     so each kept-dim slot is the sum of active lanes mapping to it."""
     widths = (4, 8)
     rng = np.random.default_rng(seed=23)
-    M = (rng.random(widths) > 0.4)
+    M = rng.random(widths) > 0.4
     SRC, DST, dst_shape = _run_reduce(widths=widths, op="+", axis=0, has_mask=True, seed=23, mask_arr=M)
-    assert dst_shape == (8, )
+    assert dst_shape == (8,)
     masked_src = np.where(M, SRC, IDENT["+"])
     ref = _np_reduce("+", masked_src, axis=0)
     np.testing.assert_allclose(DST, ref, rtol=1e-12, atol=1e-12)

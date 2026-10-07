@@ -99,6 +99,7 @@ needs concrete extents: with a SYMBOLIC size (the common case) the decision is u
 ``_sizes_are_concrete`` refuses the lift rather than gamble. A specialized program (constants
 substituted) with a small inner map is the case that still lifts.
 """
+
 import ast
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -113,9 +114,9 @@ from dace.transformation.transformation import explicit_cf_compatible
 from dace.optionals import required
 
 #: Python AST op -> WCR operator symbol for the associative/commutative reductions.
-REDUCTION_OPS: Dict[Type[ast.operator], str] = {ast.Add: '+', ast.Mult: '*'}
+REDUCTION_OPS: Dict[Type[ast.operator], str] = {ast.Add: "+", ast.Mult: "*"}
 #: min / max reductions arrive as a 2-argument Call.
-REDUCTION_FUNCS: Tuple[str, ...] = ('min', 'max')
+REDUCTION_FUNCS: Tuple[str, ...] = ("min", "max")
 
 
 def _reduction_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, Tuple[ast.AST, ast.AST]]]:
@@ -131,7 +132,7 @@ def _reduction_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, Tuple[ast
     other operand is the increment -- it may be any expression and becomes the
     WCR value verbatim (see :func:`_increment_ast`).
     """
-    if tasklet.language.name != 'Python' or len(tasklet.code.code) != 1:
+    if tasklet.language.name != "Python" or len(tasklet.code.code) != 1:
         return None
     stmt = tasklet.code.code[0]
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
@@ -139,8 +140,12 @@ def _reduction_operands(tasklet: nodes.Tasklet) -> Optional[Tuple[str, Tuple[ast
     rhs = stmt.value
     if isinstance(rhs, ast.BinOp) and type(rhs.op) in REDUCTION_OPS:
         return REDUCTION_OPS[type(rhs.op)], (rhs.left, rhs.right)
-    if (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id in REDUCTION_FUNCS
-            and len(rhs.args) == 2):
+    if (
+        isinstance(rhs, ast.Call)
+        and isinstance(rhs.func, ast.Name)
+        and rhs.func.id in REDUCTION_FUNCS
+        and len(rhs.args) == 2
+    ):
         return rhs.func.id, (rhs.args[0], rhs.args[1])
     return None
 
@@ -156,7 +161,7 @@ def _copy_input_connector(tasklet: nodes.Tasklet) -> Optional[str]:
     reduction tasklet so the lift matches whether or not the copy was cleaned
     (the cleaned direct shape is what the in-pipeline contour_integral has).
     """
-    if tasklet.language.name != 'Python' or len(tasklet.code.code) != 1:
+    if tasklet.language.name != "Python" or len(tasklet.code.code) != 1:
         return None
     stmt = tasklet.code.code[0]
     if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
@@ -202,10 +207,20 @@ def _increment_ast(tasklet: nodes.Tasklet, acc_conn: str) -> ast.AST:
 class _AccumulatorCandidate:
     """A matched in-place reduction into ``array`` inside one map, ready to lift."""
 
-    def __init__(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, tasklet: nodes.Tasklet,
-                 array: str, op: str, acc_conn: str, read_edge: MultiConnectorEdge[Memlet],
-                 entry_out_edge: MultiConnectorEdge[Memlet], tasklet_out_edge: MultiConnectorEdge[Memlet],
-                 exit_out_edge: MultiConnectorEdge[Memlet]) -> None:
+    def __init__(
+        self,
+        state: SDFGState,
+        map_entry: nodes.MapEntry,
+        map_exit: nodes.MapExit,
+        tasklet: nodes.Tasklet,
+        array: str,
+        op: str,
+        acc_conn: str,
+        read_edge: MultiConnectorEdge[Memlet],
+        entry_out_edge: MultiConnectorEdge[Memlet],
+        tasklet_out_edge: MultiConnectorEdge[Memlet],
+        exit_out_edge: MultiConnectorEdge[Memlet],
+    ) -> None:
         self.state = state
         self.map_entry = map_entry
         self.map_exit = map_exit
@@ -225,7 +240,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
     """Lift loop-carried in-place array reductions to WCR writes so the enclosing
     loop can be parallelized by ``LoopToMap``."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -275,8 +290,11 @@ class LiftLoopCarriedReduction(ppl.Pass):
         there is a blind gamble that usually loses. Refuse unless every relevant extent is
         concrete; a specialized program (constants substituted in) is still eligible."""
         syms: Dict = dict.fromkeys(cand.map_entry.map.range.free_symbols)
-        for bound in (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
-                      loop_analysis.get_loop_stride(loop)):
+        for bound in (
+            loop_analysis.get_init_assignment(loop),
+            loop_analysis.get_loop_end(loop),
+            loop_analysis.get_loop_stride(loop),
+        ):
             if bound is None:
                 return False  # an unanalyzable loop bound is not a proven constant either
             syms.update(dict.fromkeys(symbolic.pystr_to_symbolic(bound).free_symbols))
@@ -300,12 +318,13 @@ class LiftLoopCarriedReduction(ppl.Pass):
                         out.append(cand)
         return out
 
-    def _match_reduction(self, st: SDFGState, me: nodes.MapEntry, mx: nodes.MapExit,
-                         exit_out: MultiConnectorEdge[Memlet], array: str) -> Optional[_AccumulatorCandidate]:
+    def _match_reduction(
+        self, st: SDFGState, me: nodes.MapEntry, mx: nodes.MapExit, exit_out: MultiConnectorEdge[Memlet], array: str
+    ) -> Optional[_AccumulatorCandidate]:
         # The edge feeding this map-exit input connector carries the per-iteration
         # accumulator write; its subset is the element written each iteration.
         conn = exit_out.src_conn  # OUT_x
-        in_conn = 'IN' + conn[3:]
+        in_conn = "IN" + conn[3:]
         mx_in = [e for e in st.in_edges(mx) if e.dst_conn == in_conn]
         if len(mx_in) != 1:
             return None
@@ -317,14 +336,16 @@ class LiftLoopCarriedReduction(ppl.Pass):
         if tasklet is None:
             return None
         op, operands = _reduction_operands(tasklet)
-        operand_conns = dict.fromkeys(o.id for o in operands
-                                      if isinstance(o, ast.Name) and o.id in tasklet.in_connectors)
+        operand_conns = dict.fromkeys(
+            o.id for o in operands if isinstance(o, ast.Name) and o.id in tasklet.in_connectors
+        )
         # Accumulator read-back: map_entry -> tasklet, reading A at the write subset, into a
         # bare-Name reduction operand. Identify the accumulator by dataflow (which operand
         # reads exactly the written element), so the increment stays whatever the other
         # operand is -- and refuse ``out = out + out`` (both operands read A) as ambiguous.
         acc_edges = [
-            e for e in st.in_edges(tasklet)
+            e
+            for e in st.in_edges(tasklet)
             if e.src is me and e.dst_conn in operand_conns and e.data.data == array and e.data.subset == write_subset
         ]
         if len(acc_edges) != 1:
@@ -338,15 +359,17 @@ class LiftLoopCarriedReduction(ppl.Pass):
         if len([e for e in st.out_edges(me) if e.src_conn == entry_out.src_conn]) != 1:
             return None
         # the array read into the map entry feeding that accumulator connector
-        me_in_conn = 'IN' + entry_out.src_conn[3:]
+        me_in_conn = "IN" + entry_out.src_conn[3:]
         read_edges = [
-            e for e in st.in_edges(me)
+            e
+            for e in st.in_edges(me)
             if e.dst_conn == me_in_conn and isinstance(e.src, nodes.AccessNode) and e.src.data == array
         ]
         if len(read_edges) != 1:
             return None
-        return _AccumulatorCandidate(st, me, mx, tasklet, array, op, acc_conn, read_edges[0], entry_out, mx_in,
-                                     exit_out)
+        return _AccumulatorCandidate(
+            st, me, mx, tasklet, array, op, acc_conn, read_edges[0], entry_out, mx_in, exit_out
+        )
 
     def _accumulator_reads(self, body_states: List[SDFGState]) -> Dict[str, Dict[MultiConnectorEdge[Memlet], None]]:
         """Every ``AccessNode(A) -> *`` read edge of each array A across the loop body."""
@@ -360,7 +383,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
 
     def _apply_lift(self, c: _AccumulatorCandidate) -> None:
         st = c.state
-        wcr = f'lambda a, b: {c.op}(a, b)' if c.op in REDUCTION_FUNCS else f'lambda a, b: a {c.op} b'
+        wcr = f"lambda a, b: {c.op}(a, b)" if c.op in REDUCTION_FUNCS else f"lambda a, b: a {c.op} b"
         # Rewrite the tasklet to emit only the increment (drop the accumulator operand).
         inc = _increment_ast(c.tasklet, c.acc_conn)
         stmt = c.tasklet.code.code[0]
@@ -374,7 +397,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
         if c.acc_conn in c.tasklet.in_connectors:
             c.tasklet.remove_in_connector(c.acc_conn)
         me_out_conn = c.entry_out_edge.src_conn
-        me_in_conn = 'IN' + me_out_conn[3:]
+        me_in_conn = "IN" + me_out_conn[3:]
         if not any(e.src_conn == me_out_conn for e in st.out_edges(c.map_entry)):
             c.map_entry.remove_out_connector(me_out_conn)
             if not any(e.dst_conn == me_in_conn for e in st.in_edges(c.map_entry)):
@@ -383,4 +406,4 @@ class LiftLoopCarriedReduction(ppl.Pass):
             st.remove_node(c.read_edge.src)
 
 
-__all__ = ['LiftLoopCarriedReduction']
+__all__ = ["LiftLoopCarriedReduction"]

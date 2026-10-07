@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`WavefrontSkew`. Classical 2-D wavefront pattern (TSVC s2111)."""
+
 import pathlib
 import sys
 import tempfile
@@ -15,14 +16,14 @@ from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.wavefront_skew import (WavefrontSkew, SKEW_T_PREFIX, SKEW_P_PREFIX)
+from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew, SKEW_T_PREFIX, SKEW_P_PREFIX
 
 # The corpus program itself, imported as a package: its ``@dace.tasklet`` bodies lower to the
 # exact 2-D wavefront ``WavefrontSkew`` exposes -- the one real corpus beneficiary of the skew.
 from tests.corpus.polybench.medley.nussinov import nussinov as corpus_nussinov
 
-N = dace.symbol('N')
-tsteps = dace.symbol('tsteps')
+N = dace.symbol("N")
+tsteps = dace.symbol("tsteps")
 
 
 def _loops(sdfg):
@@ -68,14 +69,16 @@ def test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_ma
 
     loops = _loops(sdfg)
     assert len(loops) == 1, f"expected 1 outer t-loop after skew + inner-map; got {len(loops)}"
-    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), \
+    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), (
         f"surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
+    )
 
     map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert len(map_entries) == 1, f"expected exactly 1 inner Map; got {len(map_entries)}"
     map_node = map_entries[0].map
-    assert len(map_node.params) == 1 and map_node.params[0].startswith(SKEW_P_PREFIX), \
+    assert len(map_node.params) == 1 and map_node.params[0].startswith(SKEW_P_PREFIX), (
         f"inner Map should iterate over ``p``; got params={map_node.params}"
+    )
 
 
 def test_wavefront_skew_value_preserving():
@@ -107,6 +110,7 @@ def test_wavefront_skew_then_l2m_parallelises_inner():
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
     from dace.sdfg import nodes
+
     n_maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry))
     n_loops = len(_loops(sdfg))
     assert n_maps >= 1, f"expected at least one parallel Map after skewing + LoopToMap; got maps={n_maps}"
@@ -114,8 +118,9 @@ def test_wavefront_skew_then_l2m_parallelises_inner():
     # ``LoopToMap`` lifted the sequential diagonal, which is the race this test exists to forbid.
     loops = _loops(sdfg)
     assert n_loops == 1, f"the diagonal t-loop must survive LoopToMap; got {[c.loop_variable for c in loops]}"
-    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), \
+    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), (
         f"the surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
+    )
 
 
 @dace.program
@@ -133,8 +138,8 @@ def test_wavefront_skew_accepts_symbolic_offsets():
     """The matcher should now lift symbolic-offset wavefronts when the
     offset symbols are declared positive (``dace.symbol`` with ``positive=True``
     via the function argument types)."""
-    sym1 = dace.symbol('sym1', positive=True)
-    sym2 = dace.symbol('sym2', positive=True)
+    sym1 = dace.symbol("sym1", positive=True)
+    sym2 = dace.symbol("sym2", positive=True)
 
     @dace.program
     def prog_wavefront_skew_accepts_symbolic_offsets(aa: dace.float64[N, N]):
@@ -155,7 +160,7 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
     violation. A positive runtime value passes the guard and produces the
     correct skewed result.
     """
-    sym = dace.symbol('sym_unannot')  # no ``positive=True``
+    sym = dace.symbol("sym_unannot")  # no ``positive=True``
 
     @dace.program
     def prog_wavefront_skew_emits_runtime_guard_for_unannotated_symbol(aa: dace.float64[N, N]):
@@ -170,14 +175,14 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
 
     # A pre-state ``_skew_guard_*`` with a single zero-connector tasklet was
     # planted before the (now skewed) loop. Exactly one such tasklet exists.
-    guard_states = [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState) and s.label.startswith('_skew_guard_')]
-    assert len(guard_states) == 1, f'expected 1 guard state, got {len(guard_states)}'
+    guard_states = [s for s in sdfg.nodes() if isinstance(s, dace.SDFGState) and s.label.startswith("_skew_guard_")]
+    assert len(guard_states) == 1, f"expected 1 guard state, got {len(guard_states)}"
     guards = [
-        n for n in guard_states[0].nodes() if isinstance(n, dace.nodes.Tasklet) and n.label.startswith('_skew_guard_')
+        n for n in guard_states[0].nodes() if isinstance(n, dace.nodes.Tasklet) and n.label.startswith("_skew_guard_")
     ]
     assert len(guards) == 1
     assert guards[0].language == dace.dtypes.Language.Python
-    assert 'abort()' in guards[0].code.as_string
+    assert "abort()" in guards[0].code.as_string
 
     # Runtime check: a positive ``sym_unannot`` value passes the guard and
     # the result matches the un-skewed sequential oracle.
@@ -225,7 +230,8 @@ def test_wavefront_skew_runtime_guard_traps_on_violation(tmp_path):
     isolation prevents the trap from killing the test runner)."""
     import subprocess
     import textwrap
-    src = textwrap.dedent('''
+
+    src = textwrap.dedent("""
         import numpy as np
         import dace
         from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
@@ -242,18 +248,18 @@ def test_wavefront_skew_runtime_guard_traps_on_violation(tmp_path):
         assert WavefrontSkew().apply_pass(sdfg, {}) == 1
         print('BUILT', flush=True)
         sdfg(aa=np.zeros((8, 8)), N=8, sym_unannot=-1)  # negative -> trap
-    ''')
+    """)
     # A FILE, not ``python -c``: the child builds a ``@dace.program``, and the frontend reads it back
     # with ``inspect.getsource``, which has no source to find for a ``-c`` string -- the child then
     # died on that TypeError before ever reaching the guarded call.
-    script = tmp_path / 'wavefront_guard_child.py'
+    script = tmp_path / "wavefront_guard_child.py"
     script.write_text(src)
     res = subprocess.run([sys.executable, str(script)], capture_output=True, timeout=120)
-    ctx = f'(rc={res.returncode}, stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})'
+    ctx = f"(rc={res.returncode}, stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})"
     # Non-vacuity: without BUILT any child failure -- an import error, a skew that did not apply --
     # would satisfy the returncode check and the test could never fail.
-    assert b'BUILT' in res.stdout, f'child died before the guarded call {ctx}'
-    assert res.returncode != 0, f'runtime guard did not trap on a violating sym {ctx}'
+    assert b"BUILT" in res.stdout, f"child died before the guarded call {ctx}"
+    assert res.returncode != 0, f"runtime guard did not trap on a violating sym {ctx}"
 
 
 @dace.program
@@ -318,8 +324,9 @@ def test_wavefront_skew_steep_then_l2m_keeps_one_sequential_loop():
     assert n_maps >= 1
     loops = _loops(sdfg)
     assert len(loops) == 1, f"the diagonal t-loop must survive LoopToMap; got {[c.loop_variable for c in loops]}"
-    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), \
+    assert loops[0].loop_variable.startswith(SKEW_T_PREFIX), (
         f"the surviving loop should be the diagonal ``t``; got {loops[0].loop_variable}"
+    )
 
 
 def test_dependence_kind_classifies_backward_flow_forward_anti():
@@ -329,14 +336,15 @@ def test_dependence_kind_classifies_backward_flow_forward_anti():
     components stay conservatively flow."""
     from dace import symbolic
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
+
     p = symbolic.pystr_to_symbolic
-    assert dependence_kind(p('0'), p('-1')) == 'flow'  # aa[i, j-1]
-    assert dependence_kind(p('-1'), p('0')) == 'flow'  # aa[i-1, j]
-    assert dependence_kind(p('-1'), p('1')) == 'flow'  # aa[i-1, j+1] (du<0 dominates)
-    assert dependence_kind(p('0'), p('1')) == 'anti'  # aa[i, j+1] (old)
-    assert dependence_kind(p('1'), p('0')) == 'anti'  # aa[i+1, j] (old)
-    assert dependence_kind(p('1'), p('-1')) == 'anti'  # aa[i+1, j-1] (du>0 dominates)
-    assert dependence_kind(p('0'), p('-sym1')) == 'flow'  # symbolic -> conservative flow
+    assert dependence_kind(p("0"), p("-1")) == "flow"  # aa[i, j-1]
+    assert dependence_kind(p("-1"), p("0")) == "flow"  # aa[i-1, j]
+    assert dependence_kind(p("-1"), p("1")) == "flow"  # aa[i-1, j+1] (du<0 dominates)
+    assert dependence_kind(p("0"), p("1")) == "anti"  # aa[i, j+1] (old)
+    assert dependence_kind(p("1"), p("0")) == "anti"  # aa[i+1, j] (old)
+    assert dependence_kind(p("1"), p("-1")) == "anti"  # aa[i+1, j-1] (du>0 dominates)
+    assert dependence_kind(p("0"), p("-sym1")) == "flow"  # symbolic -> conservative flow
 
 
 @dace.program
@@ -420,16 +428,16 @@ def test_wavefront_skew_fires_on_nussinov_through_full_pipeline():
 
     def counting(self, sdfg, res):
         out = original(self, sdfg, res)
-        fired[0] += 0 if out is None else (len(out) if hasattr(out, '__len__') else int(out))
+        fired[0] += 0 if out is None else (len(out) if hasattr(out, "__len__") else int(out))
         return out
 
     ws.WavefrontSkew.apply_pass = counting
     try:
         sdfg = corpus_nussinov.to_sdfg(simplify=True)
-        canonicalize(sdfg, validate=True, target='cpu')
+        canonicalize(sdfg, validate=True, target="cpu")
     finally:
         ws.WavefrontSkew.apply_pass = original
-    assert fired[0] >= 1, 'WavefrontSkew did not fire on nussinov through the full pipeline'
+    assert fired[0] >= 1, "WavefrontSkew did not fire on nussinov through the full pipeline"
 
 
 def test_wavefront_skew_nussinov_value_preserving_through_full_pipeline():
@@ -441,7 +449,7 @@ def test_wavefront_skew_nussinov_value_preserving_through_full_pipeline():
     ref = _nussinov_oracle(seq, np.zeros((n, n), dtype=np.int32))
 
     sdfg = corpus_nussinov.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, target='cpu')
+    canonicalize(sdfg, validate=True, target="cpu")
     got = np.zeros((n, n), dtype=np.int32)
     sdfg(seq=seq.copy(), table=got, N=n)
     assert np.array_equal(got, ref)
@@ -459,21 +467,23 @@ def test_wavefront_skew_five_point_absorbs_split_snapshot_through_full_pipeline(
     from dace.transformation.passes.canonicalize import canonicalize
 
     sdfg = gauss_seidel_5pt.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, target='cpu')
+    canonicalize(sdfg, validate=True, target="cpu")
 
-    nonpinned = [l for l in _loops(sdfg) if not getattr(l, 'pinned_sequential', False)]
+    nonpinned = [l for l in _loops(sdfg) if not getattr(l, "pinned_sequential", False)]
     assert not nonpinned, f"expected no non-pinned residual loop; got {[l.loop_variable for l in nonpinned]}"
     maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert any(m.map.params[0].startswith(SKEW_P_PREFIX) for m in maps), \
+    assert any(m.map.params[0].startswith(SKEW_P_PREFIX) for m in maps), (
         f"expected a parallel wavefront p-Map; got maps={[m.map.params for m in maps]}"
+    )
     # The absorbed snapshot must be gone -- no ``_split_snap`` access node, copy,
     # nor descriptor survives (the terminal SimplifyPass runs ArrayElimination).
     snap_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.AccessNode) and n.data.endswith('_split_snap')
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.AccessNode) and n.data.endswith("_split_snap")
     ]
     assert not snap_nodes, f"snapshot copy not eliminated: {[n.data for n in snap_nodes]}"
-    assert not any(name.endswith('_split_snap') for name in sdfg.arrays), \
+    assert not any(name.endswith("_split_snap") for name in sdfg.arrays), (
         f"snapshot descriptor not eliminated: {[n for n in sdfg.arrays if n.endswith('_split_snap')]}"
+    )
 
 
 def test_wavefront_skew_five_point_snapshot_absorb_value_preserving():
@@ -484,7 +494,7 @@ def test_wavefront_skew_five_point_snapshot_absorb_value_preserving():
     from dace.transformation.passes.canonicalize import canonicalize
 
     sdfg = gauss_seidel_5pt.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, target='cpu')
+    canonicalize(sdfg, validate=True, target="cpu")
     csdfg = sdfg.compile()
     for n in (8, 13, 32):
         rng = np.random.default_rng(n)
@@ -513,38 +523,38 @@ def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset()
     ``a[N-1-i, j]`` the two spaces disagree in sign, so an array-offset check would
     accept a backward (flow) read and reject a forward (anti) one -- exactly
     inverted, a silent miscompile. This pins the iteration-space classification."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import (WriteMap, snapshot_reads_forward)
+    from dace.transformation.passes.canonicalize.wavefront_skew import WriteMap, snapshot_reads_forward
 
     # Reflected row map: row = -i + (N-1), col = j.
-    reflected = ('a', WriteMap('i', 'j', m=(-1, 0, 0, 1), c=(_p('N - 1'), _p('0'))), [])
+    reflected = ("a", WriteMap("i", "j", m=(-1, 0, 0, 1), c=(_p("N - 1"), _p("0"))), [])
     # Array cell [N-i, j] is written by iteration (i-1, j) -> BACKWARD (flow). Its raw
     # array offset vs the write [N-1-i, j] is [+1, 0] (would look "forward"); iteration
     # space says backward -> MUST refuse.
-    backward = [(None, None, None, [_p('N - i'), _p('j')], 'a', _win('0:N, 0:N'))]
-    assert snapshot_reads_forward(backward, reflected, 'i', 'j') is False
+    backward = [(None, None, None, [_p("N - i"), _p("j")], "a", _win("0:N, 0:N"))]
+    assert snapshot_reads_forward(backward, reflected, "i", "j") is False
     # Array cell [N-2-i, j] is written by iteration (i+1, j) -> FORWARD (anti). Raw
     # array offset is [-1, 0] (would look "backward"); iteration space says forward -> accept.
-    forward = [(None, None, None, [_p('N - 2 - i'), _p('j')], 'a', _win('0:N, 0:N'))]
-    assert snapshot_reads_forward(forward, reflected, 'i', 'j') is True
+    forward = [(None, None, None, [_p("N - 2 - i"), _p("j")], "a", _win("0:N, 0:N"))]
+    assert snapshot_reads_forward(forward, reflected, "i", "j") is True
 
     # Identity map sanity: a[i, j+1] forward (anti), a[i, j-1] backward (flow).
-    identity = ('a', WriteMap('i', 'j', m=(1, 0, 0, 1), c=(_p('0'), _p('0'))), [])
-    anti = [(None, None, None, [_p('i'), _p('j + 1')], 'a', _win('0:N, 0:N'))]
-    assert snapshot_reads_forward(anti, identity, 'i', 'j') is True
-    flow = [(None, None, None, [_p('i'), _p('j - 1')], 'a', _win('0:N, 0:N'))]
-    assert snapshot_reads_forward(flow, identity, 'i', 'j') is False
+    identity = ("a", WriteMap("i", "j", m=(1, 0, 0, 1), c=(_p("0"), _p("0"))), [])
+    anti = [(None, None, None, [_p("i"), _p("j + 1")], "a", _win("0:N, 0:N"))]
+    assert snapshot_reads_forward(anti, identity, "i", "j") is True
+    flow = [(None, None, None, [_p("i"), _p("j - 1")], "a", _win("0:N, 0:N"))]
+    assert snapshot_reads_forward(flow, identity, "i", "j") is False
     # A snapshot on a non-carrier array can never be reasoned about -> refuse.
-    other = [(None, None, None, [_p('i'), _p('j + 1')], 'b', _win('0:N, 0:N'))]
-    assert snapshot_reads_forward(other, identity, 'i', 'j') is False
+    other = [(None, None, None, [_p("i"), _p("j + 1")], "b", _win("0:N, 0:N"))]
+    assert snapshot_reads_forward(other, identity, "i", "j") is False
 
 
 def _snap_copy_state(memlet: str):
     """A one-edge ``a -> a_split_snap`` copy state carrying ``memlet``."""
-    sdfg = dace.SDFG('snap_copy')
-    sdfg.add_array('a', [N, N], dace.float64)
-    sdfg.add_array('a_split_snap', [N, N], dace.float64, transient=True)
-    st = sdfg.add_state('copy', is_start_block=True)
-    st.add_edge(st.add_access('a'), None, st.add_access('a_split_snap'), None, dace.Memlet(memlet))
+    sdfg = dace.SDFG("snap_copy")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_array("a_split_snap", [N, N], dace.float64, transient=True)
+    st = sdfg.add_state("copy", is_start_block=True)
+    st.add_edge(st.add_access("a"), None, st.add_access("a_split_snap"), None, dace.Memlet(memlet))
     return st
 
 
@@ -557,65 +567,65 @@ def test_split_snapshot_window_accepts_a_narrowed_copy_but_demands_identity_inde
     ``snap[idx]`` and ``a[idx]`` different cells, so redirecting a read would MOVE it."""
     from dace.transformation.passes.canonicalize.wavefront_skew import split_snapshot_window
 
-    whole = split_snapshot_window(_snap_copy_state('a[0:N, 0:N]'))
-    assert whole == _win('0:N, 0:N')
+    whole = split_snapshot_window(_snap_copy_state("a[0:N, 0:N]"))
+    assert whole == _win("0:N, 0:N")
     # The shape BreakAntiDependence emits: one row, the read window of the redirected edges.
-    row = split_snapshot_window(_snap_copy_state('a[i, 2:N]'))
-    assert row == _win('i, 2:N')
+    row = split_snapshot_window(_snap_copy_state("a[i, 2:N]"))
+    assert row == _win("i, 2:N")
     # Shifted destination -- snap[1] holds a[0], so a redirected read would move a row.
-    assert split_snapshot_window(_snap_copy_state('a[0:2, 0:N] -> [1:3, 0:N]')) is None
+    assert split_snapshot_window(_snap_copy_state("a[0:2, 0:N] -> [1:3, 0:N]")) is None
     # Strided copy -- the odd rows were never captured, and bounds alone would not see it.
-    assert split_snapshot_window(_snap_copy_state('a[0:N:2, 0:N]')) is None
+    assert split_snapshot_window(_snap_copy_state("a[0:N:2, 0:N]")) is None
 
 
 def test_snapshot_reads_outside_the_copied_window_refuse_the_absorb():
     """The protection the window relaxation moved: a read that can leave the copied window
     reads a cell the snapshot never held, so the absorb must refuse. Proved over the iteration
     domain, not by shape -- an in-window read at a symbolic index is still accepted."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import (domain_constraints, snapshot_reads_in_window)
+    from dace.transformation.passes.canonicalize.wavefront_skew import domain_constraints, snapshot_reads_in_window
 
     # i, j both in [1, N-2] -- the 5-point Gauss-Seidel domain.
-    domain = domain_constraints('i', 'j', (_p('1'), _p('N - 2')), (_p('1'), _p('N - 2')))
+    domain = domain_constraints("i", "j", (_p("1"), _p("N - 2")), (_p("1"), _p("N - 2")))
 
     def reads(index, window):
-        return [(None, None, None, index, 'a', _win(window))]
+        return [(None, None, None, index, "a", _win(window))]
 
     # a_split_snap[i, j+1] against the row window a[i, 2:N]: j+1 in [2, N-1] -- contained.
-    assert snapshot_reads_in_window(reads([_p('i'), _p('j + 1')], 'i, 2:N'), 'i', 'j', domain) is True
+    assert snapshot_reads_in_window(reads([_p("i"), _p("j + 1")], "i, 2:N"), "i", "j", domain) is True
     # The same window with a BACKWARD read a[i, j-1]: j-1 reaches 0, below the window.
-    assert snapshot_reads_in_window(reads([_p('i'), _p('j - 1')], 'i, 2:N'), 'i', 'j', domain) is False
+    assert snapshot_reads_in_window(reads([_p("i"), _p("j - 1")], "i, 2:N"), "i", "j", domain) is False
     # A single-column window cannot cover the whole forward read range.
-    assert snapshot_reads_in_window(reads([_p('i'), _p('j + 1')], 'i, 5:6'), 'i', 'j', domain) is False
+    assert snapshot_reads_in_window(reads([_p("i"), _p("j + 1")], "i, 5:6"), "i", "j", domain) is False
     # Wrong row: the snapshot captured row i, the read wants row i+1.
-    assert snapshot_reads_in_window(reads([_p('i + 1'), _p('j + 1')], 'i, 2:N'), 'i', 'j', domain) is False
+    assert snapshot_reads_in_window(reads([_p("i + 1"), _p("j + 1")], "i, 2:N"), "i", "j", domain) is False
     # A whole-array window covers everything the domain can index.
-    assert snapshot_reads_in_window(reads([_p('i'), _p('j + 1')], '0:N, 0:N'), 'i', 'j', domain) is True
+    assert snapshot_reads_in_window(reads([_p("i"), _p("j + 1")], "0:N, 0:N"), "i", "j", domain) is True
 
 
 def _snapshot_nest(external_reader: bool):
     """A minimal 2-level nest with a per-iteration snapshot ``a_split_snap = a`` in
     the outer body and an inner read ``a_split_snap[i, j+1]``. With
     ``external_reader`` a second outer-body state also reads the snapshot."""
-    sdfg = dace.SDFG('snap_nest')
-    sdfg.add_array('a', [N, N], dace.float64)
-    sdfg.add_array('a_split_snap', [N, N], dace.float64, transient=True)
-    outer = LoopRegion('outer', 'i < N - 1', 'i', 'i = 1', 'i = i + 1')
+    sdfg = dace.SDFG("snap_nest")
+    sdfg.add_array("a", [N, N], dace.float64)
+    sdfg.add_array("a_split_snap", [N, N], dace.float64, transient=True)
+    outer = LoopRegion("outer", "i < N - 1", "i", "i = 1", "i = i + 1")
     sdfg.add_node(outer, is_start_block=True)
-    cp = outer.add_state('cp', is_start_block=True)
-    cp.add_edge(cp.add_access('a'), None, cp.add_access('a_split_snap'), None, dace.Memlet('a[0:N, 0:N]'))
-    inner = LoopRegion('inner', 'j < N - 1', 'j', 'j = 1', 'j = j + 1')
+    cp = outer.add_state("cp", is_start_block=True)
+    cp.add_edge(cp.add_access("a"), None, cp.add_access("a_split_snap"), None, dace.Memlet("a[0:N, 0:N]"))
+    inner = LoopRegion("inner", "j < N - 1", "j", "j = 1", "j = j + 1")
     outer.add_node(inner)
     outer.add_edge(cp, inner, dace.InterstateEdge())
-    body = inner.add_state('body', is_start_block=True)
-    r, w = body.add_access('a_split_snap'), body.add_access('a')
-    tk = body.add_tasklet('c', {'inp'}, {'out'}, 'out = inp')
-    body.add_edge(r, None, tk, 'inp', dace.Memlet('a_split_snap[i, j + 1]'))
-    body.add_edge(tk, 'out', w, None, dace.Memlet('a[i, j]'))
+    body = inner.add_state("body", is_start_block=True)
+    r, w = body.add_access("a_split_snap"), body.add_access("a")
+    tk = body.add_tasklet("c", {"inp"}, {"out"}, "out = inp")
+    body.add_edge(r, None, tk, "inp", dace.Memlet("a_split_snap[i, j + 1]"))
+    body.add_edge(tk, "out", w, None, dace.Memlet("a[i, j]"))
     if external_reader:
-        ext = outer.add_state('ext')
-        etk = ext.add_tasklet('e', {'inp'}, {'out'}, 'out = inp')
-        ext.add_edge(ext.add_access('a_split_snap'), None, etk, 'inp', dace.Memlet('a_split_snap[i, 0]'))
-        ext.add_edge(etk, 'out', ext.add_access('a'), None, dace.Memlet('a[i, 0]'))
+        ext = outer.add_state("ext")
+        etk = ext.add_tasklet("e", {"inp"}, {"out"}, "out = inp")
+        ext.add_edge(ext.add_access("a_split_snap"), None, etk, "inp", dace.Memlet("a_split_snap[i, 0]"))
+        ext.add_edge(etk, "out", ext.add_access("a"), None, dace.Memlet("a[i, 0]"))
         outer.add_edge(inner, ext, dace.InterstateEdge())
     return sdfg, outer, inner
 
@@ -632,25 +642,25 @@ def test_plan_split_snapshots_refuses_external_snapshot_reader():
 def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
     """Planning must not touch the SDFG (so a later skew refusal is a no-op);
     committing then redirects the read onto the live array and empties the copy."""
-    from dace.transformation.passes.canonicalize.wavefront_skew import (plan_split_snapshots, commit_split_snapshots)
+    from dace.transformation.passes.canonicalize.wavefront_skew import plan_split_snapshots, commit_split_snapshots
 
     sdfg, outer, inner = _snapshot_nest(external_reader=False)
-    cp = next(b for b in outer.nodes() if isinstance(b, SDFGState) and b.label == 'cp')
+    cp = next(b for b in outer.nodes() if isinstance(b, SDFGState) and b.label == "cp")
     body = inner.states()[0]
 
     plan = plan_split_snapshots(outer, inner, sdfg)
     assert plan is not None
     snap_src, snap_reads, copy_states = plan
-    assert snap_src == {'a_split_snap': 'a'} and len(snap_reads) == 1 and copy_states == [cp]
+    assert snap_src == {"a_split_snap": "a"} and len(snap_reads) == 1 and copy_states == [cp]
     # Planning is non-mutating: copy state + snapshot read still present.
     assert len(list(cp.nodes())) == 2
-    assert any(n.data == 'a_split_snap' for n in body.data_nodes())
+    assert any(n.data == "a_split_snap" for n in body.data_nodes())
 
     commit_split_snapshots(snap_reads, copy_states)
     # Copy emptied; the inner read now comes from the live array, no snapshot node.
     assert len(list(cp.nodes())) == 0
-    assert not any(n.data == 'a_split_snap' for n in body.data_nodes())
-    a_readers = [n for n in body.data_nodes() if n.data == 'a' and body.in_degree(n) == 0]
+    assert not any(n.data == "a_split_snap" for n in body.data_nodes())
+    a_readers = [n for n in body.data_nodes() if n.data == "a" and body.in_degree(n) == 0]
     assert a_readers and any(body.out_degree(n) > 0 for n in a_readers)
 
 
@@ -665,13 +675,14 @@ def test_dependence_kind_symbolic_forward_positive_is_anti():
     ``'flow'`` (the optimistic retry pins it with a runtime guard)."""
     from dace import symbolic
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
+
     p = symbolic.pystr_to_symbolic
-    S = dace.symbol('S', positive=True)
-    assert dependence_kind(p('0'), S) == 'anti'  # aa[i, j+S], S>0 -> forward anti
-    assert dependence_kind(S, p('0')) == 'anti'  # aa[i+S, j], S>0 -> forward anti
-    assert dependence_kind(p('0'), -S) == 'flow'  # aa[i, j-S] -> backward flow
-    assert dependence_kind(p('-1'), S) == 'flow'  # du=-1 backward dominates lexicographically
-    assert dependence_kind(p('0'), p('-sym1')) == 'flow'  # unprovable sign -> conservative flow
+    S = dace.symbol("S", positive=True)
+    assert dependence_kind(p("0"), S) == "anti"  # aa[i, j+S], S>0 -> forward anti
+    assert dependence_kind(S, p("0")) == "anti"  # aa[i+S, j], S>0 -> forward anti
+    assert dependence_kind(p("0"), -S) == "flow"  # aa[i, j-S] -> backward flow
+    assert dependence_kind(p("-1"), S) == "flow"  # du=-1 backward dominates lexicographically
+    assert dependence_kind(p("0"), p("-sym1")) == "flow"  # unprovable sign -> conservative flow
 
 
 def _hand_built_forward_symbolic_nest(fwd_col):
@@ -683,25 +694,26 @@ def _hand_built_forward_symbolic_nest(fwd_col):
     symbol OBJECT (not a parsed string, which strips ``positive=True``) is what
     drives the genuine forward-anti dependence into the pass."""
     from dace import subsets
-    N_ = dace.symbol('N')
-    i, j = dace.symbol('i'), dace.symbol('j')
-    sdfg = dace.SDFG('wf_fwd_sym')
-    sdfg.add_array('aa', [N_, N_], dace.int64)
-    sdfg.add_symbol('S', dace.int64)
-    outer = LoopRegion('outer', 'i < N - 1', 'i', 'i = 1', 'i = i + 1')
+
+    N_ = dace.symbol("N")
+    i, j = dace.symbol("i"), dace.symbol("j")
+    sdfg = dace.SDFG("wf_fwd_sym")
+    sdfg.add_array("aa", [N_, N_], dace.int64)
+    sdfg.add_symbol("S", dace.int64)
+    outer = LoopRegion("outer", "i < N - 1", "i", "i = 1", "i = i + 1")
     sdfg.add_node(outer, is_start_block=True)
-    inner = LoopRegion('inner', 'j < N - 1', 'j', 'j = 1', 'j = j + 1')
+    inner = LoopRegion("inner", "j < N - 1", "j", "j = 1", "j = j + 1")
     outer.add_node(inner, is_start_block=True)
-    body = inner.add_state('body', is_start_block=True)
-    rb, rf, w = body.add_access('aa'), body.add_access('aa'), body.add_access('aa')
-    tk = body.add_tasklet('c', {'a', 'b'}, {'o'}, 'o = a + b')
+    body = inner.add_state("body", is_start_block=True)
+    rb, rf, w = body.add_access("aa"), body.add_access("aa"), body.add_access("aa")
+    tk = body.add_tasklet("c", {"a", "b"}, {"o"}, "o = a + b")
 
     def point(e0, e1):
         return subsets.Range([(e0, e0, 1), (e1, e1, 1)])
 
-    body.add_edge(rb, None, tk, 'a', dace.Memlet(data='aa', subset=point(i - 1, j)))
-    body.add_edge(rf, None, tk, 'b', dace.Memlet(data='aa', subset=point(i, fwd_col)))
-    body.add_edge(tk, 'o', w, None, dace.Memlet(data='aa', subset=point(i, j)))
+    body.add_edge(rb, None, tk, "a", dace.Memlet(data="aa", subset=point(i - 1, j)))
+    body.add_edge(rf, None, tk, "b", dace.Memlet(data="aa", subset=point(i, fwd_col)))
+    body.add_edge(tk, "o", w, None, dace.Memlet(data="aa", subset=point(i, j)))
     return sdfg
 
 
@@ -715,14 +727,14 @@ def test_wavefront_skew_symbolic_positive_forward_read_value_preserving():
     sum-diagonal ``tau = (1, 1)`` (which schedules the overwrite on a strictly
     later ``t``), reproducing the sequential reference bit-for-bit. Integer
     arithmetic keeps the check exact."""
-    S = dace.symbol('S', positive=True)
-    sdfg = _hand_built_forward_symbolic_nest(dace.symbol('j') + S)
+    S = dace.symbol("S", positive=True)
+    sdfg = _hand_built_forward_symbolic_nest(dace.symbol("j") + S)
     res = WavefrontSkew().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1, "the hand-built forward-symbolic nest must engage the skew"
     # No runtime guard is planted for a declared-positive offset, so the schedule
     # must be correct outright (not merely trap-safe).
-    guards = [s for s in sdfg.states() if s.label.startswith('_skew_guard_')]
+    guards = [s for s in sdfg.states() if s.label.startswith("_skew_guard_")]
     assert not guards, f"a declared-positive forward read must not need a runtime guard; got {len(guards)}"
 
     n, s = 16, 1
@@ -741,8 +753,8 @@ def test_wavefront_skew_symbolic_backward_read_not_over_refused():
     """Guard against the fix over-refusing: a BACKWARD symbolic read ``aa[i, j - S]``
     is a genuine flow (RAW) recurrence and must still skew correctly (``tau = (1, 1)``
     reads the freshly produced value), reproducing the sequential reference."""
-    S = dace.symbol('S', positive=True)
-    sdfg = _hand_built_forward_symbolic_nest(dace.symbol('j') - S)
+    S = dace.symbol("S", positive=True)
+    sdfg = _hand_built_forward_symbolic_nest(dace.symbol("j") - S)
     res = WavefrontSkew().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1
@@ -789,8 +801,9 @@ def test_wavefront_skew_non_2d_carried_dependence_value_preserving():
             bref[i, j, 0] = bref[i - 1, j + 1, 0] + aref[i, j]
     agot, bgot = aa0.copy(), bb0.copy()
     sdfg(aa=agot, bb=bgot, N=n)
-    assert np.array_equal(agot, aref) and np.array_equal(bgot, bref), \
+    assert np.array_equal(agot, aref) and np.array_equal(bgot, bref), (
         f"bb mismatch: got\n{bgot[..., 0]}\nref\n{bref[..., 0]}"
+    )
 
 
 def test_wavefront_skew_refuses_nest_threading_a_one_element_accumulator():
@@ -807,19 +820,19 @@ def test_wavefront_skew_refuses_nest_threading_a_one_element_accumulator():
     assert np.allclose(got_s, ref_s) and np.allclose(got_a, ref_a)
 
 
-@pytest.mark.parametrize('assignments', [{'y': 'a[i - 1, j + 2]'}, {'y': 'x', 'x': 'a[i, j]'}])
+@pytest.mark.parametrize("assignments", [{"y": "a[i - 1, j + 2]"}, {"y": "x", "x": "a[i, j]"}])
 def test_wavefront_skew_refuses_nest_carrying_a_value_through_an_interstate_edge(assignments):
-    sdfg = dace.SDFG('interstate_carry')
-    sdfg.add_array('a', [12, 12], dace.float64)
-    outer = LoopRegion('o', 'i < 10', 'i', 'i = 1', 'i = i + 1')
-    inner = LoopRegion('n', 'j < 10', 'j', 'j = 1', 'j = j + 1')
+    sdfg = dace.SDFG("interstate_carry")
+    sdfg.add_array("a", [12, 12], dace.float64)
+    outer = LoopRegion("o", "i < 10", "i", "i = 1", "i = i + 1")
+    inner = LoopRegion("n", "j < 10", "j", "j = 1", "j = j + 1")
     sdfg.add_node(outer, is_start_block=True)
     outer.add_node(inner, is_start_block=True)
-    body = inner.add_state_after(inner.add_state('head', is_start_block=True), assignments=assignments)
-    t = body.add_tasklet('t', {'p': None, 'q': None}, {'o': None}, 'o = p + q + y')
-    body.add_edge(body.add_read('a'), None, t, 'p', dace.Memlet('a[i - 1, j]'))
-    body.add_edge(body.add_read('a'), None, t, 'q', dace.Memlet('a[i, j - 1]'))
-    body.add_edge(t, 'o', body.add_write('a'), None, dace.Memlet('a[i, j]'))
+    body = inner.add_state_after(inner.add_state("head", is_start_block=True), assignments=assignments)
+    t = body.add_tasklet("t", {"p": None, "q": None}, {"o": None}, "o = p + q + y")
+    body.add_edge(body.add_read("a"), None, t, "p", dace.Memlet("a[i - 1, j]"))
+    body.add_edge(body.add_read("a"), None, t, "q", dace.Memlet("a[i, j - 1]"))
+    body.add_edge(t, "o", body.add_write("a"), None, dace.Memlet("a[i, j]"))
 
     result = WavefrontSkew().apply_pass(sdfg, {})
 
@@ -853,7 +866,7 @@ def row_stencil_diagonal_read(aa: dace.float64[N, N], bb: dace.float64[N, N]):
             aa[i, j] = aa[i - 1, j - 1] + bb[i, j]
 
 
-@pytest.mark.parametrize('prog', [row_stencil_forward_read, row_stencil_diagonal_read])
+@pytest.mark.parametrize("prog", [row_stencil_forward_read, row_stencil_diagonal_read])
 def test_sequential_outer_parallel_inner_row_stencil_lifts_inner_to_map(prog):
     """Counter-cases of the wavefront family: an in-place stencil that writes row ``i`` and
     reads only row ``i-1`` carries on the OUTER axis alone, so the inner ``j`` is DOALL and an
@@ -938,7 +951,7 @@ def _loop_over_map(prog):
     return sdfg
 
 
-@pytest.mark.parametrize('prog, interchangeable', [(same_lane_carry, True), (lane_crossing_carry, False)])
+@pytest.mark.parametrize("prog, interchangeable", [(same_lane_carry, True), (lane_crossing_carry, False)])
 def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
     """``MoveLoopIntoMap`` makes the Map the OUTER parallel axis, which is only value-preserving
     when every loop-carried dependence stays inside ONE map lane. ``a[i-1, j]`` does (same
@@ -951,8 +964,9 @@ def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
     sdfg = _loop_over_map(prog)
     outer = [l for l in _loops(sdfg)]
     assert len(outer) == 1, "fixture must leave exactly the outer i-loop"
-    assert any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive()), \
+    assert any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive()), (
         "fixture must leave the inner j as a Map"
+    )
     xform = MoveLoopIntoMap()
     xform.loop = outer[0]
     assert xform.can_be_applied(outer[0].parent_graph, 0, sdfg) is interchangeable
@@ -978,11 +992,13 @@ def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
 # time in the test file and no change to DaCe could redden them.
 
 #: The CPU knob set the corpus parallelism gate uses (``tests/corpus/measure_parallelization.py``).
-CPU_PARAMS = dict(target='cpu',
-                  peel_limit=4,
-                  break_anti_dependence=True,
-                  interchange_carry_with_map=True,
-                  scatter_to_guarded_maps=True)
+CPU_PARAMS = dict(
+    target="cpu",
+    peel_limit=4,
+    break_anti_dependence=True,
+    interchange_carry_with_map=True,
+    scatter_to_guarded_maps=True,
+)
 
 
 def run_sequentially(iters, body, make):
@@ -994,7 +1010,9 @@ def run_sequentially(iters, body, make):
 
 def residual_loops(sdfg):
     return [
-        c for sd in sdfg.all_sdfgs_recursive() for c in sd.all_control_flow_regions()
+        c
+        for sd in sdfg.all_sdfgs_recursive()
+        for c in sd.all_control_flow_regions()
         if isinstance(c, LoopRegion) and c.loop_variable
     ]
 
@@ -1016,8 +1034,9 @@ def seidel_2d_npbench(A: dace.float64[N, N], tsteps: dace.int32):
     sequential in-row Gauss-Seidel scan."""
     for t in range(0, tsteps - 1):
         for i in range(1, N - 1):
-            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] +
-                           A[i + 1, 2:])
+            A[i, 1:-1] += (
+                A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] + A[i + 1, 2:]
+            )
             for j in range(1, N - 1):
                 A[i, j] += A[i, j - 1]
                 A[i, j] /= 9.0
@@ -1027,8 +1046,9 @@ def seidel_reference(A, nsteps, n):
     """The corpus formulation in numpy -- the value oracle for the skewed SDFG."""
     for _t in range(0, nsteps - 1):
         for i in range(1, n - 1):
-            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] +
-                           A[i + 1, 2:])
+            A[i, 1:-1] += (
+                A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] + A[i + 1, 2:]
+            )
             for j in range(1, n - 1):
                 A[i, j] += A[i, j - 1]
                 A[i, j] /= 9.0
@@ -1063,24 +1083,25 @@ def test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs():
     on = seidel_2d_npbench.to_sdfg(simplify=True)
     canonicalize(on, validate=False, reconstruct_wavefront_nest=True, normalize_loop_and_map_origin=True, **CPU_PARAMS)
     diagonals = skew_diagonals(on)
-    assert len(diagonals) == 1, f'expected the (i, j) nest to be skewed; residual loops were ' \
-                                f'{[c.loop_variable for c in residual_loops(on)]}'
-    assert len(residual_loops(on)) == 2, 'only the t time-step loop and the diagonal may remain'
-    end = symbolic.simplify(loop_analysis.get_loop_end(diagonals[0]) - symbolic.pystr_to_symbolic('3*N - 9'))
-    assert end == 0, f'diagonal should run to 3*N - 9 (= 2i + j over [0, N-3]); got {end} more'
+    assert len(diagonals) == 1, (
+        f"expected the (i, j) nest to be skewed; residual loops were {[c.loop_variable for c in residual_loops(on)]}"
+    )
+    assert len(residual_loops(on)) == 2, "only the t time-step loop and the diagonal may remain"
+    end = symbolic.simplify(loop_analysis.get_loop_end(diagonals[0]) - symbolic.pystr_to_symbolic("3*N - 9"))
+    assert end == 0, f"diagonal should run to 3*N - 9 (= 2i + j over [0, N-3]); got {end} more"
 
-    finalized = finalize_for_target(on, 'cpu')
-    finalized.name = 'seidel_2d_wavefront_knobs_on'
+    finalized = finalize_for_target(on, "cpu")
+    finalized.name = "seidel_2d_wavefront_knobs_on"
     got = a0.copy()
     finalized(A=got, tsteps=steps, N=n)
-    assert np.allclose(got, seidel_reference(a0.copy(), steps, n)), 'the skew must be value-preserving'
+    assert np.allclose(got, seidel_reference(a0.copy(), steps, n)), "the skew must be value-preserving"
 
     # Non-vacuity: with the knobs at their defaults the very same kernel is NOT skewed, so the
     # assertions above are testing the knobs and not something the pipeline does anyway.
     off = seidel_2d_npbench.to_sdfg(simplify=True)
     canonicalize(off, validate=False, **CPU_PARAMS)
-    assert skew_diagonals(off) == [], 'default knobs must leave the (i, j) nest unskewed'
-    assert len(residual_loops(off)) == 3, 'default knobs leave t, i and the in-row scan sequential'
+    assert skew_diagonals(off) == [], "default knobs must leave the (i, j) nest unskewed"
+    assert len(residual_loops(off)) == 3, "default knobs leave t, i and the in-row scan sequential"
 
 
 # #
@@ -1133,14 +1154,15 @@ def test_row_sweep_ti_wavefront_is_detected():
 
     sdfg = row_sweep_3pt.to_sdfg(simplify=True)
     canonicalize(sdfg, **CPU_PARAMS)
-    assert len(skew_diagonals(sdfg)) == 1, \
-        f'(t, i) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
+    assert len(skew_diagonals(sdfg)) == 1, (
+        f"(t, i) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}"
+    )
 
-    finalized = finalize_for_target(sdfg, 'cpu')
-    finalized.name = 'row_sweep_3pt_wavefront'
+    finalized = finalize_for_target(sdfg, "cpu")
+    finalized.name = "row_sweep_3pt_wavefront"
     got = a0.copy()
     finalized(A=got, tsteps=steps, N=n)
-    assert np.allclose(got, row_sweep_reference(a0.copy(), steps, n)), 'the (t, i) skew is not value-preserving'
+    assert np.allclose(got, row_sweep_reference(a0.copy(), steps, n)), "the (t, i) skew is not value-preserving"
 
 
 # #
@@ -1193,8 +1215,10 @@ def lu_iteration_space(n, with_scalar_accumulator):
     def make():
         # Strongly diagonally dominant, so every pivot A[j][j] stays non-zero and the exact
         # rational factorization never divides by zero.
-        return [[Fraction((i * j) % 7 + 1) + (Fraction(20 * n) if i == j else Fraction(0)) for j in range(n)]
-                for i in range(n)]
+        return [
+            [Fraction((i * j) % 7 + 1) + (Fraction(20 * n) if i == j else Fraction(0)) for j in range(n)]
+            for i in range(n)
+        ]
 
     def body(A, p):
         i, j = p
@@ -1227,8 +1251,9 @@ def lu_family_matrices(n, with_scalar_accumulator):
     return start, reference
 
 
-@pytest.mark.parametrize('program, with_scalar_accumulator, label', [(lu_factorization, False, 'lu'),
-                                                                     (ludcmp_factorization, True, 'ludcmp')])
+@pytest.mark.parametrize(
+    "program, with_scalar_accumulator, label", [(lu_factorization, False, "lu"), (ludcmp_factorization, True, "ludcmp")]
+)
 def test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, label):
     """lu's outer ``i`` loop holds TWO sibling ``j`` loops (``j < i`` and ``j >= i``), which
     ``extract_two_level_nest`` refuses outright. ``plan_guarded_fusion`` recognises them as one
@@ -1244,17 +1269,18 @@ def test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, la
 
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, **CPU_PARAMS)
-    assert len(skew_diagonals(sdfg)) == 1, \
-        f'{label} (i, j) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}'
+    assert len(skew_diagonals(sdfg)) == 1, (
+        f"{label} (i, j) wavefront not found; residual loops {[c.loop_variable for c in residual_loops(sdfg)]}"
+    )
 
-    finalized = finalize_for_target(sdfg, 'cpu')
-    finalized.name = f'{label}_ij_wavefront'
+    finalized = finalize_for_target(sdfg, "cpu")
+    finalized.name = f"{label}_ij_wavefront"
     got = start.copy()
     finalized(A=got, N=n)
-    assert np.allclose(got, reference), f'{label}: the (i, j) skew is not value-preserving'
+    assert np.allclose(got, reference), f"{label}: the (i, j) skew is not value-preserving"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_wavefront_skew_rewrites_to_skewed_iterators_modified_inner_lifted_to_map()
     test_wavefront_skew_value_preserving()
     test_wavefront_skew_then_l2m_parallelises_inner()
@@ -1283,7 +1309,7 @@ if __name__ == '__main__':
     test_wavefront_skew_symbolic_backward_read_not_over_refused()
     test_wavefront_skew_non_2d_carried_dependence_value_preserving()
     test_wavefront_skew_refuses_nest_threading_a_one_element_accumulator()
-    for assignments in ({'y': 'a[i - 1, j + 2]'}, {'y': 'x', 'x': 'a[i, j]'}):
+    for assignments in ({"y": "a[i - 1, j + 2]"}, {"y": "x", "x": "a[i, j]"}):
         test_wavefront_skew_refuses_nest_carrying_a_value_through_an_interstate_edge(assignments)
     for prog in (row_stencil_forward_read, row_stencil_diagonal_read):
         test_sequential_outer_parallel_inner_row_stencil_lifts_inner_to_map(prog)
@@ -1293,6 +1319,8 @@ if __name__ == '__main__':
         test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable)
     test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs()
     test_row_sweep_ti_wavefront_is_detected()
-    for program, with_scalar_accumulator, label in ((lu_factorization, False, 'lu'), (ludcmp_factorization, True,
-                                                                                      'ludcmp')):
+    for program, with_scalar_accumulator, label in (
+        (lu_factorization, False, "lu"),
+        (ludcmp_factorization, True, "ludcmp"),
+    ):
         test_lu_family_ij_wavefront_is_detected(program, with_scalar_accumulator, label)

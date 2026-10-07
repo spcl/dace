@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``RewriteModuloToPyMod`` spells every floored modulo (``%``) as ``py_mod``, and ``CMod`` in a tasklet as ``c_mod``."""
+
 import numpy as np
 import pytest
 
@@ -68,11 +69,9 @@ def test_c_modulo_in_a_tasklet_body_becomes_c_mod():
 def test_rewrite_loop_range_codeblock():
     sdfg = dace.SDFG("mod_loop")
     sdfg.add_symbol("x", dace.int64)
-    loop = LoopRegion("L",
-                      condition_expr="i < PyMod(x, 7)",
-                      loop_var="i",
-                      initialize_expr="i = 0",
-                      update_expr="i = (i + 1)")
+    loop = LoopRegion(
+        "L", condition_expr="i < PyMod(x, 7)", loop_var="i", initialize_expr="i = 0", update_expr="i = (i + 1)"
+    )
     sdfg.add_node(loop, is_start_block=True)
     loop.add_state("body", is_start_block=True)
 
@@ -113,8 +112,11 @@ def memlet_sdfg(name: str, subset: str) -> tuple[dace.SDFG, dace.SDFGState]:
 
 
 def gather_subset(state: dace.SDFGState) -> dace.subsets.Subset:
-    return next(e.data.subset for e in state.edges()
-                if e.data is not None and e.data.data == "A" and isinstance(e.dst, dace.nodes.Tasklet))
+    return next(
+        e.data.subset
+        for e in state.edges()
+        if e.data is not None and e.data.data == "A" and isinstance(e.dst, dace.nodes.Tasklet)
+    )
 
 
 def test_rewrite_memlet_subset():
@@ -162,4 +164,5 @@ def test_idempotent_on_existing_py_mod():
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__]))

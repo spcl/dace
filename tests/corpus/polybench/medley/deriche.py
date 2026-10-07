@@ -2,29 +2,35 @@
 import math
 import dace
 
-W = dace.symbol('W')
-H = dace.symbol('H')
+W = dace.symbol("W")
+H = dace.symbol("H")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    W: 64,
-    H: 64,
-}, {
-    W: 192,
-    H: 128,
-}, {
-    W: 720,
-    H: 480,
-}, {
-    W: 4096,
-    H: 2160,
-}, {
-    W: 7680,
-    H: 4320,
-}]
+sizes = [
+    {
+        W: 64,
+        H: 64,
+    },
+    {
+        W: 192,
+        H: 128,
+    },
+    {
+        W: 720,
+        H: 480,
+    },
+    {
+        W: 4096,
+        H: 2160,
+    },
+    {
+        W: 7680,
+        H: 4320,
+    },
+]
 
 #: ported from the npbench bench_info paper row
 paper_sizes = {W: 7680, H: 4320}
@@ -36,8 +42,11 @@ args = [
 
 # Constants
 alpha = datatype(0.25)
-k = (datatype(1.0) - math.exp(-alpha)) * (datatype(1.0) - math.exp(-alpha)) / (
-    datatype(1.0) + datatype(2.0) * alpha * math.exp(-alpha) - math.exp(datatype(2.0) * alpha))
+k = (
+    (datatype(1.0) - math.exp(-alpha))
+    * (datatype(1.0) - math.exp(-alpha))
+    / (datatype(1.0) + datatype(2.0) * alpha * math.exp(-alpha) - math.exp(datatype(2.0) * alpha))
+)
 a1 = a5 = k
 a2 = a6 = k * math.exp(-alpha) * (alpha - datatype(1.0))
 a3 = a7 = k * math.exp(-alpha) * (alpha + datatype(1.0))
@@ -205,6 +214,7 @@ def deriche(imgIn: datatype[W, H], imgOut: datatype[W, H]):
         out_img = c1 * (in_y1 + in_y2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(1, 'imgOut')], init_array, deriche)
+
+    polybench.main(sizes, args, [(1, "imgOut")], init_array, deriche)

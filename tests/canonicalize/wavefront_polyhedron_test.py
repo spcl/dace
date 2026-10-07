@@ -10,6 +10,7 @@ constraint sets, where the expected answer is obvious by inspection.
 
 Constraints are sympy expressions read as ``expr >= 0``.
 """
+
 import pytest
 
 from dace import symbolic
@@ -98,13 +99,14 @@ def test_skew_bounds_seidel_diagonal_over_rebased_box() -> None:
     regression is attributed to this layer rather than to the pass.
     """
     box = [_sym("u"), _sym("N - 3 - u"), _sym("v"), _sym("N - 3 - v")]
-    bounds = poly.skew_bounds(_DIMS, ("N", ), box, (2, 1), "t", "p")
+    bounds = poly.skew_bounds(_DIMS, ("N",), box, (2, 1), "t", "p")
     assert bounds is not None, "the steep (2, 1) diagonal must be expressible"
     lo = {str(symbolic.simplify(term)) for term in bounds.t_lo_terms}
     assert "0" in lo, f"expected a 0 lower term, got {lo}"
     hi = {str(symbolic.simplify(term)) for term in bounds.t_hi_terms}
-    assert any(symbolic.simplify(term - _sym("3*N - 9")) == 0 for term in bounds.t_hi_terms), \
+    assert any(symbolic.simplify(term - _sym("3*N - 9")) == 0 for term in bounds.t_hi_terms), (
         f"expected an upper term equal to 3*N - 9, got {hi}"
+    )
 
 
 if __name__ == "__main__":

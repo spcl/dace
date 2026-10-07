@@ -16,6 +16,7 @@ DOALL. Recomputation is only sound while the clone cannot duplicate a side effec
 value the body itself overwrote, so the negative tests below pin those two refusals: each is a shape
 where substituting would parallelize the loop and compute every element wrong, with no error raised.
 """
+
 import math
 
 import numpy as np
@@ -26,14 +27,14 @@ from dace.config import Config, set_temporary
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: The rewrite is exact in ARITHMETIC, so the comparisons below are bit-exact. g++ defaults to
 #: ``-ffp-contract=fast``, which would decide them instead: the sequential loop must round ``s``
 #: because the next iteration carries it, while the remat body's ``b[i]*c[i] + t_remat`` contracts
 #: to one FMA -- 1 ulp on 16 of 64 elements, measured. Pinning contraction off keeps the assertions
 #: about the pass. Same flags the CloudSC numeric harnesses use for the same reason.
-STRICT_FP_CPU_ARGS: str = Config.get('compiler', 'cpu', 'args') + ' -fno-fast-math -ffp-contract=off'
+STRICT_FP_CPU_ARGS: str = Config.get("compiler", "cpu", "args") + " -fno-fast-math -ffp-contract=off"
 
 
 @dace.program
@@ -86,11 +87,11 @@ def reference(kernel: str, a, b, c):
     """The sequential loop, run in Python -- the oracle every case below is compared against."""
     t = 0.0
     for i in range(len(b)):
-        s = math.sqrt(b[i]) * c[i] if kernel == 'call' else b[i] * c[i]
+        s = math.sqrt(b[i]) * c[i] if kernel == "call" else b[i] * c[i]
         a[i] = s + t
-        if kernel == 'overwrite':
+        if kernel == "overwrite":
             b[i] = t
-        t = t + s if kernel == 'reduce' else s
+        t = t + s if kernel == "reduce" else s
 
 
 def canonicalized(program, name: str) -> dace.SDFG:
@@ -103,8 +104,11 @@ def canonicalized(program, name: str) -> dace.SDFG:
 def remat_tasklets(sdfg: dace.SDFG) -> list[str]:
     """Labels of the cloned producers the rewrite minted, if any."""
     return [
-        n.label for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and n.label.endswith('_remat')
+        n.label
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and n.label.endswith("_remat")
     ]
 
 
@@ -120,51 +124,57 @@ def run(program, kernel: str, name: str):
     sdfg = canonicalized(program, name)
     got = np.zeros(n)
     got_b = b.copy()
-    with set_temporary('compiler', 'cpu', 'args', value=STRICT_FP_CPU_ARGS):
+    with set_temporary("compiler", "cpu", "args", value=STRICT_FP_CPU_ARGS):
         sdfg.compile()(a=got, b=got_b, c=c.copy(), N=n)
-    assert np.allclose(got, want, rtol=0, atol=0), 'the carried value was rematerialized wrong'
-    assert np.allclose(got_b, want_b, rtol=0, atol=0), 'the body overwrote the wrong elements'
+    assert np.allclose(got, want, rtol=0, atol=0), "the carried value was rematerialized wrong"
+    assert np.allclose(got_b, want_b, rtol=0, atol=0), "the body overwrote the wrong elements"
     return sdfg
 
 
 def test_computed_carry_is_rematerialized():
     """s252: recomputing ``b[i-1] * c[i-1]`` must reproduce the sequential loop bit for bit."""
-    sdfg = run(remat_carry, 'remat', 'remat_carry_canon')
-    assert remat_tasklets(sdfg), 'the producer was never rematerialized'
+    sdfg = run(remat_carry, "remat", "remat_carry_canon")
+    assert remat_tasklets(sdfg), "the producer was never rematerialized"
 
 
 def test_the_rematerialized_remainder_is_parallel():
     """Structural half: the carry is gone, so the peeled remainder is a Map over the whole range."""
-    sdfg = canonicalized(remat_carry, 'remat_carry_struct')
+    sdfg = canonicalized(remat_carry, "remat_carry_struct")
     maps = [
-        n.map for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+        n.map
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes()
         if isinstance(n, nodes.MapEntry)
     ]
-    assert maps, 'the rematerialized loop did not parallelize'
+    assert maps, "the rematerialized loop did not parallelize"
     wcrs = [
-        e.data.data for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
+        e.data.data
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for e in st.edges()
         if e.data is not None and e.data.wcr is not None
     ]
-    assert not wcrs, f'a rotation has nothing to reduce, but a WCR appeared: {wcrs}'
+    assert not wcrs, f"a rotation has nothing to reduce, but a WCR appeared: {wcrs}"
 
 
 def test_an_accumulating_carry_is_not_rematerialized():
     """``t = t + s`` reads the carry, so its producer is fed by a container the body writes."""
-    sdfg = run(reduction_lookalike, 'reduce', 'reduction_lookalike_canon')
-    assert not remat_tasklets(sdfg), 'a reduction was rematerialized as a delay line'
+    sdfg = run(reduction_lookalike, "reduce", "reduction_lookalike_canon")
+    assert not remat_tasklets(sdfg), "a reduction was rematerialized as a delay line"
 
 
 def test_a_producer_input_the_body_overwrites_is_not_rematerialized():
     """The clone reads LATE: ``b[i-1]`` has already been overwritten by iteration ``i-1``."""
-    sdfg = run(producer_input_overwritten, 'overwrite', 'producer_input_overwritten_canon')
-    assert not remat_tasklets(sdfg), 'the clone would re-read an overwritten element'
+    sdfg = run(producer_input_overwritten, "overwrite", "producer_input_overwritten_canon")
+    assert not remat_tasklets(sdfg), "the clone would re-read an overwritten element"
 
 
 def test_a_calling_producer_is_not_rematerialized():
     """A second evaluation would run the call twice; the accepted producer language has no calls."""
-    sdfg = run(producer_calls_a_function, 'call', 'producer_calls_a_function_canon')
-    assert not remat_tasklets(sdfg), 'a call was duplicated by rematerialization'
+    sdfg = run(producer_calls_a_function, "call", "producer_calls_a_function_canon")
+    assert not remat_tasklets(sdfg), "a call was duplicated by rematerialization"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -6,6 +6,7 @@
 ``assume_even=True``). It vectorizes the resident ``GPU_Device`` maps of an
 already-offloaded SDFG; it never offloads/schedules the SDFG itself.
 """
+
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeGPUMultiDim, _has_gpu_device_map
 
 

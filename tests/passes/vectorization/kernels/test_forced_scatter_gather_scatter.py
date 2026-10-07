@@ -12,6 +12,7 @@ Covers:
 * gather-scatter ``a[idx[i]] = b[idx[i]] + c[i]``  (read AND write through the same per-lane idx)
 * multi-dim gather-scatter ``a[idx[i, j]] = b[idx[i, j]] + c[i, j]`` (2-D parallel map, tiled).
 """
+
 import numpy
 import pytest
 
@@ -24,19 +25,20 @@ pytestmark = pytest.mark.tile_nodes
 
 @dace.program
 def forced_scatter_store(a: dace.float64[N], idx: dace.int64[N], c: dace.float64[N]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         a[idx[i]] = c[i]
 
 
 @dace.program
 def forced_gather_scatter(a: dace.float64[N], b: dace.float64[N], idx: dace.int64[N], c: dace.float64[N]):
-    for i, in dace.map[0:N:1]:
+    for (i,) in dace.map[0:N:1]:
         a[idx[i]] = b[idx[i]] + c[i]
 
 
 @dace.program
-def forced_gather_scatter_2d(a: dace.float64[Y, X], b: dace.float64[Y, X], idx: dace.int64[Y, X], c: dace.float64[Y,
-                                                                                                                  X]):
+def forced_gather_scatter_2d(
+    a: dace.float64[Y, X], b: dace.float64[Y, X], idx: dace.int64[Y, X], c: dace.float64[Y, X]
+):
     # Per-row gather-scatter: ``i`` is a direct tile dim, the inner index ``idx[i, j]`` scatters
     # along the X dim (each row of ``idx`` a permutation of ``0:X``), so the write is injective.
     for i, j in dace.map[0:Y:1, 0:X:1]:
@@ -106,10 +108,7 @@ def test_forced_gather_scatter_2d(branch_mode, remainder_strategy):
             "idx": idx,
             "c": numpy.random.random((yv, xv)),
         },
-        params={
-            "Y": yv,
-            "X": xv
-        },
+        params={"Y": yv, "X": xv},
         vector_width=8,
         sdfg_name="forced_gather_scatter_2d",
         branch_mode=branch_mode,

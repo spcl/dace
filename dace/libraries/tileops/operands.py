@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The operands of an elementwise tile node and how its ``pure`` expansion reads them lane by lane."""
+
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -18,6 +19,7 @@ from dace.optionals import required
 @dataclass(frozen=True, slots=True)
 class Operand:
     """One input of an elementwise tile node: the connector it reads, of which kind, and a symbol's expression."""
+
     conn: str
     kind: str
     expr: str | None = None
@@ -69,8 +71,9 @@ def scalar_operand_ref(desc: dace.data.Data, conn: str, widths: Sequence[int], o
     return conn, True
 
 
-def shared_ctype(operands: Sequence[Operand], in_edges: dict[str, MultiConnectorEdge[Memlet]], sdfg: dace.SDFG,
-                 fallback: str) -> str:
+def shared_ctype(
+    operands: Sequence[Operand], in_edges: dict[str, MultiConnectorEdge[Memlet]], sdfg: dace.SDFG, fallback: str
+) -> str:
     """The C++ type the value operands of a node share.
 
     It is the dtype of the first array operand, else that of the first symbol an inline expression names. The output
@@ -95,8 +98,9 @@ def shared_ctype(operands: Sequence[Operand], in_edges: dict[str, MultiConnector
     return fallback
 
 
-def operands_share_output_type(node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG,
-                               operands: Sequence[Operand], out_conn: str) -> bool:
+def operands_share_output_type(
+    node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, operands: Sequence[Operand], out_conn: str
+) -> bool:
     """Whether the operands and the output have one type, which is all the ISA headers' single ``T`` carries.
 
     An op over operands of another type than its output (a comparison of ``double`` operands into ``bool``) would need
@@ -117,6 +121,7 @@ def has_lane_invariant_output(operands: Sequence[Operand], out_edge: MultiConnec
 @dataclass(slots=True)
 class LaneOperands:
     """The operands of one node as the ``pure`` expansion reads them, one lane at a time."""
+
     sdfg: dace.SDFG
     in_edges: dict[str, MultiConnectorEdge[Memlet]]
     widths: list[int]
@@ -125,8 +130,14 @@ class LaneOperands:
     cast: str
 
     @classmethod
-    def of(cls, node: nodes.LibraryNode, state: dace.SDFGState, sdfg: dace.SDFG, operands: Sequence[Operand],
-           out_ctype: str) -> "LaneOperands":
+    def of(
+        cls,
+        node: nodes.LibraryNode,
+        state: dace.SDFGState,
+        sdfg: dace.SDFG,
+        operands: Sequence[Operand],
+        out_ctype: str,
+    ) -> "LaneOperands":
         in_edges = connected_edges(state, node)
         shared = shared_ctype(operands, in_edges, sdfg, out_ctype)
         # A logical op's operands are bool tiles already, and casting a value to bool truncates it; the cast exists
@@ -161,13 +172,23 @@ class LaneOperands:
             reference, broadcast = scalar_operand_ref(desc, operand.conn, self.widths, self.offset)
             if broadcast:
                 return f"{self.cast}({reference})"
-        meets = dace.float16.ctype if all(self.ctype(other) == dace.float16.ctype
-                                          for other in others) else self.shared + "?mixed"
+        meets = (
+            dace.float16.ctype
+            if all(self.ctype(other) == dace.float16.ctype for other in others)
+            else self.shared + "?mixed"
+        )
         return half_disambiguated(reference, desc.dtype.ctype, meets)
 
 
-def elementwise_tasklet(node: nodes.LibraryNode, state: dace.SDFGState, operands: Sequence[Operand], out_conn: str,
-                        rhs: str, out_ctype: str, in_edges: dict[str, MultiConnectorEdge[Memlet]]) -> nodes.Tasklet:
+def elementwise_tasklet(
+    node: nodes.LibraryNode,
+    state: dace.SDFGState,
+    operands: Sequence[Operand],
+    out_conn: str,
+    rhs: str,
+    out_ctype: str,
+    in_edges: dict[str, MultiConnectorEdge[Memlet]],
+) -> nodes.Tasklet:
     """The ``pure`` tasklet of an elementwise node: ``out = rhs`` over the lanes, zero where the mask is off."""
     widths = list(node.widths)
     offset = tile_offset(widths)
@@ -197,7 +218,7 @@ def validate_elementwise(
     out_conn: str,
     has_mask: bool,
     promotion: Callable[[dace.typeclass, dace.typeclass], bool] | None = promotion_ok,
-    unpromoted: Sequence[str] = ()
+    unpromoted: Sequence[str] = (),
 ) -> None:
     """Check the wiring of an elementwise node and the dtypes it lowers.
 
@@ -220,11 +241,14 @@ def validate_elementwise(
             raise ValueError(f"{node.label}: kind={operand.kind!r} but {operand.conn!r} not connected")
     out_desc = sdfg.arrays[required(out_edges[out_conn].data.data)]
     widths = tuple(node.widths)
-    if any(operand.kind == TILE for operand in operands) and not (is_tile_shape(out_desc, widths)
-                                                                  or edge_moves_a_tile(out_edges[out_conn], widths)):
-        raise NotImplementedError(f"{node.label}: output-kind rule violated -- a Tile input is present but "
-                                  f"{out_conn!r} descriptor is not tile-shape {widths!r}. "
-                                  f"Per design section 6.2: any Tile input -> Tile output.")
+    if any(operand.kind == TILE for operand in operands) and not (
+        is_tile_shape(out_desc, widths) or edge_moves_a_tile(out_edges[out_conn], widths)
+    ):
+        raise NotImplementedError(
+            f"{node.label}: output-kind rule violated -- a Tile input is present but "
+            f"{out_conn!r} descriptor is not tile-shape {widths!r}. "
+            f"Per design section 6.2: any Tile input -> Tile output."
+        )
     if promotion is None:
         return
     for operand in operands:
@@ -233,4 +257,5 @@ def validate_elementwise(
             if not promotion(src, out_desc.dtype):
                 raise NotImplementedError(
                     f"{node.label}: Tile operand {operand.conn!r} dtype {src} cannot be promoted to output "
-                    f"dtype {out_desc.dtype} (narrowing conversion); cast explicitly via a separate tasklet.")
+                    f"dtype {out_desc.dtype} (narrowing conversion); cast explicitly via a separate tasklet."
+                )

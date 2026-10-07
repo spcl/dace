@@ -32,6 +32,7 @@ that write the SAME array at provably-disjoint subsets (e.g. covariance's
 ``cov[i,j]`` compute vs ``cov[j,i]`` mirror) are kept together here; splitting
 those needs subset-disjointness reasoning and is out of scope for this pass.
 """
+
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from dace.sdfg import nodes
@@ -131,7 +132,7 @@ def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List[ControlFlowBloc
         # writes_i/reads_i are already ordered dicts; dict.fromkeys unions them without
         # dropping into a hash-order set (the old `set(a) | set(b)` did).
         touched_i = dict.fromkeys([*writes_i, *reads_i])
-        for bj in order[i + 1:]:
+        for bj in order[i + 1 :]:
             writes_j, reads_j = rw[bj]
             merge = False
             for x in dict.fromkeys(k for k in touched_i if k in writes_j or k in reads_j):
@@ -165,7 +166,7 @@ class DistributeProducerConsumerLoop(ppl.Pass):
     nests each liftable on its own.
     """
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -179,7 +180,8 @@ class DistributeProducerConsumerLoop(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         # Function-local: ``perfect_loop_nesting`` imports this module.
         from dace.transformation.passes.canonicalize.perfect_loop_nesting import distribute_loops
+
         return distribute_loops(sdfg) or None
 
 
-__all__ = ['DistributeProducerConsumerLoop', '_forward_flow_groups']
+__all__ = ["DistributeProducerConsumerLoop", "_forward_flow_groups"]

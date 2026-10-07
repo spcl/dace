@@ -6,6 +6,7 @@ each of those becomes an ``ExternalCall`` whose default ``DaceReference`` expans
 program is unchanged until a caller points a node at a compiled library and selects ``ExternCall``. A nest
 whose symbol mapping is not the identity stays a nested SDFG: an expansion re-binds symbols by name.
 """
+
 import copy
 from typing import Any, Dict, List, Optional
 
@@ -43,10 +44,12 @@ def reference_sdfg(nsdfg: nodes.NestedSDFG) -> SDFG:
 
 def replace_with_external_call(state: SDFGState, nsdfg: nodes.NestedSDFG, name: str) -> external_call.ExternalCall:
     """An ``ExternalCall`` in place of ``nsdfg``, calling ``name`` in DaCe's nested-SDFG argument order."""
-    node = external_call.ExternalCall(name,
-                                      inputs=[external_call.in_conn(i) for i in nsdfg.in_connectors],
-                                      outputs=[external_call.out_conn(o) for o in nsdfg.out_connectors],
-                                      standalone_sdfg=reference_sdfg(nsdfg))
+    node = external_call.ExternalCall(
+        name,
+        inputs=[external_call.in_conn(i) for i in nsdfg.in_connectors],
+        outputs=[external_call.out_conn(o) for o in nsdfg.out_connectors],
+        standalone_sdfg=reference_sdfg(nsdfg),
+    )
     state.add_node(node)
     for edge in state.in_edges(nsdfg):
         conn = None if edge.dst_conn is None else external_call.in_conn(edge.dst_conn)
@@ -66,7 +69,7 @@ def replace_with_external_call(state: SDFGState, nsdfg: nodes.NestedSDFG, name: 
 class OutlineToExternalCalls(ppl.Pass):
     """Replace each top-level loop nest of the root SDFG with an ``ExternalCall``. See the module docstring."""
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.States | ppl.Modifies.Memlets | ppl.Modifies.Symbols

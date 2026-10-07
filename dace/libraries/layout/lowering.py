@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Lower a layout-algebra op sequence to a materialized relayout in an SDFG: one mapped-tasklet copy from the logical index to the digit-tuple physical position."""
+
 from typing import Dict, List, Tuple, Union
 
 import dace
@@ -23,13 +24,15 @@ def relayout_map(logical_shape: List, ops: List) -> Tuple[List, LayoutMap, List]
         # net Shuffle is a data-dependent reorder, not a digit reshape; ShuffleElements lowers that
         raise NotImplementedError(
             "LayoutChange cannot lower a net Shuffle; apply dace.transformation.layout.ShuffleElements "
-            "for the value-permutation, then LayoutChange for the remaining digit reshape.")
+            "for the value-permutation, then LayoutChange for the remaining digit reshape."
+        )
     out_shape = [dace.symbolic.simplify(e) for e in out_map.shape()]
     return simplified, out_map, out_shape
 
 
-def _emit_relayout_copy(state: dace.SDFGState, in_name: str, out_name: str, logical_shape: List,
-                        out_map: LayoutMap) -> None:
+def _emit_relayout_copy(
+    state: dace.SDFGState, in_name: str, out_name: str, logical_shape: List, out_map: LayoutMap
+) -> None:
     """Emit the single mapped-tasklet copy ``out[digits] = in[logical]`` into ``state``."""
     dims = list(range(len(logical_shape)))
     map_ranges: Dict[str, Union[str, dace.subsets.Subset]] = {f"__i{d}": f"0:{logical_shape[d]}" for d in dims}
@@ -53,13 +56,15 @@ def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_nam
 
     if out_name in sdfg.arrays:
         sdfg.remove_data(out_name, validate=False)
-    sdfg.add_array(name=out_name,
-                   shape=out_shape,
-                   dtype=in_desc.dtype,
-                   storage=in_desc.storage,
-                   transient=in_desc.transient,
-                   lifetime=in_desc.lifetime,
-                   find_new_name=False)
+    sdfg.add_array(
+        name=out_name,
+        shape=out_shape,
+        dtype=in_desc.dtype,
+        storage=in_desc.storage,
+        transient=in_desc.transient,
+        lifetime=in_desc.lifetime,
+        find_new_name=False,
+    )
 
     _emit_relayout_copy(state, in_name, out_name, logical_shape, out_map)
     return state

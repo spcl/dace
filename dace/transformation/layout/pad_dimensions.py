@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pad layout primitive: grow a dimension's extent with trailing unused elements, keeping packed strides. Only the descriptor changes (recursed into nested SDFGs); existing memlets still index the live region."""
+
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
@@ -103,7 +104,8 @@ class PadZeroFill(ppl.Pass):
                 "PadZeroFill must run after PadDimensions: it needs the pre-pad shapes to know which cells "
                 "are dead. Run both in a Pipeline, or pass PadDimensions' result as "
                 "pipeline_results={'PadDimensions': {array: original_shape}}. Zeroing without it would wipe "
-                "live data if the array was never grown.")
+                "live data if the array was never grown."
+            )
         originals = pipeline_results["PadDimensions"]
         self._refuse_nonsum_reductions(sdfg)
         init = None
@@ -112,15 +114,19 @@ class PadZeroFill(ppl.Pass):
             if len(pads) != len(desc.shape):
                 raise ValueError(f"PadZeroFill: pad {pads} length != rank {len(desc.shape)} of '{arr}'")
             if arr not in originals:
-                raise ValueError(f"PadZeroFill: '{arr}' was not grown by PadDimensions; refusing to zero-fill "
-                                 f"(the pad slab would overlap live data).")
+                raise ValueError(
+                    f"PadZeroFill: '{arr}' was not grown by PadDimensions; refusing to zero-fill "
+                    f"(the pad slab would overlap live data)."
+                )
             orig = originals[arr]
             for dim, p in enumerate(pads):
                 if p == 0:
                     continue
                 if (desc.shape[dim] - orig[dim] - p) != 0:
-                    raise ValueError(f"PadZeroFill: '{arr}' dim {dim} extent {desc.shape[dim]} != original "
-                                     f"{orig[dim]} + pad {p}; the shape was not grown by this pad_map.")
+                    raise ValueError(
+                        f"PadZeroFill: '{arr}' dim {dim} extent {desc.shape[dim]} != original "
+                        f"{orig[dim]} + pad {p}; the shape was not grown by this pad_map."
+                    )
                 if init is None:
                     start = sdfg.start_state
                     assert isinstance(start, dace.SDFGState), "PadZeroFill: the SDFG must start with a plain state"
@@ -164,4 +170,5 @@ class PadZeroFill(ppl.Pass):
                         raise NotImplementedError(
                             f"PadZeroFill: '{arr}' is padded on a dimension reduced by a non-sum reduction "
                             f"({reduction.name if reduction is not None else node.wcr}); zero-fill is legal only for a sum "
-                            f"reduction. Pad a free dimension instead, or do not pad this array.")
+                            f"reduction. Pad a free dimension instead, or do not pad this array."
+                        )

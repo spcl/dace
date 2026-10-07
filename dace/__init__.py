@@ -23,7 +23,7 @@ from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
 
 
-def cpf(sdfg, validate: bool = True, language: str = 'c++', order=None) -> str:
+def cpf(sdfg, validate: bool = True, language: str = "c++", order=None) -> str:
     """Render ``sdfg`` as one self-contained translation unit (see :func:`dace.codegen.cpf.cpf`).
 
     ``language`` is ``'c++'`` (C++20, the default) or ``'c'`` (C23); both build with a bare host
@@ -35,6 +35,7 @@ def cpf(sdfg, validate: bool = True, language: str = 'c++', order=None) -> str:
     pay for a code generator most programs never run.
     """
     from dace.codegen.cpf import cpf as _cpf
+
     return _cpf(sdfg, validate=validate, language=language, order=order)
 
 
@@ -55,11 +56,12 @@ if raw_path is not None:
 
 # Lazy loading for ml module to avoid eager TensorFlow/PyTorch imports
 def __getattr__(name):
-    if name == 'ml':
+    if name == "ml":
         import importlib
-        ml_module = importlib.import_module('.ml', package='dace')
+
+        ml_module = importlib.import_module(".ml", package="dace")
         # Cache the module to avoid re-importing
-        globals()['ml'] = ml_module
+        globals()["ml"] = ml_module
         return ml_module
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
@@ -67,7 +69,6 @@ def __getattr__(name):
 # Hack that enables using @dace as a decorator
 # See https://stackoverflow.com/a/48100440/6489142
 class DaceModule(sys.modules[__name__].__class__):
-
     def __call__(self, *args, **kwargs):
         return function(*args, **kwargs)
 

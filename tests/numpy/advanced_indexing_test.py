@@ -3,6 +3,7 @@
 Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
+
 import ast
 import dace
 from dace import graphlib as nx
@@ -11,8 +12,8 @@ from dace.sdfg import nodes as dace_nodes
 import numpy as np
 import pytest
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def test_flat():
@@ -27,7 +28,7 @@ def test_flat():
 
 
 def test_flat_noncontiguous():
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
 
         @dace.program
         def indexing_test(A):
@@ -201,10 +202,10 @@ def indirection_tasklet(sdfg: dace.SDFG):
     """Returns the advanced-indexing tasklet and the memlet feeding its ``__arr`` connector."""
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, dace_nodes.Tasklet) and node.label.startswith('indirection'):
-                arr_edge = next(e for e in state.in_edges(node) if e.dst_conn == '__arr')
+            if isinstance(node, dace_nodes.Tasklet) and node.label.startswith("indirection"):
+                arr_edge = next(e for e in state.in_edges(node) if e.dst_conn == "__arr")
                 return state, node, arr_edge.data
-    raise AssertionError('no indirection tasklet found in SDFG')
+    raise AssertionError("no indirection tasklet found in SDFG")
 
 
 def assert_arr_subscript_matches_memlet(sdfg: dace.SDFG) -> int:
@@ -245,12 +246,12 @@ def test_index_intarr_into_length_one_dim():
     # The gather degenerates to a broadcast: no index is read, and the map spans the index shape.
     state, tasklet, memlet = indirection_tasklet(sdfg)
     assert assert_arr_subscript_matches_memlet(sdfg) == 0
-    assert set(tasklet.in_connectors) == {'__arr'}
-    assert str(memlet.subset) == '0'
+    assert set(tasklet.in_connectors) == {"__arr"}
+    assert str(memlet.subset) == "0"
     map_entry = next(n for n in state.nodes() if isinstance(n, dace_nodes.MapEntry))
-    assert map_entry.map.params == ['__ind0', '__ind1']
-    assert str(map_entry.map.range) == '0:3, 0:2'
-    assert tuple(sdfg.arrays['__return'].shape) == expected.shape
+    assert map_entry.map.params == ["__ind0", "__ind1"]
+    assert str(map_entry.map.range) == "0:3, 0:2"
+    assert tuple(sdfg.arrays["__return"].shape) == expected.shape
 
     res = sdfg(table=table, idx=idx)
     assert res.shape == expected.shape, f"gather returned {res.shape}, numpy returns {expected.shape}"
@@ -266,17 +267,17 @@ def test_index_intarr_into_length_one_dim_of_many():
         return table[idx, :]
 
     table = np.arange(4, dtype=np.float64).reshape(1, 4)
-    idx = np.zeros((3, ), dtype=np.int64)
+    idx = np.zeros((3,), dtype=np.int64)
     expected = table[idx, :]
 
     sdfg = indexing_test.to_sdfg(simplify=False)
     state, tasklet, memlet = indirection_tasklet(sdfg)
     assert assert_arr_subscript_matches_memlet(sdfg) == 0
     # The basic dimension stays a map parameter, the degenerate one is pinned by the memlet.
-    assert str(memlet.subset) == '0, __i1'
+    assert str(memlet.subset) == "0, __i1"
     map_entry = next(n for n in state.nodes() if isinstance(n, dace_nodes.MapEntry))
-    assert sorted(map_entry.map.params) == ['__i1', '__ind0']
-    assert tuple(sdfg.arrays['__return'].shape) == expected.shape
+    assert sorted(map_entry.map.params) == ["__i1", "__ind0"]
+    assert tuple(sdfg.arrays["__return"].shape) == expected.shape
 
     res = indexing_test(table, idx)
     assert res.shape == expected.shape, f"gather returned {res.shape}, numpy returns {expected.shape}"
@@ -297,8 +298,8 @@ def test_index_intarr_length_one_dim_trailing_basic():
     sdfg = indexing_test.to_sdfg(simplify=False)
     _, tasklet, memlet = indirection_tasklet(sdfg)
     assert assert_arr_subscript_matches_memlet(sdfg) == 0
-    assert str(memlet.subset) == '0, __i1'
-    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (3, 2, 10)
+    assert str(memlet.subset) == "0, __i1"
+    assert tuple(sdfg.arrays["__return"].shape) == expected.shape == (3, 2, 10)
 
     res = sdfg(table=table, idx=idx)
     assert res.shape == expected.shape
@@ -320,15 +321,15 @@ def test_index_intarr_into_trailing_length_one_dim():
     sdfg = indexing_test.to_sdfg(simplify=False)
     _, tasklet, memlet = indirection_tasklet(sdfg)
     assert assert_arr_subscript_matches_memlet(sdfg) == 0
-    assert str(memlet.subset) == '__i0, 0'
-    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (4, 3, 2)
+    assert str(memlet.subset) == "__i0, 0"
+    assert tuple(sdfg.arrays["__return"].shape) == expected.shape == (4, 3, 2)
 
     res = sdfg(table=table, idx=idx)
     assert res.shape == expected.shape
     assert np.allclose(expected, res)
 
 
-@pytest.mark.parametrize('degenerate_dim', [0, 1])
+@pytest.mark.parametrize("degenerate_dim", [0, 1])
 def test_index_intarr_length_one_dim_beside_real_gather(degenerate_dim):
     """A degenerate advanced dimension NEXT TO a real one. The surviving index array has to keep
     its position in the tasklet subscript even though the dropped one came before or after it.
@@ -343,11 +344,11 @@ def test_index_intarr_length_one_dim_beside_real_gather(degenerate_dim):
         return table[i0, i1]
 
     if degenerate_dim == 0:
-        prog, shape, live = gather_first, (1, 5), 'i1'
+        prog, shape, live = gather_first, (1, 5), "i1"
         i0 = np.zeros(3, dtype=np.int64)
         i1 = np.array([0, 3, 4], dtype=np.int64)
     else:
-        prog, shape, live = gather_second, (5, 1), 'i0'
+        prog, shape, live = gather_second, (5, 1), "i0"
         i0 = np.array([0, 4, 2], dtype=np.int64)
         i1 = np.zeros(3, dtype=np.int64)
 
@@ -358,10 +359,10 @@ def test_index_intarr_length_one_dim_beside_real_gather(degenerate_dim):
     state, tasklet, _ = indirection_tasklet(sdfg)
     # Exactly one index survives, and it is the one belonging to the non-degenerate dimension.
     assert assert_arr_subscript_matches_memlet(sdfg) == 1
-    assert set(tasklet.in_connectors) == {'__arr', '__inp0'}
-    inp_edge = next(e for e in state.in_edges(tasklet) if e.dst_conn == '__inp0')
+    assert set(tasklet.in_connectors) == {"__arr", "__inp0"}
+    inp_edge = next(e for e in state.in_edges(tasklet) if e.dst_conn == "__inp0")
     assert inp_edge.data.data == live
-    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (3, )
+    assert tuple(sdfg.arrays["__return"].shape) == expected.shape == (3,)
 
     res = sdfg(table=table, i0=i0, i1=i1)
     assert res.shape == expected.shape
@@ -375,15 +376,15 @@ def test_index_intarr_into_reshaped_length_one_dim():
 
     @dace.program
     def indexing_test(cutsq: dace.float64[1, 1], pair: dace.int64[4]):
-        return cutsq.reshape((1, ))[pair]
+        return cutsq.reshape((1,))[pair]
 
     cutsq = np.array([[2.5]], dtype=np.float64)
-    pair = np.zeros((4, ), dtype=np.int64)
-    expected = cutsq.reshape((1, ))[pair]
+    pair = np.zeros((4,), dtype=np.int64)
+    expected = cutsq.reshape((1,))[pair]
 
     sdfg = indexing_test.to_sdfg(simplify=False)
     assert assert_arr_subscript_matches_memlet(sdfg) == 0
-    assert tuple(sdfg.arrays['__return'].shape) == expected.shape == (4, )
+    assert tuple(sdfg.arrays["__return"].shape) == expected.shape == (4,)
 
     res = sdfg(cutsq=cutsq, pair=pair)
     assert res.shape == expected.shape
@@ -554,10 +555,10 @@ def store_tasklet(sdfg: dace.SDFG):
     """Returns the state, tasklet and output memlet of an advanced-indexing store."""
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, dace_nodes.Tasklet) and node.label.startswith(('assign', 'augassign')):
-                out_edge = next(e for e in state.out_edges(node) if e.src_conn == '__out')
+            if isinstance(node, dace_nodes.Tasklet) and node.label.startswith(("assign", "augassign")):
+                out_edge = next(e for e in state.out_edges(node) if e.src_conn == "__out")
                 return state, node, out_edge.data
-    raise AssertionError('no store tasklet found in SDFG')
+    raise AssertionError("no store tasklet found in SDFG")
 
 
 def assert_out_subscript_matches_memlet(sdfg: dace.SDFG) -> int:
@@ -583,7 +584,7 @@ def assert_single_scatter_map(sdfg: dace.SDFG, extent: str):
     """
     state, _, _ = store_tasklet(sdfg)
     map_entry = next(n for n in state.nodes() if isinstance(n, dace_nodes.MapEntry))
-    assert map_entry.map.params == ['__i0'], f'scatter map has parameters {map_entry.map.params}'
+    assert map_entry.map.params == ["__i0"], f"scatter map has parameters {map_entry.map.params}"
     assert str(map_entry.map.range) == extent
     return map_entry
 
@@ -604,7 +605,7 @@ def test_out_index_multiple_intarr_aug():
 
     sdfg = indexing_test.to_sdfg(simplify=False)
     assert assert_out_subscript_matches_memlet(sdfg) == 3
-    assert_single_scatter_map(sdfg, '0:8')
+    assert_single_scatter_map(sdfg, "0:8")
 
     sdfg(a=a, rows=rows, cols=cols)
     assert np.allclose(a, ref)
@@ -625,7 +626,7 @@ def test_out_index_multiple_intarr_aug_mult():
 
     sdfg = indexing_test.to_sdfg(simplify=False)
     assert assert_out_subscript_matches_memlet(sdfg) == 3
-    assert_single_scatter_map(sdfg, '0:8')
+    assert_single_scatter_map(sdfg, "0:8")
 
     sdfg(a=a, rows=rows, cols=cols)
     assert np.allclose(a, ref)
@@ -646,7 +647,7 @@ def test_out_index_multiple_intarr_store():
 
     sdfg = indexing_test.to_sdfg(simplify=False)
     assert assert_out_subscript_matches_memlet(sdfg) == 3
-    assert_single_scatter_map(sdfg, '0:8')
+    assert_single_scatter_map(sdfg, "0:8")
 
     sdfg(a=a, rows=rows, cols=cols)
     assert np.allclose(a, ref)
@@ -658,20 +659,20 @@ def test_out_index_multiple_intarr_broadcast():
 
     @dace.program
     def indexing_test(a: dace.float64[4, 2, 2], rows: dace.int64[4]):
-        a[rows, (1, ), (1, )] += 2.0
+        a[rows, (1,), (1,)] += 2.0
 
     rows = np.array([3, 0, 2, 1], dtype=np.int64)
     a = np.arange(16, dtype=np.float64).reshape(4, 2, 2)
     ref = np.copy(a)
-    ref[rows, (1, ), (1, )] += 2.0
+    ref[rows, (1,), (1,)] += 2.0
 
     sdfg = indexing_test.to_sdfg(simplify=False)
     assert assert_out_subscript_matches_memlet(sdfg) == 3
     state, tasklet, _ = store_tasklet(sdfg)
-    assert_single_scatter_map(sdfg, '0:4')
+    assert_single_scatter_map(sdfg, "0:4")
     # The broadcast index arrays are pinned at 0; only the matching one follows the map parameter.
-    reads = {e.dst_conn: str(e.data.subset) for e in state.in_edges(tasklet) if e.dst_conn.startswith('__ind_')}
-    assert reads == {'__ind_0': '__i0', '__ind_1': '0', '__ind_2': '0'}
+    reads = {e.dst_conn: str(e.data.subset) for e in state.in_edges(tasklet) if e.dst_conn.startswith("__ind_")}
+    assert reads == {"__ind_0": "__i0", "__ind_1": "0", "__ind_2": "0"}
 
     sdfg(a=a, rows=rows)
     assert np.allclose(a, ref)
@@ -684,7 +685,7 @@ def test_out_index_multiple_intarr_mismatch_is_refused():
     def indexing_test(a: dace.float64[4, 2, 2], rows: dace.int64[8], cols: dace.int64[3]):
         a[rows, cols, cols] -= 0.5
 
-    with pytest.raises(IndexError, match='could not be broadcast together'):
+    with pytest.raises(IndexError, match="could not be broadcast together"):
         indexing_test.to_sdfg()
 
 
@@ -697,35 +698,31 @@ def test_out_index_multiple_intarr_array_operand_is_refused():
     def indexing_test(a: dace.float64[4, 2, 2], b: dace.float64[8], rows: dace.int64[8], cols: dace.int64[8]):
         a[rows, cols, cols] = b
 
-    with pytest.raises(DaceSyntaxError, match='more than one index array'):
+    with pytest.raises(DaceSyntaxError, match="more than one index array"):
         indexing_test.to_sdfg()
 
 
-@pytest.mark.parametrize('tuple_index', (False, True))
+@pytest.mark.parametrize("tuple_index", (False, True))
 def test_advanced_indexing_syntax(tuple_index):
 
     @dace.program
     def indexing_test(A: dace.float64[N, N, N]):
         if tuple_index:
-            A[
-                (1, 2, 3),
-            ] = 2
+            A[(1, 2, 3),] = 2
         else:
             A[[1, 2, 3]] = 2
         A[(1, 2, 3)] = 1
 
     A = np.random.rand(20, 20, 20)
     ref = np.copy(A)
-    ref[
-        (1, 2, 3),
-    ] = 2
+    ref[(1, 2, 3),] = 2
     ref[(1, 2, 3)] = 1
     indexing_test(A)
 
     assert np.allclose(A, ref)
 
 
-@pytest.mark.parametrize('contiguous', (False, True))
+@pytest.mark.parametrize("contiguous", (False, True))
 def test_multidim_tuple_index(contiguous):
 
     if contiguous:
@@ -740,7 +737,7 @@ def test_multidim_tuple_index(contiguous):
             return A[:, (1, 3, 0)]
 
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (N, 3)
+    assert tuple(sdfg.arrays["__return"].shape) == (N, 3)
 
     A = np.random.rand(20, 10)
     if contiguous:
@@ -760,7 +757,7 @@ def test_multidim_tuple_index_longer():
         return A[:, (1, 2, 3, 4, 5, 7)]
 
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (N, 6)
+    assert tuple(sdfg.arrays["__return"].shape) == (N, 6)
 
     A = np.random.rand(20, 10)
     ref = A[:, (1, 2, 3, 4, 5, 7)]
@@ -771,7 +768,7 @@ def test_multidim_tuple_index_longer():
 
 
 def test_multidim_tuple_multidim_index():
-    with pytest.raises(IndexError, match='could not be broadcast together'):
+    with pytest.raises(IndexError, match="could not be broadcast together"):
 
         @dace.program
         def indexing_test(A: dace.float64[N, M, N]):
@@ -782,7 +779,7 @@ def test_multidim_tuple_multidim_index():
 
 @pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_multidim_tuple_multidim_index_write():
-    with pytest.raises(IndexError, match='could not be broadcast together'):
+    with pytest.raises(IndexError, match="could not be broadcast together"):
 
         @dace.program
         def indexing_test(A: dace.float64[N, M, N]):
@@ -798,7 +795,7 @@ def test_advanced_index_broadcasting():
         return A[indices, (1, 2, 4), :]
 
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, N)
+    assert tuple(sdfg.arrays["__return"].shape) == (3, 3, N)
 
     A = np.random.rand(20, 10, 20)
     indices = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.int32)
@@ -823,7 +820,7 @@ def test_combining_basic_and_advanced_indexing():
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, 3, 5, N, N, 2)
+    assert tuple(sdfg.arrays["__return"].shape) == (3, 3, 3, 5, N, N, 2)
 
     res = indexing_test(A, indices, indices2)
 
@@ -864,7 +861,7 @@ def test_combining_basic_and_advanced_indexing_with_newaxes():
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, 3, 1, 5, N, N, 2, 1)
+    assert tuple(sdfg.arrays["__return"].shape) == (3, 3, 3, 1, 5, N, N, 2, 1)
 
     res = indexing_test(A, indices, indices2)
 
@@ -885,7 +882,7 @@ def test_combining_basic_and_advanced_indexing_with_newaxes_2():
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (1, 5, 3, 3, 3, N, N, N, 2, 1)
+    assert tuple(sdfg.arrays["__return"].shape) == (1, 5, 3, 3, 3, N, N, N, 2, 1)
 
     res = indexing_test(A, indices, indices2)
 
@@ -942,8 +939,10 @@ def test_gather_evaluated_before_its_destination_is_cleared():
     sdfg = indexing_test.to_sdfg(simplify=True)
     for state in sdfg.states():
         producers = [
-            state.entry_node(edge.src) or edge.src for node in state.data_nodes()
-            if node.data == 'out' and state.entry_node(node) is None for edge in state.in_edges(node)
+            state.entry_node(edge.src) or edge.src
+            for node in state.data_nodes()
+            if node.data == "out" and state.entry_node(node) is None
+            for edge in state.in_edges(node)
             if not edge.data.is_empty()
         ]
         for first in producers:
@@ -953,12 +952,12 @@ def test_gather_evaluated_before_its_destination_is_cleared():
                 ordered = nx.has_path(state.nx, first, second) or nx.has_path(state.nx, second, first)
                 assert ordered, f'unordered overwrite of "out" in state {state.label}'
 
-    out = np.full((12, ), -1.0)
+    out = np.full((12,), -1.0)
     sdfg(src=src, idx=idx, out=out)
     assert np.allclose(out, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_flat()
     test_flat_noncontiguous()
     test_ellipsis()

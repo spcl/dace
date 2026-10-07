@@ -8,6 +8,7 @@ edges and ``other_subset`` copies. Every SDFG is built with the constructor
 API, asserted valid before and after, and compared end-to-end against a
 deep-copied pre-pass reference run.
 """
+
 import copy
 
 import numpy as np
@@ -32,7 +33,8 @@ def _an_to_an_edges(sdfg: dace.SDFG):
 
 def _assign_tasklets(sdfg: dace.SDFG):
     return [
-        n for n, _ in sdfg.all_nodes_recursive()
+        n
+        for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.Tasklet) and n.code.as_string.strip() == "_out = _in"
     ]
 
@@ -43,13 +45,13 @@ def _assign_tasklets(sdfg: dace.SDFG):
 def test_unit_copy_with_other_subset_is_split():
     """``A[5] -[B[2]]-> B`` is a single element on both sides: rewritten."""
     rng = np.random.default_rng(42)
-    sdfg = dace.SDFG('unit_copy_othersub')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("unit_copy_othersub")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
     state = sdfg.add_state()
-    a = state.add_access('A')
-    b = state.add_access('B')
-    state.add_edge(a, None, b, None, dace.Memlet(data='A', subset='5', other_subset='2'))
+    a = state.add_access("A")
+    b = state.add_access("B")
+    state.add_edge(a, None, b, None, dace.Memlet(data="A", subset="5", other_subset="2"))
     sdfg.validate()
 
     ref = copy.deepcopy(sdfg)
@@ -72,13 +74,13 @@ def test_unit_copy_with_other_subset_is_split():
 
 def test_multi_element_copy_is_left_unchanged():
     """``A[0:5] -> B[0:5]`` moves five elements: must not be rewritten."""
-    sdfg = dace.SDFG('multi_copy')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("multi_copy")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
     state = sdfg.add_state()
-    a = state.add_access('A')
-    b = state.add_access('B')
-    state.add_edge(a, None, b, None, dace.Memlet(data='A', subset='0:5', other_subset='0:5'))
+    a = state.add_access("A")
+    b = state.add_access("B")
+    state.add_edge(a, None, b, None, dace.Memlet(data="A", subset="0:5", other_subset="0:5"))
     sdfg.validate()
 
     changed = InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
@@ -90,13 +92,13 @@ def test_multi_element_copy_is_left_unchanged():
 def test_scalar_copy_without_other_subset_is_split():
     """A plain single-element copy (no ``other_subset``) is rewritten."""
     rng = np.random.default_rng(42)
-    sdfg = dace.SDFG('scalar_copy')
-    sdfg.add_array('S1', [1], dace.float64)
-    sdfg.add_array('S2', [1], dace.float64)
+    sdfg = dace.SDFG("scalar_copy")
+    sdfg.add_array("S1", [1], dace.float64)
+    sdfg.add_array("S2", [1], dace.float64)
     state = sdfg.add_state()
-    s1 = state.add_access('S1')
-    s2 = state.add_access('S2')
-    state.add_edge(s1, None, s2, None, dace.Memlet(data='S1', subset='0'))
+    s1 = state.add_access("S1")
+    s2 = state.add_access("S2")
+    state.add_edge(s1, None, s2, None, dace.Memlet(data="S1", subset="0"))
     sdfg.validate()
 
     ref = copy.deepcopy(sdfg)
@@ -117,14 +119,14 @@ def test_scalar_copy_without_other_subset_is_split():
 
 def test_symbolic_extent_copy_is_left_unchanged():
     """A copy whose extent is the symbol ``N`` is not provably unit: skipped."""
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('symbolic_copy')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("symbolic_copy")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
     state = sdfg.add_state()
-    a = state.add_access('A')
-    b = state.add_access('B')
-    state.add_edge(a, None, b, None, dace.Memlet(data='A', subset='0:N', other_subset='0:N'))
+    a = state.add_access("A")
+    b = state.add_access("B")
+    state.add_edge(a, None, b, None, dace.Memlet(data="A", subset="0:N", other_subset="0:N"))
     sdfg.validate()
 
     changed = InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
@@ -138,23 +140,23 @@ def test_symbolic_extent_copy_is_left_unchanged():
 def _staging_sdfg() -> dace.SDFG:
     """``A -> map -> tmp -> (+1) -> tmp2 -> mapexit -> B`` with explicit
     in-scope staging AccessNodes (the stage-in / stage-out boundary)."""
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('map_staging')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_transient('tmp', [1], dace.float64)
-    sdfg.add_transient('tmp2', [1], dace.float64)
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("map_staging")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_transient("tmp", [1], dace.float64)
+    sdfg.add_transient("tmp2", [1], dace.float64)
     state = sdfg.add_state()
-    a = state.add_access('A')
-    b = state.add_access('B')
-    me, mx = state.add_map('m', dict(i='0:N'))
-    tin = state.add_access('tmp')
-    tout = state.add_access('tmp2')
-    t = state.add_tasklet('add', {'_i'}, {'_o'}, '_o = _i + 1.0')
-    state.add_memlet_path(a, me, tin, memlet=dace.Memlet(data='A', subset='i', other_subset='0'))
-    state.add_edge(tin, None, t, '_i', dace.Memlet(data='tmp', subset='0'))
-    state.add_edge(t, '_o', tout, None, dace.Memlet(data='tmp2', subset='0'))
-    state.add_memlet_path(tout, mx, b, memlet=dace.Memlet(data='B', subset='i', other_subset='0'))
+    a = state.add_access("A")
+    b = state.add_access("B")
+    me, mx = state.add_map("m", dict(i="0:N"))
+    tin = state.add_access("tmp")
+    tout = state.add_access("tmp2")
+    t = state.add_tasklet("add", {"_i"}, {"_o"}, "_o = _i + 1.0")
+    state.add_memlet_path(a, me, tin, memlet=dace.Memlet(data="A", subset="i", other_subset="0"))
+    state.add_edge(tin, None, t, "_i", dace.Memlet(data="tmp", subset="0"))
+    state.add_edge(t, "_o", tout, None, dace.Memlet(data="tmp2", subset="0"))
+    state.add_memlet_path(tout, mx, b, memlet=dace.Memlet(data="B", subset="i", other_subset="0"))
     sdfg.validate()
     return sdfg
 
@@ -180,13 +182,13 @@ def test_map_boundary_staging_is_split():
 def test_map_boundary_other_subset_an_edge_is_split():
     """A bare ``other_subset`` ``AccessNode -> AccessNode`` copy is split."""
     rng = np.random.default_rng(42)
-    sdfg = dace.SDFG('othersub_an')
-    sdfg.add_array('A', [10], dace.float64)
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("othersub_an")
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
     state = sdfg.add_state()
-    a = state.add_access('A')
-    b = state.add_access('B')
-    state.add_edge(a, None, b, None, dace.Memlet(data='A', subset='5', other_subset='2'))
+    a = state.add_access("A")
+    b = state.add_access("B")
+    state.add_edge(a, None, b, None, dace.Memlet(data="A", subset="5", other_subset="2"))
     sdfg.validate()
 
     # No reference run here: DaCe codegen for a bare ``other_subset`` AN->AN
@@ -234,9 +236,9 @@ def test_an_to_an_with_other_subset_preserves_wcr():
     # Exactly one WCR edge must remain -- on the OUTPUT side of the inserted
     # tasklet (tasklet -> dst_an), preserving the accumulator semantics.
     wcr_edges = [e for st in sdfg.states() for e in st.edges() if e.data is not None and e.data.wcr is not None]
-    assert len(wcr_edges) == 1, f'expected one preserved WCR edge, got {len(wcr_edges)}'
-    (we, ) = wcr_edges
-    assert isinstance(we.src, nodes.Tasklet), 'WCR must move to the tasklet output side'
+    assert len(wcr_edges) == 1, f"expected one preserved WCR edge, got {len(wcr_edges)}"
+    (we,) = wcr_edges
+    assert isinstance(we.src, nodes.Tasklet), "WCR must move to the tasklet output side"
     assert isinstance(we.dst, nodes.AccessNode) and we.dst.data == "acc"
 
 
@@ -275,13 +277,16 @@ def test_map_exit_stage_out_preserves_wcr():
 
     # WCR must be preserved on the tasklet -> MapExit output side.
     wcr_to_map_exit = [
-        e for st in sdfg.states() for e in st.edges()
+        e
+        for st in sdfg.states()
+        for e in st.edges()
         if e.data is not None and e.data.wcr is not None and isinstance(e.dst, nodes.MapExit)
     ]
-    assert len(wcr_to_map_exit) == 1, (f'stage-out split must keep exactly one WCR edge into MapExit; '
-                                       f'got {len(wcr_to_map_exit)}')
+    assert len(wcr_to_map_exit) == 1, (
+        f"stage-out split must keep exactly one WCR edge into MapExit; got {len(wcr_to_map_exit)}"
+    )
     we = wcr_to_map_exit[0]
-    assert isinstance(we.src, nodes.Tasklet), 'WCR must move to the tasklet output side of the split'
+    assert isinstance(we.src, nodes.Tasklet), "WCR must move to the tasklet output side of the split"
 
 
 def test_wcr_stage_out_executes_correctly_after_split():
@@ -314,8 +319,7 @@ def test_wcr_stage_out_executes_correctly_after_split():
     A = rng.random(16)
     out = np.zeros(1)
     sdfg(A=A, acc=out, N=16)
-    assert np.isclose(out[0], A.sum()), (f'WCR semantics lost across the split: got {out[0]}, '
-                                         f'expected sum(A)={A.sum()}')
+    assert np.isclose(out[0], A.sum()), f"WCR semantics lost across the split: got {out[0]}, expected sum(A)={A.sum()}"
 
 
 # View handling: a View's defining edge must never be split
@@ -332,24 +336,25 @@ def test_map_boundary_stage_out_view_defining_edge_not_split():
     reach this pass as ``View -[views]-> MapExit`` and crashed canonicalize.
     """
     from dace.sdfg.utils import get_view_edge
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('view_stage_out')
-    sdfg.add_array('A', [N, 4], dace.float64)
-    sdfg.add_array('src', [N, 4], dace.float64)
-    sdfg.add_view('V', [4], dace.float64)
+
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("view_stage_out")
+    sdfg.add_array("A", [N, 4], dace.float64)
+    sdfg.add_array("src", [N, 4], dace.float64)
+    sdfg.add_view("V", [4], dace.float64)
     state = sdfg.add_state()
-    s = state.add_read('src')
-    v = state.add_access('V')
-    a = state.add_write('A')
-    me, mx = state.add_map('m', dict(i='0:N'))
-    t = state.add_tasklet('cp', {'_in'}, {'_out'}, '_out = _in')
-    state.add_memlet_path(s, me, t, dst_conn='_in', memlet=dace.Memlet('src[i, 0:4]'))
-    state.add_edge(t, '_out', v, None, dace.Memlet('V[0:4]'))
+    s = state.add_read("src")
+    v = state.add_access("V")
+    a = state.add_write("A")
+    me, mx = state.add_map("m", dict(i="0:N"))
+    t = state.add_tasklet("cp", {"_in"}, {"_out"}, "_out = _in")
+    state.add_memlet_path(s, me, t, dst_conn="_in", memlet=dace.Memlet("src[i, 0:4]"))
+    state.add_edge(t, "_out", v, None, dace.Memlet("V[0:4]"))
     # V's DEFINING edge (``views`` connector) crosses the MapExit into A[i, :].
-    mx.add_in_connector('IN_A')
-    mx.add_out_connector('OUT_A')
-    state.add_edge(v, 'views', mx, 'IN_A', dace.Memlet(data='A', subset='i, 0:4', other_subset='0:4'))
-    state.add_edge(mx, 'OUT_A', a, None, dace.Memlet(data='A', subset='0:N, 0:4'))
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    state.add_edge(v, "views", mx, "IN_A", dace.Memlet(data="A", subset="i, 0:4", other_subset="0:4"))
+    state.add_edge(mx, "OUT_A", a, None, dace.Memlet(data="A", subset="0:N, 0:4"))
     sdfg.validate()
     assert get_view_edge(state, v) is not None  # valid view before
 
@@ -369,24 +374,25 @@ def test_map_boundary_stage_in_view_defining_edge_not_split():
     otherwise.
     """
     from dace.sdfg.utils import get_view_edge
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('view_stage_in')
-    sdfg.add_array('A', [N, 4], dace.float64)
-    sdfg.add_array('out', [N, 4], dace.float64)
-    sdfg.add_view('V', [4], dace.float64)
+
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("view_stage_in")
+    sdfg.add_array("A", [N, 4], dace.float64)
+    sdfg.add_array("out", [N, 4], dace.float64)
+    sdfg.add_view("V", [4], dace.float64)
     state = sdfg.add_state()
-    a = state.add_read('A')
-    v = state.add_access('V')
-    o = state.add_write('out')
-    me, mx = state.add_map('m', dict(i='0:N'))
-    t = state.add_tasklet('cp', {'_in'}, {'_out'}, '_out = _in')
+    a = state.add_read("A")
+    v = state.add_access("V")
+    o = state.add_write("out")
+    me, mx = state.add_map("m", dict(i="0:N"))
+    t = state.add_tasklet("cp", {"_in"}, {"_out"}, "_out = _in")
     # A[i, :] -> MapEntry -[views]-> V  (the view's defining edge across MapEntry).
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    state.add_edge(a, None, me, 'IN_A', dace.Memlet(data='A', subset='0:N, 0:4'))
-    state.add_edge(me, 'OUT_A', v, 'views', dace.Memlet(data='A', subset='i, 0:4', other_subset='0:4'))
-    state.add_edge(v, None, t, '_in', dace.Memlet('V[0:4]'))
-    state.add_memlet_path(t, mx, o, src_conn='_out', memlet=dace.Memlet('out[i, 0:4]'))
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    state.add_edge(a, None, me, "IN_A", dace.Memlet(data="A", subset="0:N, 0:4"))
+    state.add_edge(me, "OUT_A", v, "views", dace.Memlet(data="A", subset="i, 0:4", other_subset="0:4"))
+    state.add_edge(v, None, t, "_in", dace.Memlet("V[0:4]"))
+    state.add_memlet_path(t, mx, o, src_conn="_out", memlet=dace.Memlet("out[i, 0:4]"))
     sdfg.validate()
     assert get_view_edge(state, v) is not None
 
@@ -406,26 +412,26 @@ def _fissioned_staging_sdfg() -> dace.SDFG:
 
     :returns: The built, fissioned and validated SDFG.
     """
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('fissioned_staging')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_transient('c2', [1], dace.float64)
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("fissioned_staging")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_transient("c2", [1], dace.float64)
 
-    state = sdfg.add_state('compute')
-    setc = state.add_tasklet('setc', {}, {'_o'}, '_o = 2.0')
-    outer = state.add_access('c2')
-    state.add_edge(setc, '_o', outer, None, dace.Memlet('c2[0]'))
-    me, mx = state.add_map('m', dict(i='0:N'))
-    me.add_in_connector('IN_c2')
-    me.add_out_connector('OUT_c2')
-    inner = state.add_access('c2')
-    mul = state.add_tasklet('mul', {'_a': None, '_c': None}, {'_o'}, '_o = _a * _c')
-    state.add_memlet_path(state.add_access('A'), me, mul, dst_conn='_a', memlet=dace.Memlet('A[i]'))
-    state.add_edge(outer, None, me, 'IN_c2', dace.Memlet('c2[0]'))
-    state.add_edge(me, 'OUT_c2', inner, None, dace.Memlet('c2[0]'))
-    state.add_edge(inner, None, mul, '_c', dace.Memlet('c2[0]'))
-    state.add_memlet_path(mul, mx, state.add_access('B'), src_conn='_o', memlet=dace.Memlet('B[i]'))
+    state = sdfg.add_state("compute")
+    setc = state.add_tasklet("setc", {}, {"_o"}, "_o = 2.0")
+    outer = state.add_access("c2")
+    state.add_edge(setc, "_o", outer, None, dace.Memlet("c2[0]"))
+    me, mx = state.add_map("m", dict(i="0:N"))
+    me.add_in_connector("IN_c2")
+    me.add_out_connector("OUT_c2")
+    inner = state.add_access("c2")
+    mul = state.add_tasklet("mul", {"_a": None, "_c": None}, {"_o"}, "_o = _a * _c")
+    state.add_memlet_path(state.add_access("A"), me, mul, dst_conn="_a", memlet=dace.Memlet("A[i]"))
+    state.add_edge(outer, None, me, "IN_c2", dace.Memlet("c2[0]"))
+    state.add_edge(me, "OUT_c2", inner, None, dace.Memlet("c2[0]"))
+    state.add_edge(inner, None, mul, "_c", dace.Memlet("c2[0]"))
+    state.add_memlet_path(mul, mx, state.add_access("B"), src_conn="_o", memlet=dace.Memlet("B[i]"))
     sdfg.validate()
 
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
@@ -471,21 +477,21 @@ def test_staging_split_declines_a_locally_named_memlet_with_a_wider_outer_contai
     ``A[0]``.
     """
     rng = np.random.default_rng(42)
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('dst_anchored_staging')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_transient('tmp', [1], dace.float64)
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("dst_anchored_staging")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_transient("tmp", [1], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i='0:N'))
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    tin = state.add_access('tmp')
-    t = state.add_tasklet('add', {'_i'}, {'_o'}, '_o = _i + 1.0')
-    state.add_edge(state.add_access('A'), None, me, 'IN_A', dace.Memlet('A[0:N]'))
-    state.add_edge(me, 'OUT_A', tin, None, dace.Memlet(data='tmp', subset='0', other_subset='i'))
-    state.add_edge(tin, None, t, '_i', dace.Memlet('tmp[0]'))
-    state.add_memlet_path(t, mx, state.add_access('B'), src_conn='_o', memlet=dace.Memlet('B[i]'))
+    me, mx = state.add_map("m", dict(i="0:N"))
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    tin = state.add_access("tmp")
+    t = state.add_tasklet("add", {"_i"}, {"_o"}, "_o = _i + 1.0")
+    state.add_edge(state.add_access("A"), None, me, "IN_A", dace.Memlet("A[0:N]"))
+    state.add_edge(me, "OUT_A", tin, None, dace.Memlet(data="tmp", subset="0", other_subset="i"))
+    state.add_edge(tin, None, t, "_i", dace.Memlet("tmp[0]"))
+    state.add_memlet_path(t, mx, state.add_access("B"), src_conn="_o", memlet=dace.Memlet("B[i]"))
     sdfg.validate()
 
     changed = InsertAssignTaskletsAtMapBoundary().apply_pass(sdfg, {})
@@ -494,8 +500,8 @@ def test_staging_split_declines_a_locally_named_memlet_with_a_wider_outer_contai
 
     boundary = next(e for e in state.out_edges(me) if isinstance(e.dst, nodes.AccessNode))
     assert boundary.dst is tin
-    assert boundary.data.data == 'tmp'
-    assert str(boundary.data.other_subset) == 'i'
+    assert boundary.data.data == "tmp"
+    assert str(boundary.data.other_subset) == "i"
 
     A = rng.random(16)
     B = np.full(16, -1.0)

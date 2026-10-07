@@ -16,7 +16,7 @@ def test_toplevel_scalar_indirection():
     B = np.random.rand(4).astype(np.float32)
     toplevel_scalar_indirection(A, B)
     ref = A[0, 0, :, 0]
-    assert (np.array_equal(B, ref))
+    assert np.array_equal(B, ref)
 
 
 @dc.program
@@ -33,7 +33,7 @@ def test_nested_scalar_indirection():
     B = np.random.rand(2, 4).astype(np.float32)
     nested_scalar_indirection(A, B)
     ref = A[:, 0, :, 0]
-    assert (np.array_equal(B, ref))
+    assert np.array_equal(B, ref)
 
 
 def test_array_element_scalar_indirection():
@@ -74,8 +74,8 @@ def test_array_element_scalar_indirection_in_map():
 def test_submatrix():
     dtype = dc.float64
     data_index = dc.int32
-    M, N, P = (dc.symbol(s) for s in 'MNP')
-    x0, x1 = dc.symbol('x0'), dc.symbol('x1')
+    M, N, P = (dc.symbol(s) for s in "MNP")
+    x0, x1 = dc.symbol("x0"), dc.symbol("x1")
 
     @dc.program
     def create_submatrix():
@@ -108,7 +108,7 @@ def test_promoted_scalar_reaches_a_loop_range():
     Promotion adds the symbol straight to ``sdfg.symbols`` without touching the visitor scope, so a
     range over the promoted slice's own extent came back as an undefined variable.
     """
-    N = dc.symbol('N', dtype=dc.int64)
+    N = dc.symbol("N", dtype=dc.int64)
 
     @dc.program
     def promoted(rv: dc.float64[N], off: dc.int64[1], out: dc.float64[N]):

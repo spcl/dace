@@ -6,6 +6,7 @@ plus inverse-composed consumers preserve the result), so every shuffle candidate
 permutation -- must reproduce the oracle. This is the value-permutation analog of k14 (Eytzinger)
 and k06 (gather): the sweep chooses the element layout, the algebra guarantees correctness.
 """
+
 import numpy
 import dace
 

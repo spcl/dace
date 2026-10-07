@@ -59,30 +59,25 @@ class ExpandAxpyVectorized(ExpandTransformation):
 
         vec_map_entry, vec_map_exit = axpy_state.add_map("axpy", {"i": f"0:{n}"}, schedule=schedule)
 
-        axpy_tasklet = axpy_state.add_tasklet("axpy", ["x_conn", "y_conn"], ["z_conn"],
-                                              f"z_conn = {a} * x_conn + y_conn")
+        axpy_tasklet = axpy_state.add_tasklet(
+            "axpy", ["x_conn", "y_conn"], ["z_conn"], f"z_conn = {a} * x_conn + y_conn"
+        )
 
         # Access container either as an array or as a stream
         index = "0" if isinstance(x_inner, dt.Stream) else "i"
-        axpy_state.add_memlet_path(x_in,
-                                   vec_map_entry,
-                                   axpy_tasklet,
-                                   dst_conn="x_conn",
-                                   memlet=dace.Memlet(f"_x[{index}]"))
+        axpy_state.add_memlet_path(
+            x_in, vec_map_entry, axpy_tasklet, dst_conn="x_conn", memlet=dace.Memlet(f"_x[{index}]")
+        )
 
         index = "0" if isinstance(y_inner, dt.Stream) else "i"
-        axpy_state.add_memlet_path(y_in,
-                                   vec_map_entry,
-                                   axpy_tasklet,
-                                   dst_conn="y_conn",
-                                   memlet=dace.Memlet(f"_y[{index}]"))
+        axpy_state.add_memlet_path(
+            y_in, vec_map_entry, axpy_tasklet, dst_conn="y_conn", memlet=dace.Memlet(f"_y[{index}]")
+        )
 
         index = "0" if isinstance(res_inner, dt.Stream) else "i"
-        axpy_state.add_memlet_path(axpy_tasklet,
-                                   vec_map_exit,
-                                   z_out,
-                                   src_conn="z_conn",
-                                   memlet=dace.Memlet(f"_res[{index}]"))
+        axpy_state.add_memlet_path(
+            axpy_tasklet, vec_map_exit, z_out, src_conn="z_conn", memlet=dace.Memlet(f"_res[{index}]")
+        )
 
         return axpy_sdfg
 
@@ -94,9 +89,9 @@ def _axpy_strides(node, parent_sdfg, parent_state):
         sq = copy.deepcopy(e.data.subset)
         dims = sq.squeeze()
         desc = parent_sdfg.arrays[e.data.data]
-        if e.dst_conn == '_x':
+        if e.dst_conn == "_x":
             sx = desc.strides[dims[0]]
-        elif e.dst_conn == '_y':
+        elif e.dst_conn == "_y":
             sy = desc.strides[dims[0]]
     return sx, sy
 
@@ -121,7 +116,7 @@ class ExpandAxpyOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
         sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
         prefix = func.lower()
@@ -138,16 +133,13 @@ class ExpandAxpyOpenBLAS(ExpandTransformation):
             cblas_{prefix}copy({n}, _y, {sy}, _res, {sy});
             cblas_{prefix}axpy({n}, ({dtype.ctype})({a}), _x, {sx}, _res, {sy});
             """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandAxpyMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -169,22 +161,22 @@ class ExpandAxpyGPUBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandAxpyVectorized.expansion(node, parent_state, parent_sdfg, **kwargs)
         sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
         n, a = node.n, node.a
         code = cls.environments[0].handle_setup_code(node)
         code += gpu_dialect.host_scalar_mode(
-            cls.dialect, f"""
+            cls.dialect,
+            f"""
         {dtype.ctype} __alpha = {dtype.ctype}({a});
-        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _y, {sy}, _res, {sy});
-        {cls.dialect.func(func, 'axpy')}({cls.dialect.handle}, {n}, &__alpha, _x, {sx}, _res, {sy});
-        """)
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _y, {sy}, _res, {sy});
+        {cls.dialect.func(func, "axpy")}({cls.dialect.handle}, {n}, &__alpha, _x, {sx}, _res, {sy});
+        """,
+        )
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
@@ -222,14 +214,13 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"), category="Semantics")
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(('_x', '_y')), outputs={"_res"}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(("_x", "_y")), outputs={"_res"}, **kwargs)
         self.a = a or dace.symbolic.symbol("a")
         self.n = n or dace.symbolic.symbol("n")
 
     def compare(self, other):
 
-        if (self.veclen == other.veclen and self.implementation == other.implementation):
-
+        if self.veclen == other.veclen and self.implementation == other.implementation:
             return True
         else:
             return False
@@ -257,26 +248,26 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if not symbolic.shapes_equal(size, out_memlet.subset.size()):
             raise ValueError("Output of axpy must have same size as input")
 
-        if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None):
+        if in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None:
             raise ValueError("WCR on axpy memlets not supported")
 
         return True
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.axpy')
-@oprepo.replaces('dace.libraries.blas.Axpy')
-def axpy_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, y, result):
+@oprepo.replaces("dace.libraries.blas.axpy")
+@oprepo.replaces("dace.libraries.blas.Axpy")
+def axpy_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, a, x, y, result):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)
 
-    libnode = Axpy('axpy', a=a)
+    libnode = Axpy("axpy", a=a)
     state.add_node(libnode)
 
     # Connect nodes
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
-    state.add_edge(libnode, '_res', res, None, mm.Memlet(result))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, "_y", mm.Memlet(y))
+    state.add_edge(libnode, "_res", res, None, mm.Memlet(result))
 
     return []

@@ -9,6 +9,7 @@ These are NOT tests of LLVM. They exercise DaCe transformations / IR features
 and assert the post-transform shape that LLVM-the-compiler-toolkit lacks the
 representation to emit.
 """
+
 import numpy as np
 import pytest
 
@@ -21,7 +22,7 @@ from dace.transformation.passes.canonicalize.induction_variable_substitution imp
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 # 1. Library-node lifting -- LLVM can only SIMD-vectorize, never call cub::DeviceScan
 
@@ -47,9 +48,9 @@ def test_loop_lifts_to_scan_libnode_not_just_simd():
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res == 1, 'Prefix sum should lift to one Scan libnode.'
+    assert res == 1, "Prefix sum should lift to one Scan libnode."
     scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
-    assert len(scans) == 1, f'Expected exactly one Scan libnode; got {len(scans)}.'
+    assert len(scans) == 1, f"Expected exactly one Scan libnode; got {len(scans)}."
     assert scans[0].op == ScanOp.SUM
 
 
@@ -72,10 +73,11 @@ def test_residue_class_scan_with_stride_LLVM_cannot_vectorize():
     sdfg = stride2_demo.to_sdfg(simplify=True)
     LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
-    assert res == 1, f'stride-2 scan should match the matcher; got {res}'
+    assert res == 1, f"stride-2 scan should match the matcher; got {res}"
     scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
     assert len(scans) == 1 and int(scans[0].stride) == 2, (
-        f'Stride-2 residue-class scan should set Scan.stride=2; got {[int(s.stride) for s in scans]}.')
+        f"Stride-2 residue-class scan should set Scan.stride=2; got {[int(s.stride) for s in scans]}."
+    )
 
 
 # 2. Multiplicative recurrence closed form -- LLVM SCEV only models AddRec
@@ -93,31 +95,31 @@ def test_multiplicative_recurrence_collapses_to_closed_form():
     # STRENGTH: symbolic recurrence closed-form folding. SymPy's algebraic
     # backbone lets DaCe represent *non*-polynomial recurrences. LLVM's SCEV
     # is restricted to AddRec chrecs (polynomial in trip count).
-    sdfg = dace.SDFG('mult_iv')
-    sdfg.add_array('acc', [1], dace.float64)
-    sdfg.add_symbol('M', dace.int32)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('mult_loop',
-                      initialize_expr='i = 0',
-                      condition_expr='i < M',
-                      update_expr='i = i + 1',
-                      loop_var='i')
+    sdfg = dace.SDFG("mult_iv")
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_symbol("M", dace.int32)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion(
+        "mult_loop", initialize_expr="i = 0", condition_expr="i < M", update_expr="i = i + 1", loop_var="i"
+    )
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
-    body = loop.add_state('body', is_start_block=True)
-    r = body.add_read('acc')
-    w = body.add_write('acc')
-    t = body.add_tasklet('mul', {'_a'}, {'_o'}, '_o = _a * 0.99')
-    body.add_edge(r, None, t, '_a', dace.Memlet(data='acc', subset='0'))
-    body.add_edge(t, '_o', w, None, dace.Memlet(data='acc', subset='0'))
+    body = loop.add_state("body", is_start_block=True)
+    r = body.add_read("acc")
+    w = body.add_write("acc")
+    t = body.add_tasklet("mul", {"_a"}, {"_o"}, "_o = _a * 0.99")
+    body.add_edge(r, None, t, "_a", dace.Memlet(data="acc", subset="0"))
+    body.add_edge(t, "_o", w, None, dace.Memlet(data="acc", subset="0"))
     sdfg.validate()
 
     InductionVariableSubstitution().apply_pass(sdfg, {})
     sdfg.validate()
 
     surviving_loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
-    assert len(surviving_loops) == 0, ('IVSub should have collapsed the multiplicative recurrence to its closed form '
-                                       f'``acc *= 0.99 ** M``; {len(surviving_loops)} loops survived.')
+    assert len(surviving_loops) == 0, (
+        "IVSub should have collapsed the multiplicative recurrence to its closed form "
+        f"``acc *= 0.99 ** M``; {len(surviving_loops)} loops survived."
+    )
 
 
 # 3. Symbolic loop bounds + symbolic shapes -- LLVM specialises per-trip-count
@@ -157,7 +159,7 @@ def test_symbolic_loop_bound_no_specialization_needed():
         for i in range(n):
             expected[i + 1] = expected[i] + delta[i]
         sdfg(out=out, delta=delta, N=n)
-        assert np.allclose(out, expected), f'symbolic-N scan diverged at N={n}'
+        assert np.allclose(out, expected), f"symbolic-N scan diverged at N={n}"
 
 
 # 4. Symbolic subset non-overlap proof -- LLVM AA must assume worst case
@@ -178,16 +180,18 @@ def test_symbolic_subset_non_overlap_proven_at_ir_level():
     # subsets.Range.intersects can return PROVEN-False for halves of the same
     # array. Unlocks parallelism / hoisting that LLVM AA conservatively
     # forbids.
-    M = symbolic.pystr_to_symbolic('M')
-    half = symbolic.pystr_to_symbolic('M // 2')
+    M = symbolic.pystr_to_symbolic("M")
+    half = symbolic.pystr_to_symbolic("M // 2")
     lower = subsets.Range([(0, half - 1, 1)])
     upper = subsets.Range([(half, M - 1, 1)])
     # ``intersects`` returns ``False`` when proven non-overlapping, ``True`` when
     # provably overlapping, ``None`` when indeterminate. We assert PROVEN
     # non-overlapping -- the symbolic strength that LLVM AA cannot reach.
     result = lower.intersects(upper)
-    assert result is False, (f'symbolic non-overlap proof failed: lower={lower}, upper={upper}, '
-                             f'intersects() returned {result!r} (expected False)')
+    assert result is False, (
+        f"symbolic non-overlap proof failed: lower={lower}, upper={upper}, "
+        f"intersects() returned {result!r} (expected False)"
+    )
 
 
 # 5. WCR is explicit on the edge -- LLVM has to pattern-match RecurrenceDescriptor
@@ -220,13 +224,16 @@ def test_wcr_explicit_no_reduction_pattern_match_needed():
 
     sdfg = reduce_sum.to_sdfg(simplify=True)
     wcr_edges = [
-        e for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
+        e
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for e in st.edges()
         if e.data is not None and e.data.wcr is not None
     ]
-    assert wcr_edges, 'expected at least one explicit WCR edge'
-    assert any(
-        'a + b' in e.data.wcr
-        for e in wcr_edges), ('reduction op should be explicit on the WCR edge string; codegen reads it directly.')
+    assert wcr_edges, "expected at least one explicit WCR edge"
+    assert any("a + b" in e.data.wcr for e in wcr_edges), (
+        "reduction op should be explicit on the WCR edge string; codegen reads it directly."
+    )
 
 
 # 6. Hierarchical IR -- NestedSDFG composition with symbol_mapping
@@ -242,26 +249,27 @@ def test_nested_sdfg_composition_with_symbol_mapping():
     # outer<->inner boundary explicitly; passes can opt into either side
     # (inline, propagate-through, leave alone). LLVM IR is flat: a function
     # boundary either inlines or stays opaque.
-    inner = dace.SDFG('inner_nested_sdfg_composition_with_symbol_mapping')
-    inner.add_array('o', [1], dace.float64)
-    inner.add_symbol('inner_n', dace.int32)
-    istate = inner.add_state('s')
-    t = istate.add_tasklet('t', {}, {'_o'}, '_o = inner_n * 1.0')
-    iw = istate.add_write('o')
-    istate.add_edge(t, '_o', iw, None, dace.Memlet(data='o', subset='0'))
+    inner = dace.SDFG("inner_nested_sdfg_composition_with_symbol_mapping")
+    inner.add_array("o", [1], dace.float64)
+    inner.add_symbol("inner_n", dace.int32)
+    istate = inner.add_state("s")
+    t = istate.add_tasklet("t", {}, {"_o"}, "_o = inner_n * 1.0")
+    iw = istate.add_write("o")
+    istate.add_edge(t, "_o", iw, None, dace.Memlet(data="o", subset="0"))
 
-    outer = dace.SDFG('outer_nested_sdfg_composition_with_symbol_mapping')
-    outer.add_array('o', [1], dace.float64)
-    outer.add_symbol('outer_n', dace.int32)
-    state = outer.add_state('s', is_start_block=True)
-    ow = state.add_write('o')
-    nsdfg = state.add_nested_sdfg(inner, {}, {'o'}, symbol_mapping={'inner_n': 'outer_n'})
-    state.add_edge(nsdfg, 'o', ow, None, dace.Memlet(data='o', subset='0'))
+    outer = dace.SDFG("outer_nested_sdfg_composition_with_symbol_mapping")
+    outer.add_array("o", [1], dace.float64)
+    outer.add_symbol("outer_n", dace.int32)
+    state = outer.add_state("s", is_start_block=True)
+    ow = state.add_write("o")
+    nsdfg = state.add_nested_sdfg(inner, {}, {"o"}, symbol_mapping={"inner_n": "outer_n"})
+    state.add_edge(nsdfg, "o", ow, None, dace.Memlet(data="o", subset="0"))
     outer.validate()
 
     # The symbol_mapping survives + records the cross-boundary binding explicitly.
-    assert str(nsdfg.symbol_mapping['inner_n']) == 'outer_n', (
-        f'nested SDFG symbol_mapping should record outer_n; got {dict(nsdfg.symbol_mapping)}')
+    assert str(nsdfg.symbol_mapping["inner_n"]) == "outer_n", (
+        f"nested SDFG symbol_mapping should record outer_n; got {dict(nsdfg.symbol_mapping)}"
+    )
 
     # Execute end-to-end at a concrete outer_n.
     out = np.zeros(1)
@@ -303,7 +311,7 @@ def test_same_sdfg_lowers_to_cpu_and_gpu_via_schedule_only():
             n.map.schedule = initial_schedule
             break
     else:
-        pytest.fail('expected at least one MapEntry to flip schedule on')
+        pytest.fail("expected at least one MapEntry to flip schedule on")
 
 
 # 8. Memlets carry exact subsets -- no aliasing reconstruction needed
@@ -319,18 +327,18 @@ def test_memlet_subset_is_explicit_no_aliasing_reconstruction():
     # STRENGTH: dataflow edges carry exact symbolic subsets. Analyses read
     # them in O(1); LLVM must reconstruct the access expression from GEP +
     # MemorySSA every time it crosses a transformation boundary.
-    sdfg = dace.SDFG('subset_demo')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('b', [N], dace.float64)
+    sdfg = dace.SDFG("subset_demo")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
     # ``N`` is already a module-level ``dace.symbol``; ``add_array`` registered it
     # on the SDFG automatically, no explicit ``add_symbol`` needed.
-    state = sdfg.add_state('s', is_start_block=True)
-    r = state.add_read('a')
-    w = state.add_write('b')
-    me, mx = state.add_map('m', {'i': '0:N'})
-    t = state.add_tasklet('t', {'_a'}, {'_b'}, '_b = _a + 1.0')
-    state.add_memlet_path(r, me, t, dst_conn='_a', memlet=dace.Memlet(data='a', subset='i'))
-    state.add_memlet_path(t, mx, w, src_conn='_b', memlet=dace.Memlet(data='b', subset='i'))
+    state = sdfg.add_state("s", is_start_block=True)
+    r = state.add_read("a")
+    w = state.add_write("b")
+    me, mx = state.add_map("m", {"i": "0:N"})
+    t = state.add_tasklet("t", {"_a"}, {"_b"}, "_b = _a + 1.0")
+    state.add_memlet_path(r, me, t, dst_conn="_a", memlet=dace.Memlet(data="a", subset="i"))
+    state.add_memlet_path(t, mx, w, src_conn="_b", memlet=dace.Memlet(data="b", subset="i"))
     sdfg.validate()
 
     # The per-iteration memlet (the edge incident on the tasklet, not the outer
@@ -339,13 +347,13 @@ def test_memlet_subset_is_explicit_no_aliasing_reconstruction():
     # reconstruction.
     inner_subsets = []
     for e in state.edges():
-        if e.data is None or e.data.data not in ('a', 'b'):
+        if e.data is None or e.data.data not in ("a", "b"):
             continue
         if isinstance(e.src, nodes.Tasklet) or isinstance(e.dst, nodes.Tasklet):
             inner_subsets.append(str(e.data.subset))
-    assert inner_subsets and all(
-        s == 'i'
-        for s in inner_subsets), (f'per-iteration memlets should be the symbolic ``i`` verbatim; got {inner_subsets}')
+    assert inner_subsets and all(s == "i" for s in inner_subsets), (
+        f"per-iteration memlets should be the symbolic ``i`` verbatim; got {inner_subsets}"
+    )
 
     # Execute end-to-end.
     n = 16
@@ -367,22 +375,23 @@ def test_symbolic_shape_and_strides_in_descriptor():
     # STRENGTH: data layout is first-class IR. Shape, strides, offset, and
     # storage are symbolic properties of the descriptor; tiling and vec passes
     # query them directly. LLVM only sees byte-pointers and target datalayout.
-    sdfg = dace.SDFG('symbolic_shape')
-    M = dace.symbol('M')
-    K = dace.symbol('K')
-    sdfg.add_array('a', [M, K], dace.float64)
-    desc = sdfg.arrays['a']
+    sdfg = dace.SDFG("symbolic_shape")
+    M = dace.symbol("M")
+    K = dace.symbol("K")
+    sdfg.add_array("a", [M, K], dace.float64)
+    desc = sdfg.arrays["a"]
     shape_strs = {str(s) for s in desc.shape}
-    assert shape_strs == {'M', 'K'}, f'symbolic shape lost; got {shape_strs}'
+    assert shape_strs == {"M", "K"}, f"symbolic shape lost; got {shape_strs}"
     # Strides are auto-computed (row-major default) and are themselves symbolic
     # expressions of the shape -- accessible without parsing a target-specific
     # datalayout string.
     stride_strs = {str(s) for s in desc.strides}
-    assert any(
-        'K' in s
-        for s in stride_strs), (f'expected row-major stride to reference the inner-dim symbol K; got {stride_strs}')
+    assert any("K" in s for s in stride_strs), (
+        f"expected row-major stride to reference the inner-dim symbol K; got {stride_strs}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
-    sys.exit(pytest.main([__file__, '-v']))
+
+    sys.exit(pytest.main([__file__, "-v"]))

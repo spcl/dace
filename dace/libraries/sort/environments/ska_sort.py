@@ -8,6 +8,7 @@ of :class:`~dace.libraries.sort.nodes.integer_sort.IntegerSort` can declare an
 ``#include <dace/ska_sort.hpp>`` and have the codegen pull the runtime header in.
 No extra CMake packages, libraries, or flags are needed -- it is header-only.
 """
+
 import dace.library
 from typing import Dict, List
 
@@ -25,7 +26,7 @@ class SkaSort:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': ['dace/ska_sort.hpp']}
+    headers = {"frame": ["dace/ska_sort.hpp"]}
     state_fields: List[str] = []
     init_code = ""
     finalize_code = ""

@@ -35,8 +35,9 @@ def _pattern_shapes(xform: xf.PatternTransformation) -> List[PatternShape]:
     return shapes
 
 
-def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
-                     pedges: Set[Tuple[int, int]]) -> Iterator[List[nodes.Node]]:
+def _induced_matches(
+    state: SDFGState, pnodes: List[xf.PatternNode], pedges: Set[Tuple[int, int]]
+) -> Iterator[List[nodes.Node]]:
     """Yield the induced matches of one small pattern in ``state``.
 
     Replaces the VF2 subgraph isomorphism the pattern matcher ran for these patterns: pattern node
@@ -62,8 +63,9 @@ def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
     parents = [next((i for i in range(j) if (i, j) in pedges), None) for j in range(npat)]
     # A free level's candidates filtered by type once, in `state.nodes()` order, instead of once per
     #  image of the levels above it -- the horizontal pair pattern paid O(maps * nodes) per sweep.
-    free_candidates = [[n for n in all_nodes if isinstance(n, pnodes[j].node)] if parents[j] is None else []
-                       for j in range(npat)]
+    free_candidates = [
+        [n for n in all_nodes if isinstance(n, pnodes[j].node)] if parents[j] is None else [] for j in range(npat)
+    ]
 
     def extend(j: int, images: List[nodes.Node]) -> Iterator[List[nodes.Node]]:
         if j == npat:
@@ -74,8 +76,10 @@ def _induced_matches(state: SDFGState, pnodes: List[xf.PatternNode],
         for cand in candidates:
             if not isinstance(cand, node_type) or any(cand is img for img in images):
                 continue
-            if all((cand in successors(img)) == ((i, j) in pedges) and (img in successors(cand)) == ((j, i) in pedges)
-                   for i, img in enumerate(images)):
+            if all(
+                (cand in successors(img)) == ((i, j) in pedges) and (img in successors(cand)) == ((j, i) in pedges)
+                for i, img in enumerate(images)
+            ):
                 images.append(cand)
                 yield from extend(j + 1, images)
                 images.pop()
@@ -102,18 +106,21 @@ def align_step_equivalent_candidates(state: SDFGState) -> int:
         for entry in entries
     }
     outputs = {
-        entry: dict.fromkeys(e.dst for e in state.out_edges(state.exit_node(entry))
-                             if isinstance(e.dst, nodes.AccessNode))
+        entry: dict.fromkeys(
+            e.dst for e in state.out_edges(state.exit_node(entry)) if isinstance(e.dst, nodes.AccessNode)
+        )
         for entry in entries
     }
     aligned = 0
     for index, first in enumerate(entries):
-        for second in entries[index + 1:]:
+        for second in entries[index + 1 :]:
             if first.map.range.ranges == second.map.range.ranges or scopes[first] is not scopes[second]:
                 continue
-            shares_data = (any(node in inputs[second] for node in outputs[first])
-                           or any(node in inputs[first] for node in outputs[second])
-                           or any(node in inputs[second] for node in inputs[first]))
+            shares_data = (
+                any(node in inputs[second] for node in outputs[first])
+                or any(node in inputs[first] for node in outputs[second])
+                or any(node in inputs[second] for node in inputs[first])
+            )
             if shares_data and align_maps_to_unit_step(state, first, second):
                 aligned += 1
     return aligned
@@ -131,7 +138,7 @@ class FuseMaps(ppl.Pass):
     flags, both default to `True`. They allow to enable disable the two fusion components.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     # Settings
     only_toplevel_maps = properties.Property(
@@ -199,17 +206,17 @@ class FuseMaps(ppl.Pass):
     align_step_equivalent_maps = properties.Property(
         dtype=bool,
         default=True,
-        desc='Treat maps whose ranges differ only in step (e.g. 0:2N:2 and 0:N:1) as fusable by rewriting both '
-        'onto one unit-step range before fusing.',
+        desc="Treat maps whose ranges differ only in step (e.g. 0:2N:2 and 0:N:1) as fusable by rewriting both "
+        "onto one unit-step range before fusing.",
     )
     validate = properties.Property(
         dtype=bool,
         default=True,
-        desc='If True, validates the SDFG after all transformations have been applied, when at least one applied.',
+        desc="If True, validates the SDFG after all transformations have been applied, when at least one applied.",
     )
-    validate_all = properties.Property(dtype=bool,
-                                       default=False,
-                                       desc='If True, validates the SDFG after each transformation applies.')
+    validate_all = properties.Property(
+        dtype=bool, default=False, desc="If True, validates the SDFG after each transformation applies."
+    )
 
     def __init__(
         self,
@@ -257,7 +264,7 @@ class FuseMaps(ppl.Pass):
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
         if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
-            raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
+            raise ValueError("Neither perform `MapFusionVertical` nor `MapFusionHorizontal`")
         if not self.perform_vertical_map_fusion:
             unique_vertical_arguments = {
                 "strict_dataflow": strict_dataflow,
@@ -268,12 +275,13 @@ class FuseMaps(ppl.Pass):
             specified_vertical_arguments = [arg for arg, val in unique_vertical_arguments.items() if val is not None]
             if specified_vertical_arguments:
                 raise ValueError(
-                    f'Used `FuseMaps` without vertical Map fusion, but speciefied: {", ".join(specified_vertical_arguments)}'
+                    f"Used `FuseMaps` without vertical Map fusion, but speciefied: {', '.join(specified_vertical_arguments)}"
                 )
         if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
-                    f'Used `FuseMaps` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
+                    f"Used `FuseMaps` without horizontal Map fusion, but speciefied: only_if_common_ancestor"
+                )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -322,7 +330,8 @@ class FuseMaps(ppl.Pass):
                     require_all_intermediates=self.require_all_intermediates,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
-                ))
+                )
+            )
 
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
@@ -335,14 +344,17 @@ class FuseMaps(ppl.Pass):
                     only_if_common_ancestor=self.only_if_common_ancestor,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
-                ))
+                )
+            )
 
         explicit_cf = sdfg.root_sdfg.using_explicit_control_flow
         units: List[Tuple[xf.PatternTransformation, List[PatternShape]]] = []
         for xform in fusion_transforms:
             if explicit_cf and not xform.__explicit_cf_compatible__:
-                warnings.warn(f'Map fusion is skipping {type(xform).__name__} due to incompatibility with '
-                              'experimental control flow blocks.')
+                warnings.warn(
+                    f"Map fusion is skipping {type(xform).__name__} due to incompatibility with "
+                    "experimental control flow blocks."
+                )
                 continue
             units.append((xform, _pattern_shapes(xform)))
 
@@ -375,9 +387,17 @@ class FuseMaps(ppl.Pass):
 
         return applied or None
 
-    def _drain(self, xform: xf.PatternTransformation, shapes: List[PatternShape], cfg: ControlFlowRegion,
-               state: SDFGState, state_id: int, pipeline_results: Dict[str, Any], applied: AppliedMap,
-               propagated: Dict[SDFG, None]) -> None:
+    def _drain(
+        self,
+        xform: xf.PatternTransformation,
+        shapes: List[PatternShape],
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        state_id: int,
+        pipeline_results: Dict[str, Any],
+        applied: AppliedMap,
+        propagated: Dict[SDFG, None],
+    ) -> None:
         """Apply ``xform`` in ``state`` until nothing matches there any more.
 
         The fusions are single-state rewrites reading one fixed `FindSingleUseData` result, so a
@@ -402,10 +422,12 @@ class FuseMaps(ppl.Pass):
                     try:
                         matched = xform.can_be_applied(state, expr_index, owner, permissive=False)
                     except Exception as exception:
-                        if Config.get_bool('optimizer', 'match_exception'):
+                        if Config.get_bool("optimizer", "match_exception"):
                             raise
-                        print(f'WARNING: {name}::can_be_applied triggered a '
-                              f'{type(exception).__name__} exception: {exception}')
+                        print(
+                            f"WARNING: {name}::can_be_applied triggered a "
+                            f"{type(exception).__name__} exception: {exception}"
+                        )
                         continue
                     if not matched:
                         continue

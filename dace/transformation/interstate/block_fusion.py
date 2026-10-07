@@ -8,13 +8,13 @@ from dace.transformation.interstate.state_fusion import is_start_block, keep_sta
 
 @transformation.explicit_cf_compatible
 class BlockFusion(transformation.MultiStateTransformation):
-    """ Implements the block-fusion transformation.
+    """Implements the block-fusion transformation.
 
-        Block-fusion takes two control flow blocks connected by a single edge, where at least one is a
-        'no-op' block (an empty ``SDFGState``), and splices the no-op one out. It never merges two
-        blocks that both carry semantics -- two loops or two conditionals are always refused -- so it
-        reaches exactly the case ``StateFusion`` cannot: an empty state next to a LoopRegion or a
-        ConditionalBlock, which are not ``SDFGState`` and so never match that transformation.
+    Block-fusion takes two control flow blocks connected by a single edge, where at least one is a
+    'no-op' block (an empty ``SDFGState``), and splices the no-op one out. It never merges two
+    blocks that both carry semantics -- two loops or two conditionals are always refused -- so it
+    reaches exactly the case ``StateFusion`` cannot: an empty state next to a LoopRegion or a
+    ConditionalBlock, which are not ``SDFGState`` and so never match that transformation.
     """
 
     first_block = transformation.PatternNode(ControlFlowBlock)

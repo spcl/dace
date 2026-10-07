@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Perfect-loop-nesting of a guarded imperfect nest.
+"""Perfect-loop-nesting of a guarded imperfect nest.
 
-    ``if c: for i: { for j: b[i,j]=...; c[i]=... }`` -- the ``c[i]`` write
-    lives in the ``i`` loop but not in its own innermost ``j``-style loop
-    (an imperfect nest). The intended canonical form wraps every bare
-    state/tasklet in a trivial single-iteration loop so the nest is
-    perfectly nested, after which the guard is pushed into -- and
-    duplicated across -- every loop. Canonicalization is value-preserving
-    (guard taken and not-taken) and reaches the structural ideal: no
-    surviving top-level guard -- it has been moved/duplicated inside by
-    ``MoveIfIntoLoop``'s free-state (imperfect-nest) path.
+``if c: for i: { for j: b[i,j]=...; c[i]=... }`` -- the ``c[i]`` write
+lives in the ``i`` loop but not in its own innermost ``j``-style loop
+(an imperfect nest). The intended canonical form wraps every bare
+state/tasklet in a trivial single-iteration loop so the nest is
+perfectly nested, after which the guard is pushed into -- and
+duplicated across -- every loop. Canonicalization is value-preserving
+(guard taken and not-taken) and reaches the structural ideal: no
+surviving top-level guard -- it has been moved/duplicated inside by
+``MoveIfIntoLoop``'s free-state (imperfect-nest) path.
 """
+
 import numpy as np
 import pytest
 
@@ -19,8 +20,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -60,14 +61,16 @@ def test_guard_over_imperfect_nest_parallelizes_value_preserving():
     # Maximal parallelism: the nest is exposed as Maps with no sequential-loop residue.
     maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     seq_loops = [
-        r for r in sdfg.all_control_flow_regions(recursive=True)
+        r
+        for r in sdfg.all_control_flow_regions(recursive=True)
         if isinstance(r, LoopRegion) and not r.pinned_sequential
     ]
     assert len(maps) >= 2, f"nest did not fully map (maps={len(maps)})"
     assert not seq_loops, f"sequential loop survived: {[r.label for r in seq_loops]}"
     # The guard is preserved (not silently dropped), wherever canonicalize placed it.
-    assert any(isinstance(x, ConditionalBlock)
-               for x in sdfg.all_control_flow_regions(recursive=True)), "guard was dropped"
+    assert any(isinstance(x, ConditionalBlock) for x in sdfg.all_control_flow_regions(recursive=True)), (
+        "guard was dropped"
+    )
 
     for av in (1, 0):
         eb, ec = _oracle(a, n, m, av)

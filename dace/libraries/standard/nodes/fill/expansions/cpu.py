@@ -1,13 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Single-call host fill: ``std::fill_n`` in C++, ``memset`` or a loop in C."""
+
 from typing import TYPE_CHECKING
 
 import dace
 from dace import library, nodes
 from dace.codegen.common import sym2cpp
 from dace.libraries.standard import environments
-from dace.libraries.standard.nodes.fill.common import (OUTPUT_CONNECTOR_NAME, VALUE_CONNECTOR_NAME, byte_pattern,
-                                                       c_literal, cpp_literal, memset_is_exact)
+from dace.libraries.standard.nodes.fill.common import (
+    OUTPUT_CONNECTOR_NAME,
+    VALUE_CONNECTOR_NAME,
+    byte_pattern,
+    c_literal,
+    cpp_literal,
+    memset_is_exact,
+)
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.transformation.transformation import ExpandTransformation
 
@@ -16,7 +23,7 @@ if TYPE_CHECKING:
 
 #: The C fill loop's induction variable. Declared inside the tasklet's own braces, so nesting one
 #: fill inside another is legal and neither reaches the surrounding scope.
-C_FILL_INDEX = '__fill_i'
+C_FILL_INDEX = "__fill_i"
 
 
 def c_memset(count: str, splat: int) -> str:
@@ -36,11 +43,13 @@ def c_loop(count: str, value_expr: str) -> str:
     :param value_expr: The fill value, already printed as a C expression.
     :returns: The tasklet body.
     """
-    return (f"for (long long {C_FILL_INDEX} = 0; {C_FILL_INDEX} < ({count}); ++{C_FILL_INDEX}) "
-            f"{{ {OUTPUT_CONNECTOR_NAME}[{C_FILL_INDEX}] = {value_expr}; }}")
+    return (
+        f"for (long long {C_FILL_INDEX} = 0; {C_FILL_INDEX} < ({count}); ++{C_FILL_INDEX}) "
+        f"{{ {OUTPUT_CONNECTOR_NAME}[{C_FILL_INDEX}] = {value_expr}; }}"
+    )
 
 
-@library.register_expansion(FillLibraryNode, 'CPU')
+@library.register_expansion(FillLibraryNode, "CPU")
 class ExpandCPU(ExpandTransformation):
     environments = [environments.CPU]
 
@@ -53,9 +62,11 @@ class ExpandCPU(ExpandTransformation):
 
         out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
         if not out_subset.is_contiguous_subset(out):
-            raise ValueError(f"FillLibraryNode CPU expansion requires a contiguous subset; got '{out_name}' "
-                             f"subset {out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
-                             f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions.")
+            raise ValueError(
+                f"FillLibraryNode CPU expansion requires a contiguous subset; got '{out_name}' "
+                f"subset {out_subset} on shape {tuple(out.shape)} strides {tuple(out.strides)}. "
+                f"Use the 'pure' expansion (mapped tasklet) for non-contiguous regions."
+            )
 
         value_info = node.value_descriptor(parent_state)
         # Dynamic scalar value supplied through the input connector.
@@ -80,8 +91,10 @@ class ExpandCPU(ExpandTransformation):
             value_expr = VALUE_CONNECTOR_NAME if value_info is not None else c_literal(node.value, out.dtype)
             code = c_loop(count, value_expr)
 
-        return nodes.Tasklet(node.name,
-                             inputs=inputs,
-                             outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
-                             code=code,
-                             language=dace.Language.CPP)
+        return nodes.Tasklet(
+            node.name,
+            inputs=inputs,
+            outputs={OUTPUT_CONNECTOR_NAME: dace.dtypes.pointer(out.dtype)},
+            code=code,
+            language=dace.Language.CPP,
+        )

@@ -2,18 +2,19 @@
 """A5 apply_assignment: layout trajectories applied end to end -- segment
 clones, boundary conversions, exit conversion back to the logical interface -- stay bit-exact
 against the fixture oracles, and the v1 refusals (Block trajectories) are loud."""
+
 import pytest
 
 from dace.libraries.layout import LayoutChange
 from dace.libraries.layout.algebra import Block, Permute
-from dace.transformation.layout.apply_assignment import (IDENTITY_LAYOUT, Layout, apply_assignment, segments_of)
+from dace.transformation.layout.apply_assignment import IDENTITY_LAYOUT, Layout, apply_assignment, segments_of
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
 
 from tests.transformations.layout import multinest_programs as fixtures
 from tests.transformations.layout.multinest_fixtures_test import run_and_check
 
-CM = Layout("perm10", (Permute((1, 0)), ))
+CM = Layout("perm10", (Permute((1, 0)),))
 ID = IDENTITY_LAYOUT
 
 
@@ -112,7 +113,7 @@ def test_identity_assignment_is_a_noop(n=24):
 
 def test_block_trajectory_refused():
     sdfg, kernels = split_program("conflict2")
-    blocked = Layout("block8", (Block(0, 8), ))
+    blocked = Layout("block8", (Block(0, 8),))
     with pytest.raises(NotImplementedError, match="Permute trajectories only"):
         apply_assignment(sdfg, kernels, {"B": [blocked, blocked]})
 

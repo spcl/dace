@@ -33,8 +33,13 @@ from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 #: Every entry point the IVS fixed point can substitute through.
-IVS_ENTRY_POINTS = ('_try_substitute', 'try_substitute_use_site_iv', '_try_substitute_iedge_iv',
-                    '_try_substitute_derived_symbol', '_hoist_branch_uniform_iv')
+IVS_ENTRY_POINTS = (
+    "_try_substitute",
+    "try_substitute_use_site_iv",
+    "_try_substitute_iedge_iv",
+    "_try_substitute_derived_symbol",
+    "_hoist_branch_uniform_iv",
+)
 
 
 def canonicalize_recording_ivs(name, monkeypatch):
@@ -59,7 +64,7 @@ def canonicalize_recording_ivs(name, monkeypatch):
         monkeypatch.setattr(ivs, entry_point, recording(entry_point, vars(ivs)[entry_point]))
 
     kernel = [k for k in tsvc.collect() if k.name == name][0]
-    sdfg = tsvc.to_sdfg(kernel, 'refuse_' + name, simplify=True)
+    sdfg = tsvc.to_sdfg(kernel, "refuse_" + name, simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4)
 
     arrays, call_kwargs = tsvc.make_inputs(kernel)
@@ -68,40 +73,46 @@ def canonicalize_recording_ivs(name, monkeypatch):
     REFERENCES[name](**ref, **call_kwargs)
     sdfg.compile()(**got, **call_kwargs)
     values_match = all(
-        np.allclose(ref[n], got[n], equal_nan=True) for n, arr in arrays.items()
-        if not np.issubdtype(arr.dtype, np.integer))
+        np.allclose(ref[n], got[n], equal_nan=True)
+        for n, arr in arrays.items()
+        if not np.issubdtype(arr.dtype, np.integer)
+    )
     return fired, values_match
 
 
 #: (kernel, the step expression that makes it a reduction rather than an IV).
 DATA_DEPENDENT_STEPS = [
-    ('s3112_d_single', 'a[i]'),
-    ('s312_d_single', 'a[i]'),
-    ('vsumr_d_single', 'a[i]'),
-    ('s352_d_single', 'a[i] * b[i]'),
-    ('s4115_d_single', 'a[i] * b[ip[i]]'),
-    ('s4116_d_single', 'a[off] * aa[j - 1, ip[i]]'),
+    ("s3112_d_single", "a[i]"),
+    ("s312_d_single", "a[i]"),
+    ("vsumr_d_single", "a[i]"),
+    ("s352_d_single", "a[i] * b[i]"),
+    ("s4115_d_single", "a[i] * b[ip[i]]"),
+    ("s4116_d_single", "a[off] * aa[j - 1, ip[i]]"),
 ]
 
 #: Guarded increments: the accumulator counts true predicates, so it is not affine in the indices.
-CONDITIONAL_STEPS = ['s123_d_single', 's3111_d_single', 's341_d_single', 's342_d_single', 's343_d_single']
+CONDITIONAL_STEPS = ["s123_d_single", "s3111_d_single", "s341_d_single", "s342_d_single", "s343_d_single"]
 
 
-@pytest.mark.parametrize('name,step', DATA_DEPENDENT_STEPS, ids=[n.split('_')[0] for n, _ in DATA_DEPENDENT_STEPS])
+@pytest.mark.parametrize("name,step", DATA_DEPENDENT_STEPS, ids=[n.split("_")[0] for n, _ in DATA_DEPENDENT_STEPS])
 def test_data_dependent_step_is_not_an_induction_variable(name, step, monkeypatch):
     """A step that READS an array has no closed form; IVS must leave it to reduction lifting."""
     fired, values_match = canonicalize_recording_ivs(name, monkeypatch)
-    assert not fired, (f"{name}: step is `{step}` (data-dependent), so it is a REDUCTION, not an "
-                       f"induction variable -- IVS must not substitute it, but {sorted(set(fired))} did")
+    assert not fired, (
+        f"{name}: step is `{step}` (data-dependent), so it is a REDUCTION, not an "
+        f"induction variable -- IVS must not substitute it, but {sorted(set(fired))} did"
+    )
     assert values_match, f"{name}: values diverged from the numpy reference"
 
 
-@pytest.mark.parametrize('name', CONDITIONAL_STEPS, ids=[n.split('_')[0] for n in CONDITIONAL_STEPS])
+@pytest.mark.parametrize("name", CONDITIONAL_STEPS, ids=[n.split("_")[0] for n in CONDITIONAL_STEPS])
 def test_conditional_step_is_not_an_induction_variable(name, monkeypatch):
     """A guarded increment counts true predicates, so no affine closed form exists."""
     fired, values_match = canonicalize_recording_ivs(name, monkeypatch)
-    assert not fired, (f"{name}: the increment is CONDITIONAL, so the accumulator is a count of true "
-                       f"predicates and has no closed form -- but {sorted(set(fired))} substituted one")
+    assert not fired, (
+        f"{name}: the increment is CONDITIONAL, so the accumulator is a count of true "
+        f"predicates and has no closed form -- but {sorted(set(fired))} substituted one"
+    )
     assert values_match, f"{name}: values diverged from the numpy reference"
 
 
@@ -113,28 +124,31 @@ def build_accumulator_loop(data_dependent_step: bool, n: int = 8):
 
     :returns: ``(sdfg, loop, body, tasklet)``.
     """
-    sdfg = dace.SDFG('iv_step_' + ('data' if data_dependent_step else 'const'))
-    sdfg.add_array('acc', [1], dace.float64)
-    sdfg.add_array('a', [n], dace.float64)
-    init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion('loop', condition_expr=f'i < {n}', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg = dace.SDFG("iv_step_" + ("data" if data_dependent_step else "const"))
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_array("a", [n], dace.float64)
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", condition_expr=f"i < {n}", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
-    body = loop.add_state('body', is_start_block=True)
-    read, write = body.add_access('acc'), body.add_access('acc')
+    body = loop.add_state("body", is_start_block=True)
+    read, write = body.add_access("acc"), body.add_access("acc")
     # Connectors as dicts, not sets: a set makes DaCe warn about nondeterministic ordering.
     if data_dependent_step:
-        tasklet = body.add_tasklet('step', {'__in1': None, '__in2': None}, {'__out': None}, '__out = __in1 + __in2')
-        body.add_edge(body.add_access('a'), None, tasklet, '__in2', dace.Memlet('a[i]'))
+        tasklet = body.add_tasklet("step", {"__in1": None, "__in2": None}, {"__out": None}, "__out = __in1 + __in2")
+        body.add_edge(body.add_access("a"), None, tasklet, "__in2", dace.Memlet("a[i]"))
     else:
-        tasklet = body.add_tasklet('step', {'__in1': None}, {'__out': None}, '__out = __in1 + 2.0')
-    body.add_edge(read, None, tasklet, '__in1', dace.Memlet('acc[0]'))
-    body.add_edge(tasklet, '__out', write, None, dace.Memlet('acc[0]'))
+        tasklet = body.add_tasklet("step", {"__in1": None}, {"__out": None}, "__out = __in1 + 2.0")
+    body.add_edge(read, None, tasklet, "__in1", dace.Memlet("acc[0]"))
+    body.add_edge(tasklet, "__out", write, None, dace.Memlet("acc[0]"))
     return sdfg, loop, body, tasklet
 
 
-@pytest.mark.parametrize('data_dependent_step,expect_match', [(False, True), (True, False)],
-                         ids=['constant-step-is-an-IV', 'data-step-is-a-reduction'])
+@pytest.mark.parametrize(
+    "data_dependent_step,expect_match",
+    [(False, True), (True, False)],
+    ids=["constant-step-is-an-IV", "data-step-is-a-reduction"],
+)
 def test_extract_tasklet_iv_separates_a_counter_from_a_reduction(data_dependent_step, expect_match):
     """The dataflow half of the discriminator, exercised directly.
 
@@ -145,9 +159,12 @@ def test_extract_tasklet_iv_separates_a_counter_from_a_reduction(data_dependent_
     """
     sdfg, loop, body, tasklet = build_accumulator_loop(data_dependent_step)
     matched = extract_tasklet_iv(tasklet, body, loop, sdfg, sdfg.free_symbols) is not None
-    assert matched is expect_match, ('a data-dependent step must NOT match the IV shape'
-                                     if data_dependent_step else 'a literal step must match the IV shape')
+    assert matched is expect_match, (
+        "a data-dependent step must NOT match the IV shape"
+        if data_dependent_step
+        else "a literal step must match the IV shape"
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

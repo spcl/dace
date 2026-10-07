@@ -21,13 +21,13 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
 
 
 def test_a_chain_with_a_diamond_is_acyclic():
-    sdfg = dace.SDFG('diamond')
-    top = sdfg.add_state('top', is_start_block=True)
-    left = sdfg.add_state('left')
-    right = sdfg.add_state('right')
-    bottom = sdfg.add_state('bottom')
-    sdfg.add_edge(top, left, dace.InterstateEdge(condition='N > 0'))
-    sdfg.add_edge(top, right, dace.InterstateEdge(condition='N <= 0'))
+    sdfg = dace.SDFG("diamond")
+    top = sdfg.add_state("top", is_start_block=True)
+    left = sdfg.add_state("left")
+    right = sdfg.add_state("right")
+    bottom = sdfg.add_state("bottom")
+    sdfg.add_edge(top, left, dace.InterstateEdge(condition="N > 0"))
+    sdfg.add_edge(top, right, dace.InterstateEdge(condition="N <= 0"))
     sdfg.add_edge(left, bottom, dace.InterstateEdge())
     sdfg.add_edge(right, bottom, dace.InterstateEdge())
 
@@ -35,20 +35,20 @@ def test_a_chain_with_a_diamond_is_acyclic():
 
 
 def test_a_self_edge_is_a_cycle():
-    sdfg = dace.SDFG('self_edge')
-    entry = sdfg.add_state('entry', is_start_block=True)
-    body = sdfg.add_state('body')
+    sdfg = dace.SDFG("self_edge")
+    entry = sdfg.add_state("entry", is_start_block=True)
+    body = sdfg.add_state("body")
     sdfg.add_edge(entry, body, dace.InterstateEdge())
-    sdfg.add_edge(body, body, dace.InterstateEdge(condition='i < N', assignments={'i': 'i + 1'}))
+    sdfg.add_edge(body, body, dace.InterstateEdge(condition="i < N", assignments={"i": "i + 1"}))
 
     assert region_has_cycle(sdfg)
 
 
 def test_a_cycle_unreachable_from_the_source_is_a_cycle():
-    sdfg = dace.SDFG('detached_cycle')
-    sdfg.add_state('entry', is_start_block=True)
-    first = sdfg.add_state('first')
-    second = sdfg.add_state('second')
+    sdfg = dace.SDFG("detached_cycle")
+    sdfg.add_state("entry", is_start_block=True)
+    first = sdfg.add_state("first")
+    second = sdfg.add_state("second")
     sdfg.add_edge(first, second, dace.InterstateEdge())
     sdfg.add_edge(second, first, dace.InterstateEdge())
 
@@ -56,29 +56,29 @@ def test_a_cycle_unreachable_from_the_source_is_a_cycle():
 
 
 def test_raising_lifts_a_back_edge_loop_into_a_loop_region():
-    sdfg = dace.SDFG('back_edge_loop')
-    sdfg.add_array('A', [10], dace.int64)
-    start = sdfg.add_state('start', is_start_block=True)
-    guard = sdfg.add_state('guard')
-    body = sdfg.add_state('body')
-    after = sdfg.add_state('after')
-    sdfg.add_edge(start, guard, dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i < N'))
-    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    sdfg.add_edge(guard, after, dace.InterstateEdge(condition='i >= N'))
-    writer = body.add_tasklet('write', {}, {'out': sdfg.arrays['A'].dtype}, 'out = i')
-    body.add_edge(writer, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+    sdfg = dace.SDFG("back_edge_loop")
+    sdfg.add_array("A", [10], dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    guard = sdfg.add_state("guard")
+    body = sdfg.add_state("body")
+    after = sdfg.add_state("after")
+    sdfg.add_edge(start, guard, dace.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge(condition="i < N"))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i >= N"))
+    writer = body.add_tasklet("write", {}, {"out": sdfg.arrays["A"].dtype}, "out = i")
+    body.add_edge(writer, "out", body.add_write("A"), None, dace.Memlet("A[i]"))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
     assert_cfg_list_matches_reset(sdfg)
 
     loops = [block for block in sdfg.nodes() if isinstance(block, LoopRegion)]
     assert len(loops) == 1
-    assert loops[0].loop_variable == 'i'
+    assert loops[0].loop_variable == "i"
     assert not region_has_cycle(sdfg)
 
 
-@pytest.mark.parametrize('lowered_returns', [False, True])
+@pytest.mark.parametrize("lowered_returns", [False, True])
 def test_dataflow_if_check(lowered_returns: bool):
 
     @dace.program
@@ -101,7 +101,7 @@ def test_dataflow_if_check(lowered_returns: bool):
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
 
-    A = np.zeros((10, ), np.int32)
+    A = np.zeros((10,), np.int32)
     A[4] = 10
     A[5] = 100
     assert sdfg(A, 0)[0] == 0
@@ -110,7 +110,7 @@ def test_dataflow_if_check(lowered_returns: bool):
     assert sdfg(A, 6)[0] == 0
 
 
-@pytest.mark.parametrize('lowered_returns', [False, True])
+@pytest.mark.parametrize("lowered_returns", [False, True])
 def test_nested_if_chain(lowered_returns: bool):
 
     @dace.program
@@ -148,7 +148,7 @@ def test_nested_if_chain(lowered_returns: bool):
     assert nested_if_chain(15)[0] == 4
 
 
-@pytest.mark.parametrize('lowered_returns', [False, True])
+@pytest.mark.parametrize("lowered_returns", [False, True])
 def test_elif_chain(lowered_returns: bool):
 
     @dace.program
@@ -184,48 +184,48 @@ def test_elif_chain(lowered_returns: bool):
 
 
 def test_unstructured_control_flow_sibling_loops():
-    sdfg = dace.SDFG('unstructured_control_flow_sibling_loops')
+    sdfg = dace.SDFG("unstructured_control_flow_sibling_loops")
 
-    sdfg.add_array('A', (10, ), dace.int32)
-    sdfg.add_array('B', (10, ), dace.int32)
+    sdfg.add_array("A", (10,), dace.int32)
+    sdfg.add_array("B", (10,), dace.int32)
 
-    init_state = sdfg.add_state('init', is_start_block=True)
+    init_state = sdfg.add_state("init", is_start_block=True)
 
     # Add a first loop
-    l1_before = sdfg.add_state_after(init_state, 'l1_before')
-    l1_guard = sdfg.add_state('l1_guard')
-    l1_body1 = sdfg.add_state('l1_body1')
-    l1_body2 = sdfg.add_state_after(l1_body1, 'l1_body2')
-    l1_exit = sdfg.add_state('l1_exit')
-    sdfg.add_edge(l1_before, l1_guard, dace.InterstateEdge(assignments={'i': '0'}))
-    sdfg.add_edge(l1_guard, l1_body1, dace.InterstateEdge('i < 10'))
-    sdfg.add_edge(l1_guard, l1_exit, dace.InterstateEdge('i >= 10'))
-    sdfg.add_edge(l1_body2, l1_guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    l1_before = sdfg.add_state_after(init_state, "l1_before")
+    l1_guard = sdfg.add_state("l1_guard")
+    l1_body1 = sdfg.add_state("l1_body1")
+    l1_body2 = sdfg.add_state_after(l1_body1, "l1_body2")
+    l1_exit = sdfg.add_state("l1_exit")
+    sdfg.add_edge(l1_before, l1_guard, dace.InterstateEdge(assignments={"i": "0"}))
+    sdfg.add_edge(l1_guard, l1_body1, dace.InterstateEdge("i < 10"))
+    sdfg.add_edge(l1_guard, l1_exit, dace.InterstateEdge("i >= 10"))
+    sdfg.add_edge(l1_body2, l1_guard, dace.InterstateEdge(assignments={"i": "i + 1"}))
 
     # Add a second loop
-    l2_before = sdfg.add_state_after(l1_exit, 'l2_before')
-    l2_guard = sdfg.add_state('l2_guard')
-    l2_body1 = sdfg.add_state('l2_body1')
-    l2_body2 = sdfg.add_state_after(l2_body1, 'l2_body2')
-    l2_exit = sdfg.add_state('l2_exit')
-    sdfg.add_edge(l2_before, l2_guard, dace.InterstateEdge(assignments={'j': '0'}))
-    sdfg.add_edge(l2_guard, l2_body1, dace.InterstateEdge('j < 10'))
-    sdfg.add_edge(l2_guard, l2_exit, dace.InterstateEdge('j >= 10'))
-    sdfg.add_edge(l2_body2, l2_guard, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+    l2_before = sdfg.add_state_after(l1_exit, "l2_before")
+    l2_guard = sdfg.add_state("l2_guard")
+    l2_body1 = sdfg.add_state("l2_body1")
+    l2_body2 = sdfg.add_state_after(l2_body1, "l2_body2")
+    l2_exit = sdfg.add_state("l2_exit")
+    sdfg.add_edge(l2_before, l2_guard, dace.InterstateEdge(assignments={"j": "0"}))
+    sdfg.add_edge(l2_guard, l2_body1, dace.InterstateEdge("j < 10"))
+    sdfg.add_edge(l2_guard, l2_exit, dace.InterstateEdge("j >= 10"))
+    sdfg.add_edge(l2_body2, l2_guard, dace.InterstateEdge(assignments={"j": "j + 1"}))
 
-    exit_state = sdfg.add_state_after(l2_exit, 'exit')
+    exit_state = sdfg.add_state_after(l2_exit, "exit")
 
     # Add an edge from the body of the first loop to the body of the second loop - this is the unstructured control flow
-    sdfg.add_edge(l1_body1, l2_body1, dace.InterstateEdge(condition='A[i] == 1', assignments={'j': '3'}))
+    sdfg.add_edge(l1_body1, l2_body1, dace.InterstateEdge(condition="A[i] == 1", assignments={"j": "3"}))
 
     # Add some computation
-    a1 = l1_body2.add_access('A')
-    t1 = l1_body2.add_tasklet('t1', {}, {'o1'}, 'o1 = 1')
-    l1_body2.add_edge(t1, 'o1', a1, None, dace.Memlet('A[i]'))
+    a1 = l1_body2.add_access("A")
+    t1 = l1_body2.add_tasklet("t1", {}, {"o1"}, "o1 = 1")
+    l1_body2.add_edge(t1, "o1", a1, None, dace.Memlet("A[i]"))
 
-    a2 = l2_body2.add_access('B')
-    t2 = l2_body2.add_tasklet('t2', {}, {'o1'}, 'o1 = 1')
-    l2_body2.add_edge(t2, 'o1', a2, None, dace.Memlet('B[j]'))
+    a2 = l2_body2.add_access("B")
+    t2 = l2_body2.add_tasklet("t2", {}, {"o1"}, "o1 = 1")
+    l2_body2.add_edge(t2, "o1", a2, None, dace.Memlet("B[j]"))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
@@ -239,16 +239,17 @@ def test_unstructured_control_flow_sibling_loops():
     unstructured_nodes = set(unstructured_region.nodes())
     assert exit_state in top_level_nodes
     assert init_state in top_level_nodes
-    assert all(n in unstructured_nodes
-               for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit])
+    assert all(
+        n in unstructured_nodes for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit]
+    )
 
-    A_test = np.zeros((10, ), np.int32)
-    B_test = np.zeros((10, ), np.int32)
+    A_test = np.zeros((10,), np.int32)
+    B_test = np.zeros((10,), np.int32)
     A_test[3] = 1  # This will trigger the jump from the first loop to the second loop
 
-    A_valid = np.zeros((10, ), np.int32)
+    A_valid = np.zeros((10,), np.int32)
     A_valid[:4] = 1
-    B_valid = np.zeros((10, ), np.int32)
+    B_valid = np.zeros((10,), np.int32)
     B_valid[3:] = 1
 
     sdfg(A=A_test, B=B_test)
@@ -272,63 +273,65 @@ def test_unconditional_edge_lifted_as_last_branch():
     branch is not the last branch)``. The fix is a stable-sort of the
     out-edges so unconditional edges fall at the tail before
     branch population."""
-    sdfg = dace.SDFG('uncond_branch_sort')
-    sdfg.add_array('A', (4, ), dace.int32)
-    sdfg.add_scalar('i', dace.int64, transient=False)
+    sdfg = dace.SDFG("uncond_branch_sort")
+    sdfg.add_array("A", (4,), dace.int32)
+    sdfg.add_scalar("i", dace.int64, transient=False)
 
-    start = sdfg.add_state('start', is_start_block=True)
-    body_if = sdfg.add_state('body_if')
-    body_else = sdfg.add_state('body_else')
-    merge = sdfg.add_state('merge')
+    start = sdfg.add_state("start", is_start_block=True)
+    body_if = sdfg.add_state("body_if")
+    body_else = sdfg.add_state("body_else")
+    merge = sdfg.add_state("merge")
 
     # Add the UNCONDITIONAL edge FIRST so it lands at index 0 in
     # graph.out_edges() iteration order, then the conditional edge.
     sdfg.add_edge(start, body_else, dace.InterstateEdge())
-    sdfg.add_edge(start, body_if, dace.InterstateEdge('i < 2'))
+    sdfg.add_edge(start, body_if, dace.InterstateEdge("i < 2"))
     sdfg.add_edge(body_if, merge, dace.InterstateEdge())
     sdfg.add_edge(body_else, merge, dace.InterstateEdge())
 
     # Some side-effect-bearing dataflow so the regions aren't empty.
-    wa_if = body_if.add_write('A')
-    ti = body_if.add_tasklet('mark_if', {}, {'a_out'}, 'a_out = 1')
-    body_if.add_edge(ti, 'a_out', wa_if, None, dace.Memlet('A[0]'))
-    wa_else = body_else.add_write('A')
-    te = body_else.add_tasklet('mark_else', {}, {'a_out'}, 'a_out = 0')
-    body_else.add_edge(te, 'a_out', wa_else, None, dace.Memlet('A[0]'))
+    wa_if = body_if.add_write("A")
+    ti = body_if.add_tasklet("mark_if", {}, {"a_out"}, "a_out = 1")
+    body_if.add_edge(ti, "a_out", wa_if, None, dace.Memlet("A[0]"))
+    wa_else = body_else.add_write("A")
+    te = body_else.add_tasklet("mark_else", {}, {"a_out"}, "a_out = 0")
+    body_else.add_edge(te, "a_out", wa_else, None, dace.Memlet("A[0]"))
 
     ppl = FixedPointPipeline([ControlFlowRaising()])
     ppl.apply_pass(sdfg, {})
 
     # Exactly one ConditionalBlock must surface at the SDFG root.
     cb_nodes = [n for n in sdfg.nodes() if isinstance(n, ConditionalBlock)]
-    assert len(cb_nodes) == 1, f'expected one lifted ConditionalBlock, got {len(cb_nodes)}'
+    assert len(cb_nodes) == 1, f"expected one lifted ConditionalBlock, got {len(cb_nodes)}"
     cb = cb_nodes[0]
 
     # The else branch (cond is None) must be the LAST entry.
     none_positions = [i for i, (c, _) in enumerate(cb.branches) if c is None]
-    assert len(none_positions) == 1, f'expected exactly one else branch, got {len(none_positions)}'
-    assert none_positions[0] == len(cb.branches) - 1, \
-        (f'else branch must be last; got index {none_positions[0]} of '
-         f'{len(cb.branches)}: {[str(c) if c is not None else "None" for c, _ in cb.branches]}')
+    assert len(none_positions) == 1, f"expected exactly one else branch, got {len(none_positions)}"
+    assert none_positions[0] == len(cb.branches) - 1, (
+        f"else branch must be last; got index {none_positions[0]} of "
+        f"{len(cb.branches)}: {[str(c) if c is not None else 'None' for c, _ in cb.branches]}"
+    )
 
     # Subsequent DeadStateElimination would abort on an else-not-last
     # CB. Run it here as the end-to-end contract check.
     from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+
     DeadStateElimination().apply_pass(sdfg, {})
     sdfg.validate()
 
 
 def cycle_entered_twice_from_the_start_block_sdfg() -> dace.SDFG:
     """``left`` and ``right`` jump into each other, and ``start`` branches into both: an irreducible cycle."""
-    sdfg = dace.SDFG('cycle_entered_twice_from_the_start_block')
-    sdfg.add_symbol('n', dace.int64)
-    start = sdfg.add_state('start', is_start_block=True)
-    left, right, end = sdfg.add_state('left'), sdfg.add_state('right'), sdfg.add_state('end')
-    sdfg.add_edge(start, left, dace.InterstateEdge(condition='n > 0'))
-    sdfg.add_edge(start, right, dace.InterstateEdge(condition='n <= 0'))
-    sdfg.add_edge(left, right, dace.InterstateEdge(condition='n > 1', assignments={'n': 'n - 1'}))
-    sdfg.add_edge(left, end, dace.InterstateEdge(condition='n <= 1'))
-    sdfg.add_edge(right, left, dace.InterstateEdge(assignments={'n': 'n - 1'}))
+    sdfg = dace.SDFG("cycle_entered_twice_from_the_start_block")
+    sdfg.add_symbol("n", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    left, right, end = sdfg.add_state("left"), sdfg.add_state("right"), sdfg.add_state("end")
+    sdfg.add_edge(start, left, dace.InterstateEdge(condition="n > 0"))
+    sdfg.add_edge(start, right, dace.InterstateEdge(condition="n <= 0"))
+    sdfg.add_edge(left, right, dace.InterstateEdge(condition="n > 1", assignments={"n": "n - 1"}))
+    sdfg.add_edge(left, end, dace.InterstateEdge(condition="n <= 1"))
+    sdfg.add_edge(right, left, dace.InterstateEdge(assignments={"n": "n - 1"}))
     sdfg.validate()
     return sdfg
 
@@ -342,38 +345,38 @@ def test_an_irreducible_cycle_entered_from_the_start_block_is_lifted_whole_into_
     assert len(sut.nodes()) == 1
     region = sut.nodes()[0]
     assert isinstance(region, UnstructuredControlFlow)
-    assert region.start_block.label == 'start'
-    assert [block.label for block in region.nodes()] == ['start', 'left', 'right', 'end']
+    assert region.start_block.label == "start"
+    assert [block.label for block in region.nodes()] == ["start", "left", "right", "end"]
     assert region.number_of_edges() == 5
-    with pytest.raises(NotImplementedError, match='X requires structured control flow'):
-        dace.sdfg.utils.require_structured_control_flow(sut, 'X')
+    with pytest.raises(NotImplementedError, match="X requires structured control flow"):
+        dace.sdfg.utils.require_structured_control_flow(sut, "X")
 
 
 def add_dead_cycle(sdfg: dace.SDFG) -> dace.SDFGState:
     """Adds ``dead_a`` and ``dead_b`` jumping into each other, which no path from the start block reaches."""
-    dead_a, dead_b = sdfg.add_state('dead_a'), sdfg.add_state('dead_b')
+    dead_a, dead_b = sdfg.add_state("dead_a"), sdfg.add_state("dead_b")
     sdfg.add_edge(dead_a, dead_b, dace.InterstateEdge())
     sdfg.add_edge(dead_b, dead_a, dace.InterstateEdge())
     return dead_b
 
 
 def test_a_dead_block_branching_into_live_code_is_dropped_and_the_loop_is_lifted():
-    sut = dace.SDFG('dead_block_branching_into_live_code')
-    sut.add_symbol('i', dace.int64)
-    init = sut.add_state('init', is_start_block=True)
-    guard, body, done = sut.add_state('guard'), sut.add_state('body'), sut.add_state('done')
-    sut.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '0'}))
-    sut.add_edge(guard, body, dace.InterstateEdge(condition='i < 10'))
-    sut.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    sut.add_edge(guard, done, dace.InterstateEdge(condition='i >= 10'))
-    sut.add_edge(add_dead_cycle(sut), done, dace.InterstateEdge(condition='i > 100'))
+    sut = dace.SDFG("dead_block_branching_into_live_code")
+    sut.add_symbol("i", dace.int64)
+    init = sut.add_state("init", is_start_block=True)
+    guard, body, done = sut.add_state("guard"), sut.add_state("body"), sut.add_state("done")
+    sut.add_edge(init, guard, dace.InterstateEdge(assignments={"i": "0"}))
+    sut.add_edge(guard, body, dace.InterstateEdge(condition="i < 10"))
+    sut.add_edge(body, guard, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    sut.add_edge(guard, done, dace.InterstateEdge(condition="i >= 10"))
+    sut.add_edge(add_dead_cycle(sut), done, dace.InterstateEdge(condition="i > 100"))
 
     ControlFlowRaising().apply_pass(sut, {})
 
     sut.validate()
-    assert {block.label for block in sut.nodes() if isinstance(block, dace.SDFGState)} == {'init', 'done'}
+    assert {block.label for block in sut.nodes() if isinstance(block, dace.SDFGState)} == {"init", "done"}
     assert len([block for block in sut.nodes() if isinstance(block, LoopRegion)]) == 1
-    assert not [block for block in sut.all_control_flow_blocks() if block.label.startswith('dead_')]
+    assert not [block for block in sut.all_control_flow_blocks() if block.label.startswith("dead_")]
 
 
 def test_an_irreducible_cycle_beside_a_dead_cycle_is_lifted_without_the_dead_blocks():
@@ -386,35 +389,35 @@ def test_an_irreducible_cycle_beside_a_dead_cycle_is_lifted_without_the_dead_blo
     assert len(sut.nodes()) == 1
     region = sut.nodes()[0]
     assert isinstance(region, UnstructuredControlFlow)
-    assert [block.label for block in region.nodes()] == ['start', 'left', 'right', 'end']
+    assert [block.label for block in region.nodes()] == ["start", "left", "right", "end"]
 
 
-@pytest.mark.parametrize('value, expected', [(3.0, 1.0), (1.0, 0.0)])
+@pytest.mark.parametrize("value, expected", [(3.0, 1.0), (1.0, 0.0)])
 def test_a_branch_that_jumps_straight_to_the_merge_keeps_its_assignments(value, expected):
-    sdfg = dace.SDFG('empty_branch_assignment')
-    sdfg.add_array('x', [1], dace.float64)
-    sdfg.add_array('y', [1], dace.float64)
-    sdfg.add_symbol('t', dace.float64)
+    sdfg = dace.SDFG("empty_branch_assignment")
+    sdfg.add_array("x", [1], dace.float64)
+    sdfg.add_array("y", [1], dace.float64)
+    sdfg.add_symbol("t", dace.float64)
     first = sdfg.add_state(is_start_block=True)
     merge = sdfg.add_state()
     other = sdfg.add_state()
-    sdfg.add_edge(first, merge, dace.InterstateEdge(condition='x[0] > 2', assignments={'t': '1.0'}))
-    sdfg.add_edge(first, other, dace.InterstateEdge(condition='x[0] <= 2', assignments={'t': '0.0'}))
+    sdfg.add_edge(first, merge, dace.InterstateEdge(condition="x[0] > 2", assignments={"t": "1.0"}))
+    sdfg.add_edge(first, other, dace.InterstateEdge(condition="x[0] <= 2", assignments={"t": "0.0"}))
     sdfg.add_edge(other, merge, dace.InterstateEdge())
-    write = merge.add_tasklet('write', {}, {'o'}, 'o = t')
-    merge.add_edge(write, 'o', merge.add_write('y'), None, dace.Memlet('y[0]'))
+    write = merge.add_tasklet("write", {}, {"o"}, "o = t")
+    merge.add_edge(write, "o", merge.add_write("y"), None, dace.Memlet("y[0]"))
 
     ControlFlowRaising().apply_pass(sdfg, {})
 
     conditional = next(b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock))
     assignments = [e.data.assignments for _, branch in conditional.branches for e in branch.all_interstate_edges()]
-    assert {'t': '1.0'} in assignments and {'t': '0.0'} in assignments
+    assert {"t": "1.0"} in assignments and {"t": "0.0"} in assignments
     y = np.zeros(1)
     sdfg(x=np.array([value]), y=y)
     assert y[0] == expected
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
     test_nested_if_chain(False)

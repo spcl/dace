@@ -14,6 +14,7 @@ arrays / scalar params / dataset symbols by NAME; outputs are taken from the
 program's return value (mapped to ``output_args`` in order) or, for in-place
 kernels, from the mutated arrays.
 """
+
 import importlib
 import inspect
 import pkgutil
@@ -59,7 +60,7 @@ def collect(name: Optional[str] = None) -> List[dict]:
 SIZE_CAP = 16
 
 
-def sizes_for(c: dict, preset: str = 'S') -> Dict[str, object]:
+def sizes_for(c: dict, preset: str = "S") -> Dict[str, object]:
     """The dataset symbols for ``preset``.
 
     npbench declares several rows per benchmark (``S``/``M``/``L``/``paper`` in its ``bench_info``
@@ -67,21 +68,21 @@ def sizes_for(c: dict, preset: str = 'S') -> Dict[str, object]:
     data. ``paper_sizes`` is that second row. A benchmark without one falls back to ``S``: a kernel
     local to this corpus has no upstream paper row to copy.
     """
-    if preset == 'paper':
+    if preset == "paper":
         return dict(c.get("paper_sizes") or c["sizes"])
     return dict(c["sizes"])
 
 
-def _capped_sizes(c: dict, cap: Optional[int] = SIZE_CAP, preset: str = 'S') -> Dict[str, object]:
+def _capped_sizes(c: dict, cap: Optional[int] = SIZE_CAP, preset: str = "S") -> Dict[str, object]:
     sizes = sizes_for(c, preset)
     if cap is None:
         return sizes
     return {k: (min(v, cap) if isinstance(v, int) and not isinstance(v, bool) else v) for k, v in sizes.items()}
 
 
-def make_inputs(c: dict,
-                cap: Optional[int] = SIZE_CAP,
-                preset: str = 'S') -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
+def make_inputs(
+    c: dict, cap: Optional[int] = SIZE_CAP, preset: str = "S"
+) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
     """Initialize the named arrays at the dataset size; return ``(arrays, params)``
     where ``params`` holds the dataset symbols + any scalar kernel arguments.
 
@@ -92,7 +93,7 @@ def make_inputs(c: dict,
     args = [sizes[a] for a in c["input_args"]]
     rets = c["initialize"](*args)
     if not isinstance(rets, tuple):
-        rets = (rets, )
+        rets = (rets,)
     arrays = dict(zip(c["array_args"], rets))
     params = dict(c.get("scalars", {}))
     # Include ALL dataset sizes -- floats too (e.g. mandelbrot's xmin/horizon,
@@ -116,7 +117,7 @@ def _map_call(fn_or_program, arrays, params):
 
 def _collect_outputs(c, ret, work):
     out: Dict[str, np.ndarray] = {}
-    rets = ret if isinstance(ret, tuple) else (ret, )
+    rets = ret if isinstance(ret, tuple) else (ret,)
     for i, name in enumerate(c["output_args"]):
         if ret is not None and i < len(rets) and rets[i] is not None:
             out[name] = np.asarray(rets[i])
@@ -139,8 +140,9 @@ def fresh_sdfg(c: dict, *, simplify: bool = True) -> dace.SDFG:
     return sdfg
 
 
-def run_outputs(c: dict, sdfg: dace.SDFG, arrays: Dict[str, np.ndarray], params: Dict[str,
-                                                                                      object]) -> Dict[str, np.ndarray]:
+def run_outputs(
+    c: dict, sdfg: dace.SDFG, arrays: Dict[str, np.ndarray], params: Dict[str, object]
+) -> Dict[str, np.ndarray]:
     """Compile + run ``sdfg`` on copies of the inputs; return the ``output_args``."""
     work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in arrays.items()}
     call = _map_call(c["program"], work, params)
@@ -168,11 +170,9 @@ def _tol_for(dtype) -> Tuple[float, float]:
     return (1e-5, 1e-6) if single else (1e-9, 1e-11)
 
 
-def outputs_match(ref: Dict[str, np.ndarray],
-                  got: Dict[str, np.ndarray],
-                  *,
-                  rtol: float = None,
-                  atol: float = None) -> bool:
+def outputs_match(
+    ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], *, rtol: float = None, atol: float = None
+) -> bool:
     """Compare reference vs candidate ``output_args`` with a DTYPE-AWARE tolerance
     (:func:`_tol_for`): fp64 tight, fp32 fp32-appropriate, integers exact. The default
     absolute term is raised to the array's reassociation floor -- see

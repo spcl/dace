@@ -47,8 +47,9 @@ def _stats(sdfg: dace.SDFG):
 
 
 @dace.program
-def _compound_reduction(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N],
-                        e: dace.float64[N]):
+def _compound_reduction(
+    a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]
+):
     s = 0.0
     for i in range(N):
         a[i] = c[i] + d[i]

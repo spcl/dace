@@ -6,6 +6,7 @@ whose inner range mentions the outer parameter -- which is every triangular and 
 and ``MinimizeStridePermutation`` refused any nest whose strides are not concrete numbers, which on
 symbolic shapes is all of them. TSVC ``s1232`` therefore kept a stride-``LEN_2D`` innermost loop.
 """
+
 import numpy as np
 import pytest
 
@@ -13,10 +14,10 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_interchange import MapInterchange
 from dace.transformation.passes.canonicalize import pipeline as canon
-from dace.transformation.passes.minimize_stride_permutation import (UndecidableStride, stride_difference_sign)
+from dace.transformation.passes.minimize_stride_permutation import UndecidableStride, stride_difference_sign
 
-N = dace.symbol('N', dtype=dace.int64)
-V = dace.symbol('V', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
+V = dace.symbol("V", dtype=dace.int64)
 
 
 def nest(sdfg: dace.SDFG):
@@ -42,19 +43,22 @@ def test_the_contiguous_parameter_ends_up_innermost():
     sdfg = trapez_the_contiguous_parameter_ends_up_innermost.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     outer, inner = nest(sdfg)
-    assert outer is not None, 'the nest did not survive canonicalization'
+    assert outer is not None, "the nest did not survive canonicalization"
     # The inner parameter must be the one indexing the LAST (contiguous) axis.
     subsets = [
-        e.data.subset for state in sdfg.states() for e in state.edges()
-        if e.data is not None and e.data.data == 'aa' and e.data.subset is not None and len(e.data.subset) == 2
+        e.data.subset
+        for state in sdfg.states()
+        for e in state.edges()
+        if e.data is not None and e.data.data == "aa" and e.data.subset is not None and len(e.data.subset) == 2
     ]
     contiguous = {str(s) for sub in subsets for s in sub.ranges[1][0].free_symbols}
     assert inner.map.params[0] in contiguous, (
-        f'innermost parameter {inner.map.params[0]} does not index the contiguous axis '
-        f'(that axis is indexed by {contiguous})')
+        f"innermost parameter {inner.map.params[0]} does not index the contiguous axis "
+        f"(that axis is indexed by {contiguous})"
+    )
 
 
-@pytest.mark.parametrize('n,v', [(33, 1), (33, 4), (64, 3), (17, 7), (12, 20)])
+@pytest.mark.parametrize("n,v", [(33, 1), (33, 4), (64, 3), (17, 7), (12, 20)])
 def test_the_iteration_set_is_preserved(n, v):
     """The bound rewrite is a re-derivation, not an approximation: same elements, same values."""
 
@@ -83,29 +87,28 @@ def test_a_plain_swap_still_refuses_a_trapezoid():
     @dace.program
     def trapez_a_plain_swap_still_refuses_a_trapezoid(aa: dace.float64[N, N], bb: dace.float64[N, N]):
         for j in dace.map[0:N]:
-            for i in dace.map[V * j:N]:
+            for i in dace.map[V * j : N]:
                 aa[i, j] = bb[i, j] + 1.0
 
     sdfg = trapez_a_plain_swap_still_refuses_a_trapezoid.to_sdfg(simplify=True)
     outer, inner = nest(sdfg)
     assert not MapInterchange.can_be_applied_to(sdfg, outer_map_entry=outer, inner_map_entry=inner)
-    assert MapInterchange.can_be_applied_to(sdfg,
-                                            options={'transform_bounds': True},
-                                            outer_map_entry=outer,
-                                            inner_map_entry=inner)
+    assert MapInterchange.can_be_applied_to(
+        sdfg, options={"transform_bounds": True}, outer_map_entry=outer, inner_map_entry=inner
+    )
 
 
 def test_stride_comparison_uses_the_shape_contract():
     """An extent is at least one, so a symbolic stride is not an undecidable one."""
-    assert stride_difference_sign('1', 'N') == -1
-    assert stride_difference_sign('N', '1') == 1
-    assert stride_difference_sign('M', 'N*M') == -1
-    assert stride_difference_sign('N', 'N') == 0
+    assert stride_difference_sign("1", "N") == -1
+    assert stride_difference_sign("N", "1") == 1
+    assert stride_difference_sign("M", "N*M") == -1
+    assert stride_difference_sign("N", "N") == 0
     with pytest.raises(UndecidableStride):
-        stride_difference_sign('N*M', 'M + K')
+        stride_difference_sign("N*M", "M + K")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_contiguous_parameter_ends_up_innermost()
     test_the_iteration_set_is_preserved(33, 4)
     test_a_plain_swap_still_refuses_a_trapezoid()

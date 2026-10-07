@@ -116,6 +116,7 @@ Parallelization of the resulting statements is done by the passes that follow
 (``LoopToMap`` / ``MapFission`` on the shapes still nested); ``MapFusion``
 re-fuses whatever should recombine.
 """
+
 import copy
 from collections import Counter
 from dataclasses import dataclass
@@ -153,8 +154,11 @@ def neighbours_touch_view(state: SDFGState, node: nodes.Node) -> bool:
     """Whether an AccessNode adjacent to ``node`` is a ``View`` (the split rewires those edges)."""
     arrays = state.sdfg.arrays
     return any(
-        isinstance(arrays[n.data], dt.View) for e in state.all_edges(node) for n in (e.src, e.dst)
-        if isinstance(n, nodes.AccessNode) and n.data in arrays)
+        isinstance(arrays[n.data], dt.View)
+        for e in state.all_edges(node)
+        for n in (e.src, e.dst)
+        if isinstance(n, nodes.AccessNode) and n.data in arrays
+    )
 
 
 def is_opaque_code(node: nodes.Node, sdfg: SDFG) -> bool:
@@ -239,10 +243,11 @@ def body_compute_states(loop: LoopRegion) -> list[SDFGState] | None:
     :param loop: The loop whose body is inspected.
     """
     from dace.sdfg import utils as sdutil
+
     if any(not isinstance(blk, SDFGState) for blk in loop.nodes()):
         return None
     for e in loop.edges():
-        if e.data.assignments or e.data.condition.as_string not in ('1', 'True', '(1)'):
+        if e.data.assignments or e.data.condition.as_string not in ("1", "True", "(1)"):
             return None
     # Execution order, not insertion order: which state wrote a value before another read it is
     # what :func:`split_order` reads off this list.
@@ -265,11 +270,9 @@ def body_stage_index(body: Body, index: StageIndex) -> StageIndex:
     return index
 
 
-def staged_producer_edges(body: Body,
-                          state: SDFGState,
-                          node: nodes.Node,
-                          input_names: dict[str, None],
-                          stage_index: StageIndex | None = None) -> list[tuple[SDFGState, ValueEdge]]:
+def staged_producer_edges(
+    body: Body, state: SDFGState, node: nodes.Node, input_names: dict[str, None], stage_index: StageIndex | None = None
+) -> list[tuple[SDFGState, ValueEdge]]:
     """``(state, edge)`` for every VALUE producer of ``node``, following one staged transient back
     into the state that wrote it.
 
@@ -296,8 +299,15 @@ def staged_producer_edges(body: Body,
 
 #: ``(per-state names, states per name, always-outside, per-loop condition names, loop conditions per
 #: name, candidate positions, candidates no state or loop condition names)``.
-LocalTransientIndex = tuple[dict[int, dict[str, None]], Counter[str], dict[str, None], dict[int, dict[str, None]],
-                            Counter[str], dict[str, int], list[str]]
+LocalTransientIndex = tuple[
+    dict[int, dict[str, None]],
+    Counter[str],
+    dict[str, None],
+    dict[int, dict[str, None]],
+    Counter[str],
+    dict[str, int],
+    list[str],
+]
 
 
 def local_transient_index(sdfg: SDFG) -> LocalTransientIndex:
@@ -359,7 +369,8 @@ def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: LocalTransientInd
     own_cond = cond_names.get(id(loop), {})
     # A name every state outside the loop leaves alone is one the loop's states all hold, or one no state holds.
     local = [
-        nm for nm, count in inner.items()
+        nm
+        for nm, count in inner.items()
         if nm in position and in_states[nm] == count and in_conditions[nm] == (1 if nm in own_cond else 0)
     ]
     local.extend(unnamed)
@@ -370,6 +381,7 @@ def loop_local_transients(loop: LoopRegion, sdfg: SDFG, index: LocalTransientInd
 @dataclass(slots=True)
 class LoopSplitIndex:
     """The whole-SDFG indices the loop split reads, each built on first use for an unmutated ``sdfg``."""
+
     sdfg: SDFG
     use: tuple[dict[str, set[int]], set[str]] | None = None
     local: LocalTransientIndex | None = None
@@ -427,8 +439,9 @@ def output_input_reads(sdfg: SDFG, out_name: str, input_names: dict[str, None]) 
     for state in sdfg.states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
         seen: dict = dict.fromkeys((state, w) for w in writers)
-        stack = [(s2, e.src) for w in writers
-                 for s2, e in staged_producer_edges(sdfg, state, w, input_names, stage_index)]
+        stack = [
+            (s2, e.src) for w in writers for s2, e in staged_producer_edges(sdfg, state, w, input_names, stage_index)
+        ]
         while stack:
             st, node = stack.pop()
             if (st, node) in seen:
@@ -530,7 +543,7 @@ def access_offset(read_subset: subsets.Subset | None, write_subset: subsets.Subs
             diff = symbolic.simplify(r - w)
         except (TypeError, ValueError, AttributeError):
             return None
-        if not getattr(diff, 'is_Integer', False):
+        if not getattr(diff, "is_Integer", False):
             return None
         if diff != 0:
             return 1 if diff > 0 else -1
@@ -606,6 +619,7 @@ def suppress_writes(body: SDFG, name: str) -> None:
     :param name: The array whose stores go away.
     """
     from dace.sdfg import utils as sdutil
+
     for state in body.states():
         for node in [n for n in state.data_nodes() if n.data == name]:
             for e in producer_edges(state, node):
@@ -637,14 +651,13 @@ def drop_dataless_access_nodes(body: SDFG) -> None:
     while True:
         removed = False
         read_for_value = {
-            n.data
-            for state in body.states()
-            for n in state.data_nodes() if value_edges(state.out_edges(n))
+            n.data for state in body.states() for n in state.data_nodes() if value_edges(state.out_edges(n))
         }
         for state in body.states():
             for node in [n for n in state.data_nodes() if not value_edges(state.out_edges(n))]:
-                if (value_edges(state.in_edges(node))
-                        and not (body.arrays[node.data].transient and node.data not in read_for_value)):
+                if value_edges(state.in_edges(node)) and not (
+                    body.arrays[node.data].transient and node.data not in read_for_value
+                ):
                     continue
                 # Only the EMPTY in-edges carry order worth keeping; a value in-edge comes from the
                 # dead producer swept below.
@@ -663,7 +676,7 @@ def drop_dataless_access_nodes(body: SDFG) -> None:
             # ``a[i] = a[i-1] + s1; b[i] = y[i] * 2``). Deleting the computation is sound because
             # :func:`has_opaque_code` already barred anything whose effect is not its out-memlets.
             for producer in [
-                    n for n in state.nodes() if isinstance(n, nodes.CodeNode) and not value_edges(state.out_edges(n))
+                n for n in state.nodes() if isinstance(n, nodes.CodeNode) and not value_edges(state.out_edges(n))
             ]:
                 preds = [e.src for e in state.in_edges(producer) if e.data is not None and e.data.is_empty()]
                 succs = [e.dst for e in state.out_edges(producer)]
@@ -741,15 +754,13 @@ def sees_written_value(states: list[SDFGState], name: str, state: SDFGState, nod
         return True
     if state not in states:
         return False
-    before = states[:states.index(state)]
+    before = states[: states.index(state)]
     return any(producer_edges(st, n) for st in before for n in st.data_nodes() if n.data == name)
 
 
-def split_order(body: LoopRegion,
-                in_names: dict[str, None],
-                rmw: list[str],
-                groups: list[dict[str, None]],
-                cone: Cone | None = None) -> list[dict[str, None]] | None:
+def split_order(
+    body: LoopRegion, in_names: dict[str, None], rmw: list[str], groups: list[dict[str, None]], cone: Cone | None = None
+) -> list[dict[str, None]] | None:
     """``groups`` re-ordered so the split is legal, or ``None`` when no order is.
 
     :func:`rmw_confined` decides whether the groups can run as UNORDERED siblings, which needs every
@@ -850,11 +861,9 @@ def topological_group_order(after: list[dict[int, None]]) -> list[int] | None:
     return order if len(order) == len(after) else None
 
 
-def merge_carried_groups(body: LoopRegion,
-                         groups: list[dict[str, None]],
-                         rmw: list[str],
-                         in_names: dict[str, None],
-                         cone: Cone | None = None) -> list[dict[str, None]]:
+def merge_carried_groups(
+    body: LoopRegion, groups: list[dict[str, None]], rmw: list[str], in_names: dict[str, None], cone: Cone | None = None
+) -> list[dict[str, None]]:
     """``groups`` with the producer of a CARRIED value and everything that reads it merged into one.
 
     A value the loop carries -- ``s`` in TSVC ``s2251``, written every iteration at the same element
@@ -879,7 +888,8 @@ def merge_carried_groups(body: LoopRegion,
         if writer is None:
             continue
         readers = [
-            i for i, grp in enumerate(merged)
+            i
+            for i, grp in enumerate(merged)
             if i != writer and any(n.data == name for oc in grp for st, n, e in read_cone(body, oc, in_names, cone))
         ]
         if not readers:
@@ -907,7 +917,7 @@ def independent_groups(body: Body, out_names: list[str], in_names: dict[str, Non
         return x
 
     for i, a in enumerate(out_names):
-        for b in out_names[i + 1:]:
+        for b in out_names[i + 1 :]:
             if any(s in dep[b] for s in dep[a]):
                 parent[find(a)] = find(b)
     groups: dict[str, dict[str, None]] = {}
@@ -938,14 +948,15 @@ class SplitStatements(ppl.Pass):
     fissions there) is byte-identical; the nest-forge agent path turns it on to
     fission at map granularity without lowering."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     split_maps = properties.Property(
-        dtype=bool, default=False, desc="Also fission a straight-line multi-global-output map into one map per output.")
+        dtype=bool, default=False, desc="Also fission a straight-line multi-global-output map into one map per output."
+    )
 
-    split_loops = properties.Property(dtype=bool,
-                                      default=True,
-                                      desc="Distribute a straight-line multi-output loop into one loop per output.")
+    split_loops = properties.Property(
+        dtype=bool, default=True, desc="Distribute a straight-line multi-output loop into one loop per output."
+    )
 
     def __init__(self, split_maps: bool = False, split_loops: bool = True) -> None:
         super().__init__()
@@ -1017,8 +1028,10 @@ class SplitStatements(ppl.Pass):
         # The same carry under two connector names (a privatized ``_nnr_rwout_a`` writing back the ``a`` an input
         # reads) is invisible to that test and to the per-group dependency analysis: refuse it outright.
         read_outer = {e.data.data for e in state.in_edges(node) if e.data is not None and e.dst_conn not in rmw}
-        if any(e.data is not None and e.data.data in read_outer and e.src_conn not in node.in_connectors
-               for e in state.out_edges(node)):
+        if any(
+            e.data is not None and e.data.data in read_outer and e.src_conn not in node.in_connectors
+            for e in state.out_edges(node)
+        ):
             return None
         # A black-box body is not analyzable: ``_output_dependency`` reads the memlets, which
         # do not describe an opaque node's effects, and ``_split`` would then duplicate them.
@@ -1031,13 +1044,15 @@ class SplitStatements(ppl.Pass):
         return result
 
     @staticmethod
-    def _split(parent_sdfg: SDFG,
-               state: SDFGState,
-               node: nodes.NestedSDFG,
-               groups: list[dict[str, None]],
-               simplify_cls: Type[ppl.Pass],
-               rmw_read_is_dead: bool = False,
-               cut_other_stores: bool = False) -> None:
+    def _split(
+        parent_sdfg: SDFG,
+        state: SDFGState,
+        node: nodes.NestedSDFG,
+        groups: list[dict[str, None]],
+        simplify_cls: Type[ppl.Pass],
+        rmw_read_is_dead: bool = False,
+        cut_other_stores: bool = False,
+    ) -> None:
         """Clone ``node`` once per group, prune each, rewire, drop original.
 
         :param rmw_read_is_dead: The caller established (via :func:`rmw_stays_in_writer_group`) that a
@@ -1076,15 +1091,18 @@ class SplitStatements(ppl.Pass):
                 used = {
                     n.data
                     for st in clone_sdfg.states()
-                    for n in st.data_nodes() if value_edges(st.in_edges(n) + st.out_edges(n))
+                    for n in st.data_nodes()
+                    if value_edges(st.in_edges(n) + st.out_edges(n))
                 }
                 kept_in = [c for c in kept_in if c in clone_sdfg.arrays and c in used]
             # dicts/sorted, not sets: these become the clone's connector dicts, which are
             # observable in validation and codegen order.
-            clone = state.add_nested_sdfg(clone_sdfg,
-                                          inputs=dict.fromkeys(kept_in),
-                                          outputs=dict.fromkeys(sorted(grp)),
-                                          symbol_mapping=copy.deepcopy(node.symbol_mapping))
+            clone = state.add_nested_sdfg(
+                clone_sdfg,
+                inputs=dict.fromkeys(kept_in),
+                outputs=dict.fromkeys(sorted(grp)),
+                symbol_mapping=copy.deepcopy(node.symbol_mapping),
+            )
             for e in in_edges:
                 if e.dst_conn is not None and e.dst_conn not in kept_in:
                     continue
@@ -1138,9 +1156,15 @@ class SplitStatements(ppl.Pass):
         return count
 
     @staticmethod
-    def _split_one_map(cfg: ControlFlowRegion, state: SDFGState, entry: nodes.MapEntry, simplify_cls: Type[ppl.Pass],
-                       helpers: ModuleType, inline_cls: Type[transformation.TransformationBase],
-                       subgraph_cls: Type[SubgraphView[Any, Any]]) -> bool:
+    def _split_one_map(
+        cfg: ControlFlowRegion,
+        state: SDFGState,
+        entry: nodes.MapEntry,
+        simplify_cls: Type[ppl.Pass],
+        helpers: ModuleType,
+        inline_cls: Type[transformation.TransformationBase],
+        subgraph_cls: Type[SubgraphView[Any, Any]],
+    ) -> bool:
         """Split one straight-line multi-output map into one FLAT map per output; return whether it fired.
 
         Nest the WHOLE scope (entry..exit) into a NestedSDFG, clone it per output (``_split`` duplicates a
@@ -1167,8 +1191,12 @@ class SplitStatements(ppl.Pass):
         # tasklets show the write precedes the read, and a shared local is duplicated like any other. A
         # CONDITIONAL / indirection-symbol body is NOT inlined -- it cannot live directly in a map scope and
         # is _replicate_components' job.
-        if (len(inner) == 1 and isinstance(inner[0], nodes.NestedSDFG) and not _has_conditional(inner[0].sdfg)
-                and not _has_interstate_assignments(inner[0].sdfg)):
+        if (
+            len(inner) == 1
+            and isinstance(inner[0], nodes.NestedSDFG)
+            and not _has_conditional(inner[0].sdfg)
+            and not _has_interstate_assignments(inner[0].sdfg)
+        ):
             inline_cls.apply_to(cfg, nested_sdfg=inner[0], save=False, verify=False)
             scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
             inner = [n for n in scope.nodes() if n not in (entry, xit)]
@@ -1179,20 +1207,29 @@ class SplitStatements(ppl.Pass):
         # guard SplitTasklets uses (split_tasklets.py) and leave such a map unsplit. Global
         # (non-transient) arrays only: a shared local temp is meant to be recomputed per output.
         read_arrays = dict.fromkeys(
-            e.data.data for e in state.in_edges(entry)
-            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient)
+            e.data.data
+            for e in state.in_edges(entry)
+            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
+        )
         write_arrays = dict.fromkeys(
-            e.data.data for e in state.in_edges(xit)
-            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient)
+            e.data.data
+            for e in state.in_edges(xit)
+            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
+        )
         write_arrays.update(
             dict.fromkeys(
-                n.data for n in inner
-                if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0 and not cfg.arrays[n.data].transient))
+                n.data
+                for n in inner
+                if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0 and not cfg.arrays[n.data].transient
+            )
+        )
         if any(a in write_arrays for a in read_arrays):
             return False
         if any(
-                isinstance(cfg.arrays[n.data], dt.View) for n in scope.nodes()
-                if isinstance(n, nodes.AccessNode) and n.data in cfg.arrays):
+            isinstance(cfg.arrays[n.data], dt.View)
+            for n in scope.nodes()
+            if isinstance(n, nodes.AccessNode) and n.data in cfg.arrays
+        ):
             return False
         # PLAIN leaf map only: no nested map / NestedSDFG in the body (those go to _replicate_components).
         if not inner or any(isinstance(n, (nodes.NestedSDFG, nodes.MapEntry, nodes.MapExit)) for n in inner):
@@ -1242,15 +1279,17 @@ class SplitStatements(ppl.Pass):
                 if decision is None:
                     continue
                 groups, ordered = decision
-                if self._split_one_loop(cfg, loop, groups, ordered, SimplifyPass, helpers, InlineMultistateSDFG,
-                                        SubgraphView):
+                if self._split_one_loop(
+                    cfg, loop, groups, ordered, SimplifyPass, helpers, InlineMultistateSDFG, SubgraphView
+                ):
                     count += 1
                     index.clear()
         return count
 
     @staticmethod
-    def loop_output_groups(loop: LoopRegion, sdfg: SDFG,
-                           index: LoopSplitIndex) -> tuple[list[dict[str, None]], bool] | None:
+    def loop_output_groups(
+        loop: LoopRegion, sdfg: SDFG, index: LoopSplitIndex
+    ) -> tuple[list[dict[str, None]], bool] | None:
         """``(groups, ordered)`` for the loop, or ``None`` to refuse -- computed WITHOUT touching it.
 
         ``ordered`` says the clones must run one after the other, in the order ``groups`` gives,
@@ -1312,8 +1351,11 @@ class SplitStatements(ppl.Pass):
         # in one state and read in the NEXT is an ordinary staged value, not a carry.
         for state in states:
             for n in state.data_nodes():
-                if (n.data in local and value_edges(state.out_edges(n))
-                        and not sees_written_value(states, n.data, state, n)):
+                if (
+                    n.data in local
+                    and value_edges(state.out_edges(n))
+                    and not sees_written_value(states, n.data, state, n)
+                ):
                     return None
 
         out_names = [w for w in writes if w not in local]
@@ -1339,11 +1381,13 @@ class SplitStatements(ppl.Pass):
         return None if ordered is None else (ordered, True)
 
     @staticmethod
-    def _minimal_loops(body: LoopRegion,
-                       groups: list[dict[str, None]],
-                       rmw: list[str],
-                       in_names: dict[str, None],
-                       cone: Cone | None = None) -> list[dict[str, None]] | None:
+    def _minimal_loops(
+        body: LoopRegion,
+        groups: list[dict[str, None]],
+        rmw: list[str],
+        in_names: dict[str, None],
+        cone: Cone | None = None,
+    ) -> list[dict[str, None]] | None:
         """Coalesce the output groups into two loops: CARRIED and FREE.
 
         The split peels data-parallel statements out of a recurrence; finer splits only add sweeps
@@ -1367,10 +1411,16 @@ class SplitStatements(ppl.Pass):
         return [carried, free]
 
     @staticmethod
-    def _split_one_loop(sdfg: SDFG, loop: LoopRegion, groups: list[dict[str, None]], ordered: bool,
-                        simplify_cls: Type[ppl.Pass], helpers: ModuleType,
-                        inline_cls: Type[transformation.TransformationBase],
-                        subgraph_cls: Type[SubgraphView[Any, Any]]) -> bool:
+    def _split_one_loop(
+        sdfg: SDFG,
+        loop: LoopRegion,
+        groups: list[dict[str, None]],
+        ordered: bool,
+        simplify_cls: Type[ppl.Pass],
+        helpers: ModuleType,
+        inline_cls: Type[transformation.TransformationBase],
+        subgraph_cls: Type[SubgraphView[Any, Any]],
+    ) -> bool:
         """Outline ``loop``, clone it per group, inline the clones back; return whether it fired.
 
         ``nest_sdfg_subgraph`` moves the loop's own temporaries INSIDE the nest (they are its
@@ -1396,21 +1446,18 @@ class SplitStatements(ppl.Pass):
             # read-modify-write array is read by nobody but its writer, so the read is dead in
             # every other clone. The ordered split makes no such claim -- there the read is real
             # and the order is what keeps it correct -- so it keeps every input connector.
-            SplitStatements._split(sdfg,
-                                   outer,
-                                   node,
-                                   groups,
-                                   simplify_cls,
-                                   rmw_read_is_dead=True,
-                                   cut_other_stores=True)
+            SplitStatements._split(
+                sdfg, outer, node, groups, simplify_cls, rmw_read_is_dead=True, cut_other_stores=True
+            )
             clones = [n for n in outer.nodes() if isinstance(n, nodes.NestedSDFG) and n not in before]
         for clone in clones:
             inline_cls.apply_to(sdfg, nested_sdfg=clone, save=False, verify=False)
         return True
 
     @staticmethod
-    def _split_ordered(state: SDFGState, node: nodes.NestedSDFG, groups: list[dict[str, None]],
-                       simplify_cls: Type[ppl.Pass]) -> list[nodes.NestedSDFG] | None:
+    def _split_ordered(
+        state: SDFGState, node: nodes.NestedSDFG, groups: list[dict[str, None]], simplify_cls: Type[ppl.Pass]
+    ) -> list[nodes.NestedSDFG] | None:
         """Clone ``node`` once per group into CONSECUTIVE states; the clones, or ``None`` to refuse.
 
         :meth:`_split` puts every clone in ONE state, where they are unordered siblings -- which is
@@ -1441,7 +1488,7 @@ class SplitStatements(ppl.Pass):
         target = state
         for idx, grp in enumerate(groups):
             if idx:
-                target = parent.add_state_after(target, label=f'{state.label}_split_{idx}')
+                target = parent.add_state_after(target, label=f"{state.label}_split_{idx}")
             # Prune the clone BEFORE it is wired: dropping the other groups' stores leaves inputs
             # only they read, and SimplifyPass deletes those descriptors. A connector whose inner
             # array is gone is not a valid NestedSDFG, so the surviving descriptors decide the
@@ -1467,7 +1514,8 @@ class SplitStatements(ppl.Pass):
             used = {
                 n.data
                 for st in clone_sdfg.states()
-                for n in st.data_nodes() if value_edges(st.in_edges(n) + st.out_edges(n))
+                for n in st.data_nodes()
+                if value_edges(st.in_edges(n) + st.out_edges(n))
             }
             kept_in = [c for c in node.in_connectors if c in clone_sdfg.arrays and c in used]
             if any(o not in clone_sdfg.arrays for o in grp):
@@ -1476,10 +1524,12 @@ class SplitStatements(ppl.Pass):
                 clone_sdfg.arrays[leftover].transient = True
             # dicts/sorted, not sets: these become the clone's connector dicts, which are
             # observable in validation and codegen order.
-            clone = target.add_nested_sdfg(clone_sdfg,
-                                           inputs=dict.fromkeys(kept_in),
-                                           outputs=dict.fromkeys(sorted(grp)),
-                                           symbol_mapping=copy.deepcopy(node.symbol_mapping))
+            clone = target.add_nested_sdfg(
+                clone_sdfg,
+                inputs=dict.fromkeys(kept_in),
+                outputs=dict.fromkeys(sorted(grp)),
+                symbol_mapping=copy.deepcopy(node.symbol_mapping),
+            )
             for e in in_edges:
                 if e.dst_conn not in kept_in:
                     continue
@@ -1503,4 +1553,4 @@ class SplitStatements(ppl.Pass):
         return clones
 
 
-__all__ = ['SplitStatements']
+__all__ = ["SplitStatements"]

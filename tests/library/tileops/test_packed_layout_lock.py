@@ -7,6 +7,7 @@ Fortran (column-major, no padding). Any other layout raises
 ``NotImplementedError`` at ``validate()`` time -- padded layouts will
 land when per-arch codegen supports them.
 """
+
 import pytest
 
 import dace
@@ -15,14 +16,17 @@ from dace.libraries.tileops.validation import strides_match_packed, validate_pac
 from dace.memlet import Memlet
 
 
-@pytest.mark.parametrize("shape,strides,order,packed", [
-    ((8, 16), (16, 1), "C", True),
-    ((8, 16), (20, 1), "C", False),
-    ((8, 16), (1, 8), "F", True),
-    ((8, 16), (1, 12), "F", False),
-    ((8, ), (1, 1), "C", False),
-],
-                         ids=["c", "c_padded", "fortran", "fortran_padded", "length_mismatch"])
+@pytest.mark.parametrize(
+    "shape,strides,order,packed",
+    [
+        ((8, 16), (16, 1), "C", True),
+        ((8, 16), (20, 1), "C", False),
+        ((8, 16), (1, 8), "F", True),
+        ((8, 16), (1, 12), "F", False),
+        ((8,), (1, 1), "C", False),
+    ],
+    ids=["c", "c_padded", "fortran", "fortran_padded", "length_mismatch"],
+)
 def test_strides_match_packed_only_for_unpadded_strides_of_the_shape(shape, strides, order, packed):
     assert strides_match_packed(shape=shape, strides=strides, order=order) is packed
 
@@ -36,24 +40,30 @@ def _array_with(shape, strides, dtype=dace.float64):
     return sdfg.arrays["A"]
 
 
-@pytest.mark.parametrize("shape,strides", [
-    ((8, 16), (16, 1)),
-    ((8, 16), (1, 8)),
-    ((4, 8, 16), (128, 16, 1)),
-    ((16, ), (1, )),
-],
-                         ids=["packed_c_2d", "packed_fortran_2d", "packed_c_3d", "unit_stride_1d"])
+@pytest.mark.parametrize(
+    "shape,strides",
+    [
+        ((8, 16), (16, 1)),
+        ((8, 16), (1, 8)),
+        ((4, 8, 16), (128, 16, 1)),
+        ((16,), (1,)),
+    ],
+    ids=["packed_c_2d", "packed_fortran_2d", "packed_c_3d", "unit_stride_1d"],
+)
 def test_validate_accepts_a_packed_layout(shape, strides):
     """Packed C, packed Fortran and unit-stride 1-D layouts pass; the validator raises on anything else."""
     validate_packed_layout("tl", "_src", _array_with(shape=shape, strides=strides))
 
 
-@pytest.mark.parametrize("shape,strides,message", [
-    ((8, 16), (20, 1), "non-packed stride pattern"),
-    ((4, 8, 16), (192, 24, 1), "non-packed stride pattern"),
-    ((16, ), (2, ), "non-unit stride"),
-],
-                         ids=["padded_inner_dim_2d", "padded_3d", "non_unit_stride_1d"])
+@pytest.mark.parametrize(
+    "shape,strides,message",
+    [
+        ((8, 16), (20, 1), "non-packed stride pattern"),
+        ((4, 8, 16), (192, 24, 1), "non-packed stride pattern"),
+        ((16,), (2,), "non-unit stride"),
+    ],
+    ids=["padded_inner_dim_2d", "padded_3d", "non_unit_stride_1d"],
+)
 def test_validate_refuses_a_non_packed_layout(shape, strides, message):
     with pytest.raises(NotImplementedError, match=message):
         validate_packed_layout("tl", "_src", _array_with(shape=shape, strides=strides))
@@ -102,13 +112,21 @@ def test_tile_scatter_refuses_padded_dest_at_validate():
 
 
 if __name__ == "__main__":
-    for case in [((8, 16), (16, 1), "C", True), ((8, 16), (20, 1), "C", False), ((8, 16), (1, 8), "F", True),
-                 ((8, 16), (1, 12), "F", False), ((8, ), (1, 1), "C", False)]:
+    for case in [
+        ((8, 16), (16, 1), "C", True),
+        ((8, 16), (20, 1), "C", False),
+        ((8, 16), (1, 8), "F", True),
+        ((8, 16), (1, 12), "F", False),
+        ((8,), (1, 1), "C", False),
+    ]:
         test_strides_match_packed_only_for_unpadded_strides_of_the_shape(*case)
-    for case in [((8, 16), (16, 1)), ((8, 16), (1, 8)), ((4, 8, 16), (128, 16, 1)), ((16, ), (1, ))]:
+    for case in [((8, 16), (16, 1)), ((8, 16), (1, 8)), ((4, 8, 16), (128, 16, 1)), ((16,), (1,))]:
         test_validate_accepts_a_packed_layout(*case)
-    for case in [((8, 16), (20, 1), "non-packed stride pattern"),
-                 ((4, 8, 16), (192, 24, 1), "non-packed stride pattern"), ((16, ), (2, ), "non-unit stride")]:
+    for case in [
+        ((8, 16), (20, 1), "non-packed stride pattern"),
+        ((4, 8, 16), (192, 24, 1), "non-packed stride pattern"),
+        ((16,), (2,), "non-unit stride"),
+    ]:
         test_validate_refuses_a_non_packed_layout(*case)
     test_validate_accepts_scalar_descriptor_as_noop()
     test_tile_gather_refuses_padded_source_at_validate()

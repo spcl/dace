@@ -13,6 +13,7 @@ Three shapes:
 
 Accumulator: ``Scalar``, length-1 ``Array``, or one loop-invariant slice of an ``Array`` (``C[k]``).
 """
+
 import ast
 import copy
 from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
@@ -54,7 +55,7 @@ _CMP_LT = (ast.Lt, ast.LtE)
 #: The one map schedule that opens no parallel region. Everything else -- including ``Default``,
 #: which codegen turns into ``CPU_Multicore`` at the top level -- counts as an enclosing parallel
 #: scope, so a loop under it is the CPU cost model's nested-parallelism case, not this pass's.
-_SEQUENTIAL_SCHEDULES = (dtypes.ScheduleType.Sequential, )
+_SEQUENTIAL_SCHEDULES = (dtypes.ScheduleType.Sequential,)
 
 
 def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
@@ -147,8 +148,8 @@ class LoopToReduce(ppl.Pass):
 
     prefer = properties.Property(
         dtype=str,
-        default='reduce-libnode',
-        choices=('reduce-libnode', 'wcr-scalar'),
+        default="reduce-libnode",
+        choices=("reduce-libnode", "wcr-scalar"),
         desc="Emission strategy. ``reduce-libnode`` (default) emits a single "
         "``Reduce`` library node; ``wcr-scalar`` keeps a LoopRegion that "
         "accumulates into a transient scalar with WCR, plus init + writeback "
@@ -158,7 +159,7 @@ class LoopToReduce(ppl.Pass):
         "lowering for accumulator ops the ``Reduce`` libnode cannot express.",
     )
 
-    def __init__(self, permissive: bool = False, prefer: str = 'reduce-libnode'):
+    def __init__(self, permissive: bool = False, prefer: str = "reduce-libnode"):
         super().__init__()
         self.permissive = permissive
         self.prefer = prefer
@@ -191,7 +192,7 @@ class LoopToReduce(ppl.Pass):
             info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
             if info is None:
                 continue
-            if self.prefer == 'wcr-scalar':
+            if self.prefer == "wcr-scalar":
                 # Lift even a pinned (nested) reduction; ``_lift_wcr_scalar`` carries the pin
                 # onto the new loop so the downstream ``LoopToMap`` keeps it sequential.
                 _lift_wcr_scalar(parent, node, info)
@@ -204,6 +205,7 @@ class LoopToReduce(ppl.Pass):
             # uses array-extent memlets, propagation collapses to the reduction-axis
             # range so codegen / DCE see the tight subset.
             from dace.sdfg.propagation import propagate_memlets_sdfg
+
             propagate_memlets_sdfg(sdfg)
         return count or None
 
@@ -227,7 +229,7 @@ class RetargetWCRAccumulator(ppl.Pass):
     interleaved two-accumulator shape and drops one accumulator's result.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -265,6 +267,7 @@ class RetargetWCRAccumulator(ppl.Pass):
 
         if count > 0:
             from dace.sdfg.propagation import propagate_memlets_sdfg
+
             propagate_memlets_sdfg(sdfg)
         return count or None
 
@@ -277,7 +280,7 @@ def loop_to_map_refusal_is_carried(reason: Optional[str]) -> bool:
     # Covers "self-recurrent carried symbol", "carried symbol dependency",
     # "loop-carried forward/backward dependency", "writes ... may overlap across
     # iterations", and "read-after-write conflict ...".
-    return any(k in lo for k in ('carried', 'may overlap', 'read-after-write conflict'))
+    return any(k in lo for k in ("carried", "may overlap", "read-after-write conflict"))
 
 
 @xf.explicit_cf_compatible
@@ -296,7 +299,7 @@ class PinCarriedTopLevelLoops(ppl.Pass):
     :mod:`~dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes`.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -337,7 +340,7 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
     single-tasklet matcher claims.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Memlets
@@ -348,6 +351,7 @@ class AccumulatorCopyChainToWCR(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """:returns: The number of rewrites, or ``None`` if the SDFG was left untouched."""
         from dace.transformation.passes.canonicalize.eliminate_trivial_tasklets import EliminateTrivialTasklets
+
         count = EliminateTrivialTasklets().apply_pass(sdfg, {}) or 0
         count += _augassign_to_wcr_per_state(sdfg)
         return count or None
@@ -369,7 +373,8 @@ def staging_successor(state: SDFGState, node: nodes.Node) -> List[nodes.AccessNo
     """AccessNode successors of ``node`` shaped like a private staging copy: exactly one
     in-edge and one out-edge -- candidate ``copy_out``/``combine_out``."""
     return [
-        e.dst for e in data_out_edges(state, node)
+        e.dst
+        for e in data_out_edges(state, node)
         if isinstance(e.dst, nodes.AccessNode) and state.in_degree(e.dst) == 1 and state.out_degree(e.dst) == 1
     ]
 
@@ -378,13 +383,15 @@ def staging_predecessor(state: SDFGState, node: nodes.Node) -> List[nodes.Access
     """AccessNode predecessors of ``node`` shaped like a private staging copy -- candidate
     ``copy_in``."""
     return [
-        e.src for e in data_in_edges(state, node)
+        e.src
+        for e in data_in_edges(state, node)
         if isinstance(e.src, nodes.AccessNode) and state.in_degree(e.src) == 1 and state.out_degree(e.src) == 1
     ]
 
 
-def free_tasklet_augassign_candidates(state: SDFGState,
-                                      tasklet: nodes.Tasklet) -> Iterator[Tuple[int, AugAssignBinding]]:
+def free_tasklet_augassign_candidates(
+    state: SDFGState, tasklet: nodes.Tasklet
+) -> Iterator[Tuple[int, AugAssignBinding]]:
     """Candidates anchored on a combining tasklet outside any map: expr 0 (direct RMW),
     2 (copy-wrapped RMW), 3 (combine-then-copyback). Mirrors ``AugAssignToWCR.expressions()``
     node-for-node -- a bounded local walk, not an isomorphism search."""
@@ -397,40 +404,47 @@ def free_tasklet_augassign_candidates(state: SDFGState,
             yield 0, {aug.input: inp, aug.tasklet: tasklet, aug.output: out}
 
     for copy_in in staging_predecessor(state, tasklet):
-        (pred, ) = state.in_edges(copy_in)
+        (pred,) = state.in_edges(copy_in)
         if not isinstance(pred.src, nodes.AccessNode):
             continue
         for copy_out in staging_successor(state, tasklet):
-            (succ, ) = state.out_edges(copy_out)
+            (succ,) = state.out_edges(copy_out)
             if not isinstance(succ.dst, nodes.AccessNode):
                 continue
-            yield 2, {
-                aug.input: pred.src,
-                aug.copy_in: copy_in,
-                aug.tasklet: tasklet,
-                aug.copy_out: copy_out,
-                aug.output: succ.dst,
-            }
+            yield (
+                2,
+                {
+                    aug.input: pred.src,
+                    aug.copy_in: copy_in,
+                    aug.tasklet: tasklet,
+                    aug.copy_out: copy_out,
+                    aug.output: succ.dst,
+                },
+            )
 
     for inp in inputs:
         for combine_out in staging_successor(state, tasklet):
-            (mid, ) = state.out_edges(combine_out)
+            (mid,) = state.out_edges(combine_out)
             copyback = mid.dst
             if not isinstance(copyback, nodes.Tasklet):
                 continue
             for out_edge in data_out_edges(state, copyback):
                 if isinstance(out_edge.dst, nodes.AccessNode):
-                    yield 3, {
-                        aug.input: inp,
-                        aug.tasklet: tasklet,
-                        aug.combine_out: combine_out,
-                        aug.copyback: copyback,
-                        aug.output: out_edge.dst,
-                    }
+                    yield (
+                        3,
+                        {
+                            aug.input: inp,
+                            aug.tasklet: tasklet,
+                            aug.combine_out: combine_out,
+                            aug.copyback: copyback,
+                            aug.output: out_edge.dst,
+                        },
+                    )
 
 
-def map_tasklet_augassign_candidates(state: SDFGState, map_entry: nodes.MapEntry,
-                                     tasklet: nodes.Tasklet) -> Iterator[Tuple[int, AugAssignBinding]]:
+def map_tasklet_augassign_candidates(
+    state: SDFGState, map_entry: nodes.MapEntry, tasklet: nodes.Tasklet
+) -> Iterator[Tuple[int, AugAssignBinding]]:
     """Candidates anchored on a combining tasklet at the top level of a map: expr 1 (direct
     RMW), 4 (combine-then-copyback). Mirror of :func:`free_tasklet_augassign_candidates`."""
     aug = AugAssignToWCR
@@ -443,32 +457,38 @@ def map_tasklet_augassign_candidates(state: SDFGState, map_entry: nodes.MapEntry
     if any(e.dst is map_exit for e in data_out_edges(state, tasklet)):
         for inp in inputs:
             for out in outputs:
-                yield 1, {
-                    aug.input: inp,
-                    aug.map_entry: map_entry,
-                    aug.tasklet: tasklet,
-                    aug.map_exit: map_exit,
-                    aug.output: out,
-                }
+                yield (
+                    1,
+                    {
+                        aug.input: inp,
+                        aug.map_entry: map_entry,
+                        aug.tasklet: tasklet,
+                        aug.map_exit: map_exit,
+                        aug.output: out,
+                    },
+                )
 
     for inp in inputs:
         for combine_out in staging_successor(state, tasklet):
-            (mid, ) = state.out_edges(combine_out)
+            (mid,) = state.out_edges(combine_out)
             copyback = mid.dst
             if not isinstance(copyback, nodes.Tasklet):
                 continue
             if not any(e.dst is map_exit for e in data_out_edges(state, copyback)):
                 continue
             for out in outputs:
-                yield 4, {
-                    aug.input: inp,
-                    aug.map_entry: map_entry,
-                    aug.tasklet: tasklet,
-                    aug.combine_out: combine_out,
-                    aug.copyback: copyback,
-                    aug.map_exit: map_exit,
-                    aug.output: out,
-                }
+                yield (
+                    4,
+                    {
+                        aug.input: inp,
+                        aug.map_entry: map_entry,
+                        aug.tasklet: tasklet,
+                        aug.combine_out: combine_out,
+                        aug.copyback: copyback,
+                        aug.map_exit: map_exit,
+                        aug.output: out,
+                    },
+                )
 
 
 def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
@@ -481,6 +501,7 @@ def accumulates(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
     nested SDFG does not receive cannot index the write, so it repeats it.
     """
     from dace.transformation.passes.vectorization.utils.injectivity import write_subset_is_injective
+
     writes = [edge.data.subset for edge in state.out_edges(tasklet) if edge.data.subset is not None]
 
     def separates(name: Optional[str]) -> bool:
@@ -692,17 +713,19 @@ def _chase_forward_to_accum(state, sdfg: SDFG, start_node, start_subset):
         if len(out_edges) != 1 or len(in_edges) != 1:
             return cur.data, cur_sub
         oe = out_edges[0]
-        if (not isinstance(oe.dst, nodes.AccessNode) or oe.data is None or oe.data.subset is None
-                or _one_elem(oe.data.subset) != _one_elem(cur_sub)):
+        if (
+            not isinstance(oe.dst, nodes.AccessNode)
+            or oe.data is None
+            or oe.data.subset is None
+            or _one_elem(oe.data.subset) != _one_elem(cur_sub)
+        ):
             return cur.data, cur_sub
         cur, cur_sub = oe.dst, oe.data.subset
 
 
-def _expand_over_loop(subset: subsets.Subset,
-                      loop_var: sympy.Symbol,
-                      start,
-                      end,
-                      loop_stride=1) -> Optional[subsets.Range]:
+def _expand_over_loop(
+    subset: subsets.Subset, loop_var: sympy.Symbol, start, end, loop_stride=1
+) -> Optional[subsets.Range]:
     """Widen ``subset`` dims that use ``loop_var`` linearly over ``[start, end]`` (inclusive)
     stepped by ``loop_stride``. Dims not involving ``loop_var`` (e.g. outer ``jl`` in a
     per-row inner reduction ``arr[jl, jm]`` over ``jm``) stay as-is; only the reduction axis widens.
@@ -760,7 +783,7 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
         return isinstance(n, ast.Name) and n.id == target
 
     def _is_array(n):
-        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == array)
+        return isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == array
 
     left, right = tree.left, tree.comparators[0]
     if _is_target(left) and _is_array(right):
@@ -774,8 +797,9 @@ def _cmp_to_wcr(cond, target: str, array: str) -> Optional[str]:
     return "lambda a, b: max(a, b)" if arr_is_larger else "lambda a, b: min(a, b)"
 
 
-def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start, end,
-                         stride) -> Optional["_Reduction"]:
+def _extract_any_pattern(
+    cond, const_rhs: int, target: str, sdfg: SDFG, loop_var_sym, start, end, stride
+) -> Optional["_Reduction"]:
     """Match ``{sym: const}`` conditional-iedge "any"/"all".
 
     Body = ``ConditionalBlock``, one branch, guard ``arr[<subs>] <cmp> C`` (C int),
@@ -800,7 +824,7 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
     left, right = tree.left, tree.comparators[0]
 
     def _is_subscript_on_array(n):
-        return (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id in sdfg.arrays)
+        return isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id in sdfg.arrays
 
     def _is_int_const(n):
         return isinstance(n, ast.Constant) and isinstance(n.value, int)
@@ -919,7 +943,7 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
             wcr = _BINOP_TO_WCR.get(type(rhs.op))
         elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
             wcr = _BOOLOP_TO_WCR.get(type(rhs.op))
-        elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
+        elif isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2:
             wcr = _CALL_TO_WCR.get(rhs.func.id)
         else:
             wcr = None
@@ -970,8 +994,12 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                 return None
             if desc.transient and len(state.in_edges(src)) == 1 and len(state.out_edges(src)) == 1:
                 pred = state.in_edges(src)[0]
-                if (not isinstance(pred.src, nodes.AccessNode) or pred.data is None or pred.data.subset is None
-                        or _one_elem(e.data.subset) != _one_elem(pred.data.subset)):
+                if (
+                    not isinstance(pred.src, nodes.AccessNode)
+                    or pred.data is None
+                    or pred.data.subset is None
+                    or _one_elem(e.data.subset) != _one_elem(pred.data.subset)
+                ):
                     return None
                 resolved.append((pred.src.data, copy.deepcopy(pred.data.subset)))
             else:
@@ -992,9 +1020,15 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                 if array is not None:
                     return None
                 array, arr_subset = name, sub
-            elif (_one_elem(sub) == 1 and name in carried
-                  and ((name == accum and sub == write_subset) or (name == final_accum and sub == final_subset) or
-                       (name != accum and _scalar_equiv(sdfg, name, accum)))):
+            elif (
+                _one_elem(sub) == 1
+                and name in carried
+                and (
+                    (name == accum and sub == write_subset)
+                    or (name == final_accum and sub == final_subset)
+                    or (name != accum and _scalar_equiv(sdfg, name, accum))
+                )
+            ):
                 accum_ok = True
                 carried_accum, carried_sub = name, sub
         if not accum_ok or array is None or array == accum:
@@ -1040,8 +1074,14 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                     return None
                 for e in st.in_edges(an):
                     src, sub = e.src, (e.data.subset if e.data is not None else None)
-                    if (isinstance(src, nodes.AccessNode) and src.data in allowed and sub is not None and
-                        (_uses(sub, loop_var_sym) or any(str(fs) in loop_iedge_assignees for fs in sub.free_symbols))):
+                    if (
+                        isinstance(src, nodes.AccessNode)
+                        and src.data in allowed
+                        and sub is not None
+                        and (
+                            _uses(sub, loop_var_sym) or any(str(fs) in loop_iedge_assignees for fs in sub.free_symbols)
+                        )
+                    ):
                         return None
 
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, stride)
@@ -1069,13 +1109,13 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         edges = body.edges()
         if len(edges) != 1:
             return None
-        (edge, ) = edges
+        (edge,) = edges
         if {edge.src, edge.dst} != {s1, s2}:
             return None
         assignments = edge.data.assignments or {}
         if len(assignments) != 1:
             return None
-        ((target, expr_str), ) = assignments.items()
+        ((target, expr_str),) = assignments.items()
         # Interstate-edge assignment targets are always DaCe symbols.
         if target not in sdfg.symbols:
             return None
@@ -1165,8 +1205,9 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
     return None
 
 
-def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.Symbol, start, end,
-                             stride) -> Optional[_Reduction]:
+def _extract_branched_minmax(
+    loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.Symbol, start, end, stride
+) -> Optional[_Reduction]:
     """Match ``for i: if arr[i] <cmp> accum: accum = arr[i]`` where the frontend lowers
     the masked update into:
 
@@ -1202,7 +1243,7 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
         return None
     guard_rhs = guard_iedge.data.assignments[guard_sym]
     try:
-        guard_tree = ast.parse(guard_rhs.strip().lstrip('(').rstrip(')'), mode='eval').body
+        guard_tree = ast.parse(guard_rhs.strip().lstrip("(").rstrip(")"), mode="eval").body
     except SyntaxError:
         return None
     if not isinstance(guard_tree, ast.Compare) or len(guard_tree.ops) != 1:
@@ -1239,7 +1280,7 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
 
     arr_rhs = arr_iedge.data.assignments[arr_sym]
     try:
-        arr_tree = ast.parse(arr_rhs.strip(), mode='eval').body
+        arr_tree = ast.parse(arr_rhs.strip(), mode="eval").body
     except SyntaxError:
         return None
     if not isinstance(arr_tree, ast.Subscript) or not isinstance(arr_tree.value, ast.Name):
@@ -1258,11 +1299,13 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
     body_state = branch_states[0]
 
     accum_writes = [
-        n for n in body_state.nodes()
+        n
+        for n in body_state.nodes()
         if isinstance(n, nodes.AccessNode) and n.data == accum_name and body_state.in_degree(n) > 0
     ]
     array_reads = [
-        n for n in body_state.nodes()
+        n
+        for n in body_state.nodes()
         if isinstance(n, nodes.AccessNode) and n.data == array_name and body_state.out_degree(n) > 0
     ]
     if len(accum_writes) != 1 or len(array_reads) != 1:
@@ -1299,6 +1342,7 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     """Replace ``loop`` with a ``Reduce``. Data-descriptor accumulator -> write directly;
     symbol accumulator -> synthesize a transient scalar, seed from the symbol, assign back on exit."""
     import dace
+
     root = _owner_sdfg(parent)
     fsyms = set(root.free_symbols)
 
@@ -1312,16 +1356,20 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
         entry = red_state
         dest_name, dest_subset = info.accum, info.accum_subset
     else:
-        tmp_name, _ = root.add_scalar(f"_red_tmp_{info.accum}",
-                                      dtype=root.symbols[info.accum],
-                                      transient=True,
-                                      find_new_name=True)
+        tmp_name, _ = root.add_scalar(
+            f"_red_tmp_{info.accum}", dtype=root.symbols[info.accum], transient=True, find_new_name=True
+        )
         init_state = parent.add_state(loop.label + "_init", is_start_block=was_start)
         red_state = parent.add_state(loop.label + "_reduce")
         parent.add_edge(init_state, red_state, dace.InterstateEdge())
         seed = init_state.add_tasklet("seed", set(), {"_out"}, f"_out = {info.accum}")
-        init_state.add_edge(seed, "_out", init_state.add_write(tmp_name), None,
-                            mm.Memlet(data=tmp_name, subset=subsets.Range([(0, 0, 1)])))
+        init_state.add_edge(
+            seed,
+            "_out",
+            init_state.add_write(tmp_name),
+            None,
+            mm.Memlet(data=tmp_name, subset=subsets.Range([(0, 0, 1)])),
+        )
         entry = init_state
         dest_name = tmp_name
         dest_subset = subsets.Range([(0, 0, 1)])
@@ -1347,8 +1395,8 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     arr = red_state.add_read(info.array)
     dst = red_state.add_write(dest_name)
     red = red_state.add_reduce(info.wcr, axes=list(range(len(info.array_subset))), identity=None)
-    red_state.add_edge(arr, None, red, '_in', mm.Memlet(data=info.array, subset=info.array_subset))
-    red_state.add_edge(red, '_out', dst, None, mm.Memlet(data=dest_name, subset=dest_subset))
+    red_state.add_edge(arr, None, red, "_in", mm.Memlet(data=info.array, subset=info.array_subset))
+    red_state.add_edge(red, "_out", dst, None, mm.Memlet(data=dest_name, subset=dest_subset))
 
 
 def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
@@ -1365,6 +1413,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     post-loop scalar back (or assigns the symbol via an out-edge iedge).
     """
     import dace
+
     root = _owner_sdfg(parent)
 
     was_start = parent.start_block is loop
@@ -1380,12 +1429,18 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     if accum_in_arrays:
         seed_r = init_state.add_read(info.accum)
         seed_w = init_state.add_write(priv_name)
-        init_state.add_edge(seed_r, None, seed_w, None,
-                            mm.Memlet(data=info.accum, subset=copy.deepcopy(info.accum_subset)))
+        init_state.add_edge(
+            seed_r, None, seed_w, None, mm.Memlet(data=info.accum, subset=copy.deepcopy(info.accum_subset))
+        )
     else:
         seed = init_state.add_tasklet("seed", set(), {"_out"}, f"_out = {info.accum}")
-        init_state.add_edge(seed, "_out", init_state.add_write(priv_name), None,
-                            mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)])))
+        init_state.add_edge(
+            seed,
+            "_out",
+            init_state.add_write(priv_name),
+            None,
+            mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)])),
+        )
 
     new_loop = LoopRegion(
         loop.label + "_priv",
@@ -1419,8 +1474,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         # unit loop -> ``coeff == 1``; strided read/loop -> ``coeff >= 1``.
         is_reduction_axis = False
         coeff = None
-        if (loop_start is not None and loop_end is not None and loop_stride is not None and loop_stride != 0
-                and st != 0):
+        if loop_start is not None and loop_end is not None and loop_stride is not None and loop_stride != 0 and st != 0:
             coeff = symbolic.simplify(st / loop_stride)
             axis_elems = symbolic.simplify((hi - lo) / st + 1)
             iters = symbolic.simplify((loop_end - loop_start) / loop_stride + 1)
@@ -1432,11 +1486,17 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         else:
             per_iter_ranges.append((lo, hi, st))
     body.add_edge(
-        arr_an, None, priv_an, None,
-        mm.Memlet(data=info.array,
-                  subset=subsets.Range(per_iter_ranges),
-                  other_subset=subsets.Range([(0, 0, 1)]),
-                  wcr=info.wcr))
+        arr_an,
+        None,
+        priv_an,
+        None,
+        mm.Memlet(
+            data=info.array,
+            subset=subsets.Range(per_iter_ranges),
+            other_subset=subsets.Range([(0, 0, 1)]),
+            wcr=info.wcr,
+        ),
+    )
 
     wb_state = parent.add_state(loop.label + "_priv_wb")
     if accum_in_arrays:
@@ -1471,7 +1531,7 @@ def _state_in_nested_loop(state: SDFGState, loop: LoopRegion) -> bool:
     while g is not None and g is not loop:
         if isinstance(g, LoopRegion):
             return True
-        g = getattr(g, 'parent_graph', None)
+        g = getattr(g, "parent_graph", None)
     return False
 
 
@@ -1520,8 +1580,13 @@ def _extract_wcr_body(loop: LoopRegion, sdfg: SDFG):
     return candidates[0]
 
 
-def slot_accessed_besides(loop: LoopRegion, own_edges: Set[gr.MultiConnectorEdge[mm.Memlet]], accum_name: str,
-                          accum_subset: subsets.Subset, accum_desc: data.Data) -> bool:
+def slot_accessed_besides(
+    loop: LoopRegion,
+    own_edges: Set[gr.MultiConnectorEdge[mm.Memlet]],
+    accum_name: str,
+    accum_subset: subsets.Subset,
+    accum_desc: data.Data,
+) -> bool:
     """True iff the loop reads or writes ``accum_name[accum_subset]`` through any edge but ``own_edges``.
 
     The retarget redirects its own accumulate to the private scalar and writes that scalar back over
@@ -1544,8 +1609,11 @@ def slot_accessed_besides(loop: LoopRegion, own_edges: Set[gr.MultiConnectorEdge
     # An access is compared over every iteration of the loop: s118's ``a[i - j - 1]`` read names a
     # different element than the ``a[i]`` slot for each ``j`` in ``0..i-1``, which the per-iteration
     # subset alone cannot show.
-    start, end, stride = (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
-                          loop_analysis.get_loop_stride(loop))
+    start, end, stride = (
+        loop_analysis.get_init_assignment(loop),
+        loop_analysis.get_loop_end(loop),
+        loop_analysis.get_loop_stride(loop),
+    )
     iterations = None if None in (start, end, stride) else subsets.Range([(start, end, stride)])
     for state in loop.states():
         for node in state.data_nodes():
@@ -1561,8 +1629,9 @@ def slot_accessed_besides(loop: LoopRegion, own_edges: Set[gr.MultiConnectorEdge
                 if subset is None:
                     return True
                 if iterations is not None:
-                    subset = propagate_subset([mm.Memlet(data=accum_name, subset=subset)], accum_desc,
-                                              [loop.loop_variable], iterations).subset
+                    subset = propagate_subset(
+                        [mm.Memlet(data=accum_name, subset=subset)], accum_desc, [loop.loop_variable], iterations
+                    ).subset
                 if subsets.intersects(subset, accum_subset) is not False:
                     return True
     return accum_name in control_flow_reads(loop)
@@ -1584,8 +1653,14 @@ def control_flow_reads(loop: LoopRegion) -> Set[str]:
     return names
 
 
-def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_state: SDFGState, wcr_edge,
-                              accum_name: str, accum_subset: subsets.Subset):
+def _lift_wcr_scalar_retarget(
+    parent: ControlFlowRegion,
+    loop: LoopRegion,
+    wcr_state: SDFGState,
+    wcr_edge,
+    accum_name: str,
+    accum_subset: subsets.Subset,
+):
     """Wrap ``loop`` with ``init -> loop -> writeback`` and retarget the in-body WCR write
     from ``accum[accum_subset]`` to a fresh transient scalar ``_priv_<accum>``.
 
@@ -1595,6 +1670,7 @@ def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_s
     ``LoopToMap``) not here.
     """
     import dace
+
     root = _owner_sdfg(parent)
 
     desc = root.arrays[accum_name]
@@ -1605,20 +1681,35 @@ def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_s
     out_edges = list(parent.out_edges(loop))
 
     init_state = parent.add_state(loop.label + "_priv_init", is_start_block=was_start)
-    init_state.add_edge(init_state.add_read(accum_name), None, init_state.add_write(priv_name), None,
-                        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
+    init_state.add_edge(
+        init_state.add_read(accum_name),
+        None,
+        init_state.add_write(priv_name),
+        None,
+        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)),
+    )
 
     accum_sink = wcr_edge.dst
     wcr_state.remove_edge(wcr_edge)
     priv_an = wcr_state.add_write(priv_name)
-    wcr_state.add_edge(wcr_edge.src, wcr_edge.src_conn, priv_an, None,
-                       mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)]), wcr=wcr_edge.data.wcr))
+    wcr_state.add_edge(
+        wcr_edge.src,
+        wcr_edge.src_conn,
+        priv_an,
+        None,
+        mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)]), wcr=wcr_edge.data.wcr),
+    )
     if wcr_state.degree(accum_sink) == 0:
         wcr_state.remove_node(accum_sink)
 
     wb_state = parent.add_state(loop.label + "_priv_wb")
-    wb_state.add_edge(wb_state.add_read(priv_name), None, wb_state.add_write(accum_name), None,
-                      mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
+    wb_state.add_edge(
+        wb_state.add_read(priv_name),
+        None,
+        wb_state.add_write(accum_name),
+        None,
+        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)),
+    )
 
     for e in in_edges:
         parent.remove_edge(e)
@@ -1656,11 +1747,21 @@ def _slot_accumulated_more_than_once(loop: LoopRegion, accum_name: str, accum_su
             if not isinstance(node, nodes.AccessNode) or node.data != accum_name:
                 continue
             if state.in_degree(node) == 0 and state.out_degree(node) >= 1:
-                reads = any(e.data is not None and e.data.subset is not None and str(e.data.subset) == want
-                            for e in state.out_edges(node)) or reads
+                reads = (
+                    any(
+                        e.data is not None and e.data.subset is not None and str(e.data.subset) == want
+                        for e in state.out_edges(node)
+                    )
+                    or reads
+                )
             if state.in_degree(node) >= 1 and state.out_degree(node) == 0:
-                writes = any(e.data is not None and e.data.subset is not None and str(e.data.subset) == want
-                             for e in state.in_edges(node)) or writes
+                writes = (
+                    any(
+                        e.data is not None and e.data.subset is not None and str(e.data.subset) == want
+                        for e in state.in_edges(node)
+                    )
+                    or writes
+                )
         if reads and writes:
             seen += 1
             if seen > 1:
@@ -1771,8 +1872,12 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             cur_src = cur_edge.src
             while isinstance(cur_src, nodes.AccessNode):
                 desc = sdfg.arrays.get(cur_src.data)
-                if (desc is None or not desc.transient or state.in_degree(cur_src) != 1
-                        or state.out_degree(cur_src) != 1):
+                if (
+                    desc is None
+                    or not desc.transient
+                    or state.in_degree(cur_src) != 1
+                    or state.out_degree(cur_src) != 1
+                ):
                     break
                 prev = list(state.in_edges(cur_src))[0]
                 cur_edge = prev
@@ -1792,8 +1897,10 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             if _uses(carry_subset, loop_var_sym) or _uses(write_subset, loop_var_sym):
                 continue
             if any(
-                    str(sym) in loop_iedge_assignees for subset in (carry_subset, write_subset)
-                    for sym in subset.free_symbols):
+                str(sym) in loop_iedge_assignees
+                for subset in (carry_subset, write_subset)
+                for sym in subset.free_symbols
+            ):
                 continue
             if str(carry_subset) != str(write_subset):
                 continue
@@ -1810,7 +1917,7 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
                 wcr = _BINOP_TO_WCR.get(type(rhs.op))
             elif isinstance(rhs, ast.BoolOp) and len(rhs.values) == 2:
                 wcr = _BOOLOP_TO_WCR.get(type(rhs.op))
-            elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2):
+            elif isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and len(rhs.args) == 2:
                 wcr = _CALL_TO_WCR.get(rhs.func.id)
             else:
                 wcr = None
@@ -1849,12 +1956,24 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
 
             # The retarget leaves the original slot at its seed until the writeback, so a body that
             # also reads the running value (a scan) would see that seed on every iteration.
-            if slot_accessed_besides(loop, {carry_in_edge, last_write_edge}, data_name, carry_subset,
-                                     sdfg.arrays[data_name]):
+            if slot_accessed_besides(
+                loop, {carry_in_edge, last_write_edge}, data_name, carry_subset, sdfg.arrays[data_name]
+            ):
                 continue
 
-            return (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an,
-                    sink_an, wcr, data_name, copy.deepcopy(carry_subset))
+            return (
+                state,
+                final_tasklet,
+                carry_in_edge,
+                value_in_edge,
+                first_write_edge,
+                last_write_edge,
+                src_an,
+                sink_an,
+                wcr,
+                data_name,
+                copy.deepcopy(carry_subset),
+            )
     return None
 
 
@@ -1867,8 +1986,20 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     - Add ``init`` (accum -> ``_priv_X``) and ``wb`` (``_priv_X`` -> accum) states around the loop.
     """
     import dace
-    (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an, sink_an, wcr,
-     accum_name, accum_subset) = info
+
+    (
+        state,
+        final_tasklet,
+        carry_in_edge,
+        value_in_edge,
+        first_write_edge,
+        last_write_edge,
+        src_an,
+        sink_an,
+        wcr,
+        accum_name,
+        accum_subset,
+    ) = info
 
     root = _owner_sdfg(parent)
 
@@ -1912,8 +2043,13 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     last_src_conn = last_write_edge.src_conn
     state.remove_edge(last_write_edge)
     priv_sink_an = state.add_write(priv_name)
-    state.add_edge(last_src, last_src_conn, priv_sink_an, None,
-                   mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)]), wcr=wcr))
+    state.add_edge(
+        last_src,
+        last_src_conn,
+        priv_sink_an,
+        None,
+        mm.Memlet(data=priv_name, subset=subsets.Range([(0, 0, 1)]), wcr=wcr),
+    )
     if state.degree(sink_an) == 0:
         state.remove_node(sink_an)
 
@@ -1923,12 +2059,22 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     out_edges = list(parent.out_edges(loop))
 
     init_state = parent.add_state(loop.label + "_priv_init", is_start_block=was_start)
-    init_state.add_edge(init_state.add_read(accum_name), None, init_state.add_write(priv_name), None,
-                        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
+    init_state.add_edge(
+        init_state.add_read(accum_name),
+        None,
+        init_state.add_write(priv_name),
+        None,
+        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)),
+    )
 
     wb_state = parent.add_state(loop.label + "_priv_wb")
-    wb_state.add_edge(wb_state.add_read(priv_name), None, wb_state.add_write(accum_name), None,
-                      mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)))
+    wb_state.add_edge(
+        wb_state.add_read(priv_name),
+        None,
+        wb_state.add_write(accum_name),
+        None,
+        mm.Memlet(data=accum_name, subset=copy.deepcopy(accum_subset)),
+    )
 
     for e in in_edges:
         parent.remove_edge(e)

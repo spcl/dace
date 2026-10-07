@@ -83,6 +83,7 @@ common ``+`` / ``*`` / ``min`` / ``max`` cases) with a correct graceful fallback
 for the rest, so Strategy B is documented but intentionally not built here (YAGNI);
 the refuse path keeps the non-reducible cases correct.
 """
+
 import ast
 from typing import List, Optional, Set, Type, Union
 
@@ -95,7 +96,7 @@ from dace.sdfg.narrowing import as_expr
 
 #: Reduction operators OpenMP's ``reduction`` clause supports (Strategy A). ``-`` /
 #: ``/`` and custom lambdas are refused (left as the correct contended atomic).
-SCATTER_REDUCIBLE_OPS = frozenset({'+', '*', 'min', 'max'})
+SCATTER_REDUCIBLE_OPS = frozenset({"+", "*", "min", "max"})
 
 
 def scatter_wcr_op(wcr: str) -> Optional[str]:
@@ -110,7 +111,7 @@ def scatter_wcr_op(wcr: str) -> Optional[str]:
     reduction reassociates the fold, which is only value-preserving for such an op).
     """
     try:
-        tree = ast.parse(wcr.strip(), mode='eval').body
+        tree = ast.parse(wcr.strip(), mode="eval").body
     except (SyntaxError, ValueError, TypeError):
         return None
     if not isinstance(tree, ast.Lambda) or len(tree.args.args) != 2:
@@ -123,9 +124,14 @@ def scatter_wcr_op(wcr: str) -> Optional[str]:
         return len(names) == 2 and set(names) == params
 
     if isinstance(body, ast.BinOp) and _is_two_params(body.left, body.right):
-        return {ast.Add: '+', ast.Mult: '*'}.get(type(body.op))
-    if (isinstance(body, ast.Call) and isinstance(body.func, ast.Name) and body.func.id in ('min', 'max')
-            and len(body.args) == 2 and _is_two_params(*body.args)):
+        return {ast.Add: "+", ast.Mult: "*"}.get(type(body.op))
+    if (
+        isinstance(body, ast.Call)
+        and isinstance(body.func, ast.Name)
+        and body.func.id in ("min", "max")
+        and len(body.args) == 2
+        and _is_two_params(*body.args)
+    ):
         return body.func.id
     return None
 
@@ -204,9 +210,16 @@ def data_dependent_scatter_wcr_edge(nsdfg: nodes.NestedSDFG, oc: str):
     found = None
     for ist in inner.states():
         for e in ist.edges():
-            if (e.data is not None and e.data.wcr is not None and e.data.data == oc and e.data.subset is not None
-                    and e.data.subset.num_elements() == 1 and isinstance(e.dst, nodes.AccessNode) and e.dst.data == oc
-                    and ist.out_degree(e.dst) == 0):
+            if (
+                e.data is not None
+                and e.data.wcr is not None
+                and e.data.data == oc
+                and e.data.subset is not None
+                and e.data.subset.num_elements() == 1
+                and isinstance(e.dst, nodes.AccessNode)
+                and e.dst.data == oc
+                and ist.out_degree(e.dst) == 0
+            ):
                 if not _data_dependent_index(inner, e.data.subset, in_conns):
                     return None  # constant slot / affine per-element -> not a scatter reduction
                 if found is not None:
@@ -250,7 +263,7 @@ class PrivatizeScatterReduction(ppl.Pass):
     instead of a contended per-element atomic. See the module docstring.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets
@@ -340,8 +353,9 @@ def surface_scatter_reduction(state: SDFGState, nsdfg: nodes.NestedSDFG, oc: str
         return False
     acc_root = resolve_root_data(state, accumulator)
     if any(
-            isinstance(ie.src, nodes.AccessNode) and resolve_root_data(state, ie.src) == acc_root
-            for ie in state.in_edges(map_entry)):
+        isinstance(ie.src, nodes.AccessNode) and resolve_root_data(state, ie.src) == acc_root
+        for ie in state.in_edges(map_entry)
+    ):
         return False
     # Surface: copy the reduction operator onto every edge of the accumulator path.
     for e in path:
@@ -350,7 +364,13 @@ def surface_scatter_reduction(state: SDFGState, nsdfg: nodes.NestedSDFG, oc: str
 
 
 __all__ = [
-    'PrivatizeScatterReduction', 'surface_scatter_reduction', 'scatter_reduction_wcr_edge',
-    'data_dependent_scatter_wcr_edge', 'is_data_dependent_scatter_sink', 'map_is_parallel', 'resolve_root_data',
-    'scatter_wcr_op', 'SCATTER_REDUCIBLE_OPS'
+    "PrivatizeScatterReduction",
+    "surface_scatter_reduction",
+    "scatter_reduction_wcr_edge",
+    "data_dependent_scatter_wcr_edge",
+    "is_data_dependent_scatter_sink",
+    "map_is_parallel",
+    "resolve_root_data",
+    "scatter_wcr_op",
+    "SCATTER_REDUCIBLE_OPS",
 ]

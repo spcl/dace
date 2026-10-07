@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests dace.program as class methods """
+"""Tests dace.program as class methods"""
+
 import pytest
 import dace
 import numpy as np
@@ -7,7 +8,8 @@ import time
 
 
 class MyTestClass:
-    """ Test class with various values, lifetimes, and call types. """
+    """Test class with various values, lifetimes, and call types."""
+
     classvalue = 2
 
     def __init__(self, n=5) -> None:
@@ -46,9 +48,7 @@ class MyTestClass:
 
 
 class MyTestCallAttributesClass:
-
     class SDFGMethodTestClass:
-
         def __sdfg__(self, *args, **kwargs):
 
             @dace.program
@@ -58,7 +58,7 @@ class MyTestCallAttributesClass:
             return call.__sdfg__(*args)
 
         def __sdfg_signature__(self):
-            return ['A'], []
+            return ["A"], []
 
     def __init__(self, n=5) -> None:
         self.n = n
@@ -205,7 +205,6 @@ def test_sdfgattr_method_jit_with_scalar():
 def test_nested_field_in_map():
 
     class B:
-
         def __init__(self) -> None:
             self.field = np.random.rand(10, 10)
 
@@ -214,7 +213,6 @@ def test_nested_field_in_map():
             return self.field[1, 1]
 
     class A:
-
         def __init__(self, nested: B):
             self.nested = nested
 
@@ -234,7 +232,6 @@ def test_nested_field_in_map():
 def test_nested_callback_in_map():
 
     class B:
-
         def __init__(self) -> None:
             self.field = np.random.rand(10, 10)
 
@@ -243,7 +240,6 @@ def test_nested_callback_in_map():
             val[i] = time.time()
 
     class A:
-
         def __init__(self, nested: B):
             self.nested = nested
 
@@ -287,7 +283,6 @@ class SharedFieldLeg:
 
 
 class SharedFieldPair:
-
     def __init__(self, field: np.ndarray) -> None:
         self.first = SharedFieldLeg(field)
         self.second = SharedFieldLeg(field)
@@ -306,8 +301,8 @@ def test_shared_closure_field_is_one_argument():
     out = np.zeros(16, dtype=np.float64)
 
     sdfg = pair.__call__.to_sdfg(q, out)
-    closure_args = [name for name in sdfg.arglist() if name.startswith('__g_')]
-    assert closure_args == ['__g_self_field'], closure_args
+    closure_args = [name for name in sdfg.arglist() if name.startswith("__g_")]
+    assert closure_args == ["__g_self_field"], closure_args
 
     pair(q, out)
     assert np.allclose(out, q * 4.0)
@@ -315,25 +310,25 @@ def test_shared_closure_field_is_one_argument():
 
 def test_view_closure_field_is_refused():
     """A view reached through the closure is refused, not silently copied behind the kernel's back."""
-    if dace.Config.get('compiler', 'allow_view_arguments'):
-        pytest.skip('view arguments are allowed in this configuration')
+    if dace.Config.get("compiler", "allow_view_arguments"):
+        pytest.skip("view arguments are allowed in this configuration")
 
     pair = SharedFieldPair(np.full((4, 16), 2.0)[1])
     q = np.arange(16, dtype=np.float64)
     out = np.zeros(16, dtype=np.float64)
 
-    with pytest.raises(TypeError, match='numpy view'):
+    with pytest.raises(TypeError, match="numpy view"):
         pair(q, out)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_method_jit()
     test_method()
     test_method_cache()
     test_callable()
     test_static()
     test_static_withclass()
-    #test_classmethod()
+    # test_classmethod()
     test_nested_methods()
     test_decorator()
     test_sdfgattr_method_jit()

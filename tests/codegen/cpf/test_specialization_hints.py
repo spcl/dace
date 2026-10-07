@@ -20,6 +20,7 @@ through a library node that the expansion consumes; every loop kind is named and
 the naming adds comments and nothing else; and nothing reaches ordinary code generation, which
 already has a target and would only be given noise.
 """
+
 import re
 import pytest
 
@@ -29,16 +30,23 @@ from dace.codegen.cpf import CONTRACT_LINES, render
 from dace.libraries.standard.nodes.scan import PARALLEL_SCAN_HINT, SEQUENTIAL_SCAN_HINT, Scan, ScanOp
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.canonicalize.annotate_loop_kinds import (CONFLICT_MEANING, NEVER_EXAMINED, PARALLEL,
-                                                                         SEQUENTIAL_PINNED, SEQUENTIAL_PROVEN, UNSURE,
-                                                                         AnnotateLoopKinds, proven_carrying_access)
+from dace.transformation.passes.canonicalize.annotate_loop_kinds import (
+    CONFLICT_MEANING,
+    NEVER_EXAMINED,
+    PARALLEL,
+    SEQUENTIAL_PINNED,
+    SEQUENTIAL_PROVEN,
+    UNSURE,
+    AnnotateLoopKinds,
+    proven_carrying_access,
+)
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: Two lines, because a hint names a trade per device and the emitter has to keep them apart.
-MAP_HINT = 'traded a tiled map for a flat one.\nCPU: the tiles are worth trying.'
+MAP_HINT = "traded a tiled map for a flat one.\nCPU: the tiles are worth trying."
 
 
 def scaling_sdfg(name: str) -> dace.SDFG:
@@ -59,13 +67,13 @@ def map_entries(sdfg: dace.SDFG):
 
 
 def comment_lines(code: str):
-    return [line.strip() for line in code.splitlines() if line.strip().startswith('//')]
+    return [line.strip() for line in code.splitlines() if line.strip().startswith("//")]
 
 
 def test_the_rendering_states_which_verdicts_are_settled_and_which_are_open():
     """Proven verdicts need no more reasoning, so the head of the unit says so once, before any loop."""
-    lines = render(scaling_sdfg('cpf_contract')).code.splitlines()
-    assert lines[1:1 + len(CONTRACT_LINES)] == CONTRACT_LINES
+    lines = render(scaling_sdfg("cpf_contract")).code.splitlines()
+    assert lines[1 : 1 + len(CONTRACT_LINES)] == CONTRACT_LINES
 
 
 def test_a_map_hint_is_rendered_one_comment_line_per_line():
@@ -74,15 +82,15 @@ def test_a_map_hint_is_rendered_one_comment_line_per_line():
     The alternatives a hint describes are per-device (``CPU: ... / GPU: ...``) and do not read as
     one sentence, so joining them onto one line would be a worse comment than none.
     """
-    sdfg = scaling_sdfg('cpf_hint_map')
+    sdfg = scaling_sdfg("cpf_hint_map")
     entries = map_entries(sdfg)
-    assert entries, 'the program lost its map, so this test would pass without emitting anything'
+    assert entries, "the program lost its map, so this test would pass without emitting anything"
     for entry in entries:
         entry.specialization_hint = MAP_HINT
 
     rendered = comment_lines(render(sdfg).code)
-    assert '// traded a tiled map for a flat one.' in rendered
-    assert '// CPU: the tiles are worth trying.' in rendered
+    assert "// traded a tiled map for a flat one." in rendered
+    assert "// CPU: the tiles are worth trying." in rendered
 
 
 def test_a_loop_hint_is_rendered():
@@ -94,15 +102,15 @@ def test_a_loop_hint_is_rendered():
             b[i] = b[i - 1] + a[i]
 
     sdfg = prefix.to_sdfg(simplify=True)
-    sdfg.name = 'cpf_hint_loop'
+    sdfg.name = "cpf_hint_loop"
     loops = [region for region in sdfg.all_control_flow_regions(recursive=True) if isinstance(region, LoopRegion)]
-    assert loops, 'the sequential loop was rewritten away, so there is nothing to hang a hint on'
+    assert loops, "the sequential loop was rewritten away, so there is nothing to hang a hint on"
     for loop in loops:
-        loop.specialization_hint = 'kept the loop sequential.\nGPU: a scan is worth trying.'
+        loop.specialization_hint = "kept the loop sequential.\nGPU: a scan is worth trying."
 
     rendered = comment_lines(render(sdfg).code)
-    assert '// kept the loop sequential.' in rendered
-    assert '// GPU: a scan is worth trying.' in rendered
+    assert "// kept the loop sequential." in rendered
+    assert "// GPU: a scan is worth trying." in rendered
 
 
 def test_a_scan_states_its_trade_although_the_expansion_consumes_the_node():
@@ -111,36 +119,36 @@ def test_a_scan_states_its_trade_although_the_expansion_consumes_the_node():
     A ``Scan`` renders as several maps and a loop, and none of them remembers what chose their
     shape -- by the time code is emitted the library node is gone.
     """
-    sdfg = dace.SDFG('cpf_hint_scan')
-    sdfg.add_array('arr_in', [16], dace.float64)
-    sdfg.add_array('arr_out', [16], dace.float64)
-    state = sdfg.add_state('scan')
-    node = Scan('Scan', op=ScanOp.SUM)
+    sdfg = dace.SDFG("cpf_hint_scan")
+    sdfg.add_array("arr_in", [16], dace.float64)
+    sdfg.add_array("arr_out", [16], dace.float64)
+    state = sdfg.add_state("scan")
+    node = Scan("Scan", op=ScanOp.SUM)
     state.add_node(node)
-    state.add_edge(state.add_read('arr_in'), None, node, '_scan_in', dace.Memlet('arr_in[0:16]'))
-    state.add_edge(node, '_scan_out', state.add_write('arr_out'), None, dace.Memlet('arr_out[0:16]'))
+    state.add_edge(state.add_read("arr_in"), None, node, "_scan_in", dace.Memlet("arr_in[0:16]"))
+    state.add_edge(node, "_scan_out", state.add_write("arr_out"), None, dace.Memlet("arr_out[0:16]"))
     sdfg.validate()
 
     rendered = comment_lines(render(sdfg).code)
     # CPF renders a host Scan through its parallel CPU expansion, so the trade is stated from that side.
-    assert '// parallel scan; canonicalization takes the parallel form.' in rendered
-    assert '// Alternative: a sequential loop over parallel maps.' in rendered
+    assert "// parallel scan; canonicalization takes the parallel form." in rendered
+    assert "// Alternative: a sequential loop over parallel maps." in rendered
     # Folded into the node's description so one expansion is one trade, not one per map it leaves.
-    assert rendered.count('// Alternative: a sequential loop over parallel maps.') == 1
-    assert not [line for line in rendered if line.startswith('// sequential scan')]
+    assert rendered.count("// Alternative: a sequential loop over parallel maps.") == 1
+    assert not [line for line in rendered if line.startswith("// sequential scan")]
 
 
-@pytest.mark.parametrize('implementation, hint', [('pure', SEQUENTIAL_SCAN_HINT), ('CPU', PARALLEL_SCAN_HINT)])
+@pytest.mark.parametrize("implementation, hint", [("pure", SEQUENTIAL_SCAN_HINT), ("CPU", PARALLEL_SCAN_HINT)])
 def test_a_scan_hint_follows_the_expansion_that_ran(implementation, hint):
     """scan_affine_decay: "parallel scan" was printed over the sequential loop ``pure`` emits."""
-    sdfg = dace.SDFG(f'cpf_hint_scan_{implementation.lower()}')
-    sdfg.add_array('arr_in', [N], dace.float64)
-    sdfg.add_array('arr_out', [N], dace.float64)
-    state = sdfg.add_state('scan')
-    node = Scan('Scan', op=ScanOp.SUM)
+    sdfg = dace.SDFG(f"cpf_hint_scan_{implementation.lower()}")
+    sdfg.add_array("arr_in", [N], dace.float64)
+    sdfg.add_array("arr_out", [N], dace.float64)
+    state = sdfg.add_state("scan")
+    node = Scan("Scan", op=ScanOp.SUM)
     state.add_node(node)
-    state.add_edge(state.add_read('arr_in'), None, node, '_scan_in', dace.Memlet('arr_in[0:N]'))
-    state.add_edge(node, '_scan_out', state.add_write('arr_out'), None, dace.Memlet('arr_out[0:N]'))
+    state.add_edge(state.add_read("arr_in"), None, node, "_scan_in", dace.Memlet("arr_in[0:N]"))
+    state.add_edge(node, "_scan_out", state.add_write("arr_out"), None, dace.Memlet("arr_out[0:N]"))
     assert node.specialization_hint == PARALLEL_SCAN_HINT
     node.expand(state, implementation)
     assert node.specialization_hint == hint
@@ -148,47 +156,47 @@ def test_a_scan_hint_follows_the_expansion_that_ran(implementation, hint):
 
 def test_no_hint_and_an_empty_hint_render_identically():
     """An empty hint is not a hint. A pass that clears one must not leave a bare ``//`` behind."""
-    without = render(scaling_sdfg('cpf_hint_absent')).code
+    without = render(scaling_sdfg("cpf_hint_absent")).code
 
-    sdfg = scaling_sdfg('cpf_hint_empty')
+    sdfg = scaling_sdfg("cpf_hint_empty")
     for entry in map_entries(sdfg):
-        entry.specialization_hint = ''
+        entry.specialization_hint = ""
     empty = render(sdfg).code
 
-    blank = scaling_sdfg('cpf_hint_blank')
+    blank = scaling_sdfg("cpf_hint_blank")
     for entry in map_entries(blank):
-        entry.specialization_hint = '   \n\t'
+        entry.specialization_hint = "   \n\t"
     whitespace = render(blank).code
 
     assert comment_lines(empty) == comment_lines(without)
     assert comment_lines(whitespace) == comment_lines(without)
-    assert '//' not in [line.strip() for line in empty.splitlines()]
+    assert "//" not in [line.strip() for line in empty.splitlines()]
 
 
-@pytest.mark.parametrize('hint', [None, '', '   \n\t'])
+@pytest.mark.parametrize("hint", [None, "", "   \n\t"])
 def test_hint_comment_is_empty_for_an_empty_hint(hint):
     """The renderer answers for itself, so a caller cannot produce a dangling comment marker."""
     with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE):
-        assert cpf_lowering.hint_comment(hint) == ''
+        assert cpf_lowering.hint_comment(hint) == ""
 
 
 def test_hint_comment_is_empty_outside_a_standalone_rendering():
     """An ordinary build already has a target; the alternatives are noise in code nobody reads."""
     with cpf_lowering.dialect_scope(cpf_lowering.Dialect.RUNTIME):
-        assert cpf_lowering.hint_comment(MAP_HINT) == ''
+        assert cpf_lowering.hint_comment(MAP_HINT) == ""
     with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE_C):
-        assert cpf_lowering.hint_comment(MAP_HINT) != ''
+        assert cpf_lowering.hint_comment(MAP_HINT) != ""
 
 
 def test_ordinary_codegen_carries_no_hint():
     """The whole feature is scoped to the standalone rendering."""
-    sdfg = scaling_sdfg('cpf_hint_leak')
+    sdfg = scaling_sdfg("cpf_hint_leak")
     for entry in map_entries(sdfg):
         entry.specialization_hint = MAP_HINT
 
-    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'):
-        ordinary = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
-    assert 'traded a tiled map for a flat one.' not in ordinary
+    with dace.config.set_temporary("compiler", "cpu", "implementation", value="experimental_readable"):
+        ordinary = "\n".join(obj.clean_code for obj in sdfg.generate_code())
+    assert "traded a tiled map for a flat one." not in ordinary
 
 
 # Naming what every loop is: parallel, sequential (carried or pinned), unsure, and the wavefront roles.
@@ -243,20 +251,20 @@ def unexamined_sdfg(name: str) -> dace.SDFG:
     frontend's while-loop support.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('a', [16], dace.float64)
-    sdfg.add_array('b', [1], dace.float64)
-    sdfg.add_symbol('it', dace.int64)
-    entry = sdfg.add_state('entry', is_start_block=True)
-    loop = LoopRegion('spin', 'it < 16')
+    sdfg.add_array("a", [16], dace.float64)
+    sdfg.add_array("b", [1], dace.float64)
+    sdfg.add_symbol("it", dace.int64)
+    entry = sdfg.add_state("entry", is_start_block=True)
+    loop = LoopRegion("spin", "it < 16")
     sdfg.add_node(loop)
-    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={'it': '0'}))
-    body = loop.add_state('body', is_start_block=True)
-    loop.add_edge(body, loop.add_state('step'), dace.InterstateEdge(assignments={'it': 'it + 1'}))
-    tasklet = body.add_tasklet('accumulate', {'inp'}, {'out'}, 'out = inp')
-    body.add_edge(body.add_read('a'), None, tasklet, 'inp', dace.Memlet('a[it]'))
-    body.add_edge(tasklet, 'out', body.add_write('b'), None, dace.Memlet('b[0]'))
+    sdfg.add_edge(entry, loop, dace.InterstateEdge(assignments={"it": "0"}))
+    body = loop.add_state("body", is_start_block=True)
+    loop.add_edge(body, loop.add_state("step"), dace.InterstateEdge(assignments={"it": "it + 1"}))
+    tasklet = body.add_tasklet("accumulate", {"inp"}, {"out"}, "out = inp")
+    body.add_edge(body.add_read("a"), None, tasklet, "inp", dace.Memlet("a[it]"))
+    body.add_edge(tasklet, "out", body.add_write("b"), None, dace.Memlet("b[0]"))
     sdfg.validate()
-    assert not loop.loop_variable, 'the loop grew an iteration variable, so it is no longer unexamined'
+    assert not loop.loop_variable, "the loop grew an iteration variable, so it is no longer unexamined"
     return sdfg
 
 
@@ -271,9 +279,9 @@ def skewed_sdfg(name: str, tile: int) -> dace.SDFG:
 
     sdfg = wf_north_west.to_sdfg(simplify=True)
     sdfg.name = name
-    skew = WavefrontSkew(target='cpu')
+    skew = WavefrontSkew(target="cpu")
     skew.tile_i, skew.tile_j = tile, tile
-    assert skew.apply_pass(sdfg, {}), 'the nest was not skewed, so there is no wavefront to name'
+    assert skew.apply_pass(sdfg, {}), "the nest was not skewed, so there is no wavefront to name"
     sdfg.validate()
     return sdfg
 
@@ -281,20 +289,20 @@ def skewed_sdfg(name: str, tile: int) -> dace.SDFG:
 def test_a_parallel_map_says_it_is_parallel():
     """A Map renders as a plain ``for``. Without the comment nothing in the text says the order
     is free, which is the first thing a reader specializing the code needs to know."""
-    rendered = comment_lines(named(scaling_sdfg('cpf_kind_parallel')))
-    assert '// ' + PARALLEL.splitlines()[0] in rendered
+    rendered = comment_lines(named(scaling_sdfg("cpf_kind_parallel")))
+    assert "// " + PARALLEL.splitlines()[0] in rendered
 
 
 def test_a_proven_carried_dependence_is_rendered_as_a_proof_and_names_it():
     """The strong half of the sequential case: ``LoopToMap`` proved the dependence, so the order
     is required, and the hint carries the analysis' own words rather than restating the loop."""
-    rendered = comment_lines(named(carried_sdfg('cpf_kind_carried')))
-    proofs = [line for line in rendered if line.startswith('// sequential -- carried:')]
+    rendered = comment_lines(named(carried_sdfg("cpf_kind_carried")))
+    proofs = [line for line in rendered if line.startswith("// sequential -- carried:")]
     assert proofs, rendered
     # The hint carries the ACCESS that carries the dependence, which is what a reader acts on.
-    assert 'b[' in proofs[0], proofs
+    assert "b[" in proofs[0], proofs
     # The row axis is proven; nothing here is merely unsure.
-    assert not [line for line in rendered if line.startswith('// unsure')]
+    assert not [line for line in rendered if line.startswith("// unsure")]
 
 
 def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
@@ -304,47 +312,48 @@ def test_a_declined_dependence_test_is_not_rendered_as_a_proof():
     anything about data. Calling that a carried dependence would be a claim the pipeline never
     made, and would send a reader looking for a recurrence that is not there.
     """
-    rendered = comment_lines(named(breaking_sdfg('cpf_kind_unsure')))
-    unsure = [line for line in rendered if line.startswith('// unsure -- ')]
+    rendered = comment_lines(named(breaking_sdfg("cpf_kind_unsure")))
+    unsure = [line for line in rendered if line.startswith("// unsure -- ")]
     assert unsure, rendered
     # The refusal names WHERE the test stopped, which is what separates unsure from proven.
-    assert 'Break' in unsure[0], unsure
+    assert "Break" in unsure[0], unsure
     # "carried" is the proven wording, and an unsure loop must never borrow it.
-    assert not [line for line in rendered if line.startswith('// sequential -- carried:')]
+    assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
 
 
 def test_a_loop_that_was_never_examined_says_exactly_that():
     """A while loop has no iteration variable, so nothing ever asked whether it carries a dependence.
     That is as open as a declined test, so it is ``unsure`` too, with the reason saying why."""
-    rendered = comment_lines(named(unexamined_sdfg('cpf_kind_unexamined')))
-    assert '// ' + UNSURE.format(reason=NEVER_EXAMINED).splitlines()[0] in rendered, rendered
-    assert not [line for line in rendered if line.startswith('// sequential -- carried:')]
+    rendered = comment_lines(named(unexamined_sdfg("cpf_kind_unexamined")))
+    assert "// " + UNSURE.format(reason=NEVER_EXAMINED).splitlines()[0] in rendered, rendered
+    assert not [line for line in rendered if line.startswith("// sequential -- carried:")]
 
 
 def test_a_wavefront_names_its_diagonal_and_its_front():
     """The skew is the only thing that knows an axis is a wavefront: afterwards it is an ordinary
     sequential loop over an ordinary map, and the generic classifier would say only that."""
-    rendered = comment_lines(named(skewed_sdfg('cpf_kind_wavefront', tile=0)))
+    rendered = comment_lines(named(skewed_sdfg("cpf_kind_wavefront", tile=0)))
     # The skew that produced the wavefront is named, since the rewrite renames the axes to t/p and
     # a reader cannot recover it from the loop.
-    diagonal = [line for line in rendered if line.startswith('// sequential -- wavefront diagonal (t = ')]
-    assert diagonal and diagonal[0].endswith(': the skew put every dependence on this axis'), rendered
-    assert any(line.startswith('// parallel -- wavefront front (t = ') for line in rendered)
+    diagonal = [line for line in rendered if line.startswith("// sequential -- wavefront diagonal (t = ")]
+    assert diagonal and diagonal[0].endswith(": the skew put every dependence on this axis"), rendered
+    assert any(line.startswith("// parallel -- wavefront front (t = ") for line in rendered)
     # A wavefront is a trade like any other, so it states the alternative and the device it pays on.
-    assert any(line.startswith('// alternative: the unskewed nest') for line in rendered)
+    assert any(line.startswith("// alternative: the unskewed nest") for line in rendered)
 
 
 def test_a_tiled_wavefront_names_all_three_of_its_axes():
     """The tiled lowering is four loops, and a reader has to be able to tell which of them is the
     parallel one -- the tile column, not the diagonal above it or the interior below."""
-    rendered = comment_lines(named(skewed_sdfg('cpf_kind_wavefront_tiled', tile=32)))
+    rendered = comment_lines(named(skewed_sdfg("cpf_kind_wavefront_tiled", tile=32)))
     # Each axis names the tile it belongs to; the diagonal names the skew as well.
     assert any(
-        line.startswith('// sequential -- wavefront tile diagonal (t = ') and '[32x32]' in line for line in rendered)
-    assert any(line.startswith('// parallel -- wavefront tile column [32x32]') for line in rendered)
-    assert any(line.startswith('// sequential -- inner tile of a wavefront [32x32]') for line in rendered)
+        line.startswith("// sequential -- wavefront tile diagonal (t = ") and "[32x32]" in line for line in rendered
+    )
+    assert any(line.startswith("// parallel -- wavefront tile column [32x32]") for line in rendered)
+    assert any(line.startswith("// sequential -- inner tile of a wavefront [32x32]") for line in rendered)
     # The tiled form is a different trade from the untiled one and must not borrow its wording.
-    assert not any(line.startswith('// sequential -- wavefront diagonal') for line in rendered)
+    assert not any(line.startswith("// sequential -- wavefront diagonal") for line in rendered)
 
 
 def test_naming_the_loops_does_not_move_a_line_of_code():
@@ -353,32 +362,32 @@ def test_naming_the_loops_does_not_move_a_line_of_code():
     """
 
     def without_comments(code: str):
-        return [line for line in code.splitlines() if not line.strip().startswith('//')]
+        return [line for line in code.splitlines() if not line.strip().startswith("//")]
 
     # The same SDFG rendered twice, so the entry point keeps its name and the only variable left
     # between the two texts is the annotation. The rendering names loops itself, so the baseline
     # pre-empts it: a hint already set is kept, and ``x`` names no kind.
     for build in (scaling_sdfg, carried_sdfg, breaking_sdfg):
-        placeholder = build(f'cpf_kind_stable_{build.__name__}')
+        placeholder = build(f"cpf_kind_stable_{build.__name__}")
         for node, _ in placeholder.all_nodes_recursive():
             if isinstance(node, (nodes.MapEntry, LoopRegion)):
-                node.specialization_hint = 'x'
+                node.specialization_hint = "x"
         before = render(placeholder).code
-        after = named(build(f'cpf_kind_stable_{build.__name__}'))
+        after = named(build(f"cpf_kind_stable_{build.__name__}"))
         assert without_comments(before) == without_comments(after), build.__name__
-        assert '// x' in comment_lines(before) and '// x' not in comment_lines(after), build.__name__
-        assert any(' -- ' in line for line in comment_lines(after)), build.__name__
+        assert "// x" in comment_lines(before) and "// x" not in comment_lines(after), build.__name__
+        assert any(" -- " in line for line in comment_lines(after)), build.__name__
 
 
 def test_an_already_recorded_hint_is_left_alone():
     """A pass that set a hint knew which alternative it declined. The generic classifier cannot
     re-derive that, so it must never overwrite one."""
-    sdfg = carried_sdfg('cpf_kind_no_clobber')
+    sdfg = carried_sdfg("cpf_kind_no_clobber")
     for loop in loops_of(sdfg):
         loop.specialization_hint = MAP_HINT
     rendered = comment_lines(named(sdfg))
-    assert '// traded a tiled map for a flat one.' in rendered
-    assert not any(line.startswith('// sequential --') for line in rendered)
+    assert "// traded a tiled map for a flat one." in rendered
+    assert not any(line.startswith("// sequential --") for line in rendered)
 
 
 def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
@@ -388,11 +397,11 @@ def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
     Also the end-to-end shape of the feature -- one graph, both answers. Canonicalization maps the
     column axis and cannot map the row axis, and the rendering now says which is which.
     """
-    sdfg = carried_sdfg('cpf_kind_pipeline')
+    sdfg = carried_sdfg("cpf_kind_pipeline")
     canonicalize(sdfg)
     rendered = comment_lines(render(sdfg).code)
-    assert '// ' + PARALLEL.splitlines()[0] in rendered, rendered
-    assert any(line.startswith('// sequential -- carried:') for line in rendered)
+    assert "// " + PARALLEL.splitlines()[0] in rendered, rendered
+    assert any(line.startswith("// sequential -- carried:") for line in rendered)
 
 
 # Loops born after canonicalize: specialization, library expansion, codegen copy lowering.
@@ -400,37 +409,37 @@ def test_the_canonicalize_pipeline_names_the_loops_it_leaves_behind():
 
 def test_a_map_a_library_expansion_leaves_is_labelled():
     """s311: the Reduce map carried the library description and no kind, unlike every other map."""
-    sdfg = dace.SDFG('cpf_kind_reduce')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('total', [1], dace.float64)
-    state = sdfg.add_state('reduce')
-    reduction = state.add_reduce('lambda x, y: x + y', axes=None, identity=0.0)
-    state.add_edge(state.add_read('a'), None, reduction, '_in', dace.Memlet('a[0:N]'))
-    state.add_edge(reduction, '_out', state.add_write('total'), None, dace.Memlet('total[0]'))
+    sdfg = dace.SDFG("cpf_kind_reduce")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("total", [1], dace.float64)
+    state = sdfg.add_state("reduce")
+    reduction = state.add_reduce("lambda x, y: x + y", axes=None, identity=0.0)
+    state.add_edge(state.add_read("a"), None, reduction, "_in", dace.Memlet("a[0:N]"))
+    state.add_edge(reduction, "_out", state.add_write("total"), None, dace.Memlet("total[0]"))
     sdfg.validate()
     rendered = comment_lines(render(sdfg).code)
-    assert '// reduction over the given axes with the given operator' in rendered, rendered
-    assert '// ' + PARALLEL.splitlines()[0] in rendered, rendered
+    assert "// reduction over the given axes with the given operator" in rendered, rendered
+    assert "// " + PARALLEL.splitlines()[0] in rendered, rendered
 
 
 def test_a_map_codegen_lowers_a_copy_into_is_labelled():
     """ext_war_unit's seam copy: codegen lowers the copy into a map after every pass has run."""
-    sdfg = dace.SDFG('cpf_kind_copy')
-    sdfg.add_array('src', [N], dace.float64)
-    sdfg.add_array('dst', [N], dace.float64)
-    state = sdfg.add_state('copy')
-    state.add_nedge(state.add_read('src'), state.add_write('dst'), dace.Memlet('src[0:N:2] -> [0:N/2]'))
+    sdfg = dace.SDFG("cpf_kind_copy")
+    sdfg.add_array("src", [N], dace.float64)
+    sdfg.add_array("dst", [N], dace.float64)
+    state = sdfg.add_state("copy")
+    state.add_nedge(state.add_read("src"), state.add_write("dst"), dace.Memlet("src[0:N:2] -> [0:N/2]"))
     sdfg.validate()
     code = render(sdfg).code
     lines = [line.strip() for line in code.splitlines()]
-    pragma = next(index for index, line in enumerate(lines) if line.startswith('#pragma omp parallel for'))
-    assert lines[pragma - 2:pragma] == ['// ' + line for line in PARALLEL.splitlines()], code
+    pragma = next(index for index, line in enumerate(lines) if line.startswith("#pragma omp parallel for"))
+    assert lines[pragma - 2 : pragma] == ["// " + line for line in PARALLEL.splitlines()], code
 
 
 def test_a_loop_left_unlabelled_by_canonicalize_is_labelled_by_the_rendering():
     """BandCarriedLoops and seam splitting add loops after ``AnnotateLoopKinds`` ran."""
-    rendered = comment_lines(render(carried_sdfg('cpf_kind_late')).code)
-    assert any(line.startswith('// sequential -- carried: RAW on b[') for line in rendered), rendered
+    rendered = comment_lines(render(carried_sdfg("cpf_kind_late")).code)
+    assert any(line.startswith("// sequential -- carried: RAW on b[") for line in rendered), rendered
 
 
 def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
@@ -445,14 +454,14 @@ def test_a_carried_dependence_behind_a_whole_array_memlet_is_proven():
                     aa[j, i] = aa[j - 1, i] + bb[j, i]
 
     sdfg = guarded_columns.to_sdfg(simplify=True)
-    canonicalize(sdfg, validate=True, validate_all=False, target='cpu')
+    canonicalize(sdfg, validate=True, validate_all=False, target="cpu")
     hints = [loop.specialization_hint.splitlines() for loop in loops_of(sdfg)]
     assert len(hints) == 1, hints
-    assert hints[0][0].startswith('sequential -- carried: RAW on aa['), hints
+    assert hints[0][0].startswith("sequential -- carried: RAW on aa["), hints
     # The column index is the element the carry runs along, or the whole row once the parallel column
     # map sits inside the sequential recurrence.
-    assert re.search(r' - 1, (?:_loop_it_\d+|0:N)\]$', hints[0][0]), hints
-    assert hints[0][1].startswith('settled: proven, ' + CONFLICT_MEANING['RAW']), hints
+    assert re.search(r" - 1, (?:_loop_it_\d+|0:N)\]$", hints[0][0]), hints
+    assert hints[0][1].startswith("settled: proven, " + CONFLICT_MEANING["RAW"]), hints
 
 
 def test_a_read_ahead_dependence_is_named_war_not_raw():
@@ -465,8 +474,9 @@ def test_a_read_ahead_dependence_is_named_war_not_raw():
 
     sdfg = ahead.to_sdfg(simplify=True)
     AnnotateLoopKinds().apply_pass(sdfg, {})
-    assert [loop.specialization_hint for loop in loops_of(sdfg)
-            ] == [SEQUENTIAL_PROVEN.format(reason='WAR on a[i + 1]', why=CONFLICT_MEANING['WAR'])]
+    assert [loop.specialization_hint for loop in loops_of(sdfg)] == [
+        SEQUENTIAL_PROVEN.format(reason="WAR on a[i + 1]", why=CONFLICT_MEANING["WAR"])
+    ]
 
 
 def test_no_carried_dependence_is_claimed_for_independent_elements():
@@ -492,14 +502,14 @@ def test_a_pinned_independent_loop_does_not_read_as_parallel():
 
     sdfg = independent.to_sdfg(simplify=True)
     loops = loops_of(sdfg)
-    assert loops, 'the frontend mapped the loop, so there is no pinned loop to label'
+    assert loops, "the frontend mapped the loop, so there is no pinned loop to label"
     for loop in loops:
         loop.pinned_sequential = True
     code = named(sdfg)
-    assert '// ' + SEQUENTIAL_PINNED.splitlines()[0] in [line.strip() for line in code.splitlines()], code
-    assert '#pragma omp' not in code
-    assert not any(line.startswith('// parallel --') for line in comment_lines(code))
+    assert "// " + SEQUENTIAL_PINNED.splitlines()[0] in [line.strip() for line in code.splitlines()], code
+    assert "#pragma omp" not in code
+    assert not any(line.startswith("// parallel --") for line in comment_lines(code))
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

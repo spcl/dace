@@ -8,6 +8,7 @@ arrays directly, and transients that only store literals are ``constexpr`` SDFG 
 (``PromoteConstantTransients``). The GPU
 generator emits device tasklets through the shared CPU instance, so this also applies inside kernels.
 """
+
 import ast
 import re
 from dataclasses import dataclass
@@ -26,9 +27,19 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import (CPUCodeGen, LoopCounterIndex, aligned_new_value, decl_placement, hoist_loop_decls,
-                                      loop_counter_index, loop_local_counter_loop, loop_region_index_ctype,
-                                      map_schedule_is_sequential, scalar_init_style, use_aligned_operator_new)
+from dace.codegen.targets.cpu import (
+    CPUCodeGen,
+    LoopCounterIndex,
+    aligned_new_value,
+    decl_placement,
+    hoist_loop_decls,
+    loop_counter_index,
+    loop_local_counter_loop,
+    loop_region_index_ctype,
+    map_schedule_is_sequential,
+    scalar_init_style,
+    use_aligned_operator_new,
+)
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.ordered import OrderedSet
@@ -41,23 +52,23 @@ from dace.optionals import required
 from dace.sdfg.narrowing import as_basic, as_expr
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype`` (exact-width types).
-INDEX_CTYPES = {'int64': 'int64_t', 'int32': 'int32_t'}
+INDEX_CTYPES = {"int64": "int64_t", "int32": "int32_t"}
 # ``<array>_idx`` / symbolic ``<array>_size`` qualifier: host+device callable, inlined, constexpr.
-INDEX_FUNCTION_QUALIFIER = 'static DACE_HDFI constexpr'
+INDEX_FUNCTION_QUALIFIER = "static DACE_HDFI constexpr"
 # Constant ``<array>_size`` qualifier: ``consteval`` folds the extent at compile time (C++20).
-SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
+SIZE_CONSTEVAL_QUALIFIER = "static DACE_HDFI consteval"
 # Standalone output has no ``types.h`` defining ``DACE_HDFI``, so its host expansion is written out.
-STANDALONE_INDEX_FUNCTION_QUALIFIER = 'static constexpr inline'
-STANDALONE_SIZE_CONSTEVAL_QUALIFIER = 'static consteval inline'
+STANDALONE_INDEX_FUNCTION_QUALIFIER = "static constexpr inline"
+STANDALONE_SIZE_CONSTEVAL_QUALIFIER = "static consteval inline"
 # C has no constexpr functions; gcc and clang emit the same code for this and a macro at -O1 and up.
-STANDALONE_C_INDEX_FUNCTION_QUALIFIER = 'static inline'
+STANDALONE_C_INDEX_FUNCTION_QUALIFIER = "static inline"
 # Identifier tokens of code without an AST here; over-matching only costs a refusal.
-IDENTIFIER_TOKENS = re.compile(r'[A-Za-z_]\w*')
+IDENTIFIER_TOKENS = re.compile(r"[A-Za-z_]\w*")
 # Declarator punctuation _declared_identifiers looks through (``double *p``, ``T &r``, ``vector<T> v``).
-DECLARATOR_TOKENS = frozenset({'*', '&', '>'})
-INCLUDE_LINE = re.compile(r'^\s*#\s*include\s')
-PREPROCESSOR_IF = re.compile(r'^\s*#\s*if')
-PREPROCESSOR_ENDIF = re.compile(r'^\s*#\s*endif')
+DECLARATOR_TOKENS = frozenset({"*", "&", ">"})
+INCLUDE_LINE = re.compile(r"^\s*#\s*include\s")
+PREPROCESSOR_IF = re.compile(r"^\s*#\s*if")
+PREPROCESSOR_ENDIF = re.compile(r"^\s*#\s*endif")
 # Storages of a scalar held by value in a plain brace.
 VALUE_SCALAR_STORAGES = (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
 
@@ -66,6 +77,7 @@ VALUE_SCALAR_STORAGES = (dtypes.StorageType.Register, dtypes.StorageType.Default
 class InstrumentReferences:
     """Instrumentation code of ``sdfg`` that may name a loop counter outside its loop: condition texts and
     the symbols symbol-instrumented states dump."""
+
     sdfg: SDFG
     condition_texts: List[str]
     dumped_symbols: OrderedSet[str]
@@ -75,6 +87,7 @@ class InstrumentReferences:
 class DeclarationRun:
     """Counter-gate indices for one run of interstate declarations, which ``framecode`` emits back to back
     into one SDFG's callsite stream before any state is generated."""
+
     sdfg: SDFG
     stream: CodeIOStream
     counters: LoopCounterIndex
@@ -119,7 +132,7 @@ def loop_variable_in_instrument_conditions(name: str, refs: InstrumentReferences
     """Whether instrumentation code emitted outside its loop may reference ``name``."""
     if name in refs.dumped_symbols:
         return True
-    name_re = re.compile(r'\b' + re.escape(name) + r'\b')
+    name_re = re.compile(r"\b" + re.escape(name) + r"\b")
     return any(name_re.search(text) for text in refs.condition_texts)
 
 
@@ -127,7 +140,7 @@ def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
     """The ``CodeBlock`` values of one property value: bare, or inside a list / dict. Walking properties
     finds code of node classes this file does not know, so the deferral gate refuses on them."""
     if isinstance(value, CodeBlock):
-        return (value, )
+        return (value,)
     if isinstance(value, dict):
         return tuple(v for v in value.values() if isinstance(v, CodeBlock))
     if isinstance(value, (list, tuple, set, frozenset)):
@@ -148,8 +161,8 @@ def identifiers_in(blocks) -> Set[str]:
 def index_function_qualifier() -> str:
     """Qualifier of the ``<array>_idx`` / ``<array>_size`` helpers, per
     ``compiler.cpu.codegen_params.index_fn_qualifier``."""
-    if Config.get('compiler', 'cpu', 'codegen_params', 'index_fn_qualifier') == 'always_inline':
-        return 'static __attribute__((always_inline)) inline constexpr'
+    if Config.get("compiler", "cpu", "codegen_params", "index_fn_qualifier") == "always_inline":
+        return "static __attribute__((always_inline)) inline constexpr"
     if cpf_lowering.standalone():
         return STANDALONE_INDEX_FUNCTION_QUALIFIER
     return INDEX_FUNCTION_QUALIFIER
@@ -158,13 +171,13 @@ def index_function_qualifier() -> str:
 def index_ctype() -> str:
     """Integer type the index helpers compute in, per ``compiler.cpu.codegen_params.index_ctype``.
     ``int32`` overflows past 2**31 elements, so it is opt-in only."""
-    return INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'index_ctype')]
+    return INDEX_CTYPES[Config.get("compiler", "cpu", "codegen_params", "index_ctype")]
 
 
 def size_qualifier(is_constant: bool) -> str:
     """``consteval`` for a constant ``<array>_size`` extent under C++20+, else ``constexpr``."""
     standalone = cpf_lowering.standalone()
-    if is_constant and int(str(Config.get('compiler', 'cpp_standard')).strip()) >= 20:
+    if is_constant and int(str(Config.get("compiler", "cpp_standard")).strip()) >= 20:
         return STANDALONE_SIZE_CONSTEVAL_QUALIFIER if standalone else SIZE_CONSTEVAL_QUALIFIER
     return STANDALONE_INDEX_FUNCTION_QUALIFIER if standalone else INDEX_FUNCTION_QUALIFIER
 
@@ -181,10 +194,10 @@ def c_heap_alloc_stmt(alloc_name: str, ctype: str, count: str, nodedesc: Optiona
     """
     # Explicit ``size_t`` cast: an implicit signed-to-size_t conversion is a -Wsign-conversion diagnostic.
     if nodedesc is None or not use_aligned_operator_new(nodedesc):
-        return '%s = malloc(sizeof(%s) * (size_t)(%s));\n' % (alloc_name, ctype, count)
+        return "%s = malloc(sizeof(%s) * (size_t)(%s));\n" % (alloc_name, ctype, count)
     alignment = aligned_new_value(nodedesc)
-    bytes_needed = '((sizeof(%s) * (size_t)(%s) + %d) / %d) * %d' % (ctype, count, alignment - 1, alignment, alignment)
-    return '%s = aligned_alloc(%d, %s);\n' % (alloc_name, alignment, bytes_needed)
+    bytes_needed = "((sizeof(%s) * (size_t)(%s) + %d) / %d) * %d" % (ctype, count, alignment - 1, alignment, alignment)
+    return "%s = aligned_alloc(%d, %s);\n" % (alloc_name, alignment, bytes_needed)
 
 
 def format_index_helper(qualifier: str, ctype: str, fnname: str, parameters: List[str], body: str) -> str:
@@ -198,17 +211,22 @@ def format_index_helper(qualifier: str, ctype: str, fnname: str, parameters: Lis
     :param body: the printed expression over ``parameters``.
     :returns: the definition to emit once per translation unit.
     """
-    declared = ', '.join('%s %s' % (ctype, name) for name in parameters)
+    declared = ", ".join("%s %s" % (ctype, name) for name in parameters)
     if not cpf_lowering.standalone_c():
-        return '%s %s %s(%s) { return %s; }' % (qualifier, ctype, fnname, declared, body)
-    return '%s %s %s(%s) { return %s; }' % (STANDALONE_C_INDEX_FUNCTION_QUALIFIER, ctype, fnname, declared
-                                            or 'void', body)
+        return "%s %s %s(%s) { return %s; }" % (qualifier, ctype, fnname, declared, body)
+    return "%s %s %s(%s) { return %s; }" % (
+        STANDALONE_C_INDEX_FUNCTION_QUALIFIER,
+        ctype,
+        fnname,
+        declared or "void",
+        body,
+    )
 
 
 def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: List[str]) -> str:
     """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function."""
     call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
-    return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
+    return "%s[%s(%s)]" % (ptrname, fnname, ", ".join(call_args))
 
 
 def flat_offset(indices: List, desc: dt.Data):
@@ -222,13 +240,13 @@ def flat_offset(indices: List, desc: dt.Data):
 def parenthesized_ptr(expr: str) -> str:
     """A base-pointer expression safe to substitute textually for a connector: ``a + 1`` subscripted by
     the body would parse as ``a + (1[_i])``, so a non-identifier is parenthesized."""
-    return expr if expr.isidentifier() else f'({expr})'
+    return expr if expr.isidentifier() else f"({expr})"
 
 
 def loop_access_form() -> str:
     """``compiler.cpu.codegen_params.loop_access_form``: ``indexed`` (default) or ``ptr_increment``, which
     applies only where :meth:`ExperimentalCPUCodeGen.build_walk_plan` proves a pointer walk equivalent."""
-    return Config.get('compiler', 'cpu', 'codegen_params', 'loop_access_form')
+    return Config.get("compiler", "cpu", "codegen_params", "loop_access_form")
 
 
 def index_expr_nodes(slicenode: ast.AST) -> List[ast.AST]:
@@ -250,24 +268,24 @@ def deduplicate_includes(code: str) -> str:
     seen: Set[str] = set()
     depth = 0
     kept: List[str] = []
-    for line in code.split('\n'):
+    for line in code.split("\n"):
         if PREPROCESSOR_IF.match(line):
             depth += 1
         elif PREPROCESSOR_ENDIF.match(line):
             depth = max(depth - 1, 0)
         elif depth == 0 and INCLUDE_LINE.match(line):
-            key = CODE_ANNOTATION.sub('', line).strip()
+            key = CODE_ANNOTATION.sub("", line).strip()
             if key in seen:
                 continue
             seen.add(key)
         kept.append(line)
-    return '\n'.join(kept)
+    return "\n".join(kept)
 
 
 # Not registered with the target registry: ``dace.codegen.codegen.generate_code`` selects it for
 # ``compiler.cpu.implementation = experimental_readable``, and registering would instantiate it twice.
 class ExperimentalCPUCodeGen(CPUCodeGen):
-    """ Human-readable CPU/GPU-kernel code generator (see module docstring). """
+    """Human-readable CPU/GPU-kernel code generator (see module docstring)."""
 
     experimental_codegen = True
 
@@ -331,8 +349,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if dynamic_map_inputs(state_dfg, node):
             return True
         if any(
-                hoist_loop_decls(node, self.map_loop_will_have_openmp_pragma(sdfg, state_dfg, node, i))
-                for i in range(len(node.map.range))):
+            hoist_loop_decls(node, self.map_loop_will_have_openmp_pragma(sdfg, state_dfg, node, i))
+            for i in range(len(node.map.range))
+        ):
             return True
         if self.walk_plan_for(sdfg, state_dfg, node):
             return True
@@ -341,9 +360,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:
             return True
         # A complex-type ``#pragma omp declare reduction`` must not leak into sibling maps.
-        if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore and emits_tree_reductions(self.experimental_codegen)
-                and any(declare is not None
-                        for _op, _ct, _dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node))):
+        if (
+            node.map.schedule == dtypes.ScheduleType.CPU_Multicore
+            and emits_tree_reductions(self.experimental_codegen)
+            and any(
+                declare is not None for _op, _ct, _dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node)
+            )
+        ):
             return True
         return False
 
@@ -359,14 +382,14 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._emitted_provenance.add(origin)
         for line in str(description).splitlines():
             if line.strip():
-                callsite_stream.write('// %s' % line, cfg, state_id, node)
+                callsite_stream.write("// %s" % line, cfg, state_id, node)
 
     def _generate_MapEntry(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
         self.emit_provenance(node, cfg, state_id, callsite_stream)
         # A map born in codegen (copy lowering) has no label; a Map is data-parallel by definition.
         hint = cpf_lowering.hint_comment(node.specialization_hint or PARALLEL)
         if hint:
-            callsite_stream.write(hint.rstrip('\n'), cfg, state_id, node)
+            callsite_stream.write(hint.rstrip("\n"), cfg, state_id, node)
         # Plan before the base emitter, whose map_scope_needs_brace reads it.
         self.walk_plan_for(sdfg, cfg.state(state_id), node)
         self._map_scope_stack.append(node)
@@ -391,8 +414,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if key in self._walk_emitted_decls:
             return
         self._walk_emitted_decls.add(key)
-        for decl in plan['decls']:
-            outer_stream.write(decl + '\n', sdfg)
+        for decl in plan["decls"]:
+            outer_stream.write(decl + "\n", sdfg)
 
     def generate_scope_postamble(self, sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream):
         super().generate_scope_postamble(sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream)
@@ -404,8 +427,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if key in self._walk_emitted_incs:
             return
         self._walk_emitted_incs.add(key)
-        for inc in plan['incs']:
-            inner_stream.write(inc + '\n', sdfg)
+        for inc in plan["incs"]:
+            inner_stream.write(inc + "\n", sdfg)
 
     def _current_walk_plan(self) -> Optional[dict]:
         if not self._map_scope_stack:
@@ -416,7 +439,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def current_walk_accesses(self) -> Optional[Dict[tuple, str]]:
         """``{(array, index strings): pointer}`` of the map being emitted, or None."""
         plan = self._current_walk_plan()
-        return plan['accesses'] if plan else None
+        return plan["accesses"] if plan else None
 
     def walk_plan_for(self, sdfg, state_dfg, node: nodes.MapEntry) -> dict:
         """Memoized :meth:`build_walk_plan` of map ``node``."""
@@ -431,7 +454,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         """``{'accesses': {(name, idx_tuple): pointer}, 'decls': [str], 'incs': [str]}`` to walk this map's
         accesses with incrementing base pointers, or ``{}`` unless the walk is provably equivalent.
         """
-        if loop_access_form() != 'ptr_increment':
+        if loop_access_form() != "ptr_increment":
             return {}
         # Sequential only: an OpenMP loop keeps the canonical indexed form its pragma needs.
         if not map_schedule_is_sequential(node):
@@ -486,8 +509,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 continue
             flat = symbolic.pystr_to_symbolic(flat_offset(idx_tuple, desc))
             per_iter = symbolic.pystr_to_symbolic(
-                as_expr(flat.subs(loop_sym,
-                                  as_expr(loop_sym) + as_expr(skip_sym))) - as_expr(flat)).simplify()
+                as_expr(flat.subs(loop_sym, as_expr(loop_sym) + as_expr(skip_sym))) - as_expr(flat)
+            ).simplify()
             if loop_sym in per_iter.free_symbols:
                 return {}
             ptrname = self.ptr(name, desc, sdfg)
@@ -500,12 +523,12 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             pointer = self._unique_walk_name(name, used_names)
             accesses[key] = pointer
             base_off = sym2cpp(flat.subs(loop_sym, begin_sym))
-            start = ptrname if base_off == '0' else '%s + (%s)' % (ptrname, base_off)
-            decls.append('%s* %s = %s;' % (desc.dtype.ctype, pointer, start))
+            start = ptrname if base_off == "0" else "%s + (%s)" % (ptrname, base_off)
+            decls.append("%s* %s = %s;" % (desc.dtype.ctype, pointer, start))
             step = sym2cpp(per_iter)
-            if step != '0':
-                incs.append('%s += %s;' % (pointer, step))
-        return {'accesses': accesses, 'decls': decls, 'incs': incs}
+            if step != "0":
+                incs.append("%s += %s;" % (pointer, step))
+        return {"accesses": accesses, "decls": decls, "incs": incs}
 
     def _scan_walkable(self, astnode, sdfg, records: List[tuple]) -> bool:
         """Record every plain-array subscript of ``astnode``; False on an access a pointer walk cannot
@@ -528,11 +551,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         return all(self._scan_walkable(child, sdfg, records) for child in ast.iter_child_nodes(astnode))
 
     def _unique_walk_name(self, data_name: str, used: Set[str]) -> str:
-        base = '__walk_' + re.sub(r'\W', '_', data_name)
+        base = "__walk_" + re.sub(r"\W", "_", data_name)
         name = base
         k = 1
         while name in used:
-            name = '%s_%d' % (base, k)
+            name = "%s_%d" % (base, k)
             k += 1
         used.add(name)
         return name
@@ -557,7 +580,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         cached = self._body_identifiers.get(key)
         if cached is not None:
             return cached
-        code = node.code.as_string if node.code else ''
+        code = node.code.as_string if node.code else ""
         if node.language == dtypes.Language.Python:
             ids = {n.id for n in ast.walk(ast.parse(code)) if isinstance(n, ast.Name)}
         else:
@@ -576,13 +599,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     # No tasklet banner or separators: each tasklet line carries a trailing ``// <label>``.
 
     def tasklet_body_comment(self, node) -> str:
-        return ''
+        return ""
 
     def tasklet_body_open_marker(self, node) -> str:
-        return ''
+        return ""
 
     def tasklet_body_close_marker(self, node) -> str:
-        return ''
+        return ""
 
     def emit_tasklet_body_block(self, callsite_stream, cfg, state_id, node, inner_body, postamble, has_locals) -> None:
         self.emit_provenance(node, cfg, state_id, callsite_stream)
@@ -590,19 +613,19 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # locals keeps its own ``{ }`` so a declaration cannot leak into the map body.
         if not has_locals and self._single_statement_body(node):
             # Strip the baked-in ``////__DACE`` tag so ``// <label>`` lands before the stream's fresh one.
-            line = re.sub(r'[ \t]*////__(DACE:|CODEGEN;).*', '', inner_body).strip()
+            line = re.sub(r"[ \t]*////__(DACE:|CODEGEN;).*", "", inner_body).strip()
             if line:
                 # Only here is the line known to be brace-free, the one place a fused declaration is visible.
                 line = self.explicit_store_conversion(cfg, state_id, node, line)
                 line = self.fuse_pending_decl(node, line)
                 self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
-                callsite_stream.write('%s  // %s\n' % (line, node.label), cfg, state_id, node)
+                callsite_stream.write("%s  // %s\n" % (line, node.label), cfg, state_id, node)
                 return
         self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
-        callsite_stream.write('{  // %s' % node.label, cfg, state_id, node)
+        callsite_stream.write("{  // %s" % node.label, cfg, state_id, node)
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
-        callsite_stream.write('}', cfg, state_id, node)
+        callsite_stream.write("}", cfg, state_id, node)
 
     @staticmethod
     def tasklet_read_types(cfg, state_id: int, node) -> Dict[str, dtypes.typeclass]:
@@ -643,16 +666,16 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return line
         if src is None or src == dst or isinstance(src, (dtypes.pointer, dtypes.vector)):
             return line
-        split = re.search(r'(?<![=!<>+\-*/%&|^])=(?!=)', line)
+        split = re.search(r"(?<![=!<>+\-*/%&|^])=(?!=)", line)
         if split is None:
             return line
-        head, tail = line[:split.start()], line[split.end():].strip()
-        if not tail.endswith(';'):
+        head, tail = line[: split.start()], line[split.end() :].strip()
+        if not tail.endswith(";"):
             return line
         value = tail[:-1].strip()
         if cpf_lowering.standalone_c():
-            return f'{head}= ({dst.ctype})({value});'
-        return f'{head}= static_cast<{dst.ctype}>({value});'
+            return f"{head}= ({dst.ctype})({value});"
+        return f"{head}= static_cast<{dst.ctype}>({value});"
 
     @staticmethod
     def assigned_expression(node):
@@ -686,14 +709,14 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 out.append(inline[value])
             else:
                 out.append(value)
-        return ''.join(out)
+        return "".join(out)
 
     def _compute_cpp_inline(self, sdfg, state_dfg, node) -> Dict[str, str]:
         """``{connector: access}`` for every connector of a native tasklet that can be inlined: a scalar as
         an ``<array>_idx(...)`` access, a pointer / whole subset as a base-pointer expression."""
         # A preprocessor line (``ExpandReduceOpenMP``'s ``#pragma omp ... reduction(op:_out[0])``) lexes as
         # one token, so a connector in it cannot be rewritten; keep the classic copies for the tasklet.
-        if re.search(r'(?m)^[ \t]*#', node.code.as_string):
+        if re.search(r"(?m)^[ \t]*#", node.code.as_string):
             return {}
         in_map: Dict[str, str] = {}
         out_map: Dict[str, str] = {}
@@ -761,13 +784,16 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if token_type in Token.Text or token_type in Token.Comment or value in DECLARATOR_TOKENS:
                 continue
             if token_type in Token.Name:
-                if previous is not None and (previous[0] in Token.Keyword or previous[0] in Token.Name or
-                                             (in_declarator_list and previous[1] == ',')):
+                if previous is not None and (
+                    previous[0] in Token.Keyword
+                    or previous[0] in Token.Name
+                    or (in_declarator_list and previous[1] == ",")
+                ):
                     declared.add(value)
                     in_declarator_list = True
                 else:
                     in_declarator_list = False
-            elif value != ',':
+            elif value != ",":
                 in_declarator_list = False
             previous = (token_type, value)
         self._body_declarations[key] = declared
@@ -818,7 +844,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if defined_type is not None:
                 return parenthesized_ptr(cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self))
             offset = cpp.cpp_offset_expr(desc, subset)
-            return ptrname if offset == '0' else parenthesized_ptr('%s + %s' % (ptrname, offset))
+            return ptrname if offset == "0" else parenthesized_ptr("%s + %s" % (ptrname, offset))
 
         # Single element: an ``<array>_idx`` access, as in ReadableKeywordRemover._bare_access.
         indices = [str(rb) for (rb, _re, _rs) in subset.ranges]
@@ -830,26 +856,39 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         return format_index_access(ptrname, fnname, indices, extra)
 
-    def allocate_array(self,
-                       sdfg,
-                       cfg,
-                       dfg,
-                       state_id,
-                       node,
-                       nodedesc,
-                       function_stream,
-                       declaration_stream,
-                       allocation_stream,
-                       allocate_nested_data: bool = True):
+    def allocate_array(
+        self,
+        sdfg,
+        cfg,
+        dfg,
+        state_id,
+        node,
+        nodedesc,
+        function_stream,
+        declaration_stream,
+        allocation_stream,
+        allocate_nested_data: bool = True,
+    ):
         if self.defer_scalar_declaration(sdfg, dfg, node, nodedesc):
             return
-        super().allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-                               allocation_stream, allocate_nested_data)
+        super().allocate_array(
+            sdfg,
+            cfg,
+            dfg,
+            state_id,
+            node,
+            nodedesc,
+            function_stream,
+            declaration_stream,
+            allocation_stream,
+            allocate_nested_data,
+        )
         # heap_alloc_stmt may have registered an ``<array>_size`` helper.
         self._flush_generated_functions(function_stream, cfg, state_id, node)
 
-    def fused_heap_declarator(self, sdfg, name: str, nodedesc: dt.Data, arrsize, declared: bool, declaration_stream,
-                              allocation_stream) -> Optional[str]:
+    def fused_heap_declarator(
+        self, sdfg, name: str, nodedesc: dt.Data, arrsize, declared: bool, declaration_stream, allocation_stream
+    ) -> Optional[str]:
         """Declarator fusing ``T *p;`` and ``p = new T[...];`` into ``T* __restrict__ p = new T[...];``, or
         None to keep the split pair. Sound only when both land in one scope: the pointer was not already
         declared in an enclosing scope (``declared``), and the declaration and allocation share a stream
@@ -863,19 +902,23 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def array_pointer_declarator(self, name: str, nodedesc: dt.Data) -> str:
         """``T* __restrict__ name`` for a heap array pointer; no ``__restrict__`` for a ``may_alias``
         descriptor or when ``compiler.cpu.codegen_params.heap_ptr_restrict`` is ``none``."""
-        emit_restrict = (not nodedesc.may_alias
-                         and Config.get('compiler', 'cpu', 'codegen_params', 'heap_ptr_restrict') == 'restrict')
-        restrict = '__restrict__ ' if emit_restrict else ''
-        return '%s* %s%s' % (nodedesc.dtype.ctype, restrict, name)
+        emit_restrict = (
+            not nodedesc.may_alias
+            and Config.get("compiler", "cpu", "codegen_params", "heap_ptr_restrict") == "restrict"
+        )
+        restrict = "__restrict__ " if emit_restrict else ""
+        return "%s* %s%s" % (nodedesc.dtype.ctype, restrict, name)
 
-    def heap_alloc_stmt(self,
-                        alloc_name: str,
-                        ctype: str,
-                        arrsize: str,
-                        alignment: int = 0,
-                        sdfg: Optional['SDFG'] = None,
-                        nodedesc: Optional[dt.Data] = None,
-                        data_name: Optional[str] = None) -> str:
+    def heap_alloc_stmt(
+        self,
+        alloc_name: str,
+        ctype: str,
+        arrsize: str,
+        alignment: int = 0,
+        sdfg: Optional["SDFG"] = None,
+        nodedesc: Optional[dt.Data] = None,
+        data_name: Optional[str] = None,
+    ) -> str:
         # The base aligned ``operator new[]``, with the count through an ``<array>_size`` helper when one
         # is worthwhile (_register_size_function).
         count = arrsize
@@ -883,29 +926,31 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             registered = self._register_size_function(data_name, nodedesc)
             if registered is not None:
                 fnname, call_args = registered
-                count = '%s(%s)' % (fnname, ', '.join(call_args))
+                count = "%s(%s)" % (fnname, ", ".join(call_args))
         if cpf_lowering.standalone_c():
             return c_heap_alloc_stmt(alloc_name, ctype, count, nodedesc)
         if not cpf_lowering.standalone():
             return super().heap_alloc_stmt(alloc_name, ctype, count, alignment, sdfg, nodedesc, data_name)
         # A CPF unit includes no DaCe header, so it spells the aligned ``new`` itself.
-        placement = ''
+        placement = ""
         if nodedesc is not None and use_aligned_operator_new(nodedesc):
-            placement = ' (std::align_val_t(%d))' % aligned_new_value(nodedesc)
-        return '%s = new%s %s[%s];\n' % (alloc_name, placement, ctype, count)
+            placement = " (std::align_val_t(%d))" % aligned_new_value(nodedesc)
+        return "%s = new%s %s[%s];\n" % (alloc_name, placement, ctype, count)
 
     def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[dt.Data] = None) -> str:
         """The matching free: ``free`` for both allocation shapes in C."""
         if cpf_lowering.standalone_c():
-            return 'free(%s);\n' % alloc_name
+            return "free(%s);\n" % alloc_name
         # A CPF unit includes no DaCe header, so it spells the aligned delete paired with its aligned ``new``
         # itself. The direct operator call skips destructors and relies on the new-expression emitting no array
         # cookie -- both only hold for trivially destructible element types.
         if cpf_lowering.standalone() and is_array and nodedesc is not None and use_aligned_operator_new(nodedesc):
-            return ('static_assert(std::is_trivially_destructible<%s>::value, '
-                    '"aligned heap deallocation skips destructors");\n'
-                    '::operator delete[](%s, std::align_val_t(%d));\n' %
-                    (nodedesc.dtype.ctype, alloc_name, aligned_new_value(nodedesc)))
+            return (
+                "static_assert(std::is_trivially_destructible<%s>::value, "
+                '"aligned heap deallocation skips destructors");\n'
+                "::operator delete[](%s, std::align_val_t(%d));\n"
+                % (nodedesc.dtype.ctype, alloc_name, aligned_new_value(nodedesc))
+            )
         return super().heap_free_stmt(alloc_name, is_array, nodedesc)
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
@@ -921,7 +966,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             for name, defn in registry.items():
                 if name in emitted:
                     continue
-                function_stream.write(defn + '\n', cfg, state_id, node)
+                function_stream.write(defn + "\n", cfg, state_id, node)
                 emitted.add(name)
 
     def defer_scalar_declaration(self, sdfg, dfg, node, desc) -> bool:
@@ -937,13 +982,12 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Only a writer can carry a fused ``T x = expr;``; a ``setzero`` scalar's ``T x = 0;`` never fuses.
         writers = {id(edge.src) for an in state.data_nodes() if an.data == node.data for edge in state.in_edges(an)}
         self._late_pending[ptrname] = {
-            'ctype': desc.dtype.ctype,
-            'ptrname': ptrname,
-            'setzero': setzero,
-            'tasklets': {id(t)
-                         for t in scope_tasklets},
-            'writers': writers,
-            'fusable': scalar_init_style() == 'fused' and not setzero,
+            "ctype": desc.dtype.ctype,
+            "ptrname": ptrname,
+            "setzero": setzero,
+            "tasklets": {id(t) for t in scope_tasklets},
+            "writers": writers,
+            "fusable": scalar_init_style() == "fused" and not setzero,
         }
         return True
 
@@ -956,7 +1000,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         declaration must be that scope (:meth:`eager_allocation_scope`), and nothing but those accesses
         and tasklets may mention the name (:meth:`name_owners`)."""
         # ``fused`` also needs the eager declaration skipped, and first use is the nearest correct place.
-        if decl_placement() != 'late' and scalar_init_style() != 'fused':
+        if decl_placement() != "late" and scalar_init_style() != "fused":
             return None
         if not isinstance(desc, dt.Scalar) or isinstance(desc, (dt.View, dt.Reference, dt.Stream)):
             return None
@@ -1033,13 +1077,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 references = self.node_name_references(graph_node, sdfg)
                 if references is None:
                     return None
-                mentions.append((references, (id(graph_node), )))
+                mentions.append((references, (id(graph_node),)))
             for edge in state.edges():
                 names = set(edge.data.free_symbols)
                 if edge.data.data:
                     names.add(edge.data.data)
                 mentions.append((names, (id(edge.src), id(edge.dst))))
-        own = (id(sdfg), )
+        own = (id(sdfg),)
         for edge in sdfg.all_interstate_edges():
             mentions.append((edge.data.read_symbols() | set(edge.data.assignments.keys()), own))
         for block in sdfg.all_control_flow_blocks():
@@ -1077,11 +1121,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         elif isinstance(graph_node, nodes.NestedSDFG):
             # Emitted inline, so names it does not define resolve to the enclosing scope.
             nested = self.nested_free_names(graph_node.sdfg) if graph_node.sdfg is not None else None
-            references = None if nested is None else set(
-                graph_node.free_symbols) | self.code_property_names(graph_node) | nested
+            references = (
+                None if nested is None else set(graph_node.free_symbols) | self.code_property_names(graph_node) | nested
+            )
         elif isinstance(graph_node, nodes.Tasklet):
-            references = set(
-                graph_node.free_symbols) | self.code_property_names(graph_node) | self._used_identifiers(graph_node)
+            references = (
+                set(graph_node.free_symbols) | self.code_property_names(graph_node) | self._used_identifiers(graph_node)
+            )
         elif isinstance(graph_node, nodes.CodeNode):
             # A library node lowers through its own ``generate_code``, which this file cannot read.
             references = None
@@ -1119,12 +1165,12 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         becomes ``T x = expr;``). Unchanged unless ``scalar_init_style`` is ``fused`` and the text itself
         spells the scalar's first write."""
         for ptrname, info in list(self._late_pending.items()):
-            if not info['fusable'] or id(tasklet) not in info['writers']:
+            if not info["fusable"] or id(tasklet) not in info["writers"]:
                 continue
-            if not re.match(r'%s\s*=[^=]' % re.escape(ptrname), line):
+            if not re.match(r"%s\s*=[^=]" % re.escape(ptrname), line):
                 continue
             del self._late_pending[ptrname]
-            return '%s %s' % (info['ctype'], line)
+            return "%s %s" % (info["ctype"], line)
         return line
 
     def emit_pending_late_decls(self, cfg, state_id, tasklet, callsite_stream) -> None:
@@ -1132,10 +1178,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if not self._late_pending:
             return
         for ptrname, info in list(self._late_pending.items()):
-            if id(tasklet) not in info['tasklets']:
+            if id(tasklet) not in info["tasklets"]:
                 continue
-            zero = ' = 0' if info['setzero'] else ''
-            callsite_stream.write('%s %s%s;' % (info['ctype'], info['ptrname'], zero), cfg, state_id, tasklet)
+            zero = " = 0" if info["setzero"] else ""
+            callsite_stream.write("%s %s%s;" % (info["ctype"], info["ptrname"], zero), cfg, state_id, tasklet)
             del self._late_pending[ptrname]
 
     def array_index_access(self, sdfg, desc, data_name: str):
@@ -1160,26 +1206,27 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def _register_index_function(self, data_name: str, desc):
         # Register the ``<name>_idx`` helper once per signature; return (name, extra symbol names).
         ndim = len(desc.shape)
-        dim_syms = [symbolic.symbol('__d%d' % i) for i in range(ndim)]
+        dim_syms = [symbolic.symbol("__d%d" % i) for i in range(ndim)]
         flatexpr = flat_offset(dim_syms, desc)
         extra = sorted((as_basic(flatexpr).free_symbols - set(dim_syms)), key=lambda s: str(s))
         extra_names = [str(s) for s in extra]
 
-        base = re.sub(r'\W', '_', data_name)
+        base = re.sub(r"\W", "_", data_name)
         sig = (ndim, tuple(str(s) for s in desc.strides), tuple(str(o) for o in desc.offset))
         key = (base, sig)
         if key in self._index_sig_to_name:
             return self._index_sig_to_name[key], extra_names
 
-        fnname = base + '_idx'
+        fnname = base + "_idx"
         if fnname in self._index_functions:  # same name, different signature
-            fnname = '%s_%dd_%d_idx' % (base, ndim, len(self._index_sig_to_name))
+            fnname = "%s_%dd_%d_idx" % (base, ndim, len(self._index_sig_to_name))
         self._index_sig_to_name[key] = fnname
 
         ctype = index_ctype()
         parameters = [str(d) for d in dim_syms] + list(extra_names)
-        self._index_functions[fnname] = format_index_helper(index_function_qualifier(), ctype, fnname, parameters,
-                                                            sym2cpp(flatexpr))
+        self._index_functions[fnname] = format_index_helper(
+            index_function_qualifier(), ctype, fnname, parameters, sym2cpp(flatexpr)
+        )
         return fnname, extra_names
 
     def _register_size_function(self, data_name: str, desc) -> Optional[Tuple[str, List[str]]]:
@@ -1195,19 +1242,20 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         call_args = [str(s) for s in free]
         is_constant = len(free) == 0
 
-        base = re.sub(r'\W', '_', data_name)
+        base = re.sub(r"\W", "_", data_name)
         sig = (str(total), tuple(call_args))
         key = (base, sig)
         if key in self._size_sig_to_name:
             return self._size_sig_to_name[key], call_args
 
-        fnname = base + '_size'
+        fnname = base + "_size"
         if fnname in self._size_functions:  # same name, different signature
-            fnname = '%s_%d_size' % (base, len(self._size_sig_to_name))
+            fnname = "%s_%d_size" % (base, len(self._size_sig_to_name))
         self._size_sig_to_name[key] = fnname
 
-        self._size_functions[fnname] = format_index_helper(size_qualifier(is_constant), index_ctype(), fnname,
-                                                           list(call_args), sym2cpp(total))
+        self._size_functions[fnname] = format_index_helper(
+            size_qualifier(is_constant), index_ctype(), fnname, list(call_args), sym2cpp(total)
+        )
         return fnname, call_args
 
 
@@ -1216,7 +1264,7 @@ class NestedMultiDimSubscriptLowerer(ast.NodeTransformer):
     ``<array>_idx`` text. Left as a ``Tuple`` slice it would lower to ``std::make_tuple``; a rank-1 nested
     subscript already round-trips and is left alone."""
 
-    def __init__(self, remover: 'ReadableKeywordRemover'):
+    def __init__(self, remover: "ReadableKeywordRemover"):
         self.remover = remover
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
@@ -1236,8 +1284,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         #: Operand text -> dtype for the statements rendered here, so the C++ printer can type a bare
         #: literal against a ``dace::float16`` operand. Inlined connectors are keyed by their access text.
         self.operand_dtypes: Dict[str, dtypes.typeclass] = {
-            conn: entry[3]
-            for conn, entry in memlets.items() if conn is not None
+            conn: entry[3] for conn, entry in memlets.items() if conn is not None
         }
 
     def _is_bare_data(self, name: str) -> bool:
@@ -1259,7 +1306,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             if walk is not None:
                 pointer = walk.get((name, tuple(self._index_list(node.slice))))
                 if pointer is not None:
-                    return '(*%s)' % pointer
+                    return "(*%s)" % pointer
         desc = self.sdfg.arrays[name]
         info = self.codegen.array_index_access(self.sdfg, desc, name)
         if info is None:
@@ -1282,14 +1329,13 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         lhs = self._bare_access(target_node)
         if lhs is None:
             return self.generic_visit(node)
-        rhs = cppunparse.cppunparse(value,
-                                    expr_semicolon=False,
-                                    defined_symbols={
-                                        **self.defined_symbols,
-                                        **self.operand_dtypes
-                                    },
-                                    data_names=self.operand_dtypes)
-        plain = '%s = %s;' % (lhs, rhs)
+        rhs = cppunparse.cppunparse(
+            value,
+            expr_semicolon=False,
+            defined_symbols={**self.defined_symbols, **self.operand_dtypes},
+            data_names=self.operand_dtypes,
+        )
+        plain = "%s = %s;" % (lhs, rhs)
         return self._replace_assignment(ast.Name(id=plain), node)
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:

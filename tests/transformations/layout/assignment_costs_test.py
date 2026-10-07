@@ -3,13 +3,19 @@
 the model table finds conflict3's B trajectory (write row-major, flip to column-major for the two
 transposed readers), the DP matches the enumeration oracle, the chosen assignment applies
 bit-exactly, and the eval table drives the same pipeline from measured timings."""
+
 import pytest
 
 from dace.transformation.layout.apply_assignment import apply_assignment
-from dace.transformation.layout.assignment_costs import (assignment_arrays, eval_costs, model_costs,
-                                                         permutation_layouts)
-from dace.transformation.layout.global_assign import (brute_force_trajectories, conflict_report, format_conflict_report,
-                                                      greedy_assignment, per_array_dp, to_assignment)
+from dace.transformation.layout.assignment_costs import assignment_arrays, eval_costs, model_costs, permutation_layouts
+from dace.transformation.layout.global_assign import (
+    brute_force_trajectories,
+    conflict_report,
+    format_conflict_report,
+    greedy_assignment,
+    per_array_dp,
+    to_assignment,
+)
 from dace.transformation.layout.line_graph import kernel_per_state, line_graph
 from dace.transformation.layout.prepare import prepare_for_layout
 

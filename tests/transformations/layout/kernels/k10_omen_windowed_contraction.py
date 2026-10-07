@@ -23,6 +23,7 @@ Source: A. N. Ziogas, T. Ben-Nun, G. Indalecio Fernandez, T. Schulthess, T. Hoef
 Approach to Extreme-Scale Ab initio Dissipative Quantum Transport Simulations," SC 2019 (Gordon Bell
 finalist; arXiv:1912.10024); NPBench 'sselfeng' (Ziogas et al., ICS'21); SC26 layout paper.
 """
+
 import numpy
 import dace
 
@@ -34,15 +35,19 @@ W = 3  # SSE energy window width
 
 
 @dace.program
-def omen(H: dace.complex128[NA, NE, M, M], X: dace.complex128[NA, NE, M, M], D: dace.complex128[W, M, M],
-         Sigma: dace.complex128[NA, NE - W, M, M]):
+def omen(
+    H: dace.complex128[NA, NE, M, M],
+    X: dace.complex128[NA, NE, M, M],
+    D: dace.complex128[W, M, M],
+    Sigma: dace.complex128[NA, NE - W, M, M],
+):
     G = numpy.empty((NA, NE, M, M), dace.complex128)  # single-writer (scalar-acc) so Permute(G) is legal
     for a, e, i, j in dace.map[0:NA, 0:NE, 0:M, 0:M] @ dace.ScheduleType.Sequential:
         s = dace.complex128(0)
         for k in range(M):
             s = s + H[a, e, i, k] * X[a, e, k, j]
         G[a, e, i, j] = s
-    for a, eo, i, j, w, k in dace.map[0:NA, 0:NE - W, 0:M, 0:M, 0:W, 0:M] @ dace.ScheduleType.Sequential:
+    for a, eo, i, j, w, k in dace.map[0:NA, 0 : NE - W, 0:M, 0:M, 0:W, 0:M] @ dace.ScheduleType.Sequential:
         Sigma[a, eo, i, j] += G[a, eo + W - 1 - w, i, k] * D[w, k, j]
 
 

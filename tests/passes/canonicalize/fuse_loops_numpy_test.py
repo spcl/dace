@@ -9,6 +9,7 @@ pin the intended fuse / refuse behaviour: consecutive same-range sequential
 siblings fuse; a pair whose per-iteration reorder would change a value (a
 read-ahead forward flow, a mismatched range) must be refused.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -87,8 +88,9 @@ def test_two_independent_recurrences_fuse():
     """Disjoint prefix recurrences (c from a, d from b) -> independent, fuse."""
 
     @dace.program
-    def k_two_independent_recurrences_fuse(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
-                                           d: dace.float64[N]):
+    def k_two_independent_recurrences_fuse(
+        a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]
+    ):
         for i in range(1, N):
             c[i] = c[i - 1] + a[i]
         for i in range(1, N):
@@ -103,8 +105,9 @@ def test_three_sequential_recurrences_fuse_to_one():
     """A chain of three prefix recurrences collapses to a single loop."""
 
     @dace.program
-    def k_three_sequential_recurrences_fuse_to_one(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N],
-                                                   d: dace.float64[N]):
+    def k_three_sequential_recurrences_fuse_to_one(
+        a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]
+    ):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
         for i in range(1, N):
@@ -143,8 +146,9 @@ def test_parallel_elementwise_loops_left_for_loop_to_map():
         for i in range(N):
             c[i] = b[i] * 2.0
 
-    applied, before, after, exact, *_ = _run(k_parallel_elementwise_loops_left_for_loop_to_map,
-                                             _mk(names=("a", "b", "c")), 48)
+    applied, before, after, exact, *_ = _run(
+        k_parallel_elementwise_loops_left_for_loop_to_map, _mk(names=("a", "b", "c")), 48
+    )
     assert exact
     assert after == before  # parallel loops are not loop-fused
 

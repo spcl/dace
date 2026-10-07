@@ -41,6 +41,7 @@ implementation):
   ``std::execution::par`` (or sequential, when the SDFG schedule is
   sequential).  Index = iterator distance.
 """
+
 import dace
 import dace.dtypes as dtypes
 import dace.library
@@ -51,6 +52,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.transformation import ExpandTransformation
 from typing import List, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -106,8 +108,10 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     """
     desc_x, desc_idx, mask_desc, dim_zero = node.validate(parent_sdfg, parent_state)
     if mask_desc is not None:
-        raise NotImplementedError(f"{type(node).__name__}: mask= argument is not yet supported in the pure expansion. "
-                                  "Materialise the masked input first (e.g. set masked-out entries to +inf / -inf).")
+        raise NotImplementedError(
+            f"{type(node).__name__}: mask= argument is not yet supported in the pure expansion. "
+            "Materialise the masked input first (e.g. set masked-out entries to +inf / -inf)."
+        )
 
     dtype = desc_x.dtype.base_type
     idx_dtype = desc_idx.dtype.base_type
@@ -129,11 +133,9 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     # IS the outer one; the reduced/flat spellings below build a shape of their own, and a
     # stride list from a differently-ranked descriptor would be nonsense.
     idx_matches = symbolic.shapes_equal(idx_shape, desc_idx.shape)
-    sdfg.add_array("_idx",
-                   idx_shape,
-                   idx_dtype,
-                   strides=desc_idx.strides if idx_matches else None,
-                   storage=desc_idx.storage)
+    sdfg.add_array(
+        "_idx", idx_shape, idx_dtype, strides=desc_idx.strides if idx_matches else None, storage=desc_idx.storage
+    )
     # Every intermediate takes the INPUT's storage rather than the default. A transient left at
     # ``Default`` under a GPU-scheduled expansion resolves to ``GPU_Shared``, and
     # ``ExpandReduceGPUAuto`` refuses anything but ``GPU_Global``: it falls back to the pure
@@ -166,15 +168,20 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     x_subs = ", ".join([f"__i{d}" for d in range(rank)])
     bv_subs = "0" if flat else ", ".join([f"__i{d}" for d in range(rank) if d != dim_zero])
     reduce_val = sdfg.add_state(node.label + "_reduce_val", is_start_block=True)
-    val_red = Reduce(name=node.label + "_val_reduce",
-                     wcr=f"lambda a, b: {func}(a, b)",
-                     axes=axes,
-                     identity=val_identity_value)
+    val_red = Reduce(
+        name=node.label + "_val_reduce", wcr=f"lambda a, b: {func}(a, b)", axes=axes, identity=val_identity_value
+    )
     reduce_val.add_node(val_red)
-    reduce_val.add_edge(reduce_val.add_read("_x"), None, val_red, "_in",
-                        dace.Memlet.from_array("_x", sdfg.arrays["_x"]))
-    reduce_val.add_edge(val_red, "_out", reduce_val.add_access("__best_val"), None,
-                        dace.Memlet.from_array("__best_val", sdfg.arrays["__best_val"]))
+    reduce_val.add_edge(
+        reduce_val.add_read("_x"), None, val_red, "_in", dace.Memlet.from_array("_x", sdfg.arrays["_x"])
+    )
+    reduce_val.add_edge(
+        val_red,
+        "_out",
+        reduce_val.add_access("__best_val"),
+        None,
+        dace.Memlet.from_array("__best_val", sdfg.arrays["__best_val"]),
+    )
 
     # state 2: candidate index per element
     #
@@ -202,15 +209,24 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 
     # state 3: pick the first (or last) matching index
     reduce_idx = sdfg.add_state_after(candidates, node.label + "_reduce_idx")
-    idx_red = Reduce(name=node.label + "_idx_reduce",
-                     wcr=f"lambda a, b: {idx_wcr_op}(a, b)",
-                     axes=axes,
-                     identity=idx_sentinel)
+    idx_red = Reduce(
+        name=node.label + "_idx_reduce", wcr=f"lambda a, b: {idx_wcr_op}(a, b)", axes=axes, identity=idx_sentinel
+    )
     reduce_idx.add_node(idx_red)
-    reduce_idx.add_edge(reduce_idx.add_read("__idx_candidates"), None, idx_red, "_in",
-                        dace.Memlet.from_array("__idx_candidates", sdfg.arrays["__idx_candidates"]))
-    reduce_idx.add_edge(idx_red, "_out", reduce_idx.add_access("__best_idx"), None,
-                        dace.Memlet.from_array("__best_idx", sdfg.arrays["__best_idx"]))
+    reduce_idx.add_edge(
+        reduce_idx.add_read("__idx_candidates"),
+        None,
+        idx_red,
+        "_in",
+        dace.Memlet.from_array("__idx_candidates", sdfg.arrays["__idx_candidates"]),
+    )
+    reduce_idx.add_edge(
+        idx_red,
+        "_out",
+        reduce_idx.add_access("__best_idx"),
+        None,
+        dace.Memlet.from_array("__best_idx", sdfg.arrays["__best_idx"]),
+    )
 
     # state 5: extract / decode
     extract = sdfg.add_state_after(reduce_idx, node.label + "_extract")
@@ -249,6 +265,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 @dace.library.expansion
 class ExpandArgMinPure(ExpandTransformation):
     """Pure expansion of :class:`ArgMin` -- multi-state min/min pipeline."""
+
     environments: List[type] = []
 
     @staticmethod
@@ -259,6 +276,7 @@ class ExpandArgMinPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandArgMaxPure(ExpandTransformation):
     """Pure expansion of :class:`ArgMax` -- multi-state max/min pipeline."""
+
     environments: List[type] = []
 
     @staticmethod
@@ -296,8 +314,10 @@ def _validate_argminmax(node, sdfg, state):
         dim_zero = node.dim - 1
         expected_out_rank = rank - 1 or 1
         if len(desc_idx.shape) != expected_out_rank:
-            raise ValueError(f"{type(node).__name__}: dim={node.dim} reduction expects rank-{expected_out_rank} "
-                             f"output, got rank-{len(desc_idx.shape)}")
+            raise ValueError(
+                f"{type(node).__name__}: dim={node.dim} reduction expects rank-{expected_out_rank} "
+                f"output, got rank-{len(desc_idx.shape)}"
+            )
     return desc_x, desc_idx, mask_desc, dim_zero
 
 
@@ -309,16 +329,19 @@ class ArgMin(dace.sdfg.nodes.LibraryNode):
     default_implementation = "pure"
 
     one_based = dace.properties.Property(
-        dtype=bool, default=True, desc="Return a Fortran 1-based index (``True``) or a 0-based index (``False``).")
+        dtype=bool, default=True, desc="Return a Fortran 1-based index (``True``) or a 0-based index (``False``)."
+    )
     back = dace.properties.Property(
         dtype=bool,
         default=False,
-        desc="Tie-break direction.  ``False`` keeps the first occurrence; ``True`` keeps the last.")
+        desc="Tie-break direction.  ``False`` keeps the first occurrence; ``True`` keeps the last.",
+    )
     dim = dace.properties.Property(
         dtype=int,
         default=None,
         allow_none=True,
-        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array to a scalar.")
+        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array to a scalar.",
+    )
 
     def __init__(self, name, *, one_based=True, back=False, dim=None, mask=False, **kwargs):
         """:param mask: if ``True``, expose an optional ``_mask`` input connector."""
@@ -342,16 +365,19 @@ class ArgMax(dace.sdfg.nodes.LibraryNode):
     default_implementation = "pure"
 
     one_based = dace.properties.Property(
-        dtype=bool, default=True, desc="Return a Fortran 1-based index (``True``) or a 0-based index (``False``).")
+        dtype=bool, default=True, desc="Return a Fortran 1-based index (``True``) or a 0-based index (``False``)."
+    )
     back = dace.properties.Property(
         dtype=bool,
         default=False,
-        desc="Tie-break direction.  ``False`` keeps the first occurrence; ``True`` keeps the last.")
+        desc="Tie-break direction.  ``False`` keeps the first occurrence; ``True`` keeps the last.",
+    )
     dim = dace.properties.Property(
         dtype=int,
         default=None,
         allow_none=True,
-        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array to a scalar.")
+        desc="Fortran 1-based reduction axis.  ``None`` reduces the whole array to a scalar.",
+    )
 
     def __init__(self, name, *, one_based=True, back=False, dim=None, mask=False, **kwargs):
         """:param mask: if ``True``, expose an optional ``_mask`` input connector."""
@@ -367,49 +393,35 @@ class ArgMax(dace.sdfg.nodes.LibraryNode):
         return _validate_argminmax(self, sdfg, state)
 
 
-@oprepo.replaces('dace.libraries.standard.argmin')
-@oprepo.replaces('dace.libraries.standard.ArgMin')
-def argmin_libnode(pv: 'ProgramVisitor',
-                   sdfg: SDFG,
-                   state: SDFGState,
-                   x,
-                   idx,
-                   *,
-                   one_based=True,
-                   back=False,
-                   dim=None,
-                   mask=None):
+@oprepo.replaces("dace.libraries.standard.argmin")
+@oprepo.replaces("dace.libraries.standard.ArgMin")
+def argmin_libnode(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, idx, *, one_based=True, back=False, dim=None, mask=None
+):
     x_in = state.add_read(x)
     out = state.add_write(idx)
-    node = ArgMin('argmin', one_based=one_based, back=back, dim=dim, mask=mask is not None)
+    node = ArgMin("argmin", one_based=one_based, back=back, dim=dim, mask=mask is not None)
     state.add_node(node)
-    state.add_edge(x_in, None, node, '_x', mm.Memlet(x))
+    state.add_edge(x_in, None, node, "_x", mm.Memlet(x))
     if mask is not None:
         mask_in = state.add_read(mask)
-        state.add_edge(mask_in, None, node, '_mask', mm.Memlet(mask))
-    state.add_edge(node, '_idx', out, None, mm.Memlet(idx))
+        state.add_edge(mask_in, None, node, "_mask", mm.Memlet(mask))
+    state.add_edge(node, "_idx", out, None, mm.Memlet(idx))
     return []
 
 
-@oprepo.replaces('dace.libraries.standard.argmax')
-@oprepo.replaces('dace.libraries.standard.ArgMax')
-def argmax_libnode(pv: 'ProgramVisitor',
-                   sdfg: SDFG,
-                   state: SDFGState,
-                   x,
-                   idx,
-                   *,
-                   one_based=True,
-                   back=False,
-                   dim=None,
-                   mask=None):
+@oprepo.replaces("dace.libraries.standard.argmax")
+@oprepo.replaces("dace.libraries.standard.ArgMax")
+def argmax_libnode(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, idx, *, one_based=True, back=False, dim=None, mask=None
+):
     x_in = state.add_read(x)
     out = state.add_write(idx)
-    node = ArgMax('argmax', one_based=one_based, back=back, dim=dim, mask=mask is not None)
+    node = ArgMax("argmax", one_based=one_based, back=back, dim=dim, mask=mask is not None)
     state.add_node(node)
-    state.add_edge(x_in, None, node, '_x', mm.Memlet(x))
+    state.add_edge(x_in, None, node, "_x", mm.Memlet(x))
     if mask is not None:
         mask_in = state.add_read(mask)
-        state.add_edge(mask_in, None, node, '_mask', mm.Memlet(mask))
-    state.add_edge(node, '_idx', out, None, mm.Memlet(idx))
+        state.add_edge(mask_in, None, node, "_mask", mm.Memlet(mask))
+    state.add_edge(node, "_idx", out, None, mm.Memlet(idx))
     return []

@@ -33,21 +33,21 @@ def test_redundant_simple():
 
 
 def test_merge_simple():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_array('B', [20], dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
 
     state = sdfg.add_state()
-    a1 = state.add_read('A')
-    a2 = state.add_read('A')
-    b1 = state.add_write('B')
-    b2 = state.add_write('B')
-    t1 = state.add_tasklet('doit1', {'a'}, {'b'}, 'b = a')
-    t2 = state.add_tasklet('doit2', {'a'}, {'b'}, 'b = a')
-    state.add_edge(a1, None, t1, 'a', dace.Memlet('A[0]'))
-    state.add_edge(a2, None, t2, 'a', dace.Memlet('A[1]'))
-    state.add_edge(t1, 'b', b1, None, dace.Memlet('B[0]'))
-    state.add_edge(t2, 'b', b2, None, dace.Memlet('B[1]'))
+    a1 = state.add_read("A")
+    a2 = state.add_read("A")
+    b1 = state.add_write("B")
+    b2 = state.add_write("B")
+    t1 = state.add_tasklet("doit1", {"a"}, {"b"}, "b = a")
+    t2 = state.add_tasklet("doit2", {"a"}, {"b"}, "b = a")
+    state.add_edge(a1, None, t1, "a", dace.Memlet("A[0]"))
+    state.add_edge(a2, None, t2, "a", dace.Memlet("A[1]"))
+    state.add_edge(t1, "b", b1, None, dace.Memlet("B[0]"))
+    state.add_edge(t2, "b", b2, None, dace.Memlet("B[1]"))
 
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
     assert len(state.data_nodes()) == 2
@@ -66,34 +66,36 @@ def test_source_merge_refuses_when_data_is_also_written():
     """
     from dace.sdfg import nodes
 
-    sdfg = dace.SDFG('source_merge_with_write')
-    sdfg.add_array('b', [10], dace.float64)
-    sdfg.add_array('out', [10], dace.float64)
+    sdfg = dace.SDFG("source_merge_with_write")
+    sdfg.add_array("b", [10], dace.float64)
+    sdfg.add_array("out", [10], dace.float64)
     state = sdfg.add_state()
 
-    src_b1 = state.add_read('b')
-    sink_b = state.add_write('b')
-    t_write = state.add_tasklet('twrite', {'x'}, {'y'}, 'y = x + 1.0')
-    state.add_edge(src_b1, None, t_write, 'x', dace.Memlet('b[0]'))
-    state.add_edge(t_write, 'y', sink_b, None, dace.Memlet('b[0]'))
+    src_b1 = state.add_read("b")
+    sink_b = state.add_write("b")
+    t_write = state.add_tasklet("twrite", {"x"}, {"y"}, "y = x + 1.0")
+    state.add_edge(src_b1, None, t_write, "x", dace.Memlet("b[0]"))
+    state.add_edge(t_write, "y", sink_b, None, dace.Memlet("b[0]"))
 
-    src_b2 = state.add_read('b')
-    out_n = state.add_write('out')
-    t_read = state.add_tasklet('tread', {'x'}, {'y'}, 'y = x * 2.0')
-    state.add_edge(src_b2, None, t_read, 'x', dace.Memlet('b[0]'))
-    state.add_edge(t_read, 'y', out_n, None, dace.Memlet('out[0]'))
+    src_b2 = state.add_read("b")
+    out_n = state.add_write("out")
+    t_read = state.add_tasklet("tread", {"x"}, {"y"}, "y = x * 2.0")
+    state.add_edge(src_b2, None, t_read, "x", dace.Memlet("b[0]"))
+    state.add_edge(t_read, "y", out_n, None, dace.Memlet("out[0]"))
 
     sdfg.validate()
 
-    b_nodes_before = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'b']
+    b_nodes_before = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == "b"]
     assert len(b_nodes_before) == 3
 
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
 
-    b_nodes_after = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'b']
-    assert len(b_nodes_after) == 3, ('ArrayElimination merged source AccessNodes of a data container that is '
-                                     'also written in the same state -- this destroys the topological ordering '
-                                     'that keeps the read after the write')
+    b_nodes_after = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == "b"]
+    assert len(b_nodes_after) == 3, (
+        "ArrayElimination merged source AccessNodes of a data container that is "
+        "also written in the same state -- this destroys the topological ordering "
+        "that keeps the read after the write"
+    )
 
 
 def test_sink_merge_refuses_when_data_is_also_read():
@@ -104,41 +106,43 @@ def test_sink_merge_refuses_when_data_is_also_read():
     """
     from dace.sdfg import nodes
 
-    sdfg = dace.SDFG('sink_merge_with_read')
-    sdfg.add_array('a', [10], dace.float64)
-    sdfg.add_array('b', [10], dace.float64)
-    sdfg.add_array('c', [10], dace.float64)
+    sdfg = dace.SDFG("sink_merge_with_read")
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_array("b", [10], dace.float64)
+    sdfg.add_array("c", [10], dace.float64)
     state = sdfg.add_state()
 
-    src_b1 = state.add_read('b')
-    sink_a1 = state.add_write('a')
-    t_w1 = state.add_tasklet('tw1', {'x'}, {'y'}, 'y = x + 1.0')
-    state.add_edge(src_b1, None, t_w1, 'x', dace.Memlet('b[0]'))
-    state.add_edge(t_w1, 'y', sink_a1, None, dace.Memlet('a[0]'))
+    src_b1 = state.add_read("b")
+    sink_a1 = state.add_write("a")
+    t_w1 = state.add_tasklet("tw1", {"x"}, {"y"}, "y = x + 1.0")
+    state.add_edge(src_b1, None, t_w1, "x", dace.Memlet("b[0]"))
+    state.add_edge(t_w1, "y", sink_a1, None, dace.Memlet("a[0]"))
 
-    src_a = state.add_read('a')
-    sink_c = state.add_write('c')
-    t_r = state.add_tasklet('tr', {'x'}, {'y'}, 'y = x * 2.0')
-    state.add_edge(src_a, None, t_r, 'x', dace.Memlet('a[0]'))
-    state.add_edge(t_r, 'y', sink_c, None, dace.Memlet('c[0]'))
+    src_a = state.add_read("a")
+    sink_c = state.add_write("c")
+    t_r = state.add_tasklet("tr", {"x"}, {"y"}, "y = x * 2.0")
+    state.add_edge(src_a, None, t_r, "x", dace.Memlet("a[0]"))
+    state.add_edge(t_r, "y", sink_c, None, dace.Memlet("c[0]"))
 
-    src_b2 = state.add_read('b')
-    sink_a2 = state.add_write('a')
-    t_w2 = state.add_tasklet('tw2', {'x'}, {'y'}, 'y = x - 1.0')
-    state.add_edge(src_b2, None, t_w2, 'x', dace.Memlet('b[0]'))
-    state.add_edge(t_w2, 'y', sink_a2, None, dace.Memlet('a[0]'))
+    src_b2 = state.add_read("b")
+    sink_a2 = state.add_write("a")
+    t_w2 = state.add_tasklet("tw2", {"x"}, {"y"}, "y = x - 1.0")
+    state.add_edge(src_b2, None, t_w2, "x", dace.Memlet("b[0]"))
+    state.add_edge(t_w2, "y", sink_a2, None, dace.Memlet("a[0]"))
 
     sdfg.validate()
 
-    a_nodes_before = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'a']
+    a_nodes_before = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == "a"]
     assert len(a_nodes_before) == 3
 
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
 
-    a_nodes_after = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'a']
-    assert len(a_nodes_after) == 3, ('ArrayElimination merged sink AccessNodes of a data container that is '
-                                     'also read in the same state -- this destroys the topological ordering '
-                                     'that keeps the read between the two writes')
+    a_nodes_after = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == "a"]
+    assert len(a_nodes_after) == 3, (
+        "ArrayElimination merged sink AccessNodes of a data container that is "
+        "also read in the same state -- this destroys the topological ordering "
+        "that keeps the read between the two writes"
+    )
 
 
 def test_redundant_copy_refuses_when_source_is_a_war_carrier():
@@ -151,41 +155,43 @@ def test_redundant_copy_refuses_when_source_is_a_war_carrier():
     """
     from dace.sdfg import nodes
 
-    sdfg = dace.SDFG('redundant_copy_war_carrier')
-    sdfg.add_array('a', [10], dace.float64)
-    sdfg.add_array('b', [10], dace.float64)
-    sdfg.add_array('c', [10], dace.float64)
-    sdfg.add_transient('a_snap', [10], dace.float64)
+    sdfg = dace.SDFG("redundant_copy_war_carrier")
+    sdfg.add_array("a", [10], dace.float64)
+    sdfg.add_array("b", [10], dace.float64)
+    sdfg.add_array("c", [10], dace.float64)
+    sdfg.add_transient("a_snap", [10], dace.float64)
     state = sdfg.add_state()
 
     # a (read-only source) -> a_snap : a full-array copy that LOOKS redundant.
-    src_a = state.add_read('a')
-    a_snap = state.add_access('a_snap')
-    state.add_nedge(src_a, a_snap, dace.Memlet('a[0:10]'))
+    src_a = state.add_read("a")
+    a_snap = state.add_access("a_snap")
+    state.add_nedge(src_a, a_snap, dace.Memlet("a[0:10]"))
 
     # a_snap is read downstream (b[0] = a_snap[1]) -- so it is genuinely used.
-    t_r = state.add_tasklet('read_snap', {'x'}, {'y'}, 'y = x')
-    sink_b = state.add_write('b')
-    state.add_edge(a_snap, None, t_r, 'x', dace.Memlet('a_snap[1]'))
-    state.add_edge(t_r, 'y', sink_b, None, dace.Memlet('b[0]'))
+    t_r = state.add_tasklet("read_snap", {"x"}, {"y"}, "y = x")
+    sink_b = state.add_write("b")
+    state.add_edge(a_snap, None, t_r, "x", dace.Memlet("a_snap[1]"))
+    state.add_edge(t_r, "y", sink_b, None, dace.Memlet("b[0]"))
 
     # a is written IN PLACE (write-only sink) -> `a` is a read-and-written WAR carrier.
-    src_c = state.add_read('c')
-    sink_a = state.add_write('a')
-    t_w = state.add_tasklet('update_a', {'x'}, {'y'}, 'y = x * 2.0')
-    state.add_edge(src_c, None, t_w, 'x', dace.Memlet('c[0]'))
-    state.add_edge(t_w, 'y', sink_a, None, dace.Memlet('a[0]'))
+    src_c = state.add_read("c")
+    sink_a = state.add_write("a")
+    t_w = state.add_tasklet("update_a", {"x"}, {"y"}, "y = x * 2.0")
+    state.add_edge(src_c, None, t_w, "x", dace.Memlet("c[0]"))
+    state.add_edge(t_w, "y", sink_a, None, dace.Memlet("a[0]"))
 
     sdfg.validate()
-    assert 'a_snap' in sdfg.arrays
+    assert "a_snap" in sdfg.arrays
 
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
 
-    assert 'a_snap' in sdfg.arrays, ('ArrayElimination folded a redundant-copy snapshot back onto its source '
-                                     '`a`, which is also written in place in the same state (a WAR carrier) -- '
-                                     'this breaks the anti-dependence break and miscompiles (TSVC s212)')
-    snap_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'a_snap']
-    assert len(snap_nodes) == 1, 'the a_snap snapshot AccessNode must survive (its read still routes through it)'
+    assert "a_snap" in sdfg.arrays, (
+        "ArrayElimination folded a redundant-copy snapshot back onto its source "
+        "`a`, which is also written in place in the same state (a WAR carrier) -- "
+        "this breaks the anti-dependence break and miscompiles (TSVC s212)"
+    )
+    snap_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == "a_snap"]
+    assert len(snap_nodes) == 1, "the a_snap snapshot AccessNode must survive (its read still routes through it)"
 
 
 def test_source_merge_allowed_when_write_is_in_another_state():
@@ -197,42 +203,44 @@ def test_source_merge_allowed_when_write_is_in_another_state():
     """
     from dace.sdfg import nodes
 
-    sdfg = dace.SDFG('cross_state_safe_merge')
-    sdfg.add_array('b', [10], dace.float64)
-    sdfg.add_array('out1', [10], dace.float64)
-    sdfg.add_array('out2', [10], dace.float64)
+    sdfg = dace.SDFG("cross_state_safe_merge")
+    sdfg.add_array("b", [10], dace.float64)
+    sdfg.add_array("out1", [10], dace.float64)
+    sdfg.add_array("out2", [10], dace.float64)
 
-    s1 = sdfg.add_state('read_only')
-    src_b1 = s1.add_read('b')
-    src_b2 = s1.add_read('b')
-    o1 = s1.add_write('out1')
-    o2 = s1.add_write('out2')
-    t1 = s1.add_tasklet('t1', {'x'}, {'y'}, 'y = x + 1.0')
-    t2 = s1.add_tasklet('t2', {'x'}, {'y'}, 'y = x * 2.0')
-    s1.add_edge(src_b1, None, t1, 'x', dace.Memlet('b[0]'))
-    s1.add_edge(t1, 'y', o1, None, dace.Memlet('out1[0]'))
-    s1.add_edge(src_b2, None, t2, 'x', dace.Memlet('b[0]'))
-    s1.add_edge(t2, 'y', o2, None, dace.Memlet('out2[0]'))
+    s1 = sdfg.add_state("read_only")
+    src_b1 = s1.add_read("b")
+    src_b2 = s1.add_read("b")
+    o1 = s1.add_write("out1")
+    o2 = s1.add_write("out2")
+    t1 = s1.add_tasklet("t1", {"x"}, {"y"}, "y = x + 1.0")
+    t2 = s1.add_tasklet("t2", {"x"}, {"y"}, "y = x * 2.0")
+    s1.add_edge(src_b1, None, t1, "x", dace.Memlet("b[0]"))
+    s1.add_edge(t1, "y", o1, None, dace.Memlet("out1[0]"))
+    s1.add_edge(src_b2, None, t2, "x", dace.Memlet("b[0]"))
+    s1.add_edge(t2, "y", o2, None, dace.Memlet("out2[0]"))
 
-    s2 = sdfg.add_state('write')
-    sink_b = s2.add_write('b')
-    src_o1 = s2.add_read('out1')
-    t3 = s2.add_tasklet('t3', {'x'}, {'y'}, 'y = x - 1.0')
-    s2.add_edge(src_o1, None, t3, 'x', dace.Memlet('out1[0]'))
-    s2.add_edge(t3, 'y', sink_b, None, dace.Memlet('b[0]'))
+    s2 = sdfg.add_state("write")
+    sink_b = s2.add_write("b")
+    src_o1 = s2.add_read("out1")
+    t3 = s2.add_tasklet("t3", {"x"}, {"y"}, "y = x - 1.0")
+    s2.add_edge(src_o1, None, t3, "x", dace.Memlet("out1[0]"))
+    s2.add_edge(t3, "y", sink_b, None, dace.Memlet("b[0]"))
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
     sdfg.validate()
 
-    b_in_s1_before = [n for n in s1.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'b']
+    b_in_s1_before = [n for n in s1.nodes() if isinstance(n, nodes.AccessNode) and n.data == "b"]
     assert len(b_in_s1_before) == 2
 
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
 
-    b_in_s1_after = [n for n in s1.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'b']
-    assert len(b_in_s1_after) == 1, ('ArrayElimination should merge the two source b AccessNodes in S1 -- '
-                                     'the write to b lives in a separate state and the inter-state edge '
-                                     'enforces the ordering, so the merge is safe')
+    b_in_s1_after = [n for n in s1.nodes() if isinstance(n, nodes.AccessNode) and n.data == "b"]
+    assert len(b_in_s1_after) == 1, (
+        "ArrayElimination should merge the two source b AccessNodes in S1 -- "
+        "the write to b lives in a separate state and the inter-state edge "
+        "enforces the ordering, so the merge is safe"
+    )
 
 
 def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
@@ -259,9 +267,9 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
     # ArrayElimination -- the agent's bisect proved ArrayElimination is the
     # specific Simplify sub-pass that breaks s254.
     for label, pass_obj in _build_stages():
-        if label == 'end':
+        if label == "end":
             break
-        if hasattr(pass_obj, 'apply_pass'):
+        if hasattr(pass_obj, "apply_pass"):
             try:
                 pass_obj.apply_pass(sdfg, {})
             except Exception:
@@ -269,7 +277,8 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
     # Run every Simplify sub-pass EXCEPT ArrayElimination -- proves the SDFG
     # at this point is correct.
     from dace.transformation.passes.simplify import SimplifyPass
-    SimplifyPass(skip={'ArrayElimination'}).apply_pass(sdfg, {})
+
+    SimplifyPass(skip={"ArrayElimination"}).apply_pass(sdfg, {})
     sdfg.validate()
 
     n = 32
@@ -284,7 +293,7 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
 
     sa = a0.copy()
     sdfg(a=sa, b=b.copy(), LEN_1D=n)
-    assert np.allclose(sa, a_exp), 'baseline (no ArrayElimination) must compute s254 correctly'
+    assert np.allclose(sa, a_exp), "baseline (no ArrayElimination) must compute s254 correctly"
 
     # Now run ArrayElimination in isolation. If it preserves the carrier-RAW
     # ordering on the sibling transient ``x``, the kernel still computes the
@@ -295,11 +304,13 @@ def test_source_merge_preserves_carrier_raw_order_on_sibling_transient():
 
     sa = a0.copy()
     sdfg(a=sa, b=b.copy(), LEN_1D=n)
-    assert np.allclose(sa, a_exp), ('ArrayElimination broke the carrier RAW order: the two ``b`` source '
-                                    'AccessNodes were merged, destroying the implicit ordering between '
-                                    'the compute chain (reads OLD x) and the seed-write chain '
-                                    '(writes NEW x). Fix must extend the Phase 2.4a refusal to also '
-                                    'check sibling transients with both source AND sink in the same state.')
+    assert np.allclose(sa, a_exp), (
+        "ArrayElimination broke the carrier RAW order: the two ``b`` source "
+        "AccessNodes were merged, destroying the implicit ordering between "
+        "the compute chain (reads OLD x) and the seed-write chain "
+        "(writes NEW x). Fix must extend the Phase 2.4a refusal to also "
+        "check sibling transients with both source AND sink in the same state."
+    )
 
 
 def test_slice_view_fold_preserves_anti_dependence_on_output():
@@ -338,33 +349,35 @@ def test_slice_view_fold_preserves_anti_dependence_on_output():
     checked = False
     for state in sdfg.states():
         writes = [
-            n for n in state.data_nodes() if n.data == 'out' and state.in_degree(n) > 0 and state.out_degree(n) == 0
+            n for n in state.data_nodes() if n.data == "out" and state.in_degree(n) > 0 and state.out_degree(n) == 0
         ]
-        reads = [n for n in state.data_nodes() if n.data == 'out' and state.in_degree(n) == 0]
+        reads = [n for n in state.data_nodes() if n.data == "out" and state.in_degree(n) == 0]
         if not writes or not reads:
             continue
         views = [
-            n for n in state.data_nodes()
+            n
+            for n in state.data_nodes()
             if isinstance(sdfg.arrays[n.data], dace.data.View) and sdutil.get_last_view_node(state, n) in reads
         ]
         order = list(sdutil.dfs_topological_sort(state))
         last_read = max(order.index(v) for v in views)
         first_write = min(order.index(w) for w in writes)
-        assert last_read < first_write, ('codegen order puts the store into ``out`` ahead of the read of '
-                                         '``out`` -- the anti-dependence is gone')
+        assert last_read < first_write, (
+            "codegen order puts the store into ``out`` ahead of the read of ``out`` -- the anti-dependence is gone"
+        )
         checked = True
-    assert checked, 'expected a state that reads ``out`` and stores back into it'
+    assert checked, "expected a state that reads ``out`` and stores back into it"
 
     # Codegen text: the ``7.0 *`` multiply reads ``out``; it must be emitted before the store of ``lo``.
-    code = [c.clean_code for c in sdfg.generate_code() if c.title == 'Frame'][0]
-    read_pos = code.rindex('7.0 *')
-    write_pos = code.index('copy_lo_to_out', code.index('__program_'))
-    assert read_pos < write_pos, 'generated code stores into ``out`` before the read of ``out``'
+    code = [c.clean_code for c in sdfg.generate_code() if c.title == "Frame"][0]
+    read_pos = code.rindex("7.0 *")
+    write_pos = code.index("copy_lo_to_out", code.index("__program_"))
+    assert read_pos < write_pos, "generated code stores into ``out`` before the read of ``out``"
 
     # Values: bit-exact against the NumPy reference.
     got = inp.copy()
     sdfg(out=got)
-    assert np.array_equal(got, expected), f'wrong numbers, max deviation {np.abs(got - expected).max()}'
+    assert np.array_equal(got, expected), f"wrong numbers, max deviation {np.abs(got - expected).max()}"
 
 
 def test_slice_view_fold_still_removes_a_safe_view():
@@ -383,13 +396,13 @@ def test_slice_view_fold_still_removes_a_safe_view():
     sdfg.validate()
 
     views = {
-        n.data
-        for state in sdfg.states()
-        for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View)
+        n.data for state in sdfg.states() for n in state.data_nodes() if isinstance(sdfg.arrays[n.data], dace.data.View)
     }
-    assert not views & {'block', 'inp_0'}, (f'ArrayElimination stopped removing safe slice views: {sorted(views)} -- '
-                                            'the anti-dependence guard must only fire when the viewed container is '
-                                            'also written in the state')
+    assert not views & {"block", "inp_0"}, (
+        f"ArrayElimination stopped removing safe slice views: {sorted(views)} -- "
+        "the anti-dependence guard must only fire when the viewed container is "
+        "also written in the state"
+    )
 
     rng = np.random.default_rng(1)
     inp = rng.random((8, 8))
@@ -403,23 +416,23 @@ def test_folding_a_dead_view_chain_does_not_leave_its_source_isolated():
     indices) lost both views to the slice-view fold and kept the container's access node with no edges."""
     from dace.transformation.passes import analysis as ap
 
-    S = dace.symbol('S')
-    sdfg = dace.SDFG('dead_view_chain')
-    sdfg.add_array('A', [S], dace.int64, transient=True)
-    sdfg.add_array('out', [S], dace.int64)
-    sdfg.add_view('A_view', [1, S], dace.int64)
-    sdfg.add_view('A_view_view', [1, S], dace.int64)
-    init = sdfg.add_state('init')
-    fill = init.add_tasklet('fill', {}, {'o'}, 'o = 1')
-    me, mx = init.add_map('fill_map', dict(i='0:S'))
+    S = dace.symbol("S")
+    sdfg = dace.SDFG("dead_view_chain")
+    sdfg.add_array("A", [S], dace.int64, transient=True)
+    sdfg.add_array("out", [S], dace.int64)
+    sdfg.add_view("A_view", [1, S], dace.int64)
+    sdfg.add_view("A_view_view", [1, S], dace.int64)
+    init = sdfg.add_state("init")
+    fill = init.add_tasklet("fill", {}, {"o"}, "o = 1")
+    me, mx = init.add_map("fill_map", dict(i="0:S"))
     init.add_nedge(me, fill, dace.Memlet())
-    init.add_memlet_path(fill, mx, init.add_write('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
-    dead = sdfg.add_state_after(init, 'dead_views')
-    first_view = dead.add_access('A_view')
-    dead.add_edge(dead.add_read('A'), None, first_view, 'views', dace.Memlet('A[0:S]'))
-    dead.add_edge(first_view, None, dead.add_access('A_view_view'), 'views', dace.Memlet('A_view[0, 0:S]'))
-    use = sdfg.add_state_after(dead, 'use')
-    use.add_nedge(use.add_read('A'), use.add_write('out'), dace.Memlet('A[0:S]'))
+    init.add_memlet_path(fill, mx, init.add_write("A"), src_conn="o", memlet=dace.Memlet("A[i]"))
+    dead = sdfg.add_state_after(init, "dead_views")
+    first_view = dead.add_access("A_view")
+    dead.add_edge(dead.add_read("A"), None, first_view, "views", dace.Memlet("A[0:S]"))
+    dead.add_edge(first_view, None, dead.add_access("A_view_view"), "views", dace.Memlet("A_view[0, 0:S]"))
+    use = sdfg.add_state_after(dead, "use")
+    use.add_nedge(use.add_read("A"), use.add_write("out"), dace.Memlet("A[0:S]"))
     sdfg.validate()
 
     results = {
@@ -437,7 +450,7 @@ def test_folding_a_dead_view_chain_does_not_leave_its_source_isolated():
     assert np.array_equal(out, [1, 1, 1, 1]), out
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_redundant_simple()
     test_merge_simple()
     test_source_merge_refuses_when_data_is_also_written()

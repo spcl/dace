@@ -12,6 +12,7 @@ last ulp between the two generators the moment the step stopped pinning
 directory use -- 1e-9 relative for fp64 -- which is some seven orders tighter
 than any discrepancy a real codegen defect would produce.
 """
+
 import copy
 import numpy as np
 import dace
@@ -19,7 +20,7 @@ from dace.config import Config
 
 from tests.codegen.readable.conftest import assert_outputs_equivalent
 
-N, M, K = (dace.symbol(s) for s in ('N', 'M', 'K'))
+N, M, K = (dace.symbol(s) for s in ("N", "M", "K"))
 
 
 @dace.program
@@ -39,7 +40,7 @@ def mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
 
 @dace.program
 def jac(A: dace.float64[N], B: dace.float64[N]):
-    B[1:N - 1] = 0.33 * (A[0:N - 2] + A[1:N - 1] + A[2:N])
+    B[1 : N - 1] = 0.33 * (A[0 : N - 2] + A[1 : N - 1] + A[2:N])
 
 
 @dace.program
@@ -49,7 +50,7 @@ def trans(A: dace.float64[N], B: dace.float64[N]):
 
 
 def _build(prog, impl, name):
-    Config.set('compiler', 'cpu', 'implementation', value=impl)
+    Config.set("compiler", "cpu", "implementation", value=impl)
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.name = name
     return sdfg.compile()
@@ -58,11 +59,11 @@ def _build(prog, impl, name):
 def _equivalence(prog, args):
     base = args()
     a_leg = copy.deepcopy(base)
-    _build(prog, 'legacy', '%s_legacy' % prog.name)(**a_leg)
+    _build(prog, "legacy", "%s_legacy" % prog.name)(**a_leg)
     a_exp = copy.deepcopy(base)
-    _build(prog, 'experimental_readable', '%s_experimental' % prog.name)(**a_exp)
+    _build(prog, "experimental_readable", "%s_experimental" % prog.name)(**a_exp)
     arrays = {k: v for k, v in a_leg.items() if isinstance(v, np.ndarray)}
-    assert_outputs_equivalent(arrays, {k: a_exp[k] for k in arrays}, 'cpu', label=prog.name)
+    assert_outputs_equivalent(arrays, {k: a_exp[k] for k in arrays}, "cpu", label=prog.name)
 
 
 def test_elementwise():
@@ -92,11 +93,11 @@ def test_transient():
 
 def test_const_init_constexpr():
     # Constant-shape write-once array is promoted to a constexpr initializer.
-    sdfg_e = _const_sdfg('experimental_readable')
+    sdfg_e = _const_sdfg("experimental_readable")
     code = sdfg_e.generate_code()[0].clean_code
-    assert any('constexpr' in l and 'tbl[' in l and '= {' in l for l in code.splitlines())
+    assert any("constexpr" in l and "tbl[" in l and "= {" in l for l in code.splitlines())
     # No runtime allocation of the promoted array.
-    assert not any('tbl = new' in l for l in code.splitlines())
+    assert not any("tbl = new" in l for l in code.splitlines())
     # Correct result.
     A = np.arange(4, dtype=np.float64)
     B = np.zeros(4)
@@ -105,36 +106,36 @@ def test_const_init_constexpr():
 
 
 def _const_sdfg(impl):
-    Config.set('compiler', 'cpu', 'implementation', value=impl)
-    sdfg = dace.SDFG('cinit_%s' % impl)
-    sdfg.add_array('A', [4], dace.float64)
-    sdfg.add_array('B', [4], dace.float64)
-    sdfg.add_transient('tbl', [4], dace.float64)
-    s1 = sdfg.add_state('init')
-    me, mx = s1.add_map('initmap', dict(i='0:4'))
-    t1 = s1.add_tasklet('setc', {}, {'o'}, 'o = 2.0')
-    w1 = s1.add_access('tbl')
+    Config.set("compiler", "cpu", "implementation", value=impl)
+    sdfg = dace.SDFG("cinit_%s" % impl)
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_array("B", [4], dace.float64)
+    sdfg.add_transient("tbl", [4], dace.float64)
+    s1 = sdfg.add_state("init")
+    me, mx = s1.add_map("initmap", dict(i="0:4"))
+    t1 = s1.add_tasklet("setc", {}, {"o"}, "o = 2.0")
+    w1 = s1.add_access("tbl")
     s1.add_edge(me, None, t1, None, dace.Memlet())
-    s1.add_edge(t1, 'o', mx, 'IN_tbl', dace.Memlet('tbl[i]'))
-    s1.add_edge(mx, 'OUT_tbl', w1, None, dace.Memlet('tbl[0:4]'))
-    mx.add_in_connector('IN_tbl')
-    mx.add_out_connector('OUT_tbl')
-    s2 = sdfg.add_state_after(s1, 'compute')
-    ra, rt, wb = s2.add_access('A'), s2.add_access('tbl'), s2.add_access('B')
-    me2, mx2 = s2.add_map('cmap', dict(i='0:4'))
-    t2 = s2.add_tasklet('add', {'a', 't'}, {'o'}, 'o = a + t')
-    s2.add_memlet_path(ra, me2, t2, dst_conn='a', memlet=dace.Memlet('A[i]'))
-    s2.add_memlet_path(rt, me2, t2, dst_conn='t', memlet=dace.Memlet('tbl[i]'))
-    s2.add_memlet_path(t2, mx2, wb, src_conn='o', memlet=dace.Memlet('B[i]'))
+    s1.add_edge(t1, "o", mx, "IN_tbl", dace.Memlet("tbl[i]"))
+    s1.add_edge(mx, "OUT_tbl", w1, None, dace.Memlet("tbl[0:4]"))
+    mx.add_in_connector("IN_tbl")
+    mx.add_out_connector("OUT_tbl")
+    s2 = sdfg.add_state_after(s1, "compute")
+    ra, rt, wb = s2.add_access("A"), s2.add_access("tbl"), s2.add_access("B")
+    me2, mx2 = s2.add_map("cmap", dict(i="0:4"))
+    t2 = s2.add_tasklet("add", {"a", "t"}, {"o"}, "o = a + t")
+    s2.add_memlet_path(ra, me2, t2, dst_conn="a", memlet=dace.Memlet("A[i]"))
+    s2.add_memlet_path(rt, me2, t2, dst_conn="t", memlet=dace.Memlet("tbl[i]"))
+    s2.add_memlet_path(t2, mx2, wb, src_conn="o", memlet=dace.Memlet("B[i]"))
     sdfg.validate()
     return sdfg
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_elementwise()
     test_reduction_wcr()
     test_matmul_library()
     test_jacobi_stencil()
     test_transient()
     test_const_init_constexpr()
-    print('ok')
+    print("ok")

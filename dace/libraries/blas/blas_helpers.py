@@ -25,21 +25,21 @@ def matrix_view(subset) -> Tuple[List[Any], List[int]]:
 
 
 def to_blastype(dtype):
-    """ Returns a BLAS character that corresponds to the input type.
-        Used in MKL/CUBLAS calls. """
+    """Returns a BLAS character that corresponds to the input type.
+    Used in MKL/CUBLAS calls."""
 
     if dtype == np.float16:
-        return 'H'
+        return "H"
     elif dtype == np.float32:
-        return 'S'
+        return "S"
     elif dtype == np.float64:
-        return 'D'
+        return "D"
     elif dtype == np.complex64:
-        return 'C'
+        return "C"
     elif dtype == np.complex128:
-        return 'Z'
+        return "Z"
     else:
-        raise TypeError('Type %s not supported in BLAS operations' % dtype.__name__)
+        raise TypeError("Type %s not supported in BLAS operations" % dtype.__name__)
 
 
 def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
@@ -50,17 +50,17 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
     """
 
     if dtype == dtypes.float16:
-        return 'H', '__half', 'Half'
+        return "H", "__half", "Half"
     elif dtype == dtypes.float32:
-        return 'S', 'float', 'Float'
+        return "S", "float", "Float"
     elif dtype == dtypes.float64:
-        return 'D', 'double', 'Double'
+        return "D", "double", "Double"
     elif dtype == dtypes.complex64:
-        return 'C', 'cuComplex', 'Complex64'
+        return "C", "cuComplex", "Complex64"
     elif dtype == dtypes.complex128:
-        return 'Z', 'cuDoubleComplex', 'Complex128'
+        return "Z", "cuDoubleComplex", "Complex128"
     else:
-        raise TypeError('Type %s not supported in BLAS operations' % str(dtype))
+        raise TypeError("Type %s not supported in BLAS operations" % str(dtype))
 
 
 def rocblas_type(ctype: str) -> str:
@@ -70,44 +70,44 @@ def rocblas_type(ctype: str) -> str:
     rocSOLVER call that took the CUDA spelling emitted ``(cuDoubleComplex*)`` into a ROCm build,
     where that type does not exist, so quatrex_rgf's complex128 ``Inv`` failed to compile there.
     """
-    return {'cuComplex': 'rocblas_float_complex', 'cuDoubleComplex': 'rocblas_double_complex'}.get(ctype, ctype)
+    return {"cuComplex": "rocblas_float_complex", "cuDoubleComplex": "rocblas_double_complex"}.get(ctype, ctype)
 
 
 def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
     types = {
-        dtypes.float16: 'CUDA_R_16F',
-        dtypes.float32: 'CUDA_R_32F',
-        dtypes.complex64: 'CUDA_C_32F',
-        dtypes.float64: 'CUDA_R_64F',
-        dtypes.complex128: 'CUDA_C_64F',
-        dtypes.int8: 'CUDA_R_8I',
-        dtypes.uint8: 'CUDA_R_8U',
-        dtypes.int32: 'CUDA_R_32I',
-        #dtypes.complex32: 'CUDA_C_16F',
-        #dtypes.bfloat16: 'CUDA_R_16BF',
-        #dtypes.bcomplex32: 'CUDA_C_16BF',
-        #dtypes.icomplex16: 'CUDA_C_8I',
-        #dtypes.iucomplex16: 'CUDA_C_8U',
-        #dtypes.icomplex64: 'CUDA_C_32I',
+        dtypes.float16: "CUDA_R_16F",
+        dtypes.float32: "CUDA_R_32F",
+        dtypes.complex64: "CUDA_C_32F",
+        dtypes.float64: "CUDA_R_64F",
+        dtypes.complex128: "CUDA_C_64F",
+        dtypes.int8: "CUDA_R_8I",
+        dtypes.uint8: "CUDA_R_8U",
+        dtypes.int32: "CUDA_R_32I",
+        # dtypes.complex32: 'CUDA_C_16F',
+        # dtypes.bfloat16: 'CUDA_R_16BF',
+        # dtypes.bcomplex32: 'CUDA_C_16BF',
+        # dtypes.icomplex16: 'CUDA_C_8I',
+        # dtypes.iucomplex16: 'CUDA_C_8U',
+        # dtypes.icomplex64: 'CUDA_C_32I',
     }
     return types[dtype]
 
 
 def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
     types = {
-        dtypes.float16: '16F',
-        dtypes.float32: '32F',
-        dtypes.float64: '64F',
-        dtypes.complex64: '32F',
-        dtypes.complex128: '64F',
-        dtypes.int8: '32I',
-        dtypes.int16: '32I',
-        dtypes.int32: '32I',
-        dtypes.int64: '32I',
-        dtypes.uint8: '32I',
-        dtypes.uint16: '32I',
-        dtypes.uint32: '32I',
-        dtypes.uint64: '32I',
+        dtypes.float16: "16F",
+        dtypes.float32: "32F",
+        dtypes.float64: "64F",
+        dtypes.complex64: "32F",
+        dtypes.complex128: "64F",
+        dtypes.int8: "32I",
+        dtypes.int16: "32I",
+        dtypes.int32: "32I",
+        dtypes.int64: "32I",
+        dtypes.uint8: "32I",
+        dtypes.uint16: "32I",
+        dtypes.uint32: "32I",
+        dtypes.uint64: "32I",
     }
     return types[dtype]
 
@@ -162,90 +162,34 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     sCM, sCN = c_strides[-2:]
 
     opts = {
-        'mkm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mnm': {
-            'swap': False,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'knm': {
-            'swap': False,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCN,
-            'ta': 'T',
-            'tb': 'T'
-        },
-        'knn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'N'
-        },
-        'kkn': {
-            'swap': True,
-            'lda': sAM,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'N',
-            'tb': 'T'
-        },
-        'mnn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBK,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'N'
-        },
-        'mkn': {
-            'swap': True,
-            'lda': sAK,
-            'ldb': sBN,
-            'ldc': sCM,
-            'ta': 'T',
-            'tb': 'T'
-        },
+        "mkm": {"swap": False, "lda": sAK, "ldb": sBN, "ldc": sCN, "ta": "N", "tb": "N"},
+        "kkm": {"swap": False, "lda": sAM, "ldb": sBN, "ldc": sCN, "ta": "T", "tb": "N"},
+        "mnm": {"swap": False, "lda": sAK, "ldb": sBK, "ldc": sCN, "ta": "N", "tb": "T"},
+        "knm": {"swap": False, "lda": sAM, "ldb": sBK, "ldc": sCN, "ta": "T", "tb": "T"},
+        "knn": {"swap": True, "lda": sAM, "ldb": sBK, "ldc": sCM, "ta": "N", "tb": "N"},
+        "kkn": {"swap": True, "lda": sAM, "ldb": sBN, "ldc": sCM, "ta": "N", "tb": "T"},
+        "mnn": {"swap": True, "lda": sAK, "ldb": sBK, "ldc": sCM, "ta": "T", "tb": "N"},
+        "mkn": {"swap": True, "lda": sAK, "ldb": sBN, "ldc": sCM, "ta": "T", "tb": "T"},
     }
 
     if sAM == 1 and sAK != 1:
-        optA = 'm'
+        optA = "m"
     elif sAK == 1:
-        optA = 'k'
+        optA = "k"
     else:
         raise Exception("sAM or sAK should be 1")
 
     if sBN == 1:
-        optB = 'n'
+        optB = "n"
     elif sBK == 1:
-        optB = 'k'
+        optB = "k"
     else:
         raise Exception("sBK or sBN should be 1")
 
     if sCM == 1:
-        optC = 'm'
+        optC = "m"
     elif sCN == 1:
-        optC = 'n'
+        optC = "n"
     else:
         raise Exception("sCM or sCN should be 1")
 
@@ -253,22 +197,23 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
 
 
 def check_one_device(*descs: data.Data):
-    """ Raise unless one device can access every operand: a register vector and a heap matrix both live on the
-        host, although their storage types differ.
+    """Raise unless one device can access every operand: a register vector and a heap matrix both live on the
+    host, although their storage types differ.
 
-        :param descs: the operand descriptors.
+    :param descs: the operand descriptors.
     """
     if not any(
-            all(dtypes.can_access(schedule, desc.storage) for desc in descs)
-            for schedule in (dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)):
+        all(dtypes.can_access(schedule, desc.storage) for desc in descs)
+        for schedule in (dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Device)
+    ):
         raise ValueError("Input matrices must be accessible from one device")
 
 
 def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
-    """ If schedule cannot access all passed descriptors, through an error.
+    """If schedule cannot access all passed descriptors, through an error.
 
-        :param schedule: the schedule.
-        :param descs: the descriptors to check.
+    :param schedule: the schedule.
+    :param descs: the descriptors to check.
     """
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
@@ -294,6 +239,7 @@ def validate_level1_vector_to_scalar(node, sdfg, state, op_name: str):
     :raises ValueError: arity / rank / output-size mismatches.
     """
     import copy as _copy
+
     in_edges = state.in_edges(node)
     out_edges = state.out_edges(node)
     if len(in_edges) != 1 or len(out_edges) != 1:
@@ -331,6 +277,7 @@ def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
     """
     from dace import Memlet  # Avoid import loop
     from dace.symbolic import symstr
+
     sdfg = state.sdfg
     for edge in [e for e in state.in_edges(node) if e.dst_conn in connectors]:
         src_desc = sdfg.arrays[edge.data.data]
@@ -338,34 +285,38 @@ def promote_operands(node, state, connectors, dtype: dtypes.typeclass) -> None:
             continue
         subset = edge.data.subset
         shape = subset.size()
-        name, desc = sdfg.add_transient(f'{node.label}{edge.dst_conn}_as_{dtype.to_string()}',
-                                        shape,
-                                        dtype,
-                                        storage=src_desc.storage,
-                                        find_new_name=True)
-        params = [f'__promote{d}' for d in range(len(shape))]
-        index = ', '.join(f'{symstr(begin)} + ({symstr(step)}) * {p}'
-                          for (begin, _, step), p in zip(subset.ranges, params))
+        name, desc = sdfg.add_transient(
+            f"{node.label}{edge.dst_conn}_as_{dtype.to_string()}",
+            shape,
+            dtype,
+            storage=src_desc.storage,
+            find_new_name=True,
+        )
+        params = [f"__promote{d}" for d in range(len(shape))]
+        index = ", ".join(
+            f"{symstr(begin)} + ({symstr(step)}) * {p}" for (begin, _, step), p in zip(subset.ranges, params)
+        )
         # A device-resident operand is cast by a kernel: host code cannot read GPU_Global memory.
-        schedule = (dtypes.ScheduleType.GPU_Device
-                    if src_desc.storage == dtypes.StorageType.GPU_Global else dtypes.ScheduleType.Default)
-        entry, exit_ = state.add_map(f'{name}_cast', {
-            p: f'0:{symstr(n)}'
-            for p, n in zip(params, shape)
-        },
-                                     schedule=schedule)
-        cast = state.add_tasklet(f'{name}_cast', {'__inp'}, {'__out'}, '__out = __inp')
+        schedule = (
+            dtypes.ScheduleType.GPU_Device
+            if src_desc.storage == dtypes.StorageType.GPU_Global
+            else dtypes.ScheduleType.Default
+        )
+        entry, exit_ = state.add_map(
+            f"{name}_cast", {p: f"0:{symstr(n)}" for p, n in zip(params, shape)}, schedule=schedule
+        )
+        cast = state.add_tasklet(f"{name}_cast", {"__inp"}, {"__out"}, "__out = __inp")
         promoted = state.add_access(name)
-        state.add_memlet_path(edge.src,
-                              entry,
-                              cast,
-                              src_conn=edge.src_conn,
-                              dst_conn='__inp',
-                              memlet=Memlet(data=edge.data.data, subset=index))
-        state.add_memlet_path(cast,
-                              exit_,
-                              promoted,
-                              src_conn='__out',
-                              memlet=Memlet(data=name, subset=', '.join(params)))
+        state.add_memlet_path(
+            edge.src,
+            entry,
+            cast,
+            src_conn=edge.src_conn,
+            dst_conn="__inp",
+            memlet=Memlet(data=edge.data.data, subset=index),
+        )
+        state.add_memlet_path(
+            cast, exit_, promoted, src_conn="__out", memlet=Memlet(data=name, subset=", ".join(params))
+        )
         state.add_edge(promoted, None, node, edge.dst_conn, Memlet.from_array(name, desc))
         state.remove_edge(edge)

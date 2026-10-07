@@ -8,6 +8,7 @@ falls, so the two meet part way through any state that started with more nodes t
 and a graph that was converging is reported as a node that expands into itself. What separates the
 cases is whether the census of library nodes ever CHANGES, which is what these tests hold.
 """
+
 import copy
 import json
 import os
@@ -40,14 +41,14 @@ def many_fills_sdfg() -> dace.SDFG:
     """
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
-    sdfg = dace.SDFG('many_fills')
-    sdfg.add_array('out', [FILL_COUNT, ROW], dace.float64)
-    state = sdfg.add_state('fills')
-    write = state.add_write('out')
+    sdfg = dace.SDFG("many_fills")
+    sdfg.add_array("out", [FILL_COUNT, ROW], dace.float64)
+    state = sdfg.add_state("fills")
+    write = state.add_write("out")
     for row in range(FILL_COUNT):
-        fill = FillLibraryNode(f'fill_{row}', value=float(row))
+        fill = FillLibraryNode(f"fill_{row}", value=float(row))
         state.add_node(fill)
-        state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, write, None, dace.Memlet(f'out[{row}, 0:{ROW}]'))
+        state.add_edge(fill, FillLibraryNode.OUTPUT_CONNECTOR_NAME, write, None, dace.Memlet(f"out[{row}, 0:{ROW}]"))
     return sdfg
 
 
@@ -56,18 +57,18 @@ def test_a_state_holding_more_library_nodes_than_the_tolerance_is_expanded_not_c
     sdfg = many_fills_sdfg()
     force_renderable_expansions(sdfg)
     left = [node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.LibraryNode)]
-    assert not left, f'{len(left)} library nodes survived expansion: {sorted(type(n).__name__ for n in left)}'
+    assert not left, f"{len(left)} library nodes survived expansion: {sorted(type(n).__name__ for n in left)}"
 
 
 def test_a_state_holding_more_library_nodes_than_the_tolerance_renders_and_runs():
     """The same graph renders to a standalone unit that writes every row."""
     sdfg = many_fills_sdfg()
-    rendering = render(sdfg, language='c++')
+    rendering = render(sdfg, language="c++")
     assert_standalone(rendering.code, sdfg.name)
     out = np.zeros((FILL_COUNT, ROW), dtype=np.float64)
-    call_standalone(build_standalone(rendering.code, sdfg.name), sdfg, {'out': out})
+    call_standalone(build_standalone(rendering.code, sdfg.name), sdfg, {"out": out})
     expected = np.repeat(np.arange(FILL_COUNT, dtype=np.float64)[:, None], ROW, axis=1)
-    assert np.array_equal(out, expected), f'fills did not reach every row:\n{out}'
+    assert np.array_equal(out, expected), f"fills did not reach every row:\n{out}"
 
 
 def self_reproducing_expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> dace.SDFG:
@@ -77,13 +78,18 @@ def self_reproducing_expansion(node, parent_state: dace.SDFGState, parent_sdfg: 
     edge = next(e for e in parent_state.out_edges(node) if e.src_conn == FillLibraryNode.OUTPUT_CONNECTOR_NAME)
     outer = parent_state.sdfg.arrays[edge.data.data]
 
-    sdfg = dace.SDFG(f'{node.label}_sdfg')
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
     sdfg.add_array(FillLibraryNode.OUTPUT_CONNECTOR_NAME, [ROW], outer.dtype, outer.storage)
-    state = sdfg.add_state(f'{node.label}_state')
-    inner = FillLibraryNode(f'{node.label}_again', value=node.value)
+    state = sdfg.add_state(f"{node.label}_state")
+    inner = FillLibraryNode(f"{node.label}_again", value=node.value)
     state.add_node(inner)
-    state.add_edge(inner, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write(FillLibraryNode.OUTPUT_CONNECTOR_NAME),
-                   None, dace.Memlet(f'{FillLibraryNode.OUTPUT_CONNECTOR_NAME}[0:{ROW}]'))
+    state.add_edge(
+        inner,
+        FillLibraryNode.OUTPUT_CONNECTOR_NAME,
+        state.add_write(FillLibraryNode.OUTPUT_CONNECTOR_NAME),
+        None,
+        dace.Memlet(f"{FillLibraryNode.OUTPUT_CONNECTOR_NAME}[0:{ROW}]"),
+    )
     return sdfg
 
 
@@ -101,25 +107,28 @@ def test_a_library_node_that_expands_into_itself_is_reported_by_what_was_observe
     """
     from dace.libraries.standard.nodes.fill import FillLibraryNode
 
-    sdfg = dace.SDFG('self_expanding')
-    sdfg.add_array('out', [ROW], dace.float64)
-    state = sdfg.add_state('cycle')
-    node = FillLibraryNode('cycler', value=1.0)
+    sdfg = dace.SDFG("self_expanding")
+    sdfg.add_array("out", [ROW], dace.float64)
+    state = sdfg.add_state("cycle")
+    node = FillLibraryNode("cycler", value=1.0)
     state.add_node(node)
-    state.add_edge(node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write('out'), None,
-                   dace.Memlet(f'out[0:{ROW}]'))
+    state.add_edge(
+        node, FillLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_write("out"), None, dace.Memlet(f"out[0:{ROW}]")
+    )
 
     for implementation in FillLibraryNode.implementations.values():
-        monkeypatch.setattr(implementation, 'expansion', staticmethod(self_reproducing_expansion), raising=False)
+        monkeypatch.setattr(implementation, "expansion", staticmethod(self_reproducing_expansion), raising=False)
 
     with pytest.raises(NotImplementedError) as caught:
         force_renderable_expansions(sdfg)
     message = str(caught.value)
-    assert 'FillLibraryNode x1' in message, f'the refusal does not report the census it saw: {message}'
-    assert f'{MAX_EXPANSION_STALLED_ROUNDS + 1} consecutive rounds' in message, (
-        f'the refusal does not say how long the census stood: {message}')
-    assert 'appears to expand into itself' not in message, (
-        f'the refusal asserts a cause it has not established: {message}')
+    assert "FillLibraryNode x1" in message, f"the refusal does not report the census it saw: {message}"
+    assert f"{MAX_EXPANSION_STALLED_ROUNDS + 1} consecutive rounds" in message, (
+        f"the refusal does not say how long the census stood: {message}"
+    )
+    assert "appears to expand into itself" not in message, (
+        f"the refusal asserts a cause it has not established: {message}"
+    )
 
 
 def render_many_fills() -> Dict[str, str]:
@@ -133,15 +142,15 @@ def render_many_fills() -> Dict[str, str]:
     from dace.codegen import codegen as dace_codegen
     from dace.codegen.cpf import cpf_lowering, dialect_for, frame_object, prepare
 
-    cpp = render(many_fills_sdfg(), language='c++').code
-    c = render(many_fills_sdfg(), language='c').code
+    cpp = render(many_fills_sdfg(), language="c++").code
+    c = render(many_fills_sdfg(), language="c").code
 
     raw = copy.deepcopy(many_fills_sdfg())
-    with cpf_lowering.dialect_scope(dialect_for('c++')):
+    with cpf_lowering.dialect_scope(dialect_for("c++")):
         prepare(raw)
         objects = dace_codegen.generate_code(raw)
     codegen_cpp = frame_object(objects, raw.name).clean_code
-    return {'cpf_c': c, 'cpf_cpp': cpp, 'codegen_cpp': codegen_cpp}
+    return {"cpf_c": c, "cpf_cpp": cpp, "codegen_cpp": codegen_cpp}
 
 
 def test_the_same_sdfg_renders_byte_identically_across_fresh_processes(tmp_path: pathlib.Path) -> None:
@@ -151,30 +160,32 @@ def test_the_same_sdfg_renders_byte_identically_across_fresh_processes(tmp_path:
     the next node to expand by GUID -- it must pick by graph order instead.
     """
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(dace.__file__)))
-    env = dict(os.environ, PYTHONHASHSEED='0', PYTHONPATH=repo_root)
+    env = dict(os.environ, PYTHONHASHSEED="0", PYTHONPATH=repo_root)
     runs = []
     for run_index in range(2):
         # A file, not stdout: DACE_testing_serialization=1 makes generate_code print to stdout.
-        result_path = tmp_path / f'render_{run_index}.json'
+        result_path = tmp_path / f"render_{run_index}.json"
         proc = subprocess.run(
-            [sys.executable, __file__, '--render-worker', str(result_path)],
+            [sys.executable, __file__, "--render-worker", str(result_path)],
             cwd=repo_root,
             env=env,
             capture_output=True,
             text=True,
-            timeout=300)
-        assert proc.returncode == 0, f'render worker failed:\n{proc.stderr}'
+            timeout=300,
+        )
+        assert proc.returncode == 0, f"render worker failed:\n{proc.stderr}"
         runs.append(json.loads(result_path.read_text()))
     first, second = runs
     for key in first:
         assert first[key] == second[key], (
-            f'{key}: CPF output differs between two PYTHONHASHSEED=0 renders of the same SDFG in fresh '
-            'processes -- expansion order is not deterministic')
+            f"{key}: CPF output differs between two PYTHONHASHSEED=0 renders of the same SDFG in fresh "
+            "processes -- expansion order is not deterministic"
+        )
 
 
-if __name__ == '__main__':
-    if len(sys.argv) > 2 and sys.argv[1] == '--render-worker':
-        with open(sys.argv[2], 'w') as result_file:
+if __name__ == "__main__":
+    if len(sys.argv) > 2 and sys.argv[1] == "--render-worker":
+        with open(sys.argv[2], "w") as result_file:
             json.dump(render_many_fills(), result_file)
         sys.exit(0)
-    pytest.main([__file__, '-q'])
+    pytest.main([__file__, "-q"])

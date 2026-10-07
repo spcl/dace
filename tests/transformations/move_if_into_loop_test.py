@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for MoveIfIntoLoop: push a loop-invariant guarding conditional into
-    the loop body (`if c: for i: body` -> `for i: if c: body`). Conservative:
-    single branch, no else, branch region is exactly one LoopRegion, and the
-    condition is loop-invariant. Kernels use the dace Python frontend; every
-    test checks numerical equivalence against a deep-copied pre-pass run for
-    both the taken and not-taken condition.
+"""Tests for MoveIfIntoLoop: push a loop-invariant guarding conditional into
+the loop body (`if c: for i: body` -> `for i: if c: body`). Conservative:
+single branch, no else, branch region is exactly one LoopRegion, and the
+condition is loop-invariant. Kernels use the dace Python frontend; every
+test checks numerical equivalence against a deep-copied pre-pass run for
+both the taken and not-taken condition.
 """
+
 import copy
 
 import numpy as np
@@ -26,7 +27,7 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
     assert_tree_consistent(sdfg)
 
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -137,8 +138,9 @@ _MIL_N = dace.symbol("_MIL_N")
 
 
 @dace.program
-def _guard_over_bound_dependent_loop(a: dace.float64[_MIL_N], b: dace.float64[_MIL_N], c: dace.float64[_MIL_N],
-                                     kk: dace.int32):
+def _guard_over_bound_dependent_loop(
+    a: dace.float64[_MIL_N], b: dace.float64[_MIL_N], c: dace.float64[_MIL_N], kk: dace.int32
+):
     if kk > 0:
         for i in range(_MIL_N - kk):
             a[i] = a[i + kk] + b[i] * c[i]
@@ -190,7 +192,7 @@ def test_refuses_a_prep_that_carries_its_own_value():
     a = rng.random(n)
 
     sdfg = carried_prep.to_sdfg(simplify=True)
-    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None, 'a prep carrying its own value must not sink'
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is None, "a prep carrying its own value must not sink"
     sdfg.validate()
 
     for cval in (1, 0):
@@ -198,10 +200,10 @@ def test_refuses_a_prep_that_carries_its_own_value():
         out = np.zeros(n)
         sdfg(a=a.copy(), b=out, c=np.array([cval], np.int32), acc=acc, N=n)
         if cval > 0:
-            assert np.allclose(acc, 6.0), f'the prep must run exactly once, acc={acc[0]}'
-            assert np.allclose(out, a + 6.0), f'got {out[:3]}'
+            assert np.allclose(acc, 6.0), f"the prep must run exactly once, acc={acc[0]}"
+            assert np.allclose(out, a + 6.0), f"got {out[:3]}"
         else:
-            assert np.allclose(acc, 3.0), 'the guard was false: the prep must not run'
+            assert np.allclose(acc, 3.0), "the guard was false: the prep must not run"
 
 
 def test_staged_prep_still_sinks():
@@ -209,7 +211,7 @@ def test_staged_prep_still_sinks():
     same value from the same loop-invariant inputs, so it stays idempotent and must still move.
     ``nested_guards`` is exactly that shape -- its condition is materialised in stages."""
     sdfg = nested_guards.to_sdfg(simplify=True)
-    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None, 'a staged, idempotent prep must still sink'
+    assert MoveIfIntoLoop().apply_pass(sdfg, {}) is not None, "a staged, idempotent prep must still sink"
     sdfg.validate()
 
 
@@ -239,7 +241,7 @@ def test_the_cfg_list_is_never_rebuilt_by_the_pass(monkeypatch):
             lists.append(sdfg.cfg_list)
         return result
 
-    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded)
+    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, "reset_cfg_list", recorded)
     assert MoveIfIntoLoop().apply_pass(sdfg, {}) == 3
     assert len(lists) == 1, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
@@ -280,13 +282,13 @@ def test_push_moves_only_the_guard_it_is_given():
     a = np.random.rand(n)
     base = nested_guards.to_sdfg(simplify=True)
     sdfg = nested_guards.to_sdfg(simplify=True)
-    (outer, ) = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    (inner, ) = [c for c in _conds(sdfg) if c is not outer]
+    (outer,) = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
+    (inner,) = [c for c in _conds(sdfg) if c is not outer]
 
     assert MoveIfIntoLoop.push(inner)
 
     sdfg.validate()
-    (loop, ) = _loops(sdfg)
+    (loop,) = _loops(sdfg)
     assert loop.parent_graph is outer.branches[0][1]
     for cval, dval in ((1, 2.0), (1, 50.0), (0, 2.0)):
         ref, out = np.full(n, 4.0), np.full(n, 4.0)
@@ -298,7 +300,7 @@ def test_push_moves_only_the_guard_it_is_given():
 
 def test_push_refuses_a_guard_that_reads_the_loop_variable():
     sdfg = loop_var_in_cond.to_sdfg(simplify=True)
-    (cond, ) = _conds(sdfg)
+    (cond,) = _conds(sdfg)
     before = sdfg.to_json()
 
     assert not MoveIfIntoLoop.push(cond)

@@ -47,6 +47,7 @@ class TaskletType(Enum):
         UNARY_SCALAR: Single scalar operand (e.g., out = abs(scl), out = scl * scl)
         UNARY_SYMBOL: Single symbol operand (e.g., out = abs(sym), out = sym * sym)
     """
+
     ARRAY_ARRAY_ASSIGNMENT = "array_array_assignment"
     ARRAY_SYMBOL_ASSIGNMENT = "array_symbol_assignment"
     ARRAY_SCALAR_ASSIGNMENT = "array_scalar_assignment"
@@ -67,10 +68,9 @@ class TaskletType(Enum):
     UNKNOWN = "unknown"  # the classifier could not match a shape (unknown function call, unfamiliar pattern, etc.); callers fall back via ``ttype == TaskletType.UNKNOWN``.
 
 
-def add_abort_guard(state: dace.SDFGState,
-                    name: str,
-                    condition: str,
-                    inputs: typing.Optional[Dict[str, typing.Any]] = None) -> dace.nodes.Tasklet:
+def add_abort_guard(
+    state: dace.SDFGState, name: str, condition: str, inputs: typing.Optional[Dict[str, typing.Any]] = None
+) -> dace.nodes.Tasklet:
     """Add a Python tasklet ``if <condition>: abort()`` to ``state``, marked side-effecting.
 
     Every runtime precondition guard is built here, so all of them share one shape: C and C++
@@ -90,13 +90,16 @@ def add_abort_guard(state: dace.SDFGState,
 
 def abort_guard_code(condition: str) -> str:
     """The body :func:`add_abort_guard` gives a guard on ``condition``, normalized as stored."""
-    return CodeBlock(f'if {condition}:\n    abort()').as_string
+    return CodeBlock(f"if {condition}:\n    abort()").as_string
 
 
 def is_abort_guard(node: dace.nodes.Node) -> bool:
     """Whether ``node`` is a guard tasklet built by :func:`add_abort_guard`."""
-    return (isinstance(node, dace.nodes.Tasklet) and node.language == dace.dtypes.Language.Python
-            and 'abort()' in node.code.as_string)
+    return (
+        isinstance(node, dace.nodes.Tasklet)
+        and node.language == dace.dtypes.Language.Python
+        and "abort()" in node.code.as_string
+    )
 
 
 def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
@@ -118,13 +121,13 @@ def token_replace_dict(code: str, repldict: Dict[str, str]) -> str:
     """
 
     # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', code)
+    tokens = re.split(r"(\s+|[()\[\]])", code)
 
     # Replace tokens that exactly match src
     tokens = [repldict[token.strip()] if token.strip() in repldict else token for token in tokens]
 
     # Recombine everything
-    return ''.join(tokens).strip()
+    return "".join(tokens).strip()
 
 
 def token_match(string_to_check: str, pattern_str: str) -> str:
@@ -146,7 +149,7 @@ def token_match(string_to_check: str, pattern_str: str) -> str:
     """
 
     # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
+    tokens = re.split(r"(\s+|[()\[\]])", string_to_check)
 
     # Replace tokens that exactly match src
     tokens = {token.strip() for token in tokens}
@@ -172,7 +175,7 @@ def token_split(string_to_check: str) -> Set[str]:
         The set of tokens extracted from the string.
     """
     # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
+    tokens = re.split(r"(\s+|[()\[\]])", string_to_check)
 
     # Replace tokens that exactly match src
     tokens = {token.strip() for token in tokens}
@@ -198,7 +201,7 @@ def token_split_variable_names(string_to_check: str) -> Set[str]:
         The set of tokens extracted from the string.
     """
     # Split while keeping delimiters
-    tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
+    tokens = re.split(r"(\s+|[()\[\]])", string_to_check)
 
     # Replace tokens that exactly match src
     tokens = {token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()}
@@ -209,7 +212,7 @@ def token_split_variable_names(string_to_check: str) -> Set[str]:
 #: A name being assigned in a non-Python body: ``x =``, ``x +=``, ``x <<=``, but not ``x ==`` /
 #: ``x !=`` / ``x <=`` / ``x >=``. Used where the body cannot be parsed, so it is deliberately
 #: over-eager: reporting an assignment that is not one only trips a sanity check.
-_NON_PYTHON_ASSIGNMENT = r'(?<![\w.]){name}\s*(?:[+\-*/%&|^]|<<|>>)?=(?!=)'
+_NON_PYTHON_ASSIGNMENT = r"(?<![\w.]){name}\s*(?:[+\-*/%&|^]|<<|>>)?=(?!=)"
 
 
 def tasklet_assigns_name(tasklet: dace.nodes.Tasklet, name: str) -> bool:
@@ -242,7 +245,7 @@ def tasklet_assigns_name(tasklet: dace.nodes.Tasklet, name: str) -> bool:
         if isinstance(node, ast.Assign):
             targets = node.targets
         elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.For, ast.NamedExpr)):
-            targets = (node.target, )
+            targets = (node.target,)
         for target in targets:
             if any(isinstance(sub, ast.Name) and sub.id == name for sub in ast.walk(target)):
                 return True
@@ -310,11 +313,13 @@ def tasklet_has_symbol(tasklet: dace.nodes.Tasklet, symbol_str: str) -> bool:
         return token_match(code, symbol_str)
 
 
-def replace_code(code_str: str,
-                 code_lang: dace.dtypes.Language,
-                 repldict: Dict[str, str],
-                 py_only: bool = False,
-                 use_sym_expr: bool = True) -> str:
+def replace_code(
+    code_str: str,
+    code_lang: dace.dtypes.Language,
+    repldict: Dict[str, str],
+    py_only: bool = False,
+    use_sym_expr: bool = True,
+) -> str:
     """
     Replaces variables in a code string according to a replacement dictionary.
     Supports Python symbolic substitution and fallback string-based replacement.
@@ -377,10 +382,9 @@ def replace_code(code_str: str,
             assert False
 
 
-def tasklet_replace_code(tasklet: dace.nodes.Tasklet,
-                         repldict: Dict[str, str],
-                         py_only: bool = True,
-                         use_sym_expr: bool = True):
+def tasklet_replace_code(
+    tasklet: dace.nodes.Tasklet, repldict: Dict[str, str], py_only: bool = True, use_sym_expr: bool = True
+):
     """
     Replaces symbols in a tasklet's code according to a replacement dictionary.
     Updates the tasklet's code in place.
@@ -396,11 +400,9 @@ def tasklet_replace_code(tasklet: dace.nodes.Tasklet,
     -------
     None
     """
-    new_code = replace_code(tasklet.code.as_string,
-                            tasklet.code.language,
-                            repldict,
-                            py_only=py_only,
-                            use_sym_expr=use_sym_expr)
+    new_code = replace_code(
+        tasklet.code.as_string, tasklet.code.language, repldict, py_only=py_only, use_sym_expr=use_sym_expr
+    )
     tasklet.code = CodeBlock(code=new_code, language=tasklet.code.language)
 
 
@@ -417,7 +419,7 @@ def extract_bracket_tokens(s: str) -> list[tuple[str, list[str]]]:
     results = []
 
     # Pattern to match <name>[content_inside]
-    pattern = re.compile(r'(\b\w+)\[([^\]]*?)\]')
+    pattern = re.compile(r"(\b\w+)\[([^\]]*?)\]")
 
     for match in pattern.finditer(s):
         name = match.group(1)  # token before '['
@@ -438,7 +440,7 @@ def remove_bracket_tokens(s: str) -> str:
     Returns:
         str: String with all [...] removed.
     """
-    return re.sub(r'\[.*?\]', '', s)
+    return re.sub(r"\[.*?\]", "", s)
 
 
 def _extract_constant_from_ast_str(src: str) -> str:
@@ -538,9 +540,9 @@ def _extract_non_connector_syms_from_tasklet(node: dace.nodes.Tasklet, state) ->
     code_rhs = code_rhs.replace("math.", "")
     all_syms = {
         str(s)
-        for s in dace.symbolic.symbols_in_code(code_rhs,
-                                               potential_symbols={str(s)
-                                                                  for s in state.symbols_defined_at(node)})
+        for s in dace.symbolic.symbols_in_code(
+            code_rhs, potential_symbols={str(s) for s in state.symbols_defined_at(node)}
+        )
     }
     real_free_syms = all_syms - connectors
     free_non_connector_syms = {str(s) for s in real_free_syms}
@@ -562,7 +564,6 @@ def _extract_non_connector_bound_syms_from_tasklet(code_str: str) -> typing.Set[
     node = ast.parse(code_str, mode="exec")
 
     class ConstantExtractor(ast.NodeVisitor):
-
         def visit_Constant(self, n):
             constants.append(n.value)
 
@@ -610,50 +611,50 @@ _CMP_SYMBOLS = {
 """Mapping from AST comparison operation nodes to their string representations."""
 
 _SUPPORTED_OPS = {
-    '*',
-    '+',
-    '-',
-    '/',
-    '>',
-    '<',
-    '>=',
-    '<=',
-    '==',
-    '!=',
-    'and',
-    'or',
-    'not',
+    "*",
+    "+",
+    "-",
+    "/",
+    ">",
+    "<",
+    ">=",
+    "<=",
+    "==",
+    "!=",
+    "and",
+    "or",
+    "not",
 }
 """Set of supported binary and comparison operators."""
 
 _SUPPORTED = {
-    '*',
-    '+',
-    '-',
-    '/',
-    '>',
-    '<',
-    '>=',
-    '<=',
-    '==',
-    '!=',
-    '%',
-    'abs',
-    'exp',
-    'sqrt',
-    'log',
-    'ln',
-    'exp',
-    'pow',
-    'ipow',
-    '**',
-    'py_mod',
-    'min',
-    'max',
-    'and',
-    'or',
-    'not',
-    'ITE',
+    "*",
+    "+",
+    "-",
+    "/",
+    ">",
+    "<",
+    ">=",
+    "<=",
+    "==",
+    "!=",
+    "%",
+    "abs",
+    "exp",
+    "sqrt",
+    "log",
+    "ln",
+    "exp",
+    "pow",
+    "ipow",
+    "**",
+    "py_mod",
+    "min",
+    "max",
+    "and",
+    "or",
+    "not",
+    "ITE",
 }
 """Set of all supported operations including functions."""
 
@@ -1044,24 +1045,28 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             constant1 = constant if reordered[0] == constant else None
             constant2 = constant if reordered[1] == constant else None
             if isinstance(rhs_data, dace.data.Array):
-                info_dict.update({
-                    "type": TaskletType.ARRAY_SYMBOL,
-                    "rhs1": rhs1,
-                    "rhs2": rhs2,
-                    "constant1": constant1,
-                    "constant2": constant2,
-                    "op": _extract_single_op(code_str)
-                })
+                info_dict.update(
+                    {
+                        "type": TaskletType.ARRAY_SYMBOL,
+                        "rhs1": rhs1,
+                        "rhs2": rhs2,
+                        "constant1": constant1,
+                        "constant2": constant2,
+                        "op": _extract_single_op(code_str),
+                    }
+                )
                 return info_dict
             elif isinstance(rhs_data, dace.data.Scalar):
-                info_dict.update({
-                    "type": TaskletType.SCALAR_SYMBOL,
-                    "rhs1": rhs1,
-                    "rhs2": rhs2,
-                    "constant1": constant1,
-                    "constant2": constant2,
-                    "op": _extract_single_op(code_str)
-                })
+                info_dict.update(
+                    {
+                        "type": TaskletType.SCALAR_SYMBOL,
+                        "rhs1": rhs1,
+                        "rhs2": rhs2,
+                        "constant1": constant1,
+                        "constant2": constant2,
+                        "op": _extract_single_op(code_str),
+                    }
+                )
                 return info_dict
             else:
                 raise Exception("Unhandled case in tasklet type (2) {rhs_data}, {type(rhs_data)}")
@@ -1107,11 +1112,12 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         # :attr:`TaskletType.UNKNOWN` -- callers see an unclassified
         # tasklet and leave it alone.
         op = _extract_single_op(code_str)
-        if op != 'ITE':
+        if op != "ITE":
             info_dict["type"] = TaskletType.UNKNOWN
             return info_dict
         import ast as _ast
-        rhs_tree = _ast.parse(code_str.split(" = ")[-1].strip(), mode='eval').body
+
+        rhs_tree = _ast.parse(code_str.split(" = ")[-1].strip(), mode="eval").body
         if not (isinstance(rhs_tree, _ast.Call) and len(rhs_tree.args) == 3):
             info_dict["type"] = TaskletType.UNKNOWN
             return info_dict
@@ -1119,16 +1125,18 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
         if len(arg_names) != 3:
             info_dict["type"] = TaskletType.UNKNOWN
             return info_dict
-        info_dict.update({
-            "type": TaskletType.TERNARY_ARRAY,
-            "rhs1": arg_names[0],
-            "rhs2": arg_names[1],
-            "rhs3": arg_names[2],
-            "cond": arg_names[0],
-            "then_arm": arg_names[1],
-            "else_arm": arg_names[2],
-            "op": "ITE",
-        })
+        info_dict.update(
+            {
+                "type": TaskletType.TERNARY_ARRAY,
+                "rhs1": arg_names[0],
+                "rhs2": arg_names[1],
+                "rhs3": arg_names[2],
+                "cond": arg_names[0],
+                "then_arm": arg_names[1],
+                "else_arm": arg_names[2],
+                "op": "ITE",
+            }
+        )
         return info_dict
     elif n_in == 0:
         free_syms = _extract_non_connector_syms_from_tasklet(node, state)
@@ -1139,12 +1147,14 @@ def classify_tasklet(state: dace.SDFGState, node: dace.nodes.Tasklet) -> Dict:
             free_sym1 = free_syms.pop()
             free_sym2 = free_syms.pop()
             free_sym1, free_sym2 = _reorder_rhs(code_str, op, free_sym1, free_sym2)
-            info_dict.update({
-                "type": TaskletType.SYMBOL_SYMBOL,
-                "constant1": free_sym1,
-                "constant2": free_sym2,
-                "op": _extract_single_op(code_str)
-            })
+            info_dict.update(
+                {
+                    "type": TaskletType.SYMBOL_SYMBOL,
+                    "constant1": free_sym1,
+                    "constant2": free_sym2,
+                    "op": _extract_single_op(code_str),
+                }
+            )
             return info_dict
         elif len(free_syms) == 1:
             if op == "=":

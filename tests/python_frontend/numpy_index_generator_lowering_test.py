@@ -4,6 +4,7 @@
 Every case asserts the STRUCTURE first: a callback returns the right numbers, so a numeric assertion
 on its own passes straight through one and proves nothing about the lowering.
 """
+
 import numpy as np
 import pytest
 
@@ -14,12 +15,13 @@ from dace.sdfg import nodes as nd
 def callback_free(sdfg: dace.SDFG) -> bool:
     """A pyobject callback shows up as a ``__pystate`` container plus a ``numpy_<name>`` tasklet."""
     for nested in sdfg.all_sdfgs_recursive():
-        if any('__pystate' in name for name in nested.arrays):
+        if any("__pystate" in name for name in nested.arrays):
             return False
         for state in nested.states():
             for node in state.nodes():
-                if isinstance(node, nd.Tasklet) and ('numpy_' in node.code.as_string
-                                                     or node.label.startswith('callback')):
+                if isinstance(node, nd.Tasklet) and (
+                    "numpy_" in node.code.as_string or node.label.startswith("callback")
+                ):
                     return False
     return True
 
@@ -90,7 +92,7 @@ def test_geomspace_refuses_data_endpoint() -> None:
     def prog_geomspace_refuses_data_endpoint(a: dace.float64[1]):
         return np.geomspace(a[0], 1000.0, 5)
 
-    with pytest.raises(ValueError, match='compile-time constant'):
+    with pytest.raises(ValueError, match="compile-time constant"):
         prog_geomspace_refuses_data_endpoint.to_sdfg(simplify=False)
 
 
@@ -108,32 +110,34 @@ def test_fromfunction_integer_indices() -> None:
 
     @dace.program
     def prog_fromfunction_integer_indices():
-        return np.fromfunction(lambda i: i * i, (5, ), dtype=np.int64)
+        return np.fromfunction(lambda i: i * i, (5,), dtype=np.int64)
 
     assert_native(prog_fromfunction_integer_indices)
-    assert_same(prog_fromfunction_integer_indices(), np.fromfunction(lambda i: i * i, (5, ), dtype=np.int64))
+    assert_same(prog_fromfunction_integer_indices(), np.fromfunction(lambda i: i * i, (5,), dtype=np.int64))
 
 
 def test_fromfunction_symbolic_shape() -> None:
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def prog_fromfunction_symbolic_shape():
         return np.fromfunction(lambda i, j: i * (j + 2) / N, (N, N), dtype=np.float64)
 
     assert_native(prog_fromfunction_symbolic_shape)
-    assert_same(prog_fromfunction_symbolic_shape(N=7),
-                np.fromfunction(lambda i, j: i * (j + 2) / 7, (7, 7), dtype=np.float64),
-                exact=False)
+    assert_same(
+        prog_fromfunction_symbolic_shape(N=7),
+        np.fromfunction(lambda i, j: i * (j + 2) / 7, (7, 7), dtype=np.float64),
+        exact=False,
+    )
 
 
 def test_fromfunction_refuses_named_callable() -> None:
 
     @dace.program
     def prog_fromfunction_refuses_named_callable():
-        return np.fromfunction(np.sqrt, (4, ), dtype=np.float64)
+        return np.fromfunction(np.sqrt, (4,), dtype=np.float64)
 
-    with pytest.raises(ValueError, match='cannot be inlined'):
+    with pytest.raises(ValueError, match="cannot be inlined"):
         prog_fromfunction_refuses_named_callable.to_sdfg(simplify=False)
 
 
@@ -141,9 +145,9 @@ def test_fromfunction_refuses_array_read() -> None:
 
     @dace.program
     def prog_fromfunction_refuses_array_read(a: dace.float64[4]):
-        return np.fromfunction(lambda i: a[0] + i, (4, ), dtype=np.float64)
+        return np.fromfunction(lambda i: a[0] + i, (4,), dtype=np.float64)
 
-    with pytest.raises(ValueError, match='arithmetic lambda'):
+    with pytest.raises(ValueError, match="arithmetic lambda"):
         prog_fromfunction_refuses_array_read.to_sdfg(simplify=False)
 
 
@@ -196,10 +200,10 @@ def test_ix_refuses_boolean_mask() -> None:
 
     @dace.program
     def prog_ix_refuses_boolean_mask(a: dace.bool[3]):
-        rows, = np.ix_(a)
+        (rows,) = np.ix_(a)
         return rows
 
-    with pytest.raises(ValueError, match='data-dependent'):
+    with pytest.raises(ValueError, match="data-dependent"):
         prog_ix_refuses_boolean_mask.to_sdfg(simplify=False)
 
 
@@ -221,24 +225,24 @@ def test_ravel_multi_index_modes_and_order() -> None:
 
     @dace.program
     def wrapped(r: dace.int64[4], c: dace.int64[4]):
-        return np.ravel_multi_index((r, c), (3, 5), mode='wrap')
+        return np.ravel_multi_index((r, c), (3, 5), mode="wrap")
 
     @dace.program
     def clipped(r: dace.int64[4], c: dace.int64[4]):
-        return np.ravel_multi_index((r, c), (3, 5), mode='clip')
+        return np.ravel_multi_index((r, c), (3, 5), mode="clip")
 
     @dace.program
     def fortran(r: dace.int64[4], c: dace.int64[4]):
-        return np.ravel_multi_index((r, c), (3, 5), order='F')
+        return np.ravel_multi_index((r, c), (3, 5), order="F")
 
     assert_native(wrapped)
     assert_native(clipped)
     assert_native(fortran)
-    assert_same(wrapped(r=rows, c=cols), np.ravel_multi_index((rows, cols), (3, 5), mode='wrap'))
-    assert_same(clipped(r=rows, c=cols), np.ravel_multi_index((rows, cols), (3, 5), mode='clip'))
+    assert_same(wrapped(r=rows, c=cols), np.ravel_multi_index((rows, cols), (3, 5), mode="wrap"))
+    assert_same(clipped(r=rows, c=cols), np.ravel_multi_index((rows, cols), (3, 5), mode="clip"))
     inrange_r = np.array([0, 1, 2, 1], np.int64)
     inrange_c = np.array([4, 0, 3, 1], np.int64)
-    assert_same(fortran(r=inrange_r, c=inrange_c), np.ravel_multi_index((inrange_r, inrange_c), (3, 5), order='F'))
+    assert_same(fortran(r=inrange_r, c=inrange_c), np.ravel_multi_index((inrange_r, inrange_c), (3, 5), order="F"))
 
 
 def test_ravel_multi_index_broadcasts_operands() -> None:
@@ -250,8 +254,9 @@ def test_ravel_multi_index_broadcasts_operands() -> None:
     assert_native(prog_ravel_multi_index_broadcasts_operands)
     rows = np.array([[0, 1, 2], [3, 0, 1]], np.int64)
     cols = np.array([[1, 2, 3], [4, 0, 1]], np.int64)
-    assert_same(prog_ravel_multi_index_broadcasts_operands(rows=rows, cols=cols),
-                np.ravel_multi_index((rows, cols), (4, 5)))
+    assert_same(
+        prog_ravel_multi_index_broadcasts_operands(rows=rows, cols=cols), np.ravel_multi_index((rows, cols), (4, 5))
+    )
 
 
 def test_ravel_multi_index_refuses_dimension_mismatch() -> None:
@@ -260,11 +265,11 @@ def test_ravel_multi_index_refuses_dimension_mismatch() -> None:
     def prog_ravel_multi_index_refuses_dimension_mismatch(rows: dace.int64[4], cols: dace.int64[4]):
         return np.ravel_multi_index((rows, cols), (3, 5, 7))
 
-    with pytest.raises(ValueError, match='2 indices given for 3 dimensions'):
+    with pytest.raises(ValueError, match="2 indices given for 3 dimensions"):
         prog_ravel_multi_index_refuses_dimension_mismatch.to_sdfg(simplify=False)
 
 
-@pytest.mark.parametrize('n, k, m', [(4, 1, None), (3, -1, None), (4, -1, 3), (5, 0, None), (4, 0, 6)])
+@pytest.mark.parametrize("n, k, m", [(4, 1, None), (3, -1, None), (4, -1, 3), (5, 0, None), (4, 0, 6)])
 def test_triu_indices(n: int, k: int, m: int | None) -> None:
 
     @dace.program
@@ -280,16 +285,16 @@ def test_triu_indices(n: int, k: int, m: int | None) -> None:
 
 
 def test_triu_indices_refuses_symbolic_extent() -> None:
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def prog_triu_indices_refuses_symbolic_extent():
         rows, cols = np.triu_indices(N)
         return rows, cols
 
-    with pytest.raises(ValueError, match='static extent'):
+    with pytest.raises(ValueError, match="static extent"):
         prog_triu_indices_refuses_symbolic_extent.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

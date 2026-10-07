@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The GPU reduction planner reads neighboring dimensions as one only where they are one run of memory."""
+
 import dace
 from dace.libraries.standard.reduction_planner import get_reduction_schedule
 

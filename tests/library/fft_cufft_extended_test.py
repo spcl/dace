@@ -9,6 +9,7 @@ Extends the basic 1-D cuFFT coverage in :file:`fft_test.py` with:
 
 All tests run only when the ``gpu`` marker is selected.
 """
+
 import numpy as np
 import pytest
 
@@ -41,7 +42,7 @@ def test_cufft_2d():
 
     sdfg = fft2d.to_sdfg()
     sdfg.apply_gpu_transformations()
-    prev = _expand_with('cuFFT', [fftlib.FFT])
+    prev = _expand_with("cuFFT", [fftlib.FFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -64,7 +65,7 @@ def test_cufft_3d():
 
     sdfg = fft3d.to_sdfg()
     sdfg.apply_gpu_transformations()
-    prev = _expand_with('cuFFT', [fftlib.FFT])
+    prev = _expand_with("cuFFT", [fftlib.FFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -84,11 +85,11 @@ def test_cufft_complex64_roundtrip():
     @dace.program
     def roundtrip(x: dace.complex64[N]):
         y = np.fft.fft(x)
-        return np.fft.ifft(y, norm='forward')
+        return np.fft.ifft(y, norm="forward")
 
     sdfg = roundtrip.to_sdfg()
     sdfg.apply_gpu_transformations()
-    prev = _expand_with('cuFFT', [fftlib.FFT, fftlib.IFFT])
+    prev = _expand_with("cuFFT", [fftlib.FFT, fftlib.IFFT])
     try:
         sdfg.expand_library_nodes()
     finally:
@@ -102,8 +103,8 @@ def test_cufft_complex64_roundtrip():
     np.testing.assert_allclose(z / N, x, rtol=1e-3, atol=1e-5)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cufft_2d()
     test_cufft_3d()
     test_cufft_complex64_roundtrip()
-    print('cuFFT extended GPU tests PASS')
+    print("cuFFT extended GPU tests PASS")

@@ -29,13 +29,13 @@ def test_nested_sdfg_symbol_mapping():
     # Before: confirm ``i`` is the loop variable and appears in a nested SDFG mapping
     loops_before = [cfg for cfg in sdfg.all_control_flow_regions() if isinstance(cfg, LoopRegion)]
     assert len(loops_before) == 1
-    assert loops_before[0].loop_variable == 'i'
+    assert loops_before[0].loop_variable == "i"
 
     found_i_in_mapping = False
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
-                if 'i' in node.symbol_mapping:
+                if "i" in node.symbol_mapping:
                     found_i_in_mapping = True
     assert found_i_in_mapping, "Expected 'i' in nested SDFG symbol_mapping before pass"
 
@@ -47,10 +47,12 @@ def test_nested_sdfg_symbol_mapping():
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
-                assert 'i' not in node.symbol_mapping, \
+                assert "i" not in node.symbol_mapping, (
                     f"Original loop var 'i' should not be in symbol_mapping, got {node.symbol_mapping}"
-                assert '_loop_it_0' in node.symbol_mapping, \
+                )
+                assert "_loop_it_0" in node.symbol_mapping, (
                     f"renamed loop var '_loop_it_0' should be in symbol_mapping, got {node.symbol_mapping}"
+                )
 
     A = np.random.rand(10, 10)
     idx = np.random.randint(0, 10, size=(10, 10), dtype=np.int32)
@@ -89,7 +91,7 @@ def test_loop_var_reconstruction():
     sdfg.validate()
 
     # Check that a reconstruction state was added
-    reconstruction_states = [s for s in sdfg.states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
+    reconstruction_states = [s for s in sdfg.states() if hasattr(s, "label") and "loop_iter_post_value" in s.label]
     assert len(reconstruction_states) == 1, f"Expected 1 reconstruction state, found {len(reconstruction_states)}"
 
     # Check that assignment is correct
@@ -101,15 +103,15 @@ def test_loop_var_reconstruction():
     assert len(out_edges) == 1
 
     assignments = out_edges[0].data.assignments
-    assert 'i' in assignments, f"Expected assignment to 'i', got {assignments}"
+    assert "i" in assignments, f"Expected assignment to 'i', got {assignments}"
 
     loop_end = loop_analysis.get_loop_end(loop)
     init = loop_analysis.get_init_assignment(loop)
     stride = loop_analysis.get_loop_stride(loop)
     import sympy as sp
+
     expected_post = init + (loop_end - init + stride) - sp.Mod(loop_end - init + stride, stride)
-    assert str(assignments['i']) == f"({expected_post})", \
-        f"Expected post-value {expected_post}, got {assignments['i']}"
+    assert str(assignments["i"]) == f"({expected_post})", f"Expected post-value {expected_post}, got {assignments['i']}"
 
     A = np.zeros(10)
     B = np.random.rand(10)
@@ -137,7 +139,7 @@ def test_nested_loops():
     loops_before = [cfg for cfg in sdfg.all_control_flow_regions() if isinstance(cfg, LoopRegion)]
     assert len(loops_before) == 2
     loop_vars_before = {lr.loop_variable for lr in loops_before}
-    assert loop_vars_before == {'i', 'j'}
+    assert loop_vars_before == {"i", "j"}
 
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
@@ -153,14 +155,14 @@ def test_loop_var_in_tasklet_body():
     """The pass must rename the loop iter inside tasklet expressions, not
     just on memlet subsets."""
 
-    sdfg = dace.SDFG('iter_in_tasklet')
-    sdfg.add_array('out', [10], dace.int64)
-    body = LoopRegion('body', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg = dace.SDFG("iter_in_tasklet")
+    sdfg.add_array("out", [10], dace.int64)
+    body = LoopRegion("body", condition_expr="i < 10", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(body, is_start_block=True)
-    inner = body.add_state('inner', is_start_block=True)
-    t = inner.add_tasklet('write_iter', set(), {'_o'}, '_o = i * 2')
-    a = inner.add_access('out')
-    inner.add_edge(t, '_o', a, None, dace.Memlet('out[i]'))
+    inner = body.add_state("inner", is_start_block=True)
+    t = inner.add_tasklet("write_iter", set(), {"_o"}, "_o = i * 2")
+    a = inner.add_access("out")
+    inner.add_edge(t, "_o", a, None, dace.Memlet("out[i]"))
 
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
@@ -170,10 +172,11 @@ def test_loop_var_in_tasklet_body():
     for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, dace.nodes.Tasklet):
-                code = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
-                assert 'i ' not in code and code.strip() != '_o = i * 2', \
+                code = node.code.as_string if hasattr(node.code, "as_string") else str(node.code)
+                assert "i " not in code and code.strip() != "_o = i * 2", (
                     f"Tasklet still references original 'i': {code}"
-                if '_loop_it_0' in code:
+                )
+                if "_loop_it_0" in code:
                     found = True
     assert found, "Expected tasklet code to reference _loop_it_0"
 
@@ -188,20 +191,20 @@ def test_loop_var_on_interstate_edge():
     The pass must rewrite the edge's assignment / condition to use the
     renamed iterator."""
 
-    sdfg = dace.SDFG('iter_on_edge')
-    sdfg.add_array('out', [10], dace.int64)
-    sdfg.add_symbol('k', dace.int64)
+    sdfg = dace.SDFG("iter_on_edge")
+    sdfg.add_array("out", [10], dace.int64)
+    sdfg.add_symbol("k", dace.int64)
 
-    body = LoopRegion('body', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    body = LoopRegion("body", condition_expr="i < 10", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(body, is_start_block=True)
-    s1 = body.add_state('s1', is_start_block=True)
-    s2 = body.add_state('s2')
+    s1 = body.add_state("s1", is_start_block=True)
+    s2 = body.add_state("s2")
     # Interstate edge inside the loop body that reads ``i``.
-    body.add_edge(s1, s2, dace.InterstateEdge(assignments={'k': 'i + 100'}))
+    body.add_edge(s1, s2, dace.InterstateEdge(assignments={"k": "i + 100"}))
 
-    t = s2.add_tasklet('write', set(), {'_o'}, '_o = k')
-    a = s2.add_access('out')
-    s2.add_edge(t, '_o', a, None, dace.Memlet('out[i]'))
+    t = s2.add_tasklet("write", set(), {"_o"}, "_o = k")
+    a = s2.add_access("out")
+    s2.add_edge(t, "_o", a, None, dace.Memlet("out[i]"))
 
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
@@ -209,8 +212,8 @@ def test_loop_var_on_interstate_edge():
     found = False
     for e in body.edges():
         for tgt, rhs in e.data.assignments.items():
-            assert 'i ' not in str(rhs), f"Edge assignment still references 'i': {rhs}"
-            if '_loop_it_0' in str(rhs):
+            assert "i " not in str(rhs), f"Edge assignment still references 'i': {rhs}"
+            if "_loop_it_0" in str(rhs):
                 found = True
     assert found, "Expected interstate-edge assignment to reference _loop_it_0"
 
@@ -226,49 +229,53 @@ def test_loop_bound_with_indirect_array():
     ``arrayexprs=`` so the reconstruction assignment carries the
     Python subscript form."""
 
-    sdfg = dace.SDFG('indirect_bound')
-    sdfg.add_array('row_ptr', [11], dace.int64)
-    sdfg.add_array('values', [20], dace.float64)
-    sdfg.add_array('acc', [10], dace.float64)
-    sdfg.add_symbol('i', dace.int64)
-    sdfg.add_symbol('j', dace.int64)
+    sdfg = dace.SDFG("indirect_bound")
+    sdfg.add_array("row_ptr", [11], dace.int64)
+    sdfg.add_array("values", [20], dace.float64)
+    sdfg.add_array("acc", [10], dace.float64)
+    sdfg.add_symbol("i", dace.int64)
+    sdfg.add_symbol("j", dace.int64)
 
-    outer = LoopRegion('outer', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    outer = LoopRegion("outer", condition_expr="i < 10", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(outer, is_start_block=True)
-    body = outer.add_state('outer_body', is_start_block=True)
-    inner = LoopRegion('inner',
-                       condition_expr='j < row_ptr[i + 1]',
-                       loop_var='j',
-                       initialize_expr='j = row_ptr[i]',
-                       update_expr='j = j + 1')
+    body = outer.add_state("outer_body", is_start_block=True)
+    inner = LoopRegion(
+        "inner",
+        condition_expr="j < row_ptr[i + 1]",
+        loop_var="j",
+        initialize_expr="j = row_ptr[i]",
+        update_expr="j = j + 1",
+    )
     outer.add_node(inner)
     outer.add_edge(body, inner, dace.InterstateEdge())
 
-    inner_body = inner.add_state('inner_body', is_start_block=True)
-    rd = inner_body.add_access('values')
-    wr = inner_body.add_access('acc')
-    t = inner_body.add_tasklet('add', {'_v', '_a'}, {'_o'}, '_o = _v + _a')
-    inner_body.add_edge(rd, None, t, '_v', dace.Memlet('values[j]'))
-    inner_body.add_edge(wr, None, t, '_a', dace.Memlet('acc[i]'))
-    wr2 = inner_body.add_access('acc')
-    inner_body.add_edge(t, '_o', wr2, None, dace.Memlet('acc[i]'))
+    inner_body = inner.add_state("inner_body", is_start_block=True)
+    rd = inner_body.add_access("values")
+    wr = inner_body.add_access("acc")
+    t = inner_body.add_tasklet("add", {"_v", "_a"}, {"_o"}, "_o = _v + _a")
+    inner_body.add_edge(rd, None, t, "_v", dace.Memlet("values[j]"))
+    inner_body.add_edge(wr, None, t, "_a", dace.Memlet("acc[i]"))
+    wr2 = inner_body.add_access("acc")
+    inner_body.add_edge(t, "_o", wr2, None, dace.Memlet("acc[i]"))
 
     pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
     pass_.apply_pass(sdfg, None)
     sdfg.validate()
 
     # The inner-loop reconstruction state must use Python subscript form.
-    recon = [s for s in sdfg.states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
+    recon = [s for s in sdfg.states() if hasattr(s, "label") and "loop_iter_post_value" in s.label]
     rhs_strings = []
     for s in recon:
         for e in s.parent_graph.in_edges(s):
             for rhs in e.data.assignments.values():
                 rhs_strings.append(str(rhs))
 
-    assert any('row_ptr[' in s for s in rhs_strings), \
+    assert any("row_ptr[" in s for s in rhs_strings), (
         f"Reconstruction RHS must use Python subscript form: {rhs_strings}"
-    assert all('row_ptr(' not in s for s in rhs_strings), \
+    )
+    assert all("row_ptr(" not in s for s in rhs_strings), (
         f"Reconstruction RHS must not use function-call form: {rhs_strings}"
+    )
 
 
 def test_while_loop_no_induction_var():
@@ -277,21 +284,21 @@ def test_while_loop_no_induction_var():
     cleanly even with the postfix-assignment option on (there's no
     induction variable to leave a post-value for)."""
 
-    sdfg = dace.SDFG('whileloop')
-    sdfg.add_symbol('flag', dace.int64)
+    sdfg = dace.SDFG("whileloop")
+    sdfg.add_symbol("flag", dace.int64)
 
-    body = LoopRegion('body', condition_expr='flag != 0', loop_var=None)
+    body = LoopRegion("body", condition_expr="flag != 0", loop_var=None)
     sdfg.add_node(body, is_start_block=True)
-    inner = body.add_state('inner', is_start_block=True)
-    t = inner.add_tasklet('flip', set(), {'_o'}, '_o = 0')
-    sdfg.add_array('out', [1], dace.int64)
-    a = inner.add_access('out')
-    inner.add_edge(t, '_o', a, None, dace.Memlet('out[0]'))
+    inner = body.add_state("inner", is_start_block=True)
+    t = inner.add_tasklet("flip", set(), {"_o"}, "_o = 0")
+    sdfg.add_array("out", [1], dace.int64)
+    a = inner.add_access("out")
+    inner.add_edge(t, "_o", a, None, dace.Memlet("out[0]"))
 
     pass_ = UniqueLoopIterators(assign_loop_iterator_post_value=True)
     pass_.apply_pass(sdfg, None)
 
-    recon = [s for s in sdfg.states() if hasattr(s, 'label') and 'loop_iter_post_value' in s.label]
+    recon = [s for s in sdfg.states() if hasattr(s, "label") and "loop_iter_post_value" in s.label]
     assert recon == [], f"Unexpected reconstruction states: {[s.label for s in recon]}"
 
 
@@ -417,7 +424,7 @@ def test_no_postamble_drops_dead_symbol_declaration():
     # frontend keeps the declaration around because the original LoopRegions
     # use ``i`` as their ``loop_variable``.
     body_nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert any('i' in n.sdfg.symbols for n in body_nsdfgs)
+    assert any("i" in n.sdfg.symbols for n in body_nsdfgs)
 
     p = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     p.apply_pass(sdfg, {})
@@ -425,12 +432,12 @@ def test_no_postamble_drops_dead_symbol_declaration():
     # Every LoopRegion now has a unique ``_loop_it_<N>`` variable.
     loopvars = [n.loop_variable for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
     assert loopvars == sorted(set(loopvars))
-    assert all(v.startswith('_loop_it_') for v in loopvars)
+    assert all(v.startswith("_loop_it_") for v in loopvars)
 
     # The previously-leaking ``i`` declaration must be gone from every
     # SDFG-level symbol table that lost its last user.
     for n in body_nsdfgs:
-        assert 'i' not in n.sdfg.symbols, f"stale 'i' still declared in {n.sdfg.name}.symbols"
+        assert "i" not in n.sdfg.symbols, f"stale 'i' still declared in {n.sdfg.name}.symbols"
 
     # And the resulting SDFG validates cleanly (no missing-symbol error on
     # the NestedSDFG boundary).
@@ -470,7 +477,7 @@ def test_no_postamble_clears_loop_var_for_inner_accumulator():
     # Pre-condition: at least one body NestedSDFG declares ``j`` -- the
     # frontend leaves it there for the original loop_var.
     nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert any('j' in n.sdfg.symbols for n in nsdfgs)
+    assert any("j" in n.sdfg.symbols for n in nsdfgs)
 
     p = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     p.apply_pass(sdfg, {})
@@ -481,8 +488,7 @@ def test_no_postamble_clears_loop_var_for_inner_accumulator():
     # uses ``j`` after the rename to ``_loop_it_<N>``.
     nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     for n in nsdfgs:
-        assert 'j' not in n.sdfg.symbols, \
-            f"NSDFG {n.sdfg.name} still declares 'j'; symbols={sorted(n.sdfg.symbols)}"
+        assert "j" not in n.sdfg.symbols, f"NSDFG {n.sdfg.name} still declares 'j'; symbols={sorted(n.sdfg.symbols)}"
     # And the SDFG validates as a whole (no Missing-symbols error).
     sdfg.validate()
 
@@ -517,13 +523,13 @@ def test_postamble_preserves_symbol_declaration():
 
     sdfg = sibling_for_loops_postamble_preserves_symbol_declaration.to_sdfg(simplify=False)
     body_nsdfgs_before = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert any('i' in n.sdfg.symbols for n in body_nsdfgs_before)
+    assert any("i" in n.sdfg.symbols for n in body_nsdfgs_before)
 
     UniqueLoopIterators().apply_pass(sdfg, {})  # default: post-value ON
 
     # ``i`` declaration stays because the postamble assignments read/write it.
     body_nsdfgs_after = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert any('i' in n.sdfg.symbols for n in body_nsdfgs_after)
+    assert any("i" in n.sdfg.symbols for n in body_nsdfgs_after)
     sdfg.validate()
 
 
@@ -546,16 +552,18 @@ def test_idempotent_skips_already_unique_iterators():
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
     names_after_first = sorted(lr.loop_variable for lr in sdfg.all_control_flow_regions() if isinstance(lr, LoopRegion))
-    assert all(n.startswith('_loop_it_') for n in names_after_first), names_after_first
+    assert all(n.startswith("_loop_it_") for n in names_after_first), names_after_first
 
     # Second application: the iterators are already unique; nothing changes
     # and the SDFG stays valid (no "Missing symbols" crash).
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
-    names_after_second = sorted(lr.loop_variable for lr in sdfg.all_control_flow_regions()
-                                if isinstance(lr, LoopRegion))
-    assert names_after_second == names_after_first, \
-        f'second pass re-renamed already-unique iterators: {names_after_first} -> {names_after_second}'
+    names_after_second = sorted(
+        lr.loop_variable for lr in sdfg.all_control_flow_regions() if isinstance(lr, LoopRegion)
+    )
+    assert names_after_second == names_after_first, (
+        f"second pass re-renamed already-unique iterators: {names_after_first} -> {names_after_second}"
+    )
 
     A = np.random.rand(8, 8)
     exp = A + 1.0
@@ -564,7 +572,7 @@ def test_idempotent_skips_already_unique_iterators():
     assert np.allclose(A, exp)
 
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -617,7 +625,7 @@ def test_value_preserving_sibling_kbound_loops():
         sdfg.validate()
         out = np.zeros((n, n))
         sdfg(out=out, arr=arr.copy(), x=np.int32(x), N=n)
-        assert np.allclose(out, _sibling_kbound_oracle(arr, x, n)), f'value corrupted for x={x}'
+        assert np.allclose(out, _sibling_kbound_oracle(arr, x, n)), f"value corrupted for x={x}"
 
 
 @dace.program
@@ -650,14 +658,15 @@ def test_disambiguates_fission_cloned_iterators():
     after_fission = [
         r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)
     ]
-    assert len(after_fission) != len(set(after_fission)), \
-        f'expected a duplicate iterator after fission, got {after_fission}'
+    assert len(after_fission) != len(set(after_fission)), (
+        f"expected a duplicate iterator after fission, got {after_fission}"
+    )
 
     # Re-running the pass must disambiguate the fission-cloned duplicate.
     UniqueLoopIterators().apply_pass(sdfg, None)
     sdfg.validate()
     after = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
-    assert len(after) == len(set(after)), f'iterators not disambiguated after re-run: {after}'
+    assert len(after) == len(set(after)), f"iterators not disambiguated after re-run: {after}"
 
     n = 8
     rng = np.random.default_rng(0)
@@ -689,7 +698,7 @@ def test_triply_nested_loops_unique_and_value_preserving():
 
     loopvars = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
     assert len(loopvars) == 3
-    assert len(set(loopvars)) == 3 and all(v.startswith('_loop_it_') for v in loopvars), loopvars
+    assert len(set(loopvars)) == 3 and all(v.startswith("_loop_it_") for v in loopvars), loopvars
 
     A = np.random.rand(6, 6, 6)
     exp = A + (np.arange(6)[:, None, None] + np.arange(6)[None, :, None] + np.arange(6)[None, None, :])
@@ -712,7 +721,7 @@ def test_negative_step_loop_value_preserving():
     sdfg.validate()
 
     loopvars = [r.loop_variable for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
-    assert loopvars and all(v.startswith('_loop_it_') for v in loopvars), loopvars
+    assert loopvars and all(v.startswith("_loop_it_") for v in loopvars), loopvars
 
     A = np.zeros(10)
     B = np.random.rand(10)
@@ -726,37 +735,39 @@ def test_seeds_counter_past_existing_loop_it_names():
     existing unique name. Here a loop already named ``_loop_it_5`` coexists
     with a loop named ``i``; ``i`` must become ``_loop_it_6`` (not reuse 0 or
     collide with 5)."""
-    sdfg = dace.SDFG('seed_past_existing')
-    sdfg.add_array('out', [10], dace.int64)
+    sdfg = dace.SDFG("seed_past_existing")
+    sdfg.add_array("out", [10], dace.int64)
 
     # An already-unique iterator (left untouched by the idempotency skip).
-    existing = LoopRegion('existing',
-                          condition_expr='_loop_it_5 < 5',
-                          loop_var='_loop_it_5',
-                          initialize_expr='_loop_it_5 = 0',
-                          update_expr='_loop_it_5 = _loop_it_5 + 1')
+    existing = LoopRegion(
+        "existing",
+        condition_expr="_loop_it_5 < 5",
+        loop_var="_loop_it_5",
+        initialize_expr="_loop_it_5 = 0",
+        update_expr="_loop_it_5 = _loop_it_5 + 1",
+    )
     sdfg.add_node(existing, is_start_block=True)
-    es = existing.add_state('es', is_start_block=True)
-    et = es.add_tasklet('w', set(), {'_o'}, '_o = _loop_it_5')
-    ea = es.add_access('out')
-    es.add_edge(et, '_o', ea, None, dace.Memlet('out[_loop_it_5]'))
+    es = existing.add_state("es", is_start_block=True)
+    et = es.add_tasklet("w", set(), {"_o"}, "_o = _loop_it_5")
+    ea = es.add_access("out")
+    es.add_edge(et, "_o", ea, None, dace.Memlet("out[_loop_it_5]"))
 
     # A fresh loop to be renamed.
-    fresh = LoopRegion('fresh', condition_expr='i < 10', loop_var='i', initialize_expr='i = 5', update_expr='i = i + 1')
+    fresh = LoopRegion("fresh", condition_expr="i < 10", loop_var="i", initialize_expr="i = 5", update_expr="i = i + 1")
     sdfg.add_node(fresh)
     sdfg.add_edge(existing, fresh, dace.InterstateEdge())
-    fs = fresh.add_state('fs', is_start_block=True)
-    ft = fs.add_tasklet('w', set(), {'_o'}, '_o = i')
-    fa = fs.add_access('out')
-    fs.add_edge(ft, '_o', fa, None, dace.Memlet('out[i]'))
+    fs = fresh.add_state("fs", is_start_block=True)
+    ft = fs.add_tasklet("w", set(), {"_o"}, "_o = i")
+    fa = fs.add_access("out")
+    fs.add_edge(ft, "_o", fa, None, dace.Memlet("out[i]"))
 
     p = UniqueLoopIterators(assign_loop_iterator_post_value=False)
     p.apply_pass(sdfg, None)
     sdfg.validate()
 
     loopvars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
-    assert '_loop_it_5' in loopvars, f'existing unique iterator must be left alone: {loopvars}'
-    assert '_loop_it_6' in loopvars, f'fresh iterator must seed past the existing max (-> 6): {loopvars}'
+    assert "_loop_it_5" in loopvars, f"existing unique iterator must be left alone: {loopvars}"
+    assert "_loop_it_6" in loopvars, f"fresh iterator must seed past the existing max (-> 6): {loopvars}"
     assert len(loopvars) == 2, loopvars
 
 
@@ -768,32 +779,37 @@ def test_seeds_counter_past_existing_map_params():
     loop named ``i``; ``i`` must become ``_loop_it_6`` (not reuse 0 or collide
     with the map's 5 -- the collision aliased two iteration variables and
     silently corrupted results)."""
-    sdfg = dace.SDFG('seed_past_map')
-    sdfg.add_array('mout', [5], dace.int64)
-    sdfg.add_array('out', [10], dace.int64)
+    sdfg = dace.SDFG("seed_past_map")
+    sdfg.add_array("mout", [5], dace.int64)
+    sdfg.add_array("out", [10], dace.int64)
 
     # A map whose parameter is already in unique ``_loop_it_5`` form.
-    mstate = sdfg.add_state('mstate', is_start_block=True)
-    mstate.add_mapped_tasklet('themap', {'_loop_it_5': '0:5'}, {},
-                              '_o = _loop_it_5', {'_o': dace.Memlet('mout[_loop_it_5]')},
-                              external_edges=True)
+    mstate = sdfg.add_state("mstate", is_start_block=True)
+    mstate.add_mapped_tasklet(
+        "themap",
+        {"_loop_it_5": "0:5"},
+        {},
+        "_o = _loop_it_5",
+        {"_o": dace.Memlet("mout[_loop_it_5]")},
+        external_edges=True,
+    )
 
     # A fresh loop to be renamed; it must not reuse the map's id.
-    fresh = LoopRegion('fresh', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    fresh = LoopRegion("fresh", condition_expr="i < 10", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(fresh)
     sdfg.add_edge(mstate, fresh, dace.InterstateEdge())
-    fs = fresh.add_state('fs', is_start_block=True)
-    ft = fs.add_tasklet('w', set(), {'_o'}, '_o = i')
-    fa = fs.add_access('out')
-    fs.add_edge(ft, '_o', fa, None, dace.Memlet('out[i]'))
+    fs = fresh.add_state("fs", is_start_block=True)
+    ft = fs.add_tasklet("w", set(), {"_o"}, "_o = i")
+    fa = fs.add_access("out")
+    fs.add_edge(ft, "_o", fa, None, dace.Memlet("out[i]"))
 
     UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, None)
     sdfg.validate()
 
     loopvars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
-    assert loopvars == {'_loop_it_6'}, f'fresh iterator must seed past the map parameter 5 (-> 6): {loopvars}'
+    assert loopvars == {"_loop_it_6"}, f"fresh iterator must seed past the map parameter 5 (-> 6): {loopvars}"
     mapparams = {p for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) for p in n.map.params}
-    assert mapparams == {'_loop_it_5'}, f'map parameter must be left untouched: {mapparams}'
+    assert mapparams == {"_loop_it_5"}, f"map parameter must be left untouched: {mapparams}"
 
 
 def test_loop_and_map_coexist_no_collision_value_preserving():
@@ -801,23 +817,28 @@ def test_loop_and_map_coexist_no_collision_value_preserving():
     coexist. Renaming the loop must avoid the map's id and stay value-preserving.
     Regression for the ``_first_free_id`` map blindness that produced a
     ``_loop_it_0`` collision and corrupted output."""
-    sdfg = dace.SDFG('loop_map_coexist')
-    sdfg.add_array('a', [8], dace.float64)
-    sdfg.add_array('b', [8], dace.float64)
+    sdfg = dace.SDFG("loop_map_coexist")
+    sdfg.add_array("a", [8], dace.float64)
+    sdfg.add_array("b", [8], dace.float64)
 
     # Map already in unique ``_loop_it_0`` form (as LoopToMap would leave it).
-    ms = sdfg.add_state('ms', is_start_block=True)
-    ms.add_mapped_tasklet('themap', {'_loop_it_0': '0:8'}, {'_i': dace.Memlet('a[_loop_it_0]')},
-                          '_o = _i * 2.0', {'_o': dace.Memlet('a[_loop_it_0]')},
-                          external_edges=True)
+    ms = sdfg.add_state("ms", is_start_block=True)
+    ms.add_mapped_tasklet(
+        "themap",
+        {"_loop_it_0": "0:8"},
+        {"_i": dace.Memlet("a[_loop_it_0]")},
+        "_o = _i * 2.0",
+        {"_o": dace.Memlet("a[_loop_it_0]")},
+        external_edges=True,
+    )
 
     # A separate loop writing a different array.
-    loop = LoopRegion('loop', condition_expr='i < 8', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    loop = LoopRegion("loop", condition_expr="i < 8", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(ms, loop, dace.InterstateEdge())
-    ls = loop.add_state('ls', is_start_block=True)
-    t = ls.add_tasklet('w', set(), {'_o'}, '_o = i')
-    ls.add_edge(t, '_o', ls.add_access('b'), None, dace.Memlet('b[i]'))
+    ls = loop.add_state("ls", is_start_block=True)
+    t = ls.add_tasklet("w", set(), {"_o"}, "_o = i")
+    ls.add_edge(t, "_o", ls.add_access("b"), None, dace.Memlet("b[i]"))
 
     a = np.arange(8, dtype=np.float64)
     ref_a, ref_b = a * 2.0, np.arange(8, dtype=np.float64)
@@ -826,7 +847,7 @@ def test_loop_and_map_coexist_no_collision_value_preserving():
     sdfg.validate()
 
     loopvars = {r.loop_variable for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)}
-    assert loopvars == {'_loop_it_1'}, f'loop must seed past the map id 0 (-> 1): {loopvars}'
+    assert loopvars == {"_loop_it_1"}, f"loop must seed past the map id 0 (-> 1): {loopvars}"
 
     got_a, got_b = a.copy(), np.zeros(8, dtype=np.float64)
     sdfg(a=got_a, b=got_b)
@@ -845,13 +866,13 @@ def test_no_postamble_still_gives_an_iterator_read_after_its_loop_its_exit_value
     UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(sdfg, {})
     C = np.zeros(1, dtype=np.int64)
     sdfg(C=C, N=0)
-    assert sdfg.free_symbols == {'N'} and C[0] == 3
+    assert sdfg.free_symbols == {"N"} and C[0] == 3
 
 
 def test_the_renamed_iterator_keeps_the_dtype_its_loop_declares():
     """The new name is parsed from text; read at the default dtype it would be a symbol of its own, distinct from
     the int64 iterator the loop and its memlets spell."""
-    n = dace.symbol('n_unique_dtype', dtype=dace.int64)
+    n = dace.symbol("n_unique_dtype", dtype=dace.int64)
 
     @dace.program
     def two_loops(A: dace.float64[n], B: dace.float64[n]):
@@ -865,11 +886,11 @@ def test_the_renamed_iterator_keeps_the_dtype_its_loop_declares():
 
     assert UniqueLoopIterators().apply_pass(sdfg, {})
 
-    assert equalize(sdfg) is None, 'the rename spelled an iterator at a dtype its loop does not declare'
+    assert equalize(sdfg) is None, "the rename spelled an iterator at a dtype its loop does not declare"
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_sdfg_symbol_mapping()
     test_loop_var_reconstruction()
     test_nested_loops()

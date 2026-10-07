@@ -5,6 +5,7 @@ relayout OUTSIDE the region (a conversion before the body state would re-run eve
 checked bit-exact across several iterations against a NumPy oracle, and a non-uniform loop assignment (which
 would feed the wrong layout across the back-edge) is refused loudly.
 """
+
 import numpy
 import pytest
 
@@ -16,7 +17,7 @@ from dace.transformation.layout.line_graph import line_graph, locked_transitions
 
 N = dace.symbol("N")
 T = dace.symbol("T")
-CM = Layout("perm10", (Permute((1, 0)), ))
+CM = Layout("perm10", (Permute((1, 0)),))
 
 
 def elementwise_body(loop, label, expr, start=False):

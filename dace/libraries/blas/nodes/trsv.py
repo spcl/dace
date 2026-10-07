@@ -7,6 +7,7 @@ two declarations for the same name. The OpenBLAS / cuBLAS expansions
 first copy ``_xin`` into ``_xout``, then call the in-place cBLAS /
 cuBLAS triangular solve on ``_xout``.
 """
+
 import copy
 
 import dace.library
@@ -20,23 +21,26 @@ from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
 from typing import List, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
 
 def _cblas_flags(node):
-    return ('CblasUpper' if node.uplo else 'CblasLower', 'CblasTrans' if node.transA else 'CblasNoTrans',
-            'CblasUnit' if node.unit_diag else 'CblasNonUnit')
+    return (
+        "CblasUpper" if node.uplo else "CblasLower",
+        "CblasTrans" if node.transA else "CblasNoTrans",
+        "CblasUnit" if node.unit_diag else "CblasNonUnit",
+    )
 
 
 def _gpu_flags(node, dialect):
     """(uplo, trans, diag): a column-major library reads the row-major A as A^T, so both flip."""
-    return dialect.fill(not node.uplo), dialect.op('N' if node.transA else 'T'), dialect.diag(node.unit_diag)
+    return dialect.fill(not node.uplo), dialect.op("N" if node.transA else "T"), dialect.diag(node.unit_diag)
 
 
 @dace.library.expansion
 class ExpandTrsvOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -50,16 +54,13 @@ class ExpandTrsvOpenBLAS(ExpandTransformation):
         cblas_{prefix}copy({n}, _xin, {sx_in}, _xout, {sx_out});
         cblas_{prefix}trsv(CblasRowMajor, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandTrsvMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -69,7 +70,6 @@ class ExpandTrsvMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandTrsvGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -81,14 +81,12 @@ class ExpandTrsvGPUBLAS(ExpandTransformation):
         uplo, trans, diag = _gpu_flags(node, cls.dialect)
         code = cls.environments[0].handle_setup_code(node)
         code += f"""
-        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _xin, {sx_in}, _xout, {sx_out});
-        {cls.dialect.check_error}({cls.dialect.func(func, 'trsv')}({cls.dialect.handle}, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out}));
+        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _xin, {sx_in}, _xout, {sx_out});
+        {cls.dialect.check_error}({cls.dialect.func(func, "trsv")}({cls.dialect.handle}, {uplo}, {trans}, {diag}, {n}, _A, {lda}, _xout, {sx_out}));
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
@@ -115,7 +113,7 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandTrsvOpenBLAS,
         "MKL": ExpandTrsvMKL,
         "cuBLAS": ExpandTrsvCuBLAS,
-        "rocBLAS": ExpandTrsvRocBLAS
+        "rocBLAS": ExpandTrsvRocBLAS,
     }
     default_implementation = None
 
@@ -124,7 +122,7 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
     unit_diag = dace.properties.Property(dtype=bool, default=False, desc="True if A has implicit unit diagonal")
 
     def __init__(self, name, uplo=False, transA=False, unit_diag=False, **kwargs):
-        super().__init__(name, inputs=OrderedSet(('_A', '_xin')), outputs={"_xout"}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(("_A", "_xin")), outputs={"_xout"}, **kwargs)
         self.uplo, self.transA, self.unit_diag = uplo, transA, unit_diag
 
     def validate(self, sdfg, state):
@@ -149,24 +147,18 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_x, sx_in), sx_out, n
 
 
-@oprepo.replaces('dace.libraries.blas.trsv')
-@oprepo.replaces('dace.libraries.blas.Trsv')
-def trsv_libnode(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 A,
-                 x,
-                 result=None,
-                 uplo=False,
-                 transA=False,
-                 unit_diag=False):
+@oprepo.replaces("dace.libraries.blas.trsv")
+@oprepo.replaces("dace.libraries.blas.Trsv")
+def trsv_libnode(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, result=None, uplo=False, transA=False, unit_diag=False
+):
     """Build a :class:`Trsv` node. ``result`` defaults to ``x`` for in-place semantics."""
     result = result if result is not None else x
     A_in, x_in = state.add_read(A), state.add_read(x)
     x_out = state.add_write(result)
-    libnode = Trsv('trsv', uplo=uplo, transA=transA, unit_diag=unit_diag)
+    libnode = Trsv("trsv", uplo=uplo, transA=transA, unit_diag=unit_diag)
     state.add_node(libnode)
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(x_in, None, libnode, '_xin', mm.Memlet(x))
-    state.add_edge(libnode, '_xout', x_out, None, mm.Memlet(result))
+    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
+    state.add_edge(x_in, None, libnode, "_xin", mm.Memlet(x))
+    state.add_edge(libnode, "_xout", x_out, None, mm.Memlet(result))
     return []

@@ -42,9 +42,11 @@ def device_solver_implementation(node, state, connector):
     in_edges = [e for e in state.in_edges(node) if e.dst_conn == connector]
     if in_edges:
         outer = state.memlet_path(in_edges[0])[0].src
-        if (isinstance(outer, dace.sdfg.nodes.AccessNode)
-                and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global):
-            return 'rocSOLVER' if common.get_gpu_backend() == 'hip' else 'cuSolverDn'
+        if (
+            isinstance(outer, dace.sdfg.nodes.AccessNode)
+            and state.sdfg.arrays[outer.data].storage == dtypes.StorageType.GPU_Global
+        ):
+            return "rocSOLVER" if common.get_gpu_backend() == "hip" else "cuSolverDn"
     return None
 
 
@@ -56,54 +58,54 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
 
-    ain_arr = sdfg.add_array('_a', inp_shape, dtype=dtype, strides=inp_desc.strides)
-    bout_arr = sdfg.add_array('_b', out_shape, dtype=dtype, strides=out_desc.strides)
-    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True, storage=storage)
+    ain_arr = sdfg.add_array("_a", inp_shape, dtype=dtype, strides=inp_desc.strides)
+    bout_arr = sdfg.add_array("_b", out_shape, dtype=dtype, strides=out_desc.strides)
+    info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=storage)
     if implementation in GPU_SOLVERS:
-        info_host_arr = sdfg.add_array('_info_host', [1],
-                                       dtype=dace.int32,
-                                       transient=True,
-                                       storage=dtypes.StorageType.CPU_Heap)
-        binout_arr = sdfg.add_array('_bt', inp_shape, dtype=dtype, transient=True, storage=storage)
+        info_host_arr = sdfg.add_array(
+            "_info_host", [1], dtype=dace.int32, transient=True, storage=dtypes.StorageType.CPU_Heap
+        )
+        binout_arr = sdfg.add_array("_bt", inp_shape, dtype=dtype, transient=True, storage=storage)
     else:
         binout_arr = bout_arr
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
-    potrf_node = Potrf('potrf', lower=node.lower)
+    potrf_node = Potrf("potrf", lower=node.lower)
     potrf_node.implementation = implementation
 
     # The triangle that _uzero_ zeroes lives in the operand's storage, so a device-resident factorization
     # needs a device map. Under the default schedule, host code writes GPU_Global memory, which
     # validation rejects (cegterg's canon GPU run, at the __inl18_chol edge).
-    uzero_schedule = (dtypes.ScheduleType.GPU_Device
-                      if storage in GPU_RESIDENT_STORAGES else dtypes.ScheduleType.Default)
-    _, me, mx = state.add_mapped_tasklet('_uzero_',
-                                         dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
-                                         dict(_inp=Memlet.simple('_b', '__i, __j')),
-                                         '_out = (__i < __j) ? 0 : _inp;',
-                                         dict(_out=Memlet.simple('_b', '__i, __j')),
-                                         language=dace.dtypes.Language.CPP,
-                                         schedule=uzero_schedule,
-                                         external_edges=True)
+    uzero_schedule = dtypes.ScheduleType.GPU_Device if storage in GPU_RESIDENT_STORAGES else dtypes.ScheduleType.Default
+    _, me, mx = state.add_mapped_tasklet(
+        "_uzero_",
+        dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
+        dict(_inp=Memlet.simple("_b", "__i, __j")),
+        "_out = (__i < __j) ? 0 : _inp;",
+        dict(_out=Memlet.simple("_b", "__i, __j")),
+        language=dace.dtypes.Language.CPP,
+        schedule=uzero_schedule,
+        external_edges=True,
+    )
 
-    ain = state.add_read('_a')
-    info = state.add_access('_info')
+    ain = state.add_read("_a")
+    info = state.add_access("_info")
     if implementation in GPU_SOLVERS:
-        binout1 = state.add_access('_bt')
-        binout2 = state.add_access('_bt')
+        binout1 = state.add_access("_bt")
+        binout2 = state.add_access("_bt")
         binout3 = state.in_edges(me)[0].src
         bout = state.out_edges(mx)[0].dst
-        transpose_ain = Transpose('AT', dtype=dtype)
+        transpose_ain = Transpose("AT", dtype=dtype)
         transpose_ain.implementation = SOLVER_BLAS[implementation]
-        state.add_edge(ain, None, transpose_ain, '_inp', Memlet.from_array(*ain_arr))
-        state.add_edge(transpose_ain, '_out', binout1, None, Memlet.from_array(*binout_arr))
-        transpose_out = Transpose('BT', dtype=dtype)
+        state.add_edge(ain, None, transpose_ain, "_inp", Memlet.from_array(*ain_arr))
+        state.add_edge(transpose_ain, "_out", binout1, None, Memlet.from_array(*binout_arr))
+        transpose_out = Transpose("BT", dtype=dtype)
         transpose_out.implementation = SOLVER_BLAS[implementation]
-        state.add_edge(binout2, None, transpose_out, '_inp', Memlet.from_array(*binout_arr))
-        state.add_edge(transpose_out, '_out', binout3, None, Memlet.from_array(*bout_arr))
+        state.add_edge(binout2, None, transpose_out, "_inp", Memlet.from_array(*binout_arr))
+        state.add_edge(transpose_out, "_out", binout3, None, Memlet.from_array(*bout_arr))
     else:
-        binout1 = state.add_access('_b')
+        binout1 = state.add_access("_b")
         binout2 = state.in_edges(me)[0].src
         binout3 = state.out_edges(mx)[0].dst
         state.add_nedge(ain, binout1, Memlet.from_array(*ain_arr))
@@ -113,7 +115,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
     state.add_memlet_path(potrf_node, binout2, src_conn="_xout", memlet=Memlet.from_array(*binout_arr))
 
     if implementation in GPU_SOLVERS:
-        info_host = state.add_write('_info_host')
+        info_host = state.add_write("_info_host")
         state.add_nedge(info, info_host, Memlet.from_array(*info_host_arr))
 
     return sdfg
@@ -162,13 +164,12 @@ class ExpandCholeskyPure(ExpandTransformation):
         nsdfg = cholesky_pure.to_sdfg(simplify=True)
         # See ``restride``: a connector may be a strided slice of a bigger array, and a contiguous
         # reading of it is silently wrong rather than an error.
-        restride(nsdfg, (('_a', inp_shape, inp_desc.strides), ('_b', out_shape, out_desc.strides)), dtype)
+        restride(nsdfg, (("_a", inp_shape, inp_desc.strides), ("_b", out_shape, out_desc.strides)), dtype)
         return nsdfg
 
 
 @dace.library.expansion
 class ExpandCholeskyOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -178,7 +179,6 @@ class ExpandCholeskyOpenBLAS(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -188,7 +188,6 @@ class ExpandCholeskyMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyCuSolverDn(ExpandTransformation):
-
     environments = [environments.cusolverdn.cuSolverDn]
 
     @staticmethod
@@ -198,7 +197,6 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCholeskyRocSolver(ExpandTransformation):
-
     environments = [environments.rocsolver.rocSOLVER]
 
     @staticmethod
@@ -208,23 +206,28 @@ class ExpandCholeskyRocSolver(ExpandTransformation):
 
 @dace.library.node
 class Cholesky(dace.sdfg.nodes.LibraryNode):
-
     # Global properties
     implementations = {
         "pure": ExpandCholeskyPure,
         "OpenBLAS": ExpandCholeskyOpenBLAS,
         "MKL": ExpandCholeskyMKL,
         "cuSolverDn": ExpandCholeskyCuSolverDn,
-        "rocSOLVER": ExpandCholeskyRocSolver
+        "rocSOLVER": ExpandCholeskyRocSolver,
     }
     default_implementation = None
 
-    lower = dace.properties.Property(dtype=bool, default=True, category='Semantics')
+    lower = dace.properties.Property(dtype=bool, default=True, category="Semantics")
 
     def __init__(self, name, lower=True, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_a"}, outputs={
-            "_b",
-        }, **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs={"_a"},
+            outputs={
+                "_b",
+            },
+            **kwargs,
+        )
         self.lower = lower
 
     def expand(self, state_or_sdfg, *args, **kwargs):
@@ -254,7 +257,10 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         squeezed2 = copy.deepcopy(out_memlet.subset)
         sqdims2 = squeezed2.squeeze()
 
-        desc_ain, desc_aout, = None, None
+        (
+            desc_ain,
+            desc_aout,
+        ) = None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_a":
                 desc_ain = sdfg.arrays[e.data.data]

@@ -8,6 +8,7 @@ conditional block out-edge, no unstructured region), ``to_allocate`` empty, and 
 map scope / access node with no node instrumentation. This proves the elision fires for a pure-map
 state and is correctly withheld for the goto / untracked-declaration hazards.
 """
+
 import numpy as np
 
 import dace
@@ -15,8 +16,13 @@ from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 
-from tests.codegen.readable.conftest import (LEGACY, EXPERIMENTAL, use_implementation, run_isolated,
-                                             assert_outputs_equivalent)
+from tests.codegen.readable.conftest import (
+    LEGACY,
+    EXPERIMENTAL,
+    use_implementation,
+    run_isolated,
+    assert_outputs_equivalent,
+)
 
 N = dace.symbol("N")
 
@@ -76,7 +82,7 @@ def test_pure_map_state_elides_brace():
     with use_implementation(EXPERIMENTAL):
         fc = _frame(sdfg)
         assert fc._structured_control_flow(sdfg) is True
-        (state, ) = [s for s in sdfg.states() if s.number_of_nodes() > 0]
+        (state,) = [s for s in sdfg.states() if s.number_of_nodes() > 0]
         assert fc.state_needs_brace(state) is False  # elided
 
 
@@ -94,7 +100,7 @@ def test_code_to_code_keeps_brace():
     sdfg = _code_to_code_sdfg()
     with use_implementation(EXPERIMENTAL):
         fc = _frame(sdfg)
-        (state, ) = list(sdfg.states())
+        (state,) = list(sdfg.states())
         # a top-level tasklet (code->code register) is not a whitelisted map/access node -> keep the brace
         assert fc.state_needs_brace(state) is True
 
@@ -105,7 +111,7 @@ def test_legacy_always_braces():
     with use_implementation(LEGACY):
         fc = DaCeCodeGenerator(sdfg)
         fc.determine_allocation_lifetime(sdfg)
-        (state, ) = [s for s in sdfg.states() if s.number_of_nodes() > 0]
+        (state,) = [s for s in sdfg.states() if s.number_of_nodes() > 0]
         assert fc.state_needs_brace(state) is True
 
 

@@ -9,6 +9,7 @@ baseline explicitly (``peel_limit=0, break_anti_dependence=False``) so the
 "without the knob the loop stays sequential" contract is robust against
 future default changes; the ON case enables the relevant knob and asserts
 the loop becomes a Map AND stays value-preserving."""
+
 import numpy as np
 import pytest
 
@@ -18,7 +19,7 @@ from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -42,11 +43,11 @@ def test_break_anti_dependence_knob_parallelizes():
     so the loop becomes a Map, value-preserving."""
     off = _s121.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'WAR loop must stay sequential without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "WAR loop must stay sequential without the knob"
 
     on = _s121.to_sdfg(simplify=True)
     canonicalize(on, validate=True, break_anti_dependence=True)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'break_anti_dependence must parallelize the WAR loop'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "break_anti_dependence must parallelize the WAR loop"
 
     a = np.arange(1, 9, dtype=np.float64)
     b = np.arange(8, dtype=np.float64) * 0.5
@@ -74,11 +75,11 @@ def test_loop_peeling_front_conflict_knob_parallelizes():
     value-preserving."""
     off = _front_conflict.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'boundary-conflict loop must stay sequential without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "boundary-conflict loop must stay sequential without the knob"
 
     on = _front_conflict.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling must unblock the boundary-conflict loop'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling must unblock the boundary-conflict loop"
 
     A = np.arange(1, 9, dtype=np.float64)
     B = np.arange(8, dtype=np.float64) + 0.5
@@ -107,11 +108,11 @@ def test_loop_peeling_back_conflict_knob_parallelizes():
     loop-defined symbol survives past the loop to block LoopToMap."""
     off = _back_conflict.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'boundary-conflict loop must stay sequential without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "boundary-conflict loop must stay sequential without the knob"
 
     on = _back_conflict.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling must unblock the boundary-conflict loop'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling must unblock the boundary-conflict loop"
 
     A = np.arange(1, 9, dtype=np.float64)
     B = np.arange(8, dtype=np.float64) + 0.5
@@ -140,11 +141,11 @@ def test_loop_peeling_multi_front_iter_knob_parallelizes():
     count>1 plus the multi-branch dead-guard collapse."""
     off = _multi_front.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'multi-iteration boundary conflict must stay sequential off'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "multi-iteration boundary conflict must stay sequential off"
 
     on = _multi_front.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling two front iterations must unblock the loop'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling two front iterations must unblock the loop"
 
     A = np.arange(1, 9, dtype=np.float64)
     B = np.arange(8, dtype=np.float64) + 0.5
@@ -174,11 +175,11 @@ def test_loop_peeling_multi_front_else_iter_knob_parallelizes():
     arm, not just dead-branch removal."""
     off = _multi_front_else.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'if/elif/else boundary conflict must stay sequential off'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "if/elif/else boundary conflict must stay sequential off"
 
     on = _multi_front_else.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling must collapse the if/elif/else and map the remainder'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling must collapse the if/elif/else and map the remainder"
 
     A = np.arange(1, 9, dtype=np.float64)
     B = np.arange(8, dtype=np.float64) + 0.5
@@ -205,11 +206,11 @@ def test_loop_peeling_multi_back_iter_knob_parallelizes():
     leaking) and prune both dead guards so the remainder maps."""
     off = _multi_back.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'multi-iteration tail conflict must stay sequential off'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "multi-iteration tail conflict must stay sequential off"
 
     on = _multi_back.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling two tail iterations must unblock the loop'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling two tail iterations must unblock the loop"
 
     A = np.arange(1, 9, dtype=np.float64)
     B = np.arange(8, dtype=np.float64) + 0.5
@@ -237,11 +238,11 @@ def test_loop_peeling_fixed_read_first_iter_knob_parallelizes():
     plus the LICM map-scope fix (the read of a map-written array is not hoisted)."""
     off = _fixed_read.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'the carried fixed-read loop must stay sequential without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "the carried fixed-read loop must stay sequential without the knob"
 
     on = _fixed_read.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling iteration 0 must unblock the fixed-read remainder'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling iteration 0 must unblock the fixed-read remainder"
 
     a = np.arange(1, 9, dtype=np.float64)
     b = np.arange(8, dtype=np.float64) + 0.5
@@ -270,7 +271,7 @@ def _mod_wrap_plus3(A: dace.float64[N], B: dace.float64[N]):
         A[(i + 3) % N] = B[i] * 2.0
 
 
-@pytest.mark.parametrize('prog,offset', [(_mod_wrap_plus1, 1), (_mod_wrap_minus1, -1), (_mod_wrap_plus3, 3)])
+@pytest.mark.parametrize("prog,offset", [(_mod_wrap_plus1, 1), (_mod_wrap_minus1, -1), (_mod_wrap_plus3, 3)])
 def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
     """A wrap-around write ``A[(i + k) % N] = ...`` is non-affine (the ``% N`` wraps
     at the boundary), so LoopToMap refuses it. With ``peel_limit>0`` the wrapping
@@ -281,11 +282,11 @@ def test_loop_peeling_modulo_wraparound_knob_parallelizes(prog, offset):
     truncated ``%`` (correct for any sign of ``k`` and symbolic ``N``)."""
     off = prog.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'wrap-around modulo write must stay sequential without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "wrap-around modulo write must stay sequential without the knob"
 
     on = prog.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling + modulo fold must parallelize the wrap-around write'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling + modulo fold must parallelize the wrap-around write"
 
     B = np.arange(8, dtype=np.float64) + 0.5
     ref = np.zeros(8)
@@ -308,7 +309,7 @@ def _mod_read_wrap_plus1(A: dace.float64[N], B: dace.float64[N]):
         A[i] = (B[i] + B[(i + 1) % N]) * 0.5
 
 
-@pytest.mark.parametrize('prog,offset', [(_mod_read_wrap_minus1, -1), (_mod_read_wrap_plus1, 1)])
+@pytest.mark.parametrize("prog,offset", [(_mod_read_wrap_minus1, -1), (_mod_read_wrap_plus1, 1)])
 def test_loop_peeling_modulo_read_wraparound_knob_is_correct(prog, offset):
     """A wrap-around READ ``A[i] = (B[i] + B[(i + k) % N]) * 0.5`` (TSVC s291) already
     maps as-is -- the modulo is a pure read, no parallelization blocker -- but the
@@ -322,7 +323,7 @@ def test_loop_peeling_modulo_read_wraparound_knob_is_correct(prog, offset):
     maps the loop."""
     on = prog.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'peeling + modulo fold must keep the wrap-around read mapped'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "peeling + modulo fold must keep the wrap-around read mapped"
 
     B = np.arange(8, dtype=np.float64) + 0.5
     ref = np.zeros(8)
@@ -333,7 +334,7 @@ def test_loop_peeling_modulo_read_wraparound_knob_is_correct(prog, offset):
     assert np.allclose(got, ref)  # the OFF (no-knob) result is pre-existing-WRONG; only the peeled form is correct
 
 
-K = dace.symbol('K')
+K = dace.symbol("K")
 
 
 @dace.program
@@ -358,25 +359,27 @@ def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
     No trap: a violated condition degrades to the sequential path, not an abort."""
     off = _mod_wrap_symK.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'symbolic-offset wrap must stay sequential without the knob'
-    assert not _specialize_conditionals(off), 'no specialization without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "symbolic-offset wrap must stay sequential without the knob"
+    assert not _specialize_conditionals(off), "no specialization without the knob"
 
     on = _mod_wrap_symK.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
 
     # Specialized into if (K < N): parallel band-split, else: the sequential loop.
     cbs = _specialize_conditionals(on)
-    assert len(cbs) == 1, f'expected one if/else specialization, got {len(cbs)}'
+    assert len(cbs) == 1, f"expected one if/else specialization, got {len(cbs)}"
     (cond, par_region), (else_cond, seq_region) = cbs[0].branches
     assert cond is not None and else_cond is None
-    assert 'K < N' in cond.as_string, f'true branch must be guarded by K < N: {cond.as_string!r}'
-    assert any(isinstance(n, nodes.MapEntry) for n, _ in par_region.all_nodes_recursive()), \
-        'the K < N branch must be the band split lifted to Maps'
+    assert "K < N" in cond.as_string, f"true branch must be guarded by K < N: {cond.as_string!r}"
+    assert any(isinstance(n, nodes.MapEntry) for n, _ in par_region.all_nodes_recursive()), (
+        "the K < N branch must be the band split lifted to Maps"
+    )
     seq_loops = [
         r for r in seq_region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
     ]
-    assert seq_loops and all(l.pinned_sequential for l in seq_loops), \
-        'the else branch must keep the original (pinned) sequential modular loop'
+    assert seq_loops and all(l.pinned_sequential for l in seq_loops), (
+        "the else branch must keep the original (pinned) sequential modular loop"
+    )
 
     # Value-exact for every offset -- including K >= N, which takes the sequential
     # fallback and must still compute correctly (no abort).
@@ -387,7 +390,7 @@ def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
             ref[(i + kval) % 8] = B[i] * 2.0
         got = np.zeros(8)
         on(A=got, B=B.copy(), N=8, K=kval)
-        assert np.allclose(got, ref), f'K={kval}'
+        assert np.allclose(got, ref), f"K={kval}"
 
 
 @dace.program
@@ -407,11 +410,11 @@ def test_index_set_split_interior_guard_knob_parallelizes():
     Value-preserving."""
     off = _interior_guard.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'interior-guard loop must stay sequential without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "interior-guard loop must stay sequential without the knob"
 
     on = _interior_guard.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'index-set split must parallelize the range segments'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "index-set split must parallelize the range segments"
 
     A = np.arange(1, 11, dtype=np.float64)
     B = np.arange(10, dtype=np.float64) + 0.5
@@ -438,11 +441,11 @@ def test_index_set_split_body_around_guard_knob_parallelizes():
     middle iteration. Value-preserving."""
     off = _interior_guard_surrounded.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'surrounded interior-guard loop must stay sequential off'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "surrounded interior-guard loop must stay sequential off"
 
     on = _interior_guard_surrounded.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1 and _nloops(on) == 0, 'index-set split must parallelize the surrounding work'
+    assert _nmaps(on) >= 1 and _nloops(on) == 0, "index-set split must parallelize the surrounding work"
 
     A = np.arange(1, 11, dtype=np.float64)
     B = np.arange(10, dtype=np.float64) + 0.5
@@ -469,21 +472,23 @@ def test_loop_peeling_front_range_guard_knob_parallelizes():
     the disjoint-write body maps. Value-preserving."""
     off = _front_range_guard.to_sdfg(simplify=True)
     canonicalize(off, validate=True, peel_limit=0, break_anti_dependence=False)
-    assert _nmaps(off) == 0 and _nloops(off) == 1, 'range-guard loop must stay sequential without the knob'
+    assert _nmaps(off) == 0 and _nloops(off) == 1, "range-guard loop must stay sequential without the knob"
 
     on = _front_range_guard.to_sdfg(simplify=True)
     canonicalize(on, validate=True, peel_limit=8)
-    assert _nmaps(on) >= 1, 'peeling must map the remainder'
-    assert not [b for b in on.all_control_flow_blocks() if isinstance(b, ConditionalBlock)], \
-        'the i<2 guard must be pruned: it is a contradiction over the remainder'
+    assert _nmaps(on) >= 1, "peeling must map the remainder"
+    assert not [b for b in on.all_control_flow_blocks() if isinstance(b, ConditionalBlock)], (
+        "the i<2 guard must be pruned: it is a contradiction over the remainder"
+    )
     # The guarded run stays ONE loop rather than an iteration per segment. ``ShortLoopUnroll`` runs
     # at the `reduce` stage, before `peel`, so nothing unrolls it afterwards -- whether to is a
     # separate decision, deliberately not made here.
     survivors = [r for r in on.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
-    assert len(survivors) == 1, f'expected only the guarded prefix loop, got {[r.label for r in survivors]}'
-    trip = (int(loop_analysis.get_loop_end(survivors[0])) - int(loop_analysis.get_init_assignment(survivors[0]))) \
-        // int(loop_analysis.get_loop_stride(survivors[0])) + 1
-    assert trip == 2, f'the prefix loop must cover exactly the guarded iterations i<2, got {trip}'
+    assert len(survivors) == 1, f"expected only the guarded prefix loop, got {[r.label for r in survivors]}"
+    trip = (
+        int(loop_analysis.get_loop_end(survivors[0])) - int(loop_analysis.get_init_assignment(survivors[0]))
+    ) // int(loop_analysis.get_loop_stride(survivors[0])) + 1
+    assert trip == 2, f"the prefix loop must cover exactly the guarded iterations i<2, got {trip}"
 
     A = np.arange(1, 9, dtype=np.float64)
     B = np.arange(8, dtype=np.float64) + 0.5
@@ -494,7 +499,7 @@ def test_loop_peeling_front_range_guard_knob_parallelizes():
     assert np.allclose(got, ref_A)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_break_anti_dependence_knob_parallelizes()
     test_loop_peeling_front_range_guard_knob_parallelizes()
     test_loop_peeling_front_conflict_knob_parallelizes()

@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests bracketing of control flow regions with states. """
+"""Tests bracketing of control flow regions with states."""
+
 import numpy as np
 
 import dace
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock
 from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -55,8 +56,9 @@ def regions_of(sdfg):
 
 
 def bracketed(cfg, region):
-    return (all(isinstance(e.src, dace.SDFGState) for e in cfg.in_edges(region))
-            and all(isinstance(e.dst, dace.SDFGState) for e in cfg.out_edges(region)))
+    return all(isinstance(e.src, dace.SDFGState) for e in cfg.in_edges(region)) and all(
+        isinstance(e.dst, dace.SDFGState) for e in cfg.out_edges(region)
+    )
 
 
 def sizing_regions(sdfg):
@@ -73,7 +75,7 @@ def sizing_regions(sdfg):
 def test_a_region_whose_assignment_sizes_a_transient_is_bracketed():
     sdfg = loop_sized_by_an_assignment.to_sdfg(simplify=True)
     targets = list(sizing_regions(sdfg))
-    assert targets, 'the fixture must size a transient from an interstate assignment'
+    assert targets, "the fixture must size a transient from an interstate assignment"
 
     assert RegionBoundaryStates().apply_pass(sdfg, {}) > 0
     for cfg, region in targets:
@@ -89,7 +91,7 @@ def test_a_conditional_sized_by_an_assignment_is_bracketed():
     """
     sdfg = conditional_sized_by_an_assignment.to_sdfg(simplify=True)
     conditionals = [(cfg, n) for cfg, n in regions_of(sdfg) if isinstance(n, ConditionalBlock)]
-    assert conditionals, 'the fixture must keep a conditional block'
+    assert conditionals, "the fixture must keep a conditional block"
     assert any((cfg, n) in list(sizing_regions(sdfg)) for cfg, n in conditionals)
 
     assert RegionBoundaryStates().apply_pass(sdfg, {}) > 0
@@ -120,13 +122,13 @@ def test_regions_inside_a_nested_sdfg_are_bracketed():
     """The pass descends into nested SDFGs, where the same allocation bug applies."""
     sdfg = calls_loop_sized_by_an_assignment.to_sdfg(simplify=False)
     nested = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert nested, 'the fixture must keep a nested SDFG'
+    assert nested, "the fixture must keep a nested SDFG"
     # Only simplify the callee: that is what moves the size assignment onto the region's incoming
     # edge, and simplifying the caller too would inline the nested SDFG away.
     for node in nested:
         node.sdfg.simplify()
     inner = [(cfg, r) for cfg, r in sizing_regions(sdfg) if cfg.sdfg is not sdfg]
-    assert inner, 'the nested SDFG must contain a region sized by an assignment'
+    assert inner, "the nested SDFG must contain a region sized by an assignment"
 
     RegionBoundaryStates().apply_pass(sdfg, {})
     for cfg, region in inner:
@@ -140,20 +142,20 @@ def test_leading_region_keeps_start_block():
     Only a cyclic CFG reaches this: the pass brackets a region whose incoming edge assigns a size
     symbol, and in an acyclic graph a start block has no incoming edge. Hand-built for that reason.
     """
-    sdfg = dace.SDFG('cyclic_start')
-    sdfg.add_array('out', [1], dace.float64)
-    sdfg.add_symbol('K', dace.int64)
-    sdfg.add_transient('b', ['K'], dace.float64)
+    sdfg = dace.SDFG("cyclic_start")
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_symbol("K", dace.int64)
+    sdfg.add_transient("b", ["K"], dace.float64)
 
-    loop = dace.sdfg.state.LoopRegion('loop', 'i < 4', 'i', 'i = 0', 'i = i + 1')
+    loop = dace.sdfg.state.LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    body = loop.add_state('body', is_start_block=True)
-    tasklet = body.add_tasklet('one', {}, {'o'}, 'o = 1.0')
-    body.add_edge(tasklet, 'o', body.add_write('out'), None, dace.Memlet('out[0]'))
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    body.add_edge(tasklet, "o", body.add_write("out"), None, dace.Memlet("out[0]"))
 
-    tail = sdfg.add_state('tail')
-    sdfg.add_edge(loop, tail, dace.InterstateEdge(condition='0'))
-    sdfg.add_edge(tail, loop, dace.InterstateEdge(assignments={'K': '4'}))
+    tail = sdfg.add_state("tail")
+    sdfg.add_edge(loop, tail, dace.InterstateEdge(condition="0"))
+    sdfg.add_edge(tail, loop, dace.InterstateEdge(assignments={"K": "4"}))
 
     assert RegionBoundaryStates().apply_pass(sdfg, {}) == 2
     assert isinstance(sdfg.start_block, dace.SDFGState)
@@ -173,7 +175,7 @@ def test_result_is_unchanged():
     assert np.allclose(out, a * 2.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_region_whose_assignment_sizes_a_transient_is_bracketed()
     test_a_conditional_sized_by_an_assignment_is_bracketed()
     test_a_region_that_needs_no_boundary_is_left_alone()

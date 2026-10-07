@@ -6,6 +6,7 @@ the body of an outer map and guards an inner map. The transformation pushes
 the guard past the inner map so the two maps can be fused/collapsed by later
 passes.
 """
+
 import copy
 
 import numpy as np
@@ -55,11 +56,9 @@ def _run_and_compare(prog, inputs, expected_apps: int, simplify: bool = False):
     sdfg2(**transformed)
 
     for key in reference:
-        np.testing.assert_allclose(transformed[key],
-                                   reference[key],
-                                   rtol=1e-5,
-                                   atol=1e-6,
-                                   err_msg=f"Mismatch for {key}")
+        np.testing.assert_allclose(
+            transformed[key], reference[key], rtol=1e-5, atol=1e-6, err_msg=f"Mismatch for {key}"
+        )
 
     return sdfg2
 
@@ -124,8 +123,9 @@ def test_move_if_into_map_multiple_reads_and_writes():
     N, M = 4, 4
 
     @dace.program
-    def tester_move_if_into_map_multiple_reads_and_writes(A: dace.float64[N, M], B: dace.float64[N, M],
-                                                          cond: dace.int32):
+    def tester_move_if_into_map_multiple_reads_and_writes(
+        A: dace.float64[N, M], B: dace.float64[N, M], cond: dace.int32
+    ):
         for i in dace.map[0:N]:
             if cond == 1:
                 for j in dace.map[0:M]:
@@ -302,8 +302,9 @@ def test_move_if_into_map_no_race_with_upstream_symbol_assignment():
             continue
         if g.name == "mid_tester":  # the enclosing SDFG
             for sym in e.data.assignments:
-                assert not sym.endswith("_cond"), (f"condition should be moved inside inner NSDFG, found {sym} on "
-                                                   f"mid-level edge: {e.data.assignments}")
+                assert not sym.endswith("_cond"), (
+                    f"condition should be moved inside inner NSDFG, found {sym} on mid-level edge: {e.data.assignments}"
+                )
 
     # The inner NSDFG body should now contain a ConditionalBlock whose
     # guard reads ``_if_cond_24`` (piped through symbol_mapping).

@@ -5,15 +5,15 @@ import io
 import dace
 import numpy as np
 import dace.libraries.standard as stdlib
-from dace.transformation.dataflow import (MapReduceFusion, MapFusionVertical, MapWCRFusion)
+from dace.transformation.dataflow import MapReduceFusion, MapFusionVertical, MapWCRFusion
 from dace.transformation.passes import FuseMaps
 
-W = dace.symbol('W')
-H = dace.symbol('H')
+W = dace.symbol("W")
+H = dace.symbol("H")
 
-M = dace.symbol('M')
-N = dace.symbol('N')
-K = dace.symbol('K')
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
 BINS = 256
 
 
@@ -150,7 +150,7 @@ def onetest(program):
     N = 20
     K = 5
 
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
+    print("Matrix multiplication %dx%dx%d" % (M, N, K))
 
     A = np.random.rand(M, K)
     B = np.random.rand(K, N)
@@ -171,7 +171,7 @@ def test_basic():
     W = 128
     H = 128
 
-    print('Map-Reduce Test %dx%d' % (W, H))
+    print("Map-Reduce Test %dx%d" % (W, H))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
@@ -195,7 +195,7 @@ def test_mmm():
     N = 20
     K = 5
 
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
+    print("Matrix multiplication %dx%dx%d" % (M, N, K))
 
     # Initialize arrays: Randomize A and B, zero C
     A = dace.ndarray([M, N], dtype=dace.float64)
@@ -226,7 +226,7 @@ def test_extradims():
     W = 128
     H = 128
 
-    print('Map-Reduce Test %dx%d' % (W, H))
+    print("Map-Reduce Test %dx%d" % (W, H))
 
     A = dace.ndarray([1, H, 1, W, 1], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
@@ -249,7 +249,7 @@ def test_permuted():
     N = 20
     K = 5
 
-    print('Matrix multiplication %dx%dx%d' % (M, N, K))
+    print("Matrix multiplication %dx%dx%d" % (M, N, K))
 
     # Initialize arrays: Randomize A and B, zero C
     A = dace.ndarray([M, N], dtype=dace.float64)
@@ -280,7 +280,7 @@ def test_histogram():
     W = 32
     H = 32
 
-    print('Histogram (dec) %dx%d' % (W, H))
+    print("Histogram (dec) %dx%d" % (W, H))
 
     A = np.random.randint(0, BINS, (H, W)).astype(np.uint8)
     hist = np.zeros([BINS], dtype=np.uint32)
@@ -322,14 +322,15 @@ def test_fuse_maps_removes_the_reduced_intermediate():
 
     without = reduce_a_product.to_sdfg(simplify=True)
     FuseMaps(perform_vertical_map_fusion=False).apply_pass(without, {})
-    assert sized_transients(without), 'nothing to remove: the test no longer covers the case'
+    assert sized_transients(without), "nothing to remove: the test no longer covers the case"
 
     with_it = reduce_a_product.to_sdfg(simplify=True)
     FuseMaps().apply_pass(with_it, {})
-    assert not sized_transients(with_it), f'intermediate survived: {sized_transients(with_it)}'
+    assert not sized_transients(with_it), f"intermediate survived: {sized_transients(with_it)}"
     assert not [n for n, _ in with_it.all_nodes_recursive() if isinstance(n, stdlib.Reduce)]
-    assert any(e.data.wcr for sd in with_it.all_sdfgs_recursive() for st in sd.states() for e in st.edges()), \
-        'the Reduce went away without leaving a WCR behind'
+    assert any(e.data.wcr for sd in with_it.all_sdfgs_recursive() for st in sd.states() for e in st.edges()), (
+        "the Reduce went away without leaving a WCR behind"
+    )
 
     with_it.validate()
     rng = np.random.default_rng(0)
@@ -346,44 +347,44 @@ def test_a_second_body_tasklet_does_not_break_the_match():
     map body held a second tasklet writing elsewhere and the matcher bound that one -- swallowed by
     the matcher into a printed warning, six per npbench nbody build."""
     n = 8
-    sdfg = dace.SDFG('two_body_writers')
-    sdfg.add_array('a', (N, ), dace.float64)
-    sdfg.add_array('other', (N, ), dace.float64)
-    sdfg.add_array('out', (1, ), dace.float64)
-    sdfg.add_transient('tmp', (N, ), dace.float64)
+    sdfg = dace.SDFG("two_body_writers")
+    sdfg.add_array("a", (N,), dace.float64)
+    sdfg.add_array("other", (N,), dace.float64)
+    sdfg.add_array("out", (1,), dace.float64)
+    sdfg.add_transient("tmp", (N,), dace.float64)
 
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i='0:N'))
-    read = state.add_read('a')
+    me, mx = state.add_map("m", dict(i="0:N"))
+    read = state.add_read("a")
     # Insertion order is load-bearing: the matcher reaches the non-producing tasklet first, which is
     # exactly the binding that used to raise.
-    copy = state.add_tasklet('copy', {'inp'}, {'o'}, 'o = inp + 1.0')
-    scale = state.add_tasklet('scale', {'inp'}, {'o'}, 'o = inp * 2.0')
-    tmp = state.add_access('tmp')
-    state.add_memlet_path(read, me, copy, dst_conn='inp', memlet=dace.Memlet('a[i]'))
-    state.add_memlet_path(read, me, scale, dst_conn='inp', memlet=dace.Memlet('a[i]'))
-    state.add_memlet_path(copy, mx, state.add_write('other'), src_conn='o', memlet=dace.Memlet('other[i]'))
-    state.add_memlet_path(scale, mx, tmp, src_conn='o', memlet=dace.Memlet('tmp[i]'))
+    copy = state.add_tasklet("copy", {"inp"}, {"o"}, "o = inp + 1.0")
+    scale = state.add_tasklet("scale", {"inp"}, {"o"}, "o = inp * 2.0")
+    tmp = state.add_access("tmp")
+    state.add_memlet_path(read, me, copy, dst_conn="inp", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(read, me, scale, dst_conn="inp", memlet=dace.Memlet("a[i]"))
+    state.add_memlet_path(copy, mx, state.add_write("other"), src_conn="o", memlet=dace.Memlet("other[i]"))
+    state.add_memlet_path(scale, mx, tmp, src_conn="o", memlet=dace.Memlet("tmp[i]"))
 
-    red = state.add_reduce('lambda a, b: a + b', None, identity=0)
-    state.add_edge(tmp, None, red, '_in', dace.Memlet('tmp[0:N]'))
-    state.add_edge(red, '_out', state.add_write('out'), None, dace.Memlet('out[0]'))
+    red = state.add_reduce("lambda a, b: a + b", None, identity=0)
+    state.add_edge(tmp, None, red, "_in", dace.Memlet("tmp[0:N]"))
+    state.add_edge(red, "_out", state.add_write("out"), None, dace.Memlet("out[0]"))
     sdfg.validate()
 
     with contextlib.redirect_stdout(io.StringIO()) as captured:
         applied = sdfg.apply_transformations_repeated(MapReduceFusion)
     # The matcher prints and swallows every exception a `can_be_applied` raises, so the warning it
     # prints is the only place the failure is observable.
-    assert 'exception' not in captured.getvalue(), captured.getvalue()
-    assert applied == 1, 'the reduction should still fuse into the map'
+    assert "exception" not in captured.getvalue(), captured.getvalue()
+    assert applied == 1, "the reduction should still fuse into the map"
     assert not [node for node in state.nodes() if isinstance(node, stdlib.Reduce)]
 
     rng = np.random.default_rng(20260830)
     a = rng.random(n)
     other, out = np.zeros(n), np.zeros(1)
     sdfg(a=a.copy(), other=other, out=out, N=n)
-    assert np.allclose(out[0], (a * 2.0).sum()), f'reduction wrong: {out[0]}'
-    assert np.allclose(other, a + 1.0), 'the second body tasklet lost its output'
+    assert np.allclose(out[0], (a * 2.0).sum()), f"reduction wrong: {out[0]}"
+    assert np.allclose(other, a + 1.0), "the second body tasklet lost its output"
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ The rules read the shared array as one element PER ITERATION, so they hold only 
 really are per-iteration. A value the loop carries in a scalar compares EQUAL to its own store
 and would otherwise be mistaken for s221's shape; it has no legal order at all.
 """
+
 import numpy as np
 import pytest
 
@@ -27,7 +28,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -92,31 +93,32 @@ def _writes(loop: LoopRegion) -> set:
     return {
         n.data
         for st in loop.states()
-        for n in st.data_nodes() if any(e.data is not None and not e.data.is_empty() for e in st.in_edges(n))
+        for n in st.data_nodes()
+        if any(e.data is not None and not e.data.is_empty() for e in st.in_edges(n))
     }
 
 
 def _run(program, sdfg: dace.SDFG, n: int = 64, seed: int = 5) -> None:
     """Assert ``sdfg`` still computes what the unmodified program computes."""
     rng = np.random.default_rng(seed)
-    args = {name: rng.random(n) for name in 'abcd' if name in program.f.__code__.co_varnames}
+    args = {name: rng.random(n) for name in "abcd" if name in program.f.__code__.co_varnames}
     ref = {k: v.copy() for k, v in args.items()}
     _reference(program.name, ref, n)
     got = {k: v.copy() for k, v in args.items()}
     sdfg(N=n, **got)
     for name, value in got.items():
-        assert np.allclose(value, ref[name], equal_nan=True), f'{name} diverges from the oracle'
+        assert np.allclose(value, ref[name], equal_nan=True), f"{name} diverges from the oracle"
 
 
 def _reference(which: str, arr: dict, n: int) -> None:
     """Plain-numpy oracle, written out iteration by iteration."""
-    a, b, c = arr['a'], arr['b'], arr.get('c')
-    d = arr.get('d')
-    if which.endswith('read_ahead'):
+    a, b, c = arr["a"], arr["b"], arr.get("c")
+    d = arr.get("d")
+    if which.endswith("read_ahead"):
         for i in range(n - 1):
             a[i] = a[i] * c[i]
             b[i] = b[i] + a[i + 1] * d[i]
-    elif which.endswith('same_index'):
+    elif which.endswith("same_index"):
         for i in range(1, n):
             a[i] = a[i] + c[i] * d[i]
             b[i] = b[i - 1] + a[i] + d[i]
@@ -129,26 +131,26 @@ def _reference(which: str, arr: dict, n: int) -> None:
 def test_read_ahead_puts_the_reader_first():
     """s212: the loop that READS ``a`` must run before the loop that overwrites it."""
     sdfg = read_ahead.to_sdfg(simplify=True)
-    assert SplitStatements().apply_pass(sdfg, {}) == 1, 'the ordered split must fire'
+    assert SplitStatements().apply_pass(sdfg, {}) == 1, "the ordered split must fire"
     sdfg.validate()
 
     loops = _loops(sdfg)
-    assert len(loops) == 2, f'one loop per statement: {[l.label for l in loops]}'
-    assert 'b' in _writes(loops[0]) and 'a' not in _writes(loops[0]), 'the reader of a runs first'
-    assert 'a' in _writes(loops[1]), 'the writer of a runs second'
+    assert len(loops) == 2, f"one loop per statement: {[l.label for l in loops]}"
+    assert "b" in _writes(loops[0]) and "a" not in _writes(loops[0]), "the reader of a runs first"
+    assert "a" in _writes(loops[1]), "the writer of a runs second"
     _run(read_ahead, sdfg)
 
 
 def test_same_index_read_puts_the_writer_first():
     """s221: the loop that WRITES ``a`` must run before the loop that reads the same element."""
     sdfg = same_index.to_sdfg(simplify=True)
-    assert SplitStatements().apply_pass(sdfg, {}) == 1, 'the ordered split must fire'
+    assert SplitStatements().apply_pass(sdfg, {}) == 1, "the ordered split must fire"
     sdfg.validate()
 
     loops = _loops(sdfg)
-    assert len(loops) == 2, f'one loop per statement: {[l.label for l in loops]}'
-    assert 'a' in _writes(loops[0]) and 'b' not in _writes(loops[0]), 'the writer of a runs first'
-    assert 'b' in _writes(loops[1]), 'the reader of a runs second'
+    assert len(loops) == 2, f"one loop per statement: {[l.label for l in loops]}"
+    assert "a" in _writes(loops[0]) and "b" not in _writes(loops[0]), "the writer of a runs first"
+    assert "b" in _writes(loops[1]), "the reader of a runs second"
     _run(same_index, sdfg)
 
 
@@ -156,18 +158,18 @@ def test_contradictory_directions_are_refused():
     """No order reproduces the fused loop, so the pass must leave the SDFG bit-identical."""
     sdfg = pulls_both_ways.to_sdfg(simplify=True)
     before = sdfg.hash_sdfg()
-    assert SplitStatements().apply_pass(sdfg, {}) is None, 'a contradictory pair must not split'
-    assert sdfg.hash_sdfg() == before, 'a pass that does not apply must not mutate'
+    assert SplitStatements().apply_pass(sdfg, {}) is None, "a contradictory pair must not split"
+    assert sdfg.hash_sdfg() == before, "a pass that does not apply must not mutate"
 
 
-@pytest.mark.parametrize('program,maps,scans', [(read_ahead, 2, 0), (same_index, 1, 1)])
+@pytest.mark.parametrize("program,maps,scans", [(read_ahead, 2, 0), (same_index, 1, 1)])
 def test_canonicalize_parallelizes_the_split_pair(program, maps, scans):
     """End to end: the fused loop has no Map at all, and after the split neither half is a loop."""
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     sdfg.validate()
 
-    assert not _loops(sdfg), 'no sequential loop may survive'
+    assert not _loops(sdfg), "no sequential loop may survive"
     assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry)) == maps
     assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)) == scans
     _run(program, sdfg)
@@ -177,8 +179,8 @@ def test_carried_scalar_is_refused():
     """The running sum is carried in a scalar, so neither order reproduces the fused loop."""
     sdfg = carried_scalar.to_sdfg(simplify=True)
     before = sdfg.hash_sdfg()
-    assert SplitStatements().apply_pass(sdfg, {}) is None, 'a carried scalar must not split'
-    assert sdfg.hash_sdfg() == before, 'a pass that does not apply must not mutate'
+    assert SplitStatements().apply_pass(sdfg, {}) is None, "a carried scalar must not split"
+    assert sdfg.hash_sdfg() == before, "a pass that does not apply must not mutate"
 
 
 def test_carried_scalar_keeps_the_running_sum():
@@ -190,10 +192,10 @@ def test_carried_scalar_keeps_the_running_sum():
     sdfg.validate()
     got = np.zeros(n)
     sdfg(a=a.copy(), b=got, N=n)
-    assert np.allclose(got, np.cumsum(a)), 'a split loop would read the final total in every b[i]'
+    assert np.allclose(got, np.cumsum(a)), "a split loop would read the final total in every b[i]"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_read_ahead_puts_the_reader_first()
     test_same_index_read_puts_the_writer_first()
     test_contradictory_directions_are_refused()

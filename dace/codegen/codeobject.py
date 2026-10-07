@@ -2,51 +2,52 @@
 import re
 import dace
 from dace import sourcemap
-from dace.properties import (Property, DictProperty, SetProperty, make_properties)
+from dace.properties import Property, DictProperty, SetProperty, make_properties
 
 #: Trailing provenance annotation ``CodeIOStream`` pads onto every line it writes (see
 #: :mod:`dace.codegen.prettycode`). Strip it to recover the line's own code.
-CODE_ANNOTATION = re.compile(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*')
+CODE_ANNOTATION = re.compile(r"[ \t]*////__(DACE:|CODEGEN;)[^\n]*")
 
 
 @make_properties
 class CodeObject(object):
-    name = Property(dtype=str, category='Code Generation', desc="Filename to use")
-    code = Property(dtype=str, category='Code Generation', desc="The code attached to this object")
-    language = Property(dtype=str,
-                        category='Code Generation',
-                        desc="Language used for this code (same " + "as its file extension)")
-    target = Property(dtype=type, category='Code Generation', desc="Target to use for compilation", allow_none=True)
-    target_type = Property(dtype=str,
-                           category='Code Generation',
-                           desc="Sub-target within target (e.g., host or device code)",
-                           default="")
-    title = Property(dtype=str, category='Code Generation', desc="Title of code for GUI")
-    extra_compiler_kwargs = DictProperty(key_type=str,
-                                         value_type=str,
-                                         category='Code Generation',
-                                         desc="Additional compiler argument "
-                                         "variables to add to template")
-    linkable = Property(dtype=bool,
-                        category='Code Generation',
-                        desc='Should this file participate in '
-                        'overall linkage?')
-    environments = SetProperty(str,
-                               category='Code Generation',
-                               desc="Environments required by CMake to build and run this code node.",
-                               default=set())
+    name = Property(dtype=str, category="Code Generation", desc="Filename to use")
+    code = Property(dtype=str, category="Code Generation", desc="The code attached to this object")
+    language = Property(
+        dtype=str, category="Code Generation", desc="Language used for this code (same " + "as its file extension)"
+    )
+    target = Property(dtype=type, category="Code Generation", desc="Target to use for compilation", allow_none=True)
+    target_type = Property(
+        dtype=str, category="Code Generation", desc="Sub-target within target (e.g., host or device code)", default=""
+    )
+    title = Property(dtype=str, category="Code Generation", desc="Title of code for GUI")
+    extra_compiler_kwargs = DictProperty(
+        key_type=str,
+        value_type=str,
+        category="Code Generation",
+        desc="Additional compiler argument variables to add to template",
+    )
+    linkable = Property(dtype=bool, category="Code Generation", desc="Should this file participate in overall linkage?")
+    environments = SetProperty(
+        str,
+        category="Code Generation",
+        desc="Environments required by CMake to build and run this code node.",
+        default=set(),
+    )
 
-    def __init__(self,
-                 name,
-                 code,
-                 language,
-                 target,
-                 title,
-                 target_type="",
-                 additional_compiler_kwargs=None,
-                 linkable=True,
-                 environments=None,
-                 sdfg=None):
+    def __init__(
+        self,
+        name,
+        code,
+        language,
+        target,
+        title,
+        target_type="",
+        additional_compiler_kwargs=None,
+        linkable=True,
+        environments=None,
+        sdfg=None,
+    ):
         super(CodeObject, self).__init__()
 
         self.name = name
@@ -67,7 +68,7 @@ class CodeObject(object):
 
     @property
     def clean_code(self):
-        return CODE_ANNOTATION.sub('', self.code)
+        return CODE_ANNOTATION.sub("", self.code)
 
-    def create_source_map(self, sdfg: 'dace.SDFG') -> None:
+    def create_source_map(self, sdfg: "dace.SDFG") -> None:
         sourcemap.create_maps(sdfg, self.code, self.target.target_name)

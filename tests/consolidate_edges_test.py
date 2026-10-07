@@ -15,20 +15,20 @@ from .transformations import utility
 
 
 def _make_cetest_sdfg():
-    sdfg = dace.SDFG('cetest')
-    sdfg.add_array('A', [50], dace.float32)
-    sdfg.add_array('B', [48], dace.float32)
+    sdfg = dace.SDFG("cetest")
+    sdfg.add_array("A", [50], dace.float32)
+    sdfg.add_array("B", [48], dace.float32)
     state = sdfg.add_state()
 
-    r = state.add_read('A')
-    me, mx = state.add_map('map', dict(i='1:49'))
-    t = state.add_tasklet('op', {'a', 'b', 'c'}, {'out'}, 'out = a + b + c')
-    w = state.add_write('B')
+    r = state.add_read("A")
+    me, mx = state.add_map("map", dict(i="1:49"))
+    t = state.add_tasklet("op", {"a", "b", "c"}, {"out"}, "out = a + b + c")
+    w = state.add_write("B")
 
-    state.add_memlet_path(r, me, t, dst_conn='a', memlet=dace.Memlet.simple('A', 'i-1'))
-    state.add_memlet_path(r, me, t, dst_conn='b', memlet=dace.Memlet.simple('A', 'i'))
-    state.add_memlet_path(r, me, t, dst_conn='c', memlet=dace.Memlet.simple('A', 'i+1'))
-    state.add_memlet_path(t, mx, w, src_conn='out', memlet=dace.Memlet.simple('B', 'i-1'))
+    state.add_memlet_path(r, me, t, dst_conn="a", memlet=dace.Memlet.simple("A", "i-1"))
+    state.add_memlet_path(r, me, t, dst_conn="b", memlet=dace.Memlet.simple("A", "i"))
+    state.add_memlet_path(r, me, t, dst_conn="c", memlet=dace.Memlet.simple("A", "i+1"))
+    state.add_memlet_path(t, mx, w, src_conn="out", memlet=dace.Memlet.simple("B", "i-1"))
 
     sdfg.validate()
 
@@ -42,30 +42,31 @@ def test_consolidate_edges():
     assert len(state.edges()) == 6
 
 
-def _make_write_merge_sdfg(sub1: str, sub2: str, n1: int, n2: int,
-                           array_size: int) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.MapExit]:
+def _make_write_merge_sdfg(
+    sub1: str, sub2: str, n1: int, n2: int, array_size: int
+) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.MapExit]:
     # Two exit connectors of the same map, both writing directly into B, one connector
     # per tasklet so consolidate_edges_scope sees them as two independent write paths
     # to the same outer data container.
-    sdfg = dace.SDFG(utility.unique_name('write_merge'))
-    sdfg.add_array('B', [array_size], dace.float64)
+    sdfg = dace.SDFG(utility.unique_name("write_merge"))
+    sdfg.add_array("B", [array_size], dace.float64)
     state = sdfg.add_state(is_start_block=True)
 
-    me, mx = state.add_map('trivial', dict(__i='0:1'))
-    code1 = '\n'.join(f'out[{k}] = 1.0' for k in range(n1))
-    code2 = '\n'.join(f'out[{k}] = 2.0' for k in range(n2))
-    t1 = state.add_tasklet('t1', {}, {'out': None}, code1)
-    t2 = state.add_tasklet('t2', {}, {'out': None}, code2)
-    w = state.add_write('B')
+    me, mx = state.add_map("trivial", dict(__i="0:1"))
+    code1 = "\n".join(f"out[{k}] = 1.0" for k in range(n1))
+    code2 = "\n".join(f"out[{k}] = 2.0" for k in range(n2))
+    t1 = state.add_tasklet("t1", {}, {"out": None}, code1)
+    t2 = state.add_tasklet("t2", {}, {"out": None}, code2)
+    w = state.add_write("B")
 
     state.add_nedge(me, t1, dace.Memlet())
     state.add_nedge(me, t2, dace.Memlet())
-    mx.add_scope_connectors('1')
-    mx.add_scope_connectors('2')
-    state.add_edge(t1, 'out', mx, 'IN_1', dace.Memlet(f'B[{sub1}]'))
-    state.add_edge(t2, 'out', mx, 'IN_2', dace.Memlet(f'B[{sub2}]'))
-    state.add_edge(mx, 'OUT_1', w, None, dace.Memlet(f'B[{sub1}]'))
-    state.add_edge(mx, 'OUT_2', w, None, dace.Memlet(f'B[{sub2}]'))
+    mx.add_scope_connectors("1")
+    mx.add_scope_connectors("2")
+    state.add_edge(t1, "out", mx, "IN_1", dace.Memlet(f"B[{sub1}]"))
+    state.add_edge(t2, "out", mx, "IN_2", dace.Memlet(f"B[{sub2}]"))
+    state.add_edge(mx, "OUT_1", w, None, dace.Memlet(f"B[{sub1}]"))
+    state.add_edge(mx, "OUT_2", w, None, dace.Memlet(f"B[{sub2}]"))
 
     sdfg.validate()
     return sdfg, state, mx
@@ -75,7 +76,7 @@ def test_consolidate_edges_refuses_overlapping_writes():
     # B[0:6] and B[3:9] overlap on [3:6) -- consolidating would fold two independently
     # ordered writes into one connector, which can silently change which write lands
     # in the overlap. The pass must refuse the merge and leave the SDFG untouched.
-    sdfg, state, mx = _make_write_merge_sdfg('0:6', '3:9', n1=6, n2=6, array_size=10)
+    sdfg, state, mx = _make_write_merge_sdfg("0:6", "3:9", n1=6, n2=6, array_size=10)
     edges_before = len(state.edges())
     in_conn_before = dict(mx.in_connectors)
     out_conn_before = dict(mx.out_connectors)
@@ -100,7 +101,7 @@ def test_consolidate_edges_refuses_overlapping_writes():
 def test_consolidate_edges_merges_disjoint_writes():
     # B[0:4] and B[6:10] cannot overlap -- the legitimate case must still consolidate,
     # otherwise the overlap guard is just disabling the pass outright.
-    sdfg, state, mx = _make_write_merge_sdfg('0:4', '6:10', n1=4, n2=4, array_size=10)
+    sdfg, state, mx = _make_write_merge_sdfg("0:4", "6:10", n1=4, n2=4, array_size=10)
     edges_before = len(state.edges())
 
     ret = consolidate_edges(sdfg, propagate=False)
@@ -123,31 +124,31 @@ def _make_reanchor_cycle_sdfg() -> Tuple[dace.SDFG, dace.SDFGState]:
     # Map1's second write touched must finish before Map2 starts). Map2's own exit writes the
     # SAME array into the node Map1's fold keeps ('kept') -- exactly the CloudSC shape where a
     # zero-fill map's write and a later map's write land on one shared access node.
-    sdfg = dace.SDFG(utility.unique_name('reanchor_cycle'))
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG(utility.unique_name("reanchor_cycle"))
+    sdfg.add_array("B", [10], dace.float64)
     state = sdfg.add_state(is_start_block=True)
 
-    me1, mx1 = state.add_map('fold', dict(__i='0:1'))
-    t1 = state.add_tasklet('t1', {}, {'out': None}, '\n'.join(f'out[{k}] = 1.0' for k in range(4)))
-    t2 = state.add_tasklet('t2', {}, {'out': None}, '\n'.join(f'out[{k}] = 2.0' for k in range(2)))
+    me1, mx1 = state.add_map("fold", dict(__i="0:1"))
+    t1 = state.add_tasklet("t1", {}, {"out": None}, "\n".join(f"out[{k}] = 1.0" for k in range(4)))
+    t2 = state.add_tasklet("t2", {}, {"out": None}, "\n".join(f"out[{k}] = 2.0" for k in range(2)))
     state.add_nedge(me1, t1, dace.Memlet())
     state.add_nedge(me1, t2, dace.Memlet())
-    mx1.add_scope_connectors('1')
-    mx1.add_scope_connectors('2')
-    state.add_edge(t1, 'out', mx1, 'IN_1', dace.Memlet('B[0:4]'))
-    state.add_edge(t2, 'out', mx1, 'IN_2', dace.Memlet('B[4:6]'))
-    kept = state.add_access('B')
-    stranded = state.add_access('B')
-    state.add_edge(mx1, 'OUT_1', kept, None, dace.Memlet('B[0:4]'))
-    state.add_edge(mx1, 'OUT_2', stranded, None, dace.Memlet('B[4:6]'))
+    mx1.add_scope_connectors("1")
+    mx1.add_scope_connectors("2")
+    state.add_edge(t1, "out", mx1, "IN_1", dace.Memlet("B[0:4]"))
+    state.add_edge(t2, "out", mx1, "IN_2", dace.Memlet("B[4:6]"))
+    kept = state.add_access("B")
+    stranded = state.add_access("B")
+    state.add_edge(mx1, "OUT_1", kept, None, dace.Memlet("B[0:4]"))
+    state.add_edge(mx1, "OUT_2", stranded, None, dace.Memlet("B[4:6]"))
 
-    me2, mx2 = state.add_map('m2', dict(__j='0:1'))
+    me2, mx2 = state.add_map("m2", dict(__j="0:1"))
     state.add_nedge(stranded, me2, dace.Memlet())  # the WAW guard that must not become cyclic
-    t3 = state.add_tasklet('t3', {}, {'out': None}, '\n'.join(f'out[{k}] = 3.0' for k in range(4)))
+    t3 = state.add_tasklet("t3", {}, {"out": None}, "\n".join(f"out[{k}] = 3.0" for k in range(4)))
     state.add_nedge(me2, t3, dace.Memlet())
-    mx2.add_scope_connectors('3')
-    state.add_edge(t3, 'out', mx2, 'IN_3', dace.Memlet('B[6:10]'))
-    state.add_edge(mx2, 'OUT_3', kept, None, dace.Memlet('B[6:10]'))
+    mx2.add_scope_connectors("3")
+    state.add_edge(t3, "out", mx2, "IN_3", dace.Memlet("B[6:10]"))
+    state.add_edge(mx2, "OUT_3", kept, None, dace.Memlet("B[6:10]"))
 
     sdfg.validate()
     return sdfg, state
@@ -172,9 +173,9 @@ def test_consolidate_edges_never_reanchors_ordering_into_a_cycle():
     consolidate_edges(sdfg, propagate=False)
     sdfg.validate()  # must not raise "State should be acyclic but contains cycles"
     # ... nor drop the happens-before: map 2 still starts after everything map 1 wrote.
-    fold_exit = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapExit) and n.map.label == 'fold')
-    m2_entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.label == 'm2')
-    assert nx.has_path(state._nx, fold_exit, m2_entry), 'the fold dropped the ordering into the second map'
+    fold_exit = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapExit) and n.map.label == "fold")
+    m2_entry = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.label == "m2")
+    assert nx.has_path(state._nx, fold_exit, m2_entry), "the fold dropped the ordering into the second map"
 
     got = np.zeros(10)
     sdfg(B=got)
@@ -196,7 +197,7 @@ def _make_sdfg_multi_usage_input(
 
     multi_use_value_data, _ = sdfg.add_array(
         "multi_use_value",
-        shape=(12, ),
+        shape=(12,),
         dtype=dace.float64,
         transient=False,
     )
@@ -237,8 +238,13 @@ def _make_sdfg_multi_usage_input(
             code="__out = __in1 + __in2",
         )
 
-        state.add_edge(multi_use_value, None, me, f"IN_muv_{i}",
-                       dace.Memlet(f"{multi_use_value_data}[{offset_in_i}:{offset_in_i + 10}]"))
+        state.add_edge(
+            multi_use_value,
+            None,
+            me,
+            f"IN_muv_{i}",
+            dace.Memlet(f"{multi_use_value_data}[{offset_in_i}:{offset_in_i + 10}]"),
+        )
 
         if use_inner_access_node:
             inner_ac = state.add_access(inner_data)
@@ -251,16 +257,22 @@ def _make_sdfg_multi_usage_input(
                 data = inner_data
                 subset, other_subset = other_subset, subset
 
-            state.add_edge(me, f"OUT_muv_{i}", inner_ac, None,
-                           dace.Memlet(
-                               data=data,
-                               subset=subset,
-                               other_subset=other_subset,
-                           ))
+            state.add_edge(
+                me,
+                f"OUT_muv_{i}",
+                inner_ac,
+                None,
+                dace.Memlet(
+                    data=data,
+                    subset=subset,
+                    other_subset=other_subset,
+                ),
+            )
             state.add_edge(inner_ac, None, tlet, "__in1", dace.Memlet(f"{inner_data}[0]"))
         else:
-            state.add_edge(me, f"OUT_muv_{i}", tlet, "__in1",
-                           dace.Memlet(f"{multi_use_value_data}[__i + {offset_in_i}]"))
+            state.add_edge(
+                me, f"OUT_muv_{i}", tlet, "__in1", dace.Memlet(f"{multi_use_value_data}[__i + {offset_in_i}]")
+            )
         me.add_scope_connectors(f"muv_{i}")
 
         state.add_edge(iac, None, me, f"IN_{input_data}", dace.Memlet(f"{input_data}[0:10, 0:30]"))
@@ -284,18 +296,26 @@ def _test_multi_use_value_input(
         # This combination does not make sense.
         return
 
-    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(use_inner_access_node=use_inner_access_node,
-                                                                    use_non_standard_memlet=use_non_standard_memlet)
+    sdfg, state, multi_use_value, me = _make_sdfg_multi_usage_input(
+        use_inner_access_node=use_inner_access_node, use_non_standard_memlet=use_non_standard_memlet
+    )
 
     initial_ac = utility.count_nodes(sdfg, dace_nodes.AccessNode, True)
     assert multi_use_value in initial_ac
     assert state.out_degree(multi_use_value) == 5
-    assert all((oedge.data.src_subset == dace_sbs.Range.from_string("0:10") or oedge.data.src_subset ==
-                dace_sbs.Range.from_string("1:11") or oedge.data.src_subset == dace_sbs.Range.from_string("2:12"))
-               for oedge in state.out_edges(multi_use_value))
     assert all(
-        state.out_degree(ac) == 1 and isinstance(ac, dace_nodes.AccessNode) for ac in state.source_nodes()
-        if ac is not multi_use_value)
+        (
+            oedge.data.src_subset == dace_sbs.Range.from_string("0:10")
+            or oedge.data.src_subset == dace_sbs.Range.from_string("1:11")
+            or oedge.data.src_subset == dace_sbs.Range.from_string("2:12")
+        )
+        for oedge in state.out_edges(multi_use_value)
+    )
+    assert all(
+        state.out_degree(ac) == 1 and isinstance(ac, dace_nodes.AccessNode)
+        for ac in state.source_nodes()
+        if ac is not multi_use_value
+    )
     assert all(state.in_degree(ac) == 1 for ac in state.sink_nodes())
 
     ref, res = utility.make_sdfg_args(sdfg)
@@ -317,8 +337,9 @@ def _test_multi_use_value_input(
 
     # Without `propagate=False` this test would fail if we use inner AccessNodes and
     #  non standard Memelts.
-    assert all(oedge.data.src_subset == dace_sbs.Range.from_string("0:12")
-               for oedge in state.out_edges(multi_use_value))
+    assert all(
+        oedge.data.src_subset == dace_sbs.Range.from_string("0:12") for oedge in state.out_edges(multi_use_value)
+    )
 
     utility.compile_and_run_sdfg(sdfg, **res)
     assert utility.compare_sdfg_res(ref=ref, res=res)
@@ -330,8 +351,9 @@ def test_multi_use_value_input(
     use_inner_access_node: bool,
     use_non_standard_memlet: bool,
 ):
-    _test_multi_use_value_input(use_inner_access_node=use_inner_access_node,
-                                use_non_standard_memlet=use_non_standard_memlet)
+    _test_multi_use_value_input(
+        use_inner_access_node=use_inner_access_node, use_non_standard_memlet=use_non_standard_memlet
+    )
 
 
 def _make_multi_use_value_output(
@@ -360,7 +382,7 @@ def _make_multi_use_value_output(
         input_data = f"input_{i}"
         sdfg.add_array(
             input_data,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -371,8 +393,9 @@ def _make_multi_use_value_output(
             code=f"__out = __in1 + 1.45 * ({i} + 1.3)",
         )
 
-        state.add_edge(state.add_access(input_data), None, me, f"IN_{input_data}",
-                       dace.Memlet(data=input_data, subset="0:10"))
+        state.add_edge(
+            state.add_access(input_data), None, me, f"IN_{input_data}", dace.Memlet(data=input_data, subset="0:10")
+        )
         state.add_edge(me, f"OUT_{input_data}", tlet, "__in1", dace.Memlet(data=input_data, subset="__i"))
         me.add_scope_connectors(input_data)
 
@@ -394,16 +417,23 @@ def _make_multi_use_value_output(
                 subset, other_subset = other_subset, subset
 
             state.add_edge(tlet, "__out", inner_ac, None, dace.Memlet(f"{inner_data}[0]"))
-            state.add_edge(inner_ac, None, mx, f"IN_output_{i}",
-                           dace.Memlet(data=data, subset=subset, other_subset=other_subset))
+            state.add_edge(
+                inner_ac, None, mx, f"IN_output_{i}", dace.Memlet(data=data, subset=subset, other_subset=other_subset)
+            )
         else:
-            state.add_edge(tlet, "__out", mx, f"IN_output_{i}",
-                           dace.Memlet(data=multi_output_data, subset=f"__i + {i}, {i}"))
-        state.add_edge(mx, f"OUT_output_{i}", multi_output, None,
-                       dace.Memlet(
-                           data=multi_output_data,
-                           subset=f"{i}:{i + 10}, {i}",
-                       ))
+            state.add_edge(
+                tlet, "__out", mx, f"IN_output_{i}", dace.Memlet(data=multi_output_data, subset=f"__i + {i}, {i}")
+            )
+        state.add_edge(
+            mx,
+            f"OUT_output_{i}",
+            multi_output,
+            None,
+            dace.Memlet(
+                data=multi_output_data,
+                subset=f"{i}:{i + 10}, {i}",
+            ),
+        )
         mx.add_scope_connectors(f"output_{i}")
 
     sdfg.validate()
@@ -426,9 +456,14 @@ def _test_multi_use_value_output(
 
     assert all(state.out_degree(sn) == 1 and isinstance(sn, dace_nodes.AccessNode) for sn in state.source_nodes())
     assert all(sn is multi_output and state.in_degree(sn) == 3 for sn in state.sink_nodes())
-    assert all((iedge.data.dst_subset == dace_sbs.Range.from_string("0:10, 0") or iedge.data.dst_subset ==
-                dace_sbs.Range.from_string("1:11, 1") or iedge.data.dst_subset == dace_sbs.Range.from_string("2:12, 2"))
-               for iedge in state.in_edges(multi_output))
+    assert all(
+        (
+            iedge.data.dst_subset == dace_sbs.Range.from_string("0:10, 0")
+            or iedge.data.dst_subset == dace_sbs.Range.from_string("1:11, 1")
+            or iedge.data.dst_subset == dace_sbs.Range.from_string("2:12, 2")
+        )
+        for iedge in state.in_edges(multi_output)
+    )
     initial_ac = utility.count_nodes(sdfg, dace_nodes.AccessNode, True)
     assert multi_output in initial_ac
 
@@ -445,8 +480,9 @@ def _test_multi_use_value_output(
 
     assert state.in_degree(multi_output) == 1
     assert state.out_degree(multi_output) == 0
-    assert all(iedge.data.dst_subset == dace_sbs.Range.from_string("0:12, 0:3")
-               for iedge in state.in_edges(multi_output))
+    assert all(
+        iedge.data.dst_subset == dace_sbs.Range.from_string("0:12, 0:3") for iedge in state.in_edges(multi_output)
+    )
 
     utility.compile_and_run_sdfg(sdfg, **res)
     assert utility.compare_sdfg_res(ref=ref, res=res)
@@ -467,21 +503,21 @@ def test_multi_use_value_output(
 def test_consolidate_edges_refuses_reads_from_two_access_nodes():
     """Two access nodes of one container are two program points; the second is what
     sequences its read after the write feeding it."""
-    sdfg = dace.SDFG('read_merge')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64)
+    sdfg = dace.SDFG("read_merge")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64)
     state = sdfg.add_state()
 
-    src = state.add_access('A')
-    me, mx = state.add_map('m', dict(i='1:8'))
-    tasklet = state.add_tasklet('t', {'x': None, 'y': None}, {'z': None}, 'z = x + y')
-    state.add_memlet_path(src, me, tasklet, dst_conn='x', memlet=dace.Memlet('A[i]'))
-    state.add_memlet_path(tasklet, mx, state.add_access('B'), src_conn='z', memlet=dace.Memlet('B[i]'))
+    src = state.add_access("A")
+    me, mx = state.add_map("m", dict(i="1:8"))
+    tasklet = state.add_tasklet("t", {"x": None, "y": None}, {"z": None}, "z = x + y")
+    state.add_memlet_path(src, me, tasklet, dst_conn="x", memlet=dace.Memlet("A[i]"))
+    state.add_memlet_path(tasklet, mx, state.add_access("B"), src_conn="z", memlet=dace.Memlet("B[i]"))
 
     # The write feeding 'written' is what orders the A[0] read after it.
-    written = state.add_access('A')
-    state.add_edge(state.add_tasklet('w', {}, {'o': None}, 'o = 100.0'), 'o', written, None, dace.Memlet('A[0]'))
-    state.add_memlet_path(written, me, tasklet, dst_conn='y', memlet=dace.Memlet('A[0]'))
+    written = state.add_access("A")
+    state.add_edge(state.add_tasklet("w", {}, {"o": None}, "o = 100.0"), "o", written, None, dace.Memlet("A[0]"))
+    state.add_memlet_path(written, me, tasklet, dst_conn="y", memlet=dace.Memlet("A[0]"))
     sdfg.validate()
 
     ref = np.arange(8, dtype=np.float64)
@@ -503,27 +539,27 @@ def test_consolidate_edges_folds_reads_of_one_written_access_node():
     left one scope connector per read, and the next pass to route the whole body through a single
     connector -- ``nest_state_subgraph`` -- stranded the rest as dangling out-connectors.
     """
-    sdfg = dace.SDFG('read_fold')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64, transient=True)
-    sdfg.add_array('C', [8], dace.float64)
+    sdfg = dace.SDFG("read_fold")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64, transient=True)
+    sdfg.add_array("C", [8], dace.float64)
     state = sdfg.add_state()
 
     # 'b' is written here, so every read below is ordered after that write by this one node.
-    b = state.add_access('B')
-    fill_entry, fill_exit = state.add_map('fill', dict(j='0:8'))
-    fill = state.add_tasklet('fill', {'a': None}, {'o': None}, 'o = a * 2.0')
-    state.add_memlet_path(state.add_read('A'), fill_entry, fill, dst_conn='a', memlet=dace.Memlet('A[j]'))
-    state.add_memlet_path(fill, fill_exit, b, src_conn='o', memlet=dace.Memlet('B[j]'))
+    b = state.add_access("B")
+    fill_entry, fill_exit = state.add_map("fill", dict(j="0:8"))
+    fill = state.add_tasklet("fill", {"a": None}, {"o": None}, "o = a * 2.0")
+    state.add_memlet_path(state.add_read("A"), fill_entry, fill, dst_conn="a", memlet=dace.Memlet("A[j]"))
+    state.add_memlet_path(fill, fill_exit, b, src_conn="o", memlet=dace.Memlet("B[j]"))
 
-    me, mx = state.add_map('stencil', dict(i='1:7'))
-    tasklet = state.add_tasklet('t', {'l': None, 'm': None, 'r': None}, {'z': None}, 'z = l + m + r')
-    for conn, index in (('l', 'i - 1'), ('m', 'i'), ('r', 'i + 1')):
-        state.add_memlet_path(b, me, tasklet, dst_conn=conn, memlet=dace.Memlet(f'B[{index}]'))
-    state.add_memlet_path(tasklet, mx, state.add_write('C'), src_conn='z', memlet=dace.Memlet('C[i]'))
+    me, mx = state.add_map("stencil", dict(i="1:7"))
+    tasklet = state.add_tasklet("t", {"l": None, "m": None, "r": None}, {"z": None}, "z = l + m + r")
+    for conn, index in (("l", "i - 1"), ("m", "i"), ("r", "i + 1")):
+        state.add_memlet_path(b, me, tasklet, dst_conn=conn, memlet=dace.Memlet(f"B[{index}]"))
+    state.add_memlet_path(tasklet, mx, state.add_write("C"), src_conn="z", memlet=dace.Memlet("C[i]"))
     sdfg.validate()
 
-    assert len([c for c in me.out_connectors if c.startswith('OUT_')]) == 3, 'test setup: expected three reads'
+    assert len([c for c in me.out_connectors if c.startswith("OUT_")]) == 3, "test setup: expected three reads"
 
     ref = np.arange(8, dtype=np.float64)
     expected = np.zeros(8)
@@ -531,9 +567,9 @@ def test_consolidate_edges_folds_reads_of_one_written_access_node():
 
     assert consolidate_edges(sdfg, propagate=False) == 2
     sdfg.validate()
-    assert [c for c in me.out_connectors if c.startswith('OUT_')] == ['OUT_B']
+    assert [c for c in me.out_connectors if c.startswith("OUT_")] == ["OUT_B"]
     assert len(state.in_edges(me)) == 1
-    assert state.in_edges(me)[0].data.subset == dace_sbs.Range.from_string('0:8')
+    assert state.in_edges(me)[0].data.subset == dace_sbs.Range.from_string("0:8")
 
     got = np.zeros(8)
     sdfg(A=ref.copy(), C=got)
@@ -542,29 +578,29 @@ def test_consolidate_edges_folds_reads_of_one_written_access_node():
 
 def _make_symbolic_two_scope_sdfg() -> dace.SDFG:
     # Symbolic extents and an interstate assignment: consolidation must leave both alone.
-    N = dace.symbol('N', dtype=dace.int64)
-    sdfg = dace.SDFG('scope_symbol_invariant')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_array('C', [N], dace.float64)
-    sdfg.add_transient('T', [N], dace.float64)
+    N = dace.symbol("N", dtype=dace.int64)
+    sdfg = dace.SDFG("scope_symbol_invariant")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_array("C", [N], dace.float64)
+    sdfg.add_transient("T", [N], dace.float64)
 
     first = sdfg.add_state(is_start_block=True)
-    entry, exit_node = first.add_map('m1', dict(i='1:N-1'))
-    tasklet = first.add_tasklet('t1', {'l': None, 'm': None, 'r': None}, {'o': None}, 'o = l + m + r')
-    read = first.add_read('A')
-    for conn, index in (('l', 'i - 1'), ('m', 'i'), ('r', 'i + 1')):
-        first.add_memlet_path(read, entry, tasklet, dst_conn=conn, memlet=dace.Memlet(f'A[{index}]'))
-    first.add_memlet_path(tasklet, exit_node, first.add_write('T'), src_conn='o', memlet=dace.Memlet('T[i]'))
+    entry, exit_node = first.add_map("m1", dict(i="1:N-1"))
+    tasklet = first.add_tasklet("t1", {"l": None, "m": None, "r": None}, {"o": None}, "o = l + m + r")
+    read = first.add_read("A")
+    for conn, index in (("l", "i - 1"), ("m", "i"), ("r", "i + 1")):
+        first.add_memlet_path(read, entry, tasklet, dst_conn=conn, memlet=dace.Memlet(f"A[{index}]"))
+    first.add_memlet_path(tasklet, exit_node, first.add_write("T"), src_conn="o", memlet=dace.Memlet("T[i]"))
 
     second = sdfg.add_state()
-    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={'offset': '1'}))
-    entry2, exit2 = second.add_map('m2', dict(j='1:N-1'))
-    tasklet2 = second.add_tasklet('t2', {'a': None, 'b': None}, {'o': None}, 'o = a * b')
-    read_t = second.add_read('T')
-    second.add_memlet_path(read_t, entry2, tasklet2, dst_conn='a', memlet=dace.Memlet('T[j]'))
-    second.add_memlet_path(read_t, entry2, tasklet2, dst_conn='b', memlet=dace.Memlet('T[j - 1]'))
-    second.add_memlet_path(tasklet2, exit2, second.add_write('C'), src_conn='o', memlet=dace.Memlet('C[j]'))
+    sdfg.add_edge(first, second, dace.InterstateEdge(assignments={"offset": "1"}))
+    entry2, exit2 = second.add_map("m2", dict(j="1:N-1"))
+    tasklet2 = second.add_tasklet("t2", {"a": None, "b": None}, {"o": None}, "o = a * b")
+    read_t = second.add_read("T")
+    second.add_memlet_path(read_t, entry2, tasklet2, dst_conn="a", memlet=dace.Memlet("T[j]"))
+    second.add_memlet_path(read_t, entry2, tasklet2, dst_conn="b", memlet=dace.Memlet("T[j - 1]"))
+    second.add_memlet_path(tasklet2, exit2, second.add_write("C"), src_conn="o", memlet=dace.Memlet("C[j]"))
 
     sdfg.validate()
     return sdfg
@@ -579,9 +615,9 @@ def test_consolidate_edges_does_not_move_sdfg_scope_symbols():
     """
     sdfg = _make_symbolic_two_scope_sdfg()
     before = dict(sdfg_scope_symbols(sdfg))
-    assert 'N' in before, 'test setup: expected the descriptor extent to reach the table'
+    assert "N" in before, "test setup: expected the descriptor extent to reach the table"
 
-    assert consolidate_edges(sdfg) > 0, 'test setup: expected something to consolidate'
+    assert consolidate_edges(sdfg) > 0, "test setup: expected something to consolidate"
 
     assert dict(sdfg_scope_symbols(sdfg)) == before
 
@@ -600,14 +636,19 @@ def test_propagated_memlets_ignore_who_built_the_symbol_table():
         propagate_memlets_scope(precomputed, state, state.scope_leaves(), symbols=SymbolResolver(precomputed, table))
 
     def outer_subsets(sdfg: dace.SDFG) -> list:
-        return [(state.label, edge.data.data, str(edge.data.subset)) for state in sdfg.states()
-                for node in state.nodes() if isinstance(node, (dace_nodes.MapEntry, dace_nodes.MapExit))
-                for edge in state.in_edges(node) + state.out_edges(node) if edge.data.data is not None]
+        return [
+            (state.label, edge.data.data, str(edge.data.subset))
+            for state in sdfg.states()
+            for node in state.nodes()
+            if isinstance(node, (dace_nodes.MapEntry, dace_nodes.MapExit))
+            for edge in state.in_edges(node) + state.out_edges(node)
+            if edge.data.data is not None
+        ]
 
     assert outer_subsets(rebuilt) == outer_subsets(precomputed)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_consolidate_edges()
     for use_non_standard_memlet in [True, False]:
         for use_inner_access_node in [True, False]:

@@ -4,20 +4,20 @@ import pytest
 
 import dace
 
-N = dace.symbol('N', dtype=dace.int64, positive=True)
-H = dace.symbol('H', dtype=dace.int64, positive=True)
-W = dace.symbol('W', dtype=dace.int64, positive=True)
-h_in = dace.symbol('h_in', dtype=dace.int64)
-w_in = dace.symbol('w_in', dtype=dace.int64)
-e0 = dace.symbol('e0', dtype=dace.int64)
-e1 = dace.symbol('e1', dtype=dace.int64)
-m0 = dace.symbol('m0', dtype=dace.int64)
-m1 = dace.symbol('m1', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64, positive=True)
+H = dace.symbol("H", dtype=dace.int64, positive=True)
+W = dace.symbol("W", dtype=dace.int64, positive=True)
+h_in = dace.symbol("h_in", dtype=dace.int64)
+w_in = dace.symbol("w_in", dtype=dace.int64)
+e0 = dace.symbol("e0", dtype=dace.int64)
+e1 = dace.symbol("e1", dtype=dace.int64)
+m0 = dace.symbol("m0", dtype=dace.int64)
+m1 = dace.symbol("m1", dtype=dace.int64)
 
 
 @dace.program
 def maxpool2d(x: dace.float64[N, h_in, w_in, 6], out: dace.float64[N, e0, e1, 6]):
-    split = np.reshape(x[:, :2 * (h_in // 2), :2 * (w_in // 2), :], (N, h_in // 2, 2, w_in // 2, 2, 6))
+    split = np.reshape(x[:, : 2 * (h_in // 2), : 2 * (w_in // 2), :], (N, h_in // 2, 2, w_in // 2, 2, 6))
     out[:] = np.max(split, axis=(2, 4))
 
 
@@ -51,7 +51,7 @@ def method_min(x: dace.float64[N, 4, 8, 8], out: dace.float64[N, 4, 4, 4]):
     out[:] = x.reshape((N, 4, 4, 2, 4, 2)).min(axis=(3, 5))
 
 
-@pytest.mark.parametrize('program', [lenet_pool, outer])
+@pytest.mark.parametrize("program", [lenet_pool, outer])
 def test_the_call_site_proves_the_extents_a_pooling_callee_assigned(program):
     rng = np.random.default_rng(42)
     x = rng.random((2, 6, 8, 6))
@@ -60,12 +60,12 @@ def test_the_call_site_proves_the_extents_a_pooling_callee_assigned(program):
     assert np.allclose(y, x.reshape(2, 3, 2, 4, 2, 6).max(axis=(2, 4)))
 
 
-@pytest.mark.parametrize('program', [lenet_pool, outer])
+@pytest.mark.parametrize("program", [lenet_pool, outer])
 def test_the_pooling_callee_validates_as_a_nested_sdfg_of_its_own(program):
     """Without simplification the callee stays a nested SDFG and validates alone, so the extent the
     call site proved must be spelled into it rather than live only in the caller's check."""
     rng = np.random.default_rng(42)
-    with dace.config.set_temporary('optimizer', 'automatic_simplification', value=False):
+    with dace.config.set_temporary("optimizer", "automatic_simplification", value=False):
         sdfg = program.to_sdfg()
     sdfg.validate()
     x = rng.random((2, 6, 8, 6))
@@ -75,16 +75,16 @@ def test_the_pooling_callee_validates_as_a_nested_sdfg_of_its_own(program):
 
 
 def test_a_top_level_program_with_unrelated_extents_is_refused():
-    with pytest.raises(IndexError, match='could not broadcast'):
+    with pytest.raises(IndexError, match="could not broadcast"):
         maxpool2d.to_sdfg(simplify=False)
 
 
 def test_a_call_site_whose_extents_disagree_is_refused():
-    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match='could not broadcast'):
+    with pytest.raises(dace.frontend.python.common.DaceSyntaxError, match="could not broadcast"):
         wrong.to_sdfg(simplify=False)
 
 
-@pytest.mark.parametrize(('program', 'reduce'), [(method_max, np.max), (method_min, np.min)])
+@pytest.mark.parametrize(("program", "reduce"), [(method_max, np.max), (method_min, np.min)])
 def test_ndarray_max_and_min_take_a_tuple_axis(program, reduce):
     rng = np.random.default_rng(42)
     x = rng.random((3, 4, 8, 8))
@@ -93,5 +93,5 @@ def test_ndarray_max_and_min_take_a_tuple_axis(program, reduce):
     assert np.allclose(out, reduce(x.reshape(3, 4, 4, 2, 4, 2), axis=(3, 5)))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

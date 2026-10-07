@@ -44,6 +44,7 @@ Keeping this a module-level ``__getattr__`` (PEP 562) means the seam covers the
 names that would drift out of date. Only the names idxalg overrides are listed;
 everything else forwards to sympy.
 """
+
 import functools
 import math
 import os
@@ -58,43 +59,45 @@ BACKEND = backend
 # Names the idxalg backend serves natively — the pervasive index/shape arithmetic plus the
 # isinstance heads. Everything NOT in this set forwards to sympy (the hard, low-frequency tier
 # and all singletons/submodules), so the two-world hybrid stays coherent during the migration.
-_IDXALG_NAMES = frozenset({
-    # constructors
-    "Symbol",
-    "Integer",
-    "Float",
-    "Rational",
-    "Add",
-    "Mul",
-    "Pow",
-    "Mod",
-    "Min",
-    "Max",
-    "floor",
-    "ceiling",
-    "Abs",
-    "Not",
-    "And",
-    "Or",
-    "Eq",
-    "Ne",
-    "Equality",
-    "Unequality",
-    "StrictLessThan",
-    "LessThan",
-    "StrictGreaterThan",
-    "GreaterThan",
-    "Function",
-    "sympify",
-    "simplify",
-    "preorder_traversal",
-    # isinstance heads (umbrella / kind)
-    "Basic",
-    "Expr",
-    "Atom",
-    "AtomicExpr",
-    "Number",
-})
+_IDXALG_NAMES = frozenset(
+    {
+        # constructors
+        "Symbol",
+        "Integer",
+        "Float",
+        "Rational",
+        "Add",
+        "Mul",
+        "Pow",
+        "Mod",
+        "Min",
+        "Max",
+        "floor",
+        "ceiling",
+        "Abs",
+        "Not",
+        "And",
+        "Or",
+        "Eq",
+        "Ne",
+        "Equality",
+        "Unequality",
+        "StrictLessThan",
+        "LessThan",
+        "StrictGreaterThan",
+        "GreaterThan",
+        "Function",
+        "sympify",
+        "simplify",
+        "preorder_traversal",
+        # isinstance heads (umbrella / kind)
+        "Basic",
+        "Expr",
+        "Atom",
+        "AtomicExpr",
+        "Number",
+    }
+)
 
 # Heads sympy keeps in a submodule, not at top level. Real globals: the forwarding `__getattr__`
 # raises `AttributeError` on them (an `ImportError` at a `from` site -- the sympy backend had no
@@ -109,9 +112,11 @@ if _BACKEND_NAME == "idxalg":
     try:
         from idxalg import sympy_compat as _idx  # type: ignore[import-not-found]  # optional backend, opt-in via DACE_SYMBOLIC_BACKEND
     except ImportError as ex:
-        raise ImportError('DACE_SYMBOLIC_BACKEND=idxalg requires the "idxalg" package, which is '
-                          'not installed. Install it or unset the variable to use the default '
-                          'sympy backend.') from ex
+        raise ImportError(
+            'DACE_SYMBOLIC_BACKEND=idxalg requires the "idxalg" package, which is '
+            "not installed. Install it or unset the variable to use the default "
+            "sympy backend."
+        ) from ex
 
     # NOT aligning idxalg's default width to DaCe's int32 here, though the wire format argues for it:
     # doing so makes `int32(qm)` an identity cast, which the core correctly folds away and DaCe then
@@ -165,6 +170,7 @@ if _BACKEND_NAME == "idxalg":
             return _idx.Float(float(obj))
         if obj.is_Rational:  # non-integer rational: shouldn't occur in index math; keep the value
             from fractions import Fraction
+
             value = float(obj)
             if Fraction(*value.as_integer_ratio()) != Fraction(int(obj.p), int(obj.q)):
                 raise ValueError(f"rational {obj} does not survive an exact float64 round-trip")
@@ -229,14 +235,16 @@ if _BACKEND_NAME == "idxalg":
     # The relational heads by identity. sympy 1.14 does not export `Relational` at top level, so an
     # `issubclass(f, backend.Relational)` test raises `AttributeError` instead of classifying; these
     # are exactly the heads `_HEAD_CONV` below knows how to convert anyway.
-    _RELATIONAL_HEADS = frozenset({
-        backend.Equality,
-        backend.Unequality,
-        backend.StrictLessThan,
-        backend.LessThan,
-        backend.StrictGreaterThan,
-        backend.GreaterThan,
-    })
+    _RELATIONAL_HEADS = frozenset(
+        {
+            backend.Equality,
+            backend.Unequality,
+            backend.StrictLessThan,
+            backend.LessThan,
+            backend.StrictGreaterThan,
+            backend.GreaterThan,
+        }
+    )
 
     _HEAD_CONV = {
         backend.Add: lambda k: _idx.Add(*k),
@@ -310,25 +318,28 @@ if _BACKEND_NAME == "idxalg":
         missing width (float16, complex128, ...) to a 32-bit integer typeclass."""
         if not _IDX_DTYPE_MAP:
             from dace import dtypes as dt
-            _IDX_DTYPE_MAP.update({
-                "int8": dt.int8,
-                "int16": dt.int16,
-                "int32": dt.int32,
-                "int64": dt.int64,
-                "uint8": dt.uint8,
-                "uint16": dt.uint16,
-                "uint32": dt.uint32,
-                "uint64": dt.uint64,
-                "float16": dt.float16,
-                "bfloat16": dt.bfloat16,
-                "float8_e4m3fn": dt.float8_e4m3fn,
-                "float8_e5m2": dt.float8_e5m2,
-                "float32": dt.float32,
-                "float64": dt.float64,
-                "complex64": dt.complex64,
-                "complex128": dt.complex128,
-                "bool": dt.bool_,
-            })
+
+            _IDX_DTYPE_MAP.update(
+                {
+                    "int8": dt.int8,
+                    "int16": dt.int16,
+                    "int32": dt.int32,
+                    "int64": dt.int64,
+                    "uint8": dt.uint8,
+                    "uint16": dt.uint16,
+                    "uint32": dt.uint32,
+                    "uint64": dt.uint64,
+                    "float16": dt.float16,
+                    "bfloat16": dt.bfloat16,
+                    "float8_e4m3fn": dt.float8_e4m3fn,
+                    "float8_e5m2": dt.float8_e5m2,
+                    "float32": dt.float32,
+                    "float64": dt.float64,
+                    "complex64": dt.complex64,
+                    "complex128": dt.complex128,
+                    "bool": dt.bool_,
+                }
+            )
         if dstr == "opaque":
             # `Opaque` is idxalg's "no type known" marker (a black-box call, a container base), not a
             # missing entry. DaCe has no opaque typeclass, and its own `symbol()` default is the
@@ -357,6 +368,7 @@ if _BACKEND_NAME == "idxalg":
         exact declared dtype; a bare sympy symbol is classified from its assumptions (the index
         world is integer unless the symbol is explicitly real-but-not-integer)."""
         from dace import symbolic as dsym
+
         if isinstance(obj, dsym.symbol):
             return _idxstr_of_tc(obj.dtype)
         a = obj.assumptions0
@@ -371,7 +383,7 @@ if _BACKEND_NAME == "idxalg":
         signed = dstr[0] == "i"
         bits = int(dstr[3:]) if signed else int(dstr[4:])
         if signed:
-            lo, hi = -(2**(bits - 1)), 2**(bits - 1) - 1
+            lo, hi = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
         else:
             lo, hi = 0, 2**bits - 1
         if positive:
@@ -424,6 +436,7 @@ if _BACKEND_NAME == "idxalg":
             if ow is not None and iw is not None and ow[0] == iw[0] and ow[1] >= iw[1]:
                 return _from_idx(e.args[0])
             from dace.symbolic import _CAST_CLASSES
+
             cast_cls = _CAST_CLASSES.get(outer)
             arg = _from_idx(e.args[0])
             return cast_cls(arg) if cast_cls is not None else backend.Function(outer)(arg)
@@ -448,6 +461,7 @@ if _BACKEND_NAME == "idxalg":
             return backend.true if bool(e) else backend.false
         if name in ("Integer", "Float"):
             from dace.symbolic import TypedConstant
+
             value = int(e) if name == "Integer" else float(repr(e))
             if name == "Float" and (value == math.inf or value == -math.inf):
                 # sympy has no infinite `Float`; ±oo is a distinct singleton, and the retained sympy
@@ -469,6 +483,7 @@ if _BACKEND_NAME == "idxalg":
             if kind != "Complex":
                 raise ValueError(f"unexpected Number-headed idxalg node of kind {kind!r}")
             from dace.symbolic import TypedConstant
+
             re_part, im_part = str(e)[1:-1].split(" + ", 1)
             value = complex(float(re_part), float(im_part[:-1]))  # im_part ends in the literal "j"
             return TypedConstant(value, _dtype_tc(_idx._CTX.dtype(e._e)))
@@ -479,6 +494,7 @@ if _BACKEND_NAME == "idxalg":
             # back as a bare `Function(...)` call, and `Subscript`'s overridden `.free_symbols`
             # (which excludes the container) never runs.
             from dace.symbolic import Subscript
+
             b = e.args[0]
             base = backend.Symbol(str(b.func)) if b.is_Function and not b.args else _from_idx(b)
             return Subscript(base, *(_from_idx(a) for a in e.args[1:]))
@@ -487,6 +503,7 @@ if _BACKEND_NAME == "idxalg":
             # child); a hybrid-converted sympy `Attr` instead carries it as a second child. Same
             # container-base rule as `Subscript` above.
             from dace.symbolic import Attr
+
             b = e.args[0]
             base = backend.Symbol(str(b.func)) if b.is_Function and not b.args else _from_idx(b)
             field = _from_idx(e.args[1]) if name == "Attr" else backend.Symbol(name[1:])
@@ -539,6 +556,7 @@ if _BACKEND_NAME == "idxalg":
         that aliasing. The construction cost is sympy's to fix, or Phase C's to stop paying.
         """
         from dace import symbolic as dsym
+
         # Not the `symbol` FACTORY: here it builds one of ours, so the converter would answer a
         # sympy request with an idxalg value and recurse through `_sympy_()` forever.
         return dsym.sympy_symbol(name, dtype=_dtype_tc(dstr), **{k: True for k in flags})
@@ -628,6 +646,7 @@ if _BACKEND_NAME == "idxalg":
         not as applied undefs. A second hand-written name list here would drift silently.
         """
         from dace.symbolic import _PYSTR2SYM_locals
+
         bound = _PYSTR2SYM_locals.get(name)
         if not isinstance(bound, type):
             # The table also holds plain Symbols (sympy's ``_clash`` names) and `None` sentinels.
@@ -664,7 +683,7 @@ if _BACKEND_NAME == "idxalg":
         if dstr in float_bits:
             return "float", float_bits[dstr]
         if dstr in ("complex64", "complex128"):
-            return "complex", int(dstr[len("complex"):])
+            return "complex", int(dstr[len("complex") :])
         if dstr == "bool":
             return "bool", 1
         return None

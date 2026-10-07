@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement a map->for loop transformation.
-"""
+"""This module contains classes that implement a map->for loop transformation."""
 
 import copy
 
@@ -35,6 +34,7 @@ def dynamic_range_ref(sdfg: SDFG, memlet: Memlet) -> str:
     :return: Source text reading that value.
     """
     from dace.codegen.targets.cpp import cpp_array_expr
+
     if isinstance(sdfg.arrays[memlet.data], Scalar):
         return memlet.data
     return cpp_array_expr(sdfg, memlet)
@@ -99,18 +99,21 @@ class MapToForLoop(transformation.SingleStateTransformation):
     keep_reductions_parallel = properties.Property(
         dtype=bool,
         default=False,
-        desc='Refuse a map whose surviving WCR output is a genuine parallel reduction, so it stays a '
-        'map and codegens to an OpenMP reduction instead of a sequential loop. A canonicalization '
-        'PREFERENCE, not a legality condition: off by default so that consumers which mechanically '
-        'need the map->loop rewrite (DoubleBuffering, StencilTiling) are not silently refused.')
+        desc="Refuse a map whose surviving WCR output is a genuine parallel reduction, so it stays a "
+        "map and codegens to an OpenMP reduction instead of a sequential loop. A canonicalization "
+        "PREFERENCE, not a legality condition: off by default so that consumers which mechanically "
+        "need the map->loop rewrite (DoubleBuffering, StencilTiling) are not silently refused.",
+    )
 
-    inline_after = properties.Property(dtype=bool,
-                                       default=True,
-                                       desc='Flatten the wrapping NestedSDFG via '
-                                       'ExpandNestedSDFGInputs + InlineMultistateSDFG so the resulting LoopRegion '
-                                       'lives at the parent CFR. On by default so canonicalization sees a clean '
-                                       'CFR nest without spurious NSDFG boundaries. Set to False to keep the '
-                                       'legacy wrapped form (e.g., when a downstream test asserts on the NSDFG).')
+    inline_after = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Flatten the wrapping NestedSDFG via "
+        "ExpandNestedSDFGInputs + InlineMultistateSDFG so the resulting LoopRegion "
+        "lives at the parent CFR. On by default so canonicalization sees a clean "
+        "CFR nest without spurious NSDFG boundaries. Set to False to keep the "
+        "legacy wrapped form (e.g., when a downstream test asserts on the NSDFG).",
+    )
 
     @staticmethod
     def annotates_memlets():
@@ -154,8 +157,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
 
         return True
 
-    def _copy_boundary_views(self, graph: SDFGState, nsdfg_node: nodes.NestedSDFG, nsdfg: SDFG,
-                             nstate: SDFGState) -> None:
+    def _copy_boundary_views(
+        self, graph: SDFGState, nsdfg_node: nodes.NestedSDFG, nsdfg: SDFG, nstate: SDFGState
+    ) -> None:
         """Repair boundary Views left dangling by ``nest_state_subgraph``.
 
         ``nest_state_subgraph`` copies a boundary AccessNode's descriptor verbatim. For a
@@ -165,7 +169,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
         node keeps its View semantics (the ``an -> view`` pair is copied, not flattened).
         """
         views = [
-            n for n in nstate.nodes() if isinstance(n, nodes.AccessNode) and isinstance(nsdfg.arrays.get(n.data), View)
+            n
+            for n in nstate.nodes()
+            if isinstance(n, nodes.AccessNode)
+            and isinstance(nsdfg.arrays.get(n.data), View)
             and sdutil.get_view_edge(nstate, n) is None
         ]
         for vnode in views:
@@ -215,8 +222,8 @@ class MapToForLoop(transformation.SingleStateTransformation):
                 nsdfg_node.remove_out_connector(vname)
 
     def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
-        """ Applies the transformation and returns a tuple with the new nested
-            SDFG node and the main state in the for-loop. """
+        """Applies the transformation and returns a tuple with the new nested
+        SDFG node and the main state in the for-loop."""
 
         # Avoid import loop
         from dace.transformation.helpers import nest_state_subgraph
@@ -243,8 +250,8 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # If map range is dynamic, replace loop expressions with memlets
         param_to_edge = {}
         for edge in nstate.in_edges(map_entry):
-            if edge.dst_conn and not edge.dst_conn.startswith('IN_'):
-                param = '__DACE_P%d' % len(param_to_edge)
+            if edge.dst_conn and not edge.dst_conn.startswith("IN_"):
+                param = "__DACE_P%d" % len(param_to_edge)
                 repldict = {symbolic.pystr_to_symbolic(edge.dst_conn): param}
                 param_to_edge[param] = edge
                 loop_from = loop_from.subs(repldict)
@@ -260,9 +267,13 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        loop_region = LoopRegion('loop_' + map_entry.map.label, '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-                                 loop_idx, '%s = %s' % (loop_idx, replace_param(loop_from)),
-                                 '%s = %s + %s' % (loop_idx, loop_idx, replace_param(loop_step)))
+        loop_region = LoopRegion(
+            "loop_" + map_entry.map.label,
+            "%s < %s" % (loop_idx, replace_param(loop_to + 1)),
+            loop_idx,
+            "%s = %s" % (loop_idx, replace_param(loop_from)),
+            "%s = %s + %s" % (loop_idx, loop_idx, replace_param(loop_step)),
+        )
         nsdfg.add_node(loop_region, is_start_block=True)
         nsdfg.remove_node(nstate)
         loop_region.add_node(nstate, is_start_block=True)

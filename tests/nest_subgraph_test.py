@@ -7,49 +7,53 @@ from dace.transformation.helpers import nest_state_subgraph
 from dace.transformation.dataflow import tiling
 import pytest
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def create_sdfg():
-    sdfg = dace.SDFG('badscope_test')
-    sdfg.add_array('A', [2], dace.float32)
-    sdfg.add_array('B', [2], dace.float32)
+    sdfg = dace.SDFG("badscope_test")
+    sdfg.add_array("A", [2], dace.float32)
+    sdfg.add_array("B", [2], dace.float32)
     state = sdfg.add_state()
-    t, me, mx = state.add_mapped_tasklet('map',
-                                         dict(i='0:2'),
-                                         dict(a=dace.Memlet.simple('A', 'i')),
-                                         'b = a * 2',
-                                         dict(b=dace.Memlet.simple('B', 'i')),
-                                         external_edges=True)
+    t, me, mx = state.add_mapped_tasklet(
+        "map",
+        dict(i="0:2"),
+        dict(a=dace.Memlet.simple("A", "i")),
+        "b = a * 2",
+        dict(b=dace.Memlet.simple("B", "i")),
+        external_edges=True,
+    )
     return sdfg, state, t, me, mx
 
 
 def create_sdfg_4():
-    sdfg = dace.SDFG('sdfg_4_test')
-    sdfg.add_array('A', [4], dace.float32)
-    sdfg.add_array('B', [4], dace.float32)
+    sdfg = dace.SDFG("sdfg_4_test")
+    sdfg.add_array("A", [4], dace.float32)
+    sdfg.add_array("B", [4], dace.float32)
     state = sdfg.add_state()
-    t, me, mx = state.add_mapped_tasklet('map',
-                                         dict(i='0:4'),
-                                         dict(a=dace.Memlet.simple('A', 'i')),
-                                         'b = a * 2',
-                                         dict(b=dace.Memlet.simple('B', 'i')),
-                                         external_edges=True)
+    t, me, mx = state.add_mapped_tasklet(
+        "map",
+        dict(i="0:4"),
+        dict(a=dace.Memlet.simple("A", "i")),
+        "b = a * 2",
+        dict(b=dace.Memlet.simple("B", "i")),
+        external_edges=True,
+    )
     return sdfg, state, t, me, mx
 
 
 def create_tiled_sdfg():
-    sdfg = dace.SDFG('badscope_tile_test')
-    sdfg.add_array('A', [4], dace.float32)
-    sdfg.add_array('B', [4], dace.float32)
+    sdfg = dace.SDFG("badscope_tile_test")
+    sdfg.add_array("A", [4], dace.float32)
+    sdfg.add_array("B", [4], dace.float32)
     state = sdfg.add_state()
-    ome, omx = state.add_map('outer_map', dict(i='0:2'))
-    ime, imx = state.add_map('inner_map', dict(j='0:2'))
-    t = state.add_tasklet('tasklet', {'a'}, {'b'}, 'b = a * 2')
-    A = state.add_read('A')
-    B = state.add_write('B')
-    state.add_memlet_path(A, ome, ime, t, dst_conn='a', memlet=dace.Memlet.simple('A', 'i*2 + j'))
-    state.add_memlet_path(t, imx, omx, B, src_conn='b', memlet=dace.Memlet.simple('B', 'i*2 + j'))
+    ome, omx = state.add_map("outer_map", dict(i="0:2"))
+    ime, imx = state.add_map("inner_map", dict(j="0:2"))
+    t = state.add_tasklet("tasklet", {"a"}, {"b"}, "b = a * 2")
+    A = state.add_read("A")
+    B = state.add_write("B")
+    state.add_memlet_path(A, ome, ime, t, dst_conn="a", memlet=dace.Memlet.simple("A", "i*2 + j"))
+    state.add_memlet_path(t, imx, omx, B, src_conn="b", memlet=dace.Memlet.simple("B", "i*2 + j"))
     return sdfg, state
 
 
@@ -65,7 +69,7 @@ def test_simple_program():
         if any(isinstance(node, Tasklet) for node in state.nodes()):
             break
     else:
-        raise KeyError('State with tasklet not found')
+        raise KeyError("State with tasklet not found")
 
     tasklet_nodes = [n for n in state.nodes() if isinstance(n, Tasklet)]
     with pytest.raises(ValueError):
@@ -85,7 +89,7 @@ def test_simple_sdfg():
 
 def test_index_propagation_in_tiled_sdfg():
     sdfg, state, t, me, mx = create_sdfg_4()
-    tiling.MapTiling.apply_to(sdfg=sdfg, options={'tile_sizes': (2, )}, map_entry=me)
+    tiling.MapTiling.apply_to(sdfg=sdfg, options={"tile_sizes": (2,)}, map_entry=me)
     nested_me = state.in_edges(t)[0].src
     nested_mx = state.out_edges(t)[0].dst
     nest_state_subgraph(sdfg, state, SubgraphView(state, [nested_me, t, nested_mx]))
@@ -157,26 +161,26 @@ def test_nest_scalar_with_none_subset_boundary():
     dereference ``None`` -- pre-fix this raised ``AttributeError: 'NoneType' object
     has no attribute 'offset'`` (the azimint_hist histogram-accumulator shape that
     ``MapToForLoop`` hit during canonicalization)."""
-    sdfg = dace.SDFG('none_subset_boundary')
-    sdfg.add_array('A', [4], dace.float64)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    sdfg.add_array('B', [1], dace.float64)
+    sdfg = dace.SDFG("none_subset_boundary")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    sdfg.add_array("B", [1], dace.float64)
     state = sdfg.add_state()
-    A = state.add_read('A')
-    me, mx = state.add_map('m', dict(i='0:4'))
-    t1 = state.add_tasklet('t1', {'a'}, {'o'}, 'o = a * 2')
-    state.add_memlet_path(A, me, t1, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    A = state.add_read("A")
+    me, mx = state.add_map("m", dict(i="0:4"))
+    t1 = state.add_tasklet("t1", {"a"}, {"o"}, "o = a * 2")
+    state.add_memlet_path(A, me, t1, dst_conn="a", memlet=dace.Memlet("A[i]"))
     # Internal edge into the map exit is a BARE whole-scalar memlet (subset None).
-    mx.add_in_connector('IN_s')
-    mx.add_out_connector('OUT_s')
-    state.add_edge(t1, 'o', mx, 'IN_s', dace.Memlet(data='s'))
-    s_out = state.add_access('s')
+    mx.add_in_connector("IN_s")
+    mx.add_out_connector("OUT_s")
+    state.add_edge(t1, "o", mx, "IN_s", dace.Memlet(data="s"))
+    s_out = state.add_access("s")
     # Boundary edge out of the map carries an explicit point subset.
-    state.add_edge(mx, 'OUT_s', s_out, None, dace.Memlet('s[0]'))
-    t3 = state.add_tasklet('t3', {'x'}, {'b'}, 'b = x')
-    B = state.add_write('B')
-    state.add_edge(s_out, None, t3, 'x', dace.Memlet('s[0]'))
-    state.add_edge(t3, 'b', B, None, dace.Memlet('B[0]'))
+    state.add_edge(mx, "OUT_s", s_out, None, dace.Memlet("s[0]"))
+    t3 = state.add_tasklet("t3", {"x"}, {"b"}, "b = x")
+    B = state.add_write("B")
+    state.add_edge(s_out, None, t3, "x", dace.Memlet("s[0]"))
+    state.add_edge(t3, "b", B, None, dace.Memlet("B[0]"))
 
     nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
     sdfg.validate()
@@ -186,15 +190,16 @@ def test_nesting_a_top_level_subgraph_consolidates_nothing(monkeypatch):
     """A subgraph at the top of its state has no enclosing scope to consolidate, and the call scanned
     every state of the SDFG to find that out -- once per map ``MapToForLoop`` lowers."""
     from dace.sdfg import utils
+
     sdfg, state, t, me, mx = create_sdfg()
     calls = []
-    monkeypatch.setattr(utils, 'consolidate_edges', lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(utils, "consolidate_edges", lambda *args, **kwargs: calls.append(args))
     nest_state_subgraph(sdfg, state, SubgraphView(state, [me, t, mx]))
     assert calls == []
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_simple_program()
     test_simple_sdfg()
     test_index_propagation_in_tiled_sdfg()

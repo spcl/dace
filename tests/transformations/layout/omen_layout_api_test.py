@@ -17,6 +17,7 @@ Both are bit-exact against the k10 oracle. Note the API accepts the rank-4 batch
 auto-search's ``permutation_layouts`` refuses (``MAX_PERMUTE_NDIM = 3``): imposing a layout is not bound
 by the enumeration cap.
 """
+
 import numpy
 
 from dace.libraries.layout.algebra import Permute
@@ -27,7 +28,7 @@ from dace.transformation.layout.prepare import prepare_for_layout
 
 from tests.transformations.layout.kernels import k10_omen_windowed_contraction as k10
 
-BATCH_TRANSPOSE = Layout("perm1023", (Permute((1, 0, 2, 3)), ))  # swap G's (NA, NE) batch axes
+BATCH_TRANSPOSE = Layout("perm1023", (Permute((1, 0, 2, 3)),))  # swap G's (NA, NE) batch axes
 
 
 def test_omen_layout_global_permute_via_api():

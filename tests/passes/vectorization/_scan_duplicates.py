@@ -21,6 +21,7 @@ B. **Similar-kernel-different-bodies** — kernels whose AST fingerprint matches
 Run with ``python -m tests.passes.vectorization._scan_duplicates``.
 Not a test; not picked up by pytest collection.
 """
+
 import ast
 import pathlib
 from collections import defaultdict
@@ -37,7 +38,7 @@ def walk_test_files() -> List[pathlib.Path]:
 def _is_dace_program(decorator: ast.expr) -> bool:
     """Detect ``@dace.program`` and ``@dace.program(...)``."""
     if isinstance(decorator, ast.Attribute):
-        return (isinstance(decorator.value, ast.Name) and decorator.value.id == "dace" and decorator.attr == "program")
+        return isinstance(decorator.value, ast.Name) and decorator.value.id == "dace" and decorator.attr == "program"
     if isinstance(decorator, ast.Call):
         return _is_dace_program(decorator.func)
     return False
@@ -165,8 +166,8 @@ def main():
     print("=" * 78)
     print("K0 SCANNER REPORT")
     print(f"  Files scanned: {len(file_paths)}")
-    print(f"  @dace.program kernels: {sum(1 for _,n in all_programs if not n.startswith('_get_'))}")
-    print(f"  _get_*_sdfg helpers: {sum(1 for _,n in all_programs if n.startswith('_get_'))}")
+    print(f"  @dace.program kernels: {sum(1 for _, n in all_programs if not n.startswith('_get_'))}")
+    print(f"  _get_*_sdfg helpers: {sum(1 for _, n in all_programs if n.startswith('_get_'))}")
     print(f"  Tests calling run_vectorization_test: {sum(1 for v in test_kernel.values() if v)}")
     print("=" * 78)
     print()

@@ -10,6 +10,7 @@ body READS the accumulator the two are coupled and this pass must refuse -- that
 shape is handled instead by ``InductionVariableSubstitution``'s use-site expansion,
 which is covered here alongside the refusal so the hand-off stays honest.
 """
+
 import numpy as np
 import pytest
 
@@ -21,7 +22,7 @@ from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInduct
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _setup(program):
@@ -44,7 +45,7 @@ def _ntasklets_in_loop_bodies(sdfg):
     for r in sdfg.all_control_flow_regions():
         if isinstance(r, LoopRegion) and r.loop_variable:
             for blk in r.nodes():
-                if hasattr(blk, 'nodes'):
+                if hasattr(blk, "nodes"):
                     total += sum(1 for n in blk.nodes() if isinstance(n, nodes.Tasklet))
     return total
 
@@ -67,11 +68,13 @@ def test_hoist_iv_updates_splits_compound_body():
     sdfg.validate()
     n_loops_after = _nloops(sdfg)
     n_tasklets_after = _ntasklets_in_loop_bodies(sdfg)
-    assert res >= 1, 'the IV-eligible statement must be fissioned out, not left in the compound body'
-    assert res == n_loops_after - n_loops_before, (f"reported {res} hoists, but "
-                                                   f"loop count went {n_loops_before} -> {n_loops_after}")
-    assert n_tasklets_after == n_tasklets_before, ("split should not duplicate or drop tasklets; "
-                                                   f"{n_tasklets_before} -> {n_tasklets_after}")
+    assert res >= 1, "the IV-eligible statement must be fissioned out, not left in the compound body"
+    assert res == n_loops_after - n_loops_before, (
+        f"reported {res} hoists, but loop count went {n_loops_before} -> {n_loops_after}"
+    )
+    assert n_tasklets_after == n_tasklets_before, (
+        f"split should not duplicate or drop tasklets; {n_tasklets_before} -> {n_tasklets_after}"
+    )
 
 
 def test_hoist_iv_updates_value_preserving():
@@ -98,8 +101,9 @@ def test_hoist_then_ivsub_collapses_iv_loop():
     HoistInductionVariableUpdates().apply_pass(sdfg, {})
     n_subs = InductionVariableSubstitution().apply_pass(sdfg, {})
     sdfg.validate()
-    assert n_subs is not None and n_subs >= 1, ("expected at least one IV-substituted loop after hoist; "
-                                                "the hoisted single-statement loop should have collapsed")
+    assert n_subs is not None and n_subs >= 1, (
+        "expected at least one IV-substituted loop after hoist; the hoisted single-statement loop should have collapsed"
+    )
 
 
 @dace.program
@@ -115,8 +119,9 @@ def test_hoist_refuses_when_iv_slot_is_loop_dependency():
     sdfg = _setup(coupled_iv_and_perelem)
     res = HoistInductionVariableUpdates().apply_pass(sdfg, {})
     sdfg.validate()
-    assert res is None, ("hoist must refuse when the IV-eligible slot is also read elsewhere in the body; "
-                         f"got result {res}")
+    assert res is None, (
+        f"hoist must refuse when the IV-eligible slot is also read elsewhere in the body; got result {res}"
+    )
 
 
 def _iv_slot_written_in_loop(sdfg, name: str) -> bool:
@@ -161,12 +166,14 @@ def test_use_site_substitution_post_update_read():
     b0 = np.random.default_rng(1).standard_normal(n)
 
     sdfg = _setup(use_after_update)
-    assert HoistInductionVariableUpdates().apply_pass(sdfg, {}) is None, \
+    assert HoistInductionVariableUpdates().apply_pass(sdfg, {}) is None, (
         "the IV component is not independent here, so fission must refuse"
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+    )
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, (
         "s453's read-after-update data IV must be expanded at its use site"
+    )
     sdfg.validate()
-    assert not _iv_slot_written_in_loop(sdfg, 's'), "the loop still writes s -> recurrence survived"
+    assert not _iv_slot_written_in_loop(sdfg, "s"), "the loop still writes s -> recurrence survived"
 
     a = np.zeros(n)
     sdfg(a=a, b=b0.copy(), N=n)
@@ -185,10 +192,11 @@ def test_use_site_substitution_pre_update_read():
     b0 = np.random.default_rng(2).standard_normal(n)
 
     sdfg = _setup(use_before_update)
-    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, (
         "a read BEFORE the update has a closed form too (one step behind) -- it must lift"
+    )
     sdfg.validate()
-    assert not _iv_slot_written_in_loop(sdfg, 's'), "the loop still writes s -> recurrence survived"
+    assert not _iv_slot_written_in_loop(sdfg, "s"), "the loop still writes s -> recurrence survived"
 
     a = np.zeros(n)
     sdfg(a=a, b=b0.copy(), N=n)
@@ -230,5 +238,5 @@ def test_an_ordering_edge_does_not_make_a_statement_part_of_the_iv_component():
     assert sorted(t.label for t in st.nodes() if isinstance(t, _dace.nodes.Tasklet)) == ["cp", "iv"]
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

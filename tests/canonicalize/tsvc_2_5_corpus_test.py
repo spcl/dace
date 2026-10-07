@@ -12,6 +12,7 @@ Inner constant-tile loops (``heat3d``'s tile size 8) would otherwise unroll
 512x, so ``unroll_limit`` is capped to keep the sweep feasible; the rest of the
 recipe matches the corpus default (``peel_limit=4``, anti-dependence breaking).
 """
+
 import contextlib
 import inspect
 import io
@@ -70,15 +71,10 @@ def test_canonicalize_tsvc_2_5_value_preserving(program):
     # lowercased symbol values it declares (e.g. ``ssym``, ``k``).
     oracle = _oracle(program)
     pool = {
-        **{
-            n: a.copy()
-            for n, a in arrays.items()
-        },
+        **{n: a.copy() for n, a in arrays.items()},
         **scalars,
-        **{
-            s.lower(): v
-            for s, v in tsvc_2_5.SIZES.items()
-        }, "n": tsvc_2_5.SIZES["LEN_1D"]
+        **{s.lower(): v for s, v in tsvc_2_5.SIZES.items()},
+        "n": tsvc_2_5.SIZES["LEN_1D"],
     }  # iv_* oracles take the trip count as ``n``
     okwargs = {p: pool[p] for p in inspect.signature(oracle).parameters}
     oracle(**okwargs)
@@ -86,11 +82,13 @@ def test_canonicalize_tsvc_2_5_value_preserving(program):
 
     cand = program.to_sdfg(simplify=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        canonicalize(cand,
-                     validate=True,
-                     peel_limit=_PEEL_LIMIT,
-                     break_anti_dependence=_BREAK_ANTI_DEP,
-                     unroll_limit=_UNROLL_LIMIT)
+        canonicalize(
+            cand,
+            validate=True,
+            peel_limit=_PEEL_LIMIT,
+            break_anti_dependence=_BREAK_ANTI_DEP,
+            unroll_limit=_UNROLL_LIMIT,
+        )
     free = {str(s) for s in cand.free_symbols}
     for s in free:  # a hoisted config guard (e.g. K) can stay free but unregistered
         if s not in cand.symbols:
@@ -103,11 +101,13 @@ def test_canonicalize_tsvc_2_5_value_preserving(program):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # index/permutation arrays are read-only inputs
-        assert _allclose(
-            ref[name], got[name]), (f"{program.name}/{name}: canonicalize diverges from numpy oracle, "
-                                    f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert _allclose(ref[name], got[name]), (
+            f"{program.name}/{name}: canonicalize diverges from numpy oracle, "
+            f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}"
+        )
 
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(pytest.main([__file__, "-q"]))

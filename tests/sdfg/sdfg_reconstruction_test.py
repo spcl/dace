@@ -272,8 +272,8 @@ def _build_reduce_sum() -> SDFG:
     a = state.add_access("A")
     b = state.add_access("B")
     red = state.add_reduce("lambda x, y: x + y", None, 0)
-    state.add_edge(a, None, red, '_in', dace.Memlet("A[0:16]"))
-    state.add_edge(red, '_out', b, None, dace.Memlet("B[0]"))
+    state.add_edge(a, None, red, "_in", dace.Memlet("A[0:16]"))
+    state.add_edge(red, "_out", b, None, dace.Memlet("B[0]"))
     return sdfg
 
 
@@ -321,18 +321,22 @@ def test_break_continue_blocks_inside_loop():
 # Sanity: emitter never produces from_json / set_properties_from_json
 
 
-@pytest.mark.parametrize("builder", [
-    _build_mapped_increment,
-    _build_loop_region,
-    _build_nested_increment,
-    _build_reduce_sum,
-])
+@pytest.mark.parametrize(
+    "builder",
+    [
+        _build_mapped_increment,
+        _build_loop_region,
+        _build_nested_increment,
+        _build_reduce_sum,
+    ],
+)
 def test_emitter_uses_imperative_api_only(builder):
     src = sdfg_to_python(builder())
     forbidden = ("from_json", "set_properties_from_json", "dace.serialize")
     for token in forbidden:
-        assert token not in src, (f"Emitter leaked non-imperative token {token!r}; output:\n" +
-                                  textwrap.indent(src, "    "))
+        assert token not in src, f"Emitter leaked non-imperative token {token!r}; output:\n" + textwrap.indent(
+            src, "    "
+        )
 
 
 # Velocity stage1 SDFGs (real-world ICON dycore artifacts)
@@ -364,9 +368,11 @@ def test_velocity_stage1_round_trip(filename):
     rebuilt = _exec_emitted(src)
 
     # Signature equivalence: the exported argument list must match.
-    assert original.signature_arglist() == rebuilt.signature_arglist(), (f"signature mismatch for {filename}\n"
-                                                                         f"original: {original.signature_arglist()}\n"
-                                                                         f"rebuilt:  {rebuilt.signature_arglist()}")
+    assert original.signature_arglist() == rebuilt.signature_arglist(), (
+        f"signature mismatch for {filename}\n"
+        f"original: {original.signature_arglist()}\n"
+        f"rebuilt:  {rebuilt.signature_arglist()}"
+    )
 
     # Structural equivalence: arrays, symbols, state count.
     assert set(original.arrays.keys()) == set(rebuilt.arrays.keys())
@@ -441,7 +447,7 @@ def _cloudsc_kernel(
             zadd = (1.6666666666667 * rlstt * (rlstt / (rv * ztp1[it_47]) - 1.0)) / ztp1[it_47]
             zbdd = (0.452488687782805 * pap[it_47] * rv * ztp1[it_47]) / zvpice
 
-            tmp_call_49 = (zicenuclei[it_47] / zrho[it_47])
+            tmp_call_49 = zicenuclei[it_47] / zrho[it_47]
             zcvds = (7.8 * tmp_call_49 * (zvpliq - zvpice)) / (zvpice * (zadd + zbdd))
 
             zice0 = max(riceinit * zicenuclei[it_47] / zrho[it_47], zicecld[it_47])
@@ -483,17 +489,17 @@ def _cloudsc_inputs(n: int):
         "rtt": np.float64(273.15),
         "rv": np.float64(461.5),
         "N": np.int64(n),
-        "pap": u(1.0, 2.0, (n, )),
-        "za": u(0.9, 1.5, (n, )),
-        "ztp1": u(260.0, 280.0, (n, )),
-        "zqxfg": u(5.0, 11.0, (n, )),
-        "zsolqa": u(5.0, 11.0, (n, )),
-        "zdp": u(0.5, 2.0, (n, )),
-        "zfokoop": u(0.95, 1.05, (n, )),
-        "zicecld": u(10.0, 11.0, (n, )),
-        "zrho": u(0.9, 1.2, (n, )),
-        "zcldtopdist": u(0.1, 1.0, (n, )),
-        "zicenuclei": u(1e2, 1e4, (n, )),
+        "pap": u(1.0, 2.0, (n,)),
+        "za": u(0.9, 1.5, (n,)),
+        "ztp1": u(260.0, 280.0, (n,)),
+        "zqxfg": u(5.0, 11.0, (n,)),
+        "zsolqa": u(5.0, 11.0, (n,)),
+        "zdp": u(0.5, 2.0, (n,)),
+        "zfokoop": u(0.95, 1.05, (n,)),
+        "zicecld": u(10.0, 11.0, (n,)),
+        "zrho": u(0.9, 1.2, (n,)),
+        "zcldtopdist": u(0.1, 1.0, (n,)),
+        "zicenuclei": u(1e2, 1e4, (n,)),
     }
 
 

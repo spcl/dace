@@ -4,6 +4,7 @@
 Symmetric to ``test_tile_gather_pure``; the lib node copies a tile
 transient into a destination-array region.
 """
+
 import numpy as np
 import pytest
 
@@ -38,7 +39,7 @@ def build_store_sdfg(dst_shape, widths, has_mask, dtype=dace.float64):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_scatter_pure_unmasked_contiguous(widths):
     """Unmasked store copies SRC into the leading tile region of DST."""
     sdfg = build_store_sdfg(dst_shape=widths, widths=widths, has_mask=False)
@@ -69,11 +70,11 @@ def test_tile_scatter_rejects_invalid_K():
     with pytest.raises(ValueError, match="length in"):
         TileScatter(name="bad_K", widths=())
     with pytest.raises(ValueError, match="dim_strides length"):
-        TileScatter(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))
+        TileScatter(name="bad_stride_len", widths=(8,), dim_strides=(1, 1))
 
 
-if __name__ == '__main__':
-    test_tile_scatter_pure_unmasked_contiguous((8, ))
+if __name__ == "__main__":
+    test_tile_scatter_pure_unmasked_contiguous((8,))
     test_tile_scatter_pure_unmasked_contiguous((4, 8))
     test_tile_scatter_pure_masked_preserves_destination_on_inactive_lanes()
     test_tile_scatter_rejects_invalid_K()

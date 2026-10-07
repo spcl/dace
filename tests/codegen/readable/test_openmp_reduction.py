@@ -13,6 +13,7 @@ line survives as an undeclared name (the pygments C++ lexer folds the line into 
 token). The full-reduction body now has no ``#pragma`` at all, so its connectors ARE inlined -- and
 must inline to the array itself (``out[0] = ::dace::reduce::sum(a, ...)``), not to ``&out[0]``.
 """
+
 import functools
 import importlib.util
 import os
@@ -25,8 +26,15 @@ from dace.libraries.standard.nodes.reduce import Reduce
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import LoopToMap
 
-from tests.codegen.readable.conftest import (LEGACY, EXPERIMENTAL, use_implementation, generated_code, run_isolated,
-                                             assert_outputs_equivalent, experimental_available)
+from tests.codegen.readable.conftest import (
+    LEGACY,
+    EXPERIMENTAL,
+    use_implementation,
+    generated_code,
+    run_isolated,
+    assert_outputs_equivalent,
+    experimental_available,
+)
 
 N = dace.symbol("N")
 
@@ -45,8 +53,8 @@ def openmp_reduce_available():
             st = s.add_state("m")
             red = st.add_reduce("lambda x, y: x + y", None, 0.0)
             red.implementation = "CPU"
-            st.add_edge(st.add_read("a"), None, red, '_in', dace.Memlet("a[0:8]"))
-            st.add_edge(red, '_out', st.add_write("o"), None, dace.Memlet("o[0]"))
+            st.add_edge(st.add_read("a"), None, red, "_in", dace.Memlet("a[0:8]"))
+            st.add_edge(red, "_out", st.add_write("o"), None, dace.Memlet("o[0]"))
             s.validate()
             s.compile()
         return {}
@@ -77,8 +85,8 @@ def _reduce_sdfg(op, masked=False):
     red = state.add_reduce(wcr, None, identity)
     red.implementation = "CPU"
     subset = "a[0:N:2]" if masked else "a[0:N]"
-    state.add_edge(rd, None, red, '_in', dace.Memlet(subset))
-    state.add_edge(red, '_out', wr, None, dace.Memlet("out[0]"))
+    state.add_edge(rd, None, red, "_in", dace.Memlet(subset))
+    state.add_edge(red, "_out", wr, None, dace.Memlet("out[0]"))
     sdfg.validate()
     return sdfg
 
@@ -132,8 +140,8 @@ def _partial_reduce_sdfg():
     state = sdfg.add_state("main")
     red = state.add_reduce("lambda x, y: x + y", [1], 0.0)
     red.implementation = "CPU"
-    state.add_edge(state.add_read("a"), None, red, '_in', dace.Memlet("a[0:8, 0:16]"))
-    state.add_edge(red, '_out', state.add_write("out"), None, dace.Memlet("out[0:8]"))
+    state.add_edge(state.add_read("a"), None, red, "_in", dace.Memlet("a[0:8, 0:16]"))
+    state.add_edge(red, "_out", state.add_write("out"), None, dace.Memlet("out[0:8]"))
     sdfg.validate()
     return sdfg
 

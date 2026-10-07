@@ -10,14 +10,15 @@ run still looks perfect.
 The vectorizer runs ``canonicalize`` at its OWN entry, so a caller that canonicalizes first
 takes exactly this path on every kernel.
 """
+
 import dace
 import pytest
 
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -39,15 +40,15 @@ def map_params(sdfg):
     return sorted(tuple(m.map.params) for m, _ in sdfg.all_nodes_recursive() if isinstance(m, nd.MapEntry))
 
 
-@pytest.mark.parametrize('program', [guarded_elementwise, nested_rows], ids=['guarded', 'nested'])
+@pytest.mark.parametrize("program", [guarded_elementwise, nested_rows], ids=["guarded", "nested"])
 def test_second_canonicalize_keeps_every_map(program):
     sdfg = program.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
     first = map_params(sdfg)
-    assert first, 'fixture stopped producing a map -- the round trip is no longer under test'
+    assert first, "fixture stopped producing a map -- the round trip is no longer under test"
 
     canonicalize(sdfg, validate=True, peel_limit=4, break_anti_dependence=True)
-    assert map_params(sdfg) == first, 'a second canonicalize dropped a map the first one had proven parallel'
+    assert map_params(sdfg) == first, "a second canonicalize dropped a map the first one had proven parallel"
 
 
 def test_second_canonicalize_leaves_no_growing_subset():
@@ -74,10 +75,12 @@ def test_second_canonicalize_leaves_no_growing_subset():
                 checked += 1
                 for begin, end, _ in edge.data.subset.ndrange():
                     growing = begin == 0 and (dace.symbolic.pystr_to_symbolic(str(end)).free_symbols & params)
-                    assert not growing, (f'{edge.src} -> {edge.dst}: subset {edge.data.subset} grows with the '
-                                         f'map parameter instead of naming one element')
-    assert checked, 'no in-scope memlet was inspected -- fixture no longer covers the case'
+                    assert not growing, (
+                        f"{edge.src} -> {edge.dst}: subset {edge.data.subset} grows with the "
+                        f"map parameter instead of naming one element"
+                    )
+    assert checked, "no in-scope memlet was inspected -- fixture no longer covers the case"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

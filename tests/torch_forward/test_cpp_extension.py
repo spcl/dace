@@ -81,18 +81,15 @@ TORCH_LIBRARY_IMPL(myops, Autograd, m) {
 
 @pytest.mark.torch
 def test_extension():
-    program = CodeObject("myadd",
-                         op_source,
-                         "cpp",
-                         targets.cpu.CPUCodeGen,
-                         "MyAddFunction",
-                         environments={PyTorch.full_class_path()})
+    program = CodeObject(
+        "myadd", op_source, "cpp", targets.cpu.CPUCodeGen, "MyAddFunction", environments={PyTorch.full_class_path()}
+    )
 
-    BUILD_PATH = os.path.join('.dacecache', "pt_extension")
+    BUILD_PATH = os.path.join(".dacecache", "pt_extension")
     compiler.generate_program_folder(None, [program], BUILD_PATH)
     torch.utils.cpp_extension.load(
-        name='pt_extension',
-        sources=[os.path.join(BUILD_PATH, 'src', 'cpu', 'myadd.cpp')],
+        name="pt_extension",
+        sources=[os.path.join(BUILD_PATH, "src", "cpu", "myadd.cpp")],
         is_python_module=False,
     )
     torch.ops.myops.myadd(torch.randn(32, 32), torch.rand(32, 32))
@@ -106,7 +103,6 @@ def test_module_with_constant(device):
 
     @dace.ml.module(sdfg_name=f"test_module_with_constant_{device}", cuda=is_gpu(device))
     class Module(nn.Module):
-
         def forward(self, x):
             return x + 1
 

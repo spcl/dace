@@ -6,6 +6,7 @@ The fusion is OPT-IN (``VectorizeConfig.fuse_multiply_add``): a fused single-rou
 the separate ``*`` then ``+`` (and a NumPy reference) by up to one ULP, so results are compared
 with a tolerance, never bit-exact.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -59,12 +60,14 @@ def test_fma_symbolic_function():
     assert {str(s) for s in e.free_symbols} == {"a", "b", "c"}
     # 'fma' is a recognised built-in function name, not a per-lane symbol.
     from dace.symbolic import builtin_userfunctions
+
     assert "fma" in builtin_userfunctions()
 
 
 def test_fuse_pass_rewrites_mul_add_to_fma():
     """``t = a*b ; d = t + c`` (single-use ``t``) -> one ``fma`` tasklet; no residual ``*`` / ``+``."""
     from dace.sdfg.nodes import Tasklet
+
     sdfg = _axpy(dace.float64).to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
@@ -72,8 +75,10 @@ def test_fuse_pass_rewrites_mul_add_to_fma():
     fmas = [t for t, _ in sdfg.all_nodes_recursive() if isinstance(t, Tasklet) and "fma(" in t.code.as_string]
     assert len(fmas) == 1
     resid = [
-        t for t, _ in sdfg.all_nodes_recursive() if isinstance(t, Tasklet) and (
-            "*" in t.code.as_string or (" + " in t.code.as_string and "fma" not in t.code.as_string))
+        t
+        for t, _ in sdfg.all_nodes_recursive()
+        if isinstance(t, Tasklet)
+        and ("*" in t.code.as_string or (" + " in t.code.as_string and "fma" not in t.code.as_string))
     ]
     assert not resid, f"residual mul/add tasklets: {[t.code.as_string for t in resid]}"
 
@@ -111,7 +116,7 @@ def fma_lowers_and_runs(isa, dt):
     sdfg = _axpy(dt).to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa, fuse_multiply_add=True)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=isa, fuse_multiply_add=True)).apply_pass(sdfg, {})
     assert _count(sdfg, TileFMA) >= 1
     assert _count(sdfg, TileBinop) == 0
     sdfg.expand_library_nodes()
@@ -145,7 +150,7 @@ def test_cpu_fma_off_by_default():
     sdfg = _axpy(dace.float32).to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=HOST_ISA)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=HOST_ISA)).apply_pass(sdfg, {})
     assert _count(sdfg, TileFMA) == 0
 
 
@@ -153,10 +158,12 @@ def test_cpu_fma_off_by_default():
 def test_gpu_fma_lowers_to_native_packed_half_fma(tmp_path):
     """A width-8 fp16 ``tile_fma`` lowers to the native packed half FMA (four half2 FMAs: ``fma.rn.f16x2`` on CUDA,
     ``v_pk_fma_f16`` on HIP), NOT a separate packed multiply and add -- verified in the device assembly."""
-    src = ("#include \"dace/dace.h\"\n#include \"dace/tile_ops/cuda.h\"\n"
-           "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b,\n"
-           "                  const dace::float16* c) {\n"
-           "  dace::tileops::tile_fma<dace::float16, 8, false, false, false, false>(o, a, b, c, nullptr);\n}\n")
+    src = (
+        '#include "dace/dace.h"\n#include "dace/tile_ops/cuda.h"\n'
+        "__global__ void k(dace::float16* o, const dace::float16* a, const dace::float16* b,\n"
+        "                  const dace::float16* c) {\n"
+        "  dace::tileops::tile_fma<dace::float16, 8, false, false, false, false>(o, a, b, c, nullptr);\n}\n"
+    )
     build = device_compile(src, tmp_path, assembly=True)
     assert build.result.returncode == 0, build.result.stderr
     assert PACKED_HALF_FMA[get_gpu_backend()] in build.output.read_text(), "fp16 tile_fma did not lower to a packed FMA"
@@ -167,11 +174,12 @@ def test_gpu_fma_runs_fp16():
     """The fp16 GPU vectorizer with ``fuse_multiply_add`` lowers ``A*B + A`` to ``TileFMA`` and
     runs correctly on the device (within fp16 rounding)."""
     import cupy
+
     sdfg = _axpy(dace.float16).to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
     offload_to_gpu(sdfg)
-    VectorizeGPU(VectorizeConfig(widths=(8, ), fuse_multiply_add=True)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(8,), fuse_multiply_add=True)).apply_pass(sdfg, {})
     assert _count(sdfg, TileFMA) >= 1
     sdfg.name = "fma_gpu_run_f16"
     n = 64

@@ -13,6 +13,7 @@ comparison, the "no branch condition reads a symbol the first block assigns" rul
 itself live on the transformation -- this pass owns only the traversal, so the pass and the
 transformation can never disagree.
 """
+
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
@@ -46,7 +47,8 @@ def matcher_candidates(region: AbstractControlFlowRegion) -> Iterator[Tuple[int,
 
 
 def chain_candidates(
-        block: AbstractControlFlowRegion) -> Iterator[Tuple[AbstractControlFlowRegion, int, Dict[Any, Any]]]:
+    block: AbstractControlFlowRegion,
+) -> Iterator[Tuple[AbstractControlFlowRegion, int, Dict[Any, Any]]]:
     """The candidates naming ``block`` or one of its ancestors, in the region holding each, up to the SDFG."""
     while not isinstance(block, SDFG) and block.parent_graph is not None:
         region = block.parent_graph
@@ -65,7 +67,7 @@ def chain_candidates(
 class FuseConditions(ppl.Pass):
     """Fuse consecutive and nested ConditionalBlocks until no pair matches."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -129,25 +131,18 @@ class FuseConditions(ppl.Pass):
             if not isinstance(second, ConditionalBlock) or second is first:
                 continue
             if ConditionFusion.can_be_applied_to(sdfg, expr_index=CONSECUTIVE, cblck1=first, cblck2=second):
-                ConditionFusion.apply_to(sdfg,
-                                         expr_index=CONSECUTIVE,
-                                         cblck1=first,
-                                         cblck2=second,
-                                         verify=False,
-                                         annotate=False,
-                                         save=False)
+                ConditionFusion.apply_to(
+                    sdfg, expr_index=CONSECUTIVE, cblck1=first, cblck2=second, verify=False, annotate=False, save=False
+                )
                 return True
 
         for block in cfg.nodes():
             if not isinstance(block, ConditionalBlock):
                 continue
             if ConditionFusion.can_be_applied_to(sdfg, expr_index=NESTED, cblck1=block):
-                ConditionFusion.apply_to(sdfg,
-                                         expr_index=NESTED,
-                                         cblck1=block,
-                                         verify=False,
-                                         annotate=False,
-                                         save=False)
+                ConditionFusion.apply_to(
+                    sdfg, expr_index=NESTED, cblck1=block, verify=False, annotate=False, save=False
+                )
                 return True
         return False
 
@@ -202,21 +197,23 @@ class FuseConditions(ppl.Pass):
         return fused or None
 
     @staticmethod
-    def bind(xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any,
-                                                                                                       Any]) -> None:
+    def bind(
+        xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any, Any]
+    ) -> None:
         xform.setup_match(region.sdfg, -1, -1, binding, expr_index, override=True)
 
     @staticmethod
-    def accepts(xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any,
-                                                                                                          Any]) -> bool:
+    def accepts(
+        xform: ConditionFusion, region: AbstractControlFlowRegion, expr_index: int, binding: Dict[Any, Any]
+    ) -> bool:
         FuseConditions.bind(xform, region, expr_index, binding)
         try:
             return xform.can_be_applied(region, expr_index, region.sdfg, permissive=False)
         except Exception as e:  # noqa: BLE001 -- the matcher's own policy, see ``_try_to_match_transformation``
-            if Config.get_bool('optimizer', 'match_exception'):
+            if Config.get_bool("optimizer", "match_exception"):
                 raise
-            print(f'WARNING: ConditionFusion::can_be_applied triggered a {e.__class__.__name__} exception: {e}')
+            print(f"WARNING: ConditionFusion::can_be_applied triggered a {e.__class__.__name__} exception: {e}")
             return False
 
 
-__all__ = ['FuseConditions']
+__all__ = ["FuseConditions"]

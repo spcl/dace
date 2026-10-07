@@ -6,6 +6,7 @@ takes. ``MpiPackUnpack`` packs it into a contiguous transient before the ``Sendr
 received contiguous buffer back into column ``COL`` of B. A 2-rank ring then checks B's column equals the
 left neighbour's rank. Marked ``mpi`` -- run under ``mpirun -n 2``.
 """
+
 import dace
 from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
@@ -43,6 +44,7 @@ def make_sdfg(dtype):
 
 def _test_mpi(sdfg, dtype):
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
@@ -59,13 +61,15 @@ def _test_mpi(sdfg, dtype):
     N = 16
     A = np.full((N, N), rank, dtype=dtype)  # every column of A holds this rank
     B = np.zeros((N, N), dtype=dtype)
-    mpi_sdfg(A=A,
-             B=B,
-             src=np.array([srank], dtype=np.int32),
-             dest=np.array([drank], dtype=np.int32),
-             sendtag=np.array([7], dtype=np.int32),
-             recvtag=np.array([7], dtype=np.int32),
-             n=N)
+    mpi_sdfg(
+        A=A,
+        B=B,
+        src=np.array([srank], dtype=np.int32),
+        dest=np.array([drank], dtype=np.int32),
+        sendtag=np.array([7], dtype=np.int32),
+        recvtag=np.array([7], dtype=np.int32),
+        n=N,
+    )
     # B's column COL was received from the left neighbour -> holds srank.
     if not np.allclose(B[:, COL], srank):
         raise ValueError(f"rank {rank}: B[:,{COL}] = {B[:, COL]} (expected {srank})")

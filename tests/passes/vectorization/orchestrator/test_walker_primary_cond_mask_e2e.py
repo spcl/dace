@@ -12,12 +12,13 @@ at the SOURCE side -- the walker classifies the access with REPLICATE along the
 unused dim and TileGather emits a per-lane replicated load. After the comparison /
 ITE, every downstream lib node sees the canonical full-tile shape.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop, TileGather
-from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 
@@ -29,7 +30,7 @@ def _build_k2_cond_subset_of_dims(M, N):
     but TileITE wants full ``(W_0, W_1)``. The pipeline must broadcast.
     """
     sdfg = dace.SDFG("k2_cond_subset")
-    sdfg.add_array("A", (M, ), dace.float64, transient=False)
+    sdfg.add_array("A", (M,), dace.float64, transient=False)
     sdfg.add_array("C", (M, N), dace.float64, transient=False)
     sdfg.add_array("B", (M, N), dace.float64, transient=False)
     state = sdfg.add_state("s")
@@ -108,14 +109,16 @@ def test_k2_cond_subset_loads_with_replicate_factor():
     (W_1 copies). Equivalently: the loaded ``A_tile`` is full-tile shape ``(W_0, W_1)``
     with the same value along ``W_1`` per ``W_0``."""
     sdfg = _build_k2_cond_subset_of_dims(16, 16)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR,
-                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR, expand_tile_nodes=False)).apply_pass(
+        sdfg, {}
+    )
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     # Find the TileGather that reads A.
     body_state = list(inner.states())[0]
     a_loads = [
-        n for n in body_state.nodes()
+        n
+        for n in body_state.nodes()
         if isinstance(n, TileGather) and any((e.data.data == "A") for e in body_state.in_edges(n))
     ]
     assert len(a_loads) == 1, f"expected one TileGather for A, found {len(a_loads)}"
@@ -129,8 +132,9 @@ def test_k2_cond_subset_loads_with_replicate_factor():
     # For an access that's REPLICATE along one dim, the bridge IS full-tile shape
     # (it must materialise the broadcast at the load step).
     bridge_shape = tuple(int(s) for s in bridge_desc.shape)
-    assert bridge_shape == (8, 8), \
+    assert bridge_shape == (8, 8), (
         f"A's bridge transient must be full-tile (8, 8) per design (broadcast at load); got {bridge_shape}"
+    )
 
 
 def test_k2_cond_invariant_symbol_is_scalar_broadcast():
@@ -138,8 +142,9 @@ def test_k2_cond_invariant_symbol_is_scalar_broadcast():
     produces a Scalar bool output -- the TileITE then broadcasts at expansion time
     via kind_cond=Scalar / Symbol."""
     sdfg = _build_k2_cond_invariant_symbol(16, 16)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR,
-                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR, expand_tile_nodes=False)).apply_pass(
+        sdfg, {}
+    )
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     body_state = list(inner.states())[0]

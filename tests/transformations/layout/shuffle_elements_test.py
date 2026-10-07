@@ -7,6 +7,7 @@ shuffle is TRANSPARENT: it changes only the physical layout, so a shuffled kerne
 be bit-identical to the unshuffled one -- that equality is the oracle. A deliberately WRONG
 inverse must BREAK that equality (the negative test proves the rewrite genuinely uses sigma^-1).
 """
+
 import copy
 import numpy
 import dace
@@ -23,6 +24,7 @@ def test_layoutchange_rejects_net_shuffle():
     """A net Shuffle in a relayout op-sequence is refused (it is the ShuffleElements pass's job),
     but a cancelling Shuffle chain still lowers (simplify_ops removes it)."""
     import pytest
+
     with pytest.raises(NotImplementedError):
         relayout_map([16], [Shuffle(0, "sig")])
     # Shuffle o Shuffle^-1 cancels -> no net shuffle -> lowers fine (identity copy).
@@ -43,7 +45,7 @@ def test_registry_params_and_folding():
 
 def test_registry_symbol_param_detected():
     aff = register_shuffle("t_aff", "(3*i + 1) % M", "((i - 1) * 7) % M")
-    assert aff.params == ("M", )  # M auto-detected as a symbol parameter
+    assert aff.params == ("M",)  # M auto-detected as a symbol parameter
     assert str(aff.apply_forward("e")) == "shuffle_t_aff(e, M)"
     assert "long long M)" in aff.c_definitions()
 
@@ -58,7 +60,7 @@ def test_registry_inverse_roundtrips_numerically():
 def test_registry_excludes_call_callees():
     """A function callee (pow/isqrt/...) is NOT mistaken for an SDFG symbol parameter."""
     assert _symbol_params("pow(i, 2)", "isqrt(i)") == ()
-    assert _symbol_params("(3*i) % M", "(i + M) % M") == ("M", )
+    assert _symbol_params("(3*i) % M", "(i + M) % M") == ("M",)
 
 
 def test_registry_emits_floored_mod():
@@ -70,6 +72,7 @@ def test_registry_emits_floored_mod():
 def test_emit_shuffle_globals_name_collision_raises():
     """Two shuffles whose emitted C names collide with different bodies fail loudly."""
     import pytest
+
     register_shuffle("collide", "i ^ 1", "i ^ 1")  # emits shuffle_inv_collide (body i^1)
     register_shuffle("inv_collide", "i ^ 2", "i ^ 3")  # forward name == shuffle_inv_collide (body i^2)
     sdfg = dace.SDFG("collide_sdfg")
@@ -196,6 +199,7 @@ def test_shuffle_list_form_single_dim_matches_tuple():
 def test_shuffle_duplicate_dim_raises():
     """Shuffling the same dimension twice is refused."""
     import pytest
+
     register_shuffle("xor3", "i ^ 3", "i ^ 3")
     register_shuffle("cyc", "(i + 1) % N", "(i + N - 1) % N")
     sdfg = copy.deepcopy(rowscale.to_sdfg(simplify=True))
@@ -220,7 +224,7 @@ def test_shuffle_negative_mod_transparent():
 
 @dace.program
 def rows_partial(A: dace.float64[N, N], C: dace.float64[N, N]):
-    for i, j in dace.map[0:N - 1, 0:N] @ dace.ScheduleType.Sequential:
+    for i, j in dace.map[0 : N - 1, 0:N] @ dace.ScheduleType.Sequential:
         C[i, j] = A[i, j] + 1.0
 
 
@@ -242,7 +246,7 @@ def test_shuffle_partial_write_nonshuffled_dim_preserved():
 
 @dace.program
 def partial_shuffled(A: dace.float64[N], C: dace.float64[N]):
-    for i in dace.map[0:N - 1] @ dace.ScheduleType.Sequential:
+    for i in dace.map[0 : N - 1] @ dace.ScheduleType.Sequential:
         C[i] = A[i] + 1.0
 
 
@@ -250,6 +254,7 @@ def test_shuffle_partial_on_shuffled_dim_raises():
     """A partial (non-point, non-full) range on the shuffled dimension cannot be sigma^-1-composed
     and is refused rather than silently miscompiled."""
     import pytest
+
     register_shuffle("xor3", "i ^ 3", "i ^ 3")
     sdfg = copy.deepcopy(partial_shuffled.to_sdfg(simplify=True))
     with pytest.raises(NotImplementedError):

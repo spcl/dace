@@ -44,6 +44,7 @@ class InstrumentedDataReport:
     :seealso: dace.dtypes.DataInstrumentationType.Save
     :seealso: dace.dtypes.DataInstrumentationType.Restore
     """
+
     sdfg: SDFG
     folder: str
     files: Dict[str, List[str]]
@@ -54,19 +55,19 @@ class InstrumentedDataReport:
         if aname not in self.sdfg.arrays:
             return False
         desc = self.sdfg.arrays[aname]
-        if not getattr(desc, 'transient', False):
+        if not getattr(desc, "transient", False):
             return False
         # Offloading's staging names: gpu_A, gpu___return, ...
-        if aname.startswith('gpu_'):
+        if aname.startswith("gpu_"):
             return aname[4:] in self.sdfg.arrays
         # OffloadToAccelerator return-value buffer: buffer__return_gpu, buffer__returnfoo_gpu, ...
-        m = re.fullmatch(r'buffer__return(.*)_gpu', aname)
+        m = re.fullmatch(r"buffer__return(.*)_gpu", aname)
         if m:
-            return f'__return{m.group(1)}' in self.sdfg.arrays
+            return f"__return{m.group(1)}" in self.sdfg.arrays
         # OffloadToAccelerator device/host copy naming: A_gpu, __return_gpu, A_host, ...
-        if aname.endswith('_gpu'):
+        if aname.endswith("_gpu"):
             return aname[:-4] in self.sdfg.arrays
-        if aname.endswith('_host'):
+        if aname.endswith("_host"):
             return aname[:-5] in self.sdfg.arrays
         return False
 
@@ -94,14 +95,14 @@ class InstrumentedDataReport:
 
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
-            filenames = sorted([(*(int(s) for s in f.split('.')[0].split('_')), f) for f in filenames])
+            filenames = sorted([(*(int(s) for s in f.split(".")[0].split("_")), f) for f in filenames])
             for entry in filenames:
                 files.append(os.path.join(folder, aname, entry[-1]))
 
             self.files[aname] = files
 
     def keys(self) -> Set[str]:
-        """ Returns the array names available in this data report. """
+        """Returns the array names available in this data report."""
         return self.files.keys()
 
     def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
@@ -110,11 +111,11 @@ class InstrumentedDataReport:
 
         :return: A 2-tuple of (original buffer, array view)
         """
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             # Recreate runtime shape and strides from buffer
-            ndims, = struct.unpack('i', fp.read(4))
-            shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
-            strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
+            (ndims,) = struct.unpack("i", fp.read(4))
+            shape = struct.unpack("i" * ndims, fp.read(4 * ndims))
+            strides = struct.unpack("i" * ndims, fp.read(4 * ndims))
             strides = tuple(s * npdtype.itemsize for s in strides)
 
             # Make numpy array from data descriptor
@@ -124,7 +125,7 @@ class InstrumentedDataReport:
         return nparr, view
 
     def _read_symbol_file(self, filename: str, npdtype: np.dtype) -> Number:
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             npclass = getattr(np, str(npdtype))
             byteval = fp.read(npdtype.itemsize)
             val = npclass(byteval)
@@ -156,7 +157,7 @@ class InstrumentedDataReport:
                 self.loaded_values[item, i] = val
                 results.append(val)
         else:
-            raise KeyError(f'Item {item} not found in report')
+            raise KeyError(f"Item {item} not found in report")
 
         if len(results) == 1:
             return results[0]
@@ -186,7 +187,7 @@ class InstrumentedDataReport:
             val = self._read_symbol_file(file, dtype.as_numpy_dtype())
             self.loaded_values[item, 0] = val
         else:
-            raise KeyError(f'Item not found in report: {item}')
+            raise KeyError(f"Item not found in report: {item}")
 
     def update_report(self):
         """
@@ -198,8 +199,8 @@ class InstrumentedDataReport:
         for (k, i), loaded in self.loaded_values.items():
             if isinstance(loaded, np.ndarray):
                 dtype_bytes = loaded.dtype.itemsize
-                with open(self.files[k][i], 'wb') as fp:
-                    fp.write(struct.pack('i', loaded.ndim))
-                    fp.write(struct.pack('i' * loaded.ndim, *loaded.shape))
-                    fp.write(struct.pack('i' * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
+                with open(self.files[k][i], "wb") as fp:
+                    fp.write(struct.pack("i", loaded.ndim))
+                    fp.write(struct.pack("i" * loaded.ndim, *loaded.shape))
+                    fp.write(struct.pack("i" * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
                     loaded.tofile(fp)

@@ -24,13 +24,13 @@ def count_maps(sdfg):
 
 
 def test_solve():
-    i = dace.symbolic.symbol('i')
-    j = dace.symbolic.symbol('j')
+    i = dace.symbolic.symbol("i")
+    j = dace.symbolic.symbol("j")
     write_params = [i, j]
     write_accesses = ((i, i, 1), (j - 1, j - 1, 1))
 
-    k = dace.symbolic.symbol('k')
-    l = dace.symbolic.symbol('l')
+    k = dace.symbolic.symbol("k")
+    l = dace.symbolic.symbol("l")
     read_params = [k, l]
     read_accesses = ((k, k, 1), (l + 2, l + 2, 1))
 
@@ -40,8 +40,8 @@ def test_solve():
 
 
 def test_solve_permute():
-    i = dace.symbolic.symbol('i')
-    j = dace.symbolic.symbol('j')
+    i = dace.symbolic.symbol("i")
+    j = dace.symbolic.symbol("j")
     write_params = [i, j]
     write_accesses = ((i, i, 1), (j - 1, j - 1, 1))
 
@@ -54,12 +54,12 @@ def test_solve_permute():
 
 
 def test_solve_constant():
-    i = dace.symbolic.symbol('i')
+    i = dace.symbolic.symbol("i")
     write_params = [i]
-    write_accesses = ((i, i, 1), )
+    write_accesses = ((i, i, 1),)
 
     read_params = [i]
-    read_accesses = ((0, 0, 1), )
+    read_accesses = ((0, 0, 1),)
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
     assert sol[i] == 0
@@ -67,10 +67,10 @@ def test_solve_constant():
 
 def test_solve_constant2():
     write_params = []
-    write_accesses = ((0, 0, 1), )
+    write_accesses = ((0, 0, 1),)
 
     read_params = []
-    read_accesses = ((1, 1, 1), )
+    read_accesses = ((1, 1, 1),)
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
     assert (0, 0) in sol and sol[(0, 0)] == (1, 1)
@@ -78,12 +78,12 @@ def test_solve_constant2():
 
 
 def test_solve_unsolvable():
-    i = dace.symbolic.symbol('i')
+    i = dace.symbolic.symbol("i")
     write_params = [i]
-    write_accesses = ((0, 0, 1), )
+    write_accesses = ((0, 0, 1),)
 
     read_params = [i]
-    read_accesses = ((i, i, 1), )
+    read_accesses = ((i, i, 1),)
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
     assert sol is None
@@ -321,13 +321,13 @@ def test_trivial_fusion_nested_sdfg():
     assert count_maps(sdfg) == 2
 
     nums = np.arange(2, 130, 1, dtype=np.int64)
-    res = np.zeros((128, ), dtype=np.int64)
+    res = np.zeros((128,), dtype=np.int64)
     sdfg(A=nums, B=res)
 
     sdfg.apply_transformations(OTFMapFusion)
     assert count_maps(sdfg) == 1
 
-    res_fused = np.zeros((128, ), dtype=np.int64)
+    res_fused = np.zeros((128,), dtype=np.int64)
     sdfg(A=nums, B=res_fused)
     assert (res == res_fused).all()
 
@@ -339,7 +339,7 @@ def test_trivial_fusion_nested_sdfg_is_registered():
     assert sdfg.apply_transformations(OTFMapFusion) == 1
 
     nested = [n.sdfg for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
-    assert nested, 'the fused map must still hold the cloned nested SDFG'
+    assert nested, "the fused map must still hold the cloned nested SDFG"
     for nsdfg in nested:
         assert sdfg.cfg_list[nsdfg.cfg_id] is nsdfg
 
@@ -631,8 +631,13 @@ def test_local_storage_fusion_nested_map():
 
 
 @dace.program
-def matmuls(A: dace.float32[64, 32], B: dace.float32[32, 16], C: dace.float32[16, 64], o1: dace.float32[64, 16],
-            o2: dace.float32[64, 64]):
+def matmuls(
+    A: dace.float32[64, 32],
+    B: dace.float32[32, 16],
+    C: dace.float32[16, 64],
+    o1: dace.float32[64, 16],
+    o2: dace.float32[64, 64],
+):
     for i, j, k in dace.map[0:64, 0:16, 0:32]:
         with dace.tasklet:
             in_A << A[i, k]
@@ -689,26 +694,33 @@ def test_matmuls():
 
 
 @dace.program
-def hdiff(in_field: dace.float64[128 + 4, 128 + 4, 64], out_field: dace.float64[128, 128, 64],
-          coeff: dace.float64[128, 128, 64]):
-    lap_field = 4.0 * in_field[1:128 + 3, 1:128 + 3, :] - (
-        in_field[2:128 + 4, 1:128 + 3, :] + in_field[0:128 + 2, 1:128 + 3, :] + in_field[1:128 + 3, 2:128 + 4, :] +
-        in_field[1:128 + 3, 0:128 + 2, :])
+def hdiff(
+    in_field: dace.float64[128 + 4, 128 + 4, 64],
+    out_field: dace.float64[128, 128, 64],
+    coeff: dace.float64[128, 128, 64],
+):
+    lap_field = 4.0 * in_field[1 : 128 + 3, 1 : 128 + 3, :] - (
+        in_field[2 : 128 + 4, 1 : 128 + 3, :]
+        + in_field[0 : 128 + 2, 1 : 128 + 3, :]
+        + in_field[1 : 128 + 3, 2 : 128 + 4, :]
+        + in_field[1 : 128 + 3, 0 : 128 + 2, :]
+    )
 
-    res1 = lap_field[1:, 1:128 + 1, :] - lap_field[:128 + 1, 1:128 + 1, :]
+    res1 = lap_field[1:, 1 : 128 + 1, :] - lap_field[: 128 + 1, 1 : 128 + 1, :]
     flx_field = np.where(
-        (res1 * (in_field[2:128 + 3, 2:128 + 2, :] - in_field[1:128 + 2, 2:128 + 2, :])) > 0,
+        (res1 * (in_field[2 : 128 + 3, 2 : 128 + 2, :] - in_field[1 : 128 + 2, 2 : 128 + 2, :])) > 0,
         0,
         res1,
     )
-    res2 = lap_field[1:128 + 1, 1:, :] - lap_field[1:128 + 1, :128 + 1, :]
+    res2 = lap_field[1 : 128 + 1, 1:, :] - lap_field[1 : 128 + 1, : 128 + 1, :]
     fly_field = np.where(
-        (res2 * (in_field[2:128 + 2, 2:128 + 3, :] - in_field[2:128 + 2, 1:128 + 2, :])) > 0,
+        (res2 * (in_field[2 : 128 + 2, 2 : 128 + 3, :] - in_field[2 : 128 + 2, 1 : 128 + 2, :])) > 0,
         0,
         res2,
     )
-    out_field[:, :, :] = in_field[2:128 + 2, 2:128 + 2, :] - coeff[:, :, :] * (
-        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :])
+    out_field[:, :, :] = in_field[2 : 128 + 2, 2 : 128 + 2, :] - coeff[:, :, :] * (
+        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :]
+    )
 
 
 def test_hdiff():
@@ -780,13 +792,13 @@ def test_read_ahead_write_is_not_fused():
     sdfg.simplify()
     assert count_maps(sdfg) == 2
 
-    assert sdfg.apply_transformations(OTFMapFusion) == 0, 'the read-ahead anti-dependence must refuse fusion'
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, "the read-ahead anti-dependence must refuse fusion"
     assert count_maps(sdfg) == 2
 
     free = read_ahead_no_conflict.to_sdfg()
     free.simplify()
     assert count_maps(free) == 2
-    assert free.apply_transformations(OTFMapFusion) == 1, 'non-vacuity: the same shape fuses when nothing clashes'
+    assert free.apply_transformations(OTFMapFusion) == 1, "non-vacuity: the same shape fuses when nothing clashes"
     assert count_maps(free) == 1
 
     rng = np.random.default_rng(20260823)
@@ -806,14 +818,14 @@ def seidel_2d_like_war(A: dace.float64[N, N]):
     ``A[i, j + 2]`` and the consumer map writes ``A[i, j + 1]``. The intermediate
     transient orders them, but fusing into one map creates a lane-crossing WAR."""
     tmp = dace.define_local([N, N], dtype=A.dtype)
-    for i, j in dace.map[1:N - 1, 0:N - 3]:
+    for i, j in dace.map[1 : N - 1, 0 : N - 3]:
         with dace.tasklet:
             a << A[i, j + 2]
             t >> tmp[i, j]
 
             t = a
 
-    for i, j in dace.map[1:N - 1, 0:N - 3]:
+    for i, j in dace.map[1 : N - 1, 0 : N - 3]:
         with dace.tasklet:
             t << tmp[i, j]
             a >> A[i, j + 1]
@@ -829,7 +841,7 @@ def test_seidel_2d_like_war_refuses_fusion():
     sdfg.simplify()
     assert count_maps(sdfg) == 2
 
-    assert sdfg.apply_transformations(OTFMapFusion) == 0, 'seidel_2d WAR must refuse fusion'
+    assert sdfg.apply_transformations(OTFMapFusion) == 0, "seidel_2d WAR must refuse fusion"
     assert count_maps(sdfg) == 2
 
     n = 8
@@ -873,7 +885,7 @@ def test_second_writer_of_the_intermediate_is_not_fused():
     # cannot show, which is what makes the numeric half of this test load-bearing.
     eps, repl = 0.15, 9.0
     ref = np.sqrt(rdo / n)
-    assert 0 < np.count_nonzero(ref <= eps) < n, 'the mask must be partial for this to test anything'
+    assert 0 < np.count_nonzero(ref <= eps) < n, "the mask must be partial for this to test anything"
     ref = np.where(ref <= eps, repl, ref)
 
     sdfg = masked_inplace_intermediate.to_sdfg()
@@ -886,67 +898,74 @@ def test_second_writer_of_the_intermediate_is_not_fused():
 
     got = np.zeros(n)
     sdfg(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
-    assert np.allclose(got, ref), f'expected {ref}, got {got}'
+    assert np.allclose(got, ref), f"expected {ref}, got {got}"
 
     free = masked_other_intermediate.to_sdfg()
     free.simplify()
     assert count_maps(free) == 3
-    assert free.apply_transformations_repeated(OTFMapFusion) == 2, 'non-vacuity: one writer still fuses through'
+    assert free.apply_transformations_repeated(OTFMapFusion) == 2, "non-vacuity: one writer still fuses through"
     assert count_maps(free) == 2
 
     got = np.zeros(n)
     free(rdo=rdo.copy(), eps=eps, repl=repl, out=got, N=n)
-    assert np.allclose(got, ref), f'expected {ref}, got {got}'
+    assert np.allclose(got, ref), f"expected {ref}, got {got}"
 
 
 def test_advanced_replace_nested_sdfg_symbol_mapping():
-    inner = dace.SDFG('inner')
-    inner.add_symbol('i', dace.int64)
-    inner.add_array('b', [10], dace.float64)
+    inner = dace.SDFG("inner")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("b", [10], dace.float64)
     istate = inner.add_state()
-    tasklet = istate.add_tasklet('t', {}, {'o'}, 'o = 1')
-    istate.add_edge(tasklet, 'o', istate.add_write('b'), None, dace.Memlet('b[i]'))
+    tasklet = istate.add_tasklet("t", {}, {"o"}, "o = 1")
+    istate.add_edge(tasklet, "o", istate.add_write("b"), None, dace.Memlet("b[i]"))
 
-    sdfg = dace.SDFG('advanced_replace_nested')
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("advanced_replace_nested")
+    sdfg.add_array("B", [10], dace.float64)
     state = sdfg.add_state()
-    me, mx = state.add_map('m', dict(i='0:10'))
-    node = state.add_nested_sdfg(inner, {}, {'b'}, {'i': 'i'})
+    me, mx = state.add_map("m", dict(i="0:10"))
+    node = state.add_nested_sdfg(inner, {}, {"b"}, {"i": "i"})
     state.add_nedge(me, node, dace.Memlet())
-    state.add_memlet_path(node, mx, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[0:10]'))
+    state.add_memlet_path(node, mx, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[0:10]"))
     sdfg.validate()
 
-    advanced_replace(StateSubgraphView(state, state.nodes()), 'i', 'j')
+    advanced_replace(StateSubgraphView(state, state.nodes()), "i", "j")
 
-    assert set(node.symbol_mapping.keys()) == {'j'}
+    assert set(node.symbol_mapping.keys()) == {"j"}
     sdfg.validate()
 
 
 def producer_read_by_a_later_state() -> dace.SDFG:
     """``T = A + 1`` feeds ``B = 2 T`` in one state, and a later state copies ``T`` into ``C``."""
-    sdfg = dace.SDFG('otf_producer_read_later')
-    for name in ('A', 'B', 'C'):
+    sdfg = dace.SDFG("otf_producer_read_later")
+    for name in ("A", "B", "C"):
         sdfg.add_array(name, [16], dace.float64)
-    sdfg.add_transient('T', [16], dace.float64)
-    first = sdfg.add_state('fused')
-    t = first.add_access('T')
-    first.add_mapped_tasklet('produce',
-                             dict(i='0:16'), {'a': dace.Memlet('A[i]')},
-                             'o = a + 1.0', {'o': dace.Memlet('T[i]')},
-                             external_edges=True,
-                             input_nodes={'A': first.add_read('A')},
-                             output_nodes={'T': t})
-    first.add_mapped_tasklet('consume',
-                             dict(j='0:16'), {'x': dace.Memlet('T[j]')},
-                             'y = 2.0 * x', {'y': dace.Memlet('B[j]')},
-                             external_edges=True,
-                             input_nodes={'T': t},
-                             output_nodes={'B': first.add_write('B')})
-    later = sdfg.add_state_after(first, 'later')
-    later.add_mapped_tasklet('copy',
-                             dict(k='0:16'), {'x': dace.Memlet('T[k]')},
-                             'y = x', {'y': dace.Memlet('C[k]')},
-                             external_edges=True)
+    sdfg.add_transient("T", [16], dace.float64)
+    first = sdfg.add_state("fused")
+    t = first.add_access("T")
+    first.add_mapped_tasklet(
+        "produce",
+        dict(i="0:16"),
+        {"a": dace.Memlet("A[i]")},
+        "o = a + 1.0",
+        {"o": dace.Memlet("T[i]")},
+        external_edges=True,
+        input_nodes={"A": first.add_read("A")},
+        output_nodes={"T": t},
+    )
+    first.add_mapped_tasklet(
+        "consume",
+        dict(j="0:16"),
+        {"x": dace.Memlet("T[j]")},
+        "y = 2.0 * x",
+        {"y": dace.Memlet("B[j]")},
+        external_edges=True,
+        input_nodes={"T": t},
+        output_nodes={"B": first.add_write("B")},
+    )
+    later = sdfg.add_state_after(first, "later")
+    later.add_mapped_tasklet(
+        "copy", dict(k="0:16"), {"x": dace.Memlet("T[k]")}, "y = x", {"y": dace.Memlet("C[k]")}, external_edges=True
+    )
     sdfg.validate()
     return sdfg
 
@@ -957,8 +976,8 @@ def test_a_producer_another_state_reads_is_kept():
     uninitialized device memory on the GPU canonicalize column."""
     sdfg = producer_read_by_a_later_state()
     assert sdfg.apply_transformations_repeated(OTFMapFusion) >= 1
-    writers = [n for s in sdfg.states() for n in s.data_nodes() if n.data == 'T' and s.in_degree(n) > 0]
-    assert writers, 'the producer of T is gone although the later state reads T'
+    writers = [n for s in sdfg.states() for n in s.data_nodes() if n.data == "T" and s.in_degree(n) > 0]
+    assert writers, "the producer of T is gone although the later state reads T"
     sdfg.validate()
     a = np.random.rand(16)
     b, c = np.zeros(16), np.zeros(16)
@@ -966,7 +985,7 @@ def test_a_producer_another_state_reads_is_kept():
     assert np.allclose(b, 2.0 * (a + 1.0)) and np.allclose(c, a + 1.0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Solver
     test_solve()
     test_solve_permute()

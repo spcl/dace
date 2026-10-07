@@ -1,30 +1,33 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``spmv`` (sparse_linear_algebra) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace as dc
 
 dc_float = dc.float64
 dc_complex_float = dc.complex128
 
-SIZES = {'M': 4096, 'N': 4096, 'nnz': 8192}
-PAPER_SIZES = {'M': 131072, 'N': 131072, 'nnz': 262144}
-INPUT_ARGS = ('M', 'N', 'nnz')
+SIZES = {"M": 4096, "N": 4096, "nnz": 8192}
+PAPER_SIZES = {"M": 131072, "N": 131072, "nnz": 262144}
+INPUT_ARGS = ("M", "N", "nnz")
 # initialize returns the CSR triplet (indptr, indices, data) then x, y -- name them
 # so both the numpy reference (A_data/A_indices/A_indptr/x/y) and the dace kernel
 # resolve their parameters by name.
-ARRAY_ARGS = ('A_indptr', 'A_indices', 'A_data', 'x', 'y')
+ARRAY_ARGS = ("A_indptr", "A_indices", "A_data", "x", "y")
 SCALARS = {}
-OUTPUT_ARGS = ('y', )
+OUTPUT_ARGS = ("y",)
 
-M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'nnz'))
+M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ("M", "N", "nnz"))
 
 
 def initialize(M, N, nnz, datatype=np.float64):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    x = rng.random((N, ), dtype=datatype)
+    x = rng.random((N,), dtype=datatype)
     from scipy.sparse import random
-    matrix = random(M, N, density=nnz / (M * N), format='csr', dtype=datatype, random_state=rng)
+
+    matrix = random(M, N, density=nnz / (M * N), format="csr", dtype=datatype, random_state=rng)
     rows = np.uint32(matrix.indptr)
     cols = np.uint32(matrix.indices)
     vals = matrix.data
@@ -35,8 +38,8 @@ def initialize(M, N, nnz, datatype=np.float64):
 def reference(A_data, A_indices, A_indptr, x, y):
     M = A_indptr.shape[0] - 1
     for i in range(M):
-        cols = A_indices[A_indptr[i]:A_indptr[i + 1]]
-        vals = A_data[A_indptr[i]:A_indptr[i + 1]]
+        cols = A_indices[A_indptr[i] : A_indptr[i + 1]]
+        vals = A_data[A_indptr[i] : A_indptr[i + 1]]
         y[i] = vals @ x[cols]
 
 
@@ -54,14 +57,16 @@ def kernel(A_data: dc_float[nnz], A_indices: dc.uint32[nnz], A_indptr: dc.uint32
     return y
 
 
-CORPUS = dict(name='spmv',
-              dwarf='sparse_linear_algebra',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="spmv",
+    dwarf="sparse_linear_algebra",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

@@ -11,6 +11,7 @@ Like polybench, these snippets carry no numpy oracle -- correctness here is
 *value-preserving*: a canonicalized SDFG is compared against
 the untransformed baseline SDFG run on identical inputs.
 """
+
 import importlib
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -122,11 +123,9 @@ def run(sdfg: dace.SDFG, call_arrays: Dict[str, np.ndarray], symvals: Dict[str, 
     return {n: v for n, v in out.items() if isinstance(v, np.ndarray)}
 
 
-def outputs_match(ref: Dict[str, np.ndarray],
-                  got: Dict[str, np.ndarray],
-                  *,
-                  rtol: float = 1e-9,
-                  atol: float = 1e-9) -> bool:
+def outputs_match(
+    ref: Dict[str, np.ndarray], got: Dict[str, np.ndarray], *, rtol: float = 1e-9, atol: float = 1e-9
+) -> bool:
     for name, r in ref.items():
         g = got[name]
         if np.issubdtype(r.dtype, np.floating):

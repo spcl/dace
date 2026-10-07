@@ -70,15 +70,15 @@ def find_parameter_remapping(
 
     # One name can be two sympy symbols (a DaCe symbol folds its dtype into its identity, so ``N:int64``
     #  from one frontend path and ``N:int`` from another never compare equal): unify them first.
-    bounds = symbolic.equalize_symbols_across(*(symbolic.pystr_to_symbolic(b)
-                                                for rng in (*first_map.range, *second_map.range) for b in rng))
+    bounds = symbolic.equalize_symbols_across(
+        *(symbolic.pystr_to_symbolic(b) for rng in (*first_map.range, *second_map.range) for b in rng)
+    )
     split = 3 * len(first_params)
     first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in bounds[3 * i:3 * i + 3])
-        for i, param in enumerate(first_params)
+        param: tuple(simp(r) for r in bounds[3 * i : 3 * i + 3]) for i, param in enumerate(first_params)
     }
     second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-        param: tuple(simp(r) for r in bounds[split + 3 * i:split + 3 * i + 3])
+        param: tuple(simp(r) for r in bounds[split + 3 * i : split + 3 * i + 3])
         for i, param in enumerate(second_params)
     }
 
@@ -210,7 +210,7 @@ def get_new_conn_name(
 
     # If we have a MapExit or have a nested Map we never consolidate or if
     #  especially requested.
-    if (isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges):
+    if isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or never_consolidate_edges:
         return to_node.next_connector(old_conn), False
 
     # Now look for an edge that already referees to the data of the edge.
@@ -245,10 +245,12 @@ def get_new_conn_name(
     # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
     #   covers the new one, but since the order, is kind of arbitrary, we test if
     #   either one covers.
-    return ((edge_that_is_already_present.dst_conn[3:],
-             True) if edge_that_is_already_present_subset.covers(edge_to_move_subset)
-            or edge_to_move_subset.covers(edge_that_is_already_present_subset) else
-            (to_node.next_connector(old_conn), False))
+    return (
+        (edge_that_is_already_present.dst_conn[3:], True)
+        if edge_that_is_already_present_subset.covers(edge_to_move_subset)
+        or edge_to_move_subset.covers(edge_that_is_already_present_subset)
+        else (to_node.next_connector(old_conn), False)
+    )
 
 
 def relocate_nodes(
@@ -321,9 +323,11 @@ def relocate_nodes(
             if dmr_symbol in to_node.in_connectors:
                 # Same symbol, same value: the moved binding is redundant, so drop it instead.
                 if not dynamic_map_range_binding_agrees(state, to_node, from_node, dmr_symbol):
-                    raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                                              f" to '{to_node}', but the symbol is already known there, but the"
-                                              " renaming is not implemented.")
+                    raise NotImplementedError(
+                        f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                        f" to '{to_node}', but the symbol is already known there, but the"
+                        " renaming is not implemented."
+                    )
                 source = edge_to_move.src
                 state.remove_edge(edge_to_move)
                 from_node.remove_in_connector(dmr_symbol)
@@ -332,7 +336,8 @@ def relocate_nodes(
                 continue
             if not to_node.add_in_connector(dmr_symbol, force=False):
                 raise RuntimeError(  # Might fail because of out connectors.
-                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
+                    f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
+                )
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
@@ -483,8 +488,10 @@ def scope_leaves_below(state: dace.SDFGState, map_entry: nodes.EntryNode) -> Lis
 
 def memlet_text(memlet: dace.Memlet) -> str:
     """Every field of `memlet` that memlet propagation reads, as text."""
-    return (f'{memlet.data}|{memlet._is_data_src}|{memlet.subset}|{memlet.other_subset}|{memlet.volume}|'
-            f'{memlet.dynamic}|{memlet.wcr}|{memlet.wcr_nonatomic}|{memlet.allow_oob}')
+    return (
+        f"{memlet.data}|{memlet._is_data_src}|{memlet.subset}|{memlet.other_subset}|{memlet.volume}|"
+        f"{memlet.dynamic}|{memlet.wcr}|{memlet.wcr_nonatomic}|{memlet.allow_oob}"
+    )
 
 
 def propagate_scope_node(
@@ -506,22 +513,25 @@ def propagate_scope_node(
         # Not memoized: only a Map is read through `entry_node.map` below.
         lone_scope = ScopeTree(entry_node, state.exit_node(entry_node))
         lone_scope.parent = ScopeTree(None, None)
-        propagation.propagate_memlets_scope(state.parent,
-                                            state, [lone_scope],
-                                            propagate_entry=node is entry_node,
-                                            propagate_exit=node is not entry_node,
-                                            symbols=SymbolResolver(state.parent, scope_symbols))
+        propagation.propagate_memlets_scope(
+            state.parent,
+            state,
+            [lone_scope],
+            propagate_entry=node is entry_node,
+            propagate_exit=node is not entry_node,
+            symbols=SymbolResolver(state.parent, scope_symbols),
+        )
         return
     if isinstance(node, nodes.EntryNode):
-        internal_edges = [e for e in state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
-        external_edges = [e for e in state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
+        internal_edges = [e for e in state.out_edges(node) if e.src_conn and e.src_conn.startswith("OUT_")]
+        external_edges = [e for e in state.in_edges(node) if e.dst_conn and e.dst_conn.startswith("IN_")]
         internal_conn = lambda e: e.src_conn[4:]  # noqa: E731 [lambda-assignment]
         external_conn = lambda e: e.dst_conn[3:]  # noqa: E731 [lambda-assignment]
         neighbors = [e for e in state.out_edges(node) if e.src_conn]
         use_dst = False
     else:
-        internal_edges = [e for e in state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
-        external_edges = [e for e in state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
+        internal_edges = [e for e in state.in_edges(node) if e.dst_conn and e.dst_conn.startswith("IN_")]
+        external_edges = [e for e in state.out_edges(node) if e.src_conn and e.src_conn.startswith("OUT_")]
         internal_conn = lambda e: e.dst_conn[3:]  # noqa: E731 [lambda-assignment]
         external_conn = lambda e: e.src_conn[4:]  # noqa: E731 [lambda-assignment]
         neighbors = [e for e in state.in_edges(node) if e.dst_conn]
@@ -533,31 +543,46 @@ def propagate_scope_node(
             edge.data = dace.Memlet()
             continue
         if defined_variables is None:
-            defined_variables = (state.symbols_defined_at(entry_node, scope_symbols).keys()
-                                 | state.parent.constants.keys())
+            defined_variables = (
+                state.symbols_defined_at(entry_node, scope_symbols).keys() | state.parent.constants.keys()
+            )
         connector = external_conn(edge)
-        internal_edge = next((e for e in internal_edges if internal_conn(e) == connector and not e.data.is_empty()),
-                             None)
+        internal_edge = next(
+            (e for e in internal_edges if internal_conn(e) == connector and not e.data.is_empty()), None
+        )
         if internal_edge is None:
             continue
         aligned_memlet = propagation.align_memlet(state, internal_edge, dst=use_dst)
-        inputs = propagation_inputs(state, entry_node, use_dst, aligned_memlet,
-                                    [e.data for e in neighbors if internal_conn(e) == connector], defined_variables)
+        inputs = propagation_inputs(
+            state,
+            entry_node,
+            use_dst,
+            aligned_memlet,
+            [e.data for e in neighbors if internal_conn(e) == connector],
+            defined_variables,
+        )
         record = scope_records.get(id(edge.data))
-        if (record is not None and record[1] is edge.data and same_inputs(record[0], inputs)
-                and record[2] == memlet_text(edge.data)):
+        if (
+            record is not None
+            and record[1] is edge.data
+            and same_inputs(record[0], inputs)
+            and record[2] == memlet_text(edge.data)
+        ):
             continue
-        edge.data = propagation.propagate_memlet(state,
-                                                 aligned_memlet,
-                                                 node,
-                                                 True,
-                                                 connector=connector,
-                                                 defined_variables=defined_variables)
+        edge.data = propagation.propagate_memlet(
+            state, aligned_memlet, node, True, connector=connector, defined_variables=defined_variables
+        )
         scope_records[id(edge.data)] = (inputs, edge.data, memlet_text(edge.data))
 
 
-def propagation_inputs(state: dace.SDFGState, entry_node: nodes.MapEntry, use_dst: bool, aligned_memlet: dace.Memlet,
-                       connector_memlets: List[dace.Memlet], defined_variables: Iterable[str]) -> PropagationInputs:
+def propagation_inputs(
+    state: dace.SDFGState,
+    entry_node: nodes.MapEntry,
+    use_dst: bool,
+    aligned_memlet: dace.Memlet,
+    connector_memlets: List[dace.Memlet],
+    defined_variables: Iterable[str],
+) -> PropagationInputs:
     """What `propagate_memlet()` reads to propagate `aligned_memlet` out of the scope of `entry_node`.
 
     The scope node itself is not read beyond its connector's memlets, `connector_memlets`.
@@ -569,11 +594,11 @@ def propagation_inputs(state: dace.SDFGState, entry_node: nodes.MapEntry, use_ds
         str(use_dst),
         str(scope_map.params),
         str(scope_map.range),
-        str([conn for conn in entry_node.in_connectors if not conn.startswith('IN_')]),
+        str([conn for conn in entry_node.in_connectors if not conn.startswith("IN_")]),
         str(sorted(defined_variables)),
     ]
     if desc is not None:
-        texts.append(f'{type(desc).__name__}|{desc.dtype}|{desc.shape}|{desc.strides}|{desc.offset}|{desc.total_size}')
+        texts.append(f"{type(desc).__name__}|{desc.dtype}|{desc.shape}|{desc.strides}|{desc.offset}|{desc.total_size}")
     for memlet in [aligned_memlet] + connector_memlets:
         objects.extend((memlet, memlet.subset, memlet.other_subset, memlet.volume))
         texts.append(memlet_text(memlet))
@@ -582,8 +607,11 @@ def propagation_inputs(state: dace.SDFGState, entry_node: nodes.MapEntry, use_ds
 
 def same_inputs(recorded: PropagationInputs, current: PropagationInputs) -> bool:
     """`True` if both read the very same objects with the same text."""
-    return (len(recorded[0]) == len(current[0]) and all(a is b for a, b in zip(recorded[0], current[0]))
-            and recorded[1] == current[1])
+    return (
+        len(recorded[0]) == len(current[0])
+        and all(a is b for a, b in zip(recorded[0], current[0]))
+        and recorded[1] == current[1]
+    )
 
 
 def forget_propagated(propagated_nsdfgs: Optional[Dict[dace.SDFG, None]], sdfg: dace.SDFG) -> None:
@@ -696,8 +724,11 @@ def is_node_reachable_from(
     """
 
     def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-        return (edge.dst for edge in graph.out_edges(node)
-                if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty()))
+        return (
+            edge.dst
+            for edge in graph.out_edges(node)
+            if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty())
+        )
 
     to_visit: List[nodes.Node] = [begin]
     seen: Set[nodes.Node] = set()
@@ -1109,8 +1140,11 @@ def dynamic_map_range_binding_agrees(
     if edge is None or other_edge is None:
         return False
     data = edge.data.data
-    if (data != other_edge.data.data or edge.src_conn != other_edge.src_conn
-            or edge.data.subset != other_edge.data.subset):
+    if (
+        data != other_edge.data.data
+        or edge.src_conn != other_edge.src_conn
+        or edge.data.subset != other_edge.data.subset
+    ):
         return False
     if edge.src is other_edge.src:
         return True
@@ -1132,8 +1166,9 @@ def dynamic_map_ranges_agree(
         return False
     # The second Map's bindings are moved onto the first Map by `relocate_nodes()`, and a name
     #  that is already an OUT connector there can neither be added nor renamed.
-    return all(symbol not in first_map_entry.out_connectors
-               for symbol in second_map_entry.dynamic_input_connectors - shared)
+    return all(
+        symbol not in first_map_entry.out_connectors for symbol in second_map_entry.dynamic_input_connectors - shared
+    )
 
 
 def can_topologically_be_fused(

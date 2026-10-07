@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Automatic optimization routines for SDFGs. """
+"""Automatic optimization routines for SDFGs."""
 
 import os
 
@@ -34,14 +34,16 @@ from dace.transformation.estimator.enumeration import GreedyEnumerator
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
 
 
-def greedy_fuse(graph_or_subgraph: GraphViewType,
-                validate_all: bool,
-                device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
-                recursive: bool = True,
-                stencil: bool = False,
-                stencil_tile=None,
-                permutations_only: bool = True,
-                expand_reductions: bool = False) -> None:
+def greedy_fuse(
+    graph_or_subgraph: GraphViewType,
+    validate_all: bool,
+    device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
+    recursive: bool = True,
+    stencil: bool = False,
+    stencil_tile=None,
+    permutations_only: bool = True,
+    expand_reductions: bool = False,
+) -> None:
     """
     Greedily fuses maps of an SDFG or graph, operating in-place.
 
@@ -54,7 +56,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     :param permutations_only: Disallow splitting of maps during MultiExpansion stage
     :param expand_reductions: Expand all reduce nodes before fusion
     """
-    debugprint = config.Config.get_bool('debugprint')
+    debugprint = config.Config.get_bool("debugprint")
     if isinstance(graph_or_subgraph, ControlFlowRegion):
         if isinstance(graph_or_subgraph, SDFG):
             # If we have an SDFG, recurse into graphs
@@ -70,14 +72,16 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
             if isinstance(graph, (SDFGState, ControlFlowRegion)):
-                greedy_fuse(graph,
-                            validate_all=validate_all,
-                            device=device,
-                            recursive=recursive,
-                            stencil=stencil,
-                            stencil_tile=stencil_tile,
-                            permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                greedy_fuse(
+                    graph,
+                    validate_all=validate_all,
+                    device=device,
+                    recursive=recursive,
+                    stencil=stencil,
+                    stencil_tile=stencil_tile,
+                    permutations_only=permutations_only,
+                    expand_reductions=expand_reductions,
+                )
     else:
         # we are in graph or subgraph
         sdfg, graph, subgraph = None, None, None
@@ -154,25 +158,29 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             if recursive:
                 global_entry = cf._global_map_entry if len(map_entries) > 1 else map_entries[0]
 
-                greedy_fuse(graph.scope_subgraph(global_entry, include_entry=False, include_exit=False),
-                            validate_all=validate_all,
-                            device=device,
-                            recursive=recursive,
-                            stencil=stencil,
-                            stencil_tile=stencil_tile,
-                            permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                greedy_fuse(
+                    graph.scope_subgraph(global_entry, include_entry=False, include_exit=False),
+                    validate_all=validate_all,
+                    device=device,
+                    recursive=recursive,
+                    stencil=stencil,
+                    stencil_tile=stencil_tile,
+                    permutations_only=permutations_only,
+                    expand_reductions=expand_reductions,
+                )
 
         for node in graph_or_subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                greedy_fuse(node.sdfg,
-                            validate_all=validate_all,
-                            device=device,
-                            stencil=stencil,
-                            stencil_tile=stencil_tile,
-                            recursive=recursive,
-                            permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                greedy_fuse(
+                    node.sdfg,
+                    validate_all=validate_all,
+                    device=device,
+                    stencil=stencil,
+                    stencil_tile=stencil_tile,
+                    recursive=recursive,
+                    permutations_only=permutations_only,
+                    expand_reductions=expand_reductions,
+                )
 
         if applied_transformations > 0:
             if debugprint:
@@ -239,7 +247,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         return
 
     if not isinstance(graph, SDFGState):
-        raise TypeError('Graph must be a state, an SDFG, a control flow region, or a subgraph of either')
+        raise TypeError("Graph must be a state, an SDFG, a control flow region, or a subgraph of either")
     sdfg = graph.parent
 
     # Ordered, not plain sets: every one of these is ITERATED to decide which map is tiled and in
@@ -250,7 +258,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     edges_to_consider: OrderedSet[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = OrderedSet()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
-            if (isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry)):
+            if isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry):
                 # Do not consider intermediate edges
                 continue
             reason = cpp.is_write_conflicted_with_reason(graph, edge)
@@ -271,10 +279,10 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
 
             edges_to_consider.add((edge, reason))
 
-    tile_size = config.Config.get('optimizer', 'autotile_size')
-    debugprint = config.Config.get_bool('debugprint')
+    tile_size = config.Config.get("optimizer", "autotile_size")
+    debugprint = config.Config.get_bool("debugprint")
     if prefer_partial_parallelism is None:
-        prefer_partial_parallelism = config.Config.get_bool('optimizer', 'autotile_partial_parallelism')
+        prefer_partial_parallelism = config.Config.get_bool("optimizer", "autotile_partial_parallelism")
 
     maps_to_consider: OrderedSet[nodes.MapEntry] = OrderedSet(me for _, me in edges_to_consider)
 
@@ -294,7 +302,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             nonconflicted_dims = OrderedSet(mapentry.params) - conflicts
             if nonconflicted_dims:
                 dims = [i for i, p in enumerate(mapentry.params) if p in nonconflicted_dims]
-                if ((dt._prod(s for i, s in enumerate(mapentry.range.size()) if i in dims) < tile_size) == True):
+                if (dt._prod(s for i, s in enumerate(mapentry.range.size()) if i in dims) < tile_size) == True:
                     # Map has a small range, extracting parallelism may not be
                     # beneficial
                     continue
@@ -315,7 +323,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             continue
 
         # MapTiling -> AccumulateTransient / AccumulateStream
-        outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=(tile_size, )), map_entry=mapentry)
+        outer_mapentry = dataflow.MapTiling.apply_to(sdfg, dict(tile_sizes=(tile_size,)), map_entry=mapentry)
 
         # The tile body accumulates into the per-tile transient one element after another -- that
         # accumulation is what removes the atomics, and it is sequential by construction. MapTiling
@@ -331,8 +339,9 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         outer_mapexit = graph.exit_node(outer_mapentry)
 
         # Tuple of (transformation type, options, pattern)
-        to_apply: Tuple[Union[dataflow.StreamTransient, dataflow.AccumulateTransient], Dict[str, Any],
-                        Dict[str, nodes.Node]] = None
+        to_apply: Tuple[
+            Union[dataflow.StreamTransient, dataflow.AccumulateTransient], Dict[str, Any], Dict[str, nodes.Node]
+        ] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
                 mpath = graph.memlet_path(e)
@@ -346,11 +355,18 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
                     to_apply = None
                     break
 
-                to_apply = (dataflow.StreamTransient, {},
-                            dict(tasklet=tasklet, map_exit=mapexit, outer_map_exit=outer_mapexit))
+                to_apply = (
+                    dataflow.StreamTransient,
+                    {},
+                    dict(tasklet=tasklet, map_exit=mapexit, outer_map_exit=outer_mapexit),
+                )
             else:
-                if (e.data.is_empty() or e.data.wcr is None or e.data.wcr_nonatomic or
-                    (e.data.dst_subset is not None and e.data.dst_subset.num_elements() != 0 and e.data.dynamic)):
+                if (
+                    e.data.is_empty()
+                    or e.data.wcr is None
+                    or e.data.wcr_nonatomic
+                    or (e.data.dst_subset is not None and e.data.dst_subset.num_elements() != 0 and e.data.dynamic)
+                ):
                     continue
 
                 dtype = sdfg.arrays[e.data.data].dtype
@@ -363,14 +379,17 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
                     to_apply = None
                     break
 
-                to_apply = (dataflow.AccumulateTransient, dict(identity=identity, array=e.data.data),
-                            dict(map_exit=mapexit, outer_map_exit=outer_mapexit))
+                to_apply = (
+                    dataflow.AccumulateTransient,
+                    dict(identity=identity, array=e.data.data),
+                    dict(map_exit=mapexit, outer_map_exit=outer_mapexit),
+                )
         if to_apply is not None:
             xform, opts, pattern = to_apply
             xform.apply_to(sdfg, options=opts, **pattern)
 
     if debugprint and len(transformed) > 0:
-        print(f'Optimized {len(transformed)} write-conflicted maps')
+        print(f"Optimized {len(transformed)} write-conflicted maps")
 
 
 def find_fast_library(device: dtypes.DeviceType) -> List[str]:
@@ -382,9 +401,9 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         try:
             backend = get_gpu_backend()
         except RuntimeError:
-            backend = 'none'
+            backend = "none"
 
-        if backend == 'cuda':
+        if backend == "cuda":
             # ``CUDA`` for the same reason the CPU branch below carries everything past the vendor
             # BLAS: it is the key the CUB-backed nodes register under (``Scan``'s ``gpucub::DeviceScan``,
             # ``IntegerSort``'s ``DeviceRadixSort``, ``ArgReduce``'s ``DeviceReduce::ArgMax``,
@@ -397,9 +416,9 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # listed here unconditionally is picked whenever the caller's list names nothing the node
             # implements: a TensorDot took hipTENSOR on ROCm 6.3, whose hipTensor lacks the v2
             # header the expansion includes, and cp2k_grid_integrate failed to compile on mi200.
-            tensor = ['cuTENSOR'] if cutensor.cuTensor.is_installed() else []
-            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', *tensor, 'TTGT', 'cuFFT', 'CUB', 'CUDA', 'pure']
-        elif backend == 'hip':
+            tensor = ["cuTENSOR"] if cutensor.cuTensor.is_installed() else []
+            return ["cuBLAS", "cuSolverDn", "GPUAuto", *tensor, "TTGT", "cuFFT", "CUB", "CUDA", "pure"]
+        elif backend == "hip":
             # Mirrors the CUDA row entry for entry, and must keep doing so. The two backends are
             # compared column against column, so a node that takes a tuned expansion under one and
             # the serial ``pure`` loop under the other measures the priority LIST rather than the
@@ -410,21 +429,21 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             # ``gpu*`` aliases, so one expansion serves both. Each node's own environment still
             # gates whether the library is actually present, except the tensor library's, which is
             # gated here as in the CUDA row.
-            tensor = ['hipTENSOR'] if hiptensor.hipTensor.is_installed() else []
-            return ['rocBLAS', 'rocSOLVER', 'GPUAuto', *tensor, 'TTGT', 'hipFFT', 'CUB', 'CUDA', 'pure']
+            tensor = ["hipTENSOR"] if hiptensor.hipTensor.is_installed() else []
+            return ["rocBLAS", "rocSOLVER", "GPUAuto", *tensor, "TTGT", "hipFFT", "CUB", "CUDA", "pure"]
         else:
-            return ['GPUAuto', 'pure']
+            return ["GPUAuto", "pure"]
     elif device == dtypes.DeviceType.CPU:
         result = []
 
         # BLAS calls
         if mkl.IntelMKL.is_installed():
-            result.append('MKL')
+            result.append("MKL")
         if openblas.OpenBLAS.is_installed():
-            result.append('OpenBLAS')
+            result.append("OpenBLAS")
         # FFT / IFFT: the vendor transform, O(N log N) where ``pure`` is the O(N^2) separable DFT.
         if fftw3.FFTW3.is_installed():
-            result.append('FFTW3')
+            result.append("FFTW3")
 
         # Same order as canonicalize's ``canonicalize_fast_library_priority``, deliberately: the two
         # pipelines are compared column against column, so a node that lowers to a tuned expansion
@@ -437,13 +456,13 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         # dependency; ``CPU`` covers the Reduce / ArgReduce / OpenMP-5 Scan / radix sort /
         # ScatterConflictCheck. ``apply_cpu_library_parallelism`` below still has the last word on the
         # scope-dependent types, so a node nested in a parallel map keeps its sequential expansion.
-        if 'HPTT_ROOT' in os.environ:
-            result.append('HPTT')
-        result.append('TTGT')
+        if "HPTT_ROOT" in os.environ:
+            result.append("HPTT")
+        result.append("TTGT")
 
-        return result + ['CPU', 'pure']
+        return result + ["CPU", "pure"]
 
-    return ['pure']
+    return ["pure"]
 
 
 def move_small_arrays_to_stack(sdfg: SDFG) -> None:
@@ -455,20 +474,23 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     :note: Operates in-place on the SDFG.
     """
     converted = 0
-    tile_size = config.Config.get('optimizer', 'autotile_size')
+    tile_size = config.Config.get("optimizer", "autotile_size")
     for sd, aname, array in sdfg.arrays_recursive():
         if isinstance(array, dt.Stream):
             continue
-        if (array.transient and array.storage == dtypes.StorageType.Default
-                and array.lifetime == dtypes.AllocationLifetime.Scope):
+        if (
+            array.transient
+            and array.storage == dtypes.StorageType.Default
+            and array.lifetime == dtypes.AllocationLifetime.Scope
+        ):
             if not symbolic.issymbolic(array.total_size, sd.constants):
                 eval_size = symbolic.evaluate(array.total_size, sd.constants)
                 if (eval_size <= tile_size) == True:
                     array.storage = dtypes.StorageType.Register
                     converted += 1
 
-    if config.Config.get_bool('debugprint') and converted > 0:
-        print(f'Statically allocating {converted} transient arrays')
+    if config.Config.get_bool("debugprint") and converted > 0:
+        print(f"Statically allocating {converted} transient arrays")
 
 
 def libnode_work_is_below_break_even(node: nodes.LibraryNode, state: SDFGState) -> bool:
@@ -490,7 +512,7 @@ def libnode_work_is_below_break_even(node: nodes.LibraryNode, state: SDFGState) 
     :param state: the state containing it.
     :returns: ``True`` only when the element count is provably below the break-even.
     """
-    threshold = int(config.Config.get('compiler', 'cpu', 'parallel_min_work_per_region'))
+    threshold = int(config.Config.get("compiler", "cpu", "parallel_min_work_per_region"))
     if threshold <= 0:  # the size rule is disabled
         return False
     counts = [e.data.subset.num_elements() for e in state.in_edges(node) if e.data.subset is not None]
@@ -499,7 +521,7 @@ def libnode_work_is_below_break_even(node: nodes.LibraryNode, state: SDFGState) 
     biggest = counts[0]
     for count in counts[1:]:
         biggest = sympy.Max(biggest, count)
-    return symbolic.ask('negative', symbolic.simplify(biggest - threshold)) is True
+    return symbolic.ask("negative", symbolic.simplify(biggest - threshold)) is True
 
 
 def libnode_runs_multicore(node: nodes.LibraryNode) -> bool:
@@ -548,6 +570,7 @@ def libnode_is_sequential(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG)
     :returns: True if ``node`` is re-entered by an enclosing parallel map or loop.
     """
     from dace.sdfg.state import LoopRegion  # Avoid an import cycle at module load.
+
     if node.schedule == dtypes.ScheduleType.Sequential:
         return True
     for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state):
@@ -617,18 +640,20 @@ def apply_cpu_library_parallelism(node: nodes.LibraryNode, state: SDFGState, sdf
     if isinstance(node, (Reduce, ArgReduce, Scan, ScatterConflictCheck)):
         # ``pure-seq`` needs an ``identity`` a lifted node may not carry, so ``pure`` is the robust
         # single-core choice (it lowers to a plain accumulate loop when Sequential).
-        node.implementation = 'pure' if sequential else ('CPU' if 'CPU' in impls else node.implementation)
+        node.implementation = "pure" if sequential else ("CPU" if "CPU" in impls else node.implementation)
     elif isinstance(node, CopyLibraryNode):
-        node.implementation = select_copy_implementation(node, state) if sequential else 'Auto'
+        node.implementation = select_copy_implementation(node, state) if sequential else "Auto"
     else:
-        node.implementation = select_fill_implementation(node, state) if sequential else 'Auto'
+        node.implementation = select_fill_implementation(node, state) if sequential else "Auto"
     return True
 
 
-def set_fast_implementations(sdfg: SDFG,
-                             device: dtypes.DeviceType,
-                             blocklist: List[str] = None,
-                             find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None) -> None:
+def set_fast_implementations(
+    sdfg: SDFG,
+    device: dtypes.DeviceType,
+    blocklist: List[str] = None,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+) -> None:
     """
     Set fast library node implementations for the given device
 
@@ -653,9 +678,10 @@ def set_fast_implementations(sdfg: SDFG,
         for state in current_sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.LibraryNode):
-                    if (node.default_implementation == 'specialize'
-                            and (len(set(node.implementations)
-                                     & set(implementation_prio))) == 0):
+                    if (
+                        node.default_implementation == "specialize"
+                        and (len(set(node.implementations) & set(implementation_prio))) == 0
+                    ):
                         node.expand(state)
 
     def pick_implementations() -> None:
@@ -669,14 +695,15 @@ def set_fast_implementations(sdfg: SDFG,
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     # Not every node has a ``pure`` expansion: a Copy has none, and its own selector
                     # already picks the in-kernel form.
-                    if 'pure' in node.implementations:
-                        node.implementation = 'pure'
+                    if "pure" in node.implementations:
+                        node.implementation = "pure"
                     continue
                 for impl in implementation_prio:
                     if impl in node.implementations:
-                        if isinstance(
-                                node,
-                                dace.libraries.standard.nodes.reduce.Reduce) and node.implementation == 'CUDA (block)':
+                        if (
+                            isinstance(node, dace.libraries.standard.nodes.reduce.Reduce)
+                            and node.implementation == "CUDA (block)"
+                        ):
                             continue
                         node.implementation = impl
                         break
@@ -686,9 +713,12 @@ def set_fast_implementations(sdfg: SDFG,
     # A composite expansion builds further library nodes (TTGT: transposes and a Gemm), which would
     # expand with their class default -- a pure GEMM loop. Expanded here, they are picked like the rest.
     composites = [
-        (node, state) for node, state in sdfg.all_nodes_recursive()
-        if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation and type(node).implementations.get(
-            node.implementation) is not None and type(node).implementations[node.implementation].composite
+        (node, state)
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.LibraryNode)
+        and node.auto_select_implementation
+        and type(node).implementations.get(node.implementation) is not None
+        and type(node).implementations[node.implementation].composite
     ]
     for node, state in composites:
         node.expand(state)
@@ -709,19 +739,24 @@ def set_fast_implementations(sdfg: SDFG,
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode) and node.auto_select_implementation:
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
-                    if 'pure' in node.implementations:
-                        node.implementation = 'pure'
+                    if "pure" in node.implementations:
+                        node.implementation = "pure"
                     continue
                 # use GPUAuto expansion if applicable
-                if ('GPUAuto' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
-                        and state.scope_dict()[node] is None):
-                    node.implementation = 'GPUAuto'
+                if (
+                    "GPUAuto" in node.implementations
+                    and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                    and state.scope_dict()[node] is None
+                ):
+                    node.implementation = "GPUAuto"
                     continue
                 # Use CUB for device-level reductions
-                if ('CUDA (device)' in node.implementations
-                        and not is_devicelevel_gpu_kernel(state.parent, state, node)
-                        and state.scope_dict()[node] is None):
-                    node.implementation = 'CUDA (device)'
+                if (
+                    "CUDA (device)" in node.implementations
+                    and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                    and state.scope_dict()[node] is None
+                ):
+                    node.implementation = "CUDA (device)"
                     continue
                 # The whole-array algorithms -- Scan, FindFirst, ScatterConflictCheck -- name their
                 # device lowering ``CUDA``, which is in none of the ``find_fast_library`` priority
@@ -729,14 +764,17 @@ def set_fast_implementations(sdfg: SDFG,
                 # GPU: a scan loses its Blelloch/CUB sweep, a search and a conflict check lose theirs,
                 # and each becomes a serial walk inside a kernel launch. Host-side only -- a
                 # device-level instance keeps the pure expansion, which is what runs in-kernel.
-                if ('CUDA' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
-                        and state.scope_dict()[node] is None):
-                    node.implementation = 'CUDA'
+                if (
+                    "CUDA" in node.implementations
+                    and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                    and state.scope_dict()[node] is None
+                ):
+                    node.implementation = "CUDA"
 
 
-def make_transients_persistent(sdfg: SDFG,
-                               device: dtypes.DeviceType,
-                               toplevel_only: bool = True) -> Dict[int, Set[str]]:
+def make_transients_persistent(
+    sdfg: SDFG, device: dtypes.DeviceType, toplevel_only: bool = True
+) -> Dict[int, Set[str]]:
     """
     Helper function to change several storage and scheduling properties
 
@@ -777,8 +815,10 @@ def make_transients_persistent(sdfg: SDFG,
                     continue
                 desc = dnode.desc(nsdfg)
                 # Only convert what is not a member of a non-persistent struct.
-                if (dnode.root_data != dnode.data
-                        and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
+                if (
+                    dnode.root_data != dnode.data
+                    and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent
+                ):
                     continue
                 # Only convert transient arrays -- never a scalar or a provably single-element array.
                 # Persistent (state-struct) allocation buys nothing for a single element, and a
@@ -790,8 +830,11 @@ def make_transients_persistent(sdfg: SDFG,
                 if all(is_unit(s) for s in desc.shape):
                     not_persistent.add(dnode.data)
                     continue
-                if desc.storage not in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global,
-                                        dtypes.StorageType.Default):
+                if desc.storage not in (
+                    dtypes.StorageType.CPU_Heap,
+                    dtypes.StorageType.GPU_Global,
+                    dtypes.StorageType.Default,
+                ):
                     not_persistent.add(dnode.data)
                     continue
                 # Only convert arrays where the size depends on SDFG parameters
@@ -820,10 +863,10 @@ def make_transients_persistent(sdfg: SDFG,
 
                 persistent.add(dnode.data)
 
-        for aname in (persistent - not_persistent):
+        for aname in persistent - not_persistent:
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
 
-        result[nsdfg.cfg_id] = (persistent - not_persistent)
+        result[nsdfg.cfg_id] = persistent - not_persistent
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
@@ -849,7 +892,7 @@ def interstate_read_names(sdfg: SDFG) -> OrderedSet:
 
 
 def apply_gpu_storage(sdfg: SDFG) -> None:
-    """ Changes the storage of the SDFG's input and output arrays to GPU global memory.
+    """Changes the storage of the SDFG's input and output arrays to GPU global memory.
 
     EVERY non-transient array moves, including one an interstate edge indexes. That read -- a loop
     condition ``A[0] < N``, a branch on ``src[k]`` -- is host code, and host code cannot read device
@@ -875,14 +918,16 @@ def apply_gpu_storage(sdfg: SDFG) -> None:
             desc.storage = dtypes.StorageType.GPU_Global
 
 
-def auto_optimize(sdfg: SDFG,
-                  device: dtypes.DeviceType,
-                  validate: bool = True,
-                  validate_all: bool = False,
-                  symbols: Dict[str, int] = None,
-                  use_gpu_storage: bool = False,
-                  find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
-                  expand: bool = True) -> SDFG:
+def auto_optimize(
+    sdfg: SDFG,
+    device: dtypes.DeviceType,
+    validate: bool = True,
+    validate_all: bool = False,
+    symbols: Dict[str, int] = None,
+    use_gpu_storage: bool = False,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+    expand: bool = True,
+) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -914,7 +959,7 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    debugprint = config.Config.get_bool('debugprint')
+    debugprint = config.Config.get_bool("debugprint")
 
     # Simplification and loop parallelization
     transformed = True
@@ -949,6 +994,7 @@ def auto_optimize(sdfg: SDFG,
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
+
     sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     # Tiled WCR and streams
@@ -988,7 +1034,7 @@ def auto_optimize(sdfg: SDFG,
     if symbols:
         # Specialize for all known symbols
         known_symbols = {}
-        for (s, v) in symbols.items():
+        for s, v in symbols.items():
             if s in sdfg.free_symbols:
                 if isinstance(v, (int, float)):
                     known_symbols[s] = v

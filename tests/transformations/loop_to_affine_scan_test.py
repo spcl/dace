@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``LoopToScan`` on the first-order LINEAR recurrence ``x[i] = c[i]*x[i-1] + d[i]``."""
+
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +11,7 @@ from dace.libraries.standard.nodes.scan import COEF_CONNECTOR_NAME, Scan, ScanOp
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def lift(sdfg: dace.SDFG) -> int:
@@ -61,8 +62,11 @@ def second_order(x: dace.float64[N], d: dace.float64[N]):
 
 def contracting(n: int):
     rng = np.random.default_rng(7)
-    return ((0.3 + 0.4 * rng.random(n)).astype(np.float64), rng.standard_normal(n).astype(np.float64),
-            rng.standard_normal(n).astype(np.float64))
+    return (
+        (0.3 + 0.4 * rng.random(n)).astype(np.float64),
+        rng.standard_normal(n).astype(np.float64),
+        rng.standard_normal(n).astype(np.float64),
+    )
 
 
 def test_linear_recurrence_lifts_to_an_affine_scan():
@@ -77,26 +81,29 @@ def test_linear_recurrence_lifts_to_an_affine_scan():
     # ops. What must be gone is the carry: no body state may touch the carrier any more, which
     # is the whole reason the loop is now data-parallel.
     loops = [
-        b for b in sdfg.all_control_flow_blocks()
-        if isinstance(b, dace.sdfg.state.LoopRegion) and b.loop_variable == 'i'
+        b
+        for b in sdfg.all_control_flow_blocks()
+        if isinstance(b, dace.sdfg.state.LoopRegion) and b.loop_variable == "i"
     ]
     assert len(loops) == 1
     body_reads = {
         n.data
-        for blk in loops[0].all_control_flow_blocks() if isinstance(blk, dace.SDFGState) for n in blk.data_nodes()
+        for blk in loops[0].all_control_flow_blocks()
+        if isinstance(blk, dace.SDFGState)
+        for n in blk.data_nodes()
     }
-    assert 'x' not in body_reads
+    assert "x" not in body_reads
     # Both operands here are bare slices -- ``c[i]`` and ``d[i]`` -- so the rewrite wires the scan
     # straight to them and the body is left with nothing to build at all. It used to fill two
     # buffers, which is why this asserted their names; the buffer survives only for a COMPUTED
     # operand now (``loop_to_scan_test.test_a_computed_affine_operand_still_gets_its_buffer``).
-    assert not body_reads, f'the body still carries data after the lift: {sorted(body_reads)}'
+    assert not body_reads, f"the body still carries data after the lift: {sorted(body_reads)}"
     scan_state = next(st for n, st in sdfg.all_nodes_recursive() if n is nodes[0])
     operands = {e.data.data for e in scan_state.in_edges(nodes[0]) if e.data.data is not None}
-    assert {'c', 'd'} <= operands, f'the scan does not read its operands where they lie: {sorted(operands)}'
+    assert {"c", "d"} <= operands, f"the scan does not read its operands where they lie: {sorted(operands)}"
 
 
-@pytest.mark.parametrize('n', [1, 2, 4, 129, 20011])
+@pytest.mark.parametrize("n", [1, 2, 4, 129, 20011])
 def test_lifted_linear_recurrence_matches_the_sequential_loop(n):
     c, d, _ = contracting(n)
     x0 = np.zeros(n, dtype=np.float64)
@@ -272,8 +279,10 @@ def affine_then_consumer(x: dace.float64[N], c: dace.float64[N], d: dace.float64
 def apply_recipe(sdfg: dace.SDFG, config: str) -> dace.SDFG:
     """Run one production pipeline configuration over ``sdfg`` in place."""
     import sys
+
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from corpus.measure_parallelization import apply_config, cpu_params
+
     apply_config(sdfg, config, cpu_params())
     return sdfg
 
@@ -286,7 +295,7 @@ def recurrence_reference(seed: float, coef: np.ndarray, delta: np.ndarray) -> np
     return out
 
 
-@pytest.mark.parametrize('config', ['canon', 'canon+vec'])
+@pytest.mark.parametrize("config", ["canon", "canon+vec"])
 def test_recurrence_survives_the_production_recipes(config):
     """The plain shape, end to end. ``canon+vec`` is the one that runs the vectorizer."""
     n = 4001
@@ -299,7 +308,7 @@ def test_recurrence_survives_the_production_recipes(config):
     assert np.allclose(got, recurrence_reference(0.5, c, d), rtol=0, atol=1e-11)
 
 
-@pytest.mark.parametrize('config', ['canon', 'canon+vec'])
+@pytest.mark.parametrize("config", ["canon", "canon+vec"])
 def test_two_independent_recurrences_both_lift(config):
     """Two carriers in one program, each its own affine scan."""
     n = 513
@@ -315,7 +324,7 @@ def test_two_independent_recurrences_both_lift(config):
     assert np.allclose(y, recurrence_reference(0.25, d, c), rtol=0, atol=1e-11)
 
 
-@pytest.mark.parametrize('config', ['canon', 'canon+vec'])
+@pytest.mark.parametrize("config", ["canon", "canon+vec"])
 def test_coefficient_and_offset_may_be_divisions(config):
     """``(c[i]/2)*x[i-1] + d[i]/c[i]`` -- both halves are expressions the build tasklets rebuild."""
     n = 513
@@ -328,7 +337,7 @@ def test_coefficient_and_offset_may_be_divisions(config):
     assert np.allclose(got, recurrence_reference(0.4, c / 2.0, d / c), rtol=0, atol=1e-11)
 
 
-@pytest.mark.parametrize('config', ['canon', 'canon+vec'])
+@pytest.mark.parametrize("config", ["canon", "canon+vec"])
 def test_a_later_consumer_of_the_carrier_reads_the_scanned_values(config):
     """A downstream map reading ``x`` must see the scan's output, not the pre-loop array.
 
@@ -363,9 +372,9 @@ def test_vectorizer_tiles_the_build_map_it_is_left_with():
         assert affine_nodes(sdfg)
         return sum(1 for n_, _ in sdfg.all_nodes_recursive() if isinstance(n_, dnodes.MapEntry))
 
-    plain, vectorized = map_count('canon'), map_count('canon+vec')
-    assert plain >= 1, 'the computed coefficient should leave a build map behind'
-    assert vectorized > plain, f'vectorizer left the build map alone ({plain} -> {vectorized})'
+    plain, vectorized = map_count("canon"), map_count("canon+vec")
+    assert plain >= 1, "the computed coefficient should leave a build map behind"
+    assert vectorized > plain, f"vectorizer left the build map alone ({plain} -> {vectorized})"
 
 
 def test_a_trivial_build_collapses_instead_of_leaving_a_map():
@@ -377,13 +386,13 @@ def test_a_trivial_build_collapses_instead_of_leaving_a_map():
     """
     from dace.sdfg import nodes as dnodes
 
-    sdfg = apply_recipe(linear_recurrence.to_sdfg(simplify=True), 'canon')
+    sdfg = apply_recipe(linear_recurrence.to_sdfg(simplify=True), "canon")
     assert affine_nodes(sdfg)
     assert not [b for b in sdfg.all_control_flow_blocks() if isinstance(b, dace.sdfg.state.LoopRegion)]
     assert not [n_ for n_, _ in sdfg.all_nodes_recursive() if isinstance(n_, dnodes.MapEntry)]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_linear_recurrence_lifts_to_an_affine_scan()
     test_lifted_linear_recurrence_matches_the_sequential_loop(129)
-    print('ok')
+    print("ok")

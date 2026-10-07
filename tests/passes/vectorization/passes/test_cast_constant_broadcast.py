@@ -13,6 +13,7 @@ int -> int); a cross-domain fp <-> int cast stays a real per-lane conversion. Th
 cover the emitted-code shape (broadcast flag, no fill), value-exactness vs numpy, and the
 domain classifier directly.
 """
+
 import re
 
 import numpy as np
@@ -21,8 +22,10 @@ import pytest
 import dace
 from dace.libraries.tileops import TileBinop, TileGather
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (is_same_domain_constant,
-                                                                                   numeric_constant_domain)
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (
+    is_same_domain_constant,
+    numeric_constant_domain,
+)
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
@@ -37,12 +40,14 @@ BINOP_FLAGS_RE = re.compile(r"tile_binop<[^>]*'.'\s*,\s*(true|false)\s*,\s*(true
 
 
 def _config(expand: bool) -> VectorizeConfig:
-    return VectorizeConfig(widths=(2, ),
-                           target_isa=ISA.SCALAR,
-                           remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
-                           branch_mode=BranchMode.MERGE,
-                           scalar_remainder_emit="tile_k1",
-                           expand_tile_nodes=expand)
+    return VectorizeConfig(
+        widths=(2,),
+        target_isa=ISA.SCALAR,
+        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+        branch_mode=BranchMode.MERGE,
+        scalar_remainder_emit="tile_k1",
+        expand_tile_nodes=expand,
+    )
 
 
 def _vectorize(prog, expand: bool = True) -> dace.SDFG:
@@ -110,11 +115,15 @@ def test_cast_and_separate_forms_emit_equivalent_shape():
         binops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileBinop)]
         assert len(binops) == 1, f"{prog.name}: expected exactly one TileBinop, got {len(binops)}"
         b = binops[0]
-        assert "Scalar" in (b.kind_a, b.kind_b) or "Symbol" in (b.kind_a, b.kind_b), \
+        assert "Scalar" in (b.kind_a, b.kind_b) or "Symbol" in (b.kind_a, b.kind_b), (
             f"{prog.name}: the constant operand must be a Scalar/Symbol broadcast, got kinds {(b.kind_a, b.kind_b)}"
+        )
         # No constant materialised as a per-lane tile via a Symbol-source TileGather.
         const_fills = [
-            n for n, node_state in sdfg.all_nodes_recursive() if isinstance(n, TileGather) and n.src_kind == "Symbol"
+            n
+            for n, node_state in sdfg.all_nodes_recursive()
+            if isinstance(n, TileGather)
+            and n.src_kind == "Symbol"
             and numeric_constant_domain(str(n.src_expr)) is not None
         ]
         assert not const_fills, f"{prog.name}: constant must not be widened into a Symbol-source fill tile"
@@ -128,8 +137,9 @@ def test_cast_inline_value_exact():
     C = np.zeros(M, np.float16)
     sdfg(A=A, C=C, N=M)
     ref = np.float16(0.125) * A
-    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), \
-        np.max(np.abs(C.astype(np.float32) - ref.astype(np.float32)))
+    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), np.max(
+        np.abs(C.astype(np.float32) - ref.astype(np.float32))
+    )
 
 
 def test_cast_separate_value_exact():
@@ -139,8 +149,9 @@ def test_cast_separate_value_exact():
     C = np.zeros(M, np.float16)
     sdfg(A=A, C=C, N=M)
     ref = A * np.float16(0.125)
-    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), \
-        np.max(np.abs(C.astype(np.float32) - ref.astype(np.float32)))
+    assert np.allclose(C.astype(np.float32), ref.astype(np.float32), rtol=1e-2, atol=1e-2), np.max(
+        np.abs(C.astype(np.float32) - ref.astype(np.float32))
+    )
 
 
 def test_pure_const_store_still_materialises_and_is_exact():

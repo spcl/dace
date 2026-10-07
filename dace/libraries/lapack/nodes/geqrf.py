@@ -8,6 +8,7 @@ length ``min(m, n)``. Use :class:`Orgqr` to materialise ``Q``.
 Uses ``_ain`` / ``_aout`` for the matrix to keep input and output
 connectors distinct in the codegen.
 """
+
 import copy
 
 import dace.library
@@ -24,7 +25,6 @@ from typing import List
 
 @dace.library.expansion
 class ExpandGeqrfOpenBLAS(ExpandTransformation):
-
     environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -39,16 +39,13 @@ class ExpandGeqrfOpenBLAS(ExpandTransformation):
         std::memcpy(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}));
         _res = LAPACKE_{lap}geqrf(LAPACK_ROW_MAJOR, {m}, {n}, {cast}_aout, {lda_out}, {cast}_tau);
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandGeqrfMKL(ExpandTransformation):
-
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -58,12 +55,12 @@ class ExpandGeqrfMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGeqrfGPUSolver(ExpandTransformation):
-
     environments: List[type] = []
 
     @classmethod
-    def call(cls, func: str, ctype: str, m: symbolic.SymbolicType, n: symbolic.SymbolicType,
-             lda: symbolic.SymbolicType) -> str:
+    def call(
+        cls, func: str, ctype: str, m: symbolic.SymbolicType, n: symbolic.SymbolicType, lda: symbolic.SymbolicType
+    ) -> str:
         """The vendor call, spelled by the cuSOLVER / rocSOLVER subclass."""
         raise NotImplementedError
 
@@ -72,18 +69,20 @@ class ExpandGeqrfGPUSolver(ExpandTransformation):
         (desc_A, lda_in, lda_out, m, n), _ = node.validate(parent_sdfg, parent_state)
         dt = desc_A.dtype.base_type
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dt)
-        func = func + 'geqrf'
-        code = cls.environments[0].handle_setup_code(node) + f"""
+        func = func + "geqrf"
+        code = (
+            cls.environments[0].handle_setup_code(node)
+            + f"""
             gpuMemcpyAsync(_aout, _ain, sizeof({dt.ctype}) * ({m}) * ({lda_in}),
                             gpuMemcpyDeviceToDevice, __dace_current_stream);
-            """ + cls.call(func, cuda_type, m, n, lda_out)
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+            """
+            + cls.call(func, cuda_type, m, n, lda_out)
+        )
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         conn = tasklet.out_connectors
-        tasklet.out_connectors = {c: (dtypes.pointer(dtypes.int32) if c == '_res' else t) for c, t in conn.items()}
+        tasklet.out_connectors = {c: (dtypes.pointer(dtypes.int32) if c == "_res" else t) for c, t in conn.items()}
         return tasklet
 
 
@@ -134,12 +133,12 @@ class Geqrf(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGeqrfOpenBLAS,
         "MKL": ExpandGeqrfMKL,
         "cuSolverDn": ExpandGeqrfCuSolverDn,
-        "rocSOLVER": ExpandGeqrfRocSolver
+        "rocSOLVER": ExpandGeqrfRocSolver,
     }
     default_implementation = None
 
     def __init__(self, name, **kwargs):
-        super().__init__(name, inputs={"_ain"}, outputs=OrderedSet(('_aout', '_tau', '_res')), **kwargs)
+        super().__init__(name, inputs={"_ain"}, outputs=OrderedSet(("_aout", "_tau", "_res")), **kwargs)
 
     def validate(self, sdfg, state):
         """:return: ``((desc_A, lda_in, lda_out, m, n), desc_tau)``."""

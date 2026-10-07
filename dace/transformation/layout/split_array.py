@@ -289,9 +289,11 @@ class SplitArray(ppl.Pass):
                     new_name_expr.append(self._name_map[splitd][access_offset])
                 except Exception as e:
                     if access_mapping is None:
-                        raise Exception(f"Expression {b} is not an integer, can't resolve array"
-                                        f" for {edge.data.data}[{edge.data.subset}],"
-                                        f" {edge.src} -> {edge.dst}: {e}")
+                        raise Exception(
+                            f"Expression {b} is not an integer, can't resolve array"
+                            f" for {edge.data.data}[{edge.data.subset}],"
+                            f" {edge.src} -> {edge.dst}: {e}"
+                        )
                     if str(b) not in access_mapping:
                         raise Exception(f"(Internal) access_mapping {access_mapping} missing key {b}")
                     new_name_expr.append(self._name_map[splitd][access_mapping[str(b)]])
@@ -357,7 +359,8 @@ class SplitArray(ppl.Pass):
         if all_data_dependent_dims:
             # Multiple distinct data-dependent symbols would require nested branching
             assert len(all_data_dependent_dims) == 1, (
-                f"Multiple data-dependent dims not supported: {all_data_dependent_dims} in {state}")
+                f"Multiple data-dependent dims not supported: {all_data_dependent_dims} in {state}"
+            )
             return all_data_dependent_dims.pop(), all_access_exprs
         return None, None
 
@@ -438,12 +441,14 @@ class SplitArray(ppl.Pass):
                         mapped_data, new_subset = self._get_corresponding_array(edge, split_map, access_mapping)
                         if mapped_data != edge.data.data:
                             # keep wcr/other_subset/dynamic (dropping wcr turns a reduction into an overwrite)
-                            edge.data = dace.memlet.Memlet(data=mapped_data,
-                                                           subset=new_subset,
-                                                           other_subset=copy.deepcopy(edge.data.other_subset),
-                                                           wcr=edge.data.wcr,
-                                                           wcr_nonatomic=edge.data.wcr_nonatomic,
-                                                           dynamic=edge.data.dynamic)
+                            edge.data = dace.memlet.Memlet(
+                                data=mapped_data,
+                                subset=new_subset,
+                                other_subset=copy.deepcopy(edge.data.other_subset),
+                                wcr=edge.data.wcr,
+                                wcr_nonatomic=edge.data.wcr_nonatomic,
+                                dynamic=edge.data.dynamic,
+                            )
 
                 SplitArray.c += 1
             else:
@@ -452,12 +457,14 @@ class SplitArray(ppl.Pass):
                     mapped_data, new_subset = self._get_corresponding_array(edge, split_map)
                     if mapped_data != edge.data.data:
                         # keep wcr/other_subset/dynamic -- dropping any breaks reductions, copies, or dynamic edges
-                        edge.data = dace.memlet.Memlet(data=mapped_data,
-                                                       subset=new_subset,
-                                                       other_subset=copy.deepcopy(edge.data.other_subset),
-                                                       wcr=edge.data.wcr,
-                                                       wcr_nonatomic=edge.data.wcr_nonatomic,
-                                                       dynamic=edge.data.dynamic)
+                        edge.data = dace.memlet.Memlet(
+                            data=mapped_data,
+                            subset=new_subset,
+                            other_subset=copy.deepcopy(edge.data.other_subset),
+                            wcr=edge.data.wcr,
+                            wcr_nonatomic=edge.data.wcr_nonatomic,
+                            dynamic=edge.data.dynamic,
+                        )
 
     # #
     #  Phase 3b: Rewrite interstate-edge symbolic expressions
@@ -478,7 +485,7 @@ class SplitArray(ppl.Pass):
 
             # normalize both shapes to (array name, indices)
             fname = type(expr).__name__
-            if fname == 'Subscript':
+            if fname == "Subscript":
                 base, index_args = new_args[0], new_args[1:]
                 fname = str(base)
             else:
@@ -489,8 +496,9 @@ class SplitArray(ppl.Pass):
                 return expr.func(*new_args)
 
             dim_filter = split_map[fname]
-            assert len(dim_filter) == len(index_args), (f"{fname}: split_config has {len(dim_filter)} dims "
-                                                        f"but access has {len(index_args)} indices: {expr}")
+            assert len(dim_filter) == len(index_args), (
+                f"{fname}: split_config has {len(dim_filter)} dims but access has {len(index_args)} indices: {expr}"
+            )
 
             name_parts = []
             kept_args = []
@@ -540,8 +548,9 @@ class SplitArray(ppl.Pass):
                     continue
 
                 # Multiple in-names combined with out-names is unsupported
-                assert len(in_names) <= 1 or len(out_names) == 0, (f"Multiple in-names with out-names unsupported: "
-                                                                   f"in={in_names}, out={out_names} in {state}")
+                assert len(in_names) <= 1 or len(out_names) == 0, (
+                    f"Multiple in-names with out-names unsupported: in={in_names}, out={out_names} in {state}"
+                )
 
                 if len(out_names) > 0:
                     # <=1 in-name, multiple out-names -> split out-edges
@@ -575,8 +584,10 @@ class SplitArray(ppl.Pass):
                 if isinstance(n, dace.nodes.NestedSDFG):
                     connectors = set(n.in_connectors) | set(n.out_connectors)
                     if any(name in split_map for name in connectors):
-                        raise Exception(f"TODO: Split arrays passed to nested SDFGs not supported yet."
-                                        f" Found in {n} of {state}. Split arrays: {list(split_map.keys())}")
+                        raise Exception(
+                            f"TODO: Split arrays passed to nested SDFGs not supported yet."
+                            f" Found in {n} of {state}. Split arrays: {list(split_map.keys())}"
+                        )
 
     # #
     #  Entry point

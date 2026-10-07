@@ -22,6 +22,7 @@ Source: SC26 layout-algebra paper Fig.4 (E1_MatrixAdd running example, Permute +
 the read operand); Chatterjee et al., "Nonlinear array layouts for hierarchical memory systems,"
 ICS'99 (blocked layout).
 """
+
 import numpy
 import dace
 

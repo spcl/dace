@@ -17,6 +17,7 @@ scalar-dependent dynamic ranges, and 3D tensor accesses::
                 for k in dace.map[0:K]:          # Map "inner_compute_*"
                     A[k, ii, j+s+idx] += 1.0     # Tasklet
 """
+
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.helpers import get_parent_map_and_loop_scopes
@@ -69,7 +70,7 @@ def _find_inner_tasklet(sdfg):
     """Find the tasklet that performs the A[...] += 1.0 increment."""
     for n, st in sdfg.all_nodes_recursive():
         if isinstance(n, dace.sdfg.nodes.Tasklet):
-            code = n.code.as_string if hasattr(n.code, 'as_string') else str(n.code)
+            code = n.code.as_string if hasattr(n.code, "as_string") else str(n.code)
             if "+ 1.0" in code or "+1.0" in code or "+ 1" in code:
                 return n, st
     raise RuntimeError("Could not find increment tasklet")
@@ -90,10 +91,8 @@ def test_inner_map_sees_two_loops_and_outer_map():
     loops = [p for p in parents if isinstance(p, LoopRegion)]
     maps = [p for p in parents if isinstance(p, dace.sdfg.nodes.MapEntry)]
 
-    assert len(loops) == 2, (f"Expected 2 LoopRegions, got {len(loops)}: "
-                             f"{[p.label for p in loops]}")
-    assert len(maps) == 1, (f"Expected 1 MapEntry (outer i-map), got {len(maps)}: "
-                            f"{[p.label for p in maps]}")
+    assert len(loops) == 2, f"Expected 2 LoopRegions, got {len(loops)}: {[p.label for p in loops]}"
+    assert len(maps) == 1, f"Expected 1 MapEntry (outer i-map), got {len(maps)}: {[p.label for p in maps]}"
 
 
 def test_inner_tasklet_sees_inner_map_plus_all_scopes():

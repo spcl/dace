@@ -57,6 +57,7 @@ DOALL once innermost certifies every adjacent swap along the way. Multi-statemen
 bodies (which need :class:`LoopFission` to run first) are still out of scope --
 the innermost body must be a single statement for the oracle.
 """
+
 import re
 from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
@@ -76,7 +77,7 @@ from dace.optionals import required
 from dace.sdfg.narrowing import as_basic, as_expr
 
 #: Loop-control properties swapped to realize an interchange.
-_LOOP_META_ATTRS = ('loop_variable', 'init_statement', 'loop_condition', 'update_statement', 'inverted')
+_LOOP_META_ATTRS = ("loop_variable", "init_statement", "loop_condition", "update_statement", "inverted")
 
 
 @transformation.explicit_cf_compatible
@@ -88,7 +89,7 @@ class LoopStridePermutation(ppl.Pass):
     safe to reorder is left untouched (logged as a TODO).
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
@@ -229,8 +230,9 @@ class LoopStridePermutation(ppl.Pass):
     def _bounds_independent(outer: LoopRegion, inner: LoopRegion) -> bool:
         """``True`` iff neither loop's bounds reference the other's loop variable
         (a rectangular iteration space). A triangular nest fails this test."""
-        return (inner.loop_variable not in LoopStridePermutation._meta_tokens(outer)
-                and outer.loop_variable not in LoopStridePermutation._meta_tokens(inner))
+        return inner.loop_variable not in LoopStridePermutation._meta_tokens(
+            outer
+        ) and outer.loop_variable not in LoopStridePermutation._meta_tokens(inner)
 
     @staticmethod
     def _tokens(text: str) -> Set[str]:
@@ -241,7 +243,7 @@ class LoopStridePermutation(ppl.Pass):
     def _meta_tokens(lr: LoopRegion) -> Set[str]:
         """Identifiers appearing anywhere in ``lr``'s loop control."""
         toks: Set[str] = set()
-        for attr in ('init_statement', 'loop_condition', 'update_statement'):
+        for attr in ("init_statement", "loop_condition", "update_statement"):
             block = getattr(lr, attr)
             if block is not None:
                 toks |= LoopStridePermutation._tokens(block.as_string)
@@ -262,7 +264,7 @@ class LoopStridePermutation(ppl.Pass):
         ovar, ivar = outer.loop_variable, inner.loop_variable
         if ivar in LoopStridePermutation._meta_tokens(outer):
             return False
-        for attr in ('loop_condition', 'update_statement'):
+        for attr in ("loop_condition", "update_statement"):
             block = getattr(inner, attr)
             if block is not None and ovar in LoopStridePermutation._tokens(block.as_string):
                 return False
@@ -288,12 +290,12 @@ class LoopStridePermutation(ppl.Pass):
 
         floor_expr = symstr(dace.symbolic.int_floor(pystr_to_symbolic(ivar) - d, c))
         outer.loop_variable, inner.loop_variable = ivar, ovar
-        outer.init_statement = CodeBlock(ivar + ' = ' + symstr(required(c) * j0 + d))
-        outer.loop_condition = CodeBlock(ivar + ' <= ' + symstr(i1))
-        outer.update_statement = CodeBlock(ivar + ' = ' + ivar + ' + 1')
-        inner.init_statement = CodeBlock(ovar + ' = ' + symstr(j0))
-        inner.loop_condition = CodeBlock(ovar + ' <= min(' + symstr(j1) + ', ' + floor_expr + ')')
-        inner.update_statement = CodeBlock(ovar + ' = ' + ovar + ' + 1')
+        outer.init_statement = CodeBlock(ivar + " = " + symstr(required(c) * j0 + d))
+        outer.loop_condition = CodeBlock(ivar + " <= " + symstr(i1))
+        outer.update_statement = CodeBlock(ivar + " = " + ivar + " + 1")
+        inner.init_statement = CodeBlock(ovar + " = " + symstr(j0))
+        inner.loop_condition = CodeBlock(ovar + " <= min(" + symstr(j1) + ", " + floor_expr + ")")
+        inner.update_statement = CodeBlock(ovar + " = " + ovar + " + 1")
         return True
 
     @staticmethod

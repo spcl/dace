@@ -15,6 +15,7 @@ tractable while still exercising every knob across the suite. A kernel that
 canonicalization renders as a 2-D nested map additionally gets a ``K=2`` multidim
 config.
 """
+
 import os
 
 # dace lazily ``from mpi4py import MPI`` during ``to_sdfg``. Left to auto-init,
@@ -47,35 +48,37 @@ KERNELS = [k.name for k in tsvc.collect()]
 
 #: Kernels this knob set leaves with no tile lib node, measured after canonicalize. Pinned exactly: the
 #: ``canon_vec`` comparison alone passes on a refusal, which hands back the un-tiled graph.
-UNTILED_KERNELS = frozenset({
-    "s123_d_single",
-    "s13110_d_single",
-    "s141_d_single",
-    "s161_d_single",
-    # The outer j loop canonicalizes to a genuine sum-over-j reduction (a[i] += ...*c[j]) once InlineSDFG
-    # (7883519d9) exposes the body; a cross-lane reduction is not tileable.
-    "s176_d_single",
-    "s2111_d_single",
-    "s232_d_single",
-    "s257_d_single",
-    "s258_d_single",
-    "s277_d_single",
-    "s3110_d_single",
-    "s3112_d_single",
-    "s311_d_single",
-    "s312_d_single",
-    "s314_d_single",
-    "s316_d_single",
-    "s317_d_single",
-    "s318_d_single",
-    "s321_d_single",
-    "s322_d_single",
-    "s332_d_single",
-    "s343_d_single",
-    "s481_d_single",
-    "s482_d_single",
-    "vsumr_d_single",
-})
+UNTILED_KERNELS = frozenset(
+    {
+        "s123_d_single",
+        "s13110_d_single",
+        "s141_d_single",
+        "s161_d_single",
+        # The outer j loop canonicalizes to a genuine sum-over-j reduction (a[i] += ...*c[j]) once InlineSDFG
+        # (7883519d9) exposes the body; a cross-lane reduction is not tileable.
+        "s176_d_single",
+        "s2111_d_single",
+        "s232_d_single",
+        "s257_d_single",
+        "s258_d_single",
+        "s277_d_single",
+        "s3110_d_single",
+        "s3112_d_single",
+        "s311_d_single",
+        "s312_d_single",
+        "s314_d_single",
+        "s316_d_single",
+        "s317_d_single",
+        "s318_d_single",
+        "s321_d_single",
+        "s322_d_single",
+        "s332_d_single",
+        "s343_d_single",
+        "s481_d_single",
+        "s482_d_single",
+        "vsumr_d_single",
+    }
+)
 
 # Round-robin knob sets (valid combinations only; see VectorizeCPU /
 # VectorizeCPUMultiDim constructors). The SIMD ISA is the HOST's best runnable one
@@ -96,7 +99,7 @@ MULTIDIM_KNOBS = [
 # and would be refused; vectorizing the inner (unit-stride) dim alone is both
 # correct and contiguous. Force K=1 for these kernels.
 FORCE_K1_KERNELS = {
-    's125_d_single',
+    "s125_d_single",
 }
 
 
@@ -111,9 +114,10 @@ def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     for n, a in got.items():
         if not (isinstance(a, np.ndarray) and np.issubdtype(a.dtype, np.floating) and a.size):
             continue
-        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9,
-                           equal_nan=True), (f"{name}/{n}: {stage} diverges from numpy reference, "
-                                             f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
+        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9, equal_nan=True), (
+            f"{name}/{n}: {stage} diverges from numpy reference, "
+            f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}"
+        )
 
 
 def _canonicalized(name, tag="cvc"):
@@ -170,16 +174,21 @@ def test_tsvc_canonicalize_then_multidim_vectorize(idx, name):
     # strided box over one array dim.
     if name in FORCE_K1_KERNELS:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)]))
+            VectorizeConfig(widths=(8,), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)])
+        )
     elif map_param_counts and min(map_param_counts) >= 2:
         # 2-D nested map -> K=2 tile (merge/masked_tail; fp_factor+scalar are K=1 only).
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, 8),
-                            target_isa=ISA.SCALAR,
-                            remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                            branch_mode=BranchMode.MERGE,
-                            validate_all=True))
+            VectorizeConfig(
+                widths=(8, 8),
+                target_isa=ISA.SCALAR,
+                remainder_strategy=RemainderStrategy.MASKED_TAIL,
+                branch_mode=BranchMode.MERGE,
+                validate_all=True,
+            )
+        )
     else:
         vec = VectorizeCPUMultiDim(
-            VectorizeConfig(widths=(8, ), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)]))
+            VectorizeConfig(widths=(8,), validate_all=True, **MULTIDIM_KNOBS[idx % len(MULTIDIM_KNOBS)])
+        )
     _vectorize_and_check(name, sdfg, kernel, arrays, ck, ref, vec)

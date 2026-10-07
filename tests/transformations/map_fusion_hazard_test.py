@@ -9,6 +9,7 @@ edge is then dropped with nothing in its place.
 Each test runs the UNFUSED SDFG as the oracle, then fuses and runs again. Refusing to fuse is
 always acceptable; changing the numbers never is.
 """
+
 import numpy as np
 import pytest
 
@@ -40,8 +41,9 @@ def _writer_map(state, sdfg, label, tag, array, subset, value, name_inner_contai
         sdfg.add_scalar(buffer_name, dace.float64, transient=True)
         buffer_node = state.add_access(buffer_name)
         state.add_edge(tasklet, "o", buffer_node, None, dace.Memlet(data=buffer_name, subset="0"))
-        state.add_edge(buffer_node, None, map_exit, f"IN_{array}",
-                       dace.Memlet(data=buffer_name, subset="0", other_subset=subset))
+        state.add_edge(
+            buffer_node, None, map_exit, f"IN_{array}", dace.Memlet(data=buffer_name, subset="0", other_subset=subset)
+        )
     else:
         state.add_edge(tasklet, "o", map_exit, f"IN_{array}", dace.Memlet(data=array, subset=subset))
 
@@ -56,8 +58,13 @@ def _reader_map(state, sdfg, label, tag, source, read_array, read_subset, out_ar
     tasklet = state.add_tasklet(f"t{tag}", {"a"}, {"o"}, "o = a")
     map_entry.add_in_connector(f"IN_{read_array}")
     map_entry.add_out_connector(f"OUT_{read_array}")
-    state.add_edge(source, None, map_entry, f"IN_{read_array}",
-                   dace.Memlet(data=source.data, subset=f"0:{source.desc(sdfg).shape[0]}"))
+    state.add_edge(
+        source,
+        None,
+        map_entry,
+        f"IN_{read_array}",
+        dace.Memlet(data=source.data, subset=f"0:{source.desc(sdfg).shape[0]}"),
+    )
     state.add_edge(map_entry, f"OUT_{read_array}", tasklet, "a", dace.Memlet(data=read_array, subset=read_subset))
 
     map_exit.add_in_connector(f"IN_{out_array}")
@@ -91,8 +98,9 @@ def _assert_fusion_preserves_meaning(build, what: str):
         return  # refusing is always sound
     got = _run(fused)
     for name, expected in oracle.items():
-        assert np.array_equal(got[name], expected), (f"fusing across the ordering edge changed {name} "
-                                                     f"({what}): {got[name]} != {expected}")
+        assert np.array_equal(got[name], expected), (
+            f"fusing across the ordering edge changed {name} ({what}): {got[name]} != {expected}"
+        )
 
 
 def test_copy_memlet_naming_the_inner_container_hides_the_write():
@@ -159,11 +167,12 @@ def test_an_unknown_boundary_subset_must_not_erase_the_access_sets():
     assert writes != {}, "an unknown subset erased the write set instead of being reported as unknown"
 
     param_repl = mfhelper.find_parameter_remapping(first_entry.map, second_entry.map)
-    assert mfhelper.analyze_happens_before_fusion(state=state,
-                                                  sdfg=sdfg,
-                                                  first_map_entry=first_entry,
-                                                  second_map_entry=second_entry,
-                                                  param_repl=param_repl) is None
+    assert (
+        mfhelper.analyze_happens_before_fusion(
+            state=state, sdfg=sdfg, first_map_entry=first_entry, second_map_entry=second_entry, param_repl=param_repl
+        )
+        is None
+    )
 
 
 def _inner_write_then_read_sdfg() -> dace.SDFG:
@@ -242,7 +251,7 @@ def test_inout_split_must_not_redirect_a_cross_state_read():
         return  # refusing is always sound
     got = run(fused)
     for name, expected in oracle.items():
-        assert np.array_equal(got[name], expected), (f"the InOut split changed {name}: {got[name]} != {expected}")
+        assert np.array_equal(got[name], expected), f"the InOut split changed {name}: {got[name]} != {expected}"
 
 
 def _wcr_shape(reduction_is_consumed: bool) -> dace.SDFG:

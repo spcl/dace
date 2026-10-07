@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Program structure for global layout assignment: one kernel per state, and the flat line graph of kernels (:func:`kernel_per_state`, :func:`check_kernel_per_state`, :func:`line_graph`)."""
+
 from dataclasses import dataclass
 from typing import List, Optional, Set, Tuple
 
@@ -31,10 +32,12 @@ def kernel_per_state(sdfg: SDFG) -> int:
             splits += 1
         if excess_nests() >= excess:
             offenders = [s.label for s in sdfg.states() if len(nest_entries(s)) > 1]
-            raise RuntimeError(f"kernel_per_state: state_fission made no progress separating the nests of "
-                               f"{offenders} (a shared sink access node or a view between the nests drags the "
-                               f"second nest into the fissioned state); refusing rather than reporting a split "
-                               f"that did not happen.")
+            raise RuntimeError(
+                f"kernel_per_state: state_fission made no progress separating the nests of "
+                f"{offenders} (a shared sink access node or a view between the nests drags the "
+                f"second nest into the fissioned state); refusing rather than reporting a split "
+                f"that did not happen."
+            )
 
 
 def check_kernel_per_state(sdfg: SDFG) -> None:
@@ -42,10 +45,12 @@ def check_kernel_per_state(sdfg: SDFG) -> None:
     for state in sdfg.states():
         entries = nest_entries(state)
         if len(entries) > 1:
-            raise RuntimeError(f"kernel-per-state invariant broken: state '{state.label}' holds {len(entries)} "
-                               f"top-level map scopes ({[e.map.label for e in entries]}). A pass fused split "
-                               f"states back (simplify/StateFusion must not run after kernel_per_state); re-split "
-                               f"or drop the offending pass.")
+            raise RuntimeError(
+                f"kernel-per-state invariant broken: state '{state.label}' holds {len(entries)} "
+                f"top-level map scopes ({[e.map.label for e in entries]}). A pass fused split "
+                f"states back (simplify/StateFusion must not run after kernel_per_state); re-split "
+                f"or drop the offending pass."
+            )
 
 
 @dataclass
@@ -53,6 +58,7 @@ class KernelState:
     """One kernel of the line graph. ``loop`` is the (single) enclosing LoopRegion when the kernel lives
     inside a loop body, else None -- consecutive kernels sharing a ``loop`` form one loop span, which the
     body-uniform layout model pins to a single layout (see ``loop_spans``)."""
+
     state: SDFGState
     map_entry: nodes.MapEntry
     index: int
@@ -90,12 +96,16 @@ def add_state_kernel(sdfg: SDFG, block: SDFGState, kernels: List[KernelState], l
         # kernels on either side would fuse into one span (pinning one layout) while the LayoutChange it sits
         # between silently re-runs every iteration, unmodelled
         if loop is not None:
-            raise NotImplementedError(f"line_graph: relayout state '{block.label}' inside loop '{loop.label}' "
-                                      f"-- a LayoutChange in a loop body re-runs every iteration and is not "
-                                      f"modelled; hoist it out of the loop.")
+            raise NotImplementedError(
+                f"line_graph: relayout state '{block.label}' inside loop '{loop.label}' "
+                f"-- a LayoutChange in a loop body re-runs every iteration and is not "
+                f"modelled; hoist it out of the loop."
+            )
     elif state_does_work(block):
-        raise NotImplementedError(f"line_graph: state '{block.label}' does non-map work at top level -- v1 scores "
-                                  f"map nests only (expand/canonicalize the state first).")
+        raise NotImplementedError(
+            f"line_graph: state '{block.label}' does non-map work at top level -- v1 scores "
+            f"map nests only (expand/canonicalize the state first)."
+        )
 
 
 def collect_line(sdfg: SDFG, region, kernels: List[KernelState], loop: Optional[LoopRegion]) -> None:
@@ -111,24 +121,31 @@ def collect_line(sdfg: SDFG, region, kernels: List[KernelState], loop: Optional[
         seen.add(block)
         out_edges = region.out_edges(block)
         if len(out_edges) > 1 or region.in_degree(block) > 1:
-            raise NotImplementedError(f"line_graph: block '{block.label}' has {len(out_edges)} successors / "
-                                      f"{region.in_degree(block)} predecessors -- v1 refuses branches and DAGs.")
+            raise NotImplementedError(
+                f"line_graph: block '{block.label}' has {len(out_edges)} successors / "
+                f"{region.in_degree(block)} predecessors -- v1 refuses branches and DAGs."
+            )
         if isinstance(block, SDFGState):
             add_state_kernel(sdfg, block, kernels, loop)
         elif isinstance(block, LoopRegion):
             if loop is not None:
-                raise NotImplementedError(f"line_graph: nested LoopRegion '{block.label}' inside '{loop.label}' -- "
-                                          f"v1 handles a single loop level (nested loops are deferred).")
+                raise NotImplementedError(
+                    f"line_graph: nested LoopRegion '{block.label}' inside '{loop.label}' -- "
+                    f"v1 handles a single loop level (nested loops are deferred)."
+                )
             collect_line(sdfg, block, kernels, loop=block)
         else:
-            raise NotImplementedError(f"line_graph: control-flow block '{block.label}' of type "
-                                      f"{type(block).__name__} -- v1 handles states and single-level LoopRegions "
-                                      f"only (conditionals are deferred).")
+            raise NotImplementedError(
+                f"line_graph: control-flow block '{block.label}' of type "
+                f"{type(block).__name__} -- v1 handles states and single-level LoopRegions "
+                f"only (conditionals are deferred)."
+            )
         block = out_edges[0].dst if out_edges else None
     if len(seen) != region.number_of_nodes():
         unreached = {b.label for b in region.nodes()} - {b.label for b in seen}
-        raise NotImplementedError(f"line_graph: unreachable blocks {sorted(unreached)} in '{region.label}' "
-                                  f"-- not a line.")
+        raise NotImplementedError(
+            f"line_graph: unreachable blocks {sorted(unreached)} in '{region.label}' -- not a line."
+        )
 
 
 def line_graph(sdfg: SDFG) -> List[KernelState]:

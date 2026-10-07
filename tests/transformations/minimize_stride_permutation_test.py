@@ -1,23 +1,24 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the ``MinimizeStridePermutation`` canonicalization pass.
+"""Tests for the ``MinimizeStridePermutation`` canonicalization pass.
 
-    The pass permutes perfectly-nested, single-parameter map dimensions so the
-    innermost parameter indexes the smallest-stride (contiguous) array axis. It
-    only emits ``MapInterchange`` applications, so the result is unchanged.
+The pass permutes perfectly-nested, single-parameter map dimensions so the
+innermost parameter indexes the smallest-stride (contiguous) array axis. It
+only emits ``MapInterchange`` applications, so the result is unchanged.
 
-    Reordering is decided symbolically. An array's strides are products of its
-    shape extents and an extent is at least one wherever the array exists, so
-    ``1`` versus ``M`` and ``11`` versus ``11*N`` both follow from the shape
-    contract and are permuted exactly like concrete strides. A pair the pass
-    does not manage to decide leaves the nest untouched instead -- a safe,
-    idempotent no-op rather than a guess. Each scenario therefore has an
-    integer-dimension variant and a symbolic one, and both reorder unless the
-    pass declines the comparison.
+Reordering is decided symbolically. An array's strides are products of its
+shape extents and an extent is at least one wherever the array exists, so
+``1`` versus ``M`` and ``11`` versus ``11*N`` both follow from the shape
+contract and are permuted exactly like concrete strides. A pair the pass
+does not manage to decide leaves the nest untouched instead -- a safe,
+idempotent no-op rather than a guess. Each scenario therefore has an
+integer-dimension variant and a symbolic one, and both reorder unless the
+pass declines the comparison.
 
-    Kernels use the dace Python frontend only. A single multi-dimensional
-    ``dace.map`` is split into a clean nested single-parameter nest with the
-    standard ``MapExpansion`` transformation.
+Kernels use the dace Python frontend only. A single multi-dimensional
+``dace.map`` is split into a clean nested single-parameter nest with the
+standard ``MapExpansion`` transformation.
 """
+
 import copy
 
 import numpy as np
@@ -28,7 +29,7 @@ from dace.sdfg import nodes
 from dace.transformation.dataflow import MapExpansion
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
 
-K, N, M = (dace.symbol(s) for s in ('K', 'N', 'M'))
+K, N, M = (dace.symbol(s) for s in ("K", "N", "M"))
 
 
 @dace.program
@@ -124,7 +125,7 @@ def _nest_param_order(sdfg: dace.SDFG):
 def test_integer_dims_two_level_reordered():
     rng = np.random.default_rng(42)
     sdfg = _expanded(transposed_2d_int)
-    assert _nest_param_order(sdfg) == ['i', 'j']
+    assert _nest_param_order(sdfg) == ["i", "j"]
 
     a = rng.random((7, 11))
     ref = np.zeros((7, 11))
@@ -132,7 +133,7 @@ def test_integer_dims_two_level_reordered():
 
     assert MinimizeStridePermutation().apply_pass(sdfg, {}) is not None
     # Strides (11, 1): ``i`` (unit) must become innermost.
-    assert _nest_param_order(sdfg) == ['j', 'i']
+    assert _nest_param_order(sdfg) == ["j", "i"]
 
     out = np.zeros((7, 11))
     sdfg(A=a.copy(), B=out)
@@ -141,15 +142,15 @@ def test_integer_dims_two_level_reordered():
 
 def test_integer_dims_already_canonical_is_noop():
     sdfg = _expanded(canonical_2d_int)
-    assert _nest_param_order(sdfg) == ['i', 'j']
+    assert _nest_param_order(sdfg) == ["i", "j"]
     assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
-    assert _nest_param_order(sdfg) == ['i', 'j']
+    assert _nest_param_order(sdfg) == ["i", "j"]
 
 
 def test_integer_dims_three_level_reordered():
     rng = np.random.default_rng(42)
     sdfg = _expanded(transposed_3d_int)
-    assert _nest_param_order(sdfg) == ['i', 'j', 'k']
+    assert _nest_param_order(sdfg) == ["i", "j", "k"]
 
     a = rng.random((5, 7, 11))
     ref = np.zeros((5, 7, 11))
@@ -157,7 +158,7 @@ def test_integer_dims_three_level_reordered():
 
     MinimizeStridePermutation().apply_pass(sdfg, {})
     # Strides (77, 11, 1): ``i`` innermost, ``k`` outermost.
-    assert _nest_param_order(sdfg) == ['k', 'j', 'i']
+    assert _nest_param_order(sdfg) == ["k", "j", "i"]
 
     out = np.zeros((5, 7, 11))
     sdfg(A=a.copy(), B=out)
@@ -165,14 +166,14 @@ def test_integer_dims_three_level_reordered():
 
 
 def test_symbolic_dims_two_level_reordered():
-    """ Strides ``(M, 1)``: ``M >= 1`` wherever the array exists, so ``1 <= M``
-        follows from the shape contract and ``i`` (the unit-stride parameter)
-        belongs innermost -- the same order the concrete ``(11, 1)`` nest gets.
+    """Strides ``(M, 1)``: ``M >= 1`` wherever the array exists, so ``1 <= M``
+    follows from the shape contract and ``i`` (the unit-stride parameter)
+    belongs innermost -- the same order the concrete ``(11, 1)`` nest gets.
     """
     rng = np.random.default_rng(42)
     n, m = 12, 17
     sdfg = _expanded(transposed_2d_sym)
-    assert _nest_param_order(sdfg) == ['i', 'j']
+    assert _nest_param_order(sdfg) == ["i", "j"]
 
     a = rng.random((n, m))
     ref = np.zeros((n, m))
@@ -181,10 +182,10 @@ def test_symbolic_dims_two_level_reordered():
     # One adjacent interchange realizes the two-level reversal.
     applied = MinimizeStridePermutation().apply_pass(sdfg, {})
     assert applied is not None and sum(applied.values()) == 1
-    assert _nest_param_order(sdfg) == ['j', 'i']
+    assert _nest_param_order(sdfg) == ["j", "i"]
     # The permuted nest is canonical: a second run finds nothing to swap.
     assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
-    assert _nest_param_order(sdfg) == ['j', 'i']
+    assert _nest_param_order(sdfg) == ["j", "i"]
 
     out = np.zeros((n, m))
     sdfg(A=a.copy(), B=out, N=n, M=m)
@@ -192,22 +193,22 @@ def test_symbolic_dims_two_level_reordered():
 
 
 def test_symbolic_dims_three_level_is_safe_noop():
-    """ Strides ``(N*M, M, 1)``: with every extent symbolic the pass does not
-        decide ``Abs(M)`` versus ``Abs(N*M)`` and abandons the nest rather than
-        guessing. Guards the escape hatch, which is still reachable and still
-        numerically transparent (declining is conservative, not wrong).
+    """Strides ``(N*M, M, 1)``: with every extent symbolic the pass does not
+    decide ``Abs(M)`` versus ``Abs(N*M)`` and abandons the nest rather than
+    guessing. Guards the escape hatch, which is still reachable and still
+    numerically transparent (declining is conservative, not wrong).
     """
     rng = np.random.default_rng(42)
     k, n, m = 5, 7, 11
     sdfg = _expanded(transposed_3d_sym)
-    assert _nest_param_order(sdfg) == ['i', 'j', 'k']
+    assert _nest_param_order(sdfg) == ["i", "j", "k"]
 
     a = rng.random((k, n, m))
     ref = np.zeros((k, n, m))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref, K=k, N=n, M=m)
 
     assert MinimizeStridePermutation().apply_pass(sdfg, {}) is None
-    assert _nest_param_order(sdfg) == ['i', 'j', 'k']
+    assert _nest_param_order(sdfg) == ["i", "j", "k"]
 
     out = np.zeros((k, n, m))
     sdfg(A=a.copy(), B=out, K=k, N=n, M=m)
@@ -254,22 +255,23 @@ def test_mixed_dims_2d_one_symbolic_reordered():
     every extent the array exists at, so ``i`` moves innermost. At the
     degenerate ``M == 1`` the two strides tie and either order is equally
     contiguous; at ``M == 0`` the map is empty."""
-    _assert_mixed_reordered(transposed_2d_mixed, (7, 17), dict(M=17), ['i', 'j'], ['j', 'i'], 1)
+    _assert_mixed_reordered(transposed_2d_mixed, (7, 17), dict(M=17), ["i", "j"], ["j", "i"], 1)
 
 
 def test_mixed_dims_3d_outer_symbolic_reordered():
     """Strides (N*11, 11, 1): one symbolic stride does not block the order,
     because ``11 <= 11*N`` follows from ``N >= 1``. The nest reaches the same
     ``k, j, i`` order as its all-concrete (77, 11, 1) twin."""
-    _assert_mixed_reordered(transposed_3d_mixed, (5, 7, 11), dict(N=7), ['i', 'j', 'k'], ['k', 'j', 'i'], 3)
+    _assert_mixed_reordered(transposed_3d_mixed, (5, 7, 11), dict(N=7), ["i", "j", "k"], ["k", "j", "i"], 3)
 
 
 def test_mixed_dims_3d_two_symbolic_reordered():
     """Strides (5*M, M, 1): two symbolic strides still order, because they
     share the symbolic factor and ``M <= 5*M`` for every M -- unlike the fully
     symbolic ``(N*M, M, 1)`` nest, which the pass declines."""
-    _assert_mixed_reordered(transposed_3d_mixed_inner_symbolic, (7, 5, 13), dict(M=13), ['i', 'j', 'k'],
-                            ['k', 'j', 'i'], 3)
+    _assert_mixed_reordered(
+        transposed_3d_mixed_inner_symbolic, (7, 5, 13), dict(M=13), ["i", "j", "k"], ["k", "j", "i"], 3
+    )
 
 
 def test_all_concrete_mixed_magnitudes_still_reorders():
@@ -278,12 +280,12 @@ def test_all_concrete_mixed_magnitudes_still_reorders():
     permutes -- the symbolic guard does not over-suppress."""
     rng = np.random.default_rng(42)
     sdfg = _expanded(transposed_3d_int)
-    assert _nest_param_order(sdfg) == ['i', 'j', 'k']
+    assert _nest_param_order(sdfg) == ["i", "j", "k"]
     a = rng.random((5, 7, 11))
     ref = np.zeros((5, 7, 11))
     copy.deepcopy(sdfg)(A=a.copy(), B=ref)
     assert MinimizeStridePermutation().apply_pass(sdfg, {}) is not None
-    assert _nest_param_order(sdfg) == ['k', 'j', 'i']
+    assert _nest_param_order(sdfg) == ["k", "j", "i"]
     out = np.zeros((5, 7, 11))
     sdfg(A=a.copy(), B=out)
     assert np.allclose(out, ref) and np.allclose(out, a + 1.0)

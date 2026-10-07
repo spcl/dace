@@ -14,6 +14,7 @@ node's connector + incident edge -- so the name -> body map is 1:1 before codege
 Only the readable-codegen preprocessing block runs this pass (see ``dace.codegen.codegen.generate_code``),
 so the legacy generator is unaffected.
 """
+
 from typing import Dict, Optional, Set, Tuple
 
 from dace import data as dt
@@ -21,7 +22,7 @@ from dace.sdfg.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
 
-RETURN_NAMESPACE = '__return'
+RETURN_NAMESPACE = "__return"
 
 
 class CanonicalizeNestedIndexNames(ppl.Pass):
@@ -53,10 +54,10 @@ class CanonicalizeNestedIndexNames(ppl.Pass):
         # ``__return`` and ``__return_<i>`` are the names SDFG validation reads as the program's return values, so a
         # derived ``__return_v0`` would be read as a tuple element that is not consecutively numbered.
         if base.startswith(RETURN_NAMESPACE):
-            base = 'nested' + base
+            base = "nested" + base
         i = 0
         while True:
-            cand = '%s_v%d' % (base, i)
+            cand = "%s_v%d" % (base, i)
             if cand not in used:
                 used.add(cand)
                 return cand

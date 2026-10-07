@@ -1,17 +1,33 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``TileITE``: a per-lane select on K-dim register tiles."""
+
 import dace
 from dace import library, properties
 from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 
-from dace.libraries.tileops.environments import TileOpsAVX2, TileOpsAVX512, TileOpsCUDA, TileOpsNeon, TileOpsScalar, TileOpsSVE
+from dace.libraries.tileops.environments import (
+    TileOpsAVX2,
+    TileOpsAVX512,
+    TileOpsCUDA,
+    TileOpsNeon,
+    TileOpsScalar,
+    TileOpsSVE,
+)
 from dace.libraries.tileops.expansions import ExpandTileIsa, ExpandTilePure
 from dace.libraries.tileops.isa import IsaCall, broadcast_ref
 from dace.libraries.tileops.kinds import SYMBOL, TILE
 from dace.libraries.tileops.lanes import nested_loops, tile_offset
-from dace.libraries.tileops.operands import (Operand, check_operands, connected_edges, edge_ctype, input_connectors,
-                                             output_edge, scalar_operand_ref, validate_elementwise)
+from dace.libraries.tileops.operands import (
+    Operand,
+    check_operands,
+    connected_edges,
+    edge_ctype,
+    input_connectors,
+    output_edge,
+    scalar_operand_ref,
+    validate_elementwise,
+)
 from dace.libraries.tileops.nodes.tile_op import TileOp
 from dace.optionals import required
 
@@ -114,28 +130,29 @@ class TileITE(TileOp):
         desc="The expression of the condition when it is a 'Symbol'.",
     )
 
-    def __init__(self,
-                 name: str,
-                 widths: tuple[int, ...],
-                 kind_t: str = TILE,
-                 kind_e: str = TILE,
-                 expr_t: str | None = None,
-                 expr_e: str | None = None,
-                 kind_mask: str = TILE,
-                 expr_mask: str | None = None,
-                 location: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        widths: tuple[int, ...],
+        kind_t: str = TILE,
+        kind_e: str = TILE,
+        expr_t: str | None = None,
+        expr_e: str | None = None,
+        kind_mask: str = TILE,
+        expr_mask: str | None = None,
+        location: str | None = None,
+    ):
         if not 1 <= len(widths) <= 3:
             raise ValueError(f"TileITE: widths must have length in {{1, 2, 3}}, got {widths!r}")
         operands = [
             Operand("_mask", kind_mask, expr_mask),
             Operand("_t", kind_t, expr_t),
-            Operand("_e", kind_e, expr_e)
+            Operand("_e", kind_e, expr_e),
         ]
         check_operands("TileITE", operands)
-        super().__init__(name,
-                         location=location,
-                         inputs=dict.fromkeys(input_connectors(operands, False)),
-                         outputs={"_o"})
+        super().__init__(
+            name, location=location, inputs=dict.fromkeys(input_connectors(operands, False)), outputs={"_o"}
+        )
         self.widths = list(widths)
         self.kind_t = kind_t
         self.kind_e = kind_e
@@ -148,12 +165,12 @@ class TileITE(TileOp):
         return [
             Operand("_mask", self.kind_mask, self.expr_mask),
             Operand("_t", self.kind_t, self.expr_t),
-            Operand("_e", self.kind_e, self.expr_e)
+            Operand("_e", self.kind_e, self.expr_e),
         ]
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         # The condition is not promoted to the output dtype; the arms are.
-        validate_elementwise(self, state, sdfg, self.operands(), "_o", False, unpromoted=("_mask", ))
+        validate_elementwise(self, state, sdfg, self.operands(), "_o", False, unpromoted=("_mask",))
 
     def pure_tasklet(self, state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         self.validate(sdfg, state)
@@ -170,15 +187,18 @@ class TileITE(TileOp):
                 return f"({cast})({cpp})" if cast else f"({cpp})"
             if operand.kind == TILE:
                 return f"{operand.conn}[{offset}]"
-            reference, broadcast = scalar_operand_ref(sdfg.arrays[required(in_edges[operand.conn].data.data)],
-                                                      operand.conn, widths, offset)
+            reference, broadcast = scalar_operand_ref(
+                sdfg.arrays[required(in_edges[operand.conn].data.data)], operand.conn, widths, offset
+            )
             if not broadcast:
                 return reference
             return f"({cast})({reference})" if cast else f"({reference})"
 
         condition, then, otherwise = operands
-        body = (f"_o[{offset}] = ({lane_reference(condition, None)} ? {lane_reference(then, out_ctype)} : "
-                f"{lane_reference(otherwise, out_ctype)});")
+        body = (
+            f"_o[{offset}] = ({lane_reference(condition, None)} ? {lane_reference(then, out_ctype)} : "
+            f"{lane_reference(otherwise, out_ctype)});"
+        )
         return nodes.Tasklet(
             label=f"{self.label}_pure",
             inputs=dict.fromkeys(input_connectors(operands, False)),
@@ -204,10 +224,14 @@ class TileITE(TileOp):
                 value = broadcast_ref("_mask", call.in_edges["_mask"].data.subset)
             condition_pointer = "_bcmask"
             call.pre.append(f"{condition_ctype} {condition_pointer}[{call.vlen}];")
-            call.pre.append(f"for (int _mi = 0; _mi < {call.vlen}; ++_mi) "
-                            f"{condition_pointer}[_mi] = ({condition_ctype})({value});")
-        (then_broadcast, then_pointer), (else_broadcast, else_pointer) = (call.operand(arm, promote_tile=False)
-                                                                          for arm in (then, otherwise))
-        text = (f"dace::tileops::tile_ite<{call.ctype}, {condition_ctype}, {call.vlen}, {then_broadcast}, "
-                f"{else_broadcast}, false>(_o, {condition_pointer}, {then_pointer}, {else_pointer}, nullptr);")
+            call.pre.append(
+                f"for (int _mi = 0; _mi < {call.vlen}; ++_mi) {condition_pointer}[_mi] = ({condition_ctype})({value});"
+            )
+        (then_broadcast, then_pointer), (else_broadcast, else_pointer) = (
+            call.operand(arm, promote_tile=False) for arm in (then, otherwise)
+        )
+        text = (
+            f"dace::tileops::tile_ite<{call.ctype}, {condition_ctype}, {call.vlen}, {then_broadcast}, "
+            f"{else_broadcast}, false>(_o, {condition_pointer}, {then_pointer}, {else_pointer}, nullptr);"
+        )
         return call.tasklet(self, backend, operands, "_o", text, False)

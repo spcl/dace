@@ -18,6 +18,7 @@ Each pass calls checkers directly from ``apply_pass``:
                          "WidenAccesses", "memlet dim consistent")
         return result
 """
+
 from collections.abc import Iterator
 
 import dace
@@ -37,10 +38,17 @@ from dace.sdfg.narrowing import as_expr, as_map_entry, as_range
 #: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
 #: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
 #: associative; a ``Custom`` (non-reassociable) WCR keeps the strict "no loose WCR" refusal.
-_ASSOCIATIVE_REDUCTIONS: Tuple[ReductionType,
-                               ...] = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max,
-                                       ReductionType.Bitwise_And, ReductionType.Bitwise_Or, ReductionType.Bitwise_Xor,
-                                       ReductionType.Logical_And, ReductionType.Logical_Or)
+_ASSOCIATIVE_REDUCTIONS: Tuple[ReductionType, ...] = (
+    ReductionType.Sum,
+    ReductionType.Product,
+    ReductionType.Min,
+    ReductionType.Max,
+    ReductionType.Bitwise_And,
+    ReductionType.Bitwise_Or,
+    ReductionType.Bitwise_Xor,
+    ReductionType.Logical_And,
+    ReductionType.Logical_Or,
+)
 
 
 def assert_invariant(violation: str | None, pass_name: str, description: str) -> None:
@@ -83,8 +91,10 @@ def no_memlet_dim_mismatch(scope: SDFG | SDFGState) -> str | None:
             if isinstance(edge.src, (MapEntry, MapExit)) or isinstance(edge.dst, (MapEntry, MapExit)):
                 continue
             if len(as_range(mem.subset).size()) != len(as_range(mem.other_subset).size()):
-                return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset dim={len(as_range(mem.subset).size())} "
-                        f"!= other_subset dim={len(as_range(mem.other_subset).size())}")
+                return (
+                    f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset dim={len(as_range(mem.subset).size())} "
+                    f"!= other_subset dim={len(as_range(mem.other_subset).size())}"
+                )
     return None
 
 
@@ -118,7 +128,8 @@ def no_transient_scalar_stores(scope: SDFG | SDFGState) -> str | None:
                 return (
                     f"{sd.name}.{state.label}: tile (multi-element {tuple(as_range(mem.subset).size())}) stored into "
                     f"transient Scalar ``{dst.data}`` -- widen the transient to a tile "
-                    f"(scalar stores are only allowed to a non-transient program output)")
+                    f"(scalar stores are only allowed to a non-transient program output)"
+                )
     return None
 
 
@@ -140,6 +151,7 @@ def no_duplicate_connector_edges(scope: SDFG | SDFGState) -> str | None:
     pass-through connectors fan-out (entry ``OUT_X``) and fan-in (exit ``IN_X``) by design.
     """
     from dace.sdfg.nodes import MapEntry, MapExit
+
     for sd, state in _iter_states(scope):
         for node in state.nodes():
             if isinstance(node, (MapEntry, MapExit)):
@@ -152,8 +164,10 @@ def no_duplicate_connector_edges(scope: SDFG | SDFGState) -> str | None:
                 in_counts[e.dst_conn] += 1
             for conn, count in in_counts.items():
                 if count > 1:
-                    return (f"{sd.name}.{state.label}: {type(node).__name__} ``{node.label}``"
-                            f"in-connector ``{conn}`` has {count} edges (max 1)")
+                    return (
+                        f"{sd.name}.{state.label}: {type(node).__name__} ``{node.label}``"
+                        f"in-connector ``{conn}`` has {count} edges (max 1)"
+                    )
             out_counts = {}
             for e in state.out_edges(node):
                 if e.src_conn is None:
@@ -162,8 +176,10 @@ def no_duplicate_connector_edges(scope: SDFG | SDFGState) -> str | None:
                 out_counts[e.src_conn] += 1
             for conn, count in out_counts.items():
                 if count > 1:
-                    return (f"{sd.name}.{state.label}: {type(node).__name__} ``{node.label}``"
-                            f"out-connector ``{conn}`` has {count} edges (max 1)")
+                    return (
+                        f"{sd.name}.{state.label}: {type(node).__name__} ``{node.label}``"
+                        f"out-connector ``{conn}`` has {count} edges (max 1)"
+                    )
     return None
 
 
@@ -175,6 +191,7 @@ def mask_connectors_are_bool(scope: SDFG | SDFGState) -> str | None:
     ``_mask``) defined over a boolean tile.
     """
     import dace.dtypes as dtypes
+
     for sd, state in _iter_states(scope):
         for edge in state.edges():
             if edge.dst_conn != "_mask":
@@ -186,9 +203,11 @@ def mask_connectors_are_bool(scope: SDFG | SDFGState) -> str | None:
             if desc is None:
                 continue
             if desc.dtype != dtypes.bool_:
-                return (f"{sd.name}.{state.label}: ``_mask`` connector on "
-                        f"{type(edge.dst).__name__} ``{edge.dst.label}`` is fed by "
-                        f"``{mem.data}`` of dtype {desc.dtype} (must be bool)")
+                return (
+                    f"{sd.name}.{state.label}: ``_mask`` connector on "
+                    f"{type(edge.dst).__name__} ``{edge.dst.label}`` is fed by "
+                    f"``{mem.data}`` of dtype {desc.dtype} (must be bool)"
+                )
     return None
 
 
@@ -202,13 +221,16 @@ def tile_mask_gen_dominates_consumers(scope: SDFG | SDFGState) -> str | None:
     of ``GenerateTileIterationMask`` (emits it in a dedicated ``_tile_mask_init`` start state).
     """
     from dace.libraries.tileops import TileMaskGen
+
     for sd, state in _iter_states(scope):
         if not any(isinstance(n, TileMaskGen) for n in state.nodes()):
             continue
         if state is not sd.start_block:
-            return (f"{sd.name}.{state.label}: TileMaskGen lives outside the SDFG start block "
-                    f"``{sd.start_block.label}`` -- the iteration mask producer must dominate every "
-                    f"masked consumer (emit it in the ``_tile_mask_init`` start state)")
+            return (
+                f"{sd.name}.{state.label}: TileMaskGen lives outside the SDFG start block "
+                f"``{sd.start_block.label}`` -- the iteration mask producer must dominate every "
+                f"masked consumer (emit it in the ``_tile_mask_init`` start state)"
+            )
     return None
 
 
@@ -230,9 +252,11 @@ def memlet_subset_matches_descriptor(scope: SDFG | SDFGState) -> str | None:
             if len(as_range(mem.subset).size()) != len(desc.shape):
                 src = edge.src.label
                 dst = edge.dst.label
-                return (f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset rank "
-                        f"{len(as_range(mem.subset).size())} != descriptor rank {len(desc.shape)} "
-                        f"(shape {tuple(desc.shape)}) on edge {src} -> {dst}")
+                return (
+                    f"{sd.name}.{state.label}: memlet ``{mem.data}`` subset rank "
+                    f"{len(as_range(mem.subset).size())} != descriptor rank {len(desc.shape)} "
+                    f"(shape {tuple(desc.shape)}) on edge {src} -> {dst}"
+                )
     return None
 
 
@@ -242,20 +266,24 @@ def logical_binops_are_bool(scope: SDFG | SDFGState) -> str | None:
     """
     import dace.dtypes as dtypes
     from dace.libraries.tileops import TileBinop
+
     for sd, state in _iter_states(scope):
         for node in state.nodes():
             if not isinstance(node, TileBinop) or node.op not in ("&&", "||"):
                 continue
             for conn in ("_a", "_b", "_c"):
-                edges = ([e for e in state.in_edges(node) if e.dst_conn == conn] +
-                         [e for e in state.out_edges(node) if e.src_conn == conn])
+                edges = [e for e in state.in_edges(node) if e.dst_conn == conn] + [
+                    e for e in state.out_edges(node) if e.src_conn == conn
+                ]
                 for e in edges:
                     if e.data is None or e.data.data is None:
                         continue
                     desc = sd.arrays.get(e.data.data)
                     if desc is not None and desc.dtype != dtypes.bool_:
-                        return (f"{sd.name}.{state.label}: logical TileBinop ``{node.label}`` (op {node.op}) "
-                                f"connector ``{conn}`` is ``{e.data.data}`` of dtype {desc.dtype} (must be bool)")
+                        return (
+                            f"{sd.name}.{state.label}: logical TileBinop ``{node.label}`` (op {node.op}) "
+                            f"connector ``{conn}`` is ``{e.data.data}`` of dtype {desc.dtype} (must be bool)"
+                        )
     return None
 
 
@@ -293,9 +321,11 @@ def no_wcr_in_map_body(scope: SDFG | SDFGState) -> str | None:
                 # flagged. See _is_lifted_reduction_wcr.
                 if _is_lifted_reduction_wcr(sd, state, edge):
                     continue
-                return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
-                        f"``{edge.data.wcr}`` inside a map body (convert it to an explicit "
-                        f"read-modify-write via WCRToAugAssign before vectorizing)")
+                return (
+                    f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
+                    f"``{edge.data.wcr}`` inside a map body (convert it to an explicit "
+                    f"read-modify-write via WCRToAugAssign before vectorizing)"
+                )
     return None
 
 
@@ -315,7 +345,7 @@ def _reduction_chain_origin(state: SDFGState, edge: MultiConnectorEdge[Memlet]) 
         conn = cur.src_conn
         if not conn or not conn.startswith("OUT_"):
             return None
-        ins = [e for e in state.in_edges(cur.src) if e.dst_conn == "IN_" + conn[len("OUT_"):]]
+        ins = [e for e in state.in_edges(cur.src) if e.dst_conn == "IN_" + conn[len("OUT_") :]]
         if len(ins) != 1:
             return None
         cur = ins[0]
@@ -334,7 +364,7 @@ def _boundary_sink(state: SDFGState, origin: MultiConnectorEdge[Memlet]) -> Acce
 
     :returns: The sink AccessNode, or ``None`` if the chain forks or leaves through another scope.
     """
-    outs = [e for e in state.out_edges(origin.dst) if e.src_conn == "OUT_" + origin.dst_conn[len("IN_"):]]
+    outs = [e for e in state.out_edges(origin.dst) if e.src_conn == "OUT_" + origin.dst_conn[len("IN_") :]]
     if len(outs) != 1 or not isinstance(outs[0].dst, AccessNode):
         return None
     return outs[0].dst
@@ -473,9 +503,11 @@ def no_wcr_inside_nested_sdfgs(scope: SDFG | SDFGState, allow_boundary_duplicate
                 continue
             if allow_boundary_duplicates and boundary_carries_same_wcr(sd, edge):
                 continue
-            return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
-                    f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "
-                    f"NSDFG -> MapExit boundary; convert in-place RMW via WCRToAugAssign before tiling)")
+            return (
+                f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
+                f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "
+                f"NSDFG -> MapExit boundary; convert in-place RMW via WCRToAugAssign before tiling)"
+            )
     return None
 
 
@@ -494,6 +526,7 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
     orchestrator refuses the kernel and leaves it correct + scalar instead.
     """
     import dace.data as data
+
     for _state, nsdfg_node, _map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
@@ -509,10 +542,12 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> s
                     desc = inner_sdfg.arrays.get(edge.data.data)
                     if not isinstance(desc, data.Array) or tuple(desc.shape) != map_widths:
                         continue
-                    return (f"{inner_sdfg.name}.{state.label}: tasklet ``{node.label}`` still holds "
-                            f"the scalar body ``{node.code.as_string.strip()!r}`` while its operand "
-                            f"``{edge.data.data}`` was widened to a {map_widths} tile "
-                            f"(ConvertTaskletsToTileOps could not classify it)")
+                    return (
+                        f"{inner_sdfg.name}.{state.label}: tasklet ``{node.label}`` still holds "
+                        f"the scalar body ``{node.code.as_string.strip()!r}`` while its operand "
+                        f"``{edge.data.data}`` was widened to a {map_widths} tile "
+                        f"(ConvertTaskletsToTileOps could not classify it)"
+                    )
     return None
 
 
@@ -527,6 +562,7 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
     Refuse the kernel instead of handing back a silently wrong per-lane value.
     """
     import dace.data as data
+
     for _state, nsdfg_node, _map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
         for state in inner_sdfg.states():
@@ -549,9 +585,11 @@ def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: tuple[int, ...])
                     except (TypeError, ValueError):
                         collapsed = False
                     if collapsed:
-                        return (f"{inner_sdfg.name}.{state.label}: nested SDFG ``{node.label}`` reads/writes "
-                                f"tile ``{edge.data.data}`` {map_widths} through single-element connector "
-                                f"``{conn}`` -- it would run once at the tile base (lane 0 for all lanes)")
+                        return (
+                            f"{inner_sdfg.name}.{state.label}: nested SDFG ``{node.label}`` reads/writes "
+                            f"tile ``{edge.data.data}`` {map_widths} through single-element connector "
+                            f"``{conn}`` -- it would run once at the tile base (lane 0 for all lanes)"
+                        )
     return None
 
 
@@ -562,9 +600,10 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
     """
     import dace.data as data
     from dace.transformation.passes.vectorization.utils.tile_access import data_is_lane_indexed
+
     for _state, nsdfg_node, map_entry, map_widths in _tile_tagged_bodies(sdfg, widths):
         inner_sdfg = nsdfg_node.sdfg
-        iter_vars = tuple(map_entry.map.params[-len(map_widths):])
+        iter_vars = tuple(map_entry.map.params[-len(map_widths) :])
         for name, desc in inner_sdfg.arrays.items():
             if not desc.transient:
                 continue
@@ -589,8 +628,10 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: tuple[int, ...]) -> 
             # it alone, and flagging it here would contradict the pass this invariant guards.
             if data_is_lane_indexed(inner_sdfg, name, iter_vars):
                 continue
-            return (f"{inner_sdfg.name}: lane-dep transient ``{name}`` has shape {shape} "
-                    f"!= widths {map_widths} (expected widened or Scalar bridge)")
+            return (
+                f"{inner_sdfg.name}: lane-dep transient ``{name}`` has shape {shape} "
+                f"!= widths {map_widths} (expected widened or Scalar bridge)"
+            )
     return None
 
 
@@ -598,6 +639,7 @@ def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: tuple[int, ...]) ->
     """Every TILE_MAIN map has its tiled dim steps == its own :func:`map_tile_widths`."""
     from dace.libraries.tileops.alignment import TILE_MAIN_MARKER
     from dace.transformation.passes.vectorization.utils.map_predicates import map_tile_widths
+
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
@@ -608,10 +650,12 @@ def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: tuple[int, ...]) ->
                 if len(node.map.range) < K:
                     continue
                 map_widths = map_tile_widths(state, node, tuple(widths))
-                tail_steps = tuple(rng[2] for rng in node.map.range[len(node.map.range) - len(map_widths):])
+                tail_steps = tuple(rng[2] for rng in node.map.range[len(node.map.range) - len(map_widths) :])
                 if tuple(str(s) for s in tail_steps) != tuple(str(s) for s in map_widths):
-                    return (f"{sd.name}.{state.label}: TILE_MAIN map ``{node.map.label}`` tiled steps "
-                            f"{tail_steps} != expected widths {map_widths}")
+                    return (
+                        f"{sd.name}.{state.label}: TILE_MAIN map ``{node.map.label}`` tiled steps "
+                        f"{tail_steps} != expected widths {map_widths}"
+                    )
     return None
 
 
@@ -630,21 +674,24 @@ def no_strided_map_param_in_surviving_condition(sdfg: SDFG, K: int) -> str | Non
     :param K: number of tiled (innermost) dims.
     :returns: an error string, or ``None`` when the invariant holds.
     """
-    from dace.transformation.passes.vectorization.utils.map_predicates import (map_body_has_tiled_param_dependent_branch
-                                                                               )
+    from dace.transformation.passes.vectorization.utils.map_predicates import map_body_has_tiled_param_dependent_branch
+
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
                 if not isinstance(node, MapEntry) or len(node.map.range) < K or len(node.map.params) < K:
                     continue
-                strided = tuple(param for param, (_, _, step) in zip(node.map.params[-K:], node.map.range[-K:])
-                                if str(step) != '1')
+                strided = tuple(
+                    param for param, (_, _, step) in zip(node.map.params[-K:], node.map.range[-K:]) if str(step) != "1"
+                )
                 if not strided:
                     continue  # not strided: nothing was rebound to a tile base
                 if map_body_has_tiled_param_dependent_branch(state, node, strided):
-                    return (f"{sd.name}.{state.label}: strided map ``{node.map.label}`` still holds a "
-                            f"conditional guarding its own param -- that guard is evaluated once per "
-                            f"tile, not per lane")
+                    return (
+                        f"{sd.name}.{state.label}: strided map ``{node.map.label}`` still holds a "
+                        f"conditional guarding its own param -- that guard is evaluated once per "
+                        f"tile, not per lane"
+                    )
     return None
 
 
@@ -688,11 +735,15 @@ def lane_varying_interstate_guard(sdfg: SDFG, widths: tuple[int, ...]) -> tuple[
                     continue
                 keys = sorted(k for e in assigned for k in e.data.assignments)
                 if keys:
-                    return block, (f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
-                                   f"{desc.shape} assigns {keys} on an interstate edge -- one symbol cannot "
-                                   f"hold a per-lane value, so the guard runs for every lane")
-                return block, (f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
-                               f"{desc.shape} survived branch lowering -- a scalar guard over a lane buffer")
+                    return block, (
+                        f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
+                        f"{desc.shape} assigns {keys} on an interstate edge -- one symbol cannot "
+                        f"hold a per-lane value, so the guard runs for every lane"
+                    )
+                return block, (
+                    f"{block.sdfg.name}.{block.label}: conditional on widened ``{name}`` "
+                    f"{desc.shape} survived branch lowering -- a scalar guard over a lane buffer"
+                )
     return None
 
 
@@ -712,12 +763,16 @@ def _iter_states(scope: SDFG | SDFGState) -> Iterator[tuple[SDFG, SDFGState]]:
     raise TypeError(f"Invariant scope must be SDFG or SDFGState, got {type(scope).__name__}")
 
 
-def _tile_tagged_bodies(sdfg: SDFG,
-                        widths: tuple[int, ...]) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry, tuple[int, ...]]]:
+def _tile_tagged_bodies(
+    sdfg: SDFG, widths: tuple[int, ...]
+) -> Iterator[tuple[SDFGState, NestedSDFG, MapEntry, tuple[int, ...]]]:
     """Yield ``(state, nsdfg_node, map_entry, map_widths)`` for every tile-tagged body NSDFG."""
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                       TILE_K1_TAIL_MARKER)
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+        SCALAR_TAIL_MARKER,
+        TILE_K1_TAIL_MARKER,
+    )
     from dace.transformation.passes.vectorization.utils.map_predicates import is_innermost_map, map_tile_widths
+
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():

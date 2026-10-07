@@ -14,6 +14,7 @@ physical tiling.
 Source: J. D. McCalpin, "Memory Bandwidth and Machine Balance in Current High Performance
 Computers," IEEE TCCA Newsletter, 1995 (STREAM Triad); SC26 layout paper (fragmentation parameter).
 """
+
 import numpy
 import dace
 

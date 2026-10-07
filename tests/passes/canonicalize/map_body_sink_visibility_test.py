@@ -17,6 +17,7 @@ canonicalization pass must then do. Two outcomes are correct and the tests disti
   emptied walk. The refusal loses a lift and never produces a wrong answer, so the walk stays; the
   tests here pin the refusal so a later relaxation of the guard cannot turn it dangerous silently.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -49,11 +50,13 @@ SCRATCH = "zanew_0"
 
 def plant_write_only_scratch(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, name: str = SCRATCH) -> None:
     """Give ``map_entry``'s scope a transient Register scalar that is written and never read."""
-    sdfg.add_scalar(name,
-                    dace.float64,
-                    transient=True,
-                    storage=dtypes.StorageType.Register,
-                    lifetime=dtypes.AllocationLifetime.Scope)
+    sdfg.add_scalar(
+        name,
+        dace.float64,
+        transient=True,
+        storage=dtypes.StorageType.Register,
+        lifetime=dtypes.AllocationLifetime.Scope,
+    )
     writer = state.add_tasklet(f"write_{name}", {}, {f"{name}_out"}, f"{name}_out = 0.0")
     state.add_edge(map_entry, None, writer, None, Memlet())
     state.add_edge(writer, f"{name}_out", state.add_access(name), None, Memlet(f"{name}[0]"))
@@ -61,8 +64,13 @@ def plant_write_only_scratch(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapE
 
 def two_param_map_entry(sdfg: SDFG) -> Tuple[SDFGState, nodes.MapEntry]:
     """The single two-parameter map of a freshly parsed kernel, with its state."""
-    found = [(st, n) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
-             if isinstance(n, nodes.MapEntry) and len(n.map.params) == 2]
+    found = [
+        (st, n)
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.MapEntry) and len(n.map.params) == 2
+    ]
     assert len(found) == 1, f"expected one two-parameter map, got {len(found)}"
     return found[0]
 
@@ -138,11 +146,9 @@ def map_of_sibling_nsdfgs(siblings: int, with_scratch: bool) -> Tuple[SDFG, SDFG
     for index, out_name in enumerate(("B", "C")[:siblings]):
         nested = state.add_nested_sdfg(increment_leaf(f"leaf{index}"), {"x": None}, {"y": None}, {})
         state.add_memlet_path(read, entry, nested, dst_conn="x", memlet=Memlet("A[i]"))
-        state.add_memlet_path(nested,
-                              exit_node,
-                              state.add_access(out_name),
-                              src_conn="y",
-                              memlet=Memlet(f"{out_name}[i]"))
+        state.add_memlet_path(
+            nested, exit_node, state.add_access(out_name), src_conn="y", memlet=Memlet(f"{out_name}[i]")
+        )
     if with_scratch:
         plant_write_only_scratch(sdfg, state, entry)
     convert_legacy_nested_sdfgs(sdfg)
@@ -178,8 +184,9 @@ N = dace.symbol("N")
 
 
 @dace.program
-def polybench_symm(C: dace.float64[M, N], A: dace.float64[M, M], B: dace.float64[M, N], alpha: dace.float64[1],
-                   beta: dace.float64[1]):
+def polybench_symm(
+    C: dace.float64[M, N], A: dace.float64[M, M], B: dace.float64[M, N], alpha: dace.float64[1], beta: dace.float64[1]
+):
     """The hand-written polybench ``symm`` nest ``LoopToSymm`` is built to recognize."""
 
     @dace.mapscope
@@ -271,8 +278,9 @@ def test_a_write_only_scratch_scalar_is_a_map_body_node():
     scratch = next(n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == SCRATCH)
     assert state.out_edges(scratch) == [], "the planted scratch must be the sink shape that empties the walk"
     assert body_node_names(state, entry) == ["scale", "write_zanew_0", "zanew_0"]
-    assert state.all_nodes_between(entry, state.exit_node(entry)) == set(), \
+    assert state.all_nodes_between(entry, state.exit_node(entry)) == set(), (
         "the reachability walk is expected to keep discarding this body -- that is the bug being worked around"
+    )
 
 
 def test_rebasing_a_map_beside_a_write_only_scratch_shifts_the_body_reads():
@@ -347,8 +355,9 @@ def test_a_lone_nested_sdfg_beside_a_write_only_scratch_is_left_alone():
 
 
 @pytest.mark.parametrize("scratch_in_body, expected_lifts, expected_symms", [(False, 1, 1), (True, None, 0)])
-def test_symm_nest_lifts_only_while_its_body_holds_the_nested_sdfg_alone(scratch_in_body: bool, expected_lifts,
-                                                                         expected_symms: int):
+def test_symm_nest_lifts_only_while_its_body_holds_the_nested_sdfg_alone(
+    scratch_in_body: bool, expected_lifts, expected_symms: int
+):
     """``LoopToSymm`` guards on a body of exactly one node, so the scratch costs the lift. Fail-safe
     by construction: the nest is left standing and still computes symm, never lifted wrongly."""
     sdfg = symm_nest(scratch_in_body)
@@ -362,7 +371,8 @@ def test_symm_nest_lifts_only_while_its_body_holds_the_nested_sdfg_alone(scratch
 
 @pytest.mark.parametrize("scratch_in_body, expected_lifts, expected_invs", [(False, 1, 1), (True, None, 0)])
 def test_solve_against_identity_lifts_only_while_the_identity_map_holds_its_tasklet_alone(
-        scratch_in_body: bool, expected_lifts, expected_invs: int):
+    scratch_in_body: bool, expected_lifts, expected_invs: int
+):
     """``LiftInv`` guards on an identity map of exactly one tasklet, so the scratch costs the lift.
     Fail-safe: the Solve and its identity construction survive untouched."""
     sdfg = solve_against_identity(scratch_in_body)

@@ -2,13 +2,21 @@
 """Tests for the layout timing pass: barrier the copy-in/copy-out relayout states with an empty
 side-effect tasklet (so StateFusion cannot merge them into the compute) and Timer-instrument the
 compute region, so a run times the compute alone -- excluding the one-time relayout copies."""
+
 import numpy
 import dace
 
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
-from dace.transformation.layout.timing import (InsertLayoutTiming, is_copy_state, add_fusion_barrier, time_compute,
-                                               instrumentation_for, state_runs_on_gpu, barrier_relayout_states,
-                                               has_fusion_barrier)
+from dace.transformation.layout.timing import (
+    InsertLayoutTiming,
+    is_copy_state,
+    add_fusion_barrier,
+    time_compute,
+    instrumentation_for,
+    state_runs_on_gpu,
+    barrier_relayout_states,
+    has_fusion_barrier,
+)
 
 N = dace.symbol("N")
 
@@ -46,6 +54,7 @@ def test_insert_timing_instruments_compute_only():
 
 def test_barrier_prevents_state_fusion():
     from dace.transformation.interstate import StateFusion
+
     sdfg = _permuted()
     InsertLayoutTiming().apply_pass(sdfg, {})
     before = sdfg.number_of_nodes()
@@ -196,10 +205,15 @@ def test_state_runs_on_gpu_sees_nested_sdfg_maps():
     inner = dace.SDFG("inner_gpu")
     inner.add_array("a", [16], dace.float64)
     istate = inner.add_state("i", is_start_block=True)
-    istate.add_mapped_tasklet("m", {"k": "0:16"}, {"__i": dace.Memlet("a[k]")},
-                              "__o = __i * 2.0", {"__o": dace.Memlet("a[k]")},
-                              schedule=dace.ScheduleType.GPU_Device,
-                              external_edges=True)
+    istate.add_mapped_tasklet(
+        "m",
+        {"k": "0:16"},
+        {"__i": dace.Memlet("a[k]")},
+        "__o = __i * 2.0",
+        {"__o": dace.Memlet("a[k]")},
+        schedule=dace.ScheduleType.GPU_Device,
+        external_edges=True,
+    )
 
     outer = dace.SDFG("outer_host")
     outer.add_array("a", [16], dace.float64)
@@ -224,6 +238,7 @@ def test_rep_without_fresh_report_is_a_hard_error():
     state = sdfg.add_state("s", is_start_block=True)
     state.instrument = dace.InstrumentationType.Timer
     from dace.transformation.layout.timing import time_compute_stats
+
     with pytest.raises(RuntimeError, match="no fresh instrumentation report"):
         time_compute_stats(sdfg, lambda _: None, reps=2, warmup=0)  # the run never executes the SDFG
 

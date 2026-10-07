@@ -1,13 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for the layout algebra (dace.libraries.layout.algebra)."""
+
 import sympy
 
 from dace.symbolic import int_ceil, symstr
-from dace.libraries.layout.algebra import (Digit, Permute, Block, Unblock, Pad, Shuffle, Zip, Unzip, identity_map,
-                                           compose_ops, simplify_ops, is_identity)
+from dace.libraries.layout.algebra import (
+    Digit,
+    Permute,
+    Block,
+    Unblock,
+    Pad,
+    Shuffle,
+    Zip,
+    Unzip,
+    identity_map,
+    compose_ops,
+    simplify_ops,
+    is_identity,
+)
 
-N = sympy.Symbol('N', nonnegative=True, integer=True)
-M = sympy.Symbol('M', nonnegative=True, integer=True)
+N = sympy.Symbol("N", nonnegative=True, integer=True)
+M = sympy.Symbol("M", nonnegative=True, integer=True)
 
 
 # compose (semantics) ---------------------------
@@ -33,7 +46,7 @@ def test_block_then_unblock_map_roundtrip_divisible():
     n = 128
     m = compose_ops([Block(0, 16), Unblock(0, 16)], shape=[n])
     # ceil(128/16)*16 == 128 exactly.
-    assert m.digits == (Digit(0, 1, 128), )
+    assert m.digits == (Digit(0, 1, 128),)
 
 
 # optimizer (rewrite rules) ---------------------------
@@ -64,14 +77,14 @@ def test_pad_fuses_and_cancels():
 
 
 def test_shuffle_inverse_cancels():
-    assert is_identity([Shuffle(0, 'rcm'), Shuffle(0, 'rcm', inverted=True)])
-    assert not is_identity([Shuffle(0, 'rcm'), Shuffle(0, 'other', inverted=True)])
+    assert is_identity([Shuffle(0, "rcm"), Shuffle(0, "rcm", inverted=True)])
+    assert not is_identity([Shuffle(0, "rcm"), Shuffle(0, "other", inverted=True)])
 
 
 def test_zip_unzip_cancels():
-    assert is_identity([Zip(('re', 'im')), Unzip(('re', 'im'))])
-    assert is_identity([Unzip(('re', 'im')), Zip(('re', 'im'))])
-    assert not is_identity([Zip(('re', 'im'))])
+    assert is_identity([Zip(("re", "im")), Unzip(("re", "im"))])
+    assert is_identity([Unzip(("re", "im")), Zip(("re", "im"))])
+    assert not is_identity([Zip(("re", "im"))])
 
 
 def test_mixed_sequence_reduces():
@@ -94,12 +107,12 @@ def test_block_extent_divides_the_whole_numerator():
     # exact either way), so assert on the emitted code.
     extent = compose_ops([Block(0, 16)], shape=[N + 1]).digits[0].extent
     assert extent == int_ceil(N + 1, 16)
-    assert symstr(extent, cpp_mode=True) == '(int_ceil(N + 1, 16))'
+    assert symstr(extent, cpp_mode=True) == "(int_ceil(N + 1, 16))"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     for name, fn in list(globals().items()):
-        if name.startswith('test_') and callable(fn):
+        if name.startswith("test_") and callable(fn):
             fn()
             print(f"ok  {name}")
     print("algebra tests PASS")

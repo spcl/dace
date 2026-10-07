@@ -4,14 +4,12 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, validate_integer_descriptor,
-                                           expanded_input_connectors)
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, validate_integer_descriptor, expanded_input_connectors
 from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
 class ExpandSendMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -26,7 +24,7 @@ class ExpandSendMPI(ExpandTransformation):
             code = f"""static MPI_Datatype newtype;
                         static int init=1;
                         if (init) {{
-                           MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
+                           MPI_Type_vector({ddt["count"]}, {ddt["blocklen"]}, {ddt["stride"]}, {ddt["oldtype"]}, &newtype);
                            MPI_Type_commit(&newtype);
                            init=0;
                         }}
@@ -42,18 +40,19 @@ class ExpandSendMPI(ExpandTransformation):
             code += f"""// MPI_Type_free(&newtype);
             """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+            side_effects=True,
+        )
         return tasklet
 
 
 @dace.library.node
 class Send(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandSendMPI,
@@ -61,10 +60,10 @@ class Send(MPINode):
     default_implementation = "MPI"
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category="Semantics")
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name, *args, inputs=OrderedSet(('_buffer', '_dest', '_tag')), outputs={}, **kwargs)
+        super().__init__(name, *args, inputs=OrderedSet(("_buffer", "_dest", "_tag")), outputs={}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -84,12 +83,12 @@ class Send(MPINode):
             if e.dst_conn == "_tag":
                 tag = sdfg.arrays[e.data.data]
 
-        validate_integer_descriptor(dest, 'Destination')
-        validate_integer_descriptor(tag, 'Tag')
+        validate_integer_descriptor(dest, "Destination")
+        validate_integer_descriptor(tag, "Tag")
 
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_buffer':
+            if dst_conn == "_buffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
                 # compute buffer offset

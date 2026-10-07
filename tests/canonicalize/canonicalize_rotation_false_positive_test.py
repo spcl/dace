@@ -14,13 +14,14 @@ These assert numerics against a sequential reference, so they are green today (n
 them) and go red the moment a rotation pass over-fires. That is the point: a guard is only worth
 having if it fails when the guard it guards is breached.
 """
+
 import numpy as np
 import pytest
 
 import dace
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 _LEN = 64
 
 
@@ -53,7 +54,7 @@ def test_accumulation_is_not_a_rotation():
         want[i] = (b[i] + x) * 0.5
         x = x + b[i]
     # A rotation rewrite would substitute b[i-1] for x, computing (b[i]+b[i-1])*0.5.
-    assert np.allclose(got, want, rtol=0, atol=0), 'an accumulation was rewritten as a rotation'
+    assert np.allclose(got, want, rtol=0, atol=0), "an accumulation was rewritten as a rotation"
 
 
 # read AFTER the write: x is b[i], not b[i-1]
@@ -73,7 +74,7 @@ def test_read_after_write_is_not_shifted():
     _run(read_after_write, a=got, b=b.copy())
     # Off by one iteration if the rewrite assumes read-before-write.
     want = (b + b) * 0.5
-    assert np.allclose(got, want, rtol=0, atol=0), 'a post-update read was shifted by one iteration'
+    assert np.allclose(got, want, rtol=0, atol=0), "a post-update read was shifted by one iteration"
 
 
 # the update is CONDITIONAL: the carried value is the last taken write, not b[i-1]
@@ -98,7 +99,7 @@ def test_conditional_update_is_not_a_rotation():
         want[i] = (b[i] + x) * 0.5
         if b[i] > 8.0:
             x = b[i]
-    assert np.allclose(got, want, rtol=0, atol=0), 'a conditionally-updated carry was rewritten'
+    assert np.allclose(got, want, rtol=0, atol=0), "a conditionally-updated carry was rewritten"
 
 
 # the rotated source IS the written array: substitution changes which version is read
@@ -124,7 +125,7 @@ def test_in_place_rotation_reads_the_pre_write_version():
         want[i] = (want[i] + x) * 0.5
         x = old
     # Substituting a[i-1] would read the value iteration i-1 WROTE, not the one it read.
-    assert np.allclose(got, want, rtol=0, atol=0), 'in-place carry read the post-write version'
+    assert np.allclose(got, want, rtol=0, atol=0), "in-place carry read the post-write version"
 
 
 # the carry escapes the loop: deleting the update must still leave its final value
@@ -143,7 +144,7 @@ def test_carry_live_after_loop_is_materialised():
     b = np.arange(_LEN, dtype=np.float64) + 1.0
     got, out = np.zeros(_LEN), np.zeros(1)
     _run(carry_escapes, a=got, b=b.copy(), out=out)
-    assert out[0] == b[_LEN - 1], 'the carried value was not materialised after the loop'
+    assert out[0] == b[_LEN - 1], "the carried value was not materialised after the loop"
 
 
 # a genuine rotation must NOT be lifted to an accumulation (WCR)
@@ -163,8 +164,8 @@ def test_genuine_rotation_is_not_lifted_to_wcr():
     wcrs = [
         e.data.wcr for state in sdfg.states() for e in state.edges() if e.data is not None and e.data.wcr is not None
     ]
-    assert not wcrs, f'rotation lifted to a reduction: {wcrs}'
+    assert not wcrs, f"rotation lifted to a reduction: {wcrs}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

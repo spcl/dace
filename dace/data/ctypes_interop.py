@@ -4,6 +4,7 @@ Ctypes interoperability for data descriptors.
 
 This module contains functions for converting data descriptors to ctypes.
 """
+
 import ctypes
 import warnings
 
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from dace.data import Data
 
 
-def _owns_its_buffer_through_a_proxy(arg: np.ndarray, argtype: 'Data') -> bool:
+def _owns_its_buffer_through_a_proxy(arg: np.ndarray, argtype: "Data") -> bool:
     """Whether ``arg`` is the sole occupant of the buffer it reports as its base, laid out the way
     ``argtype`` declares.
 
@@ -42,7 +43,7 @@ def _owns_its_buffer_through_a_proxy(arg: np.ndarray, argtype: 'Data') -> bool:
         return False
 
 
-def contradicts_packed_order(arg: np.ndarray, argtype: 'Data') -> bool:
+def contradicts_packed_order(arg: np.ndarray, argtype: "Data") -> bool:
     """Whether ``arg`` is packed in the other memory order than the packed order ``argtype`` declares.
 
     The call hands the SDFG only the data pointer, and the SDFG walks it with the DESCRIPTOR's
@@ -56,8 +57,10 @@ def contradicts_packed_order(arg: np.ndarray, argtype: 'Data') -> bool:
     # A C array of shape (5, n) bound to a Fortran-strided (n, 5) descriptor is the same memory, the
     # usual Fortran-interop spelling: only an array of the descriptor's own shape is read transposed.
     # A concrete extent that differs says the caller already transposed the shape.
-    if any(not symbolic.issymbolic(declared) and int(declared) != extent
-           for extent, declared in zip(arg.shape, argtype.shape)):
+    if any(
+        not symbolic.issymbolic(declared) and int(declared) != extent
+        for extent, declared in zip(arg.shape, argtype.shape)
+    ):
         return False
     only_fortran = arg.flags.f_contiguous and not arg.flags.c_contiguous
     only_c = arg.flags.c_contiguous and not arg.flags.f_contiguous
@@ -68,13 +71,15 @@ def contradicts_packed_order(arg: np.ndarray, argtype: 'Data') -> bool:
     return False
 
 
-def make_ctypes_argument(arg: Any,
-                         argtype: 'Data',
-                         name: Optional[str] = None,
-                         allow_views: Optional[bool] = None,
-                         symbols: Optional[Dict[str, Any]] = None,
-                         callback_retval_references: Optional[List[Any]] = None,
-                         argument_to_pyobject: Optional[Dict[Any, Any]] = None) -> Any:
+def make_ctypes_argument(
+    arg: Any,
+    argtype: "Data",
+    name: Optional[str] = None,
+    allow_views: Optional[bool] = None,
+    symbols: Optional[Dict[str, Any]] = None,
+    callback_retval_references: Optional[List[Any]] = None,
+    argument_to_pyobject: Optional[Dict[Any, Any]] = None,
+) -> Any:
     """
     Converts a given argument to the expected ``ctypes`` type for passing to compiled SDFG functions.
 
@@ -97,10 +102,10 @@ def make_ctypes_argument(arg: Any,
     from dace.data.core import Array, ContainerArray, Structure
 
     if allow_views is None:
-        no_view_arguments = not config.Config.get_bool('compiler', 'allow_view_arguments')
+        no_view_arguments = not config.Config.get_bool("compiler", "allow_view_arguments")
     else:
         no_view_arguments = not allow_views
-    a = name or '<unknown>'
+    a = name or "<unknown>"
 
     result = arg
     is_array = dtypes.is_array(arg)
@@ -117,17 +122,21 @@ def make_ctypes_argument(arg: Any,
             pass
         elif isinstance(arg, str):
             # Cast to bytes
-            result = ctypes.c_char_p(arg.encode('utf-8'))
+            result = ctypes.c_char_p(arg.encode("utf-8"))
         else:
             raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
     elif is_array and not is_dtArray:
         # GPU scalars and return values are pointers, so this is fine
-        if argtype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
+        if argtype.storage != dtypes.StorageType.GPU_Global and not a.startswith("__return"):
             raise TypeError(f'Passing an array to a scalar (type {argtype.dtype.ctype}) in argument "{a}"')
-    elif (is_dtArray and is_ndarray and not isinstance(argtype, ContainerArray)
-          and argtype.dtype.as_numpy_dtype() != arg.dtype):
+    elif (
+        is_dtArray
+        and is_ndarray
+        and not isinstance(argtype, ContainerArray)
+        and argtype.dtype.as_numpy_dtype() != arg.dtype
+    ):
         # Make exception for vector types
-        if (isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype):
+        if isinstance(argtype.dtype, dtypes.vector) and argtype.dtype.vtype.as_numpy_dtype() == arg.dtype:
             pass
         else:
             # Warn and reinterpret-cast.  Auto-casting here is unsafe
@@ -140,23 +149,34 @@ def make_ctypes_argument(arg: Any,
             # the bindings wrapper which does the cast at a layer that
             # knows intent and does proper copy-in/copy-out.
             print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {argtype.dtype.type.__name__} array')
-    elif (is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments
-          and not _owns_its_buffer_through_a_proxy(arg, argtype)):
-        raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
-                        'programs is not allowed in order to retain analyzability. '
-                        'Please make a copy with "numpy.copy(...)". If you know what '
-                        'you are doing, you can override this error in the '
-                        'configuration by setting compiler.allow_view_arguments '
-                        'to True.')
-    elif (not isinstance(argtype, (Array, Structure)) and not isinstance(argtype.dtype, dtypes.callback)
-          and not isinstance(arg, (argtype.dtype.type, sp.Basic))
-          and not (isinstance(arg, symbolic.symbol) and arg.dtype == argtype.dtype)):
+    elif (
+        is_dtArray
+        and is_ndarray
+        and arg.base is not None
+        and not "__return" in a
+        and no_view_arguments
+        and not _owns_its_buffer_through_a_proxy(arg, argtype)
+    ):
+        raise TypeError(
+            f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
+            "programs is not allowed in order to retain analyzability. "
+            'Please make a copy with "numpy.copy(...)". If you know what '
+            "you are doing, you can override this error in the "
+            "configuration by setting compiler.allow_view_arguments "
+            "to True."
+        )
+    elif (
+        not isinstance(argtype, (Array, Structure))
+        and not isinstance(argtype.dtype, dtypes.callback)
+        and not isinstance(arg, (argtype.dtype.type, sp.Basic))
+        and not (isinstance(arg, symbolic.symbol) and arg.dtype == argtype.dtype)
+    ):
         is_int = isinstance(arg, int)
         if is_int and argtype.dtype.type == np.int64:
             pass
-        elif (is_int and argtype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
+        elif is_int and argtype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1:
             pass
-        elif (is_int and argtype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
+        elif is_int and argtype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1:
             pass
         elif isinstance(arg, float) and argtype.dtype.type == np.float64:
             pass
@@ -167,17 +187,19 @@ def make_ctypes_argument(arg: Any,
                 result = ctypes.c_char_p(None)
             else:
                 # Cast to bytes
-                result = ctypes.c_char_p(arg.encode('utf-8'))
+                result = ctypes.c_char_p(arg.encode("utf-8"))
         else:
             warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {argtype.dtype.type}')
             result = argtype.dtype.type(arg)
 
     if is_dtArray and is_ndarray and contradicts_packed_order(arg, argtype):
-        order = 'Fortran' if arg.flags.f_contiguous else 'C'
-        raise TypeError(f'Passing a {order}-ordered array to argument "{a}", whose descriptor declares the '
-                        f'other memory order (strides {tuple(argtype.strides)}): the SDFG would read it '
-                        'with the wrong strides. Convert it with "numpy.ascontiguousarray(...)" or '
-                        '"numpy.asfortranarray(...)" to match the descriptor.')
+        order = "Fortran" if arg.flags.f_contiguous else "C"
+        raise TypeError(
+            f'Passing a {order}-ordered array to argument "{a}", whose descriptor declares the '
+            f"other memory order (strides {tuple(argtype.strides)}): the SDFG would read it "
+            'with the wrong strides. Convert it with "numpy.ascontiguousarray(...)" or '
+            '"numpy.asfortranarray(...)" to match the descriptor.'
+        )
 
     # Call a wrapper function to make NumPy arrays from pointers.
     if isinstance(argtype.dtype, dtypes.callback):

@@ -15,7 +15,8 @@ class CarrierIndex:
     ``node_states`` holds the state of each access node and ``edge_sources`` the source block of each interstate
     edge reading the name, both in the order a walk of ``all_states`` / ``all_interstate_edges`` meets them. Asking
     the walk once per container made the check quadratic in the SDFG size."""
-    __slots__ = ('node_states', 'edge_sources')
+
+    __slots__ = ("node_states", "edge_sources")
 
     def __init__(self, sdfg: SDFG) -> None:
         self.node_states: Dict[str, List[SDFGState]] = defaultdict(list)
@@ -34,7 +35,7 @@ class ScalarFission(ppl.Pass):
     Fission transient scalars or arrays of size 1 that are dominated by a write into separate data containers.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -180,7 +181,7 @@ class ScalarFission(ppl.Pass):
         return results
 
     def report(self, pass_retval: Any) -> Optional[str]:
-        return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+        return f"Renamed {len(pass_retval)} scalars: {pass_retval}."
 
     @staticmethod
     def is_wcr_write(state: SDFGState, node: nd.AccessNode) -> bool:
@@ -235,11 +236,13 @@ class ScalarFission(ppl.Pass):
                 for conn in n.in_connectors.keys() & n.out_connectors.keys():
                     in_arrays = {
                         e.data.data
-                        for e in state.in_edges(n) if e.dst_conn == conn and e.data is not None and e.data.data
+                        for e in state.in_edges(n)
+                        if e.dst_conn == conn and e.data is not None and e.data.data
                     }
                     out_arrays = {
                         e.data.data
-                        for e in state.out_edges(n) if e.src_conn == conn and e.data is not None and e.data.data
+                        for e in state.out_edges(n)
+                        if e.src_conn == conn and e.data is not None and e.data.data
                     }
                     carried |= in_arrays & out_arrays
         return carried
@@ -304,12 +307,9 @@ class ScalarFission(ppl.Pass):
     #  Privatization of undominated (None-scope) loop-local scalars
     # #
 
-    def _privatize_loop_local_undominated(self,
-                                          sdfg: SDFG,
-                                          name: str,
-                                          accesses: Set[Tuple],
-                                          results,
-                                          carriers: Optional['CarrierIndex'] = None):
+    def _privatize_loop_local_undominated(
+        self, sdfg: SDFG, name: str, accesses: Set[Tuple], results, carriers: Optional["CarrierIndex"] = None
+    ):
         """Give a separate container to each loop's copy of a scalar whose reads
         are not dominated by a single write (the ``None`` write-scope), when it
         is provably loop-local. This is scalar privatization; it is legal only if
@@ -364,7 +364,7 @@ class ScalarFission(ppl.Pass):
             self._propagate_rename_into_nsdfgs(affected_states, name, newname)
             results[name].add(newname)
 
-    def _carrier_free(self, sdfg: SDFG, name: str, carriers: Optional['CarrierIndex'] = None) -> bool:
+    def _carrier_free(self, sdfg: SDFG, name: str, carriers: Optional["CarrierIndex"] = None) -> bool:
         """Whether no value of ``name`` can flow from one loop to another, or out to non-loop scope.
 
         The undominated (``None``) write scope is one equivalence class of accesses the shadow
@@ -464,10 +464,12 @@ class ScalarFission(ppl.Pass):
                 # connector rename to its edge's renamed endpoint.
                 in_match = old_name in n.in_connectors and any(
                     e.dst_conn == old_name and isinstance(e.src, nd.AccessNode) and e.src.data == new_name
-                    for e in state.in_edges(n))
+                    for e in state.in_edges(n)
+                )
                 out_match = old_name in n.out_connectors and any(
                     e.src_conn == old_name and isinstance(e.dst, nd.AccessNode) and e.dst.data == new_name
-                    for e in state.out_edges(n))
+                    for e in state.out_edges(n)
+                )
                 if not (in_match or out_match or old_name in n.symbol_mapping):
                     continue
                 # 1. Rename the connector.
@@ -582,8 +584,9 @@ class ScalarFission(ppl.Pass):
         # ONLY read is such an edge -- ``if I[i]:`` inside a loop lowers to exactly that -- reports
         # no upward-exposed use, and ``_carrier_free`` then lets the reader be privatized away from
         # its writer into a container nobody writes.
-        no_ue = no_ue and all(defn[e.src] or bdef[e.src]
-                              for e in region.edges() if any(str(sym) == name for sym in e.data.free_symbols))
+        no_ue = no_ue and all(
+            defn[e.src] or bdef[e.src] for e in region.edges() if any(str(sym) == name for sym in e.data.free_symbols)
+        )
         sinks = [b for b in blocks if region.out_degree(b) == 0]
         must_def_exit = bool(sinks) and all(defn[b] or bdef[b] for b in sinks)
         return must_def_exit, no_ue
@@ -702,7 +705,7 @@ class ArrayFission(ScalarFission):
         return desc.transient and desc.total_size != 1
 
     def report(self, pass_retval: Any) -> Optional[str]:
-        return f'Renamed {len(pass_retval)} arrays: {pass_retval}.'
+        return f"Renamed {len(pass_retval)} arrays: {pass_retval}."
 
 
 @transformation.explicit_cf_compatible

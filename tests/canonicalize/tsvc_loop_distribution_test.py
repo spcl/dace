@@ -9,6 +9,7 @@ leaves behind. The assertions are on what ``canonicalize`` PRODUCES -- how many 
 survive and which arrays each still writes -- because a numeric comparison alone passes just as
 happily on the un-split loop, and "it parallelized" is the property at stake.
 """
+
 import os
 
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -31,7 +32,7 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 def canonicalized(name):
     """``(kernel, sdfg)`` for one TSVC kernel put through the production canonicalize recipe."""
     kernel = tsvc.collect(name=name)[0]
-    sdfg = tsvc.to_sdfg(kernel, 'dist_' + name, simplify=True)
+    sdfg = tsvc.to_sdfg(kernel, "dist_" + name, simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4)
     return kernel, sdfg
 
@@ -43,7 +44,7 @@ def distributed(name):
     number and ORDER of the loops the split emitted is only readable here.
     """
     kernel = tsvc.collect(name=name)[0]
-    sdfg = tsvc.to_sdfg(kernel, 'split_' + name, simplify=True)
+    sdfg = tsvc.to_sdfg(kernel, "split_" + name, simplify=True)
     for _label, unit in _build_stages():
         unit.apply_pass(sdfg, {})
         if isinstance(unit, SplitStatements):
@@ -56,10 +57,11 @@ def split_loops_in_order(sdfg):
     """The arrays each residual loop writes, in the order the SDFG runs the loops."""
     loops = residual_loops(sdfg)
     regions = {id(loop.parent_graph): loop.parent_graph for loop in loops}
-    assert len(regions) == 1, 'the split must leave its loops in one region'
+    assert len(regions) == 1, "the split must leave its loops in one region"
     graph = next(iter(regions.values()))
     return [
-        written_arrays(blk) for blk in sdutil.dfs_topological_sort(graph, [graph.start_block])
+        written_arrays(blk)
+        for blk in sdutil.dfs_topological_sort(graph, [graph.start_block])
         if isinstance(blk, LoopRegion) and blk.loop_variable
     ]
 
@@ -84,19 +86,27 @@ def reaches(state, src, dst):
 
 def map_writing(sdfg, name):
     """``(state, entry)`` of the one top-level map storing to ``name``."""
-    found = [(state, entry) for state in sdfg.states() for entry in state.nodes() if isinstance(entry, nd.MapEntry)
-             and state.entry_node(entry) is None and name in written_arrays_of_scope(state, entry)]
-    assert len(found) == 1, f'expected exactly one top-level map writing {name}, got {len(found)}'
+    found = [
+        (state, entry)
+        for state in sdfg.states()
+        for entry in state.nodes()
+        if isinstance(entry, nd.MapEntry)
+        and state.entry_node(entry) is None
+        and name in written_arrays_of_scope(state, entry)
+    ]
+    assert len(found) == 1, f"expected exactly one top-level map writing {name}, got {len(found)}"
     return found[0]
 
 
 def written_arrays_of_scope(state, entry):
     """The non-transient arrays the map under ``entry`` stores to, sorted."""
-    return sorted({
-        e.data.data
-        for e in state.in_edges(state.exit_node(entry))
-        if e.data is not None and e.data.data is not None and not state.sdfg.arrays[e.data.data].transient
-    })
+    return sorted(
+        {
+            e.data.data
+            for e in state.in_edges(state.exit_node(entry))
+            if e.data is not None and e.data.data is not None and not state.sdfg.arrays[e.data.data].transient
+        }
+    )
 
 
 def residual_loops(sdfg):
@@ -138,7 +148,7 @@ def assert_matches_reference(kernel, sdfg):
     for n, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue
-        assert np.allclose(ref[n], got[n], equal_nan=True), f'{kernel.name}: value mismatch on {n}'
+        assert np.allclose(ref[n], got[n], equal_nan=True), f"{kernel.name}: value mismatch on {n}"
 
 
 def test_s211_reader_and_writer_of_b_become_two_maps():
@@ -148,8 +158,8 @@ def test_s211_reader_and_writer_of_b_become_two_maps():
     parallel -- but the ``b`` writer read AHEAD of its own store, which puts it first, and ``a``
     then reads the finished ``b``. Two loops, both data-parallel.
     """
-    kernel, sdfg = canonicalized('s211_d_single')
-    assert residual_loops(sdfg) == [], 's211 must distribute into two parallel maps'
+    kernel, sdfg = canonicalized("s211_d_single")
+    assert residual_loops(sdfg) == [], "s211 must distribute into two parallel maps"
     assert num_maps(sdfg) >= 2
     assert_matches_reference(kernel, sdfg)
 
@@ -161,8 +171,8 @@ def test_s261_dead_staging_does_not_keep_the_clone_sequential():
     ``c[i-1]`` the pruning left behind, staged into a transient nothing reads and held alive by
     ordering edges. With the staging gone the clone reads and writes only ``c[i]``.
     """
-    kernel, sdfg = canonicalized('s261_d_single')
-    assert residual_loops(sdfg) == [], 's261 must distribute into two parallel maps'
+    kernel, sdfg = canonicalized("s261_d_single")
+    assert residual_loops(sdfg) == [], "s261 must distribute into two parallel maps"
     assert num_maps(sdfg) >= 2
     assert_matches_reference(kernel, sdfg)
 
@@ -176,16 +186,17 @@ def test_s261_runs_the_writer_of_c_before_its_reader():
     and the reader sees the ORIGINAL ``c``, which still validates and still parallelizes. Counting
     loops or maps cannot tell the two apart, so the order is what has to be pinned.
     """
-    _kernel, split = distributed('s261_d_single')
-    assert split_loops_in_order(split) == [['c'], ['a']], 'the c loop must be emitted before the a loop'
+    _kernel, split = distributed("s261_d_single")
+    assert split_loops_in_order(split) == [["c"], ["a"]], "the c loop must be emitted before the a loop"
 
-    kernel, sdfg = canonicalized('s261_d_single')
-    assert num_maps(sdfg) == 2, 's261 must end up as exactly two maps'
-    writer_state, writer = map_writing(sdfg, 'c')
-    reader_state, reader = map_writing(sdfg, 'a')
-    assert writer_state is reader_state, 'both maps land in one state, joined by the c they share'
-    assert reaches(writer_state, writer_state.exit_node(writer), reader), \
-        'the a map must read the c the other map wrote, not the original'
+    kernel, sdfg = canonicalized("s261_d_single")
+    assert num_maps(sdfg) == 2, "s261 must end up as exactly two maps"
+    writer_state, writer = map_writing(sdfg, "c")
+    reader_state, reader = map_writing(sdfg, "a")
+    assert writer_state is reader_state, "both maps land in one state, joined by the c they share"
+    assert reaches(writer_state, writer_state.exit_node(writer), reader), (
+        "the a map must read the c the other map wrote, not the original"
+    )
     assert_matches_reference(kernel, sdfg)
 
 
@@ -203,8 +214,8 @@ def test_s241_raw_dependence_cycle_is_refused():
     take it. Turning that pass off leaves this kernel one sequential loop, which is the property
     the refusal is responsible for.
     """
-    _kernel, split = distributed('s241_d_single')
-    assert split_loops_in_order(split) == [['a', 'b']], 's241 is a dependence cycle and must stay one loop'
+    _kernel, split = distributed("s241_d_single")
+    assert split_loops_in_order(split) == [["a", "b"]], "s241 is a dependence cycle and must stay one loop"
 
 
 def test_s243_dependence_cycle_is_refused():
@@ -214,8 +225,8 @@ def test_s243_dependence_cycle_is_refused():
     so the groups are one strongly connected component however they are cut. Unlike ``s241`` this
     one is never distributed at all: the split declines it at every point in the recipe.
     """
-    _kernel, split = distributed('s243_d_single')
-    assert split_loops_in_order(split) == [['a', 'b']], 's243 is a dependence cycle and must stay one loop'
+    _kernel, split = distributed("s243_d_single")
+    assert split_loops_in_order(split) == [["a", "b"]], "s243 is a dependence cycle and must stay one loop"
 
 
 def test_s3251_three_groups_need_a_sorted_order():
@@ -226,8 +237,8 @@ def test_s3251_three_groups_need_a_sorted_order():
     of two goes first". The body is also three STATES, so the producer cones have to cross them to
     see the groups apart at all.
     """
-    kernel, sdfg = canonicalized('s3251_d_single')
-    assert residual_loops(sdfg) == [], 's3251 must distribute into parallel maps'
+    kernel, sdfg = canonicalized("s3251_d_single")
+    assert residual_loops(sdfg) == [], "s3251 must distribute into parallel maps"
     assert num_maps(sdfg) >= 2
     assert_matches_reference(kernel, sdfg)
 
@@ -240,8 +251,8 @@ def test_s2251_carried_scalar_stays_with_its_reader_and_then_rotates():
     peeled group ``b`` is no longer written, so ``s``'s producer can be re-evaluated one iteration
     back and the carry disappears.
     """
-    kernel, sdfg = canonicalized('s2251_d_single')
-    assert residual_loops(sdfg) == [], 's2251 must lose its carried scalar and fully parallelize'
+    kernel, sdfg = canonicalized("s2251_d_single")
+    assert residual_loops(sdfg) == [], "s2251 must lose its carried scalar and fully parallelize"
     assert num_maps(sdfg) >= 2
     assert_matches_reference(kernel, sdfg)
 
@@ -253,13 +264,13 @@ def test_s222_elementwise_statement_is_peeled_off_the_recurrence():
     writes, so only ``e`` keeps a sequential loop; the ``a`` statements are per-element and become a
     map. Reading ``a`` as carried too leaves no free group and refuses the split outright.
     """
-    kernel, sdfg = canonicalized('s222_d_single')
+    kernel, sdfg = canonicalized("s222_d_single")
     loops = residual_loops(sdfg)
-    assert len(loops) == 1, f's222 must keep exactly the e recurrence sequential, got {len(loops)}'
-    assert written_arrays(loops[0]) == ['e'], 'the surviving loop must be the e recurrence alone'
-    assert num_maps(sdfg) >= 1, 'the a statements must come out as a map'
+    assert len(loops) == 1, f"s222 must keep exactly the e recurrence sequential, got {len(loops)}"
+    assert written_arrays(loops[0]) == ["e"], "the surviving loop must be the e recurrence alone"
+    assert num_maps(sdfg) >= 1, "the a statements must come out as a map"
     assert_matches_reference(kernel, sdfg)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

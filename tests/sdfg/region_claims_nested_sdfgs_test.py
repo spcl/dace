@@ -23,6 +23,7 @@ nested-SDFG boundaries on purpose: a nested SDFG one level deeper was copied tog
 state that owns it, so its references are already consistent and belong to that SDFG, not to this
 one.
 """
+
 import copy
 
 import dace
@@ -36,35 +37,35 @@ from dace.transformation.passes.loop_fission import LoopFission
 def writer_sdfg(name: str) -> dace.SDFG:
     """A one-state SDFG writing a single element, for use as a nested SDFG."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array('x', [10], dace.float64)
-    state = sdfg.add_state('compute')
-    tasklet = state.add_tasklet('t', {}, {'o'}, 'o = 1.0')
-    state.add_edge(tasklet, 'o', state.add_access('x'), None, dace.Memlet('x[0]'))
+    sdfg.add_array("x", [10], dace.float64)
+    state = sdfg.add_state("compute")
+    tasklet = state.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    state.add_edge(tasklet, "o", state.add_access("x"), None, dace.Memlet("x[0]"))
     return sdfg
 
 
 def wrapping_sdfg(name: str, inner: dace.SDFG) -> dace.SDFG:
     """An SDFG whose single state holds ``inner`` as a nested SDFG."""
     sdfg = dace.SDFG(name)
-    sdfg.add_array('x', [10], dace.float64)
-    state = sdfg.add_state('s')
-    node = state.add_nested_sdfg(inner, {}, {'x'})
-    state.add_edge(node, 'x', state.add_access('x'), None, dace.Memlet('x[0:10]'))
+    sdfg.add_array("x", [10], dace.float64)
+    state = sdfg.add_state("s")
+    node = state.add_nested_sdfg(inner, {}, {"x"})
+    state.add_edge(node, "x", state.add_access("x"), None, dace.Memlet("x[0:10]"))
     return sdfg
 
 
-def detached_loop_holding(inner: dace.SDFG, array: str = 'a', label: str = 'loop') -> LoopRegion:
+def detached_loop_holding(inner: dace.SDFG, array: str = "a", label: str = "loop") -> LoopRegion:
     """A LoopRegion, not yet owned by any SDFG, whose body state holds ``inner``."""
-    loop = LoopRegion(label, 'i < 10', 'i', 'i = 0', 'i = i + 1')
-    state = loop.add_state(f'{label}_body', is_start_block=True)
-    node = state.add_nested_sdfg(inner, {}, {'x'})
-    state.add_edge(node, 'x', state.add_access(array), None, dace.Memlet(f'{array}[0:10]'))
+    loop = LoopRegion(label, "i < 10", "i", "i = 0", "i = i + 1")
+    state = loop.add_state(f"{label}_body", is_start_block=True)
+    node = state.add_nested_sdfg(inner, {}, {"x"})
+    state.add_edge(node, "x", state.add_access(array), None, dace.Memlet(f"{array}[0:10]"))
     return loop
 
 
 def host_sdfg(name: str) -> dace.SDFG:
     sdfg = dace.SDFG(name)
-    sdfg.add_array('a', [10], dace.float64)
+    sdfg.add_array("a", [10], dace.float64)
     return sdfg
 
 
@@ -87,8 +88,8 @@ def assert_homed(sdfg: dace.SDFG, expected_count: int) -> None:
 
 def test_a_region_assembled_detached_is_claimed_when_it_is_added():
     """No copy involved: a region built before it has an owner still records that owner."""
-    sdfg = host_sdfg('detached_build')
-    loop = detached_loop_holding(writer_sdfg('leaf'))
+    sdfg = host_sdfg("detached_build")
+    loop = detached_loop_holding(writer_sdfg("leaf"))
     # Built while the loop had no SDFG, so the state had none either and this is the state of it.
     assert loop.nodes()[0].nodes()[0].sdfg.parent_sdfg is None
     sdfg.add_node(loop, is_start_block=True)
@@ -97,13 +98,13 @@ def test_a_region_assembled_detached_is_claimed_when_it_is_added():
 
 def test_a_deepcopied_region_is_claimed_when_it_is_added():
     """The clone shape every loop-splitting pass uses: deepcopy an owned region, add the copy."""
-    sdfg = host_sdfg('clone')
-    loop = detached_loop_holding(writer_sdfg('leaf'))
+    sdfg = host_sdfg("clone")
+    loop = detached_loop_holding(writer_sdfg("leaf"))
     sdfg.add_node(loop, is_start_block=True)
     sdfg.validate()
 
     clone = copy.deepcopy(loop)
-    assert clone.nodes()[0].nodes()[0].sdfg.parent_sdfg is None, 'deepcopy is supposed to lose it'
+    assert clone.nodes()[0].nodes()[0].sdfg.parent_sdfg is None, "deepcopy is supposed to lose it"
     sdfg.add_node(clone, ensure_unique_name=True)
     sdfg.add_edge(loop, clone, dace.InterstateEdge())
     assert_homed(sdfg, 2)
@@ -117,14 +118,14 @@ def test_a_region_assembled_behind_a_conditional_is_claimed_through_its_branches
     its branches in a list rather than in the graph, and ``nodes()`` returns them, so the claim has
     to traverse into them.
     """
-    sdfg = host_sdfg('specialize')
-    original = detached_loop_holding(writer_sdfg('leaf'))
+    sdfg = host_sdfg("specialize")
+    original = detached_loop_holding(writer_sdfg("leaf"))
     sdfg.add_node(original, is_start_block=True)
     sdfg.validate()
 
-    conditional = ConditionalBlock('specialize')
-    for label, condition in (('par', 'N > 1'), ('seq', None)):
-        region = ControlFlowRegion(f'branch_{label}')
+    conditional = ConditionalBlock("specialize")
+    for label, condition in (("par", "N > 1"), ("seq", None)):
+        region = ControlFlowRegion(f"branch_{label}")
         region.add_node(copy.deepcopy(original), is_start_block=True, ensure_unique_name=True)
         conditional.add_branch(condition, region)
     sdfg.add_node(conditional, ensure_unique_name=True)
@@ -141,13 +142,13 @@ def test_a_conditional_claims_a_branch_it_is_handed():
     none of the generic bookkeeping runs for it. Propagating just ``sdfg`` into the branch's blocks
     left their nested SDFGs pointing at wherever they were copied from.
     """
-    sdfg = host_sdfg('branch_claim')
-    conditional = ConditionalBlock('cond')
+    sdfg = host_sdfg("branch_claim")
+    conditional = ConditionalBlock("cond")
     sdfg.add_node(conditional, is_start_block=True)
 
-    branch = ControlFlowRegion('branch')
-    branch.add_node(detached_loop_holding(writer_sdfg('leaf')), is_start_block=True)
-    conditional.add_branch(CodeBlock('True'), copy.deepcopy(branch))
+    branch = ControlFlowRegion("branch")
+    branch.add_node(detached_loop_holding(writer_sdfg("leaf")), is_start_block=True)
+    conditional.add_branch(CodeBlock("True"), copy.deepcopy(branch))
 
     assert_homed(sdfg, 1)
 
@@ -159,13 +160,13 @@ def test_a_bare_state_handed_to_a_region_is_claimed():
     exactly this shape -- ``region.add_node(copy.deepcopy(state))``, which ``MoveIfIntoLoop`` and
     ``BranchElimination`` both do -- with the nested SDFGs still naming the donor.
     """
-    donor = host_sdfg('donor')
-    state = donor.add_state('s')
-    node = state.add_nested_sdfg(writer_sdfg('leaf'), {}, {'x'})
-    state.add_edge(node, 'x', state.add_access('a'), None, dace.Memlet('a[0:10]'))
+    donor = host_sdfg("donor")
+    state = donor.add_state("s")
+    node = state.add_nested_sdfg(writer_sdfg("leaf"), {}, {"x"})
+    state.add_edge(node, "x", state.add_access("a"), None, dace.Memlet("a[0:10]"))
     donor.validate()
 
-    sdfg = host_sdfg('state_claim')
+    sdfg = host_sdfg("state_claim")
     sdfg.add_node(copy.deepcopy(state), is_start_block=True)
 
     assert_homed(sdfg, 1)
@@ -179,21 +180,21 @@ def test_condition_fusion_produces_a_valid_sdfg():
     of ``fuse_consecutive_conditions`` that used to repair parent references after the fact. So the
     branch's nested SDFGs stayed unclaimed and the fused SDFG failed validation.
     """
-    sdfg = host_sdfg('condition_fusion')
-    sdfg.add_symbol('c', dace.bool)
+    sdfg = host_sdfg("condition_fusion")
+    sdfg.add_symbol("c", dace.bool)
 
-    first = ConditionalBlock('cb1')
-    taken = ControlFlowRegion('cb1_body')
-    taken.add_state('cb1_s', is_start_block=True).add_tasklet('nop', {}, {}, '')
-    first.add_branch(CodeBlock('c'), taken)
+    first = ConditionalBlock("cb1")
+    taken = ControlFlowRegion("cb1_body")
+    taken.add_state("cb1_s", is_start_block=True).add_tasklet("nop", {}, {}, "")
+    first.add_branch(CodeBlock("c"), taken)
     sdfg.add_node(first, is_start_block=True)
 
-    second = ConditionalBlock('cb2')
-    otherwise = ControlFlowRegion('cb2_body')
-    state = otherwise.add_state('cb2_s', is_start_block=True)
-    node = state.add_nested_sdfg(writer_sdfg('leaf'), {}, {'x'})
-    state.add_edge(node, 'x', state.add_access('a'), None, dace.Memlet('a[0:10]'))
-    second.add_branch(CodeBlock('not c'), otherwise)
+    second = ConditionalBlock("cb2")
+    otherwise = ControlFlowRegion("cb2_body")
+    state = otherwise.add_state("cb2_s", is_start_block=True)
+    node = state.add_nested_sdfg(writer_sdfg("leaf"), {}, {"x"})
+    state.add_edge(node, "x", state.add_access("a"), None, dace.Memlet("a[0:10]"))
+    second.add_branch(CodeBlock("not c"), otherwise)
     sdfg.add_node(second)
     sdfg.add_edge(first, second, dace.InterstateEdge())
     sdfg.validate()
@@ -208,14 +209,14 @@ def test_condition_fusion_produces_a_valid_sdfg():
 
 def test_a_claim_inside_a_nested_sdfg_homes_to_that_nested_sdfg():
     """``parent_sdfg`` names the SDFG the block belongs to, which is not always the root."""
-    inner = host_sdfg('inner')
-    loop = detached_loop_holding(writer_sdfg('leaf'))
+    inner = host_sdfg("inner")
+    loop = detached_loop_holding(writer_sdfg("leaf"))
     inner.add_node(loop, is_start_block=True)
 
-    root = host_sdfg('root')
-    state = root.add_state('s')
-    node = state.add_nested_sdfg(inner, {}, {'a'})
-    state.add_edge(node, 'a', state.add_access('a'), None, dace.Memlet('a[0:10]'))
+    root = host_sdfg("root")
+    state = root.add_state("s")
+    node = state.add_nested_sdfg(inner, {}, {"a"})
+    state.add_edge(node, "a", state.add_access("a"), None, dace.Memlet("a[0:10]"))
     root.validate()
 
     inner.add_node(copy.deepcopy(loop), ensure_unique_name=True)
@@ -230,9 +231,9 @@ def test_a_deeper_nested_sdfg_keeps_the_parent_it_was_copied_with():
     references already point inside the copy. Re-homing it to the claiming SDFG would be wrong --
     it does not live there.
     """
-    sdfg = host_sdfg('depth')
-    leaf = writer_sdfg('leaf')
-    middle = wrapping_sdfg('middle', leaf)
+    sdfg = host_sdfg("depth")
+    leaf = writer_sdfg("leaf")
+    middle = wrapping_sdfg("middle", leaf)
     loop = detached_loop_holding(middle)
     sdfg.add_node(loop, is_start_block=True)
     sdfg.validate()
@@ -256,14 +257,14 @@ def test_loop_fission_clones_keep_their_nested_sdfg_parents_two_levels_down():
     Two levels of nesting, so this also covers the half the claim does NOT do: the inner SDFG comes
     out of ``deepcopy`` already consistent, and the pass must not need a recursive sweep to fix it.
     """
-    sdfg = host_sdfg('fission')
-    sdfg.add_array('b', [10], dace.float64)
-    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    sdfg = host_sdfg("fission")
+    sdfg.add_array("b", [10], dace.float64)
+    loop = LoopRegion("loop", "i < 10", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    for label, array in (('s0', 'a'), ('s1', 'b')):
-        state = loop.add_state(label, is_start_block=(label == 's0'))
-        node = state.add_nested_sdfg(wrapping_sdfg(f'middle_{label}', writer_sdfg(f'leaf_{label}')), {}, {'x'})
-        state.add_edge(node, 'x', state.add_access(array), None, dace.Memlet(f'{array}[0:10]'))
+    for label, array in (("s0", "a"), ("s1", "b")):
+        state = loop.add_state(label, is_start_block=(label == "s0"))
+        node = state.add_nested_sdfg(wrapping_sdfg(f"middle_{label}", writer_sdfg(f"leaf_{label}")), {}, {"x"})
+        state.add_edge(node, "x", state.add_access(array), None, dace.Memlet(f"{array}[0:10]"))
     loop.add_edge(loop.nodes()[0], loop.nodes()[1], dace.InterstateEdge())
     sdfg.validate()
 
@@ -276,7 +277,7 @@ def test_loop_fission_clones_keep_their_nested_sdfg_parents_two_levels_down():
         assert deeper[0].sdfg.parent_sdfg is node.sdfg
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_region_assembled_detached_is_claimed_when_it_is_added()
     test_a_deepcopied_region_is_claimed_when_it_is_added()
     test_a_region_assembled_behind_a_conditional_is_claimed_through_its_branches()

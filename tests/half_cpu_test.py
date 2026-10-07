@@ -90,7 +90,7 @@ def test_float16_cpu_random_roundtrip_matches_numpy():
 
 
 def math_h_path():
-    return os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'math.h')
+    return os.path.join(os.path.dirname(dace.__file__), "runtime", "include", "dace", "math.h")
 
 
 def scalar_math_sdfg(name, func_name, dtype, size):
@@ -98,16 +98,21 @@ def scalar_math_sdfg(name, func_name, dtype, size):
     the SDFG API (not ``@dace.program``) so the tasklet body names the exact function under test.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('inp', [size], dtype)
-    sdfg.add_array('out', [size], dtype)
+    sdfg.add_array("inp", [size], dtype)
+    sdfg.add_array("out", [size], dtype)
     state = sdfg.add_state()
-    state.add_mapped_tasklet('elementwise', {'i': f'0:{size}'}, {'a': dace.Memlet('inp[i]')},
-                             f'b = dace.math.{func_name}(a)', {'b': dace.Memlet('out[i]')},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        "elementwise",
+        {"i": f"0:{size}"},
+        {"a": dace.Memlet("inp[i]")},
+        f"b = dace.math.{func_name}(a)",
+        {"b": dace.Memlet("out[i]")},
+        external_edges=True,
+    )
     return sdfg
 
 
-@pytest.mark.parametrize('func_name, np_func', [('sqrt', np.sqrt), ('exp', np.exp), ('log', np.log)])
+@pytest.mark.parametrize("func_name, np_func", [("sqrt", np.sqrt), ("exp", np.exp), ("log", np.log)])
 def test_float16_math_dispatches_through_fp32(func_name, np_func):
     """The CPU-emulated ``dace::half`` has no native ``sqrt``/``exp``/``log`` -- the runtime
     header must explicitly route it through fp32 (cast in, call the fp32 libm entry, cast back),
@@ -120,13 +125,15 @@ def test_float16_math_dispatches_through_fp32(func_name, np_func):
     """
     with open(math_h_path()) as fp:
         header = fp.read()
-    assert f'DACE_MATH_UNARY_LP({func_name}, dace::float16)' in header, \
-        f'no fp32-routed dace::float16 overload for {func_name} in math.h'
-    assert f'DACE_MATH_UNARY_LP({func_name}, dace::bfloat16)' in header, \
-        f'no fp32-routed dace::bfloat16 overload for {func_name} in math.h'
+    assert f"DACE_MATH_UNARY_LP({func_name}, dace::float16)" in header, (
+        f"no fp32-routed dace::float16 overload for {func_name} in math.h"
+    )
+    assert f"DACE_MATH_UNARY_LP({func_name}, dace::bfloat16)" in header, (
+        f"no fp32-routed dace::bfloat16 overload for {func_name} in math.h"
+    )
 
     n = 64
-    sdfg = scalar_math_sdfg(f'half_{func_name}', func_name, dace.float16, n)
+    sdfg = scalar_math_sdfg(f"half_{func_name}", func_name, dace.float16, n)
     rng = np.random.default_rng(5)
     # sqrt/log need positive inputs; exp needs a modest range to stay in float16 bounds.
     inp = (rng.random(n).astype(np.float32) * 8.0 + 0.5).astype(np.float16)
@@ -150,14 +157,14 @@ def openmp_reduce_sdfg(name, wcr, identity, size, dtype=dace.float16):
     ``operator<op>=`` and a ``#pragma omp declare reduction`` to be accepted at all.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [size], dtype)
-    sdfg.add_array('s', [1], dtype)
+    sdfg.add_array("A", [size], dtype)
+    sdfg.add_array("s", [1], dtype)
     state = sdfg.add_state()
-    red = Reduce('reduce', wcr, None, identity=identity)
-    red.implementation = 'CPU'
+    red = Reduce("reduce", wcr, None, identity=identity)
+    red.implementation = "CPU"
     state.add_node(red)
-    state.add_edge(state.add_read('A'), None, red, '_in', dace.Memlet(f'A[0:{size}]'))
-    state.add_edge(red, '_out', state.add_write('s'), None, dace.Memlet('s[0]'))
+    state.add_edge(state.add_read("A"), None, red, "_in", dace.Memlet(f"A[0:{size}]"))
+    state.add_edge(red, "_out", state.add_write("s"), None, dace.Memlet("s[0]"))
     return sdfg
 
 
@@ -187,7 +194,7 @@ def test_float16_openmp_reduction_sum_is_exact():
     ``u = 2**-11`` for binary16, which is already vacuous (>= 1) for n = 2048.
     """
     size = 2048
-    sdfg = openmp_reduce_sdfg('half_omp_sum', 'lambda a, b: a + b', np.float16(0), size)
+    sdfg = openmp_reduce_sdfg("half_omp_sum", "lambda a, b: a + b", np.float16(0), size)
     result = run_reduction(sdfg, np.ones(size, dtype=np.float16))
     assert result == np.float16(size)
 
@@ -205,7 +212,7 @@ def test_float16_openmp_reduction_sum_nonuniform_is_exact():
     expected = np.float16(values.astype(np.float64).sum())
     assert abs(float(expected)) <= 2048.0
 
-    sdfg = openmp_reduce_sdfg('half_omp_sum_nu', 'lambda a, b: a + b', np.float16(0), size)
+    sdfg = openmp_reduce_sdfg("half_omp_sum_nu", "lambda a, b: a + b", np.float16(0), size)
     assert run_reduction(sdfg, values) == expected
 
 
@@ -213,24 +220,28 @@ def test_float16_openmp_reduction_product_is_exact():
     """Products of powers of two are exact in binary16 while they stay in range."""
     size = 2048
     values = np.where(np.arange(size) % 2 == 0, np.float16(0.5), np.float16(2.0)).astype(np.float16)
-    sdfg = openmp_reduce_sdfg('half_omp_prod', 'lambda a, b: a * b', np.float16(1), size)
+    sdfg = openmp_reduce_sdfg("half_omp_prod", "lambda a, b: a * b", np.float16(1), size)
     # Equal counts of 0.5 and 2.0, so the exact product is 1.0 in any order.
     assert run_reduction(sdfg, values) == np.float16(1.0)
 
 
-@pytest.mark.parametrize('kind, wcr, identity, reference',
-                         [('min', 'lambda a, b: min(a, b)', np.float16(np.inf), np.min),
-                          ('max', 'lambda a, b: max(a, b)', np.float16(-np.inf), np.max)])
+@pytest.mark.parametrize(
+    "kind, wcr, identity, reference",
+    [
+        ("min", "lambda a, b: min(a, b)", np.float16(np.inf), np.min),
+        ("max", "lambda a, b: max(a, b)", np.float16(-np.inf), np.max),
+    ],
+)
 def test_float16_openmp_reduction_minmax(kind, wcr, identity, reference):
     """min/max select an existing element, so they never round: assert exactly."""
     rng = np.random.default_rng(11)
     size = 2048
     values = (rng.standard_normal(size) * 100.0).astype(np.float16)
-    sdfg = openmp_reduce_sdfg(f'half_omp_{kind}', wcr, identity, size)
+    sdfg = openmp_reduce_sdfg(f"half_omp_{kind}", wcr, identity, size)
     assert run_reduction(sdfg, values) == reference(values)
 
 
-@pytest.mark.parametrize('dtype, npdtype', [(dace.float16, np.float16), (dace.float32, np.float32)])
+@pytest.mark.parametrize("dtype, npdtype", [(dace.float16, np.float16), (dace.float32, np.float32)])
 def test_openmp_reduction_div_matches_sequential(dtype, npdtype):
     """Div lowers to a product reduction over the divisors, then one divide.
 
@@ -250,7 +261,7 @@ def test_openmp_reduction_div_matches_sequential(dtype, npdtype):
     values[[3, 9, 77, 900]] = npdtype(2.0)
     identity = npdtype(1024.0)
 
-    sdfg = openmp_reduce_sdfg(f'div_{np.dtype(npdtype).name}', 'lambda a, b: a / b', identity, size, dtype=dtype)
+    sdfg = openmp_reduce_sdfg(f"div_{np.dtype(npdtype).name}", "lambda a, b: a / b", identity, size, dtype=dtype)
     out = np.zeros(1, dtype=npdtype)
     sdfg.compile()(A=values.copy(), s=out)
 
@@ -261,9 +272,13 @@ def test_openmp_reduction_div_matches_sequential(dtype, npdtype):
     assert out[0] == npdtype(reference)
 
 
-@pytest.mark.parametrize('kind, wcr, identity, reference',
-                         [('and', 'lambda a, b: a and b', np.float16(1), np.logical_and.reduce),
-                          ('or', 'lambda a, b: a or b', np.float16(0), np.logical_or.reduce)])
+@pytest.mark.parametrize(
+    "kind, wcr, identity, reference",
+    [
+        ("and", "lambda a, b: a and b", np.float16(1), np.logical_and.reduce),
+        ("or", "lambda a, b: a or b", np.float16(0), np.logical_or.reduce),
+    ],
+)
 def test_float16_openmp_reduction_logical(kind, wcr, identity, reference):
     """&& and || reduce on truthiness and normalize to exactly 1.0 / 0.0.
 
@@ -272,23 +287,23 @@ def test_float16_openmp_reduction_logical(kind, wcr, identity, reference):
     it normalizes rather than propagating, which is what ``float`` does.
     """
     size = 2048
-    for values in (np.ones(size, dtype=np.float16), np.zeros(size, dtype=np.float16),
-                   np.concatenate([np.ones(size - 1, dtype=np.float16),
-                                   np.zeros(1, dtype=np.float16)]),
-                   np.concatenate([
-                       np.zeros(7, dtype=np.float16),
-                       np.full(1, 5.0, dtype=np.float16),
-                       np.zeros(size - 8, dtype=np.float16)
-                   ])):
-        sdfg = openmp_reduce_sdfg(f'logical_{kind}', wcr, identity, size)
+    for values in (
+        np.ones(size, dtype=np.float16),
+        np.zeros(size, dtype=np.float16),
+        np.concatenate([np.ones(size - 1, dtype=np.float16), np.zeros(1, dtype=np.float16)]),
+        np.concatenate(
+            [np.zeros(7, dtype=np.float16), np.full(1, 5.0, dtype=np.float16), np.zeros(size - 8, dtype=np.float16)]
+        ),
+    ):
+        sdfg = openmp_reduce_sdfg(f"logical_{kind}", wcr, identity, size)
         out = np.zeros(1, dtype=np.float16)
         sdfg.compile()(A=values.copy(), s=out)
         expected = np.float16(1.0) if reference(values.astype(bool)) else np.float16(0.0)
-        assert out[0] == expected, f'{kind} over {values[:10]}...: got {out[0]}, want {expected}'
+        assert out[0] == expected, f"{kind} over {values[:10]}...: got {out[0]}, want {expected}"
 
 
-@pytest.mark.parametrize('wcr', ['lambda a, b: a & b', 'lambda a, b: a | b', 'lambda a, b: a ^ b'])
-@pytest.mark.parametrize('dtype', [dace.float16, dace.float32, dace.float64])
+@pytest.mark.parametrize("wcr", ["lambda a, b: a & b", "lambda a, b: a | b", "lambda a, b: a ^ b"])
+@pytest.mark.parametrize("dtype", [dace.float16, dace.float32, dace.float64])
 def test_openmp_bitwise_reduction_on_float_is_refused(wcr, dtype):
     """A bitwise reduction over a floating-point dtype must be refused, clearly.
 
@@ -298,8 +313,8 @@ def test_openmp_bitwise_reduction_on_float_is_refused(wcr, dtype):
     found for '*(float (*)[1])_out'", which says nothing about the real cause.
     """
     size = 256
-    sdfg = openmp_reduce_sdfg('bitwise', wcr, 1, size, dtype=dtype)
-    with pytest.raises(ValueError, match='not defined for non-integral data type'):
+    sdfg = openmp_reduce_sdfg("bitwise", wcr, 1, size, dtype=dtype)
+    with pytest.raises(ValueError, match="not defined for non-integral data type"):
         sdfg.compile()
 
 
@@ -309,7 +324,7 @@ def test_openmp_bitwise_reduction_on_integers_still_works():
     rng = np.random.default_rng(3)
     values = rng.integers(0, 2**31 - 1, size=size).astype(np.int32)
 
-    sdfg = openmp_reduce_sdfg('bitwise_int', 'lambda a, b: a & b', -1, size, dtype=dace.int32)
+    sdfg = openmp_reduce_sdfg("bitwise_int", "lambda a, b: a & b", -1, size, dtype=dace.int32)
     out = np.zeros(1, dtype=np.int32)
     sdfg.compile()(A=values.copy(), s=out)
     assert out[0] == np.bitwise_and.reduce(values)
@@ -337,18 +352,19 @@ def test_float16_openmp_reduction_thread_counts(tmp_path):
     ones exactly in any order (see above), every thread count must give exactly 2048.
     """
     size = 2048
-    sdfg = openmp_reduce_sdfg('half_omp_threads', 'lambda a, b: a + b', np.float16(0), size)
-    path = str(tmp_path / 'half_omp_threads.sdfg')
+    sdfg = openmp_reduce_sdfg("half_omp_threads", "lambda a, b: a + b", np.float16(0), size)
+    path = str(tmp_path / "half_omp_threads.sdfg")
     sdfg.save(path)
     sdfg.compile()  # populate the build cache so the subprocesses do not each rebuild
 
     script = THREAD_RUNNER.format(path=path, size=size)
     for threads in (1, 2, 4, 8, 16):
         env = dict(os.environ, OMP_NUM_THREADS=str(threads))
-        proc = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, env=env)
-        assert proc.returncode == 0, f'OMP_NUM_THREADS={threads}:\n{proc.stdout}\n{proc.stderr}'
-        assert float(proc.stdout.strip().splitlines()[-1]) == float(size), \
-            f'OMP_NUM_THREADS={threads} gave {proc.stdout.strip()}'
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, f"OMP_NUM_THREADS={threads}:\n{proc.stdout}\n{proc.stderr}"
+        assert float(proc.stdout.strip().splitlines()[-1]) == float(size), (
+            f"OMP_NUM_THREADS={threads} gave {proc.stdout.strip()}"
+        )
 
 
 if __name__ == "__main__":
@@ -357,6 +373,6 @@ if __name__ == "__main__":
     test_float16_openmp_reduction_sum_is_exact()
     test_float16_openmp_reduction_sum_nonuniform_is_exact()
     test_float16_openmp_reduction_product_is_exact()
-    test_float16_openmp_reduction_minmax('min', 'lambda a, b: min(a, b)', np.float16(np.inf), np.min)
-    test_float16_openmp_reduction_minmax('max', 'lambda a, b: max(a, b)', np.float16(-np.inf), np.max)
+    test_float16_openmp_reduction_minmax("min", "lambda a, b: min(a, b)", np.float16(np.inf), np.min)
+    test_float16_openmp_reduction_minmax("max", "lambda a, b: max(a, b)", np.float16(-np.inf), np.max)
     test_float16_openmp_reduction_scales_with_threads()

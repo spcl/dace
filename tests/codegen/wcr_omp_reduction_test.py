@@ -7,6 +7,7 @@ write-edges that target a true ``Scalar`` descriptor outside a parallel map,
 the OMP runtime privatizes the variable per thread and tree-reduces at the
 end, so an extra atomic add is strictly wasted work.
 """
+
 import os
 import re
 import shutil
@@ -73,8 +74,9 @@ def test_scalar_wcr_emits_omp_reduction_clause():
 
     # The OMP pragma must include the reduction clause for the scalar accumulator.
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert any("reduction(+:" in l for l in pragma_lines), \
+    assert any("reduction(+:" in l for l in pragma_lines), (
         "expected reduction(+:...) clause in the OMP pragma -- got:\n" + "\n".join(pragma_lines)
+    )
 
 
 def test_scalar_wcr_does_not_emit_atomic_for_covered_target():
@@ -116,26 +118,24 @@ def test_multiple_omp_reducible_targets_emit_multiple_clauses():
     sdfg.add_array("out2", [1], dace.float64)
 
     init = sdfg.add_state("init", is_start_block=True)
-    init.add_edge(init.add_tasklet("z1", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc1"), None,
-                  dace.Memlet("acc1[0]"))
-    init.add_edge(init.add_tasklet("z2", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc2"), None,
-                  dace.Memlet("acc2[0]"))
+    init.add_edge(
+        init.add_tasklet("z1", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc1"), None, dace.Memlet("acc1[0]")
+    )
+    init.add_edge(
+        init.add_tasklet("z2", {}, {"o"}, "o = 0.0"), "o", init.add_write("acc2"), None, dace.Memlet("acc2[0]")
+    )
 
     ms = sdfg.add_state("ms")
     sdfg.add_edge(init, ms, dace.InterstateEdge())
     me, mx = ms.add_map("m", dict(i="0:N"), schedule=dace.ScheduleType.CPU_Multicore)
     t = ms.add_tasklet("two", {"v"}, {"r1", "r2"}, "r1 = v; r2 = 2.0 * v")
     ms.add_memlet_path(ms.add_read("src"), me, t, dst_conn="v", memlet=dace.Memlet("src[i]"))
-    ms.add_memlet_path(t,
-                       mx,
-                       ms.add_write("acc1"),
-                       src_conn="r1",
-                       memlet=dace.Memlet("acc1[0]", wcr="lambda a, b: a + b"))
-    ms.add_memlet_path(t,
-                       mx,
-                       ms.add_write("acc2"),
-                       src_conn="r2",
-                       memlet=dace.Memlet("acc2[0]", wcr="lambda a, b: a + b"))
+    ms.add_memlet_path(
+        t, mx, ms.add_write("acc1"), src_conn="r1", memlet=dace.Memlet("acc1[0]", wcr="lambda a, b: a + b")
+    )
+    ms.add_memlet_path(
+        t, mx, ms.add_write("acc2"), src_conn="r2", memlet=dace.Memlet("acc2[0]", wcr="lambda a, b: a + b")
+    )
 
     post = sdfg.add_state("post")
     sdfg.add_edge(ms, post, dace.InterstateEdge())
@@ -147,8 +147,9 @@ def test_multiple_omp_reducible_targets_emit_multiple_clauses():
     sdfg.validate()
     csdfg, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert any("reduction(+:acc1)" in l and "reduction(+:acc2)" in l for l in pragma_lines), \
+    assert any("reduction(+:acc1)" in l and "reduction(+:acc2)" in l for l in pragma_lines), (
         "expected reduction(+:acc1) and reduction(+:acc2) on one pragma -- got:\n" + "\n".join(pragma_lines)
+    )
     assert "reduce_atomic" not in src, "covered reduction targets must skip the atomic path"
 
 
@@ -220,24 +221,65 @@ PER_OP_CASES = [
     ("product", "lambda a, b: a * b", "*", dace.float64, "o = 1.0", _f64_rand, lambda x: float(x.prod()), np.isclose),
     ("min", "lambda a, b: min(a, b)", "min", dace.float64, "o = 1e9", _f64_rand, lambda x: float(x.min()), np.isclose),
     ("max", "lambda a, b: max(a, b)", "max", dace.float64, "o = -1e9", _f64_rand, lambda x: float(x.max()), np.isclose),
-    ("band", "lambda a, b: a & b", "&", dace.int32, "o = -1", _i32_rand, lambda x: int(np.bitwise_and.reduce(x)),
-     lambda a, b: int(a) == int(b)),
-    ("bor", "lambda a, b: a | b", "|", dace.int32, "o = 0", _i32_rand, lambda x: int(np.bitwise_or.reduce(x)),
-     lambda a, b: int(a) == int(b)),
-    ("bxor", "lambda a, b: a ^ b", "^", dace.int32, "o = 0", _i32_rand, lambda x: int(np.bitwise_xor.reduce(x)),
-     lambda a, b: int(a) == int(b)),
-    ("land", "lambda a, b: a and b", "&&", dace.int32, "o = 1", lambda n: _bool_rand_mostly_true(n).astype(np.int32),
-     lambda x: int(bool(np.all(x))), lambda a, b: bool(int(a)) == bool(int(b))),
-    ("lor", "lambda a, b: a or b", "||", dace.int32, "o = 0", lambda n: _bool_rand_mostly_false(n).astype(np.int32),
-     lambda x: int(bool(np.any(x))), lambda a, b: bool(int(a)) == bool(int(b))),
+    (
+        "band",
+        "lambda a, b: a & b",
+        "&",
+        dace.int32,
+        "o = -1",
+        _i32_rand,
+        lambda x: int(np.bitwise_and.reduce(x)),
+        lambda a, b: int(a) == int(b),
+    ),
+    (
+        "bor",
+        "lambda a, b: a | b",
+        "|",
+        dace.int32,
+        "o = 0",
+        _i32_rand,
+        lambda x: int(np.bitwise_or.reduce(x)),
+        lambda a, b: int(a) == int(b),
+    ),
+    (
+        "bxor",
+        "lambda a, b: a ^ b",
+        "^",
+        dace.int32,
+        "o = 0",
+        _i32_rand,
+        lambda x: int(np.bitwise_xor.reduce(x)),
+        lambda a, b: int(a) == int(b),
+    ),
+    (
+        "land",
+        "lambda a, b: a and b",
+        "&&",
+        dace.int32,
+        "o = 1",
+        lambda n: _bool_rand_mostly_true(n).astype(np.int32),
+        lambda x: int(bool(np.all(x))),
+        lambda a, b: bool(int(a)) == bool(int(b)),
+    ),
+    (
+        "lor",
+        "lambda a, b: a or b",
+        "||",
+        dace.int32,
+        "o = 0",
+        lambda n: _bool_rand_mostly_false(n).astype(np.int32),
+        lambda x: int(bool(np.any(x))),
+        lambda a, b: bool(int(a)) == bool(int(b)),
+    ),
 ]
 
 
-@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare",
-                         PER_OP_CASES,
-                         ids=[c[0] for c in PER_OP_CASES])
-def test_per_operator_emits_correct_omp_reduction_clause(op_name, wcr, expected_op, dtype, init, gen_input, oracle,
-                                                         compare):
+@pytest.mark.parametrize(
+    "op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare", PER_OP_CASES, ids=[c[0] for c in PER_OP_CASES]
+)
+def test_per_operator_emits_correct_omp_reduction_clause(
+    op_name, wcr, expected_op, dtype, init, gen_input, oracle, compare
+):
     """Each supported WCR op must produce the matching ``reduction(<op>:acc)``
     clause AND compute the right numerical result. Pins three things at once:
 
@@ -252,10 +294,9 @@ def test_per_operator_emits_correct_omp_reduction_clause(op_name, wcr, expected_
 
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
     target_clause = f"reduction({expected_op}:"
-    assert any(
-        target_clause in l
-        for l in pragma_lines), (f"expected '{target_clause}' clause for op '{op_name}' (wcr={wcr!r}); got pragmas:\n" +
-                                 "\n".join(pragma_lines))
+    assert any(target_clause in l for l in pragma_lines), (
+        f"expected '{target_clause}' clause for op '{op_name}' (wcr={wcr!r}); got pragmas:\n" + "\n".join(pragma_lines)
+    )
 
     n = 1024
     src_arr = gen_input(n)
@@ -265,11 +306,12 @@ def test_per_operator_emits_correct_omp_reduction_clause(op_name, wcr, expected_
     assert compare(out[0], expected), f"{op_name}: got {out[0]}, expected {expected}"
 
 
-@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare",
-                         PER_OP_CASES,
-                         ids=[c[0] for c in PER_OP_CASES])
-def test_per_operator_suppresses_atomic_on_covered_target(op_name, wcr, expected_op, dtype, init, gen_input, oracle,
-                                                          compare):
+@pytest.mark.parametrize(
+    "op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare", PER_OP_CASES, ids=[c[0] for c in PER_OP_CASES]
+)
+def test_per_operator_suppresses_atomic_on_covered_target(
+    op_name, wcr, expected_op, dtype, init, gen_input, oracle, compare
+):
     """For each supported op, the per-edge ``reduce_atomic`` must be skipped
     on the OMP-reduction-covered target: the runtime's per-thread copy + final
     tree-reduce makes an extra atomic on top strictly wasted work (and would
@@ -281,9 +323,9 @@ def test_per_operator_suppresses_atomic_on_covered_target(op_name, wcr, expected
     assert not bad, f"{op_name}: per-iter atomic on covered target:\n" + "\n".join(bad)
 
 
-@pytest.mark.parametrize("op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare",
-                         PER_OP_CASES,
-                         ids=[c[0] for c in PER_OP_CASES])
+@pytest.mark.parametrize(
+    "op_name,wcr,expected_op,dtype,init,gen_input,oracle,compare", PER_OP_CASES, ids=[c[0] for c in PER_OP_CASES]
+)
 def test_per_operator_reduction_clause_carries_simd(op_name, wcr, expected_op, dtype, init, gen_input, oracle, compare):
     """The reduction clause is combined with ``simd``, except on ``min``/``max``.
 
@@ -301,7 +343,8 @@ def test_per_operator_reduction_clause_carries_simd(op_name, wcr, expected_op, d
     wants_simd = expected_op not in ("min", "max")
     for line in pragma_lines:
         assert (" simd " in line) == wants_simd, (
-            f"{op_name}: expected simd={wants_simd} on the combined construct; got: {line.strip()}")
+            f"{op_name}: expected simd={wants_simd} on the combined construct; got: {line.strip()}"
+        )
         # A bare ``if(...)`` on a combined ``parallel for simd`` binds to the simd part too on GCC
         # and silently devectorizes; only the ``if(parallel: ...)`` form would be safe here.
         assert not re.search(r"\bif\s*\(", line), f"{op_name}: if-clause on a combined construct: {line.strip()}"
@@ -315,11 +358,12 @@ def test_unsupported_op_falls_back_to_atomic():
     sdfg = _build_op_sdfg("sub", "lambda a, b: a - b", dace.float64, "o = 0.0")
     _, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("reduction(" in l
-                   for l in pragma_lines), ("expected NO reduction clause for an unsupported op; got:\n" +
-                                            "\n".join(pragma_lines))
-    assert any("reduce_atomic" in l and "acc" in l for l in src.splitlines()), \
+    assert not any("reduction(" in l for l in pragma_lines), (
+        "expected NO reduction clause for an unsupported op; got:\n" + "\n".join(pragma_lines)
+    )
+    assert any("reduce_atomic" in l and "acc" in l for l in src.splitlines()), (
         "expected reduce_atomic on 'acc' as fallback when no reduction clause is emitted"
+    )
 
 
 def test_length_one_array_target_falls_back_to_atomic():
@@ -362,9 +406,9 @@ def test_length_one_array_target_falls_back_to_atomic():
 
     _, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("reduction(" in l
-                   for l in pragma_lines), ("expected NO reduction clause for length-1 Array target; got:\n" +
-                                            "\n".join(pragma_lines))
+    assert not any("reduction(" in l for l in pragma_lines), (
+        "expected NO reduction clause for length-1 Array target; got:\n" + "\n".join(pragma_lines)
+    )
 
 
 def test_persistent_scalar_target_falls_back_to_atomic():
@@ -381,13 +425,15 @@ def test_persistent_scalar_target_falls_back_to_atomic():
 
     csdfg, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("reduction(" in l for l in pragma_lines), \
-        ("expected NO reduction clause for a persistent (state-resident) target; got:\n" + "\n".join(pragma_lines))
+    assert not any("reduction(" in l for l in pragma_lines), (
+        "expected NO reduction clause for a persistent (state-resident) target; got:\n" + "\n".join(pragma_lines)
+    )
     # The illegal ``reduction(+:__state->...)`` lvalue must never be emitted.
     assert "reduction(+:__state->" not in src, "emitted an illegal OMP reduction on a state-struct member"
     # The atomic path is the fallback that keeps the persistent reduction correct.
-    assert any("reduce_atomic" in l for l in src.splitlines()), \
+    assert any("reduce_atomic" in l for l in src.splitlines()), (
         "expected reduce_atomic fallback for the persistent target"
+    )
 
     # End-to-end: the atomic fallback still computes the sum correctly.
     n = 1024
@@ -437,8 +483,9 @@ def test_mixed_copy_and_reduce_map():
 
     csdfg, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert any("reduction(+:" in l for l in pragma_lines), \
-        ("expected reduction(+:d) on the copy+reduce map; got:\n" + "\n".join(pragma_lines))
+    assert any("reduction(+:" in l for l in pragma_lines), (
+        "expected reduction(+:d) on the copy+reduce map; got:\n" + "\n".join(pragma_lines)
+    )
 
     n = 256
     rng = np.random.default_rng(0)
@@ -483,8 +530,9 @@ def test_mixed_copy_and_product_reduce_detects_star_op():
 
     csdfg, src = _compile_and_read_src(sdfg)
     pragma_lines = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert any("reduction(*:" in l for l in pragma_lines), \
-        ("expected reduction(*:p) (op detected from WCR lambda ``a*b``); got:\n" + "\n".join(pragma_lines))
+    assert any("reduction(*:" in l for l in pragma_lines), (
+        "expected reduction(*:p) (op detected from WCR lambda ``a*b``); got:\n" + "\n".join(pragma_lines)
+    )
     assert not any("reduction(+:" in l for l in pragma_lines), "must not emit '+'; the WCR op is '*'"
 
     n = 64
@@ -521,12 +569,9 @@ def _build_wcr_array_sum(dtype, flag: bool, wcr: str = "lambda a, b: a + b", str
     ie, ix = st.add_map("inner", dict(i="0:%d" % NR, j="0:%d" % NM))
     t = st.add_tasklet("acc", {"xin"}, {"aout"}, "aout = xin")
     st.add_memlet_path(st.add_read("X"), oe, ie, t, dst_conn="xin", memlet=dace.Memlet(data="X", subset="k, i, j"))
-    st.add_memlet_path(t,
-                       ix,
-                       ox,
-                       st.add_write("A"),
-                       src_conn="aout",
-                       memlet=dace.Memlet(data="A", subset="i, j", wcr=wcr))
+    st.add_memlet_path(
+        t, ix, ox, st.add_write("A"), src_conn="aout", memlet=dace.Memlet(data="A", subset="i, j", wcr=wcr)
+    )
     sd.validate()
     sd.openmp_array_reductions = flag
     return sd
@@ -544,10 +589,12 @@ def test_array_wcr_emits_omp_array_section_clause():
     sd = _build_wcr_array_sum(dace.float64, flag=True)
     _, src = _compile_and_read_src(sd)
     pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert any("reduction(+:A[0:" in l for l in pragma), \
+    assert any("reduction(+:A[0:" in l for l in pragma), (
         "expected reduction(+:A[0:n]) array-section clause -- got:\n" + "\n".join(pragma)
-    assert not any("reduce_atomic" in l and "A " in l for l in src.splitlines()), \
+    )
+    assert not any("reduce_atomic" in l and "A " in l for l in src.splitlines()), (
         "covered array target must not use the atomic path"
+    )
 
 
 def test_array_wcr_flag_off_falls_back_to_atomic():
@@ -555,8 +602,9 @@ def test_array_wcr_flag_off_falls_back_to_atomic():
     sd = _build_wcr_array_sum(dace.float64, flag=False)
     _, src = _compile_and_read_src(sd)
     pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("[0:" in l and "reduction(" in l for l in pragma), \
+    assert not any("[0:" in l and "reduction(" in l for l in pragma), (
         "flag off must NOT emit an array-section reduction clause -- got:\n" + "\n".join(pragma)
+    )
     assert "reduce_atomic" in src, "flag off must keep the atomic path"
 
 
@@ -587,12 +635,11 @@ def test_complex_array_wcr_emits_declare_reduction_and_is_correct():
     clause, and is bit-exact at OMP=4."""
     sd = _build_wcr_array_sum(dace.complex128, flag=True)
     _, src = _compile_and_read_src(sd)
-    assert "declare reduction(cpf_cadd : dace::complex128" in src, \
-        "expected complex declare-reduction directive"
+    assert "declare reduction(cpf_cadd : dace::complex128" in src, "expected complex declare-reduction directive"
     assert any("reduction(cpf_cadd:A[0:" in l for l in src.splitlines() if "#pragma omp parallel for" in l)
 
     rng = np.random.default_rng(3)
-    X = (rng.standard_normal((KK, NR, NM)) + 1j * rng.standard_normal((KK, NR, NM)))
+    X = rng.standard_normal((KK, NR, NM)) + 1j * rng.standard_normal((KK, NR, NM))
     A0 = np.zeros((NR, NM), np.complex128)
     ref = A0 + X.sum(axis=0)
     old = os.environ.get("OMP_NUM_THREADS")
@@ -613,8 +660,9 @@ def test_noncontiguous_array_target_falls_back_to_atomic():
     sd = _build_wcr_array_sum(dace.float64, flag=True, strides=[1, NR])
     _, src = _compile_and_read_src(sd)
     pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("[0:" in l and "reduction(" in l for l in pragma), \
+    assert not any("[0:" in l and "reduction(" in l for l in pragma), (
         "non-contiguous buffer must NOT take the array-section clause -- got:\n" + "\n".join(pragma)
+    )
 
 
 def test_complex_product_declare_uses_identity_one():
@@ -644,12 +692,14 @@ def _build_wcr_array_sum_reads_target(dtype, flag: bool) -> dace.SDFG:
     t = st.add_tasklet("acc", {"xin", "ain"}, {"aout"}, "aout = xin + 0 * ain")
     st.add_memlet_path(st.add_read("X"), oe, ie, t, dst_conn="xin", memlet=dace.Memlet(data="X", subset="k, i, j"))
     st.add_memlet_path(st.add_read("A"), oe, ie, t, dst_conn="ain", memlet=dace.Memlet(data="A", subset="i, j"))
-    st.add_memlet_path(t,
-                       ix,
-                       ox,
-                       st.add_write("A"),
-                       src_conn="aout",
-                       memlet=dace.Memlet(data="A", subset="i, j", wcr="lambda a, b: a + b"))
+    st.add_memlet_path(
+        t,
+        ix,
+        ox,
+        st.add_write("A"),
+        src_conn="aout",
+        memlet=dace.Memlet(data="A", subset="i, j", wcr="lambda a, b: a + b"),
+    )
     sd.validate()
     sd.openmp_array_reductions = flag
     return sd
@@ -665,8 +715,9 @@ def test_array_wcr_read_target_falls_back_to_atomic():
     sd_on = _build_wcr_array_sum_reads_target(dace.float64, flag=True)
     _, src = _compile_and_read_src(sd_on)
     pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
-    assert not any("reduction(+:A[0:" in l for l in pragma), \
+    assert not any("reduction(+:A[0:" in l for l in pragma), (
         "reduction array is also READ -> must NOT emit the array-section clause; got:\n" + "\n".join(pragma)
+    )
 
     rng = np.random.default_rng(0)
     X = rng.random((KK, NR, NM))
@@ -691,11 +742,13 @@ def build_wcr_element_sum(elements) -> dace.SDFG:
     st.add_memlet_path(st.add_read("X"), me, t, dst_conn="xin", memlet=dace.Memlet(data="X", subset="k"))
     write = st.add_write("A")
     for name, (i, j) in zip(outs, elements):
-        st.add_memlet_path(t,
-                           mx,
-                           write,
-                           src_conn=name,
-                           memlet=dace.Memlet(data="A", subset="%d, %d" % (i, j), wcr="lambda a, b: a + b"))
+        st.add_memlet_path(
+            t,
+            mx,
+            write,
+            src_conn=name,
+            memlet=dace.Memlet(data="A", subset="%d, %d" % (i, j), wcr="lambda a, b: a + b"),
+        )
     sd.validate()
     sd.openmp_array_reductions = True
     return sd

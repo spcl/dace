@@ -30,6 +30,7 @@ _e`` (lowers to ``TileITE``) and the masked write ``_o = IT(_c, _val)`` (lowers 
 frontend's implicit per-arm assignment cast -- these two forms are NOT ``ast.BinOp`` /
 ``ast.Compare``, so they need their own detector rather than reusing the binop one.
 """
+
 import ast
 
 from collections.abc import Callable
@@ -76,7 +77,7 @@ def ite_operands(tasklet: nodes.Tasklet) -> tuple[str, list[str], str | None] | 
     rhs = assign.value
     if isinstance(rhs, ast.IfExp):
         arms, cond = [rhs.body, rhs.orelse], rhs.test
-    elif (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "ITE" and len(rhs.args) == 3):
+    elif isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "ITE" and len(rhs.args) == 3:
         arms, cond = [rhs.args[1], rhs.args[2]], rhs.args[0]
     else:
         return None
@@ -131,8 +132,9 @@ def masked_write_operand(tasklet: nodes.Tasklet) -> tuple[str, str] | None:
         return None
     out_conn = assign.targets[0].id
     rhs = assign.value
-    if not (isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "IT"
-            and len(rhs.args) == 2):
+    if not (
+        isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name) and rhs.func.id == "IT" and len(rhs.args) == 2
+    ):
         return None
     val = rhs.args[1]
     if not (isinstance(val, ast.Name) and val.id in tasklet.in_connectors):
@@ -364,8 +366,11 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         assign = single_assignment(tasklet.code.as_string)
         if assign is None:
             return False
-        if (len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name)
-                or not isinstance(assign.value, ast.Name)):
+        if (
+            len(assign.targets) != 1
+            or not isinstance(assign.targets[0], ast.Name)
+            or not isinstance(assign.value, ast.Name)
+        ):
             return False
         out_conn, in_conn = assign.targets[0].id, assign.value.id
         if in_conn not in tasklet.in_connectors or out_conn not in tasklet.out_connectors:
@@ -383,36 +388,49 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         return True
 
     def _new_scalar(self, sdfg: dace.SDFG, dtype: dtypes.typeclass) -> str:
-        name, _ = sdfg.add_scalar("__mixcast",
-                                  dtype,
-                                  storage=dtypes.StorageType.Register,
-                                  transient=True,
-                                  find_new_name=True)
+        name, _ = sdfg.add_scalar(
+            "__mixcast", dtype, storage=dtypes.StorageType.Register, transient=True, find_new_name=True
+        )
         return name
 
-    def _insert_operand_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge: MultiConnectorEdge[Memlet],
-                             conn: str, promoted: dtypes.typeclass) -> None:
+    def _insert_operand_cast(
+        self,
+        state: SDFGState,
+        tasklet: nodes.Tasklet,
+        edge: MultiConnectorEdge[Memlet],
+        conn: str,
+        promoted: dtypes.typeclass,
+    ) -> None:
         # Route operand ``edge`` through ``_co = dace.<promoted>(_ci)`` so ``tasklet``'s ``conn`` reads a promoted-dtype
         # transient instead of the narrower source.
         sdfg = state.sdfg
         tmp = self._new_scalar(sdfg, promoted)
-        cast = state.add_tasklet(f"{tasklet.label}_cast_{conn}", {"_ci"}, {"_co"},
-                                 f"_co = dace.{_cast_name(promoted)}(_ci)")
+        cast = state.add_tasklet(
+            f"{tasklet.label}_cast_{conn}", {"_ci"}, {"_co"}, f"_co = dace.{_cast_name(promoted)}(_ci)"
+        )
         tmp_an = state.add_access(tmp)
         state.add_edge(edge.src, edge.src_conn, cast, "_ci", dace.Memlet.from_memlet(edge.data))
         state.add_edge(cast, "_co", tmp_an, None, dace.Memlet(tmp))
         state.add_edge(tmp_an, None, tasklet, conn, dace.Memlet(tmp))
         state.remove_edge(edge)
 
-    def _insert_output_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge: MultiConnectorEdge[Memlet], conn: str,
-                            promoted: dtypes.typeclass, out_dt: dtypes.typeclass) -> None:
+    def _insert_output_cast(
+        self,
+        state: SDFGState,
+        tasklet: nodes.Tasklet,
+        edge: MultiConnectorEdge[Memlet],
+        conn: str,
+        promoted: dtypes.typeclass,
+        out_dt: dtypes.typeclass,
+    ) -> None:
         # Compute at ``promoted`` into a fresh transient, then ``_co = dace.<out_dt>(_ci)`` stores the result into the
         # original destination, casting to its dtype (a downcast when it is narrower than ``promoted``, a widening store
         # when it is wider).
         sdfg = state.sdfg
         tmp = self._new_scalar(sdfg, promoted)
-        cast = state.add_tasklet(f"{tasklet.label}_cast_{conn}", {"_ci"}, {"_co"},
-                                 f"_co = dace.{_cast_name(out_dt)}(_ci)")
+        cast = state.add_tasklet(
+            f"{tasklet.label}_cast_{conn}", {"_ci"}, {"_co"}, f"_co = dace.{_cast_name(out_dt)}(_ci)"
+        )
         tmp_an = state.add_access(tmp)
         state.add_edge(tasklet, conn, tmp_an, None, dace.Memlet(tmp))
         state.add_edge(tmp_an, None, cast, "_ci", dace.Memlet(tmp))

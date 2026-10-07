@@ -17,6 +17,7 @@ the test is ``is_empty()`` and never ``volume``. Deleting a load-bearing orderin
 not fail validation and does not fail to compile -- it silently makes the result depend on
 iteration order -- so every rule here errs towards keeping the edge.
 """
+
 import collections
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
@@ -182,7 +183,8 @@ def reduce_state(state: SDFGState) -> int:
 @transformation.explicit_cf_compatible
 class RedundantOrderingEdgeElimination(ppl.Pass):
     """Remove ordering (empty-memlet) edges implied by another path in the same state."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets

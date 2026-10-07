@@ -11,7 +11,6 @@ from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 
 class Module(nn.Module):
-
     def forward(self, x):
         y = x + 3
         return y * 5
@@ -23,10 +22,9 @@ def test_debug_transients(device):
 
     dev = torch_device(device)
 
-    module = DaceModule(Module(),
-                        debug_transients=True,
-                        sdfg_name=f"test_debug_transients_{device}",
-                        cuda=is_gpu(device))
+    module = DaceModule(
+        Module(), debug_transients=True, sdfg_name=f"test_debug_transients_{device}", cuda=is_gpu(device)
+    )
 
     x = torch.rand(5, 5).to(dev)
     with experimental_cuda():

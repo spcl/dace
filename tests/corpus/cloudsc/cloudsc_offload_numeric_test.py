@@ -21,6 +21,7 @@ Two levels of strictness, on purpose:
 
     pytest tests/corpus/cloudsc/cloudsc_offload_numeric_test.py -v -m gpu
 """
+
 import copy
 import math
 
@@ -39,7 +40,7 @@ pytestmark = pytest.mark.gpu
 
 #: Strict-FP host flags, the same regime ``IEEE_CPU_ARGS`` uses: the point of these tests is a
 #: host/device comparison, so neither side may be left on a fast-math build that reassociates.
-STRICT_FP_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract=off'
+STRICT_FP_CPU_ARGS: str = "-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract=off"
 
 #: How far the transcendental fixture's device result may sit from the host result, in ULPs of the
 #: host value. CUDA's ``exp``/``log`` are not glibc's, so a few last bits differ no matter how strictly
@@ -49,16 +50,20 @@ STRICT_FP_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-con
 #: ~1e-13 relative -- far tighter than any real logic error would land.
 LIBM_ULP_BOUND: int = 64
 
-nblocks = dace.symbol('nblocks')
-klev = dace.symbol('klev')
-klon = dace.symbol('klon')
+nblocks = dace.symbol("nblocks")
+klev = dace.symbol("klev")
+klon = dace.symbol("klon")
 
-SIZES = {'klon': 8, 'klev': 16, 'nblocks': 4}
+SIZES = {"klon": 8, "klev": 16, "nblocks": 4}
 
 
 @dace.program
-def microphysics(pt: dace.float64[klon, klev, nblocks], pq: dace.float64[klon, klev, nblocks],
-                 pflux: dace.float64[klon, klev, nblocks], tend: dace.float64[klon, klev, nblocks]):
+def microphysics(
+    pt: dace.float64[klon, klev, nblocks],
+    pq: dace.float64[klon, klev, nblocks],
+    pflux: dace.float64[klon, klev, nblocks],
+    tend: dace.float64[klon, klev, nblocks],
+):
     """CLOUDSC's compute shape in miniature: per-block outer map, horizontal map inside it, and a
     SEQUENTIAL vertical sweep carrying a running flux -- plus the saturation-pressure exponential the
     real kernel spends most of its time in. Enough arithmetic that a wrong schedule, a lost carry or a
@@ -78,25 +83,25 @@ def microphysics_buffers(seed: int = 7):
     """Seeded inputs in the physical window (``pt`` well clear of the ``pt - 32.19`` pole) and zeroed
     outputs. A fresh set per leg, so neither run can see the other's buffers."""
     rng = np.random.default_rng(seed)
-    shape = (SIZES['klon'], SIZES['klev'], SIZES['nblocks'])
+    shape = (SIZES["klon"], SIZES["klev"], SIZES["nblocks"])
     return {
-        'pt': 250.0 + 50.0 * rng.random(shape),
-        'pq': 1e-3 * rng.random(shape),
-        'pflux': np.zeros(shape),
-        'tend': np.zeros(shape),
+        "pt": 250.0 + 50.0 * rng.random(shape),
+        "pq": 1e-3 * rng.random(shape),
+        "pflux": np.zeros(shape),
+        "tend": np.zeros(shape),
     }
 
 
 def blocked_buffers(seed: int = 3):
     rng = np.random.default_rng(seed)
-    shape = (SIZES['klev'], SIZES['klon'], SIZES['nblocks'])  # blocked_sdfg is [klev, klon, nblocks]
-    return {'pin': rng.random(shape), 'pout': np.zeros(shape)}
+    shape = (SIZES["klev"], SIZES["klon"], SIZES["nblocks"])  # blocked_sdfg is [klev, klon, nblocks]
+    return {"pin": rng.random(shape), "pout": np.zeros(shape)}
 
 
 def run_on_host(sdfg: dace.SDFG, buffers: dict, name: str) -> dict:
     sdfg = copy.deepcopy(sdfg)
     sdfg.name = name
-    with set_temporary('compiler', 'cpu', 'args', value=STRICT_FP_CPU_ARGS):
+    with set_temporary("compiler", "cpu", "args", value=STRICT_FP_CPU_ARGS):
         sdfg(**buffers, **SIZES)
     return buffers
 
@@ -106,9 +111,11 @@ def run_on_device(sdfg: dace.SDFG, buffers: dict, name: str) -> dict:
     sdfg = copy.deepcopy(sdfg)
     sdfg.name = name
     offload_cloudsc_to_gpu(sdfg)
-    assert any(node.map.schedule == dace.ScheduleType.GPU_Device
-               for node, _ in sdfg.all_nodes_recursive() if isinstance(node, nodes.MapEntry)), \
-        'nothing was scheduled onto the device -- the comparison would be host-vs-host'
+    assert any(
+        node.map.schedule == dace.ScheduleType.GPU_Device
+        for node, _ in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.MapEntry)
+    ), "nothing was scheduled onto the device -- the comparison would be host-vs-host"
     with strict_fp_device_build():
         sdfg(**buffers, **SIZES)
     return buffers
@@ -134,13 +141,13 @@ def test_offloaded_graph_is_called_with_host_arrays():
     what lets both legs be driven from the identical plain-numpy dict."""
     sdfg = copy.deepcopy(microphysics.to_sdfg(simplify=True))
     offload_cloudsc_to_gpu(sdfg)
-    mirrors = sorted(name for name in sdfg.arrays if name.startswith('gpu_'))
-    assert mirrors, 'nothing was mirrored to the device'
+    mirrors = sorted(name for name in sdfg.arrays if name.startswith("gpu_"))
+    assert mirrors, "nothing was mirrored to the device"
     arglist = sdfg.arglist()
-    assert not [name for name in mirrors if name in arglist], f'mirrors leaked into the arglist: {mirrors}'
+    assert not [name for name in mirrors if name in arglist], f"mirrors leaked into the arglist: {mirrors}"
     assert all(sdfg.arrays[name].transient for name in mirrors)
-    for name in ('pt', 'pq', 'pflux', 'tend'):
-        assert name in arglist, f'{name} vanished from the arglist'
+    for name in ("pt", "pq", "pflux", "tend"):
+        assert name in arglist, f"{name} vanished from the arglist"
 
 
 def test_pure_arithmetic_offload_is_bit_exact_on_device():
@@ -148,28 +155,31 @@ def test_pure_arithmetic_offload_is_bit_exact_on_device():
     offloaded graph must reproduce the host result BIT FOR BIT. Asserted with ``array_equal`` -- no
     tolerance to hide behind."""
     base = blocked_sdfg()
-    host = run_on_host(base, blocked_buffers(), 'offload_numeric_blocked_host')
-    device = run_on_device(base, blocked_buffers(), 'offload_numeric_blocked_device')
-    assert np.array_equal(host['pout'], device['pout']), (
-        f'device result is not bit-exact: {int((host["pout"] != device["pout"]).sum())} of '
-        f'{host["pout"].size} elements differ, max |delta|={np.abs(host["pout"] - device["pout"]).max():.3e}')
-    assert np.array_equal(host['pin'], device['pin']), 'the copy-in/copy-out round trip corrupted an input'
+    host = run_on_host(base, blocked_buffers(), "offload_numeric_blocked_host")
+    device = run_on_device(base, blocked_buffers(), "offload_numeric_blocked_device")
+    assert np.array_equal(host["pout"], device["pout"]), (
+        f"device result is not bit-exact: {int((host['pout'] != device['pout']).sum())} of "
+        f"{host['pout'].size} elements differ, max |delta|={np.abs(host['pout'] - device['pout']).max():.3e}"
+    )
+    assert np.array_equal(host["pin"], device["pin"]), "the copy-in/copy-out round trip corrupted an input"
 
 
 def test_microphysics_offload_matches_the_host_to_last_bits():
     """The CLOUDSC-shaped fixture: same inputs, host leg and device leg, both strict-FP. Bounded in
     ULPs so what is being allowed is exactly "the last bits of exp/log differ" and nothing looser."""
     base = microphysics.to_sdfg(simplify=True)
-    host = run_on_host(base, microphysics_buffers(), 'offload_numeric_micro_host')
-    device = run_on_device(base, microphysics_buffers(), 'offload_numeric_micro_device')
-    for name in ('pflux', 'tend'):
+    host = run_on_host(base, microphysics_buffers(), "offload_numeric_micro_host")
+    device = run_on_device(base, microphysics_buffers(), "offload_numeric_micro_device")
+    for name in ("pflux", "tend"):
         ulps = ulp_distance(host[name], device[name])
         worst = float(ulps.max())
-        assert worst <= LIBM_ULP_BOUND, (f'{name}: device result is {worst:.1f} ULP from the host result '
-                                         f'(bound {LIBM_ULP_BOUND}); max |delta|='
-                                         f'{np.abs(host[name] - device[name]).max():.3e}. A gap this wide is '
-                                         f'not a libm last-bit difference -- suspect the offload.')
-    assert np.array_equal(host['pt'], device['pt']), 'the copy-in/copy-out round trip corrupted an input'
+        assert worst <= LIBM_ULP_BOUND, (
+            f"{name}: device result is {worst:.1f} ULP from the host result "
+            f"(bound {LIBM_ULP_BOUND}); max |delta|="
+            f"{np.abs(host[name] - device[name]).max():.3e}. A gap this wide is "
+            f"not a libm last-bit difference -- suspect the offload."
+        )
+    assert np.array_equal(host["pt"], device["pt"]), "the copy-in/copy-out round trip corrupted an input"
 
 
 def test_check_offload_phase_runs_the_numeric_check_on_device():
@@ -178,17 +188,17 @@ def test_check_offload_phase_runs_the_numeric_check_on_device():
     check's failure through rather than swallowing it."""
     sdfg = blocked_sdfg()
     offload_cloudsc_to_gpu(sdfg)
-    sdfg.name = 'offload_numeric_gate'
+    sdfg.name = "offload_numeric_gate"
     seen = []
     assert check_offload_phase(sdfg, lambda graph, phase: seen.append((graph.name, phase))) is True
-    assert seen == [('offload_numeric_gate', 'offload')], seen
+    assert seen == [("offload_numeric_gate", "offload")], seen
 
     def failing_check(_graph, _phase):
-        raise AssertionError('wired check failed')
+        raise AssertionError("wired check failed")
 
-    with pytest.raises(AssertionError, match='wired check failed'):
+    with pytest.raises(AssertionError, match="wired check failed"):
         check_offload_phase(sdfg, failing_check)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

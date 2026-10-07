@@ -14,21 +14,21 @@ import dace.library
 # name our own job scripts export (alongside ``LD_LIBRARY_PATH``); the others are the
 # de-facto CMake/spack conventions. Each may name either an install prefix (with
 # ``lib``/``lib64`` + ``include`` under it) or a lib dir directly.
-OPENBLAS_ENV_VARS = ('OPENBLAS_DIR', 'OPENBLAS_ROOT', 'OPENBLAS_HOME', 'OpenBLAS_HOME')
+OPENBLAS_ENV_VARS = ("OPENBLAS_DIR", "OPENBLAS_ROOT", "OPENBLAS_HOME", "OpenBLAS_HOME")
 
 # ``openblas_get_parallel()`` return codes, and the spack variant each corresponds to.
 OPENBLAS_PARALLEL_NAMES = {
-    0: 'sequential (spack threads=none)',
-    1: 'pthreads (spack threads=pthreads)',
-    2: 'OpenMP (spack threads=openmp)'
+    0: "sequential (spack threads=none)",
+    1: "pthreads (spack threads=pthreads)",
+    2: "OpenMP (spack threads=openmp)",
 }
 
 
 def _include_dir_for(libdir):
     """Sibling ``include`` dir of a lib dir, if it actually holds ``cblas.h`` -- spack/conda
     keep the OpenBLAS headers off the default compiler search path, so the build needs it."""
-    inc = os.path.join(os.path.dirname(os.path.realpath(libdir)), 'include')
-    return inc if os.path.isfile(os.path.join(inc, 'cblas.h')) else None
+    inc = os.path.join(os.path.dirname(os.path.realpath(libdir)), "include")
+    return inc if os.path.isfile(os.path.join(inc, "cblas.h")) else None
 
 
 def _libopenblas_in(libdir):
@@ -39,10 +39,10 @@ def _libopenblas_in(libdir):
     ``libopenblas.so.0`` (no unversioned dev symlink) is still usable."""
     if not libdir or not os.path.isdir(libdir):
         return None
-    exact = os.path.join(libdir, 'libopenblas.so')
+    exact = os.path.join(libdir, "libopenblas.so")
     if os.path.exists(exact):
         return exact
-    hits = sorted(glob.glob(os.path.join(libdir, 'libopenblas.so*')))
+    hits = sorted(glob.glob(os.path.join(libdir, "libopenblas.so*")))
     return hits[-1] if hits else None
 
 
@@ -52,7 +52,7 @@ def _scan_ld_library_path():
     the default loader dirs, so it returns ``None`` for an OpenBLAS that lives *solely* on
     ``LD_LIBRARY_PATH`` -- and the detection then wrongly reports "not installed" and MatMul
     falls back to a naive pure-Python-style loop. Globbing the path ourselves fixes that."""
-    for d in os.environ.get('LD_LIBRARY_PATH', '').split(os.pathsep):
+    for d in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep):
         lib = _libopenblas_in(d)
         if lib:
             return lib
@@ -68,8 +68,8 @@ def _resolve_lib_dir(soname_or_path):
         return None
     if os.path.isabs(soname_or_path) and os.path.exists(soname_or_path):
         return os.path.dirname(os.path.realpath(soname_or_path))
-    for d in os.environ.get('LD_LIBRARY_PATH', '').split(os.pathsep):
-        cand = os.path.join(d, soname_or_path) if d else ''
+    for d in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep):
+        cand = os.path.join(d, soname_or_path) if d else ""
         if cand and os.path.exists(cand):
             return os.path.dirname(os.path.realpath(cand))
     return None
@@ -92,11 +92,11 @@ def _standalone_libopenblas():
         if not root or not os.path.isdir(root):
             continue
         # ``root`` may be an install prefix (lib/lib64 under it) or a lib dir itself.
-        for libdir in (os.path.join(root, 'lib'), os.path.join(root, 'lib64'), root):
+        for libdir in (os.path.join(root, "lib"), os.path.join(root, "lib64"), root):
             lib = _libopenblas_in(libdir)
             if lib:
                 return lib, _include_dir_for(libdir)
-    found = ctypes.util.find_library('openblas')
+    found = ctypes.util.find_library("openblas")
     libdir = _resolve_lib_dir(found)
     if libdir:
         lib = _libopenblas_in(libdir) or found  # else let the linker resolve the soname
@@ -104,9 +104,9 @@ def _standalone_libopenblas():
     lib = _scan_ld_library_path()
     if lib:
         return lib, _include_dir_for(os.path.dirname(lib))
-    root = spack_install_prefix('openblas')
+    root = spack_install_prefix("openblas")
     if root:
-        for libdir in (os.path.join(root, 'lib'), os.path.join(root, 'lib64')):
+        for libdir in (os.path.join(root, "lib"), os.path.join(root, "lib64")):
             lib = _libopenblas_in(libdir)
             if lib:
                 return lib, _include_dir_for(libdir)
@@ -125,13 +125,13 @@ def spack_install_prefix(package: str) -> str | None:
     spack that is absent, slow, or reports several matching installs leaves the detection exactly
     where it was.
     """
-    root = os.environ.get('SPACK_ROOT')
-    root_exe = os.path.join(root, 'bin', 'spack') if root else None
-    exe = shutil.which('spack') or (root_exe if root_exe and os.access(root_exe, os.X_OK) else None)
+    root = os.environ.get("SPACK_ROOT")
+    root_exe = os.path.join(root, "bin", "spack") if root else None
+    exe = shutil.which("spack") or (root_exe if root_exe and os.access(root_exe, os.X_OK) else None)
     if not exe:
         return None
     try:
-        out = subprocess.run([exe, 'location', '-i', package], capture_output=True, text=True, timeout=30, check=False)
+        out = subprocess.run([exe, "location", "-i", package], capture_output=True, text=True, timeout=30, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     prefix = out.stdout.strip()
@@ -141,13 +141,13 @@ def spack_install_prefix(package: str) -> str | None:
 def _openblas_present() -> bool:
     """Whether a ``libopenblas`` exists at all. The ldconfig cache counts: ``BLA_VENDOR=OpenBLAS``
     makes FindBLAS search the standard link paths, so it needs no resolvable directory."""
-    return bool(ctypes.util.find_library('openblas')) or bool(_standalone_libopenblas()[0])
+    return bool(ctypes.util.find_library("openblas")) or bool(_standalone_libopenblas()[0])
 
 
 def _system_blas_libs():
     """Generic distro BLAS shared libs (``liblapacke``/``libcblas``/``libblas``) on the loader
     path, or ``[]``. These are update-alternatives symlinks and may point at ANY implementation."""
-    return [p for p in (ctypes.util.find_library(l) for l in ('lapacke', 'cblas', 'blas')) if p]
+    return [p for p in (ctypes.util.find_library(l) for l in ("lapacke", "cblas", "blas")) if p]
 
 
 def _mapped_openblas_path() -> str | None:
@@ -155,10 +155,10 @@ def _mapped_openblas_path() -> str | None:
     because the loader is given a bare soname, and Debian and spack both keep several flavors
     side by side -- only the concrete path tells the user which one they got."""
     try:
-        with open('/proc/self/maps') as f:  # Linux-only; absent elsewhere, hence the guard
+        with open("/proc/self/maps") as f:  # Linux-only; absent elsewhere, hence the guard
             for line in f:
-                if 'libopenblas' in line:
-                    return line.rstrip().rsplit(' ', 1)[-1]
+                if "libopenblas" in line:
+                    return line.rstrip().rsplit(" ", 1)[-1]
     except OSError:
         pass
     return None
@@ -174,7 +174,7 @@ def _openblas_threading_flavor() -> tuple[int | None, str | None, str | None]:
     ``openblas_get_parallel()`` can. Loaded ``RTLD_LOCAL`` (ctypes' default) so it cannot interpose
     on symbols numpy's own BLAS already provides, and cached so this costs one ``dlopen`` per
     process."""
-    lib_path = _standalone_libopenblas()[0] or ctypes.util.find_library('openblas')
+    lib_path = _standalone_libopenblas()[0] or ctypes.util.find_library("openblas")
     if not lib_path:
         return None, None, None
     try:
@@ -208,15 +208,19 @@ def _warn_unless_openmp_threaded() -> None:
     code, config, path = _openblas_threading_flavor()
     if code is None or code == 2:
         return
-    flavor = OPENBLAS_PARALLEL_NAMES.get(code, f'unknown ({code})')
-    effect = ('spawns a thread pool of its own instead of sharing libgomp\'s, so inside DaCe OpenMP '
-              'maps the two pools multiply and oversubscribe the machine'
-              if code == 1 else 'leaves every BLAS call single-threaded')
+    flavor = OPENBLAS_PARALLEL_NAMES.get(code, f"unknown ({code})")
+    effect = (
+        "spawns a thread pool of its own instead of sharing libgomp's, so inside DaCe OpenMP "
+        "maps the two pools multiply and oversubscribe the machine"
+        if code == 1
+        else "leaves every BLAS call single-threaded"
+    )
     warnings.warn(
-        f'OpenBLAS at {path} is the {flavor} build: it {effect}. Results stay correct, '
-        'timings do not -- load an OpenBLAS built with threads=openmp before measuring. '
-        f'openblas_get_config()={config}',
-        stacklevel=2)
+        f"OpenBLAS at {path} is the {flavor} build: it {effect}. Results stay correct, "
+        "timings do not -- load an OpenBLAS built with threads=openmp before measuring. "
+        f"openblas_get_config()={config}",
+        stacklevel=2,
+    )
 
 
 @functools.lru_cache(maxsize=None, typed=True)
@@ -250,7 +254,6 @@ def exports_symbol(symbol: str) -> bool | None:
 
 @dace.library.environment
 class OpenBLAS:
-
     # Two install shapes: distro alternatives (liblapacke/libcblas/libblas pointing at OpenBLAS,
     # headers on the default path) and a lone libopenblas from spack/conda (headers under its
     # own include dir). The mode names say who locates the library, which is what the build needs.
@@ -278,23 +281,23 @@ class OpenBLAS:
         directly.
         """
         if _system_blas_libs() and _openblas_present():
-            return 'find_package'
-        return 'direct_link' if _standalone_libopenblas()[0] else None
+            return "find_package"
+        return "direct_link" if _standalone_libopenblas()[0] else None
 
     @staticmethod
     def cmake_packages():
         # direct_link passes a full library path below, and find_package(BLAS REQUIRED) cannot
         # be satisfied for an off-default-path spack/conda install -- asking would only fail.
-        return ["LAPACK", "BLAS"] if OpenBLAS._mode() == 'find_package' else []
+        return ["LAPACK", "BLAS"] if OpenBLAS._mode() == "find_package" else []
 
     @staticmethod
     def cmake_variables():
-        return {"BLA_VENDOR": "OpenBLAS"} if OpenBLAS._mode() == 'find_package' else {}
+        return {"BLA_VENDOR": "OpenBLAS"} if OpenBLAS._mode() == "find_package" else {}
 
     @staticmethod
     def cmake_link_flags():
         # These vars only exist once find_package(LAPACK/BLAS) has run.
-        return ["${LAPACK_LINKER_FLAGS} ${BLAS_LINKER_FLAGS}"] if OpenBLAS._mode() == 'find_package' else []
+        return ["${LAPACK_LINKER_FLAGS} ${BLAS_LINKER_FLAGS}"] if OpenBLAS._mode() == "find_package" else []
 
     @staticmethod
     def cmake_includes():
@@ -309,7 +312,7 @@ class OpenBLAS:
         if mode is None:
             return []
         _warn_unless_openmp_threaded()  # only once an OpenBLAS is actually going to be used
-        if mode == 'find_package':
+        if mode == "find_package":
             return _system_blas_libs()
         lib, _ = _standalone_libopenblas()
         return [lib]

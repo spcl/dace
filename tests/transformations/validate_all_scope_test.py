@@ -30,25 +30,25 @@ M = 8
 
 def two_map_state(sdfg: SDFG, index: int) -> dace.SDFGState:
     """One state holding ``T = A*2; B = T+1`` -- a vertically fusable Map pair."""
-    for name in (f'A{index}', f'B{index}'):
+    for name in (f"A{index}", f"B{index}"):
         sdfg.add_array(name, [M], dtypes.float64)
-    sdfg.add_transient(f'T{index}', [M], dtypes.float64)
-    state = sdfg.add_state(f's{index}', is_start_block=(index == 0))
+    sdfg.add_transient(f"T{index}", [M], dtypes.float64)
+    state = sdfg.add_state(f"s{index}", is_start_block=(index == 0))
 
-    ar, tw, bw = state.add_access(f'A{index}'), state.add_access(f'T{index}'), state.add_access(f'B{index}')
-    entry1, exit1 = state.add_map(f'prod{index}', {'i': f'0:{M}'})
-    t1 = state.add_tasklet('x2', {'_in'}, {'_out'}, '_out = _in * 2.0')
-    state.add_memlet_path(ar, entry1, t1, dst_conn='_in', memlet=Memlet(f'A{index}[i]'))
-    state.add_memlet_path(t1, exit1, tw, src_conn='_out', memlet=Memlet(f'T{index}[i]'))
-    entry2, exit2 = state.add_map(f'cons{index}', {'i': f'0:{M}'})
-    t2 = state.add_tasklet('p1', {'_in'}, {'_out'}, '_out = _in + 1.0')
-    state.add_memlet_path(tw, entry2, t2, dst_conn='_in', memlet=Memlet(f'T{index}[i]'))
-    state.add_memlet_path(t2, exit2, bw, src_conn='_out', memlet=Memlet(f'B{index}[i]'))
+    ar, tw, bw = state.add_access(f"A{index}"), state.add_access(f"T{index}"), state.add_access(f"B{index}")
+    entry1, exit1 = state.add_map(f"prod{index}", {"i": f"0:{M}"})
+    t1 = state.add_tasklet("x2", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    state.add_memlet_path(ar, entry1, t1, dst_conn="_in", memlet=Memlet(f"A{index}[i]"))
+    state.add_memlet_path(t1, exit1, tw, src_conn="_out", memlet=Memlet(f"T{index}[i]"))
+    entry2, exit2 = state.add_map(f"cons{index}", {"i": f"0:{M}"})
+    t2 = state.add_tasklet("p1", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_memlet_path(tw, entry2, t2, dst_conn="_in", memlet=Memlet(f"T{index}[i]"))
+    state.add_memlet_path(t2, exit2, bw, src_conn="_out", memlet=Memlet(f"B{index}[i]"))
     return state
 
 
 def chain_of_states(num_states: int) -> SDFG:
-    sdfg = SDFG(f'validate_scope_chain{num_states}')
+    sdfg = SDFG(f"validate_scope_chain{num_states}")
     previous = None
     for index in range(num_states):
         state = two_map_state(sdfg, index)
@@ -63,7 +63,7 @@ def test_validate_all_still_fuses_a_valid_sdfg():
     """The scoped check must not reject anything a full validate accepts."""
     sdfg = chain_of_states(4)
     applied = sdfg.apply_transformations_repeated(MapFusionVertical, validate=True, validate_all=True)
-    assert applied == 4, f'expected one fusion per state, got {applied}'
+    assert applied == 4, f"expected one fusion per state, got {applied}"
     sdfg.validate()
 
 
@@ -73,6 +73,7 @@ def test_validate_all_catches_a_transformation_that_breaks_its_own_state():
 
     class BreakTheState(xf.SingleStateTransformation):
         """Applies to any MapEntry and leaves a dangling connector behind."""
+
         map_entry = xf.PatternNode(dnodes.MapEntry)
 
         @classmethod
@@ -85,34 +86,34 @@ def test_validate_all_catches_a_transformation_that_breaks_its_own_state():
         def apply(self, graph, sdfg):
             # An in-connector with no edge feeding it: state-local corruption, exactly the
             # class of damage a dataflow transformation causes.
-            self.map_entry.add_in_connector('IN_dangling')
+            self.map_entry.add_in_connector("IN_dangling")
 
     sdfg = chain_of_states(3)
-    with pytest.raises(InvalidSDFGError, match='Validation failed after applying'):
+    with pytest.raises(InvalidSDFGError, match="Validation failed after applying"):
         sdfg.apply_transformations_repeated(BreakTheState, validate=False, validate_all=True)
 
 
 def loop_with_target_state_at_index_one() -> Tuple[SDFG, LoopRegion, dace.SDFGState, dace.SDFGState]:
     """SDFG whose top-level block 1 is an unrelated state, with the mapped state at index 1 of a loop."""
-    sdfg = SDFG('validate_scope_nested_region')
-    sdfg.add_array('A', [M], dtypes.float64)
-    sdfg.add_array('B', [M], dtypes.float64)
-    entry_state = sdfg.add_state('entry', is_start_block=True)
-    decoy = sdfg.add_state('decoy_block_at_index_one')
-    loop = LoopRegion('loop', 'i < 4', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    sdfg = SDFG("validate_scope_nested_region")
+    sdfg.add_array("A", [M], dtypes.float64)
+    sdfg.add_array("B", [M], dtypes.float64)
+    entry_state = sdfg.add_state("entry", is_start_block=True)
+    decoy = sdfg.add_state("decoy_block_at_index_one")
+    loop = LoopRegion("loop", "i < 4", "i", "i = 0", "i = i + 1", sdfg=sdfg)
     sdfg.add_node(loop)
     sdfg.add_edge(entry_state, decoy, InterstateEdge())
     sdfg.add_edge(decoy, loop, InterstateEdge())
 
-    preamble = loop.add_state('loop_preamble', is_start_block=True)
-    target = loop.add_state('target')
+    preamble = loop.add_state("loop_preamble", is_start_block=True)
+    target = loop.add_state("target")
     loop.add_edge(preamble, target, InterstateEdge())
 
-    ar, bw = target.add_access('A'), target.add_access('B')
-    map_entry, map_exit = target.add_map('doubler', {'k': f'0:{M}'})
-    tasklet = target.add_tasklet('x2', {'_in'}, {'_out'}, '_out = _in * 2.0')
-    target.add_memlet_path(ar, map_entry, tasklet, dst_conn='_in', memlet=Memlet('A[k]'))
-    target.add_memlet_path(tasklet, map_exit, bw, src_conn='_out', memlet=Memlet('B[k]'))
+    ar, bw = target.add_access("A"), target.add_access("B")
+    map_entry, map_exit = target.add_map("doubler", {"k": f"0:{M}"})
+    tasklet = target.add_tasklet("x2", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    target.add_memlet_path(ar, map_entry, tasklet, dst_conn="_in", memlet=Memlet("A[k]"))
+    target.add_memlet_path(tasklet, map_exit, bw, src_conn="_out", memlet=Memlet("B[k]"))
     # ``add_node`` does not register the region, and pattern matching addresses matches by cfg id.
     sdfg.reset_cfg_list()
     sdfg.validate()
@@ -130,6 +131,7 @@ def test_validate_all_failure_in_a_region_names_the_state_it_matched():
     @xf.explicit_cf_compatible
     class BreakTheStateInRegion(xf.SingleStateTransformation):
         """Applies to any MapEntry and leaves a dangling connector behind."""
+
         map_entry = xf.PatternNode(dnodes.MapEntry)
 
         @classmethod
@@ -140,7 +142,7 @@ def test_validate_all_failure_in_a_region_names_the_state_it_matched():
             return True
 
         def apply(self, graph, sdfg):
-            self.map_entry.add_in_connector('IN_dangling')
+            self.map_entry.add_in_connector("IN_dangling")
 
     sdfg, loop, target, decoy = loop_with_target_state_at_index_one()
     # The mapped state is block 1 of the loop, and an unrelated state is block 1 of the SDFG.
@@ -153,73 +155,73 @@ def test_validate_all_failure_in_a_region_names_the_state_it_matched():
     err = excinfo.value
     assert err.sdfg is loop
     assert err.sdfg.node(err.state_id) is target
-    assert 'decoy_block_at_index_one' not in str(err)
-    assert '(at state target)' in str(err)
+    assert "decoy_block_at_index_one" not in str(err)
+    assert "(at state target)" in str(err)
 
 
 def test_scoped_check_does_not_warn_about_transients_initialized_elsewhere():
     """A state-local check has no cross-state context: a transient another state initialized
     looks uninitialized. The scoped path seeds every descriptor as initialized, so a valid
     SDFG produces no spurious diagnostic (and no raise for a Reference)."""
-    sdfg = SDFG('cross_state_transient')
-    sdfg.add_array('A', [M], dtypes.float64)
-    sdfg.add_array('B', [M], dtypes.float64)
-    sdfg.add_transient('T', [M], dtypes.float64)
+    sdfg = SDFG("cross_state_transient")
+    sdfg.add_array("A", [M], dtypes.float64)
+    sdfg.add_array("B", [M], dtypes.float64)
+    sdfg.add_transient("T", [M], dtypes.float64)
 
-    producer = sdfg.add_state('produce', is_start_block=True)
-    ar, tw = producer.add_access('A'), producer.add_access('T')
-    entry, exit_ = producer.add_map('prod', {'i': f'0:{M}'})
-    t = producer.add_tasklet('x2', {'_in'}, {'_out'}, '_out = _in * 2.0')
-    producer.add_memlet_path(ar, entry, t, dst_conn='_in', memlet=Memlet('A[i]'))
-    producer.add_memlet_path(t, exit_, tw, src_conn='_out', memlet=Memlet('T[i]'))
+    producer = sdfg.add_state("produce", is_start_block=True)
+    ar, tw = producer.add_access("A"), producer.add_access("T")
+    entry, exit_ = producer.add_map("prod", {"i": f"0:{M}"})
+    t = producer.add_tasklet("x2", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    producer.add_memlet_path(ar, entry, t, dst_conn="_in", memlet=Memlet("A[i]"))
+    producer.add_memlet_path(t, exit_, tw, src_conn="_out", memlet=Memlet("T[i]"))
 
     # The consumer reads ``T`` without writing it: only the producer state initializes it.
-    consumer = sdfg.add_state('consume')
+    consumer = sdfg.add_state("consume")
     sdfg.add_edge(producer, consumer, InterstateEdge())
-    tr, bw = consumer.add_access('T'), consumer.add_access('B')
-    entry2, exit2 = consumer.add_map('cons', {'i': f'0:{M}'})
-    t2 = consumer.add_tasklet('p1', {'_in'}, {'_out'}, '_out = _in + 1.0')
-    consumer.add_memlet_path(tr, entry2, t2, dst_conn='_in', memlet=Memlet('T[i]'))
-    consumer.add_memlet_path(t2, exit2, bw, src_conn='_out', memlet=Memlet('B[i]'))
+    tr, bw = consumer.add_access("T"), consumer.add_access("B")
+    entry2, exit2 = consumer.add_map("cons", {"i": f"0:{M}"})
+    t2 = consumer.add_tasklet("p1", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    consumer.add_memlet_path(tr, entry2, t2, dst_conn="_in", memlet=Memlet("T[i]"))
+    consumer.add_memlet_path(t2, exit2, bw, src_conn="_out", memlet=Memlet("B[i]"))
     sdfg.validate()
 
     match = MapFusionVertical()
     match.state_id = sdfg.node_id(consumer)
     checker = PatternMatchAndApply([MapFusionVertical])
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
+        warnings.simplefilter("always")
         checker.validate_after_match(match, consumer, sdfg)
-    spurious = [str(w.message) for w in caught if 'uninitialized transient' in str(w.message)]
-    assert not spurious, f'scoped validation warned about a transient another state initializes: {spurious}'
+    spurious = [str(w.message) for w in caught if "uninitialized transient" in str(w.message)]
+    assert not spurious, f"scoped validation warned about a transient another state initializes: {spurious}"
 
 
 def test_scoped_check_accepts_a_match_inside_a_nested_sdfg():
     """The state a match rewrites may belong to a NESTED SDFG. validate_state rejects a state
     whose ``.sdfg`` is not the one passed in, so the scoped check must use the OWNING SDFG --
     passing the root turns every nested match into a bogus 'does not point to the correct parent'."""
-    inner = SDFG('inner')
-    inner.add_array('A', [M, M], dtypes.float64)
-    body = inner.add_state('body', is_start_block=True)
-    read, write = body.add_access('A'), body.add_access('A')
-    entry_i, exit_i = body.add_map('mi', {'i': f'0:{M}'})
-    entry_j, exit_j = body.add_map('mj', {'j': f'0:{M}'})
-    tasklet = body.add_tasklet('x2', {'_in'}, {'_out'}, '_out = _in * 2.0')
-    body.add_memlet_path(read, entry_i, entry_j, tasklet, dst_conn='_in', memlet=Memlet('A[i, j]'))
-    body.add_memlet_path(tasklet, exit_j, exit_i, write, src_conn='_out', memlet=Memlet('A[i, j]'))
+    inner = SDFG("inner")
+    inner.add_array("A", [M, M], dtypes.float64)
+    body = inner.add_state("body", is_start_block=True)
+    read, write = body.add_access("A"), body.add_access("A")
+    entry_i, exit_i = body.add_map("mi", {"i": f"0:{M}"})
+    entry_j, exit_j = body.add_map("mj", {"j": f"0:{M}"})
+    tasklet = body.add_tasklet("x2", {"_in"}, {"_out"}, "_out = _in * 2.0")
+    body.add_memlet_path(read, entry_i, entry_j, tasklet, dst_conn="_in", memlet=Memlet("A[i, j]"))
+    body.add_memlet_path(tasklet, exit_j, exit_i, write, src_conn="_out", memlet=Memlet("A[i, j]"))
 
-    sdfg = SDFG('outer')
-    sdfg.add_array('A', [M, M], dtypes.float64)
-    state = sdfg.add_state('main', is_start_block=True)
-    nested = state.add_nested_sdfg(inner, {'A'}, {'A'})
-    state.add_edge(state.add_access('A'), None, nested, 'A', Memlet(f'A[0:{M}, 0:{M}]'))
-    state.add_edge(nested, 'A', state.add_access('A'), None, Memlet(f'A[0:{M}, 0:{M}]'))
+    sdfg = SDFG("outer")
+    sdfg.add_array("A", [M, M], dtypes.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+    nested = state.add_nested_sdfg(inner, {"A"}, {"A"})
+    state.add_edge(state.add_access("A"), None, nested, "A", Memlet(f"A[0:{M}, 0:{M}]"))
+    state.add_edge(nested, "A", state.add_access("A"), None, Memlet(f"A[0:{M}, 0:{M}]"))
     sdfg.validate()
 
     applied = sdfg.apply_transformations_repeated(MapCollapse, validate=True, validate_all=True)
-    assert applied == 1, f'MapCollapse must fire inside the nested SDFG, applied={applied}'
+    assert applied == 1, f"MapCollapse must fire inside the nested SDFG, applied={applied}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_validate_all_still_fuses_a_valid_sdfg()
     test_validate_all_catches_a_transformation_that_breaks_its_own_state()
     test_validate_all_failure_in_a_region_names_the_state_it_matched()

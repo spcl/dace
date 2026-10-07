@@ -16,6 +16,7 @@ Both are uniform across lanes, so the condition stays valid with them left symbo
 over-refusal control is ``v``, bound by an interstate-edge assignment from data and read
 only by the tasklet: it MUST still be demoted.
 """
+
 import pytest
 
 import dace
@@ -23,7 +24,8 @@ from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
-    LowerInterstateConditionalAssignmentsToTasklets, )
+    LowerInterstateConditionalAssignmentsToTasklets,
+)
 
 N = dace.symbol("N", nonnegative=True)
 
@@ -36,8 +38,8 @@ def _build_sdfg(v_dtype: dace.dtypes.typeclass = dace.float64) -> dace.SDFG:
     :returns: the constructed SDFG.
     """
     sdfg = dace.SDFG("conditional_symbol_demotion")
-    sdfg.add_array("a", shape=(N, ), dtype=dace.float64)
-    sdfg.add_array("b", shape=(N, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(N,), dtype=dace.float64)
+    sdfg.add_array("b", shape=(N,), dtype=dace.float64)
     sdfg.add_symbol("v", v_dtype)
 
     loop = LoopRegion("loop", loop_var="i", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1")
@@ -114,14 +116,15 @@ def test_demotion_keeps_the_declared_dtype(declared):
     LowerInterstateConditionalAssignmentsToTasklets().apply_pass(sdfg, {})
 
     assert "v" in sdfg.arrays, "the data-bound symbol must still be demoted"
-    assert sdfg.arrays["v"].dtype == declared, \
+    assert sdfg.arrays["v"].dtype == declared, (
         f"demotion changed the dtype: declared {declared}, scalar is {sdfg.arrays['v'].dtype}"
+    )
 
 
 def build_undeclared_arm_bound_sdfg() -> dace.SDFG:
     """A ConditionalBlock arm binds zlcrit on its own interstate edge; zlcrit is declared nowhere (CloudSC shape)."""
     sdfg = dace.SDFG("undeclared_arm_bound_symbol")
-    sdfg.add_array("a", shape=(1, ), dtype=dace.float32)
+    sdfg.add_array("a", shape=(1,), dtype=dace.float32)
 
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -147,9 +150,7 @@ def test_undeclared_arm_bound_symbol_is_demoted_from_the_assignment_type():
     assert demoted == 1, f"expected exactly one arm-bound symbol demoted, got {demoted}"
     assert "zlcrit" in sdfg.arrays, "the undeclared arm-bound symbol must be demoted to a scalar"
     scalar = sdfg.arrays["zlcrit"]
-    assert isinstance(scalar, dace.data.Scalar) and scalar.transient, \
-        "the demoted symbol must be a transient Scalar"
-    assert scalar.dtype == dace.float32, \
-        f"dtype must come from the assignment (a is float32), got {scalar.dtype}"
+    assert isinstance(scalar, dace.data.Scalar) and scalar.transient, "the demoted symbol must be a transient Scalar"
+    assert scalar.dtype == dace.float32, f"dtype must come from the assignment (a is float32), got {scalar.dtype}"
     assert "zlcrit" not in sdfg.symbols, "the demoted name must no longer be a symbol"
     sdfg.validate()

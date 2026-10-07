@@ -36,6 +36,7 @@ result -- reusing ``WavefrontSkew.try_skew`` itself, so this pass can never drif
 the very next pipeline stage decides. A candidate that does not demonstrably unlock a skew
 leaves the SDFG untouched.
 """
+
 import copy
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
@@ -88,8 +89,9 @@ def _same_axis(m_lo: Any, m_hi: Any, m_step: Any, lo: Any, hi: Any, step: Any) -
     1 is the same axis if both sweep the same number of steps. The origin itself is not lost:
     it stays exactly where it always was, on the Map's own stored range and the loop's own
     init statement, for whichever later step performs the actual rebase."""
-    return _symbolically_equal(m_step, step) and _symbolically_equal(_trip_count(m_lo, m_hi, m_step),
-                                                                     _trip_count(lo, hi, step))
+    return _symbolically_equal(m_step, step) and _symbolically_equal(
+        _trip_count(m_lo, m_hi, m_step), _trip_count(lo, hi, step)
+    )
 
 
 def _ranges_match(map_state: SDFGState, inner_loop: LoopRegion) -> bool:
@@ -223,7 +225,8 @@ class ReconstructWavefrontNest(ppl.Pass):
     A candidate is committed to the real SDFG only after an identical trial run on a deepcopy
     proves ``WavefrontSkew`` would then skew it -- a pass that does not apply must not mutate.
     """
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States | ppl.Modifies.Nodes | ppl.Modifies.Edges
@@ -271,8 +274,8 @@ class ReconstructWavefrontNest(ppl.Pass):
         # succeeded; a refusal here would mean the two runs diverged -- an upstream bug,
         # not a normal outcome -- surfaced loudly rather than left as a half-mutated graph.
         if not _reconstruct_body(sdfg, outer):
-            raise RuntimeError('ReconstructWavefrontNest: real commit diverged from its own probe')
+            raise RuntimeError("ReconstructWavefrontNest: real commit diverged from its own probe")
         return True
 
 
-__all__ = ['ReconstructWavefrontNest']
+__all__ = ["ReconstructWavefrontNest"]

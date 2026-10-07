@@ -5,6 +5,7 @@ Drives a forward + inverse round-trip through the FFTW3 expansion and
 compares against numpy's reference. The marker ``fftw`` opts the test
 into the CI step that installs ``libfftw3-dev``.
 """
+
 import numpy as np
 import pytest
 
@@ -20,17 +21,17 @@ def test_fft_fftw3_lowering():
     @dace.program
     def fft_then_ifft(x: dace.complex128[N]):
         y = np.fft.fft(x)
-        z = np.fft.ifft(y, norm='forward')
+        z = np.fft.ifft(y, norm="forward")
         return y, z
 
     sdfg = fft_then_ifft.to_sdfg()
-    fftlib.FFT.default_implementation = 'FFTW3'
-    fftlib.IFFT.default_implementation = 'FFTW3'
+    fftlib.FFT.default_implementation = "FFTW3"
+    fftlib.IFFT.default_implementation = "FFTW3"
     try:
         sdfg.expand_library_nodes()
     finally:
-        fftlib.FFT.default_implementation = 'pure'
-        fftlib.IFFT.default_implementation = 'pure'
+        fftlib.FFT.default_implementation = "pure"
+        fftlib.IFFT.default_implementation = "pure"
 
     rng = np.random.default_rng(42)
     x = rng.standard_normal(N) + 1j * rng.standard_normal(N)
@@ -42,6 +43,6 @@ def test_fft_fftw3_lowering():
     np.testing.assert_allclose(z / N, x, rtol=1e-12, atol=1e-12)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_fft_fftw3_lowering()
-    print('FFTW3 FFT lowering test PASS')
+    print("FFTW3 FFT lowering test PASS")

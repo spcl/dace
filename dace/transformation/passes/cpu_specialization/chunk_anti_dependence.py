@@ -42,6 +42,7 @@ a run rather than of a point and is not expressible as one memlet on a 1-D array
 loops keep the snapshot. Pure data movement either way -- no arithmetic is reassociated,
 so the result is bit-identical.
 """
+
 import copy
 from typing import Any, Dict, Optional, Tuple
 
@@ -53,18 +54,22 @@ from dace.optionals import required
 from dace.sdfg.narrowing import as_basic, as_expr, as_map_entry
 
 #: Schedules that lower through the CPU path. A GPU-scheduled map never matches.
-_CPU_SCHEDULES = (dtypes.ScheduleType.Default, dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
-                  dtypes.ScheduleType.Sequential)
+_CPU_SCHEDULES = (
+    dtypes.ScheduleType.Default,
+    dtypes.ScheduleType.CPU_Multicore,
+    dtypes.ScheduleType.CPU_Persistent,
+    dtypes.ScheduleType.Sequential,
+)
 
 
 def _min(a, b):
     """``min(a, b)`` built through DaCe's parser, not raw sympy."""
-    return symbolic.pystr_to_symbolic(f'Min({symbolic.symstr(a)}, {symbolic.symstr(b)})')
+    return symbolic.pystr_to_symbolic(f"Min({symbolic.symstr(a)}, {symbolic.symstr(b)})")
 
 
 def _diff(a, b):
     """``a - b`` with both sides reparsed, so equally-named symbols cancel."""
-    return symbolic.simplify(symbolic.pystr_to_symbolic(f'({a}) - ({b})'))
+    return symbolic.simplify(symbolic.pystr_to_symbolic(f"({a}) - ({b})"))
 
 
 def _exact(bound):
@@ -101,7 +106,8 @@ def _clone_contents(src: SDFGState, dst: SDFGState, sdfg: SDFG) -> None:
             scope_local[node.data] = scope_local.get(node.data, True) and src.entry_node(node) is not None
     private = {
         name: sdfg.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]), find_new_name=True)
-        for name, only_inside in scope_local.items() if only_inside and sdfg.arrays[name].transient
+        for name, only_inside in scope_local.items()
+        if only_inside and sdfg.arrays[name].transient
     }
 
     clones = copy.deepcopy(src_nodes)
@@ -121,7 +127,7 @@ def _clone_contents(src: SDFGState, dst: SDFGState, sdfg: SDFG) -> None:
 class ChunkAntiDependence(ppl.Pass):
     """Rewrite a CPU snapshot-broken read-ahead map into parallel chunks with seam buffers."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -135,6 +141,7 @@ class ChunkAntiDependence(ppl.Pass):
     def _match(self, state: SDFGState, sdfg: SDFG) -> Optional[Tuple]:
         """``(snap_node, arr, map_entry, lo, hi)`` for the canonical snapshot pattern, else None."""
         from dace.sdfg.scope import is_devicelevel_gpu
+
         for snap_node in state.data_nodes():
             desc = sdfg.arrays[snap_node.data]
             if not (desc.transient and isinstance(desc, data.Array) and len(desc.shape) == 1):
@@ -156,7 +163,8 @@ class ChunkAntiDependence(ppl.Pass):
             # The snapshot must be private to this state: a reader elsewhere would still
             # need the whole window this rewrite is about to stop copying.
             others = [
-                n for n, _ in sdfg.all_nodes_recursive()
+                n
+                for n, _ in sdfg.all_nodes_recursive()
                 if isinstance(n, nodes.AccessNode) and n.data == snap_node.data and n is not snap_node
             ]
             if others:
@@ -253,11 +261,14 @@ class ChunkAntiDependence(ppl.Pass):
         starts, with the memlets already propagated.
         """
         from dace.transformation.dataflow.tiling import MapTiling
-        MapTiling.apply_to(sdfg,
-                           options=dict(prefix='antidep_chunk', tile_sizes=(chunk_size, ), tile_trivial=True),
-                           map_entry=me,
-                           save=False,
-                           verify=False)
+
+        MapTiling.apply_to(
+            sdfg,
+            options=dict(prefix="antidep_chunk", tile_sizes=(chunk_size,), tile_trivial=True),
+            map_entry=me,
+            save=False,
+            verify=False,
+        )
         outer = state.entry_node(me)
         as_map_entry(outer).map.schedule = dtypes.ScheduleType.CPU_Multicore
         # Sequential inner, parallel outer. The differing schedules also stop MapCollapse
@@ -282,6 +293,7 @@ class ChunkAntiDependence(ppl.Pass):
         """
         # Avoid import loop: dataflow transformations import the pass pipeline this module defines.
         from dace.transformation.dataflow.map_for_loop import MapToForLoop
+
         to_loop = MapToForLoop()
         # The loop belongs inside the chunk map's scope, so keep the wrapping NestedSDFG rather
         # than inlining it up to the parent region, where a map scope cannot hold it.
@@ -316,9 +328,9 @@ class ChunkAntiDependence(ppl.Pass):
 
         # Clone the map BEFORE redirecting it, so the prologue and the seam iterations keep
         # reading the snapshot while the chunk body moves to the live array.
-        pro = parent.add_state_before(state, label=f'{arr}_antidep_prologue')
-        seam = parent.add_state_before(pro, label=f'{arr}_antidep_seams')
-        tail = parent.add_state_after(state, label=f'{arr}_antidep_seam_iters')
+        pro = parent.add_state_before(state, label=f"{arr}_antidep_prologue")
+        seam = parent.add_state_before(pro, label=f"{arr}_antidep_seams")
+        tail = parent.add_state_after(state, label=f"{arr}_antidep_seam_iters")
         _clone_contents(state, pro, sdfg)
         _clone_contents(state, tail, sdfg)
 
@@ -328,22 +340,26 @@ class ChunkAntiDependence(ppl.Pass):
         # tasklet supplies once the program is running -- a persistent buffer is allocated in
         # ``__dace_init``, where that symbol does not yet exist and the C++ does not compile. The
         # seam is a couple of dozen elements, so allocating it per call costs nothing.
-        buf, desc = sdfg.add_transient(f'{arr}_antidep_seam', [as_expr(threads) + 1],
-                                       sdfg.arrays[snap].dtype,
-                                       storage=sdfg.arrays[snap].storage,
-                                       lifetime=dtypes.AllocationLifetime.State,
-                                       find_new_name=True)
+        buf, desc = sdfg.add_transient(
+            f"{arr}_antidep_seam",
+            [as_expr(threads) + 1],
+            sdfg.arrays[snap].dtype,
+            storage=sdfg.arrays[snap].storage,
+            lifetime=dtypes.AllocationLifetime.State,
+            find_new_name=True,
+        )
         gathered = (gather, subsets.Range([(0, nchunks - 1, 1)]))
         trailing = (subsets.Range([(hi + 1, hi + 1, 1)]), subsets.Range([(nchunks, nchunks, 1)]))
         for src_sub, dst_sub in (gathered, trailing):
-            seam.add_nedge(seam.add_read(arr), seam.add_write(buf),
-                           Memlet(data=arr, subset=src_sub, other_subset=dst_sub))
+            seam.add_nedge(
+                seam.add_read(arr), seam.add_write(buf), Memlet(data=arr, subset=src_sub, other_subset=dst_sub)
+            )
 
         # Prologue: the one iteration whose read-ahead has no chunk in front of it, so it
         # reads chunk 0's own first element -- slot 0.
         pro_entry = next(n for n in pro.nodes() if isinstance(n, nodes.MapEntry))
         pro_entry.map.range = subsets.Range([(lo, _min(lo, hi), 1)])
-        self._redirect_to_seam(pro, snap, buf, symbolic.pystr_to_symbolic('0'), None)
+        self._redirect_to_seam(pro, snap, buf, symbolic.pystr_to_symbolic("0"), None)
 
         # Chunk body: sequential inside a chunk, so every read-ahead that stays inside the
         # chunk sees the value the sequential loop would have seen -- read the live array.
@@ -370,8 +386,9 @@ class ChunkAntiDependence(ppl.Pass):
         # Off the OUTER chunk parameter, whose stride is C, not off the inner index: the inner
         # map is a single point whose bound is already a Min, which no division would survive.
         chunk_id = symbolic.int_floor(symbolic.pystr_to_symbolic(tail_outer.map.params[0]) - (lo + 1), chunk)
-        self._redirect_to_seam(tail, snap, buf, symbolic.simplify(chunk_id + 1),
-                               (tail_outer, subsets.Range([(1, nchunks, 1)])))
+        self._redirect_to_seam(
+            tail, snap, buf, symbolic.simplify(chunk_id + 1), (tail_outer, subsets.Range([(1, nchunks, 1)]))
+        )
 
         # Nothing reads the whole-window snapshot any more; ``remove_data`` validates that.
         sdfg.remove_data(snap)

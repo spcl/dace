@@ -16,7 +16,8 @@ from typing import Any, Dict, FrozenSet, List, Set, Optional, Tuple
 
 
 class _UnknownValue:
-    """ A helper class that indicates a symbol value is ambiguous. """
+    """A helper class that indicates a symbol value is ambiguous."""
+
     pass
 
 
@@ -48,7 +49,7 @@ def _free_symbols_cached(value: Any) -> FrozenSet[str]:
 
 
 def _free_symbols(value: Any) -> FrozenSet[str]:
-    """ Memoized ``symbolic.free_symbols_and_functions``, as the same values are queried on every block. """
+    """Memoized ``symbolic.free_symbols_and_functions``, as the same values are queried on every block."""
     if isinstance(value, (str, sympy.Basic)):
         return _free_symbols_cached(value)
     return frozenset(symbolic.free_symbols_and_functions(value))
@@ -68,17 +69,14 @@ class ConstantPropagation(ppl.Pass):
     the number of overall symbols.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    recursive = properties.Property(dtype=bool,
-                                    default=True,
-                                    category='Applicability',
-                                    desc='Propagate recursively through nested SDFGs')
-    progress = properties.Property(dtype=bool,
-                                   default=None,
-                                   allow_none=True,
-                                   category='Diagnostics',
-                                   desc='Show progress')
+    recursive = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Propagate recursively through nested SDFGs"
+    )
+    progress = properties.Property(
+        dtype=bool, default=None, allow_none=True, category="Diagnostics", desc="Show progress"
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes
@@ -117,11 +115,13 @@ class ConstantPropagation(ppl.Pass):
         with nodes.memoize_nested_used_symbols() as used_symbols_memo:
             return self._apply_pass(sdfg, _, initial_symbols or {}, used_symbols_memo)
 
-    def _apply_pass(self, sdfg: SDFG, _, initial_symbols: Dict[str, Any],
-                    used_symbols_memo: Dict[SDFG, Set[str]]) -> Optional[Set[str]]:
+    def _apply_pass(
+        self, sdfg: SDFG, _, initial_symbols: Dict[str, Any], used_symbols_memo: Dict[SDFG, Set[str]]
+    ) -> Optional[Set[str]]:
         # A constant for a Scalar data descriptor is baked with specialize_scalars (folds reads, drops the
         # node); the replace_dict path below would rename its data to the literal and leave a dangling ref.
         from dace.sdfg.utils import specialize_scalars
+
         # Bake them all in one call: the walk it costs is per call, not per scalar.
         scalars_to_bake = {
             name: value
@@ -154,10 +154,10 @@ class ConstantPropagation(ppl.Pass):
             def _add_nested_datanames(name: str, desc: data.Structure):
                 for k, v in desc.members.items():
                     if isinstance(v, data.Structure):
-                        _add_nested_datanames(f'{name}.{k}', v)
+                        _add_nested_datanames(f"{name}.{k}", v)
                     elif isinstance(v, data.ContainerArray):
                         pass
-                    arrays.add(f'{name}.{k}')
+                    arrays.add(f"{name}.{k}")
 
             for name, desc in sdfg.arrays.items():
                 if isinstance(desc, data.Structure):
@@ -179,19 +179,17 @@ class ConstantPropagation(ppl.Pass):
             desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, in_constants)
 
             # Replace constants per state
-            for block, mapping in optional_progressbar(in_constants.items(),
-                                                       'Propagating constants',
-                                                       n=len(in_constants),
-                                                       progress=self.progress):
+            for block, mapping in optional_progressbar(
+                in_constants.items(), "Propagating constants", n=len(in_constants), progress=self.progress
+            ):
                 if block is sdfg:
                     continue
 
                 remaining_unknowns.update(
-                    {k
-                     for k, v in mapping.items() if v is _UnknownValue or k in multivalue_desc_symbols})
+                    {k for k, v in mapping.items() if v is _UnknownValue or k in multivalue_desc_symbols}
+                )
                 mapping = {
-                    k: v
-                    for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
+                    k: v for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
                 out_mapping = {
                     k: v
@@ -230,12 +228,9 @@ class ConstantPropagation(ppl.Pass):
             # early return, so it re-normalizes every descriptor property for no replacement.
             if result:
                 # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
-                sdfg.replace_dict({
-                    k: v
-                    for k, v in result.items() if k in desc_symbols
-                },
-                                  replace_in_graph=False,
-                                  replace_keys=False)
+                sdfg.replace_dict(
+                    {k: v for k, v in result.items() if k in desc_symbols}, replace_in_graph=False, replace_keys=False
+                )
 
                 # Remove constant symbol assignments in interstate edges
                 for edge in sdfg.all_interstate_edges():
@@ -299,10 +294,11 @@ class ConstantPropagation(ppl.Pass):
         return result
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Propagated {len(pass_retval)} constants.'
+        return f"Propagated {len(pass_retval)} constants."
 
-    def _propagate_loop(self, loop: LoopRegion, post_constants: BlockConstsT,
-                        multivalue_desc_symbols: Set[str]) -> bool:
+    def _propagate_loop(
+        self, loop: LoopRegion, post_constants: BlockConstsT, multivalue_desc_symbols: Set[str]
+    ) -> bool:
         """Fold post-loop constants into the loop's update expression.
 
         :returns: Whether a substitution actually rewrote the update RHS. Idempotent: a second
@@ -311,8 +307,9 @@ class ConstantPropagation(ppl.Pass):
                   FixedPointPipeline's convergence.
         """
         if loop in post_constants and post_constants[loop] is not None:
-            if loop.update_statement is not None and (loop.inverted and loop.update_before_condition
-                                                      or not loop.inverted):
+            if loop.update_statement is not None and (
+                loop.inverted and loop.update_before_condition or not loop.inverted
+            ):
                 # Replace the RHS of the update expression
                 post_mapping = {
                     k: v
@@ -330,10 +327,17 @@ class ConstantPropagation(ppl.Pass):
                 return replaced > 0
         return False
 
-    def _collect_constants_for_conditional(self, conditional: ConditionalBlock, arrays: Set[str],
-                                           in_const_dict: BlockConstsT, pre_const_dict: BlockConstsT,
-                                           post_const_dict: BlockConstsT, out_const_dict: BlockConstsT,
-                                           order_cache: OrderCacheT, last_in: BlockConstsT) -> None:
+    def _collect_constants_for_conditional(
+        self,
+        conditional: ConditionalBlock,
+        arrays: Set[str],
+        in_const_dict: BlockConstsT,
+        pre_const_dict: BlockConstsT,
+        post_const_dict: BlockConstsT,
+        out_const_dict: BlockConstsT,
+        order_cache: OrderCacheT,
+        last_in: BlockConstsT,
+    ) -> None:
         """
         Collect the constants for and inside of a conditional region.
         Recursively collects constants inside of nested regions.
@@ -359,8 +363,9 @@ class ConstantPropagation(ppl.Pass):
         # First, collect all constants for each of the branches.
         for _, branch in conditional.branches:
             in_const_dict[branch] = in_consts
-            self._collect_constants_for_region(branch, arrays, in_const_dict, pre_const_dict, post_const_dict,
-                                               out_const_dict, order_cache, last_in)
+            self._collect_constants_for_region(
+                branch, arrays, in_const_dict, pre_const_dict, post_const_dict, out_const_dict, order_cache, last_in
+            )
         # Second, determine the 'post constants' (constants at the end of the conditional region) as an intersection
         # between the output constants of each of the branches.
         post_consts = {}
@@ -409,15 +414,17 @@ class ConstantPropagation(ppl.Pass):
             assignments_within.add(loop.loop_variable)
         return assignments_within
 
-    def _collect_constants_for_region(self,
-                                      cfg: ControlFlowRegion,
-                                      arrays: Set[str],
-                                      in_const_dict: BlockConstsT,
-                                      pre_const_dict: BlockConstsT,
-                                      post_const_dict: BlockConstsT,
-                                      out_const_dict: BlockConstsT,
-                                      order_cache: Optional[OrderCacheT] = None,
-                                      last_in: Optional[BlockConstsT] = None) -> None:
+    def _collect_constants_for_region(
+        self,
+        cfg: ControlFlowRegion,
+        arrays: Set[str],
+        in_const_dict: BlockConstsT,
+        pre_const_dict: BlockConstsT,
+        post_const_dict: BlockConstsT,
+        out_const_dict: BlockConstsT,
+        order_cache: Optional[OrderCacheT] = None,
+        last_in: Optional[BlockConstsT] = None,
+    ) -> None:
         """
         Finds all constants and constant-assigned symbols in the control flow graph for each block.
         Recursively collects constants for nested control flow regions.
@@ -487,8 +494,9 @@ class ConstantPropagation(ppl.Pass):
         while redo:
             redo = False
             # Traverse CFG topologically
-            for block in optional_progressbar(block_order, 'Collecting constants for ' + cfg.label,
-                                              cfg.number_of_nodes(), self.progress):
+            for block in optional_progressbar(
+                block_order, "Collecting constants for " + cfg.label, cfg.number_of_nodes(), self.progress
+            ):
                 # Get predecessors
                 in_edges = cfg.in_edges(block)
                 assignments = {}
@@ -505,8 +513,9 @@ class ConstantPropagation(ppl.Pass):
                         # If something was assigned more than once (to a different value), it's not a constant
                         # If a symbol appearing in the replacing expression of a constant is modified,
                         # the constant is not valid anymore
-                        if ((aname in assignments and aval != assignments[aname])
-                                or (edge.data.assignments and _free_symbols(aval) & edge.data.assignments.keys())):
+                        if (aname in assignments and aval != assignments[aname]) or (
+                            edge.data.assignments and _free_symbols(aval) & edge.data.assignments.keys()
+                        ):
                             assignments[aname] = _UnknownValue
                         else:
                             assignments[aname] = aval
@@ -545,12 +554,27 @@ class ConstantPropagation(ppl.Pass):
                     if last_in.get(block) != in_const_dict[block]:
                         last_in[block] = in_const_dict[block].copy()
                         if isinstance(block, ControlFlowRegion):
-                            self._collect_constants_for_region(block, arrays, in_const_dict, pre_const_dict,
-                                                               post_const_dict, out_const_dict, order_cache, last_in)
+                            self._collect_constants_for_region(
+                                block,
+                                arrays,
+                                in_const_dict,
+                                pre_const_dict,
+                                post_const_dict,
+                                out_const_dict,
+                                order_cache,
+                                last_in,
+                            )
                         else:
-                            self._collect_constants_for_conditional(block, arrays, in_const_dict, pre_const_dict,
-                                                                    post_const_dict, out_const_dict, order_cache,
-                                                                    last_in)
+                            self._collect_constants_for_conditional(
+                                block,
+                                arrays,
+                                in_const_dict,
+                                pre_const_dict,
+                                post_const_dict,
+                                out_const_dict,
+                                order_cache,
+                                last_in,
+                            )
                 else:
                     # Simple case, no change in constants through this block (states and other basic blocks).
                     pre_const_dict[block] = in_const_dict[block].copy()
@@ -662,8 +686,7 @@ class ConstantPropagation(ppl.Pass):
 
         # Update results with values of other propagated symbols
         propagated_symbols = {
-            k: _replace_assignment(v, {k}) if v is not _UnknownValue else _UnknownValue
-            for k, v in new_symbols.items()
+            k: _replace_assignment(v, {k}) if v is not _UnknownValue else _UnknownValue for k, v in new_symbols.items()
         }
         original_symbols = symbols.copy()
         symbols.update(propagated_symbols)

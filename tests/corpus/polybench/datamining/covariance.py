@@ -2,10 +2,10 @@
 import dace
 import numpy as np
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -35,6 +35,7 @@ def covariance(data: datatype[N, M], cov: datatype[M, M], mean: datatype[M]):
         cov[i:M, i] = cov[i, i:M]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
-    polybench.main(sizes, args, [(1, 'cov')], init_array, covariance)
+
+    polybench.main(sizes, args, [(1, "cov")], init_array, covariance)

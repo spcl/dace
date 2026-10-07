@@ -22,6 +22,7 @@ Source: G. Zaengl, D. Reinert, P. Ripodas, M. Baldauf, "The ICON modelling frame
 MPI-M," QJRMS 141, 2015 (dynamical core); M. Giorgetta et al., "The ICON-A model for direct QBO
 simulations on GPUs," GMD 2022 ((nproma, nlev, nblocks) unit-stride order); SC26 layout paper SS IV-D.
 """
+
 import numpy
 import dace
 
@@ -33,15 +34,17 @@ WV, WH = 0.5, 0.25
 
 @dace.program
 def stencil(A: dace.float64[NI, NJ, NK], out: dace.float64[NI, NJ, NK]):
-    for i, j, k in dace.map[1:NI - 1, 1:NJ - 1, 1:NK - 1] @ dace.ScheduleType.Sequential:
-        out[i, j, k] = (WV * (A[i, j, k - 1] + A[i, j, k + 1]) + WH *
-                        (A[i - 1, j, k] + A[i + 1, j, k] + A[i, j - 1, k] + A[i, j + 1, k]))
+    for i, j, k in dace.map[1 : NI - 1, 1 : NJ - 1, 1 : NK - 1] @ dace.ScheduleType.Sequential:
+        out[i, j, k] = WV * (A[i, j, k - 1] + A[i, j, k + 1]) + WH * (
+            A[i - 1, j, k] + A[i + 1, j, k] + A[i, j - 1, k] + A[i, j + 1, k]
+        )
 
 
 def oracle(A):
     out = numpy.zeros_like(A)  # boundary faces are never written -> stay 0
-    out[1:-1, 1:-1, 1:-1] = (WV * (A[1:-1, 1:-1, :-2] + A[1:-1, 1:-1, 2:]) + WH *
-                             (A[:-2, 1:-1, 1:-1] + A[2:, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1] + A[1:-1, 2:, 1:-1]))
+    out[1:-1, 1:-1, 1:-1] = WV * (A[1:-1, 1:-1, :-2] + A[1:-1, 1:-1, 2:]) + WH * (
+        A[:-2, 1:-1, 1:-1] + A[2:, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1] + A[1:-1, 2:, 1:-1]
+    )
     return {"out": out}
 
 

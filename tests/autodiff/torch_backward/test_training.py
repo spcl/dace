@@ -2,8 +2,9 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("transformers",
-                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
+)
 import torch
 from torch import nn, optim
 from transformers import BertConfig
@@ -24,7 +25,8 @@ def min_relu_input_magnitude(model: torch.nn.Module, x: torch.Tensor) -> float:
     magnitudes = []
     hooks = [
         module.register_forward_pre_hook(lambda _, args: magnitudes.append(args[0].abs().min().item()))
-        for module in model.modules() if isinstance(module, nn.ReLU)
+        for module in model.modules()
+        if isinstance(module, nn.ReLU)
     ]
     try:
         with torch.no_grad():
@@ -53,7 +55,8 @@ def min_relu_input_magnitude(model: torch.nn.Module, x: torch.Tensor) -> float:
     magnitudes = []
     hooks = [
         module.register_forward_pre_hook(lambda _, args: magnitudes.append(args[0].abs().min().item()))
-        for module in model.modules() if isinstance(module, nn.ReLU)
+        for module in model.modules()
+        if isinstance(module, nn.ReLU)
     ]
     try:
         with torch.no_grad():
@@ -89,12 +92,9 @@ def training_step(
     for dace_value, value in zip(pt_model.state_dict().values(), dace_model.state_dict().values()):
         assert torch.allclose(dace_value, value), "State dict copy verification failed"
 
-    dace_model = DaceModule(dace_model,
-                            sdfg_name=f"{sdfg_name}_{device}",
-                            backward=True,
-                            simplify=True,
-                            training=True,
-                            cuda=is_gpu(device))
+    dace_model = DaceModule(
+        dace_model, sdfg_name=f"{sdfg_name}_{device}", backward=True, simplify=True, training=True, cuda=is_gpu(device)
+    )
 
     x, y = train_batch
     x = x.to(dev)
@@ -115,7 +115,7 @@ def training_step(
         dace_loss.backward()
 
     for (name, dace_param), (pt_name, pt_param) in zip(pt_model.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
+        assert "model." + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
         torch_tensors_close(name, pt_param.grad, dace_param.grad)
 
     optimizer = optim.SGD(pt_model.parameters(), lr=0.001)
@@ -124,7 +124,9 @@ def training_step(
     dace_optimizer.step()
 
     for (name, dace_param), (pt_name, pt_param) in zip(pt_model.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name, f"Parameter name mismatch after optimizer step: expected 'model.{name}', got '{pt_name}'"
+        assert "model." + name == pt_name, (
+            f"Parameter name mismatch after optimizer step: expected 'model.{name}', got '{pt_name}'"
+        )
         torch_tensors_close(name, pt_param.detach(), dace_param.detach())
 
 
@@ -196,6 +198,7 @@ def test_mnist(device):
 
     training_step(dace_model, model, (images, labels), sdfg_name="test_mnist_training", device=device)
 
+
 @pytest.mark.xdist_group("large_ML_models")
 @pytest.mark.torch
 @pytest.mark.autodiff
@@ -207,7 +210,6 @@ def test_bert(device):
     hidden_size = 768
 
     class BertTokenSoftmaxClf(nn.Module):
-
         def __init__(self):
             super(BertTokenSoftmaxClf, self).__init__()
             self.bert = BertLayer(BertConfig(hidden_act="relu")).eval()
@@ -221,10 +223,9 @@ def test_bert(device):
     input = torch.randn([batch_size, seq_len, hidden_size])
     labels = torch.tensor([0, 123], dtype=torch.long)
 
-    training_step(BertTokenSoftmaxClf(),
-                  BertTokenSoftmaxClf(), (input, labels),
-                  sdfg_name="test_bert_training",
-                  device=device)
+    training_step(
+        BertTokenSoftmaxClf(), BertTokenSoftmaxClf(), (input, labels), sdfg_name="test_bert_training", device=device
+    )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``RematerializeDerivedTemporaries``: it must fire on the fusion artifact and refuse otherwise."""
+
 import numpy as np
 import pytest
 
@@ -10,8 +11,8 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+M = dace.symbol("M")
+N = dace.symbol("N")
 
 
 @dace.program
@@ -78,7 +79,7 @@ def stranded_by_fusion(sdfg: dace.SDFG):
     How many of them fusion leaves depends on the order its matches are applied in, which follows the networkx
     version's VF2 candidate order, so the tests count against this set and not against a literal.
     """
-    return arrays(sdfg) - {'A_slice'}
+    return arrays(sdfg) - {"A_slice"}
 
 
 def candidate(sdfg: dace.SDFG):
@@ -88,24 +89,25 @@ def candidate(sdfg: dace.SDFG):
             if node.data not in arrays(sdfg) or state.in_degree(node) != 1:
                 continue
             if isinstance(state.in_edges(node)[0].src, nodes.MapExit) and any(
-                    isinstance(e.dst, nodes.MapEntry) for e in state.out_edges(node)):
+                isinstance(e.dst, nodes.MapEntry) for e in state.out_edges(node)
+            ):
                 return state, node
-    raise AssertionError('no candidate temporary in the fused SDFG')
+    raise AssertionError("no candidate temporary in the fused SDFG")
 
 
 def check_values(program, size: int, dims: int = 1):
     """Run the fused SDFG with and without the pass on identical inputs; require bit equality."""
     rng = np.random.default_rng(4711)
-    shape = (size, ) * dims
-    base = {name: rng.random(shape) for name in program.f.__annotations__ if name != 'return'}
-    symbols = {'M' if dims == 1 else 'N': size}
+    shape = (size,) * dims
+    base = {name: rng.random(shape) for name in program.f.__annotations__ if name != "return"}
+    symbols = {"M" if dims == 1 else "N": size}
 
     outputs = []
     for apply_pass in (False, True):
         sdfg = fused(program)
         if apply_pass:
             assert RematerializeDerivedTemporaries().apply_pass(sdfg, {})
-        sdfg.name = program.name + ('_remat' if apply_pass else '_ref')
+        sdfg.name = program.name + ("_remat" if apply_pass else "_ref")
         args = {name: value.copy() for name, value in base.items()}
         sdfg.compile()(**args, **symbols)
         outputs.append(args)
@@ -125,9 +127,10 @@ def test_removes_stencil_temporary():
     reads = {
         str(e.data.subset)
         for state in sdfg.states()
-        for e in state.edges() if e.data.data == 'B' and isinstance(e.src, nodes.MapEntry)
+        for e in state.edges()
+        if e.data.data == "B" and isinstance(e.src, nodes.MapEntry)
     }
-    assert '__i0 + 1' in reads
+    assert "__i0 + 1" in reads
 
 
 def test_removes_stencil_temporary_bit_exactly():
@@ -165,19 +168,20 @@ def second_read_of_the_temporary(sdfg: dace.SDFG):
     state, tnode = candidate(sdfg)
     outer = state.out_edges(tnode)[0]
     entry2 = outer.dst
-    inner = next(iter(state.out_edges_by_connector(entry2, outer.dst_conn.replace('IN_', 'OUT_', 1))))
+    inner = next(iter(state.out_edges_by_connector(entry2, outer.dst_conn.replace("IN_", "OUT_", 1))))
     exit2 = state.exit_node(entry2)
     desc = sdfg.arrays[tnode.data]
-    probe, _ = sdfg.add_array('probe', desc.shape, desc.dtype)
-    point = ', '.join(entry2.map.params)
+    probe, _ = sdfg.add_array("probe", desc.shape, desc.dtype)
+    point = ", ".join(entry2.map.params)
 
-    tasklet = state.add_tasklet('probe_read', {'__in': None}, {'__out': None}, '__out = __in * 3.0')
-    state.add_edge(entry2, inner.src_conn, tasklet, '__in', dace.Memlet(data=tnode.data, subset=str(inner.data.subset)))
-    exit2.add_in_connector('IN_probe')
-    exit2.add_out_connector('OUT_probe')
-    state.add_edge(tasklet, '__out', exit2, 'IN_probe', dace.Memlet(data=probe, subset=point))
-    state.add_edge(exit2, 'OUT_probe', state.add_access(probe), None,
-                   dace.Memlet(data=probe, subset='0:%s' % desc.shape[0]))
+    tasklet = state.add_tasklet("probe_read", {"__in": None}, {"__out": None}, "__out = __in * 3.0")
+    state.add_edge(entry2, inner.src_conn, tasklet, "__in", dace.Memlet(data=tnode.data, subset=str(inner.data.subset)))
+    exit2.add_in_connector("IN_probe")
+    exit2.add_out_connector("OUT_probe")
+    state.add_edge(tasklet, "__out", exit2, "IN_probe", dace.Memlet(data=probe, subset=point))
+    state.add_edge(
+        exit2, "OUT_probe", state.add_access(probe), None, dace.Memlet(data=probe, subset="0:%s" % desc.shape[0])
+    )
     sdfg.validate()
     return state
 
@@ -195,14 +199,14 @@ def test_two_reads_at_the_same_point_share_one_clone():
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 1
     sdfg.validate()
     feeders = {next(iter(state.in_edges_by_connector(dst, conn))).src for dst, conn in consumers}
-    assert len(feeders) == 1, 'each read got its own clone'
+    assert len(feeders) == 1, "each read got its own clone"
 
 
 def test_two_reads_of_one_temporary_are_bit_exact():
     """Both reads have to end up on the recomputed value, not one of them on a stale register."""
     size = 128
     rng = np.random.default_rng(4711)
-    base = {'A': rng.random(size), 'B': rng.random(size), 'probe': np.zeros(size - 2)}
+    base = {"A": rng.random(size), "B": rng.random(size), "probe": np.zeros(size - 2)}
 
     outputs = []
     for apply_pass in (False, True):
@@ -210,7 +214,7 @@ def test_two_reads_of_one_temporary_are_bit_exact():
         second_read_of_the_temporary(sdfg)
         if apply_pass:
             assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 1
-        sdfg.name = 'heat1d_second_read' + ('_remat' if apply_pass else '_ref')
+        sdfg.name = "heat1d_second_read" + ("_remat" if apply_pass else "_ref")
         args = {name: value.copy() for name, value in base.items()}
         sdfg.compile()(**args, M=size)
         outputs.append(args)
@@ -228,13 +232,15 @@ def test_refuses_a_chain_fed_by_the_temporary_itself():
     state, tnode = candidate(sdfg)
     exit1 = state.in_edges(tnode)[0].src
     write = next(e for e in state.in_edges(exit1) if e.data.data == tnode.data)
-    reg, _ = sdfg.add_scalar('carry',
-                             sdfg.arrays[tnode.data].dtype,
-                             transient=True,
-                             storage=dace.dtypes.StorageType.Register,
-                             find_new_name=True)
+    reg, _ = sdfg.add_scalar(
+        "carry",
+        sdfg.arrays[tnode.data].dtype,
+        transient=True,
+        storage=dace.dtypes.StorageType.Register,
+        find_new_name=True,
+    )
     node = state.add_access(reg)
-    state.add_edge(write.src, write.src_conn, node, None, dace.Memlet(data=reg, subset='0'))
+    state.add_edge(write.src, write.src_conn, node, None, dace.Memlet(data=reg, subset="0"))
     state.add_edge(node, None, exit1, write.dst_conn, dace.Memlet(data=tnode.data, subset=str(write.data.subset)))
     state.remove_edge(write)
     sdfg.validate()
@@ -276,7 +282,7 @@ def test_nothing_still_names_the_deleted_temporary():
     sdfg.validate()
 
 
-@pytest.mark.parametrize('build', [lambda: fused(deep_chain), lambda: heat3d_after_loop_to_map_and_fusion()])
+@pytest.mark.parametrize("build", [lambda: fused(deep_chain), lambda: heat3d_after_loop_to_map_and_fusion()])
 def test_every_rematerialized_register_is_written(build):
     """A clone whose sink is never filled is SILENT garbage -- the consumer reads an uninitialised
     register, validation has nothing to object to, and the wrong values come out of a passing test."""
@@ -284,11 +290,11 @@ def test_every_rematerialized_register_is_written(build):
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {})
     for state in sdfg.states():
         for node in state.data_nodes():
-            if node.data.startswith('remat_'):
+            if node.data.startswith("remat_"):
                 assert state.in_degree(node) == 1, node.data
 
 
-@pytest.mark.parametrize('program', [consumer_reads_wrong_index, consumer_reads_far_index])
+@pytest.mark.parametrize("program", [consumer_reads_wrong_index, consumer_reads_far_index])
 def test_refuses_when_the_needed_index_is_not_already_read(program):
     """The user-facing condition is not "the container reaches the consumer" but "that ELEMENT does"."""
     sdfg = fused(program)
@@ -309,8 +315,8 @@ def test_refuses_a_temporary_with_a_second_reader():
     sdfg = fused(heat1d)
     state, node = candidate(sdfg)
     desc = sdfg.arrays[node.data]
-    escape, _ = sdfg.add_array('escape', desc.shape, desc.dtype, transient=False)
-    state.add_edge(node, None, state.add_access(escape), None, dace.Memlet(data=node.data, subset='0:M - 2'))
+    escape, _ = sdfg.add_array("escape", desc.shape, desc.dtype, transient=False)
+    state.add_edge(node, None, state.add_access(escape), None, dace.Memlet(data=node.data, subset="0:M - 2"))
     before = arrays(sdfg)
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) is None
     assert arrays(sdfg) == before
@@ -320,7 +326,7 @@ def test_refuses_a_temporary_named_by_control_flow():
     """A container an interstate edge reads is live outside dataflow."""
     sdfg = fused(heat1d)
     state, node = candidate(sdfg)
-    sdfg.add_state_after(state, assignments={'probe': '%s[0]' % node.data})
+    sdfg.add_state_after(state, assignments={"probe": "%s[0]" % node.data})
     before = arrays(sdfg)
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) is None
     assert arrays(sdfg) == before
@@ -333,27 +339,35 @@ def test_refuses_a_temporary_named_by_control_flow():
 def heat3d(TSTEPS: dace.int64, A: dace.float64[N, N, N], B: dace.float64[N, N, N]):
     """The npbench/polybench formulation, verbatim -- see ``tests/corpus/polybench/stencils/heat_3d.py``."""
     for _ in range(1, TSTEPS):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def heat3d_numpy(tsteps: int, A: np.ndarray, B: np.ndarray) -> None:
     """Independent oracle: plain numpy, same operand order, updated in place."""
     for _ in range(1, tsteps):
-        B[1:-1, 1:-1,
-          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
-                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
-        A[1:-1, 1:-1,
-          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
-                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
-                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+        B[1:-1, 1:-1, 1:-1] = (
+            0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1])
+            + 0.125 * (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1])
+            + 0.125 * (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2])
+            + A[1:-1, 1:-1, 1:-1]
+        )
+        A[1:-1, 1:-1, 1:-1] = (
+            0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1])
+            + 0.125 * (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1])
+            + 0.125 * (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2])
+            + B[1:-1, 1:-1, 1:-1]
+        )
 
 
 def heat3d_after_loop_to_map_and_fusion() -> dace.SDFG:
@@ -378,7 +392,7 @@ def test_heat3d_after_loop_to_map_and_fusion_drops_transients():
     # Guard against a vacuous test: fusion must actually have stranded the three temporaries.
     assert len(stranded) == 3, stranded
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == len(stranded)
-    assert arrays(sdfg) == {'A_slice'}
+    assert arrays(sdfg) == {"A_slice"}
     sdfg.validate()
 
 
@@ -386,8 +400,8 @@ def test_heat3d_after_loop_to_map_and_fusion_is_bit_exact():
     """Bit-exact against the same SDFG without the pass, and against an independent numpy oracle."""
     size, tsteps = 24, 5
     rng = np.random.default_rng(4711)
-    base_a = rng.random((size, ) * 3)
-    base_b = rng.random((size, ) * 3)
+    base_a = rng.random((size,) * 3)
+    base_b = rng.random((size,) * 3)
 
     results = []
     for apply_pass in (False, True):
@@ -395,7 +409,7 @@ def test_heat3d_after_loop_to_map_and_fusion_is_bit_exact():
         if apply_pass:
             stranded = stranded_by_fusion(sdfg)
             assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == len(stranded)
-        sdfg.name = 'heat3d_remat' if apply_pass else 'heat3d_fused_ref'
+        sdfg.name = "heat3d_remat" if apply_pass else "heat3d_fused_ref"
         a, b = base_a.copy(), base_b.copy()
         sdfg.compile()(TSTEPS=tsteps, A=a, B=b, N=size)
         results.append((a, b))
@@ -403,13 +417,13 @@ def test_heat3d_after_loop_to_map_and_fusion_is_bit_exact():
     oracle_a, oracle_b = base_a.copy(), base_b.copy()
     heat3d_numpy(tsteps, oracle_a, oracle_b)
 
-    for got, want, name in ((results[1][0], results[0][0], 'A'), (results[1][1], results[0][1], 'B')):
-        assert np.array_equal(got.view(np.uint64), want.view(np.uint64)), 'vs the same SDFG without the pass: ' + name
-    for got, want, name in ((results[1][0], oracle_a, 'A'), (results[1][1], oracle_b, 'B')):
-        assert np.array_equal(got.view(np.uint64), want.view(np.uint64)), 'vs numpy oracle: ' + name
+    for got, want, name in ((results[1][0], results[0][0], "A"), (results[1][1], results[0][1], "B")):
+        assert np.array_equal(got.view(np.uint64), want.view(np.uint64)), "vs the same SDFG without the pass: " + name
+    for got, want, name in ((results[1][0], oracle_a, "A"), (results[1][1], oracle_b, "B")):
+        assert np.array_equal(got.view(np.uint64), want.view(np.uint64)), "vs numpy oracle: " + name
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_removes_stencil_temporary()
     test_removes_stencil_temporary_bit_exactly()
     test_multidimensional()

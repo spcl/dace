@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for LoopFission (loop distribution), the LoopRegion equivalent of
-    MapFission. Mirrors the map-fission frontend kernels with ``dace.map``
-    replaced by ``range`` so the frontend emits loops. Every test checks
-    numerical equivalence against a deep-copied pre-pass run; loop counts are
-    asserted where the independent-group partition is deterministic.
+"""Tests for LoopFission (loop distribution), the LoopRegion equivalent of
+MapFission. Mirrors the map-fission frontend kernels with ``dace.map``
+replaced by ``range`` so the frontend emits loops. Every test checks
+numerical equivalence against a deep-copied pre-pass run; loop counts are
+asserted where the independent-group partition is deterministic.
 
-    LoopFission only distributes a single-body-state loop; data-dependent
-    statements (and bodies with control flow / nested loops) stay in one
-    loop -- those mirror as value-preserving no-ops.
+LoopFission only distributes a single-body-state loop; data-dependent
+statements (and bodies with control flow / nested loops) stay in one
+loop -- those mirror as value-preserving no-ops.
 """
+
 import copy
 
 import numpy as np
@@ -19,8 +20,8 @@ from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.loop_fission import LoopFission
 
-N = dace.symbol('N')
-START, STOP, STEP = (dace.symbol(s) for s in ('START', 'STOP', 'STEP'))
+N = dace.symbol("N")
+START, STOP, STEP = (dace.symbol(s) for s in ("START", "STOP", "STEP"))
 
 
 @dace.program
@@ -79,10 +80,23 @@ def loop_symbolic_strided(a: dace.float64[64], A: dace.float64[64], B: dace.floa
 
 
 @dace.program
-def loop_five_set_five_cpy(s0: dace.float64[N], s1: dace.float64[N], s2: dace.float64[N], s3: dace.float64[N],
-                           s4: dace.float64[N], a0: dace.float64[N], a1: dace.float64[N], a2: dace.float64[N],
-                           a3: dace.float64[N], a4: dace.float64[N], c0: dace.float64[N], c1: dace.float64[N],
-                           c2: dace.float64[N], c3: dace.float64[N], c4: dace.float64[N]):
+def loop_five_set_five_cpy(
+    s0: dace.float64[N],
+    s1: dace.float64[N],
+    s2: dace.float64[N],
+    s3: dace.float64[N],
+    s4: dace.float64[N],
+    a0: dace.float64[N],
+    a1: dace.float64[N],
+    a2: dace.float64[N],
+    a3: dace.float64[N],
+    a4: dace.float64[N],
+    c0: dace.float64[N],
+    c1: dace.float64[N],
+    c2: dace.float64[N],
+    c3: dace.float64[N],
+    c4: dace.float64[N],
+):
     for i in range(N):
         s0[i] = 0.0
         s1[i] = 1.0
@@ -276,9 +290,9 @@ def test_loop_fission_symbolic_strided():
 
 def test_loop_fission_many_set_cpy():
     n = 8
-    arrs = {f'a{i}': np.random.rand(n) for i in range(5)}
-    arrs.update({f's{i}': np.zeros(n) for i in range(5)})
-    arrs.update({f'c{i}': np.zeros(n) for i in range(5)})
+    arrs = {f"a{i}": np.random.rand(n) for i in range(5)}
+    arrs.update({f"s{i}": np.zeros(n) for i in range(5)})
+    arrs.update({f"c{i}": np.zeros(n) for i in range(5)})
     _run(loop_five_set_five_cpy, arrs, dict(N=n), 10)
 
 
@@ -311,8 +325,9 @@ def test_loop_fission_nested_dependent_inner_loops_not_split():
     sdfg = loop_nested_dependent.to_sdfg(simplify=True)
     assert LoopFission().apply_pass(sdfg, {}) is None  # dependent -> kept together
     sdfg.validate()
-    assert sum(1 for c in sdfg.nodes() if isinstance(c, LoopRegion)) == 1, \
+    assert sum(1 for c in sdfg.nodes() if isinstance(c, LoopRegion)) == 1, (
         "dependent inner loops were illegally distributed"
+    )
     B, C = np.zeros((n, n)), np.zeros((n, n))
     sdfg(A=A.copy(), B=B, C=C, N=n)
     assert np.allclose(B, A + 1.0) and np.allclose(C, (A + 1.0) * 2.0)
@@ -365,7 +380,8 @@ def _assert_noop_numeric(prog, args, n):
         # split" contract -- its multi-statement body is now fissioned per the
         # per-iter-shared-container relaxation; see test_loop_fission_tsvc_s221_*.
         (tsvc_s111, "ab"),
-    ])
+    ],
+)
 def test_loop_fission_tsvc_carried_dep_not_split(prog, arrs):
     """TSVC s21*/s22* kernels with a genuine cross-statement (or single-
     statement recurrence) dependence: distributing is illegal -- LoopFission
@@ -411,14 +427,15 @@ def test_loop_fission_tsvc_s222_correct_split():
     def touched(loop):
         return {nd.data for st in loop.states() for nd in st.nodes() if isinstance(nd, nodes.AccessNode)}
 
-    e_loops = [L for L in loops if 'e' in touched(L)]
-    a_loops = [L for L in loops if 'a' in touched(L)]
+    e_loops = [L for L in loops if "e" in touched(L)]
+    a_loops = [L for L in loops if "a" in touched(L)]
     assert len(e_loops) == 1, "expected one e-recurrence loop"
-    assert len(a_loops) >= 1 and not any(L is e_loops[0] for L in a_loops), \
+    assert len(a_loops) >= 1 and not any(L is e_loops[0] for L in a_loops), (
         "a-group loop overlapped the e-recurrence loop"
-    assert 'a' not in touched(e_loops[0]) and 'b' not in touched(e_loops[0]), "e-loop touched a/b"
+    )
+    assert "a" not in touched(e_loops[0]) and "b" not in touched(e_loops[0]), "e-loop touched a/b"
     for L in a_loops:
-        assert 'e' not in touched(L), "a-loop touched the e recurrence"
+        assert "e" not in touched(L), "a-loop touched the e recurrence"
 
     out = dict(a=a.copy(), b=b.copy(), c=c.copy(), e=e.copy())
     sdfg(**out, N=n)
@@ -427,9 +444,9 @@ def test_loop_fission_tsvc_s222_correct_split():
     e_exp = e.copy()
     for i in range(1, n):
         e_exp[i] = e_exp[i - 1] * e_exp[i - 1]
-    assert np.allclose(out['e'], e_exp), f"recurrence wrong after split: {out['e']} vs {e_exp}"
-    assert np.allclose(out['a'], a), "a must be unchanged (a+=bc; a-=bc nets to zero)"
-    for k in ('a', 'b', 'c', 'e'):
+    assert np.allclose(out["e"], e_exp), f"recurrence wrong after split: {out['e']} vs {e_exp}"
+    assert np.allclose(out["a"], a), "a must be unchanged (a+=bc; a-=bc nets to zero)"
+    for k in ("a", "b", "c", "e"):
         assert np.allclose(out[k], ref[k]), f"split not value-preserving on {k}"
 
 
@@ -526,7 +543,7 @@ def test_loop_fission_same_array_two_writes_kept_together():
     assert _loop_count(sdfg) == 1, f"expected 1 loop, got {_loop_count(sdfg)}"
     out = {k: v.copy() for k, v in args.items()}
     sdfg(**out, N=n)
-    assert np.allclose(out['A'], args['y']), "second write must win per-iter"
+    assert np.allclose(out["A"], args["y"]), "second write must win per-iter"
     for k in args:
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
 
@@ -559,14 +576,20 @@ def test_loop_fission_per_iter_rmw_kept_together():
     sdfg.validate()
     out = {k: v.copy() for k, v in args.items()}
     sdfg(**out, N=n)
-    assert np.allclose(out['A'], args['x'] + 1.0), "A must equal x + 1.0"
+    assert np.allclose(out["A"], args["x"] + 1.0), "A must equal x + 1.0"
     for k in args:
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
 
 
 @dace.program
-def loop_three_independent_writes(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], x: dace.float64[N],
-                                  y: dace.float64[N], z: dace.float64[N]):
+def loop_three_independent_writes(
+    A: dace.float64[N],
+    B: dace.float64[N],
+    C: dace.float64[N],
+    x: dace.float64[N],
+    y: dace.float64[N],
+    z: dace.float64[N],
+):
     """Three completely independent per-iter writes to three different arrays.
     Each touches its own container with no cross-array reads -- the maximally-
     fissioned shape is 3 sibling loops."""
@@ -581,18 +604,21 @@ def test_loop_fission_three_independent_writes():
     fission produces 3 sibling loops."""
     n = 20
     rng = np.random.default_rng(7)
-    args = dict(A=np.zeros(n),
-                B=np.zeros(n),
-                C=np.zeros(n),
-                x=rng.standard_normal(n),
-                y=rng.standard_normal(n),
-                z=rng.standard_normal(n))
+    args = dict(
+        A=np.zeros(n),
+        B=np.zeros(n),
+        C=np.zeros(n),
+        x=rng.standard_normal(n),
+        y=rng.standard_normal(n),
+        z=rng.standard_normal(n),
+    )
     _run(loop_three_independent_writes, args, dict(N=n), 3)
 
 
 @dace.program
-def loop_mixed_partition(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], a: dace.float64[N],
-                         b: dace.float64[N]):
+def loop_mixed_partition(
+    A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], a: dace.float64[N], b: dace.float64[N]
+):
     """One sibling is data-dependent (``A → B`` per-iter chain), the other is
     independent (``C`` from ``b``). Fission partitions into the A+B pair and
     the C-only sibling: 2 sibling loops."""
@@ -648,8 +674,9 @@ def test_loop_fission_reverse_iteration_splits():
 
 
 @dace.program
-def loop_two_indep_with_one_recurrence(out_a: dace.float64[N], out_b: dace.float64[N], x: dace.float64[N],
-                                       y: dace.float64[N]):
+def loop_two_indep_with_one_recurrence(
+    out_a: dace.float64[N], out_b: dace.float64[N], x: dace.float64[N], y: dace.float64[N]
+):
     """One pointwise sibling and one carried recurrence on a different array.
     Fission must split them: pointwise becomes parallelizable, recurrence
     stays sequential. (Mirrors TSVC s221 shape with a different access pattern.)"""
@@ -668,8 +695,16 @@ def test_loop_fission_pointwise_and_carried_recurrence_split():
 
 
 @dace.program
-def loop_eight_independent(s0: dace.float64[N], s1: dace.float64[N], s2: dace.float64[N], s3: dace.float64[N],
-                           s4: dace.float64[N], s5: dace.float64[N], s6: dace.float64[N], s7: dace.float64[N]):
+def loop_eight_independent(
+    s0: dace.float64[N],
+    s1: dace.float64[N],
+    s2: dace.float64[N],
+    s3: dace.float64[N],
+    s4: dace.float64[N],
+    s5: dace.float64[N],
+    s6: dace.float64[N],
+    s7: dace.float64[N],
+):
     """Eight independent fills with constant values -- stresses the maximal-
     fission path on a wider body than ``loop_five_set_five_cpy``."""
     for i in range(N):
@@ -688,7 +723,7 @@ def test_loop_fission_eight_independent_writes_max_fission():
     the post-fission shape AND that each surviving loop touches exactly one
     container (no leftover grouping)."""
     n = 9
-    args = {f's{k}': np.full(n, -1.0) for k in range(8)}
+    args = {f"s{k}": np.full(n, -1.0) for k in range(8)}
     base = loop_eight_independent.to_sdfg(simplify=True)
     ref = {k: v.copy() for k, v in args.items()}
     copy.deepcopy(base)(**ref, N=n)
@@ -708,15 +743,16 @@ def test_loop_fission_eight_independent_writes_max_fission():
                 if isinstance(nd, nodes.AccessNode) and st.in_degree(nd) > 0:
                     wset.add(nd.data)
         sibling_writes.append(wset)
-    assert all(len(w) == 1
-               for w in sibling_writes), (f"each sibling loop must write exactly one array; got {sibling_writes}")
+    assert all(len(w) == 1 for w in sibling_writes), (
+        f"each sibling loop must write exactly one array; got {sibling_writes}"
+    )
     written_arrays = set().union(*sibling_writes)
-    assert written_arrays == {f's{k}' for k in range(8)}, "all 8 arrays must be partitioned"
+    assert written_arrays == {f"s{k}" for k in range(8)}, "all 8 arrays must be partitioned"
 
     out = {k: v.copy() for k, v in args.items()}
     sdfg(**out, N=n)
     for k_idx in range(8):
-        assert np.allclose(out[f's{k_idx}'], float(k_idx)), f"s{k_idx} must equal {float(k_idx)}"
+        assert np.allclose(out[f"s{k_idx}"], float(k_idx)), f"s{k_idx} must equal {float(k_idx)}"
     for k in args:
         assert np.allclose(out[k], ref[k]), f"mismatch on {k}"
 
@@ -747,7 +783,7 @@ def test_loop_fission_cross_iter_same_array_kept_together():
     sdfg = loop_cross_shared_array_kept_together.to_sdfg(simplify=True)
     LoopFission().apply_pass(sdfg, {})
     sdfg.validate()
-    assert _loop_count(sdfg) == 1, (f"cross-iter A[i-1] dep must keep loop intact; got {_loop_count(sdfg)} loops")
+    assert _loop_count(sdfg) == 1, f"cross-iter A[i-1] dep must keep loop intact; got {_loop_count(sdfg)} loops"
     out = {k: v.copy() for k, v in args.items()}
     sdfg(**out, N=n)
     for k in args:
@@ -799,8 +835,8 @@ def test_loop_fission_refuses_constant_slot_intra_iter_carry():
 
     sa, saa = a.copy(), aa.copy()
     sdfg(a=sa, aa=saa, bb=bb.copy(), LEN_2D=n)
-    assert np.allclose(sa, ra), 'a diverges -- LoopFission split the intra-iter constant-slot carry'
-    assert np.allclose(saa, raa), 'aa diverges -- LoopFission split the intra-iter constant-slot carry'
+    assert np.allclose(sa, ra), "a diverges -- LoopFission split the intra-iter constant-slot carry"
+    assert np.allclose(saa, raa), "aa diverges -- LoopFission split the intra-iter constant-slot carry"
 
 
 if __name__ == "__main__":
@@ -829,8 +865,11 @@ def test_unfissionable_loop_is_left_untouched():
     sdfg = unfissionable_per_iter_bridge.to_sdfg(simplify=True)
 
     def shape(sd):
-        return (len(list(sd.states())), sum(len(st.nodes())
-                                            for st in sd.states()), sum(len(st.edges()) for st in sd.states()))
+        return (
+            len(list(sd.states())),
+            sum(len(st.nodes()) for st in sd.states()),
+            sum(len(st.edges()) for st in sd.states()),
+        )
 
     before = shape(sdfg)
     applied = LoopFission().apply_pass(sdfg, {})
@@ -904,31 +943,32 @@ def test_dependence_aware_grouping_disjoint_same_data():
     from dace.sdfg.state import SDFGState, LoopRegion
     from dace.subsets import Range
 
-    sdfg = SDFG('disjoint_same_data')
-    sdfg.add_array('tmp', [20], dtypes.float64, transient=True)
-    state: SDFGState = SDFGState(sdfg, 'body')
+    sdfg = SDFG("disjoint_same_data")
+    sdfg.add_array("tmp", [20], dtypes.float64, transient=True)
+    state: SDFGState = SDFGState(sdfg, "body")
     sdfg.add_node(state)
 
     def make_chain(write_range: str, read_range: str):
-        t = state.add_tasklet('t', {'a'}, {'b'}, 'b = a + 1.0')
-        write_node = state.add_access('tmp')
-        read_node = state.add_access('tmp')
-        state.add_edge(t, 'b', write_node, None, Memlet(data='tmp', subset=Range.from_string(write_range)))
-        state.add_edge(read_node, None, t, 'a', Memlet(data='tmp', subset=Range.from_string(read_range)))
+        t = state.add_tasklet("t", {"a"}, {"b"}, "b = a + 1.0")
+        write_node = state.add_access("tmp")
+        read_node = state.add_access("tmp")
+        state.add_edge(t, "b", write_node, None, Memlet(data="tmp", subset=Range.from_string(write_range)))
+        state.add_edge(read_node, None, t, "a", Memlet(data="tmp", subset=Range.from_string(read_range)))
         return t
 
-    make_chain('0:10', '0:10')
-    make_chain('10:20', '10:20')
+    make_chain("0:10", "0:10")
+    make_chain("10:20", "10:20")
 
-    loop = LoopRegion('loop', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
-    symbolic.symbol('i')  # ensure the symbol exists for the SMT oracle
+    loop = LoopRegion("loop", condition_expr="i < 10", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
+    symbolic.symbol("i")  # ensure the symbol exists for the SMT oracle
     groups = _independent_groups(state, loop, sdfg, sibling_check=False)
     assert len(groups) == 2, f"expected 2 independent groups, got {len(groups)}"
 
 
 @dace.program
-def two_splittable_loops(a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-                         D: dace.float64[N]):
+def two_splittable_loops(
+    a: dace.float64[N], A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N]
+):
     for i in range(N):
         A[i] = a[i] + 1.0
         B[i] = a[i] * 2.0
@@ -959,7 +999,7 @@ def test_fission_splits_only_the_loop_it_is_given():
 
 def test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged():
     sdfg = loop_carried.to_sdfg(simplify=True)
-    (loop, ) = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
+    (loop,) = [b for b in sdfg.nodes() if isinstance(b, LoopRegion)]
     before = sdfg.to_json()
 
     assert not LoopFission.can_fission(loop)
@@ -967,5 +1007,5 @@ def test_fission_of_a_loop_that_does_not_split_leaves_the_graph_unchanged():
     assert sdfg.to_json() == before
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

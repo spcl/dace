@@ -7,23 +7,31 @@ for every scalar alias it lowers, which is how TSVC ``s318`` reaches the arg-red
 ``maxv := abs(a[k]) + 0.0``. Matching the surface syntax refused it and left a textbook argmax as
 a sequential loop.
 """
+
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import pipeline as canon
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def lifted(sdfg: dace.SDFG) -> bool:
     """An ``ArgReduce`` is present and no sequential loop survives."""
     libs = [
-        type(n).__name__ for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
+        type(n).__name__
+        for g in sdfg.all_sdfgs_recursive()
+        for st in g.states()
+        for n in st.nodes()
         if isinstance(n, nodes.LibraryNode)
     ]
-    loops = sum(1 for g in sdfg.all_sdfgs_recursive() for b in g.all_control_flow_regions(recursive=True)
-                if isinstance(b, LoopRegion))
-    return 'ArgReduce' in libs and loops == 0
+    loops = sum(
+        1
+        for g in sdfg.all_sdfgs_recursive()
+        for b in g.all_control_flow_regions(recursive=True)
+        if isinstance(b, LoopRegion)
+    )
+    return "ArgReduce" in libs and loops == 0
 
 
 def test_plain_carrier_write_lifts():
@@ -41,7 +49,7 @@ def test_plain_carrier_write_lifts():
 
     sdfg = argmax_plain.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
-    assert lifted(sdfg), 'the plain argmax did not lift'
+    assert lifted(sdfg), "the plain argmax did not lift"
 
 
 def test_identity_on_the_carrier_write_still_lifts():
@@ -60,7 +68,7 @@ def test_identity_on_the_carrier_write_still_lifts():
 
     sdfg = argmax_identity.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
-    assert lifted(sdfg), 'the identity-spelled carrier write blocked the lift'
+    assert lifted(sdfg), "the identity-spelled carrier write blocked the lift"
 
 
 def test_a_real_offset_is_not_folded_away():
@@ -79,13 +87,16 @@ def test_a_real_offset_is_not_folded_away():
     sdfg = argmax_offset.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     libs = [
-        type(n).__name__ for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
+        type(n).__name__
+        for g in sdfg.all_sdfgs_recursive()
+        for st in g.states()
+        for n in st.nodes()
         if isinstance(n, nodes.LibraryNode)
     ]
-    assert 'ArgReduce' not in libs, 'a carrier write that adds 1.0 must not be read as an argmax'
+    assert "ArgReduce" not in libs, "a carrier write that adds 1.0 must not be read as an argmax"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_plain_carrier_write_lifts()
     test_identity_on_the_carrier_write_still_lifts()
     test_a_real_offset_is_not_folded_away()

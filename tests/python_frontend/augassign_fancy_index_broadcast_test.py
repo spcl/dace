@@ -7,18 +7,20 @@ broadcast against the length-4 axis. Aligning the operand against the target's U
 instead charged it for the removed axis, squeezed its declared 1 away, and refused the program with
 "could not broadcast input array from shape [N] into shape [N, 4]" -- lulesh's face-force scatter.
 """
+
 import dace
 import numpy as np
 
-N = dace.symbol('N')
-C = dace.symbol('C')
+N = dace.symbol("N")
+C = dace.symbol("C")
 
 
 def test_fancy_indexed_target_broadcasts_a_declared_one_axis():
 
     @dace.program
-    def scatter_fancy_indexed_target_broadcasts_a_declared_one_axis(pf: dace.float64[N, 8, 3], area: dace.float64[N],
-                                                                    corners: dace.int64[4]):
+    def scatter_fancy_indexed_target_broadcasts_a_declared_one_axis(
+        pf: dace.float64[N, 8, 3], area: dace.float64[N], corners: dace.int64[4]
+    ):
         pf[:, corners, 0] += area[:, None]
 
     rng = np.random.default_rng(0)
@@ -35,8 +37,9 @@ def test_fancy_indexed_target_without_an_integer_axis():
     """The same alignment with nothing squeezed on the target -- the operand keeps its axis too."""
 
     @dace.program
-    def scatter_fancy_indexed_target_without_an_integer_axis(pf: dace.float64[N, 8], area: dace.float64[N],
-                                                             corners: dace.int64[4]):
+    def scatter_fancy_indexed_target_without_an_integer_axis(
+        pf: dace.float64[N, 8], area: dace.float64[N], corners: dace.int64[4]
+    ):
         pf[:, corners] += area[:, None]
 
     rng = np.random.default_rng(1)

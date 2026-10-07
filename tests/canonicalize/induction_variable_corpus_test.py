@@ -32,6 +32,7 @@ Source of the corpus: the LLR benchmark tree this repo's TSVC/TSVC-2.5 corpus mo
 provenance -- the corpus modules already imported below are the executable oracle, this file
 never reads the benchmark tree at test time.
 """
+
 import contextlib
 import copy
 import io
@@ -57,15 +58,21 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
 
 #: Provenance only (see module docstring) -- the LLR benchmark tree this corpus mirrors.
 BENCH_ROOT = pathlib.Path(
-    "/capstor/scratch/cscs/ybudanaz/x86_64/optarena/hpcagent_bench/benchmarks/loop_level_reasoning")
+    "/capstor/scratch/cscs/ybudanaz/x86_64/optarena/hpcagent_bench/benchmarks/loop_level_reasoning"
+)
 
 _PEEL_LIMIT = 4
 _TOL = 1e-9
 
 #: Every entry point through which IVS can perform a substitution -- see
 #: ``induction_variable_substitution.py``'s own module-level functions.
-IVS_ENTRY_POINTS = ("_try_substitute", "try_substitute_use_site_iv", "_try_substitute_iedge_iv",
-                    "_try_substitute_derived_symbol", "_hoist_branch_uniform_iv")
+IVS_ENTRY_POINTS = (
+    "_try_substitute",
+    "try_substitute_use_site_iv",
+    "_try_substitute_iedge_iv",
+    "_try_substitute_derived_symbol",
+    "_hoist_branch_uniform_iv",
+)
 
 _CAST_FUNCS = ("int64", "int32", "float64", "float32")
 
@@ -79,8 +86,15 @@ def strip_casts(expr):
 
 def single_element_reads(sdfg: dace.SDFG, array_name: str) -> List[Tuple["dace.SDFGState", object]]:
     """``(state, edge)`` for every edge reading exactly one element of ``array_name``."""
-    return [(state, e) for state in sdfg.states() for e in state.edges() if e.data is not None
-            and not e.data.is_empty() and e.data.data == array_name and e.data.subset.num_elements() == 1]
+    return [
+        (state, e)
+        for state in sdfg.states()
+        for e in state.edges()
+        if e.data is not None
+        and not e.data.is_empty()
+        and e.data.data == array_name
+        and e.data.subset.num_elements() == 1
+    ]
 
 
 def enclosing_map_params(state, node) -> Dict[str, tuple]:
@@ -222,10 +236,10 @@ def check_s126_closed(sdfg: dace.SDFG) -> None:
     reads = [(s, e) for s, e in single_element_reads(sdfg, "flat_2d_array")]
     assert len(reads) == 1, f"s126: expected one single-element flat_2d_array read, got {len(reads)}"
     state, edge = reads[0]
-    (expr, ) = edge.data.subset.min_element()
+    (expr,) = edge.data.subset.min_element()
     enclosing = enclosing_map_params(state, edge.dst)
-    (outer, ) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 0]
-    (inner, ) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 1]
+    (outer,) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 0]
+    (inner,) = [p for p, rng in enclosing.items() if symbolic.simplify(rng[0]) == 1]
     by_name = {str(s): s for s in expr.free_symbols}
     i, j, n = by_name[outer], by_name[inner], by_name["LEN_2D"]
     assert symbolic.simplify(expr - (i * n + j - 1)) == 0, f"s126: expected i*LEN_2D+j-1, got {expr}"
@@ -237,7 +251,7 @@ def check_s125_closed(sdfg: dace.SDFG) -> None:
     reads = single_element_reads(sdfg, "flat_2d_array")
     assert len(reads) == 1, f"s125: expected one single-element flat_2d_array write, got {len(reads)}"
     state, edge = reads[0]
-    (expr, ) = edge.data.subset.min_element()
+    (expr,) = edge.data.subset.min_element()
     by_name = {str(s): s for s in expr.free_symbols}
     i, j, n = by_name["i"], by_name["j"], by_name["LEN_2D"]
     assert symbolic.simplify(expr - (i * n + j)) == 0, f"s125: expected i*LEN_2D+j, got {expr}"
@@ -248,7 +262,7 @@ def check_s122_closed(sdfg: dace.SDFG) -> None:
     reads = single_element_reads(sdfg, "b")
     assert len(reads) == 1, f"s122: expected one single-element b read, got {len(reads)}"
     state, edge = reads[0]
-    (raw, ) = edge.data.subset.min_element()
+    (raw,) = edge.data.subset.min_element()
     subs = {}
     for s in raw.free_symbols:
         name = str(s)
@@ -271,7 +285,7 @@ def check_s124_closed(sdfg: dace.SDFG) -> None:
     reads = single_element_reads(sdfg, "a")
     assert len(reads) == 2, f"s124: expected two single-element a accesses (read+write), got {len(reads)}"
     for state, edge in reads:
-        (raw, ) = edge.data.subset.min_element()
+        (raw,) = edge.data.subset.min_element()
         by_name = {str(s): s for s in raw.free_symbols}
         expr = raw.subs({by_name["j"]: j_val}) if "j" in by_name else raw
         i = by_name.get("i") or next(iter(raw.free_symbols))
@@ -293,8 +307,15 @@ def check_s318_closed(sdfg: dace.SDFG) -> None:
     plain ``inc``.
     """
     from dace.libraries.standard.nodes import ArgReduce
-    edges = [(state, e) for state in sdfg.states() for n in state.nodes() if isinstance(n, ArgReduce)
-             for e in state.in_edges(n) if e.dst_conn == "_in"]
+
+    edges = [
+        (state, e)
+        for state in sdfg.states()
+        for n in state.nodes()
+        if isinstance(n, ArgReduce)
+        for e in state.in_edges(n)
+        if e.dst_conn == "_in"
+    ]
     assert len(edges) == 1, f"s318: expected exactly one ArgReduce _in edge, got {len(edges)}"
     _, edge = edges[0]
     assert edge.data.data == "a", f"s318: the arg-reduction must read a directly, got {edge.data.data}"
@@ -308,7 +329,9 @@ def check_s318_closed(sdfg: dace.SDFG) -> None:
 
 def check_s453_closed(sdfg: dace.SDFG) -> None:
     candidates = [
-        n for state in sdfg.states() for n in state.nodes()
+        n
+        for state in sdfg.states()
+        for n in state.nodes()
         if isinstance(n, nodes.Tasklet) and "__in1" in n.in_connectors and "__in2" in n.in_connectors
     ]
     assert len(candidates) == 1, f"s453: expected one fused mult tasklet, got {len(candidates)}"
@@ -403,14 +426,21 @@ def test_true_induction_variable_closes(name, bare_fires, check_closed):
 CONDITIONAL_REFUSALS = ["s123_d_single", "s341_d_single", "s342_d_single", "s343_d_single"]
 
 REDUCTION_REFUSALS = [
-    "s3112_d_single", "s312_d_single", "vsumr_d_single", "s3111_d_single", "s319_d_single", "s352_d_single",
-    "s4115_d_single", "s4116_d_single", "s31111_d_single"
+    "s3112_d_single",
+    "s312_d_single",
+    "vsumr_d_single",
+    "s3111_d_single",
+    "s319_d_single",
+    "s352_d_single",
+    "s4115_d_single",
+    "s4116_d_single",
+    "s31111_d_single",
 ]
 
 
-@pytest.mark.parametrize("name",
-                         CONDITIONAL_REFUSALS + REDUCTION_REFUSALS,
-                         ids=CONDITIONAL_REFUSALS + REDUCTION_REFUSALS)
+@pytest.mark.parametrize(
+    "name", CONDITIONAL_REFUSALS + REDUCTION_REFUSALS, ids=CONDITIONAL_REFUSALS + REDUCTION_REFUSALS
+)
 def test_non_induction_variable_refuses(name):
     kernel = tsvc_kernel(name)
 

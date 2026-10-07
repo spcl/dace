@@ -18,6 +18,7 @@ Inputs are order-independent (exact small ints for sum; associative max/min) and
 per element so each thread's partial is distinct across many blocks -- a race or
 dropped-block atomic would corrupt the result.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -83,7 +84,7 @@ def _vectorized(prog):
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
     offload_to_gpu(sdfg)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -104,11 +105,18 @@ def test_partial_is_thread_local_register(kind):
     threads) is refused by :meth:`_collect_gpu_reductions`, since a single such slot read by
     every thread would over-count the block fold."""
     from dace.sdfg.nodes import AccessNode, MapExit
+
     sdfg = _vectorized(PROGRAMS[kind][0])
     cross_thread = (dtypes.StorageType.GPU_Shared, dtypes.StorageType.GPU_Global)
-    partials = [(e.src.data, s.arrays[e.src.data]) for s in sdfg.all_sdfgs_recursive() for st in s.states()
-                for n in st.nodes() if isinstance(n, MapExit) for e in st.in_edges(n)
-                if e.data is not None and e.data.wcr is not None and isinstance(e.src, AccessNode)]
+    partials = [
+        (e.src.data, s.arrays[e.src.data])
+        for s in sdfg.all_sdfgs_recursive()
+        for st in s.states()
+        for n in st.nodes()
+        if isinstance(n, MapExit)
+        for e in st.in_edges(n)
+        if e.data is not None and e.data.wcr is not None and isinstance(e.src, AccessNode)
+    ]
     assert partials, "expected a per-thread reduction partial feeding the map-exit WCR"
     for name, d in partials:
         assert d.total_size == 1, f"{name} reduction partial must fold onto a single element, got {d.total_size}"
@@ -128,8 +136,9 @@ def test_half2_tile_reduce_fires(kind):
     """
     sdfg = _vectorized(PROGRAMS[kind][0])
     reds = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileReduce)]
-    assert len(reds) == 2 and all(list(r.widths) == [2] for r in reds), \
+    assert len(reds) == 2 and all(list(r.widths) == [2] for r in reds), (
         f"expected two width-2 TileReduce nodes (mask-free body + masked-tail body); got {[r.widths for r in reds]}"
+    )
 
 
 @pytest.mark.parametrize("kind", list(PROGRAMS))
@@ -142,8 +151,9 @@ def test_emits_block_reduce_and_single_atomic(kind):
     # constants chosen by gpu_block_size_selection (not fixed magic numbers). All THREE block
     # dimensions are spelled: the 1-D ``BlockReduce<T, N>`` form assumes threadIdx.y/z == 0 and
     # mis-maps threads whenever the block is 2-D/3-D.
-    assert re.search(r"gpucub::BlockReduce<dace::float16,\s*\d+,\s*gpucub::BLOCK_REDUCE_WARP_REDUCTIONS,\s*\d+,\s*\d+>", cu), \
-        "block reduce not emitted / not typed to a constant-thread block"
+    assert re.search(
+        r"gpucub::BlockReduce<dace::float16,\s*\d+,\s*gpucub::BLOCK_REDUCE_WARP_REDUCTIONS,\s*\d+,\s*\d+>", cu
+    ), "block reduce not emitted / not typed to a constant-thread block"
     assert ".Reduce(" in cu, "cub block Reduce call missing"
     assert f"dace::ReductionType::{suffix}" in cu, f"block reduce not using the {suffix} functor"
     assert "reduce_atomic" in cu, "thread-0 atomic to the global accumulator missing"
@@ -153,10 +163,11 @@ def test_emits_block_reduce_and_single_atomic(kind):
     # (``__bpart_*``) instead, and every ``reduce_atomic`` in the TU sits under a thread-0 guard --
     # so the TU commits one atomic per block, never one per thread.
     assert re.search(
-        r"__bpart_\S+\[[^\]]*\]\s*=\s*dace::_wcr_fixed<dace::ReductionType::%s,\s*dace::float16>\(\)\(" % suffix,
-        cu), "per-thread atomic not suppressed into a register partial"
-    assert cu.count("reduce_atomic") == cu.count("threadIdx.x == 0"), \
+        r"__bpart_\S+\[[^\]]*\]\s*=\s*dace::_wcr_fixed<dace::ReductionType::%s,\s*dace::float16>\(\)\(" % suffix, cu
+    ), "per-thread atomic not suppressed into a register partial"
+    assert cu.count("reduce_atomic") == cu.count("threadIdx.x == 0"), (
         "a reduce_atomic outside the thread-0 block-fold guard = one atomic per thread"
+    )
 
 
 @pytest.mark.gpu

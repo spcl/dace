@@ -7,13 +7,14 @@ output, and a shared local temp stays a SCALAR in each split map rather than bei
 size-N array (the anti-pattern of the max-fission MapFission). ``split_maps`` is OFF by default, so the
 canonicalization pipeline is byte-identical -- the default-constructed pass must leave the map alone.
 """
+
 import numpy as np
 
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -22,7 +23,7 @@ def _nmaps(sdfg):
 
 def _materialized_buffers(sdfg):
     """Transients that are NOT scalars (shape != (1,)) -- a shared local wrongly promoted to a buffer."""
-    return {n for n, d in sdfg.arrays.items() if d.transient and tuple(d.shape) != (1, )}
+    return {n for n, d in sdfg.arrays.items() if d.transient and tuple(d.shape) != (1,)}
 
 
 @dace.program
@@ -84,14 +85,14 @@ def _rand(n=16, seed=0):
 
 
 def test_two_global_outputs_split_into_one_map_each():
-    cand = _value_preserved(_two_out, {'x': _rand(), 'A': np.zeros(16), 'B': np.zeros(16)})
+    cand = _value_preserved(_two_out, {"x": _rand(), "A": np.zeros(16), "B": np.zeros(16)})
     assert _nmaps(cand) == 2
     # the shared 't' is recomputed in each map as a scalar, not promoted to a size-N buffer.
     assert not _materialized_buffers(cand)
 
 
 def test_three_global_outputs_split_into_three_maps():
-    cand = _value_preserved(_three_out, {'x': _rand(), 'A': np.zeros(16), 'B': np.zeros(16), 'C': np.zeros(16)})
+    cand = _value_preserved(_three_out, {"x": _rand(), "A": np.zeros(16), "B": np.zeros(16), "C": np.zeros(16)})
     assert _nmaps(cand) == 3
     assert not _materialized_buffers(cand)
 
@@ -100,7 +101,7 @@ def test_a_dependent_read_after_write_splits_by_recomputing_the_local():
     """``B[i]=A[i]*2`` reads a value written earlier in the SAME map; the frontend wraps it in a plain
     NestedSDFG. The split inlines that body and recomputes the shared local in each map -- so the two
     maps are independent, no cross-map buffer, value preserved."""
-    cand = _value_preserved(_dependent, {'x': _rand(), 'A': np.zeros(16), 'B': np.zeros(16)})
+    cand = _value_preserved(_dependent, {"x": _rand(), "A": np.zeros(16), "B": np.zeros(16)})
     assert _nmaps(cand) == 2
     assert not _materialized_buffers(cand)
 
@@ -111,12 +112,12 @@ def test_in_place_read_modify_write_map_is_left_unsplit():
     overwrote ``A[i]`` (WAR unpreserved) and duplicates the A-write -- a silent miscompile that still
     validates. The RMW guard (mirroring SplitTasklets) leaves it as one map, value preserved (A==A0+B0,
     C==A0*2, checked inside ``_value_preserved`` against the untransformed run)."""
-    cand = _value_preserved(_rmw_in_place, {'A': _rand(seed=1), 'B': _rand(seed=2), 'C': np.zeros(16)})
+    cand = _value_preserved(_rmw_in_place, {"A": _rand(seed=1), "B": _rand(seed=2), "C": np.zeros(16)})
     assert _nmaps(cand) == 1  # left unsplit: read set intersects write set on the global A
 
 
 def test_a_single_output_map_is_left_alone():
-    cand = _value_preserved(_single_out, {'x': _rand(), 'A': np.zeros(16)})
+    cand = _value_preserved(_single_out, {"x": _rand(), "A": np.zeros(16)})
     assert _nmaps(cand) == 1
 
 
@@ -127,7 +128,7 @@ def test_off_by_default_leaves_the_map_unsplit():
     assert _nmaps(sdfg) == before == 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_two_global_outputs_split_into_one_map_each()
     test_three_global_outputs_split_into_three_maps()
     test_in_place_read_modify_write_map_is_left_unsplit()

@@ -4,6 +4,7 @@
 Policy (locked): ``assert_X`` siblings kept alongside their ``X`` counterparts; every
 loud-failure helper stays available. Removing them shifts silent corruption into the pipeline.
 """
+
 import ast
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -186,6 +187,7 @@ def _sdfg_conditions_depend_on_symbols(sdfg: dace.SDFG, param_syms: set[str]) ->
     # module-level edge to a pass module would close the cycle the package already dodges.
     # branch_normalization.py:669 defers the same module for the same reason.
     from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import condition_guards_symbols
+
     for region in sdfg.all_control_flow_regions(recursive=False):
         if isinstance(region, ConditionalBlock) and condition_guards_symbols(region, param_syms):
             return True
@@ -194,13 +196,15 @@ def _sdfg_conditions_depend_on_symbols(sdfg: dace.SDFG, param_syms: set[str]) ->
             if not isinstance(node, dace.nodes.NestedSDFG):
                 continue
             if _inner_syms_for(node, param_syms) and _sdfg_conditions_depend_on_symbols(
-                    node.sdfg, _inner_syms_for(node, param_syms)):
+                node.sdfg, _inner_syms_for(node, param_syms)
+            ):
                 return True
     return False
 
 
-def map_body_has_tiled_param_dependent_branch(state: SDFGState, map_entry: dace.nodes.MapEntry,
-                                              iter_vars: tuple[str, ...]) -> bool:
+def map_body_has_tiled_param_dependent_branch(
+    state: SDFGState, map_entry: dace.nodes.MapEntry, iter_vars: tuple[str, ...]
+) -> bool:
     """True if the map body has a conditional whose guard constrains one of ``iter_vars``.
 
     Sibling of :func:`map_body_has_param_dependent_loop`, refused for the same reason. Tiling
@@ -257,8 +261,11 @@ def mark_maps_no_vectorize(sdfg: dace.SDFG, labels: tuple[str, ...]) -> set[str]
     if not wanted:
         return marked
     for node, _ in sdfg.all_nodes_recursive():
-        if (isinstance(node, dace.nodes.MapEntry) and node.map.label in wanted
-                and not node.map.label.endswith(NO_VECTORIZE_MARKER)):
+        if (
+            isinstance(node, dace.nodes.MapEntry)
+            and node.map.label in wanted
+            and not node.map.label.endswith(NO_VECTORIZE_MARKER)
+        ):
             marked.add(node.map.label)
             node.map.label += NO_VECTORIZE_MARKER
     return marked
@@ -274,7 +281,7 @@ def innermost_enclosing_map_label(sdfg: dace.SDFG) -> tuple[str, ...]:
         state = sdfg.parent
         entry = state.entry_node(sdfg.parent_nsdfg_node)
         if isinstance(entry, dace.nodes.MapEntry):
-            return (entry.map.label, )
+            return (entry.map.label,)
         sdfg = state.sdfg
     return ()
 
@@ -326,8 +333,12 @@ def reduction_index_symbols(edge) -> set[str]:
     names: set[str] = set()
     for inner_state in nsdfg.sdfg.states():
         for inner in inner_state.edges():
-            if inner.data.data != edge.src_conn or inner.data.subset is None or not isinstance(
-                    inner.dst, dace.nodes.AccessNode) or inner.dst.data != edge.src_conn:
+            if (
+                inner.data.data != edge.src_conn
+                or inner.data.subset is None
+                or not isinstance(inner.dst, dace.nodes.AccessNode)
+                or inner.dst.data != edge.src_conn
+            ):
                 continue
             for sym in inner.data.subset.free_symbols:
                 outer = nsdfg.symbol_mapping.get(str(sym), sym)
@@ -356,7 +367,7 @@ def tiled_param_count(state: SDFGState, map_entry: dace.nodes.MapEntry, K: int) 
             reduced |= reduction_index_symbols(e)
     params = map_entry.map.params
     count = 0
-    for param in reversed(params[len(params) - K:]):
+    for param in reversed(params[len(params) - K :]):
         if param in reduced:
             break
         count += 1
@@ -369,7 +380,7 @@ def map_tile_widths(state: SDFGState, map_entry: dace.nodes.MapEntry, widths: tu
     if len(map_entry.map.params) < len(widths):
         return ()
     count = tiled_param_count(state, map_entry, len(widths))
-    return tuple(widths[len(widths) - count:])
+    return tuple(widths[len(widths) - count :])
 
 
 def check_tile_widths(owner: str, widths: tuple[int, ...] | list[int]) -> None:
@@ -384,11 +395,12 @@ def check_tile_widths(owner: str, widths: tuple[int, ...] | list[int]) -> None:
 
 def lane_widths(widths: tuple[int, ...], iter_vars: tuple[str, ...]) -> tuple[int, ...]:
     """The innermost ``widths`` matching a map's tiled ``iter_vars``."""
-    return tuple(int(w) for w in widths[len(widths) - len(iter_vars):])
+    return tuple(int(w) for w in widths[len(widths) - len(iter_vars) :])
 
 
-def tile_body_nsdfgs(sdfg: dace.SDFG,
-                     widths: tuple[int, ...]) -> Iterator[tuple[SDFGState, dace.nodes.NestedSDFG, dace.nodes.MapEntry]]:
+def tile_body_nsdfgs(
+    sdfg: dace.SDFG, widths: tuple[int, ...]
+) -> Iterator[tuple[SDFGState, dace.nodes.NestedSDFG, dace.nodes.MapEntry]]:
     """Yield ``(state, nsdfg_node, map_entry)`` for every tile-tagged body NSDFG.
 
     A tile-tagged body is the single NestedSDFG of a vectorizable map with at least ``len(widths)``
@@ -399,8 +411,11 @@ def tile_body_nsdfgs(sdfg: dace.SDFG,
     :param sdfg: The SDFG to walk, recursively.
     :param widths: Per-dim tile widths, innermost-last.
     """
-    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                       TILE_K1_TAIL_MARKER)
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+        SCALAR_TAIL_MARKER,
+        TILE_K1_TAIL_MARKER,
+    )
+
     scan_cache: dict[int, Any] = {}
     selected = []
     for node, parent in sdfg.all_nodes_recursive():
@@ -452,7 +467,8 @@ def map_body_has_foreign_language_tasklet(state: SDFGState, map_entry: dace.node
         if is_foreign_language_tasklet(node):
             return True
         if isinstance(node, dace.nodes.NestedSDFG) and any(
-                is_foreign_language_tasklet(n) for n, _ in node.sdfg.all_nodes_recursive()):
+            is_foreign_language_tasklet(n) for n, _ in node.sdfg.all_nodes_recursive()
+        ):
             return True
     return False
 
@@ -535,6 +551,7 @@ class PerLaneWrite:
     the exact inner-name-to-map-param renaming (see :func:`lane_param_aliases`) the injectivity
     proof needs.
     """
+
     subset: subsets.Range
     sdfg: dace.SDFG
     state: SDFGState
@@ -586,10 +603,9 @@ def map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry) 
     return writes()
 
 
-def map_body_is_tile_lowerable(state: SDFGState,
-                               map_entry: dace.nodes.MapEntry,
-                               K: int | None = None,
-                               scan_cache: dict[int, Any] | None = None) -> bool:
+def map_body_is_tile_lowerable(
+    state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | None = None, scan_cache: dict[int, Any] | None = None
+) -> bool:
     """True unless the body has a per-lane WRITE the tile emitter cannot soundly lower.
 
     A tile iter-var nested inside a non-affine function -- ``a[i mod K]`` (a residue-scan seed),
@@ -625,8 +641,12 @@ def map_body_is_tile_lowerable(state: SDFGState,
         (see :func:`is_vectorizable_map`).
     :returns: ``True`` if every per-lane write in the body can be soundly widened.
     """
-    from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
-                                                                            build_symbol_definition_map)
+    from dace.transformation.passes.vectorization.utils.tile_access import (
+        PerDimKind,
+        classify_tile_access,
+        build_symbol_definition_map,
+    )
+
     # One symbol-definition map per body, not per subset. Building it scans every interstate edge and
     # scalar write in the body, and a large tiled state yields many subsets that all share the same
     # body -- rebuilding per subset made this predicate quadratic in the state size, enough to look
@@ -645,11 +665,13 @@ def map_body_is_tile_lowerable(state: SDFGState,
         if key not in sym_defs_cache:
             sym_defs_cache[key] = build_symbol_definition_map(write.sdfg, write.state, scan_cache=scan_cache)
         try:
-            rec = classify_tile_access(write.subset,
-                                       iter_vars=write.iter_vars,
-                                       inner_sdfg=write.sdfg,
-                                       state=write.state,
-                                       sym_defs=sym_defs_cache[key])
+            rec = classify_tile_access(
+                write.subset,
+                iter_vars=write.iter_vars,
+                inner_sdfg=write.sdfg,
+                state=write.state,
+                sym_defs=sym_defs_cache[key],
+            )
         except Exception:  # noqa: BLE001 -- a store we cannot classify, we cannot prove injective:
             return False  # fail closed, keep the map scalar (bit-exact) rather than risk a race.
         if lane_param is not None:
@@ -710,10 +732,9 @@ def map_body_has_mixed_conditional_tasklet(state: SDFGState, map_entry: dace.nod
     return False
 
 
-def is_vectorizable_map(state: SDFGState,
-                        map_entry: dace.nodes.MapEntry,
-                        K: int | None = None,
-                        scan_cache: dict[int, Any] | None = None) -> bool:
+def is_vectorizable_map(
+    state: SDFGState, map_entry: dace.nodes.MapEntry, K: int | None = None, scan_cache: dict[int, Any] | None = None
+) -> bool:
     """Innermost AND tile-eligible AND no library node inside AND a loop-free body AND body
     tile-lowerable: the shared tile-candidate gate.
 
@@ -813,8 +834,9 @@ def map_consists_of_single_nsdfg_or_no_nsdfg(graph: dace.SDFGState, map_entry: d
     all_nodes = [
         k for k in map_body_nodes(graph, map_entry) if not isinstance(k, (dace.nodes.MapEntry, dace.nodes.MapExit))
     ]
-    return (len(all_nodes) == 1 and isinstance(
-        all_nodes[0], dace.nodes.NestedSDFG)) or not any(isinstance(n, dace.nodes.NestedSDFG) for n in all_nodes)
+    return (len(all_nodes) == 1 and isinstance(all_nodes[0], dace.nodes.NestedSDFG)) or not any(
+        isinstance(n, dace.nodes.NestedSDFG) for n in all_nodes
+    )
 
 
 def get_single_nsdfg_inside_map(graph: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> dace.nodes.NestedSDFG | None:

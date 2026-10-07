@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """UnblockDimensions -- inverse of SplitDimensions (Block): merges each blocked (outer, inner) dim pair back into one flat dim, ``outer*factor + inner``. Assumes layout normal form (post ``prepare_for_layout``), a packed blocked array, and single-tile outer accesses; multi-tile outer accesses raise."""
+
 import copy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
@@ -32,8 +33,11 @@ class UnblockDimensions(ppl.Pass):
     def _recover_extent(self, blocked_dim, factor: int):
         """Invert Block's per-dimension division to recover the original extent: unwraps ``int_ceil``/``int_floor(E, factor)`` to ``E`` exactly, falling back to ``count * factor`` for a folded integer count."""
         expr = dace.symbolic.pystr_to_symbolic(blocked_dim)
-        if type(expr).__name__ in ('int_ceil', 'int_floor') and len(
-                expr.args) == 2 and dace.symbolic.simplify(as_expr(expr.args[1]) - factor) == 0:
+        if (
+            type(expr).__name__ in ("int_ceil", "int_floor")
+            and len(expr.args) == 2
+            and dace.symbolic.simplify(as_expr(expr.args[1]) - factor) == 0
+        ):
             return expr.args[0]
         return dace.symbolic.simplify(as_expr(expr) * factor)
 
@@ -46,13 +50,15 @@ class UnblockDimensions(ppl.Pass):
                 new_shape.append(blocked_shape[d])
         return new_shape
 
-    def _unblocked_subset(self, subset: dace.subsets.Range, masks: List[bool],
-                          factors: List[int]) -> dace.subsets.Range:
+    def _unblocked_subset(
+        self, subset: dace.subsets.Range, masks: List[bool], factors: List[int]
+    ) -> dace.subsets.Range:
         ranges = list(subset.ranges)
         expected = len(masks) + sum(1 for m in masks if m)
         if len(ranges) != expected:
-            raise ValueError(f"UnblockDimensions: subset rank {len(ranges)} != expected blocked rank {expected} "
-                             f"for masks {masks}")
+            raise ValueError(
+                f"UnblockDimensions: subset rank {len(ranges)} != expected blocked rank {expected} for masks {masks}"
+            )
 
         # Merge (outer, inner) -> outer*factor + inner; over-approximates for multi-tile outer ranges (not a form Block emits).
         new_ranges = []
@@ -74,15 +80,17 @@ class UnblockDimensions(ppl.Pass):
         arr = sdfg.arrays[arr_name]
         datadesc = copy.deepcopy(arr)
         sdfg.remove_data(arr_name, validate=False)
-        sdfg.add_array(name=arr_name,
-                       shape=new_shape,
-                       dtype=datadesc.dtype,
-                       transient=datadesc.transient,
-                       storage=datadesc.storage,
-                       lifetime=datadesc.lifetime,
-                       alignment=datadesc.alignment,
-                       debuginfo=datadesc.debuginfo,
-                       find_new_name=False)
+        sdfg.add_array(
+            name=arr_name,
+            shape=new_shape,
+            dtype=datadesc.dtype,
+            transient=datadesc.transient,
+            storage=datadesc.storage,
+            lifetime=datadesc.lifetime,
+            alignment=datadesc.alignment,
+            debuginfo=datadesc.debuginfo,
+            find_new_name=False,
+        )
 
     def _nested_targets(self, sdfg: dace.SDFG, arr_name: str):
         """Yield ``(nested_sdfg, inner_name)`` per nested SDFG ``arr_name`` flows into, deduped (a read-write array shares its in/out inner name)."""
@@ -91,8 +99,9 @@ class UnblockDimensions(ppl.Pass):
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
-                boundary = ([(ie, ie.dst_conn) for ie in state.in_edges(node)] + [(oe, oe.src_conn)
-                                                                                  for oe in state.out_edges(node)])
+                boundary = [(ie, ie.dst_conn) for ie in state.in_edges(node)] + [
+                    (oe, oe.src_conn) for oe in state.out_edges(node)
+                ]
                 for edge, conn in boundary:
                     if edge.data is None or edge.data.data != arr_name or conn is None:
                         continue
@@ -109,19 +118,25 @@ class UnblockDimensions(ppl.Pass):
     def _replace_memlets_recursive(self, sdfg: dace.SDFG, arr_name: str, masks, factors):
         for state in sdfg.states():
             for edge in state.edges():
-                if (edge.data is not None and edge.data.data != arr_name and edge.data.other_subset is not None and any(
-                        isinstance(n, dace.nodes.AccessNode) and n.data == arr_name for n in (edge.src, edge.dst))):
+                if (
+                    edge.data is not None
+                    and edge.data.data != arr_name
+                    and edge.data.other_subset is not None
+                    and any(isinstance(n, dace.nodes.AccessNode) and n.data == arr_name for n in (edge.src, edge.dst))
+                ):
                     # The other side of a copy keeps its own subset; one that indexes ``arr_name`` would need unblocking
                     raise NotImplementedError(f"UnblockDimensions: a copy into '{arr_name}' named after its source.")
                 if edge.data is not None and edge.data.data == arr_name:
                     new_subset = self._unblocked_subset(edge.data.subset, masks, factors)
                     # keep wcr: reduction still accumulates.
-                    edge.data = dace.memlet.Memlet(data=edge.data.data,
-                                                   subset=new_subset,
-                                                   other_subset=edge.data.other_subset,
-                                                   wcr=edge.data.wcr,
-                                                   wcr_nonatomic=edge.data.wcr_nonatomic,
-                                                   dynamic=edge.data.dynamic)
+                    edge.data = dace.memlet.Memlet(
+                        data=edge.data.data,
+                        subset=new_subset,
+                        other_subset=edge.data.other_subset,
+                        wcr=edge.data.wcr,
+                        wcr_nonatomic=edge.data.wcr_nonatomic,
+                        dynamic=edge.data.dynamic,
+                    )
         for nsdfg, inner in self._nested_targets(sdfg, arr_name):
             self._replace_memlets_recursive(nsdfg, inner, masks, factors)
 
@@ -130,8 +145,10 @@ class UnblockDimensions(ppl.Pass):
 
         def merge_indices(indices):
             if len(indices) != expected:
-                raise ValueError(f"UnblockDimensions: '{arr_name}' is accessed with {len(indices)} indices, "
-                                 f"expected its blocked rank {expected} for masks {masks}")
+                raise ValueError(
+                    f"UnblockDimensions: '{arr_name}' is accessed with {len(indices)} indices, "
+                    f"expected its blocked rank {expected} for masks {masks}"
+                )
             # fold each (outer, appended inner) pair back into the original index
             return [
                 indices[d] * factors[d] + indices[self._inner_slot(masks, d)] if m else indices[d]
@@ -140,8 +157,7 @@ class UnblockDimensions(ppl.Pass):
 
         for edge in sdfg.all_interstate_edges():
             edge.data.assignments = {
-                k: rewrite_subscript_indices(v, arr_name, merge_indices)
-                for k, v in edge.data.assignments.items()
+                k: rewrite_subscript_indices(v, arr_name, merge_indices) for k, v in edge.data.assignments.items()
             }
         for nsdfg, inner in self._nested_targets(sdfg, arr_name):
             self._replace_interstate_edges_recursive(nsdfg, inner, masks, factors)
@@ -151,8 +167,10 @@ class UnblockDimensions(ppl.Pass):
             arr = sdfg.arrays[arr_name]
             expected = len(masks) + sum(1 for m in masks if m)
             if len(arr.shape) != expected:
-                raise ValueError(f"UnblockDimensions: array '{arr_name}' has rank {len(arr.shape)}, expected blocked "
-                                 f"rank {expected} for masks {masks}")
+                raise ValueError(
+                    f"UnblockDimensions: array '{arr_name}' has rank {len(arr.shape)}, expected blocked "
+                    f"rank {expected} for masks {masks}"
+                )
             new_shape = self._unblocked_shape(tuple(arr.shape), masks, factors)
             self._replace_array_recursive(sdfg, arr_name, new_shape)
             self._replace_memlets_recursive(sdfg, arr_name, masks, factors)

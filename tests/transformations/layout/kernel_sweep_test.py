@@ -59,12 +59,9 @@ def test_k11_thomas_layout_sweep_timed():
     reference = k11_thomas.oracle(inputs["a"], inputs["b"], inputs["c"], inputs["d"])
     candidates = _sdfg_candidates(k11_thomas.thomas, k11_thomas.candidates())
 
-    results = sweep(candidates,
-                    k11_thomas.run_closure(inputs, k, nb),
-                    reference,
-                    reps=2,
-                    warmup=1,
-                    timer=compute_region_timer)
+    results = sweep(
+        candidates, k11_thomas.run_closure(inputs, k, nb), reference, reps=2, warmup=1, timer=compute_region_timer
+    )
     assert set(candidates) == {"interleaved", "system_major"}
     assert all(r.correct for r in results), [(r.name, r.error) for r in results]
     # every correct candidate has a compute-region time recorded

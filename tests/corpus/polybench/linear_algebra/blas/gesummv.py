@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
-#datatypes = [dace.float64, dace.int32, dace.float32]
+# datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
 # Dataset sizes
@@ -12,10 +12,17 @@ sizes = [{N: 30}, {N: 90}, {N: 250}, {N: 1300}, {N: 2800}]
 #: ported from the npbench bench_info paper row
 paper_sizes = {N: 11200}
 
-args = [([N, N], datatype), ([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([1], datatype),
-        ([1], datatype)]
+args = [
+    ([N, N], datatype),
+    ([N, N], datatype),
+    ([N], datatype),
+    ([N], datatype),
+    ([N], datatype),
+    ([1], datatype),
+    ([1], datatype),
+]
 
-outputs = [(4, 'y')]
+outputs = [(4, "y")]
 
 
 def init_array(A, B, tmp, x, y, alpha, beta, n):
@@ -30,8 +37,15 @@ def init_array(A, B, tmp, x, y, alpha, beta, n):
 
 
 @dace.program
-def gesummv(A: datatype[N, N], B: datatype[N, N], tmp: datatype[N], x: datatype[N], y: datatype[N], alpha: datatype[1],
-            beta: datatype[1]):
+def gesummv(
+    A: datatype[N, N],
+    B: datatype[N, N],
+    tmp: datatype[N],
+    x: datatype[N],
+    y: datatype[N],
+    alpha: datatype[1],
+    beta: datatype[1],
+):
 
     # npbench formulation: ``y = alpha * A @ x + beta * B @ x`` (two Gemv library nodes).
     # ``tmp`` is unused now (kept for the corpus signature); ``alpha``/``beta`` are 1-element
@@ -39,6 +53,7 @@ def gesummv(A: datatype[N, N], B: datatype[N, N], tmp: datatype[N], x: datatype[
     y[:] = alpha[0] * A @ x + beta[0] * B @ x
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import polybench  # noqa: E402  (CLI only; corpus loads module without it)
+
     polybench.main(sizes, args, outputs, init_array, gesummv)

@@ -6,6 +6,7 @@ an :class:`~dace.nodes.AccessNode` (the canonical reduction shape DaCe codegen
 recognises). Tasklet- and NestedSDFG-sourced WCR get a freshly inserted private
 transient between producer and consumer.
 """
+
 import copy
 import functools
 
@@ -20,7 +21,10 @@ from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
 
 def _wcr_source_classes(sdfg: dace.SDFG):
     return [
-        type(e.src).__name__ for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
+        type(e.src).__name__
+        for sd in sdfg.all_sdfgs_recursive()
+        for st in sd.states()
+        for e in st.edges()
         if e.data is not None and e.data.wcr is not None
     ]
 
@@ -31,29 +35,27 @@ def _build_nsdfg_wcr_sum(n: int) -> dace.SDFG:
 
     Codegen drops the reduction on this shape; the pass normalises it.
     """
-    sdfg = dace.SDFG(f'nsdfg_wcr_sum_n{n}')
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('acc', [1], dace.float64)
-    state = sdfg.add_state('m')
-    src_read = state.add_read('src')
-    acc_write = state.add_write('acc')
+    sdfg = dace.SDFG(f"nsdfg_wcr_sum_n{n}")
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    state = sdfg.add_state("m")
+    src_read = state.add_read("src")
+    acc_write = state.add_write("acc")
 
-    body = dace.SDFG('body_build_nsdfg_wcr_sum')
-    body.add_array('_in', [1], dace.float64)
-    body.add_array('_out', [1], dace.float64)
-    bstate = body.add_state('b')
-    bin = bstate.add_read('_in')
-    bout = bstate.add_write('_out')
-    bstate.add_nedge(bin, bout, dace.Memlet(data='_in', subset='0', other_subset='0'))
+    body = dace.SDFG("body_build_nsdfg_wcr_sum")
+    body.add_array("_in", [1], dace.float64)
+    body.add_array("_out", [1], dace.float64)
+    bstate = body.add_state("b")
+    bin = bstate.add_read("_in")
+    bout = bstate.add_write("_out")
+    bstate.add_nedge(bin, bout, dace.Memlet(data="_in", subset="0", other_subset="0"))
 
-    me, mx = state.add_map('m', {'i': f'0:{n}'})
-    nnode = state.add_nested_sdfg(body, {'_in'}, {'_out'})
-    state.add_memlet_path(src_read, me, nnode, dst_conn='_in', memlet=dace.Memlet(data='src', subset='i'))
-    state.add_memlet_path(nnode,
-                          mx,
-                          acc_write,
-                          src_conn='_out',
-                          memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    me, mx = state.add_map("m", {"i": f"0:{n}"})
+    nnode = state.add_nested_sdfg(body, {"_in"}, {"_out"})
+    state.add_memlet_path(src_read, me, nnode, dst_conn="_in", memlet=dace.Memlet(data="src", subset="i"))
+    state.add_memlet_path(
+        nnode, mx, acc_write, src_conn="_out", memlet=dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b")
+    )
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
@@ -66,15 +68,15 @@ def test_pass_rewrites_nsdfg_source_to_access_node():
     """
     sdfg = _build_nsdfg_wcr_sum(64)
     pre = _wcr_source_classes(sdfg)
-    assert 'NestedSDFG' in pre, f'fixture should have NSDFG-source WCR; got {pre}'
+    assert "NestedSDFG" in pre, f"fixture should have NSDFG-source WCR; got {pre}"
 
     NormalizeWCRSource().apply_pass(sdfg, {})
 
     post = _wcr_source_classes(sdfg)
-    assert 'NestedSDFG' not in post, (f'pass should remove all NSDFG-source WCR edges; got {post}')
-    assert post, 'pass should preserve at least one WCR edge per reduction'
-    bad = [c for c in post if c not in ('AccessNode', 'MapExit')]
-    assert not bad, f'WCR sources must be AccessNode/MapExit only; got {bad}'
+    assert "NestedSDFG" not in post, f"pass should remove all NSDFG-source WCR edges; got {post}"
+    assert post, "pass should preserve at least one WCR edge per reduction"
+    bad = [c for c in post if c not in ("AccessNode", "MapExit")]
+    assert not bad, f"WCR sources must be AccessNode/MapExit only; got {bad}"
 
 
 def test_pass_rewrite_is_numerically_correct():
@@ -88,7 +90,7 @@ def test_pass_rewrite_is_numerically_correct():
     src = rng.uniform(-1.0, 1.0, size=n)
     acc = np.zeros(1, dtype=np.float64)
     sdfg(src=src, acc=acc)
-    assert np.isclose(acc[0], src.sum()), f'got {acc[0]}, expected {src.sum()}'
+    assert np.isclose(acc[0], src.sum()), f"got {acc[0]}, expected {src.sum()}"
 
 
 def test_pass_preserves_initial_accumulator_value():
@@ -105,14 +107,14 @@ def test_pass_preserves_initial_accumulator_value():
 
 
 @pytest.mark.parametrize(
-    'wcr_str,binop,init,domain',
+    "wcr_str,binop,init,domain",
     [
-        ('lambda a, b: a + b', lambda a, b: a + b, 0.0, (-1.0, 1.0)),
-        ('lambda a, b: a * b', lambda a, b: a * b, 1.0, (0.95, 1.05)),
-        ('lambda a, b: max(a, b)', max, 0.0, (-1.0, 1.0)),
-        ('lambda a, b: min(a, b)', min, 0.0, (-1.0, 1.0)),
+        ("lambda a, b: a + b", lambda a, b: a + b, 0.0, (-1.0, 1.0)),
+        ("lambda a, b: a * b", lambda a, b: a * b, 1.0, (0.95, 1.05)),
+        ("lambda a, b: max(a, b)", max, 0.0, (-1.0, 1.0)),
+        ("lambda a, b: min(a, b)", min, 0.0, (-1.0, 1.0)),
     ],
-    ids=['sum', 'product', 'max', 'min'],
+    ids=["sum", "product", "max", "min"],
 )
 def test_pass_handles_every_associative_wcr(wcr_str, binop, init, domain):
     """The rewrite preserves the WCR string verbatim; sum / product / max / min all
@@ -131,7 +133,7 @@ def test_pass_handles_every_associative_wcr(wcr_str, binop, init, domain):
     expected = functools.reduce(binop, src.tolist(), init)
     acc = np.array([init])
     sdfg(src=src, acc=acc)
-    assert np.isclose(acc[0], expected), (f'WCR ``{wcr_str}`` returned {acc[0]}, expected {expected}')
+    assert np.isclose(acc[0], expected), f"WCR ``{wcr_str}`` returned {acc[0]}, expected {expected}"
 
 
 def test_pass_is_idempotent():
@@ -139,9 +141,9 @@ def test_pass_is_idempotent():
     on already-normalised SDFGs."""
     sdfg = _build_nsdfg_wcr_sum(16)
     first = NormalizeWCRSource().apply_pass(sdfg, {})
-    assert first is not None, 'first apply should report a rewrite'
+    assert first is not None, "first apply should report a rewrite"
     second = NormalizeWCRSource().apply_pass(sdfg, {})
-    assert second is None, f'second apply should be a no-op; got {second}'
+    assert second is None, f"second apply should be a no-op; got {second}"
 
 
 def test_pass_rewrites_tasklet_source_wcr_too():
@@ -149,26 +151,24 @@ def test_pass_rewrites_tasklet_source_wcr_too():
     works because the codegen handles scalar-typed CodeNode outputs, but the
     normalisation invariant must apply uniformly)."""
     n = 32
-    sdfg = dace.SDFG(f'tasklet_wcr_n{n}')
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('acc', [1], dace.float64)
-    st = sdfg.add_state('m')
-    src_read = st.add_read('src')
-    acc_write = st.add_write('acc')
-    me, mx = st.add_map('m', {'i': f'0:{n}'})
-    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
-    st.add_memlet_path(src_read, me, t, dst_conn='_in', memlet=dace.Memlet(data='src', subset='i'))
-    st.add_memlet_path(t,
-                       mx,
-                       acc_write,
-                       src_conn='_out',
-                       memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    sdfg = dace.SDFG(f"tasklet_wcr_n{n}")
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    st = sdfg.add_state("m")
+    src_read = st.add_read("src")
+    acc_write = st.add_write("acc")
+    me, mx = st.add_map("m", {"i": f"0:{n}"})
+    t = st.add_tasklet("id", {"_in"}, {"_out"}, "_out = _in")
+    st.add_memlet_path(src_read, me, t, dst_conn="_in", memlet=dace.Memlet(data="src", subset="i"))
+    st.add_memlet_path(
+        t, mx, acc_write, src_conn="_out", memlet=dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b")
+    )
     sdfg.validate()
 
     NormalizeWCRSource().apply_pass(sdfg, {})
 
     post = _wcr_source_classes(sdfg)
-    assert 'Tasklet' not in post, f'pass should remove Tasklet-source WCR; got {post}'
+    assert "Tasklet" not in post, f"pass should remove Tasklet-source WCR; got {post}"
 
     rng = np.random.default_rng(7)
     src = rng.uniform(-1.0, 1.0, size=n)
@@ -181,24 +181,24 @@ def test_pass_no_op_on_canonical_access_node_source_wcr():
     """An SDFG that already places WCR on AccessNode -> MapExit edges is left
     unchanged (the pass only rewrites CodeNode-source WCR)."""
     n = 16
-    sdfg = dace.SDFG(f'canonical_wcr_n{n}')
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('acc', [1], dace.float64)
-    sdfg.add_scalar('_priv', dace.float64, transient=True)
-    st = sdfg.add_state('m')
-    src_read = st.add_read('src')
-    acc_write = st.add_write('acc')
-    priv = st.add_access('_priv')
-    me, mx = st.add_map('m', {'i': f'0:{n}'})
-    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
-    st.add_memlet_path(src_read, me, t, dst_conn='_in', memlet=dace.Memlet(data='src', subset='i'))
-    st.add_edge(t, '_out', priv, None, dace.Memlet(data='_priv', subset='0'))
-    st.add_memlet_path(priv, mx, acc_write, memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    sdfg = dace.SDFG(f"canonical_wcr_n{n}")
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    sdfg.add_scalar("_priv", dace.float64, transient=True)
+    st = sdfg.add_state("m")
+    src_read = st.add_read("src")
+    acc_write = st.add_write("acc")
+    priv = st.add_access("_priv")
+    me, mx = st.add_map("m", {"i": f"0:{n}"})
+    t = st.add_tasklet("id", {"_in"}, {"_out"}, "_out = _in")
+    st.add_memlet_path(src_read, me, t, dst_conn="_in", memlet=dace.Memlet(data="src", subset="i"))
+    st.add_edge(t, "_out", priv, None, dace.Memlet(data="_priv", subset="0"))
+    st.add_memlet_path(priv, mx, acc_write, memlet=dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
     before = copy.deepcopy(sdfg.to_json())
     res = NormalizeWCRSource().apply_pass(sdfg, {})
-    assert res is None, 'canonical-shape SDFG should be left alone'
+    assert res is None, "canonical-shape SDFG should be left alone"
 
     rng = np.random.default_rng(4)
     src = rng.uniform(-1.0, 1.0, size=n)
@@ -218,31 +218,31 @@ def _build_nsdfg_inout_wcr_sdfg() -> dace.SDFG:
     the outgoing edge with WCR. The shape stands on its own without depending
     on any other pass producing it.
     """
-    sdfg = dace.SDFG('nsdfg_inout_wcr')
-    sdfg.add_array('out', [4], dace.float64)
-    sdfg.add_array('src', [4], dace.float64)
+    sdfg = dace.SDFG("nsdfg_inout_wcr")
+    sdfg.add_array("out", [4], dace.float64)
+    sdfg.add_array("src", [4], dace.float64)
 
-    inner = dace.SDFG('loop_body_build_nsdfg_inout_wcr_sdfg')
-    inner.add_array('out', [1], dace.float64)
-    inner.add_array('src', [1], dace.float64)
-    istate = inner.add_state('s', is_start_block=True)
-    t = istate.add_tasklet('add', {'_o', '_s'}, {'_r'}, '_r = _o + _s')
-    or_in = istate.add_read('out')
-    sr = istate.add_read('src')
-    ow = istate.add_write('out')
-    istate.add_edge(or_in, None, t, '_o', dace.Memlet('out[0]'))
-    istate.add_edge(sr, None, t, '_s', dace.Memlet('src[0]'))
-    istate.add_edge(t, '_r', ow, None, dace.Memlet('out[0]'))
+    inner = dace.SDFG("loop_body_build_nsdfg_inout_wcr_sdfg")
+    inner.add_array("out", [1], dace.float64)
+    inner.add_array("src", [1], dace.float64)
+    istate = inner.add_state("s", is_start_block=True)
+    t = istate.add_tasklet("add", {"_o", "_s"}, {"_r"}, "_r = _o + _s")
+    or_in = istate.add_read("out")
+    sr = istate.add_read("src")
+    ow = istate.add_write("out")
+    istate.add_edge(or_in, None, t, "_o", dace.Memlet("out[0]"))
+    istate.add_edge(sr, None, t, "_s", dace.Memlet("src[0]"))
+    istate.add_edge(t, "_r", ow, None, dace.Memlet("out[0]"))
 
-    state = sdfg.add_state('s', is_start_block=True)
-    me, mx = state.add_map('m', dict(i='0:4'))
-    n = state.add_nested_sdfg(inner, {'out', 'src'}, {'out'})
-    out_in = state.add_read('out')
-    out_out = state.add_write('out')
-    src_in = state.add_read('src')
-    state.add_memlet_path(out_in, me, n, dst_conn='out', memlet=dace.Memlet('out[i]'))
-    state.add_memlet_path(src_in, me, n, dst_conn='src', memlet=dace.Memlet('src[i]'))
-    state.add_memlet_path(n, mx, out_out, src_conn='out', memlet=dace.Memlet('out[i]', wcr='lambda a, b: a + b'))
+    state = sdfg.add_state("s", is_start_block=True)
+    me, mx = state.add_map("m", dict(i="0:4"))
+    n = state.add_nested_sdfg(inner, {"out", "src"}, {"out"})
+    out_in = state.add_read("out")
+    out_out = state.add_write("out")
+    src_in = state.add_read("src")
+    state.add_memlet_path(out_in, me, n, dst_conn="out", memlet=dace.Memlet("out[i]"))
+    state.add_memlet_path(src_in, me, n, dst_conn="src", memlet=dace.Memlet("src[i]"))
+    state.add_memlet_path(n, mx, out_out, src_conn="out", memlet=dace.Memlet("out[i]", wcr="lambda a, b: a + b"))
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
@@ -275,7 +275,7 @@ def test_skips_rewrite_when_nsdfg_output_is_also_inout_connector():
             shared = set(n_node.in_connectors) & set(n_node.out_connectors)
             if shared:
                 inout_pairs.append(shared)
-    assert inout_pairs, 'expected at least one NestedSDFG with InOut connectors'
+    assert inout_pairs, "expected at least one NestedSDFG with InOut connectors"
 
     # Pre-fix this raises InvalidSDFGNodeError("Inout connector out is
     # connected to different input ({'out'}) and output
@@ -288,11 +288,11 @@ def test_skips_rewrite_when_nsdfg_output_is_also_inout_connector():
     src = rng.standard_normal(4)
     out_buf = np.zeros(4)
     sdfg(out=out_buf, src=src)
-    assert np.allclose(out_buf, src), f'got {out_buf}, expected {src}'
+    assert np.allclose(out_buf, src), f"got {out_buf}, expected {src}"
 
 
 def _seed_states(sdfg: dace.SDFG):
-    return [st.label for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if '_wcr_seed' in st.label]
+    return [st.label for sd in sdfg.all_sdfgs_recursive() for st in sd.states() if "_wcr_seed" in st.label]
 
 
 def test_seed_fresh_write_once_accumulator():
@@ -301,30 +301,30 @@ def test_seed_fresh_write_once_accumulator():
     initializer is identity-seeded, so codegen's ``acc = acc OP val`` read-back
     (``0 + val``) starts defined instead of reading uninitialized memory."""
     n = 16
-    sdfg = dace.SDFG('seed_write_once')
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('out', [n], dace.float64)
-    sdfg.add_transient('acc', [n], dace.float64)
-    st = sdfg.add_state('m')
-    sr = st.add_read('src')
-    aw = st.add_access('acc')
-    me, mx = st.add_map('m', {'i': f'0:{n}'})
-    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
-    st.add_memlet_path(sr, me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
-    st.add_memlet_path(t, mx, aw, src_conn='_out', memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
-    st2 = sdfg.add_state_after(st, 'c')
-    st2.add_nedge(st2.add_read('acc'), st2.add_write('out'), dace.Memlet(f'acc[0:{n}]'))
+    sdfg = dace.SDFG("seed_write_once")
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("out", [n], dace.float64)
+    sdfg.add_transient("acc", [n], dace.float64)
+    st = sdfg.add_state("m")
+    sr = st.add_read("src")
+    aw = st.add_access("acc")
+    me, mx = st.add_map("m", {"i": f"0:{n}"})
+    t = st.add_tasklet("id", {"_in"}, {"_out"}, "_out = _in")
+    st.add_memlet_path(sr, me, t, dst_conn="_in", memlet=dace.Memlet("src[i]"))
+    st.add_memlet_path(t, mx, aw, src_conn="_out", memlet=dace.Memlet(data="acc", subset="i", wcr="lambda a, b: a + b"))
+    st2 = sdfg.add_state_after(st, "c")
+    st2.add_nedge(st2.add_read("acc"), st2.add_write("out"), dace.Memlet(f"acc[0:{n}]"))
     sdfg.validate()
 
     assert not _seed_states(sdfg)
     NormalizeWCRSource().apply_pass(sdfg, {})
-    assert _seed_states(sdfg), 'fresh write-once WCR accumulator must be identity-seeded'
+    assert _seed_states(sdfg), "fresh write-once WCR accumulator must be identity-seeded"
 
     rng = np.random.default_rng(0)
     src = rng.uniform(-1.0, 1.0, size=n)
     out = np.empty(n)
     sdfg(src=src, out=out)
-    assert np.allclose(out, src), f'write-once acc[i] = 0 + src[i]; got {out}'
+    assert np.allclose(out, src), f"write-once acc[i] = 0 + src[i]; got {out}"
 
 
 def test_seed_covers_only_the_window_the_reduction_writes():
@@ -332,22 +332,24 @@ def test_seed_covers_only_the_window_the_reduction_writes():
     two-slot reduction inside an ``i`` loop paid a full-array fill every iteration (the compound nest
     after PR #2586 inlined its loop body)."""
     n = 16
-    sdfg = dace.SDFG('seed_window')
-    sdfg.add_symbol('b', dace.int64)
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('out', [2], dace.float64)
-    sdfg.add_transient('acc', [n], dace.float64)
-    st = sdfg.add_state('m')
-    me, mx = st.add_map('m', {'i': 'b:b + 2'})
-    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
-    st.add_memlet_path(st.add_read('src'), me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
-    st.add_memlet_path(t,
-                       mx,
-                       st.add_access('acc'),
-                       src_conn='_out',
-                       memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
-    st2 = sdfg.add_state_after(st, 'c')
-    st2.add_nedge(st2.add_read('acc'), st2.add_write('out'), dace.Memlet('acc[b:b + 2]'))
+    sdfg = dace.SDFG("seed_window")
+    sdfg.add_symbol("b", dace.int64)
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("out", [2], dace.float64)
+    sdfg.add_transient("acc", [n], dace.float64)
+    st = sdfg.add_state("m")
+    me, mx = st.add_map("m", {"i": "b:b + 2"})
+    t = st.add_tasklet("id", {"_in"}, {"_out"}, "_out = _in")
+    st.add_memlet_path(st.add_read("src"), me, t, dst_conn="_in", memlet=dace.Memlet("src[i]"))
+    st.add_memlet_path(
+        t,
+        mx,
+        st.add_access("acc"),
+        src_conn="_out",
+        memlet=dace.Memlet(data="acc", subset="i", wcr="lambda a, b: a + b"),
+    )
+    st2 = sdfg.add_state_after(st, "c")
+    st2.add_nedge(st2.add_read("acc"), st2.add_write("out"), dace.Memlet("acc[b:b + 2]"))
     propagate_memlets_sdfg(sdfg)
     sdfg.validate()
 
@@ -355,15 +357,16 @@ def test_seed_covers_only_the_window_the_reduction_writes():
     sdfg.validate()
 
     seed_maps = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry) and n.map.params[0].startswith('_wcrseed')
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.params[0].startswith("_wcrseed")
     ]
-    assert [str(m.map.range) for m in seed_maps] == ['b:b + 2'], [str(m.map.range) for m in seed_maps]
+    assert [str(m.map.range) for m in seed_maps] == ["b:b + 2"], [str(m.map.range) for m in seed_maps]
 
     src = np.random.default_rng(1).uniform(-1.0, 1.0, size=n)
     out = np.empty(2)
     sdfg(src=src, out=out, b=5)
-    assert np.allclose(out, src[5:7]), f'acc[b:b + 2] = 0 + src[b:b + 2]; got {out}'
+    assert np.allclose(out, src[5:7]), f"acc[b:b + 2] = 0 + src[b:b + 2]; got {out}"
 
 
 def test_seed_spares_top_level_argument():
@@ -371,26 +374,26 @@ def test_seed_spares_top_level_argument():
     gramschmidt's ``A[:,j] -= ...`` -- must NOT be seeded: the argument carries the
     caller's value, which an identity fill would destroy."""
     n = 16
-    sdfg = dace.SDFG('inplace_arg')
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('acc', [n], dace.float64)  # non-transient argument, updated in place
-    st = sdfg.add_state('m')
-    sr = st.add_read('src')
-    aw = st.add_write('acc')
-    me, mx = st.add_map('m', {'i': f'0:{n}'})
-    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
-    st.add_memlet_path(sr, me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
-    st.add_memlet_path(t, mx, aw, src_conn='_out', memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
+    sdfg = dace.SDFG("inplace_arg")
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("acc", [n], dace.float64)  # non-transient argument, updated in place
+    st = sdfg.add_state("m")
+    sr = st.add_read("src")
+    aw = st.add_write("acc")
+    me, mx = st.add_map("m", {"i": f"0:{n}"})
+    t = st.add_tasklet("id", {"_in"}, {"_out"}, "_out = _in")
+    st.add_memlet_path(sr, me, t, dst_conn="_in", memlet=dace.Memlet("src[i]"))
+    st.add_memlet_path(t, mx, aw, src_conn="_out", memlet=dace.Memlet(data="acc", subset="i", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
     NormalizeWCRSource().apply_pass(sdfg, {})
-    assert not _seed_states(sdfg), 'in-place WCR onto a top-level argument must not be seeded'
+    assert not _seed_states(sdfg), "in-place WCR onto a top-level argument must not be seeded"
 
     rng = np.random.default_rng(3)
     src = rng.uniform(-1.0, 1.0, size=n)
     acc = np.full(n, 5.0)
     sdfg(src=src, acc=acc)
-    assert np.allclose(acc, 5.0 + src), 'the caller-supplied prior must be preserved'
+    assert np.allclose(acc, 5.0 + src), "the caller-supplied prior must be preserved"
 
 
 def test_seed_spares_same_slot_fold():
@@ -399,25 +402,25 @@ def test_seed_spares_same_slot_fold():
     ``table`` input) must NOT be blindly reset. The pass leaves it unseeded so the prior
     is preserved."""
     n = 16
-    sdfg = dace.SDFG('fold_prior')
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('acc', [1], dace.float64)  # non-transient: caller supplies the prior
-    st = sdfg.add_state('m')
-    sr = st.add_read('src')
-    aw = st.add_write('acc')
-    me, mx = st.add_map('m', {'i': f'0:{n}'})
-    t = st.add_tasklet('id', {'_in'}, {'_out'}, '_out = _in')
-    st.add_memlet_path(sr, me, t, dst_conn='_in', memlet=dace.Memlet('src[i]'))
-    st.add_memlet_path(t, mx, aw, src_conn='_out', memlet=dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    sdfg = dace.SDFG("fold_prior")
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)  # non-transient: caller supplies the prior
+    st = sdfg.add_state("m")
+    sr = st.add_read("src")
+    aw = st.add_write("acc")
+    me, mx = st.add_map("m", {"i": f"0:{n}"})
+    t = st.add_tasklet("id", {"_in"}, {"_out"}, "_out = _in")
+    st.add_memlet_path(sr, me, t, dst_conn="_in", memlet=dace.Memlet("src[i]"))
+    st.add_memlet_path(t, mx, aw, src_conn="_out", memlet=dace.Memlet(data="acc", subset="0", wcr="lambda a, b: a + b"))
     sdfg.validate()
 
     NormalizeWCRSource().apply_pass(sdfg, {})
-    assert not _seed_states(sdfg), 'same-slot fold onto a live accumulator must not be seeded'
+    assert not _seed_states(sdfg), "same-slot fold onto a live accumulator must not be seeded"
 
     src = np.ones(n)
     acc = np.array([10.0])
     sdfg(src=src, acc=acc)
-    assert np.isclose(acc[0], 10.0 + n), f'prior + sum(src); got {acc[0]}'
+    assert np.isclose(acc[0], 10.0 + n), f"prior + sum(src); got {acc[0]}"
 
 
 def test_seed_spares_nested_out_only_aliasing_live_array():
@@ -425,34 +428,36 @@ def test_seed_spares_nested_out_only_aliasing_live_array():
     is not fresh storage: the in-place reduction accumulates onto the caller's data, so seeding
     it to identity would erase the live value. The pass must leave it unseeded."""
     n = 8
-    sdfg = dace.SDFG('inplace_nested')
-    sdfg.add_array('A', [n], dace.float64)
-    sdfg.add_array('val', [n], dace.float64)
-    st = sdfg.add_state('s')
-    body = dace.SDFG('body_seed_spares_nested_out_only_aliasing_live_array')
-    body.add_array('out', [n], dace.float64)
-    body.add_array('bval', [n], dace.float64)
-    bst = body.add_state('b')
-    me, mx = bst.add_map('m', {'i': f'0:{n}'})
-    t = bst.add_tasklet('f', {'__v'}, {'__o'}, '__o = __v')
-    bst.add_memlet_path(bst.add_read('bval'), me, t, dst_conn='__v', memlet=dace.Memlet('bval[i]'))
-    bst.add_memlet_path(t,
-                        mx,
-                        bst.add_write('out'),
-                        src_conn='__o',
-                        memlet=dace.Memlet(data='out', subset='i', wcr='lambda a, b: a + b'))
-    nsdfg = st.add_nested_sdfg(body, {'bval'}, {'out'})
-    st.add_edge(st.add_read('val'), None, nsdfg, 'bval', dace.Memlet(f'val[0:{n}]'))
-    st.add_edge(nsdfg, 'out', st.add_write('A'), None, dace.Memlet(f'A[0:{n}]'))  # plain outer edge: out -> live A
+    sdfg = dace.SDFG("inplace_nested")
+    sdfg.add_array("A", [n], dace.float64)
+    sdfg.add_array("val", [n], dace.float64)
+    st = sdfg.add_state("s")
+    body = dace.SDFG("body_seed_spares_nested_out_only_aliasing_live_array")
+    body.add_array("out", [n], dace.float64)
+    body.add_array("bval", [n], dace.float64)
+    bst = body.add_state("b")
+    me, mx = bst.add_map("m", {"i": f"0:{n}"})
+    t = bst.add_tasklet("f", {"__v"}, {"__o"}, "__o = __v")
+    bst.add_memlet_path(bst.add_read("bval"), me, t, dst_conn="__v", memlet=dace.Memlet("bval[i]"))
+    bst.add_memlet_path(
+        t,
+        mx,
+        bst.add_write("out"),
+        src_conn="__o",
+        memlet=dace.Memlet(data="out", subset="i", wcr="lambda a, b: a + b"),
+    )
+    nsdfg = st.add_nested_sdfg(body, {"bval"}, {"out"})
+    st.add_edge(st.add_read("val"), None, nsdfg, "bval", dace.Memlet(f"val[0:{n}]"))
+    st.add_edge(nsdfg, "out", st.add_write("A"), None, dace.Memlet(f"A[0:{n}]"))  # plain outer edge: out -> live A
     sdfg.validate()
 
     NormalizeWCRSource().apply_pass(sdfg, {})
-    assert not _seed_states(sdfg), 'an out-only connector aliasing a live array must not be seeded'
+    assert not _seed_states(sdfg), "an out-only connector aliasing a live array must not be seeded"
 
     A = np.full(n, 10.0)
     val = np.arange(1, n + 1, dtype=np.float64)
     sdfg(A=A, val=val)
-    assert np.allclose(A, 10.0 + val), f'A must be accumulated in place (10 + val), not overwritten; got {A}'
+    assert np.allclose(A, 10.0 + val), f"A must be accumulated in place (10 + val), not overwritten; got {A}"
 
 
 def test_seed_spares_source_oriented_plain_init():
@@ -461,35 +466,37 @@ def test_seed_spares_source_oriented_plain_init():
     plain-writer scan on the edge DESTINATION, not the memlet data) and leave the accumulator
     unseeded, so the init survives."""
     n = 8
-    sdfg = dace.SDFG('src_oriented_init')
-    sdfg.add_array('bias', [n], dace.float64)
-    sdfg.add_array('src', [n], dace.float64)
-    sdfg.add_array('out', [n], dace.float64)
-    sdfg.add_transient('acc', [n], dace.float64)
-    s1 = sdfg.add_state('init')  # acc <- bias, source-oriented (memlet.data == 'bias')
-    s1.add_edge(s1.add_read('bias'), None, s1.add_write('acc'), None, dace.Memlet(f'bias[0:{n}]'))
-    s2 = sdfg.add_state_after(s1, 'accum')  # acc[i] (wcr+)= src[i]
-    me, mx = s2.add_map('m', {'i': f'0:{n}'})
-    t = s2.add_tasklet('f', {'__s'}, {'__o'}, '__o = __s')
-    s2.add_memlet_path(s2.add_read('src'), me, t, dst_conn='__s', memlet=dace.Memlet('src[i]'))
-    s2.add_memlet_path(t,
-                       mx,
-                       s2.add_access('acc'),
-                       src_conn='__o',
-                       memlet=dace.Memlet(data='acc', subset='i', wcr='lambda a, b: a + b'))
-    s3 = sdfg.add_state_after(s2, 'copyout')
-    s3.add_edge(s3.add_read('acc'), None, s3.add_write('out'), None, dace.Memlet(f'acc[0:{n}]'))
+    sdfg = dace.SDFG("src_oriented_init")
+    sdfg.add_array("bias", [n], dace.float64)
+    sdfg.add_array("src", [n], dace.float64)
+    sdfg.add_array("out", [n], dace.float64)
+    sdfg.add_transient("acc", [n], dace.float64)
+    s1 = sdfg.add_state("init")  # acc <- bias, source-oriented (memlet.data == 'bias')
+    s1.add_edge(s1.add_read("bias"), None, s1.add_write("acc"), None, dace.Memlet(f"bias[0:{n}]"))
+    s2 = sdfg.add_state_after(s1, "accum")  # acc[i] (wcr+)= src[i]
+    me, mx = s2.add_map("m", {"i": f"0:{n}"})
+    t = s2.add_tasklet("f", {"__s"}, {"__o"}, "__o = __s")
+    s2.add_memlet_path(s2.add_read("src"), me, t, dst_conn="__s", memlet=dace.Memlet("src[i]"))
+    s2.add_memlet_path(
+        t,
+        mx,
+        s2.add_access("acc"),
+        src_conn="__o",
+        memlet=dace.Memlet(data="acc", subset="i", wcr="lambda a, b: a + b"),
+    )
+    s3 = sdfg.add_state_after(s2, "copyout")
+    s3.add_edge(s3.add_read("acc"), None, s3.add_write("out"), None, dace.Memlet(f"acc[0:{n}]"))
     sdfg.validate()
 
     NormalizeWCRSource().apply_pass(sdfg, {})
-    assert not _seed_states(sdfg), 'acc already has a (source-oriented) plain init; must not be re-seeded'
+    assert not _seed_states(sdfg), "acc already has a (source-oriented) plain init; must not be re-seeded"
 
     rng = np.random.default_rng(2)
     bias = rng.uniform(-1.0, 1.0, size=n)
     src = rng.uniform(-1.0, 1.0, size=n)
     out = np.empty(n)
     sdfg(bias=bias, src=src, out=out)
-    assert np.allclose(out, bias + src), f'seeding would have dropped bias; got {out}'
+    assert np.allclose(out, bias + src), f"seeding would have dropped bias; got {out}"
 
 
 def _build_nsdfg_accumulating_connector_sdfg(n: int) -> dace.SDFG:
@@ -504,31 +511,27 @@ def _build_nsdfg_accumulating_connector_sdfg(n: int) -> dace.SDFG:
 
     The shape stands on its own without depending on any other pass producing it.
     """
-    inner = dace.SDFG('acc_body')
-    inner.add_array('acc', [n], dace.float64)
-    istate = inner.add_state('s', is_start_block=True)
-    ime, imx = istate.add_map('k', dict(k='i:i+2'))
-    t = istate.add_tasklet('one', {}, {'_r'}, '_r = 1.0')
-    aw = istate.add_write('acc')
+    inner = dace.SDFG("acc_body")
+    inner.add_array("acc", [n], dace.float64)
+    istate = inner.add_state("s", is_start_block=True)
+    ime, imx = istate.add_map("k", dict(k="i:i+2"))
+    t = istate.add_tasklet("one", {}, {"_r"}, "_r = 1.0")
+    aw = istate.add_write("acc")
     istate.add_edge(ime, None, t, None, dace.Memlet())
-    istate.add_memlet_path(t,
-                           imx,
-                           aw,
-                           src_conn='_r',
-                           memlet=dace.Memlet(data='acc', subset='k', wcr='lambda a, b: a + b'))
+    istate.add_memlet_path(
+        t, imx, aw, src_conn="_r", memlet=dace.Memlet(data="acc", subset="k", wcr="lambda a, b: a + b")
+    )
 
-    sdfg = dace.SDFG(f'nsdfg_accumulating_connector_n{n}')
-    sdfg.add_array('out', [n, n], dace.float64)
-    state = sdfg.add_state('s', is_start_block=True)
-    me, mx = state.add_map('m', dict(i=f'0:{n - 1}'))
-    nnode = state.add_nested_sdfg(inner, {}, {'acc'}, symbol_mapping=dict(i='i'))
-    out_w = state.add_write('out')
+    sdfg = dace.SDFG(f"nsdfg_accumulating_connector_n{n}")
+    sdfg.add_array("out", [n, n], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    me, mx = state.add_map("m", dict(i=f"0:{n - 1}"))
+    nnode = state.add_nested_sdfg(inner, {}, {"acc"}, symbol_mapping=dict(i="i"))
+    out_w = state.add_write("out")
     state.add_edge(me, None, nnode, None, dace.Memlet())
-    state.add_memlet_path(nnode,
-                          mx,
-                          out_w,
-                          src_conn='acc',
-                          memlet=dace.Memlet(data='out', subset=f'i, 0:{n}', wcr='lambda a, b: a + b'))
+    state.add_memlet_path(
+        nnode, mx, out_w, src_conn="acc", memlet=dace.Memlet(data="out", subset=f"i, 0:{n}", wcr="lambda a, b: a + b")
+    )
     convert_legacy_nested_sdfgs(sdfg)
     sdfg.validate()
     return sdfg
@@ -568,7 +571,7 @@ def test_skips_rewrite_when_nsdfg_wcr_accumulates_into_its_output_connector():
 
     n = 4
     sdfg = _build_nsdfg_accumulating_connector_sdfg(n)
-    assert 'NestedSDFG' in _wcr_source_classes(sdfg), 'fixture should have NSDFG-source WCR'
+    assert "NestedSDFG" in _wcr_source_classes(sdfg), "fixture should have NSDFG-source WCR"
 
     NormalizeWCRSource().apply_pass(sdfg, {})
     sdfg.validate()
@@ -578,20 +581,23 @@ def test_skips_rewrite_when_nsdfg_wcr_accumulates_into_its_output_connector():
     # precisely the miscompile. The body's own inner ``acc[k] (+)= 1.0`` tasklet edge is
     # still normalized onto a scalar ``_wcr_priv`` (the rewrite this pass exists for), so
     # only multi-element buffers are disqualifying.
-    assert 'NestedSDFG' in _wcr_source_classes(sdfg), 'accumulating connector must keep its direct WCR edge'
+    assert "NestedSDFG" in _wcr_source_classes(sdfg), "accumulating connector must keep its direct WCR edge"
     wide = [
-        nm for sd in sdfg.all_sdfgs_recursive() for nm, d in sd.arrays.items()
-        if nm.startswith('_wcr_priv') and d.total_size != 1
+        nm
+        for sd in sdfg.all_sdfgs_recursive()
+        for nm, d in sd.arrays.items()
+        if nm.startswith("_wcr_priv") and d.total_size != 1
     ]
-    assert not wide, f'accumulating output connector must not be re-homed onto a whole-array buffer; got {wide}'
+    assert not wide, f"accumulating output connector must not be re-homed onto a whole-array buffer; got {wide}"
 
     # Value-preservation: the refused shape still computes the right answer, bit-exact.
     out = np.zeros((n, n))
     sdfg(out=out)
     exp = _accumulating_connector_oracle(n)
-    assert np.array_equal(out, exp), f'refused shape must stay value-preserving; got\n{out}\nwant\n{exp}'
+    assert np.array_equal(out, exp), f"refused shape must stay value-preserving; got\n{out}\nwant\n{exp}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
-    sys.exit(pytest.main([__file__, '-v']))
+
+    sys.exit(pytest.main([__file__, "-v"]))

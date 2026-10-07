@@ -51,7 +51,8 @@ class UniqueLoopIterators(ppl.Pass):
         default=True,
         desc=(
             "If True, emit a post-loop state assigning the original loop variable its counted "
-            "exit value so downstream reads see the iterator-after-loop value. Required especially for Fortran inputs"),
+            "exit value so downstream reads see the iterator-after-loop value. Required especially for Fortran inputs"
+        ),
     )
 
     def __init__(self, assign_loop_iterator_post_value: bool = True):
@@ -274,9 +275,11 @@ class UniqueLoopIterators(ppl.Pass):
                     if post_value is not None:
                         post_value_str = dace.symbolic.symstr(post_value, arrayexprs=array_names).strip()
                         if post_value_str:
-                            cfg.parent_graph.add_state_after(cfg,
-                                                             f"{_POST_VALUE_STATE_PREFIX}_{self._next_id}",
-                                                             assignments={old_name: f"({post_value_str})"})
+                            cfg.parent_graph.add_state_after(
+                                cfg,
+                                f"{_POST_VALUE_STATE_PREFIX}_{self._next_id}",
+                                assignments={old_name: f"({post_value_str})"},
+                            )
             else:
                 # Deferred to a single post-loop check (below): renaming ``cfg`` only
                 # substitutes occurrences of THIS ``old_name`` inside ``cfg``'s own subtree,
@@ -298,12 +301,17 @@ class UniqueLoopIterators(ppl.Pass):
                 self._blocks_reading = self._collect_symbol_readers(sdfg, still_read)
                 for loop, old_name in dead_symbol_candidates:
                     post_value = self._compute_post_value(loop)
-                    if old_name in still_read and post_value is not None and self._post_value_needed(
-                            loop, old_name, self._block_reach, self._blocks_reading):
+                    if (
+                        old_name in still_read
+                        and post_value is not None
+                        and self._post_value_needed(loop, old_name, self._block_reach, self._blocks_reading)
+                    ):
                         post_value_str = dace.symbolic.symstr(post_value, arrayexprs=array_names)
-                        loop.parent_graph.add_state_after(loop,
-                                                          f"{_POST_VALUE_STATE_PREFIX}_{loop.loop_variable}",
-                                                          assignments={old_name: f"({post_value_str})"})
+                        loop.parent_graph.add_state_after(
+                            loop,
+                            f"{_POST_VALUE_STATE_PREFIX}_{loop.loop_variable}",
+                            assignments={old_name: f"({post_value_str})"},
+                        )
             for _, old_name in dead_symbol_candidates:
                 if old_name in sdfg.symbols and old_name not in used:
                     # The rename scoped to each loop's own subtree left no
@@ -347,7 +355,7 @@ class UniqueLoopIterators(ppl.Pass):
         prefix = f"{_LOOP_ITER_NAME_PREFIX}_"
 
         def _id_of(name: str) -> int:
-            suffix = name[len(prefix):]
+            suffix = name[len(prefix) :]
             return int(suffix) if name.startswith(prefix) and suffix.isdigit() else -1
 
         max_id = -1

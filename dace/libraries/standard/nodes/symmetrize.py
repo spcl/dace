@@ -15,6 +15,7 @@ explicit and its ``pure`` expansion emits the parallel triangular copy directly.
 The node is in-place: its ``_in`` and ``_out`` connectors both wire to the same
 square array; the expansion reads the source triangle and writes the mirror.
 """
+
 import dace
 from dace import library, nodes, properties, symbolic
 from dace.codegen.common import global_code_id
@@ -53,10 +54,14 @@ class ExpandSymmetrizePure(ExpandTransformation):
         # This expansion is therefore the CPU lowering, and the one to use for a node already
         # inside a kernel. A host-level node on a GPU target picks ``ExpandSymmetrizeCUDA`` instead,
         # which keeps both axes parallel.
-        ome, omx = nstate.add_map(f"{node.label}_row", {"__i": f"{node.row_lo}:{node.row_hi}"},
-                                  schedule=dace.dtypes.ScheduleType.Default)
-        ime, imx = nstate.add_map(f"{node.label}_col", {"__j": f"__i + {node.col_offset}:{node.col_hi}"},
-                                  schedule=dace.dtypes.ScheduleType.Sequential)
+        ome, omx = nstate.add_map(
+            f"{node.label}_row", {"__i": f"{node.row_lo}:{node.row_hi}"}, schedule=dace.dtypes.ScheduleType.Default
+        )
+        ime, imx = nstate.add_map(
+            f"{node.label}_col",
+            {"__j": f"__i + {node.col_offset}:{node.col_hi}"},
+            schedule=dace.dtypes.ScheduleType.Sequential,
+        )
         # source_upper: read the upper element X[i, j] (i < j), write the lower
         # mirror X[j, i]. Otherwise read the lower and write the upper.
         read_idx = "__i, __j" if node.source_upper else "__j, __i"
@@ -112,11 +117,14 @@ class ExpandSymmetrizeBoundingBox(ExpandTransformation):
         # A nest would hand the inner map's FULL width to the launch as the block dimension --
         # ``dim3((M - 1), 1, 1)``, which is 1199 threads at correlation's paper shape and past the
         # 1024 a block may hold.
-        entry, exit_ = nstate.add_map(f"{node.label}_row", {
-            "__i": f"{node.row_lo}:{node.row_hi}",
-            "__jj": f"0:{width}",
-        },
-                                      schedule=dace.dtypes.ScheduleType.Default)
+        entry, exit_ = nstate.add_map(
+            f"{node.label}_row",
+            {
+                "__i": f"{node.row_lo}:{node.row_hi}",
+                "__jj": f"0:{width}",
+            },
+            schedule=dace.dtypes.ScheduleType.Default,
+        )
         read_idx = f"__i, {column}" if node.source_upper else f"{column}, __i"
         write_idx = f"{column}, __i" if node.source_upper else f"__i, {column}"
 
@@ -155,17 +163,24 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
         # comparable expressions (sympy refuses a bare str).
         # Reparsing loses the assumptions and dtype the shape carries, so the window bound and the
         # extent become two sympy instances of one name that ``equal`` then calls undecidable.
-        row_lo, row_hi, col_hi, rows, cols = symbolic.equalize_symbols_across(symbolic.pystr_to_symbolic(node.row_lo),
-                                                                              symbolic.pystr_to_symbolic(node.row_hi),
-                                                                              symbolic.pystr_to_symbolic(node.col_hi),
-                                                                              rows, cols)
-        return (symbolic.equal(rows, cols) is True and symbolic.equal(row_lo, 0) is True
-                and symbolic.equal(col_hi, cols) is True and symbolic.equal(row_hi,
-                                                                            as_expr(cols) - node.col_offset) is True)
+        row_lo, row_hi, col_hi, rows, cols = symbolic.equalize_symbols_across(
+            symbolic.pystr_to_symbolic(node.row_lo),
+            symbolic.pystr_to_symbolic(node.row_hi),
+            symbolic.pystr_to_symbolic(node.col_hi),
+            rows,
+            cols,
+        )
+        return (
+            symbolic.equal(rows, cols) is True
+            and symbolic.equal(row_lo, 0) is True
+            and symbolic.equal(col_hi, cols) is True
+            and symbolic.equal(row_hi, as_expr(cols) - node.col_offset) is True
+        )
 
     @staticmethod
     def expansion(node: "Symmetrize", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         from dace.codegen.targets.cpp import sym2cpp
+
         array_name, desc = node.validate(parent_sdfg, parent_state)
         if not ExpandSymmetrizeCUDA.canonical_window(node, desc):
             # ``ExpandTransformation.apply`` attaches THIS class's ``environments`` to whatever is
@@ -176,27 +191,36 @@ class ExpandSymmetrizeCUDA(ExpandTransformation):
 
         idstr = global_code_id(parent_sdfg, parent_state, node)
         ctype = desc.dtype.base_type.ctype
-        prototype = (f'DACE_EXPORTED gpuError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, '
-                     f'int __sym_ld, int __sym_off, int __sym_upper, gpuStream_t __sym_stream);')
-        parent_sdfg.append_global_code(prototype + '\n')
+        prototype = (
+            f"DACE_EXPORTED gpuError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, "
+            f"int __sym_ld, int __sym_off, int __sym_upper, gpuStream_t __sym_stream);"
+        )
+        parent_sdfg.append_global_code(prototype + "\n")
         # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a free
         # function in the CUDA unit does not have. The status is returned and checked at the call.
         parent_sdfg.append_global_code(
-            f'{prototype}\n'
-            f'gpuError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, int __sym_ld, int __sym_off, '
-            f'int __sym_upper, gpuStream_t __sym_stream) {{\n'
-            f'    return ::dace::cuda_transpose::symmetrize<{ctype}>(__sym_x, __sym_n, __sym_ld, __sym_off, '
-            f'__sym_upper != 0, __sym_stream);\n'
-            f'}}\n', 'cuda')
+            f"{prototype}\n"
+            f"gpuError_t __dace_symmetrize_{idstr}({ctype} *__sym_x, int __sym_n, int __sym_ld, int __sym_off, "
+            f"int __sym_upper, gpuStream_t __sym_stream) {{\n"
+            f"    return ::dace::cuda_transpose::symmetrize<{ctype}>(__sym_x, __sym_n, __sym_ld, __sym_off, "
+            f"__sym_upper != 0, __sym_stream);\n"
+            f"}}\n",
+            "cuda",
+        )
 
-        code = (f'(void)_in;  // the node is in place: ``_in`` and ``_out`` name the same array\n'
-                f'DACE_GPU_CHECK(__dace_symmetrize_{idstr}(_out, (int)({sym2cpp(desc.shape[0])}), '
-                f'(int)({sym2cpp(desc.strides[0])}), {int(node.col_offset)}, {int(bool(node.source_upper))}, '
-                f'__dace_current_stream));')
-        return nodes.Tasklet(node.name, {'_in': dace.dtypes.pointer(desc.dtype.base_type)},
-                             {'_out': dace.dtypes.pointer(desc.dtype.base_type)},
-                             code,
-                             language=dace.dtypes.Language.CPP)
+        code = (
+            f"(void)_in;  // the node is in place: ``_in`` and ``_out`` name the same array\n"
+            f"DACE_GPU_CHECK(__dace_symmetrize_{idstr}(_out, (int)({sym2cpp(desc.shape[0])}), "
+            f"(int)({sym2cpp(desc.strides[0])}), {int(node.col_offset)}, {int(bool(node.source_upper))}, "
+            f"__dace_current_stream));"
+        )
+        return nodes.Tasklet(
+            node.name,
+            {"_in": dace.dtypes.pointer(desc.dtype.base_type)},
+            {"_out": dace.dtypes.pointer(desc.dtype.base_type)},
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
 
 
 @library.node
@@ -221,19 +245,20 @@ class Symmetrize(nodes.LibraryNode):
     row_hi = properties.Property(dtype=str, default="0", desc="Outer (row) index exclusive end.")
     col_offset = properties.Property(dtype=int, default=1, desc="Inner (col) start offset past the row index.")
     col_hi = properties.Property(dtype=str, default="0", desc="Inner (col) index exclusive end.")
-    source_upper = properties.Property(dtype=bool,
-                                       default=True,
-                                       desc="Source triangle is the upper (read X[i,j], write X[j,i]); "
-                                       "else the lower.")
+    source_upper = properties.Property(
+        dtype=bool, default=True, desc="Source triangle is the upper (read X[i,j], write X[j,i]); else the lower."
+    )
 
-    def __init__(self,
-                 name: str,
-                 row_lo: str = "0",
-                 row_hi: str = "0",
-                 col_offset: int = 1,
-                 col_hi: str = "0",
-                 source_upper: bool = True,
-                 **kwargs):
+    def __init__(
+        self,
+        name: str,
+        row_lo: str = "0",
+        row_hi: str = "0",
+        col_offset: int = 1,
+        col_hi: str = "0",
+        source_upper: bool = True,
+        **kwargs,
+    ):
         super().__init__(name, inputs={"_in"}, outputs={"_out"}, **kwargs)
         self.row_lo = row_lo
         self.row_hi = row_hi
@@ -254,8 +279,9 @@ class Symmetrize(nodes.LibraryNode):
         in_name = in_edges[0].data.data
         out_name = out_edges[0].data.data
         if in_name != out_name:
-            raise ValueError(f"{type(self).__name__} is in-place: '_in' ({in_name}) and '_out' ({out_name}) "
-                             f"must be the same array.")
+            raise ValueError(
+                f"{type(self).__name__} is in-place: '_in' ({in_name}) and '_out' ({out_name}) must be the same array."
+            )
         desc = sdfg.arrays[required(in_name)]
         if len(desc.shape) != 2:
             raise ValueError(f"{type(self).__name__} target '{in_name}' must be 2-D; got shape {tuple(desc.shape)}.")

@@ -4,6 +4,7 @@
 Each case here was accepted by ``can_be_applied`` and then either crashed
 mid-rewrite or produced a silently wrong / invalid SDFG.
 """
+
 import dace
 import numpy as np
 import pytest
@@ -41,7 +42,7 @@ def test_nested_inner_maps_are_refused():
     before = sdfg.to_json()
     _apply(sdfg)  # must not raise
     sdfg.validate()
-    assert sdfg.to_json() == before, 'a refused match must not mutate the graph'
+    assert sdfg.to_json() == before, "a refused match must not mutate the graph"
 
 
 def test_data_dependent_guard_does_not_produce_an_invalid_sdfg():
@@ -50,8 +51,9 @@ def test_data_dependent_guard_does_not_produce_an_invalid_sdfg():
     not exist inside the inner body."""
 
     @dace.program
-    def kern_data_dependent_guard_does_not_produce_an_invalid_sdfg(a: dace.float64[N], b: dace.float64[N, N],
-                                                                   thr: dace.float64):
+    def kern_data_dependent_guard_does_not_produce_an_invalid_sdfg(
+        a: dace.float64[N], b: dace.float64[N, N], thr: dace.float64
+    ):
         for i in dace.map[0:N]:
             if a[i] > thr:
                 for j in dace.map[0:N]:
@@ -69,38 +71,38 @@ def test_data_dependent_guard_does_not_produce_an_invalid_sdfg():
 
 def _two_predecessor_guard():
     """``S1 -[k=0]-> cond <-[k=1]- S2`` with guard ``k == 1``."""
-    sdfg = dace.SDFG('twodefs')
-    sdfg.add_symbol('k', dace.int64)
-    sdfg.add_symbol('sel', dace.int64)
-    sdfg.add_array('b', [N], dace.float64)
+    sdfg = dace.SDFG("twodefs")
+    sdfg.add_symbol("k", dace.int64)
+    sdfg.add_symbol("sel", dace.int64)
+    sdfg.add_array("b", [N], dace.float64)
 
-    outer = dace.SDFG('outer_two_predecessor_guard')
-    outer.add_symbol('k', dace.int64)
-    outer.add_array('bo', [N], dace.float64)
-    outer.add_symbol('sel', dace.int64)
-    entry = outer.add_state('entry', is_start_block=True)
-    s1 = outer.add_state('s1')
-    s2 = outer.add_state('s2')
-    cb = ConditionalBlock('guard')
+    outer = dace.SDFG("outer_two_predecessor_guard")
+    outer.add_symbol("k", dace.int64)
+    outer.add_array("bo", [N], dace.float64)
+    outer.add_symbol("sel", dace.int64)
+    entry = outer.add_state("entry", is_start_block=True)
+    s1 = outer.add_state("s1")
+    s2 = outer.add_state("s2")
+    cb = ConditionalBlock("guard")
     outer.add_node(cb)
     # Diamond: both predecessors define the guard symbol, differently.
-    outer.add_edge(entry, s1, InterstateEdge(condition=CodeBlock('sel > 0')))
-    outer.add_edge(entry, s2, InterstateEdge(condition=CodeBlock('sel <= 0')))
-    outer.add_edge(s1, cb, InterstateEdge(assignments={'k': '0'}))
-    outer.add_edge(s2, cb, InterstateEdge(assignments={'k': '1'}))
-    region = ControlFlowRegion('then', sdfg=outer)
-    bs = region.add_state('w', is_start_block=True)
-    me, mx = bs.add_map('inner', dict(j='0:%d' % N))
-    t = bs.add_tasklet('one', {}, {'o'}, 'o = 1.0')
+    outer.add_edge(entry, s1, InterstateEdge(condition=CodeBlock("sel > 0")))
+    outer.add_edge(entry, s2, InterstateEdge(condition=CodeBlock("sel <= 0")))
+    outer.add_edge(s1, cb, InterstateEdge(assignments={"k": "0"}))
+    outer.add_edge(s2, cb, InterstateEdge(assignments={"k": "1"}))
+    region = ControlFlowRegion("then", sdfg=outer)
+    bs = region.add_state("w", is_start_block=True)
+    me, mx = bs.add_map("inner", dict(j="0:%d" % N))
+    t = bs.add_tasklet("one", {}, {"o"}, "o = 1.0")
     bs.add_edge(me, None, t, None, dace.Memlet())
-    bs.add_memlet_path(t, mx, bs.add_access('bo'), src_conn='o', memlet=dace.Memlet('bo[j]'))
-    cb.add_branch(CodeBlock('k == 1'), region)
+    bs.add_memlet_path(t, mx, bs.add_access("bo"), src_conn="o", memlet=dace.Memlet("bo[j]"))
+    cb.add_branch(CodeBlock("k == 1"), region)
 
-    st = sdfg.add_state('main', is_start_block=True)
-    ome, omx = st.add_map('outer_map', dict(i='0:1'))
-    ns = st.add_nested_sdfg(outer, {}, {'bo'}, symbol_mapping={'k': 'k', 'sel': 'sel'})
+    st = sdfg.add_state("main", is_start_block=True)
+    ome, omx = st.add_map("outer_map", dict(i="0:1"))
+    ns = st.add_nested_sdfg(outer, {}, {"bo"}, symbol_mapping={"k": "k", "sel": "sel"})
     st.add_edge(ome, None, ns, None, dace.Memlet())
-    st.add_memlet_path(ns, omx, st.add_access('b'), src_conn='bo', memlet=dace.Memlet('b[0:%d]' % N))
+    st.add_memlet_path(ns, omx, st.add_access("b"), src_conn="bo", memlet=dace.Memlet("b[0:%d]" % N))
     return sdfg
 
 
@@ -112,7 +114,7 @@ def test_guard_symbol_defined_on_two_edges_is_refused():
     definition iteration order landed on.
     """
     sdfg = _two_predecessor_guard()
-    assert _apply(sdfg) is None, 'ambiguous guard definition must be refused'
+    assert _apply(sdfg) is None, "ambiguous guard definition must be refused"
 
 
 def test_guard_symbol_used_by_a_map_range_is_not_deleted():
@@ -123,7 +125,7 @@ def test_guard_symbol_used_by_a_map_range_is_not_deleted():
     undefined at every level.
     """
 
-    n2 = dace.symbol('n2')
+    n2 = dace.symbol("n2")
 
     @dace.program
     def kern_guard_symbol_used_by_a_map_range_is_not_deleted(b: dace.float64[N]):
@@ -141,5 +143,5 @@ def test_guard_symbol_used_by_a_map_range_is_not_deleted():
     assert np.allclose(out, np.ones(N), rtol=1e-9, atol=1e-9, equal_nan=True)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

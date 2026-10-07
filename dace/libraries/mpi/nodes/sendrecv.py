@@ -4,14 +4,12 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-from dace.libraries.mpi.nodes.node import (MPINode, resolve_comm, validate_integer_descriptor,
-                                           expanded_input_connectors)
+from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, validate_integer_descriptor, expanded_input_connectors
 from dace.ordered import OrderedSet
 
 
 @dace.library.expansion
 class ExpandSendrecvMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -28,12 +26,14 @@ class ExpandSendrecvMPI(ExpandTransformation):
             MPI_Sendrecv(&(_inbuffer[0]), {scount}, {send_dtype}, int(_dest), int(_sendtag),
                          _outbuffer, {rcount}, {recv_dtype}, int(_src), int(_recvtag), {comm}, MPI_STATUS_IGNORE);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+            side_effects=True,
+        )
         return tasklet
 
 
@@ -52,11 +52,13 @@ class Sendrecv(MPINode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs=OrderedSet(('_inbuffer', '_dest', '_src', '_sendtag', '_recvtag')),
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(
+            name,
+            *args,
+            inputs=OrderedSet(("_inbuffer", "_dest", "_src", "_sendtag", "_recvtag")),
+            outputs={"_outbuffer"},
+            **kwargs,
+        )
 
     def validate(self, sdfg, state):
         """
@@ -80,10 +82,10 @@ class Sendrecv(MPINode):
             if e.src_conn == "_outbuffer":
                 outbuffer, recv_memlet = sdfg.arrays[e.data.data], e.data
 
-        validate_integer_descriptor(dest, 'Destination')
-        validate_integer_descriptor(src, 'Source')
-        validate_integer_descriptor(sendtag, 'Send tag')
-        validate_integer_descriptor(recvtag, 'Recv tag')
+        validate_integer_descriptor(dest, "Destination")
+        validate_integer_descriptor(src, "Source")
+        validate_integer_descriptor(sendtag, "Send tag")
+        validate_integer_descriptor(recvtag, "Recv tag")
         if send_memlet is None or recv_memlet is None:
             raise ValueError("Sendrecv requires both an _inbuffer input and an _outbuffer output.")
 

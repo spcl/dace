@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Scalar expressions whose symbols cancel out. """
+"""Scalar expressions whose symbols cancel out."""
+
 import dace
 import numpy as np
 
-N = dace.symbol('N', dtype=dace.int64, positive=True)
+N = dace.symbol("N", dtype=dace.int64, positive=True)
 
 
 def test_cancelling_symbols_fold_to_a_constant():
@@ -58,7 +59,7 @@ def test_cancelling_integer_symbols_stay_integer():
     assert np.array_equal(out, a * 3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cancelling_symbols_fold_to_a_constant()
     test_surviving_symbol_still_reaches_the_kernel()
     test_cancelling_integer_symbols_stay_integer()

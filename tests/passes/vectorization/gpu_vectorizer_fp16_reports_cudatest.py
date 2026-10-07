@@ -16,6 +16,7 @@ these run the programs and check what came back. Each is compared against the sa
 carried out on the host in the same precisions -- numpy's float16 is the CPU emulation of the
 storage type the device path uses natively.
 """
+
 import numpy as np
 import pytest
 
@@ -42,8 +43,8 @@ FP16_ULP = float(np.finfo(np.float16).eps)
 #: difference.
 VADV_RTOL = 1e-11
 
-N = dace.symbol('N')
-I, J, K = (dace.symbol(s, dtype=dace.int64) for s in ('I', 'J', 'K'))
+N = dace.symbol("N")
+I, J, K = (dace.symbol(s, dtype=dace.int64) for s in ("I", "J", "K"))
 
 
 @dace.program
@@ -52,9 +53,13 @@ def where_over_fp16(x: dace.float16[N], y: dace.float16[N]):
 
 
 @dace.program
-def vadv_with_an_fp16_field(utens_stage: dace.float64[I, J, K], u_stage: dace.float64[I, J, K],
-                            wcon: dace.float64[I + 1, J, K], u_pos: dace.float16[I, J, K], utens: dace.float64[I, J,
-                                                                                                               K]):
+def vadv_with_an_fp16_field(
+    utens_stage: dace.float64[I, J, K],
+    u_stage: dace.float64[I, J, K],
+    wcon: dace.float64[I + 1, J, K],
+    u_pos: dace.float16[I, J, K],
+    utens: dace.float64[I, J, K],
+):
     """``vadv``, verbatim from the report, with ``u_pos`` in float16 -- the field that sends the
     vectorizer down the tile path. ``dtr_stage`` is the constant the reference uses (3 / 20)."""
     dtr_stage = 3.0 / 20.0
@@ -71,7 +76,7 @@ def vadv_with_an_fp16_field(utens_stage: dace.float64[I, J, K], u_stage: dace.fl
         bcol = dtr_stage - ccol[:, :, k]
 
         correction_term = -cs * (u_stage[:, :, k + 1] - u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         divided = 1.0 / bcol
         ccol[:, :, k] = ccol[:, :, k] * divided
@@ -88,9 +93,10 @@ def vadv_with_an_fp16_field(utens_stage: dace.float64[I, J, K], u_stage: dace.fl
         ccol[:, :, k] = gcv * 0.5
         bcol[:] = dtr_stage - acol - ccol[:, :, k]
 
-        correction_term[:] = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (u_stage[:, :, k + 1] -
-                                                                                      u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        correction_term[:] = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k]) - cs * (
+            u_stage[:, :, k + 1] - u_stage[:, :, k]
+        )
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         divided[:] = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
         ccol[:, :, k] = ccol[:, :, k] * divided
@@ -103,7 +109,7 @@ def vadv_with_an_fp16_field(utens_stage: dace.float64[I, J, K], u_stage: dace.fl
         bcol[:] = dtr_stage - acol
 
         correction_term[:] = -as_ * (u_stage[:, :, k - 1] - u_stage[:, :, k])
-        dcol[:, :, k] = (dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term)
+        dcol[:, :, k] = dtr_stage * u_pos[:, :, k] + utens[:, :, k] + utens_stage[:, :, k] + correction_term
 
         divided[:] = 1.0 / (bcol - ccol[:, :, k - 1] * acol)
         dcol[:, :, k] = (dcol[:, :, k] - (dcol[:, :, k - 1]) * acol) * divided
@@ -126,10 +132,10 @@ def vectorized_where(n: int) -> dace.SDFG:
     :returns: The vectorized SDFG, ready to compile.
     """
     sdfg = where_over_fp16.to_sdfg(simplify=True)
-    sdfg.specialize({'N': n})
+    sdfg.specialize({"N": n})
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     return sdfg
 
 
@@ -147,12 +153,12 @@ def vectorized_vadv(extents: dict) -> dace.SDFG:
     sdfg.simplify()
     sdfg.apply_gpu_transformations(simplify=False)
     sdfg.simplify()
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     return sdfg
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('n', [1024, 1025])
+@pytest.mark.parametrize("n", [1024, 1025])
 def test_a_where_over_fp16_selects_the_same_values_the_host_does(n):
     """The blend keeps every operand it selects, at both an even extent and an odd one.
 
@@ -165,8 +171,9 @@ def test_a_where_over_fp16_selects_the_same_values_the_host_does(n):
     vectorized_where(n)(x=x, y=y)
 
     reference = np.where(x > np.float16(0), np.float16(0), x)
-    assert np.allclose(y.astype(np.float64), reference.astype(np.float64), rtol=FP16_ULP,
-                       atol=0.0), (f'{int((y != reference).sum())} of {n} lanes differ from the host select')
+    assert np.allclose(y.astype(np.float64), reference.astype(np.float64), rtol=FP16_ULP, atol=0.0), (
+        f"{int((y != reference).sum())} of {n} lanes differ from the host select"
+    )
 
 
 @pytest.mark.gpu
@@ -176,13 +183,13 @@ def test_vadv_with_an_fp16_field_matches_the_host_reference():
     The reference reads ``u_pos`` at the values the kernel reads -- the float16 field widened, not
     the float64 field it was rounded from -- so the only difference left to measure is the lowering.
     """
-    extents = {'I': 32, 'J': 32, 'K': 16}
+    extents = {"I": 32, "J": 32, "K": 16}
     # Imported here, not at module scope: vadv_test pulls in dace.autodiff, which imports torch,
     # which dlopens an OpenMP runtime into the whole session at COLLECTION time -- what
     # tests/openmp_runtime_leak_test.py refuses.
     from tests.npbench.weather_stencils.vadv_test import ground_truth, initialize
 
-    _, utens_stage, u_stage, wcon, u_pos, utens = initialize(extents['I'], extents['J'], extents['K'])
+    _, utens_stage, u_stage, wcon, u_pos, utens = initialize(extents["I"], extents["J"], extents["K"])
     u_pos16 = u_pos.astype(np.float16)
 
     reference = np.copy(utens_stage)
@@ -192,10 +199,11 @@ def test_vadv_with_an_fp16_field_matches_the_host_reference():
     vectorized_vadv(extents)(utens_stage=result, u_stage=u_stage, wcon=wcon, u_pos=u_pos16, utens=utens)
 
     assert np.allclose(result, reference, rtol=VADV_RTOL, atol=0.0), (
-        f'max relative error {np.max(np.abs(result - reference) / np.abs(reference)):.3e} exceeds {VADV_RTOL:.0e}')
+        f"max relative error {np.max(np.abs(result - reference) / np.abs(reference)):.3e} exceeds {VADV_RTOL:.0e}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_where_over_fp16_selects_the_same_values_the_host_does(1024)
     test_a_where_over_fp16_selects_the_same_values_the_host_does(1025)
     test_vadv_with_an_fp16_field_matches_the_host_reference()

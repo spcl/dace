@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the ``numpy.matmul`` function spelling, which delegates to the ``@`` operator."""
+
 import dace
 from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
@@ -22,7 +23,7 @@ def test_matmul_2d_2d():
     assert np.allclose(C, np.matmul(A, B))
 
 
-SM, SK, SN = (dace.symbol(s) for s in ('SM', 'SK', 'SN'))
+SM, SK, SN = (dace.symbol(s) for s in ("SM", "SK", "SN"))
 
 
 @dace.program
@@ -142,7 +143,7 @@ def test_matmul_3d_1d_refused():
     def matmul_3d_1d(A: dace.float64[B1, M, K], x: dace.float64[K], C: dace.float64[B1, M]):
         C[:] = np.matmul(A, x)
 
-    with pytest.raises(DaceSyntaxError, match='numpy.matmul of a 3-D and a 1-D operand is not supported'):
+    with pytest.raises(DaceSyntaxError, match="numpy.matmul of a 3-D and a 1-D operand is not supported"):
         matmul_3d_1d.to_sdfg()
 
 
@@ -160,7 +161,7 @@ def test_matmul_broadcast_batch():
     b = np.random.rand(B1, K, N)
     c = np.zeros((B1, M, N))
     matmul_bcast(A=a, B=b, C=c)
-    assert np.allclose(c, a @ b), f'max|diff| = {np.max(np.abs(c - a @ b))}'
+    assert np.allclose(c, a @ b), f"max|diff| = {np.max(np.abs(c - a @ b))}"
 
 
 def test_matmul_1d_3d_refused():
@@ -169,11 +170,11 @@ def test_matmul_1d_3d_refused():
     def matmul_1d_3d(x: dace.float64[K], B: dace.float64[B1, K, N], C: dace.float64[B1, N]):
         C[:] = np.matmul(x, B)
 
-    with pytest.raises(DaceSyntaxError, match='numpy.matmul of a 1-D and a 3-D operand is not supported'):
+    with pytest.raises(DaceSyntaxError, match="numpy.matmul of a 1-D and a 3-D operand is not supported"):
         matmul_1d_3d.to_sdfg()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_matmul_2d_2d()
     test_matmul_2d_2d_symbolic()
     test_matmul_2d_1d()

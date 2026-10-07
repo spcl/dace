@@ -17,6 +17,7 @@ with different perms, all three, and 1D-array identity permutes):
 The dimensions are deliberately distinct (M != N != P) so a wrong axis rewrite cannot hide behind a
 square shape.
 """
+
 import numpy
 import pytest
 import dace
@@ -47,8 +48,9 @@ def blend2d(w0: dace.float64, w1: dace.float64, A: dace.float64[M, N], B: dace.f
 
 
 @dace.program
-def blend3d(w0: dace.float64, w1: dace.float64, A: dace.float64[M, N, P], B: dace.float64[M, N, P],
-            C: dace.float64[M, N, P]):
+def blend3d(
+    w0: dace.float64, w1: dace.float64, A: dace.float64[M, N, P], B: dace.float64[M, N, P], C: dace.float64[M, N, P]
+):
     for i, j, k in dace.map[0:M, 0:N, 0:P]:
         C[i, j, k] = w0 * A[i, j, k] + w1 * B[i, j, k]
 

@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Marks the maps whose innermost loop can carry an OpenMP ``simd`` clause. """
+"""Marks the maps whose innermost loop can carry an OpenMP ``simd`` clause."""
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set, Tuple
@@ -14,16 +14,16 @@ from dace.sdfg.state import LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import MapExpansion
 
-OMP_DIRECTIVE = '#pragma omp'
+OMP_DIRECTIVE = "#pragma omp"
 
 
 def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """ True if the map's body holds no Map and no loop, at any depth.
+    """True if the map's body holds no Map and no loop, at any depth.
 
-        A NestedSDFG is opened rather than refused on sight: an outlined body is often just
-        straight-line dataflow. Inside one a loop takes two forms, a ``LoopRegion`` and a back
-        edge in a plain state machine; a ``ConditionalBlock`` lowers to an ``if`` the vectorizer
-        masks, so it does not disqualify. Anything undecidable reads as not a leaf.
+    A NestedSDFG is opened rather than refused on sight: an outlined body is often just
+    straight-line dataflow. Inside one a loop takes two forms, a ``LoopRegion`` and a back
+    edge in a plain state machine; a ``ConditionalBlock`` lowers to an ``if`` the vectorizer
+    masks, so it does not disqualify. Anything undecidable reads as not a leaf.
     """
 
     def loop_and_map_free(sdfg: SDFG, seen: Set[int]) -> bool:
@@ -62,14 +62,14 @@ def map_body_is_leaf(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
 
 
 def body_wcr(state: SDFGState, map_entry: nodes.MapEntry):
-    """ Every WCR the map body executes: the map exit's own in-edges, plus each edge inside a
-        NestedSDFG the body holds, at any depth.
+    """Every WCR the map body executes: the map exit's own in-edges, plus each edge inside a
+    NestedSDFG the body holds, at any depth.
 
-        The exit edges alone are not the whole story. A frontend-outlined body carries its
-        accumulate INSIDE the nested SDFG (``oc[bsym] += w`` with the nested-SDFG-to-exit edge
-        plain), and that write is a read-modify-write the clause would still let lanes
-        interleave. Undecidable reads as "there is a WCR": the callers use this to WITHHOLD the
-        clause, so missing one is a miscompile while an extra one only costs vectorization.
+    The exit edges alone are not the whole story. A frontend-outlined body carries its
+    accumulate INSIDE the nested SDFG (``oc[bsym] += w`` with the nested-SDFG-to-exit edge
+    plain), and that write is a read-modify-write the clause would still let lanes
+    interleave. Undecidable reads as "there is a WCR": the callers use this to WITHHOLD the
+    clause, so missing one is a miscompile while an extra one only costs vectorization.
     """
     try:
         map_exit = state.exit_node(map_entry)
@@ -86,22 +86,23 @@ def body_wcr(state: SDFGState, map_entry: nodes.MapEntry):
 
 
 def map_has_minmax_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """ True if a WCR the map body executes reduces with ``min``/``max``, whose NaN-preserving
-        compare/branch combine vectorizers do not reliably fold.
+    """True if a WCR the map body executes reduces with ``min``/``max``, whose NaN-preserving
+    compare/branch combine vectorizers do not reliably fold.
     """
     return any(
         operations.detect_reduction_type(wcr) in (dtypes.ReductionType.Min, dtypes.ReductionType.Max)
-        for wcr in body_wcr(state, map_entry))
+        for wcr in body_wcr(state, map_entry)
+    )
 
 
 def map_has_wcr(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-    """ True if the map body executes any WCR.
+    """True if the map body executes any WCR.
 
-        A Sequential map lowers WCR to a plain ``wcr_fixed::reduce``, a read-modify-write of the
-        target in the loop body: an accumulation into a fixed location carries across iterations,
-        and a scatter (``hist[bin(a[i])] += 1``) can alias across them. ``simd`` asserts neither
-        happens, so a Sequential map that reduces gets no clause. CPU_Multicore goes through
-        ``reduce_atomic`` instead, which composes with the clause.
+    A Sequential map lowers WCR to a plain ``wcr_fixed::reduce``, a read-modify-write of the
+    target in the loop body: an accumulation into a fixed location carries across iterations,
+    and a scatter (``hist[bin(a[i])] += 1``) can alias across them. ``simd`` asserts neither
+    happens, so a Sequential map that reduces gets no clause. CPU_Multicore goes through
+    ``reduce_atomic`` instead, which composes with the clause.
     """
     return bool(body_wcr(state, map_entry))
 
@@ -115,7 +116,7 @@ class MarkSIMDMaps(ppl.Pass):
     Code generation only renders the clause; the safety analysis lives here.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -143,21 +144,23 @@ class MarkSIMDMaps(ppl.Pass):
                     # new nest outermost-first, and propagates the scope it rewrote by itself, so
                     # ``annotate`` stays off: a whole-SDFG propagation per map is quadratic.
                     if len(entry.map.params) > 1:
-                        entry = MapExpansion.apply_to(nsdfg,
-                                                      options={
-                                                          'expansion_limit': len(entry.map.params) - 1,
-                                                          'inner_schedule': dtypes.ScheduleType.Sequential
-                                                      },
-                                                      map_entry=entry,
-                                                      verify=False,
-                                                      annotate=False,
-                                                      save=False)[-1]
+                        entry = MapExpansion.apply_to(
+                            nsdfg,
+                            options={
+                                "expansion_limit": len(entry.map.params) - 1,
+                                "inner_schedule": dtypes.ScheduleType.Sequential,
+                            },
+                            map_entry=entry,
+                            verify=False,
+                            annotate=False,
+                            save=False,
+                        )[-1]
                     entry.map.omp_simd = True
                     marked.add((nsdfg.cfg_id, entry.map.label))
         return marked or None
 
     def map_takes_simd(self, state: SDFGState, map_entry: nodes.MapEntry) -> bool:
-        """ Whether this map's innermost loop can carry the clause. """
+        """Whether this map's innermost loop can carry the clause."""
         if map_entry.map.unroll:  # its own pragma, and an unrolled body is not a loop to vectorize
             return False
         if map_entry.map.collapse > 1:

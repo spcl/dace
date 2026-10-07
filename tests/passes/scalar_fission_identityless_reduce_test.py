@@ -6,6 +6,7 @@ like a WCR edge. Fission read it as a fresh definition and gave it a new name, s
 before TSVC vsumr's sum loop became a dead write to the old name and was removed: on the GPU the sum
 then accumulated into an uninitialized device scalar and came back 9x, 10x, ... over repeated calls.
 """
+
 import numpy as np
 
 import dace
@@ -14,27 +15,27 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.scalar_fission import ScalarFission
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def zero_then_reduce() -> dace.SDFG:
     """``s = 0; s = reduce(+, a, into s); out[0] = s``."""
-    sdfg = dace.SDFG('zero_then_reduce')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('out', [1], dace.float64)
-    sdfg.add_scalar('s', dace.float64, transient=True)
-    init = sdfg.add_state('init', is_start_block=True)
-    zero = init.add_tasklet('zero', [], ['y'], 'y = 0.0')
-    init.add_edge(zero, 'y', init.add_write('s'), None, dace.Memlet('s[0]'))
-    fold = sdfg.add_state_after(init, 'fold')
-    reduce = Reduce('sum', 'lambda x, y: x + y', axes=None, identity=None)
+    sdfg = dace.SDFG("zero_then_reduce")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    init = sdfg.add_state("init", is_start_block=True)
+    zero = init.add_tasklet("zero", [], ["y"], "y = 0.0")
+    init.add_edge(zero, "y", init.add_write("s"), None, dace.Memlet("s[0]"))
+    fold = sdfg.add_state_after(init, "fold")
+    reduce = Reduce("sum", "lambda x, y: x + y", axes=None, identity=None)
     fold.add_node(reduce)
-    fold.add_edge(fold.add_read('a'), None, reduce, '_in', dace.Memlet('a[0:N]'))
-    fold.add_edge(reduce, '_out', fold.add_write('s'), None, dace.Memlet('s[0]'))
-    copy = sdfg.add_state_after(fold, 'copy')
-    tasklet = copy.add_tasklet('copy', ['x'], ['y'], 'y = x')
-    copy.add_edge(copy.add_read('s'), None, tasklet, 'x', dace.Memlet('s[0]'))
-    copy.add_edge(tasklet, 'y', copy.add_write('out'), None, dace.Memlet('out[0]'))
+    fold.add_edge(fold.add_read("a"), None, reduce, "_in", dace.Memlet("a[0:N]"))
+    fold.add_edge(reduce, "_out", fold.add_write("s"), None, dace.Memlet("s[0]"))
+    copy = sdfg.add_state_after(fold, "copy")
+    tasklet = copy.add_tasklet("copy", ["x"], ["y"], "y = x")
+    copy.add_edge(copy.add_read("s"), None, tasklet, "x", dace.Memlet("s[0]"))
+    copy.add_edge(tasklet, "y", copy.add_write("out"), None, dace.Memlet("out[0]"))
     sdfg.validate()
     return sdfg
 
@@ -46,8 +47,9 @@ def reduce_outputs(sdfg: dace.SDFG) -> list:
 def zero_writes(sdfg: dace.SDFG) -> list:
     """Containers a no-input tasklet writes ``0.0`` into."""
     return [
-        state.out_edges(node)[0].data.data for node, state in sdfg.all_nodes_recursive()
-        if isinstance(node, dace.nodes.Tasklet) and not node.in_connectors and '0.0' in node.code.as_string
+        state.out_edges(node)[0].data.data
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, dace.nodes.Tasklet) and not node.in_connectors and "0.0" in node.code.as_string
     ]
 
 
@@ -70,7 +72,7 @@ def test_a_canonicalized_sum_keeps_the_initializer_its_reduce_accumulates_into()
     sdfg = vsumr.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     outputs = reduce_outputs(sdfg)
-    assert outputs, 'the loop was expected to become a Reduce'
+    assert outputs, "the loop was expected to become a Reduce"
     assert set(outputs) <= set(zero_writes(sdfg)), (outputs, zero_writes(sdfg))
     a = np.random.default_rng(0).standard_normal(37)
     out = np.zeros(1)

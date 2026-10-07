@@ -11,6 +11,7 @@ so they are the ones to share out. This pass moves them to the front of the map 
 into an inner ``Sequential`` map, which is the same iteration space in an order the code generator proves
 conflict-free: the write leaves the outer map indexed by its own parameter, so no atomic is emitted.
 """
+
 from typing import Any, Dict, List, Optional, Set
 
 from dace import SDFG, dtypes, properties
@@ -46,7 +47,7 @@ class SequentializeReductionAxes(ppl.Pass):
     """Split a parallel CPU map into an outer parallel map over the axes its reduced outputs are indexed by,
     and an inner sequential map over the axes it reduces."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes
@@ -66,22 +67,23 @@ class SequentializeReductionAxes(ppl.Pass):
         """
         candidates: List[tuple] = []
         for node, state in sdfg.all_nodes_recursive():
-            if (not isinstance(node, nodes.MapEntry) or node.map.schedule != dtypes.ScheduleType.CPU_Multicore
-                    or node.map.collapse > 1):
+            if (
+                not isinstance(node, nodes.MapEntry)
+                or node.map.schedule != dtypes.ScheduleType.CPU_Multicore
+                or node.map.collapse > 1
+            ):
                 continue
             indexing = reduction_output_params(state, node)
             if indexing is not None:
                 candidates.append((node, state, indexing))
         for entry, state, indexing in candidates:
-            order = ([p
-                      for p in entry.map.params if p in indexing] + [p for p in entry.map.params if p not in indexing])
+            order = [p for p in entry.map.params if p in indexing] + [p for p in entry.map.params if p not in indexing]
             if order != entry.map.params:
-                MapDimShuffle.apply_to(state.sdfg, map_entry=entry, options={'parameters': order}, save=False)
-            MapExpansion.apply_to(state.sdfg,
-                                  map_entry=entry,
-                                  options={
-                                      'inner_schedule': dtypes.ScheduleType.Sequential,
-                                      'expansion_limit': 1
-                                  },
-                                  save=False)
+                MapDimShuffle.apply_to(state.sdfg, map_entry=entry, options={"parameters": order}, save=False)
+            MapExpansion.apply_to(
+                state.sdfg,
+                map_entry=entry,
+                options={"inner_schedule": dtypes.ScheduleType.Sequential, "expansion_limit": 1},
+                save=False,
+            )
         return len(candidates) or None

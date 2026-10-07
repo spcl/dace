@@ -10,14 +10,14 @@ def viewtest(A: dace.float64[20, 20]):
 
 
 def test_view_argument():
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=False):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=False):
         with pytest.raises(TypeError):
             A = np.random.rand(20, 20)
             viewtest(A.T)
 
 
 def test_view_argument_override():
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         A = np.random.rand(40, 20)
         result = viewtest(A[20:, :])
         assert np.allclose(result, A[20:, :] + 1)
@@ -31,7 +31,7 @@ def test_unpickled_array_is_not_a_view():
     to an isolated child look like a sub-array."""
     import pickle
 
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=False):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=False):
         A = pickle.loads(pickle.dumps(np.random.rand(20, 20)))
         assert np.allclose(viewtest(A), A + 1)
 
@@ -39,7 +39,7 @@ def test_unpickled_array_is_not_a_view():
 def test_contiguous_subarray_is_still_a_view():
     """The relaxation above must not let a genuine sub-array through: it looks into a buffer bigger
     than itself, so its pointer and extent no longer describe the same array the descriptor does."""
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=False):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=False):
         A = np.random.rand(40, 20)
         with pytest.raises(TypeError):
             viewtest(A[20:, :])
@@ -64,7 +64,7 @@ def test_fortran_ordered_array_to_c_descriptor_raises():
     A = np.arange(30 * 20, dtype=np.int64).reshape(30, 20).T.astype(np.float64)
     assert A.base is None and A.flags.f_contiguous and not A.flags.c_contiguous
     out = np.zeros(20)
-    with pytest.raises(TypeError, match='Fortran-ordered'):
+    with pytest.raises(TypeError, match="Fortran-ordered"):
         rowsum(A, out)
 
 
@@ -72,7 +72,7 @@ def test_c_ordered_array_to_fortran_descriptor_raises():
     """The mirror case: a C-ordered array handed to a column-major descriptor is read transposed too."""
     A = np.random.rand(20, 30)
     out = np.zeros(20)
-    with pytest.raises(TypeError, match='C-ordered'):
+    with pytest.raises(TypeError, match="C-ordered"):
         rowsum_fortran(A, out)
 
 
@@ -94,7 +94,7 @@ def test_fortran_ordered_array_to_fortran_descriptor():
     assert np.allclose(out, A.sum(axis=1))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_view_argument()
     test_view_argument_override()
     test_unpickled_array_is_not_a_view()

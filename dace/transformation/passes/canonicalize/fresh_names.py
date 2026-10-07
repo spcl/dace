@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Fresh ``<prefix><N>`` name suffixes shared by the canonicalization passes."""
+
 from typing import Dict, Tuple
 
 from dace import SDFG
@@ -22,8 +23,8 @@ def lowest_free_suffix(sdfg: SDFG, prefixes: Tuple[str, ...], with_free_symbols:
         names += [cfg.loop_variable for cfg in sd.all_control_flow_regions() if isinstance(cfg, LoopRegion)]
         for name in names:
             for pre in prefixes:
-                if name and name.startswith(pre) and name[len(pre):].isdigit():
-                    used[int(name[len(pre):])] = None
+                if name and name.startswith(pre) and name[len(pre) :].isdigit():
+                    used[int(name[len(pre) :])] = None
     n = 0
     while n in used:
         n += 1

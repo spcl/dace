@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The chain matcher (a pattern that is one directed path, e.g. map fusion's ``MapExit -> AccessNode -> MapEntry``)
 finds exactly VF2's induced matches, in graph order rather than in the networkx version's VF2 order."""
+
 import dace
 from dace.transformation.dataflow import MapFusionVertical
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes import pattern_matching as pm
 from dace.transformation.passes.pattern_matching import collapse_multigraph_to_nx, type_match
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -35,7 +36,7 @@ def test_the_chain_matcher_finds_exactly_the_vf2_matches():
             chain = match_keys(pm._chain_matcher(graph, pattern, type_match, None))
             assert sorted(vf2) == sorted(chain)
             checked += len(chain)
-    assert checked > 0, 'no fusion candidate in the fixture, so the comparison proves nothing'
+    assert checked > 0, "no fusion candidate in the fixture, so the comparison proves nothing"
 
 
 def test_the_chain_matcher_yields_in_graph_order():
@@ -55,6 +56,6 @@ def test_the_chain_matcher_yields_in_graph_order():
         assert [positions[n] for n in starts] == sorted(positions[n] for n in starts)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_the_chain_matcher_finds_exactly_the_vf2_matches()
     test_the_chain_matcher_yields_in_graph_order()

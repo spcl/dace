@@ -7,6 +7,7 @@ already covers the fusion math exhaustively. These tests pin the TRANSFORMATION 
 pass) drives: ``can_be_applied_to`` identifies exactly the legal pairs, ``apply_to`` / repeated application
 fuses them, the result is bit-exact to the un-fused program, and no input crashes.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -79,8 +80,9 @@ def test_fuse_loops_fuses_two_sequential_recurrences():
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    before, after, applied, exact = run_fused(prog_fuse_loops_fuses_two_sequential_recurrences,
-                                              mk(names=("a", "b", "c")), 48)
+    before, after, applied, exact = run_fused(
+        prog_fuse_loops_fuses_two_sequential_recurrences, mk(names=("a", "b", "c")), 48
+    )
     assert before == 2 and after == 1 and applied == 1
     assert exact
 
@@ -220,11 +222,14 @@ def test_map_bodied_recurrence_pair_is_conservatively_refused():
 
 def test_fusable_outer_seq_loop_with_reduction_body():
     before, after, applied, exact = run_fused(
-        seq_outer_map_reduction_body, {
+        seq_outer_map_reduction_body,
+        {
             "a": np.random.default_rng(1).random((24, 24)),
             "b": np.random.default_rng(2).random(24),
             "c": np.random.default_rng(3).random(24),
-        }, 24)
+        },
+        24,
+    )
     assert exact  # value-preserving whether or not the reduction-bodied pair fuses
 
 
@@ -329,12 +334,15 @@ def transpose_dependence(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
             c[i, j] = c[i - 1, j] + b[j, i]  # reads b transposed -- not the same-index cell
 
 
-@pytest.mark.parametrize("prog,names,n,d1", [
-    (read_ahead_flow, ("a", "b", "c"), 48, 1),
-    (read_behind_anti, ("a", "b", "c"), 48, 1),
-    (divergent_output_writes, ("a", "b"), 48, 1),
-    (transpose_dependence, ("a", "b", "c"), 20, 2),
-])
+@pytest.mark.parametrize(
+    "prog,names,n,d1",
+    [
+        (read_ahead_flow, ("a", "b", "c"), 48, 1),
+        (read_behind_anti, ("a", "b", "c"), 48, 1),
+        (divergent_output_writes, ("a", "b"), 48, 1),
+        (transpose_dependence, ("a", "b", "c"), 20, 2),
+    ],
+)
 def test_real_dependence_blocks_fusion(prog, names, n, d1):
     inputs = mk(n=n, names=names) if d1 == 1 else mk2d(n=n, names=names)
     before, after, applied, exact = run_fused(prog, inputs, n)
@@ -364,10 +372,13 @@ def deep_4level_nest(a: f64[N, N], b: f64[N, N]):
                     b[i, j] = b[i - 1, j] + a[i, j]
 
 
-@pytest.mark.parametrize("prog,names,n", [
-    (loop_map_loop_sandwich, ("a", "b", "c"), 16),
-    (deep_4level_nest, ("a", "b"), 8),
-])
+@pytest.mark.parametrize(
+    "prog,names,n",
+    [
+        (loop_map_loop_sandwich, ("a", "b", "c"), 16),
+        (deep_4level_nest, ("a", "b"), 8),
+    ],
+)
 def test_arbitrary_nesting_never_crashes_and_preserves_value(prog, names, n):
     before, after, applied, exact = run_fused(prog, mk2d(names=names), n)
     assert exact  # whatever LoopFusion does (or refuses to do) on the nest, the result is unchanged
@@ -461,10 +472,13 @@ def multi_statement_body(a: f64[N], b: f64[N], c: f64[N], d: f64[N]):
         c[i] = c[i - 1] + b[i]
 
 
-@pytest.mark.parametrize("prog,names", [
-    (independent_recurrences_shared_read, ("a", "b", "c")),
-    (multi_statement_body, ("a", "b", "c", "d")),
-])
+@pytest.mark.parametrize(
+    "prog,names",
+    [
+        (independent_recurrences_shared_read, ("a", "b", "c")),
+        (multi_statement_body, ("a", "b", "c", "d")),
+    ],
+)
 def test_more_scalar_recurrence_pairs_fuse(prog, names):
     before, after, applied, exact = run_fused(prog, mk(names=names), 48)
     assert exact
@@ -489,8 +503,9 @@ def test_scalar_recurrence_fuses_at_a_small_trip_count():
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    before, after, applied, exact = run_fused(prog_scalar_recurrence_fuses_at_a_small_trip_count,
-                                              mk(n=4, names=("a", "b", "c")), 4)
+    before, after, applied, exact = run_fused(
+        prog_scalar_recurrence_fuses_at_a_small_trip_count, mk(n=4, names=("a", "b", "c")), 4
+    )
     assert exact
     assert applied == 1 and after == before - 1
 
@@ -647,8 +662,9 @@ def localize_scalar_chain(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
 
 
 def test_intermediate_is_localized_to_a_scalar():
-    applied, exact, big_before, big_after = fuse_and_measure(localize_scalar_chain, mk(names=("a", "b", "acc", "out")),
-                                                             48)
+    applied, exact, big_before, big_after = fuse_and_measure(
+        localize_scalar_chain, mk(names=("a", "b", "acc", "out")), 48
+    )
     assert applied >= 1
     assert exact
     assert "tmp" in "".join(big_before)  # the [N] intermediate existed before fusion
@@ -658,8 +674,9 @@ def test_intermediate_is_localized_to_a_scalar():
 
 def test_intermediate_localization_at_a_small_trip_count():
     # the contraction decision is symbolic in N; this pins the contracted [1] slot at a trip count of 3.
-    applied, exact, big_before, big_after = fuse_and_measure(localize_scalar_chain,
-                                                             mk(n=4, names=("a", "b", "acc", "out")), 4)
+    applied, exact, big_before, big_after = fuse_and_measure(
+        localize_scalar_chain, mk(n=4, names=("a", "b", "acc", "out")), 4
+    )
     assert applied >= 1 and exact
     assert len(big_after) < len(big_before)
 
@@ -677,8 +694,9 @@ def localize_two_intermediates(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
 
 
 def test_two_point_intermediates_both_localized():
-    applied, exact, big_before, big_after = fuse_and_measure(localize_two_intermediates,
-                                                             mk(names=("a", "b", "acc", "out")), 48)
+    applied, exact, big_before, big_after = fuse_and_measure(
+        localize_two_intermediates, mk(names=("a", "b", "acc", "out")), 48
+    )
     assert applied >= 1 and exact
     assert len(big_before) >= 2  # t1, t2 both [N] before
     assert big_after == []  # both contracted
@@ -753,10 +771,13 @@ def intermediate_used_after_loop(a: f64[N], b: f64[N], acc: f64[N], out: f64[N],
     sink[0] = tmp[3]  # tmp is live AFTER the loop -> not exclusive -> must not be contracted
 
 
-@pytest.mark.parametrize("prog,names", [
-    (intermediate_carries_history, ("a", "b", "acc", "out")),
-    (intermediate_used_after_loop, ("a", "b", "acc", "out", "sink")),
-])
+@pytest.mark.parametrize(
+    "prog,names",
+    [
+        (intermediate_carries_history, ("a", "b", "acc", "out")),
+        (intermediate_used_after_loop, ("a", "b", "acc", "out", "sink")),
+    ],
+)
 def test_unsafe_intermediate_is_not_contracted_but_value_preserved(prog, names):
     applied, exact, big_before, big_after = fuse_and_measure(prog, mk(names=names), 48)
     assert exact  # value is always preserved
@@ -777,8 +798,9 @@ def test_two_d_intermediate_not_contracted_v1():
             for j in dace.map[0:N]:
                 out[i, j] = out[i - 1, j] + tmp[i, j]
 
-    applied, exact, big_before, big_after = fuse_and_measure(prog_two_d_intermediate_not_contracted_v1,
-                                                             mk2d(names=("a", "acc", "out")), 24)
+    applied, exact, big_before, big_after = fuse_and_measure(
+        prog_two_d_intermediate_not_contracted_v1, mk2d(names=("a", "acc", "out")), 24
+    )
     assert exact
     assert big_before == big_after  # 2-D intermediate left at full size in v1
 
@@ -803,8 +825,9 @@ def intermediate_flow_read_ahead_blocks(a: f64[N], acc: f64[N], out: f64[N]):
 
 
 def test_intermediate_flow_read_ahead_refuses_fusion():
-    applied, exact, big_before, big_after = fuse_and_measure(intermediate_flow_read_ahead_blocks,
-                                                             mk(names=("a", "acc", "out")), 48)
+    applied, exact, big_before, big_after = fuse_and_measure(
+        intermediate_flow_read_ahead_blocks, mk(names=("a", "acc", "out")), 48
+    )
     assert applied == 0  # a real read-ahead flow hazard through the temp -> refuse the fuse entirely
     assert exact
     assert big_before == big_after  # nothing fused -> nothing contracted
@@ -819,8 +842,9 @@ def test_contraction_never_crashes_without_an_intermediate():
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]  # b is a program ARG, not a transient -> never contracted
 
-    applied, exact, big_before, big_after = fuse_and_measure(prog_contraction_never_crashes_without_an_intermediate,
-                                                             mk(names=("a", "b", "c")), 48)
+    applied, exact, big_before, big_after = fuse_and_measure(
+        prog_contraction_never_crashes_without_an_intermediate, mk(names=("a", "b", "c")), 48
+    )
     assert applied == 1 and exact
     assert big_before == big_after == []  # nothing transient to contract
 
@@ -840,8 +864,9 @@ def test_fuse_survives_first_id_shift_after_second_removed():
     from dace.transformation.passes.loop_fission import LoopFission
 
     @dace.program
-    def prog_fuse_survives_first_id_shift_after_second_removed(a: dace.float64[N], b: dace.float64[N],
-                                                               c: dace.float64[N], d: dace.float64[N]):
+    def prog_fuse_survives_first_id_shift_after_second_removed(
+        a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]
+    ):
         for i in range(1, N - 1):
             d[i] = d[i - 1] + a[i]  # recurrence on d, independent of c -> fissionable
             c[i] = c[i - 1] + a[i]  # recurrence on c, independent of d
@@ -897,8 +922,9 @@ def test_unknown_sign_symbolic_read_ahead_is_not_fused():
     sd = prog_unknown_sign_symbolic_read_ahead_is_not_fused.to_sdfg(simplify=True)
     pairs = adjacent_loop_pairs(sd)
     assert pairs, "expected the two sequential loops as an adjacency"
-    assert not any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
+    assert not any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), (
         "unknown-sign symbolic read-ahead a[i+K-M] must NOT be judged fusable"
+    )
 
 
 def test_provable_read_behind_symbolic_still_fuses():
@@ -917,8 +943,9 @@ def test_provable_read_behind_symbolic_still_fuses():
 
     sd = prog_provable_read_behind_symbolic_still_fuses.to_sdfg(simplify=True)
     pairs = adjacent_loop_pairs(sd)
-    assert any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
+    assert any(LoopFusion.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), (
         "provable read-behind a[i-K] must remain fusable"
+    )
 
 
 def test_fusion_keeps_the_cfg_list_of_a_fresh_reset(monkeypatch):

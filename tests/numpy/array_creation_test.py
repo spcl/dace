@@ -18,8 +18,8 @@ def empty():
 
 def test_empty():
     out = empty()
-    assert (list(out.shape) == [M, N])
-    assert (out.dtype == np.uint32)
+    assert list(out.shape) == [M, N]
+    assert out.dtype == np.uint32
 
 
 @dace.program
@@ -30,8 +30,8 @@ def empty_like1(A: dace.complex64[N, M, 2]):
 def test_empty_like1():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like1(A)
-    assert (list(out.shape) == [N, M, 2])
-    assert (out.dtype == np.complex64)
+    assert list(out.shape) == [N, M, 2]
+    assert out.dtype == np.complex64
 
 
 @dace.program
@@ -42,8 +42,8 @@ def empty_like2(A: dace.complex64[N, M, 2]):
 def test_empty_like2():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like2(A)
-    assert (list(out.shape) == [2, N, N])
-    assert (out.dtype == np.complex64)
+    assert list(out.shape) == [2, N, N]
+    assert out.dtype == np.complex64
 
 
 @dace.program
@@ -54,8 +54,8 @@ def empty_like3(A: dace.complex64[N, M, 2]):
 def test_empty_like3():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like3(A)
-    assert (list(out.shape) == [N, M, 2])
-    assert (out.dtype == np.uint8)
+    assert list(out.shape) == [N, M, 2]
+    assert out.dtype == np.uint8
 
 
 @compare_numpy_output()
@@ -255,7 +255,7 @@ def program_strides_3():
     return A
 
 
-@pytest.mark.skip(reason='Temporarily skipping due to a sporadic issue on CI')
+@pytest.mark.skip(reason="Temporarily skipping due to a sporadic issue on CI")
 def test_strides_3():
     A = program_strides_3()
     assert A.strides == (8, 16)
@@ -263,15 +263,15 @@ def test_strides_3():
 
 
 def test_zeros_symbolic_size_scalar():
-    K = dace.symbol('K')
+    K = dace.symbol("K")
 
     @dace.program
     def zeros_symbolic_size():
         return np.zeros((K), dtype=np.uint32)
 
     out = zeros_symbolic_size(K=10)
-    assert (list(out.shape) == [10])
-    assert (out.dtype == np.uint32)
+    assert list(out.shape) == [10]
+    assert out.dtype == np.uint32
 
 
 def test_ones_scalar_size_scalar():
@@ -304,7 +304,7 @@ def test_array_of_a_slice_copies_instead_of_viewing():
     update wrote straight back into it -- and the copy edge left a View access node carrying no
     viewed-data edge, which simplify rejects as ambiguous.
     """
-    S = dace.symbol('S')
+    S = dace.symbol("S")
 
     @dace.program
     def copy_slice_then_scale(a: dace.float64[S, S, S], out: dace.float64[S, S]):
@@ -313,10 +313,10 @@ def test_array_of_a_slice_copies_instead_of_viewing():
         out[:] = col
 
     sdfg = copy_slice_then_scale.to_sdfg(simplify=False)
-    desc = sdfg.arrays['col']
+    desc = sdfg.arrays["col"]
     assert not isinstance(desc, dace.data.View), f'np.array must copy, but "col" is a {type(desc).__name__}'
-    assert [str(x) for x in desc.strides] == ['S', '1'], f'a copy is contiguous, got strides {desc.strides}'
-    assert str(desc.total_size) == 'S**2', f'a copy sizes itself, not its parent, got {desc.total_size}'
+    assert [str(x) for x in desc.strides] == ["S", "1"], f"a copy is contiguous, got strides {desc.strides}"
+    assert str(desc.total_size) == "S**2", f"a copy sizes itself, not its parent, got {desc.total_size}"
     sdfg.simplify()
 
     n = 5
@@ -325,8 +325,8 @@ def test_array_of_a_slice_copies_instead_of_viewing():
     before = a.copy()
     out = np.zeros((n, n))
     sdfg(a=a, out=out, S=n)
-    assert np.allclose(out, before[:, :, 1] * 2.0), f'got {out}'
-    assert np.allclose(a, before), 'the in-place update wrote through into the sliced source'
+    assert np.allclose(out, before[:, :, 1] * 2.0), f"got {out}"
+    assert np.allclose(a, before), "the in-place update wrote through into the sliced source"
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ Guards against the length-1-slice squeeze bug: e.g. A[:, 1:2] used to drop to (N
 numpy's (N, 1). Numpy is the bit-exact oracle; BROKEN_TODAY (empty) holds any idiom that
 regresses, marked xfail(strict=True) so a fix shows up as XPASS.
 """
+
 from collections import namedtuple
 
 import numpy as np
@@ -132,10 +133,12 @@ def run_case(case):
     arr = case.make_input()
     oracle = np.asarray(case.oracle(arr))
     result = np.asarray(case.prog(arr.copy()))
-    assert result.shape == oracle.shape, (f"{case.id}: dace returned shape {result.shape}, "
-                                          f"numpy oracle shape {oracle.shape}")
-    assert np.array_equal(result, oracle), (f"{case.id}: bit-exact value mismatch "
-                                            f"(dace {result.tolist()} vs numpy {oracle.tolist()})")
+    assert result.shape == oracle.shape, (
+        f"{case.id}: dace returned shape {result.shape}, numpy oracle shape {oracle.shape}"
+    )
+    assert np.array_equal(result, oracle), (
+        f"{case.id}: bit-exact value mismatch (dace {result.tolist()} vs numpy {oracle.tolist()})"
+    )
 
 
 def works_params():
@@ -160,7 +163,7 @@ def test_returned_scalar_index_is_dace_scalar_convention():
     """A[1, 2] returned collapses to dace's scalar shape (1,), not numpy's 0-d () -- accepted convention."""
     arr = make_2d()
     result = np.asarray(take_scalar(arr.copy()))
-    assert result.shape == (1, ), f"returned scalar convention changed: got {result.shape}, expected (1,)"
+    assert result.shape == (1,), f"returned scalar convention changed: got {result.shape}, expected (1,)"
     assert result.reshape(()) == arr[1, 2], "returned scalar value mismatch vs numpy"
 
 
@@ -169,7 +172,7 @@ def test_transpose_minus_self_square_int():
     arr = make_square()
     oracle = arr.T - arr
     result = np.asarray(transpose_minus_self(arr.copy()))
-    assert result.shape == oracle.shape, (f"x.T - x: dace shape {result.shape} != numpy {oracle.shape}")
+    assert result.shape == oracle.shape, f"x.T - x: dace shape {result.shape} != numpy {oracle.shape}"
     assert np.array_equal(result, oracle), "x.T - x: bit-exact mismatch vs numpy"
 
 
@@ -183,8 +186,7 @@ if __name__ == "__main__":
         except AssertionError as err:
             print(f"BROKEN_TODAY xfail: {broken_case.id}  <- {err}")
         else:
-            raise SystemExit(f"XPASS: {broken_case.id} unexpectedly matches numpy now -- "
-                             f"promote it into WORKS_TODAY")
+            raise SystemExit(f"XPASS: {broken_case.id} unexpectedly matches numpy now -- promote it into WORKS_TODAY")
     test_transpose_minus_self_square_int()
     print("regression   pass : x.T - x")
     print("all idioms behaved as classified")

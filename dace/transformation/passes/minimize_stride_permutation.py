@@ -29,6 +29,7 @@ applications (an adjacent-transposition bubble sort). An interchange that is
 not legal at its turn is skipped rather than raising, so the pass degrades
 gracefully on nests it cannot fully reorder.
 """
+
 import functools
 from typing import Dict, List, Optional, Tuple
 
@@ -61,7 +62,7 @@ def _to_float(value: object) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
-        return float('inf')
+        return float("inf")
 
 
 def score_indexed_strides(edges, sdfg, var_names) -> Dict[str, Tuple[object, object, object]]:
@@ -146,15 +147,15 @@ def stride_difference_sign(a, b) -> int:
     if as_basic(diff).is_number:
         return -1 if diff < 0 else 1
     rebuilt = diff.subs(
-        {sym: sympy.Symbol(sym.name, positive=True, integer=True)
-         for sym in as_basic(diff).free_symbols})
+        {sym: sympy.Symbol(sym.name, positive=True, integer=True) for sym in as_basic(diff).free_symbols}
+    )
     # Non-STRICT: two scores that may coincide (``1`` vs ``LEN_2D`` at ``LEN_2D == 1``) impose no
     # order, and reporting them as tied keeps the stable sort's current-order behaviour.
     if as_basic(rebuilt).is_nonpositive:
         return -1
     if as_basic(rebuilt).is_nonnegative:
         return 1
-    raise UndecidableStride(f'{a} vs {b}')
+    raise UndecidableStride(f"{a} vs {b}")
 
 
 @properties.make_properties
@@ -167,7 +168,7 @@ class MinimizeStridePermutation(ppl.Pass):
     and therefore preserves the SDFG's numerical result.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.Memlets
@@ -209,8 +210,9 @@ class MinimizeStridePermutation(ppl.Pass):
             applied += self._reorder_nest(state, sdfg, nest)
         return applied
 
-    def _collect_perfect_nest(self, state: SDFGState, outer: nodes.MapEntry,
-                              scope_children: Dict[Optional[nodes.Node], List[nodes.Node]]) -> List[nodes.MapEntry]:
+    def _collect_perfect_nest(
+        self, state: SDFGState, outer: nodes.MapEntry, scope_children: Dict[Optional[nodes.Node], List[nodes.Node]]
+    ) -> List[nodes.MapEntry]:
         """Collect the chain of perfectly-nested single-parameter map entries.
 
         A level is part of the perfect nest only if its scope contains exactly
@@ -307,21 +309,20 @@ class MinimizeStridePermutation(ppl.Pass):
         # the outer parameter. TSVC ``s1232`` (``for j: for i in range(j*VLEN, N): aa[i, j] = ...``)
         # keeps a stride-``N`` innermost loop without it -- the pass scores the nest correctly and
         # then cannot act on the score.
-        options = {'transform_bounds': True}
+        options = {"transform_bounds": True}
         if not MapInterchange.can_be_applied_to(
-                sdfg, options=options, outer_map_entry=outer_entry, inner_map_entry=inner_entry):
+            sdfg, options=options, outer_map_entry=outer_entry, inner_map_entry=inner_entry
+        ):
             return False
-        MapInterchange.apply_to(sdfg,
-                                options=options,
-                                outer_map_entry=outer_entry,
-                                inner_map_entry=inner_entry,
-                                verify=False,
-                                save=False)
+        MapInterchange.apply_to(
+            sdfg, options=options, outer_map_entry=outer_entry, inner_map_entry=inner_entry, verify=False, save=False
+        )
         nest[depth], nest[depth + 1] = inner_entry, outer_entry
         return True
 
-    def _score_parameters(self, state: SDFGState, sdfg: SDFG, nest: List[nodes.MapEntry],
-                          params: List[str]) -> List[Tuple[object, object]]:
+    def _score_parameters(
+        self, state: SDFGState, sdfg: SDFG, nest: List[nodes.MapEntry], params: List[str]
+    ) -> List[Tuple[object, object]]:
         """Compute the ``(stride_score, offset_tiebreak)`` key for each param.
 
         :param state: The containing state.

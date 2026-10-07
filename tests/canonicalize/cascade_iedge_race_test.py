@@ -5,7 +5,8 @@ import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (
-    CascadeInterstateEdgeAssignmentsUp, )
+    CascadeInterstateEdgeAssignmentsUp,
+)
 
 
 def build_gather_loop() -> dace.SDFG:
@@ -16,21 +17,21 @@ def build_gather_loop() -> dace.SDFG:
     a race. Every legality guard in the pass examines the child's interior and predecessors;
     none looked at what the destination edge already assigns.
     """
-    sdfg = dace.SDFG('s353_gather')
-    sdfg.add_array('ip', [16], dace.int64)
-    sdfg.add_array('a', [16], dace.float64)
-    sdfg.add_symbol('ip_index', dace.int64)
-    sdfg.add_symbol('i', dace.int64)
+    sdfg = dace.SDFG("s353_gather")
+    sdfg.add_array("ip", [16], dace.int64)
+    sdfg.add_array("a", [16], dace.float64)
+    sdfg.add_symbol("ip_index", dace.int64)
+    sdfg.add_symbol("i", dace.int64)
 
-    outer = LoopRegion('outer', 'k < 4', 'k', 'k = 0', 'k = k + 1')
+    outer = LoopRegion("outer", "k < 4", "k", "k = 0", "k = k + 1")
     sdfg.add_node(outer, is_start_block=True)
 
-    body = outer.add_state('body', is_start_block=True)
-    tail = outer.add_state('tail')
+    body = outer.add_state("body", is_start_block=True)
+    tail = outer.add_state("tail")
     # The counter update and the indirect read share one edge only if the pass puts them there.
-    outer.add_edge(body, tail, InterstateEdge(assignments={'i': 'i + 1'}))
-    inner = outer.add_state('inner')
-    outer.add_edge(tail, inner, InterstateEdge(assignments={'ip_index': 'ip[i]'}))
+    outer.add_edge(body, tail, InterstateEdge(assignments={"i": "i + 1"}))
+    inner = outer.add_state("inner")
+    outer.add_edge(tail, inner, InterstateEdge(assignments={"ip_index": "ip[i]"}))
     return sdfg
 
 
@@ -51,11 +52,11 @@ def test_cascade_refuses_to_create_an_interstate_race():
     # copy the production check. What it does NOT say is that the pass declined: the contract is
     # that ``ip_index`` stayed where it was instead of joining ``i = i + 1``.
     sdfg.validate()
-    assert applied is None, f'the pass rewrote a graph whose only candidate edge races: {applied}'
-    assert assignment_map(sdfg) == before, 'the refused cascade still moved an assignment'
-    assert before[('body', 'tail')] == {'i': 'i + 1'}
-    assert before[('tail', 'inner')] == {'ip_index': 'ip[i]'}
+    assert applied is None, f"the pass rewrote a graph whose only candidate edge races: {applied}"
+    assert assignment_map(sdfg) == before, "the refused cascade still moved an assignment"
+    assert before[("body", "tail")] == {"i": "i + 1"}
+    assert before[("tail", "inner")] == {"ip_index": "ip[i]"}
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_cascade_refuses_to_create_an_interstate_race()

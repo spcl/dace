@@ -38,6 +38,7 @@ here: the barrier goes after the map exit, never inside.
 Runs before :class:`AddThreadBlockMaps`, which adds a thread-block level to any kernel that lacks
 one: promoting first is what stops a tagged kernel from getting a second.
 """
+
 from typing import Any, Dict, Optional
 
 import dace
@@ -47,24 +48,31 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 
 #: Schedules that already place a scope inside a thread block. Another one may not nest in them.
-WITHIN_A_BLOCK = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-                  dtypes.ScheduleType.GPU_Warp)
+WITHIN_A_BLOCK = (
+    dtypes.ScheduleType.GPU_ThreadBlock,
+    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+    dtypes.ScheduleType.GPU_Warp,
+)
 
 #: What a promoted warp-tile map is, for a CPF reader; any hint the producer left follows it.
 WARP_TILE_HINT = (
-    'parallel -- warp tile: a map its producer proved parallel (tagged is_warp_tile), spread over the threads of '
-    'the block instead of one thread walking it\nwhy: the device offload serializes every map nested '
-    'in a kernel; the producer\'s proof lets this one use the block')
+    "parallel -- warp tile: a map its producer proved parallel (tagged is_warp_tile), spread over the threads of "
+    "the block instead of one thread walking it\nwhy: the device offload serializes every map nested "
+    "in a kernel; the producer's proof lets this one use the block"
+)
 #: Added when a sequential loop re-enters the warp tile.
-WARP_TILE_BARRIER_HINT = ('a block barrier follows the map: the enclosing loop runs it again, and without the barrier '
-                          'the next run could read what this one has not finished writing')
+WARP_TILE_BARRIER_HINT = (
+    "a block barrier follows the map: the enclosing loop runs it again, and without the barrier "
+    "the next run could read what this one has not finished writing"
+)
 
 
 def block_scope_inside(state, entry: nodes.MapEntry) -> bool:
     """``True`` iff some map under ``entry`` is already scheduled within a thread block."""
     return any(
         isinstance(n, nodes.MapEntry) and n.map.schedule in WITHIN_A_BLOCK
-        for n in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes())
+        for n in state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
+    )
 
 
 def steps_inside_a_loop(sdfg: SDFG, state, entry: nodes.MapEntry) -> bool:
@@ -74,6 +82,7 @@ def steps_inside_a_loop(sdfg: SDFG, state, entry: nodes.MapEntry) -> bool:
     exactly the condition under which the block needs a barrier between them.
     """
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
     return any(isinstance(scope, LoopRegion) for scope in get_parent_map_and_loop_scopes(sdfg, entry, state))
 
 
@@ -89,11 +98,9 @@ def add_block_barrier(state, entry: nodes.MapEntry) -> None:
     the barrier is simply sequenced after the writes the map made.
     """
     exit_node = state.exit_node(entry)
-    barrier = state.add_tasklet(name='sync_threads',
-                                inputs=set(),
-                                outputs=set(),
-                                code='__syncthreads();\n',
-                                language=dtypes.Language.CPP)
+    barrier = state.add_tasklet(
+        name="sync_threads", inputs=set(), outputs=set(), code="__syncthreads();\n", language=dtypes.Language.CPP
+    )
     for succ in state.successors(exit_node):
         state.add_edge(barrier, None, succ, None, dace.Memlet())
     state.add_edge(exit_node, None, barrier, None, dace.Memlet())
@@ -102,6 +109,7 @@ def add_block_barrier(state, entry: nodes.MapEntry) -> None:
 def promotable(sdfg: SDFG, state, entry: nodes.MapEntry) -> bool:
     """``True`` iff ``entry`` sits in exactly one device scope and no block scope, in or out."""
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
     device_scopes = 0
     for scope in get_parent_map_and_loop_scopes(sdfg, entry, state):
         if not isinstance(scope, nodes.MapEntry):
@@ -117,7 +125,7 @@ def promotable(sdfg: SDFG, state, entry: nodes.MapEntry) -> bool:
 class PromoteWarpTiles(ppl.Pass):
     """Turn every promotable ``is_warp_tile`` map into a ``GPU_ThreadBlock`` map."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -145,10 +153,11 @@ class PromoteWarpTiles(ppl.Pass):
             if steps_inside_a_loop(sdfg, state, node):
                 add_block_barrier(state, node)
                 hints.append(WARP_TILE_BARRIER_HINT)
-            node.specialization_hint = '\n'.join(hints +
-                                                 ([node.specialization_hint] if node.specialization_hint else []))
+            node.specialization_hint = "\n".join(
+                hints + ([node.specialization_hint] if node.specialization_hint else [])
+            )
             promoted += 1
         return promoted or None
 
     def report(self, pass_retval: int) -> str:
-        return f'Promoted {pass_retval} warp-tile map(s) to GPU_ThreadBlock'
+        return f"Promoted {pass_retval} warp-tile map(s) to GPU_ThreadBlock"

@@ -6,6 +6,7 @@ a 1-D integer sort with CPU (`ska_sort`), CUDA (`gpucub::DeviceRadixSort`), and 
 portable `std::sort` fallback. Used by passes that need to sort integer indices,
 notably the scatter-conflict guard.
 """
+
 from dace.library import register_library
 from .environments import *
 from .nodes import *

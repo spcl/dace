@@ -8,6 +8,7 @@ program through ``prepare_for_layout`` sees it -- respells a packed rank-3 strid
 ``ipow(N, 2)``. ``ipow`` is an opaque ``Function`` to SymPy and never simplifies against an equal
 ``Pow``, so a raw structural stride comparison calls every symbolic rank>=3 array padded.
 """
+
 import warnings
 
 import pytest

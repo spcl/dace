@@ -2,8 +2,9 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-pytest.importorskip("transformers",
-                    reason="transformers not installed. Please install with: pip install dace[ml-testing]")
+pytest.importorskip(
+    "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
+)
 import torch
 import torch.nn as nn
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaConfig
@@ -14,7 +15,6 @@ from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 
 # Create a wrapper module that handles the position embeddings internally
 class LlamaDecoderLayerWrapper(nn.Module):
-
     def __init__(self, decoder_layer, config):
         super().__init__()
         self.decoder_layer = decoder_layer
@@ -22,6 +22,7 @@ class LlamaDecoderLayerWrapper(nn.Module):
 
         # Create rotary embeddings as part of the wrapper
         from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
+
         self.rotary_emb = LlamaRotaryEmbedding(config)
 
     def forward(self, hidden_states, attention_mask, position_ids):
@@ -82,13 +83,18 @@ def test_llama_decoder_backward(device):
         cuda=is_gpu(device),
     )
 
-    hidden_states_pt, attention_mask_pt, position_ids_pt = (torch.clone(hidden_states), torch.clone(attention_mask),
-                                                            torch.clone(position_ids))
+    hidden_states_pt, attention_mask_pt, position_ids_pt = (
+        torch.clone(hidden_states),
+        torch.clone(attention_mask),
+        torch.clone(position_ids),
+    )
     hidden_states_pt.requires_grad = True
 
-    hidden_states_dace, attention_mask_dace, position_ids_dace = (torch.clone(hidden_states),
-                                                                  torch.clone(attention_mask),
-                                                                  torch.clone(position_ids))
+    hidden_states_dace, attention_mask_dace, position_ids_dace = (
+        torch.clone(hidden_states),
+        torch.clone(attention_mask),
+        torch.clone(position_ids),
+    )
     hidden_states_dace.requires_grad = True
 
     wrapped_model(hidden_states_pt, attention_mask_pt, position_ids_pt).sum().backward()
@@ -97,7 +103,7 @@ def test_llama_decoder_backward(device):
 
     # Check gradients of the parameters
     for (name, dace_param), (pt_name, pt_param) in zip(wrapped_model.named_parameters(), dace_model.named_parameters()):
-        assert 'model.' + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
+        assert "model." + name == pt_name, f"Parameter name mismatch: expected 'model.{name}', got '{pt_name}'"
         torch_tensors_close(name, dace_param.grad, pt_param.grad)
 
     # Check the gradients of the input tensor

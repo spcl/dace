@@ -24,8 +24,10 @@ def _count_assign_tasklets(sdfg):
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for node in state.nodes():
-                if isinstance(node,
-                              dace.nodes.Tasklet) and node.code.as_string.strip().rstrip(";").strip() == "_out = _in":
+                if (
+                    isinstance(node, dace.nodes.Tasklet)
+                    and node.code.as_string.strip().rstrip(";").strip() == "_out = _in"
+                ):
                     total += 1
     return total
 
@@ -37,10 +39,10 @@ def _build_outer_with_body_nsdfg():
     so the rewrite target lives inside a NestedSDFG node, not in the top
     state. Returns ``(outer_sdfg, body_sdfg, body_state)``.
     """
-    outer = dace.SDFG('outer_build_outer_with_body_nsdfg')
-    outer.add_array("X", (1, ), dace.float64, transient=False)
+    outer = dace.SDFG("outer_build_outer_with_body_nsdfg")
+    outer.add_array("X", (1,), dace.float64, transient=False)
     outer_state = outer.add_state("o")
-    body = dace.SDFG('body_build_outer_with_body_nsdfg')
+    body = dace.SDFG("body_build_outer_with_body_nsdfg")
     body_state = body.add_state("b")
     nsdfg = outer_state.add_nested_sdfg(body, set(), set(), {})
     return outer, body, body_state, nsdfg
@@ -50,9 +52,9 @@ def test_bypass_dst_transient_routes_src_to_consumer():
     """``AN(src=global) -> [_out=_in] -> AN(dst=transient) -> consumer`` collapses
     to ``AN(src) -> consumer`` directly."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("G", (1, ), dace.float64, transient=False)
-    body.add_array("T", (1, ), dace.float64, transient=True)
-    body.add_array("OUT", (1, ), dace.float64, transient=False)
+    body.add_array("G", (1,), dace.float64, transient=False)
+    body.add_array("T", (1,), dace.float64, transient=True)
+    body.add_array("OUT", (1,), dace.float64, transient=False)
 
     g = state.add_access("G")
     t = state.add_access("T")
@@ -73,9 +75,9 @@ def test_bypass_src_transient_routes_producer_to_dst():
     """``producer -> AN(src=transient) -> [_out=_in] -> AN(dst=global)`` collapses
     to ``producer -> AN(dst)`` directly."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("IN", (1, ), dace.float64, transient=False)
-    body.add_array("T", (1, ), dace.float64, transient=True)
-    body.add_array("G", (1, ), dace.float64, transient=False)
+    body.add_array("IN", (1,), dace.float64, transient=False)
+    body.add_array("T", (1,), dace.float64, transient=True)
+    body.add_array("G", (1,), dace.float64, transient=False)
 
     src = state.add_access("IN")
     t = state.add_access("T")
@@ -96,10 +98,10 @@ def test_dedup_keeps_one_assign_per_src_dst_pair():
     """Two ``AN(src) -> [_out=_in] -> AN(dst)`` triples on the same ``(src, dst)``
     collapse to one; the second tasklet is dropped."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("SRC", (1, ), dace.float64, transient=True)
-    body.add_array("DST", (1, ), dace.float64, transient=True)
-    body.add_array("OUT1", (1, ), dace.float64, transient=False)
-    body.add_array("OUT2", (1, ), dace.float64, transient=False)
+    body.add_array("SRC", (1,), dace.float64, transient=True)
+    body.add_array("DST", (1,), dace.float64, transient=True)
+    body.add_array("OUT1", (1,), dace.float64, transient=False)
+    body.add_array("OUT2", (1,), dace.float64, transient=False)
 
     src = state.add_access("SRC")
     dst = state.add_access("DST")
@@ -130,8 +132,8 @@ def test_does_not_touch_connector_to_connector_assign():
     """An assign between two non-transient arrays is left alone -- collapsing
     it would lose the boundary edge."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("A", (1, ), dace.float64, transient=False)
-    body.add_array("B", (1, ), dace.float64, transient=False)
+    body.add_array("A", (1,), dace.float64, transient=False)
+    body.add_array("B", (1,), dace.float64, transient=False)
 
     a = state.add_access("A")
     b = state.add_access("B")
@@ -148,10 +150,10 @@ def test_does_not_touch_multi_consumer_src():
     """SSA-like reassignment chain: bypassing would fold two distinct
     assignments through one AN and pick the wrong value."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("T", (1, ), dace.float64, transient=True)
-    body.add_array("X", (1, ), dace.float64, transient=True)
-    body.add_array("Y", (1, ), dace.float64, transient=True)
-    body.add_array("OUT", (1, ), dace.float64, transient=False)
+    body.add_array("T", (1,), dace.float64, transient=True)
+    body.add_array("X", (1,), dace.float64, transient=True)
+    body.add_array("Y", (1,), dace.float64, transient=True)
+    body.add_array("OUT", (1,), dace.float64, transient=False)
 
     src = state.add_access("T")
     a1 = state.add_access("X")
@@ -185,9 +187,9 @@ def test_outer_sdfg_an_to_an_assign_left_alone():
     stay untouched (those may be scatter / gather staging the legacy
     1D detect passes consume)."""
     sdfg = dace.SDFG("top_level_only")
-    sdfg.add_array("G", (1, ), dace.float64, transient=False)
-    sdfg.add_array("T", (1, ), dace.float64, transient=True)
-    sdfg.add_array("OUT", (1, ), dace.float64, transient=False)
+    sdfg.add_array("G", (1,), dace.float64, transient=False)
+    sdfg.add_array("T", (1,), dace.float64, transient=True)
+    sdfg.add_array("OUT", (1,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     g = state.add_access("G")
     t = state.add_access("T")
@@ -208,6 +210,7 @@ def _scope_passthrough_consistent(sdfg) -> bool:
     across a scope boundary renames only one side -> the two disagree -> invalid.
     """
     from dace.sdfg.nodes import MapEntry, MapExit
+
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
@@ -216,7 +219,7 @@ def _scope_passthrough_consistent(sdfg) -> bool:
                 for oe in state.out_edges(node):
                     if oe.src_conn is None or not oe.src_conn.startswith("OUT_"):
                         continue
-                    in_conn = "IN_" + oe.src_conn[len("OUT_"):]
+                    in_conn = "IN_" + oe.src_conn[len("OUT_") :]
                     for ie in state.in_edges(node):
                         if ie.dst_conn == in_conn and ie.data.data != oe.data.data:
                             return False
@@ -230,9 +233,9 @@ def test_map_exit_boundary_assign_not_corrupted():
     the exit's ``OUT_x`` side, leaving ``IN_x`` naming the old array (invalid).
     The pass leaves such copies in place; the scope passthrough stays consistent."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("A", (8, ), dace.float64, transient=True)
-    body.add_array("acc", (1, ), dace.float64, transient=True)
-    body.add_array("OUT", (1, ), dace.float64, transient=True)
+    body.add_array("A", (8,), dace.float64, transient=True)
+    body.add_array("acc", (1,), dace.float64, transient=True)
+    body.add_array("OUT", (1,), dace.float64, transient=True)
     a = state.add_access("A")
     acc = state.add_access("acc")
     out = state.add_access("OUT")
@@ -271,8 +274,13 @@ def test_spmv_bypass_keeps_sdfg_valid():
     nnz = dace.symbol("nnz")
 
     @dace.program
-    def spmv_csr(indptr: dace.int64[n + 1], indices: dace.int64[nnz], data: dace.float64[nnz], x: dace.float64[m],
-                 y: dace.float64[n]):
+    def spmv_csr(
+        indptr: dace.int64[n + 1],
+        indices: dace.int64[nnz],
+        data: dace.float64[nnz],
+        x: dace.float64[m],
+        y: dace.float64[n],
+    ):
         n_rows = len(indptr) - 1
         for i in dace.map[0:n_rows:1]:
             row_start = indptr[i]
@@ -305,8 +313,8 @@ def test_bypass_dead_dst_resolves_to_copy_not_isolated():
     memlet -- both AccessNodes stay connected and the SDFG stays valid (a later
     dead-copy elimination drops the copy if ``dst`` is genuinely unused)."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("S", (8, ), dace.float64, transient=True)
-    body.add_array("D", (8, ), dace.float64, transient=True)
+    body.add_array("S", (8,), dace.float64, transient=True)
+    body.add_array("D", (8,), dace.float64, transient=True)
     s = state.add_access("S")
     d = state.add_access("D")
     cp = state.add_tasklet("cp", {"_in"}, {"_out"}, "_out = _in")
@@ -321,8 +329,9 @@ def test_bypass_dead_dst_resolves_to_copy_not_isolated():
     for sd in outer.all_sdfgs_recursive():
         for st in sd.states():
             for n in st.nodes():
-                assert not (isinstance(n, dace.nodes.AccessNode) and st.degree(n) == 0), \
+                assert not (isinstance(n, dace.nodes.AccessNode) and st.degree(n) == 0), (
                     f"bypass left an isolated node {n.data}"
+                )
     # Both S and D remain, joined by exactly one direct AN -> AN copy edge.
     assert {n.data for n in state.data_nodes()} == {"S", "D"}
     edges = list(state.edges())
@@ -338,9 +347,9 @@ def test_does_not_collapse_cross_state_transient():
     write, and orphan the source -> ``InvalidSDFGNodeError: Isolated node``. The
     pass must leave cross-state transient triples alone."""
     outer, body, state_a, _ = _build_outer_with_body_nsdfg()
-    body.add_array("G", (1, ), dace.float64, transient=False)
-    body.add_array("T", (1, ), dace.float64, transient=True)
-    body.add_array("OUT", (1, ), dace.float64, transient=False)
+    body.add_array("G", (1,), dace.float64, transient=False)
+    body.add_array("T", (1,), dace.float64, transient=True)
+    body.add_array("OUT", (1,), dace.float64, transient=False)
     # State A: G -> [_out=_in] -> T  (T's reader is in the next state, so T has
     # out_degree 0 here -- the cross-state blind spot).
     g = state_a.add_access("G")
@@ -377,9 +386,9 @@ def test_identity_free_reduce_producer_is_not_bypassed():
     from dace.libraries.standard.nodes.reduce import Reduce
 
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("a", (8, ), dace.float64, transient=False)
-    body.add_array("s", (1, ), dace.float64, transient=True)
-    body.add_array("out", (1, ), dace.float64, transient=False)
+    body.add_array("a", (8,), dace.float64, transient=False)
+    body.add_array("s", (1,), dace.float64, transient=True)
+    body.add_array("out", (1,), dace.float64, transient=False)
 
     seed_node = state.add_access("s")
     seed = state.add_tasklet("seed", set(), {"__out"}, "__out = 0.0")
@@ -409,9 +418,9 @@ def test_wcr_producer_into_transient_is_not_bypassed():
     WCR, so bypassing would drop the reduction AND move it onto an unseeded
     buffer; refuse instead."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("IN", (1, ), dace.float64, transient=False)
-    body.add_array("T", (1, ), dace.float64, transient=True)
-    body.add_array("G", (1, ), dace.float64, transient=False)
+    body.add_array("IN", (1,), dace.float64, transient=False)
+    body.add_array("T", (1,), dace.float64, transient=True)
+    body.add_array("G", (1,), dace.float64, transient=False)
 
     src = state.add_access("IN")
     t = state.add_access("T")
@@ -450,9 +459,9 @@ def test_a_copy_taken_before_its_source_is_overwritten_stays_written():
     Rerouting ``T``'s consumer onto ``G`` left that ordering on a ``T`` nothing wrote, so the consumer read
     ``G`` after the overwrite -- CloudSC's ``ztold = ztp1`` before ``ztp1 += zdtforc``."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("G", (1, ), dace.float64, transient=False)
-    body.add_array("T", (1, ), dace.float64, transient=True)
-    body.add_array("OUT", (1, ), dace.float64, transient=False)
+    body.add_array("G", (1,), dace.float64, transient=False)
+    body.add_array("T", (1,), dace.float64, transient=True)
+    body.add_array("OUT", (1,), dace.float64, transient=False)
     saved = state.add_access("T")
     written_g = state.add_access("G")
     save = state.add_tasklet("save", {"_in"}, {"_out"}, "_out = _in")
@@ -475,10 +484,10 @@ def test_a_producer_ordered_after_another_node_is_not_spliced_past_its_transient
     """An ordering edge INTO ``T`` sequences its producer; splicing the producer onto ``D`` strands that
     ordering on a ``T`` nothing writes and lets the write run unordered."""
     outer, body, state, _ = _build_outer_with_body_nsdfg()
-    body.add_array("A", (1, ), dace.float64, transient=False)
-    body.add_array("Y", (1, ), dace.float64, transient=False)
-    body.add_array("T", (1, ), dace.float64, transient=True)
-    body.add_array("D", (1, ), dace.float64, transient=False)
+    body.add_array("A", (1,), dace.float64, transient=False)
+    body.add_array("Y", (1,), dace.float64, transient=False)
+    body.add_array("T", (1,), dace.float64, transient=True)
+    body.add_array("D", (1,), dace.float64, transient=False)
     staged = state.add_access("T")
     double = state.add_tasklet("double", {"_in"}, {"_out"}, "_out = _in * 2.0")
     state.add_edge(state.add_access("A"), None, double, "_in", Memlet("A[0]"))
@@ -508,8 +517,8 @@ def run_in_outer(body: dace.SDFG, **arrays: np.ndarray) -> list[str]:
 
 def test_bypass_writes_the_consumer_element_of_a_memlet_named_on_the_transient():
     body = dace.SDFG("consumer_named_on_transient")
-    body.add_array("A", (4, ), dace.float64)
-    body.add_array("T", (2, ), dace.float64, transient=True)
+    body.add_array("A", (4,), dace.float64)
+    body.add_array("T", (2,), dace.float64, transient=True)
     st = body.add_state()
     staged, t = st.add_access("T"), st.add_tasklet("assign", {"_in"}, {"_out"}, "_out = _in")
     st.add_edge(st.add_read("A"), None, t, "_in", Memlet("A[0]"))
@@ -525,8 +534,8 @@ def test_bypass_writes_the_consumer_element_of_a_memlet_named_on_the_transient()
 
 def test_bypass_leaves_a_transient_whose_other_element_has_another_producer():
     body = dace.SDFG("two_producers")
-    body.add_array("A", (1, ), dace.float64)
-    body.add_array("T", (2, ), dace.float64, transient=True)
+    body.add_array("A", (1,), dace.float64)
+    body.add_array("T", (2,), dace.float64, transient=True)
     st = body.add_state()
     staged, t = st.add_access("T"), st.add_tasklet("assign", {"_in"}, {"_out"}, "_out = _in")
     for i in (0, 1):
@@ -543,8 +552,8 @@ def test_bypass_leaves_a_transient_whose_other_element_has_another_producer():
 
 def test_dedup_keeps_copies_taken_before_and_after_a_write_to_the_source():
     body = dace.SDFG("copies_around_write")
-    body.add_array("X", (3, ), dace.float64)
-    body.add_array("T", (1, ), dace.float64, transient=True)
+    body.add_array("X", (3,), dace.float64)
+    body.add_array("T", (1,), dace.float64, transient=True)
     st = body.add_state()
     x0, x1, x2 = st.add_read("X"), st.add_access("X"), st.add_write("X")
     for src, name, dst, out in ((x0, "c0", x1, "X[0]"), (x1, "c1", x2, "X[1]")):  # T = X[0]; out = T + 1

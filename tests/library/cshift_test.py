@@ -9,6 +9,7 @@ combinations of the construction path, verify the pure expansion's
 numerics against ``numpy.roll``, and pin the loud-fail contract when
 ``shift`` was never set.
 """
+
 import numpy as np
 import pytest
 
@@ -46,9 +47,9 @@ def _build(in_shape, dtype, *, dim=1, shift=None, direction=ShiftDirection.FORTR
 # Construct-and-validate coverage: many shape / dim combinations, each
 # wired with a full-dimension memlet on both connectors.
 _SHAPE_DIM_CASES = [
-    ((5, ), 1),
-    ((1, ), 1),
-    ((128, ), 1),
+    ((5,), 1),
+    ((1,), 1),
+    ((128,), 1),
     ((3, 4), 1),
     ((3, 4), 2),
     ((1, 1), 1),
@@ -80,7 +81,7 @@ def test_cshift_construct_validates_compile_time_shift(shape, dim):
 @pytest.mark.parametrize("shift", [-7, -1, 0, 1, 7, 128])
 def test_cshift_construct_handles_various_shift_magnitudes(shift):
     """Negative, zero, and large shifts all construct cleanly."""
-    sdfg = _build((16, ), dace.float64, dim=1, shift=shift)
+    sdfg = _build((16,), dace.float64, dim=1, shift=shift)
     sdfg.validate()
 
 
@@ -137,7 +138,7 @@ def test_cshift_validate_accepts_reparsed_symbol_instances():
     state.add_edge(node, "_out", state.add_write("out"), None, dace.Memlet.from_array("out", sdfg.arrays["out"]))
     node.validate(sdfg, state)  # must not raise
 
-    sdfg.arrays["out"].shape = (dace.symbol("P", dace.int32), )
+    sdfg.arrays["out"].shape = (dace.symbol("P", dace.int32),)
     out_edge = next(e for e in state.out_edges(node) if e.src_conn == "_out")
     out_edge.data = dace.Memlet.from_array("out", sdfg.arrays["out"])
     with pytest.raises(ValueError, match="input shape .* != output shape"):
@@ -148,7 +149,7 @@ def test_cshift_pure_expansion_requires_shift():
     """The pure expansion fails loud when ``shift`` was never set -- a
     fabricated fallback symbol would leak as an unbound free symbol the
     SDFG would then demand as a call argument."""
-    sdfg = _build((5, ), dace.float64, dim=1)  # shift=None
+    sdfg = _build((5,), dace.float64, dim=1)  # shift=None
     with pytest.raises(ValueError, match="shift is None"):
         sdfg.expand_library_nodes()
 
@@ -158,7 +159,7 @@ def test_cshift_pure_expansion_computes_circular_shift(shift):
     """``CSHIFT(arr, s)`` rotates LEFT by ``s`` (== ``np.roll(arr, -s)``);
     the floored ``FtnModulo`` keeps a negative shift in range."""
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
-    sdfg = _build((5, ), dace.float64, dim=1, shift=shift)
+    sdfg = _build((5,), dace.float64, dim=1, shift=shift)
     sdfg.expand_library_nodes()
     sdfg.validate()
     out = np.zeros(5, dtype=np.float64)
@@ -185,7 +186,7 @@ def test_cshift_numpy_direction_rotates_the_other_way(shift):
     expansion, so a regression that drops the sign shows up as one of these two matching the wrong
     reference -- and at ``shift=0``, where the two agree, as neither of them failing."""
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
-    sdfg = _build((5, ), dace.float64, dim=1, shift=shift, direction=ShiftDirection.NUMPY)
+    sdfg = _build((5,), dace.float64, dim=1, shift=shift, direction=ShiftDirection.NUMPY)
     sdfg.expand_library_nodes()
     sdfg.validate()
     out = np.zeros(5, dtype=np.float64)

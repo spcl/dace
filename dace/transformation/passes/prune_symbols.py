@@ -19,16 +19,14 @@ class RemoveUnusedSymbols(ppl.Pass):
     Also includes uses in Tasklets of all languages.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
-    recursive = properties.Property(dtype=bool,
-                                    default=True,
-                                    category='Applicability',
-                                    desc='Prune nested SDFGs recursively')
-    symbols = properties.SetProperty(element_type=str,
-                                     allow_none=True,
-                                     category='Applicability',
-                                     desc='Limit considered symbols to this set')
+    recursive = properties.Property(
+        dtype=bool, default=True, category="Applicability", desc="Prune nested SDFGs recursively"
+    )
+    symbols = properties.SetProperty(
+        element_type=str, allow_none=True, category="Applicability", desc="Limit considered symbols to this set"
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols
@@ -102,7 +100,7 @@ class RemoveUnusedSymbols(ppl.Pass):
         return set() if modified else None
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Removed {len(pass_retval)} unused symbols: {pass_retval}.'
+        return f"Removed {len(pass_retval)} unused symbols: {pass_retval}."
 
     def used_symbols(self, sdfg: SDFG) -> Set[str]:
         result = set()
@@ -123,17 +121,21 @@ class RemoveUnusedSymbols(ppl.Pass):
                 for node in block.nodes():
                     if isinstance(node, nodes.Tasklet):
                         if node.code.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
                         if node.code_global.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code_global.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code_global.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
                         if node.code_init.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code_init.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code_init.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
                         if node.code_exit.language != dtypes.Language.Python:
-                            result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
-                                                               node.ignored_symbols)
+                            result |= symbolic.symbols_in_code(
+                                node.code_exit.as_string, sdfg.symbols.keys(), node.ignored_symbols
+                            )
             else:
                 # A region's recursive free_symbols re-walks blocks this loop visits anyway, and its
                 # extra work -- subtracting symbols the region itself defines -- can only shrink a

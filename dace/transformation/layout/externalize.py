@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Externalize one loop nest into a standalone runnable SDFG; a thin wrapper over ``SDFGCutout`` that cuts the nest's scope subgraph out and gives it a stable unique name."""
+
 import math
 import re
 from typing import Dict, Optional
@@ -22,15 +23,15 @@ def externalize_nest(state: SDFGState, map_entry: Optional[nodes.MapEntry] = Non
     if map_entry is None:
         entries = nest_entries(state)
         if len(entries) != 1:
-            raise ValueError(f"externalize_nest: state '{state.label}' holds {len(entries)} top-level "
-                             f"nests; pass map_entry to pick one")
+            raise ValueError(
+                f"externalize_nest: state '{state.label}' holds {len(entries)} top-level "
+                f"nests; pass map_entry to pick one"
+            )
         map_entry = entries[0]
     scope_nodes = state.scope_subgraph(map_entry).nodes()
-    cut = SDFGCutout.singlestate_cutout(state,
-                                        *scope_nodes,
-                                        make_copy=True,
-                                        make_side_effects_global=True,
-                                        use_alibi_nodes=False)
+    cut = SDFGCutout.singlestate_cutout(
+        state, *scope_nodes, make_copy=True, make_side_effects_global=True, use_alibi_nodes=False
+    )
     cut.name = re.sub(r"\W", "_", name or f"{state.sdfg.name}__{map_entry.map.label}")
     cut.validate()
     return cut
@@ -61,7 +62,8 @@ def indexes_indirectly(nsdfg: nodes.NestedSDFG) -> bool:
     read_from_data = {
         name
         for edge in inner.all_interstate_edges(recursive=True)
-        for name, value in edge.data.assignments.items() if dace.symbolic.arrays(dace.symbolic.pystr_to_symbolic(value))
+        for name, value in edge.data.assignments.items()
+        if dace.symbolic.arrays(dace.symbolic.pystr_to_symbolic(value))
     }
     for state in inner.states():
         for edge in state.edges():
@@ -96,17 +98,17 @@ def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
             if None in shape or math.prod(shape) <= 1:
                 continue
             elements = constant_or_none(edge.data.subset.num_elements(), symbols) if edge.data.subset else None
-            gathered = (isinstance(edge.dst, nodes.NestedSDFG) and elements == math.prod(shape)
-                        and indexes_indirectly(edge.dst))
+            gathered = (
+                isinstance(edge.dst, nodes.NestedSDFG) and elements == math.prod(shape) and indexes_indirectly(edge.dst)
+            )
             if edge.data.dynamic or gathered:
                 extents += shape
     return min(extents) if extents else None
 
 
-def nest_arguments(ext: SDFG,
-                   symbols: Dict[str, int],
-                   provided: Optional[Dict[str, numpy.ndarray]] = None,
-                   seed: int = 0) -> Dict[str, numpy.ndarray]:
+def nest_arguments(
+    ext: SDFG, symbols: Dict[str, int], provided: Optional[Dict[str, numpy.ndarray]] = None, seed: int = 0
+) -> Dict[str, numpy.ndarray]:
     """Deterministic argument buffers for an externalized nest. ``provided`` arrays are copied verbatim; everything else gets a deterministic fill from ``seed`` (sorted name order)."""
     provided = provided or {}
     rng = numpy.random.default_rng(seed)

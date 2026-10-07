@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Time the compute region of a laid-out SDFG, excluding the relayout copy-in/copy-out states."""
+
 import statistics
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -30,12 +31,12 @@ def _is_pure_copy_tasklet(t: nodes.Node) -> bool:
     """True for an ``out = in`` copy tasklet, False for arithmetic or the barrier tasklet."""
     if not isinstance(t, nodes.Tasklet) or len(t.out_connectors) != 1 or len(t.in_connectors) != 1:
         return False
-    code = t.code.as_string.strip().rstrip(';').strip()
-    if '=' not in code:
+    code = t.code.as_string.strip().rstrip(";").strip()
+    if "=" not in code:
         return False
-    _, _, rhs = code.partition('=')
+    _, _, rhs = code.partition("=")
     rhs = rhs.strip()
-    while rhs.startswith('(') and rhs.endswith(')'):
+    while rhs.startswith("(") and rhs.endswith(")"):
         rhs = rhs[1:-1].strip()
     return rhs in t.in_connectors
 
@@ -44,7 +45,8 @@ def state_runs_on_gpu(state: dace.SDFGState) -> bool:
     """True iff ``state`` carries a GPU map (recurses into nested SDFGs); needs CUDA-event timing, not a host ``Timer``."""
     return any(
         isinstance(node, nodes.MapEntry) and node.map.schedule in dace.dtypes.GPU_SCHEDULES
-        for node, _ in state.all_nodes_recursive())
+        for node, _ in state.all_nodes_recursive()
+    )
 
 
 def instrumentation_for(state: dace.SDFGState) -> dace.InstrumentationType:
@@ -141,10 +143,9 @@ def _report_total_ms(report) -> Optional[float]:
 SPREAD_CONTENDED_THRESHOLD = 0.10
 
 
-def time_compute_stats(sdfg: dace.SDFG,
-                       run: Callable[[dace.SDFG], Any],
-                       reps: int = 10,
-                       warmup: int = 2) -> Optional[Dict[str, Any]]:
+def time_compute_stats(
+    sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 10, warmup: int = 2
+) -> Optional[Dict[str, Any]]:
     """Run ``run(sdfg)`` ``reps`` times and return compute-region stats from the instrumentation report: ``{"median": ms, "spread": (max-min)/min, "contended": bool, "samples": [...]}``, or ``None`` if ``sdfg`` carries no timers (see :class:`InsertLayoutTiming`). Every rep must produce a fresh report -- the build folder is keyed on SDFG name and shared across sweep candidates, so a stale or missing report is a hard error, never silently absorbed."""
     if not any(state.instrument != dace.InstrumentationType.No_Instrumentation for state in sdfg.states()):
         return None
@@ -156,14 +157,18 @@ def time_compute_stats(sdfg: dace.SDFG,
         run(sdfg)
         path = sdfg.get_latest_report_path()
         if path is None or path == previous_path:
-            raise RuntimeError(f"time_compute_stats: rep {rep} of '{sdfg.name}' produced no fresh instrumentation "
-                               f"report (latest: {path}); the run did not write one (report_each_invocation off, "
-                               f"or a save path failure) -- refusing to report stale timings")
+            raise RuntimeError(
+                f"time_compute_stats: rep {rep} of '{sdfg.name}' produced no fresh instrumentation "
+                f"report (latest: {path}); the run did not write one (report_each_invocation off, "
+                f"or a save path failure) -- refusing to report stale timings"
+            )
         ms = _report_total_ms(sdfg.get_latest_report())
         if ms is None:
-            raise RuntimeError(f"time_compute_stats: rep {rep} of '{sdfg.name}' wrote an EMPTY instrumentation "
-                               f"report ({path}) despite instrumented states -- refusing to shrink the sample set "
-                               f"silently")
+            raise RuntimeError(
+                f"time_compute_stats: rep {rep} of '{sdfg.name}' wrote an EMPTY instrumentation "
+                f"report ({path}) despite instrumented states -- refusing to shrink the sample set "
+                f"silently"
+            )
         samples.append(ms)
     low = min(samples)
     spread = (max(samples) - low) / low if low > 0.0 else 0.0
@@ -181,10 +186,9 @@ def time_compute(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5
     return None if stats is None else stats["median"]
 
 
-def compute_region_timer(sdfg: dace.SDFG,
-                         run: Callable[[dace.SDFG], Any],
-                         reps: int = 5,
-                         warmup: int = 1) -> Optional[float]:
+def compute_region_timer(
+    sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5, warmup: int = 1
+) -> Optional[float]:
     """A ``brute_force.sweep`` ``timer``: instruments the compute region and returns its median time (ms), so the sweep ranks by compute cost, not the one-time relayout. Mutates ``sdfg``."""
     InsertLayoutTiming().apply_pass(sdfg, {})
     return time_compute(sdfg, run, reps, warmup)

@@ -15,6 +15,7 @@ Covers:
   sequentializes a re-entered transfer by writing ``node.schedule``, without the expansion losing
   the contiguity a later memcpy collapse needs.
 """
+
 import functools
 
 import numpy as np
@@ -25,9 +26,11 @@ from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy import (
-    AssignmentAndCopyKernelToMemsetAndMemcpy)
+    AssignmentAndCopyKernelToMemsetAndMemcpy,
+)
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
-    CleanAccessNodeToScalarSliceToTaskletPattern)
+    CleanAccessNodeToScalarSliceToTaskletPattern,
+)
 
 N = dace.symbol("N")
 
@@ -170,7 +173,7 @@ def test_large_copy_selects_mapped_parallel():
     schedules across OpenMP threads at top level (``#pragma omp parallel for``)."""
     sdfg, ln = _copy_libnode_sdfg(BIG_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
     assert "#pragma omp parallel for" in _generated_code(sdfg)
 
     src = np.arange(BIG_ELEMS, dtype=np.float64)
@@ -183,7 +186,7 @@ def test_large_copy_selects_mapped_parallel():
 def test_small_copy_selects_serial_no_pragma():
     sdfg, ln = _copy_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MemcpyCPU'
+    assert ln.implementation == "MemcpyCPU"
     code = _generated_code(sdfg)
     assert "#pragma omp parallel for" not in code
     assert "dace::CopyImpl<" in code
@@ -200,7 +203,7 @@ def test_large_memset_selects_mapped_parallel():
     across OpenMP threads at top level (``#pragma omp parallel for``)."""
     sdfg, ln = _memset_libnode_sdfg(BIG_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'pure'
+    assert ln.implementation == "pure"
     assert "#pragma omp parallel for" in _generated_code(sdfg)
 
     dst = np.ones(BIG_ELEMS, dtype=np.float64)
@@ -212,7 +215,7 @@ def test_large_memset_selects_mapped_parallel():
 def test_small_memset_selects_serial_no_pragma():
     sdfg, ln = _memset_libnode_sdfg(SMALL_ELEMS)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'CPU'
+    assert ln.implementation == "CPU"
     code = _generated_code(sdfg)
     assert "#pragma omp parallel for" not in code
     assert "memset" in code
@@ -237,7 +240,7 @@ def test_symbolic_copy_selects_parallel_map():
     state.add_edge(ln, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet("dst[0:N]"))
     sdfg.validate()
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
     code = _generated_code(sdfg)
     assert "#pragma omp parallel for" in code
 
@@ -269,8 +272,9 @@ def _loop_wrapped_copy_sdfg(name: str, trip: str, contiguous: bool):
 
     ln = CopyLibraryNode(name="cp")
     out_subset = f"dst[k, 0:{BIG_ELEMS}]" if contiguous else f"dst[0:{BIG_ELEMS}, k]"
-    state.add_edge(state.add_access("src"), None, ln, CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                   dace.Memlet(f"src[0:{BIG_ELEMS}]"))
+    state.add_edge(
+        state.add_access("src"), None, ln, CopyLibraryNode.INPUT_CONNECTOR_NAME, dace.Memlet(f"src[0:{BIG_ELEMS}]")
+    )
     state.add_edge(ln, CopyLibraryNode.OUTPUT_CONNECTOR_NAME, state.add_access("dst"), None, dace.Memlet(out_subset))
     sdfg.validate()
     return sdfg, ln
@@ -287,7 +291,7 @@ def test_contiguous_copy_in_long_loop_still_expands_parallel():
     ``memcpy`` is a CPU specialization, decided by the band that owns the cost model."""
     sdfg, ln = _loop_wrapped_copy_sdfg("copy_in_long_loop", "T", contiguous=True)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
     assert "#pragma omp parallel for" in _generated_code(sdfg)
 
 
@@ -296,7 +300,7 @@ def test_strided_copy_in_long_loop_expands_parallel():
     """Same for the strided copy the ``memcpy`` form cannot express (the stockham_fft shape)."""
     sdfg, ln = _loop_wrapped_copy_sdfg("copy_strided_in_long_loop", "T", contiguous=False)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
     assert "#pragma omp parallel for" in _generated_code(sdfg)
 
 
@@ -306,7 +310,7 @@ def test_strided_copy_in_short_loop_stays_parallel():
     its parallel map either way."""
     sdfg, ln = _loop_wrapped_copy_sdfg("copy_strided_in_short_loop", "4", contiguous=False)
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
     assert "#pragma omp parallel" in _generated_code(sdfg)
 
 
@@ -318,7 +322,7 @@ def test_band_sequential_verdict_reaches_the_expanded_map():
     sdfg, ln = _loop_wrapped_copy_sdfg("copy_strided_seq_verdict", "T", contiguous=False)
     ln.schedule = dace.dtypes.ScheduleType.Sequential
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
     assert [m.map.schedule for m in _expanded_maps(sdfg)] == [dace.dtypes.ScheduleType.Sequential]
     assert "#pragma omp parallel" not in _generated_code(sdfg)
 
@@ -351,19 +355,15 @@ def test_copy_inside_parallel_map_does_not_nest_parallel_region():
     ln = CopyLibraryNode(name="cp")
     src = state.add_access("src")
     dst = state.add_access("dst")
-    state.add_memlet_path(src,
-                          me,
-                          ln,
-                          dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME,
-                          memlet=dace.Memlet(f"src[0:{BIG_ELEMS}]"))
-    state.add_memlet_path(ln,
-                          mx,
-                          dst,
-                          src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME,
-                          memlet=dace.Memlet(f"dst[k, 0:{BIG_ELEMS}]"))
+    state.add_memlet_path(
+        src, me, ln, dst_conn=CopyLibraryNode.INPUT_CONNECTOR_NAME, memlet=dace.Memlet(f"src[0:{BIG_ELEMS}]")
+    )
+    state.add_memlet_path(
+        ln, mx, dst, src_conn=CopyLibraryNode.OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet(f"dst[k, 0:{BIG_ELEMS}]")
+    )
     sdfg.validate()
     sdfg.expand_library_nodes(recursive=True)
-    assert ln.implementation == 'MappedTasklet'
+    assert ln.implementation == "MappedTasklet"
     assert _generated_code(sdfg).count("#pragma omp parallel") == 1
 
 
@@ -375,11 +375,11 @@ def test_threshold_config_flips_selection():
 
     below, ln_below = _copy_libnode_sdfg(2048)
     below.expand_library_nodes(recursive=True)
-    assert ln_below.implementation == 'MemcpyCPU'
+    assert ln_below.implementation == "MemcpyCPU"
 
     at, ln_at = _copy_libnode_sdfg(4096)
     at.expand_library_nodes(recursive=True)
-    assert ln_at.implementation == 'MappedTasklet'
+    assert ln_at.implementation == "MappedTasklet"
 
 
 if __name__ == "__main__":

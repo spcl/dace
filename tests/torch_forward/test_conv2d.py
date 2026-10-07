@@ -20,7 +20,6 @@ def test_conv2d(use_cpp_dispatcher: bool, device):
     dev = torch_device(device)
 
     class Model(nn.Module):
-
         def __init__(self):
             super(Model, self).__init__()
             self.conv1 = nn.Conv2d(1, 4, 3)
@@ -39,10 +38,12 @@ def test_conv2d(use_cpp_dispatcher: bool, device):
     class TestDecorator(Model):
         pass
 
-    dace_model = DaceModule(ptmodel,
-                            sdfg_name=f"test_conv2d_{dispatcher_suffix}_{device}",
-                            compile_torch_extension=use_cpp_dispatcher,
-                            cuda=is_gpu(device))
+    dace_model = DaceModule(
+        ptmodel,
+        sdfg_name=f"test_conv2d_{dispatcher_suffix}_{device}",
+        compile_torch_extension=use_cpp_dispatcher,
+        cuda=is_gpu(device),
+    )
     with experimental_cuda():
         dace_output = dace_model(x)
 
@@ -51,10 +52,12 @@ def test_conv2d(use_cpp_dispatcher: bool, device):
 
     torch_output = ptmodel(x)
 
-    np.testing.assert_allclose(torch_output.detach().cpu().numpy(),
-                               dace_output.detach().cpu().numpy(),
-                               atol=1e-06,
-                               err_msg="Conv2d output mismatch between PyTorch and DaCe")
+    np.testing.assert_allclose(
+        torch_output.detach().cpu().numpy(),
+        dace_output.detach().cpu().numpy(),
+        atol=1e-06,
+        err_msg="Conv2d output mismatch between PyTorch and DaCe",
+    )
 
 
 if __name__ == "__main__":

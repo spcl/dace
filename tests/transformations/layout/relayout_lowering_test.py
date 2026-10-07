@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for build_relayout: lower a layout-algebra op sequence to a materialized copy."""
+
 import numpy
 import dace
 
@@ -48,7 +49,7 @@ def test_relayout_block_unblock_is_copy():
     A = numpy.random.rand(n)
     # Block∘Unblock simplifies to [] -> plain copy, output shape == input.
     out = _run_relayout([N], [Block(0, 16), Unblock(0, 16)], A)
-    assert out.shape == (n, )
+    assert out.shape == (n,)
     assert numpy.array_equal(out, A)
 
 

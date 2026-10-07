@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" End-to-end and structural tests for vertical and horizontal map fusion.
+"""End-to-end and structural tests for vertical and horizontal map fusion.
 
-    The kernels mirror the ICON velocity-advection neighbour-gather shape
-    (``out[i, k] = c1 * w[cidx[i, 0], k] - c2 * w[vidx[i, 1], k]``): the
-    first array dimension is gathered through an int32 neighbour-index
-    table while the level dimension stays structured. Each test builds the
-    SDFG through the python frontend, captures a numpy oracle (and a
-    deep-copied pre-fusion run), applies :class:`MapFusionVertical` or
-    :class:`MapFusionHorizontal` repeatedly, asserts the expected map count
-    via :func:`_n_maps`, validates the SDFG, and checks the post-fusion
-    result against the oracle with :func:`numpy.allclose`.
+The kernels mirror the ICON velocity-advection neighbour-gather shape
+(``out[i, k] = c1 * w[cidx[i, 0], k] - c2 * w[vidx[i, 1], k]``): the
+first array dimension is gathered through an int32 neighbour-index
+table while the level dimension stays structured. Each test builds the
+SDFG through the python frontend, captures a numpy oracle (and a
+deep-copied pre-fusion run), applies :class:`MapFusionVertical` or
+:class:`MapFusionHorizontal` repeatedly, asserts the expected map count
+via :func:`_n_maps`, validates the SDFG, and checks the post-fusion
+result against the oracle with :func:`numpy.allclose`.
 """
+
 import copy
 
 import numpy as np
@@ -20,12 +21,12 @@ from dace.sdfg import nodes
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 
-N = dace.symbol('N')
-L = dace.symbol('L')
+N = dace.symbol("N")
+L = dace.symbol("L")
 
 
 def _n_maps(sdfg):
-    """ Count :class:`~dace.sdfg.nodes.MapEntry` nodes through the whole SDFG.
+    """Count :class:`~dace.sdfg.nodes.MapEntry` nodes through the whole SDFG.
 
     :param sdfg: The SDFG to inspect.
     :returns: The number of map entries, recursing into nested SDFGs.
@@ -34,7 +35,7 @@ def _n_maps(sdfg):
 
 
 def _make_inputs(n, levels, seed):
-    """ Build a reproducible set of velocity-advection-shaped inputs.
+    """Build a reproducible set of velocity-advection-shaped inputs.
 
     :param n: The gathered (edge) dimension size.
     :param levels: The structured (level) dimension size.
@@ -50,8 +51,9 @@ def _make_inputs(n, levels, seed):
 
 
 @dace.program
-def vertical_producer_consumer(w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2],
-                               vidx: dace.int32[N, 2], b: dace.float64[N, L]):
+def vertical_producer_consumer(
+    w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2], vidx: dace.int32[N, 2], b: dace.float64[N, L]
+):
     t = np.empty_like(w)
     for i, k in dace.map[0:N, 0:L]:
         t[i, k] = w[cidx[i, 0], k] * 2.0
@@ -60,8 +62,9 @@ def vertical_producer_consumer(w: dace.float64[N, L], v: dace.float64[N, L], cid
 
 
 @dace.program
-def vertical_chain_of_three(w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2],
-                            vidx: dace.int32[N, 2], b: dace.float64[N, L]):
+def vertical_chain_of_three(
+    w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2], vidx: dace.int32[N, 2], b: dace.float64[N, L]
+):
     t1 = np.empty_like(w)
     t2 = np.empty_like(w)
     for i, k in dace.map[0:N, 0:L]:
@@ -73,8 +76,14 @@ def vertical_chain_of_three(w: dace.float64[N, L], v: dace.float64[N, L], cidx: 
 
 
 @dace.program
-def horizontal_two_gathers(w: dace.float64[N, L], v: dace.float64[N, L], cidx: dace.int32[N, 2], vidx: dace.int32[N, 2],
-                           b: dace.float64[N, L], d: dace.float64[N, L]):
+def horizontal_two_gathers(
+    w: dace.float64[N, L],
+    v: dace.float64[N, L],
+    cidx: dace.int32[N, 2],
+    vidx: dace.int32[N, 2],
+    b: dace.float64[N, L],
+    d: dace.float64[N, L],
+):
     for i, k in dace.map[0:N, 0:L]:
         b[i, k] = w[cidx[i, 0], k] + 1.0
     for i, k in dace.map[0:N, 0:L]:
@@ -82,8 +91,9 @@ def horizontal_two_gathers(w: dace.float64[N, L], v: dace.float64[N, L], cidx: d
 
 
 @dace.program
-def vertical_dependent_gather(w: dace.float64[N, L], cidx: dace.int32[N, 2], vidx: dace.int32[N, 2],
-                              b: dace.float64[N, L]):
+def vertical_dependent_gather(
+    w: dace.float64[N, L], cidx: dace.int32[N, 2], vidx: dace.int32[N, 2], b: dace.float64[N, L]
+):
     # The consumer reads the transient through a *different* gathered index
     # (vidx[i, 1]) than the structured slot the producer wrote (i), so the
     # producer-consumer link is a genuine indirect cross-iteration
@@ -220,7 +230,7 @@ def test_vertical_dependent_gather_preserves_numerics():
     assert np.allclose(b_out, oracle)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_vertical_producer_consumer()
     test_vertical_chain_of_three()
     test_horizontal_two_gathers()

@@ -15,7 +15,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.sdfg.validation import InvalidSDFGError
 
 
-def unique_dependencies(passes: Iterable['Pass']) -> List[Union[Type['Pass'], 'Pass']]:
+def unique_dependencies(passes: Iterable["Pass"]) -> List[Union[Type["Pass"], "Pass"]]:
     """
     Collects the dependencies of the given passes, preserving their listed order and removing duplicates.
 
@@ -34,6 +34,7 @@ class Modifies(Flag):
     This is used when deciding whether to rerun certain Passes for SDFG analysis.
     Note that this is a Python ``Flag``, which means values such as ``Memlets | Symbols`` are allowed.
     """
+
     Nothing = 0  #: Nothing was modified
     Descriptors = auto()  #: Data descriptors (e.g., arrays, streams) and their properties were modified
     Symbols = auto()  #: Symbols were modified
@@ -44,10 +45,16 @@ class Modifies(Flag):
     Tasklets = auto()  #: Tasklets were created/removed or their contents were modified
     NestedSDFGs = auto()  #: SDFG nesting structure or properties of NestedSDFG nodes were modified
     Memlets = auto()  #: Memlets' existence, contents, or properties were modified
-    Nodes = AccessNodes | Scopes | Tasklets | NestedSDFGs  #: Modification of any dataflow node (contained in an SDFG state) was made
+    Nodes = (
+        AccessNodes | Scopes | Tasklets | NestedSDFGs
+    )  #: Modification of any dataflow node (contained in an SDFG state) was made
     Edges = InterstateEdges | Memlets  #: Any edge (memlet or inter-state) was modified
-    CFG = States | InterstateEdges  #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
-    Everything = Descriptors | Symbols | CFG | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
+    CFG = (
+        States | InterstateEdges
+    )  #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
+    Everything = (
+        Descriptors | Symbols | CFG | Nodes | Memlets
+    )  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
 @properties.make_properties
@@ -69,12 +76,12 @@ class Pass:
     :seealso: Pipeline
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
     #: Set to True by the ``dace.transformation.explicit_cf_compatible`` decorator
     __explicit_cf_compatible__: bool = False
 
-    def depends_on(self) -> List[Union[Type['Pass'], 'Pass']]:
+    def depends_on(self) -> List[Union[Type["Pass"], "Pass"]]:
         """
         If in the context of a ``Pipeline``, which other Passes need to run first.
 
@@ -123,21 +130,21 @@ class Pass:
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {'type': 'Pass', 'transformation': type(self).__name__, 'CATEGORY': type(self).CATEGORY, **props}
+        return {"type": "Pass", "transformation": type(self).__name__, "CATEGORY": type(self).CATEGORY, **props}
 
     @staticmethod
-    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Pass':
-        pss = next(ext for ext in Pass.subclasses_recursive() if ext.__name__ == json_obj['transformation'])
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> "Pass":
+        pss = next(ext for ext in Pass.subclasses_recursive() if ext.__name__ == json_obj["transformation"])
 
         # Reconstruct the pass.
         ret = pss()
         context = context or {}
-        context['transformation'] = ret
-        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
+        context["transformation"] = ret
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={"transformation", "type"})
         return ret
 
     @classmethod
-    def subclasses_recursive(cls) -> Set[Type['Pass']]:
+    def subclasses_recursive(cls) -> Set[Type["Pass"]]:
         """
         Returns all subclasses of this class, including subclasses of subclasses.
         """
@@ -157,10 +164,10 @@ class Pass:
         for opt_name in opts:
             if not opt_name.startswith(pass_pattern):
                 continue
-            attr_name = opt_name[len(pass_pattern):]
-            assert hasattr(
-                self, attr_name
-            ), f"Tried to set attribute '{attr_name}' on a '{self.__class__.__name__}' instance, but that option is unknown."
+            attr_name = opt_name[len(pass_pattern) :]
+            assert hasattr(self, attr_name), (
+                f"Tried to set attribute '{attr_name}' on a '{self.__class__.__name__}' instance, but that option is unknown."
+            )
             setattr(self, attr_name, opts[opt_name])
 
 
@@ -193,7 +200,7 @@ class VisitorPass(Pass):
         print('Memlets:', memlets_with_wcr)
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
     def generic_visit(self, element: Any, parent: Any, pipeline_results: Dict[str, Any]) -> Any:
         """
@@ -221,19 +228,19 @@ class VisitorPass(Pass):
         results = {}
         for node, parent in sdfg.all_nodes_recursive():
             # Visit node (SDFGState, AccessNode, ...)
-            f = getattr(self, f'visit_{type(node).__name__}', self.generic_visit)
+            f = getattr(self, f"visit_{type(node).__name__}", self.generic_visit)
             res = f(node, parent, pipeline_results)
             if res is not None:
                 results[node] = res
         for edge, parent in sdfg.all_edges_recursive():
             # Visit edge (Edge, MultiConnectorEdge)
-            f = getattr(self, f'visit_{type(edge).__name__}', self.generic_visit)
+            f = getattr(self, f"visit_{type(edge).__name__}", self.generic_visit)
             res = f(edge, parent, pipeline_results)
             if res is not None:
                 results[edge] = res
 
             # Visit edge data (Memlet, InterstateEdge)
-            f = getattr(self, f'visit_{type(edge.data).__name__}', self.generic_visit)
+            f = getattr(self, f"visit_{type(edge.data).__name__}", self.generic_visit)
             res = f(edge.data, parent, pipeline_results)
             if res is not None:
                 results[edge.data] = res
@@ -252,7 +259,7 @@ class StatePass(Pass):
     :see: Pass
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
         """
@@ -299,17 +306,21 @@ class ControlFlowRegionPass(Pass):
     :see: Pass
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
-    apply_to_conditionals = properties.Property(dtype=bool,
-                                                default=False,
-                                                category='Applicability',
-                                                desc='Whether or not to apply to conditional blocks. If false, do ' +
-                                                'not apply to conditional blocks, but only their children.')
-    top_down = properties.Property(dtype=bool,
-                                   default=False,
-                                   category='Parameters',
-                                   desc='Whether or not to apply top down (i.e., parents before children)')
+    apply_to_conditionals = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Whether or not to apply to conditional blocks. If false, do "
+        + "not apply to conditional blocks, but only their children.",
+    )
+    top_down = properties.Property(
+        dtype=bool,
+        default=False,
+        category="Parameters",
+        desc="Whether or not to apply top down (i.e., parents before children)",
+    )
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:
         """
@@ -359,7 +370,7 @@ class ScopePass(Pass):
     :see: Pass
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
     def apply_pass(
         self,
@@ -427,12 +438,11 @@ class Pipeline(Pass):
 
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
-    passes = properties.ListProperty(element_type=Pass,
-                                     default=[],
-                                     category='(Debug)',
-                                     desc='List of passes that this pipeline contains')
+    passes = properties.ListProperty(
+        element_type=Pass, default=[], category="(Debug)", desc="List of passes that this pipeline contains"
+    )
 
     def __init__(self, passes: List[Pass]):
         self.passes = []
@@ -459,8 +469,10 @@ class Pipeline(Pass):
         if len(check_if_unique) != len(passes):
             pass_types = [type(p) for p in passes]
             dups = set([x for x in pass_types if pass_types.count(x) > 1])
-            raise NameError('Duplicate pass types found in pipeline. Please use unique Pass type objects within one '
-                            f'Pipeline. Duplicates: {dups}')
+            raise NameError(
+                "Duplicate pass types found in pipeline. Please use unique Pass type objects within one "
+                f"Pipeline. Duplicates: {dups}"
+            )
 
         # Traverse pass dependencies until there is nothing to visit
         passes_to_check = passes
@@ -474,8 +486,9 @@ class Pipeline(Pass):
                         if type(dep) in check_if_unique:
                             raise NameError(
                                 f'Duplicate dependency passes given: "{type(dep).__name__}" is a Pass object dependency '
-                                'that is already a dependency of a pass or used directly in the pipeline. Please use a '
-                                'class instead of an object in the `depends_on` method.')
+                                "that is already a dependency of a pass or used directly in the pipeline. Please use a "
+                                "class instead of an object in the `depends_on` method."
+                            )
 
                         check_if_unique.add(type(dep))
                         self.passes.append(dep)
@@ -487,7 +500,7 @@ class Pipeline(Pass):
                             self.passes.append(dep_obj)
                             new_passes.append(dep_obj)
                     else:
-                        raise TypeError(f'Invalid pass type {type(dep).__name__} given to pipeline')
+                        raise TypeError(f"Invalid pass type {type(dep).__name__} given to pipeline")
             passes_to_check = new_passes
 
     def modifies(self) -> Modifies:
@@ -547,7 +560,7 @@ class Pipeline(Pass):
         applied_passes: Dict[Pass, Modifies] = {}
 
         def reapply_recursive(p: Pass):
-            """ Reapply pass dependencies in a recursive fashion. """
+            """Reapply pass dependencies in a recursive fashion."""
             # If pass should not reapply, skip
             if p in applied_passes and not p.should_reapply(applied_passes[p]):
                 return
@@ -599,8 +612,8 @@ class Pipeline(Pass):
                 sdfg.validate()
             except InvalidSDFGError as err:
                 raise InvalidSDFGError(
-                    f'Validation failed after applying {type(p).__name__}. '
-                    f'{type(err).__name__}: {err}', sdfg, None) from err
+                    f"Validation failed after applying {type(p).__name__}. {type(err).__name__}: {err}", sdfg, None
+                ) from err
         return retval
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -620,7 +633,7 @@ class Pipeline(Pass):
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {'type': 'Pipeline', 'transformation': type(self).__name__, 'CATEGORY': type(self).CATEGORY, **props}
+        return {"type": "Pipeline", "transformation": type(self).__name__, "CATEGORY": type(self).CATEGORY, **props}
 
 
 @properties.make_properties
@@ -632,7 +645,7 @@ class FixedPointPipeline(Pipeline):
     :see: Pipeline
     """
 
-    CATEGORY: str = 'Helper'
+    CATEGORY: str = "Helper"
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

@@ -6,6 +6,7 @@ CloudSC's ``imelt[4] = -99`` lowers to a Symbol-operand ``TileUnop`` writing ``i
 expansions judged the output by its DESCRIPTOR, saw an array, and walked the lane loop
 ``_c[__l0] = ...``: "subscripted value is not an array, pointer, or vector".
 """
+
 import numpy as np
 import pytest
 
@@ -16,20 +17,20 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def element_write_sdfg(name: str, node, implementation: str) -> dace.SDFG:
     """``node`` (lane-invariant operands, 2-lane tile) writes ``F[4]`` of an ``int32[5]``."""
-    sdfg = dace.SDFG(f'{name}_{implementation}')
-    sdfg.add_array('F', [5], dace.int32)
-    state = sdfg.add_state('main', is_start_block=True)
+    sdfg = dace.SDFG(f"{name}_{implementation}")
+    sdfg.add_array("F", [5], dace.int32)
+    state = sdfg.add_state("main", is_start_block=True)
     state.add_node(node)
-    state.add_edge(node, '_c', state.add_write('F'), None, dace.Memlet('F[4]'))
+    state.add_edge(node, "_c", state.add_write("F"), None, dace.Memlet("F[4]"))
     # ``scalar`` is the target ISA the vectorizer selects the implementation for; a one-element output has no header
     # lowering, so the selection is the pure loop too.
-    if implementation == 'pure':
-        node.implementation = 'pure'
+    if implementation == "pure":
+        node.implementation = "pure"
     else:
         node.target_isa = ISA[implementation.upper()]
         node.implementation = select_tile_implementation(node, state)
@@ -39,16 +40,17 @@ def element_write_sdfg(name: str, node, implementation: str) -> dace.SDFG:
 
 
 def negate_99():
-    return TileUnop(name='neg', widths=(2, ), op='neg', kind_a='Symbol', expr_a='99')
+    return TileUnop(name="neg", widths=(2,), op="neg", kind_a="Symbol", expr_a="99")
 
 
 def add_40_2():
-    return TileBinop(name='add', widths=(2, ), op='+', kind_a='Symbol', kind_b='Symbol', expr_a='40', expr_b='2')
+    return TileBinop(name="add", widths=(2,), op="+", kind_a="Symbol", kind_b="Symbol", expr_a="40", expr_b="2")
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'scalar'])
-@pytest.mark.parametrize('name,make_node,want', [('one_element_unop', negate_99, -99),
-                                                 ('one_element_binop', add_40_2, 42)])
+@pytest.mark.parametrize("implementation", ["pure", "scalar"])
+@pytest.mark.parametrize(
+    "name,make_node,want", [("one_element_unop", negate_99, -99), ("one_element_binop", add_40_2, 42)]
+)
 def test_a_lane_invariant_op_writes_exactly_the_one_element_its_memlet_names(name, make_node, want, implementation):
     sdfg = element_write_sdfg(name, make_node(), implementation)
     got = np.full(5, 7, dtype=np.int32)
@@ -70,13 +72,17 @@ def test_a_vectorized_map_storing_a_negated_literal_into_one_element_stores_it()
     rng = np.random.default_rng(42)
     sdfg = flag_every_column.to_sdfg(simplify=True)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(2, ),
-                        target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
-                        validate_all=True)).apply_pass(sdfg, {})
-    stores = [(n.has_mask, str(e.data)) for n, state in sdfg.all_nodes_recursive() if isinstance(n, TileUnop)
-              for e in state.out_edges(n)]
-    assert sorted(stores) == [(False, 'flag[4]'), (True, 'flag[4]')], stores
+        VectorizeConfig(
+            widths=(2,), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.MASKED_TAIL, validate_all=True
+        )
+    ).apply_pass(sdfg, {})
+    stores = [
+        (n.has_mask, str(e.data))
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, TileUnop)
+        for e in state.out_edges(n)
+    ]
+    assert sorted(stores) == [(False, "flag[4]"), (True, "flag[4]")], stores
     a = rng.random(7)
     out = np.zeros(7)
     flag = np.zeros(5, dtype=np.int32)
@@ -85,5 +91,5 @@ def test_a_vectorized_map_storing_a_negated_literal_into_one_element_stores_it()
     np.testing.assert_array_equal(out, 2.0 * a)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -27,7 +27,7 @@ def _canonicalize_and_check(name):
     """Canonicalize the named TSVC kernel, assert value-preservation vs the numpy
     oracle, and return (n_sequential_loops, {node_type: count}, has_wcr)."""
     kernel = [k for k in tsvc.collect() if k.name == name][0]
-    sdfg = tsvc.to_sdfg(kernel, 'e2e_' + name, simplify=True)
+    sdfg = tsvc.to_sdfg(kernel, "e2e_" + name, simplify=True)
     canonicalize(sdfg, validate=True, peel_limit=4)
 
     arrays, call_kwargs = tsvc.make_inputs(kernel)
@@ -53,23 +53,23 @@ def _canonicalize_and_check(name):
 
 def test_vdot_s313_parallelizes_as_wcr_reduction():
     """vdot must become a parallel reduction (Map + WCR), not a sequential loop."""
-    nloops, types, has_wcr = _canonicalize_and_check('s313_d_single')
+    nloops, types, has_wcr = _canonicalize_and_check("s313_d_single")
     assert nloops == 0, "vdot must not remain a sequential loop"
-    assert types.get('MapEntry', 0) >= 1 and has_wcr, "vdot should be a parallel WCR-map reduction"
+    assert types.get("MapEntry", 0) >= 1 and has_wcr, "vdot should be a parallel WCR-map reduction"
 
 
 def test_s315_argmax_with_index_lifts_to_argreduce():
     """1-D argmax tracking both the max value and its index must lift to ArgReduce."""
-    nloops, types, _ = _canonicalize_and_check('s315_d_single')
-    assert types.get('ArgReduce', 0) >= 1, "s315 (value+index argmax) must lift to an ArgReduce libnode"
+    nloops, types, _ = _canonicalize_and_check("s315_d_single")
+    assert types.get("ArgReduce", 0) >= 1, "s315 (value+index argmax) must lift to an ArgReduce libnode"
     assert nloops == 0, "the argmax loop must be gone"
 
 
 def test_s13110_2d_argmax_lifts_to_argreduce():
     """2-D argmax with three carriers (maxv / xindex / yindex) must lift to ArgReduce."""
-    nloops, types, _ = _canonicalize_and_check('s13110_d_single')
-    assert types.get('ArgReduce', 0) >= 1, "s13110 (2D 3-carrier argmax) must lift to an ArgReduce libnode"
+    nloops, types, _ = _canonicalize_and_check("s13110_d_single")
+    assert types.get("ArgReduce", 0) >= 1, "s13110 (2D 3-carrier argmax) must lift to an ArgReduce libnode"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-q'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-q"])

@@ -24,6 +24,7 @@ accumulates (a write-conflict-resolved memlet), holds a library node (its own lo
 block), or when a strided map leaves a lane-private container other code reads afterwards (each lane
 would hold only its own share of it).
 """
+
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, Memlet, SDFGState, dtypes, properties
@@ -37,13 +38,16 @@ from dace.optionals import required
 
 #: What a block-tiled kernel's lane map is, for a CPF reader.
 BLOCK_TILE_HINT = (
-    'parallel -- block tile: this kernel runs one block per outer iteration, and these are the lanes of the '
-    'block\nwhy: the inner parallel maps are strided across the lanes, so one outer iteration uses a '
-    'whole block instead of one thread; code outside them runs on every lane, or on lane 0 alone '
-    'between two barriers when it updates data other lanes read')
+    "parallel -- block tile: this kernel runs one block per outer iteration, and these are the lanes of the "
+    "block\nwhy: the inner parallel maps are strided across the lanes, so one outer iteration uses a "
+    "whole block instead of one thread; code outside them runs on every lane, or on lane 0 alone "
+    "between two barriers when it updates data other lanes read"
+)
 #: What a map strided across the lanes of a block-tiled kernel is, for a CPF reader.
-LANE_STRIDED_HINT = ('parallel -- lane-strided: lane t of the block takes iterations t, t + B, ... (B lanes)\n'
-                     'why: the map is parallel, and adjacent lanes touching adjacent elements coalesce the accesses')
+LANE_STRIDED_HINT = (
+    "parallel -- lane-strided: lane t of the block takes iterations t, t + B, ... (B lanes)\n"
+    "why: the map is parallel, and adjacent lanes touching adjacent elements coalesce the accesses"
+)
 
 #: Storage whose containers each lane holds its own copy of.
 LANE_PRIVATE_STORAGE = (dtypes.StorageType.Register, dtypes.StorageType.Default)
@@ -55,15 +59,19 @@ def is_kernel(state: SDFGState, entry: nodes.MapEntry) -> bool:
         return False
     return not any(
         isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device
-        for scope in xfh.get_parent_map_and_loop_scopes(state.sdfg, entry, state))
+        for scope in xfh.get_parent_map_and_loop_scopes(state.sdfg, entry, state)
+    )
 
 
 def strided_maps(state: SDFGState, kernel: nodes.MapEntry) -> List[Tuple[SDFGState, nodes.MapEntry]]:
     """The inner maps to stride across the lanes: the immediate ones that are not provably narrower than
     the block. A map is parallel by definition; the ``Sequential`` schedule inference gives a map
     nested in a kernel only says one thread would walk it."""
-    return [(inner_state, inner) for inner_state, inner in xfh.get_internal_scopes(state, kernel, immediate=True)
-            if isinstance(inner, nodes.MapEntry) and (inner.map.range.size()[-1] < BLOCK_COLLECTIVE_THREADS) != True]
+    return [
+        (inner_state, inner)
+        for inner_state, inner in xfh.get_internal_scopes(state, kernel, immediate=True)
+        if isinstance(inner, nodes.MapEntry) and (inner.map.range.size()[-1] < BLOCK_COLLECTIVE_THREADS) != True
+    ]
 
 
 def lane_private(sdfg: SDFG, name: str) -> bool:
@@ -75,7 +83,9 @@ def reads_outside(sdfg: SDFG, name: str, inner: Set[nodes.Node]) -> bool:
     """Whether any node of ``sdfg`` outside ``inner`` reads ``name``."""
     return any(
         isinstance(node, nodes.AccessNode) and node.data == name and node not in inner and state.out_degree(node) > 0
-        for state in sdfg.states() for node in state.nodes())
+        for state in sdfg.states()
+        for node in state.nodes()
+    )
 
 
 def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
@@ -97,20 +107,26 @@ def strided_map_is_safe(state: SDFGState, entry: nodes.MapEntry) -> bool:
 def updates_shared(node: nodes.Tasklet, state: SDFGState) -> bool:
     """Whether ``node`` writes a shared (not lane-private) container it also reads: once per lane is wrong."""
     read = {edge.data.data for edge in state.in_edges(node) if not edge.data.is_empty()}
-    return any(edge.data.data in read and not lane_private(state.sdfg, edge.data.data) for edge in state.out_edges(node)
-               if not edge.data.is_empty())
+    return any(
+        edge.data.data in read and not lane_private(state.sdfg, edge.data.data)
+        for edge in state.out_edges(node)
+        if not edge.data.is_empty()
+    )
 
 
 def accumulates_outside(state: SDFGState, edges, skipped: Set[nodes.Node]) -> bool:
     """Whether a write-conflict-resolved edge leaves a node outside the strided maps: every lane would add.
     In canonical form a WCR is ``tasklet -wcr-> MapExit* -wcr-> access node``, so a map exit only relays
     the tasklet's write (checked where the tasklet is); any other source accumulates here."""
-    return any(edge.data.wcr is not None and edge.src not in skipped and not isinstance(edge.src, nodes.MapExit)
-               for edge in edges)
+    return any(
+        edge.data.wcr is not None and edge.src not in skipped and not isinstance(edge.src, nodes.MapExit)
+        for edge in edges
+    )
 
 
-def single_lane_nodes(state: SDFGState, kernel: nodes.MapEntry,
-                      strided: List[Tuple[SDFGState, nodes.MapEntry]]) -> Optional[List[nodes.Tasklet]]:
+def single_lane_nodes(
+    state: SDFGState, kernel: nodes.MapEntry, strided: List[Tuple[SDFGState, nodes.MapEntry]]
+) -> Optional[List[nodes.Tasklet]]:
     """The tasklets that must run on lane 0 alone for the kernel body to run once per lane, with ``strided``
     split across the lanes; ``None`` if no such split is sound."""
     if not strided or not all(strided_map_is_safe(s, entry) for s, entry in strided):
@@ -148,22 +164,22 @@ def single_lane_nodes(state: SDFGState, kernel: nodes.MapEntry,
 
 def barrier(state: SDFGState) -> nodes.Tasklet:
     """A ``__syncthreads()`` tasklet (CUDA and HIP spell it alike)."""
-    return state.add_tasklet('lane_barrier', {}, {}, '__syncthreads();', dtypes.Language.CPP)
+    return state.add_tasklet("lane_barrier", {}, {}, "__syncthreads();", dtypes.Language.CPP)
 
 
 def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
     """Nest ``tasklet`` under ``if (__tid == 0)``, fenced by barriers every lane reaches."""
-    wrapper = xfh.nest_state_subgraph(state.sdfg, state, SubgraphView(state, [tasklet]), name='lane_zero')
+    wrapper = xfh.nest_state_subgraph(state.sdfg, state, SubgraphView(state, [tasklet]), name="lane_zero")
     inner = wrapper.sdfg
     body = inner.start_state
     inner.remove_node(body)
-    branch = ControlFlowRegion('lane_zero_body', sdfg=inner)
+    branch = ControlFlowRegion("lane_zero_body", sdfg=inner)
     branch.add_node(body, is_start_block=True)
-    guard = ConditionalBlock('lane_zero_guard', sdfg=inner)
-    guard.add_branch('__tid == 0', branch)
+    guard = ConditionalBlock("lane_zero_guard", sdfg=inner)
+    guard.add_branch("__tid == 0", branch)
     inner.add_node(guard, is_start_block=True)
-    inner.add_symbol('__tid', dtypes.int32)
-    wrapper.symbol_mapping['__tid'] = '__tid'
+    inner.add_symbol("__tid", dtypes.int32)
+    wrapper.symbol_mapping["__tid"] = "__tid"
     inner.reset_cfg_list()
     before, after = barrier(state), barrier(state)
     for pred in state.predecessors(wrapper):
@@ -178,7 +194,7 @@ def run_on_lane_zero(tasklet: nodes.Tasklet, state: SDFGState) -> None:
 class BlockTileKernels(ppl.Pass):
     """Run each eligible kernel one block per outer iteration, its inner parallel maps across the lanes."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.States | ppl.Modifies.Descriptors
@@ -193,8 +209,11 @@ class BlockTileKernels(ppl.Pass):
         :param pipeline_results: unused.
         :returns: how many kernels were tiled, or ``None`` if none were.
         """
-        kernels = [(node, state) for node, state in sdfg.all_nodes_recursive()
-                   if isinstance(node, nodes.MapEntry) and is_kernel(state, node)]
+        kernels = [
+            (node, state)
+            for node, state in sdfg.all_nodes_recursive()
+            if isinstance(node, nodes.MapEntry) and is_kernel(state, node)
+        ]
         tiled = 0
         for kernel, state in kernels:
             if xfh.gpu_map_has_explicit_threadblocks(state, kernel):
@@ -207,20 +226,21 @@ class BlockTileKernels(ppl.Pass):
             for inner in [entry for owner, entry in strided]:
                 inner.map.schedule = dtypes.ScheduleType.Default
                 inner.specialization_hint = LANE_STRIDED_HINT
-            WarpTiling.apply_to(state.sdfg,
-                                options={
-                                    'warp_size': BLOCK_COLLECTIVE_THREADS,
-                                    'replicate_maps': False
-                                },
-                                verify=False,
-                                mapentry=kernel)
+            WarpTiling.apply_to(
+                state.sdfg,
+                options={"warp_size": BLOCK_COLLECTIVE_THREADS, "replicate_maps": False},
+                verify=False,
+                mapentry=kernel,
+            )
             # WarpTiling nests the body, so each tasklet is found again by identity.
             owners = {node: owner for node, owner in sdfg.all_nodes_recursive() if node in single}
             for node in single:
                 run_on_lane_zero(node, owners[node])
             for lane_map in state.scope_children()[kernel]:
-                if isinstance(lane_map,
-                              nodes.MapEntry) and lane_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                if (
+                    isinstance(lane_map, nodes.MapEntry)
+                    and lane_map.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock
+                ):
                     lane_map.specialization_hint = BLOCK_TILE_HINT
             # The lane map sizes the block now; a declared block size beside it is a conflict.
             kernel.map.gpu_block_size = None

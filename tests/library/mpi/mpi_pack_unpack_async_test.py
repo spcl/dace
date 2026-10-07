@@ -7,6 +7,7 @@ the receive is only complete there. Two structural checks run offline (no MPI): 
 Irecv/Wait inside a ``LoopRegion`` (the halo-in-a-time-loop shape), which is where the async unpack must
 be spliced into the Wait's own graph, not the top SDFG. A 2-rank ring exercises it at runtime.
 """
+
 import dace
 from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
@@ -29,14 +30,12 @@ def _wire_irecv_wait(state, y_name, col):
     state.add_memlet_path(state.add_access("src"), recv, dst_conn="_src", memlet=Memlet.simple("src", "0:1"))
     state.add_memlet_path(state.add_access("tag"), recv, dst_conn="_tag", memlet=Memlet.simple("tag", "0:1"))
     state.add_memlet_path(recv_req, wait, dst_conn="_request", memlet=Memlet.simple("recv_req", "0:1"))
-    state.add_memlet_path(wait,
-                          state.add_access("stat_tag"),
-                          src_conn="_stat_tag",
-                          memlet=Memlet.simple("stat_tag", "0:1"))
-    state.add_memlet_path(wait,
-                          state.add_access("stat_source"),
-                          src_conn="_stat_source",
-                          memlet=Memlet.simple("stat_source", "0:1"))
+    state.add_memlet_path(
+        wait, state.add_access("stat_tag"), src_conn="_stat_tag", memlet=Memlet.simple("stat_tag", "0:1")
+    )
+    state.add_memlet_path(
+        wait, state.add_access("stat_source"), src_conn="_stat_source", memlet=Memlet.simple("stat_source", "0:1")
+    )
     return wait
 
 
@@ -51,11 +50,9 @@ def _irecv_wait_sdfg(in_loop: bool):
     sdfg.add_array("stat_source", [1], dace.dtypes.int32, transient=True)
 
     if in_loop:
-        loop = LoopRegion("halo",
-                          loop_var="t",
-                          initialize_expr="t = 0",
-                          condition_expr="t < 4",
-                          update_expr="t = t + 1")
+        loop = LoopRegion(
+            "halo", loop_var="t", initialize_expr="t = 0", condition_expr="t < 4", update_expr="t = t + 1"
+        )
         sdfg.add_node(loop, is_start_block=True)
         sdfg.add_symbol("t", dace.int64)
         state = loop.add_state("exchange", is_start_block=True)
@@ -157,6 +154,7 @@ def _async_ring_sdfg(dtype):
 
 def _test_mpi(sdfg, dtype):
     from mpi4py import MPI as MPI4PY
+
     comm = MPI4PY.COMM_WORLD
     rank, size = comm.Get_rank(), comm.Get_size()
     if size < 2:
@@ -171,12 +169,14 @@ def _test_mpi(sdfg, dtype):
     N = 16
     X = np.full((N, N), rank, dtype=dtype)
     Y = np.zeros((N, N), dtype=dtype)
-    mpi_sdfg(X=X,
-             Y=Y,
-             src=np.array([srank], dtype=np.int32),
-             dest=np.array([drank], dtype=np.int32),
-             tag=np.array([7], dtype=np.int32),
-             n=N)
+    mpi_sdfg(
+        X=X,
+        Y=Y,
+        src=np.array([srank], dtype=np.int32),
+        dest=np.array([drank], dtype=np.int32),
+        tag=np.array([7], dtype=np.int32),
+        n=N,
+    )
     if not np.allclose(Y[:, COL], srank):
         raise ValueError(f"rank {rank}: Y[:,{COL}] = {Y[:, COL]} (expected {srank})")
 

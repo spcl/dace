@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """DaCe library environment for the AMD hipTensor backend."""
+
 import ctypes.util
 import os
 import pathlib
@@ -22,7 +23,7 @@ class hipTensor:
     cmake_link_flags: List[str] = []
     cmake_files: List[str] = []
 
-    headers = {'frame': ["dace/dace_hiptensor.h"], 'cuda': ["dace/dace_hiptensor.h"]}
+    headers = {"frame": ["dace/dace_hiptensor.h"], "cuda": ["dace/dace_hiptensor.h"]}
     state_fields = ["dace::linalg::HipTensorHandle hiptensor_handle;"]
     init_code = ""
     finalize_code = ""
@@ -44,8 +45,8 @@ class hipTensor:
     #: GPU-resident data is still a GPU map. Listing them instead aborts the process, because the
     #: status is raised as a C++ exception from inside the tasklet.
     TYPE_MAP = {
-        dace.float16: ('HIPTENSOR_R_16F', 'HIPTENSOR_COMPUTE_DESC_16F', '__half'),
-        dace.float32: ('HIPTENSOR_R_32F', 'HIPTENSOR_COMPUTE_DESC_32F', 'float'),
+        dace.float16: ("HIPTENSOR_R_16F", "HIPTENSOR_COMPUTE_DESC_16F", "__half"),
+        dace.float32: ("HIPTENSOR_R_32F", "HIPTENSOR_COMPUTE_DESC_32F", "float"),
     }
 
     #: :attr:`TYPE_MAP` extended for contraction, which accepts more dtypes than permute. Measured the
@@ -57,7 +58,7 @@ class hipTensor:
     #: complex64 and complex128 stay out until a contraction in each is measured the same way.
     CONTRACTION_TYPE_MAP = {
         **TYPE_MAP,
-        dace.float64: ('HIPTENSOR_R_64F', 'HIPTENSOR_COMPUTE_DESC_64F', 'double'),
+        dace.float64: ("HIPTENSOR_R_64F", "HIPTENSOR_COMPUTE_DESC_64F", "double"),
     }
 
     @staticmethod
@@ -78,8 +79,11 @@ class hipTensor:
 
     @staticmethod
     def handle_setup_code(node):
-        return dace.library.reject_gpu_location(node) + """\
+        return (
+            dace.library.reject_gpu_location(node)
+            + """\
 hiptensorHandle_t &__dace_hiptensor_handle = __state->hiptensor_handle.Get();\n"""
+        )
 
     @staticmethod
     def is_installed():
@@ -87,6 +91,6 @@ hiptensorHandle_t &__dace_hiptensor_handle = __state->hiptensor_handle.Get();\n"
         cuTENSOR-v2-shaped header ``hiptensor/hiptensor.h``. ROCm 6.3 ships the library with only the
         older ``hiptensor.hpp`` API, and a node lowered to it failed to compile (cp2k_grid_integrate,
         ls3df_scf on the canon GPU column on mi200)."""
-        if ctypes.util.find_library('hiptensor') is None:
+        if ctypes.util.find_library("hiptensor") is None:
             return False
-        return any((pathlib.Path(root) / 'hiptensor' / 'hiptensor.h').is_file() for root in hipTensor.cmake_includes())
+        return any((pathlib.Path(root) / "hiptensor" / "hiptensor.h").is_file() for root in hipTensor.cmake_includes())

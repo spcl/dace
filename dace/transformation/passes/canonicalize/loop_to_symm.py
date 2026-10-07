@@ -49,6 +49,7 @@ already fused, so the pass is scheduled a second time next to ``loop_to_rank_k_u
 the polybench orientation (``side='L'``, ``uplo='L'``) is recognised; other
 orientations fall through untouched.
 """
+
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import sympy
@@ -61,12 +62,24 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.canonicalize.rank_k_match import (ArrayRead, StateValueResolver, equals, full_memlet,
-                                                                  expressions_equal, is_single_element, loop_extent,
-                                                                  loop_invariant, nontransient_written,
-                                                                  outer_loop_candidates, reaches,
-                                                                  replace_loop_with_state, root_sdfg_of,
-                                                                  single_body_state, sink_write_subset, written_arrays)
+from dace.transformation.passes.canonicalize.rank_k_match import (
+    ArrayRead,
+    StateValueResolver,
+    equals,
+    full_memlet,
+    expressions_equal,
+    is_single_element,
+    loop_extent,
+    loop_invariant,
+    nontransient_written,
+    outer_loop_candidates,
+    reaches,
+    replace_loop_with_state,
+    root_sdfg_of,
+    single_body_state,
+    sink_write_subset,
+    written_arrays,
+)
 from dace.transformation.transformation import explicit_cf_compatible
 from dace.transformation.passes.canonicalize.split_statements import value_edges
 from dace.optionals import required
@@ -121,7 +134,8 @@ class SymmMatch:
 #: connector happened to carry the value.
 ALPHA_ROLE, BETA_ROLE, A_TRI_ROLE, A_DIAG_ROLE, B_PT_ROLE, B_COL_ROLE, C_PT_ROLE, TEMP_ROLE = sympy.symbols(
     "symm_role_alpha symm_role_beta symm_role_a_tri symm_role_a_diag symm_role_b_pt symm_role_b_col "
-    "symm_role_c_pt symm_role_temp")
+    "symm_role_c_pt symm_role_temp"
+)
 
 #: A resolved sink: the state/SDFG a scalar AccessNode lives in, plus the node itself.
 Sink = Tuple[SDFGState, SDFG, nodes.AccessNode]
@@ -144,12 +158,13 @@ def is_scalar_desc(desc: data.Data) -> bool:
     return not desc.shape or all(str(s) == "1" for s in desc.shape)
 
 
-def inner_nested_sdfg_feeding(state: SDFGState, mx: nodes.MapExit,
-                              out_conn: str) -> Optional[Tuple[nodes.NestedSDFG, str]]:
+def inner_nested_sdfg_feeding(
+    state: SDFGState, mx: nodes.MapExit, out_conn: str
+) -> Optional[Tuple[nodes.NestedSDFG, str]]:
     """The NestedSDFG feeding ``mx``'s ``out_conn`` from inside its scope, if any --
     a MapExit fed directly by a Tasklet is not this matcher's concern (StateValueResolver
     already walks that case)."""
-    in_conn = "IN_" + out_conn[len("OUT_"):] if out_conn.startswith("OUT_") else out_conn
+    in_conn = "IN_" + out_conn[len("OUT_") :] if out_conn.startswith("OUT_") else out_conn
     inner = [e for e in state.in_edges(mx) if e.dst_conn == in_conn]
     if len(inner) == 1 and isinstance(inner[0].src, nodes.NestedSDFG):
         return inner[0].src, inner[0].src_conn
@@ -195,7 +210,10 @@ def wcr_sum_write_state(inner: SDFG, name: str) -> Optional[SDFGState]:
     zero-initialisation elsewhere)."""
     for st in inner.states():
         edges = [
-            e for dn in st.data_nodes() if dn.data == name for e in st.in_edges(dn)
+            e
+            for dn in st.data_nodes()
+            if dn.data == name
+            for e in st.in_edges(dn)
             if e.data is not None and e.data.wcr is not None and st.entry_node(e.src) is not None
         ]
         if len(edges) == 1 and wcr_is_sum(edges[0].data.wcr):
@@ -253,8 +271,16 @@ def classify_read(array: str, subset: subsets.Range, match: SymmMatch, p_row: st
     return None
 
 
-def classify_leaf(state: SDFGState, sdfg: SDFG, read: ArrayRead, temp_name: Optional[str], match: SymmMatch, p_row: str,
-                  p_col: str, top: Optional[SDFG]) -> Optional[sympy.Expr]:
+def classify_leaf(
+    state: SDFGState,
+    sdfg: SDFG,
+    read: ArrayRead,
+    temp_name: Optional[str],
+    match: SymmMatch,
+    p_row: str,
+    p_col: str,
+    top: Optional[SDFG],
+) -> Optional[sympy.Expr]:
     """Role of one ``StateValueResolver`` leaf read, climbing out through Map/NestedSDFG
     boundaries (``sdutil.trace_nested_access``) to the real array read, or None if it
     resolves to none of the known symm operands (the caller then refuses the match).
@@ -282,17 +308,21 @@ def classify_leaf(state: SDFGState, sdfg: SDFG, read: ArrayRead, temp_name: Opti
     return classify_read(outer_memlet.data, outer_memlet.subset, match, p_row, p_col)
 
 
-def read_in_body_coordinates(state: SDFGState, sdfg: SDFG, read: ArrayRead,
-                             top: SDFG) -> Optional[Tuple[str, subsets.Subset]]:
+def read_in_body_coordinates(
+    state: SDFGState, sdfg: SDFG, read: ArrayRead, top: SDFG
+) -> Optional[Tuple[str, subsets.Subset]]:
     """``read`` as ``(container, subset)`` of ``top``, propagated out of every scope up to ``top``.
 
     Every NestedSDFG between the read and ``top`` must bind whole containers in its parent's coordinates.
     """
     point = subsets.Range.from_indices(list(read.index))
     reads = [
-        e for e in state.edges()
-        if isinstance(e.dst, nodes.CodeNode) and e.data is not None and e.data.data == read.array and (
-            e.data.src_subset or e.data.subset) == point
+        e
+        for e in state.edges()
+        if isinstance(e.dst, nodes.CodeNode)
+        and e.data is not None
+        and e.data.data == read.array
+        and (e.data.src_subset or e.data.subset) == point
     ]
     if len(reads) != 1:
         return None
@@ -301,8 +331,9 @@ def read_in_body_coordinates(state: SDFGState, sdfg: SDFG, read: ArrayRead,
         scope = state.scope_dict()
         entry = scope[anchor]
         while entry is not None:
-            subset = propagate_subset([mm.Memlet(data=name, subset=subset)], sdfg.arrays[name], entry.map.params,
-                                      entry.map.range).subset
+            subset = propagate_subset(
+                [mm.Memlet(data=name, subset=subset)], sdfg.arrays[name], entry.map.params, entry.map.range
+            ).subset
             entry = scope[entry]
         if sdfg is top:
             return name, subset
@@ -316,8 +347,9 @@ def read_in_body_coordinates(state: SDFGState, sdfg: SDFG, read: ArrayRead,
         sdfg, anchor = state.sdfg, nested
 
 
-def resolve_role_expr(sink: Sink, temp_name: Optional[str], match: SymmMatch, p_row: str, p_col: str, allow_wcr: bool,
-                      top: Optional[SDFG]) -> Optional[sympy.Basic]:
+def resolve_role_expr(
+    sink: Sink, temp_name: Optional[str], match: SymmMatch, p_row: str, p_col: str, allow_wcr: bool, top: Optional[SDFG]
+) -> Optional[sympy.Basic]:
     """``sink``'s defining value with every leaf read substituted by its canonical role
     symbol, or None if the value or any leaf cannot be resolved exactly."""
     state, sdfg, node = sink
@@ -349,8 +381,14 @@ def arithmetic_matches(state: SDFGState, nsdfg: nodes.NestedSDFG, match: SymmMat
             return False
         wcr_state = wcr_sum_write_state(inner, conn)
         plain_states = [
-            st for st in inner.states() if any(e.data is not None and not e.data.is_empty() and e.data.wcr is None
-                                               for dn in st.data_nodes() if dn.data == conn for e in st.in_edges(dn))
+            st
+            for st in inner.states()
+            if any(
+                e.data is not None and not e.data.is_empty() and e.data.wcr is None
+                for dn in st.data_nodes()
+                if dn.data == conn
+                for e in st.in_edges(dn)
+            )
         ]
         if wcr_state is None or len(plain_states) != 1:
             return False
@@ -380,9 +418,13 @@ def arithmetic_matches(state: SDFGState, nsdfg: nodes.NestedSDFG, match: SymmMat
     f_term = resolve_role_expr(final_sink, temp_name, match, p_row, p_col, allow_wcr=False, top=top)
     if c_term is None or t_term is None or f_term is None:
         return False
-    return (expressions_equal(c_term, ALPHA_ROLE * A_TRI_ROLE * B_PT_ROLE)
-            and expressions_equal(t_term, A_TRI_ROLE * B_COL_ROLE) and expressions_equal(
-                f_term, BETA_ROLE * C_PT_ROLE + ALPHA_ROLE * B_PT_ROLE * A_DIAG_ROLE + ALPHA_ROLE * TEMP_ROLE))
+    return (
+        expressions_equal(c_term, ALPHA_ROLE * A_TRI_ROLE * B_PT_ROLE)
+        and expressions_equal(t_term, A_TRI_ROLE * B_COL_ROLE)
+        and expressions_equal(
+            f_term, BETA_ROLE * C_PT_ROLE + ALPHA_ROLE * B_PT_ROLE * A_DIAG_ROLE + ALPHA_ROLE * TEMP_ROLE
+        )
+    )
 
 
 @explicit_cf_compatible
@@ -479,8 +521,9 @@ class LoopToSymm(ppl.Pass):
             return None
         # C is also read point-wise at [p_row, p_col].
         if c not in ins or not any(
-                _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
-                for s in ins[c]):
+            _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
+            for s in ins[c]
+        ):
             return None
 
         # Symmetric operand A: read on its lower triangle [p_row, 0:p_row] and its
@@ -506,32 +549,38 @@ class LoopToSymm(ppl.Pass):
             return None
         return match
 
-    def _find_symmetric(self, ins: Dict[str, List[subsets.Subset]], p_row: str, exclude: Dict[str,
-                                                                                              None]) -> Optional[str]:
+    def _find_symmetric(
+        self, ins: Dict[str, List[subsets.Subset]], p_row: str, exclude: Dict[str, None]
+    ) -> Optional[str]:
         for name, subs in ins.items():
             if name in exclude:
                 continue
             has_diag = any(
                 _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_row)
-                for s in subs)
+                for s in subs
+            )
             has_tri = any(
                 _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_lower_tri(required(_axes(s))[1], p_row)
-                for s in subs)
+                for s in subs
+            )
             if has_diag and has_tri:
                 return name
         return None
 
-    def _find_b(self, ins: Dict[str, List[subsets.Subset]], p_row: str, p_col: str,
-                exclude: Dict[str, None]) -> Optional[str]:
+    def _find_b(
+        self, ins: Dict[str, List[subsets.Subset]], p_row: str, p_col: str, exclude: Dict[str, None]
+    ) -> Optional[str]:
         for name, subs in ins.items():
             if name in exclude:
                 continue
             has_pt = any(
                 _axes(s) and _is_point(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
-                for s in subs)
+                for s in subs
+            )
             has_col = any(
                 _axes(s) and _is_lower_tri(required(_axes(s))[0], p_row) and _is_point(required(_axes(s))[1], p_col)
-                for s in subs)
+                for s in subs
+            )
             if has_pt and has_col:
                 return name
         return None
@@ -554,16 +603,19 @@ class LoopToSymm(ppl.Pass):
 
     def _replace(self, sdfg: SDFG, state: SDFGState, me: nodes.MapEntry, match: SymmMatch) -> None:
         from dace.libraries.blas.nodes.symm import Symm
+
         mx = state.exit_node(me)
         nsdfg = min(state.all_nodes_between(me, required(mx)), key=state.node_id)  # set -> stable pick (see _match)
         # One read AccessNode per array feeding the map; the frontend may stage the
         # same array through several duplicate read nodes -- keep one, drop the rest.
         reads = {e.data.data: e.src for e in state.in_edges(me) if isinstance(e.src, nodes.AccessNode)}
         writes = {e.data.data: e.dst for e in state.out_edges(mx) if isinstance(e.dst, nodes.AccessNode)}
-        boundary = dict.fromkeys([
-            *(e.src for e in state.in_edges(me) if isinstance(e.src, nodes.AccessNode)),
-            *(e.dst for e in state.out_edges(mx) if isinstance(e.dst, nodes.AccessNode)),
-        ])
+        boundary = dict.fromkeys(
+            [
+                *(e.src for e in state.in_edges(me) if isinstance(e.src, nodes.AccessNode)),
+                *(e.dst for e in state.out_edges(mx) if isinstance(e.dst, nodes.AccessNode)),
+            ]
+        )
 
         node = Symm(me.map.label + "_symm", side="L", uplo="L", alpha=1, beta=1, alpha_input=True, beta_input=True)
         state.add_node(node)
@@ -632,15 +684,17 @@ def body_accesses(inner: SDFG) -> Optional[Tuple[Reads, Writes]]:
                 if nested is None:
                     return None
                 conn = e.dst_conn if dst_code else e.src_conn
-                found = ([(s, None) for s in nested[0].get(conn, [])] if dst_code else nested[1].get(conn, []))
+                found = [(s, None) for s in nested[0].get(conn, [])] if dst_code else nested[1].get(conn, [])
             else:
-                found = [(e.data.dst_subset if src_code and e.data.dst_subset is not None else e.data.subset,
-                          e.data.wcr)]
+                found = [
+                    (e.data.dst_subset if src_code and e.data.dst_subset is not None else e.data.subset, e.data.wcr)
+                ]
             for subset, wcr in found:
                 entry = scope[code]
                 while entry is not None:
-                    subset = propagate_subset([mm.Memlet(data=name, subset=subset)], inner.arrays[name],
-                                              entry.map.params, entry.map.range).subset
+                    subset = propagate_subset(
+                        [mm.Memlet(data=name, subset=subset)], inner.arrays[name], entry.map.params, entry.map.range
+                    ).subset
                     entry = scope[entry]
                 if dst_code:
                     reads.setdefault(name, []).append(subset)
@@ -670,13 +724,10 @@ def boundary_accesses(state: SDFGState, nsdfg: nodes.NestedSDFG) -> Optional[Tup
         return None
     outer_of = {e.dst_conn: e.data.data for e in state.in_edges(nsdfg) if e.data is not None and e.data.data}
     outer_of.update({e.src_conn: e.data.data for e in state.out_edges(nsdfg) if e.data is not None and e.data.data})
-    return ({
-        outer_of[k]: v
-        for k, v in body[0].items() if k in outer_of
-    }, {
-        outer_of[k]: v
-        for k, v in body[1].items() if k in outer_of
-    })
+    return (
+        {outer_of[k]: v for k, v in body[0].items() if k in outer_of},
+        {outer_of[k]: v for k, v in body[1].items() if k in outer_of},
+    )
 
 
 def _boundary_in(sdfg: SDFG, nsdfg: nodes.NestedSDFG) -> List[MultiConnectorEdge[mm.Memlet]]:
@@ -699,13 +750,15 @@ def _reaches_map_scope(inner: SDFG, conn: str) -> bool:
                 if isinstance(e.dst, nodes.MapEntry):
                     return True
                 if isinstance(e.dst, nodes.AccessNode) and any(
-                        isinstance(e2.dst, nodes.MapEntry) for e2 in st.out_edges(e.dst)):
+                    isinstance(e2.dst, nodes.MapEntry) for e2 in st.out_edges(e.dst)
+                ):
                     return True
     return False
 
 
 class SymmSliceMatch(NamedTuple):
     """Operands of a recognised npbench-slice ``symm`` nest."""
+
     c: str
     a: str
     b: str
@@ -718,9 +771,14 @@ def col_slice(subset: Optional[subsets.Subset], rows: object, col: object) -> bo
     if subset is None or len(subset) != 2:
         return False
     (rb, re_, rs), (cb, ce, cs) = subset.ndrange()
-    return (equals(rb, 0) and equals(re_,
-                                     as_expr(symbolic.pystr_to_symbolic(str(rows))) - 1) and equals(rs, 1)
-            and equals(cb, col) and equals(ce, col) and equals(cs, 1))
+    return (
+        equals(rb, 0)
+        and equals(re_, as_expr(symbolic.pystr_to_symbolic(str(rows))) - 1)
+        and equals(rs, 1)
+        and equals(cb, col)
+        and equals(ce, col)
+        and equals(cs, 1)
+    )
 
 
 def row_slice(subset: Optional[subsets.Subset], row: object, cols: object) -> bool:
@@ -728,9 +786,14 @@ def row_slice(subset: Optional[subsets.Subset], row: object, cols: object) -> bo
     if subset is None or len(subset) != 2:
         return False
     (rb, re_, rs), (cb, ce, cs) = subset.ndrange()
-    return (equals(rb, row) and equals(re_, row) and equals(rs, 1) and equals(cb, 0)
-            and equals(ce,
-                       as_expr(symbolic.pystr_to_symbolic(str(cols))) - 1) and equals(cs, 1))
+    return (
+        equals(rb, row)
+        and equals(re_, row)
+        and equals(rs, 1)
+        and equals(cb, 0)
+        and equals(ce, as_expr(symbolic.pystr_to_symbolic(str(cols))) - 1)
+        and equals(cs, 1)
+    )
 
 
 def point_of(subset: Optional[subsets.Subset], index: object) -> bool:
@@ -795,8 +858,9 @@ def staged_library_node(state: SDFGState, node: nodes.AccessNode) -> Optional[no
     return None
 
 
-def library_operand_reads(state: SDFGState, sdfg: SDFG,
-                          node: nodes.LibraryNode) -> Optional[List[Tuple[str, subsets.Subset]]]:
+def library_operand_reads(
+    state: SDFGState, sdfg: SDFG, node: nodes.LibraryNode
+) -> Optional[List[Tuple[str, subsets.Subset]]]:
     """The ``(array, subset)`` each operand of ``node`` ultimately reads, resolving the
     frontend's per-operand staging copy back to the array it was filled from."""
     out: List[Tuple[str, subsets.Subset]] = []
@@ -814,8 +878,9 @@ def library_operand_reads(state: SDFGState, sdfg: SDFG,
     return out
 
 
-def match_finalize_state(state: SDFGState, root: SDFG, i: str, n: symbolic.SymbolicType,
-                         c: str) -> Optional[Tuple[str, str, str, str]]:
+def match_finalize_state(
+    state: SDFGState, root: SDFG, i: str, n: symbolic.SymbolicType, c: str
+) -> Optional[Tuple[str, str, str, str]]:
     """Match ``C[i, 0:N] += alpha[0]*B[i, 0:N]*A[i, i] + alpha[0]*t[0:N]``.
 
     :returns: ``(a, b, alpha, t)`` -- the symmetric operand, the second matrix, the
@@ -923,6 +988,7 @@ def matches_inner_product(state: SDFGState, root: SDFG, i: str, j: str, match: S
     rather than as resolvable dataflow."""
     from dace.libraries.blas.nodes.dot import Dot  # local: the BLAS package imports transformations
     from dace.libraries.blas.nodes.matmul import MatMul
+
     tw = write_node(state, match.temp)
     if tw is None or not point_of(sink_write_subset(state, tw), symbolic.pystr_to_symbolic(j)):
         return False
@@ -1010,6 +1076,7 @@ def replace_slice_form(parent: ControlFlowRegion, loop: LoopRegion, match: SymmS
     ``C := alpha*A*B + beta*C``.
     """
     from dace.libraries.blas.nodes.symm import Symm  # local: the BLAS package imports transformations
+
     root = root_sdfg_of(parent)
     state = replace_loop_with_state(parent, loop, loop.label + "_symm")
     node = Symm(loop.label + "_symm", side="L", uplo="L", alpha=1, beta=1, alpha_input=True, beta_input=False)

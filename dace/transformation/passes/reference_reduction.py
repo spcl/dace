@@ -18,7 +18,7 @@ class ReferenceToView(ppl.Pass):
     Replaces Reference data descriptors that are only set to one source with views.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -47,8 +47,9 @@ class ReferenceToView(ppl.Pass):
             return None
 
         # Filter out multi-source references and tasklet-set references
-        candidates = set(k for k, v in reference_sources.items()
-                         if len(v) == 1 and not isinstance(next(iter(v)), nodes.CodeNode))
+        candidates = set(
+            k for k, v in reference_sources.items() if len(v) == 1 and not isinstance(next(iter(v)), nodes.CodeNode)
+        )
 
         refsets = self.find_refsets(candidates, access_states)
 
@@ -68,10 +69,11 @@ class ReferenceToView(ppl.Pass):
         return result or None
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Converted {len(pass_retval)} references to views: {pass_retval}.'
+        return f"Converted {len(pass_retval)} references to views: {pass_retval}."
 
-    def find_refsets(self, candidates: Set[str],
-                     access_states: Dict[str, Set[SDFGState]]) -> Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]:
+    def find_refsets(
+        self, candidates: Set[str], access_states: Dict[str, Set[SDFGState]]
+    ) -> Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]:
         """
         Returns a dictionary of reference name to a list of tuples of (state, access node)
         where the reference is set via a memlet.
@@ -86,7 +88,7 @@ class ReferenceToView(ppl.Pass):
             for node in state.data_nodes():
                 if node.data not in candidates:
                     continue
-                for _ in state.in_edges_by_connector(node, 'set'):
+                for _ in state.in_edges_by_connector(node, "set"):
                     result[node.data].append((state, node))
                     break
 
@@ -168,7 +170,7 @@ class ReferenceToView(ppl.Pass):
                 edges_to_remove = OrderedSet()
                 nodes_to_remove = OrderedSet()
                 affected_nodes = OrderedSet()
-                for e in state.in_edges_by_connector(node, 'set'):
+                for e in state.in_edges_by_connector(node, "set"):
                     # This is a reference set edge. Consider scope and neighbors and remove set
                     if state.out_degree(e.dst) == 0:
                         edges_to_remove.add(e)
@@ -188,7 +190,7 @@ class ReferenceToView(ppl.Pass):
                             edges_to_add.append((scope, None, node, None, Memlet()))
                     else:  # Node has other neighbors, modify edge to become an empty memlet instead
                         e.dst_conn = None
-                        e.dst.remove_in_connector('set')
+                        e.dst.remove_in_connector("set")
                         e.data = Memlet()
 
                 # Modify the state graph as necessary
@@ -205,8 +207,13 @@ class ReferenceToView(ppl.Pass):
                     if state.degree(n) == 0:
                         state.remove_node(n)
 
-    def reconnect_views(self, sdfg: SDFG, candidates: Set[str], access_states: Dict[str, Set[SDFGState]],
-                        reference_sources: Dict[str, Set[Memlet]]):
+    def reconnect_views(
+        self,
+        sdfg: SDFG,
+        candidates: Set[str],
+        access_states: Dict[str, Set[SDFGState]],
+        reference_sources: Dict[str, Set[Memlet]],
+    ):
         all_states_to_consider: Set[SDFGState] = set()
         for cand in candidates:
             all_states_to_consider.update(access_states[cand])
@@ -244,11 +251,11 @@ class ReferenceToView(ppl.Pass):
 
         # Use "views" connector to disambiguate potential corner cases
         if predecessor:
-            view.add_out_connector('views')
-            state.add_edge(view, 'views', node, None, copy.deepcopy(refsource))
+            view.add_out_connector("views")
+            state.add_edge(view, "views", node, None, copy.deepcopy(refsource))
         else:
-            view.add_in_connector('views')
-            state.add_edge(node, None, view, 'views', copy.deepcopy(refsource))
+            view.add_in_connector("views")
+            state.add_edge(node, None, view, "views", copy.deepcopy(refsource))
 
     def change_ref_descriptors_to_views(self, sdfg: SDFG, names: Set[str]):
         for name in names:

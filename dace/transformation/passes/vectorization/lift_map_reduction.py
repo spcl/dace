@@ -26,6 +26,7 @@ Detection: :func:`recognize_map_reduction`. Only accumulators pre-initialised to
 the op identity are lifted, so seeding the fold with the identity reproduces the
 original ``init (op) fold``.
 """
+
 import ast
 import copy
 
@@ -69,8 +70,9 @@ def _free_syms(expr: object) -> set[str]:
         return set()
 
 
-def _trip_depends_on_enclosing_map(state: dace.SDFGState, map_entry: nodes.MapEntry,
-                                   trip: symbolic.SymbolicType) -> bool:
+def _trip_depends_on_enclosing_map(
+    state: dace.SDFGState, map_entry: nodes.MapEntry, trip: symbolic.SymbolicType
+) -> bool:
     # True if the reduction map's trip count is sized by a param of a map ENCLOSING it -- following the scope tree out
     # through nested-SDFG boundaries.
     syms = _free_syms(trip)
@@ -88,8 +90,9 @@ def _trip_depends_on_enclosing_map(state: dace.SDFGState, map_entry: nodes.MapEn
         nsdfg_node = cur_state.sdfg.parent_nsdfg_node
         if nsdfg_node is None:
             return False
-        syms = set().union(*(_free_syms(nsdfg_node.symbol_mapping[s]) if s in nsdfg_node.symbol_mapping else {s}
-                             for s in syms))
+        syms = set().union(
+            *(_free_syms(nsdfg_node.symbol_mapping[s]) if s in nsdfg_node.symbol_mapping else {s} for s in syms)
+        )
         node, cur_state = nsdfg_node, cur_state.sdfg.parent
     return False
 
@@ -119,8 +122,15 @@ class PureWCRReductionInfo:
 
     __slots__ = ("map_entry", "map_exit", "body", "accumulator", "op", "write_edge")
 
-    def __init__(self, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, body: nodes.Node, accumulator: str, op: str,
-                 write_edge: MultiConnectorEdge[Memlet]) -> None:
+    def __init__(
+        self,
+        map_entry: nodes.MapEntry,
+        map_exit: nodes.MapExit,
+        body: nodes.Node,
+        accumulator: str,
+        op: str,
+        write_edge: MultiConnectorEdge[Memlet],
+    ) -> None:
         self.map_entry = map_entry
         self.map_exit = map_exit
         self.body = body
@@ -129,8 +139,9 @@ class PureWCRReductionInfo:
         self.write_edge = write_edge
 
 
-def _pure_wcr_map_ok(state: "dace.SDFGState",
-                     map_entry: "dace.nodes.MapEntry") -> tuple[nodes.MapExit, list[nodes.Node], str] | None:
+def _pure_wcr_map_ok(
+    state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry"
+) -> tuple[nodes.MapExit, list[nodes.Node], str] | None:
     # Shared map-level guards for a pure-WCR reduction: single-param, unit-step, top-level (within its state) map whose
     # body holds no nested map.
     if not isinstance(map_entry, dace.nodes.MapEntry):
@@ -153,12 +164,18 @@ def _pure_wcr_map_ok(state: "dace.SDFGState",
     return map_exit, inner, map_entry.map.params[0]
 
 
-def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit,
-                             inner: list[nodes.Node], param: str,
-                             write_edge: MultiConnectorEdge[Memlet]) -> PureWCRReductionInfo | None:
+def _validate_pure_wcr_write(
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    map_exit: nodes.MapExit,
+    inner: list[nodes.Node],
+    param: str,
+    write_edge: MultiConnectorEdge[Memlet],
+) -> PureWCRReductionInfo | None:
     # Per-write guards: one scalar ``body -> map_exit`` WCR edge writing a FIXED (param-independent) scalar accumulator
     # not read at map entry / aliased in scope.
     from dace.frontend.operations import detect_reduction_type
+
     body = write_edge.src
     acc = write_edge.data.data
     # FIXED scalar accumulator: the write subset must not depend on the map param
@@ -186,13 +203,19 @@ def _validate_pure_wcr_write(state: dace.SDFGState, map_entry: nodes.MapEntry, m
 def _scalar_wcr_writes(state: dace.SDFGState, map_exit: nodes.MapExit) -> list[MultiConnectorEdge[Memlet]]:
     # Every scalar-slot (single-element) WCR write edge into ``map_exit``.
     return [
-        e for e in state.in_edges(map_exit) if e.data is not None and e.data.data is not None
-        and e.data.subset is not None and e.data.subset.num_elements() == 1 and e.data.wcr is not None
+        e
+        for e in state.in_edges(map_exit)
+        if e.data is not None
+        and e.data.data is not None
+        and e.data.subset is not None
+        and e.data.subset.num_elements() == 1
+        and e.data.wcr is not None
     ]
 
 
-def _recognize_pure_wcr_reductions(state: "dace.SDFGState",
-                                   map_entry: "dace.nodes.MapEntry") -> "list[PureWCRReductionInfo]":
+def _recognize_pure_wcr_reductions(
+    state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry"
+) -> "list[PureWCRReductionInfo]":
     # Recognise EVERY independent pure-WCR scalar reduction on ``map_entry``.
     ok = _pure_wcr_map_ok(state, map_entry)
     if ok is None:
@@ -212,8 +235,9 @@ def _recognize_pure_wcr_reductions(state: "dace.SDFGState",
     return infos
 
 
-def _recognize_pure_wcr_reduction(state: "dace.SDFGState",
-                                  map_entry: "dace.nodes.MapEntry") -> PureWCRReductionInfo | None:
+def _recognize_pure_wcr_reduction(
+    state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry"
+) -> PureWCRReductionInfo | None:
     # Recognise ``acc (op)= f(...)`` as a MapExit WCR with no carry-in.
     infos = _recognize_pure_wcr_reductions(state, map_entry)
     return infos[0] if len(infos) == 1 else None
@@ -227,12 +251,14 @@ class LiftMapReductionToReduce(ppl.Pass):
         self-contained, no-tile-node CPU vectorized fold). Default ``True``.
     """
 
-    def __init__(self,
-                 vectorized: bool = True,
-                 pure_wcr_only: bool = False,
-                 rmw_only: bool = False,
-                 nested_only: bool = False,
-                 wcr_free_output: bool = False) -> None:
+    def __init__(
+        self,
+        vectorized: bool = True,
+        pure_wcr_only: bool = False,
+        rmw_only: bool = False,
+        nested_only: bool = False,
+        wcr_free_output: bool = False,
+    ) -> None:
         super().__init__()
         self._vectorized = vectorized
         #: Lift ONLY pure-WCR boundary reductions (skip RMW recogniser). For the
@@ -261,8 +287,11 @@ class LiftMapReductionToReduce(ppl.Pass):
         :param sdfg: The SDFG to transform in place.
         :returns: The number of reductions lifted, or ``None`` if none.
         """
-        targets = [(n, g) for n, g in sdfg.all_nodes_recursive()
-                   if isinstance(n, nodes.MapEntry) and isinstance(g, dace.SDFGState)]
+        targets = [
+            (n, g)
+            for n, g in sdfg.all_nodes_recursive()
+            if isinstance(n, nodes.MapEntry) and isinstance(g, dace.SDFGState)
+        ]
         count = 0
         for me, state in targets:
             if me not in state.nodes():
@@ -310,7 +339,7 @@ class LiftMapReductionToReduce(ppl.Pass):
             return False
 
         # Locate the map_exit -> acc sink edge that the WCR write drains into.
-        write_out_conn = "OUT_" + write_edge.dst_conn[len("IN_"):]
+        write_out_conn = "OUT_" + write_edge.dst_conn[len("IN_") :]
         mx_out = [e for e in state.out_edges(mx) if e.src_conn == write_out_conn]
         if len(mx_out) != 1:
             return False
@@ -323,7 +352,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         acc_subset = copy.deepcopy(mx_out_edge.data.subset)
 
         # all preconditions hold; mutate from here on
-        buf, _ = sdfg.add_transient(f"_red_buf_{acc}", (trip, ), dtype, find_new_name=True)
+        buf, _ = sdfg.add_transient(f"_red_buf_{acc}", (trip,), dtype, find_new_name=True)
         # Per-iteration result -> product buffer (drop the WCR carry).
         write_edge.data = dace.Memlet(f"{buf}[{param} - ({lb})]")
         buf_node = state.add_access(buf)
@@ -333,25 +362,28 @@ class LiftMapReductionToReduce(ppl.Pass):
         red = state.add_reduce(wcr, axes=[0], identity=identity_val)
         if self._vectorized:
             red.implementation = "vectorized"
-        state.add_edge(buf_node, None, red, '_in', dace.Memlet(f"{buf}[0:{trip}]"))
+        state.add_edge(buf_node, None, red, "_in", dace.Memlet(f"{buf}[0:{trip}]"))
         if self._wcr_free_output:
             # Reduce(buf) -> _partial (plain), then acc = acc <op> _partial (plain RMW). No
             # WCR survives, so the reduction is legal inside a body NSDFG.
             from dace.transformation.dataflow.wcr_conversion import _wcr_augassign_body
+
             partial, _ = sdfg.add_scalar(f"_red_partial_{acc}", dtype, transient=True, find_new_name=True)
             partial_node = state.add_access(partial)
-            state.add_edge(red, '_out', partial_node, None, dace.Memlet(f"{partial}[0]"))
-            fold = state.add_tasklet("reduce_accum", OrderedSet(('__in1', '__in2')), {"__out"},
-                                     f"__out = {_wcr_augassign_body(wcr)}")
-            state.add_edge(state.add_access(acc), None, fold, "__in1",
-                           dace.Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
+            state.add_edge(red, "_out", partial_node, None, dace.Memlet(f"{partial}[0]"))
+            fold = state.add_tasklet(
+                "reduce_accum", OrderedSet(("__in1", "__in2")), {"__out"}, f"__out = {_wcr_augassign_body(wcr)}"
+            )
+            state.add_edge(
+                state.add_access(acc), None, fold, "__in1", dace.Memlet(data=acc, subset=copy.deepcopy(acc_subset))
+            )
             state.add_edge(partial_node, None, fold, "__in2", dace.Memlet(f"{partial}[0]"))
             state.add_edge(fold, "__out", acc_node, None, dace.Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
             return True
         # Reduce(buf) -> acc, WCR-accumulated into the prior acc (top-level boundary form).
         out_mem = dace.Memlet(data=acc, subset=copy.deepcopy(acc_subset))
         out_mem.wcr = wcr
-        state.add_edge(red, '_out', acc_node, None, out_mem)
+        state.add_edge(red, "_out", acc_node, None, out_mem)
         return True
 
     @staticmethod
@@ -364,12 +396,9 @@ class LiftMapReductionToReduce(ppl.Pass):
         conn = write_conn
         inner = body.sdfg
         idesc = inner.arrays[conn]
-        new_inner, _ = inner.add_array(f"{conn}_acc_w",
-                                       idesc.shape,
-                                       idesc.dtype,
-                                       storage=idesc.storage,
-                                       transient=False,
-                                       find_new_name=True)
+        new_inner, _ = inner.add_array(
+            f"{conn}_acc_w", idesc.shape, idesc.dtype, storage=idesc.storage, transient=False, find_new_name=True
+        )
         renamed = False
         for st in inner.states():
             for an in list(st.data_nodes()):
@@ -415,9 +444,9 @@ class LiftMapReductionToReduce(ppl.Pass):
         # Locate the accumulator's map-entry feed and post-map sink. The inout
         # split retargets only the body->map_exit *src* connector, so these lookups
         # (keyed off the unchanged ``write_edge.dst_conn`` / read connector) stay valid.
-        read_in_conn = "IN_" + info.read_edge.src_conn[len("OUT_"):]
+        read_in_conn = "IN_" + info.read_edge.src_conn[len("OUT_") :]
         me_in = [e for e in state.in_edges(me) if e.dst_conn == read_in_conn]
-        write_out_conn = "OUT_" + info.write_edge.dst_conn[len("IN_"):]
+        write_out_conn = "OUT_" + info.write_edge.dst_conn[len("IN_") :]
         mx_out = [e for e in state.out_edges(mx) if e.src_conn == write_out_conn]
         if len(me_in) != 1 or len(mx_out) != 1:
             return False
@@ -453,7 +482,7 @@ class LiftMapReductionToReduce(ppl.Pass):
         if write_edge is None:
             return False
 
-        buf, _ = sdfg.add_transient(f"_red_buf_{acc}", (trip, ), dtype, find_new_name=True)
+        buf, _ = sdfg.add_transient(f"_red_buf_{acc}", (trip,), dtype, find_new_name=True)
         zero, _ = sdfg.add_scalar(f"_red_zero_{acc}", dtype, transient=True, find_new_name=True)
         zero_slot = "0"
         # A nested body's connector descriptor is the outer container and the body picks the element (No-View):
@@ -484,10 +513,16 @@ class LiftMapReductionToReduce(ppl.Pass):
             part_desc.transient = True
             part = sdfg.add_datadesc(f"_red_part_{acc}", part_desc, find_new_name=True)
             part_node = state.add_access(part)
-            state.add_edge(write_edge.src, write_edge.src_conn, part_node, None,
-                           dace.Memlet(data=part, subset=copy.deepcopy(slot)))
-            state.add_edge(part_node, None, write_edge.dst, write_edge.dst_conn,
-                           dace.Memlet(data=buf, subset=f"{param} - ({lb})", other_subset=copy.deepcopy(slot)))
+            state.add_edge(
+                write_edge.src, write_edge.src_conn, part_node, None, dace.Memlet(data=part, subset=copy.deepcopy(slot))
+            )
+            state.add_edge(
+                part_node,
+                None,
+                write_edge.dst,
+                write_edge.dst_conn,
+                dace.Memlet(data=buf, subset=f"{param} - ({lb})", other_subset=copy.deepcopy(slot)),
+            )
             state.remove_edge(write_edge)
         buf_node = state.add_access(buf)
         state.remove_edge(mx_out_edge)
@@ -497,8 +532,8 @@ class LiftMapReductionToReduce(ppl.Pass):
         red = state.add_reduce(wcr, axes=[0], identity=identity_val)
         if self._vectorized:
             red.implementation = "vectorized"
-        state.add_edge(buf_node, None, red, '_in', dace.Memlet(f"{buf}[0:{trip}]"))
-        state.add_edge(red, '_out', acc_out_node, None, dace.Memlet(data=acc, subset=slot))
+        state.add_edge(buf_node, None, red, "_in", dace.Memlet(f"{buf}[0:{trip}]"))
+        state.add_edge(red, "_out", acc_out_node, None, dace.Memlet(data=acc, subset=slot))
 
         # A data-dependent trip (spmv ``indptr[i]`` bounds) is wrapped in a single-iteration map whose
         # dynamic-range connectors redefine the symbols; interstate bindings do not survive the re-nest.
@@ -507,8 +542,9 @@ class LiftMapReductionToReduce(ppl.Pass):
         return True
 
     @staticmethod
-    def _scope_dynamic_range_symbols(state: dace.SDFGState, me: nodes.MapEntry, mx: nodes.MapExit,
-                                     buf_node: nodes.AccessNode, red: nodes.LibraryNode) -> None:
+    def _scope_dynamic_range_symbols(
+        state: dace.SDFGState, me: nodes.MapEntry, mx: nodes.MapExit, buf_node: nodes.AccessNode, red: nodes.LibraryNode
+    ) -> None:
         # Wrap the lifted product-map + buffer + ``Reduce`` in a single-iteration map that re-defines the product-map's
         # data-dependent range symbols as dynamic-range connectors.
         sdfg = state.sdfg

@@ -20,6 +20,7 @@ iteration variable on some dimension, a collision forces the reading and writing
 iterations to coincide, so the overlap is confined to a single iteration (program order in
 the map body preserves it) and never becomes a cross-iteration dependency.
 """
+
 import numpy as np
 
 import dace
@@ -27,8 +28,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def maps_with_param(sdfg: dace.SDFG, param: str):
@@ -39,7 +40,9 @@ def maps_with_param(sdfg: dace.SDFG, param: str):
 def loops_with_var(sdfg: dace.SDFG, var: str):
     """LoopRegions whose loop variable is ``var``, across every (nested) SDFG."""
     return [
-        r for nested in sdfg.all_sdfgs_recursive() for r in nested.all_control_flow_regions()
+        r
+        for nested in sdfg.all_sdfgs_recursive()
+        for r in nested.all_control_flow_regions()
         if isinstance(r, LoopRegion) and r.loop_variable == var
     ]
 
@@ -59,8 +62,8 @@ def test_triangular_doall_maps_both_axes():
     sdfg = tri_doall.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert maps_with_param(sdfg, 'i'), "outer triangular DOALL axis i should become a Map"
-    assert not loops_with_var(sdfg, 'i'), "outer axis i should no longer be a sequential loop"
+    assert maps_with_param(sdfg, "i"), "outer triangular DOALL axis i should become a Map"
+    assert not loops_with_var(sdfg, "i"), "outer axis i should no longer be a sequential loop"
 
     n = 7
     a = np.random.default_rng(0).random((n, n))
@@ -92,8 +95,8 @@ def test_triangular_read_write_slab_maps_outer():
     sdfg = tri_prefix.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert maps_with_param(sdfg, 'i'), "outer axis i should become a Map (triangular read/write slab)"
-    assert not loops_with_var(sdfg, 'i')
+    assert maps_with_param(sdfg, "i"), "outer axis i should become a Map (triangular read/write slab)"
+    assert not loops_with_var(sdfg, "i")
 
     n = 9
     b = np.random.default_rng(1).random((n, n))
@@ -122,9 +125,9 @@ def test_outer_doall_inner_recurrence_splits():
     sdfg = inner_carry_outer_doall.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert maps_with_param(sdfg, 'i'), "outer DOALL axis i should become a Map"
-    assert not maps_with_param(sdfg, 'j'), "inner recurrence axis j must stay a sequential loop"
-    assert loops_with_var(sdfg, 'j'), "inner recurrence axis j must remain a LoopRegion"
+    assert maps_with_param(sdfg, "i"), "outer DOALL axis i should become a Map"
+    assert not maps_with_param(sdfg, "j"), "inner recurrence axis j must stay a sequential loop"
+    assert loops_with_var(sdfg, "j"), "inner recurrence axis j must remain a LoopRegion"
 
     n = 6
     a = np.random.default_rng(2).random((n, n))
@@ -156,8 +159,8 @@ def test_triangular_looking_row_recurrence_stays_sequential():
     sdfg = row_recurrence.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert not maps_with_param(sdfg, 'i'), "carried outer axis i must NOT become a Map"
-    assert loops_with_var(sdfg, 'i'), "carried outer axis i must remain a sequential LoopRegion"
+    assert not maps_with_param(sdfg, "i"), "carried outer axis i must NOT become a Map"
+    assert loops_with_var(sdfg, "i"), "carried outer axis i must remain a sequential LoopRegion"
 
     n = 6
     a = np.random.default_rng(3).random((n, n))
@@ -180,8 +183,8 @@ def test_prefix_scan_stays_sequential():
     sdfg = prefix_scan.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
-    assert not maps_with_param(sdfg, 'i'), "prefix scan axis i must NOT become a Map"
-    assert loops_with_var(sdfg, 'i'), "prefix scan axis i must remain a sequential LoopRegion"
+    assert not maps_with_param(sdfg, "i"), "prefix scan axis i must NOT become a Map"
+    assert loops_with_var(sdfg, "i"), "prefix scan axis i must remain a sequential LoopRegion"
 
     n = 12
     b = np.random.default_rng(4).random(n)
@@ -192,7 +195,7 @@ def test_prefix_scan_stays_sequential():
     assert np.allclose(b, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_triangular_doall_maps_both_axes()
     test_triangular_read_write_slab_maps_outer()
     test_outer_doall_inner_recurrence_splits()

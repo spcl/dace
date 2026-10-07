@@ -17,8 +17,15 @@ class OffloadingIRNode:
     OPEN_COND = 3
     EDGE = 4  # interstate edge
 
-    def __init__(self, type: int, block: ControlFlowBlock | None, cpu_set: OrderedSet[str], gpu_set: OrderedSet[str],
-                 next: list['OffloadingIRNode'], close: 'OffloadingIRNode | None'):
+    def __init__(
+        self,
+        type: int,
+        block: ControlFlowBlock | None,
+        cpu_set: OrderedSet[str],
+        gpu_set: OrderedSet[str],
+        next: list["OffloadingIRNode"],
+        close: "OffloadingIRNode | None",
+    ):
         assert block is None or isinstance(block, ControlFlowBlock), f"{block}, {block.__class__.__name__}"
         self.type = type
         self.block: ControlFlowBlock | None = block
@@ -31,9 +38,9 @@ class OffloadingIRNode:
         self.debug_name = "debug"
 
         # there should be a reference to the corresponding close node IFF the current node is an open node
-        assert (
-            self.close
-            is not None) == self.is_open_node(), f"node {self.debug_name} of type {self.type} has close {self.close}"
+        assert (self.close is not None) == self.is_open_node(), (
+            f"node {self.debug_name} of type {self.type} has close {self.close}"
+        )
 
     def __repr__(self) -> str:
         return self._get_str(OrderedSet(), -4)
@@ -41,7 +48,7 @@ class OffloadingIRNode:
     def __str__(self) -> str:
         return self.__repr__()
 
-    def _get_str(self, visited_set: OrderedSet['OffloadingIRNode'], len_before: int) -> str:
+    def _get_str(self, visited_set: OrderedSet["OffloadingIRNode"], len_before: int) -> str:
         s = f"{self.debug_name}:"
         spaces = 40 - (len_before + len(s))
         cpu = sorted(name for name in self.cpu_set if len(name) <= PRINT_NAMES)
@@ -67,10 +74,10 @@ class OffloadingIRNode:
     def is_close_node(self) -> bool:
         return self.type in [OffloadingIRNode.CLOSE]
 
-    def append_node(self, node: 'OffloadingIRNode') -> None:
+    def append_node(self, node: "OffloadingIRNode") -> None:
         self.next.append(node)
 
-    def get_all_tails(self) -> list['OffloadingIRNode']:
+    def get_all_tails(self) -> list["OffloadingIRNode"]:
         assert self.is_open_node()
 
         # ITERATIVE, and it has to be: the IR is one node per state and per interstate edge, so the
@@ -130,7 +137,7 @@ class OffloadingIRNode:
 
     # static makers
     @staticmethod
-    def new_open_node(block: ControlFlowBlock) -> 'OffloadingIRNode':
+    def new_open_node(block: ControlFlowBlock) -> "OffloadingIRNode":
         close = OffloadingIRNode(OffloadingIRNode.CLOSE, None, OrderedSet(), OrderedSet(), [], None)
         close.debug_name = f"_close_{block.label}"
 
@@ -149,14 +156,15 @@ class OffloadingIRNode:
         return open
 
     @staticmethod
-    def new_state_node(block: ControlFlowBlock, cpu_set: OrderedSet[str],
-                       gpu_set: OrderedSet[str]) -> 'OffloadingIRNode':
+    def new_state_node(
+        block: ControlFlowBlock, cpu_set: OrderedSet[str], gpu_set: OrderedSet[str]
+    ) -> "OffloadingIRNode":
         state = OffloadingIRNode(OffloadingIRNode.STATE, block, cpu_set, gpu_set, [], None)
         state.debug_name = f"_state_{block.label}"
         return state
 
     @staticmethod
-    def new_edge_node(block: ControlFlowBlock, cpu_set: OrderedSet[str]) -> 'OffloadingIRNode':
+    def new_edge_node(block: ControlFlowBlock, cpu_set: OrderedSet[str]) -> "OffloadingIRNode":
         edge_node = OffloadingIRNode(OffloadingIRNode.EDGE, block, cpu_set, OrderedSet(), [], None)
         edge_node.debug_name = f"_edge_{block.label}"
         return edge_node

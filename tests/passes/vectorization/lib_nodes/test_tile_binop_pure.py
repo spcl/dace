@@ -6,6 +6,7 @@ Constructs a single-state SDFG that wires two tile inputs through a
 to lower to the nested ``pure`` SDFG, compiles, and compares against
 numpy. K=1 and K=2 shapes are covered with and without ``has_mask``.
 """
+
 import numpy as np
 import pytest
 
@@ -26,7 +27,7 @@ OP_TAG = {
     "==": "eq",
     "!=": "ne",
     "&&": "land",
-    "||": "lor"
+    "||": "lor",
 }
 
 
@@ -59,7 +60,7 @@ def _build_binop_sdfg(widths, op, has_mask, dtype):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 @pytest.mark.parametrize("op", ["+", "*", "max"])
 def test_tile_binop_pure_unmasked(widths, op):
     """Unmasked tile binop matches the numpy reference for K = 1, 2."""
@@ -78,7 +79,7 @@ def test_tile_binop_pure_unmasked(widths, op):
     np.testing.assert_allclose(C, ref, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_binop_pure_masked_holds_destination(widths):
     """Masked write must leave inactive lanes untouched (here: zero-init)."""
     sdfg = _build_binop_sdfg(widths, "+", has_mask=True, dtype=dace.float64)
@@ -87,7 +88,7 @@ def test_tile_binop_pure_masked_holds_destination(widths):
     B = rng.random(widths)
     C = np.zeros(widths)
     M = np.zeros(widths, dtype=bool)
-    M.flat[:M.size // 2] = True
+    M.flat[: M.size // 2] = True
     sdfg(A=A, B=B, C=C, M=M)
     ref = np.where(M, A + B, 0.0)
     np.testing.assert_allclose(C, ref, rtol=0, atol=0)
@@ -96,7 +97,7 @@ def test_tile_binop_pure_masked_holds_destination(widths):
 def test_tile_binop_rejects_unknown_op():
     """Constructor refuses ops that are not in ``_PY_OP_RHS``."""
     with pytest.raises(ValueError, match="unknown op"):
-        TileBinop(name="bad", widths=(8, ), op="not-an-op")
+        TileBinop(name="bad", widths=(8,), op="not-an-op")
 
 
 def test_tile_binop_rejects_invalid_K():
@@ -133,7 +134,7 @@ def _build_binop_symbol_rhs_sdfg(widths, expr_b, tag, dtype=dace.float64, free_s
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_binop_kind_b_symbol_with_literal(widths):
     """Symbol-kind RHS with a numeric literal — every lane is shifted by the constant."""
     sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="2.5", tag="literal")
@@ -147,7 +148,7 @@ def test_tile_binop_kind_b_symbol_with_literal(widths):
 def test_tile_binop_kind_b_symbol_with_complex_literal():
     """``expr_*`` is PYTHON source: an imaginary literal (npbench ``mandelbrot1``'s
     ``Y * 1j``) must lower to ``dace::complex128(0.0, 1.0)``, not the uncompilable ``1j``."""
-    widths = (8, )
+    widths = (8,)
     sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="1j", tag="cplx", dtype=dace.complex128)
     rng = np.random.default_rng(seed=53)
     A = rng.random(widths) + 1j * rng.random(widths)
@@ -159,7 +160,7 @@ def test_tile_binop_kind_b_symbol_with_complex_literal():
 def test_tile_binop_kind_b_symbol_with_free_symbol():
     """Symbol-kind RHS resolves a free symbol at runtime."""
     widths = (4, 8)
-    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="alpha", tag="freesym", free_symbols=("alpha", ))
+    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="alpha", tag="freesym", free_symbols=("alpha",))
     rng = np.random.default_rng(seed=52)
     A = rng.random(widths)
     C = np.zeros(widths)
@@ -167,7 +168,7 @@ def test_tile_binop_kind_b_symbol_with_free_symbol():
     np.testing.assert_allclose(C, A + 0.75, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_binop_symbol_symbol_broadcasts(widths):
     """Both-sides Symbol: each operand broadcasts to every lane (a
     loop-invariant ``N + M`` constant fill)."""
@@ -190,13 +191,13 @@ def test_tile_binop_symbol_symbol_broadcasts(widths):
 def test_tile_binop_rejects_symbol_without_expr():
     """Symbol-kind operand requires the corresponding ``expr_*``."""
     with pytest.raises(ValueError, match="kind_b='Symbol' requires expr_b"):
-        TileBinop(name="bad", widths=(8, ), op="+", kind_b="Symbol")
+        TileBinop(name="bad", widths=(8,), op="+", kind_b="Symbol")
 
 
 def test_tile_binop_rejects_unknown_kind():
     """Constructor refuses kinds outside the allowed set."""
     with pytest.raises(ValueError, match="kind_a must be one of"):
-        TileBinop(name="bad", widths=(8, ), op="+", kind_a="NotAKind")
+        TileBinop(name="bad", widths=(8,), op="+", kind_a="NotAKind")
 
 
 def _build_binop_scalar_rhs_sdfg(widths, dtype=dace.float64):
@@ -218,7 +219,7 @@ def _build_binop_scalar_rhs_sdfg(widths, dtype=dace.float64):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_binop_kind_b_scalar_broadcasts(widths):
     """Scalar-kind RHS (a ``dace.data.Scalar``) broadcasts to every lane."""
     sdfg = _build_binop_scalar_rhs_sdfg(widths)
@@ -231,7 +232,7 @@ def test_tile_binop_kind_b_scalar_broadcasts(widths):
 
 def test_tile_binop_scalar_symbol_broadcasts():
     """A Scalar + Symbol pair (no Tile operand): both broadcast to every lane."""
-    widths = (8, )
+    widths = (8,)
     sdfg = dace.SDFG("tile_binop_scalar_symbol")
     sdfg.add_symbol("M", dace.float64)
     sdfg.add_scalar("s", dace.float64, transient=False)

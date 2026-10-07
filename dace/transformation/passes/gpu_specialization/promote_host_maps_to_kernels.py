@@ -14,6 +14,7 @@ Only a body the device can run is promoted: data in device-accessible storage (o
 owns), Python tasklets (a native tasklet may call the host runtime, a copy among them), nested SDFGs of
 the same kind, and library nodes that have an in-kernel block lowering for their shape.
 """
+
 from typing import Any, Dict, Optional
 
 from dace import SDFG, SDFGState, dtypes, properties
@@ -39,8 +40,10 @@ def device_capable(node: nodes.Node, state: SDFGState, owned: bool) -> bool:
         return gpu_block_implementation(node, state, state.sdfg) is not None
     if isinstance(node, nodes.NestedSDFG):
         return all(
-            device_capable(inner, inner_state, True) for inner_state in node.sdfg.states()
-            for inner in inner_state.nodes())
+            device_capable(inner, inner_state, True)
+            for inner_state in node.sdfg.states()
+            for inner in inner_state.nodes()
+        )
     return isinstance(node, (nodes.EntryNode, nodes.ExitNode))
 
 
@@ -57,19 +60,19 @@ def promotable(state: SDFGState, entry: nodes.MapEntry) -> bool:
     if entry.map.schedule not in HOST_MAP_SCHEDULES:
         return False
     if any(
-            isinstance(scope, nodes.MapEntry) and scope.map.schedule in dtypes.GPU_SCHEDULES
-            for scope in xfh.get_parent_map_and_loop_scopes(state.sdfg, entry, state)):
+        isinstance(scope, nodes.MapEntry) and scope.map.schedule in dtypes.GPU_SCHEDULES
+        for scope in xfh.get_parent_map_and_loop_scopes(state.sdfg, entry, state)
+    ):
         return False
     body = state.scope_subgraph(entry, include_entry=False, include_exit=False).nodes()
-    return (any(launches_device_work(node) for node in body)
-            and all(device_capable(node, state, False) for node in body))
+    return any(launches_device_work(node) for node in body) and all(device_capable(node, state, False) for node in body)
 
 
 @properties.make_properties
 class PromoteHostMapsToKernels(ppl.Pass):
     """Make each host map that only launches device work the kernel (see the module docstring)."""
 
-    CATEGORY: str = 'Device Specialization'
+    CATEGORY: str = "Device Specialization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes

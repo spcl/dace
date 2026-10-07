@@ -17,6 +17,7 @@ is then legitimately trivial and may be folded into a direct copy by
 ``TrivialTaskletElimination``. A genuine cast (differing dtypes) fails (b) and is kept,
 so no conversion is ever silently dropped.
 """
+
 import ast
 from typing import Any, Dict, Optional, Tuple
 
@@ -36,8 +37,9 @@ def string_to_typeclass() -> Dict[str, dtypes.typeclass]:
     return {tc.to_string(): tc for tc in dtypes.TYPECLASS_TO_STRING}
 
 
-def noop_cast_candidate(code: CodeBlock,
-                        casts: Dict[str, dtypes.typeclass]) -> Optional[Tuple[str, ast.AST, dtypes.typeclass]]:
+def noop_cast_candidate(
+    code: CodeBlock, casts: Dict[str, dtypes.typeclass]
+) -> Optional[Tuple[str, ast.AST, dtypes.typeclass]]:
     """If ``code`` is a single ``x = cast(y)`` with ``y`` a data/symbol reference and
     ``cast`` a dtype conversion, return ``(target_conn, arg_ast, cast_dtype)``; else
     ``None``. The dtype-equality checks (a genuine no-op) are applied by the caller."""
@@ -54,7 +56,7 @@ def noop_cast_candidate(code: CodeBlock,
     # (a) ``y`` must be a data/symbol reference, not a numeric constant or a compound expression.
     if not isinstance(arg, (ast.Name, ast.Subscript)):
         return None
-    cast_name = required(astutils.rname(call.func)).split('.')[-1]
+    cast_name = required(astutils.rname(call.func)).split(".")[-1]
     if cast_name not in casts:
         return None
     return assign.targets[0].id, arg, casts[cast_name]
@@ -65,8 +67,9 @@ def base_name(arg: ast.AST) -> str:
     return arg.id if isinstance(arg, ast.Name) else astutils.rname(arg.value)
 
 
-def destination_dtype(state: SDFGState, tasklet: nodes.Tasklet, out_conn: str, sdfg: SDFG,
-                      resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass | scopes.UndeterminedDType:
+def destination_dtype(
+    state: SDFGState, tasklet: nodes.Tasklet, out_conn: str, sdfg: SDFG, resolver: scopes.ScopedSymbolResolver
+) -> dtypes.typeclass | scopes.UndeterminedDType:
     """The declared dtype ``x`` is written into: the dtype of the array the output
     connector ``out_conn`` feeds, or :data:`~dace.transformation.passes.analysis.scopes.UNDETERMINED`."""
     for edge in state.out_edges(tasklet):
@@ -75,8 +78,9 @@ def destination_dtype(state: SDFGState, tasklet: nodes.Tasklet, out_conn: str, s
     return scopes.UNDETERMINED
 
 
-def source_dtype(state: SDFGState, tasklet: nodes.Tasklet, in_name: str, sdfg: SDFG,
-                 resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass | scopes.UndeterminedDType:
+def source_dtype(
+    state: SDFGState, tasklet: nodes.Tasklet, in_name: str, sdfg: SDFG, resolver: scopes.ScopedSymbolResolver
+) -> dtypes.typeclass | scopes.UndeterminedDType:
     """The dtype of the value ``y`` reads: the array behind the matching input connector, or --
     when ``y`` is a free symbol rather than a connector -- the symbol's dtype.
 
@@ -98,7 +102,7 @@ class CollapseNoOpCast(ppl.Pass):
     only when ``y`` is a non-constant data/symbol reference and source, destination and
     cast-target dtype all coincide (the cast is identity and the store is exact)."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets
@@ -132,9 +136,9 @@ class CollapseNoOpCast(ppl.Pass):
                     # mismatch is a real conversion and is left as a cast.
                     if src_dtype != cast_dtype or dst_dtype != cast_dtype:
                         continue
-                    tasklet.code = CodeBlock(f'{target_conn} = {required(astutils.unparse(arg)).strip()}')
+                    tasklet.code = CodeBlock(f"{target_conn} = {required(astutils.unparse(arg)).strip()}")
                     count += 1
         return count or None
 
 
-__all__ = ['CollapseNoOpCast']
+__all__ = ["CollapseNoOpCast"]

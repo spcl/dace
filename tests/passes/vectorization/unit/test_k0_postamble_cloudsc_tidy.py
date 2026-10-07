@@ -38,7 +38,8 @@ import dace
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-    VectorizeCPUMultiDim, )
+    VectorizeCPUMultiDim,
+)
 
 KLEV = dace.symbol("KLEV")
 KLON = dace.symbol("KLON")
@@ -107,7 +108,8 @@ def test_k0_postamble_runs_on_cloudsc_tidy_branch():
             remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
             branch_mode=BranchMode.MERGE,
             scalar_remainder_emit="tile_k1",
-        )).apply_pass(sdfg, {})
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
 
 

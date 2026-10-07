@@ -22,6 +22,7 @@ the two code generators never share a ``.dacecache`` build (the implementation
 flag is not part of the SDFG hash, so a shared name would serve one generator's
 compiled binary to the other and mask a real divergence).
 """
+
 import importlib
 import pkgutil
 
@@ -33,8 +34,15 @@ from dace.codegen.exceptions import CompilationError
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg.validation import InvalidSDFGError
 from dace.symbolic import evaluate
-from tests.codegen.readable.conftest import (EXPERIMENTAL, LEGACY, assert_outputs_equivalent, run_isolated,
-                                             use_implementation, without_fma_contraction, without_simd)
+from tests.codegen.readable.conftest import (
+    EXPERIMENTAL,
+    LEGACY,
+    assert_outputs_equivalent,
+    run_isolated,
+    use_implementation,
+    without_fma_contraction,
+    without_simd,
+)
 
 #: Small square extent bound to every free symbol -- keeps the compile+run fast while
 #: still non-trivial (a non-power-of-two catches naive stride assumptions).
@@ -46,20 +54,8 @@ SYMBOL_SIZE = 13
 #: matmuls, so a uniform 13 is 13**8 ~= 8.2e8 iterations -- it ran for ~2h and took the CI job down
 #: with it. Two per axis keeps the shape exercised at 2**8 = 256 iterations.
 SYMBOL_OVERRIDES = {
-    "stockham_fft": {
-        "R": 2,
-        "K": 6
-    },
-    "scattering_self": {
-        "Nkz": 2,
-        "NE": 2,
-        "Nqz": 2,
-        "Nw": 2,
-        "N3D": 2,
-        "NA": 2,
-        "NB": 2,
-        "Norb": 2
-    },
+    "stockham_fft": {"R": 2, "K": 6},
+    "scattering_self": {"Nkz": 2, "NE": 2, "Nqz": 2, "Nw": 2, "N3D": 2, "NA": 2, "NB": 2, "Norb": 2},
 }
 
 #: Integer inputs that are INDEX arrays, as ``{kernel: {input: bounding symbol}}``. ``make_inputs``
@@ -114,8 +110,9 @@ def discover(family):
     """All ``(family, kernel_stem)`` in ``tests/npbench/<family>`` (via the package's own
     ``__path__``, so no filesystem paths are hard-coded), minus the denylist."""
     package = importlib.import_module(f"tests.npbench.{family}")
-    stems = sorted(info.name[:-len("_test")] for info in pkgutil.iter_modules(package.__path__)
-                   if info.name.endswith("_test"))
+    stems = sorted(
+        info.name[: -len("_test")] for info in pkgutil.iter_modules(package.__path__) if info.name.endswith("_test")
+    )
     return [(family, stem) for stem in stems if stem not in DENYLIST]
 
 
@@ -169,7 +166,7 @@ def collect_outputs(result, call_arguments):
     returned values."""
     outputs = {name: np.asarray(value) for name, value in call_arguments.items() if hasattr(value, "shape")}
     if result is not None:
-        for index, value in enumerate(result if isinstance(result, tuple) else (result, )):
+        for index, value in enumerate(result if isinstance(result, tuple) else (result,)):
             outputs[f"__return{index}"] = np.asarray(value)
     return outputs
 

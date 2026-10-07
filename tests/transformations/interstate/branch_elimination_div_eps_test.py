@@ -18,6 +18,7 @@ trigger NaN/inf on divisor-zero paths. The pinned invariants:
    ``ast.unparse`` without precision loss -- the tasklet still divides
    by the exact ``tiny`` value, not a rounded-down neighbour.
 """
+
 import ast
 
 import numpy as np
@@ -52,18 +53,20 @@ def _make_div_sdfg(dtype: dace.dtypes.typeclass) -> dace.SDFG:
     :meth:`make_division_tasklets_safe_for_unconditional_execution`.
     """
     sdfg = dace.SDFG(f"div_eps_{dtype.to_string()}_test")
-    sdfg.add_array("A", (4, ), dtype)
-    sdfg.add_array("B", (4, ), dtype)
-    sdfg.add_array("C", (4, ), dtype, transient=False)
+    sdfg.add_array("A", (4,), dtype)
+    sdfg.add_array("B", (4,), dtype)
+    sdfg.add_array("C", (4,), dtype, transient=False)
     state = sdfg.add_state("main")
     a = state.add_read("A")
     b = state.add_read("B")
     c = state.add_write("C")
-    t = state.add_tasklet(name="div",
-                          inputs={"_in1", "_in2"},
-                          outputs={"_out"},
-                          code="_out = _in1 / _in2",
-                          language=dace.dtypes.Language.Python)
+    t = state.add_tasklet(
+        name="div",
+        inputs={"_in1", "_in2"},
+        outputs={"_out"},
+        code="_out = _in1 / _in2",
+        language=dace.dtypes.Language.Python,
+    )
     state.add_edge(a, None, t, "_in1", dace.Memlet("A[0]"))
     state.add_edge(b, None, t, "_in2", dace.Memlet("B[0]"))
     state.add_edge(t, "_out", c, None, dace.Memlet("C[0]"))
@@ -95,8 +98,9 @@ def test_fp64_eps_is_finfo_float64_tiny():
     sdfg, state, tasklet = _make_div_sdfg(dace.float64)
     _make_pass().make_division_tasklets_safe_for_unconditional_execution(state, dace.float64)
     eps_in_code = _parse_constant_in_rhs(tasklet.code.as_string)
-    assert eps_in_code == np.finfo(
-        np.float64).tiny, (f"fp64 div eps = {eps_in_code!r}, expected {np.finfo(np.float64).tiny!r}")
+    assert eps_in_code == np.finfo(np.float64).tiny, (
+        f"fp64 div eps = {eps_in_code!r}, expected {np.finfo(np.float64).tiny!r}"
+    )
 
 
 def test_fp32_eps_is_finfo_float32_tiny():
@@ -111,7 +115,7 @@ def test_fp32_eps_is_finfo_float32_tiny():
     _make_pass().make_division_tasklets_safe_for_unconditional_execution(state, dace.float32)
     eps_in_code = _parse_constant_in_rhs(tasklet.code.as_string)
     fp32_tiny_as_fp64 = float(np.finfo(np.float32).tiny)
-    assert eps_in_code == fp32_tiny_as_fp64, (f"fp32 div eps = {eps_in_code!r}, expected {fp32_tiny_as_fp64!r}")
+    assert eps_in_code == fp32_tiny_as_fp64, f"fp32 div eps = {eps_in_code!r}, expected {fp32_tiny_as_fp64!r}"
 
 
 @pytest.mark.parametrize("dtype", [dace.float32, dace.float64])
@@ -131,7 +135,8 @@ def test_eps_roundtrips_through_ast_without_precision_loss(dtype):
     # precision somewhere between ``finfo().tiny`` and the AST.
     assert eps_in_code == expected_tiny, (
         f"{dtype} eps lost precision: code={eps_in_code!r}, expected={expected_tiny!r}, "
-        f"ulps={abs(eps_in_code - expected_tiny) / np.spacing(expected_tiny):.1f}")
+        f"ulps={abs(eps_in_code - expected_tiny) / np.spacing(expected_tiny):.1f}"
+    )
 
 
 def test_eps_does_not_introduce_machine_epsilon_shift():
@@ -149,8 +154,10 @@ def test_eps_does_not_introduce_machine_epsilon_shift():
     sdfg, state, tasklet = _make_div_sdfg(dace.float64)
     _make_pass().make_division_tasklets_safe_for_unconditional_execution(state, dace.float64)
     eps_in_code = _parse_constant_in_rhs(tasklet.code.as_string)
-    assert eps_in_code < np.finfo(np.float64).eps, (f"eps {eps_in_code!r} >= machine eps {np.finfo(np.float64).eps!r}; "
-                                                    f"divide-by-1 would shift the quotient by a measurable amount")
+    assert eps_in_code < np.finfo(np.float64).eps, (
+        f"eps {eps_in_code!r} >= machine eps {np.finfo(np.float64).eps!r}; "
+        f"divide-by-1 would shift the quotient by a measurable amount"
+    )
 
 
 if __name__ == "__main__":

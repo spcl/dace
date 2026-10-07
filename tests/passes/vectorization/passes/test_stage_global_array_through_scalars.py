@@ -30,6 +30,7 @@ The pass module does not exist yet — the implementation agent creates it. Unti
 then this file raises an ``ImportError`` for the pass *only*; everything else
 imports cleanly.
 """
+
 import copy
 
 import numpy
@@ -38,7 +39,8 @@ import pytest
 import dace
 from dace import data as dt
 from dace.transformation.passes.vectorization.stage_global_array_through_scalars import (
-    StageGlobalArrayThroughScalars, )
+    StageGlobalArrayThroughScalars,
+)
 
 #: Symbolic map size used by the no-pattern (``add_mapped_tasklet``) fixture.
 N_SYM = dace.symbol("N")
@@ -137,8 +139,8 @@ def _build_single_global_array_chain(name: str, *, s1: str, s2: str, shape, stri
     """
     sdfg = dace.SDFG(name)
     sdfg.add_array("A", shape, dace.float64, strides=strides, transient=False)
-    sdfg.add_array("src", (1, ), dace.float64, transient=False)
-    sdfg.add_array("dst", (1, ), dace.float64, transient=False)
+    sdfg.add_array("src", (1,), dace.float64, transient=False)
+    sdfg.add_array("dst", (1,), dace.float64, transient=False)
     state = sdfg.add_state("main", is_start_block=True)
 
     src = state.add_access("src")
@@ -185,9 +187,9 @@ def _build_intervening_write_chain(name: str) -> dace.SDFG:
     :returns: The constructed SDFG.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array("A", (1, ), dace.float64, transient=False)
-    sdfg.add_array("src", (1, ), dace.float64, transient=False)
-    sdfg.add_array("dst", (1, ), dace.float64, transient=False)
+    sdfg.add_array("A", (1,), dace.float64, transient=False)
+    sdfg.add_array("src", (1,), dace.float64, transient=False)
+    sdfg.add_array("dst", (1,), dace.float64, transient=False)
     state = sdfg.add_state("main", is_start_block=True)
 
     src = state.add_access("src")
@@ -226,9 +228,9 @@ def _build_transient_bridge_chain(name: str) -> dace.SDFG:
     :returns: The constructed SDFG.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array("A", (1, ), dace.float64, transient=True)
-    sdfg.add_array("src", (1, ), dace.float64, transient=False)
-    sdfg.add_array("dst", (1, ), dace.float64, transient=False)
+    sdfg.add_array("A", (1,), dace.float64, transient=True)
+    sdfg.add_array("src", (1,), dace.float64, transient=False)
+    sdfg.add_array("dst", (1,), dace.float64, transient=False)
     state = sdfg.add_state("main", is_start_block=True)
 
     src = state.add_access("src")
@@ -257,9 +259,9 @@ def _build_wcr_chain(name: str) -> dace.SDFG:
     :returns: The constructed SDFG.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array("A", (1, ), dace.float64, transient=False)
-    sdfg.add_array("src", (1, ), dace.float64, transient=False)
-    sdfg.add_array("dst", (1, ), dace.float64, transient=False)
+    sdfg.add_array("A", (1,), dace.float64, transient=False)
+    sdfg.add_array("src", (1,), dace.float64, transient=False)
+    sdfg.add_array("dst", (1,), dace.float64, transient=False)
     state = sdfg.add_state("main", is_start_block=True)
 
     src = state.add_access("src")
@@ -301,11 +303,13 @@ def _run_and_compare(build_fn, name: str, arrays, params):
     ref.compile()(**ref_arrays, **params)
     vec.compile()(**vec_arrays, **params)
     for key in arrays:
-        numpy.testing.assert_allclose(vec_arrays[key],
-                                      ref_arrays[key],
-                                      rtol=RTOL,
-                                      atol=ATOL,
-                                      err_msg=f"{name}: array {key!r} diverged after staging")
+        numpy.testing.assert_allclose(
+            vec_arrays[key],
+            ref_arrays[key],
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=f"{name}: array {key!r} diverged after staging",
+        )
     return vec
 
 
@@ -353,7 +357,7 @@ def test_disjoint_constant_dim_is_case_a_structure():
     """A 1-D global array written at ``A[0]`` and read at ``A[1]`` is a Case-A
     occurrence: the pass inserts TWO transient scalars and the global array
     keeps its store but loses the direct ``A -> T2`` feed."""
-    sdfg = _build_single_global_array_chain("stage_disjoint_struct", s1="0", s2="1", shape=(4, ), strides=(1, ))
+    sdfg = _build_single_global_array_chain("stage_disjoint_struct", s1="0", s2="1", shape=(4,), strides=(1,))
     n_before = len(_transient_scalars(sdfg))
     applied = StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
     sdfg.validate()
@@ -399,10 +403,19 @@ def test_disjoint_constant_dim_is_case_a_numerics():
         "src": rng.random(1),
         "dst": numpy.zeros(1),
     }
-    _run_and_compare(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="1", shape=(4, ), strides=(1, )),
-                     "stage_disjoint_num", arrays, {})
-    _run_and_compare_python(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="1", shape=(4, ), strides=(1, )),
-                            "stage_disjoint_num", arrays, {}, _python_ref_single_global_array_chain("0", "1"))
+    _run_and_compare(
+        lambda nm: _build_single_global_array_chain(nm, s1="0", s2="1", shape=(4,), strides=(1,)),
+        "stage_disjoint_num",
+        arrays,
+        {},
+    )
+    _run_and_compare_python(
+        lambda nm: _build_single_global_array_chain(nm, s1="0", s2="1", shape=(4,), strides=(1,)),
+        "stage_disjoint_num",
+        arrays,
+        {},
+        _python_ref_single_global_array_chain("0", "1"),
+    )
 
 
 def test_disjoint_multidim_offsets_is_case_a_numerics():
@@ -417,12 +430,21 @@ def test_disjoint_multidim_offsets_is_case_a_numerics():
     }
     _run_and_compare(
         lambda nm: _build_single_global_array_chain(
-            nm, s1="1, 0", s2="3, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_disjoint_offset",
-        arrays, {})
+            nm, s1="1, 0", s2="3, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)
+        ),
+        "stage_disjoint_offset",
+        arrays,
+        {},
+    )
     _run_and_compare_python(
         lambda nm: _build_single_global_array_chain(
-            nm, s1="1, 0", s2="3, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_disjoint_offset",
-        arrays, {}, _python_ref_single_global_array_chain("1, 0", "3, 0"))
+            nm, s1="1, 0", s2="3, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)
+        ),
+        "stage_disjoint_offset",
+        arrays,
+        {},
+        _python_ref_single_global_array_chain("1, 0", "3, 0"),
+    )
 
 
 # Case B — not provably disjoint (RMW)
@@ -432,7 +454,7 @@ def test_identical_subset_is_case_b_structure():
     and consumer, drains to the global through the enclosing ``MapExit`` chain
     (no extra assignment tasklet needed), and the consumer no longer reads
     the global node directly."""
-    sdfg = _build_single_global_array_chain("stage_rmw_struct", s1="0", s2="0", shape=(1, ), strides=(1, ))
+    sdfg = _build_single_global_array_chain("stage_rmw_struct", s1="0", s2="0", shape=(1,), strides=(1,))
     n_scalars_before = len(_transient_scalars(sdfg))
     applied = StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
     sdfg.validate()
@@ -454,10 +476,19 @@ def test_identical_subset_is_case_b_numerics():
         "src": rng.random(1),
         "dst": numpy.zeros(1),
     }
-    _run_and_compare(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="0", shape=(1, ), strides=(1, )),
-                     "stage_rmw_num", arrays, {})
-    _run_and_compare_python(lambda nm: _build_single_global_array_chain(nm, s1="0", s2="0", shape=(1, ), strides=(1, )),
-                            "stage_rmw_num", arrays, {}, _python_ref_single_global_array_chain("0", "0"))
+    _run_and_compare(
+        lambda nm: _build_single_global_array_chain(nm, s1="0", s2="0", shape=(1,), strides=(1,)),
+        "stage_rmw_num",
+        arrays,
+        {},
+    )
+    _run_and_compare_python(
+        lambda nm: _build_single_global_array_chain(nm, s1="0", s2="0", shape=(1,), strides=(1,)),
+        "stage_rmw_num",
+        arrays,
+        {},
+        _python_ref_single_global_array_chain("0", "0"),
+    )
 
 
 def test_overlapping_multidim_subset_is_case_b_numerics():
@@ -472,11 +503,21 @@ def test_overlapping_multidim_subset_is_case_b_numerics():
     }
     _run_and_compare(
         lambda nm: _build_single_global_array_chain(
-            nm, s1="2, 0", s2="2, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_rmw_2d", arrays, {})
+            nm, s1="2, 0", s2="2, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)
+        ),
+        "stage_rmw_2d",
+        arrays,
+        {},
+    )
     _run_and_compare_python(
         lambda nm: _build_single_global_array_chain(
-            nm, s1="2, 0", s2="2, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)), "stage_rmw_2d", arrays, {},
-        _python_ref_single_global_array_chain("2, 0", "2, 0"))
+            nm, s1="2, 0", s2="2, 0", shape=(NSPECIES, NSPECIES), strides=(NSPECIES, 1)
+        ),
+        "stage_rmw_2d",
+        arrays,
+        {},
+        _python_ref_single_global_array_chain("2, 0", "2, 0"),
+    )
 
 
 # Multi-dim global array (zqx[i, j, 4]-style)
@@ -491,21 +532,32 @@ def test_multidim_global_disjoint_species_numerics():
         "dst": numpy.zeros(1),
     }
     vec = _run_and_compare(
-        lambda nm: _build_single_global_array_chain(nm,
-                                                    s1="1, 1, 4",
-                                                    s2="1, 1, 2",
-                                                    shape=(NSPECIES, NSPECIES, NSPECIES),
-                                                    strides=(NSPECIES * NSPECIES, NSPECIES, 1)), "stage_multidim",
-        arrays, {})
+        lambda nm: _build_single_global_array_chain(
+            nm,
+            s1="1, 1, 4",
+            s2="1, 1, 2",
+            shape=(NSPECIES, NSPECIES, NSPECIES),
+            strides=(NSPECIES * NSPECIES, NSPECIES, 1),
+        ),
+        "stage_multidim",
+        arrays,
+        {},
+    )
     # Two transient scalars for the disjoint species hop.
     assert len(_transient_scalars(vec)) >= 2, "multi-dim disjoint hop must stage through two scalars"
     _run_and_compare_python(
-        lambda nm: _build_single_global_array_chain(nm,
-                                                    s1="1, 1, 4",
-                                                    s2="1, 1, 2",
-                                                    shape=(NSPECIES, NSPECIES, NSPECIES),
-                                                    strides=(NSPECIES * NSPECIES, NSPECIES, 1)), "stage_multidim",
-        arrays, {}, _python_ref_single_global_array_chain("1, 1, 4", "1, 1, 2"))
+        lambda nm: _build_single_global_array_chain(
+            nm,
+            s1="1, 1, 4",
+            s2="1, 1, 2",
+            shape=(NSPECIES, NSPECIES, NSPECIES),
+            strides=(NSPECIES * NSPECIES, NSPECIES, 1),
+        ),
+        "stage_multidim",
+        arrays,
+        {},
+        _python_ref_single_global_array_chain("1, 1, 4", "1, 1, 2"),
+    )
 
 
 # Refusal / skip cases — SDFG must be unchanged
@@ -545,14 +597,17 @@ def test_no_pattern_is_noop():
     """A kernel with no ``T1 -> A(global) -> T2`` hop is a no-op."""
     sdfg = dace.SDFG("stage_nopattern")
     sdfg.add_symbol("N", dace.int64)
-    sdfg.add_array("src", (N_SYM, ), dace.float64)
-    sdfg.add_array("dst", (N_SYM, ), dace.float64)
+    sdfg.add_array("src", (N_SYM,), dace.float64)
+    sdfg.add_array("dst", (N_SYM,), dace.float64)
     state = sdfg.add_state("main", is_start_block=True)
-    t, _, _ = state.add_mapped_tasklet("m", {"i": "0:N:1"},
-                                       inputs={"_in": dace.memlet.Memlet("src[i]")},
-                                       code="_out = _in * 2.0",
-                                       outputs={"_out": dace.memlet.Memlet("dst[i]")},
-                                       external_edges=True)
+    t, _, _ = state.add_mapped_tasklet(
+        "m",
+        {"i": "0:N:1"},
+        inputs={"_in": dace.memlet.Memlet("src[i]")},
+        code="_out = _in * 2.0",
+        outputs={"_out": dace.memlet.Memlet("dst[i]")},
+        external_edges=True,
+    )
     sdfg.validate()
     before = sdfg.to_json()
     applied = StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
@@ -564,7 +619,7 @@ def test_no_pattern_is_noop():
 def test_pass_is_idempotent_case_a():
     """A second application of the pass on the already-staged Case-A kernel is
     a no-op (the global node no longer bridges two tasklets)."""
-    sdfg = _build_single_global_array_chain("stage_idem", s1="0", s2="1", shape=(4, ), strides=(1, ))
+    sdfg = _build_single_global_array_chain("stage_idem", s1="0", s2="1", shape=(4,), strides=(1,))
     first = StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
     sdfg.validate()
     assert first, "first application should stage the chain"
@@ -581,8 +636,8 @@ def _rmw_chain_in_map_sdfg(name: str, n: int, k: int) -> dace.SDFG:
     last-writer-wins silently truncates the accumulation.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array("A", (n, ), dace.float64)
-    sdfg.add_array("B", (n, ), dace.float64)
+    sdfg.add_array("A", (n,), dace.float64)
+    sdfg.add_array("B", (n,), dace.float64)
     sdfg.add_array("C", (n, k), dace.float64)
     state = sdfg.add_state("main", is_start_block=True)
 
@@ -652,7 +707,7 @@ def _build_flat_nsdfg_offset_chain(name: str) -> dace.SDFG:
     pass takes its flat NSDFG-internal path.
     """
     inner = dace.SDFG(name + "_inner")
-    inner.add_array("a", (4, ), dace.float64, transient=False)
+    inner.add_array("a", (4,), dace.float64, transient=False)
     istate = inner.add_state("body", is_start_block=True)
 
     a_in = istate.add_access("a")
@@ -666,7 +721,7 @@ def _build_flat_nsdfg_offset_chain(name: str) -> dace.SDFG:
     istate.add_edge(t1, "_out", a_out, None, dace.Memlet("a[1]"))
 
     sdfg = dace.SDFG(name)
-    sdfg.add_array("a", (4, ), dace.float64, transient=False)
+    sdfg.add_array("a", (4,), dace.float64, transient=False)
     state = sdfg.add_state("main", is_start_block=True)
     me, mx = state.add_map("outer", dict(_i="0:1"))
     nested = state.add_nested_sdfg(inner, {"a"}, {"a"})
@@ -707,8 +762,9 @@ def test_a_flat_nsdfg_read_only_subset_keeps_a_source():
     StageGlobalArrayThroughScalars().apply_pass(sdfg, {})
     sdfg.validate()
 
-    assert not _unsourced_staged_scalars(sdfg), (f"staged scalars are read but never written: "
-                                                 f"{_unsourced_staged_scalars(sdfg)}")
+    assert not _unsourced_staged_scalars(sdfg), (
+        f"staged scalars are read but never written: {_unsourced_staged_scalars(sdfg)}"
+    )
 
     a = numpy.array([1.0, 2.0, 3.0, 4.0])
     sdfg(a=a)

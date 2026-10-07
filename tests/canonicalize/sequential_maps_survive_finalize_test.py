@@ -29,6 +29,7 @@ that would fail if the map inventory changes shape, if a future edit turns a gen
 parallel (a race) or leaves a genuinely parallel map serial (a silent regression), or if a fusion
 loses a guard.
 """
+
 import typing
 
 import numpy as np
@@ -50,15 +51,18 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES
 
 def canonicalized_for_cpu(sdfg: dace.SDFG) -> dace.SDFG:
     """The production CPU recipe: ``canonicalize`` then ``finalize_for_target``, in place."""
-    cp.canonicalize(sdfg, target='cpu')
-    finalize.finalize_for_target(sdfg, 'cpu')
+    cp.canonicalize(sdfg, target="cpu")
+    finalize.finalize_for_target(sdfg, "cpu")
     return sdfg
 
 
 def maps_with_schedule(sdfg: dace.SDFG, schedule: dace.ScheduleType) -> typing.List[typing.Tuple[nd.MapEntry, object]]:
     """``[(MapEntry, owning SDFGState)]`` for every map of ``schedule`` anywhere in ``sdfg``."""
-    return [(n, state) for n, state in sdfg.all_nodes_recursive()
-            if isinstance(n, nd.MapEntry) and n.map.schedule == schedule]
+    return [
+        (n, state)
+        for n, state in sdfg.all_nodes_recursive()
+        if isinstance(n, nd.MapEntry) and n.map.schedule == schedule
+    ]
 
 
 def root_name(sdfg: dace.SDFG, name: str) -> str:
@@ -140,7 +144,7 @@ def names_behind(sdfg: dace.SDFG, condition: str) -> OrderedSet[str]:
 # ext_war_unit: a[i] = a[i+1] + b[i] -- a real distance-1 WAR, resolved by chunking.             #
 # #
 
-WAR_LEN_1D = dace.symbol('LEN_1D', dtype=dace.int64, positive=True)
+WAR_LEN_1D = dace.symbol("LEN_1D", dtype=dace.int64, positive=True)
 
 
 @dace.program
@@ -169,7 +173,7 @@ def test_ext_war_unit_matches_reference_across_a_chunk_boundary():
     got = a.copy()
     csdfg = sdfg.compile()
     csdfg(a=got, b=b.copy(), LEN_1D=n)
-    assert np.allclose(got, expected), 'the WAR chunk/seam rewrite must reproduce in-order semantics'
+    assert np.allclose(got, expected), "the WAR chunk/seam rewrite must reproduce in-order semantics"
 
 
 def test_ext_war_unit_sequential_maps_are_single_iteration_seams():
@@ -188,34 +192,40 @@ def test_ext_war_unit_sequential_maps_are_single_iteration_seams():
     sdfg = canonicalized_for_cpu(ext_war_unit.to_sdfg(simplify=False))
     seq_maps = maps_with_schedule(sdfg, ScheduleType.Sequential)
     par_maps = maps_with_schedule(sdfg, ScheduleType.CPU_Multicore)
-    assert len(seq_maps) == 2, f'expected exactly 2 boundary seam maps, got {len(seq_maps)}'
-    assert len(par_maps) == 2, f'expected exactly 2 chunk-parallel maps, got {len(par_maps)}'
+    assert len(seq_maps) == 2, f"expected exactly 2 boundary seam maps, got {len(seq_maps)}"
+    assert len(par_maps) == 2, f"expected exactly 2 chunk-parallel maps, got {len(par_maps)}"
 
     for map_entry, _state in seq_maps:
         size = map_entry.map.range.num_elements()
         for n in (2, 3, 4096, 4097, 8192, 4096 * 3 + 137):
-            assert symbolic.evaluate(size, {'LEN_1D': n}) == 1, \
-                f'seam map {map_entry.map.label} must be exactly one iteration at LEN_1D={n}, got {size}'
+            assert symbolic.evaluate(size, {"LEN_1D": n}) == 1, (
+                f"seam map {map_entry.map.label} must be exactly one iteration at LEN_1D={n}, got {size}"
+            )
 
     # One seam (the per-chunk finisher) is nested inside a chunk-parallel map; the other (the
     # i=0 prologue) runs once before the parallel region, at top level -- both are singleton
     # regardless of nesting, which is the property this test protects.
     nested = [get_parent_map_and_loop_scopes(sdfg, n, s) for n, s in seq_maps]
-    assert sum(1 for scopes in nested if scopes) == 1, \
-        'exactly one seam map must be nested inside the chunk-parallel map'
+    assert sum(1 for scopes in nested if scopes) == 1, (
+        "exactly one seam map must be nested inside the chunk-parallel map"
+    )
 
 
 # #
 # fuse_move_ifs: two nests that fuse into ONE flat parallel map, guard kept as a predicate.      #
 # #
 
-FMI_LEN_2D = dace.symbol('LEN_2D', dtype=dace.int64, positive=True)
-FMI_K = dace.symbol('K', dtype=dace.int64, positive=True)
+FMI_LEN_2D = dace.symbol("LEN_2D", dtype=dace.int64, positive=True)
+FMI_K = dace.symbol("K", dtype=dace.int64, positive=True)
 
 
 @dace.program
-def fuse_move_ifs(a: dace.float64[FMI_LEN_2D, FMI_LEN_2D], b: dace.float64[FMI_LEN_2D, FMI_LEN_2D],
-                  src: dace.float64[FMI_LEN_2D, FMI_LEN_2D], cond: dace.float64[FMI_LEN_2D]):
+def fuse_move_ifs(
+    a: dace.float64[FMI_LEN_2D, FMI_LEN_2D],
+    b: dace.float64[FMI_LEN_2D, FMI_LEN_2D],
+    src: dace.float64[FMI_LEN_2D, FMI_LEN_2D],
+    cond: dace.float64[FMI_LEN_2D],
+):
     for i in range(FMI_LEN_2D):
         if cond[i] > 0.0:
             for j in range(FMI_LEN_2D):
@@ -226,8 +236,9 @@ def fuse_move_ifs(a: dace.float64[FMI_LEN_2D, FMI_LEN_2D], b: dace.float64[FMI_L
                 b[i, j] = src[i, j] + 1.0
 
 
-def reference_fuse_move_ifs(a: np.ndarray, b: np.ndarray, src: np.ndarray, cond: np.ndarray,
-                            k: int) -> typing.Tuple[np.ndarray, np.ndarray]:
+def reference_fuse_move_ifs(
+    a: np.ndarray, b: np.ndarray, src: np.ndarray, cond: np.ndarray, k: int
+) -> typing.Tuple[np.ndarray, np.ndarray]:
     a, b = a.copy(), b.copy()
     n = a.shape[0]
     for i in range(n):
@@ -252,9 +263,9 @@ def test_fuse_move_ifs_matches_reference_in_every_guard_regime():
     rng = np.random.default_rng(3)
     a, b, src = rng.random((n, n)), rng.random((n, n)), rng.random((n, n))
     conds = {
-        'mixed': rng.random(n) - 0.5,
-        'all_negative': -rng.random(n) - 0.5,
-        'all_positive': rng.random(n) + 0.5,
+        "mixed": rng.random(n) - 0.5,
+        "all_negative": -rng.random(n) - 0.5,
+        "all_positive": rng.random(n) + 0.5,
     }
 
     sdfg = canonicalized_for_cpu(fuse_move_ifs.to_sdfg(simplify=False))
@@ -263,8 +274,8 @@ def test_fuse_move_ifs_matches_reference_in_every_guard_regime():
         expected_a, expected_b = reference_fuse_move_ifs(a, b, src, cond, k=1)
         got_a, got_b = a.copy(), b.copy()
         csdfg(a=got_a, b=got_b, src=src.copy(), cond=cond.copy(), LEN_2D=n, K=1)
-        assert np.array_equal(got_a, expected_a), f'{regime}: the guarded a-write must be preserved'
-        assert np.array_equal(got_b, expected_b), f'{regime}: the unconditional b-write must be preserved'
+        assert np.array_equal(got_a, expected_a), f"{regime}: the guarded a-write must be preserved"
+        assert np.array_equal(got_b, expected_b), f"{regime}: the unconditional b-write must be preserved"
 
 
 def test_fuse_move_ifs_fuses_to_one_parallel_region_and_keeps_the_guard_as_a_predicate():
@@ -293,28 +304,31 @@ def test_fuse_move_ifs_fuses_to_one_parallel_region_and_keeps_the_guard_as_a_pre
     sdfg = canonicalized_for_cpu(fuse_move_ifs.to_sdfg(simplify=False))
     seq_maps = maps_with_schedule(sdfg, ScheduleType.Sequential)
     par_maps = maps_with_schedule(sdfg, ScheduleType.CPU_Multicore)
-    assert len(par_maps) == 1, f'the two nests must fuse into exactly 1 parallel map, got {len(par_maps)}'
-    assert not seq_maps, f'nothing is left to sequentialize once the nests fuse, got {len(seq_maps)}'
+    assert len(par_maps) == 1, f"the two nests must fuse into exactly 1 parallel map, got {len(par_maps)}"
+    assert not seq_maps, f"nothing is left to sequentialize once the nests fuse, got {len(seq_maps)}"
 
-    (fused, _fused_state), = par_maps
-    assert len(fused.map.params) == 2, f'the fused map must cover both dimensions, got {fused.map.params}'
+    ((fused, _fused_state),) = par_maps
+    assert len(fused.map.params) == 2, f"the fused map must cover both dimensions, got {fused.map.params}"
     for begin, end, _step in fused.map.range:
-        assert (begin, str(end)) == (0, 'LEN_2D - 1'), \
-            f'the fused map must span the full 2D domain, got {fused.map.range}'
+        assert (begin, str(end)) == (0, "LEN_2D - 1"), (
+            f"the fused map must span the full 2D domain, got {fused.map.range}"
+        )
 
     # Rule 1's actual subject, stated as itself: no map re-enters a parallel scope.
     for map_entry, state in maps_with_schedule(sdfg, ScheduleType.CPU_Multicore):
         enclosing = get_parent_map_and_loop_scopes(sdfg, map_entry, state)
-        assert not [s for s in enclosing if isinstance(s, nd.MapEntry)], \
-            f'{map_entry.map.label} is parallel inside another map -- nested OpenMP regions'
+        assert not [s for s in enclosing if isinstance(s, nd.MapEntry)], (
+            f"{map_entry.map.label} is parallel inside another map -- nested OpenMP regions"
+        )
 
-    a_writers = tasklets_writing(sdfg, 'a')
-    assert a_writers, 'the a-write must survive canonicalization'
+    a_writers = tasklets_writing(sdfg, "a")
+    assert a_writers, "the a-write must survive canonicalization"
     for tasklet, state in a_writers:
         conditions = enclosing_branch_conditions(state)
-        assert conditions, f'{tasklet.label} writes a unguarded -- the fusion dropped the branch'
-        assert any('cond' in names_behind(sdfg, c) for c in conditions), \
-            f'{tasklet.label} is guarded by {conditions}, which no longer tests cond'
+        assert conditions, f"{tasklet.label} writes a unguarded -- the fusion dropped the branch"
+        assert any("cond" in names_behind(sdfg, c) for c in conditions), (
+            f"{tasklet.label} is guarded by {conditions}, which no longer tests cond"
+        )
 
 
 # #
@@ -323,13 +337,13 @@ def test_fuse_move_ifs_fuses_to_one_parallel_region_and_keeps_the_guard_as_a_pre
 
 
 def canonicalized_s1232(tag: str) -> typing.Tuple[object, dace.SDFG]:
-    kernel = tsvc.collect(name='s1232_d_single')[0]
+    kernel = tsvc.collect(name="s1232_d_single")[0]
     sdfg = tsvc.to_sdfg(kernel, tag, simplify=True)
     return kernel, canonicalized_for_cpu(sdfg)
 
 
 def test_tsvc_2_s1232_matches_reference():
-    kernel, sdfg = canonicalized_s1232('sequential_maps_survive_finalize_numeric')
+    kernel, sdfg = canonicalized_s1232("sequential_maps_survive_finalize_numeric")
     arrays, call_kwargs = tsvc.make_inputs(kernel)
     ref = {name: arr.copy() for name, arr in arrays.items()}
     REFERENCES[kernel.name](**ref, **call_kwargs)
@@ -337,7 +351,7 @@ def test_tsvc_2_s1232_matches_reference():
     csdfg = sdfg.compile()
     csdfg(**got, **call_kwargs)
     for name, arr in arrays.items():
-        assert np.allclose(ref[name], got[name]), f'{kernel.name}: value mismatch on {name}'
+        assert np.allclose(ref[name], got[name]), f"{kernel.name}: value mismatch on {name}"
 
 
 def test_tsvc_2_s1232_inner_loop_is_sequential_by_nested_parallelism_policy_not_a_dependence():
@@ -351,17 +365,17 @@ def test_tsvc_2_s1232_inner_loop_is_sequential_by_nested_parallelism_policy_not_
     :157-161). The outer loop already gives every thread independent work; parallelizing the
     (much smaller, per-i) inner loop too would only add a second, nested OpenMP region.
     """
-    _kernel, sdfg = canonicalized_s1232('sequential_maps_survive_finalize_structural')
+    _kernel, sdfg = canonicalized_s1232("sequential_maps_survive_finalize_structural")
     seq_maps = maps_with_schedule(sdfg, ScheduleType.Sequential)
     par_maps = maps_with_schedule(sdfg, ScheduleType.CPU_Multicore)
-    assert len(seq_maps) == 1, f'expected exactly 1 sequential (untiled inner) map, got {len(seq_maps)}'
-    assert len(par_maps) == 1, f'expected exactly 1 parallel (untiled outer) map, got {len(par_maps)}'
+    assert len(seq_maps) == 1, f"expected exactly 1 sequential (untiled inner) map, got {len(seq_maps)}"
+    assert len(par_maps) == 1, f"expected exactly 1 parallel (untiled outer) map, got {len(par_maps)}"
 
-    (seq_entry, seq_state), = seq_maps
-    (par_entry, _par_state), = par_maps
+    ((seq_entry, seq_state),) = seq_maps
+    ((par_entry, _par_state),) = par_maps
     enclosing = get_parent_map_and_loop_scopes(sdfg, seq_entry, seq_state)
-    assert enclosing == [par_entry], 'the sequential inner map must be nested directly in the one parallel outer map'
+    assert enclosing == [par_entry], "the sequential inner map must be nested directly in the one parallel outer map"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

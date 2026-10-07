@@ -25,6 +25,7 @@ So no wrong output value and no reliable crash can distinguish the bug -- only t
 end-to-end (in-process, bit-exact vs numpy) to prove the left-in-place conditional still compiles
 and computes correctly.
 """
+
 import numpy as np
 
 import dace
@@ -41,8 +42,9 @@ def conditional_blocks(sdfg: dace.SDFG):
     return [b for b in sdfg.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]
 
 
-def add_copy_arm(sdfg: dace.SDFG, cb: ConditionalBlock, cond, read_subset: str, write_arr: str,
-                 write_subset: str) -> ControlFlowRegion:
+def add_copy_arm(
+    sdfg: dace.SDFG, cb: ConditionalBlock, cond, read_subset: str, write_arr: str, write_subset: str
+) -> ControlFlowRegion:
     """Attach one arm ``[if <cond>]: <write_arr>[<write_subset>] = a[<read_subset>]`` to ``cb``.
 
     :param sdfg: SDFG owning the arm's region.
@@ -75,10 +77,10 @@ def build_loop_with_cb(extra_arrays=()) -> tuple:
     :returns: ``(sdfg, cb)``.
     """
     sdfg = dace.SDFG("branch_norm_iter_guard")
-    sdfg.add_array("a", shape=(N + 1, ), dtype=dace.float64)
-    sdfg.add_array("b", shape=(N, ), dtype=dace.float64)
+    sdfg.add_array("a", shape=(N + 1,), dtype=dace.float64)
+    sdfg.add_array("b", shape=(N,), dtype=dace.float64)
     for name in extra_arrays:
-        sdfg.add_array(name, shape=(N, ), dtype=dace.float64)
+        sdfg.add_array(name, shape=(N,), dtype=dace.float64)
     loop = LoopRegion("loop", loop_var="i", initialize_expr="i = 0", condition_expr="i < N", update_expr="i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
     head = loop.add_state("head", is_start_block=True)
@@ -105,7 +107,7 @@ def run_bit_exact(sdfg: dace.SDFG, kwargs: dict, outputs) -> None:
     """
     sdfg.compile()(**kwargs)
     for index, (buffer, reference) in enumerate(outputs):
-        assert np.array_equal(buffer, reference), f'output {index} is not bit-exact vs its reference'
+        assert np.array_equal(buffer, reference), f"output {index} is not bit-exact vs its reference"
 
 
 def test_branch_normalization_refuses_direct_iteration_guard():
@@ -143,7 +145,7 @@ def test_branch_normalization_refuses_two_arm_iteration_guard():
     flattened each (``ConditionalBlock`` gone), again fabricating the ``a[N]`` read in the
     if-arm. The refused SDFG still runs bit-exact.
     """
-    sdfg, cb = build_loop_with_cb(extra_arrays=("c", ))
+    sdfg, cb = build_loop_with_cb(extra_arrays=("c",))
     add_copy_arm(sdfg, cb, "i < N - 1", "i + 1", "b", "i")  # if-arm (has the OOB read)
     add_copy_arm(sdfg, cb, None, "i", "c", "i")  # bare else-arm (disjoint write)
     assert len(conditional_blocks(sdfg)) == 1

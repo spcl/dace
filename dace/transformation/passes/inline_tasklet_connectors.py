@@ -12,6 +12,7 @@ Correctness-preserving: these keep the classic connector lowering -- WCR outputs
 (vector / pointer) accesses, reference-set / stream / non-Array-or-Scalar data. Only Python bodies are
 rewritten here; C++ / library bodies are handled at code-gen time (``rewrite_cpp_tasklet_body``).
 """
+
 import ast
 import keyword
 import warnings
@@ -28,7 +29,7 @@ from dace.transformation.pass_pipeline import Modifies
 
 
 class InlineTaskletConnectors(ppl.Pass):
-    """ Rewrites eligible tasklet connectors into direct array accesses. """
+    """Rewrites eligible tasklet connectors into direct array accesses."""
 
     def modifies(self) -> Modifies:
         return Modifies.Tasklets
@@ -65,8 +66,9 @@ class InlineTaskletConnectors(ppl.Pass):
             try:
                 accesses = self._plan_tasklet(state.sdfg, state, node)
             except Exception as ex:  # noqa: BLE001
-                warnings.warn(f'InlineTaskletConnectors: left tasklet {node.label!r} in classic form: '
-                              f'{type(ex).__name__}: {ex}')
+                warnings.warn(
+                    f"InlineTaskletConnectors: left tasklet {node.label!r} in classic form: {type(ex).__name__}: {ex}"
+                )
                 accesses = {}
             for data, _indices in accesses.values():
                 inlinable[data] = inlinable.get(data, 0) + 1
@@ -86,12 +88,14 @@ class InlineTaskletConnectors(ppl.Pass):
                 if self._apply_plan(node, accesses):
                     inlined_tasklets.add(node.label)
             except Exception as ex:  # noqa: BLE001
-                warnings.warn(f'InlineTaskletConnectors: left tasklet {node.label!r} in classic form: '
-                              f'{type(ex).__name__}: {ex}')
+                warnings.warn(
+                    f"InlineTaskletConnectors: left tasklet {node.label!r} in classic form: {type(ex).__name__}: {ex}"
+                )
         return inlined_tasklets or None
 
-    def _connector_access(self, osdfg: SDFG, state, node: nodes.Tasklet, edge,
-                          is_output: bool) -> Optional[Tuple[str, str, List[str]]]:
+    def _connector_access(
+        self, osdfg: SDFG, state, node: nodes.Tasklet, edge, is_output: bool
+    ) -> Optional[Tuple[str, str, List[str]]]:
         """
         Decides whether ``edge``'s connector can be inlined, and if so returns
         ``(connector_name, data_name, index_expressions)`` where the index
@@ -263,18 +267,31 @@ def _rebound_names(tree: ast.AST) -> Set[str]:
     return names
 
 
-def aliased_writers(name: str, in_acc: Dict[str, Tuple[str, List[str]]], out_acc: Dict[str, Tuple[str, List[str]]],
-                    in_subset: Dict[str, subsets.Subset], out_subset: Dict[str, subsets.Subset]) -> List[str]:
+def aliased_writers(
+    name: str,
+    in_acc: Dict[str, Tuple[str, List[str]]],
+    out_acc: Dict[str, Tuple[str, List[str]]],
+    in_subset: Dict[str, subsets.Subset],
+    out_subset: Dict[str, subsets.Subset],
+) -> List[str]:
     """The outputs other than input ``name`` that write an element of its container it may read."""
     return [
-        other for other in out_acc if other != name and out_acc[other][0] == in_acc[name][0]
+        other
+        for other in out_acc
+        if other != name
+        and out_acc[other][0] == in_acc[name][0]
         and subsets.intersects(in_subset[name], out_subset[other]) is not False
     ]
 
 
-def reads_after_aliased_writes(node: nodes.Tasklet, candidates: List[str], in_acc: Dict[str, Tuple[str, List[str]]],
-                               out_acc: Dict[str, Tuple[str, List[str]]], in_subset: Dict[str, subsets.Subset],
-                               out_subset: Dict[str, subsets.Subset]) -> List[str]:
+def reads_after_aliased_writes(
+    node: nodes.Tasklet,
+    candidates: List[str],
+    in_acc: Dict[str, Tuple[str, List[str]]],
+    out_acc: Dict[str, Tuple[str, List[str]]],
+    in_subset: Dict[str, subsets.Subset],
+    out_subset: Dict[str, subsets.Subset],
+) -> List[str]:
     """The ``candidates`` inputs a statement of ``node`` may read after an output writing an aliased element."""
     aliased = {name: aliased_writers(name, in_acc, out_acc, in_subset, out_subset) for name in candidates}
     aliased = {name: writers for name, writers in aliased.items() if writers}
@@ -306,19 +323,20 @@ def stored_name(n: ast.AST) -> Optional[str]:
 
 def evaluates_before_storing(stmt: ast.stmt, walked: List[ast.AST]) -> bool:
     """A plain assignment evaluates its whole value first; a walrus inside it stores early."""
-    return isinstance(
-        stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign)) and not any(isinstance(n, ast.NamedExpr) for n in walked)
+    return isinstance(stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign)) and not any(
+        isinstance(n, ast.NamedExpr) for n in walked
+    )
 
 
 class _ConnectorInliner(ast.NodeTransformer):
-    """ Replaces connector names with direct ``data[indices]`` subscripts. """
+    """Replaces connector names with direct ``data[indices]`` subscripts."""
 
     def __init__(self, accesses: Dict[str, Tuple[str, List[str]]]):
         self.accesses = accesses
         self.inlined: Set[str] = set()
 
     def _make_access(self, data: str, indices: List[str]) -> ast.AST:
-        elts = [ast.parse(ix, mode='eval').body for ix in indices]
+        elts = [ast.parse(ix, mode="eval").body for ix in indices]
         if len(elts) == 1:
             sl = elts[0]
         else:

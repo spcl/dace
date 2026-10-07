@@ -6,6 +6,7 @@ the guard tears every loaded runtime's pool down first and refuses the fork only
 cannot be performed. Both halves matter: refusing a fork the teardown already made safe turned a
 whole directory red at random, and allowing one it did not make safe hangs the suite with no verdict.
 """
+
 import os
 import signal
 
@@ -92,6 +93,7 @@ def test_fork_is_refused_when_the_pool_cannot_be_torn_down(live_team, monkeypatc
     """A runtime predating OpenMP 5.0, or a fork from inside a parallel region: the teardown does not
     happen, the child would wait on a barrier forever, and the guard must refuse instead."""
     import dace.transformation.layout.isolation as isolation
+
     monkeypatch.setattr(isolation, "pause_openmp_pools", lambda mode=isolation.OMP_PAUSE_SOFT: False)
     monkeypatch.setattr("tests.conftest.thread_count", lambda: 8)  # a one-core host has no team either way
     assert openmp_pool_may_outlive_fork() is True

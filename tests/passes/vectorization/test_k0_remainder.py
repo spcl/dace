@@ -86,10 +86,7 @@ def test_k0_remainder_tsvc(kernel_name: str):
     run_vectorization_test(
         dace_func=kernel.program,
         arrays=arrays,
-        params={
-            **sym,
-            **sparams
-        },
+        params={**sym, **sparams},
         vector_width=8,
         sdfg_name=f"k0_remainder_{kernel_name}",
         branch_mode=BranchMode.MERGE,

@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """TensorTranspose library node and its pure / HPTT / cuTENSOR expansions."""
+
 import dace
 import multiprocessing
 from dace import dtypes, library, nodes, properties, symbolic
@@ -23,7 +24,7 @@ def moves_whole_container(desc: dace.data.Data, shape: Sequence[Any]) -> bool:
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """ Implements the pure expansion of TensorTranspose library node. """
+    """Implements the pure expansion of TensorTranspose library node."""
 
     environments = []
 
@@ -34,16 +35,12 @@ class ExpandPure(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         # Shape from the memlet, strides from the container: the connector sees the SUBSET the edge
         # carries, laid out the way the array it is cut from is laid out.
-        _, inp_arr = sdfg.add_array("_inp_tensor",
-                                    inp_shape,
-                                    inp_tensor.dtype,
-                                    inp_tensor.storage,
-                                    strides=inp_tensor.strides)
-        _, out_arr = sdfg.add_array("_out_tensor",
-                                    out_shape,
-                                    out_tensor.dtype,
-                                    out_tensor.storage,
-                                    strides=out_tensor.strides)
+        _, inp_arr = sdfg.add_array(
+            "_inp_tensor", inp_shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.strides
+        )
+        _, out_arr = sdfg.add_array(
+            "_out_tensor", out_shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides
+        )
 
         state = sdfg.add_state(f"{node.label}_state")
         map_params = [f"__i{i}" for i in range(len(inp_arr.shape))]
@@ -69,13 +66,9 @@ class ExpandPure(ExpandTransformation):
             schedule = dtypes.ScheduleType.GPU_Device
         else:
             schedule = dtypes.ScheduleType.Default
-        state.add_mapped_tasklet(f"{node.label}_tasklet",
-                                 map_rng,
-                                 inputs,
-                                 code,
-                                 outputs,
-                                 schedule=schedule,
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            f"{node.label}_tasklet", map_rng, inputs, code, outputs, schedule=schedule, external_edges=True
+        )
 
         return sdfg
 
@@ -97,13 +90,15 @@ class ExpandHPTT(ExpandTransformation):
         # HPTT expresses a non-packed operand only as an "outer size" per mode -- it cannot take a
         # stride array -- so a memlet moving a slice of a larger container has no faithful call here.
         if not (moves_whole_container(inp_tensor, inp_shape) and moves_whole_container(out_tensor, out_shape)):
-            warnings.warn("HPTT takes no stride array, so it cannot transpose a subset of a larger "
-                          "container, falling back to the pure implementation")
+            warnings.warn(
+                "HPTT takes no stride array, so it cannot transpose a subset of a larger "
+                "container, falling back to the pure implementation"
+            )
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
-        axes = ','.join([sym2cpp(a) for a in node.axes])
-        shape = ','.join([sym2cpp(s) for s in inp_shape])
+        axes = ",".join([sym2cpp(a) for a in node.axes])
+        shape = ",".join([sym2cpp(s) for s in inp_shape])
         dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
-        if dchar not in ('s', 'd', 'c', 'z'):
+        if dchar not in ("s", "d", "c", "z"):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = sym2cpp(node.alpha)
         beta = sym2cpp(node.beta)
@@ -113,11 +108,9 @@ class ExpandHPTT(ExpandTransformation):
             {dchar}TensorTranspose(perm, {len(inp_shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
         """
 
-        tasklet = nodes.Tasklet(node.name,
-                                node.in_connectors,
-                                node.out_connectors,
-                                code,
-                                language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
         return tasklet
 
@@ -158,9 +151,11 @@ class ExpandGPUTensor(ExpandTransformation):
         inp_tensor, out_tensor, inp_shape, out_shape = node.validate(parent_sdfg, parent_state)
 
         if node.beta != 0:
-            raise NotImplementedError(f"{cls.vendor} permute does not support beta != 0. Its signature is "
-                                      "(handle, plan, alpha, A, B, stream) -- out-of-place B = alpha*op(A), no "
-                                      "beta term. Use the 'pure' expansion for C = alpha*perm(A) + beta*C.")
+            raise NotImplementedError(
+                f"{cls.vendor} permute does not support beta != 0. Its signature is "
+                "(handle, plan, alpha, A, B, stream) -- out-of-place B = alpha*op(A), no "
+                "beta term. Use the 'pure' expansion for C = alpha*perm(A) + beta*C."
+            )
 
         ndim = len(inp_shape)
         dtype = inp_tensor.dtype.base_type
@@ -169,8 +164,10 @@ class ExpandGPUTensor(ExpandTransformation):
             # Fall back to pure expansion for unsupported types (integers, etc.).
             # The pure expansion generates a GPU map when data is GPU_Global,
             # so integer transposes still execute on the GPU.
-            warnings.warn(f"{cls.vendor} does not support {dtype} tensors, falling back to the pure "
-                          "implementation (still a GPU map on GPU-resident data)")
+            warnings.warn(
+                f"{cls.vendor} does not support {dtype} tensors, falling back to the pure "
+                "implementation (still a GPU map on GPU-resident data)"
+            )
             return ExpandPure.expansion(node, parent_state, parent_sdfg)
 
         tensor_dtype, compute_desc, alpha_type = cls.environments[0].TYPE_MAP[dtype]
@@ -192,20 +189,22 @@ class ExpandGPUTensor(ExpandTransformation):
             # Packedness is a property of the moved REGION: a slice of a packed container is not
             # itself packed, and this vendor writes the output densely whatever its strides say.
             if not datacore.strides_equal(datacore.packed_c_strides(out_shape), out_tensor.strides):
-                warnings.warn(f"{cls.vendor} permute ignores the output tensor's strides and would pack a "
-                              "non-packed output, falling back to the pure implementation (still a GPU map "
-                              "on GPU-resident data)")
+                warnings.warn(
+                    f"{cls.vendor} permute ignores the output tensor's strides and would pack a "
+                    "non-packed output, falling back to the pure implementation (still a GPU map "
+                    "on GPU-resident data)"
+                )
                 return ExpandPure.expansion(node, parent_state, parent_sdfg)
             modes_a, modes_c = modes_a[::-1], modes_c[::-1]
             extent_a, extent_c = extent_a[::-1], extent_c[::-1]
             stride_a, stride_c = stride_a[::-1], stride_c[::-1]
 
-        modes_a_str = ', '.join(str(m) for m in modes_a)
-        modes_c_str = ', '.join(str(m) for m in modes_c)
-        extent_a_str = ', '.join(extent_a)
-        extent_c_str = ', '.join(extent_c)
-        stride_a_str = ', '.join(stride_a)
-        stride_c_str = ', '.join(stride_c)
+        modes_a_str = ", ".join(str(m) for m in modes_a)
+        modes_c_str = ", ".join(str(m) for m in modes_c)
+        extent_a_str = ", ".join(extent_a)
+        extent_c_str = ", ".join(extent_c)
+        stride_a_str = ", ".join(stride_a)
+        stride_c_str = ", ".join(stride_c)
 
         code = f"""\
 {cls.environments[0].handle_setup_code(node)}
@@ -264,11 +263,9 @@ class ExpandGPUTensor(ExpandTransformation):
 }}
 """
 
-        tasklet = nodes.Tasklet(node.name,
-                                node.in_connectors,
-                                node.out_connectors,
-                                code,
-                                language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
@@ -326,18 +323,20 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
         already fallen back to the pure map.
         """
         from dace.codegen.common import get_gpu_backend  # Avoid import loop
+
         try:
             backend = get_gpu_backend()
         except RuntimeError:
-            backend = 'cuda'
-        delegate = ExpandHipTensor if backend == 'hip' else ExpandCuTensor
+            backend = "cuda"
+        delegate = ExpandHipTensor if backend == "hip" else ExpandCuTensor
         return delegate if delegate.environments[0].is_installed() else ExpandPure
 
     @staticmethod
     def expansion(node, state, sdfg, **kwargs):
         from dace.codegen.targets.cpp import sym2cpp
+
         inp_tensor, out_tensor, inp_shape, out_shape = node.validate(sdfg, state)
-        plain_swap = (list(node.axes) == [1, 0] and len(inp_shape) == 2 and node.alpha == 1 and node.beta == 0)
+        plain_swap = list(node.axes) == [1, 0] and len(inp_shape) == 2 and node.alpha == 1 and node.beta == 0
         if not plain_swap:
             # ``ExpandTransformation.apply`` attaches THIS class's ``environments`` to whatever is
             # returned, so a delegation has to carry the delegate's -- otherwise cuTENSOR's expansion
@@ -352,28 +351,34 @@ class ExpandTensorTransposeCUDA(ExpandTransformation):
         rows, cols = inp_shape
         idstr = global_code_id(sdfg, state, node)
         ctype = inp_tensor.dtype.base_type.ctype
-        prototype = (f'DACE_EXPORTED gpuError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, '
-                     f'int __tr_rows, int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream);')
-        sdfg.append_global_code(prototype + '\n')
+        prototype = (
+            f"DACE_EXPORTED gpuError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, "
+            f"int __tr_rows, int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream);"
+        )
+        sdfg.append_global_code(prototype + "\n")
         # No ``DACE_GPU_CHECK`` in this body: the macro reports through ``__state``, which a free
         # function in the CUDA unit does not have. The status is returned and checked at the call.
         sdfg.append_global_code(
-            f'{prototype}\n'
-            f'gpuError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, int __tr_rows, '
-            f'int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream) {{\n'
-            f'    return ::dace::cuda_transpose::transpose<{ctype}>(__tr_in, __tr_out, __tr_rows, __tr_cols, '
-            f'__tr_ldin, __tr_ldout, __tr_stream);\n'
-            f'}}\n', 'cuda')
+            f"{prototype}\n"
+            f"gpuError_t __dace_ttranspose_{idstr}(const {ctype} *__tr_in, {ctype} *__tr_out, int __tr_rows, "
+            f"int __tr_cols, int __tr_ldin, int __tr_ldout, gpuStream_t __tr_stream) {{\n"
+            f"    return ::dace::cuda_transpose::transpose<{ctype}>(__tr_in, __tr_out, __tr_rows, __tr_cols, "
+            f"__tr_ldin, __tr_ldout, __tr_stream);\n"
+            f"}}\n",
+            "cuda",
+        )
 
-        code = (f'DACE_GPU_CHECK(__dace_ttranspose_{idstr}(_inp_tensor, _out_tensor, (int)({sym2cpp(rows)}), '
-                f'(int)({sym2cpp(cols)}), (int)({sym2cpp(inp_tensor.strides[0])}), '
-                f'(int)({sym2cpp(out_tensor.strides[0])}), __dace_current_stream));')
+        code = (
+            f"DACE_GPU_CHECK(__dace_ttranspose_{idstr}(_inp_tensor, _out_tensor, (int)({sym2cpp(rows)}), "
+            f"(int)({sym2cpp(cols)}), (int)({sym2cpp(inp_tensor.strides[0])}), "
+            f"(int)({sym2cpp(out_tensor.strides[0])}), __dace_current_stream));"
+        )
         return nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
 
 
 @library.node
 class TensorTranspose(nodes.LibraryNode):
-    """ Implements out-of-place tensor transpositions. """
+    """Implements out-of-place tensor transpositions."""
 
     implementations = {
         "pure": ExpandPure,
@@ -382,12 +387,11 @@ class TensorTranspose(nodes.LibraryNode):
         "hipTENSOR": ExpandHipTensor,
         "CUDA": ExpandTensorTransposeCUDA,
     }
-    default_implementation = 'pure'
+    default_implementation = "pure"
 
-    axes = properties.ListProperty(element_type=int,
-                                   default=[],
-                                   category="Semantics",
-                                   desc="Permutation of input tensor's modes")
+    axes = properties.ListProperty(
+        element_type=int, default=[], category="Semantics", desc="Permutation of input tensor's modes"
+    )
     alpha = properties.Property(dtype=Number, default=1, category="Semantics", desc="Input tensor scaling factor")
     beta = properties.Property(dtype=Number, default=0, category="Semantics", desc="Output tensor scaling factor")
 

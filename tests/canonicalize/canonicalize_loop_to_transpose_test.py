@@ -11,6 +11,7 @@ subscript, a single loop -- must be refused.
 Value-preservation is checked against a plain-Python execution of the same loop
 body (not ``np.transpose``, to avoid coupling the test to that convention).
 """
+
 import numpy as np
 import pytest
 
@@ -20,13 +21,13 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def _apply(sdfg) -> int:
     res = Pipeline([LoopToTranspose()]).apply_pass(sdfg, {})
-    return (res or {}).get('LoopToTranspose', 0) or 0
+    return (res or {}).get("LoopToTranspose", 0) or 0
 
 
 def _libnodes(sdfg):
@@ -74,7 +75,7 @@ def _strided_transpose(A: dace.float64[8, 8], B: dace.float64[8, 8]):
 def test_transpose_2d_lifts_to_transpose_node():
     sdfg = _transpose2d.to_sdfg(simplify=True)
     assert _apply(sdfg) == 1
-    assert 'Transpose' in _libnodes(sdfg)
+    assert "Transpose" in _libnodes(sdfg)
     assert _num_loops(sdfg) == 0
     sdfg.validate()
 
@@ -93,7 +94,7 @@ def test_transpose_2d_lifts_to_transpose_node():
 def test_transpose_3d_lifts_to_tensortranspose_node():
     sdfg = _transpose3d.to_sdfg(simplify=True)
     assert _apply(sdfg) == 1
-    assert 'TensorTranspose' in _libnodes(sdfg)
+    assert "TensorTranspose" in _libnodes(sdfg)
     assert _num_loops(sdfg) == 0
     sdfg.validate()
 
@@ -114,7 +115,7 @@ def test_sub_region_transpose_lifts_via_view():
     through strided Views; only the accessed window is transposed."""
     sdfg = _sub_region_transpose.to_sdfg(simplify=True)
     assert _apply(sdfg) == 1
-    assert 'Transpose' in _libnodes(sdfg)
+    assert "Transpose" in _libnodes(sdfg)
     sdfg.validate()
 
     rng = np.random.default_rng(2)
@@ -220,7 +221,7 @@ def test_refuses_single_loop():
     assert not _libnodes(sdfg)
 
 
-@pytest.mark.parametrize('program', [_transpose2d, _transpose3d], ids=['2d', '3d'])
+@pytest.mark.parametrize("program", [_transpose2d, _transpose3d], ids=["2d", "3d"])
 def test_idempotent(program):
     """Re-running must be a no-op: the pass is wired into the canonicalize recipe, which is
     expected to reach a fixed point, so a second application has to lift nothing."""
@@ -231,5 +232,5 @@ def test_idempotent(program):
     assert _libnodes(sdfg) == lifted
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

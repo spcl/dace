@@ -12,6 +12,7 @@ node express broadcasts without a strided tile source:
   ``_src[0]`` for length-1 arrays and bare ``_src`` for true Scalars
   (DaCe codegen passes Scalar connectors by value).
 """
+
 import dace
 import pytest
 
@@ -19,6 +20,7 @@ import pytest
 def test_tile_gather_symbol_minimal():
     """``src_kind="Symbol"`` declares no ``_src`` input."""
     from dace.libraries.tileops import TileGather
+
     node = TileGather("tl_sym", widths=(8, 8), src_kind="Symbol", src_expr="0.0")
     assert "_src" not in node.in_connectors
     assert "_dst" in node.out_connectors
@@ -28,14 +30,16 @@ def test_tile_gather_symbol_minimal():
 def test_tile_gather_symbol_requires_expr():
     """``src_kind="Symbol"`` without ``src_expr`` raises at construction."""
     from dace.libraries.tileops import TileGather
+
     with pytest.raises(ValueError, match="src_expr"):
-        TileGather("tl_sym_bad", widths=(8, ), src_kind="Symbol")
+        TileGather("tl_sym_bad", widths=(8,), src_kind="Symbol")
 
 
 def test_tile_gather_scalar_keeps_src_connector():
     """``src_kind="Scalar"`` still declares ``_src`` (length-1 source)."""
     from dace.libraries.tileops import TileGather
-    node = TileGather("tl_scalar", widths=(8, ), src_kind="Scalar")
+
+    node = TileGather("tl_scalar", widths=(8,), src_kind="Scalar")
     assert "_src" in node.in_connectors
     assert "_dst" in node.out_connectors
 
@@ -43,8 +47,9 @@ def test_tile_gather_scalar_keeps_src_connector():
 def test_tile_gather_unknown_src_kind():
     """Unknown ``src_kind`` rejected at construction."""
     from dace.libraries.tileops import TileGather
+
     with pytest.raises(ValueError, match="src_kind"):
-        TileGather("tl_bad", widths=(8, ), src_kind="Bogus")
+        TileGather("tl_bad", widths=(8,), src_kind="Bogus")
 
 
 def test_tile_gather_symbol_pure_expansion():
@@ -52,12 +57,13 @@ def test_tile_gather_symbol_pure_expansion():
     tasklet that writes the literal to every lane. Only one Tasklet
     survives after ``expand_library_nodes``; no ``_src`` edge required."""
     from dace.libraries.tileops import TileGather
+
     sdfg = dace.SDFG("tl_sym_smoke")
     sdfg.add_array("OUT", [8], dace.float64)
     sdfg.add_array("_tile", [8], dace.float64, storage=dace.dtypes.StorageType.Register, transient=True)
     state = sdfg.add_state()
     me, mx = state.add_map("m", {"i": "0:1"})
-    load = TileGather("tl_sym_x", widths=(8, ), src_kind="Symbol", src_expr="3.14")
+    load = TileGather("tl_sym_x", widths=(8,), src_kind="Symbol", src_expr="3.14")
     state.add_node(load)
     state.add_nedge(me, load, dace.Memlet())
     tile_acc = state.add_access("_tile")
@@ -75,7 +81,7 @@ def test_tile_gather_symbol_pure_expansion():
     assert n_tasklet == 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_tile_gather_symbol_minimal()
     test_tile_gather_symbol_requires_expr()
     test_tile_gather_scalar_keeps_src_connector()

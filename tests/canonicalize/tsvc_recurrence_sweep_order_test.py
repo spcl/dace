@@ -13,6 +13,7 @@ What is asserted here is the ORDER and the innermost STRIDE, never a wall clock:
 property the cost model decides, and it is readable off the graph. The numeric check rides along
 because an order assertion alone passes just as happily on a miscompiled nest.
 """
+
 import os
 
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -25,8 +26,10 @@ import pytest
 import dace
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation.passes.canonicalize.move_loop_into_map_gated import (MoveLoopIntoMapGated,
-                                                                              interchange_lowers_stride)
+from dace.transformation.passes.canonicalize.move_loop_into_map_gated import (
+    MoveLoopIntoMapGated,
+    interchange_lowers_stride,
+)
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.minimize_stride_permutation import _to_float, score_indexed_strides
 
@@ -87,7 +90,7 @@ def innermost_stride(sdfg, array):
     uses, so the test measures the property the pass claims to optimize rather than a proxy.
     """
     axis = iteration_order(sdfg)[-1]
-    best = float('inf')
+    best = float("inf")
     for sub in sdfg.all_sdfgs_recursive():
         if array not in sub.arrays:
             continue
@@ -101,7 +104,7 @@ def innermost_stride(sdfg, array):
 def carried_axis(sdfg):
     """The axis of the one sequential ``LoopRegion`` canonicalize left behind."""
     loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable]
-    assert len(loops) == 1, f'expected exactly one residual sequential loop, got {[r.label for r in loops]}'
+    assert len(loops) == 1, f"expected exactly one residual sequential loop, got {[r.label for r in loops]}"
     return str(loops[0].loop_variable)
 
 
@@ -119,10 +122,10 @@ def assert_matches_reference(kernel, sdfg):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue
-        assert np.allclose(ref[name], got[name], equal_nan=True), f'{kernel.name}: value mismatch on {name}'
+        assert np.allclose(ref[name], got[name], equal_nan=True), f"{kernel.name}: value mismatch on {name}"
 
 
-@pytest.mark.parametrize('name', ['s231_d_single', 's235_d_single'])
+@pytest.mark.parametrize("name", ["s231_d_single", "s235_d_single"])
 def test_carried_axis_is_outermost_and_the_contiguous_axis_is_innermost(name):
     """``aa[j, i] = aa[j-1, i] + ...``: ``j`` carries, ``i`` is contiguous, so ``i`` goes inside.
 
@@ -130,23 +133,24 @@ def test_carried_axis_is_outermost_and_the_contiguous_axis_is_innermost(name):
     ``stride = LEN_2D``. Both orders run the same iterations; only one of them has a contiguous
     innermost access, and that is the one the cost model must pick.
     """
-    kernel, sdfg = canonicalized(name, 'sweep_order_' + name)
+    kernel, sdfg = canonicalized(name, "sweep_order_" + name)
     order = iteration_order(sdfg)
     carried = carried_axis(sdfg)
-    assert order[-1] != carried, f'{name}: the carried axis {carried} must not be innermost, got {order}'
-    assert order.index(carried) < len(order) - 1, f'{name}: {carried} must enclose the independent axis, got {order}'
+    assert order[-1] != carried, f"{name}: the carried axis {carried} must not be innermost, got {order}"
+    assert order.index(carried) < len(order) - 1, f"{name}: {carried} must enclose the independent axis, got {order}"
     assert_matches_reference(kernel, sdfg)
 
 
-@pytest.mark.parametrize('name', ['s231_d_single', 's235_d_single'])
+@pytest.mark.parametrize("name", ["s231_d_single", "s235_d_single"])
 def test_innermost_access_is_unit_stride(name):
     """The emitted inner loop must walk ``aa`` contiguously -- that is the whole point of the order."""
-    _kernel, sdfg = canonicalized(name, 'sweep_stride_' + name)
-    assert innermost_stride(sdfg, 'aa') == 1.0, \
-        f'{name}: innermost axis {iteration_order(sdfg)[-1]} does not walk aa with stride 1'
+    _kernel, sdfg = canonicalized(name, "sweep_stride_" + name)
+    assert innermost_stride(sdfg, "aa") == 1.0, (
+        f"{name}: innermost axis {iteration_order(sdfg)[-1]} does not walk aa with stride 1"
+    )
 
 
-@pytest.mark.parametrize('name', ['s1232_d_single', 's2275_d_single'])
+@pytest.mark.parametrize("name", ["s1232_d_single", "s2275_d_single"])
 def test_fully_parallel_nests_keep_their_contiguous_inner_axis(name):
     """The nests where the interchange already fired must not regress.
 
@@ -154,20 +158,21 @@ def test_fully_parallel_nests_keep_their_contiguous_inner_axis(name):
     consulted; the ordering comes from ``MinimizeStridePermutation``. Asserted here so a change to
     the gate that accidentally reaches these shows up as a failure rather than as a slowdown.
     """
-    kernel, sdfg = canonicalized(name, 'sweep_par_' + name)
-    assert innermost_stride(sdfg, 'aa') == 1.0, f'{name}: innermost axis must walk aa with stride 1'
+    kernel, sdfg = canonicalized(name, "sweep_par_" + name)
+    assert innermost_stride(sdfg, "aa") == 1.0, f"{name}: innermost axis must walk aa with stride 1"
     assert_matches_reference(kernel, sdfg)
 
 
 def test_gate_declining_leaves_the_sdfg_untouched():
     """A graph the gate declines must come out bit-identical -- no partial rewrite, no renaming."""
-    kernel = tsvc.collect(name='s231_d_single')[0]
-    sdfg = tsvc.to_sdfg(kernel, 'sweep_noop', simplify=True)
+    kernel = tsvc.collect(name="s231_d_single")[0]
+    sdfg = tsvc.to_sdfg(kernel, "sweep_noop", simplify=True)
     canonicalize(sdfg, validate=True)
     before = sdfg.to_json()
-    assert MoveLoopIntoMapGated(target='cpu').apply_pass(sdfg, {}) is None, \
-        'the gate must decline the settled recurrence sweep'
-    assert sdfg.to_json() == before, 'a declined gate must not mutate the SDFG'
+    assert MoveLoopIntoMapGated(target="cpu").apply_pass(sdfg, {}) is None, (
+        "the gate must decline the settled recurrence sweep"
+    )
+    assert sdfg.to_json() == before, "a declined gate must not mutate the SDFG"
 
 
 def test_gate_declines_when_the_map_axis_is_the_contiguous_one():
@@ -190,13 +195,15 @@ def test_gate_declines_when_the_map_axis_is_the_contiguous_one():
 
     sdfg = sweep.to_sdfg(simplify=True)
     loops = [
-        r for r in sdfg.all_control_flow_regions(recursive=True)
+        r
+        for r in sdfg.all_control_flow_regions(recursive=True)
         if isinstance(r, LoopRegion) and r.loop_variable and MoveLoopIntoMap.can_be_applied_to(r.sdfg, loop=r)
     ]
-    assert loops, 'the fixture must present an interchangeable loop<->map pair'
+    assert loops, "the fixture must present an interchangeable loop<->map pair"
     for loop in loops:
-        assert not interchange_lowers_stride(loop, loop.sdfg), \
-            f'{loop.loop_variable} is the strided axis; hoisting its map must not be judged a win'
+        assert not interchange_lowers_stride(loop, loop.sdfg), (
+            f"{loop.loop_variable} is the strided axis; hoisting its map must not be judged a win"
+        )
 
 
 def test_s275_guarded_sweep_gets_the_same_order():
@@ -206,9 +213,9 @@ def test_s275_guarded_sweep_gets_the_same_order():
     order is legal here: ``MoveIfIntoLoop`` takes the guard's prep down with the guard, which
     leaves the ``i`` loop holding the ``j`` loop alone and the interchange is offered.
     """
-    kernel, sdfg = canonicalized('s275_d_single', 'sweep_guard')
+    kernel, sdfg = canonicalized("s275_d_single", "sweep_guard")
     order = iteration_order(sdfg)
     carried = carried_axis(sdfg)
-    assert order[-1] != carried, f's275: the carried axis {carried} must not be innermost, got {order}'
-    assert order.index(carried) < len(order) - 1, f's275: {carried} must enclose the independent axis, got {order}'
+    assert order[-1] != carried, f"s275: the carried axis {carried} must not be innermost, got {order}"
+    assert order.index(carried) < len(order) - 1, f"s275: {carried} must enclose the independent axis, got {order}"
     assert_matches_reference(kernel, sdfg)

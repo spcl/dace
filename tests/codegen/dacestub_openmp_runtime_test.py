@@ -7,6 +7,7 @@ The stub now finds the runtime through the program. It must still keep that runt
 program's ``dlclose``, which a runtime on the stub's own link line used to do: unmapped under its worker
 threads, it crashes the process.
 """
+
 import ctypes
 import pathlib
 import subprocess
@@ -23,8 +24,9 @@ extern "C" int omp_get_max_threads() { if (flag) *flag += 1; return 1; }
 """
 
 
-def shared_library(directory: pathlib.Path, name: str, source: pathlib.Path, compile_flags: list[str],
-                   link_flags: list[str]) -> pathlib.Path:
+def shared_library(
+    directory: pathlib.Path, name: str, source: pathlib.Path, compile_flags: list[str], link_flags: list[str]
+) -> pathlib.Path:
     """Compile ``source`` and link it into ``lib<name>.so`` in two steps, so the link line is exactly ``link_flags``."""
     obj = directory / f"{name}.o"
     library = directory / f"lib{name}.so"

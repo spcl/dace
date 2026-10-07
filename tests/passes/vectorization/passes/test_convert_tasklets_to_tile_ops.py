@@ -1,27 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for :class:`ConvertTaskletsToTileOps` (first slice: binary Tile+Tile)."""
+
 import pytest
 
 import dace
 from dace.libraries.tileops import TileBinop
 from dace.memlet import Memlet
-from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import (ConvertTaskletsToTileOps)
+from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 
 
 def _build_inner_body_with_binop(op="+"):
     """Build an SDFG with one tile-tagged Map containing a body NSDFG whose state
     has a single binary tasklet ``_o = _a <op> _b``."""
-    sdfg = dace.SDFG('binop_fixture_build_inner_body_with_binop')
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("B", (8, ), dace.float64, transient=False)
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    sdfg = dace.SDFG("binop_fixture_build_inner_body_with_binop")
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("B", (8,), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_inner_body_with_binop')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("B", (8, ), dace.float64, transient=False)
-    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_inner_body_with_binop")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("B", (8,), dace.float64, transient=False)
+    inner.add_array("C", (8,), dace.float64, transient=False)
     instate = inner.add_state("body")
     a_inner = instate.add_access("A")
     b_inner = instate.add_access("B")
@@ -49,7 +50,7 @@ def _build_inner_body_with_binop(op="+"):
 def test_converter_replaces_binary_tasklet_with_tilebinop(op):
     """Each supported op gets converted; the inner state has exactly one TileBinop after."""
     sdfg, inner = _build_inner_body_with_binop(op=op)
-    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    result = ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     assert result == 1
     body_state = next(s for s in inner.states())
     binops = [n for n in body_state.nodes() if isinstance(n, TileBinop)]
@@ -60,7 +61,7 @@ def test_converter_replaces_binary_tasklet_with_tilebinop(op):
 def test_converter_preserves_memlets_on_rewired_edges():
     """Rewired ``_a`` / ``_b`` / ``_c`` memlets keep their per-iteration subset shape."""
     sdfg, inner = _build_inner_body_with_binop(op="+")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     a_edge = next(e for e in body_state.in_edges(binop) if e.dst_conn == "_a")
@@ -78,7 +79,7 @@ def test_converter_skips_non_recognised_tasklet():
     body_state = next(s for s in inner.states())
     tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
     tasklet.code = dace.properties.CodeBlock("_o = _a // _b")
-    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    result = ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     assert result is None
     # Tasklet still present, no TileBinop.
     body_state = next(s for s in inner.states())
@@ -88,9 +89,9 @@ def test_converter_skips_non_recognised_tasklet():
 
 def test_converter_empty_sdfg_returns_none():
     """SDFG with no tile-tagged map yields zero conversions -> ``None``."""
-    sdfg = dace.SDFG('empty_converter_empty_sdfg_returns_none')
+    sdfg = dace.SDFG("empty_converter_empty_sdfg_returns_none")
     sdfg.add_state("s")
-    assert ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {}) is None
+    assert ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {}) is None
 
 
 def test_converter_refuses_invalid_widths():
@@ -108,14 +109,14 @@ def _build_inner_body_with_unop(op="abs"):
     """Build an SDFG with one tile-tagged Map containing a body NSDFG whose state
     has a single unary tasklet ``_o = <op>(_a)`` (or ``_o = -_a`` for ``neg``)."""
     sdfg = dace.SDFG(f"unop_{op}_fixture")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_inner_body_with_unop')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_inner_body_with_unop")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("C", (8,), dace.float64, transient=False)
     instate = inner.add_state("body")
     a_inner = instate.add_access("A")
     c_inner = instate.add_access("C")
@@ -139,8 +140,9 @@ def _build_inner_body_with_unop(op="abs"):
 def test_converter_replaces_unary_tasklet_with_tileunop(op):
     """Each supported unary op gets converted to a TileUnop."""
     from dace.libraries.tileops import TileUnop
+
     sdfg, inner = _build_inner_body_with_unop(op=op)
-    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    result = ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     assert result == 1
     body_state = next(s for s in inner.states())
     unops = [n for n in body_state.nodes() if isinstance(n, TileUnop)]
@@ -151,8 +153,9 @@ def test_converter_replaces_unary_tasklet_with_tileunop(op):
 def test_converter_unop_preserves_memlets_on_rewired_edges():
     """Rewired ``_a`` / ``_c`` memlets keep their per-iteration subset shape."""
     from dace.libraries.tileops import TileUnop
+
     sdfg, inner = _build_inner_body_with_unop(op="abs")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
     a_edge = next(e for e in body_state.in_edges(unop) if e.dst_conn == "_a")
@@ -167,18 +170,18 @@ def test_converter_unop_preserves_memlets_on_rewired_edges():
 def _build_inner_body_with_ite():
     """Build an SDFG whose body NSDFG has a ternary ``_o = _t if _cond else _e`` tasklet."""
     sdfg = dace.SDFG("ite_fixture")
-    sdfg.add_array("Cond", (8, ), dace.bool_, transient=False)
-    sdfg.add_array("T", (8, ), dace.float64, transient=False)
-    sdfg.add_array("E", (8, ), dace.float64, transient=False)
-    sdfg.add_array("O", (8, ), dace.float64, transient=False)
+    sdfg.add_array("Cond", (8,), dace.bool_, transient=False)
+    sdfg.add_array("T", (8,), dace.float64, transient=False)
+    sdfg.add_array("E", (8,), dace.float64, transient=False)
+    sdfg.add_array("O", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_inner_body_with_ite')
-    inner.add_array("Cond", (8, ), dace.bool_, transient=False)
-    inner.add_array("T", (8, ), dace.float64, transient=False)
-    inner.add_array("E", (8, ), dace.float64, transient=False)
-    inner.add_array("O", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_inner_body_with_ite")
+    inner.add_array("Cond", (8,), dace.bool_, transient=False)
+    inner.add_array("T", (8,), dace.float64, transient=False)
+    inner.add_array("E", (8,), dace.float64, transient=False)
+    inner.add_array("O", (8,), dace.float64, transient=False)
     instate = inner.add_state("body")
     c_inner = instate.add_access("Cond")
     t_inner = instate.add_access("T")
@@ -201,8 +204,9 @@ def _build_inner_body_with_ite():
 def test_converter_replaces_ternary_tasklet_with_tileite():
     """A Python ternary ``_o = _t if _cond else _e`` gets converted to a TileITE."""
     from dace.libraries.tileops import TileITE
+
     sdfg, inner = _build_inner_body_with_ite()
-    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    result = ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     assert result == 1
     body_state = next(s for s in inner.states())
     ites = [n for n in body_state.nodes() if isinstance(n, TileITE)]
@@ -212,8 +216,9 @@ def test_converter_replaces_ternary_tasklet_with_tileite():
 def test_converter_ite_wires_cond_t_e_connectors_correctly():
     """``_cond`` / ``_t`` / ``_e`` end up on the right connectors with the right memlets."""
     from dace.libraries.tileops import TileITE
+
     sdfg, inner = _build_inner_body_with_ite()
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     ite = next(n for n in body_state.nodes() if isinstance(n, TileITE))
     cond_edge = next(e for e in body_state.in_edges(ite) if e.dst_conn == "_mask")
@@ -232,15 +237,15 @@ def test_converter_ite_wires_cond_t_e_connectors_correctly():
 def _build_inner_body_with_tile_plus_scalar(op="+"):
     """Binop with tile-shape left + Scalar right (the post-walker shape for stage_constant)."""
     sdfg = dace.SDFG("mixed_kind_fixture")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_inner_body_with_tile_plus_scalar')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("C", (8, ), dace.float64, transient=False)
-    inner.add_array("A_tile", (8, ), dace.float64, transient=True)
+    inner = dace.SDFG("body_build_inner_body_with_tile_plus_scalar")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("C", (8,), dace.float64, transient=False)
+    inner.add_array("A_tile", (8,), dace.float64, transient=True)
     inner.add_scalar("S_bridge", dace.float64, transient=True)
     instate = inner.add_state("body")
     tile_an = instate.add_access("A_tile")
@@ -262,7 +267,7 @@ def _build_inner_body_with_tile_plus_scalar(op="+"):
 def test_converter_classifies_scalar_bridge_operand_as_scalar_kind():
     """Binop right-reads a Scalar transient -> TileBinop.kind_b == "Scalar"."""
     sdfg, inner = _build_inner_body_with_tile_plus_scalar(op="+")
-    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    result = ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     assert result == 1
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
@@ -273,7 +278,7 @@ def test_converter_classifies_scalar_bridge_operand_as_scalar_kind():
 def test_converter_default_tile_kind_when_both_sources_are_tile_shape():
     """Both reads from tile-shape -> both kinds default to Tile."""
     sdfg, inner = _build_inner_body_with_binop(op="+")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.kind_a == "Tile"
@@ -283,12 +288,13 @@ def test_converter_default_tile_kind_when_both_sources_are_tile_shape():
 def test_converter_unop_with_scalar_source_sets_scalar_kind():
     """Unary op reading a Scalar bridge -> TileUnop.kind_a == "Scalar"."""
     from dace.libraries.tileops import TileUnop
+
     sdfg = dace.SDFG("unop_scalar_fixture")
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG('body_converter_unop_with_scalar_source_sets_scalar_kind')
-    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_converter_unop_with_scalar_source_sets_scalar_kind")
+    inner.add_array("C", (8,), dace.float64, transient=False)
     inner.add_scalar("S_bridge", dace.float64, transient=True)
     instate = inner.add_state("body")
     scalar_an = instate.add_access("S_bridge")
@@ -301,7 +307,7 @@ def test_converter_unop_with_scalar_source_sets_scalar_kind():
     state.add_memlet_path(me, nsdfg, memlet=Memlet())
     state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
 
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
     assert unop.kind_a == "Scalar"
@@ -314,14 +320,14 @@ def _build_inner_body_with_reduction(op="+"):
     """Build a body NSDFG with an in-place RMW accumulator tasklet ``_acc = _acc <op> _val``."""
     OP_TAG = {"+": "add", "*": "mul", "min": "min", "max": "max"}
     sdfg = dace.SDFG(f"reduce_{OP_TAG[op]}_fixture")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("Acc", (1, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("Acc", (1,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_inner_body_with_reduction')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("Acc", (1, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_inner_body_with_reduction")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("Acc", (1,), dace.float64, transient=False)
     instate = inner.add_state("body")
     a_inner = instate.add_access("A")
     acc_inner_in = instate.add_access("Acc")
@@ -349,8 +355,9 @@ def _build_inner_body_with_reduction(op="+"):
 def test_converter_replaces_inplace_rmw_tasklet_with_tilereduce(op):
     """Each supported associative op gets converted to a TileReduce."""
     from dace.libraries.tileops import TileReduce
+
     sdfg, inner = _build_inner_body_with_reduction(op=op)
-    result = ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    result = ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     assert result == 1
     body_state = next(s for s in inner.states())
     reduces = [n for n in body_state.nodes() if isinstance(n, TileReduce)]
@@ -361,8 +368,9 @@ def test_converter_replaces_inplace_rmw_tasklet_with_tilereduce(op):
 def test_converter_reduction_wires_src_and_dst_correctly():
     """``_val`` (tile input) -> TileReduce._src; ``_acc`` (accumulator) -> TileReduce._dst."""
     from dace.libraries.tileops import TileReduce
+
     sdfg, inner = _build_inner_body_with_reduction(op="+")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     reduce_node = next(n for n in body_state.nodes() if isinstance(n, TileReduce))
     src_edge = next(e for e in body_state.in_edges(reduce_node) if e.dst_conn == "_src")
@@ -374,8 +382,9 @@ def test_converter_reduction_wires_src_and_dst_correctly():
 def test_converter_skips_non_inplace_binop():
     """Non-RMW binop ``_o = _a + _b`` is NOT recognised as a reduction; stays a TileBinop."""
     from dace.libraries.tileops import TileBinop, TileReduce
+
     sdfg, inner = _build_inner_body_with_binop(op="+")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     assert not any(isinstance(n, TileReduce) for n in body_state.nodes())
     assert any(isinstance(n, TileBinop) for n in body_state.nodes())
@@ -393,15 +402,16 @@ def test_widening_done_by_widen_accesses_pre_pass():
     set up by the pre-pass.
     """
     from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
+
     sdfg2 = dace.SDFG("widen_intermediate")
-    sdfg2.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg2.add_array("B", (8, ), dace.float64, transient=False)
+    sdfg2.add_array("A", (8,), dace.float64, transient=False)
+    sdfg2.add_array("B", (8,), dace.float64, transient=False)
     state = sdfg2.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG('body_widening_done_by_widen_accesses_pre_pass')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("B", (8, ), dace.float64, transient=False)
-    inner.add_array("mid_t", (1, ), dace.float64, transient=True)
+    inner = dace.SDFG("body_widening_done_by_widen_accesses_pre_pass")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("B", (8,), dace.float64, transient=False)
+    inner.add_array("mid_t", (1,), dace.float64, transient=True)
     instate = inner.add_state("body")
     a_in = instate.add_access("A")
     b_in = instate.add_access("B")
@@ -415,14 +425,13 @@ def test_widening_done_by_widen_accesses_pre_pass():
     state.add_memlet_path(state.add_access("B"), me, nsdfg, dst_conn="B", memlet=Memlet("B[0:8]"))
     state.add_nedge(nsdfg, mx, Memlet())
     # Run the unified pre-pass -- it widens mid_t based on producer access patterns.
-    WidenAccesses(widths=(8, )).apply_pass(sdfg2, {})
+    WidenAccesses(widths=(8,)).apply_pass(sdfg2, {})
     desc = inner.arrays["mid_t"]
-    assert tuple(desc.shape) == (8, ), \
-        f"WidenAccesses should widen mid_t to (8,); got {tuple(desc.shape)}"
+    assert tuple(desc.shape) == (8,), f"WidenAccesses should widen mid_t to (8,); got {tuple(desc.shape)}"
     # Then the converter is a pure tasklet -> lib-node rewriter (no widening, no narrowing).
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg2, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg2, {})
     # mid_t still tile-shape.
-    assert tuple(inner.arrays["mid_t"].shape) == (8, )
+    assert tuple(inner.arrays["mid_t"].shape) == (8,)
 
 
 def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
@@ -430,15 +439,15 @@ def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
 
     Per user direction: scalar-scalar / scalar-symbol / symbol-symbol op -> Scalar output."""
     sdfg = dace.SDFG("no_widen_scalar")
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG('body_converter_leaves_length1_output_unchanged_for_all_scalar_binop')
-    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_converter_leaves_length1_output_unchanged_for_all_scalar_binop")
+    inner.add_array("C", (8,), dace.float64, transient=False)
     # Two Scalar bridges + one length-1 intermediate transient.
     inner.add_scalar("S_a", dace.float64, transient=True)
     inner.add_scalar("S_b", dace.float64, transient=True)
-    inner.add_array("mid_t", (1, ), dace.float64, transient=True)
+    inner.add_array("mid_t", (1,), dace.float64, transient=True)
     instate = inner.add_state("body")
     sa = instate.add_access("S_a")
     sb = instate.add_access("S_b")
@@ -451,10 +460,11 @@ def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
     nsdfg = state.add_nested_sdfg(inner, set(), {"C"}, symbol_mapping={"ii": "ii"})
     state.add_nedge(me, nsdfg, Memlet())
     state.add_memlet_path(nsdfg, mx, state.add_access("C"), src_conn="C", memlet=Memlet("C[0:8]"))
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     desc = inner.arrays["mid_t"]
-    assert tuple(desc.shape) == (1, ), \
+    assert tuple(desc.shape) == (1,), (
         f"expected mid_t to stay length-1 for all-Scalar op (Scalar output), got {tuple(desc.shape)}"
+    )
 
 
 # Symbol operand kind
@@ -463,13 +473,13 @@ def test_converter_leaves_length1_output_unchanged_for_all_scalar_binop():
 def _build_inner_body_with_symbol_binop(body_str):
     """Body NSDFG with a single in-connector tasklet whose body references an outer symbol."""
     sdfg = dace.SDFG("symbol_binop_fixture")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG('body_build_inner_body_with_symbol_binop')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
-    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_inner_body_with_symbol_binop")
+    inner.add_array("A", (8,), dace.float64, transient=False)
+    inner.add_array("C", (8,), dace.float64, transient=False)
     instate = inner.add_state("body")
     a_in = instate.add_access("A")
     c_in = instate.add_access("C")
@@ -487,7 +497,7 @@ def _build_inner_body_with_symbol_binop(body_str):
 def test_converter_handles_symbol_operand_on_right():
     """``_o = _a + 5`` -> TileBinop(kind_a=Tile, kind_b=Symbol, expr_b="5")."""
     sdfg, inner = _build_inner_body_with_symbol_binop("_o = _a + 5")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.kind_a == "Tile"
@@ -499,7 +509,7 @@ def test_converter_handles_symbol_operand_on_right():
 def test_converter_handles_symbol_operand_on_left():
     """``_o = 2 * _a`` -> TileBinop(kind_a=Symbol, expr_a="2", kind_b=Tile)."""
     sdfg, inner = _build_inner_body_with_symbol_binop("_o = 2 * _a")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.kind_a == "Symbol"
@@ -511,7 +521,7 @@ def test_converter_handles_symbol_operand_on_left():
 def test_converter_handles_symbol_in_min_function():
     """``_o = min(_a, 0.5)`` -> TileBinop(op=min, kind_a=Tile, kind_b=Symbol, expr_b="0.5")."""
     sdfg, inner = _build_inner_body_with_symbol_binop("_o = min(_a, 0.5)")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.op == "min"
@@ -528,24 +538,25 @@ def _build_body_with_mask(body_str, n_in_conns=2, has_b_arr=True):
     plus a tasklet whose body is ``body_str``. Used to verify the converter wires
     ``has_mask=True`` + ``_mask`` on the emitted Tile* lib node."""
     from dace.libraries.tileops import TileMaskGen
+
     sdfg = dace.SDFG("mask_fixture")
-    sdfg.add_array("A", (8, ), dace.float64, transient=False)
+    sdfg.add_array("A", (8,), dace.float64, transient=False)
     if has_b_arr:
-        sdfg.add_array("B", (8, ), dace.float64, transient=False)
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+        sdfg.add_array("B", (8,), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
 
-    inner = dace.SDFG('body_build_body_with_mask')
-    inner.add_array("A", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_body_with_mask")
+    inner.add_array("A", (8,), dace.float64, transient=False)
     if has_b_arr:
-        inner.add_array("B", (8, ), dace.float64, transient=False)
-    inner.add_array("C", (8, ), dace.float64, transient=False)
-    inner.add_array("_tile_iter_mask", (8, ), dace.bool_, transient=True)
+        inner.add_array("B", (8,), dace.float64, transient=False)
+    inner.add_array("C", (8,), dace.float64, transient=False)
+    inner.add_array("_tile_iter_mask", (8,), dace.bool_, transient=True)
     instate = inner.add_state("body")
 
     # Emit TileMaskGen + mask AN inside the body (mimics GenerateTileIterationMask).
-    mask_gen = TileMaskGen(name="_tile_iter_mask_gen", widths=(8, ), iter_vars=("ii", ), global_ubs=("8", ))
+    mask_gen = TileMaskGen(name="_tile_iter_mask_gen", widths=(8,), iter_vars=("ii",), global_ubs=("8",))
     instate.add_node(mask_gen)
     mask_an = instate.add_access("_tile_iter_mask")
     instate.add_edge(mask_gen, "_o", mask_an, None, Memlet("_tile_iter_mask[0:8]"))
@@ -576,7 +587,7 @@ def test_converter_wires_mask_on_binop_when_mask_in_scope():
     ``_mask`` edge. Inactive lanes would otherwise hold garbage that can
     trap (div-by-0, log-of-neg) or propagate NaN."""
     sdfg, inner = _build_body_with_mask("_o = _a + _b")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.has_mask is True
@@ -588,8 +599,9 @@ def test_converter_wires_mask_on_binop_when_mask_in_scope():
 def test_converter_wires_mask_on_unop_when_mask_in_scope():
     """Mask-when-partial: :class:`TileUnop` also gets the iter-mask."""
     from dace.libraries.tileops import TileUnop
+
     sdfg, inner = _build_body_with_mask("_o = abs(_a)", n_in_conns=1, has_b_arr=False)
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
     assert unop.has_mask is True
@@ -601,7 +613,7 @@ def test_converter_wires_mask_on_unop_when_mask_in_scope():
 def test_converter_skips_mask_when_no_mask_in_scope():
     """A body without TileMaskGen produces has_mask=False (the divisible / unmasked case)."""
     sdfg, inner = _build_inner_body_with_binop(op="+")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.has_mask is False
@@ -614,8 +626,9 @@ def test_converter_keeps_mask_producer_an_alive_for_reductions():
     produces the mask transient for the side-effect-boundary consumers
     (:class:`TileReduce`, :class:`TileScatter`)."""
     from dace.libraries.tileops import TileMaskGen
+
     sdfg, inner = _build_body_with_mask("_o = _a + _b")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     # TileMaskGen still emitted (consumed downstream by TileScatter at the global write).
     assert any(isinstance(n, TileMaskGen) for n in body_state.nodes())
@@ -627,25 +640,22 @@ def test_converter_keeps_mask_producer_an_alive_for_reductions():
 def _build_body_with_zero_in_conn(body_str, add_symbol_N=True):
     """Build a body NSDFG whose tasklet has 0 input connectors (purely Symbol-driven)."""
     sdfg = dace.SDFG("sym_only_fixture")
-    sdfg.add_array("C", (8, ), dace.float64, transient=False)
+    sdfg.add_array("C", (8,), dace.float64, transient=False)
     if add_symbol_N:
         sdfg.add_symbol("N", dace.int64)
     state = sdfg.add_state("s")
     me, mx = state.add_map("k", {"ii": "0:8"})
-    inner = dace.SDFG('body_build_body_with_zero_in_conn')
-    inner.add_array("C", (8, ), dace.float64, transient=False)
+    inner = dace.SDFG("body_build_body_with_zero_in_conn")
+    inner.add_array("C", (8,), dace.float64, transient=False)
     if add_symbol_N:
         inner.add_symbol("N", dace.int64)
     instate = inner.add_state("body")
     c_in = instate.add_access("C")
     tasklet = instate.add_tasklet("body_t", set(), {"_o"}, body_str)
     instate.add_edge(tasklet, "_o", c_in, None, Memlet("C[ii]"))
-    nsdfg = state.add_nested_sdfg(inner,
-                                  set(), {"C"},
-                                  symbol_mapping={
-                                      "ii": "ii",
-                                      "N": "N"
-                                  } if add_symbol_N else {"ii": "ii"})
+    nsdfg = state.add_nested_sdfg(
+        inner, set(), {"C"}, symbol_mapping={"ii": "ii", "N": "N"} if add_symbol_N else {"ii": "ii"}
+    )
     c_outer = state.add_access("C")
     state.add_nedge(me, nsdfg, Memlet())
     state.add_memlet_path(nsdfg, mx, c_outer, src_conn="C", memlet=Memlet("C[0:8]"))
@@ -655,8 +665,9 @@ def _build_body_with_zero_in_conn(body_str, add_symbol_N=True):
 def test_converter_emits_tileunop_with_symbol_invariant():
     """``_o = abs(N + 1)`` (N invariant) -> TileUnop(kind_a=Symbol, expr_a) with NO _a edge."""
     from dace.libraries.tileops import TileUnop
+
     sdfg, inner = _build_body_with_zero_in_conn("_o = abs(N + 1)")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
     assert unop.kind_a == "Symbol"
@@ -670,8 +681,9 @@ def test_converter_materialises_tile_for_lane_id_dependent_symbol_in_unop():
     """``_o = abs(ii + 1)`` -> the materialiser produces a per-lane tile; TileUnop reads
     from it as a Tile operand. Validates the user's "lane-id-symbol -> tile" path."""
     from dace.libraries.tileops import TileUnop
+
     sdfg, inner = _build_body_with_zero_in_conn("_o = abs(ii + 1)", add_symbol_N=False)
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     unop = next(n for n in body_state.nodes() if isinstance(n, TileUnop))
     assert unop.kind_a == "Tile", f"expected Tile (materialised lane-id), got {unop.kind_a}"
@@ -684,7 +696,7 @@ def test_converter_materialises_tile_for_lane_id_dependent_symbol_in_unop():
 def test_converter_emits_tilebinop_with_two_symbols_invariant():
     """``_o = N + 5`` (both invariant) -> TileBinop(kind_a=Symbol, kind_b=Symbol)."""
     sdfg, inner = _build_body_with_zero_in_conn("_o = N + 5")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.kind_a == "Symbol"
@@ -694,7 +706,7 @@ def test_converter_emits_tilebinop_with_two_symbols_invariant():
 def test_converter_emits_mixed_tilebinop_with_lane_id_and_invariant_symbols():
     """``_o = ii * N`` -> lane-id ``ii`` materialised to Tile; N stays Symbol."""
     sdfg, inner = _build_body_with_zero_in_conn("_o = ii * N")
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     body_state = next(s for s in inner.states())
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert {binop.kind_a, binop.kind_b} == {"Tile", "Symbol"}
@@ -703,10 +715,13 @@ def test_converter_emits_mixed_tilebinop_with_lane_id_and_invariant_symbols():
 # ``**`` / ``pow`` lowering
 
 
-@pytest.mark.parametrize("body_form", [
-    "_o = _a ** _b",
-    "_o = pow(_a, _b)",
-])
+@pytest.mark.parametrize(
+    "body_form",
+    [
+        "_o = _a ** _b",
+        "_o = pow(_a, _b)",
+    ],
+)
 def test_converter_emits_tilebinop_for_power(body_form):
     """Both ``_a ** _b`` and ``pow(_a, _b)`` lower to a TileBinop resolved to ``pow``.
 
@@ -721,6 +736,6 @@ def test_converter_emits_tilebinop_for_power(body_form):
     body_state = next(s for s in inner.states())
     tasklet = next(n for n in body_state.nodes() if isinstance(n, dace.nodes.Tasklet))
     tasklet.code = dace.properties.CodeBlock(body_form)
-    ConvertTaskletsToTileOps(widths=(8, )).apply_pass(sdfg, {})
+    ConvertTaskletsToTileOps(widths=(8,)).apply_pass(sdfg, {})
     binop = next(n for n in body_state.nodes() if isinstance(n, TileBinop))
     assert binop.op == "pow", f"expected op='pow', got {binop.op!r}"

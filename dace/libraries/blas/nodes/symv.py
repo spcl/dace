@@ -6,6 +6,7 @@ doesn't generate two declarations for the same name. The expansion
 copies ``_yin`` into ``_yout`` first then calls the in-place cBLAS / cuBLAS
 SYMV on ``_yout``.
 """
+
 import copy
 
 import dace.library
@@ -19,13 +20,13 @@ from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
 from typing import List, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
 
 @dace.library.expansion
 class ExpandSymvOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -34,22 +35,19 @@ class ExpandSymvOpenBLAS(ExpandTransformation):
         dt = desc_A.dtype.base_type
         func, _, _ = blas_helpers.cublas_type_metadata(dt)
         prefix = func.lower()
-        uplo = 'CblasUpper' if node.uplo else 'CblasLower'
+        uplo = "CblasUpper" if node.uplo else "CblasLower"
         a, b = node.alpha, node.beta
         code = f"""
         cblas_{prefix}copy({n}, _yin, {syi}, _yout, {syo});
         cblas_{prefix}symv(CblasColMajor, {uplo}, {n}, ({dt.ctype})({a}), _A, {lda}, _x, {sx}, ({dt.ctype})({b}), _yout, {syo});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandSymvMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -59,7 +57,6 @@ class ExpandSymvMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandSymvGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -72,16 +69,16 @@ class ExpandSymvGPUBLAS(ExpandTransformation):
         a, b = node.alpha, node.beta
         code = cls.environments[0].handle_setup_code(node)
         code += gpu_dialect.host_scalar_mode(
-            cls.dialect, f"""
+            cls.dialect,
+            f"""
         {dt.ctype} __alpha = ({dt.ctype})({a}); {dt.ctype} __beta = ({dt.ctype})({b});
-        {cls.dialect.func(func, 'copy')}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
-        {cls.dialect.func(func, 'symv')}({cls.dialect.handle}, {uplo}, {n}, &__alpha, _A, {lda}, _x, {sx}, &__beta, _yout, {syo});
-        """)
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        {cls.dialect.func(func, "copy")}({cls.dialect.handle}, {n}, _yin, {syi}, _yout, {syo});
+        {cls.dialect.func(func, "symv")}({cls.dialect.handle}, {uplo}, {n}, &__alpha, _A, {lda}, _x, {sx}, &__beta, _yout, {syo});
+        """,
+        )
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
@@ -104,7 +101,7 @@ class Symv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandSymvOpenBLAS,
         "MKL": ExpandSymvMKL,
         "cuBLAS": ExpandSymvCuBLAS,
-        "rocBLAS": ExpandSymvRocBLAS
+        "rocBLAS": ExpandSymvRocBLAS,
     }
     default_implementation = None
 
@@ -113,7 +110,7 @@ class Symv(dace.sdfg.nodes.LibraryNode):
     beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
 
     def __init__(self, name, uplo=False, alpha=1, beta=0, **kwargs):
-        super().__init__(name, inputs=OrderedSet(('_A', '_x', '_yin')), outputs={"_yout"}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(("_A", "_x", "_yin")), outputs={"_yout"}, **kwargs)
         self.uplo, self.alpha, self.beta = uplo, alpha, beta
 
     def validate(self, sdfg, state):
@@ -139,17 +136,17 @@ class Symv(dace.sdfg.nodes.LibraryNode):
         return ((descs["_A"], strides["_A"]), (descs["_x"], strides["_x"]), (descs["_yin"], strides["_yin"]), syo, n)
 
 
-@oprepo.replaces('dace.libraries.blas.symv')
-@oprepo.replaces('dace.libraries.blas.Symv')
-def symv_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
+@oprepo.replaces("dace.libraries.blas.symv")
+@oprepo.replaces("dace.libraries.blas.Symv")
+def symv_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
     """Build a :class:`Symv` node. ``result`` defaults to ``y`` for in-place semantics."""
     result = result if result is not None else y
     A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
     y_out = state.add_write(result)
-    libnode = Symv('symv', uplo=uplo, alpha=alpha, beta=beta)
+    libnode = Symv("symv", uplo=uplo, alpha=alpha, beta=beta)
     state.add_node(libnode)
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(y_in, None, libnode, '_yin', mm.Memlet(y))
-    state.add_edge(libnode, '_yout', y_out, None, mm.Memlet(result))
+    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, "_yin", mm.Memlet(y))
+    state.add_edge(libnode, "_yout", y_out, None, mm.Memlet(result))
     return []

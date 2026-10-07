@@ -10,6 +10,7 @@ name and another parses it differently:
 - ``TileNameScheme`` — K-dim tile-transient names (``<base>_tile``, ``<base>_tile_idx``,
   ``_tile_iter_mask``, ``<base>_tile_cond_mask``).
 """
+
 import re
 from collections.abc import Iterable, Iterator
 
@@ -95,7 +96,7 @@ class LaneIdScheme:
         """
         m = LaneIdScheme._CHUNK_TAIL_RE.search(name)
         if m is not None and m.end() == len(name):
-            return name[:m.start()], int(m.group(2))
+            return name[: m.start()], int(m.group(2))
         lm = LaneIdScheme._LEGACY_RE.match(name)
         if lm is not None:
             return lm.group(1), int(lm.group(2))
@@ -118,7 +119,7 @@ class LaneIdScheme:
             m = LaneIdScheme._CHUNK_TAIL_RE.search(remaining)
             if m is not None and m.end() == len(remaining):
                 peeled.append((int(m.group(1)), int(m.group(2))))
-                remaining = remaining[:m.start()]
+                remaining = remaining[: m.start()]
                 continue
             lm = LaneIdScheme._LEGACY_RE.match(remaining)
             if lm is not None:
@@ -271,9 +272,9 @@ class TileNameScheme:
         if name == TileNameScheme.ITER_MASK:
             return True
         for suffix in (
-                TileNameScheme.TILE_SUFFIX,
-                TileNameScheme.IDX_SUFFIX,
-                TileNameScheme.COND_MASK_SUFFIX,
+            TileNameScheme.TILE_SUFFIX,
+            TileNameScheme.IDX_SUFFIX,
+            TileNameScheme.COND_MASK_SUFFIX,
         ):
             if name.endswith(suffix):
                 return True
@@ -328,5 +329,7 @@ def assert_no_laneid_in_tile_path(sdfg: SDFG) -> None:
     """
     leaks = sorted({n for n in _iter_all_symbol_strings(sdfg) if LaneIdScheme.is_lane_fanned(n)})
     if leaks:
-        raise AssertionError(f"K-dim tile path leaked {len(leaks)} per-lane scalar(s): {leaks!r}. "
-                             f"Lib-node emission must carry lane offsets implicitly — check the prep passes.")
+        raise AssertionError(
+            f"K-dim tile path leaked {len(leaks)} per-lane scalar(s): {leaks!r}. "
+            f"Lib-node emission must carry lane offsets implicitly — check the prep passes."
+        )

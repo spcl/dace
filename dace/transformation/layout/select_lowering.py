@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Device-aware lowering selection for layout-inserted library nodes: on CPU a ``TensorDot`` prefers TBLIS (native transpose-free contraction) when the library is linkable and the operand dtype is supported, otherwise ``pure``; a ``TensorTranspose``/``LayoutChange`` always gets ``pure`` (TBLIS only does contraction). GPU prefers ``cuTENSOR``, falling back to ``pure`` when it can't build/run for the operands."""
+
 import ctypes.util
 import os
 from typing import List, Set, Type
@@ -17,6 +18,7 @@ def layout_node_types() -> Set[Type[nd.LibraryNode]]:
     """The library-node types the layout passes insert (imported lazily to avoid import loops)."""
     from dace.libraries.linalg import TensorTranspose, TensorDot
     from dace.libraries.layout.layout_change import LayoutChange
+
     return {TensorTranspose, TensorDot, LayoutChange}
 
 
@@ -27,7 +29,7 @@ def cutensor_is_linkable() -> bool:
 
 def tblis_is_linkable() -> bool:
     """Whether TBLIS is available: ``TBLIS_ROOT`` points at an install, or ``libtblis`` is on the loader path."""
-    return 'TBLIS_ROOT' in os.environ or ctypes.util.find_library("tblis") is not None
+    return "TBLIS_ROOT" in os.environ or ctypes.util.find_library("tblis") is not None
 
 
 def cpu_implementation(node: nd.LibraryNode, descs: List[dace.data.Data], tblis_ok: bool) -> str:
@@ -36,8 +38,13 @@ def cpu_implementation(node: nd.LibraryNode, descs: List[dace.data.Data], tblis_
     ``TensorTranspose``/``LayoutChange`` always gets ``pure``."""
     from dace.libraries.linalg import TensorDot
     from dace.libraries.linalg.nodes.tensordot import ExpandTBLIS
-    if (tblis_ok and descs and isinstance(node, TensorDot)
-            and all(desc.dtype.base_type in ExpandTBLIS.TYPE_MAP for desc in descs)):
+
+    if (
+        tblis_ok
+        and descs
+        and isinstance(node, TensorDot)
+        and all(desc.dtype.base_type in ExpandTBLIS.TYPE_MAP for desc in descs)
+    ):
         return CPU_TENSOR_IMPL
     return CPU_IMPL
 
@@ -57,6 +64,7 @@ def gpu_implementation(descs: List[dace.data.Data], cutensor_ok: bool) -> str:
     if not cutensor_ok or not descs:
         return CPU_IMPL
     from dace.libraries.linalg.environments import cuTensor
+
     on_gpu = all(desc.storage == dtypes.StorageType.GPU_Global for desc in descs)
     dtypes_supported = all(desc.dtype.base_type in cuTensor.TYPE_MAP for desc in descs)
     return GPU_IMPL if (on_gpu and dtypes_supported) else CPU_IMPL

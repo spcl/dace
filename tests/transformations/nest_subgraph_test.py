@@ -45,15 +45,15 @@ def test_nest_oneelementmap():
 
 
 def test_internal_outarray():
-    sdfg = dace.SDFG('internal_outarr')
-    sdfg.add_array('A', [20], dace.float64)
+    sdfg = dace.SDFG("internal_outarr")
+    sdfg.add_array("A", [20], dace.float64)
     state = sdfg.add_state()
 
-    me, mx = state.add_map('_', dict(i='0:1'))
-    t = state.add_tasklet('doit', {}, {'a'}, 'a = 0')
-    w = state.add_write('A')
+    me, mx = state.add_map("_", dict(i="0:1"))
+    t = state.add_tasklet("doit", {}, {"a"}, "a = 0")
+    w = state.add_write("A")
     state.add_nedge(me, t, dace.Memlet())
-    state.add_edge(t, 'a', w, None, dace.Memlet('A[1]'))
+    state.add_edge(t, "a", w, None, dace.Memlet("A[1]"))
     state.add_nedge(w, mx, dace.Memlet())
 
     subgraph = StateSubgraphView(state, [t, w])
@@ -65,33 +65,33 @@ def test_internal_outarray():
 
 
 def test_nest_keeps_ordering_memlets_empty():
-    """ An empty (happens-before) memlet hanging off the same scope connector as a boundary memlet
-        must stay empty after nesting, rather than being stamped with the boundary array. """
-    sdfg = dace.SDFG('ordering_memlet_nesting')
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_array('B', [20], dace.float64)
-    sdfg.add_scalar('tmp', dace.float64, transient=True)
+    """An empty (happens-before) memlet hanging off the same scope connector as a boundary memlet
+    must stay empty after nesting, rather than being stamped with the boundary array."""
+    sdfg = dace.SDFG("ordering_memlet_nesting")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
+    sdfg.add_scalar("tmp", dace.float64, transient=True)
     state = sdfg.add_state()
 
-    a = state.add_read('A')
-    b = state.add_write('B')
-    me, mx = state.add_map('m', dict(i='0:20'))
-    me.add_in_connector('IN_A')
-    me.add_out_connector('OUT_A')
-    mx.add_in_connector('IN_B')
-    mx.add_out_connector('OUT_B')
-    compute = state.add_tasklet('compute', {'_in'}, {'_out'}, '_out = _in + 1')
-    side = state.add_tasklet('side', {}, {'_out'}, '_out = 0')
-    scal = state.add_access('tmp')
+    a = state.add_read("A")
+    b = state.add_write("B")
+    me, mx = state.add_map("m", dict(i="0:20"))
+    me.add_in_connector("IN_A")
+    me.add_out_connector("OUT_A")
+    mx.add_in_connector("IN_B")
+    mx.add_out_connector("OUT_B")
+    compute = state.add_tasklet("compute", {"_in"}, {"_out"}, "_out = _in + 1")
+    side = state.add_tasklet("side", {}, {"_out"}, "_out = 0")
+    scal = state.add_access("tmp")
 
-    state.add_edge(a, None, me, 'IN_A', dace.Memlet('A[0:20]'))
-    state.add_edge(me, 'OUT_A', compute, '_in', dace.Memlet('A[i]'))
+    state.add_edge(a, None, me, "IN_A", dace.Memlet("A[0:20]"))
+    state.add_edge(me, "OUT_A", compute, "_in", dace.Memlet("A[i]"))
     # Ordering edge: empty memlet, but on the same scope connector as the boundary memlet above
-    state.add_edge(me, 'OUT_A', side, None, dace.Memlet())
-    state.add_edge(side, '_out', scal, None, dace.Memlet('tmp'))
+    state.add_edge(me, "OUT_A", side, None, dace.Memlet())
+    state.add_edge(side, "_out", scal, None, dace.Memlet("tmp"))
     state.add_edge(scal, None, compute, None, dace.Memlet())
-    state.add_edge(compute, '_out', mx, 'IN_B', dace.Memlet('B[i]'))
-    state.add_edge(mx, 'OUT_B', b, None, dace.Memlet('B[0:20]'))
+    state.add_edge(compute, "_out", mx, "IN_B", dace.Memlet("B[i]"))
+    state.add_edge(mx, "OUT_B", b, None, dace.Memlet("B[0:20]"))
     sdfg.validate()
 
     nsdfg_node = nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
@@ -99,7 +99,7 @@ def test_nest_keeps_ordering_memlets_empty():
 
     nstate = nsdfg_node.sdfg.states()[0]
     inner_me = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.MapEntry))
-    inner_side = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == 'side')
+    inner_side = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == "side")
 
     ordering = [e for e in nstate.out_edges(inner_me) if e.dst is inner_side]
     assert len(ordering) == 1
@@ -110,10 +110,10 @@ def test_nest_keeps_ordering_memlets_empty():
     assert ordering.dst_conn is None
 
     # The sibling data memlet on the very same connector must still carry the boundary array
-    inner_compute = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == 'compute')
-    data_edge = next(e for e in nstate.out_edges(inner_me) if e.dst is inner_compute and e.dst_conn == '_in')
+    inner_compute = next(n for n in nstate.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == "compute")
+    data_edge = next(e for e in nstate.out_edges(inner_me) if e.dst is inner_compute and e.dst_conn == "_in")
     assert not data_edge.data.is_empty()
-    assert data_edge.data.data == 'A'
+    assert data_edge.data.data == "A"
 
     # No empty memlet anywhere in the nested state gained a data name
     assert all(e.data.subset is not None for e in nstate.edges() if e.data.data is not None)
@@ -162,7 +162,7 @@ def test_nest_cf_simple_for_loop():
 
     @dace.program
     def simple_for_loop():
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         for i in range(10):
             A[i] = i
         return A
@@ -185,7 +185,7 @@ def test_nest_cf_simple_while_loop():
     @dace.program
     def simple_while_loop():
         i = 0
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         while i < 10:
             A[i] = i
             i = update(A[i])
@@ -272,30 +272,30 @@ def test_region_local_transient_is_not_exported_as_a_connector():
     out as an in AND out connector: a value handed across a boundary it never crosses, and one that
     any per-clone duplication of the nest would then have several writers for.
     """
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('region_local_transient')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('x', [N], dace.float64)
-    sdfg.add_scalar('tmp', dace.float64, transient=True)
-    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("region_local_transient")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_scalar("tmp", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    st = loop.add_state('body', is_start_block=True)
-    t0 = st.add_tasklet('t0', {'inp'}, {'out'}, 'out = inp * 2.0')
-    wtmp = st.add_access('tmp')
-    st.add_edge(st.add_read('x'), None, t0, 'inp', dace.Memlet('x[i]'))
-    st.add_edge(t0, 'out', wtmp, None, dace.Memlet('tmp'))
-    t1 = st.add_tasklet('t1', {'v'}, {'out'}, 'out = v + 1.0')
-    st.add_edge(wtmp, None, t1, 'v', dace.Memlet('tmp'))
-    st.add_edge(t1, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
+    st = loop.add_state("body", is_start_block=True)
+    t0 = st.add_tasklet("t0", {"inp"}, {"out"}, "out = inp * 2.0")
+    wtmp = st.add_access("tmp")
+    st.add_edge(st.add_read("x"), None, t0, "inp", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", wtmp, None, dace.Memlet("tmp"))
+    t1 = st.add_tasklet("t1", {"v"}, {"out"}, "out = v + 1.0")
+    st.add_edge(wtmp, None, t1, "v", dace.Memlet("tmp"))
+    st.add_edge(t1, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
 
     outer = nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
     sdfg.reset_cfg_list()
     node = next(n for n in outer.nodes() if isinstance(n, nodes.NestedSDFG))
-    assert 'tmp' not in node.in_connectors
-    assert 'tmp' not in node.out_connectors
+    assert "tmp" not in node.in_connectors
+    assert "tmp" not in node.out_connectors
     # Moved in, not merely disconnected: the nest owns it and the parent no longer declares it.
-    assert 'tmp' not in sdfg.arrays
-    assert node.sdfg.arrays['tmp'].transient
+    assert "tmp" not in sdfg.arrays
+    assert node.sdfg.arrays["tmp"].transient
     sdfg.validate()
 
     n = 16
@@ -312,26 +312,26 @@ def test_region_local_transient_read_by_an_outside_edge_stays_a_connector():
     The node walk alone calls it unused, so it would be moved into the nest and the outside read
     left dangling.
     """
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('region_local_promoted')
-    sdfg.add_array('a', [N], dace.float64)
-    sdfg.add_array('x', [N], dace.float64)
-    sdfg.add_scalar('flag', dace.float64, transient=True)
-    loop = LoopRegion('loop', 'i < N', 'i', 'i = 0', 'i = i + 1')
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("region_local_promoted")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("x", [N], dace.float64)
+    sdfg.add_scalar("flag", dace.float64, transient=True)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
     sdfg.add_node(loop, is_start_block=True)
-    st = loop.add_state('body', is_start_block=True)
-    t0 = st.add_tasklet('t0', {'inp'}, {'out'}, 'out = inp')
-    st.add_edge(st.add_read('x'), None, t0, 'inp', dace.Memlet('x[i]'))
-    st.add_edge(t0, 'out', st.add_write('flag'), None, dace.Memlet('flag'))
-    t1 = st.add_tasklet('t1', {'inp'}, {'out'}, 'out = inp')
-    st.add_edge(st.add_read('x'), None, t1, 'inp', dace.Memlet('x[i]'))
-    st.add_edge(t1, 'out', st.add_write('a'), None, dace.Memlet('a[i]'))
-    after = sdfg.add_state('after')
-    sdfg.add_edge(loop, after, dace.InterstateEdge(condition='flag > 0.0'))
+    st = loop.add_state("body", is_start_block=True)
+    t0 = st.add_tasklet("t0", {"inp"}, {"out"}, "out = inp")
+    st.add_edge(st.add_read("x"), None, t0, "inp", dace.Memlet("x[i]"))
+    st.add_edge(t0, "out", st.add_write("flag"), None, dace.Memlet("flag"))
+    t1 = st.add_tasklet("t1", {"inp"}, {"out"}, "out = inp")
+    st.add_edge(st.add_read("x"), None, t1, "inp", dace.Memlet("x[i]"))
+    st.add_edge(t1, "out", st.add_write("a"), None, dace.Memlet("a[i]"))
+    after = sdfg.add_state("after")
+    sdfg.add_edge(loop, after, dace.InterstateEdge(condition="flag > 0.0"))
 
     nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
     sdfg.reset_cfg_list()
-    assert 'flag' in sdfg.arrays
+    assert "flag" in sdfg.arrays
     sdfg.validate()
 
 
@@ -343,22 +343,22 @@ def test_symbol_needing_an_incoming_value_stays_an_argument():
     comes in from the caller. Treating it as owned drops it from ``sdfg.symbols`` while it is still
     free, and the SDFG can no longer build its own argument list.
     """
-    sdfg = dace.SDFG('incoming_symbol')
-    sdfg.add_array('A', [4], dace.int32)
-    sdfg.add_symbol('N', dace.int32)
-    pre = sdfg.add_state('pre', is_start_block=True)
-    reg = ControlFlowRegion('reg', sdfg)
+    sdfg = dace.SDFG("incoming_symbol")
+    sdfg.add_array("A", [4], dace.int32)
+    sdfg.add_symbol("N", dace.int32)
+    pre = sdfg.add_state("pre", is_start_block=True)
+    reg = ControlFlowRegion("reg", sdfg)
     sdfg.add_node(reg)
     sdfg.add_edge(pre, reg, dace.InterstateEdge())
     # Read N, rebind it, read it again -- all inside the region, nothing outside touches it.
-    s0 = reg.add_state('s0', is_start_block=True)
-    t0 = s0.add_tasklet('use0', {}, {'o'}, 'o = N')
-    s0.add_edge(t0, 'o', s0.add_access('A'), None, dace.Memlet('A[0]'))
-    s1 = reg.add_state('s1')
-    reg.add_edge(s0, s1, dace.InterstateEdge(assignments={'N': '7'}))
-    t1 = s1.add_tasklet('use1', {}, {'o'}, 'o = N')
-    s1.add_edge(t1, 'o', s1.add_access('A'), None, dace.Memlet('A[1]'))
-    sdfg.add_edge(reg, sdfg.add_state('post'), dace.InterstateEdge())
+    s0 = reg.add_state("s0", is_start_block=True)
+    t0 = s0.add_tasklet("use0", {}, {"o"}, "o = N")
+    s0.add_edge(t0, "o", s0.add_access("A"), None, dace.Memlet("A[0]"))
+    s1 = reg.add_state("s1")
+    reg.add_edge(s0, s1, dace.InterstateEdge(assignments={"N": "7"}))
+    t1 = s1.add_tasklet("use1", {}, {"o"}, "o = N")
+    s1.add_edge(t1, "o", s1.add_access("A"), None, dace.Memlet("A[1]"))
+    sdfg.add_edge(reg, sdfg.add_state("post"), dace.InterstateEdge())
 
     reference = np.zeros(4, dtype=np.int32)
     dace.SDFG.from_json(sdfg.to_json())(A=reference, N=3)
@@ -366,11 +366,11 @@ def test_symbol_needing_an_incoming_value_stays_an_argument():
     nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [reg]))
     sdfg.reset_cfg_list()
     # Still free, so it must still be declared and still be a required argument.
-    assert 'N' in sdfg.free_symbols
-    assert 'N' in sdfg.symbols
-    assert 'N' in sdfg.arglist()
+    assert "N" in sdfg.free_symbols
+    assert "N" in sdfg.symbols
+    assert "N" in sdfg.arglist()
     nested = next(n for st in sdfg.states() for n in st.nodes() if isinstance(n, nodes.NestedSDFG))
-    assert 'N' in nested.symbol_mapping
+    assert "N" in nested.symbol_mapping
     sdfg.validate()
 
     A = np.zeros(4, dtype=np.int32)
@@ -386,18 +386,18 @@ def test_view_on_the_boundary_is_nested_as_an_array():
     across the boundary leaves an access node whose single edge runs to a code node, which
     ``get_view_edge`` cannot resolve -- validation rejects it as an ambiguous View edge.
     """
-    sdfg = dace.SDFG('view_boundary')
-    sdfg.add_array('A', [4, 4], dace.float64)
-    sdfg.add_array('B', [16], dace.float64)
-    sdfg.add_view('A_flat', [16], dace.float64)
+    sdfg = dace.SDFG("view_boundary")
+    sdfg.add_array("A", [4, 4], dace.float64)
+    sdfg.add_array("B", [16], dace.float64)
+    sdfg.add_view("A_flat", [16], dace.float64)
     state = sdfg.add_state()
 
-    a = state.add_access('A')
-    view = state.add_access('A_flat')
-    state.add_edge(a, None, view, 'views', dace.Memlet('A[0:4, 0:4] -> [0:16]'))
-    tasklet = state.add_tasklet('copy', {'i'}, {'o'}, 'o = i * 2.0')
-    state.add_edge(view, None, tasklet, 'i', dace.Memlet('A_flat[0]'))
-    state.add_edge(tasklet, 'o', state.add_access('B'), None, dace.Memlet('B[0]'))
+    a = state.add_access("A")
+    view = state.add_access("A_flat")
+    state.add_edge(a, None, view, "views", dace.Memlet("A[0:4, 0:4] -> [0:16]"))
+    tasklet = state.add_tasklet("copy", {"i"}, {"o"}, "o = i * 2.0")
+    state.add_edge(view, None, tasklet, "i", dace.Memlet("A_flat[0]"))
+    state.add_edge(tasklet, "o", state.add_access("B"), None, dace.Memlet("B[0]"))
 
     # Only the tasklet: the view and its ``views`` edge stay outside, so the tasklet's read crosses
     # the boundary and has to be given a descriptor of its own.
@@ -405,7 +405,7 @@ def test_view_on_the_boundary_is_nested_as_an_array():
     sdfg.validate()
 
     inner = [nsdfg.sdfg.arrays[c] for c in nsdfg.in_connectors]
-    assert inner, 'the boundary read should have produced an input connector'
+    assert inner, "the boundary read should have produced an input connector"
     assert not any(isinstance(desc, dace.data.View) for desc in inner)
 
     A = np.arange(16, dtype=np.float64).reshape(4, 4)
@@ -424,26 +424,26 @@ def _staged_scalar_sdfg(fission: bool) -> dace.SDFG:
     :param fission: Whether to run ``ScalarFission`` before returning.
     :returns: The built (and validated) SDFG.
     """
-    N = dace.symbol('N')
-    sdfg = dace.SDFG('staged_scalar')
-    sdfg.add_array('A', [N], dace.float64)
-    sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_transient('c2', [1], dace.float64)
+    N = dace.symbol("N")
+    sdfg = dace.SDFG("staged_scalar")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    sdfg.add_transient("c2", [1], dace.float64)
 
-    state = sdfg.add_state('compute')
-    setc = state.add_tasklet('setc', {}, {'_o'}, '_o = 2.0')
-    outer = state.add_access('c2')
-    state.add_edge(setc, '_o', outer, None, dace.Memlet('c2[0]'))
-    me, mx = state.add_map('m', dict(i='0:N'))
-    me.add_in_connector('IN_c2')
-    me.add_out_connector('OUT_c2')
-    inner = state.add_access('c2')
-    mul = state.add_tasklet('mul', {'_a': None, '_c': None}, {'_o'}, '_o = _a * _c')
-    state.add_memlet_path(state.add_access('A'), me, mul, dst_conn='_a', memlet=dace.Memlet('A[i]'))
-    state.add_edge(outer, None, me, 'IN_c2', dace.Memlet('c2[0]'))
-    state.add_edge(me, 'OUT_c2', inner, None, dace.Memlet('c2[0]'))
-    state.add_edge(inner, None, mul, '_c', dace.Memlet('c2[0]'))
-    state.add_memlet_path(mul, mx, state.add_access('B'), src_conn='_o', memlet=dace.Memlet('B[i]'))
+    state = sdfg.add_state("compute")
+    setc = state.add_tasklet("setc", {}, {"_o"}, "_o = 2.0")
+    outer = state.add_access("c2")
+    state.add_edge(setc, "_o", outer, None, dace.Memlet("c2[0]"))
+    me, mx = state.add_map("m", dict(i="0:N"))
+    me.add_in_connector("IN_c2")
+    me.add_out_connector("OUT_c2")
+    inner = state.add_access("c2")
+    mul = state.add_tasklet("mul", {"_a": None, "_c": None}, {"_o"}, "_o = _a * _c")
+    state.add_memlet_path(state.add_access("A"), me, mul, dst_conn="_a", memlet=dace.Memlet("A[i]"))
+    state.add_edge(outer, None, me, "IN_c2", dace.Memlet("c2[0]"))
+    state.add_edge(me, "OUT_c2", inner, None, dace.Memlet("c2[0]"))
+    state.add_edge(inner, None, mul, "_c", dace.Memlet("c2[0]"))
+    state.add_memlet_path(mul, mx, state.add_access("B"), src_conn="_o", memlet=dace.Memlet("B[i]"))
     sdfg.validate()
 
     if fission:
@@ -482,8 +482,8 @@ def test_boundary_memlet_naming_a_moved_container_is_reanchored():
     outer = state.memlet_path(boundary)[0].src
 
     assert isinstance(outer, nodes.AccessNode)
-    assert outer.data != inner.data, 'ScalarFission should have versioned the two ends apart'
-    assert boundary.data.data == inner.data, 'the boundary memlet should follow the inner version'
+    assert outer.data != inner.data, "ScalarFission should have versioned the two ends apart"
+    assert boundary.data.data == inner.data, "the boundary memlet should follow the inner version"
 
     nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, body))
     sdfg.validate()
@@ -514,15 +514,15 @@ def test_boundary_carried_access_node_gets_no_second_interface():
     nsdfg = nest_state_subgraph(sdfg, state, StateSubgraphView(state, body))
     sdfg.validate()
 
-    assert set(nsdfg.in_connectors) == {'A', 'c2'}
-    assert set(nsdfg.out_connectors) == {'B'}
-    assert 'c2' not in nsdfg.sdfg.read_and_write_sets()[1]
-    assert len([n for n in state.data_nodes() if n.data == 'c2']) == 1
+    assert set(nsdfg.in_connectors) == {"A", "c2"}
+    assert set(nsdfg.out_connectors) == {"B"}
+    assert "c2" not in nsdfg.sdfg.read_and_write_sets()[1]
+    assert len([n for n in state.data_nodes() if n.data == "c2"]) == 1
     assert not [e for e in state.edges() if e.data.is_empty()]
 
     assert sdfg.apply_transformations_repeated(PruneConnectors) == 0
-    assert 'c2' in nsdfg.in_connectors
-    assert [e for e in state.in_edges(nsdfg) if e.data.data == 'c2']
+    assert "c2" in nsdfg.in_connectors
+    assert [e for e in state.in_edges(nsdfg) if e.data.data == "c2"]
     sdfg.validate()
 
     _run(sdfg)
@@ -545,10 +545,10 @@ def test_input_edge_on_the_whole_container_gets_no_inner_copy():
     assert not [
         e for e in nstate.edges() if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
     ]
-    staged = [n for n in nstate.data_nodes() if n.data == 'c2']
+    staged = [n for n in nstate.data_nodes() if n.data == "c2"]
     assert len(staged) == 1
     assert nstate.in_degree(staged[0]) == 0
-    assert [name for name in nsdfg.sdfg.arrays if name.startswith('c2')] == ['c2']
+    assert [name for name in nsdfg.sdfg.arrays if name.startswith("c2")] == ["c2"]
 
     _run(sdfg)
 
@@ -560,37 +560,37 @@ def test_folded_write_ordering_is_not_reanchored_into_a_cycle():
     writes ``kept``. Nesting ``fold``'s body folds both writes onto ``kept``. Moving ``stranded``'s
     ordering onto ``kept`` closed ``kept -> m2 -> kept`` (CloudSC GPU, single_state_body_85).
     """
-    sdfg = dace.SDFG('nest_folded_write_ordering')
-    sdfg.add_array('B', [10], dace.float64)
+    sdfg = dace.SDFG("nest_folded_write_ordering")
+    sdfg.add_array("B", [10], dace.float64)
     state = sdfg.add_state(is_start_block=True)
-    me1, mx1 = state.add_map('fold', dict(i='0:1'))
-    t1 = state.add_tasklet('t1', {}, {'out': None}, '\n'.join(f'out[{k}] = 1.0' for k in range(4)))
-    t2 = state.add_tasklet('t2', {}, {'out': None}, '\n'.join(f'out[{k}] = 2.0' for k in range(2)))
+    me1, mx1 = state.add_map("fold", dict(i="0:1"))
+    t1 = state.add_tasklet("t1", {}, {"out": None}, "\n".join(f"out[{k}] = 1.0" for k in range(4)))
+    t2 = state.add_tasklet("t2", {}, {"out": None}, "\n".join(f"out[{k}] = 2.0" for k in range(2)))
     state.add_nedge(me1, t1, dace.Memlet())
     state.add_nedge(me1, t2, dace.Memlet())
-    mx1.add_scope_connectors('1')
-    mx1.add_scope_connectors('2')
-    state.add_edge(t1, 'out', mx1, 'IN_1', dace.Memlet('B[0:4]'))
-    state.add_edge(t2, 'out', mx1, 'IN_2', dace.Memlet('B[4:6]'))
-    kept = state.add_access('B')
-    stranded = state.add_access('B')
-    state.add_edge(mx1, 'OUT_1', kept, None, dace.Memlet('B[0:4]'))
-    state.add_edge(mx1, 'OUT_2', stranded, None, dace.Memlet('B[4:6]'))
-    me2, mx2 = state.add_map('m2', dict(j='0:1'))
+    mx1.add_scope_connectors("1")
+    mx1.add_scope_connectors("2")
+    state.add_edge(t1, "out", mx1, "IN_1", dace.Memlet("B[0:4]"))
+    state.add_edge(t2, "out", mx1, "IN_2", dace.Memlet("B[4:6]"))
+    kept = state.add_access("B")
+    stranded = state.add_access("B")
+    state.add_edge(mx1, "OUT_1", kept, None, dace.Memlet("B[0:4]"))
+    state.add_edge(mx1, "OUT_2", stranded, None, dace.Memlet("B[4:6]"))
+    me2, mx2 = state.add_map("m2", dict(j="0:1"))
     state.add_nedge(stranded, me2, dace.Memlet())
-    t3 = state.add_tasklet('t3', {}, {'out': None}, '\n'.join(f'out[{k}] = 3.0' for k in range(4)))
+    t3 = state.add_tasklet("t3", {}, {"out": None}, "\n".join(f"out[{k}] = 3.0" for k in range(4)))
     state.add_nedge(me2, t3, dace.Memlet())
-    mx2.add_scope_connectors('3')
-    state.add_edge(t3, 'out', mx2, 'IN_3', dace.Memlet('B[6:10]'))
-    state.add_edge(mx2, 'OUT_3', kept, None, dace.Memlet('B[6:10]'))
+    mx2.add_scope_connectors("3")
+    state.add_edge(t3, "out", mx2, "IN_3", dace.Memlet("B[6:10]"))
+    state.add_edge(mx2, "OUT_3", kept, None, dace.Memlet("B[6:10]"))
     sdfg.validate()
 
     nest_state_subgraph(sdfg, state, SubgraphView(state, [t1, t2]))
 
     sdfg.validate()
     nsdfg = next(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
-    assert list(nsdfg.out_connectors) == ['B'] and state.out_degree(nsdfg) == 1
-    assert nx.has_path(state._nx, mx1, me2), 'the fold dropped the ordering of m2 after fold'
+    assert list(nsdfg.out_connectors) == ["B"] and state.out_degree(nsdfg) == 1
+    assert nx.has_path(state._nx, mx1, me2), "the fold dropped the ordering of m2 after fold"
     assert [n for n in state.data_nodes()] == [kept]
     got = np.zeros(10)
     sdfg(B=got)
@@ -601,19 +601,19 @@ def test_a_folded_input_keeps_the_moved_tasklets_connectors():
     """Two boundary edges carrying one scalar fold onto one nested connector. Dropping the duplicate outer
     edge must leave the moved tasklet both of its inputs: its inner edges still use them, and a stripped
     connector leaks its name as a free symbol of the nested SDFG."""
-    sdfg = dace.SDFG('folded_input_connectors')
-    sdfg.add_scalar('scale', dace.float64)
-    sdfg.add_array('out', [1], dace.float64)
+    sdfg = dace.SDFG("folded_input_connectors")
+    sdfg.add_scalar("scale", dace.float64)
+    sdfg.add_array("out", [1], dace.float64)
     state = sdfg.add_state()
-    read = state.add_read('scale')
-    tasklet = state.add_tasklet('add', {'__in1', '__in2'}, {'__out'}, '__out = __in1 + __in2')
-    state.add_edge(read, None, tasklet, '__in1', dace.Memlet('scale[0]'))
-    state.add_edge(read, None, tasklet, '__in2', dace.Memlet('scale[0]'))
-    state.add_edge(tasklet, '__out', state.add_write('out'), None, dace.Memlet('out[0]'))
+    read = state.add_read("scale")
+    tasklet = state.add_tasklet("add", {"__in1", "__in2"}, {"__out"}, "__out = __in1 + __in2")
+    state.add_edge(read, None, tasklet, "__in1", dace.Memlet("scale[0]"))
+    state.add_edge(read, None, tasklet, "__in2", dace.Memlet("scale[0]"))
+    state.add_edge(tasklet, "__out", state.add_write("out"), None, dace.Memlet("out[0]"))
 
     nest_state_subgraph(sdfg, state, StateSubgraphView(state, [tasklet]))
 
-    assert set(tasklet.in_connectors) == {'__in1', '__in2'}
+    assert set(tasklet.in_connectors) == {"__in1", "__in2"}
     sdfg.validate()
     out = np.zeros(1)
     sdfg(scale=1.5, out=out)
@@ -621,7 +621,7 @@ def test_a_folded_input_keeps_the_moved_tasklets_connectors():
 
 
 def test_nest_two_loops_with_same_variable():
-    """ Nesting a second region that defines the same symbol must name its symbol output consistently. """
+    """Nesting a second region that defines the same symbol must name its symbol output consistently."""
 
     @dace.program
     def two_loops(A: dace.float64[10], B: dace.float64[10]):
@@ -646,7 +646,7 @@ def test_nest_two_loops_with_same_variable():
     assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
     test_nest_keeps_ordering_memlets_empty()

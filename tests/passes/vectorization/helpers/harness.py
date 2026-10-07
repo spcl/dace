@@ -35,24 +35,24 @@ from dace.transformation.passes.vectorization.enums import ISA, BranchMode, Rema
 
 from tests.passes.vectorization.tile_assertions import tile_library_nodes
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 S1 = dace.symbol("S1")
 S2 = dace.symbol("S2")
 S = dace.symbol("S")
 klev = dace.symbol("klev")
 kidia = dace.symbol("kidia")
 kfdia = dace.symbol("kfdia")
-n = dace.symbol('n')  # number of rows
-m = dace.symbol('m')  # number of columns
-nnz = dace.symbol('nnz')  # number of nonzeros
+n = dace.symbol("n")  # number of rows
+m = dace.symbol("m")  # number of columns
+nnz = dace.symbol("nnz")  # number of nonzeros
 C = 32
 ssym = dace.symbolic.symbol("ssym")
 Y = dace.symbolic.symbol("Y")
 X = dace.symbolic.symbol("X")
-KLON = dace.symbol('KLON')
-KLEV = dace.symbol('KLEV')
-NCLDQL = dace.symbol('NCLDQL')
-NCLDQI = dace.symbol('NCLDQI')
+KLON = dace.symbol("KLON")
+KLEV = dace.symbol("KLEV")
+NCLDQL = dace.symbol("NCLDQL")
+NCLDQI = dace.symbol("NCLDQI")
 
 
 def _innermost_map_K(sdfg: dace.SDFG, loop_to_map_permissive: bool = False) -> int | None:
@@ -90,6 +90,7 @@ def _innermost_map_K(sdfg: dace.SDFG, loop_to_map_permissive: bool = False) -> i
     # No map yet — probe LoopToMap on a copy so loop-carrying kernels
     # (e.g. raw Python ``@dace.program`` for-loops) still report K.
     from dace.transformation.interstate import LoopToMap
+
     probe = copy.deepcopy(sdfg)
     probe.apply_transformations_repeated(LoopToMap(), permissive=loop_to_map_permissive, validate=False)
     candidates = _scan(probe)
@@ -114,6 +115,7 @@ def _collapsible_innermost_K(sdfg: dace.SDFG, loop_to_map_permissive: bool = Fal
     """
     from dace.transformation.dataflow import MapCollapse
     from dace.sdfg import infer_types
+
     probe = copy.deepcopy(sdfg)
     # Mirror the orchestrator's front-of-pipeline schedule assignment BEFORE probing the
     # collapse (VectorizeMultiDim runs ``set_default_schedule_and_storage_types`` ahead of
@@ -150,14 +152,14 @@ def _auto_tile_widths(sdfg: dace.SDFG, vector_width: int, loop_to_map_permissive
     """
     K = _collapsible_innermost_K(sdfg, loop_to_map_permissive)
     if K is None or K < 1:
-        return (vector_width, )
+        return (vector_width,)
     if K == 1:
-        return (vector_width, )
+        return (vector_width,)
     # K >= 2: verify the outer tiled dim's static trip can fit the outer
     # tile width (8). If it can't, drop to K=1 — the inner W-wide dim
     # still tiles, the outer dim sequentialises.
     if not _outer_tiled_dim_fits(sdfg, outer_tile_width=8):
-        return (vector_width, )
+        return (vector_width,)
     return (8, vector_width)
 
 
@@ -171,6 +173,7 @@ def _outer_tiled_dim_fits(sdfg: dace.SDFG, outer_tile_width: int) -> bool:
     ``_collapsible_innermost_K``).
     """
     from dace.transformation.dataflow import MapCollapse
+
     probe = copy.deepcopy(sdfg)
     probe.apply_transformations_repeated(MapCollapse(), permissive=False, validate=False)
     for n, g in probe.all_nodes_recursive():
@@ -191,8 +194,9 @@ def _outer_tiled_dim_fits(sdfg: dace.SDFG, outer_tile_width: int) -> bool:
     return True
 
 
-def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: BranchMode, remainder_strategy: str, emission_style: str,
-                            loop_to_map_permissive: bool):
+def _tile_nodes_skip_reason(
+    sdfg: dace.SDFG, branch_mode: BranchMode, remainder_strategy: str, emission_style: str, loop_to_map_permissive: bool
+):
     """Return a non-empty skip reason for the ``tile_nodes`` arm when
     the test's knob combination is outside the v2 locked-knob shape.
 
@@ -212,29 +216,32 @@ def _tile_nodes_skip_reason(sdfg: dace.SDFG, branch_mode: BranchMode, remainder_
     return ""
 
 
-def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
-                           arrays,
-                           params,
-                           vector_width=8,
-                           simplify=True,
-                           skip_simplify=None,
-                           sdfg_name=None,
-                           insert_copies=True,
-                           cleanup=False,
-                           from_sdfg=False,
-                           no_inline=False,
-                           exact=None,
-                           branch_mode: BranchMode = BranchMode.MERGE,
-                           remainder_strategy: str = "scalar",
-                           param_tag: str = None,
-                           loop_to_map_permissive: bool = False,
-                           emission_style: str = "default",
-                           vectorize_config: str = "tile_nodes",
-                           scalar_remainder_emit: str = "scalar",
-                           expect_no_tiling: bool = False,
-                           canon_lift_copy: bool = True):
+def run_vectorization_test(
+    dace_func: Union[dace.SDFG, callable],
+    arrays,
+    params,
+    vector_width=8,
+    simplify=True,
+    skip_simplify=None,
+    sdfg_name=None,
+    insert_copies=True,
+    cleanup=False,
+    from_sdfg=False,
+    no_inline=False,
+    exact=None,
+    branch_mode: BranchMode = BranchMode.MERGE,
+    remainder_strategy: str = "scalar",
+    param_tag: str = None,
+    loop_to_map_permissive: bool = False,
+    emission_style: str = "default",
+    vectorize_config: str = "tile_nodes",
+    scalar_remainder_emit: str = "scalar",
+    expect_no_tiling: bool = False,
+    canon_lift_copy: bool = True,
+):
 
     import pytest
+
     # ``--run-full-matrix`` hook: when the flag is set, the test was
     # parametrised over knob fixtures it does NOT declare in its signature.
     # Pick up those knob values from ``request.getfixturevalue`` so the
@@ -255,6 +262,7 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # frame. Tests that take ``request`` make it visible; for tests that
         # don't, knob fallbacks stay on the kwargs path.
         import inspect
+
         for frame in inspect.stack()[1:]:
             candidate = frame.frame.f_locals.get("request")
             if candidate is not None and hasattr(candidate, "getfixturevalue"):
@@ -317,7 +325,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     # discriminates build dirs, so two callers that differ ONLY in it still get their own
     # ``.dacecache/<name>/`` and cannot race CMake mid-configure under xdist.
     tile_tag = f"_c{int(insert_copies)}"
-    sdfg_name = f"{sdfg_name}_{branch_mode.name.lower()}_{remainder_strategy}_{emission_style}_{vectorize_config}{tile_tag}"
+    sdfg_name = (
+        f"{sdfg_name}_{branch_mode.name.lower()}_{remainder_strategy}_{emission_style}_{vectorize_config}{tile_tag}"
+    )
     if param_tag is not None:
         sdfg_name = f"{sdfg_name}_{param_tag}"
 
@@ -348,28 +358,41 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
     if cleanup:
         for e, g in copy_sdfg.all_edges_recursive():
             if isinstance(g, dace.SDFGState):
-                if (isinstance(e.src, dace.nodes.AccessNode) and isinstance(e.dst, dace.nodes.AccessNode)
-                        and isinstance(g.sdfg.arrays[e.dst.data], dace.data.Scalar)
-                        and e.data.other_subset is not None):
+                if (
+                    isinstance(e.src, dace.nodes.AccessNode)
+                    and isinstance(e.dst, dace.nodes.AccessNode)
+                    and isinstance(g.sdfg.arrays[e.dst.data], dace.data.Scalar)
+                    and e.data.other_subset is not None
+                ):
                     # Add assignment taskelt
                     src_data = e.src.data
                     src_subset = e.data.subset if e.data.data == src_data else e.data.other_subset
                     dst_data = e.dst.data
                     dst_subset = e.data.subset if e.data.data == dst_data else e.data.other_subset
                     g.remove_edge(e)
-                    t = g.add_tasklet(name=f"assign_dst_{dst_data}_from_{src_data}",
-                                      code="_out = _in",
-                                      inputs={"_in"},
-                                      outputs={"_out"})
-                    g.add_edge(e.src, e.src_conn, t, "_in",
-                               dace.memlet.Memlet(data=src_data, subset=copy.deepcopy(src_subset)))
-                    g.add_edge(t, "_out", e.dst, e.dst_conn,
-                               dace.memlet.Memlet(data=dst_data, subset=copy.deepcopy(dst_subset)))
+                    t = g.add_tasklet(
+                        name=f"assign_dst_{dst_data}_from_{src_data}",
+                        code="_out = _in",
+                        inputs={"_in"},
+                        outputs={"_out"},
+                    )
+                    g.add_edge(
+                        e.src, e.src_conn, t, "_in", dace.memlet.Memlet(data=src_data, subset=copy.deepcopy(src_subset))
+                    )
+                    g.add_edge(
+                        t,
+                        "_out",
+                        e.dst,
+                        e.dst_conn,
+                        dace.memlet.Memlet(data=dst_data, subset=copy.deepcopy(dst_subset)),
+                    )
         copy_sdfg.validate()
 
     if vectorize_config != "tile_nodes":
-        raise ValueError(f"legacy vectorize_config {vectorize_config!r} was removed; only the multi-dim "
-                         f"tile-op path ('tile_nodes') is supported")
+        raise ValueError(
+            f"legacy vectorize_config {vectorize_config!r} was removed; only the multi-dim "
+            f"tile-op path ('tile_nodes') is supported"
+        )
     # The tiler's input contract: canonicalized (or dace-parallelized) form. The orchestrator used
     # to canonicalize at its own entry, so every kernel here arrived canonical whether the test said
     # so or not; that entry call is gone -- it cost 98% of the pass -- and the prerequisite is now
@@ -420,7 +443,9 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                 pytest.skip(f"tile_nodes arm: {skip_reason}")
         widths = _auto_tile_widths(copy_sdfg, vector_width, loop_to_map_permissive)
         from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (
-            VectorizeCPUMultiDim, )
+            VectorizeCPUMultiDim,
+        )
+
         # Map the test knobs to the tile orchestrator's remainder strategy:
         #   remainder=masked  -> masked_tail (mask-free interior + masked
         #     boundary regions);
@@ -439,11 +464,14 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
             tile_remainder = RemainderStrategy.SCALAR_POSTAMBLE
         if not tile_nodes_noop:
             VectorizeCPUMultiDim(
-                VectorizeConfig(widths=widths,
-                                target_isa=ISA.SCALAR,
-                                remainder_strategy=tile_remainder,
-                                branch_mode=branch_mode,
-                                scalar_remainder_emit=scalar_remainder_emit)).apply_pass(copy_sdfg, {})
+                VectorizeConfig(
+                    widths=widths,
+                    target_isa=ISA.SCALAR,
+                    remainder_strategy=tile_remainder,
+                    branch_mode=branch_mode,
+                    scalar_remainder_emit=scalar_remainder_emit,
+                )
+            ).apply_pass(copy_sdfg, {})
         # The vectorizer never rebuilds ``cfg_list``: every region it adds or drops must already be
         # registered exactly where a full rebuild would put it.
         regions = list(copy_sdfg.all_control_flow_regions(recursive=True))
@@ -453,8 +481,10 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         control = tile_library_nodes(sdfg)
         emitted = tile_library_nodes(copy_sdfg)
         if expect_no_tiling:
-            assert len(emitted) <= len(control), (f"{sdfg_name}: expect_no_tiling=True but the vectorizer emitted "
-                                                  f"{len(emitted) - len(control)} tile lib node(s) -- drop the flag.")
+            assert len(emitted) <= len(control), (
+                f"{sdfg_name}: expect_no_tiling=True but the vectorizer emitted "
+                f"{len(emitted) - len(control)} tile lib node(s) -- drop the flag."
+            )
         else:
             # The control is the reference's own count, not zero: a caller that passes a pre-built
             # SDFG (``from_sdfg=True``) may hand one that already carries tile nodes. Requiring a
@@ -467,7 +497,8 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
                 f"so the comparison below runs the reference against itself "
                 f"and passes unconditionally. Re-run with -W error::UserWarning "
                 f"to read the refusal reason, or pass expect_no_tiling=True if "
-                f"this kernel genuinely has nothing to tile.")
+                f"this kernel genuinely has nothing to tile."
+            )
 
     c_copy_sdfg = copy_sdfg.compile()
 
@@ -483,12 +514,14 @@ def run_vectorization_test(dace_func: Union[dace.SDFG, callable],
         # reordering the tile path is allowed -- a reduction folded per lane instead of
         # left-to-right, which lands a few ulp away. At these kernels' magnitudes (<= 1e4) that
         # is tighter than the 1e-8 it replaces, and at 1e-12 it is 1e-24 rather than vacuous.
-        assert numpy.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-12, atol=0), \
+        assert numpy.allclose(arrays_orig[name], arrays_vec[name], rtol=1e-12, atol=0), (
             f"{name} Diff: {arrays_orig[name] - arrays_vec[name]}"
+        )
         if exact is not None:
             diff = arrays_vec[name] - exact
-            assert numpy.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300), \
+            assert numpy.allclose(arrays_vec[name], exact, rtol=0, atol=1e-300), (
                 f"{name} Diff: max abs diff = {numpy.max(numpy.abs(diff))}"
+            )
     return copy_sdfg
 
 
@@ -513,20 +546,27 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
     )
     for arr_name, shape in [
         ("zsolqa", (5, 5, C)),
-        ("zrainaut", (C, )),
-        ("zrainacc", (C, )),
-        ("ztp1", (C, )),
+        ("zrainaut", (C,)),
+        ("zrainacc", (C,)),
+        ("ztp1", (C,)),
     ]:
         sd1.add_array(arr_name, shape, dace.float64)
     sd1.add_scalar("rtt", dace.float64)
     sd1.add_symbol("_if_cond_58", dace.float64)
     sd1.add_symbol("_for_it_52", dace.int64)
-    sd1.add_edge(src=ss1, dst=cb1, data=dace.InterstateEdge(assignments={
-        "_if_cond_58": "ztp1[_for_it_52] <= rtt",
-    }, ))
+    sd1.add_edge(
+        src=ss1,
+        dst=cb1,
+        data=dace.InterstateEdge(
+            assignments={
+                "_if_cond_58": "ztp1[_for_it_52] <= rtt",
+            },
+        ),
+    )
 
     for state, d1_access_str, zsolqa_access_str, zsolqa_access_str_rev in [
-        (s1, "_for_it_52", "0,3,_for_it_52", "3,0,_for_it_52"), (s2, "_for_it_52", "0,2,_for_it_52", "2,0,_for_it_52")
+        (s1, "_for_it_52", "0,3,_for_it_52", "3,0,_for_it_52"),
+        (s2, "_for_it_52", "0,2,_for_it_52", "2,0,_for_it_52"),
     ]:
         zrainaut = state.add_access("zrainaut")
         zrainacc = state.add_access("zrainacc")
@@ -535,14 +575,30 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
         zsolqa3 = state.add_access("zsolqa")
         zsolqa4 = state.add_access("zsolqa")
         zsolqa5 = state.add_access("zsolqa")
-        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate([
-            ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
-            ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
-            ("_out = (-_in1) + _in2", zrainaut, d1_access_str, zsolqa3, zsolqa_access_str_rev, zsolqa4,
-             zsolqa_access_str_rev),
-            ("_out = (-_in1) + _in2", zrainacc, d1_access_str, zsolqa4, zsolqa_access_str_rev, zsolqa5,
-             zsolqa_access_str_rev),
-        ]):
+        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate(
+            [
+                ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
+                ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
+                (
+                    "_out = (-_in1) + _in2",
+                    zrainaut,
+                    d1_access_str,
+                    zsolqa3,
+                    zsolqa_access_str_rev,
+                    zsolqa4,
+                    zsolqa_access_str_rev,
+                ),
+                (
+                    "_out = (-_in1) + _in2",
+                    zrainacc,
+                    d1_access_str,
+                    zsolqa4,
+                    zsolqa_access_str_rev,
+                    zsolqa5,
+                    zsolqa_access_str_rev,
+                ),
+            ]
+        ):
             t1 = state.add_tasklet("t1", ["_in1", "_in2"], ["_out"], tasklet_code)
             state.add_edge(in1, None, t1, "_in1", dace.memlet.Memlet(f"{in1.data}[{instr1}]"))
             state.add_edge(in2, None, t1, "_in2", dace.memlet.Memlet(f"{in2.data}[{instr2}]"))
@@ -554,27 +610,41 @@ def _get_disjoint_chain_sdfg(trivial_if: bool, fortran_layout: bool = False) -> 
     p_s1 = sd2.add_state("p_s1", is_start_block=True)
 
     map_entry, map_exit = p_s1.add_map(name="map1", ndrange={"_for_it_52": dace.subsets.Range([(0, C - 1, 1)])})
-    nsdfg = p_s1.add_nested_sdfg(sdfg=sd1,
-                                 inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
-                                 outputs={"zsolqa"},
-                                 symbol_mapping={"_for_it_52": "_for_it_52"})
-    for arr_name, shape in [("zsolqa", (5, 5, C)), ("zrainaut", (C, )), ("zrainacc", (C, )), ("ztp1", (C, ))]:
+    nsdfg = p_s1.add_nested_sdfg(
+        sdfg=sd1,
+        inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
+        outputs={"zsolqa"},
+        symbol_mapping={"_for_it_52": "_for_it_52"},
+    )
+    for arr_name, shape in [("zsolqa", (5, 5, C)), ("zrainaut", (C,)), ("zrainacc", (C,)), ("ztp1", (C,))]:
         sd2.add_array(arr_name, shape, dace.float64)
     sd2.add_scalar("rtt", dace.float64)
     for input_name in {"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"}:
         a = p_s1.add_access(input_name)
-        p_s1.add_edge(a, None, map_entry, f"IN_{input_name}",
-                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
-        p_s1.add_edge(map_entry, f"OUT_{input_name}", nsdfg, input_name,
-                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
+        p_s1.add_edge(
+            a, None, map_entry, f"IN_{input_name}", dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name])
+        )
+        p_s1.add_edge(
+            map_entry,
+            f"OUT_{input_name}",
+            nsdfg,
+            input_name,
+            dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]),
+        )
         map_entry.add_in_connector(f"IN_{input_name}")
         map_entry.add_out_connector(f"OUT_{input_name}")
     for output_name in {"zsolqa"}:
         a = p_s1.add_access(output_name)
-        p_s1.add_edge(map_exit, f"OUT_{output_name}", a, None,
-                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
-        p_s1.add_edge(nsdfg, output_name, map_exit, f"IN_{output_name}",
-                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
+        p_s1.add_edge(
+            map_exit, f"OUT_{output_name}", a, None, dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name])
+        )
+        p_s1.add_edge(
+            nsdfg,
+            output_name,
+            map_exit,
+            f"IN_{output_name}",
+            dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]),
+        )
         map_exit.add_in_connector(f"IN_{output_name}")
         map_exit.add_out_connector(f"OUT_{output_name}")
 
@@ -607,20 +677,27 @@ def _get_disjoint_chain_sdfg_two() -> dace.SDFG:
     )
     for arr_name, shape in [
         ("zsolqa", (5, 5, N)),
-        ("zrainaut", (N, )),
-        ("zrainacc", (N, )),
-        ("ztp1", (N, )),
+        ("zrainaut", (N,)),
+        ("zrainacc", (N,)),
+        ("ztp1", (N,)),
     ]:
         sd1.add_array(arr_name, shape, dace.float64)
     sd1.add_scalar("rtt", dace.float64)
     sd1.add_symbol("_if_cond_58", dace.float64)
     sd1.add_symbol("_for_it_52", dace.int64)
-    sd1.add_edge(src=ss1, dst=cb1, data=InterstateEdge(assignments={
-        "_if_cond_58": "ztp1[_for_it_52] <= rtt",
-    }, ))
+    sd1.add_edge(
+        src=ss1,
+        dst=cb1,
+        data=InterstateEdge(
+            assignments={
+                "_if_cond_58": "ztp1[_for_it_52] <= rtt",
+            },
+        ),
+    )
 
     for state, d1_access_str, zsolqa_access_str, zsolqa_access_str_rev in [
-        (s1, "_for_it_52", "3,0,_for_it_52", "0,3,_for_it_52"), (s2, "_for_it_52", "2,0,_for_it_52", "0,2,_for_it_52")
+        (s1, "_for_it_52", "3,0,_for_it_52", "0,3,_for_it_52"),
+        (s2, "_for_it_52", "2,0,_for_it_52", "0,2,_for_it_52"),
     ]:
         zrainaut = state.add_access("zrainaut")
         zrainacc = state.add_access("zrainacc")
@@ -629,14 +706,30 @@ def _get_disjoint_chain_sdfg_two() -> dace.SDFG:
         zsolqa3 = state.add_access("zsolqa")
         zsolqa4 = state.add_access("zsolqa")
         zsolqa5 = state.add_access("zsolqa")
-        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate([
-            ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
-            ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
-            ("_out = (-_in1) + _in2", zrainaut, d1_access_str, zsolqa3, zsolqa_access_str_rev, zsolqa4,
-             zsolqa_access_str_rev),
-            ("_out = (-_in1) + _in2", zrainacc, d1_access_str, zsolqa4, zsolqa_access_str_rev, zsolqa5,
-             zsolqa_access_str_rev),
-        ]):
+        for i, (tasklet_code, in1, instr1, in2, instr2, out, outstr) in enumerate(
+            [
+                ("_out = _in1 + _in2", zrainaut, d1_access_str, zsolqa1, zsolqa_access_str, zsolqa2, zsolqa_access_str),
+                ("_out = _in1 + _in2", zrainacc, d1_access_str, zsolqa2, zsolqa_access_str, zsolqa3, zsolqa_access_str),
+                (
+                    "_out = (-_in1) + _in2",
+                    zrainaut,
+                    d1_access_str,
+                    zsolqa3,
+                    zsolqa_access_str_rev,
+                    zsolqa4,
+                    zsolqa_access_str_rev,
+                ),
+                (
+                    "_out = (-_in1) + _in2",
+                    zrainacc,
+                    d1_access_str,
+                    zsolqa4,
+                    zsolqa_access_str_rev,
+                    zsolqa5,
+                    zsolqa_access_str_rev,
+                ),
+            ]
+        ):
             t1 = state.add_tasklet("t1", ["_in1", "_in2"], ["_out"], tasklet_code)
             state.add_edge(in1, None, t1, "_in1", dace.memlet.Memlet(f"{in1.data}[{instr1}]"))
             state.add_edge(in2, None, t1, "_in2", dace.memlet.Memlet(f"{in2.data}[{instr2}]"))
@@ -656,28 +749,42 @@ def _get_disjoint_chain_sdfg_two() -> dace.SDFG:
     p_s1 = sd2.add_state("p_s1", is_start_block=True)
 
     map_entry, map_exit = p_s1.add_map(name="map1", ndrange={"_for_it_52": dace.subsets.Range([(0, N - 1, 1)])})
-    nsdfg = p_s1.add_nested_sdfg(sdfg=sd1,
-                                 inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
-                                 outputs={"zsolqa", "zrainacc"},
-                                 symbol_mapping={"_for_it_52": "_for_it_52"})
-    for arr_name, shape in [("zsolqa", (5, 5, N)), ("zrainaut", (N, )), ("zrainacc", (N, )), ("ztp1", (N, ))]:
+    nsdfg = p_s1.add_nested_sdfg(
+        sdfg=sd1,
+        inputs={"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"},
+        outputs={"zsolqa", "zrainacc"},
+        symbol_mapping={"_for_it_52": "_for_it_52"},
+    )
+    for arr_name, shape in [("zsolqa", (5, 5, N)), ("zrainaut", (N,)), ("zrainacc", (N,)), ("ztp1", (N,))]:
         sd2.add_array(arr_name, shape, dace.float64)
     sd2.add_scalar("rtt", dace.float64)
 
     for input_name in {"zsolqa", "ztp1", "zrainaut", "zrainacc", "rtt"}:
         a = p_s1.add_access(input_name)
-        p_s1.add_edge(a, None, map_entry, f"IN_{input_name}",
-                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
-        p_s1.add_edge(map_entry, f"OUT_{input_name}", nsdfg, input_name,
-                      dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]))
+        p_s1.add_edge(
+            a, None, map_entry, f"IN_{input_name}", dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name])
+        )
+        p_s1.add_edge(
+            map_entry,
+            f"OUT_{input_name}",
+            nsdfg,
+            input_name,
+            dace.memlet.Memlet.from_array(input_name, sd2.arrays[input_name]),
+        )
         map_entry.add_in_connector(f"IN_{input_name}")
         map_entry.add_out_connector(f"OUT_{input_name}")
     for output_name in {"zsolqa", "zrainacc"}:
         a = p_s1.add_access(output_name)
-        p_s1.add_edge(map_exit, f"OUT_{output_name}", a, None,
-                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
-        p_s1.add_edge(nsdfg, output_name, map_exit, f"IN_{output_name}",
-                      dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]))
+        p_s1.add_edge(
+            map_exit, f"OUT_{output_name}", a, None, dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name])
+        )
+        p_s1.add_edge(
+            nsdfg,
+            output_name,
+            map_exit,
+            f"IN_{output_name}",
+            dace.memlet.Memlet.from_array(output_name, sd2.arrays[output_name]),
+        )
         map_exit.add_in_connector(f"IN_{output_name}")
         map_exit.add_out_connector(f"OUT_{output_name}")
 
@@ -777,8 +884,9 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
             access_nodes[in2_arr] = in2_an
         access_nodes[out_arr] = out_an
 
-        t = inner_state.add_tasklet("t_" + out_arr, ["_in1", "_in2"] if in2_arr is not None else ["_in1"], ["_out"],
-                                    tasklet_code)
+        t = inner_state.add_tasklet(
+            "t_" + out_arr, ["_in1", "_in2"] if in2_arr is not None else ["_in1"], ["_out"], tasklet_code
+        )
         access_str1 = f"{in1_arr}[{in1_subset}]" if in1_subset != "0" else in1_arr
         if in2_arr is not None:
             access_str2 = f"{in2_arr}[{in2_subset}]" if in2_subset != "0" else in2_arr
@@ -802,8 +910,13 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
 
     # Access nodes to map entry
     for arr in in_arrays.union(in_scalars):
-        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            outer_state.add_access(arr),
+            None,
+            m1_entry,
+            f"IN_{arr}",
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_entry.add_in_connector(f"IN_{arr}")
     # Access nodes to map entry1 to map entry 2 and nsdfg
     for arr in in_arrays.union(in_scalars):
@@ -818,8 +931,13 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
         else:
             mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
 
-        outer_state.add_edge(m1_entry, f"OUT_{arr}", m2_entry, f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m1_entry,
+            f"OUT_{arr}",
+            m2_entry,
+            f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr,
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_entry.add_out_connector(f"OUT_{arr}", force=True)
         m2_entry.add_in_connector(f"IN_{arr}" if arr not in {"kidia", "kfdia"} else arr, force=True)
         if arr not in {"kidia", "kfdia"}:
@@ -839,14 +957,24 @@ def _get_cloudsc_snippet_three(add_scalar: bool, map_range_dependent_subset: boo
             mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
         outer_state.add_edge(nsdfg, arr, m2_exit, f"IN_{arr}", copy.deepcopy(mem))
         m2_exit.add_in_connector(f"IN_{arr}", force=True)
-        outer_state.add_edge(m2_exit, f"OUT_{arr}", m1_exit, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m2_exit,
+            f"OUT_{arr}",
+            m1_exit,
+            f"IN_{arr}",
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_exit.add_in_connector(f"IN_{arr}", force=True)
         m2_exit.add_out_connector(f"OUT_{arr}", force=True)
 
     for arr in out_arrays:
-        outer_state.add_edge(m1_exit, f"OUT_{arr}", outer_state.add_access(arr), None,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m1_exit,
+            f"OUT_{arr}",
+            outer_state.add_access(arr),
+            None,
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
     sdfg.validate()
     return sdfg
@@ -862,13 +990,17 @@ def _get_cloudsc_snippet_four():
     out_arrays = {"zqlhs"}
     arr_shapes = {
         "zqlhs": ((klon, 5, 5), (1, klon, 5 * klon), dace.float64),
-        "zfallsink": ((
-            klon,
-            5,
-        ), (
-            1,
-            klon,
-        ), dace.float64),
+        "zfallsink": (
+            (
+                klon,
+                5,
+            ),
+            (
+                1,
+                klon,
+            ),
+            dace.float64,
+        ),
         "zsolqb": ((klon, 5, 5), (1, klon, 5 * klon), dace.float64),
     }
     outer_sdfg = dace.SDFG("outer")
@@ -890,18 +1022,60 @@ def _get_cloudsc_snippet_four():
         inner_sdfg.add_scalar(transient_scl, dace.float64, dace.dtypes.StorageType.Register, True)
 
     tasklets = {
-        ("zfallsink", "_for_it_93, _for_it_91", None, None, "_out = _in1 + 1.0", "zqlhs@1",
-         "_for_it_93, _for_it_92, _for_it_91"),
-        ("zqlhs@1", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 0, _for_it_91", "_out = _in1 + _in2",
-         "zqlhs@2", "_for_it_93, _for_it_92, _for_it_91"),
-        ("zqlhs@2", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 1, _for_it_91", "_out = _in1 + _in2",
-         "zqlhs@3", "_for_it_93, _for_it_92, _for_it_91"),
-        ("zqlhs@3", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 2, _for_it_91", "_out = _in1 + _in2",
-         "zqlhs@4", "_for_it_93, _for_it_92, _for_it_91"),
-        ("zqlhs@4", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 3, _for_it_91", "_out = _in1 + _in2",
-         "zqlhs@5", "_for_it_93, _for_it_92, _for_it_91"),
-        ("zqlhs@5", "_for_it_93, _for_it_92, _for_it_91", "zsolqb", "_for_it_93, 4, _for_it_91", "_out = _in1 + _in2",
-         "zqlhs@6", "_for_it_93, _for_it_92, _for_it_91"),
+        (
+            "zfallsink",
+            "_for_it_93, _for_it_91",
+            None,
+            None,
+            "_out = _in1 + 1.0",
+            "zqlhs@1",
+            "_for_it_93, _for_it_92, _for_it_91",
+        ),
+        (
+            "zqlhs@1",
+            "_for_it_93, _for_it_92, _for_it_91",
+            "zsolqb",
+            "_for_it_93, 0, _for_it_91",
+            "_out = _in1 + _in2",
+            "zqlhs@2",
+            "_for_it_93, _for_it_92, _for_it_91",
+        ),
+        (
+            "zqlhs@2",
+            "_for_it_93, _for_it_92, _for_it_91",
+            "zsolqb",
+            "_for_it_93, 1, _for_it_91",
+            "_out = _in1 + _in2",
+            "zqlhs@3",
+            "_for_it_93, _for_it_92, _for_it_91",
+        ),
+        (
+            "zqlhs@3",
+            "_for_it_93, _for_it_92, _for_it_91",
+            "zsolqb",
+            "_for_it_93, 2, _for_it_91",
+            "_out = _in1 + _in2",
+            "zqlhs@4",
+            "_for_it_93, _for_it_92, _for_it_91",
+        ),
+        (
+            "zqlhs@4",
+            "_for_it_93, _for_it_92, _for_it_91",
+            "zsolqb",
+            "_for_it_93, 3, _for_it_91",
+            "_out = _in1 + _in2",
+            "zqlhs@5",
+            "_for_it_93, _for_it_92, _for_it_91",
+        ),
+        (
+            "zqlhs@5",
+            "_for_it_93, _for_it_92, _for_it_91",
+            "zsolqb",
+            "_for_it_93, 4, _for_it_91",
+            "_out = _in1 + _in2",
+            "zqlhs@6",
+            "_for_it_93, _for_it_92, _for_it_91",
+        ),
     }
     zqlhs_ans = list()
     for i in range(6):
@@ -934,8 +1108,9 @@ def _get_cloudsc_snippet_four():
             access_nodes[in2_arr] = in2_an
         access_nodes[out_arr] = out_an
 
-        t = inner_state.add_tasklet("t_" + out_arr, ["_in1", "_in2"] if in2_arr is not None else ["_in1"], ["_out"],
-                                    tasklet_code)
+        t = inner_state.add_tasklet(
+            "t_" + out_arr, ["_in1", "_in2"] if in2_arr is not None else ["_in1"], ["_out"], tasklet_code
+        )
         access_str1 = f"{in1_arr}[{in1_subset}]" if in1_subset != "0" else in1_arr
         if in2_arr is not None:
             access_str2 = f"{in2_arr}[{in2_subset}]" if in2_subset != "0" else in2_arr
@@ -956,8 +1131,13 @@ def _get_cloudsc_snippet_four():
 
     # Access nodes to map entry
     for arr in in_arrays:
-        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            outer_state.add_access(arr),
+            None,
+            m1_entry,
+            f"IN_{arr}",
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_entry.add_in_connector(f"IN_{arr}")
         mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
         m1_entry.add_out_connector(f"OUT_{arr}", force=True)
@@ -966,8 +1146,13 @@ def _get_cloudsc_snippet_four():
     for arr in out_arrays:
         mem = dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
         outer_state.add_edge(nsdfg, arr, m1_exit, f"IN_{arr}", copy.deepcopy(mem))
-        outer_state.add_edge(m1_exit, f"OUT_{arr}", outer_state.add_access(arr), None,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m1_exit,
+            f"OUT_{arr}",
+            outer_state.add_access(arr),
+            None,
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
         m1_exit.add_in_connector(f"IN_{arr}", force=True)
     sdfg.validate()
@@ -1008,21 +1193,20 @@ def _get_map_inside_nested_map():
         for scalar_name in in_scalars:
             sdfg.add_scalar(scalar_name, scalar_dtypes[scalar_name], transient=False)
 
-    t, map_entry, map_exit = inner_state.add_mapped_tasklet(name="assign",
-                                                            map_ranges={
-                                                                "j": dace.subsets.Range([(0, 4, 1)]),
-                                                                "k": dace.subsets.Range([(kfdia - 1, kidia - 1, 1)])
-                                                            },
-                                                            inputs=dict(),
-                                                            code="_out = 0",
-                                                            outputs={
-                                                                "_out": dace.memlet.Memlet("int_array[k, j, i]"),
-                                                            },
-                                                            external_edges=True,
-                                                            input_nodes=dict(),
-                                                            output_nodes={
-                                                                "int_array": inner_state.add_access("int_array"),
-                                                            })
+    t, map_entry, map_exit = inner_state.add_mapped_tasklet(
+        name="assign",
+        map_ranges={"j": dace.subsets.Range([(0, 4, 1)]), "k": dace.subsets.Range([(kfdia - 1, kidia - 1, 1)])},
+        inputs=dict(),
+        code="_out = 0",
+        outputs={
+            "_out": dace.memlet.Memlet("int_array[k, j, i]"),
+        },
+        external_edges=True,
+        input_nodes=dict(),
+        output_nodes={
+            "int_array": inner_state.add_access("int_array"),
+        },
+    )
     for scl_name in {"kfdia", "kidia"}:
         an = inner_state.add_access(scl_name)
         inner_state.add_edge(an, None, map_entry, scl_name, dace.memlet.Memlet(scl_name))
@@ -1037,24 +1221,37 @@ def _get_map_inside_nested_map():
     inner_sdfg.validate()
 
     t2 = inner_state.add_tasklet("t2", set(), ["_out"], "_out = 1")
-    inner_state.add_edge(t2, "_out", inner_state.add_access("int_array2"), None,
-                         dace.memlet.Memlet("int_array2[1,1,1]"))
+    inner_state.add_edge(
+        t2, "_out", inner_state.add_access("int_array2"), None, dace.memlet.Memlet("int_array2[1,1,1]")
+    )
 
     # Access nodes to map entry
     for arr in in_arrays.union(in_scalars):
-        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            outer_state.add_access(arr),
+            None,
+            m1_entry,
+            f"IN_{arr}",
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_entry.add_in_connector(f"IN_{arr}")
-        outer_state.add_edge(m1_entry, f"OUT_{arr}", nsdfg, arr,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m1_entry, f"OUT_{arr}", nsdfg, arr, dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        )
         m1_entry.add_out_connector(f"OUT_{arr}")
     # Same for exit nodes
     for arr in out_arrays:
-        outer_state.add_edge(nsdfg, arr, m1_exit, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            nsdfg, arr, m1_exit, f"IN_{arr}", dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        )
         m1_exit.add_in_connector(f"IN_{arr}", force=True)
-        outer_state.add_edge(m1_exit, f"OUT_{arr}", outer_state.add_access(arr), None,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m1_exit,
+            f"OUT_{arr}",
+            outer_state.add_access(arr),
+            None,
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
     sdfg.validate()
     return sdfg
@@ -1067,8 +1264,8 @@ def _get_dependency_edge_to_unary_symbol_sdfg():
     in_scalars = {}
     out_arrays = {"int_array2"}
     arr_shapes = {
-        "int_array": ((klon, ), (1, ), dace.int64),
-        "int_array2": ((klon, ), (1, ), dace.int64),
+        "int_array": ((klon,), (1,), dace.int64),
+        "int_array2": ((klon,), (1,), dace.int64),
     }
     scalar_dtypes = {}
     outer_sdfg = dace.SDFG("outer")
@@ -1111,19 +1308,31 @@ def _get_dependency_edge_to_unary_symbol_sdfg():
 
     # Access nodes to map entry
     for arr in in_arrays.union(in_scalars):
-        outer_state.add_edge(outer_state.add_access(arr), None, m1_entry, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            outer_state.add_access(arr),
+            None,
+            m1_entry,
+            f"IN_{arr}",
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_entry.add_in_connector(f"IN_{arr}")
-        outer_state.add_edge(m1_entry, f"OUT_{arr}", nsdfg, arr,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m1_entry, f"OUT_{arr}", nsdfg, arr, dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        )
         m1_entry.add_out_connector(f"OUT_{arr}")
     # Same for exit nodes
     for arr in out_arrays:
-        outer_state.add_edge(nsdfg, arr, m1_exit, f"IN_{arr}",
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            nsdfg, arr, m1_exit, f"IN_{arr}", dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr])
+        )
         m1_exit.add_in_connector(f"IN_{arr}", force=True)
-        outer_state.add_edge(m1_exit, f"OUT_{arr}", outer_state.add_access(arr), None,
-                             dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]))
+        outer_state.add_edge(
+            m1_exit,
+            f"OUT_{arr}",
+            outer_state.add_access(arr),
+            None,
+            dace.memlet.Memlet.from_array(arr, outer_state.sdfg.arrays[arr]),
+        )
         m1_exit.add_out_connector(f"OUT_{arr}", force=True)
     sdfg.validate()
     return sdfg
@@ -1150,14 +1359,20 @@ def _get_unstructured_access_cloudsc_sdfg(layout: str = "C") -> dace.SDFG:
             sdfg.add_symbol(sname, stype)
 
     if layout == "Fortran":
-        arrays = {("iorder", dace.int64, (klon, 5), (1, klon)),
-                  ("zqx", dace.float64, (klon, klev, 5), (1, klon, klon * klev)),
-                  ("zsinksum", dace.float64, (klon, 5), (1, klon)), ("zratio", dace.float64, (klon, 5), (1, klon))}
+        arrays = {
+            ("iorder", dace.int64, (klon, 5), (1, klon)),
+            ("zqx", dace.float64, (klon, klev, 5), (1, klon, klon * klev)),
+            ("zsinksum", dace.float64, (klon, 5), (1, klon)),
+            ("zratio", dace.float64, (klon, 5), (1, klon)),
+        }
     else:
         assert layout == "C"
-        arrays = {("iorder", dace.int64, (5, klon), (klon, 1)),
-                  ("zqx", dace.float64, (5, klev, klon), (klon * klev, klon, 1)),
-                  ("zsinksum", dace.float64, (5, klon), (klon, 1)), ("zratio", dace.float64, (5, klon), (klon, 1))}
+        arrays = {
+            ("iorder", dace.int64, (5, klon), (klon, 1)),
+            ("zqx", dace.float64, (5, klev, klon), (klon * klev, klon, 1)),
+            ("zsinksum", dace.float64, (5, klon), (klon, 1)),
+            ("zratio", dace.float64, (5, klon), (klon, 1)),
+        }
     scalars = {("zmm", dace.float64), ("zrr", dace.float64)}
 
     # Add arrays
@@ -1215,28 +1430,50 @@ def _get_unstructured_access_cloudsc_sdfg(layout: str = "C") -> dace.SDFG:
 
     map_entry, map_exit = state_outer.add_map("m1", {"_for_it_88": "0:klon:1"})
 
-    nsdfg = state_outer.add_nested_sdfg(sdfg_inner,
-                                        inputs={"zqx", "zsinksum", "iorder"},
-                                        outputs={"zratio"},
-                                        symbol_mapping={"_for_it_88": "_for_it_88"})
+    nsdfg = state_outer.add_nested_sdfg(
+        sdfg_inner,
+        inputs={"zqx", "zsinksum", "iorder"},
+        outputs={"zratio"},
+        symbol_mapping={"_for_it_88": "_for_it_88"},
+    )
 
     # Add in arrays
     for arr_name in {"zqx", "zsinksum", "iorder"}:
         an = state_outer.add_access(arr_name)
-        state_outer.add_edge(an, None, map_entry, f"IN_{arr_name}",
-                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
-        state_outer.add_edge(map_entry, f"OUT_{arr_name}", nsdfg, arr_name,
-                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
+        state_outer.add_edge(
+            an,
+            None,
+            map_entry,
+            f"IN_{arr_name}",
+            dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]),
+        )
+        state_outer.add_edge(
+            map_entry,
+            f"OUT_{arr_name}",
+            nsdfg,
+            arr_name,
+            dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]),
+        )
         map_entry.add_in_connector(f"IN_{arr_name}")
         map_entry.add_out_connector(f"OUT_{arr_name}")
 
     # Add out arrays
     for arr_name in {"zratio"}:
         an = state_outer.add_access(arr_name)
-        state_outer.add_edge(nsdfg, arr_name, map_exit, f"IN_{arr_name}",
-                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
-        state_outer.add_edge(map_exit, f"OUT_{arr_name}", an, None,
-                             dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]))
+        state_outer.add_edge(
+            nsdfg,
+            arr_name,
+            map_exit,
+            f"IN_{arr_name}",
+            dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]),
+        )
+        state_outer.add_edge(
+            map_exit,
+            f"OUT_{arr_name}",
+            an,
+            None,
+            dace.memlet.Memlet.from_array(arr_name, state_outer.sdfg.arrays[arr_name]),
+        )
         map_exit.add_in_connector(f"IN_{arr_name}")
         map_exit.add_out_connector(f"OUT_{arr_name}")
 

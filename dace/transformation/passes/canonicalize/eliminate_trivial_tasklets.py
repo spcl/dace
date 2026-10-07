@@ -12,6 +12,7 @@ every match from scratch after each single application, one ``collapse_multigrap
 VF2 subgraph isomorphism per state per sweep. Same reason as
 :mod:`dace.transformation.passes.canonicalize.revert_nonreduction_wcr`, which this mirrors.
 """
+
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from dace import SDFG
@@ -42,29 +43,39 @@ def trivial_tasklet_candidates(state: SDFGState) -> Iterator[Tuple[int, Binding]
         src, dst = in_edges[0].src, out_edges[0].dst
         if isinstance(dst, nodes.AccessNode):
             if isinstance(src, nodes.AccessNode):
-                yield 0, {
+                yield (
+                    0,
+                    {
+                        TrivialTaskletElimination.read: src,
+                        TrivialTaskletElimination.tasklet: node,
+                        TrivialTaskletElimination.write: dst,
+                    },
+                )
+            elif isinstance(src, nodes.MapEntry):
+                yield (
+                    1,
+                    {
+                        TrivialTaskletElimination.read_map: src,
+                        TrivialTaskletElimination.tasklet: node,
+                        TrivialTaskletElimination.write: dst,
+                    },
+                )
+        elif isinstance(dst, nodes.MapExit) and isinstance(src, nodes.AccessNode):
+            yield (
+                2,
+                {
                     TrivialTaskletElimination.read: src,
                     TrivialTaskletElimination.tasklet: node,
-                    TrivialTaskletElimination.write: dst
-                }
-            elif isinstance(src, nodes.MapEntry):
-                yield 1, {
-                    TrivialTaskletElimination.read_map: src,
-                    TrivialTaskletElimination.tasklet: node,
-                    TrivialTaskletElimination.write: dst
-                }
-        elif isinstance(dst, nodes.MapExit) and isinstance(src, nodes.AccessNode):
-            yield 2, {
-                TrivialTaskletElimination.read: src,
-                TrivialTaskletElimination.tasklet: node,
-                TrivialTaskletElimination.write_map: dst
-            }
+                    TrivialTaskletElimination.write_map: dst,
+                },
+            )
 
 
 @transformation.explicit_cf_compatible
 class EliminateTrivialTasklets(ppl.Pass):
     """Apply ``TrivialTaskletElimination`` at every copy tasklet it accepts, to a fixpoint."""
-    CATEGORY: str = 'Canonicalization'
+
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets

@@ -10,6 +10,7 @@ the operand depends on the tile iter-vars.
 Both pieces are consumed by the prep / emitter passes; this module
 contains no SDFG mutation — only analysis.
 """
+
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -43,8 +44,10 @@ class TileDimSpec:
         if not (1 <= len(self.widths) <= 3):
             raise ValueError(f"TileDimSpec: K must be in {{1, 2, 3}}, got {len(self.widths)}")
         if not (len(self.iter_vars) == len(self.widths) == len(self.global_ubs)):
-            raise ValueError(f"TileDimSpec: iter_vars / widths / global_ubs lengths must agree; "
-                             f"got {len(self.iter_vars)}, {len(self.widths)}, {len(self.global_ubs)}")
+            raise ValueError(
+                f"TileDimSpec: iter_vars / widths / global_ubs lengths must agree; "
+                f"got {len(self.iter_vars)}, {len(self.widths)}, {len(self.global_ubs)}"
+            )
 
     @property
     def K(self) -> int:
@@ -236,7 +239,7 @@ def build_dim_index_map(
     tile_syms = [pystr_to_symbolic(v) for v in tile_iter_vars]
     name_to_pos = {v: p for p, v in enumerate(tile_iter_vars)}
     out: list[DimIndex] = []
-    for (b, _e, _s) in subset.ranges:
+    for b, _e, _s in subset.ranges:
         try:
             b_sym = pystr_to_symbolic(str(b))
         except Exception:
@@ -294,7 +297,7 @@ def classify_tile_access(
 
     K = len(tile_iter_vars)
     if all(not di.dep for di in dims):
-        return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL, dim_strides=(0, ) * K)
+        return TileAccessClassification(kind=TileAccessKind.BROADCAST_SYMBOL, dim_strides=(0,) * K)
 
     # Bijection check: each tile var must bind to exactly one array dim, and
     # each tile-dependent dim to exactly one tile var.
@@ -355,9 +358,9 @@ def classify_tile_access(
     dim_strides = tuple(per_tile_dim_strides)
     match_dims_t = tuple(match_dims)
     if structured:
-        return TileAccessClassification(kind=TileAccessKind.STRUCTURED,
-                                        dim_strides=dim_strides,
-                                        match_dims=match_dims_t)
+        return TileAccessClassification(
+            kind=TileAccessKind.STRUCTURED, dim_strides=dim_strides, match_dims=match_dims_t
+        )
 
     # CONTIGUOUS = aligned to the last K dims, unit coefficients, unit
     # innermost memory stride; else STRIDED. Both lower via

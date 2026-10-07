@@ -9,6 +9,7 @@ read-modify-written under one of the associative ``IDENTITY`` ops.
 These tests build the tasklet shapes imperatively (no JSON fallback)
 and pin exactly what is and is not recognised.
 """
+
 import dace
 import pytest
 
@@ -52,13 +53,16 @@ def _no_rmw_sdfg(code: str):
     return sdfg, st, t
 
 
-@pytest.mark.parametrize("code,op,identity", [
-    ("o = a + b", "+", "0"),
-    ("o = a * b", "*", "1"),
-    ("o = a | b", "|", "0"),
-    ("o = a & b", "&", "~0"),
-    ("o = a ^ b", "^", "0"),
-])
+@pytest.mark.parametrize(
+    "code,op,identity",
+    [
+        ("o = a + b", "+", "0"),
+        ("o = a * b", "*", "1"),
+        ("o = a | b", "|", "0"),
+        ("o = a & b", "&", "~0"),
+        ("o = a ^ b", "^", "0"),
+    ],
+)
 def test_recognizes_infix_rmw(code, op, identity):
     sdfg, st, t = _rmw_sdfg(code, extra_in=True)
     info = recognize_reduction(st, t)

@@ -2,6 +2,7 @@
 """Tests for NormalizeScheduleForLayout: after a Block lays an array out as [.., N/b, .., b], the
 schedule is re-tiled by b so the innermost loop iterates the block. Oracle: the tiled schedule
 computes the same result (bit-exact), tiling is idempotent, and an unblocked kernel is untouched."""
+
 import numpy
 import dace
 

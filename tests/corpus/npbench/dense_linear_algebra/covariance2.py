@@ -1,19 +1,20 @@
 # Copyright 2021 ETH Zurich and the NPBench authors. All rights reserved.
 """npbench corpus benchmark: ``covariance2`` (dense_linear_algebra) -- auto-ported from the npbench repo."""
+
 import numpy as np
 import dace as dc
 
 dc_float = dc.float64
 dc_complex_float = dc.complex128
 
-SIZES = {'M': 500, 'N': 600}
-PAPER_SIZES = {'M': 1200, 'N': 1400}
-INPUT_ARGS = ('M', 'N')
-ARRAY_ARGS = ('float_n', 'data', 'out')
+SIZES = {"M": 500, "N": 600}
+PAPER_SIZES = {"M": 1200, "N": 1400}
+INPUT_ARGS = ("M", "N")
+ARRAY_ARGS = ("float_n", "data", "out")
 SCALARS = {}
-OUTPUT_ARGS = ('out', )
+OUTPUT_ARGS = ("out",)
 
-M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
+M, N = (dc.symbol(s, dtype=dc.int64) for s in ("M", "N"))
 
 
 def initialize(M, N, datatype=np.float64):
@@ -41,14 +42,16 @@ def kernel(float_n: dc_float, data: dc_float[N, M]):
     return centered.T @ centered / (float_n - 1.0)
 
 
-CORPUS = dict(name='covariance2',
-              dwarf='dense_linear_algebra',
-              sizes=SIZES,
-              paper_sizes=PAPER_SIZES,
-              input_args=INPUT_ARGS,
-              array_args=ARRAY_ARGS,
-              scalars=SCALARS,
-              output_args=OUTPUT_ARGS,
-              initialize=initialize,
-              reference=reference,
-              program=kernel)
+CORPUS = dict(
+    name="covariance2",
+    dwarf="dense_linear_algebra",
+    sizes=SIZES,
+    paper_sizes=PAPER_SIZES,
+    input_args=INPUT_ARGS,
+    array_args=ARRAY_ARGS,
+    scalars=SCALARS,
+    output_args=OUTPUT_ARGS,
+    initialize=initialize,
+    reference=reference,
+    program=kernel,
+)

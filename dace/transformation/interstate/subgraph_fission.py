@@ -43,7 +43,7 @@ class SubgraphFission(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
-    cut = properties.Property(dtype=str, default='', desc='Label of the last top-level body block of the first map')
+    cut = properties.Property(dtype=str, default="", desc="Label of the last top-level body block of the first map")
 
     @classmethod
     def expressions(cls):
@@ -65,17 +65,16 @@ class SubgraphFission(transformation.SingleStateTransformation):
             return False
         # MapFission judges the unsplit body at least as strictly as the split one: nesting the halves hides their
         # interstate assignments from the map parameters it refuses
-        return map_fission.MapFission.can_be_applied_to(sdfg,
-                                                        expr_index=1,
-                                                        map_entry=self.map_entry,
-                                                        nested_sdfg=self.nested_sdfg)
+        return map_fission.MapFission.can_be_applied_to(
+            sdfg, expr_index=1, map_entry=self.map_entry, nested_sdfg=self.nested_sdfg
+        )
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         entry, nsdfg, cut = self.map_entry, self.nested_sdfg, self.cut_block()
         body = nsdfg.sdfg
         blocks = list(sdutil.dfs_topological_sort(body))
         index = blocks.index(cut)
-        for group in (blocks[:index + 1], blocks[index + 1:]):
+        for group in (blocks[: index + 1], blocks[index + 1 :]):
             if len(group) == 1 and isinstance(group[0], sd.SDFGState):
                 # nest_sdfg_subgraph leaves a lone state in place, and MapFission would split it per component
                 group = [group[0], body.add_state_after(group[0])]

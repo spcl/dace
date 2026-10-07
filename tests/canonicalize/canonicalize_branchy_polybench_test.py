@@ -28,6 +28,7 @@ expectation depends on an unimplemented pass (e.g. the deferred
 the test is marked ``strict=True`` xfail with a precise reason linking to
 the design doc.
 """
+
 import re
 
 import numpy as np
@@ -38,7 +39,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _nmaps(sdfg):
@@ -52,7 +53,7 @@ def _ncond_blocks(sdfg):
 def outer_inner_loops(sdfg):
     """The two LoopRegions of a single two-deep nest, outermost first."""
     loops = [r for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion)]
-    assert len(loops) == 2, f'expected a two-deep nest, got {[r.label for r in loops]}'
+    assert len(loops) == 2, f"expected a two-deep nest, got {[r.label for r in loops]}"
     first, second = loops
     return (first, second) if second in first.all_control_flow_blocks() else (second, first)
 
@@ -60,8 +61,11 @@ def outer_inner_loops(sdfg):
 def branch_conditions(region):
     """Condition strings of every ConditionalBlock anywhere inside ``region``."""
     return [
-        cond.as_string for blk in region.all_control_flow_blocks() if isinstance(blk, ConditionalBlock)
-        for cond, _ in blk.branches if cond is not None
+        cond.as_string
+        for blk in region.all_control_flow_blocks()
+        if isinstance(blk, ConditionalBlock)
+        for cond, _ in blk.branches
+        if cond is not None
     ]
 
 
@@ -109,21 +113,23 @@ def test_nussinov_boundary_guards_value_preserving():
     assert np.array_equal(got, exp)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason='MoveLoopInvariantIfUp cannot reach this shape at all: _match and _split_guard_loop both '
-                   'require exactly ONE ConditionalBlock in the loop body and the source already has two, so '
-                   'the hoist refuses before ConditionFusion ever runs -- reordering them buys nothing. '
-                   'Splitting the two guards apart is illegal: A at j reads table[i, j - 1] that B writes at '
-                   'j - 1. The only value-preserving hoist is loop unswitching (replicate the j loop under '
-                   'both arms of i + 1 < N), which no pass in the tree implements.')
+@pytest.mark.xfail(
+    strict=True,
+    reason="MoveLoopInvariantIfUp cannot reach this shape at all: _match and _split_guard_loop both "
+    "require exactly ONE ConditionalBlock in the loop body and the source already has two, so "
+    "the hoist refuses before ConditionFusion ever runs -- reordering them buys nothing. "
+    "Splitting the two guards apart is illegal: A at j reads table[i, j - 1] that B writes at "
+    "j - 1. The only value-preserving hoist is loop unswitching (replicate the j loop under "
+    "both arms of i + 1 < N), which no pass in the tree implements.",
+)
 def test_nussinov_invariant_boundary_guard_not_evaluated_per_j():
     """``i + 1 < N`` is invariant over the inner ``j`` loop and must be hoisted above it."""
     sdfg = nussinov_boundary_guards.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     outer, inner = outer_inner_loops(sdfg)
-    per_j = [c for c in branch_conditions(inner) if re.search(rf'\b{re.escape(outer.loop_variable)}\b', c)]
-    assert not per_j, f'the i-invariant boundary guard is re-evaluated per j iteration: {per_j}'
+    per_j = [c for c in branch_conditions(inner) if re.search(rf"\b{re.escape(outer.loop_variable)}\b", c)]
+    assert not per_j, f"the i-invariant boundary guard is re-evaluated per j iteration: {per_j}"
 
 
 # Floyd-Warshall: data-dependent guarded update
@@ -163,7 +169,7 @@ def test_floyd_warshall_step_value_preserving():
         sdfg.validate()
         got = base.copy()
         sdfg(path=got, k=np.int32(k), N=n)
-        assert np.allclose(got, exp), f'fw step k={k} mismatch'
+        assert np.allclose(got, exp), f"fw step k={k} mismatch"
         base = exp
 
 
@@ -203,8 +209,8 @@ def test_floyd_warshall_step_i_parallel_via_index_split():
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    assert len(maps) == 3, f'expected the three i-segments of the split at k to map, got {len(maps)}'
-    assert all(len(m.map.params) == 1 for m in maps), 'each segment maps the i dimension alone'
+    assert len(maps) == 3, f"expected the three i-segments of the split at k to map, got {len(maps)}"
+    assert all(len(m.map.params) == 1 for m in maps), "each segment maps the i dimension alone"
 
 
 # Correlation-style masked write
@@ -247,7 +253,7 @@ def test_masked_threshold_write_stays_one_map():
     sdfg = masked_threshold_write.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert _nmaps(sdfg) == 1, f'masked elementwise write split to {_nmaps(sdfg)} maps'
+    assert _nmaps(sdfg) == 1, f"masked elementwise write split to {_nmaps(sdfg)} maps"
 
 
 # Loop-invariant boundary guard (synthetic nussinov-like distilled case)
@@ -280,7 +286,7 @@ def test_loop_invariant_guard_over_inner_value_preserving():
         got = np.zeros_like(a)
         sdfg(a=a, b=got, lim=np.int32(lim), N=n)
         exp = a * (2.0 if lim < n else 1.0)
-        assert np.allclose(got, exp), f'lim={lim}'
+        assert np.allclose(got, exp), f"lim={lim}"
 
 
 def test_loop_invariant_guard_over_inner_hoisted_to_top():
@@ -295,9 +301,11 @@ def test_loop_invariant_guard_over_inner_hoisted_to_top():
     canonicalize(sdfg, validate=True)
     sdfg.validate()
     top_conds = [c for c in sdfg.nodes() if isinstance(c, ConditionalBlock)]
-    assert len(top_conds) == 1, ('expected the (lim < N) guard hoisted to the SDFG '
-                                 f'top level; got {_ncond_blocks(sdfg)} conditional '
-                                 f'block(s) total, {len(top_conds)} at top level')
+    assert len(top_conds) == 1, (
+        "expected the (lim < N) guard hoisted to the SDFG "
+        f"top level; got {_ncond_blocks(sdfg)} conditional "
+        f"block(s) total, {len(top_conds)} at top level"
+    )
 
 
 # Gramschmidt-style safety guard around a division
@@ -329,7 +337,7 @@ def test_safety_guarded_divide_value_preserving():
         out = np.zeros(n)
         sdfg(a=a, out=out, denom=np.float64(denom), N=n)
         exp = (a / denom) if denom > 0 else np.zeros(n)
-        assert np.allclose(out, exp), f'denom={denom}'
+        assert np.allclose(out, exp), f"denom={denom}"
 
 
 def test_safety_guarded_divide_keeps_outer_guard_at_top():
@@ -340,9 +348,10 @@ def test_safety_guarded_divide_keeps_outer_guard_at_top():
     sdfg = safety_guarded_divide.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
     sdfg.validate()
-    assert any(isinstance(c, ConditionalBlock) for c in sdfg.nodes()), \
-        'top-level safety guard was pushed inside the map nest'
+    assert any(isinstance(c, ConditionalBlock) for c in sdfg.nodes()), (
+        "top-level safety guard was pushed inside the map nest"
+    )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

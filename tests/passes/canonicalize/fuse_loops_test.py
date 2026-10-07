@@ -6,6 +6,7 @@ Fusion must be value-preserving (compared against the un-fused build) and must
 refuse any pair whose per-iteration reorder would change a value (forward flow /
 read-behind anti / mismatched output) or that is independently parallel.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")

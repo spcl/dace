@@ -3,12 +3,13 @@ zero-risk default -- graphs built via graphlib.DiGraph()/MultiDiGraph() under th
 plain networkx.DiGraph()/MultiDiGraph() instances, so every call below runs the literal same
 networkx code a direct `import networkx as nx` call would.
 """
+
 import networkx
 from networkx.algorithms.isomorphism import DiGraphMatcher
 
 
 class NetworkxBackend:
-    name = 'networkx'
+    name = "networkx"
 
     def new_digraph(self):
         return networkx.DiGraph()

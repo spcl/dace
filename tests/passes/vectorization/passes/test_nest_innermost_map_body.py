@@ -11,6 +11,7 @@ After the pass:
 End-to-end numerical correctness is verified against the pre-pass SDFG
 output, the rewrite is a pure SDFG-shape transform.
 """
+
 import numpy as np
 import pytest
 
@@ -19,7 +20,8 @@ from dace.memlet import Memlet
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy
 from dace.transformation.passes.vectorization.nest_innermost_map_body import (
-    NestInnermostMapBodyIntoNSDFG, )
+    NestInnermostMapBodyIntoNSDFG,
+)
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.utils.map_predicates import (
     get_single_nsdfg_inside_map,
@@ -43,8 +45,11 @@ def nested_map_program(a: dace.float64[N, N], b: dace.float64[N, N]):
 
 
 def _innermost_maps(sdfg: dace.SDFG):
-    return [(n, g) for n, g in sdfg.all_nodes_recursive()
-            if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and is_innermost_map(g, n)]
+    return [
+        (n, g)
+        for n, g in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and is_innermost_map(g, n)
+    ]
 
 
 def test_bare_tasklet_body_gets_nested():
@@ -58,8 +63,9 @@ def test_bare_tasklet_body_gets_nested():
     assert n_applied is not None and n_applied >= 1
 
     inner_post = _innermost_maps(sdfg)
-    assert all(get_single_nsdfg_inside_map(g, n) is not None for n, g in inner_post), \
+    assert all(get_single_nsdfg_inside_map(g, n) is not None for n, g in inner_post), (
         "every innermost map should now wrap a single NestedSDFG"
+    )
 
 
 def test_nested_pass_is_idempotent_on_already_wrapped_body():
@@ -74,12 +80,14 @@ def test_pass_does_not_touch_outer_maps_in_nested_map_program():
     sdfg = nested_map_program.to_sdfg(simplify=True)
     # Snapshot which maps are outer vs inner.
     outers_before = [
-        (n, g) for n, g in sdfg.all_nodes_recursive()
+        (n, g)
+        for n, g in sdfg.all_nodes_recursive()
         if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and not is_innermost_map(g, n)
     ]
     NestInnermostMapBodyIntoNSDFG().apply_pass(sdfg, {})
     outers_after = [
-        (n, g) for n, g in sdfg.all_nodes_recursive()
+        (n, g)
+        for n, g in sdfg.all_nodes_recursive()
         if isinstance(n, dace.nodes.MapEntry) and isinstance(g, dace.SDFGState) and not is_innermost_map(g, n)
     ]
     # The outer map count is preserved (the pass only touches innermost maps).
@@ -133,17 +141,21 @@ def test_k2_broadcast_tile_k1_tail_stays_valid_through_nest():
     The orchestrator must drive this kernel through preprocessing without leaving a
     malformed SDFG (the final validate must pass).
     """
-    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import (VectorizeCPUMultiDim)
+    from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+
     sdfg = _k2_col_broadcast.to_sdfg(simplify=True)
     # tile_k1 tail is the configuration that exposes the bug. expand_tile_nodes=False keeps
     # it a transform-only check (no compile -> no UCX flake); the per-subpass validate gate
     # inside the orchestrator is what asserts each preprocessing pass left the SDFG valid.
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, 8),
-                        target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
-                        scalar_remainder_emit="tile_k1",
-                        expand_tile_nodes=False)).apply_pass(sdfg, {})
+        VectorizeConfig(
+            widths=(8, 8),
+            target_isa=ISA.SCALAR,
+            remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+            scalar_remainder_emit="tile_k1",
+            expand_tile_nodes=False,
+        )
+    ).apply_pass(sdfg, {})
     sdfg.validate()
 
 
@@ -210,8 +222,9 @@ def test_k2_scalar_staged_body_nest_alone_is_valid():
             if isinstance(node, dace.nodes.NestedSDFG):
                 for edge in (*state.in_edges(node), *state.out_edges(node)):
                     if edge.data is not None and edge.data.data is not None:
-                        assert edge.data.other_subset is None, \
+                        assert edge.data.other_subset is None, (
                             f"boundary edge {edge.data.data} still carries other_subset {edge.data.other_subset}"
+                        )
 
     # Nest alone must produce a valid SDFG (no ExpandNestedSDFGInputs needed).
     sdfg.validate()
@@ -234,23 +247,23 @@ def test_numerical_correctness_nested_map_program():
 
 def stencil_over_written_access_node() -> tuple[dace.SDFG, dace.nodes.MapEntry]:
     """A stencil whose three reads all pass through the ONE access node the previous map wrote."""
-    sdfg = dace.SDFG('stencil_over_written')
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_array('B', [8], dace.float64, transient=True)
-    sdfg.add_array('C', [8], dace.float64)
+    sdfg = dace.SDFG("stencil_over_written")
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_array("B", [8], dace.float64, transient=True)
+    sdfg.add_array("C", [8], dace.float64)
     state = sdfg.add_state()
 
-    b = state.add_access('B')
-    fill_entry, fill_exit = state.add_map('fill', dict(j='0:8'))
-    fill = state.add_tasklet('fill', {'a': None}, {'o': None}, 'o = a * 2.0')
-    state.add_memlet_path(state.add_read('A'), fill_entry, fill, dst_conn='a', memlet=Memlet('A[j]'))
-    state.add_memlet_path(fill, fill_exit, b, src_conn='o', memlet=Memlet('B[j]'))
+    b = state.add_access("B")
+    fill_entry, fill_exit = state.add_map("fill", dict(j="0:8"))
+    fill = state.add_tasklet("fill", {"a": None}, {"o": None}, "o = a * 2.0")
+    state.add_memlet_path(state.add_read("A"), fill_entry, fill, dst_conn="a", memlet=Memlet("A[j]"))
+    state.add_memlet_path(fill, fill_exit, b, src_conn="o", memlet=Memlet("B[j]"))
 
-    me, mx = state.add_map('stencil', dict(i='1:7'))
-    tasklet = state.add_tasklet('t', {'l': None, 'm': None, 'r': None}, {'z': None}, 'z = l + m + r')
-    for conn, index in (('l', 'i - 1'), ('m', 'i'), ('r', 'i + 1')):
-        state.add_memlet_path(b, me, tasklet, dst_conn=conn, memlet=Memlet(f'B[{index}]'))
-    state.add_memlet_path(tasklet, mx, state.add_write('C'), src_conn='z', memlet=Memlet('C[i]'))
+    me, mx = state.add_map("stencil", dict(i="1:7"))
+    tasklet = state.add_tasklet("t", {"l": None, "m": None, "r": None}, {"z": None}, "z = l + m + r")
+    for conn, index in (("l", "i - 1"), ("m", "i"), ("r", "i + 1")):
+        state.add_memlet_path(b, me, tasklet, dst_conn=conn, memlet=Memlet(f"B[{index}]"))
+    state.add_memlet_path(tasklet, mx, state.add_write("C"), src_conn="z", memlet=Memlet("C[i]"))
     sdfg.validate()
     return sdfg, me
 
@@ -259,8 +272,9 @@ def test_reads_of_one_written_access_node_leave_no_dangling_connector():
     """Nesting routes the whole body through ONE connector per container, so the map entry must
     not keep the other reads' connectors behind -- they would dangle with no edge to carry."""
     sdfg, map_entry = stencil_over_written_access_node()
-    assert len([c for c in map_entry.out_connectors if c.startswith('OUT_')]) == 3, \
-        'test setup: expected the three stencil reads on separate connectors'
+    assert len([c for c in map_entry.out_connectors if c.startswith("OUT_")]) == 3, (
+        "test setup: expected the three stencil reads on separate connectors"
+    )
 
     ref = np.arange(8, dtype=np.float64)
     expected = np.zeros(8)
@@ -271,11 +285,11 @@ def test_reads_of_one_written_access_node_leave_no_dangling_connector():
     for state in sdfg.states():
         for node in state.nodes():
             for conn in node.out_connectors:
-                assert any(e.src_conn == conn for e in state.out_edges(node)), \
-                    f'dangling out-connector {conn} on {node}'
+                assert any(e.src_conn == conn for e in state.out_edges(node)), (
+                    f"dangling out-connector {conn} on {node}"
+                )
             for conn in node.in_connectors:
-                assert any(e.dst_conn == conn for e in state.in_edges(node)), \
-                    f'dangling in-connector {conn} on {node}'
+                assert any(e.dst_conn == conn for e in state.in_edges(node)), f"dangling in-connector {conn} on {node}"
     sdfg.validate()
 
     got = np.zeros(8)
@@ -287,41 +301,41 @@ def map_with_a_nested_body_reading_a_prefix() -> dace.SDFG:
     """A map whose body holds a two-state NestedSDFG next to a tasklet, the NestedSDFG wired through
     prefix memlets (``a[0:i + 1]``) over full-size inner arrays, as CloudSC's peeled ``zqxn`` solve.
     ``b[i] = 3 * a[i] + 1.5`` and ``d[i] = 3 * c[i]``."""
-    inner = dace.SDFG('two_state_body')
-    inner.add_symbol('i', dace.int64)
-    inner.add_array('a', ('N', ), dace.float64)
-    inner.add_array('b', ('N', ), dace.float64)
-    inner.add_scalar('t', dace.float64, transient=True)
-    first = inner.add_state('first', is_start_block=True)
-    second = inner.add_state('second')
+    inner = dace.SDFG("two_state_body")
+    inner.add_symbol("i", dace.int64)
+    inner.add_array("a", ("N",), dace.float64)
+    inner.add_array("b", ("N",), dace.float64)
+    inner.add_scalar("t", dace.float64, transient=True)
+    first = inner.add_state("first", is_start_block=True)
+    second = inner.add_state("second")
     inner.add_edge(first, second, dace.InterstateEdge())
-    double = first.add_tasklet('double', {'x': None}, {'o': None}, 'o = x * 2.0')
-    first.add_edge(first.add_read('a'), None, double, 'x', Memlet('a[i]'))
-    doubled = first.add_access('t')
-    first.add_edge(double, 'o', doubled, None, Memlet('t'))
-    shift = first.add_tasklet('shift', {'x': None}, {'o': None}, 'o = x + 0.5')
-    first.add_edge(doubled, None, shift, 'x', Memlet('t'))
-    first.add_edge(shift, 'o', first.add_write('t'), None, Memlet('t'))
-    bump = second.add_tasklet('bump', {'x': None}, {'o': None}, 'o = x + 1.0')
-    second.add_edge(second.add_read('t'), None, bump, 'x', Memlet('t'))
-    bumped = second.add_access('t')
-    second.add_edge(bump, 'o', bumped, None, Memlet('t'))
-    store = second.add_tasklet('store', {'x': None, 'y': None}, {'o': None}, 'o = x + y')
-    second.add_edge(bumped, None, store, 'x', Memlet('t'))
-    second.add_edge(second.add_read('a'), None, store, 'y', Memlet('a[i]'))
-    second.add_edge(store, 'o', second.add_write('b'), None, Memlet('b[i]'))
+    double = first.add_tasklet("double", {"x": None}, {"o": None}, "o = x * 2.0")
+    first.add_edge(first.add_read("a"), None, double, "x", Memlet("a[i]"))
+    doubled = first.add_access("t")
+    first.add_edge(double, "o", doubled, None, Memlet("t"))
+    shift = first.add_tasklet("shift", {"x": None}, {"o": None}, "o = x + 0.5")
+    first.add_edge(doubled, None, shift, "x", Memlet("t"))
+    first.add_edge(shift, "o", first.add_write("t"), None, Memlet("t"))
+    bump = second.add_tasklet("bump", {"x": None}, {"o": None}, "o = x + 1.0")
+    second.add_edge(second.add_read("t"), None, bump, "x", Memlet("t"))
+    bumped = second.add_access("t")
+    second.add_edge(bump, "o", bumped, None, Memlet("t"))
+    store = second.add_tasklet("store", {"x": None, "y": None}, {"o": None}, "o = x + y")
+    second.add_edge(bumped, None, store, "x", Memlet("t"))
+    second.add_edge(second.add_read("a"), None, store, "y", Memlet("a[i]"))
+    second.add_edge(store, "o", second.add_write("b"), None, Memlet("b[i]"))
 
-    sdfg = dace.SDFG('nested_body_reading_a_prefix')
-    for name in 'abcd':
-        sdfg.add_array(name, ('N', ), dace.float64)
-    state = sdfg.add_state('main')
-    me, mx = state.add_map('m', dict(i='0:N'))
-    body = state.add_nested_sdfg(inner, {'a': None}, {'b': None}, symbol_mapping={'i': 'i', 'N': 'N'})
-    state.add_memlet_path(state.add_read('a'), me, body, dst_conn='a', memlet=Memlet('a[0:i + 1]'))
-    state.add_memlet_path(body, mx, state.add_write('b'), src_conn='b', memlet=Memlet('b[0:i + 1]'))
-    triple = state.add_tasklet('triple', {'x': None}, {'o': None}, 'o = x * 3.0')
-    state.add_memlet_path(state.add_read('c'), me, triple, dst_conn='x', memlet=Memlet('c[i]'))
-    state.add_memlet_path(triple, mx, state.add_write('d'), src_conn='o', memlet=Memlet('d[i]'))
+    sdfg = dace.SDFG("nested_body_reading_a_prefix")
+    for name in "abcd":
+        sdfg.add_array(name, ("N",), dace.float64)
+    state = sdfg.add_state("main")
+    me, mx = state.add_map("m", dict(i="0:N"))
+    body = state.add_nested_sdfg(inner, {"a": None}, {"b": None}, symbol_mapping={"i": "i", "N": "N"})
+    state.add_memlet_path(state.add_read("a"), me, body, dst_conn="a", memlet=Memlet("a[0:i + 1]"))
+    state.add_memlet_path(body, mx, state.add_write("b"), src_conn="b", memlet=Memlet("b[0:i + 1]"))
+    triple = state.add_tasklet("triple", {"x": None}, {"o": None}, "o = x * 3.0")
+    state.add_memlet_path(state.add_read("c"), me, triple, dst_conn="x", memlet=Memlet("c[i]"))
+    state.add_memlet_path(triple, mx, state.add_write("d"), src_conn="o", memlet=Memlet("d[i]"))
     sdfg.validate()
     return sdfg
 
@@ -338,13 +352,13 @@ def test_nested_body_reading_a_prefix_is_flattened_into_the_body():
     assert not any(isinstance(node, dace.nodes.NestedSDFG) for node, _ in bodies[0].sdfg.all_nodes_recursive())
 
 
-@pytest.mark.parametrize('n', [16, 17])
+@pytest.mark.parametrize("n", [16, 17])
 def test_nested_body_reading_a_prefix_writes_every_lane(n):
     rng = np.random.default_rng(seed=n)
     a, c = rng.random(n), rng.random(n)
     b, d = np.zeros(n), np.zeros(n)
     sdfg = map_with_a_nested_body_reading_a_prefix()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
 
     sdfg(a=a.copy(), b=b, c=c.copy(), d=d, N=n)
 

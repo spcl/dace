@@ -27,22 +27,22 @@ class TBLIS:
 
     @staticmethod
     def cmake_includes():
-        if 'TBLIS_ROOT' in os.environ:
-            return [os.path.join(os.environ['TBLIS_ROOT'], 'include')]
+        if "TBLIS_ROOT" in os.environ:
+            return [os.path.join(os.environ["TBLIS_ROOT"], "include")]
         return []
 
     @staticmethod
     def cmake_libraries():
         # libtci is TBLIS's threading-runtime companion; both ship from the same build.
-        if 'TBLIS_ROOT' in os.environ:
-            prefix = str(config.Config.get('compiler', 'library_prefix'))
-            suffix = str(config.Config.get('compiler', 'library_extension'))
-            libdir = os.path.join(os.environ['TBLIS_ROOT'], 'lib')
+        if "TBLIS_ROOT" in os.environ:
+            prefix = str(config.Config.get("compiler", "library_prefix"))
+            suffix = str(config.Config.get("compiler", "library_extension"))
+            libdir = os.path.join(os.environ["TBLIS_ROOT"], "lib")
             libs = []
-            for name in ('tblis', 'tci'):
-                libfile = os.path.join(libdir, prefix + name + '.' + suffix)
+            for name in ("tblis", "tci"):
+                libfile = os.path.join(libdir, prefix + name + "." + suffix)
                 if os.path.isfile(libfile):
                     libs.append(libfile)
             if libs:
                 return libs
-        return ['tblis', 'tci']
+        return ["tblis", "tci"]

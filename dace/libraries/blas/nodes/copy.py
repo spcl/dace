@@ -8,6 +8,7 @@ typically lower overhead than a ``cblas_?copy`` call; this node exists
 so the Fortran frontend can recognise an explicit ``DCOPY`` call and
 preserve the user's intent.
 """
+
 import copy
 from typing import List, TYPE_CHECKING
 import warnings
@@ -21,6 +22,7 @@ from .. import environments
 from dace.libraries.blas import gpu_dialect
 from dace import memlet as mm, symbolic, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
@@ -41,15 +43,19 @@ class ExpandCopyPure(ExpandTransformation):
         sdfg.add_array("_y", [n], desc_y.dtype, strides=[stride_y], storage=desc_y.storage)
 
         state = sdfg.add_state(node.label + "_state")
-        state.add_mapped_tasklet("copy", {"__i": f"0:{n}"}, {"__x": dace.Memlet("_x[__i]")},
-                                 "__y = __x", {"__y": dace.Memlet("_y[__i]")},
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            "copy",
+            {"__i": f"0:{n}"},
+            {"__x": dace.Memlet("_x[__i]")},
+            "__y = __x",
+            {"__y": dace.Memlet("_y[__i]")},
+            external_edges=True,
+        )
         return sdfg
 
 
 @dace.library.expansion
 class ExpandCopyOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -60,24 +66,21 @@ class ExpandCopyOpenBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandCopyPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         n = n or node.n or sz
-        cfunc = func.lower() + 'copy'
+        cfunc = func.lower() + "copy"
         code = f"cblas_{cfunc}({n}, _x, {stride_x}, _y, {stride_y});"
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
 @dace.library.expansion
 class ExpandCopyMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -87,7 +90,6 @@ class ExpandCopyMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandCopyGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -99,19 +101,17 @@ class ExpandCopyGPUBLAS(ExpandTransformation):
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
-            warnings.warn(f'{ex}. Falling back to pure expansion')
+            warnings.warn(f"{ex}. Falling back to pure expansion")
             return ExpandCopyPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
 
         n = n or node.n or sz
-        cfunc = func + 'copy'
+        cfunc = func + "copy"
         code = cls.environments[0].handle_setup_code(node)
         code += f"{cls.dialect.routine(cfunc)}({cls.dialect.handle}, {n}, _x, {stride_x}, _y, {stride_y});"
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
         return tasklet
 
 
@@ -174,14 +174,14 @@ class Copy(dace.sdfg.nodes.LibraryNode):
 
 
 # Numpy replacement
-@oprepo.replaces('dace.libraries.blas.copy')
-@oprepo.replaces('dace.libraries.blas.Copy')
-def copy_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y):
+@oprepo.replaces("dace.libraries.blas.copy")
+@oprepo.replaces("dace.libraries.blas.Copy")
+def copy_libnode(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, x, y):
     """Build a :class:`Copy` library node ``y := x`` and wire it into ``state``."""
     x_in = state.add_read(x)
     y_out = state.add_write(y)
-    libnode = Copy('copy', n=sdfg.arrays[x].shape[0])
+    libnode = Copy("copy", n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
-    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
-    state.add_edge(libnode, '_y', y_out, None, mm.Memlet(y))
+    state.add_edge(x_in, None, libnode, "_x", mm.Memlet(x))
+    state.add_edge(libnode, "_y", y_out, None, mm.Memlet(y))
     return []

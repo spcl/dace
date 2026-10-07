@@ -5,14 +5,17 @@
 :func:`gpu_specialize_offloaded` resolves the device schedules of an offloaded graph
 (``finalize_for_target('gpu')`` calls it).
 """
+
 from typing import Optional
 
 from dace import SDFG
 from dace.sdfg import nodes
 from dace.config import Config
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (AutoGPUStreamScheduler,
-                                                                                 GPUStreamSchedulingStrategy)
+from dace.transformation.passes.gpu_specialization.gpu_stream_scheduling import (
+    AutoGPUStreamScheduler,
+    GPUStreamSchedulingStrategy,
+)
 from dace.transformation.passes.gpu_specialization.gpu_stream_wiring import GPUStreamWiring
 
 
@@ -27,13 +30,15 @@ def gpu_specialize_offloaded(sdfg: SDFG) -> SDFG:
     from dace.transformation.passes.gpu_specialization.contiguous_axis_to_threads import ContiguousAxisToThreads
     from dace.transformation.passes.gpu_specialization.promote_host_maps_to_kernels import PromoteHostMapsToKernels
     from dace.transformation.passes.gpu_specialization.sequentialize_nested_device_scopes import (
-        SequentializeNestedDeviceScopes)
+        SequentializeNestedDeviceScopes,
+    )
+
     # A loop around a single-iteration kernel launches it once per trip; running the loop inside is one launch.
-    MoveLoopIntoMapGated(target='gpu', single_iteration_only=True).apply_pass(sdfg, {})
+    MoveLoopIntoMapGated(target="gpu", single_iteration_only=True).apply_pass(sdfg, {})
     # A ``specialize`` node (MatMul) becomes the node it stands for during implementation selection;
     # becoming it here lets the promotion below see what will actually run.
     for node, state in list(sdfg.all_nodes_recursive()):
-        if isinstance(node, nodes.LibraryNode) and (node.implementation or node.default_implementation) == 'specialize':
+        if isinstance(node, nodes.LibraryNode) and (node.implementation or node.default_implementation) == "specialize":
             node.expand(state)
     # A host map that only launches device work is the kernel; everything below resolves its nesting.
     PromoteHostMapsToKernels().apply_pass(sdfg, {})
@@ -58,10 +63,13 @@ class GPUStreamPipeline(Pipeline):
     def __init__(self, scheduling_strategy: Optional[GPUStreamSchedulingStrategy] = None):
         if scheduling_strategy is None:
             scheduling_strategy = AutoGPUStreamScheduler(
-                synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
+                synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit")
+            )
         elif not isinstance(scheduling_strategy, GPUStreamSchedulingStrategy):
-            raise TypeError(f"scheduling_strategy must be a GPUStreamSchedulingStrategy instance, "
-                            f"got {type(scheduling_strategy).__name__}.")
+            raise TypeError(
+                f"scheduling_strategy must be a GPUStreamSchedulingStrategy instance, "
+                f"got {type(scheduling_strategy).__name__}."
+            )
         self._scheduling_strategy = scheduling_strategy
         super().__init__([scheduling_strategy, GPUStreamWiring(scheduling_strategy)])
 
@@ -73,16 +81,22 @@ class GPUCodegenPreprocessPipeline(Pipeline):
     def __init__(self):
         # Local imports: avoid circular import in ``dace.transformation`` package init.
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
-            AddThreadBlockMaps, ExpandLibraryNodes, InferDefaultSchedulesAndStorages, ReinferConnectorTypes,
-            SynchronizeStreamUnawareGPUCallbacks)
+            AddThreadBlockMaps,
+            ExpandLibraryNodes,
+            InferDefaultSchedulesAndStorages,
+            ReinferConnectorTypes,
+            SynchronizeStreamUnawareGPUCallbacks,
+        )
         from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
         from dace.transformation.passes.move_array_out_of_kernel import MoveArrayOutOfKernel
         from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
         from dace.transformation.passes.demote_kernel_internal_arrays_to_scalars import (
-            DemoteKernelInternalArraysToScalars)
+            DemoteKernelInternalArraysToScalars,
+        )
         from dace.transformation.passes.lower_nested_gpu_device_maps import NestedGPUDeviceMapLowering
         from dace.transformation.passes.gpu_specialization.promote_warp_tiles import PromoteWarpTiles
         from dace.transformation.passes.gpu_specialization.grid_stride_kernels import GridStrideKernels
+
         # Order constraints:
         #   * NestedGPUDeviceMapLowering first -- everything downstream assumes one-level kernels.
         #   * scheduler after ExpandLibraryNodes -- it would miss opaque libnodes.
@@ -97,22 +111,24 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         #     connectors that re-inference then re-derives as scalar references.
         #   * SynchronizeStreamUnawareGPUCallbacks after wiring -- its fence takes no stream connector.
         #   * ReinferConnectorTypes last -- earlier passes mutate NestedSDFG connector descriptors.
-        strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
+        strategy = AutoGPUStreamScheduler(synchronize_on_exit=Config.get("compiler", "cuda", "synchronize_on_exit"))
         scalar_promotion = PromoteScalarOutputsToArrays()
         scalar_promotion.gpu = True
-        super().__init__([
-            InferDefaultSchedulesAndStorages(),
-            NestedGPUDeviceMapLowering(),
-            scalar_promotion,
-            MoveArrayOutOfKernel(),
-            InsertExplicitCopies(),
-            ExpandLibraryNodes(),
-            strategy,
-            GPUStreamWiring(strategy),
-            SynchronizeStreamUnawareGPUCallbacks(),
-            PromoteWarpTiles(),
-            AddThreadBlockMaps(),
-            GridStrideKernels(),
-            DemoteKernelInternalArraysToScalars(),
-            ReinferConnectorTypes(),
-        ])
+        super().__init__(
+            [
+                InferDefaultSchedulesAndStorages(),
+                NestedGPUDeviceMapLowering(),
+                scalar_promotion,
+                MoveArrayOutOfKernel(),
+                InsertExplicitCopies(),
+                ExpandLibraryNodes(),
+                strategy,
+                GPUStreamWiring(strategy),
+                SynchronizeStreamUnawareGPUCallbacks(),
+                PromoteWarpTiles(),
+                AddThreadBlockMaps(),
+                GridStrideKernels(),
+                DemoteKernelInternalArraysToScalars(),
+                ReinferConnectorTypes(),
+            ]
+        )

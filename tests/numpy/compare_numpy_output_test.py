@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``compare_numpy_output`` is the oracle of every ufunc test, so an output it skips passes while wrong."""
+
 import dace
 import numpy as np
 import pytest
@@ -26,16 +27,19 @@ def run_dace_leg_as_python_tampering_the_second_output(monkeypatch, tamper):
 
         return wrap
 
-    monkeypatch.setattr(dace, 'program', program)
+    monkeypatch.setattr(dace, "program", program)
 
 
-@pytest.mark.parametrize('tamper', [
-    pytest.param(lambda second: second + 1.0, id='value'),
-    pytest.param(lambda second: second.astype(np.float32), id='dtype'),
-])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        pytest.param(lambda second: second + 1.0, id="value"),
+        pytest.param(lambda second: second.astype(np.float32), id="dtype"),
+    ],
+)
 def test_a_wrong_second_tuple_element_is_reported(monkeypatch, tamper):
     run_dace_leg_as_python_tampering_the_second_output(monkeypatch, tamper)
-    with pytest.raises(AssertionError, match=r'^\(1, '):
+    with pytest.raises(AssertionError, match=r"^\(1, "):
         compare_numpy_output(check_dtype=True)(two_outputs)()
 
 

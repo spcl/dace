@@ -37,8 +37,8 @@ def _build_single_arm_if_sdfg():
     Then nothing if cond is false.
     """
     sdfg = dace.SDFG("single_arm")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)
-    sdfg.add_array("B", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)
+    sdfg.add_array("B", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("cond", dace.bool_)
 
     entry = sdfg.add_state("entry", is_start_block=True)
@@ -67,7 +67,7 @@ def _build_disjoint_two_arm_sdfg():
     and then normalized."""
     sdfg = dace.SDFG("disjoint_two_arm")
     for n in ("A", "B", "C"):
-        sdfg.add_array(n, shape=(1, ), dtype=dace.float64)
+        sdfg.add_array(n, shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("cond", dace.bool_)
 
     entry = sdfg.add_state("entry", is_start_block=True)
@@ -103,8 +103,9 @@ def test_single_arm_removes_conditional_block_and_emits_ite_tasklet():
     rewritten = BranchNormalization().apply_pass(sdfg, {})
     assert rewritten is not None and rewritten >= 1
 
-    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks()), \
-        [b.label for b in sdfg.all_control_flow_blocks()]
+    assert not any(isinstance(b, ConditionalBlock) for b in sdfg.all_control_flow_blocks()), [
+        b.label for b in sdfg.all_control_flow_blocks()
+    ]
 
     found_ite = False
     for state in sdfg.states():
@@ -216,8 +217,8 @@ def _build_arm_with_writes(sdfg: dace.SDFG, label: str, writes):
 def test_escape_writes_non_transient_target_escapes():
     """Rule 1: a write to a non-transient array always escapes."""
     sdfg = dace.SDFG("escape_rule1")
-    sdfg.add_array("A", shape=(1, ), dtype=dace.float64)  # non-transient
-    sdfg.add_array("S", shape=(1, ), dtype=dace.float64, transient=True)
+    sdfg.add_array("A", shape=(1,), dtype=dace.float64)  # non-transient
+    sdfg.add_array("S", shape=(1,), dtype=dace.float64, transient=True)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -235,8 +236,8 @@ def test_escape_writes_transient_read_elsewhere_escapes():
     """Rule 2: a write to a transient is escaping iff the transient is
     read in a state outside the conditional's subtree."""
     sdfg = dace.SDFG("escape_rule2")
-    sdfg.add_array("T", shape=(1, ), dtype=dace.float64, transient=True)
-    sdfg.add_array("OUT", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("T", shape=(1,), dtype=dace.float64, transient=True)
+    sdfg.add_array("OUT", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -255,7 +256,7 @@ def test_escape_writes_transient_only_inside_arm_stays_private():
     """A transient that is never read outside the arm and not written by
     a sibling arm stays arm-private (no entry in the plan)."""
     sdfg = dace.SDFG("escape_arm_private")
-    sdfg.add_array("PRIVATE", shape=(1, ), dtype=dace.float64, transient=True)
+    sdfg.add_array("PRIVATE", shape=(1,), dtype=dace.float64, transient=True)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -272,8 +273,8 @@ def test_escape_writes_cross_arm_read_escapes_writer():
     the writer's write escapes because both arms run unconditionally
     post-rewrite."""
     sdfg = dace.SDFG("escape_rule3")
-    sdfg.add_array("T", shape=(1, ), dtype=dace.float64, transient=True)
-    sdfg.add_array("OUT", shape=(1, ), dtype=dace.float64, transient=True)
+    sdfg.add_array("T", shape=(1,), dtype=dace.float64, transient=True)
+    sdfg.add_array("OUT", shape=(1,), dtype=dace.float64, transient=True)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -314,8 +315,8 @@ def recompute_then_read(region: ControlFlowRegion, label: str, temporary: str, w
 def test_escape_writes_transient_recomputed_before_every_outside_read_stays_private():
     """A later copy of the arm writes ``T`` before reading it, so no read outside ``cb`` can see this arm's ``T``."""
     sdfg = dace.SDFG("escape_recomputed_outside")
-    sdfg.add_array("T", shape=(1, ), dtype=dace.float64, transient=True)
-    sdfg.add_array("OUT", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("T", shape=(1,), dtype=dace.float64, transient=True)
+    sdfg.add_array("OUT", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -332,8 +333,8 @@ def test_escape_writes_transient_recomputed_before_every_outside_read_stays_priv
 def test_escape_writes_other_arm_recomputing_the_transient_does_not_escape_the_writer():
     """The else arm recomputes ``T`` before reading it, so the if arm's write of ``T`` never reaches it."""
     sdfg = dace.SDFG("escape_recomputed_other_arm")
-    sdfg.add_array("T", shape=(1, ), dtype=dace.float64, transient=True)
-    sdfg.add_array("OUT", shape=(1, ), dtype=dace.float64)
+    sdfg.add_array("T", shape=(1,), dtype=dace.float64, transient=True)
+    sdfg.add_array("OUT", shape=(1,), dtype=dace.float64)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -354,7 +355,7 @@ def test_escape_writes_interstate_edge_cond_outside_cb_is_a_read():
     """Rule 2 extension: an interstate-edge condition outside ``cb`` that
     references a transient counts as a read for escape purposes."""
     sdfg = dace.SDFG("escape_interstate_cond")
-    sdfg.add_array("T", shape=(1, ), dtype=dace.float64, transient=True)
+    sdfg.add_array("T", shape=(1,), dtype=dace.float64, transient=True)
     sdfg.add_symbol("c", dace.bool_)
     entry = sdfg.add_state("entry", is_start_block=True)
     cb = ConditionalBlock("cb")
@@ -401,9 +402,14 @@ def arm_with_alias_entry_and_map() -> dace.SDFG:
     entry = arm.add_state("entry", is_start_block=True)
     body = arm.add_state("body")
     arm.add_edge(entry, body, dace.InterstateEdge(assignments={"__sym_z1": "z1"}))
-    body.add_mapped_tasklet("m", {"j": "0:8"}, {"_in": dace.Memlet("a[j]")},
-                            "_out = _in + __sym_z1", {"_out": dace.Memlet("b[j]")},
-                            external_edges=True)
+    body.add_mapped_tasklet(
+        "m",
+        {"j": "0:8"},
+        {"_in": dace.Memlet("a[j]")},
+        "_out = _in + __sym_z1",
+        {"_out": dace.Memlet("b[j]")},
+        external_edges=True,
+    )
     cb.add_branch(CodeBlock("c > 0"), arm)
     sdfg.add_edge(init, cb, dace.InterstateEdge())
     return sdfg

@@ -24,8 +24,11 @@ def assert_cfg_list_matches_reset(sdfg: dace.SDFG) -> None:
 
 def _branch_conditions(sdfg):
     return [
-        cnd.as_string for cb, _ in sdfg.all_nodes_recursive() if isinstance(cb, ConditionalBlock)
-        for cnd, _ in cb.branches if cnd is not None
+        cnd.as_string
+        for cb, _ in sdfg.all_nodes_recursive()
+        if isinstance(cb, ConditionalBlock)
+        for cnd, _ in cb.branches
+        if cnd is not None
     ]
 
 
@@ -303,7 +306,7 @@ def test_identical_guards_no_duplicated_conjunct():
     # ConditionFusion simplifies its own output: the redundant ``(c) and
     # (c)`` collapses and the unsatisfiable cross-terms are dropped, so no
     # surviving condition is a conjunction.
-    assert all(' and ' not in c for c in conds), f"non-minimal condition: {conds}"
+    assert all(" and " not in c for c in conds), f"non-minimal condition: {conds}"
 
     for v in (5.0, 20.0):  # guard not-taken / taken
         ref, out = np.array([v, 0, 0, 0]), np.array([v, 0, 0, 0])
@@ -336,7 +339,7 @@ def test_three_identical_guards_no_duplicated_conjunct():
     cbs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cbs) == 1, f"guards not merged: {len(cbs)}"
     conds = _branch_conditions(sdfg)
-    assert all(' and ' not in c for c in conds), f"non-minimal condition: {conds}"
+    assert all(" and " not in c for c in conds), f"non-minimal condition: {conds}"
 
     for v in (5.0, 20.0):
         ref, out = np.array([v, 0, 0, 0, 0]), np.array([v, 0, 0, 0, 0])
@@ -349,16 +352,16 @@ def guarded_nested_sdfg(label, sdfg, condition, value):
     """A ConditionalBlock whose single branch writes ``value`` to ``A[0]`` through a NESTED SDFG."""
     cb = ConditionalBlock(label)
     sdfg.add_node(cb)
-    body = ControlFlowRegion(label + '_body', sdfg=sdfg)
+    body = ControlFlowRegion(label + "_body", sdfg=sdfg)
     cb.add_branch(CodeBlock(condition), body)
-    state = body.add_state(label + '_write', is_start_block=True)
-    inner = dace.SDFG(label + '_inner')
-    inner.add_array('a', [4], dace.float64)
-    inner_state = inner.add_state('w', is_start_block=True)
-    tasklet = inner_state.add_tasklet('w', {}, {'o'}, f'o = {value}')
-    inner_state.add_edge(tasklet, 'o', inner_state.add_write('a'), None, dace.Memlet('a[0]'))
-    nsdfg = state.add_nested_sdfg(inner, {}, {'a'})
-    state.add_edge(nsdfg, 'a', state.add_write('A'), None, dace.Memlet('A[0:4]'))
+    state = body.add_state(label + "_write", is_start_block=True)
+    inner = dace.SDFG(label + "_inner")
+    inner.add_array("a", [4], dace.float64)
+    inner_state = inner.add_state("w", is_start_block=True)
+    tasklet = inner_state.add_tasklet("w", {}, {"o"}, f"o = {value}")
+    inner_state.add_edge(tasklet, "o", inner_state.add_write("a"), None, dace.Memlet("a[0]"))
+    nsdfg = state.add_nested_sdfg(inner, {}, {"a"})
+    state.add_edge(nsdfg, "a", state.add_write("A"), None, dace.Memlet("A[0:4]"))
     return cb
 
 
@@ -371,32 +374,32 @@ def test_fusing_copied_branches_leaves_every_region_addressable():
     list`` the first time any later pass asks for it, which is how the CloudSC parallelize pipeline
     died in its fuse phase. Every region must be addressable in the tree it now lives in.
     """
-    sdfg = dace.SDFG('cond_fusion_keeps_the_cfg_list')
-    sdfg.add_array('A', [4], dace.float64)
-    sdfg.add_symbol('c', dace.int32)
-    sdfg.add_symbol('d', dace.int32)
+    sdfg = dace.SDFG("cond_fusion_keeps_the_cfg_list")
+    sdfg.add_array("A", [4], dace.float64)
+    sdfg.add_symbol("c", dace.int32)
+    sdfg.add_symbol("d", dace.int32)
     # INDEPENDENT guards, so the merge-matching-guards shortcut declines and the fusion takes the
     # cartesian branch product -- the path that deep-copies each branch region wholesale.
-    first = guarded_nested_sdfg('g1', sdfg, 'c > 0', 1.0)
-    second = guarded_nested_sdfg('g2', sdfg, 'd > 0', 2.0)
-    start = sdfg.add_state('start', is_start_block=True)
+    first = guarded_nested_sdfg("g1", sdfg, "c > 0", 1.0)
+    second = guarded_nested_sdfg("g2", sdfg, "d > 0", 2.0)
+    start = sdfg.add_state("start", is_start_block=True)
     sdfg.add_edge(start, first, dace.InterstateEdge())
     sdfg.add_edge(first, second, dace.InterstateEdge())
     sdfg.validate()
 
-    assert sdfg.apply_transformations_repeated(ConditionFusion) > 0, 'the independent guards did not fuse'
+    assert sdfg.apply_transformations_repeated(ConditionFusion) > 0, "the independent guards did not fuse"
     sdfg.validate()
 
     # The property that failed: every region resolves its own index in the list it carries.
     for region in sdfg.all_control_flow_regions(recursive=True):
-        assert region.cfg_list, f'{type(region).__name__} {region.label!r} carries an empty CFG list'
+        assert region.cfg_list, f"{type(region).__name__} {region.label!r} carries an empty CFG list"
         assert region.cfg_id >= 0
 
     # And the copied branches still compute: the later write wins where both guards hold.
     for c, d, expected in ((1, 0, 1.0), (0, 1, 2.0), (1, 1, 2.0), (0, 0, 0.0)):
         out = np.zeros(4)
         sdfg(A=out, c=c, d=d)
-        assert out[0] == expected, f'c={c} d={d}: got {out[0]}, want {expected}'
+        assert out[0] == expected, f"c={c} d={d}: got {out[0]}, want {expected}"
 
 
 def test_an_application_never_rebuilds_the_cfg_list(monkeypatch):
@@ -431,8 +434,8 @@ def test_an_application_never_rebuilds_the_cfg_list(monkeypatch):
         applications.append(self.expr_index)
         return original_apply(self, graph, sd)
 
-    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded_reset)
-    monkeypatch.setattr(ConditionFusion, 'apply', recorded_apply)
+    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, "reset_cfg_list", recorded_reset)
+    monkeypatch.setattr(ConditionFusion, "apply", recorded_apply)
     sdfg.apply_transformations_repeated(ConditionFusion)
     sdfg.validate()
     assert applications == [1, 1, 1], applications
@@ -440,37 +443,43 @@ def test_an_application_never_rebuilds_the_cfg_list(monkeypatch):
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
 
 
-@pytest.mark.parametrize('conjunction', [
-    '(not ((b == 1) and (d == 3))) and (b == 1) and (d == 3)',
-    '(d == 2) and (d == 3)',
-    '(d != 3) and (d == 3)',
-    '(a < 1) and (a >= 1)',
-    '(c > 10) and (not (c > 10))',
-])
+@pytest.mark.parametrize(
+    "conjunction",
+    [
+        "(not ((b == 1) and (d == 3))) and (b == 1) and (d == 3)",
+        "(d == 2) and (d == 3)",
+        "(d != 3) and (d == 3)",
+        "(a < 1) and (a >= 1)",
+        "(c > 10) and (not (c > 10))",
+    ],
+)
 def test_an_unsatisfiable_cross_term_simplifies_to_false(conjunction):
     """A cross-term the branch product builds and does not prune is copied into every later product:
     warpx_field_gather's guard chain grew 9 -> 31 -> ... -> 12573 branches."""
-    assert simplify_conjunction(conjunction) == 'False'
+    assert simplify_conjunction(conjunction) == "False"
 
 
-@pytest.mark.parametrize('conjunction', [
-    '(not ((b == 1) and (d != 3))) and (b == 1) and (d == 3)',
-    '(d == 2) and (e == 3)',
-    '(a > 1) and (a > 2)',
-])
+@pytest.mark.parametrize(
+    "conjunction",
+    [
+        "(not ((b == 1) and (d != 3))) and (b == 1) and (d == 3)",
+        "(d == 2) and (e == 3)",
+        "(a > 1) and (a > 2)",
+    ],
+)
 def test_a_satisfiable_conjunction_is_kept(conjunction):
-    assert simplify_conjunction(conjunction) != 'False'
+    assert simplify_conjunction(conjunction) != "False"
 
 
 def test_a_deduplicated_negation_stays_a_logical_not():
     """``str`` of a sympy negation is ``~x``, which parses back as a BITWISE invert: ``~True`` is -2,
     which is true, so the fused branch runs exactly when it must not."""
-    simplified = simplify_conjunction('(not ((a > 1) and (b > 1))) and (c > 1) and (c > 1)')
-    assert 'invert' not in str(symbolic.pystr_to_symbolic(simplified)), simplified
+    simplified = simplify_conjunction("(not ((a > 1) and (b > 1))) and (c > 1) and (c > 1)")
+    assert "invert" not in str(symbolic.pystr_to_symbolic(simplified)), simplified
     reparsed = symbolic.pystr_to_symbolic(simplified)
     for a, b in ((0, 0), (0, 2), (2, 0), (2, 2)):
         want = not (a > 1 and b > 1)
-        assert bool(reparsed.subs({'a': a, 'b': b, 'c': 2})) == want, (simplified, a, b)
+        assert bool(reparsed.subs({"a": a, "b": b, "c": 2})) == want, (simplified, a, b)
 
 
 def test_fusing_two_if_else_chains_builds_exactly_their_product():
@@ -538,7 +547,7 @@ def nested_guards(a: dace.float64[4], b: dace.int64, d: dace.int64):
             a[2] = 3.0
 
 
-@pytest.mark.parametrize('program', [independent_guards, equal_guards, opposite_guards, nested_guards])
+@pytest.mark.parametrize("program", [independent_guards, equal_guards, opposite_guards, nested_guards])
 def test_moved_branch_bodies_keep_the_cfg_list_of_a_fresh_reset(program):
     """The blocks of the dropped conditional move instead of being copied; the tree stays exact and the values hold."""
     base = program.to_sdfg(simplify=True)

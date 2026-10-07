@@ -55,10 +55,12 @@ from dace.transformation.passes.canonicalize.normalize_floor_division import Nor
 from dace.transformation.passes.cpu_specialization.calibrate_thresholds import CalibrateCpuThresholds
 from dace.transformation.passes.cpu_specialization.chunk_anti_dependence import ChunkAntiDependence
 from dace.transformation.passes.cpu_specialization.recompute_oversized_intermediates import (
-    RecomputeOversizedIntermediates)
+    RecomputeOversizedIntermediates,
+)
 from dace.transformation.passes.cpu_specialization.sequentialize_reduction_axes import SequentializeReductionAxes
 from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
-    SequentializeUnprofitableParallelScopes)
+    SequentializeUnprofitableParallelScopes,
+)
 from dace.transformation.passes.cpu_specialization.specialize_cpu_transfers import SpecializeCpuTransfers
 
 

@@ -17,7 +17,6 @@ def test_multi_output(use_cpp_dispatcher: bool, device):
     dev = torch_device(device)
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             return x + 1, x * 2
 

@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests write-conflict resolution tiling """
+"""Tests write-conflict resolution tiling"""
+
 import dace
 from dace.transformation.auto import auto_optimize as aopt
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _runtest(sdfg: dace.SDFG, n: int, add_symbol: bool = True):
@@ -33,7 +34,7 @@ def test_shortmap():
 
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
-    assert 'atomic' not in sdfg.generate_code()[0].code
+    assert "atomic" not in sdfg.generate_code()[0].code
     _runtest(sdfg, 4, False)
     del sdfg
 
@@ -52,7 +53,7 @@ def test_symmap():
     # half used to read as a ``wcr_fixed::reduce`` into the tile scalar; the sequential tile
     # loop now accumulates in a register and stores once, so assert the register instead of
     # the memory round-trip it replaced.
-    assert '__acc_' in code and code.count('atomic') == 1
+    assert "__acc_" in code and code.count("atomic") == 1
     _runtest(sdfg, 257)
     del sdfg
 
@@ -71,7 +72,7 @@ def test_libnode():
     # whichever one happens to be the default.
     for n, _ in sdfg.all_nodes_recursive():
         if isinstance(n, dace.libraries.standard.nodes.Reduce):
-            n.implementation = 'pure'
+            n.implementation = "pure"
     sdfg.expand_library_nodes()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
@@ -79,7 +80,7 @@ def test_libnode():
     # half used to read as a ``wcr_fixed::reduce`` into the tile scalar; the sequential tile
     # loop now accumulates in a register and stores once, so assert the register instead of
     # the memory round-trip it replaced.
-    assert '__acc_' in code and code.count('atomic') == 1
+    assert "__acc_" in code and code.count("atomic") == 1
     _runtest(sdfg, 257)
     del sdfg
 
@@ -94,8 +95,8 @@ def test_block_reduction():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    if dace.Config.get_bool('optimizer', 'autotile_partial_parallelism'):
-        assert 'reduce(' in code and code.count('atomic') == 0
+    if dace.Config.get_bool("optimizer", "autotile_partial_parallelism"):
+        assert "reduce(" in code and code.count("atomic") == 0
     _runtest2d(sdfg, 257, 257)
     del sdfg
 
@@ -110,7 +111,7 @@ def test_block_reduction_short():
     sdfg = sum.to_sdfg()
     aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     code: str = sdfg.generate_code()[0].code
-    assert 'reduce(' in code and code.count('atomic') == 1
+    assert "reduce(" in code and code.count("atomic") == 1
     _runtest2d(sdfg, 257, 2)
     del sdfg
 
@@ -118,11 +119,13 @@ def test_block_reduction_short():
 def _map_schedules(sdfg: dace.SDFG):
     """Every map in the SDFG tree, as ``label -> schedule``, nested SDFGs included."""
     from dace.sdfg import nodes as nd
+
     return {
         n.map.label: n.map.schedule
         for sd in sdfg.all_sdfgs_recursive()
         for st in sd.states()
-        for n in st.nodes() if isinstance(n, nd.MapEntry)
+        for n in st.nodes()
+        if isinstance(n, nd.MapEntry)
     }
 
 
@@ -142,10 +145,10 @@ def test_the_tiled_conflict_body_is_sequential_on_gpu():
     aopt.auto_optimize(sdfg, dace.DeviceType.GPU)
 
     schedules = _map_schedules(sdfg)
-    bodies = [lbl for lbl, sched in schedules.items() if lbl.endswith('_map') and 'init' not in lbl]
-    assert bodies, f'nothing was tiled; schedules were {schedules}'
+    bodies = [lbl for lbl, sched in schedules.items() if lbl.endswith("_map") and "init" not in lbl]
+    assert bodies, f"nothing was tiled; schedules were {schedules}"
     device = [lbl for lbl, sched in schedules.items() if sched == dace.dtypes.ScheduleType.GPU_Device]
-    assert device, f'no kernel map survived; schedules were {schedules}'
+    assert device, f"no kernel map survived; schedules were {schedules}"
     # The body of a tiled conflict is never a second kernel.
     kernels = 0
     for node, state in sdfg.all_nodes_recursive():
@@ -154,8 +157,8 @@ def test_the_tiled_conflict_body_is_sequential_on_gpu():
         if node.map.schedule != dace.dtypes.ScheduleType.GPU_Device:
             continue
         kernels += 1
-        assert state.entry_node(node) is None, f'{node.map.label} is a GPU_Device map inside another map scope'
-    assert kernels, 'no kernel map was produced, so the scope check above asserted nothing'
+        assert state.entry_node(node) is None, f"{node.map.label} is a GPU_Device map inside another map scope"
+    assert kernels, "no kernel map was produced, so the scope check above asserted nothing"
 
 
 def test_the_gpu_grid_names_no_kernel_parameter():
@@ -172,19 +175,21 @@ def test_the_gpu_grid_names_no_kernel_parameter():
     sdfg.generate_code()  # the launch geometry is only built here; a bad range fails at C++ compile
 
     kernels = [
-        n for n, _ in sdfg.all_nodes_recursive()
+        n
+        for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     ]
-    assert kernels, 'no kernel map was produced'
+    assert kernels, "no kernel map was produced"
     for kernel in kernels:
         own = set(kernel.map.params)
         named = {str(sym) for b, e, _ in kernel.map.range for sym in dace.symbolic.pystr_to_symbolic(b).free_symbols}
         named |= {str(sym) for _, e, _ in kernel.map.range for sym in dace.symbolic.pystr_to_symbolic(e).free_symbols}
-        assert not (named & own), \
-            f'{kernel.map.label} sizes its grid from its own parameters {sorted(named & own)}: {kernel.map.range}'
+        assert not (named & own), (
+            f"{kernel.map.label} sizes its grid from its own parameters {sorted(named & own)}: {kernel.map.range}"
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_symmap()
     test_shortmap()
     test_libnode()

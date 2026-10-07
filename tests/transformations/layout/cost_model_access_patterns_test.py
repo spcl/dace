@@ -12,6 +12,7 @@ moved`` -- which is what the bandwidth term of the LogP model divides by:
 fp64 on 64-byte blocks throughout, so a block holds 8 elements and eps ranges over [1/8, 1] for
 reads (see the relayout tests for the [1/16, 1] write range).
 """
+
 import numpy
 import pytest
 import sympy as sp
@@ -20,9 +21,12 @@ import dace
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
 from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
 from dace.transformation.layout.cost_model.loggp import LogGP
-from dace.transformation.layout.cost_model.relayout import (break_even_passes, nest_time_by_efficiency,
-                                                            relayout_pays_by_efficiency,
-                                                            single_pass_efficiency_threshold)
+from dace.transformation.layout.cost_model.relayout import (
+    break_even_passes,
+    nest_time_by_efficiency,
+    relayout_pays_by_efficiency,
+    single_pass_efficiency_threshold,
+)
 
 N = dace.symbol("N")
 ELEMS_PER_BLOCK = 8  # 64-byte block / fp64
@@ -154,9 +158,9 @@ INSPECTOR = 3.0  # read the index array + bucket it: ~3 array passes of traffic
 def test_static_replace_beats_inspector_executor_at_equal_efficiency():
     """Same reordering, same resulting layout -- static replace simply does not pay the inspector.
     It is strictly better wherever sigma is known without running the program."""
-    assert (break_even_passes(SCATTERED, PERFECT, overhead_passes=0.0) <= break_even_passes(SCATTERED,
-                                                                                            PERFECT,
-                                                                                            overhead_passes=INSPECTOR))
+    assert break_even_passes(SCATTERED, PERFECT, overhead_passes=0.0) <= break_even_passes(
+        SCATTERED, PERFECT, overhead_passes=INSPECTOR
+    )
 
 
 def test_static_replace_of_a_scattered_gather_pays_immediately():

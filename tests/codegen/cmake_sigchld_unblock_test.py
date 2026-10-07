@@ -6,6 +6,7 @@ every child inherits; CMake/KWSys reaps the helper processes it spawns during co
 forever in ``select()`` leaving ``<defunct>`` children -- the daint configure hang.
 ``build_subprocess_sigmask`` unblocks SIGCHLD only for the duration of the fork and
 restores the caller's mask afterwards."""
+
 import signal
 
 import pytest
@@ -45,5 +46,5 @@ def test_sigmask_is_noop_when_sigchld_already_deliverable():
         signal.pthread_sigmask(signal.SIG_SETMASK, original)
 
 
-if __name__ == '__main__':
-    raise SystemExit(pytest.main([__file__, '-v']))
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-v"]))

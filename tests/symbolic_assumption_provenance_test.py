@@ -11,6 +11,7 @@ Subtracting them yields ``N - N`` rather than ``0`` and every gate written as
 Every test here MUST mint its symbol WITH assumptions: a bare-symbol fixture makes both instances
 identical and the guard cannot fail, which is why the corpus never caught the original defect.
 """
+
 import numpy as np
 import pytest
 
@@ -33,7 +34,7 @@ from dace.transformation.passes.scatter_conflict_guard import scatter_index_is_p
 
 # The declared spelling: dtype and assumptions are exactly what a benchmark emitter or a real
 # frontend attaches, and exactly what the reparsed spelling below cannot recover.
-DECLARED_N = dace.symbol('N', dtype=dace.int64, positive=True)
+DECLARED_N = dace.symbol("N", dtype=dace.int64, positive=True)
 
 
 def bare(name: str) -> symbolic.SymbolicType:
@@ -43,48 +44,48 @@ def bare(name: str) -> symbolic.SymbolicType:
 
 def test_declared_and_reparsed_symbols_do_not_cancel():
     """The premise of every other test here: without equalization the two spellings never cancel."""
-    assert symbolic.simplify(bare('N') - DECLARED_N) != 0
-    lhs, rhs = symbolic.equalize_symbols_across(bare('N'), DECLARED_N)
+    assert symbolic.simplify(bare("N") - DECLARED_N) != 0
+    lhs, rhs = symbolic.equalize_symbols_across(bare("N"), DECLARED_N)
     assert symbolic.simplify(lhs - rhs) == 0
 
 
 def test_covers_full_extent_accepts_reparsed_bound():
-    desc = data.Array(dace.float64, (DECLARED_N, ))
-    reparsed = subsets.Range([(0, bare('N') - 1, 1)])
+    desc = data.Array(dace.float64, (DECLARED_N,))
+    reparsed = subsets.Range([(0, bare("N") - 1, 1)])
     assert covers_full_extent(reparsed, desc) is True
 
 
 def test_apply_assignment_covers_dimension_accepts_reparsed_bound():
-    assert covers_dimension(0, bare('N') - 1, 1, DECLARED_N) is True
+    assert covers_dimension(0, bare("N") - 1, 1, DECLARED_N) is True
 
 
 def test_apply_assignment_covers_full_array_accepts_reparsed_memlet():
-    desc = data.Array(dace.float64, (DECLARED_N, ))
-    memlet = dace.Memlet(data='a', subset=subsets.Range([(0, bare('N') - 1, 1)]))
+    desc = data.Array(dace.float64, (DECLARED_N,))
+    memlet = dace.Memlet(data="a", subset=subsets.Range([(0, bare("N") - 1, 1)]))
     assert covers_full_array(memlet, desc) is True
 
 
 def test_permute_dimensions_covers_full_array_accepts_reparsed_memlet():
-    desc = data.Array(dace.float64, (DECLARED_N, ))
-    memlet = dace.Memlet(data='a', subset=subsets.Range([(0, bare('N') - 1, 1)]))
+    desc = data.Array(dace.float64, (DECLARED_N,))
+    memlet = dace.Memlet(data="a", subset=subsets.Range([(0, bare("N") - 1, 1)]))
     assert permute_covers_full_array(memlet, desc) is True
 
 
 def test_contiguous_element_count_accepts_reparsed_total_size():
     """``total_size`` is reassigned from reparsed map extents by MapFission and friends."""
-    desc = data.Array(dace.float64, (DECLARED_N, ))
-    desc.total_size = bare('N')
+    desc = data.Array(dace.float64, (DECLARED_N,))
+    desc.total_size = bare("N")
     assert _contiguous_element_count(desc) is not None
 
 
 def test_diff_is_zero_accepts_reparsed_operand():
-    assert _diff_is_zero(DECLARED_N - 1, bare('N') - 1) is True
+    assert _diff_is_zero(DECLARED_N - 1, bare("N") - 1) is True
 
 
 def test_symmetrize_canonical_window_accepts_reparsed_bounds():
     """The window bounds are string properties, so they ALWAYS reach the check reparsed."""
     desc = data.Array(dace.float64, (DECLARED_N, DECLARED_N))
-    node = Symmetrize('sym', row_lo='0', row_hi='N - 1', col_offset=1, col_hi='N')
+    node = Symmetrize("sym", row_lo="0", row_hi="N - 1", col_offset=1, col_hi="N")
     assert ExpandSymmetrizeCUDA.canonical_window(node, desc) is True
 
 
@@ -94,22 +95,22 @@ def affine_index_sdfg() -> dace.SDFG:
     The loop bounds live in ``CodeBlock`` strings, so ``loop_analysis`` hands them back bare while
     ``idx``'s shape keeps the declared ones -- the shape the scatter-guard gate compares them to.
     """
-    sdfg = dace.SDFG('affine_index')
-    sdfg.add_array('idx', (DECLARED_N, ), dace.int64, transient=True)
-    loop = LoopRegion('loop', 'j < N', 'j', 'j = 0', 'j = j + 1')
+    sdfg = dace.SDFG("affine_index")
+    sdfg.add_array("idx", (DECLARED_N,), dace.int64, transient=True)
+    loop = LoopRegion("loop", "j < N", "j", "j = 0", "j = j + 1")
     sdfg.add_node(loop, is_start_block=True)
-    state = loop.add_state('body', is_start_block=True)
-    tasklet = state.add_tasklet('assign', {}, {'o'}, 'o = 2 * j')
-    write = state.add_access('idx')
-    state.add_edge(tasklet, 'o', write, None, dace.Memlet('idx[j]'))
+    state = loop.add_state("body", is_start_block=True)
+    tasklet = state.add_tasklet("assign", {}, {"o"}, "o = 2 * j")
+    write = state.add_access("idx")
+    state.add_edge(tasklet, "o", write, None, dace.Memlet("idx[j]"))
     return sdfg
 
 
 def test_scatter_index_injectivity_accepts_reparsed_loop_end():
-    assert scatter_index_is_provably_injective(affine_index_sdfg(), 'idx') is True
+    assert scatter_index_is_provably_injective(affine_index_sdfg(), "idx") is True
 
 
-DECLARED_M = dace.symbol('M', dtype=dace.int64, positive=True)
+DECLARED_M = dace.symbol("M", dtype=dace.int64, positive=True)
 
 
 @dace.program
@@ -155,15 +156,15 @@ def test_wcr_to_aug_assign_accepts_an_independently_minted_volume():
     subset's instances of the same names; the ``num_elements() - volume`` guard then never
     resolves and a conflict-free WCR copy keeps its atomics.
     """
-    sdfg = dace.SDFG('wcr_copy')
-    sdfg.add_array('A', (DECLARED_N, ), dace.float64)
-    sdfg.add_array('src', (DECLARED_N, ), dace.float64)
+    sdfg = dace.SDFG("wcr_copy")
+    sdfg.add_array("A", (DECLARED_N,), dace.float64)
+    sdfg.add_array("src", (DECLARED_N,), dace.float64)
     state = sdfg.add_state()
-    memlet = dace.Memlet(data='A', subset=subsets.Range([(0, DECLARED_N - 1, 1)]), wcr='lambda a, b: a + b')
-    memlet.volume = bare('N')
-    state.add_edge(state.add_access('src'), None, state.add_access('A'), None, memlet)
+    memlet = dace.Memlet(data="A", subset=subsets.Range([(0, DECLARED_N - 1, 1)]), wcr="lambda a, b: a + b")
+    memlet.volume = bare("N")
+    state.add_edge(state.add_access("src"), None, state.add_access("A"), None, memlet)
     assert sdfg.apply_transformations_repeated(WCRToAugAssign) == 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

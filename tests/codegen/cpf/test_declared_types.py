@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """CPF spells the type of every variable it declares: the rendered unit carries no ``auto``."""
+
 import os
 import ast
 import re
@@ -15,9 +16,9 @@ from dace.libraries.standard.nodes.scan import INPUT_CONNECTOR_NAME, OUTPUT_CONN
 
 from tests.codegen.cpf.conftest import assert_standalone, build_standalone, call_standalone
 
-N = dace.symbol('N')
-LABELS = {'c++': 'cpp', 'c': 'c'}
-DEDUCED = re.compile(r'\b(auto|__auto_type)\b')
+N = dace.symbol("N")
+LABELS = {"c++": "cpp", "c": "c"}
+DEDUCED = re.compile(r"\b(auto|__auto_type)\b")
 
 
 def rendered(program, name: str, language: str):
@@ -67,62 +68,62 @@ def persistent_region(a: dace.float64[N], out: dace.float64[N]):
 
 
 def strided_min_scan(n: int) -> dace.SDFG:
-    sdfg = dace.SDFG('cpf_typed_strided_scan')
-    sdfg.add_array('arr_in', [n], dace.float64)
-    sdfg.add_array('arr_out', [n], dace.float64)
-    state = sdfg.add_state('scan')
-    node = Scan('Scan', op=ScanOp.MIN, exclusive=False)
+    sdfg = dace.SDFG("cpf_typed_strided_scan")
+    sdfg.add_array("arr_in", [n], dace.float64)
+    sdfg.add_array("arr_out", [n], dace.float64)
+    state = sdfg.add_state("scan")
+    node = Scan("Scan", op=ScanOp.MIN, exclusive=False)
     node.stride = 2
-    node.implementation = 'CPU'
+    node.implementation = "CPU"
     state.add_node(node)
-    state.add_edge(state.add_read('arr_in'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'arr_in[0:{n}]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('arr_out'), None, dace.Memlet(f'arr_out[0:{n}]'))
+    state.add_edge(state.add_read("arr_in"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f"arr_in[0:{n}]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("arr_out"), None, dace.Memlet(f"arr_out[0:{n}]"))
     return sdfg
 
 
-@pytest.mark.parametrize('language', sorted(LABELS))
+@pytest.mark.parametrize("language", sorted(LABELS))
 def test_a_map_induction_variable_is_int64_like_the_symbol_it_runs_to(language):
     """``N`` is the int32 default symbol, which CPF widens; an iterator left narrower would wrap past 2^31."""
-    name = f'cpf_typed_iterator_{LABELS[language]}'
+    name = f"cpf_typed_iterator_{LABELS[language]}"
     rendering = rendered(doubled, name, language)
-    assert 'for (int64_t i = 0; i < N; i += 1)' in rendering.code, rendering.code
+    assert "for (int64_t i = 0; i < N; i += 1)" in rendering.code, rendering.code
     a = np.linspace(-1.0, 1.0, 37)
     out = np.zeros_like(a)
-    run(rendering, name, language, {'a': a, 'out': out, 'N': a.size})
+    run(rendering, name, language, {"a": a, "out": out, "N": a.size})
     np.testing.assert_array_equal(out, a * 2.0)
 
 
-@pytest.mark.parametrize('language', sorted(LABELS))
+@pytest.mark.parametrize("language", sorted(LABELS))
 def test_a_tasklet_local_takes_the_type_of_its_value(language):
-    name = f'cpf_typed_local_{LABELS[language]}'
+    name = f"cpf_typed_local_{LABELS[language]}"
     rendering = rendered(local_temporary, name, language)
-    assert re.search(r'\bdouble t = ', rendering.code), rendering.code
+    assert re.search(r"\bdouble t = ", rendering.code), rendering.code
     a = np.linspace(-1.0, 1.0, 23)
     out = np.zeros_like(a)
-    run(rendering, name, language, {'a': a, 'out': out, 'N': a.size})
+    run(rendering, name, language, {"a": a, "out": out, "N": a.size})
     np.testing.assert_array_equal(out, a * 2.0 + 1.0)
 
 
-@pytest.mark.parametrize('language, declaration', [('c++', 'bool positive = '), ('c', 'int positive = ')])
+@pytest.mark.parametrize("language, declaration", [("c++", "bool positive = "), ("c", "int positive = ")])
 def test_a_comparison_local_is_bool_in_cpp_and_int_in_c(language, declaration):
     """Each language's own comparison type, so the local holds exactly what the comparison yields."""
-    name = f'cpf_typed_flag_{LABELS[language]}'
+    name = f"cpf_typed_flag_{LABELS[language]}"
     rendering = rendered(local_flag, name, language)
     assert declaration in rendering.code, rendering.code
     a = np.linspace(-1.0, 1.0, 19)
     out = np.full_like(a, -7.0)
-    run(rendering, name, language, {'a': a, 'out': out, 'N': a.size})
+    run(rendering, name, language, {"a": a, "out": out, "N": a.size})
     np.testing.assert_array_equal(out, np.where(a > 0.0, a, 0.0))
 
 
-@pytest.mark.parametrize('language', sorted(LABELS))
+@pytest.mark.parametrize("language", sorted(LABELS))
 def test_a_persistent_region_thread_id_is_the_int_openmp_returns(language):
-    name = f'cpf_typed_thread_id_{LABELS[language]}'
+    name = f"cpf_typed_thread_id_{LABELS[language]}"
     rendering = rendered(persistent_region, name, language)
-    assert 'int tid = omp_get_thread_num();' in rendering.code, rendering.code
+    assert "int tid = omp_get_thread_num();" in rendering.code, rendering.code
     a = np.linspace(-1.0, 1.0, 29)
     out = np.zeros_like(a)
-    run(rendering, name, language, {'a': a, 'out': out, 'N': a.size})
+    run(rendering, name, language, {"a": a, "out": out, "N": a.size})
     # A persistent map's parameter is the OpenMP thread id, as in the regular CPU backend, so each element carries
     # the id of the thread that computed it: an integer in [0, threads).
     thread_ids = out - a * 2.0
@@ -133,23 +134,26 @@ def test_a_persistent_region_thread_id_is_the_int_openmp_returns(language):
 def test_a_strided_scan_renders_as_parallel_residue_classes_with_no_deduced_type():
     arr_in = np.array([5.0, 3.0, 4.0, 9.0, 1.0, 7.0, 2.0, 8.0, 6.0, 0.0, 3.0])
     sdfg = strided_min_scan(arr_in.size)
-    rendering = render(sdfg, language='c++')
+    rendering = render(sdfg, language="c++")
     assert DEDUCED.search(rendering.code) is None, rendering.code
-    assert '#pragma omp parallel for\n' in rendering.code and 'cpf_r < cpf_s' in rendering.code, rendering.code
+    assert "#pragma omp parallel for\n" in rendering.code and "cpf_r < cpf_s" in rendering.code, rendering.code
     arr_out = np.zeros_like(arr_in)
-    run(rendering, sdfg.name, 'c++', {'arr_in': arr_in, 'arr_out': arr_out})
+    run(rendering, sdfg.name, "c++", {"arr_in": arr_in, "arr_out": arr_out})
     expected = np.empty_like(arr_in)
     for residue in range(2):
         expected[residue::2] = np.minimum.accumulate(arr_in[residue::2])
     np.testing.assert_array_equal(arr_out, expected)
 
 
-@pytest.mark.parametrize('source, construct', [
-    ('p, q = x, y', 'tuple-unpacking'),
-    ('for k in range(3):\n    s = s + x', 'for loop'),
-    ('def f(v):\n    return v', "function 'f'"),
-    ('def f(v) -> float:\n    return v', "parameter 'v'"),
-])
+@pytest.mark.parametrize(
+    "source, construct",
+    [
+        ("p, q = x, y", "tuple-unpacking"),
+        ("for k in range(3):\n    s = s + x", "for loop"),
+        ("def f(v):\n    return v", "function 'f'"),
+        ("def f(v) -> float:\n    return v", "parameter 'v'"),
+    ],
+)
 def test_a_tasklet_construct_with_no_nameable_type_is_refused(source, construct):
     """Before the refusal a range loop rendered ``auto`` text that did not compile, reported as a broken form."""
     with cpf_lowering.dialect_scope(cpf_lowering.Dialect.STANDALONE):
@@ -158,4 +162,4 @@ def test_a_tasklet_construct_with_no_nameable_type_is_refused(source, construct)
 
 
 def test_outside_cpf_the_printer_output_is_unchanged():
-    assert cppunparse.cppunparse(ast.parse('p, q = x, y')).startswith('auto [p, q]')
+    assert cppunparse.cppunparse(ast.parse("p, q = x, y")).startswith("auto [p, q]")

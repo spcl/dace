@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`NormalizeNegativeStride`."""
+
 import numpy as np
 import pytest
 
@@ -8,7 +9,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def _loops(sdfg):
@@ -33,7 +34,7 @@ def test_reverse_loop_normalizes_to_positive_stride():
     loops = _loops(sdfg)
     assert len(loops) == 1
     loop = loops[0]
-    assert loop.loop_variable.startswith('_loop_pos_')
+    assert loop.loop_variable.startswith("_loop_pos_")
     stride = loop_analysis.get_loop_stride(loop)
     assert stride == 1, f"expected positive stride, got {stride}"
 
@@ -76,7 +77,7 @@ def test_positive_stride_loop_is_noop():
     before = sdfg.to_json()
     res = NormalizeNegativeStride().apply_pass(sdfg, {})
     assert res is None
-    assert sdfg.to_json() == before, 'a refusal must leave the SDFG byte-identical'
+    assert sdfg.to_json() == before, "a refusal must leave the SDFG byte-identical"
 
 
 @dace.program
@@ -98,7 +99,7 @@ def test_strided_negative_loop_normalizes():
     assert loop_analysis.get_loop_stride(loops[0]) == 1
 
 
-@pytest.mark.parametrize('n', [8, 9])
+@pytest.mark.parametrize("n", [8, 9])
 def test_strided_negative_loop_value_preserving(n):
     """Stride -2 keeps the trip count and the touched indices for an even and an odd ``N``.
 
@@ -117,8 +118,8 @@ def test_strided_negative_loop_value_preserving(n):
     sdfg.validate()
     got = a0.copy()
     sdfg(a=got, b=b0.copy(), N=n)
-    assert np.allclose(got, ref), f'stride -2 rewrite changed the touched indices for N={n}'
+    assert np.allclose(got, ref), f"stride -2 rewrite changed the touched indices for N={n}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

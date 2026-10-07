@@ -17,6 +17,7 @@ surviving extents are the same symbol (``A[N, N, N]``): the shapes still line up
 transpose, the same class as a permuted copy that squares away to an identity. These tests pin the
 loud failure and pin that the real pipeline never reaches it.
 """
+
 import numpy
 import pytest
 import dace
@@ -64,11 +65,11 @@ def test_partial_slice_into_nested_sdfg_is_refused():
 
 def test_single_surviving_axis_needs_no_inner_permutation():
     """rank 3 outer -> rank 1 inner: one axis cannot be reordered, so this is NOT refused."""
-    sdfg = _cube_calling((N, ), f"0, 0, 0:{N}", f"0, 0, 0:{N}")
+    sdfg = _cube_calling((N,), f"0, 0, 0:{N}", f"0, 0, 0:{N}")
     PermuteDimensions(permute_map={"A": [2, 1, 0]}, add_permute_maps=True).apply_pass(sdfg, {})
     nested = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
     assert len(nested) == 1
-    assert tuple(nested[0].sdfg.arrays["a"].shape) == (N, )  # inner descriptor untouched
+    assert tuple(nested[0].sdfg.arrays["a"].shape) == (N,)  # inner descriptor untouched
 
 
 def _mixed_rank_cube():

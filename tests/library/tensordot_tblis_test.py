@@ -5,6 +5,7 @@ The label-derivation and codegen checks run everywhere (no TBLIS needed): the ei
 are correct iff ``np.einsum(labels)`` equals ``np.tensordot``. The execution test is marked
 ``tblis`` and only runs where the TBLIS library is installed (``-m tblis``).
 """
+
 import numpy as np
 import pytest
 import dace

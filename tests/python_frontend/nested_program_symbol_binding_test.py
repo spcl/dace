@@ -6,9 +6,9 @@ import pytest
 
 import dace
 
-M = dace.symbol('M', dtype=dace.int64, positive=True)
-N = dace.symbol('N', dtype=dace.int64, positive=True)
-K = dace.symbol('K', dtype=dace.int64, positive=True)
+M = dace.symbol("M", dtype=dace.int64, positive=True)
+N = dace.symbol("N", dtype=dace.int64, positive=True)
+K = dace.symbol("K", dtype=dace.int64, positive=True)
 
 
 @dace.program
@@ -18,7 +18,7 @@ def twice(x: dace.float64[M], out: dace.float64[M]):
 
 @dace.program
 def strided(x: dace.float64[M], out: dace.float64[(M - 7) // 2 + 1]):
-    out[:] = x[0:(M - 7) // 2 + 1]
+    out[:] = x[0 : (M - 7) // 2 + 1]
 
 
 @dace.program
@@ -32,8 +32,9 @@ def test_a_callee_rebinds_its_shape_symbol_per_call_site():
     """One shape-generic callee serves two call sites of different extents."""
 
     @dace.program
-    def caller_a_callee_rebinds_its_shape_symbol_per_call_site(a: dace.float64[N], b: dace.float64[2 * N],
-                                                               oa: dace.float64[N], ob: dace.float64[2 * N]):
+    def caller_a_callee_rebinds_its_shape_symbol_per_call_site(
+        a: dace.float64[N], b: dace.float64[2 * N], oa: dace.float64[N], ob: dace.float64[2 * N]
+    ):
         twice(a, oa)
         twice(b, ob)
 
@@ -51,15 +52,16 @@ def test_a_callee_extent_that_needs_inverting_an_int_floor():
     function with more than 1 argument`` rather than declining."""
 
     @dace.program
-    def caller_a_callee_extent_that_needs_inverting_an_int_floor(a: dace.float64[N],
-                                                                 out: dace.float64[(N - 7) // 2 + 1]):
+    def caller_a_callee_extent_that_needs_inverting_an_int_floor(
+        a: dace.float64[N], out: dace.float64[(N - 7) // 2 + 1]
+    ):
         strided(a, out)
 
     n = 32
     a = np.arange(n, dtype=np.float64)
     out = np.zeros((n - 7) // 2 + 1)
     caller_a_callee_extent_that_needs_inverting_an_int_floor(a, out, N=n)
-    assert np.allclose(out, a[0:(n - 7) // 2 + 1])
+    assert np.allclose(out, a[0 : (n - 7) // 2 + 1])
 
 
 def test_a_body_only_symbol_is_bound_by_keyword():
@@ -76,7 +78,7 @@ def test_a_body_only_symbol_is_bound_by_keyword():
     oa, ob = np.zeros(n), np.zeros(n)
     caller_a_body_only_symbol_is_bound_by_keyword(a, oa, ob, N=n)
     assert np.allclose(oa, a)
-    assert np.allclose(ob, np.append(a[:n - 1], 0.0))
+    assert np.allclose(ob, np.append(a[: n - 1], 0.0))
 
 
 def test_a_shape_inferred_symbol_may_not_also_be_passed():
@@ -90,7 +92,7 @@ def test_a_shape_inferred_symbol_may_not_also_be_passed():
         caller_a_shape_inferred_symbol_may_not_also_be_passed.to_sdfg(simplify=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_callee_rebinds_its_shape_symbol_per_call_site()
     test_a_callee_extent_that_needs_inverting_an_int_floor()
     test_a_body_only_symbol_is_bound_by_keyword()

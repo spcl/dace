@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for the numpy.triu and numpy.tril replacements (upper/lower triangular masks)."""
+
 import numpy as np
 import dace
 from common import compare_numpy_output
@@ -56,7 +57,7 @@ def test_tril_3d(A: dace.float64[3, 5, 5]):
     return np.tril(A, k=1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_triu_square_k0()
     test_triu_square_kpos()
     test_triu_square_kneg()

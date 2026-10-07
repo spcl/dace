@@ -10,17 +10,14 @@ from tests.passes.vectorization.helpers.harness import (
 def test_dependency_edge_to_unary_symbol(emission_style):
     sdfg = _get_dependency_edge_to_unary_symbol_sdfg()
     N = 64
-    A = numpy.random.random((N, )).astype(numpy.float64)
-    B = numpy.random.random((N, )).astype(numpy.float64)
+    A = numpy.random.random((N,)).astype(numpy.float64)
+    B = numpy.random.random((N,)).astype(numpy.float64)
 
     run_vectorization_test(
         dace_func=sdfg,
-        arrays={
-            'int_array': A,
-            'int_array2': B
-        },
+        arrays={"int_array": A, "int_array2": B},
         params={
-            'klon': N,
+            "klon": N,
         },
         vector_width=8,
         sdfg_name="dependency_edge_to_unary_symbol",

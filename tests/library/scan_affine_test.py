@@ -1,13 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``Scan(op=AFFINE)``: the first-order linear recurrence ``out[k] = c[k]*out[k-1] + d[k]``."""
+
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.scan import (COEF_CONNECTOR_NAME, INIT_CONNECTOR_NAME, INPUT_CONNECTOR_NAME,
-                                                OUTPUT_CONNECTOR_NAME, Scan, ScanOp)
+from dace.libraries.standard.nodes.scan import (
+    COEF_CONNECTOR_NAME,
+    INIT_CONNECTOR_NAME,
+    INPUT_CONNECTOR_NAME,
+    OUTPUT_CONNECTOR_NAME,
+    Scan,
+    ScanOp,
+)
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def affine_reference(coef: np.ndarray, delta: np.ndarray, seed: float) -> np.ndarray:
@@ -20,25 +27,25 @@ def affine_reference(coef: np.ndarray, delta: np.ndarray, seed: float) -> np.nda
     return out
 
 
-def build_affine_sdfg(dtype=dace.float64, with_init: bool = True, implementation: str = 'CPU') -> dace.SDFG:
+def build_affine_sdfg(dtype=dace.float64, with_init: bool = True, implementation: str = "CPU") -> dace.SDFG:
     """One state holding a single ``Scan(AFFINE)`` reading ``coef``/``delta`` (+ ``seed``)."""
-    sdfg = dace.SDFG(f'affine_scan_{implementation}_{"init" if with_init else "noinit"}')
-    sdfg.add_array('coef', [N], dtype)
-    sdfg.add_array('delta', [N], dtype)
-    sdfg.add_array('out', [N], dtype)
+    sdfg = dace.SDFG(f"affine_scan_{implementation}_{'init' if with_init else 'noinit'}")
+    sdfg.add_array("coef", [N], dtype)
+    sdfg.add_array("delta", [N], dtype)
+    sdfg.add_array("out", [N], dtype)
     if with_init:
-        sdfg.add_array('seed', [1], dtype)
+        sdfg.add_array("seed", [1], dtype)
     state = sdfg.add_state()
 
-    node = Scan('affine', op=ScanOp.AFFINE)
+    node = Scan("affine", op=ScanOp.AFFINE)
     node.implementation = implementation
     state.add_node(node)
-    state.add_edge(state.add_read('delta'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet('delta[0:N]'))
-    state.add_edge(state.add_read('coef'), None, node, COEF_CONNECTOR_NAME, dace.Memlet('coef[0:N]'))
+    state.add_edge(state.add_read("delta"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("delta[0:N]"))
+    state.add_edge(state.add_read("coef"), None, node, COEF_CONNECTOR_NAME, dace.Memlet("coef[0:N]"))
     if with_init:
         node.add_in_connector(INIT_CONNECTOR_NAME)
-        state.add_edge(state.add_read('seed'), None, node, INIT_CONNECTOR_NAME, dace.Memlet('seed[0]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('out'), None, dace.Memlet('out[0:N]'))
+        state.add_edge(state.add_read("seed"), None, node, INIT_CONNECTOR_NAME, dace.Memlet("seed[0]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("out"), None, dace.Memlet("out[0:N]"))
     sdfg.validate()
     return sdfg
 
@@ -51,8 +58,8 @@ def contracting_inputs(n: int, seed_value: float = 0.25):
     return coef, delta, np.array([seed_value], dtype=np.float64)
 
 
-@pytest.mark.parametrize('implementation', ['pure', 'Auto', 'CPU'])
-@pytest.mark.parametrize('n', [1, 2, 17, 40001])
+@pytest.mark.parametrize("implementation", ["pure", "Auto", "CPU"])
+@pytest.mark.parametrize("n", [1, 2, 17, 40001])
 def test_affine_scan_matches_sequential_recurrence(implementation, n):
     """The libnode computes the recurrence, at every size the blocked lowering treats differently."""
     sdfg = build_affine_sdfg(implementation=implementation, with_init=True)
@@ -76,21 +83,22 @@ def test_affine_scan_without_init_enters_at_zero():
 def test_affine_scan_is_thread_count_stable_on_contracting_coefficients():
     """The blocked carry must not move the answer: same SDFG, 1 thread vs 8."""
     import os
+
     n = 65537
     coef, delta, seed = contracting_inputs(n)
     results = []
-    for threads in ('1', '8'):
-        old = os.environ.get('OMP_NUM_THREADS')
-        os.environ['OMP_NUM_THREADS'] = threads
+    for threads in ("1", "8"):
+        old = os.environ.get("OMP_NUM_THREADS")
+        os.environ["OMP_NUM_THREADS"] = threads
         try:
             out = np.zeros(n, dtype=np.float64)
             build_affine_sdfg()(coef=coef, delta=delta, seed=seed, out=out, N=n)
             results.append(out)
         finally:
             if old is None:
-                del os.environ['OMP_NUM_THREADS']
+                del os.environ["OMP_NUM_THREADS"]
             else:
-                os.environ['OMP_NUM_THREADS'] = old
+                os.environ["OMP_NUM_THREADS"] = old
     assert np.allclose(results[0], results[1], rtol=0, atol=1e-11)
 
 
@@ -103,7 +111,7 @@ def doubling_inputs(n: int):
     instead of a tolerance, which is the only way to see a composition that is slightly wrong.
     """
     coef = np.full(n, 2.0, dtype=np.float64)
-    delta = (np.arange(n, dtype=np.float64) % 10.0)
+    delta = np.arange(n, dtype=np.float64) % 10.0
     return coef, delta, np.array([1.0], dtype=np.float64)
 
 
@@ -132,40 +140,41 @@ def test_affine_scan_is_thread_count_stable_on_an_expanding_coefficient():
     step, and the answer is exact, so 1 thread and 8 must agree BIT FOR BIT.
     """
     import os
+
     n = 45
     coef, delta, seed = doubling_inputs(n)
     reference = affine_reference(coef, delta, float(seed[0]))
     results = []
-    for threads in ('1', '8'):
-        old = os.environ.get('OMP_NUM_THREADS')
-        os.environ['OMP_NUM_THREADS'] = threads
+    for threads in ("1", "8"):
+        old = os.environ.get("OMP_NUM_THREADS")
+        os.environ["OMP_NUM_THREADS"] = threads
         try:
             out = np.zeros(n, dtype=np.float64)
             build_affine_sdfg()(coef=coef, delta=delta, seed=seed, out=out, N=n)
             results.append(out)
         finally:
             if old is None:
-                del os.environ['OMP_NUM_THREADS']
+                del os.environ["OMP_NUM_THREADS"]
             else:
-                os.environ['OMP_NUM_THREADS'] = old
+                os.environ["OMP_NUM_THREADS"] = old
     assert np.array_equal(results[0], reference)
     assert np.array_equal(results[0], results[1])
 
 
 def test_affine_scan_of_one_static_element():
     """A statically length-1 subset is scalar-typed by the codegen, so it takes its own shape."""
-    sdfg = dace.SDFG('affine_one')
-    for name in ('coef', 'delta', 'out'):
+    sdfg = dace.SDFG("affine_one")
+    for name in ("coef", "delta", "out"):
         sdfg.add_array(name, [1], dace.float64)
-    sdfg.add_array('seed', [1], dace.float64)
+    sdfg.add_array("seed", [1], dace.float64)
     state = sdfg.add_state()
-    node = Scan('affine', op=ScanOp.AFFINE)
+    node = Scan("affine", op=ScanOp.AFFINE)
     node.add_in_connector(INIT_CONNECTOR_NAME)
     state.add_node(node)
-    state.add_edge(state.add_read('delta'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet('delta[0]'))
-    state.add_edge(state.add_read('coef'), None, node, COEF_CONNECTOR_NAME, dace.Memlet('coef[0]'))
-    state.add_edge(state.add_read('seed'), None, node, INIT_CONNECTOR_NAME, dace.Memlet('seed[0]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('out'), None, dace.Memlet('out[0]'))
+    state.add_edge(state.add_read("delta"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("delta[0]"))
+    state.add_edge(state.add_read("coef"), None, node, COEF_CONNECTOR_NAME, dace.Memlet("coef[0]"))
+    state.add_edge(state.add_read("seed"), None, node, INIT_CONNECTOR_NAME, dace.Memlet("seed[0]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("out"), None, dace.Memlet("out[0]"))
     sdfg.validate()
 
     out = np.zeros(1, dtype=np.float64)
@@ -173,8 +182,9 @@ def test_affine_scan_of_one_static_element():
     assert out[0] == 3.0 * 2.0 + 0.5
 
 
-@pytest.mark.parametrize('dtype,nptype', [(dace.float32, np.float32), (dace.float64, np.float64),
-                                          (dace.int64, np.int64)])
+@pytest.mark.parametrize(
+    "dtype,nptype", [(dace.float32, np.float32), (dace.float64, np.float64), (dace.int64, np.int64)]
+)
 def test_affine_scan_over_dtypes(dtype, nptype):
     """The recurrence is a multiply-add, so it must hold at every arithmetic element type.
 
@@ -215,7 +225,7 @@ def test_affine_scan_over_dtypes(dtype, nptype):
     assert np.abs(out - want).max() <= 4 * np.spacing(np.abs(want).max())
 
 
-@pytest.mark.parametrize('n', [255, 256, 257, 2047, 2048, 2049])
+@pytest.mark.parametrize("n", [255, 256, 257, 2047, 2048, 2049])
 def test_affine_scan_across_block_boundaries(n):
     """Sizes straddling the blocking. The carry crosses a block exactly at these counts, and a
     composition that is off by one block reads as a wrong prefix from that point on -- which a
@@ -235,45 +245,46 @@ def test_affine_scan_with_growing_coefficients_is_thread_stable():
     end of the range.
     """
     import os
+
     n = 20011
     coef = np.full(n, 1.0009, dtype=np.float64)
     delta = np.full(n, 0.001, dtype=np.float64)
     seed = np.array([1.0], dtype=np.float64)
     want = affine_reference(coef, delta, 1.0)
 
-    for threads in ('1', '8'):
-        old_value = os.environ.get('OMP_NUM_THREADS')
-        os.environ['OMP_NUM_THREADS'] = threads
+    for threads in ("1", "8"):
+        old_value = os.environ.get("OMP_NUM_THREADS")
+        os.environ["OMP_NUM_THREADS"] = threads
         try:
             out = np.zeros(n, dtype=np.float64)
             build_affine_sdfg()(coef=coef, delta=delta, seed=seed, out=out, N=n)
         finally:
             if old_value is None:
-                del os.environ['OMP_NUM_THREADS']
+                del os.environ["OMP_NUM_THREADS"]
             else:
-                os.environ['OMP_NUM_THREADS'] = old_value
-        assert np.allclose(out, want, rtol=1e-12, atol=0), f'drifted at OMP_NUM_THREADS={threads}'
+                os.environ["OMP_NUM_THREADS"] = old_value
+        assert np.allclose(out, want, rtol=1e-12, atol=0), f"drifted at OMP_NUM_THREADS={threads}"
 
 
 def test_affine_node_wires_the_coefficient_connector():
     """``_scan_coef`` is part of the node's shape for AFFINE and absent for every other op."""
-    assert COEF_CONNECTOR_NAME in Scan('a', op=ScanOp.AFFINE).in_connectors
-    assert COEF_CONNECTOR_NAME not in Scan('s', op=ScanOp.SUM).in_connectors
+    assert COEF_CONNECTOR_NAME in Scan("a", op=ScanOp.AFFINE).in_connectors
+    assert COEF_CONNECTOR_NAME not in Scan("s", op=ScanOp.SUM).in_connectors
 
 
 def test_affine_scan_refuses_a_coefficient_of_the_wrong_length():
     """A shorter coefficient array is a wiring bug, not a broadcast."""
-    sdfg = dace.SDFG('affine_bad_coef')
-    sdfg.add_array('coef', [N], dace.float64)
-    sdfg.add_array('delta', [N], dace.float64)
-    sdfg.add_array('out', [N], dace.float64)
+    sdfg = dace.SDFG("affine_bad_coef")
+    sdfg.add_array("coef", [N], dace.float64)
+    sdfg.add_array("delta", [N], dace.float64)
+    sdfg.add_array("out", [N], dace.float64)
     state = sdfg.add_state()
-    node = Scan('affine', op=ScanOp.AFFINE)
+    node = Scan("affine", op=ScanOp.AFFINE)
     state.add_node(node)
-    state.add_edge(state.add_read('delta'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet('delta[0:N]'))
-    state.add_edge(state.add_read('coef'), None, node, COEF_CONNECTOR_NAME, dace.Memlet('coef[0:N-1]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('out'), None, dace.Memlet('out[0:N]'))
-    with pytest.raises(ValueError, match='_scan_coef'):
+    state.add_edge(state.add_read("delta"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("delta[0:N]"))
+    state.add_edge(state.add_read("coef"), None, node, COEF_CONNECTOR_NAME, dace.Memlet("coef[0:N-1]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("out"), None, dace.Memlet("out[0:N]"))
+    with pytest.raises(ValueError, match="_scan_coef"):
         node.validate(sdfg, state)
 
 
@@ -284,11 +295,11 @@ def test_affine_scan_refuses_shapes_without_a_lowering():
     unit-stride affine scans, one per residue class, and the runtime has that entry point -- see
     :func:`test_a_strided_affine_scan_takes_the_per_class_entry_point`.
     """
-    for attr, value in (('exclusive', True), ('chains', 2)):
+    for attr, value in (("exclusive", True), ("chains", 2)):
         sdfg = build_affine_sdfg()
         node = next(n for n in sdfg.states()[0].nodes() if isinstance(n, Scan))
         setattr(node, attr, value)
-        with pytest.raises(NotImplementedError, match='AFFINE'):
+        with pytest.raises(NotImplementedError, match="AFFINE"):
             sdfg.expand_library_nodes()
 
 
@@ -302,8 +313,8 @@ def test_a_strided_affine_scan_takes_the_per_class_entry_point():
     node = next(n for n in sdfg.states()[0].nodes() if isinstance(n, Scan))
     node.stride = 2
     sdfg.expand_library_nodes()
-    code = '\n'.join(c.clean_code for c in sdfg.generate_code())
-    assert 'inclusive_affine_strided' in code, 'strided affine scan did not take the per-class entry point'
+    code = "\n".join(c.clean_code for c in sdfg.generate_code())
+    assert "inclusive_affine_strided" in code, "strided affine scan did not take the per-class entry point"
 
 
 def build_affine_cuda_sdfg(seed_on_device: bool) -> dace.SDFG:
@@ -314,22 +325,22 @@ def build_affine_cuda_sdfg(seed_on_device: bool) -> dace.SDFG:
     """
     from dace import dtypes
 
-    sdfg = dace.SDFG(f'affine_scan_cuda_{int(seed_on_device)}')
-    for name in ('coef', 'delta', 'out'):
+    sdfg = dace.SDFG(f"affine_scan_cuda_{int(seed_on_device)}")
+    for name in ("coef", "delta", "out"):
         sdfg.add_array(name, [N], dace.float64, storage=dtypes.StorageType.GPU_Global)
     seed_storage = dtypes.StorageType.GPU_Global if seed_on_device else dtypes.StorageType.Default
-    sdfg.add_array('seed', [1], dace.float64, storage=seed_storage)
+    sdfg.add_array("seed", [1], dace.float64, storage=seed_storage)
     state = sdfg.add_state()
 
-    node = Scan('affine', op=ScanOp.AFFINE)
-    node.implementation = 'CUDA'
+    node = Scan("affine", op=ScanOp.AFFINE)
+    node.implementation = "CUDA"
     node.schedule = dtypes.ScheduleType.GPU_Device
     node.add_in_connector(INIT_CONNECTOR_NAME)
     state.add_node(node)
-    state.add_edge(state.add_read('delta'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet('delta[0:N]'))
-    state.add_edge(state.add_read('coef'), None, node, COEF_CONNECTOR_NAME, dace.Memlet('coef[0:N]'))
-    state.add_edge(state.add_read('seed'), None, node, INIT_CONNECTOR_NAME, dace.Memlet('seed[0]'))
-    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write('out'), None, dace.Memlet('out[0:N]'))
+    state.add_edge(state.add_read("delta"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("delta[0:N]"))
+    state.add_edge(state.add_read("coef"), None, node, COEF_CONNECTOR_NAME, dace.Memlet("coef[0:N]"))
+    state.add_edge(state.add_read("seed"), None, node, INIT_CONNECTOR_NAME, dace.Memlet("seed[0]"))
+    state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("out"), None, dace.Memlet("out[0:N]"))
     sdfg.validate()
     return sdfg
 
@@ -344,14 +355,14 @@ def test_the_cuda_affine_call_is_emitted_into_the_cuda_unit():
     sdfg = build_affine_cuda_sdfg(seed_on_device=False)
     sdfg.expand_library_nodes()
     tasklet = next(n for n in sdfg.states()[0].nodes() if isinstance(n, dace.sdfg.nodes.Tasklet))
-    assert 'inclusive_affine' not in tasklet.code.as_string, 'the device call reached the host tasklet'
-    assert '__dace_scan_affine_' in tasklet.code.as_string
-    assert 'inclusive_affine' in sdfg.global_code['cuda'].as_string
+    assert "inclusive_affine" not in tasklet.code.as_string, "the device call reached the host tasklet"
+    assert "__dace_scan_affine_" in tasklet.code.as_string
+    assert "inclusive_affine" in sdfg.global_code["cuda"].as_string
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('seed_on_device', [False, True])
-@pytest.mark.parametrize('n', [17, 4096])
+@pytest.mark.parametrize("seed_on_device", [False, True])
+@pytest.mark.parametrize("n", [17, 4096])
 def test_the_cuda_affine_scan_computes_the_recurrence(seed_on_device, n):
     """Both seed shapes reproduce the sequential recurrence the CPU lowering computes."""
     import cupy as cp
@@ -360,16 +371,14 @@ def test_the_cuda_affine_scan_computes_the_recurrence(seed_on_device, n):
     coef, delta, seed = contracting_inputs(n)
     want = affine_reference(coef, delta, seed[0])
     out = cp.zeros(n, dtype=np.float64)
-    sdfg(coef=cp.asarray(coef),
-         delta=cp.asarray(delta),
-         out=out,
-         seed=cp.asarray(seed) if seed_on_device else seed,
-         N=n)
+    sdfg(
+        coef=cp.asarray(coef), delta=cp.asarray(delta), out=out, seed=cp.asarray(seed) if seed_on_device else seed, N=n
+    )
     assert np.allclose(cp.asnumpy(out), want, rtol=1e-12, atol=1e-12)
 
 
-if __name__ == '__main__':
-    test_affine_scan_matches_sequential_recurrence('CPU', 40001)
+if __name__ == "__main__":
+    test_affine_scan_matches_sequential_recurrence("CPU", 40001)
     test_affine_scan_without_init_enters_at_zero()
     test_affine_scan_of_one_static_element()
     test_affine_scan_is_thread_count_stable_on_contracting_coefficients()
@@ -377,4 +386,4 @@ if __name__ == '__main__':
     test_affine_scan_refuses_a_coefficient_of_the_wrong_length()
     test_affine_scan_refuses_shapes_without_a_lowering()
     test_the_cuda_affine_call_is_emitted_into_the_cuda_unit()
-    print('ok')
+    print("ok")

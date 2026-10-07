@@ -6,6 +6,7 @@ numeric check alone passes on the un-banded form this replaces. Every legality c
 a numeric check as well, because the failure mode of getting the predicate wrong is a WRONG ANSWER
 at a band boundary, not a crash.
 """
+
 import re
 
 import numpy as np
@@ -15,7 +16,7 @@ import dace
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def finalized(program, tag):
@@ -23,7 +24,7 @@ def finalized(program, tag):
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = tag
     canonicalize(sdfg, validate=True)
-    finalize_for_target(sdfg, 'cpu')
+    finalize_for_target(sdfg, "cpu")
     return sdfg
 
 
@@ -32,7 +33,7 @@ def emitted(sdfg):
 
 
 def is_banded(sdfg):
-    return '__dace_band' in emitted(sdfg)
+    return "__dace_band" in emitted(sdfg)
 
 
 @dace.program
@@ -88,29 +89,33 @@ def test_a_distance_zero_carry_is_banded():
     ``#pragma omp parallel for`` over the bands, and inside it a plain sequential carry -- so the
     nest reaches one barrier, at the end, instead of one per trip.
     """
-    code = emitted(finalized(column_scan, 'band_s231'))
-    assert '__dace_band' in code, 'a distance-zero carry must be banded'
-    band_loop = re.search(r'#pragma omp parallel for\s*\n\s*for \(\w+ __dace_band', code)
-    assert band_loop, f'the band loop must be the worksharing construct:\n{code}'
+    code = emitted(finalized(column_scan, "band_s231"))
+    assert "__dace_band" in code, "a distance-zero carry must be banded"
+    band_loop = re.search(r"#pragma omp parallel for\s*\n\s*for \(\w+ __dace_band", code)
+    assert band_loop, f"the band loop must be the worksharing construct:\n{code}"
     # No worksharing construct may remain INSIDE the carry -- that is the barrier being removed.
-    assert not re.search(r'#pragma omp for', code), 'no per-trip worksharing loop may survive'
-    assert 'nowait' not in code, 'banding removes the barrier by structure, never by nowait'
+    assert not re.search(r"#pragma omp for", code), "no per-trip worksharing loop may survive"
+    assert "nowait" not in code, "banding removes the barrier by structure, never by nowait"
 
 
 def test_the_band_covers_the_axis_exactly_once():
     """Bounds must partition the axis: no gap (lost work) and no overlap (a race)."""
-    code = emitted(finalized(column_scan, 'band_cover'))
-    assert '__dace_num_threads' in code, 'the band count must be the thread count'
+    code = emitted(finalized(column_scan, "band_cover"))
+    assert "__dace_num_threads" in code, "the band count must be the thread count"
     # Lower bound of band t and upper bound of band t-1 are the same expression, so consecutive
     # bands abut; at t = P the bound is the full extent, so the last band ends at the axis end.
-    assert re.search(r'__dace_band\)\s*[/,]\s*__dace_num_threads', code), 'band lower bound missing'
-    assert re.search(r'__dace_band \+ 1\)+\s*[/,]\s*__dace_num_threads', code), 'band upper bound missing'
+    assert re.search(r"__dace_band\)\s*[/,]\s*__dace_num_threads", code), "band lower bound missing"
+    assert re.search(r"__dace_band \+ 1\)+\s*[/,]\s*__dace_num_threads", code), "band upper bound missing"
 
 
-@pytest.mark.parametrize('program,reference,names,tag',
-                         [(column_scan, reference_column_scan, ('aa', 'bb'), 'num_s231'),
-                          (diagonal_carry, reference_diagonal_carry, ('aa', 'bb'), 'num_s119'),
-                          (skewed_carry, reference_skewed_carry, ('a', 'b'), 'num_skew')])
+@pytest.mark.parametrize(
+    "program,reference,names,tag",
+    [
+        (column_scan, reference_column_scan, ("aa", "bb"), "num_s231"),
+        (diagonal_carry, reference_diagonal_carry, ("aa", "bb"), "num_s119"),
+        (skewed_carry, reference_skewed_carry, ("a", "b"), "num_skew"),
+    ],
+)
 def test_the_finalized_kernel_matches_the_reference(program, reference, names, tag):
     """Banded or refused, the values are the reference's.
 
@@ -126,10 +131,10 @@ def test_the_finalized_kernel_matches_the_reference(program, reference, names, t
     expected = reference(first, second)
     got = first.copy()
     sdfg.compile()(**{carried: got, addend: second}, N=size)
-    assert np.allclose(got, expected), f'{tag}: value mismatch, max |diff| {np.abs(got - expected).max()}'
+    assert np.allclose(got, expected), f"{tag}: value mismatch, max |diff| {np.abs(got - expected).max()}"
 
 
-@pytest.mark.parametrize('program,tag', [(diagonal_carry, 'refuse_s119'), (skewed_carry, 'refuse_skew')])
+@pytest.mark.parametrize("program,tag", [(diagonal_carry, "refuse_s119"), (skewed_carry, "refuse_skew")])
 def test_a_carry_that_crosses_a_band_boundary_is_refused(program, tag):
     """``aa[i-1, j-1]`` and ``a[i-1, j+1]`` read a NEIGHBOUR's column.
 
@@ -137,7 +142,7 @@ def test_a_carry_that_crosses_a_band_boundary_is_refused(program, tag):
     on the previous trip. Only a barrier orders that, which is what the plain team hoist keeps.
     """
     sdfg = finalized(program, tag)
-    assert not is_banded(sdfg), 'a dependence crossing a band boundary must not be banded'
+    assert not is_banded(sdfg), "a dependence crossing a band boundary must not be banded"
 
 
 def test_a_target_shared_by_every_band_is_refused():
@@ -155,8 +160,8 @@ def test_a_target_shared_by_every_band_is_refused():
                 a[i, j] = a[i - 1, j] + s[0]
             s[0] = a[i, 0]
 
-    sdfg = finalized(shared_scalar, 'refuse_shared')
-    assert not is_banded(sdfg), 'a location every band writes must not be banded'
+    sdfg = finalized(shared_scalar, "refuse_shared")
+    assert not is_banded(sdfg), "a location every band writes must not be banded"
 
 
 def cloudsc_covptot_numpy(ztp1, za, pap, paph, zcovptot, zcovpmax, ncldtop):
@@ -198,8 +203,14 @@ def test_the_cloudsc_vertical_carry_is_banded_and_matches_numpy():
     ncldtop = 2
 
     @dace.program
-    def cloudsc_covptot(ztp1: dace.float64[N, N], za: dace.float64[N, N], pap: dace.float64[N, N],
-                        paph: dace.float64[N, N], zcovptot: dace.float64[N], zcovpmax: dace.float64[N]):
+    def cloudsc_covptot(
+        ztp1: dace.float64[N, N],
+        za: dace.float64[N, N],
+        pap: dace.float64[N, N],
+        paph: dace.float64[N, N],
+        zcovptot: dace.float64[N],
+        zcovpmax: dace.float64[N],
+    ):
         for jk in range(2, N):
             for jl in range(N):
                 zdtdp = 0.285 * 0.5 * (ztp1[jk - 1, jl] + ztp1[jk, jl]) / paph[jk, jl]
@@ -209,9 +220,9 @@ def test_the_cloudsc_vertical_carry_is_banded_and_matches_numpy():
                 zcovptot[jl] = max(zcovptot[jl], 1e-06)
                 zcovpmax[jl] = max(zcovptot[jl], zcovpmax[jl])
 
-    sdfg = finalized(cloudsc_covptot, 'band_cloudsc_covptot')
-    assert is_banded(sdfg), 'the CLOUDSC vertical carry must band: every reference is distance-0 in jl'
-    assert 'nowait' not in sdfg.generate_code()[0].clean_code
+    sdfg = finalized(cloudsc_covptot, "band_cloudsc_covptot")
+    assert is_banded(sdfg), "the CLOUDSC vertical carry must band: every reference is distance-0 in jl"
+    assert "nowait" not in sdfg.generate_code()[0].clean_code
 
     size = 61
     rng = np.random.default_rng(11)
@@ -223,9 +234,9 @@ def test_the_cloudsc_vertical_carry_is_banded_and_matches_numpy():
     want_t, want_ct, want_cm = cloudsc_covptot_numpy(ztp1, za, pap, paph, zcovptot, zcovpmax, ncldtop)
     got_t, got_ct, got_cm = ztp1.copy(), zcovptot.copy(), zcovpmax.copy()
     sdfg.compile()(ztp1=got_t, za=za.copy(), pap=pap, paph=paph, zcovptot=got_ct, zcovpmax=got_cm, N=size)
-    assert np.allclose(got_t, want_t, equal_nan=True), f'ztp1 mismatch, max |diff| {np.abs(got_t - want_t).max()}'
-    assert np.allclose(got_ct, want_ct, equal_nan=True), 'zcovptot mismatch'
-    assert np.allclose(got_cm, want_cm, equal_nan=True), 'zcovpmax mismatch'
+    assert np.allclose(got_t, want_t, equal_nan=True), f"ztp1 mismatch, max |diff| {np.abs(got_t - want_t).max()}"
+    assert np.allclose(got_ct, want_ct, equal_nan=True), "zcovptot mismatch"
+    assert np.allclose(got_cm, want_cm, equal_nan=True), "zcovpmax mismatch"
 
 
 def test_a_gather_on_the_carried_array_is_refused():
@@ -246,8 +257,9 @@ def test_a_gather_on_the_carried_array_is_refused():
             for i in range(N):
                 a[k, i] = a[k - 1, idx[i]] + 1.0
 
-    assert not is_banded(finalized(gather_carried, 'refuse_gather_carried')), \
-        'a gather on the carried array must not be banded'
+    assert not is_banded(finalized(gather_carried, "refuse_gather_carried")), (
+        "a gather on the carried array must not be banded"
+    )
 
 
 def test_a_gather_on_a_read_only_operand_still_bands():
@@ -271,8 +283,8 @@ def test_a_gather_on_a_read_only_operand_still_bands():
             for i in range(N):
                 a[k, i] = a[k - 1, i] + b[idx[i]]
 
-    sdfg = finalized(gather_readonly, 'band_gather_readonly')
-    assert is_banded(sdfg), 'a gather on a read-only operand must not block banding'
+    sdfg = finalized(gather_readonly, "band_gather_readonly")
+    assert is_banded(sdfg), "a gather on a read-only operand must not block banding"
 
     size = 61
     rng = np.random.default_rng(5)
@@ -284,10 +296,10 @@ def test_a_gather_on_a_read_only_operand_still_bands():
         want[k, :] = want[k - 1, :] + b[idx]
     got = a.copy()
     sdfg.compile()(a=got, b=b, idx=idx, N=size)
-    assert np.allclose(got, want), f'value mismatch, max |diff| {np.abs(got - want).max()}'
+    assert np.allclose(got, want), f"value mismatch, max |diff| {np.abs(got - want).max()}"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_distance_zero_carry_is_banded()
     test_the_band_covers_the_axis_exactly_once()
     test_a_target_shared_by_every_band_is_refused()

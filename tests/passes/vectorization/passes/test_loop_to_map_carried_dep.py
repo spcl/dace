@@ -15,6 +15,7 @@ compile or numeric run. It is the regression net for the rule "every loop
 that must stay a loop stays a loop". The kernels are pulled from the
 shared :mod:`tests.corpus.tsvc` registry rather than redefined.
 """
+
 import copy
 
 import dace
@@ -22,9 +23,19 @@ import pytest
 
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
-from tests.corpus.tsvc.tsvc import (s481_d_single, s482_d_single, s1119_d_single, s2101_d_single, s2111_d_single,
-                                    s231_d_single, s2275_d_single, s232_d_single, s235_d_single, s256_d_single,
-                                    s257_d_single)
+from tests.corpus.tsvc.tsvc import (
+    s481_d_single,
+    s482_d_single,
+    s1119_d_single,
+    s2101_d_single,
+    s2111_d_single,
+    s231_d_single,
+    s2275_d_single,
+    s232_d_single,
+    s235_d_single,
+    s256_d_single,
+    s257_d_single,
+)
 
 # (kernel, loop variables carrying a real dependency that MUST stay sequential).
 CARRIED_DEP = [
@@ -86,10 +97,12 @@ def test_loop_to_map_keeps_carried_dep_sequential(prog, carried_vars):
     wrongly_mapped = carried_vars & map_params
     assert not wrongly_mapped, (
         f"{prog.name}: LoopToMap parallelised carried-dependency loop(s) {wrongly_mapped} into a Map "
-        f"(map_params={map_params}); this would vectorize a recurrence and produce wrong results.")
+        f"(map_params={map_params}); this would vectorize a recurrence and produce wrong results."
+    )
     missing = carried_vars - loops
     assert not missing, (
-        f"{prog.name}: carried-dependency loop(s) {missing} are no longer a LoopRegion (loops_kept={loops}).")
+        f"{prog.name}: carried-dependency loop(s) {missing} are no longer a LoopRegion (loops_kept={loops})."
+    )
 
 
 @pytest.mark.parametrize("prog,break_vars", DATA_DEPENDENT_BREAK, ids=[p[0].name for p in DATA_DEPENDENT_BREAK])
@@ -98,14 +111,17 @@ def test_loop_to_map_keeps_data_dependent_break_sequential(prog, break_vars):
     wrongly_mapped = break_vars & map_params
     assert not wrongly_mapped, (
         f"{prog.name}: LoopToMap parallelised a loop with a data-dependent break {wrongly_mapped} "
-        f"(map_params={map_params}); the early exit makes the trip count runtime-dependent.")
+        f"(map_params={map_params}); the early exit makes the trip count runtime-dependent."
+    )
     missing = break_vars - loops
-    assert not missing, (f"{prog.name}: break loop(s) {missing} are no longer a LoopRegion (loops_kept={loops}).")
+    assert not missing, f"{prog.name}: break loop(s) {missing} are no longer a LoopRegion (loops_kept={loops})."
 
 
 @pytest.mark.parametrize("prog,parallel_vars", FULLY_PARALLEL, ids=[p[0].name for p in FULLY_PARALLEL])
 def test_loop_to_map_parallelises_independent_loops(prog, parallel_vars):
     loops, map_params = _loops_and_maps_after_l2map(prog)
     not_mapped = parallel_vars - map_params
-    assert not not_mapped, (f"{prog.name}: independent loop(s) {not_mapped} were NOT mapped (map_params={map_params}, "
-                            f"loops_kept={loops}); LoopToMap should parallelise them.")
+    assert not not_mapped, (
+        f"{prog.name}: independent loop(s) {not_mapped} were NOT mapped (map_params={map_params}, "
+        f"loops_kept={loops}); LoopToMap should parallelise them."
+    )

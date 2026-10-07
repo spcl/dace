@@ -6,6 +6,7 @@ Most of what follows therefore checks that the pass REFUSES: a read inside the l
 accumulate, a conditional store, a transient. The one positive case is TSVC ``s244``, and it is
 checked numerically against the sequential reference as well as structurally.
 """
+
 import numpy as np
 import pytest
 
@@ -14,12 +15,17 @@ from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.dead_carried_store import DeadCarriedStoreElimination
 from tests.sdfg.cfg_list_checks import assert_cfg_list_as_after_a_reset, record_tree_resets
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 def stores_of(sdfg, name):
-    return sum(1 for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes()
-               if isinstance(n, nodes.AccessNode) and n.data == name and st.in_degree(n) > 0)
+    return sum(
+        1
+        for g in sdfg.all_sdfgs_recursive()
+        for st in g.states()
+        for n in st.nodes()
+        if isinstance(n, nodes.AccessNode) and n.data == name and st.in_degree(n) > 0
+    )
 
 
 def run(prog, **kwargs):
@@ -46,7 +52,7 @@ def reference_s244(a, b, c, d, n):
 
 def test_s244_is_rewritten_and_still_computes():
     sdfg, applied = run(s244)
-    assert applied, 's244 is the motivating shape and must be recognised'
+    assert applied, "s244 is the motivating shape and must be recognised"
 
     n = 51
     rng = np.random.default_rng(4)
@@ -54,8 +60,8 @@ def test_s244_is_rewritten_and_still_computes():
     want_a, want_b = reference_s244(*[x.copy() for x in base], n)
     got_a, got_b, got_c, got_d = [x.copy() for x in base]
     sdfg(a=got_a, b=got_b, c=got_c, d=got_d, N=n)
-    assert np.allclose(got_a, want_a), f'a: {got_a} != {want_a}'
-    assert np.allclose(got_b, want_b), f'b: {got_b} != {want_b}'
+    assert np.allclose(got_a, want_a), f"a: {got_a} != {want_a}"
+    assert np.allclose(got_b, want_b), f"b: {got_b} != {want_b}"
 
 
 def test_the_peel_keeps_the_cfg_list_in_place(monkeypatch):
@@ -63,7 +69,7 @@ def test_the_peel_keeps_the_cfg_list_in_place(monkeypatch):
     sdfg = s244.to_sdfg(simplify=False)
     resets = record_tree_resets(monkeypatch, lambda root: root is sdfg)
     assert DeadCarriedStoreElimination().apply_pass(sdfg, {})
-    assert '_instantiate_peeled_iteration' not in resets, resets
+    assert "_instantiate_peeled_iteration" not in resets, resets
     assert_cfg_list_as_after_a_reset(sdfg)
     sdfg.validate()
 
@@ -77,23 +83,27 @@ def test_s244_parallelizes_through_the_pipeline():
     """
     from dace.sdfg.state import LoopRegion
     from dace.transformation.passes.canonicalize import pipeline as canon
+
     sdfg = s244.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     maps = [
         n for g in sdfg.all_sdfgs_recursive() for st in g.states() for n in st.nodes() if isinstance(n, nodes.MapEntry)
     ]
     loops = [
-        b for g in sdfg.all_sdfgs_recursive() for b in g.all_control_flow_regions(recursive=True)
+        b
+        for g in sdfg.all_sdfgs_recursive()
+        for b in g.all_control_flow_regions(recursive=True)
         if isinstance(b, LoopRegion)
     ]
-    assert maps, f'no map (loops={len(loops)})'
-    assert not loops, f'{len(loops)} sequential loop(s) survived'
+    assert maps, f"no map (loops={len(loops)})"
+    assert not loops, f"{len(loops)} sequential loop(s) survived"
 
 
-@pytest.mark.parametrize('n', [2, 3, 4, 5, 17, 64])
+@pytest.mark.parametrize("n", [2, 3, 4, 5, 17, 64])
 def test_s244_matches_the_reference_through_the_pipeline(n):
     """Including the degenerate sizes where the peel consumes almost the whole loop."""
     from dace.transformation.passes.canonicalize import pipeline as canon
+
     sdfg = s244.to_sdfg(simplify=False)
     canon.canonicalize(sdfg)
     rng = np.random.default_rng(17 + n)
@@ -101,8 +111,8 @@ def test_s244_matches_the_reference_through_the_pipeline(n):
     want_a, want_b = reference_s244(*[x.copy() for x in base], n)
     got = [x.copy() for x in base]
     sdfg(a=got[0], b=got[1], c=got[2], d=got[3], N=n)
-    assert np.allclose(got[0], want_a), f'a: {got[0]} != {want_a}'
-    assert np.allclose(got[1], want_b), f'b: {got[1]} != {want_b}'
+    assert np.allclose(got[0], want_a), f"a: {got[0]} != {want_a}"
+    assert np.allclose(got[1], want_b), f"b: {got[1]} != {want_b}"
 
 
 @dace.program
@@ -116,7 +126,7 @@ def read_in_the_live_window(a: dace.float64[N], b: dace.float64[N]):
 
 def test_a_read_inside_the_live_window_refuses():
     sdfg, applied = run(read_in_the_live_window)
-    assert not applied, 'a[i + 1] observes the store before the kill reaches it'
+    assert not applied, "a[i + 1] observes the store before the kill reaches it"
 
 
 @dace.program
@@ -129,7 +139,7 @@ def conditional_kill(a: dace.float64[N], b: dace.float64[N]):
 
 def test_a_conditional_killing_store_refuses():
     sdfg, applied = run(conditional_kill)
-    assert not applied, 'a kill that may not execute kills nothing'
+    assert not applied, "a kill that may not execute kills nothing"
 
 
 @dace.program
@@ -153,7 +163,7 @@ def no_second_store(a: dace.float64[N], b: dace.float64[N]):
 
 def test_a_lone_store_refuses():
     sdfg, applied = run(no_second_store)
-    assert not applied, 'nothing overwrites it'
+    assert not applied, "nothing overwrites it"
 
 
 @dace.program
@@ -180,7 +190,7 @@ def test_a_kill_by_a_lower_offset_is_still_a_kill():
         want_a[i - 1] = b0[i] * 2.0
     got = a0.copy()
     sdfg(a=got, b=b0.copy(), N=n)
-    assert np.allclose(got, want_a), 'the rewrite changed the result'
+    assert np.allclose(got, want_a), "the rewrite changed the result"
 
 
 @dace.program
@@ -199,7 +209,7 @@ def test_a_sibling_consuming_the_store_refuses():
     a different access node for the same array. Dropping the store silently gave D the stale value.
     """
     sdfg, applied = run(sibling_reads_the_store)
-    assert not applied, 'the store is consumed in the same iteration'
+    assert not applied, "the store is consumed in the same iteration"
 
 
 def test_a_sibling_reading_BEFORE_the_store_is_still_dead():
@@ -208,7 +218,7 @@ def test_a_sibling_reading_BEFORE_the_store_is_still_dead():
     assert applied, "s244's own read-modify-write read precedes its store and must stay liftable"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_s244_is_rewritten_and_still_computes()
     test_s244_parallelizes_through_the_pipeline()
     test_s244_matches_the_reference_through_the_pipeline(17)

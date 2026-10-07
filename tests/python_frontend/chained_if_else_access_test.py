@@ -39,6 +39,7 @@ These tests pin three contracts:
    target must produce exactly one NestedSDFG output connector for that
    element, not one per arm.
 """
+
 import numpy as np
 
 import dace
@@ -73,18 +74,22 @@ def _assert_connector_role_matches_edges(sdfg: dace.SDFG):
                 continue
             assert e.dst_conn not in out_names - inout, (
                 f"Node {n.label!r} in state {state.label!r}: read edge lands on out-connector "
-                f"{e.dst_conn!r} (should land on an in-connector). Source: {e.src}")
+                f"{e.dst_conn!r} (should land on an in-connector). Source: {e.src}"
+            )
             assert e.dst_conn in in_names, (
-                f"Node {n.label!r} in state {state.label!r}: edge lands on unknown connector {e.dst_conn!r}")
+                f"Node {n.label!r} in state {state.label!r}: edge lands on unknown connector {e.dst_conn!r}"
+            )
 
         for e in state.out_edges(n):
             if e.src_conn is None:
                 continue
             assert e.src_conn not in in_names - inout, (
                 f"Node {n.label!r} in state {state.label!r}: write edge leaves in-connector "
-                f"{e.src_conn!r} (should leave from an out-connector). Destination: {e.dst}")
+                f"{e.src_conn!r} (should leave from an out-connector). Destination: {e.dst}"
+            )
             assert e.src_conn in out_names, (
-                f"Node {n.label!r} in state {state.label!r}: edge leaves unknown connector {e.src_conn!r}")
+                f"Node {n.label!r} in state {state.label!r}: edge leaves unknown connector {e.src_conn!r}"
+            )
 
 
 # Chained if/elif/else (TSVC s441 / s441_v2 shape).
@@ -126,8 +131,7 @@ def test_chained_if_else_read_edges_route_to_read_side_access_nodes():
                 continue
             if e.dst_conn == "__in1" and src_data.endswith("_w"):
                 misrouted.append((state_label, src_data))
-    assert not misrouted, (f"elif/else arms read a[i] from a write-side access node "
-                           f"(should be read-side): {misrouted}")
+    assert not misrouted, f"elif/else arms read a[i] from a write-side access node (should be read-side): {misrouted}"
 
 
 def test_chained_if_else_connector_topology_correct():

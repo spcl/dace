@@ -9,6 +9,7 @@ single batched 1-D DFT along that axis.  These tests pin that against numpy
 *without* needing an external FFT library (unlike ``fft_axis_test.py`` which is
 FFTW3-gated).
 """
+
 import numpy as np
 import pytest
 
@@ -17,7 +18,7 @@ from dace.libraries.fft.nodes import FFT, IFFT
 
 
 # Full N-D (axis=None) via the numpy frontend (fftn / ifftn)
-@pytest.mark.parametrize('shape', [(8, 12), (4, 6, 5)])
+@pytest.mark.parametrize("shape", [(8, 12), (4, 6, 5)])
 def test_pure_fftn(shape):
 
     @dace.program
@@ -30,7 +31,7 @@ def test_pure_fftn(shape):
     np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.parametrize('norm', ['backward', 'forward', 'ortho'])
+@pytest.mark.parametrize("norm", ["backward", "forward", "ortho"])
 def test_pure_ifftn_2d(norm):
     shape = (8, 12)
 
@@ -45,12 +46,15 @@ def test_pure_ifftn_2d(norm):
 
 
 # Batched 1-D (axis=k) via the numpy frontend (fft(x, axis=k))
-@pytest.mark.parametrize('shape,axis', [
-    ((8, 12), 0),
-    ((8, 12), -1),
-    ((4, 6, 5), 1),
-    ((4, 6, 5), -1),
-])
+@pytest.mark.parametrize(
+    "shape,axis",
+    [
+        ((8, 12), 0),
+        ((8, 12), -1),
+        ((4, 6, 5), 1),
+        ((4, 6, 5), -1),
+    ],
+)
 def test_pure_fft_axis(shape, axis):
 
     @dace.program
@@ -82,15 +86,15 @@ def test_pure_ifft_axis_inverse():
 # alias-decoupling copy in the builder.
 def test_pure_fftn_inplace():
     shape = (6, 5)
-    sdfg = dace.SDFG('inplace_fftn')
-    sdfg.add_array('buf', shape, dace.complex128)
+    sdfg = dace.SDFG("inplace_fftn")
+    sdfg.add_array("buf", shape, dace.complex128)
     state = sdfg.add_state()
-    rnode = state.add_read('buf')
-    wnode = state.add_write('buf')
-    node = FFT('fft')  # axes=None -> full 2-D fftn
+    rnode = state.add_read("buf")
+    wnode = state.add_write("buf")
+    node = FFT("fft")  # axes=None -> full 2-D fftn
     state.add_node(node)
-    state.add_edge(rnode, None, node, '_inp', dace.Memlet.from_array('buf', sdfg.arrays['buf']))
-    state.add_edge(node, '_out', wnode, None, dace.Memlet.from_array('buf', sdfg.arrays['buf']))
+    state.add_edge(rnode, None, node, "_inp", dace.Memlet.from_array("buf", sdfg.arrays["buf"]))
+    state.add_edge(node, "_out", wnode, None, dace.Memlet.from_array("buf", sdfg.arrays["buf"]))
     sdfg.expand_library_nodes()
 
     rng = np.random.default_rng(4)
@@ -102,7 +106,7 @@ def test_pure_fftn_inplace():
 
 # Symbolic dimensions -- the shape is only known at call time.
 def test_pure_fftn_symbolic():
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def tester_pure_fftn_symbolic(x: dace.complex128[M, N]):
@@ -114,11 +118,11 @@ def test_pure_fftn_symbolic():
     np.testing.assert_allclose(y, np.fft.fftn(x), rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.parametrize('norm', ['backward', 'forward', 'ortho'])
+@pytest.mark.parametrize("norm", ["backward", "forward", "ortho"])
 def test_pure_ifftn_symbolic(norm):
     """The normalization factor is ``1 / (M*N)`` over integer symbols: emitted verbatim into C it is integer
     division and the whole transform returns zeros."""
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def tester_pure_ifftn_symbolic(x: dace.complex128[M, N]):
@@ -130,10 +134,10 @@ def test_pure_ifftn_symbolic(norm):
     np.testing.assert_allclose(y, np.fft.ifftn(x, norm=norm), rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.parametrize('norm', ['backward', 'ortho'])
+@pytest.mark.parametrize("norm", ["backward", "ortho"])
 def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     """The tasklet carries the normalization as text, so the text is what decides integer versus floating division."""
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def tester_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(x: dace.complex128[M, N]):
@@ -142,10 +146,10 @@ def test_pure_ifftn_symbolic_factor_is_emitted_in_floating_point(norm):
     sdfg = tester_pure_ifftn_symbolic_factor_is_emitted_in_floating_point.to_sdfg(simplify=False)
     sdfg.expand_library_nodes()
     codes = [n.code.as_string for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)]
-    scaled = [code for code in codes if 'exponent' in code and 'M' in code and 'N' in code]
-    assert scaled, f'no DFT tasklet carries the {norm} factor: {codes}'
-    assert all('(1.0 * M)' in code and '(1.0 * N)' in code for code in scaled), scaled
-    assert not any('1/(M*N)' in code.replace(' ', '') for code in scaled), scaled
+    scaled = [code for code in codes if "exponent" in code and "M" in code and "N" in code]
+    assert scaled, f"no DFT tasklet carries the {norm} factor: {codes}"
+    assert all("(1.0 * M)" in code and "(1.0 * N)" in code for code in scaled), scaled
+    assert not any("1/(M*N)" in code.replace(" ", "") for code in scaled), scaled
 
 
 # The rank-1 path must stay byte-identical (still routes to dft_explicit).
@@ -182,12 +186,15 @@ def tolerance(dtype):
     return 1e-4 if dtype == np.float32 else 1e-10
 
 
-@pytest.mark.parametrize('shape,axes', PARTIAL_AXES)
-@pytest.mark.parametrize('dtype,dace_type', [
-    (np.float64, dace.float64),
-    (np.complex128, dace.complex128),
-    (np.float32, dace.float32),
-])
+@pytest.mark.parametrize("shape,axes", PARTIAL_AXES)
+@pytest.mark.parametrize(
+    "dtype,dace_type",
+    [
+        (np.float64, dace.float64),
+        (np.complex128, dace.complex128),
+        (np.float32, dace.float32),
+    ],
+)
 def test_fftn_over_a_subset_of_axes_batches_the_other_axes(shape, axes, dtype, dace_type):
     """cegterg transforms the three grid axes of a (n1, n2, n3, nvec) block, one 3-D FFT per band."""
 
@@ -202,7 +209,7 @@ def test_fftn_over_a_subset_of_axes_batches_the_other_axes(shape, axes, dtype, d
     np.testing.assert_allclose(got, want, rtol=tolerance(dtype), atol=tolerance(dtype))
 
 
-@pytest.mark.parametrize('shape,axes', PARTIAL_AXES)
+@pytest.mark.parametrize("shape,axes", PARTIAL_AXES)
 def test_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(shape, axes):
 
     @dace.program
@@ -210,10 +217,12 @@ def test_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(
         return np.fft.ifftn(x, axes=axes)
 
     x = random_array(shape, np.complex128, 9)
-    np.testing.assert_allclose(tester_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(x.copy()),
-                               np.fft.ifftn(x, axes=axes),
-                               rtol=1e-10,
-                               atol=1e-10)
+    np.testing.assert_allclose(
+        tester_ifftn_over_a_subset_of_axes_normalizes_by_the_transformed_extents_only(x.copy()),
+        np.fft.ifftn(x, axes=axes),
+        rtol=1e-10,
+        atol=1e-10,
+    )
 
 
 def test_literal_negative_axes_with_ortho_norm_match_numpy():
@@ -221,12 +230,12 @@ def test_literal_negative_axes_with_ortho_norm_match_numpy():
 
     @dace.program
     def tester_literal_negative_axes_with_ortho_norm_match_numpy(x: dace.complex128[4, 5, 6]):
-        return np.fft.fftn(x, axes=(-1, -3), norm='ortho'), np.fft.ifftn(x, axes=(-1, -3), norm='ortho')
+        return np.fft.fftn(x, axes=(-1, -3), norm="ortho"), np.fft.ifftn(x, axes=(-1, -3), norm="ortho")
 
     x = random_array((4, 5, 6), np.complex128, 10)
     forward, inverse = tester_literal_negative_axes_with_ortho_norm_match_numpy(x.copy())
-    np.testing.assert_allclose(forward, np.fft.fftn(x, axes=(-1, -3), norm='ortho'), rtol=1e-10, atol=1e-10)
-    np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=(-1, -3), norm='ortho'), rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(forward, np.fft.fftn(x, axes=(-1, -3), norm="ortho"), rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(inverse, np.fft.ifftn(x, axes=(-1, -3), norm="ortho"), rtol=1e-10, atol=1e-10)
 
 
 def test_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input():
@@ -236,10 +245,9 @@ def test_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input():
         return np.fft.ifftn(np.fft.fftn(x, axes=(1, 2, 3)), axes=(1, 2, 3))
 
     x = random_array((3, 4, 5, 2), np.complex128, 11)
-    np.testing.assert_allclose(tester_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input(x.copy()),
-                               x,
-                               rtol=1e-10,
-                               atol=1e-10)
+    np.testing.assert_allclose(
+        tester_ifftn_of_fftn_over_a_subset_of_axes_returns_the_input(x.copy()), x, rtol=1e-10, atol=1e-10
+    )
 
 
 def test_fft2_and_ifft2_transform_the_last_two_axes_by_default():
@@ -251,20 +259,23 @@ def test_fft2_and_ifft2_transform_the_last_two_axes_by_default():
 
     sdfg = tester_fft2_and_ifft2_transform_the_last_two_axes_by_default.to_sdfg(simplify=False)
     got = sorted((type(n).__name__, n.axes) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, (FFT, IFFT)))
-    assert got == [('FFT', [1, 2]), ('IFFT', [0, 2])], got
+    assert got == [("FFT", [1, 2]), ("IFFT", [0, 2])], got
     x = random_array((4, 5, 6), np.complex128, 12)
     forward, inverse = tester_fft2_and_ifft2_transform_the_last_two_axes_by_default(x.copy())
     np.testing.assert_allclose(forward, np.fft.fft2(x), rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(inverse, np.fft.ifft2(x, axes=(0, 2)), rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.parametrize('axes,want', [
-    (None, None),
-    ((1, 0), None),
-    ((-2, -1), None),
-    ((0, ), [0]),
-    ((-1, 0, -1), [1, 0, 1]),
-])
+@pytest.mark.parametrize(
+    "axes,want",
+    [
+        (None, None),
+        ((1, 0), None),
+        ((-2, -1), None),
+        ((0,), [0]),
+        ((-1, 0, -1), [1, 0, 1]),
+    ],
+)
 def test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes(axes, want):
     """A full-array transform must keep the whole-array lowering (``plan_dft_{rank}d``, the rank-generic DFT)."""
 
@@ -277,7 +288,7 @@ def test_only_a_transform_that_skips_an_axis_or_repeats_one_sets_the_node_axes(a
     assert got == [want], got
 
 
-@pytest.mark.parametrize('axes', [(), (2, ), (-3, )])
+@pytest.mark.parametrize("axes", [(), (2,), (-3,)])
 def test_empty_or_out_of_range_axes_are_refused(axes):
 
     @dace.program
@@ -291,37 +302,36 @@ def test_empty_or_out_of_range_axes_are_refused(axes):
 def test_cegterg_grid_fft_of_a_column_major_band_block_matches_numpy():
     """QE cegterg (h_psi) transforms the (nnr, nvec) band block as a column-major (n1, n2, n3, nvec) grid, over the
     three grid axes only; the reshape is a View whose strides are not C-order."""
-    n1, n2, n3, nvec = (dace.symbol(name, dtype=dace.int64) for name in ('n1', 'n2', 'n3', 'nvec'))
+    n1, n2, n3, nvec = (dace.symbol(name, dtype=dace.int64) for name in ("n1", "n2", "n3", "nvec"))
 
     @dace.program
     def grid_fft(psic: dace.complex128[n1 * n2 * n3, nvec], rv: dace.complex128[n1 * n2 * n3, nvec]):
-        recv = np.fft.ifftn(psic.reshape((n1, n2, n3, nvec), order='F'), axes=(0, 1, 2))
-        send = np.fft.fftn(rv.reshape((n1, n2, n3, nvec), order='F'), axes=(0, 1, 2))
+        recv = np.fft.ifftn(psic.reshape((n1, n2, n3, nvec), order="F"), axes=(0, 1, 2))
+        send = np.fft.fftn(rv.reshape((n1, n2, n3, nvec), order="F"), axes=(0, 1, 2))
         return recv, send
 
     grid = (3, 4, 5, 2)
     psic = random_array((60, 2), np.complex128, 13)
     rv = random_array((60, 2), np.complex128, 14)
     recv, send = grid_fft(psic.copy(), rv.copy(), n1=3, n2=4, n3=5, nvec=2)
-    np.testing.assert_allclose(recv,
-                               np.fft.ifftn(psic.reshape(grid, order='F'), axes=(0, 1, 2)),
-                               rtol=1e-10,
-                               atol=1e-10)
-    np.testing.assert_allclose(send, np.fft.fftn(rv.reshape(grid, order='F'), axes=(0, 1, 2)), rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(
+        recv, np.fft.ifftn(psic.reshape(grid, order="F"), axes=(0, 1, 2)), rtol=1e-10, atol=1e-10
+    )
+    np.testing.assert_allclose(send, np.fft.fftn(rv.reshape(grid, order="F"), axes=(0, 1, 2)), rtol=1e-10, atol=1e-10)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_pure_fftn((8, 12))
     test_pure_fftn((4, 6, 5))
-    for nrm in ('backward', 'forward', 'ortho'):
+    for nrm in ("backward", "forward", "ortho"):
         test_pure_ifftn_2d(nrm)
     for sh, ax in (((8, 12), 0), ((8, 12), -1), ((4, 6, 5), 1), ((4, 6, 5), -1)):
         test_pure_fft_axis(sh, ax)
     test_pure_ifft_axis_inverse()
     test_pure_fftn_inplace()
     test_pure_fftn_symbolic()
-    for nrm in ('backward', 'forward', 'ortho'):
+    for nrm in ("backward", "forward", "ortho"):
         test_pure_ifftn_symbolic(nrm)
     test_pure_rank1_unchanged()
     test_cegterg_grid_fft_of_a_column_major_band_block_matches_numpy()
-    print('pure N-D FFT tests PASS')
+    print("pure N-D FFT tests PASS")

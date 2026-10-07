@@ -18,27 +18,43 @@ def _get_sdfg_for_dynamic_map_input():
     s1 = sdfg.add_state("s1")
     sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"nlev_sym": "nlev"}))
     an = s1.add_access("A")
-    _, _, _ = s1.add_mapped_tasklet(name="assign_map",
-                                    map_ranges={"i": dace.subsets.Range(ranges=[
-                                        ("0", "nlev-1", "1"),
-                                    ])},
-                                    inputs={},
-                                    outputs={"_out": dace.memlet.Memlet("A[i]")},
-                                    code="_out = 0",
-                                    input_nodes=None,
-                                    external_edges=True,
-                                    output_nodes={"A": an})
+    _, _, _ = s1.add_mapped_tasklet(
+        name="assign_map",
+        map_ranges={
+            "i": dace.subsets.Range(
+                ranges=[
+                    ("0", "nlev-1", "1"),
+                ]
+            )
+        },
+        inputs={},
+        outputs={"_out": dace.memlet.Memlet("A[i]")},
+        code="_out = 0",
+        input_nodes=None,
+        external_edges=True,
+        output_nodes={"A": an},
+    )
     return sdfg
 
 
 def _get_sdfg_with_symbol_use_in_if():
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(name="A", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
-    _, B = sdfg.add_array(name="B", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _, B = sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
     cfg = dace.ControlFlowRegion(label="cfg1", sdfg=cb.sdfg, parent=cb)
@@ -53,12 +69,22 @@ def _get_sdfg_with_symbol_use_in_if():
 
 def _get_sdfg_with_symbol_use_in_for_cfg():
     sdfg = dace.SDFG("basic1")
-    _, A = sdfg.add_array(name="A", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
-    _, B = sdfg.add_array(name="B", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    _, B = sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
     sdfg.add_scalar(name="nlev", dtype=dace.int64)
     loop = LoopRegion(
         label="cfb1",
@@ -113,12 +139,22 @@ def test_use_in_if_block():
 def _get_sdfg_with_symbol_use_in_multi_arm_if():
     """Conditional with two guards plus an else, each arm carrying a distinguishable body."""
     sdfg = dace.SDFG("multi_arm")
-    _, A = sdfg.add_array(name="A", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
-    sdfg.add_array(name="B", shape=[
-        5,
-    ], dtype=dace.float64, transient=False)
+    _, A = sdfg.add_array(
+        name="A",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_array(
+        name="B",
+        shape=[
+            5,
+        ],
+        dtype=dace.float64,
+        transient=False,
+    )
     sdfg.add_scalar(name="nlev", dtype=dace.int64)
     cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
     sdfg.add_node(cb, is_start_block=True)
@@ -219,16 +255,15 @@ def get_sdfg_with_uncast_division(language: dace.dtypes.Language):
     sdfg.add_array("C", [N], dace.float64)
     sdfg.add_scalar("n", dace.float64 if language == dace.dtypes.Language.CPP else dace.int64)
     state = sdfg.add_state("s0")
-    state.add_mapped_tasklet(name="divide",
-                             map_ranges={"i": "0:N"},
-                             inputs={
-                                 "__in1": dace.Memlet("A[i]"),
-                                 "__in2": dace.Memlet("n[0]")
-                             },
-                             code=code,
-                             language=language,
-                             outputs={"__out": dace.Memlet("C[i]")},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        name="divide",
+        map_ranges={"i": "0:N"},
+        inputs={"__in1": dace.Memlet("A[i]"), "__in2": dace.Memlet("n[0]")},
+        code=code,
+        language=language,
+        outputs={"__out": dace.Memlet("C[i]")},
+        external_edges=True,
+    )
     return sdfg
 
 

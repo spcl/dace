@@ -10,6 +10,7 @@ The ISA path had a second hole behind it: ``dace::tileops::tile_unop`` templates
 character and only twelve of the seventeen lowered ops have one, while the lookup was a bare
 subscript. Any of the other five reached codegen as a KeyError instead of a refusal or a fallback.
 """
+
 import numpy as np
 import pytest
 
@@ -25,24 +26,24 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 from dace.transformation.passes.vectorization.enums import ISA
 
 N = 64
-WIDTHS = (8, )
+WIDTHS = (8,)
 
 
 def test_every_lowered_unop_has_a_cpp_rendering():
     """A converter that lowers an op the pure expansion cannot render is a codegen failure."""
     missing = sorted(_SUPPORTED_UNOPS - set(UNARY_OPS))
-    assert not missing, f'lowered without a C++ rendering: {missing}'
+    assert not missing, f"lowered without a C++ rendering: {missing}"
 
 
 def test_ops_without_an_isa_character_fall_back_rather_than_raise():
     """The ISA table is a SUBSET of what the converter lowers, and the gap must be a fallback."""
     no_char = sorted(set(UNARY_OPS) - set(UNARY_ISA_CODES))
-    assert no_char, 'the fixture is vacuous -- every op now has an ISA character'
+    assert no_char, "the fixture is vacuous -- every op now has an ISA character"
     # The op the fallback exists for; the others (tan, asin, ...) ride the same path.
-    assert 'sign_numpy_2' in no_char
+    assert "sign_numpy_2" in no_char
 
 
-@pytest.mark.parametrize('isa', [ISA.SCALAR, detect_host_isa()])
+@pytest.mark.parametrize("isa", [ISA.SCALAR, detect_host_isa()])
 def test_sign_vectorizes_and_matches_numpy(isa):
     """End-to-end: the kernel really is tiled, and the numbers are numpy's."""
 
@@ -55,12 +56,13 @@ def test_sign_vectorizes_and_matches_numpy(isa):
     canonicalize(sdfg, validate=True)
     VectorizeCPUMultiDim(VectorizeConfig(widths=WIDTHS, target_isa=isa, validate=True)).apply_pass(sdfg, {})
 
-    unops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileUnop) and n.op == 'sign_numpy_2']
-    assert unops, 'np.sign did not reach the tile pipeline as a TileUnop'
+    unops = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileUnop) and n.op == "sign_numpy_2"]
+    assert unops, "np.sign did not reach the tile pipeline as a TileUnop"
     assert not [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.Tasklet) and 'sign_numpy_2' in (n.code.as_string or '')
-    ], 'a scalar sign tasklet survived beside the tile op'
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.Tasklet) and "sign_numpy_2" in (n.code.as_string or "")
+    ], "a scalar sign tasklet survived beside the tile op"
 
     rng = np.random.default_rng(0)
     a = rng.standard_normal(N)

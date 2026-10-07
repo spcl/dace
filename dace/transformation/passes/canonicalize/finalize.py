@@ -19,6 +19,7 @@ to the backend. It mirrors ``auto_optimize``'s library-and-storage finalization
 ``canonicalize(s); finalize_for_target(s)`` is the perf-path counterpart to
 ``auto_optimize(s)``.
 """
+
 import os
 from typing import List
 
@@ -33,9 +34,15 @@ from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _matrix_operand
-from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage, find_fast_library,
-                                                    libnode_is_sequential, make_transients_persistent,
-                                                    move_small_arrays_to_stack, set_fast_implementations)
+from dace.transformation.auto.auto_optimize import (
+    apply_cpu_library_parallelism,
+    apply_gpu_storage,
+    find_fast_library,
+    libnode_is_sequential,
+    make_transients_persistent,
+    move_small_arrays_to_stack,
+    set_fast_implementations,
+)
 from dace.transformation.passes.canonicalize.hoist_loop_range_calls import HoistLoopRangeCalls
 from dace.transformation.passes.canonicalize.pipeline import run_structural_cleanup
 from dace.transformation.passes.canonicalize.shrink_map_local_transients import ShrinkMapLocalTransients
@@ -58,7 +65,7 @@ from dace.transformation import helpers as xfh
 from dace.sdfg.narrowing import as_range
 
 #: Map the canonicalize target string to the codegen device type.
-TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
+TARGET_DEVICE = {"cpu": dtypes.DeviceType.CPU, "gpu": dtypes.DeviceType.GPU}
 
 #: Per-dimension matmul extent at or below which canonicalization picks an inlined expansion over
 #: a BLAS call. MEASURED against OpenBLAS at 64/128/256 cubed: OpenBLAS wins at every one of them
@@ -135,16 +142,16 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType) -> List[str]:
     if device == dtypes.DeviceType.GPU:
         # ``pure`` is auto_optimize's terminal fallback rather than a forced pick, so it is dropped
         # here. A tensor library this host cannot build against is already absent from that list.
-        return [impl for impl in find_fast_library(device) if impl != 'pure']
+        return [impl for impl in find_fast_library(device) if impl != "pure"]
     prio: List[str] = []
     if openblas.OpenBLAS.is_installed():
-        prio.append('OpenBLAS')
+        prio.append("OpenBLAS")
     if fftw3.FFTW3.is_installed():
-        prio.append('FFTW3')
-    if 'HPTT_ROOT' in os.environ:
-        prio.append('HPTT')
-    prio.append('TTGT')
-    prio.append('CPU')
+        prio.append("FFTW3")
+    if "HPTT_ROOT" in os.environ:
+        prio.append("HPTT")
+    prio.append("TTGT")
+    prio.append("CPU")
     return prio
 
 
@@ -152,6 +159,7 @@ def release_kernel_block_size(node: nodes.Node, state: SDFGState, sdfg: SDFG) ->
     """Clear the declared block size of the kernel enclosing ``node``: a thread-block level inside it
     (a block collective's lane map, or a thread-block map) sizes the block, and two sizes conflict."""
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
     for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
         if isinstance(scope, nodes.MapEntry) and scope.map.schedule == dtypes.ScheduleType.GPU_Device:
             scope.map.gpu_block_size = None
@@ -167,12 +175,13 @@ def libnode_is_device_code(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG
     """
     return any(
         isinstance(scope, nodes.MapEntry) and scope.map.schedule in dtypes.GPU_SCHEDULES
-        for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state))
+        for scope in xfh.get_parent_map_and_loop_scopes(sdfg, node, state)
+    )
 
 
-def canonicalize_set_fast_implementations(sdfg: SDFG,
-                                          device: dtypes.DeviceType,
-                                          small_dim: int = SMALL_MATMUL_DIM) -> None:
+def canonicalize_set_fast_implementations(
+    sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = SMALL_MATMUL_DIM
+) -> None:
     """Select library-node implementations for the canonicalize perf tail.
 
     Delegates to :func:`~dace.transformation.auto.auto_optimize.set_fast_implementations` with the
@@ -186,7 +195,7 @@ def canonicalize_set_fast_implementations(sdfg: SDFG,
     library calls. Symbolic- or large-dimensioned matmuls keep the fast BLAS implementation, and so
     does a node with no ``'rowwise'`` expansion.
     """
-    set_fast_implementations(sdfg, device, blocklist=['MKL'], find_fast_library_fn=canonicalize_fast_library_priority)
+    set_fast_implementations(sdfg, device, blocklist=["MKL"], find_fast_library_fn=canonicalize_fast_library_priority)
     gpu_priority = canonicalize_fast_library_priority(device) if device == dtypes.DeviceType.GPU else []
     for node, state in sdfg.all_nodes_recursive():
         if not isinstance(node, nodes.LibraryNode):
@@ -217,7 +226,7 @@ def canonicalize_set_fast_implementations(sdfg: SDFG,
 
         # A GEMM no BLAS call can address takes the expansion that indexes its operands directly.
         if isinstance(node, Gemm) and not blas_addresses(node, state):
-            node.implementation = 'rowwise' if device == dtypes.DeviceType.CPU and 'rowwise' in impls else 'pure'
+            node.implementation = "rowwise" if device == dtypes.DeviceType.CPU and "rowwise" in impls else "pure"
             if device == dtypes.DeviceType.GPU and not libnode_is_device_code(node, state, sdfg):
                 node.schedule = dtypes.ScheduleType.GPU_Device
             continue
@@ -237,8 +246,11 @@ def canonicalize_set_fast_implementations(sdfg: SDFG,
         # affine scan under the outer loop). Decide by SCOPE, as the generic rule below does; the
         # schedule says ``Sequential`` for a host loop and a kernel alike.
         if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
-            node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
-                                   ('CUDA' if 'CUDA' in impls else node.implementation))
+            node.implementation = (
+                "pure"
+                if libnode_is_device_code(node, state, sdfg)
+                else ("CUDA" if "CUDA" in impls else node.implementation)
+            )
             continue
         # ``Transpose`` / ``TensorTranspose`` deliberately get NO override here. Our tiled kernel is
         # registered as ``CUDA`` and the priority list already puts ``cuBLAS`` and ``cuTENSOR`` ahead
@@ -253,8 +265,11 @@ def canonicalize_set_fast_implementations(sdfg: SDFG,
         # parallel, constant extents. Inside a kernel there is no launch to configure and the
         # triangular walk is the cheaper one, so keep ``pure`` there.
         if isinstance(node, Symmetrize) and device == dtypes.DeviceType.GPU:
-            node.implementation = ('pure' if libnode_is_device_code(node, state, sdfg) else
-                                   ('CUDA' if 'CUDA' in impls else node.implementation))
+            node.implementation = (
+                "pure"
+                if libnode_is_device_code(node, state, sdfg)
+                else ("CUDA" if "CUDA" in impls else node.implementation)
+            )
             continue
         # ``set_fast_implementations`` leaves every ``Sequential`` GPU node ``pure``, reading
         # Sequential as "inside a kernel", where only device code may be emitted. A host loop and a
@@ -262,8 +277,11 @@ def canonicalize_set_fast_implementations(sdfg: SDFG,
         # ``GPU_Global`` operands -- polybench trisolv's Dot, npbench stockham_fft's Gemm and
         # TensorTranspose. Host code is where a device library call belongs, so decide by SCOPE.
         # A node with no device expansion falls through and keeps what it had.
-        if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential \
-                and not libnode_is_device_code(node, state, sdfg):
+        if (
+            device == dtypes.DeviceType.GPU
+            and node.schedule == dtypes.ScheduleType.Sequential
+            and not libnode_is_device_code(node, state, sdfg)
+        ):
             fast = next((impl for impl in gpu_priority if impl in impls), None)
             if fast is not None:
                 node.implementation = fast
@@ -280,17 +298,17 @@ def canonicalize_set_fast_implementations(sdfg: SDFG,
         # That same rule pins a node to ``pure`` without checking that the node HAS one:
         # ``CopyLibraryNode`` does not, and expansion then raises ``Unknown implementation``
         # (polybench durbin). Its own default is the lowering that reads the schedule.
-        if node.implementation == 'pure' and 'pure' not in impls:
+        if node.implementation == "pure" and "pure" not in impls:
             node.implementation = type(node).default_implementation
 
-        if 'pure' not in impls:
+        if "pure" not in impls:
             continue
         # Only the row-wise (ikj) expansion: a vectorizable row update with a sequential K
         # accumulation and no atomic. The plain 'pure' nest is deliberately NOT selectable here --
         # it reduces through one ``reduce_atomic`` per multiply-add and measured slower than
         # OpenBLAS at every size tried. A node without 'rowwise' (e.g. MatMul) keeps its BLAS call.
-        if 'rowwise' in impls and _all_matmul_extents_small(state, node, small_dim):
-            node.implementation = 'rowwise'
+        if "rowwise" in impls and _all_matmul_extents_small(state, node, small_dim):
+            node.implementation = "rowwise"
 
 
 def allocated_unconditionally(sdfg: SDFG, name: str) -> bool:
@@ -372,8 +390,10 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
             # allocation anyway, or where the extent holds for every value the boundary admits: a
             # buffer sized by the very quantity its guard tests (LoopToScan's carry distance) is
             # positive inside the branch and negative outside it, and ``new T[negative]`` aborts.
-            if not (allocated_unconditionally(sd, name)
-                    or all(symbolic.provably_nonnegative(dim, assume_symbols_nonnegative=True) for dim in desc.shape)):
+            if not (
+                allocated_unconditionally(sd, name)
+                or all(symbolic.provably_nonnegative(dim, assume_symbols_nonnegative=True) for dim in desc.shape)
+            ):
                 desc.lifetime = dtypes.AllocationLifetime.State
                 continue
             # A shape naming a RUNTIME-SUPPLIED symbol cannot be allocated in ``__dace_init``:
@@ -381,25 +401,29 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
             # once the program is running. Promoting such a buffer emits an init that references an
             # undeclared name and does not compile. Scope lifetime instead -- these are per-thread
             # seams of a few dozen elements, so a per-call allocation costs nothing.
-            if any(symbolic.NUM_THREADS_SYMBOL in {str(x)
-                                                   for x in symbolic.pystr_to_symbolic(str(dim)).free_symbols}
-                   for dim in desc.shape):
+            if any(
+                symbolic.NUM_THREADS_SYMBOL in {str(x) for x in symbolic.pystr_to_symbolic(str(dim)).free_symbols}
+                for dim in desc.shape
+            ):
                 desc.lifetime = dtypes.AllocationLifetime.State
 
 
 def fed_by_producer_map(state: SDFGState, node: nodes.LibraryNode) -> bool:
     """Whether a map in ``state`` writes a transient operand of ``node`` (spmv's gathered ``x[cols]``)."""
     return any(
-        isinstance(edge.src, nodes.AccessNode) and edge.src.desc(state.sdfg).transient and any(
-            isinstance(write.src, nodes.MapExit) for write in state.in_edges(edge.src))
-        for edge in state.in_edges(node))
+        isinstance(edge.src, nodes.AccessNode)
+        and edge.src.desc(state.sdfg).transient
+        and any(isinstance(write.src, nodes.MapExit) for write in state.in_edges(edge.src))
+        for edge in state.in_edges(node)
+    )
 
 
 def vector_operands(state: SDFGState, node: nodes.LibraryNode) -> bool:
     """Whether every input of ``node`` is a vector, so a ``MatMul`` specializes to a ``Dot``."""
     return all(
         len([extent for extent in as_range(edge.data.subset).size() if extent != 1]) <= 1
-        for edge in state.in_edges(node))
+        for edge in state.in_edges(node)
+    )
 
 
 def expand_gathered_dots(sdfg: SDFG) -> int:
@@ -413,14 +437,21 @@ def expand_gathered_dots(sdfg: SDFG) -> int:
     """
     count = 0
     while True:
-        found = next(((node, state) for node, state in sdfg.all_nodes_recursive()
-                      if isinstance(node, (Dot, MatMul)) and fed_by_producer_map(state, node) and (
-                          isinstance(node, Dot) or vector_operands(state, node))), None)
+        found = next(
+            (
+                (node, state)
+                for node, state in sdfg.all_nodes_recursive()
+                if isinstance(node, (Dot, MatMul))
+                and fed_by_producer_map(state, node)
+                and (isinstance(node, Dot) or vector_operands(state, node))
+            ),
+            None,
+        )
         if found is None:
             break
         node, state = found
         if isinstance(node, Dot):
-            node.implementation = 'pure_accumulate'
+            node.implementation = "pure_accumulate"
             count += 1
         before = OrderedSet(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
         node.expand(state.sdfg, state)
@@ -502,7 +533,7 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     concurrency is layered back in. Set on the process Config here so the subsequent codegen
     (which reads the value) emits the single-stream form.
     """
-    Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
+    Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
     run_structural_cleanup(sdfg)
     # Before the offload reads a map around a device-wide scan as a host loop of launches.
     BatchRowScans().apply_pass(sdfg, {})
@@ -550,10 +581,12 @@ def assert_offloaded(sdfg: SDFG) -> None:
                 return
     if not offloadable:
         return
-    raise ValueError(f"finalize_for_target(sdfg, 'gpu') needs an already-offloaded SDFG, but '{sdfg.name}' has no "
-                     "GPU_Device map and no GPU_Global array. Offload is a separate step so passes can run between "
-                     "canonicalization and the device move: call offload_to_gpu(sdfg), or your own offload recipe, "
-                     "before finalizing.")
+    raise ValueError(
+        f"finalize_for_target(sdfg, 'gpu') needs an already-offloaded SDFG, but '{sdfg.name}' has no "
+        "GPU_Device map and no GPU_Global array. Offload is a separate step so passes can run between "
+        "canonicalization and the device move: call offload_to_gpu(sdfg), or your own offload recipe, "
+        "before finalizing."
+    )
 
 
 def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> None:
@@ -577,8 +610,8 @@ def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> Non
         same schedule among its enclosing scopes (walked across nested-SDFG boundaries).
     """
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
-    parallel = (dtypes.ScheduleType.GPU_Device
-                if device == dtypes.DeviceType.GPU else dtypes.ScheduleType.CPU_Multicore)
+
+    parallel = dtypes.ScheduleType.GPU_Device if device == dtypes.DeviceType.GPU else dtypes.ScheduleType.CPU_Multicore
     for node, state in sdfg.all_nodes_recursive():
         # A library node is a "special tasklet": a ``node.schedule`` on the device parallel schedule
         # means it would open its own parallel region, exactly what must not happen inside a parallel map.
@@ -592,17 +625,17 @@ def assert_no_nested_parallel_maps(sdfg: SDFG, device: dtypes.DeviceType) -> Non
             continue
         for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
             if isinstance(scope, nodes.MapEntry) and scope.map.schedule == parallel:
-                kind = 'map' if isinstance(node, nodes.MapEntry) else 'library node'
+                kind = "map" if isinstance(node, nodes.MapEntry) else "library node"
                 raise ValueError(
                     f"Nested {parallel.name}: {kind} '{label}' is nested inside {parallel.name} map "
                     f"'{scope.map.label}'. Inner maps / library nodes must not carry the device parallel "
-                    f"schedule (only top-level maps parallelize) -- nesting emits stacked parallel regions.")
+                    f"schedule (only top-level maps parallelize) -- nesting emits stacked parallel regions."
+                )
 
 
-def finalize_for_target(sdfg: SDFG,
-                        target: str = 'cpu',
-                        validate: bool = True,
-                        break_anti_dependence: bool = True) -> SDFG:
+def finalize_for_target(
+    sdfg: SDFG, target: str = "cpu", validate: bool = True, break_anti_dependence: bool = True
+) -> SDFG:
     """Apply the performance finalization tail to a canonicalized ``sdfg``.
 
     Selects fast library implementations (leaving the nodes un-expanded for

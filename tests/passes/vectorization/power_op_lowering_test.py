@@ -15,6 +15,7 @@ A float base always stays ``std::pow`` -- NumPy raises a float base with libm ``
 exponent). These tests pin that boundary and the two supporting pieces (the redundant
 float-cast strip on the exponent, and the nonnegativity assumption that lets the proof fire).
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -40,23 +41,24 @@ S = dace.symbol("S")
 @dace.program
 def frac_power(A: dace.float64[S], B: dace.float64[S]):
     for i in dace.map[0:S]:
-        B[i] = A[i]**1.5
+        B[i] = A[i] ** 1.5
 
 
 @dace.program
 def symbolic_power(A: dace.float64[S], B: dace.float64[S]):
     for i in dace.map[0:S]:
-        B[i] = A[i]**S
+        B[i] = A[i] ** S
 
 
 @dace.program
 def const_power(A: dace.float64[S], B: dace.float64[S]):
     for i in dace.map[0:S]:
-        B[i] = A[i]**3
+        B[i] = A[i] ** 3
 
 
-@pytest.mark.parametrize("prog,name", [(frac_power, "frac_power"), (symbolic_power, "symbolic_power"),
-                                       (const_power, "const_power")])
+@pytest.mark.parametrize(
+    "prog,name", [(frac_power, "frac_power"), (symbolic_power, "symbolic_power"), (const_power, "const_power")]
+)
 def test_float_power_is_bit_exact(prog, name, remainder_strategy):
     """A float-base power vectorizes against the unvectorized reference within the harness
     tolerance (both use libm ``pow``; the emitter must NOT pick ``ipow`` for a float base).
@@ -66,27 +68,27 @@ def test_float_power_is_bit_exact(prog, name, remainder_strategy):
     precision gap the ``log`` / ``exp`` kernel tests live with) -- a huge ``A ** 64`` would
     amplify that ULP past ``atol``, which is a libmvec property, not the classification."""
     n = 64
-    A = np.random.default_rng(0).uniform(0.9, 1.1, (n, )).astype(np.float64)
-    B = np.zeros((n, ), np.float64)
-    run_vectorization_test(dace_func=prog,
-                           arrays={
-                               'A': A,
-                               'B': B
-                           },
-                           params={'S': n},
-                           vector_width=8,
-                           sdfg_name=name,
-                           remainder_strategy=remainder_strategy)
+    A = np.random.default_rng(0).uniform(0.9, 1.1, (n,)).astype(np.float64)
+    B = np.zeros((n,), np.float64)
+    run_vectorization_test(
+        dace_func=prog,
+        arrays={"A": A, "B": B},
+        params={"S": n},
+        vector_width=8,
+        sdfg_name=name,
+        remainder_strategy=remainder_strategy,
+    )
 
 
 def test_float_power_emits_stdpow():
     """The generated tile code for a float-base power calls ``std::pow`` (not ``ipow``)."""
     from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+
     sdfg = symbolic_power.to_sdfg(simplify=True)
     sdfg.name = "symbolic_power_stdpow"
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
-                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+        VectorizeConfig(widths=(8,), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)
+    ).apply_pass(sdfg, {})
     code = sdfg.generate_code()[0].clean_code
     assert "std::pow" in code, "float base ** must lower to std::pow"
     assert "dace::math::ipow" not in code, "float base ** must NOT lower to ipow (not bit-exact with numpy)"

@@ -19,7 +19,7 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import PrivatizeScalars
 from dace.transformation.interstate import LoopToMap
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -179,8 +179,10 @@ def test_privatize_keeps_branch_condition_scalar():
     post = _condition_referenced_scalars(sdfg)
     for nm, w0 in pre.items():
         if w0 > 0:
-            assert post.get(nm, 0) == w0, (f"condition-referenced scalar {nm!r} lost its writer to privatization "
-                                           f"({w0} -> {post.get(nm, 0)}); the condition reference is now orphaned")
+            assert post.get(nm, 0) == w0, (
+                f"condition-referenced scalar {nm!r} lost its writer to privatization "
+                f"({w0} -> {post.get(nm, 0)}); the condition reference is now orphaned"
+            )
 
 
 def test_privatize_keeps_loop_condition_scalar():
@@ -217,9 +219,10 @@ def test_privatize_keeps_loop_condition_scalar():
     post = _condition_referenced_scalars(sdfg)
     for nm in loop_cond_names:
         if pre.get(nm, 0) > 0:
-            assert post.get(nm, 0) == pre[nm], (f"loop-condition scalar {nm!r} lost its writer to privatization "
-                                                f"({pre[nm]} -> {post.get(nm, 0)})")
+            assert post.get(nm, 0) == pre[nm], (
+                f"loop-condition scalar {nm!r} lost its writer to privatization ({pre[nm]} -> {post.get(nm, 0)})"
+            )
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

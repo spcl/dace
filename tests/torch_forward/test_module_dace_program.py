@@ -19,13 +19,13 @@ from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device
 def test_parse_forward_simple(device):
     dev = torch_device(device)
     torch_module = torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)).to(dev)
-    dace_module = DaceModule(torch_module, sdfg_name=f'test_parse_forward_simple_{device}', cuda=is_gpu(device))
+    dace_module = DaceModule(torch_module, sdfg_name=f"test_parse_forward_simple_{device}", cuda=is_gpu(device))
     x = torch.randn(2, 12).to(dev)
     expected = torch_module(x)
     with experimental_cuda():
         result = dace_module(x)
 
-    torch_tensors_close('output', expected, result)
+    torch_tensors_close("output", expected, result)
 
     @dace
     def train_step(y):
@@ -37,7 +37,7 @@ def test_parse_forward_simple(device):
 
     with experimental_cuda():
         result = train_step(x)
-    tensors_close('parsed', expected.sum(), result)
+    tensors_close("parsed", expected.sum(), result)
 
 
 @pytest.mark.torch
@@ -45,15 +45,16 @@ def test_parse_forward_simple(device):
 def test_parse_forward_nested(device):
 
     dev = torch_device(device)
-    torch_module = torch.nn.Sequential(torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)),
-                                       nn.Softmax(dim=1)).to(dev)
-    dace_module2 = DaceModule(torch_module, sdfg_name=f'test_parse_forward_nested_{device}', cuda=is_gpu(device))
+    torch_module = torch.nn.Sequential(
+        torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)), nn.Softmax(dim=1)
+    ).to(dev)
+    dace_module2 = DaceModule(torch_module, sdfg_name=f"test_parse_forward_nested_{device}", cuda=is_gpu(device))
     x = torch.randn(2, 12).to(dev)
     expected = torch_module(x)
     with experimental_cuda():
         result = dace_module2(x)
 
-    torch_tensors_close('output', expected, result)
+    torch_tensors_close("output", expected, result)
 
     @dace
     def train_step(y):
@@ -64,7 +65,7 @@ def test_parse_forward_nested(device):
 
     with experimental_cuda():
         result = train_step(x)
-    tensors_close('parsed', expected.sum(), result)
+    tensors_close("parsed", expected.sum(), result)
 
 
 if __name__ == "__main__":

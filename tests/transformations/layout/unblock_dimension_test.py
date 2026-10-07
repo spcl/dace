@@ -17,7 +17,7 @@ def madd(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
 @dace.program
 def madd_blocked(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
     for i, j in dace.map[0:N:16, 0:N:4] @ dace.ScheduleType.Sequential:
-        for ii, jj in dace.map[i:i + 16, j:j + 4] @ dace.ScheduleType.Sequential:
+        for ii, jj in dace.map[i : i + 16, j : j + 4] @ dace.ScheduleType.Sequential:
             C[ii, jj] = 0.5 * (A[ii, jj] + B[ii, jj])
 
 
@@ -78,8 +78,10 @@ def indexed_by(expr_str: str, name: str):
     """Every ``name[...]`` access in ``expr_str``, as a sorted list of index-string tuples."""
     expr = dace.symbolic.pystr_to_symbolic(expr_str)
     return sorted(
-        tuple(str(a) for a in node.args[1:]) for node in expr.atoms(dace.symbolic.Subscript)
-        if str(node.args[0]) == name)
+        tuple(str(a) for a in node.args[1:])
+        for node in expr.atoms(dace.symbolic.Subscript)
+        if str(node.args[0]) == name
+    )
 
 
 def test_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression():
@@ -92,7 +94,7 @@ def test_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression():
     unblock = UnblockDimensions(unblock_map={})
     masks, factors = [True, False], [4, 1]
 
-    sdfg = dace.SDFG('probe_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression')
+    sdfg = dace.SDFG("probe_unblock_rewrites_every_access_and_keeps_the_rest_of_the_expression")
     st0 = sdfg.add_state("s0")
     st1 = sdfg.add_state("s1")
     edge = dace.InterstateEdge(assignments={"v": "(A[i, j, t] * B[i, j])"})

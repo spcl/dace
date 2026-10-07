@@ -5,10 +5,11 @@ The sweep compiles/runs/verifies each global layout candidate against a numpy or
 correct ones. Correctness (every transparent candidate verifies, incorrect ones are flagged and not
 timed, best() returns a correct one) is the invariant asserted here; timing is best-effort and NOT
 asserted (noisy on a shared host)."""
+
 import numpy
 import dace
 
-from dace.transformation.layout.brute_force import (sweep, best, time_cpu, permutation_candidates)
+from dace.transformation.layout.brute_force import sweep, best, time_cpu, permutation_candidates
 
 N = dace.symbol("N")
 
@@ -117,6 +118,7 @@ def test_sweep_timing_failure_does_not_demote_correct():
 def test_sweep_bad_device_rejected():
     """sweep validates device up front rather than swallowing it per-candidate."""
     import pytest
+
     with pytest.raises(ValueError):
         sweep({}, lambda s: {}, {}, device="tpu")
 
@@ -124,6 +126,7 @@ def test_sweep_bad_device_rejected():
 def test_single_default_stream_forces_minus_one():
     """The 1-stream mode is ALWAYS -1 (legacy default stream) inside the context, restored after."""
     from dace.transformation.layout.brute_force import single_default_stream
+
     before = dace.Config.get("compiler", "cuda", "max_concurrent_streams")
     with single_default_stream():
         assert dace.Config.get("compiler", "cuda", "max_concurrent_streams") == -1

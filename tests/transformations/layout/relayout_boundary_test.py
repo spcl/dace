@@ -3,6 +3,7 @@
 boundaries hold parallel LayoutChange nodes, are recognized (not kernels) by line_graph, and a
 permute-there-and-back round trip through two boundaries reproduces the input bit-exactly while the
 program stays correct."""
+
 import numpy
 import pytest
 
@@ -49,10 +50,14 @@ def test_round_trip_through_two_boundaries(n=32):
 
 def test_parallel_changes_share_one_state(n=16):
     sdfg, kernels = split_conflict2()
-    boundary = relayout_on_boundary(sdfg, kernels[1].state, {
-        "A": ("A_p", [Permute((1, 0))]),
-        "B": ("B_p", [Permute((1, 0))]),
-    })
+    boundary = relayout_on_boundary(
+        sdfg,
+        kernels[1].state,
+        {
+            "A": ("A_p", [Permute((1, 0))]),
+            "B": ("B_p", [Permute((1, 0))]),
+        },
+    )
     assert is_relayout_state(boundary)
     assert sum(1 for node in boundary.nodes() if isinstance(node, LayoutChange)) == 2
     assert len(line_graph(sdfg)) == 2

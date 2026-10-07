@@ -34,9 +34,9 @@ def test_concatenate_out():
 
 
 def test_concatenate_symbolic():
-    n = dace.symbol('n')
-    m = dace.symbol('m')
-    k = dace.symbol('k')
+    n = dace.symbol("n")
+    m = dace.symbol("m")
+    k = dace.symbol("k")
 
     @dace.program
     def tester(a: dace.float64[k, m], b: dace.float64[k, n]):

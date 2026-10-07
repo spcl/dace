@@ -23,6 +23,7 @@ the emitted divide carries no explicit type on either operand. The GPU tests att
 run the same program and are expected to fail the same way until the literal (or the promotion
 implied by the original ``float64`` body) carries an explicit dtype.
 """
+
 import re
 
 import numpy as np
@@ -85,8 +86,9 @@ def test_boundary_division_operand_is_explicitly_typed():
     divides = re.findall(r"([^;\n=]*\b1\.0\b[^;\n=]*)/\s*(?:a_gpu\[[^\]]*\]|__in2\b)", code)
     assert divides, "no reciprocal division emitted; the test would prove nothing"
     for expr in divides:
-        assert "dace::float16(" in expr or "static_cast<double>" in expr or "double(" in expr, \
+        assert "dace::float16(" in expr or "static_cast<double>" in expr or "double(" in expr, (
             f"an fp64/fp16 nested-SDFG boundary division reached C++ without an explicit cast: {expr}"
+        )
 
 
 # GPU: compiling and running the same program
@@ -111,8 +113,9 @@ def test_numeric_matches_fp64_then_fp16_cast(n):
     csr(a=a, b=b, N=n)
     expected = (1.0 / a.astype(np.float64)).astype(np.float16)
     fp16_ulp = float(np.finfo(np.float16).eps)
-    assert np.allclose(b.astype(np.float64), expected.astype(np.float64), rtol=fp16_ulp, atol=0.0), \
+    assert np.allclose(b.astype(np.float64), expected.astype(np.float64), rtol=fp16_ulp, atol=0.0), (
         f"N={n}: {int((b != expected).sum())} of {n} lanes differ from the fp64-then-cast oracle"
+    )
 
 
 if __name__ == "__main__":

@@ -1,25 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Reproducers: a Python loop over an int64 size symbol whose iterator bounds a slice of an array operation. """
+"""Reproducers: a Python loop over an int64 size symbol whose iterator bounds a slice of an array operation."""
+
 from typing import List
 
 import numpy as np
 
 import dace
 
-N = dace.symbol('N', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
 
 
 @dace.program
 def lu_column_update(A: dace.float64[N, N]):
     for k in range(N):
-        A[k + 1:, k] = A[k + 1:, k] / A[k, k]
-        A[k + 1:, k + 1:] = A[k + 1:, k + 1:] - A[k + 1:, k][:, None] * A[k, k + 1:][None, :]
+        A[k + 1 :, k] = A[k + 1 :, k] / A[k, k]
+        A[k + 1 :, k + 1 :] = A[k + 1 :, k + 1 :] - A[k + 1 :, k][:, None] * A[k, k + 1 :][None, :]
 
 
 @dace.program
 def scaled_row_prefix(C: dace.float64[N, N], beta: dace.float64):
     for i in range(N):
-        C[i, :i + 1] = C[i, :i + 1] * beta
+        C[i, : i + 1] = C[i, : i + 1] * beta
 
 
 @dace.program
@@ -31,7 +32,7 @@ def forward_substitution(A: dace.float64[N, N], b: dace.float64[N], y: dace.floa
 @dace.program
 def backward_row_suffix(A: dace.float64[N, N], x: dace.float64[N]):
     for i in range(N - 1, -1, -1):
-        A[i, i + 1:] = A[i, i + 1:] + x[i + 1:]
+        A[i, i + 1 :] = A[i, i + 1 :] + x[i + 1 :]
 
 
 def iterator_dtypes(sdfg: dace.SDFG, name: str) -> List[dace.typeclass]:
@@ -43,7 +44,7 @@ def iterator_dtypes(sdfg: dace.SDFG, name: str) -> List[dace.typeclass]:
                     if subset is None:
                         continue
                     for bound in (b for rng in subset.ndrange() for b in rng):
-                        found.extend(s.dtype for s in getattr(bound, 'free_symbols', ()) if s.name == name)
+                        found.extend(s.dtype for s in getattr(bound, "free_symbols", ()) if s.name == name)
     return found
 
 
@@ -56,9 +57,10 @@ def test_lu_column_update_matches_numpy():
     A = well_conditioned(12)
     expected = A.copy()
     for k in range(12):
-        expected[k + 1:, k] = expected[k + 1:, k] / expected[k, k]
-        expected[k + 1:,
-                 k + 1:] = expected[k + 1:, k + 1:] - expected[k + 1:, k][:, None] * expected[k, k + 1:][None, :]
+        expected[k + 1 :, k] = expected[k + 1 :, k] / expected[k, k]
+        expected[k + 1 :, k + 1 :] = (
+            expected[k + 1 :, k + 1 :] - expected[k + 1 :, k][:, None] * expected[k, k + 1 :][None, :]
+        )
     lu_column_update(A)
     assert np.allclose(A, expected)
 
@@ -67,7 +69,7 @@ def test_scaled_row_prefix_matches_numpy():
     C = well_conditioned(9)
     expected = C.copy()
     for i in range(9):
-        expected[i, :i + 1] = expected[i, :i + 1] * 0.5
+        expected[i, : i + 1] = expected[i, : i + 1] * 0.5
     scaled_row_prefix(C, 0.5)
     assert np.allclose(C, expected)
 
@@ -85,12 +87,12 @@ def test_backward_row_suffix_matches_numpy():
     A, x = well_conditioned(8), np.arange(8, dtype=np.float64)
     expected = A.copy()
     for i in range(7, -1, -1):
-        expected[i, i + 1:] = expected[i, i + 1:] + x[i + 1:]
+        expected[i, i + 1 :] = expected[i, i + 1 :] + x[i + 1 :]
     backward_row_suffix(A, x)
     assert np.allclose(A, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_lu_column_update_matches_numpy()
     test_scaled_row_prefix_matches_numpy()
     test_forward_substitution_matches_numpy()

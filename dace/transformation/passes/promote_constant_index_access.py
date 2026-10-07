@@ -76,6 +76,7 @@ reverted so the SDFG does not grow needlessly.
 The pass assumes the loop body is flat dataflow: tasklets + AccessNodes connected by
 plain memlets. NestedSDFG-mediated accesses to the same array are not considered.
 """
+
 import contextlib
 import copy
 import io
@@ -85,8 +86,14 @@ from dace import graphlib as nx
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
-from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion,
-                             LoopRegion, SDFGState)
+from dace.sdfg.state import (
+    AbstractControlFlowRegion,
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    SDFGState,
+)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis.analysis import must_write_state
 from dace.ordered import OrderedSet
@@ -120,16 +127,18 @@ class _Promotion:
                               orphan cleanup. Tuples of ``(node, state)``.
     """
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 arr_name: str,
-                 scalar_name: str,
-                 prologue: SDFGState,
-                 edits: List[Tuple[Memlet, Optional[str], Any]],
-                 node_edits: List[Tuple[nodes.AccessNode, str]],
-                 introduced_scalar_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
-                 removed_arr_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
-                 endpoint_edits: Optional[List[Tuple[Any, Memlet, str, nodes.AccessNode]]] = None):
+    def __init__(
+        self,
+        sdfg: SDFG,
+        arr_name: str,
+        scalar_name: str,
+        prologue: SDFGState,
+        edits: List[Tuple[Memlet, Optional[str], Any]],
+        node_edits: List[Tuple[nodes.AccessNode, str]],
+        introduced_scalar_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
+        removed_arr_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
+        endpoint_edits: Optional[List[Tuple[Any, Memlet, str, nodes.AccessNode]]] = None,
+    ):
         self.sdfg = sdfg
         self.arr_name = arr_name
         self.scalar_name = scalar_name
@@ -169,8 +178,8 @@ class _Promotion:
             for e in list(state.edges()):
                 if e.data is not memlet:
                     continue
-                new_src = orig_node if side == 'src' else e.src
-                new_dst = orig_node if side == 'dst' else e.dst
+                new_src = orig_node if side == "src" else e.src
+                new_dst = orig_node if side == "dst" else e.dst
                 state.remove_edge(e)
                 state.add_edge(new_src, e.src_conn, new_dst, e.dst_conn, e.data)
                 break
@@ -213,10 +222,10 @@ class PromoteConstantIndexAccess(ppl.Pass):
     then becomes parallelizable.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     def modifies(self) -> ppl.Modifies:
-        return (ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.CFG | ppl.Modifies.AccessNodes)
+        return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.CFG | ppl.Modifies.AccessNodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # Single-shot: a successful promotion turns its loop into a map; a refused loop
@@ -242,8 +251,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if not pass_retval:
             return None
         slots = sum(len(v) for v in pass_retval.values())
-        return (f'PromoteConstantIndexAccess: promoted {slots} constant-index slot(s) to '
-                f'unblock {len(pass_retval)} loop(s)')
+        return (
+            f"PromoteConstantIndexAccess: promoted {slots} constant-index slot(s) to unblock {len(pass_retval)} loop(s)"
+        )
 
     # core
 
@@ -280,7 +290,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             for arr_name, c_subset in pairs:
                 promo = self._promote(sdfg, loop, arr_name, c_subset)
                 applied.append(promo)
-                labels.append(f'{arr_name}@{c_subset}')
+                labels.append(f"{arr_name}@{c_subset}")
             if applied and self._l2m_accepts(loop, sdfg):
                 kept[loop.label] = labels
             else:
@@ -305,6 +315,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         :returns: ``True`` if L2M's strict-mode ``can_be_applied`` returns True.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap  # avoid an import cycle
+
         xform = LoopToMap()
         xform.loop = loop
         xform.expr_index = 0
@@ -509,14 +520,24 @@ class PromoteConstantIndexAccess(ppl.Pass):
         cache: MustWriteCache = {}
         for state, read_nodes in reads.items():
             for read in read_nodes:
-                if not self._read_is_must_defined(loop, name, slot, state, read, writes[state], access_sets, idom,
-                                                  cache):
+                if not self._read_is_must_defined(
+                    loop, name, slot, state, read, writes[state], access_sets, idom, cache
+                ):
                     return False
         return True
 
-    def _read_is_must_defined(self, loop: LoopRegion, name: str, slot: subsets.Range, state: SDFGState,
-                              read: nodes.AccessNode, state_writes: List[nodes.AccessNode], access_sets: AccessSetMap,
-                              idom: IdomMap, cache: MustWriteCache) -> bool:
+    def _read_is_must_defined(
+        self,
+        loop: LoopRegion,
+        name: str,
+        slot: subsets.Range,
+        state: SDFGState,
+        read: nodes.AccessNode,
+        state_writes: List[nodes.AccessNode],
+        access_sets: AccessSetMap,
+        idom: IdomMap,
+        cache: MustWriteCache,
+    ) -> bool:
         """Whether one read AccessNode of ``name[slot]`` is preceded by a write in the same iteration."""
         # The read node is itself written at the slot -- the write is ordered before the read.
         # Only at the top scope: inside a map, an empty range leaves the node unwritten.
@@ -600,11 +621,21 @@ class PromoteConstantIndexAccess(ppl.Pass):
             for n in state.nodes():
                 if not isinstance(n, nodes.AccessNode) or n.data != name:
                     continue
-                if any(e.data is not None and e.data.data == name and e.data.subset is not None
-                       and self._point_subsets_equal(e.data.subset, slot) for e in state.out_edges(n)):
+                if any(
+                    e.data is not None
+                    and e.data.data == name
+                    and e.data.subset is not None
+                    and self._point_subsets_equal(e.data.subset, slot)
+                    for e in state.out_edges(n)
+                ):
                     reads.append((state, n))
-                if any(e.data is not None and e.data.data == name and e.data.subset is not None
-                       and self._point_subsets_equal(e.data.subset, slot) for e in state.in_edges(n)):
+                if any(
+                    e.data is not None
+                    and e.data.data == name
+                    and e.data.subset is not None
+                    and self._point_subsets_equal(e.data.subset, slot)
+                    for e in state.in_edges(n)
+                ):
                     writes.append((state, n))
         writes_set = set(writes)
 
@@ -713,9 +744,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
             idx = s.find(name, idx)
             if idx < 0:
                 return False
-            before_ok = idx == 0 or not (s[idx - 1].isalnum() or s[idx - 1] == '_')
+            before_ok = idx == 0 or not (s[idx - 1].isalnum() or s[idx - 1] == "_")
             after = idx + len(name)
-            after_ok = after >= len(s) or not (s[after].isalnum() or s[after] == '_')
+            after_ok = after >= len(s) or not (s[after].isalnum() or s[after] == "_")
             if before_ok and after_ok:
                 return True
             idx = after
@@ -750,8 +781,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
         if len(a.ranges) != len(b.ranges):
             return False
         return all(
-            symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0])
-            for ar, br in zip(a.ranges, b.ranges))
+            symbolic.pystr_to_symbolic(ar[0]) == symbolic.pystr_to_symbolic(br[0]) for ar, br in zip(a.ranges, b.ranges)
+        )
 
     def _not_live_out(self, loop: LoopRegion, name: str, slot: Optional[subsets.Range] = None) -> bool:
         """Live-out check for ``name`` (whole array) or ``name[slot]`` (one element).
@@ -885,24 +916,23 @@ class PromoteConstantIndexAccess(ppl.Pass):
         desc = sdfg.arrays[arr_name]
         # Use every axis of the constant point in the scalar's label so multi-dim slots
         # (``arr[3, 5]``) stay distinguishable from sibling slots (``arr[3, 6]``).
-        c_str = '_'.join(str(symbolic.pystr_to_symbolic(rng[0])) for rng in c_subset.ranges)
-        base = f'{arr_name}_at_{c_str}_promoted'
-        scalar_name, _ = sdfg.add_scalar(base,
-                                         desc.dtype,
-                                         transient=True,
-                                         lifetime=dtypes.AllocationLifetime.Scope,
-                                         find_new_name=True)
+        c_str = "_".join(str(symbolic.pystr_to_symbolic(rng[0])) for rng in c_subset.ranges)
+        base = f"{arr_name}_at_{c_str}_promoted"
+        scalar_name, _ = sdfg.add_scalar(
+            base, desc.dtype, transient=True, lifetime=dtypes.AllocationLifetime.Scope, find_new_name=True
+        )
 
         # Prologue: insert a state at the head of the loop body that copies arr[c] -> t.
         # The must-def gate has already established that every read of the slot in the body
         # sees a write from its own iteration; the load only keeps the scalar defined on
         # entry (and carries the live-in for a body that never writes the slot).
         old_start = loop.start_block
-        prologue = loop.add_state_before(old_start, label=f'{arr_name}_at_{c_str}_load', is_start_block=True)
+        prologue = loop.add_state_before(old_start, label=f"{arr_name}_at_{c_str}_load", is_start_block=True)
         src = prologue.add_access(arr_name)
         dst = prologue.add_access(scalar_name)
         prologue.add_nedge(
-            src, dst, Memlet(data=arr_name, subset=copy.deepcopy(c_subset), other_subset=subsets.Range([(0, 0, 1)])))
+            src, dst, Memlet(data=arr_name, subset=copy.deepcopy(c_subset), other_subset=subsets.Range([(0, 0, 1)]))
+        )
 
         edits: List[Tuple[Memlet, Optional[str], Any]] = []
         node_edits: List[Tuple[nodes.AccessNode, str]] = []
@@ -931,7 +961,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 if not single_slot:
                     # Slot-precise: swap the arr-AccessNode endpoint to a fresh per-state
                     # scalar AccessNode (one per state; reused across this slot's edges).
-                    for endpoint in ('src', 'dst'):
+                    for endpoint in ("src", "dst"):
                         end_node = getattr(edge, endpoint)
                         if isinstance(end_node, nodes.AccessNode) and end_node.data == arr_name:
                             if per_state_scalar is None:
@@ -940,8 +970,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
                             # Record which arr node this edge's endpoint came from, so undo
                             # restores THIS edge to THIS node (not a shared best-guess node).
                             endpoint_edits.append((state, memlet, endpoint, end_node))
-                            new_src = per_state_scalar if endpoint == 'src' else edge.src
-                            new_dst = per_state_scalar if endpoint == 'dst' else edge.dst
+                            new_src = per_state_scalar if endpoint == "src" else edge.src
+                            new_dst = per_state_scalar if endpoint == "dst" else edge.dst
                             state.remove_edge(edge)
                             edge = state.add_edge(new_src, edge.src_conn, new_dst, edge.dst_conn, edge.data)
             if single_slot:
@@ -958,8 +988,17 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 # so the SDFG validates; tracked separately from node_edits so undo
                 # can distinguish rename-restore from re-add.
                 for node in list(state.nodes()):
-                    if (isinstance(node, nodes.AccessNode) and node.data == arr_name and state.degree(node) == 0):
+                    if isinstance(node, nodes.AccessNode) and node.data == arr_name and state.degree(node) == 0:
                         removed_arr_nodes.append((node, state))
                         state.remove_node(node)
-        return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits, introduced_scalar_nodes,
-                          removed_arr_nodes, endpoint_edits)
+        return _Promotion(
+            sdfg,
+            arr_name,
+            scalar_name,
+            prologue,
+            edits,
+            node_edits,
+            introduced_scalar_nodes,
+            removed_arr_nodes,
+            endpoint_edits,
+        )

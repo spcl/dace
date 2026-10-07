@@ -9,6 +9,7 @@ expansion body is shared, rather than a second copy of the body per vendor.
 Not rocSPARSE: that is the NATIVE library, spelled differently throughout, and hipSPARSE dispatches
 to it anyway -- so targeting it would mean maintaining a second body for the same work.
 """
+
 from typing import NamedTuple
 
 

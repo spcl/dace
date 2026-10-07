@@ -1,14 +1,15 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the generalized ``PerfLoopNesting`` transformation.
+"""Tests for the generalized ``PerfLoopNesting`` transformation.
 
-    ``PerfLoopNesting`` duplicates a parent map once per independent inner map.
-    Besides the original NestedSDFG-wrapped form it also handles the common
-    inlined same-state shape (a parent map directly enclosing >= 2 inner maps,
-    no NestedSDFG indirection), delegating the dependency-respecting split to
-    ``MapFission``. Applied repeatedly it cascades an arbitrarily deep nest.
+``PerfLoopNesting`` duplicates a parent map once per independent inner map.
+Besides the original NestedSDFG-wrapped form it also handles the common
+inlined same-state shape (a parent map directly enclosing >= 2 inner maps,
+no NestedSDFG indirection), delegating the dependency-respecting split to
+``MapFission``. Applied repeatedly it cascades an arbitrarily deep nest.
 
-    All kernels use the dace Python frontend only.
+All kernels use the dace Python frontend only.
 """
+
 import copy
 
 import numpy as np
@@ -18,7 +19,7 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow.perf_loop_nesting import PerfLoopNesting
 
-N, M, P = (dace.symbol(s) for s in ('N', 'M', 'P'))
+N, M, P = (dace.symbol(s) for s in ("N", "M", "P"))
 
 
 @dace.program

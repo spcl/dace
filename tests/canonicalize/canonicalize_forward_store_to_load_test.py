@@ -6,6 +6,7 @@ loop-carried dependence. Everything below is about telling that shape apart from
 ``a[i]`` written then read is a store-to-load, ``a[i]`` written and ``a[i-1]`` read is a carry,
 and the two differ only in the SUBSET -- never in the names -- so that is what the pass reads.
 """
+
 import os
 
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
@@ -20,14 +21,15 @@ import pytest
 import dace
 from dace.transformation.passes.canonicalize.forward_store_to_load import ForwardStoreToLoad
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 TOL = dict(rtol=1e-12, atol=1e-12)
 
 
 @dace.program
-def same_iteration_round_trip(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N],
-                              e: dace.float64[N]):
+def same_iteration_round_trip(
+    a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]
+):
     """TSVC s323: ``a[i]`` is stored and reloaded at the SAME ``i``."""
     for i in range(1, N):
         a[i] = b[i - 1] + c[i] * d[i]
@@ -75,7 +77,7 @@ def prepared(program) -> dace.SDFG:
 
 
 def forwarding_transients(sdfg: dace.SDFG) -> list[str]:
-    return sorted(name for name in sdfg.arrays if '_fwd' in name)
+    return sorted(name for name in sdfg.arrays if "_fwd" in name)
 
 
 def in_iteration_reads(sdfg: dace.SDFG, name: str) -> int:
@@ -90,13 +92,13 @@ def stores(sdfg: dace.SDFG, name: str) -> int:
 def test_same_iteration_store_to_load_is_forwarded():
     """The reader stops reading ``a`` and the store to ``a`` stays: ``a`` becomes write-only."""
     sdfg = prepared(same_iteration_round_trip)
-    assert in_iteration_reads(sdfg, 'a') == 1, 'the fixture must start with the round trip in place'
+    assert in_iteration_reads(sdfg, "a") == 1, "the fixture must start with the round trip in place"
 
     assert ForwardStoreToLoad().apply_pass(sdfg, {}) == 1
     sdfg.validate()
-    assert forwarding_transients(sdfg), 'the forwarded value needs a transient of its own'
-    assert in_iteration_reads(sdfg, 'a') == 0, '`a` must no longer be read inside the body'
-    assert stores(sdfg, 'a') == 1, 'the store to the declared output `a` must survive'
+    assert forwarding_transients(sdfg), "the forwarded value needs a transient of its own"
+    assert in_iteration_reads(sdfg, "a") == 0, "`a` must no longer be read inside the body"
+    assert stores(sdfg, "a") == 1, "the store to the declared output `a` must survive"
 
 
 def test_a_genuine_carry_is_left_alone():
@@ -105,7 +107,7 @@ def test_a_genuine_carry_is_left_alone():
     before = copy.deepcopy(sdfg.to_json())
 
     assert ForwardStoreToLoad().apply_pass(sdfg, {}) is None
-    assert sdfg.to_json() == before, 'a pass that does not apply must leave the SDFG untouched'
+    assert sdfg.to_json() == before, "a pass that does not apply must leave the SDFG untouched"
 
 
 def test_a_read_of_the_incoming_value_is_left_alone():
@@ -114,7 +116,7 @@ def test_a_read_of_the_incoming_value_is_left_alone():
     before = copy.deepcopy(sdfg.to_json())
 
     assert ForwardStoreToLoad().apply_pass(sdfg, {}) is None
-    assert sdfg.to_json() == before, 'a pass that does not apply must leave the SDFG untouched'
+    assert sdfg.to_json() == before, "a pass that does not apply must leave the SDFG untouched"
 
 
 def test_a_conditional_store_is_left_alone():
@@ -128,7 +130,7 @@ def test_a_conditional_store_is_left_alone():
     before = copy.deepcopy(sdfg.to_json())
 
     assert ForwardStoreToLoad().apply_pass(sdfg, {}) is None
-    assert sdfg.to_json() == before, 'a pass that does not apply must leave the SDFG untouched'
+    assert sdfg.to_json() == before, "a pass that does not apply must leave the SDFG untouched"
 
 
 def test_an_aliasing_output_is_left_alone():
@@ -139,31 +141,31 @@ def test_an_aliasing_output_is_left_alone():
     against nothing -- so the value in the register is no longer provably the value in ``a[i]``.
     """
     sdfg = prepared(same_iteration_round_trip)
-    sdfg.arrays['a'].may_alias = True
+    sdfg.arrays["a"].may_alias = True
     before = copy.deepcopy(sdfg.to_json())
 
     assert ForwardStoreToLoad().apply_pass(sdfg, {}) is None
-    assert sdfg.to_json() == before, 'a pass that does not apply must leave the SDFG untouched'
+    assert sdfg.to_json() == before, "a pass that does not apply must leave the SDFG untouched"
 
 
-@pytest.mark.parametrize('seed', [0, 7])
+@pytest.mark.parametrize("seed", [0, 7])
 def test_forwarding_preserves_values(seed: int):
     """The rewrite is a value identity, checked before any later pass gets to reassociate."""
     rng = np.random.default_rng(seed)
-    arrays = {name: rng.random(48) + 1.0 for name in 'abcde'}
+    arrays = {name: rng.random(48) + 1.0 for name in "abcde"}
 
     want = {name: arr.copy() for name, arr in arrays.items()}
     for i in range(1, 48):
-        want['a'][i] = want['b'][i - 1] + want['c'][i] * want['d'][i]
-        want['b'][i] = want['a'][i] + want['c'][i] * want['e'][i]
+        want["a"][i] = want["b"][i - 1] + want["c"][i] * want["d"][i]
+        want["b"][i] = want["a"][i] + want["c"][i] * want["e"][i]
 
     sdfg = prepared(same_iteration_round_trip)
     assert ForwardStoreToLoad().apply_pass(sdfg, {}) == 1
     got = {name: arr.copy() for name, arr in arrays.items()}
     sdfg.compile()(**got, N=48)
     for name in arrays:
-        assert np.allclose(want[name], got[name], **TOL), f'forwarding changed {name}'
+        assert np.allclose(want[name], got[name], **TOL), f"forwarding changed {name}"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

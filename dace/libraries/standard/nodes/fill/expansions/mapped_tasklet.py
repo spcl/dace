@@ -1,11 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Element-wise mapped fill: the device-neutral parallel form, and the fallback for everything a
 single call cannot express (non-contiguous subsets, non-byte-splat GPU values, device scope)."""
+
 from typing import TYPE_CHECKING
 
 import dace
 from dace import library
-from dace.libraries.standard.nodes.fill.common import (VALUE_CONNECTOR_NAME, make_fill_skeleton, python_literal)
+from dace.libraries.standard.nodes.fill.common import VALUE_CONNECTOR_NAME, make_fill_skeleton, python_literal
 from dace.libraries.standard.nodes.fill.node import FillLibraryNode
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     pass
 
 
-@library.register_expansion(FillLibraryNode, 'pure')
+@library.register_expansion(FillLibraryNode, "pure")
 class ExpandPure(ExpandTransformation):
     environments = []
 
@@ -49,12 +50,14 @@ class ExpandPure(ExpandTransformation):
             schedule = dace.dtypes.ScheduleType.GPU_Device
         else:
             schedule = dace.dtypes.ScheduleType.Default
-        state.add_mapped_tasklet(f"{node.label}_tasklet",
-                                 map_rng,
-                                 inputs,
-                                 f"{inner_out} = {value_expr}",
-                                 outputs,
-                                 schedule=schedule,
-                                 external_edges=True)
+        state.add_mapped_tasklet(
+            f"{node.label}_tasklet",
+            map_rng,
+            inputs,
+            f"{inner_out} = {value_expr}",
+            outputs,
+            schedule=schedule,
+            external_edges=True,
+        )
 
         return sdfg

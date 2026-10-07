@@ -84,21 +84,21 @@ class ASTSplitter:
                 self.stmts.append(f"{t} = int_floor({l}, {r})")
                 return t
             ops = {
-                ast.Add: '+',
-                ast.Sub: '-',
-                ast.Mult: '*',
-                ast.Div: '/',
-                ast.Pow: '**',
-                ast.Mod: '%',
-                ast.MatMult: '@',
-                ast.BitAnd: '&',
-                ast.BitOr: '|',
-                ast.BitXor: '^',
-                ast.LShift: '<<',
-                ast.RShift: '>>',
-                ast.Or: 'or',
-                ast.And: 'and',
-                ast.Eq: '==',
+                ast.Add: "+",
+                ast.Sub: "-",
+                ast.Mult: "*",
+                ast.Div: "/",
+                ast.Pow: "**",
+                ast.Mod: "%",
+                ast.MatMult: "@",
+                ast.BitAnd: "&",
+                ast.BitOr: "|",
+                ast.BitXor: "^",
+                ast.LShift: "<<",
+                ast.RShift: ">>",
+                ast.Or: "or",
+                ast.And: "and",
+                ast.Eq: "==",
             }
             self.stmts.append(f"{t} = {l} {ops[type(node.op)]} {r}")
             return t
@@ -106,7 +106,7 @@ class ASTSplitter:
         elif isinstance(node, ast.UnaryOp):
             op = self.visit(node.operand)
             t = self.temp()
-            ops = {ast.USub: '-', ast.UAdd: '+', ast.Not: 'not ', ast.Invert: '~'}
+            ops = {ast.USub: "-", ast.UAdd: "+", ast.Not: "not ", ast.Invert: "~"}
             self.stmts.append(f"{t} = {ops[type(node.op)]}{op}")
             return t
 
@@ -136,12 +136,12 @@ class ASTSplitter:
                 comp = self.visit(comparator)
                 t = self.temp()
                 ops = {
-                    ast.Eq: '==',
-                    ast.NotEq: '!=',
-                    ast.Lt: '<',
-                    ast.LtE: '<=',
-                    ast.Gt: '>',
-                    ast.GtE: '>=',
+                    ast.Eq: "==",
+                    ast.NotEq: "!=",
+                    ast.Lt: "<",
+                    ast.LtE: "<=",
+                    ast.Gt: ">",
+                    ast.GtE: ">=",
                 }
                 self.stmts.append(f"{t} = {current} {ops[type(op)]} {comp}")
                 comparisons.append(t)
@@ -149,13 +149,13 @@ class ASTSplitter:
 
             # If multiple comparisons, combine with 'and' -- TWO at a time (see _chain_logical).
             if len(comparisons) > 1:
-                return self._chain_logical(comparisons, ' and ')
+                return self._chain_logical(comparisons, " and ")
             return comparisons[0] if comparisons else left
 
         elif isinstance(node, ast.BoolOp):
             # Handle boolean operators (and, or)
             values = [self.visit(v) for v in node.values]
-            op = ' and ' if isinstance(node.op, ast.And) else ' or '
+            op = " and " if isinstance(node.op, ast.And) else " or "
             return self._chain_logical(values, op)
 
         elif isinstance(node, ast.IfExp):
@@ -228,12 +228,15 @@ def fold_conditionals(body: List[ast.stmt]) -> Optional[List[ast.Assign]]:
             false_value = when_false.get(name)
             if (true_value is None or false_value is None) and name not in assigned:
                 return None
-            blend = ast.Call(func=ast.Name(id='ITE', ctx=ast.Load()),
-                             args=[
-                                 statement.test, true_value or ast.Name(id=name, ctx=ast.Load()), false_value
-                                 or ast.Name(id=name, ctx=ast.Load())
-                             ],
-                             keywords=[])
+            blend = ast.Call(
+                func=ast.Name(id="ITE", ctx=ast.Load()),
+                args=[
+                    statement.test,
+                    true_value or ast.Name(id=name, ctx=ast.Load()),
+                    false_value or ast.Name(id=name, ctx=ast.Load()),
+                ],
+                keywords=[],
+            )
             folded.append(ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=blend))
             assigned.add(name)
     return folded
@@ -260,7 +263,7 @@ def to_static_single_assignment(assignments: List[ast.Assign]) -> List[ast.Assig
                 node.id = current[node.id]
         name = assignment.targets[0].id
         if final[name] != index:
-            renamed = '__fold%d' % counter
+            renamed = "__fold%d" % counter
             counter += 1
             current[name] = renamed
             name = renamed
@@ -289,7 +292,7 @@ def lower_assignments(assignments: List[ast.Assign], code: str) -> List[str]:
             ssa.stmts.append(f"{target} = {ssa.visit(assignment.value)}")
             continue
         rhs = ssa.visit(assignment.value)
-        if ssa.stmts and ssa.stmts[-1].startswith(rhs + ' ='):
+        if ssa.stmts and ssa.stmts[-1].startswith(rhs + " ="):
             ssa.stmts[-1] = ssa.stmts[-1].replace(rhs, target, 1)
         else:
             ssa.stmts.append(f"{target} = {rhs}")
@@ -336,7 +339,7 @@ def to_ssa(code: str) -> List[str]:
         else:
             rhs = ssa.visit(tree.value)
             # Replace the last temp variable with the target
-            if ssa.stmts and ssa.stmts[-1].startswith(rhs + ' ='):
+            if ssa.stmts and ssa.stmts[-1].startswith(rhs + " ="):
                 ssa.stmts[-1] = ssa.stmts[-1].replace(rhs, target, 1)
             else:
                 ssa.stmts.append(f"{target} = {rhs}")
@@ -395,22 +398,29 @@ def _get_vars(ssa_line: str) -> Tuple[List[str], List[str]]:
     # the legacy allowlist (covers ``or`` / ``and`` boolean keywords + ``True`` /
     # ``False`` literals + builtin user functions that might be referenced
     # bare without a Call wrapper).
-    function_names = (_ast_function_names(rhs).union(dace.symbolic.builtin_userfunctions()).union({
-        "log",
-        "Log",
-        "ln",
-        "exp",
-        "Exp",
-        "or",
-        "and",
-        "Or",
-        "And",
-        "OR",
-        "AND",
-        "math",
-        "Math",
-        "MATH",
-    }).union({"True", "False"}))
+    function_names = (
+        _ast_function_names(rhs)
+        .union(dace.symbolic.builtin_userfunctions())
+        .union(
+            {
+                "log",
+                "Log",
+                "ln",
+                "exp",
+                "Exp",
+                "or",
+                "and",
+                "Or",
+                "And",
+                "OR",
+                "AND",
+                "math",
+                "Math",
+                "MATH",
+            }
+        )
+        .union({"True", "False"})
+    )
 
     return [lhs], list(dace.symbolic.symbols_in_code(rhs, symbols_to_ignore=function_names))
 
@@ -480,6 +490,7 @@ def _infer_ssa_intermediate_types(ssa_statements: List[str], leaf_types: Dict[st
 @dataclasses.dataclass(slots=True)
 class StraightLineBody:
     """A body of ``name = expr`` statements; ``defining`` maps each output to its final assignment."""
+
     targets: List[str]
     values: List[ast.expr]
     reads: List[Dict[str, None]]
@@ -489,6 +500,7 @@ class StraightLineBody:
 @dataclasses.dataclass(slots=True)
 class OutputPlan:
     """One output's statements, the inputs they read, and the other outputs they read through their arrays."""
+
     out_conn: str
     code: str
     input_reads: OrderedSet
@@ -554,8 +566,9 @@ def backward_slice(body: StraightLineBody, output: str) -> Optional[List[int]]:
     return sorted(needed)
 
 
-def classify_reads(tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str,
-                   statements: List[int]) -> Tuple[OrderedSet, OrderedSet]:
+def classify_reads(
+    tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str, statements: List[int]
+) -> Tuple[OrderedSet, OrderedSet]:
     """Connector names the sliced ``statements`` read before any assignment, and other outputs they read."""
     connector_reads: OrderedSet = OrderedSet()
     cross_reads: OrderedSet = OrderedSet()
@@ -569,8 +582,9 @@ def classify_reads(tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: 
     return connector_reads, cross_reads
 
 
-def plan_output(tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str,
-                in_edges: Dict[str, Any]) -> Optional[OutputPlan]:
+def plan_output(
+    tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str, in_edges: Dict[str, Any]
+) -> Optional[OutputPlan]:
     statements = backward_slice(body, output)
     if statements is None:
         return None
@@ -578,7 +592,7 @@ def plan_output(tasklet: dace.nodes.Tasklet, body: StraightLineBody, output: str
     # An input connector without an edge, or an output read before anything assigns it, has no value.
     if any(name not in in_edges for name in input_reads):
         return None
-    code = '\n'.join(f'{body.targets[index]} = {ast.unparse(body.values[index])}' for index in statements)
+    code = "\n".join(f"{body.targets[index]} = {ast.unparse(body.values[index])}" for index in statements)
     return OutputPlan(output, code, input_reads, cross_reads)
 
 
@@ -635,8 +649,9 @@ def writes_stay_whole(plans: Dict[str, OutputPlan], in_edges: Dict[str, Any], ou
         others = [plan for plan in plans.values() if plan.out_conn != conn]
         if overlaps_a_read(write, [in_edges[name] for plan in others for name in plan.input_reads]):
             return True
-        if any(reads_output(plans, plan.out_conn, conn)
-               for plan in others) and overlaps_a_read(write, in_edges.values()):
+        if any(reads_output(plans, plan.out_conn, conn) for plan in others) and overlaps_a_read(
+            write, in_edges.values()
+        ):
             return True
     return False
 
@@ -651,8 +666,9 @@ def emission_order(tasklet: dace.nodes.Tasklet, plans: Dict[str, OutputPlan]) ->
     return list(placed.values())
 
 
-def plan_output_split(tasklet: dace.nodes.Tasklet, state: dace.SDFGState,
-                      symbol_lifted_data: OrderedSet) -> Optional[List[OutputPlan]]:
+def plan_output_split(
+    tasklet: dace.nodes.Tasklet, state: dace.SDFGState, symbol_lifted_data: OrderedSet
+) -> Optional[List[OutputPlan]]:
     """One plan per output in emission order, or ``None`` to keep ``tasklet`` whole."""
     if tasklet.code.language != dace.dtypes.Language.Python:
         return None
@@ -672,24 +688,31 @@ def plan_output_split(tasklet: dace.nodes.Tasklet, state: dace.SDFGState,
     return ordered
 
 
-def route_read_output_to_destination(state: dace.SDFGState, label: str, produced: dace.nodes.AccessNode,
-                                     out_edge) -> None:
+def route_read_output_to_destination(
+    state: dace.SDFGState, label: str, produced: dace.nodes.AccessNode, out_edge
+) -> None:
     """A same-array copy into an access node; a map exit rejects that copy, so a store tasklet there."""
     if isinstance(out_edge.dst, dace.nodes.AccessNode):
         forward = copy.deepcopy(out_edge.data)
         forward.other_subset = copy.deepcopy(forward.subset)
         state.add_edge(produced, None, out_edge.dst, out_edge.dst_conn, forward)
     else:
-        store = state.add_tasklet(name=f"{label}_store",
-                                  inputs={'_store_in'},
-                                  outputs={'_store_out'},
-                                  code='_store_out = _store_in')
-        state.add_edge(produced, None, store, '_store_in', copy.deepcopy(out_edge.data))
-        state.add_edge(store, '_store_out', out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
+        store = state.add_tasklet(
+            name=f"{label}_store", inputs={"_store_in"}, outputs={"_store_out"}, code="_store_out = _store_in"
+        )
+        state.add_edge(produced, None, store, "_store_in", copy.deepcopy(out_edge.data))
+        state.add_edge(store, "_store_out", out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
 
 
-def connect_inputs(state: dace.SDFGState, split: dace.nodes.Tasklet, plan: OutputPlan, original_in_edges: List[Any],
-                   out_edges: Dict[str, Any], produced: Dict[str, dace.nodes.AccessNode], scope_entry) -> None:
+def connect_inputs(
+    state: dace.SDFGState,
+    split: dace.nodes.Tasklet,
+    plan: OutputPlan,
+    original_in_edges: List[Any],
+    out_edges: Dict[str, Any],
+    produced: Dict[str, dace.nodes.AccessNode],
+    scope_entry,
+) -> None:
     in_edges = {edge.dst_conn: edge for edge in original_in_edges if edge.dst_conn is not None}
     for edge in original_in_edges:
         if edge.dst_conn is None:
@@ -704,8 +727,14 @@ def connect_inputs(state: dace.SDFGState, split: dace.nodes.Tasklet, plan: Outpu
         state.add_edge(scope_entry, None, split, None, dace.Memlet())
 
 
-def write_output(state: dace.SDFGState, split: dace.nodes.Tasklet, plan: OutputPlan, out_edge,
-                 produced: Dict[str, dace.nodes.AccessNode], read_outputs: OrderedSet) -> None:
+def write_output(
+    state: dace.SDFGState,
+    split: dace.nodes.Tasklet,
+    plan: OutputPlan,
+    out_edge,
+    produced: Dict[str, dace.nodes.AccessNode],
+    read_outputs: OrderedSet,
+) -> None:
     """Connect the output of ``split``; a value a later output reads is kept on an access node of its array."""
     if plan.out_conn not in read_outputs:
         state.add_edge(split, plan.out_conn, out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
@@ -732,8 +761,12 @@ def emit_output_split(tasklet: dace.nodes.Tasklet, state: dace.SDFGState, plans:
     produced: Dict[str, dace.nodes.AccessNode] = {}
     emitted: List[dace.nodes.Tasklet] = []
     for plan in plans:
-        split = state.add_tasklet(f'{tasklet.label}_out_{plan.out_conn}',
-                                  dict.fromkeys(plan.input_reads | plan.cross_reads), {plan.out_conn: None}, plan.code)
+        split = state.add_tasklet(
+            f"{tasklet.label}_out_{plan.out_conn}",
+            dict.fromkeys(plan.input_reads | plan.cross_reads),
+            {plan.out_conn: None},
+            plan.code,
+        )
         connect_inputs(state, split, plan, original_in_edges, out_edges, produced, scope_entry)
         write_output(state, split, plan, out_edges[plan.out_conn], produced, read_outputs)
         for edge in ordering_out:
@@ -754,15 +787,15 @@ class SplitTasklets(ppl.Pass):
     ``split_operations`` splits single-output bodies into single-op tasklets; per-output ones wait for the next run.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
-    split_multi_output = properties.Property(dtype=bool,
-                                             default=True,
-                                             desc='Split a multi-output tasklet into one tasklet per output')
-    split_operations = properties.Property(dtype=bool,
-                                           default=True,
-                                           desc="Split each output's expression into one operation per tasklet")
-    validate = properties.Property(dtype=bool, default=True, desc='Validate the SDFG after splitting')
+    split_multi_output = properties.Property(
+        dtype=bool, default=True, desc="Split a multi-output tasklet into one tasklet per output"
+    )
+    split_operations = properties.Property(
+        dtype=bool, default=True, desc="Split each output's expression into one operation per tasklet"
+    )
+    validate = properties.Property(dtype=bool, default=True, desc="Validate the SDFG after splitting")
 
     def __init__(self, split_multi_output: bool = True, split_operations: bool = True, validate: bool = True) -> None:
         super().__init__()
@@ -809,9 +842,10 @@ class SplitTasklets(ppl.Pass):
         :returns: The set of identifier-like tokens in the string.
         """
         # Keep the delimiters so adjacent identifiers stay separated.
-        tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
-        return OrderedSet(token.strip() for token in tokens
-                          if token not in ["[", "]", "(", ")"] and token.isidentifier())
+        tokens = re.split(r"(\s+|[()\[\]])", string_to_check)
+        return OrderedSet(
+            token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()
+        )
 
     def _add_missing_symbols(self, sdfg: SDFG) -> OrderedSet:
         """
@@ -838,7 +872,7 @@ class SplitTasklets(ppl.Pass):
             for k, v in e.data.assignments.items():
                 if k not in sdfg.symbols:
                     symexpr = dace.symbolic.SymExpr(v)
-                    cast_name = getattr(getattr(symexpr, 'func', None), '__name__', None)
+                    cast_name = getattr(getattr(symexpr, "func", None), "__name__", None)
                     if cast_name in dace.dtypes.TYPECLASS_STRINGS:
                         cast_dtype = getattr(dace, cast_name)
                         if cast_dtype in dace.dtypes.INTEGER_TYPES:
@@ -937,10 +971,11 @@ class SplitTasklets(ppl.Pass):
             sdfg.validate()
         if not added_symbols and not split_names:
             return None
-        return {'added_symbols': added_symbols, 'split_tasklets': split_names}
+        return {"added_symbols": added_symbols, "split_tasklets": split_names}
 
-    def plan_outputs(self, sdfg: SDFG,
-                     symbol_lifted_data: Optional[OrderedSet]) -> List[Tuple[Any, dace.SDFGState, List[OutputPlan]]]:
+    def plan_outputs(
+        self, sdfg: SDFG, symbol_lifted_data: Optional[OrderedSet]
+    ) -> List[Tuple[Any, dace.SDFGState, List[OutputPlan]]]:
         """Plan the per-output split of every multi-output tasklet that splits soundly."""
         planned = []
         for node, state in sdfg.all_nodes_recursive():
@@ -1107,8 +1142,9 @@ class SplitTasklets(ppl.Pass):
             # Variables assigned by a comparison / boolean SSA statement hold a bool;
             # their split transient must be typed bool (mask / ITE-cond contract), not
             # the numeric ``input_type``.
-            bool_vars = OrderedSet(lhs for stmt in ssa_statements if _ssa_lhs_is_bool(stmt)
-                                   for lhs in _get_vars(stmt)[0])
+            bool_vars = OrderedSet(
+                lhs for stmt in ssa_statements if _ssa_lhs_is_bool(stmt) for lhs in _get_vars(stmt)[0]
+            )
             added_tasklets = list()
             for i, ssa_statement in enumerate(ssa_statements):  # Since SSA we are going to add in a line
                 lhs_vars, rhs_vars = _get_vars(ssa_statement)
@@ -1122,10 +1158,8 @@ class SplitTasklets(ppl.Pass):
                 assert len(lhs_vars) == 1
                 t = state.add_tasklet(
                     name=f"{tasklet.name}_split_{i}",
-                    inputs={v: None
-                            for v in rhs_vars},
-                    outputs={v: None
-                             for v in lhs_vars},
+                    inputs={v: None for v in rhs_vars},
+                    outputs={v: None for v in lhs_vars},
                     code=ssa_statement,
                 )
                 for rhs_var in rhs_vars:
@@ -1145,15 +1179,20 @@ class SplitTasklets(ppl.Pass):
                     matched_in_conns = OrderedSet()
                     for in_conn in t.in_connectors:
                         matching_in_edges = [ie for ie in tasklet_input_edges if ie.dst_conn == in_conn]
-                        assert len(
-                            matching_in_edges
-                        ) <= 1, f"Required 1 matching in edge always, found: {matching_in_edges}, original tasklet code: {tasklet.code.as_string}, current tasklet code: {t.code.as_string}"
+                        assert len(matching_in_edges) <= 1, (
+                            f"Required 1 matching in edge always, found: {matching_in_edges}, original tasklet code: {tasklet.code.as_string}, current tasklet code: {t.code.as_string}"
+                        )
 
                         if len(matching_in_edges) > 0:
                             matching_in_edge = matching_in_edges[0]
 
-                            state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
-                                           copy.deepcopy(matching_in_edge.data))
+                            state.add_edge(
+                                matching_in_edge.src,
+                                matching_in_edge.src_conn,
+                                t,
+                                in_conn,
+                                copy.deepcopy(matching_in_edge.data),
+                            )
                             matched_in_conns.add(in_conn)
 
                     for in_conn in list(t.in_connectors.keys()):
@@ -1185,14 +1224,24 @@ class SplitTasklets(ppl.Pass):
                                 assert array_name not in added_accesses
                                 added_accesses[array_name] = state.add_access(array_name)
                             state.add_edge(
-                                added_accesses[array_name], None, t, in_conn,
-                                dace.memlet.Memlet.from_array(dataname=array_name,
-                                                              datadesc=state.sdfg.arrays[array_name]))
+                                added_accesses[array_name],
+                                None,
+                                t,
+                                in_conn,
+                                dace.memlet.Memlet.from_array(
+                                    dataname=array_name, datadesc=state.sdfg.arrays[array_name]
+                                ),
+                            )
                         else:
                             assert len(matching_in_edges) == 1
                             matching_in_edge = matching_in_edges[0]
-                            state.add_edge(matching_in_edge.src, matching_in_edge.src_conn, t, in_conn,
-                                           copy.deepcopy(matching_in_edge.data))
+                            state.add_edge(
+                                matching_in_edge.src,
+                                matching_in_edge.src_conn,
+                                t,
+                                in_conn,
+                                copy.deepcopy(matching_in_edge.data),
+                            )
 
                 # Then do the outputs
                 if i == len(added_tasklets) - 1:  # last tasklet
@@ -1201,8 +1250,13 @@ class SplitTasklets(ppl.Pass):
                         matching_out_edges = [oe for oe in tasklet_output_edges if oe.src_conn == out_conn]
                         assert len(matching_out_edges) == 1
                         matching_out_edge = matching_out_edges[0]
-                        state.add_edge(t, out_conn, matching_out_edge.dst, matching_out_edge.dst_conn,
-                                       copy.deepcopy(matching_out_edge.data))
+                        state.add_edge(
+                            t,
+                            out_conn,
+                            matching_out_edge.dst,
+                            matching_out_edge.dst_conn,
+                            copy.deepcopy(matching_out_edge.data),
+                        )
                 else:
                     # Output should have been added already
                     assert len(t.out_connectors) == 1
@@ -1218,8 +1272,12 @@ class SplitTasklets(ppl.Pass):
                         assert array_name not in added_accesses
                         added_accesses[array_name] = state.add_access(array_name)
                     state.add_edge(
-                        t, out_conn, added_accesses[array_name], None,
-                        dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]))
+                        t,
+                        out_conn,
+                        added_accesses[array_name],
+                        None,
+                        dace.memlet.Memlet.from_array(dataname=array_name, datadesc=state.sdfg.arrays[array_name]),
+                    )
 
             # Anchor every sub-tasklet that ended up with NO incoming edge into the
             # original scope. A symbol-only SSA statement (``__t1 = double(N)``) has no

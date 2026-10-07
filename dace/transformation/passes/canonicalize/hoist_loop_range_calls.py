@@ -19,6 +19,7 @@ Runs AFTER canonicalization as a cleanup: the analysis passes need the call form
 symbol form, and this is the seam between them. Names are minted from a counter that never reuses a
 value, so two ranges can never collide on one symbol.
 """
+
 import itertools
 from collections.abc import Iterator
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,7 +36,7 @@ from dace.sdfg.narrowing import as_map_entry
 
 #: Prefix for a minted range symbol. ``__dace`` keeps it out of the ABI (``SDFG.arglist`` drops the
 #: prefix on both the scalar and free-symbol paths), which is what makes minting one free.
-RANGE_SYMBOL_PREFIX = '__dace_rng_'
+RANGE_SYMBOL_PREFIX = "__dace_rng_"
 
 
 def contains_call(expr: symbolic.SymbolicType) -> bool:
@@ -56,7 +57,7 @@ def contains_call(expr: symbolic.SymbolicType) -> bool:
 class HoistLoopRangeCalls(ppl.Pass):
     """Replace every call-bearing loop bound or step with a symbol assigned before the loop."""
 
-    CATEGORY: str = 'Canonicalization'
+    CATEGORY: str = "Canonicalization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.InterstateEdges | ppl.Modifies.Nodes
@@ -81,13 +82,20 @@ class HoistLoopRangeCalls(ppl.Pass):
     def _next_free_index(self, sdfg: SDFG) -> int:
         """One past the highest index any nested graph already used, so a name is never reused."""
         used = [
-            int(name[len(RANGE_SYMBOL_PREFIX):]) for nested in sdfg.all_sdfgs_recursive() for name in nested.symbols
-            if name.startswith(RANGE_SYMBOL_PREFIX) and name[len(RANGE_SYMBOL_PREFIX):].isdigit()
+            int(name[len(RANGE_SYMBOL_PREFIX) :])
+            for nested in sdfg.all_sdfgs_recursive()
+            for name in nested.symbols
+            if name.startswith(RANGE_SYMBOL_PREFIX) and name[len(RANGE_SYMBOL_PREFIX) :].isdigit()
         ]
         return max(used) + 1 if used else 0
 
-    def step_dtype(self, state: SDFGState, entry: nodes.MapEntry, step: symbolic.SymbolicType,
-                   resolver: scopes.ScopedSymbolResolver) -> dtypes.typeclass:
+    def step_dtype(
+        self,
+        state: SDFGState,
+        entry: nodes.MapEntry,
+        step: symbolic.SymbolicType,
+        resolver: scopes.ScopedSymbolResolver,
+    ) -> dtypes.typeclass:
         """The dtype the minted step symbol must be DECLARED with, so the declaration and the
         instance placed in the range are one symbol.
 
@@ -108,8 +116,9 @@ class HoistLoopRangeCalls(ppl.Pass):
             raise scopes.UndeterminedSymbolDType(str(step), state.sdfg.label)
         return dtypes.result_type_of(*operands)
 
-    def _bind_map_range(self, state: SDFGState, entry: nodes.MapEntry, counter: Iterator[int],
-                        resolver: scopes.ScopedSymbolResolver) -> int:
+    def _bind_map_range(
+        self, state: SDFGState, entry: nodes.MapEntry, counter: Iterator[int], resolver: scopes.ScopedSymbolResolver
+    ) -> int:
         sdfg = state.sdfg
         parent: ControlFlowRegion = state.parent_graph
         # An interstate assignment is evaluated at STATE scope, so a component may only be hoisted
@@ -130,11 +139,12 @@ class HoistLoopRangeCalls(ppl.Pass):
             # loop-invariant integer expression there, while the same call in either BOUND compiles
             # in both ``omp for`` and ``omp simd``. So the begin and end are left exactly as the
             # analysis passes built them, and only the stride is bound to a name.
-            if not contains_call(step) or ({str(sym)
-                                            for sym in symbolic.pystr_to_symbolic(str(step)).free_symbols} & enclosing):
+            if not contains_call(step) or (
+                {str(sym) for sym in symbolic.pystr_to_symbolic(str(step)).free_symbols} & enclosing
+            ):
                 ranges.append((begin, end, step))
                 continue
-            name = f'{RANGE_SYMBOL_PREFIX}{next(counter)}'
+            name = f"{RANGE_SYMBOL_PREFIX}{next(counter)}"
             dtype = self.step_dtype(state, entry, step, resolver)
             sdfg.add_symbol(name, dtype)
             assignments.append((name, symbolic.symstr(step)))
@@ -150,7 +160,7 @@ class HoistLoopRangeCalls(ppl.Pass):
         # silently miss the definition.
         in_edges = parent.in_edges(state)
         if not in_edges:
-            parent.add_state_before(state, label=f'{state.label}_range_bind')
+            parent.add_state_before(state, label=f"{state.label}_range_bind")
             in_edges = parent.in_edges(state)
         for edge in in_edges:
             for name, value in assignments:

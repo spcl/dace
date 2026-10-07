@@ -20,6 +20,7 @@ Source: P. Giannozzi et al., "QUANTUM ESPRESSO," J. Phys.: Condens. Matter 21 (2
 (exact-exchange/HSE US-augmentation); SC26 layout-algebra paper SS IV-C (Gather-Accumulate-Scatter
 isolation). Elementwise accumulate form so the layout is honest -- a BLAS ``zaxpy`` would hide it.
 """
+
 import numpy
 import dace
 

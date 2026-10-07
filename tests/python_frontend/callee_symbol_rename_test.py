@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests that a callee symbol bound to a caller expression is renamed consistently. """
+"""Tests that a callee symbol bound to a caller expression is renamed consistently."""
+
 import numpy as np
 
 import dace
 
-N = dace.symbol('N', dtype=dace.int64)
-M = dace.symbol('M', dtype=dace.int64)
+N = dace.symbol("N", dtype=dace.int64)
+M = dace.symbol("M", dtype=dace.int64)
 
 
 @dace.program
 def copy_callee(a: dace.float64[M]):
-    b = np.ndarray((M, ), dtype=np.float64)
+    b = np.ndarray((M,), dtype=np.float64)
     for j in dace.map[0:M]:
         b[j] = a[j]
     return b
@@ -32,5 +33,5 @@ def test_a_callee_symbol_mapped_to_a_loop_bound_is_renamed_everywhere():
     outer.to_sdfg(simplify=True).validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_a_callee_symbol_mapped_to_a_loop_bound_is_renamed_everywhere()

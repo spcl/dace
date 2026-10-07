@@ -21,6 +21,7 @@ thing.
 The A/B of ``optimizer.gpu_taskloop_heuristics`` is NOT here. A ratio is a measurement, not an
 assertion, and it belongs in ``tests/corpus/measure_gpu_arms.py``, which reports it.
 """
+
 import pytest
 
 from tests.corpus import corpus_suite as suite
@@ -28,14 +29,14 @@ from tests.corpus.measure_gpu_arms import offloaded_sdfg
 
 #: ``S``, not ``paper``: these assertions are about the graph the pass produces, and the pass does not
 #: read the extents. The perf shapes belong to the measurement driver.
-PRESET = 'S'
+PRESET = "S"
 #: The arm this suite asserts about: the canonicalize-then-offload pipeline with the taskloop knob
 #: at its shipped default, named rather than inherited -- a test that reads the ambient config
 #: asserts about whichever configuration the box happens to carry.
-ARM = 'canon'
+ARM = "canon"
 
 
-@pytest.mark.parametrize('kind,name', suite.kernels())
+@pytest.mark.parametrize("kind,name", suite.kernels())
 def test_the_offloaded_kernel_validates_and_emits(kind: str, name: str):
     """The pass leaves a graph that validates and emits for the GPU.
 
@@ -44,15 +45,15 @@ def test_the_offloaded_kernel_validates_and_emits(kind: str, name: str):
     ``Data container "alpha_gpu" is stored as StorageType.GPU_Global but accessed on host`` -- and it
     names the container, so a regression here says which one without a debugger.
     """
-    sdfg, _ = offloaded_sdfg(suite.make(kind, name, preset=PRESET), ARM, 'corpus_offload')
+    sdfg, _ = offloaded_sdfg(suite.make(kind, name, preset=PRESET), ARM, "corpus_offload")
     sdfg.validate()
-    assert sdfg.generate_code(), f'{kind}/{name} offloaded to nothing'
+    assert sdfg.generate_code(), f"{kind}/{name} offloaded to nothing"
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize('kind,name', suite.kernels())
+@pytest.mark.parametrize("kind,name", suite.kernels())
 def test_the_offloaded_kernel_matches_the_reference(kind: str, name: str):
     """Compiled and run on the device, the offloaded kernel computes what the corpus oracle does."""
     ctx = suite.make(kind, name, preset=PRESET)
-    sdfg, _ = offloaded_sdfg(ctx, ARM, 'corpus_offload')
-    assert suite.run_matches(ctx, sdfg), f'{kind}/{name} disagrees with its reference on the GPU'
+    sdfg, _ = offloaded_sdfg(ctx, ARM, "corpus_offload")
+    assert suite.run_matches(ctx, sdfg), f"{kind}/{name} disagrees with its reference on the GPU"

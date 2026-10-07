@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" A test for the MapToForLoop transformation. """
+"""A test for the MapToForLoop transformation."""
 
 import dace
 import numpy as np
@@ -52,9 +52,11 @@ def test_map2for_scalar_dynamic_range():
     loops = [b for s in sdfg.all_sdfgs_recursive() for b in s.all_control_flow_blocks() if isinstance(b, LoopRegion)]
     assert len(loops) == 1
     statements = [
-        loops[0].init_statement.as_string, loops[0].loop_condition.as_string, loops[0].update_statement.as_string
+        loops[0].init_statement.as_string,
+        loops[0].loop_condition.as_string,
+        loops[0].update_statement.as_string,
     ]
-    assert not any('lo[' in s or 'hi[' in s for s in statements), statements
+    assert not any("lo[" in s or "hi[" in s for s in statements), statements
 
     A = np.random.rand(20)
     expected = np.copy(A)
@@ -77,13 +79,13 @@ def test_lowering_one_map_never_rebuilds_the_cfg_list(monkeypatch):
             lists.append(sdfg.cfg_list)
         return result
 
-    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, 'reset_cfg_list', recorded)
+    monkeypatch.setattr(dace.sdfg.state.AbstractControlFlowRegion, "reset_cfg_list", recorded)
     assert sdfg.apply_transformations(MapToForLoop) == 1
     assert len(lists) == 1, len(lists)
     assert sdfg.cfg_list == list(sdfg.all_control_flow_regions(recursive=True))
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_map2for_overlap()
     test_map2for_scalar_dynamic_range()

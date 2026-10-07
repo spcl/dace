@@ -20,6 +20,7 @@ Modes covered:
     ``LOGICAL(1)`` ↔ uint8).  The expansion's cast tasklet widens
     to int32 before reducing.
 """
+
 import dace
 from dace.libraries.standard.nodes import CountLibraryNode
 

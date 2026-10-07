@@ -7,6 +7,7 @@ Testing input and output combinations for onnx Ops
 | Scalar CPU     | Shape     |
 | Array CPU      | Add       |
 """
+
 import pytest
 
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
@@ -40,11 +41,13 @@ def test_squeeze(simplify: bool, device):
     access_result = state.add_access("__return")
 
     # Tasklet to initialize axes
-    init_axes = state.add_tasklet("init_axes",
-                                  inputs={},
-                                  outputs={"__axes": dace.pointer(dace.int64)},
-                                  code="__axes[0] = 0;",
-                                  language=dace.Language.CPP)
+    init_axes = state.add_tasklet(
+        "init_axes",
+        inputs={},
+        outputs={"__axes": dace.pointer(dace.int64)},
+        code="__axes[0] = 0;",
+        language=dace.Language.CPP,
+    )
 
     state.add_edge(init_axes, "__axes", access_axes, None, sdfg.make_array_memlet("axes"))
 
@@ -70,7 +73,7 @@ def test_squeeze(simplify: bool, device):
     sdfg.expand_library_nodes()
     result = run_sdfg(sdfg, device, X_arr=X)
 
-    assert result.shape == (1, ), f"Expected shape (1,), got {result.shape}"
+    assert result.shape == (1,), f"Expected shape (1,), got {result.shape}"
     assert result[0] == X, f"Expected value {X}, got {result[0]}"
 
 
@@ -123,11 +126,13 @@ def test_unsqueeze(simplify: bool, device):
     access_result = state.add_access("__return")
 
     # Tasklet to initialize axes
-    init_axes = state.add_tasklet("init_axes",
-                                  inputs={},
-                                  outputs={"__axes": dace.pointer(dace.int64)},
-                                  code="__axes[0] = 0;",
-                                  language=dace.Language.CPP)
+    init_axes = state.add_tasklet(
+        "init_axes",
+        inputs={},
+        outputs={"__axes": dace.pointer(dace.int64)},
+        code="__axes[0] = 0;",
+        language=dace.Language.CPP,
+    )
 
     state.add_edge(init_axes, "__axes", access_axes, None, sdfg.make_array_memlet("axes"))
 
@@ -147,7 +152,7 @@ def test_unsqueeze(simplify: bool, device):
 
     result = run_sdfg(sdfg, device, X_arr=X)
 
-    assert result.shape == (1, ), f"Expected shape (1,), got {result.shape}"
+    assert result.shape == (1,), f"Expected shape (1,), got {result.shape}"
     assert X == result[0], f"Expected value {X}, got {result[0]}"
 
 
@@ -192,11 +197,13 @@ def test_add(scalars: bool, simplify: bool, device):
 
     if scalars:
         # Tasklet to initialize axes
-        init_axes = state.add_tasklet("init_axes",
-                                      inputs={},
-                                      outputs={"__axes": dace.pointer(dace.int64)},
-                                      code="__axes[0] = 0;",
-                                      language=dace.Language.CPP)
+        init_axes = state.add_tasklet(
+            "init_axes",
+            inputs={},
+            outputs={"__axes": dace.pointer(dace.int64)},
+            code="__axes[0] = 0;",
+            language=dace.Language.CPP,
+        )
 
         state.add_edge(init_axes, "__axes", access_axes, None, sdfg.make_array_memlet("axes"))
 

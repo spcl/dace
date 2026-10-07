@@ -9,7 +9,7 @@ def make_gpu_a_persistent(sdfg: dace.SDFG) -> None:
     """Make the device copy of ``A`` persistent; the experimental codegen lifts it out of the kernel under a
     name that merely contains the copy's name, ``gpu_A`` or ``A_gpu`` depending on the GPU transformation."""
     arrays = sdfg.cfg_list[-1].arrays
-    copy_name = next(name for name in arrays if 'gpu_A' in name or 'A_gpu' in name)
+    copy_name = next(name for name in arrays if "gpu_A" in name or "A_gpu" in name)
     arrays[copy_name].lifetime = dace.AllocationLifetime.Persistent
 
 
@@ -25,13 +25,13 @@ def _test_kernel_transient(persistent: bool):
 
     # Distinct per variant: these differ only in generated code, so sharing a name would put them in
     # one build folder and let two of them clobber each other's build when run in parallel.
-    top_sdfg = dace.SDFG('kernel_transient_persistent' if persistent else 'kernel_transient')
-    top_sdfg.arg_names = ['A']
-    top_sdfg.add_datadesc('A', copy.deepcopy(sdfg.arrays['A']))
+    top_sdfg = dace.SDFG("kernel_transient_persistent" if persistent else "kernel_transient")
+    top_sdfg.arg_names = ["A"]
+    top_sdfg.add_datadesc("A", copy.deepcopy(sdfg.arrays["A"]))
     state = top_sdfg.add_state()
-    n = state.add_nested_sdfg(sdfg, {}, {'A'})
-    w = state.add_write('A')
-    state.add_edge(n, 'A', w, None, dace.Memlet('A'))
+    n = state.add_nested_sdfg(sdfg, {}, {"A"})
+    w = state.add_write("A")
+    state.add_edge(n, "A", w, None, dace.Memlet("A"))
 
     if persistent:
         make_gpu_a_persistent(sdfg)
@@ -39,7 +39,7 @@ def _test_kernel_transient(persistent: bool):
     a = np.random.rand(128, 64)
     expected = np.copy(a)
     expected[:] = 1
-    with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='64,8,1'):
+    with dace.config.set_temporary("compiler", "cuda", "default_block_size", value="64,8,1"):
         top_sdfg(a)
 
     assert np.allclose(a, expected)
@@ -57,7 +57,7 @@ def _test_transient(persistent: bool):
             A[i, :] = gpu_A
 
     sdfg = transient.to_sdfg()
-    sdfg.name = 'nested_transient_persistent' if persistent else 'nested_transient'
+    sdfg.name = "nested_transient_persistent" if persistent else "nested_transient"
     sdfg.apply_gpu_transformations()
 
     if persistent:
@@ -66,7 +66,7 @@ def _test_transient(persistent: bool):
     a = np.random.rand(128, 64)
     expected = np.copy(a)
     expected[:] = 1
-    with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='64,8,1'):
+    with dace.config.set_temporary("compiler", "cuda", "default_block_size", value="64,8,1"):
         sdfg(a)
 
     assert np.allclose(a, expected)
@@ -89,11 +89,11 @@ def _test_double_transient(persistent: bool):
 
     # Simplify, but do not inline
     sdfg = transient.to_sdfg(simplify=False)
-    sdfg.name = 'double_transient_persistent' if persistent else 'double_transient'
+    sdfg.name = "double_transient_persistent" if persistent else "double_transient"
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.NestedSDFG):
             node.no_inline = True
-    if dace.Config.get_bool('optimizer', 'automatic_simplification'):
+    if dace.Config.get_bool("optimizer", "automatic_simplification"):
         sdfg.simplify()
 
     sdfg.apply_gpu_transformations()
@@ -104,7 +104,7 @@ def _test_double_transient(persistent: bool):
     a = np.random.rand(128, 64)
     expected = np.copy(a)
     expected[:] = 1
-    with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='64,8,1'):
+    with dace.config.set_temporary("compiler", "cuda", "default_block_size", value="64,8,1"):
         sdfg(a)
 
     assert np.allclose(a, expected)
@@ -140,7 +140,7 @@ def test_double_nested_kernel_transient_persistent():
     _test_double_transient(True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_kernel_transient()
     test_kernel_transient_persistent()
     test_nested_kernel_transient()

@@ -26,7 +26,7 @@ from dace.transformation.passes import canonicalize
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.interstate.loop_to_map import LoopToMap
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -87,8 +87,9 @@ def test_scop_fission_enables_more_parallelism():
     canon_maps = _num_map_entries(canon)
 
     assert canon_maps >= 1, "canonicalization produced no parallel map"
-    assert canon_maps >= baseline_maps, (f"canonicalization parallelized less than the fused baseline "
-                                         f"({canon_maps} < {baseline_maps})")
+    assert canon_maps >= baseline_maps, (
+        f"canonicalization parallelized less than the fused baseline ({canon_maps} < {baseline_maps})"
+    )
 
 
 if __name__ == "__main__":

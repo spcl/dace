@@ -32,11 +32,13 @@ from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from tests.corpus.polybench import polybench as PB
 
 #: The CPU canonicalize knob set the numerical corpus gate uses.
-CPU = dict(target='cpu',
-           peel_limit=4,
-           break_anti_dependence=True,
-           interchange_carry_with_map=True,
-           scatter_to_guarded_maps=True)
+CPU = dict(
+    target="cpu",
+    peel_limit=4,
+    break_anti_dependence=True,
+    interchange_carry_with_map=True,
+    scatter_to_guarded_maps=True,
+)
 
 #: Generated-code ceiling. Measured: 5105 bytes untransformed, 5861 after canon.
 #: A canon change that unrolled/fused/expanded this kernel into a compile-time
@@ -48,7 +50,7 @@ MAX_NODES = 500
 
 
 def _kernel():
-    kernels = PB.collect('k3mm')
+    kernels = PB.collect("k3mm")
     assert kernels, "polybench corpus does not expose a 'k3mm' kernel"
     return kernels[0]
 
@@ -57,7 +59,7 @@ def _canonicalized():
     """A canonicalized + CPU-finalized k3mm."""
     sdfg = PB.fresh_sdfg(_kernel())
     canonicalize(sdfg, validate=True, validate_all=False, **CPU)
-    finalize_for_target(sdfg, 'cpu')
+    finalize_for_target(sdfg, "cpu")
     return sdfg
 
 
@@ -78,15 +80,18 @@ def test_k3mm_canonicalize_does_not_explode():
     sdfg = _canonicalized()
 
     libs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.LibraryNode)]
-    assert len(libs) == 3, (f"expected k3mm's 3 chained MatMul library nodes to survive canon+finalize "
-                            f"unexpanded, got {len(libs)}: {[type(n).__name__ for n in libs]}")
+    assert len(libs) == 3, (
+        f"expected k3mm's 3 chained MatMul library nodes to survive canon+finalize "
+        f"unexpanded, got {len(libs)}: {[type(n).__name__ for n in libs]}"
+    )
 
     nodes = _node_count(sdfg)
     assert nodes <= MAX_NODES, f"canon exploded k3mm's SDFG: {nodes} nodes (> {MAX_NODES}); expected ~17"
 
     code_bytes = _code_bytes(sdfg)
-    assert code_bytes <= MAX_CODE_BYTES, (f"canon exploded k3mm's generated code: {code_bytes} bytes "
-                                          f"(> {MAX_CODE_BYTES}); expected ~5.9KB")
+    assert code_bytes <= MAX_CODE_BYTES, (
+        f"canon exploded k3mm's generated code: {code_bytes} bytes (> {MAX_CODE_BYTES}); expected ~5.9KB"
+    )
 
 
 def test_k3mm_canonicalized_compiles_and_is_value_preserving():
@@ -100,7 +105,7 @@ def test_k3mm_canonicalized_compiles_and_is_value_preserving():
     ref = PB.reference(kernel, arrays, psize)
 
     sdfg = _canonicalized()
-    sdfg.name = f'{sdfg.name}_compile_time_guard'
+    sdfg.name = f"{sdfg.name}_compile_time_guard"
     got = PB.run(sdfg, arrays, psize)
 
     assert PB.outputs_match(ref, got), "canonicalized k3mm is not value-preserving vs the polybench reference"

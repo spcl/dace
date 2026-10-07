@@ -5,6 +5,7 @@ Outside a map the frontend builds a real View for a slice; inside one it builds 
 connector instead, and that second path used to lose the write-through, the length-1 axis, the
 new axis and the source/destination aliasing.
 """
+
 import numpy as np
 import pytest
 
@@ -17,7 +18,7 @@ def nested_sdfg_node(sdfg: dace.SDFG) -> nodes.NestedSDFG:
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             return node
-    raise AssertionError('no nested SDFG in the parsed program')
+    raise AssertionError("no nested SDFG in the parsed program")
 
 
 @dace.program
@@ -33,7 +34,7 @@ def test_view_write_in_map():
 
     # The connector is the container (No-View nested SDFGs): the row write leaves through ``A`` itself
     nsdfg = nested_sdfg_node(sdfg)
-    assert 'A' in nsdfg.out_connectors, 'the write through the sliced row must leave the map body through A'
+    assert "A" in nsdfg.out_connectors, "the write through the sliced row must leave the map body through A"
 
     A = np.arange(64, dtype=np.float64).reshape(8, 8).copy()
     B = np.arange(1, 9, dtype=np.float64).copy()
@@ -91,8 +92,9 @@ def index_in_map(A: dace.float64[4, 4, 4], B: dace.float64[4, 4, 4], out: dace.f
 def test_len1_slice_keeps_its_axis_in_map():
     sdfg = len1_slice_in_map.to_sdfg(simplify=False)
     inner = [sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg][0]
-    assert any(tuple(desc.shape) == (4, 1) for desc in inner.arrays.values()), \
-        f'the length-1 axis was squeezed away: {[tuple(d.shape) for d in inner.arrays.values()]}'
+    assert any(tuple(desc.shape) == (4, 1) for desc in inner.arrays.values()), (
+        f"the length-1 axis was squeezed away: {[tuple(d.shape) for d in inner.arrays.values()]}"
+    )
 
     A = np.arange(64, dtype=np.float64).reshape(4, 4, 4).copy()
     B = (np.arange(64, dtype=np.float64).reshape(4, 4, 4) % 7 + 1).copy()
@@ -122,7 +124,7 @@ def test_newaxis_in_map():
     sdfg = newaxis_in_map.to_sdfg(simplify=False)
     inner = [sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg][0]
     shapes = [tuple(desc.shape) for desc in inner.arrays.values()]
-    assert (8, 1) in shapes and (1, 8) in shapes, f'np.newaxis was dropped: {shapes}'
+    assert (8, 1) in shapes and (1, 8) in shapes, f"np.newaxis was dropped: {shapes}"
 
     A = np.arange(32, dtype=np.float64).reshape(4, 8).copy()
     B = np.arange(1, 33, dtype=np.float64).reshape(4, 8).copy()
@@ -141,8 +143,9 @@ def test_overlapping_slice_copy_in_map():
     # Both sides become connectors that POINT INTO the same row, so the copy needs a temporary.
     sdfg = overlapping_row_copy_in_map.to_sdfg(simplify=False)
     inner = [sd for sd in sdfg.all_sdfgs_recursive() if sd is not sdfg][0]
-    assert any(desc.transient for desc in inner.arrays.values()), \
-        'the overlapping self-copy was left aliased, with no temporary in between'
+    assert any(desc.transient for desc in inner.arrays.values()), (
+        "the overlapping self-copy was left aliased, with no temporary in between"
+    )
 
     A = np.arange(64, dtype=np.float64).reshape(8, 8).copy()
     expected = A.copy()
@@ -158,7 +161,7 @@ def negative_step_in_map(A: dace.float64[8, 8], out: dace.float64[8, 8]):
 
 
 def test_negative_step_in_map_is_refused():
-    with pytest.raises(DaceSyntaxError, match='Negative strides'):
+    with pytest.raises(DaceSyntaxError, match="Negative strides"):
         negative_step_in_map.to_sdfg(simplify=False)
 
 
@@ -172,14 +175,18 @@ def test_fancy_index_in_map():
     sdfg = fancy_index_in_map.to_sdfg(simplify=False)
     sdfg.validate()
 
-    found = [(n, p) for n, p in sdfg.all_nodes_recursive()
-             if isinstance(n, nodes.Tasklet) and n.label.startswith('indirection')]
-    assert found, 'advanced indexing in a map body must lower to an indirection tasklet'
+    found = [
+        (n, p)
+        for n, p in sdfg.all_nodes_recursive()
+        if isinstance(n, nodes.Tasklet) and n.label.startswith("indirection")
+    ]
+    assert found, "advanced indexing in a map body must lower to an indirection tasklet"
     for tasklet, state in found:
         for edge in state.in_edges(tasklet):
-            if edge.dst_conn.startswith('__inp'):
-                assert edge.data.subset.num_elements() == 1, \
-                    'the index fed to the tasklet must be one element, not the whole index array'
+            if edge.dst_conn.startswith("__inp"):
+                assert edge.data.subset.num_elements() == 1, (
+                    "the index fed to the tasklet must be one element, not the whole index array"
+                )
 
     A = np.arange(32, dtype=np.float64).reshape(4, 8).copy()
     idx = np.array([5, 0, 2], dtype=np.int64)
@@ -210,7 +217,7 @@ def boolean_mask_read_in_map(A: dace.float64[4, 8], m: dace.bool[4, 8], out: dac
 
 
 def test_boolean_mask_read_in_map_is_refused():
-    with pytest.raises(IndexError, match='Boolean array indexing'):
+    with pytest.raises(IndexError, match="Boolean array indexing"):
         boolean_mask_read_in_map.to_sdfg(simplify=False)
 
 
@@ -228,7 +235,7 @@ def test_subscripted_binop_in_map():
     assert np.allclose(out, (A + B)[:, 2])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_view_write_in_map()
     test_view_of_view_write_in_map()
     test_augmented_view_write_in_map()

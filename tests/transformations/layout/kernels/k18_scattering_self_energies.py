@@ -25,6 +25,7 @@ Source: A. N. Ziogas et al., "A Data-Centric Approach to Extreme-Scale Ab initio
 Transport Simulations," SC'19 (Gordon Bell finalist; arXiv:1912.10024); npbench ``scattering_self_energies``
 (dense_linear_algebra); SC26 layout paper.
 """
+
 import numpy
 import dace
 
@@ -35,9 +36,13 @@ Nkz, NB, Nqz, Nw, Norb, N3D = 2, 2, 2, 2, 3, 2  # small compile-time block/momen
 
 
 @dace.program
-def sselfeng(neigh_idx: dace.int32[NA, NB], dH: dace.complex128[NA, NB, N3D, Norb,
-                                                                Norb], G: dace.complex128[Nkz, NE, NA, Norb, Norb],
-             D: dace.complex128[Nqz, Nw, NA, NB, N3D, N3D], Sigma: dace.complex128[Nkz, NE, NA, Norb, Norb]):
+def sselfeng(
+    neigh_idx: dace.int32[NA, NB],
+    dH: dace.complex128[NA, NB, N3D, Norb, Norb],
+    G: dace.complex128[Nkz, NE, NA, Norb, Norb],
+    D: dace.complex128[Nqz, Nw, NA, NB, N3D, N3D],
+    Sigma: dace.complex128[Nkz, NE, NA, Norb, Norb],
+):
     for k in range(Nkz):
         for E in range(NE):
             for q in range(Nqz):
@@ -98,13 +103,15 @@ def run_closure(inputs, na, ne):
 
     def run(sdfg):
         Sigma = numpy.zeros([Nkz, ne, na, Norb, Norb], dtype=numpy.complex128)
-        sdfg(neigh_idx=inputs["neigh_idx"].copy(),
-             dH=inputs["dH"].copy(),
-             G=inputs["G"].copy(),
-             D=inputs["D"].copy(),
-             Sigma=Sigma,
-             NA=na,
-             NE=ne)
+        sdfg(
+            neigh_idx=inputs["neigh_idx"].copy(),
+            dH=inputs["dH"].copy(),
+            G=inputs["G"].copy(),
+            D=inputs["D"].copy(),
+            Sigma=Sigma,
+            NA=na,
+            NE=ne,
+        )
         return {"Sigma": Sigma}
 
     return run

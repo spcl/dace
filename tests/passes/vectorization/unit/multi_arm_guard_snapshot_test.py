@@ -5,6 +5,7 @@
 ``if not c0 and not c1: A2`` re-reads the guard data after ``A0`` wrote it, so a lane whose update
 flips the guards takes a second arm as well.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -42,10 +43,12 @@ def add_chain(body: dace.SDFG, guards: tuple[str | None, ...]) -> tuple[Conditio
     return chain, states
 
 
-def compute(state: dace.SDFGState, source: str | None, source_subset: str, target: str, target_subset: str,
-            expression: str) -> None:
-    tasklet = state.add_tasklet(f"{target}_from_{source}", {"x": None} if source else {}, {"y": None},
-                                f"y = {expression}")
+def compute(
+    state: dace.SDFGState, source: str | None, source_subset: str, target: str, target_subset: str, expression: str
+) -> None:
+    tasklet = state.add_tasklet(
+        f"{target}_from_{source}", {"x": None} if source else {}, {"y": None}, f"y = {expression}"
+    )
     if source:
         state.add_edge(state.add_read(source), None, tasklet, "x", dace.Memlet(f"{source}[{source_subset}]"))
     state.add_edge(tasklet, "y", state.add_write(target), None, dace.Memlet(f"{target}[{target_subset}]"))
@@ -60,17 +63,13 @@ def lanes_program(name: str, body: dace.SDFG, inputs: tuple[str, ...], outputs: 
     map_entry, map_exit = state.add_map("lanes", {"i": f"0:{LENGTH}"})
     nsdfg = state.add_nested_sdfg(body, dict.fromkeys(inputs), dict.fromkeys(outputs), {"i": "i"})
     for array in inputs:
-        state.add_memlet_path(state.add_read(array),
-                              map_entry,
-                              nsdfg,
-                              dst_conn=array,
-                              memlet=dace.Memlet(f"{array}[0:{LENGTH}]"))
+        state.add_memlet_path(
+            state.add_read(array), map_entry, nsdfg, dst_conn=array, memlet=dace.Memlet(f"{array}[0:{LENGTH}]")
+        )
     for array in outputs:
-        state.add_memlet_path(nsdfg,
-                              map_exit,
-                              state.add_write(array),
-                              src_conn=array,
-                              memlet=dace.Memlet(f"{array}[0:{LENGTH}]"))
+        state.add_memlet_path(
+            nsdfg, map_exit, state.add_write(array), src_conn=array, memlet=dace.Memlet(f"{array}[0:{LENGTH}]")
+        )
     sdfg.validate()
     return sdfg
 
@@ -106,13 +105,16 @@ def test_every_flattened_guard_reads_a_snapshot_taken_before_the_arms():
     blocks = [block for block in body.all_control_flow_blocks() if isinstance(block, ConditionalBlock)]
     assert len(blocks) == 3 and all(len(block.branches) == 1 for block in blocks)
     guards = [block.branches[0][0].as_string for block in blocks]
-    guard_arrays = set().union(*(symbolic.symbols_in_code(guard, potential_symbols=set(body.arrays))
-                                 for guard in guards))
+    guard_arrays = set().union(
+        *(symbolic.symbols_in_code(guard, potential_symbols=set(body.arrays)) for guard in guards)
+    )
     assert guard_arrays, guards
     assert all(body.arrays[name].transient and body.arrays[name].dtype == dace.bool_ for name in guard_arrays), guards
     snapshots = [
-        block for block in body.nodes() if isinstance(block, dace.SDFGState) and any(
-            isinstance(node, nodes.AccessNode) and node.data == "a" for node in block.nodes())
+        block
+        for block in body.nodes()
+        if isinstance(block, dace.SDFGState)
+        and any(isinstance(node, nodes.AccessNode) and node.data == "a" for node in block.nodes())
     ]
     assert len(snapshots) == 2, [block.label for block in snapshots]
 

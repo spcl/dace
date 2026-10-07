@@ -16,11 +16,12 @@ silent miscompile far from the loop this was built for. The soundness half of th
 the important half: it pins the facts the relaxation must REFUSE, including ones that are true for
 most values of ``N`` but false for some.
 """
+
 import pytest
 
 from dace import subsets, symbolic
 
-N = symbolic.pystr_to_symbolic('N')
+N = symbolic.pystr_to_symbolic("N")
 FLOOR = symbolic.int_floor(N, 2)
 CEIL = symbolic.int_ceil(N, 2)
 
@@ -49,7 +50,7 @@ def test_relaxation_refuses_plainly_false_and_undecidable_claims():
     assert symbolic.provably_nonnegative(-N) is False
     assert symbolic.provably_nonnegative(N - 5) is False
     assert symbolic.provably_nonnegative(FLOOR - N) is False
-    assert symbolic.provably_nonnegative(N - symbolic.pystr_to_symbolic('KOFF')) is False
+    assert symbolic.provably_nonnegative(N - symbolic.pystr_to_symbolic("KOFF")) is False
 
 
 def test_relaxation_refuses_a_rounding_it_cannot_bound_one_sidedly():
@@ -73,7 +74,7 @@ def test_has_rounding_gates_the_expensive_path():
     assert symbolic.has_rounding(N - 2 * FLOOR) is True
     assert symbolic.has_rounding(CEIL) is True
     assert symbolic.has_rounding(N - 1) is False
-    assert symbolic.has_rounding(symbolic.pystr_to_symbolic('5')) is False
+    assert symbolic.has_rounding(symbolic.pystr_to_symbolic("5")) is False
 
 
 def _rng(begin, end):
@@ -99,7 +100,7 @@ def test_intersects_still_refuses_to_separate_ranges_that_really_touch():
     assert subsets.intersects(_rng(0, N - 1), _rng(0, N - 1)) is True
 
 
-@pytest.mark.parametrize('n', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 100, 101])
+@pytest.mark.parametrize("n", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 100, 101])
 def test_the_proved_facts_hold_when_evaluated(n):
     """Executable check of the two proofs above: the relaxation is only sound if the facts it
     proves are true for every concrete ``N``, so evaluate them rather than trust the algebra."""
@@ -113,7 +114,7 @@ def test_the_proved_facts_hold_when_evaluated(n):
     assert not (upper_writes & upper_reads)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_relaxation_proves_both_halves_of_a_midpoint_split_disjoint()
     test_relaxation_refuses_facts_that_fail_at_one_parity()
     test_relaxation_refuses_plainly_false_and_undecidable_claims()
@@ -124,4 +125,4 @@ if __name__ == '__main__':
     test_intersects_still_refuses_to_separate_ranges_that_really_touch()
     for _n in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 100, 101]:
         test_the_proved_facts_hold_when_evaluated(_n)
-    print('OK')
+    print("OK")

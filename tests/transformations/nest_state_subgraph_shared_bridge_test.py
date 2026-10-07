@@ -9,6 +9,7 @@ pointing at nothing (``KeyError`` the next time anything looked the descriptor u
 that other body in turn, which is exactly what the tile remainder tail does after
 ``SplitMapForTileRemainder`` copies a body).
 """
+
 import dace
 import pytest
 from dace.sdfg.graph import SubgraphView
@@ -21,21 +22,21 @@ def _two_bodies_sharing_a_bridge_name():
     Mirrors a split map: the main body and the remainder tail are separate node sets that both
     name the same bridge transient on a tasklet-to-tasklet edge.
     """
-    sdfg = dace.SDFG('shared_bridge')
-    sdfg.add_array('a', [2], dace.float64)
-    sdfg.add_array('b', [2], dace.float64)
-    sdfg.add_transient('bridge', [1], dace.float64)
-    state = sdfg.add_state('main', is_start_block=True)
+    sdfg = dace.SDFG("shared_bridge")
+    sdfg.add_array("a", [2], dace.float64)
+    sdfg.add_array("b", [2], dace.float64)
+    sdfg.add_transient("bridge", [1], dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
 
     made = []
     for i in (0, 1):
-        producer = state.add_tasklet(f'produce_{i}', {'v'}, {'o'}, 'o = v * 2')
-        consumer = state.add_tasklet(f'consume_{i}', {'v'}, {'o'}, 'o = v + 1')
-        state.add_edge(state.add_access('a'), None, producer, 'v', dace.Memlet(f'a[{i}]'))
-        bridge = state.add_access('bridge')
-        state.add_edge(producer, 'o', bridge, None, dace.Memlet('bridge[0]'))
-        state.add_edge(bridge, None, consumer, 'v', dace.Memlet('bridge[0]'))
-        state.add_edge(consumer, 'o', state.add_access('b'), None, dace.Memlet(f'b[{i}]'))
+        producer = state.add_tasklet(f"produce_{i}", {"v"}, {"o"}, "o = v * 2")
+        consumer = state.add_tasklet(f"consume_{i}", {"v"}, {"o"}, "o = v + 1")
+        state.add_edge(state.add_access("a"), None, producer, "v", dace.Memlet(f"a[{i}]"))
+        bridge = state.add_access("bridge")
+        state.add_edge(producer, "o", bridge, None, dace.Memlet("bridge[0]"))
+        state.add_edge(bridge, None, consumer, "v", dace.Memlet("bridge[0]"))
+        state.add_edge(consumer, "o", state.add_access("b"), None, dace.Memlet(f"b[{i}]"))
         made.append((producer, bridge, consumer))
     return sdfg, state, made
 
@@ -43,16 +44,16 @@ def _two_bodies_sharing_a_bridge_name():
 def test_bridge_transient_survives_when_another_body_still_names_it():
     sdfg, state, made = _two_bodies_sharing_a_bridge_name()
 
-    nest_state_subgraph(sdfg, state, SubgraphView(state, list(made[0])), name='first_body')
+    nest_state_subgraph(sdfg, state, SubgraphView(state, list(made[0])), name="first_body")
 
-    assert 'bridge' in sdfg.arrays, 'the second body still names bridge -- it must not be deleted'
+    assert "bridge" in sdfg.arrays, "the second body still names bridge -- it must not be deleted"
     # And the nested SDFG got its own copy, so the moved body is self-contained.
     nested = [n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     assert len(nested) == 1
-    assert 'bridge' in nested[0].sdfg.arrays
+    assert "bridge" in nested[0].sdfg.arrays
 
     # The second body nests too, which is what used to raise KeyError.
-    nest_state_subgraph(sdfg, state, SubgraphView(state, list(made[1])), name='second_body')
+    nest_state_subgraph(sdfg, state, SubgraphView(state, list(made[1])), name="second_body")
     sdfg.validate()
 
 
@@ -63,9 +64,9 @@ def test_an_exclusive_bridge_transient_is_still_moved_out():
     for node in made[1]:
         state.remove_node(node)
 
-    nest_state_subgraph(sdfg, state, SubgraphView(state, list(made[0])), name='only_body')
-    assert 'bridge' not in sdfg.arrays, 'a subgraph-local transient still moves into the nested SDFG'
+    nest_state_subgraph(sdfg, state, SubgraphView(state, list(made[0])), name="only_body")
+    assert "bridge" not in sdfg.arrays, "a subgraph-local transient still moves into the nested SDFG"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

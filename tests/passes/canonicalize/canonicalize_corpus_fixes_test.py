@@ -18,6 +18,7 @@ miscompiles (atax/cholesky/correlation/covariance numerically wrong, correlation
 until a value-preserving fix is found. Do not re-add their tests without a numeric
 (canon-output == baseline-output) assertion.
 """
+
 import os
 
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
@@ -65,17 +66,21 @@ def test_finalize_does_not_persist_reduction_scalar():
         return a + s
 
     sdfg = reduce_prog.to_sdfg(simplify=False)
-    sdfg = canonicalize(sdfg,
-                        validate=True,
-                        target="cpu",
-                        peel_limit=4,
-                        break_anti_dependence=True,
-                        interchange_carry_with_map=True,
-                        scatter_to_guarded_maps=True)
+    sdfg = canonicalize(
+        sdfg,
+        validate=True,
+        target="cpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+    )
     finalize_for_target(sdfg, "cpu")
 
     persistent_scalars = [
-        f"{sd.label}:{nm}" for sd in sdfg.all_sdfgs_recursive() for nm, desc in sd.arrays.items()
+        f"{sd.label}:{nm}"
+        for sd in sdfg.all_sdfgs_recursive()
+        for nm, desc in sd.arrays.items()
         if desc.transient and desc.total_size == 1 and desc.lifetime == dace.dtypes.AllocationLifetime.Persistent
     ]
     assert not persistent_scalars, f"finalize left size-1 transient(s) persistent: {persistent_scalars}"
@@ -119,27 +124,33 @@ def test_finalize_selects_openmp_for_reduce():
             return npfn(a)
 
         sdfg = reducer.to_sdfg(simplify=False)
-        sdfg = canonicalize(sdfg,
-                            validate=True,
-                            target="cpu",
-                            peel_limit=4,
-                            break_anti_dependence=True,
-                            interchange_carry_with_map=True,
-                            scatter_to_guarded_maps=True)
+        sdfg = canonicalize(
+            sdfg,
+            validate=True,
+            target="cpu",
+            peel_limit=4,
+            break_anti_dependence=True,
+            interchange_carry_with_map=True,
+            scatter_to_guarded_maps=True,
+        )
         finalize_for_target(sdfg, "cpu")
 
         reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
         assert reduces, f"{op}: canonicalize should lift the loop-reduction to a Reduce library node"
-        assert all(n.implementation == "CPU" for n in reduces), \
+        assert all(n.implementation == "CPU" for n in reduces), (
             f"{op}: Reduce must be CPU, got {[n.implementation for n in reduces]}"
+        )
 
         code = sdfg.generate_code()[0].clean_code
-        assert f"::dace::reduce::{op}(" in code, \
+        assert f"::dace::reduce::{op}(" in code, (
             f"{op}: no ::dace::reduce::{op}() call -- the reduce did not lower through the runtime facility"
-        assert f"::dace::reduce::seq::{op}(" not in code, \
+        )
+        assert f"::dace::reduce::seq::{op}(" not in code, (
             f"{op}: sequential entry point emitted for a reduction that is the outermost parallel work"
-        assert f"reduction({clause_op} : acc)" in header_src, \
+        )
+        assert f"reduction({clause_op} : acc)" in header_src, (
             f"{op}: reduction({clause_op}:...) clause dropped from dace/reduction.h"
+        )
         assert "reduce_atomic" not in code, f"{op}: reduction must not fall back to a per-element atomic"
         assert "#pragma omp atomic" not in code, f"{op}: reduction must not fall back to omp atomic"
         assert "#pragma omp critical" not in code, f"{op}: reduction must not fall back to omp critical"
@@ -168,19 +179,22 @@ def test_finalize_selects_openmp_scan_for_prefix_scan():
             out[i] = out[i - 1] + a[i]
 
     sdfg = prefix_sum.to_sdfg(simplify=False)
-    sdfg = canonicalize(sdfg,
-                        validate=True,
-                        target="cpu",
-                        peel_limit=4,
-                        break_anti_dependence=True,
-                        interchange_carry_with_map=True,
-                        scatter_to_guarded_maps=True)
+    sdfg = canonicalize(
+        sdfg,
+        validate=True,
+        target="cpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+    )
     finalize_for_target(sdfg, "cpu")
 
     scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
     assert scans, "canonicalize should lift the prefix-sum loop to a Scan library node"
-    assert all(n.implementation == "CPU" for n in scans), \
+    assert all(n.implementation == "CPU" for n in scans), (
         f"Scan must use the parallel CPU (OpenMP-scan) expansion, got {[n.implementation for n in scans]}"
+    )
 
     rng = np.random.default_rng(0)
     a = rng.random(4096)
@@ -211,21 +225,25 @@ def test_finalize_nested_reduction_stays_sequential():
             y[i] = acc
 
     sdfg = rowsum.to_sdfg(simplify=False)
-    sdfg = canonicalize(sdfg,
-                        validate=True,
-                        target="cpu",
-                        peel_limit=4,
-                        break_anti_dependence=True,
-                        interchange_carry_with_map=True,
-                        scatter_to_guarded_maps=True)
+    sdfg = canonicalize(
+        sdfg,
+        validate=True,
+        target="cpu",
+        peel_limit=4,
+        break_anti_dependence=True,
+        interchange_carry_with_map=True,
+        scatter_to_guarded_maps=True,
+    )
     finalize_for_target(sdfg, "cpu")
 
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
-    assert all(n.implementation != "CPU" for n in reduces), \
+    assert all(n.implementation != "CPU" for n in reduces), (
         f"a nested (Sequential-scheduled) Reduce must not be CPU, got {[n.implementation for n in reduces]}"
+    )
     code = sdfg.generate_code()[0].clean_code
-    assert code.count("#pragma omp parallel") == 1, \
+    assert code.count("#pragma omp parallel") == 1, (
         f"expected one parallel region (outer map), got {code.count('#pragma omp parallel')} (nested reduction?)"
+    )
 
     rng = np.random.default_rng(0)
     A = rng.random((256, 256))
@@ -273,11 +291,13 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
     from dace.transformation.passes.cpu_specialization import cpu_specialize
     from dace.transformation.passes.cpu_specialization.sequentialize_unprofitable_parallel_scopes import (
-        min_work_per_region)
+        min_work_per_region,
+    )
 
     @dace.program
-    def nussinov_shaped(A: dace.float64[REDUCTION_EXTENT, REDUCTION_EXTENT], out: dace.float64[REDUCTION_EXTENT,
-                                                                                               REDUCTION_EXTENT]):
+    def nussinov_shaped(
+        A: dace.float64[REDUCTION_EXTENT, REDUCTION_EXTENT], out: dace.float64[REDUCTION_EXTENT, REDUCTION_EXTENT]
+    ):
         for i in range(1, REDUCTION_EXTENT):
             for j in range(1, REDUCTION_EXTENT):
                 out[i, j] = out[i, j - 1] + out[i - 1, j]  # carried on BOTH i and j -> both sequential
@@ -285,44 +305,53 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
                     # in-place compute-then-accumulate max-reduction over k (nussinov's shape)
                     out[i, j] = max(out[i, j], A[i, k] + A[k, j])
 
-    with dace.config.set_temporary('compiler', 'cpu', 'parallel_min_work_per_region', value=REDUCTION_BREAK_EVEN):
+    with dace.config.set_temporary("compiler", "cpu", "parallel_min_work_per_region", value=REDUCTION_BREAK_EVEN):
         assert min_work_per_region() == REDUCTION_BREAK_EVEN, (
-            'DACE_compiler_cpu_parallel_min_work_per_region overrides the pin, so the reduction no '
-            'longer sits below the break-even; unset it to run this test')
+            "DACE_compiler_cpu_parallel_min_work_per_region overrides the pin, so the reduction no "
+            "longer sits below the break-even; unset it to run this test"
+        )
         sdfg = nussinov_shaped.to_sdfg(simplify=False)
-        sdfg = canonicalize(sdfg,
-                            validate=True,
-                            target="cpu",
-                            peel_limit=4,
-                            break_anti_dependence=True,
-                            interchange_carry_with_map=True,
-                            scatter_to_guarded_maps=True)
+        sdfg = canonicalize(
+            sdfg,
+            validate=True,
+            target="cpu",
+            peel_limit=4,
+            break_anti_dependence=True,
+            interchange_carry_with_map=True,
+            scatter_to_guarded_maps=True,
+        )
 
-        assert any(isinstance(c, LoopRegion) for c in sdfg.all_control_flow_regions(recursive=True)), \
+        assert any(isinstance(c, LoopRegion) for c in sdfg.all_control_flow_regions(recursive=True)), (
             "the carried nest collapsed entirely; this test no longer exercises the cost model"
+        )
 
         # The k axis is the only map spanning the whole extent -- a wavefront map, where WavefrontSkew
         # made one, spans a diagonal whose length is symbolic in the skew step.
         def reduction_map():
             over_k = [
-                n.map for n, _ in sdfg.all_nodes_recursive()
+                n.map
+                for n, _ in sdfg.all_nodes_recursive()
                 if isinstance(n, nd.MapEntry) and n.map.range.num_elements() == REDUCTION_EXTENT
             ]
-            assert len(over_k) == 1, \
+            assert len(over_k) == 1, (
                 f"expected exactly one map over the k axis, got {[(m.params, str(m.range)) for m in over_k]}"
+            )
             return over_k[0]
 
-        assert reduction_map().schedule != dace.dtypes.ScheduleType.Sequential, \
+        assert reduction_map().schedule != dace.dtypes.ScheduleType.Sequential, (
             "canonicalization decided the CPU's fork/join question; it must leave the choice parallel"
+        )
 
         cpu_specialize(sdfg)
-        assert reduction_map().schedule == dace.dtypes.ScheduleType.Sequential, \
+        assert reduction_map().schedule == dace.dtypes.ScheduleType.Sequential, (
             f"the k-reduction kept its own region per (i, j): {reduction_map().schedule}"
+        )
 
         finalize_for_target(sdfg, "cpu")
         code = sdfg.generate_code()[0].clean_code
-        assert "reduction(max:" not in code, \
+        assert "reduction(max:" not in code, (
             "codegen emitted a per-(i, j) OpenMP max reduction despite the Sequential schedule"
+        )
 
         csdfg = sdfg.compile()
 
@@ -345,10 +374,9 @@ def test_finalize_never_selects_mkl_prefers_openblas():
     """The canonicalize perf tail must never pick ``MKL`` -- it prefers OpenBLAS (and OpenMP /
     HPTT / cuBLAS). A large matmul lowers to OpenBLAS, and no library node is left on ``MKL``."""
     from dace.sdfg import nodes
-    from dace.transformation.passes.canonicalize.finalize import (finalize_for_target,
-                                                                  canonicalize_fast_library_priority)
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target, canonicalize_fast_library_priority
 
-    assert 'MKL' not in canonicalize_fast_library_priority(dace.dtypes.DeviceType.CPU)
+    assert "MKL" not in canonicalize_fast_library_priority(dace.dtypes.DeviceType.CPU)
 
     Nsym = dace.symbol("N")
 
@@ -359,8 +387,8 @@ def test_finalize_never_selects_mkl_prefers_openblas():
     sdfg = gemm.to_sdfg(simplify=True)
     finalize_for_target(sdfg, "cpu", validate=False)
     lib_impls = [n.implementation for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)]
-    assert 'MKL' not in lib_impls, f"MKL must never be selected, got {lib_impls}"
-    assert 'OpenBLAS' in lib_impls, f"large matmul should lower to OpenBLAS, got {lib_impls}"
+    assert "MKL" not in lib_impls, f"MKL must never be selected, got {lib_impls}"
+    assert "OpenBLAS" in lib_impls, f"large matmul should lower to OpenBLAS, got {lib_impls}"
 
 
 def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
@@ -388,7 +416,8 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     finalize_for_target(sdfg, "gpu", validate=True)
 
     gpu_maps = [
-        n for n, _ in sdfg.all_nodes_recursive()
+        n
+        for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     ]
     assert gpu_maps, "offload_to_gpu should move the loop nest to a GPU_Device map"
@@ -397,8 +426,9 @@ def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
     # avoid. Both extents are symbolic here, so the domain counts as square and takes the default
     # depth. Asked of the backend rather than hardcoded -- a CDNA wavefront is 64 lanes, not 32.
     want = [warp_width(), WARPS_PER_2D_BLOCK, 1]
-    assert any(n.map.gpu_block_size == want for n in gpu_maps), \
+    assert any(n.map.gpu_block_size == want for n in gpu_maps), (
         f"N x N map should get a {want[0]}x{want[1]} block, got {[n.map.gpu_block_size for n in gpu_maps]}"
+    )
     titles = [c.title for c in sdfg.generate_code()]
     assert any("cuda" in t.lower() for t in titles), f"expected CUDA codegen, got {titles}"
 
@@ -433,7 +463,9 @@ def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():
     assert isinstance(sdfg.arrays["acc"], ddata.Scalar), "len-1 transient array must become a Scalar"
     assert isinstance(sdfg.arrays["keep"], ddata.Array), "non-transient len-1 array must stay an Array"
     leftover = [
-        f"{sd.label}:{n}" for sd in sdfg.all_sdfgs_recursive() for n, d in sd.arrays.items()
+        f"{sd.label}:{n}"
+        for sd in sdfg.all_sdfgs_recursive()
+        for n, d in sd.arrays.items()
         if d.transient and isinstance(d, ddata.Array) and d.total_size == 1
     ]
     assert not leftover, f"len-1 transient arrays left unconverted: {leftover}"

@@ -6,17 +6,24 @@ First per-map analysis step in the v2 orchestrator. Loud failure on any inner ma
 be K-dim tiled (step != 1, < K params, ...) so error points at the offending map, not a
 confusing downstream masked-tail failure.
 """
+
 from typing import Any
 
 import dace
 from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
-                                                                                   TILE_K1_TAIL_MARKER)
-from dace.transformation.passes.vectorization.utils.map_predicates import (check_tile_widths, is_gpu_resident_map,
-                                                                           is_vectorizable_map, map_tile_widths)
-from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch)
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (
+    SCALAR_TAIL_MARKER,
+    TILE_K1_TAIL_MARKER,
+)
+from dace.transformation.passes.vectorization.utils.map_predicates import (
+    check_tile_widths,
+    is_gpu_resident_map,
+    is_vectorizable_map,
+    map_tile_widths,
+)
+from dace.transformation.passes.vectorization.utils.pass_invariants import assert_invariant, no_memlet_dim_mismatch
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 from dace.sdfg.narrowing import as_expr
 
@@ -65,11 +72,13 @@ class MarkTileDims(ppl.Pass):
         "short dim IS tiled, as an empty interior plus one masked remainder tile.",
     )
 
-    def __init__(self,
-                 widths: tuple[int, ...] = (8, ),
-                 skip_ineligible: bool = False,
-                 require_gpu_resident: bool = False,
-                 assume_even: bool = False) -> None:
+    def __init__(
+        self,
+        widths: tuple[int, ...] = (8,),
+        skip_ineligible: bool = False,
+        require_gpu_resident: bool = False,
+        assume_even: bool = False,
+    ) -> None:
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -110,14 +119,16 @@ class MarkTileDims(ppl.Pass):
         # Build a :class:`TileDimSpec` for ``map_entry`` if eligible.
         # ``__tile_k1_tail`` maps pin K=1 widths=(1,) regardless of orchestrator
         # widths: single-lane scalar-tile remainder over the innermost iter-var only.
-        widths = (1, ) if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER) else map_tile_widths(
-            state, map_entry, tuple(self.widths))
+        widths = (
+            (1,)
+            if map_entry.map.label.endswith(TILE_K1_TAIL_MARKER)
+            else map_tile_widths(state, map_entry, tuple(self.widths))
+        )
         K = len(widths)
         params = list(map_entry.map.params)
         ranges = list(map_entry.map.range.ranges)
         if K == 0 or len(params) < K:
-            return self._fail_or_skip(f"map {map_entry.label!r} has only {len(params)} params "
-                                      f"(< K={len(self.widths)})")
+            return self._fail_or_skip(f"map {map_entry.label!r} has only {len(params)} params (< K={len(self.widths)})")
         iter_vars = tuple(params[-K:])
         slice_ranges = ranges[-K:]
         global_ubs = []
@@ -132,7 +143,8 @@ class MarkTileDims(ppl.Pass):
         for (lb, ub, step), iv, W in zip(slice_ranges, iter_vars, widths):
             if step != 1 and str(step) != "1":
                 return self._fail_or_skip(
-                    f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1")
+                    f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1"
+                )
             # A provably-too-small dim (extent < tile width) is tiled ONLY where a remainder exists
             # to cover it: the masked / scalar-tail models peel an empty interior plus one masked
             # remainder tile, and the mask keeps the short dim in bounds, so a trip-4 map at W=8
@@ -187,6 +199,7 @@ class MarkTileDims(ppl.Pass):
             spec = self._classify_one(g, n)
             if spec is not None:
                 specs[n] = spec
-        assert_invariant(no_memlet_dim_mismatch(sdfg), "MarkTileDims",
-                         "memlet subset and other_subset have matching dimensionality")
+        assert_invariant(
+            no_memlet_dim_mismatch(sdfg), "MarkTileDims", "memlet subset and other_subset have matching dimensionality"
+        )
         return specs or None

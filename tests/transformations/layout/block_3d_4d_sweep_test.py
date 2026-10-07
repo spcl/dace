@@ -14,6 +14,7 @@ the result is bit-exact (``numpy.allclose``) against a flat numpy oracle. Covera
 elementwise ``C = A*2 + 1``; each single dimension blocked by {2, 4}; and every pair of dimensions
 blocked at once (multi-mask) with mixed factors.
 """
+
 import itertools
 
 import numpy
@@ -90,7 +91,7 @@ def build_cases():
     for ndim in (3, 4):
         for d in range(ndim):
             for b in single_factors:
-                cases.append((ndim, (d, ), (b, )))
+                cases.append((ndim, (d,), (b,)))
         pair_factors = pair_factors_3d if ndim == 3 else pair_factors_4d
         for d0, d1 in itertools.combinations(range(ndim), 2):
             for b0, b1 in pair_factors:
@@ -118,14 +119,14 @@ def test_block_elementwise(case):
     normalize_schedule_for_layout(sdfg)
     sdfg.validate()
 
-    A_logical = numpy.random.default_rng(0).random((n, ) * ndim)
+    A_logical = numpy.random.default_rng(0).random((n,) * ndim)
     oracle = A_logical * 2.0 + 1.0
 
     phys_shape = tuple(int(dace.symbolic.evaluate(s, {N: n})) for s in sdfg.arrays["A"].shape)
     A_in = block_pack(A_logical, masks, facs)
     assert A_in.shape == phys_shape, (A_in.shape, phys_shape)
 
-    C = numpy.zeros((n, ) * ndim)
+    C = numpy.zeros((n,) * ndim)
     sdfg(A=A_in, C=C, N=n)
 
     assert numpy.allclose(C, oracle), "mismatch for %s: max abs err %g" % (case_id(case), numpy.abs(C - oracle).max())

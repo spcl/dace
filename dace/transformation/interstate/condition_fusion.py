@@ -33,7 +33,7 @@ def simplify_conjunction(cond_str: str) -> str:
     if len(conjuncts) <= 1:
         return cond_str
     if unsatisfiable(expr):
-        return 'False'
+        return "False"
     uniq = []
     for c in conjuncts:
         if not any(c == u for u in uniq):
@@ -42,7 +42,7 @@ def simplify_conjunction(cond_str: str) -> str:
         return cond_str
     # ``symstr``, not ``str``: sympy prints a negation as ``~x``, which parses back as a BITWISE invert
     # (``~True`` is -2, which is true) and hides the negation from the next simplification.
-    return ' and '.join(f'({symbolic.symstr(u, cpp_mode=False)})' for u in uniq)
+    return " and ".join(f"({symbolic.symstr(u, cpp_mode=False)})" for u in uniq)
 
 
 def constant_equality(conjunct: sympy.Basic):
@@ -71,7 +71,7 @@ def propositional(expr: sympy.Basic, atoms: dict) -> sympy.Basic:
     if isinstance(expr, (sympy.Ne, sympy.Lt, sympy.Le)):
         return sympy.Not(propositional(expr.negated, atoms))
     if expr not in atoms:
-        atoms[expr] = sympy.Symbol(f'__atom{len(atoms)}')
+        atoms[expr] = sympy.Symbol(f"__atom{len(atoms)}")
     return atoms[expr]
 
 
@@ -92,8 +92,10 @@ def unsatisfiable(expr: sympy.Basic) -> bool:
         if equality is not None:
             pinned.setdefault(equality[0], []).append(variable)
     exclusive = [
-        sympy.Not(sympy.And(a, b)) for variables in pinned.values() for k, a in enumerate(variables)
-        for b in variables[k + 1:]
+        sympy.Not(sympy.And(a, b))
+        for variables in pinned.values()
+        for k, a in enumerate(variables)
+        for b in variables[k + 1 :]
     ]
     return sympy.satisfiable(sympy.And(formula, *exclusive)) is False
 
@@ -135,10 +137,12 @@ class ConditionFusion(xf.MultiStateTransformation):
             for e in self.cblck1.all_interstate_edges():
                 modified_symbols |= e.data.assignments.keys()
 
-            if any([
+            if any(
+                [
                     cnd is not None and cnd.get_free_symbols() & modified_symbols != set()
                     for cnd, _ in self.cblck2.branches
-            ]):
+                ]
+            ):
                 return False
 
             return True
@@ -181,23 +185,25 @@ class ConditionFusion(xf.MultiStateTransformation):
 
         # Check if it only has one successor and that successor is a conditional block
         outer_cfg = cblck1.parent_graph
-        assert (len(outer_cfg.successors(cblck1)) == 1), "Conditional block has no or multiple successors"
-        assert (outer_cfg.successors(cblck1)[0] == cblck2), "Consecutive conditional block is not a successor"
+        assert len(outer_cfg.successors(cblck1)) == 1, "Conditional block has no or multiple successors"
+        assert outer_cfg.successors(cblck1)[0] == cblck2, "Consecutive conditional block is not a successor"
 
         # Check if cblck2 has a single predecessor
-        assert (len(outer_cfg.predecessors(cblck2)) == 1), "Conditional block has no or multiple predecessors"
+        assert len(outer_cfg.predecessors(cblck2)) == 1, "Conditional block has no or multiple predecessors"
 
         # Edge between cblck1 and cblck2 should not have any conditions
-        assert (len(outer_cfg.edges_between(cblck1, cblck2)) == 1), "Multiple edges between conditional blocks"
+        assert len(outer_cfg.edges_between(cblck1, cblck2)) == 1, "Multiple edges between conditional blocks"
 
         cblck_edge = outer_cfg.edges_between(cblck1, cblck2)[0]
-        assert (cblck_edge.data.condition.as_string == "1"), "Edge between conditional blocks has conditions"
+        assert cblck_edge.data.condition.as_string == "1", "Edge between conditional blocks has conditions"
 
         # Edge between cblck1 and cblck2 may have assignments, but only if none of the conditions in cblck2 depend on them
-        assert all([
-            cnd is None or cnd.get_free_symbols() & cblck_edge.data.assignments.keys() == set()
-            for cnd, _ in cblck2.branches
-        ]), "Assignments in edge are used in cblck2"
+        assert all(
+            [
+                cnd is None or cnd.get_free_symbols() & cblck_edge.data.assignments.keys() == set()
+                for cnd, _ in cblck2.branches
+            ]
+        ), "Assignments in edge are used in cblck2"
 
         # There should be exactly one or no else branches in each conditional block
         cblck1_elses = len([True for cnd, cfg in cblck1.branches if cnd is None])
@@ -246,7 +252,7 @@ class ConditionFusion(xf.MultiStateTransformation):
         for i, (cnd, cfg) in enumerate(cblck2.branches):
             for j in range(orig_blck1_branches):
                 off = orig_blck1_branches * i + j
-                cblck1.branches[off][0].as_string = (f"({cblck1.branches[off][0].as_string}) and ({cnd.as_string})")
+                cblck1.branches[off][0].as_string = f"({cblck1.branches[off][0].as_string}) and ({cnd.as_string})"
 
                 last_use = j == orig_blck1_branches - 1
                 old_new_mapping = {}
@@ -282,7 +288,7 @@ class ConditionFusion(xf.MultiStateTransformation):
             if cnd is None or len(cblck1.branches) <= 1:
                 continue
             simplified = simplify_conjunction(cnd.as_string)
-            if simplified == 'False':
+            if simplified == "False":
                 cblck1.remove_branch(cfg)
             elif simplified != cnd.as_string:
                 cnd.as_string = simplified

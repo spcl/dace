@@ -46,7 +46,8 @@ def assert_connector_role_matches_edges(state: dace.SDFGState):
             both = in_names & out_names
             if both:
                 raise AssertionError(
-                    f"Tasklet {node.label!r} declares connector(s) {sorted(both)} as both input and output")
+                    f"Tasklet {node.label!r} declares connector(s) {sorted(both)} as both input and output"
+                )
 
         in_edges_per_conn = {n: 0 for n in in_names}
         out_edges_per_conn = {n: 0 for n in out_names}
@@ -56,8 +57,10 @@ def assert_connector_role_matches_edges(state: dace.SDFGState):
                 continue
             if e.dst_conn not in in_names:
                 if e.dst_conn in out_names:
-                    raise AssertionError(f"Node {node.label!r}: edge lands on out-connector {e.dst_conn!r} "
-                                         f"(should land on an in-connector). Src: {e.src}")
+                    raise AssertionError(
+                        f"Node {node.label!r}: edge lands on out-connector {e.dst_conn!r} "
+                        f"(should land on an in-connector). Src: {e.src}"
+                    )
                 raise AssertionError(f"Node {node.label!r}: edge lands on unknown connector {e.dst_conn!r}")
             in_edges_per_conn[e.dst_conn] += 1
 
@@ -66,8 +69,10 @@ def assert_connector_role_matches_edges(state: dace.SDFGState):
                 continue
             if e.src_conn not in out_names:
                 if e.src_conn in in_names:
-                    raise AssertionError(f"Node {node.label!r}: edge leaves in-connector {e.src_conn!r} "
-                                         f"(should leave from an out-connector). Dst: {e.dst}")
+                    raise AssertionError(
+                        f"Node {node.label!r}: edge leaves in-connector {e.src_conn!r} "
+                        f"(should leave from an out-connector). Dst: {e.dst}"
+                    )
                 raise AssertionError(f"Node {node.label!r}: edge leaves unknown connector {e.src_conn!r}")
             out_edges_per_conn[e.src_conn] += 1
 
@@ -117,8 +122,9 @@ def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) ->
     return node_map
 
 
-def copy_graph_contents(old_graph: ControlFlowRegion,
-                        new_graph: ControlFlowRegion) -> Dict[dace.nodes.Node, dace.nodes.Node]:
+def copy_graph_contents(
+    old_graph: ControlFlowRegion, new_graph: ControlFlowRegion
+) -> Dict[dace.nodes.Node, dace.nodes.Node]:
     """
     Deep-copies all nodes and edges from one SDFG state into another.
 
@@ -292,7 +298,7 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
     # Read before the copy loop: the first copied node lands in ``graph`` disconnected,
     # which makes ``graph.start_block`` ambiguous for every later iteration.
     body_start_block = body_to_take.start_block
-    if_block_is_start = (graph.start_block is if_block)
+    if_block_is_start = graph.start_block is if_block
 
     for node in body_to_take.nodes():
         # Copy over nodes
@@ -325,14 +331,16 @@ def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_ta
     graph.remove_node(if_block)
 
 
-def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str],
-                                                    nsdfg_node: 'dace.nodes.NestedSDFG',
-                                                    parent_graph: 'dace.SDFGState',
-                                                    parent_sdfg: 'dace.SDFG',
-                                                    add_to_output_too: bool = False,
-                                                    add_with_exact_subset: bool = False,
-                                                    exact_subset: Union[None, dace.subsets.Range] = None,
-                                                    nsdfg_connector_name: Union[str, None] = None):
+def insert_non_transient_data_through_parent_scopes(
+    non_transient_data: Set[str],
+    nsdfg_node: "dace.nodes.NestedSDFG",
+    parent_graph: "dace.SDFGState",
+    parent_sdfg: "dace.SDFG",
+    add_to_output_too: bool = False,
+    add_with_exact_subset: bool = False,
+    exact_subset: Union[None, dace.subsets.Range] = None,
+    nsdfg_connector_name: Union[str, None] = None,
+):
     """
     Inserts non-transient data containers into all relevant parent scopes (through all map scopes).
 
@@ -367,8 +375,10 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
         inner_sdfg: dace.SDFG = nsdfg_node.sdfg
 
         # Skip if the connector already exists and is wired
-        if (data_access in nsdfg_node.in_connectors
-                and len(list(parent_graph.in_edges_by_connector(nsdfg_node, data_access))) > 0):
+        if (
+            data_access in nsdfg_node.in_connectors
+            and len(list(parent_graph.in_edges_by_connector(nsdfg_node, data_access))) > 0
+        ):
             continue
 
         # Remove conflicting symbols in nested SDFG
@@ -408,20 +418,21 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
         # Add input connection path
 
         state = {
-            'cur_in_conn_name': f"IN_{data_access}_p",
-            'cur_out_conn_name': f"OUT_{data_access}_p",
-            'cur_name_set': False,
+            "cur_in_conn_name": f"IN_{data_access}_p",
+            "cur_out_conn_name": f"OUT_{data_access}_p",
+            "cur_name_set": False,
         }
 
         def _get_in_conn_name(dst, state=state):
-            if state['cur_name_set'] is False:
+            if state["cur_name_set"] is False:
                 i = 0
-                while (state['cur_in_conn_name'] in dst.in_connectors
-                       or state['cur_out_conn_name'] in dst.out_connectors):
-                    state['cur_in_conn_name'] = f"IN_{data_access}_p_{i}"
-                    state['cur_out_conn_name'] = f"OUT_{data_access}_p_{i}"
+                while (
+                    state["cur_in_conn_name"] in dst.in_connectors or state["cur_out_conn_name"] in dst.out_connectors
+                ):
+                    state["cur_in_conn_name"] = f"IN_{data_access}_p_{i}"
+                    state["cur_out_conn_name"] = f"OUT_{data_access}_p_{i}"
                     i += 1
-                state['cur_name_set'] = True
+                state["cur_name_set"] = True
 
             inner_data_access = data_access if nsdfg_connector_name is None else nsdfg_connector_name
 
@@ -430,17 +441,18 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             elif isinstance(dst, dace.nodes.NestedSDFG):
                 return inner_data_access
             else:
-                return state['cur_in_conn_name']
+                return state["cur_in_conn_name"]
 
         def _get_out_conn_name(src, state=state):
-            if state['cur_name_set'] is False:
+            if state["cur_name_set"] is False:
                 i = 0
-                while (state['cur_in_conn_name'] in src.in_connectors
-                       or state['cur_out_conn_name'] in src.out_connectors):
-                    state['cur_in_conn_name'] = f"IN_{data_access}_p_{i}"
-                    state['cur_out_conn_name'] = f"OUT_{data_access}_p_{i}"
+                while (
+                    state["cur_in_conn_name"] in src.in_connectors or state["cur_out_conn_name"] in src.out_connectors
+                ):
+                    state["cur_in_conn_name"] = f"IN_{data_access}_p_{i}"
+                    state["cur_out_conn_name"] = f"OUT_{data_access}_p_{i}"
                     i += 1
-                state['cur_name_set'] = True
+                state["cur_name_set"] = True
 
             inner_data_access = data_access if nsdfg_connector_name is None else nsdfg_connector_name
             if isinstance(src, dace.nodes.AccessNode):
@@ -448,7 +460,7 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
             elif isinstance(src, dace.nodes.NestedSDFG):
                 return inner_data_access
             else:
-                return state['cur_out_conn_name']
+                return state["cur_out_conn_name"]
 
         an = parent_graph.add_access(data_access)
         src: dace.nodes.Node = an
@@ -508,7 +520,9 @@ def insert_non_transient_data_through_parent_scopes(non_transient_data: Set[str]
                 if isinstance(src, dace.nodes.NestedSDFG):
                     src.add_out_connector(required(_get_out_conn_name(src)), force=True)
                 else:
-                    required(src).add_out_connector(required(_get_out_conn_name(src)), )
+                    required(src).add_out_connector(
+                        required(_get_out_conn_name(src)),
+                    )
                 dst = src
             src = nsdfg_node
             parent_graph.add_edge(
@@ -592,8 +606,7 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     # Process interstate edge, extract brackets for access patterns
     # Collect array accesses
     in_access_exprs: dict[sympy.Basic, list[list[sympy.Basic]]] = {
-        sub.args[0]: []
-        for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript) if str(sub.args[0]) in state.sdfg.arrays
+        sub.args[0]: [] for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript) if str(sub.args[0]) in state.sdfg.arrays
     }
     for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript):
         if str(sub.args[0]) not in state.sdfg.arrays:
@@ -603,7 +616,8 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     # Get scalar and arrays that are free symbols currently
     name_mapping: dict[sympy.Basic, str] = {
         sub: in_connectors[sub]
-        for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript) if str(sub.args[0]) in state.sdfg.arrays
+        for sub in rhs_sym_expr.atoms(dace.symbolic.Subscript)
+        if str(sub.args[0]) in state.sdfg.arrays
     }
     name_mapping.update({s: in_connectors[s] for s in rhs_sym_expr.free_symbols if str(s) in state.sdfg.arrays})
 
@@ -624,10 +638,12 @@ def generate_assignment_as_tasklet_in_state(state: dace.SDFGState, lhs: str, rhs
     lhs = printer.doprint(lhs_sym_expr.xreplace(lhs_repl))
 
     # Ass tasklets
-    t = state.add_tasklet(name=f"assign_{lhs}",
-                          inputs=OrderedSet(in_connectors.values()),
-                          outputs=OrderedSet(out_connectors.values()),
-                          code=f"{lhs} = {rhs}")
+    t = state.add_tasklet(
+        name=f"assign_{lhs}",
+        inputs=OrderedSet(in_connectors.values()),
+        outputs=OrderedSet(out_connectors.values()),
+        code=f"{lhs} = {rhs}",
+    )
 
     # Add connectors and accesses, do not duplicate array access nodes
     # As we might have array accesses to different subsets
@@ -672,9 +688,11 @@ def get_num_parent_map_scopes(root_sdfg: dace.SDFG, node: dace.nodes.MapEntry, p
     return len(get_parent_maps(root_sdfg, node, parent_state))
 
 
-def get_parent_map_and_loop_scopes_cfg(root_cfg: ControlFlowRegion, node: Union[dace.nodes.MapEntry, ControlFlowRegion,
-                                                                                dace.nodes.Tasklet, ConditionalBlock],
-                                       parent_state: Union[dace.SDFGState, None]):
+def get_parent_map_and_loop_scopes_cfg(
+    root_cfg: ControlFlowRegion,
+    node: Union[dace.nodes.MapEntry, ControlFlowRegion, dace.nodes.Tasklet, ConditionalBlock],
+    parent_state: Union[dace.SDFGState, None],
+):
     scope_dict = parent_state.scope_dict() if parent_state is not None else None
     num_parent_maps_and_loops = 0
     cur_node: dace.nodes.Node | ControlFlowRegion | ConditionalBlock = node
@@ -694,7 +712,7 @@ def get_parent_map_and_loop_scopes_cfg(root_cfg: ControlFlowRegion, node: Union[
     elif isinstance(node, ControlFlowBlock):
         parent_graph = node.parent_graph
     else:
-        raise TypeError(f'{node} has no parent graph without a parent state')
+        raise TypeError(f"{node} has no parent graph without a parent state")
     while parent_graph != root_cfg:
         if isinstance(parent_graph, LoopRegion):
             num_parent_maps_and_loops += 1
@@ -756,15 +774,17 @@ def _find_new_name(base: str, existing_names: Set[str]) -> str:
     return candidate
 
 
-def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_entry: dace.nodes.MapEntry,
-                                                  if_subsets_are_not_equal: bool) -> bool:
+def duplicate_memlets_sharing_single_in_connector(
+    state: dace.SDFGState, map_entry: dace.nodes.MapEntry, if_subsets_are_not_equal: bool
+) -> bool:
     applied = False
     for _i, out_conn in enumerate(list(map_entry.out_connectors.keys())):
         # Ordered, not a set: the naming loop below allocates connector names first-come-wins, and
         # ``MultiConnectorEdge`` hashes by id(), so a set would order it by allocation history --
         # which varies run to run and would swap which edge keeps the base name.
-        out_edges_of_out_conn = sorted(state.out_edges_by_connector(map_entry, out_conn),
-                                       key=lambda e: (state.node_id(e.dst), e.dst_conn or ''))
+        out_edges_of_out_conn = sorted(
+            state.out_edges_by_connector(map_entry, out_conn), key=lambda e: (state.node_id(e.dst), e.dst_conn or "")
+        )
         if len(out_edges_of_out_conn) > 1:
             if if_subsets_are_not_equal:
                 subsets = {e.data.subset for e in out_edges_of_out_conn}
@@ -786,9 +806,9 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
             # loop variables for every later connector.
             for pmap in parent_maps:
                 for conn in pmap.in_connectors:
-                    all_existing_connector_names.add(conn[len("IN_"):])
+                    all_existing_connector_names.add(conn[len("IN_") :])
                 for conn in pmap.out_connectors:
-                    all_existing_connector_names.add(conn[len("OUT_"):])
+                    all_existing_connector_names.add(conn[len("OUT_") :])
 
             # Get the edge before the split, ensure all of them are the same
             prev_src_edge = None
@@ -805,7 +825,7 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
                 state.remove_edge(e)
 
             for e in out_edges_of_out_conn:
-                base = e.src_conn[len("OUT_"):]
+                base = e.src_conn[len("OUT_") :]
                 new_connector_base = _find_new_name(base, all_existing_connector_names)
                 all_existing_connector_names.add(new_connector_base)
 
@@ -815,7 +835,10 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
                 state.add_edge(
                     required(src_edge).src,
                     required(src_edge).src_conn,
-                    required(src_edge).dst, "IN_" + new_connector_base, copy.deepcopy(e.data))
+                    required(src_edge).dst,
+                    "IN_" + new_connector_base,
+                    copy.deepcopy(e.data),
+                )
 
                 required(src_edge).dst.add_in_connector("IN_" + new_connector_base)
 
@@ -832,10 +855,9 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
     return applied
 
 
-def array_is_used_in_sdfg_states(sdfg: dace.SDFG,
-                                 states_to_skip: Set[dace.SDFGState],
-                                 arr_name: str,
-                                 read_only: bool = False):
+def array_is_used_in_sdfg_states(
+    sdfg: dace.SDFG, states_to_skip: Set[dace.SDFGState], arr_name: str, read_only: bool = False
+):
     for st in sdfg.states():
         if st in states_to_skip:
             continue
@@ -870,7 +892,7 @@ from dace.ordered import OrderedSet
 from dace.optionals import required
 from dace.sdfg.narrowing import as_basic
 
-_TOKEN_SPLIT_RE = re.compile(r'[()\[\]\s,+\-*/%<>!=&|^~?:]+')
+_TOKEN_SPLIT_RE = re.compile(r"[()\[\]\s,+\-*/%<>!=&|^~?:]+")
 
 
 def _tokens(expr: str) -> Set[str]:
@@ -938,7 +960,7 @@ def _prune_memlet_path(state: dace.SDFGState, edge):
             except (KeyError, ValueError):
                 pass
         for ep in (e.src, e.dst):
-            if (isinstance(ep, dace.nodes.AccessNode) and ep in state.nodes() and state.degree(ep) == 0):
+            if isinstance(ep, dace.nodes.AccessNode) and ep in state.nodes() and state.degree(ep) == 0:
                 state.remove_node(ep)
 
 

@@ -11,8 +11,15 @@ from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
-                                          SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
+from dace.transformation.dataflow import (
+    RedundantArray,
+    RedundantReadSlice,
+    RedundantSecondArray,
+    RedundantWriteSlice,
+    SqueezeViewRemove,
+    UnsqueezeViewRemove,
+    RemoveSliceView,
+)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 from dace.ordered import OrderedSet
@@ -94,8 +101,9 @@ def _view_fold_breaks_anti_dependence(state: SDFGState, view: nodes.AccessNode) 
     if not chain:
         return False
     inside = OrderedSet(chain)
-    fenced = any(e.data.is_empty() and (e.src not in inside or e.dst not in inside) for n in chain
-                 for e in state.all_edges(n))
+    fenced = any(
+        e.data.is_empty() and (e.src not in inside or e.dst not in inside) for n in chain for e in state.all_edges(n)
+    )
     if not fenced:
         return False
     return _is_war_carrier(state, chain[-1].data)
@@ -109,7 +117,7 @@ class ArrayElimination(ppl.Pass):
     and duplicate access nodes.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -201,10 +209,14 @@ class ArrayElimination(ppl.Pass):
         return result or None
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Eliminated {len(pass_retval)} arrays: {pass_retval}.'
+        return f"Eliminated {len(pass_retval)} arrays: {pass_retval}."
 
-    def merge_access_nodes(self, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]],
-                           condition: Callable[[nodes.AccessNode], bool]):
+    def merge_access_nodes(
+        self,
+        state: SDFGState,
+        access_nodes: Dict[str, List[nodes.AccessNode]],
+        condition: Callable[[nodes.AccessNode], bool],
+    ):
         """
         Merges access nodes that follow the same conditions together to the first access node.
         """
@@ -275,7 +287,7 @@ class ArrayElimination(ppl.Pass):
                     if len(producers) > 1 and _state_has_read_write_sibling_carrier(state, data_container):
                         continue
 
-                for node in nodeset[first_node_idx + 1:]:
+                for node in nodeset[first_node_idx + 1 :]:
                     if not condition(node):
                         continue
 
@@ -287,11 +299,15 @@ class ArrayElimination(ppl.Pass):
                     other_edges: List[MultiConnectorEdge[Memlet]] = []
                     for edge in edges:
                         if edge.dst is node:
-                            if edge.dst_conn == 'views':
-                                other_edges = list(state.in_edges_by_connector(first_node, 'views'))
+                            if edge.dst_conn == "views":
+                                other_edges = list(state.in_edges_by_connector(first_node, "views"))
                                 if len(other_edges) != 1:
-                                    raise InvalidSDFGNodeError('Multiple edges connected to views connector',
-                                                               state.sdfg, state.block_id, state.node_id(first_node))
+                                    raise InvalidSDFGNodeError(
+                                        "Multiple edges connected to views connector",
+                                        state.sdfg,
+                                        state.block_id,
+                                        state.node_id(first_node),
+                                    )
                                 other_view_edge = other_edges[0]
                                 if other_view_edge.data != edge.data:
                                     # The memlets do not match, skip the node.
@@ -301,21 +317,27 @@ class ArrayElimination(ppl.Pass):
                                 # two edges, and a later subset write through one of them turns the
                                 # other (an empty ordering edge with dst_conn=None) into an invalid
                                 # non-empty edge.
-                                state.add_edge(edge.src, edge.src_conn, first_node, edge.dst_conn,
-                                               copy.deepcopy(edge.data))
+                                state.add_edge(
+                                    edge.src, edge.src_conn, first_node, edge.dst_conn, copy.deepcopy(edge.data)
+                                )
                         else:
-                            if edge.src_conn == 'views':
-                                other_edges = list(state.out_edges_by_connector(first_node, 'views'))
+                            if edge.src_conn == "views":
+                                other_edges = list(state.out_edges_by_connector(first_node, "views"))
                                 if len(other_edges) != 1:
-                                    raise InvalidSDFGNodeError('Multiple edges connected to views connector',
-                                                               state.sdfg, state.block_id, state.node_id(first_node))
+                                    raise InvalidSDFGNodeError(
+                                        "Multiple edges connected to views connector",
+                                        state.sdfg,
+                                        state.block_id,
+                                        state.node_id(first_node),
+                                    )
                                 other_view_edge = other_edges[0]
                                 if other_view_edge.data != edge.data:
                                     # The memlets do not match, skip the node.
                                     continue
                             else:
-                                state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn,
-                                               copy.deepcopy(edge.data))
+                                state.add_edge(
+                                    first_node, edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data)
+                                )
                     # Remove merged node and associated edges
                     state.remove_node(node)
                     removed_nodes.add(node)
@@ -348,8 +370,9 @@ class ArrayElimination(ppl.Pass):
                         nodeset.remove(anode)
         return removed_nodes
 
-    def remove_redundant_copies(self, sdfg: SDFG, state: SDFGState, removable_data: Set[str],
-                                access_nodes: Dict[str, List[nodes.AccessNode]]):
+    def remove_redundant_copies(
+        self, sdfg: SDFG, state: SDFGState, removable_data: Set[str], access_nodes: Dict[str, List[nodes.AccessNode]]
+    ):
         """
         Removes access nodes that represent redundant copies and/or views.
         """
@@ -362,8 +385,9 @@ class ArrayElimination(ppl.Pass):
         xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
         # Transformations that remove the second access node
         xforms_second: List[SingleStateTransformation] = [
-            RedundantReadSlice(), SqueezeViewRemove(),
-            RedundantSecondArray()
+            RedundantReadSlice(),
+            SqueezeViewRemove(),
+            RedundantSecondArray(),
         ]
 
         # Try the different redundant copy/view transformations on the node

@@ -6,6 +6,7 @@ integer-scalar input.  Carries side effects (so it is never pruned despite havin
 no data outputs) and resolves its communicator from an optional ``_comm`` or
 ``_grid`` input connector, else the default world.
 """
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -17,7 +18,6 @@ from dace.libraries.mpi.nodes.node import MPINode, resolve_comm, expanded_input_
 
 @dace.library.expansion
 class ExpandAbortMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -26,12 +26,14 @@ class ExpandAbortMPI(ExpandTransformation):
         comm = resolve_comm(node, parent_state)
         code = f"""
             MPI_Abort({comm}, _errorcode);"""
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dtypes.Language.CPP,
-                                          side_effects=True)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
         return tasklet
 
 

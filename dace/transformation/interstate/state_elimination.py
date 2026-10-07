@@ -1,5 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-""" State elimination transformations """
+"""State elimination transformations"""
 
 from dace import graphlib as nx
 from typing import Dict, Set
@@ -340,7 +340,8 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
 
 @transformation.explicit_cf_compatible
 class HoistState(transformation.SingleStateTransformation):
-    """ Move a state out of a nested SDFG """
+    """Move a state out of a nested SDFG"""
+
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     @classmethod
@@ -475,7 +476,7 @@ class HoistState(transformation.SingleStateTransformation):
             if akey not in sdfg.symbols and akey not in sdfg.arrays:
                 newname = akey
             else:
-                newname = nsdfg.label + '_' + akey
+                newname = nsdfg.label + "_" + akey
 
             isedge.data.assignments[newname] = aval
 

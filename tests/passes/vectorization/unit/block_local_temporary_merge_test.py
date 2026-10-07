@@ -4,6 +4,7 @@
 Two guarded blocks both write ``t`` and read it back. Counting the second block's read as an escape of the first
 block's write made the merge emit ``t = ITE(c, t_then, t)``, reading a ``t`` no path had written.
 """
+
 import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -21,7 +22,8 @@ from dace.transformation.passes.vectorization import VectorizeCPUMultiDim
 from dace.transformation.passes.vectorization.branch_normalization import BranchNormalization
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.lower_interstate_conditional_assignments_to_tasklets import (
-    LowerInterstateConditionalAssignmentsToTasklets)
+    LowerInterstateConditionalAssignmentsToTasklets,
+)
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import SameWriteSetIfElseToITECFG
 from tests.passes.vectorization.tile_assertions import tile_library_nodes
 
@@ -30,8 +32,9 @@ LENGTH = 67
 
 
 @dace.program
-def two_guarded_blocks_sharing_a_temporary(c: dace.float64[N], x: dace.float64[N], y: dace.float64[N],
-                                           out: dace.float64[N]):
+def two_guarded_blocks_sharing_a_temporary(
+    c: dace.float64[N], x: dace.float64[N], y: dace.float64[N], out: dace.float64[N]
+):
     for i in dace.map[0:N]:
         if c[i] > 0.5:
             t = x[i] - y[i]
@@ -56,16 +59,21 @@ def canonical_sdfg(name: str) -> dace.SDFG:
 def test_branch_lowering_merges_only_writes_that_outlive_their_block():
     sdfg = canonical_sdfg("block_local_temporary_lowering")
 
-    for lowering in (LowerInterstateConditionalAssignmentsToTasklets(), SameWriteSetIfElseToITECFG(),
-                     BranchNormalization()):
+    for lowering in (
+        LowerInterstateConditionalAssignmentsToTasklets(),
+        SameWriteSetIfElseToITECFG(),
+        BranchNormalization(),
+    ):
         lowering.apply_pass(sdfg, {})
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         sdfg.validate()
     merged = [
-        edge.dst.data for node, state in sdfg.all_nodes_recursive()
-        if isinstance(node, nodes.Tasklet) and "ITE(" in node.code.as_string for edge in state.out_edges(node)
+        edge.dst.data
+        for node, state in sdfg.all_nodes_recursive()
+        if isinstance(node, nodes.Tasklet) and "ITE(" in node.code.as_string
+        for edge in state.out_edges(node)
     ]
     assert len(merged) == 2 and len(set(merged)) == 1, merged
 
@@ -77,8 +85,7 @@ def test_vectorized_blocks_sharing_a_temporary_match_the_scalar_program():
     reference.compile()(**want, N=LENGTH)
     sdfg = canonical_sdfg("block_local_temporary_vectorized")
 
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=detect_host_isa(),
-                                         validate=True)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8,), target_isa=detect_host_isa(), validate=True)).apply_pass(sdfg, {})
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")

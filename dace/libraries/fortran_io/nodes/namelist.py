@@ -9,6 +9,7 @@ connector, then close.  The member names (in connector order ``_out_0`` ...
 ``_out_{num_items-1}``) come from :pyattr:`members`, which the bridge fills
 from the namelist group descriptor.
 """
+
 import dace.library
 import dace.properties
 from dace import dtypes
@@ -22,34 +23,35 @@ from .. import environments
 
 @dace.library.expansion
 class ExpandNamelistReadFortranIO(ExpandTransformation):
-
     environments = [environments.FortranIO]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         items = node._ordered_items(parent_sdfg, parent_state, "_out_", edges_in=False)
         if len(node.members) != len(items):
-            raise ValueError(f"NamelistRead '{node.name}': {len(node.members)} member names "
-                             f"for {len(items)} connected outputs")
+            raise ValueError(
+                f"NamelistRead '{node.name}': {len(node.members)} member names for {len(items)} connected outputs"
+            )
         path, group = _c_string(node.filename), _c_string(node.group)
         lines = [
-            f'int _h = dace_nml_open("{path}", {len(node.filename.encode())}, '
-            f'"{group}", {len(node.group.encode())});'
+            f'int _h = dace_nml_open("{path}", {len(node.filename.encode())}, "{group}", {len(node.group.encode())});'
         ]
         for (conn, desc, count, is_value), member in zip(items, node.members):
             suffix, ctype = fio_type(desc.dtype)
             name_arg = f'"{_c_string(member)}", {len(member.encode())}'
             if is_value:
-                lines.append(f'dace_nml_get_{suffix}(_h, {name_arg}, ({ctype} *)&{conn});')
+                lines.append(f"dace_nml_get_{suffix}(_h, {name_arg}, ({ctype} *)&{conn});")
             else:
-                lines.append(f'dace_nml_get_{suffix}_arr(_h, {name_arg}, ({ctype} *){conn}, {count});')
+                lines.append(f"dace_nml_get_{suffix}_arr(_h, {name_arg}, ({ctype} *){conn}, {count});")
         lines.append("dace_nml_close(_h);")
-        return nodes.Tasklet(node.name,
-                             node.in_connectors,
-                             node.out_connectors,
-                             "\n".join(lines),
-                             language=dtypes.Language.CPP,
-                             side_effects=True)
+        return nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            node.out_connectors,
+            "\n".join(lines),
+            language=dtypes.Language.CPP,
+            side_effects=True,
+        )
 
 
 @dace.library.node

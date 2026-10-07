@@ -50,6 +50,7 @@ the split either way, distributed later by ``LoopFission``).
 Breaking is never declined because the copy looks expensive: the canonical form
 prefers the parallel version, and cost is the tuner's call, not this pass's.
 """
+
 import copy
 import zlib
 from functools import lru_cache
@@ -87,8 +88,12 @@ def _subset_key(subset):
 def _smt_loop_bounds(loop):
     """``(start, end, stride)`` of ``loop``; any ``None`` means the SMT query cannot be posed."""
     from dace.transformation.passes.analysis import loop_analysis
-    return (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
-            loop_analysis.get_loop_stride(loop))
+
+    return (
+        loop_analysis.get_init_assignment(loop),
+        loop_analysis.get_loop_end(loop),
+        loop_analysis.get_loop_stride(loop),
+    )
 
 
 @lru_cache(maxsize=8192, typed=True)
@@ -163,6 +168,7 @@ def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
     Returns ``False`` on any sympy uncertainty (``is_nonnegative`` is ``None``).
     """
     from dace import symbolic
+
     try:
         # Fresh DaCe symbols (uncached ``__xnew__``) carrying the nonnegativity
         # assumption for a LOCAL proof; ``_eval_subs`` matches by name, so the
@@ -232,13 +238,14 @@ class BreakAntiDependence(ppl.Pass):
     tuning knob when the extra buffer is worth the parallelism.
     """
 
-    CATEGORY: str = 'Optimization Preparation'
+    CATEGORY: str = "Optimization Preparation"
 
     forward_reads = properties.Property(
         dtype=bool,
         default=False,
         desc="Break a read-ahead EDGE even when the array's other reads are true dependences, so the "
-        "read-ahead stops binding two otherwise-independent statements (TSVC s1244).")
+        "read-ahead stops binding two otherwise-independent statements (TSVC s1244).",
+    )
 
     def __init__(self, forward_reads: bool = False) -> None:
         super().__init__()
@@ -276,6 +283,7 @@ class BreakAntiDependence(ppl.Pass):
         constraints, which subsumes the stride-positivity ask.
         """
         from dace.transformation.passes.analysis import loop_analysis
+
         stride = loop_analysis.get_loop_stride(loop)
         if stride is None:
             return False
@@ -321,7 +329,7 @@ class BreakAntiDependence(ppl.Pass):
         isym = symbolic.pystr_to_symbolic(ivar)
         rr, wr = list(read.ndrange()), list(write.ndrange())
         if len(rr) != len(wr):
-            return ('complex', None)
+            return ("complex", None)
         # Inline iedge symbol bindings (``i := LEN_1D - _loop_pos_0 - 2`` is
         # what :class:`NormalizeNegativeStride` plants for a reversed loop) so
         # the matcher sees memlet subsets in terms of the actual loop
@@ -335,7 +343,7 @@ class BreakAntiDependence(ppl.Pass):
         carried_offset = None
         for (rb, re_, _), (wb, we_, _) in zip(rr, wr):
             if rb != re_ or wb != we_:
-                return ('complex', None)  # not a single-element (point) access
+                return ("complex", None)  # not a single-element (point) access
             rb = _reparsed_index(rb)
             wb = _reparsed_index(wb)
             if bindings:
@@ -345,7 +353,7 @@ class BreakAntiDependence(ppl.Pass):
             w_has = isym in as_basic(wb).free_symbols
             if not r_has and not w_has:
                 if not _is_identically_zero(rb - wb):
-                    return ('none', None)  # different fixed index -> never alias
+                    return ("none", None)  # different fixed index -> never alias
                 continue
             # carried dimension: decompose ``wb`` as ``alpha * isym + beta`` with
             # ``alpha in {+1, -1}`` and ``beta`` loop-invariant. ``alpha = +1`` is
@@ -359,18 +367,22 @@ class BreakAntiDependence(ppl.Pass):
             # so an ``isym`` the raw (already term-collected) difference has dropped
             # stays dropped -- test that first and only simplify when it has not.
             wb_minus_i = wb - as_expr(isym)
-            if isym not in as_basic(wb_minus_i).free_symbols or isym not in as_basic(
-                    symbolic.simplify(wb_minus_i)).free_symbols:
+            if (
+                isym not in as_basic(wb_minus_i).free_symbols
+                or isym not in as_basic(symbolic.simplify(wb_minus_i)).free_symbols
+            ):
                 alpha = 1
             else:
                 wb_plus_i = wb + as_expr(isym)
-                if isym not in as_basic(wb_plus_i).free_symbols or isym not in as_basic(
-                        symbolic.simplify(wb_plus_i)).free_symbols:
+                if (
+                    isym not in as_basic(wb_plus_i).free_symbols
+                    or isym not in as_basic(symbolic.simplify(wb_plus_i)).free_symbols
+                ):
                     alpha = -1
                 else:
-                    return ('complex', None)
+                    return ("complex", None)
             if carried_offset is not None:
-                return ('complex', None)  # more than one carried dimension
+                return ("complex", None)  # more than one carried dimension
             carried_offset = symbolic.simplify(rb - wb)
             # Effective offset in iteration-time space: solving ``rb(i1) = wb(i2)``
             # under ``rb = alpha*i + gamma``, ``wb = alpha*i + beta`` gives
@@ -391,13 +403,13 @@ class BreakAntiDependence(ppl.Pass):
             # one already returned 'none' above): the read and the write hit the SAME loop-invariant
             # location. Not a carried anti-dependence, so not our case -- but it is an alias, which
             # ``'none'`` would deny to callers who need to know.
-            return ('invariant', None)
+            return ("invariant", None)
         if as_basic(carried_offset).is_number:
             if carried_offset > 0:
-                return ('WAR', None)
+                return ("WAR", None)
             if carried_offset < 0:
-                return ('RAW', None)
-            return ('none', None)
+                return ("RAW", None)
+            return ("none", None)
         # Symbolic offset path. Three sub-cases depending on what's left in the
         # carried_offset's free symbols:
         #
@@ -423,32 +435,34 @@ class BreakAntiDependence(ppl.Pass):
             # unsatisfiable runtime ``> 0`` guard that traps and, once DCE'd, silently
             # corrupts the result.
             if _provably_nonnegative_under_nonneg_symbols(carried_offset):
-                return ('WAR_symbolic', carried_offset)
+                return ("WAR_symbolic", carried_offset)
             if _provably_nonpositive_under_nonneg_symbols(carried_offset):
-                return ('RAW', None)  # provable read-behind (``a[i - K]``): a true recurrence
+                return ("RAW", None)  # provable read-behind (``a[i - K]``): a true recurrence
             # Sign undecidable even under the nonneg-symbol assumption (``K - M``): keep
             # sequential, but do NOT report 'RAW'. RAW means a *proven* read-behind, and a
             # consumer that fuses on that (LoopFusion) would then wrongly permit fusing a possible
             # read-ahead. 'complex' is the honest verdict -- every in-module consumer already
             # treats it exactly like RAW (keep sequential), so this is a no-op for renaming and
             # only tightens the fusion oracle.
-            return ('complex', None)
+            return ("complex", None)
         if loop is not None and sdfg is not None:
             arr = self._try_recognize_indirected(carried_offset, isym, loop, sdfg)
             if arr is not None:
-                return ('WAR_indirected', arr)
-        return ('complex', None)
+                return ("WAR_indirected", arr)
+        return ("complex", None)
 
-    def _smt_dep_class(self,
-                       read,
-                       write,
-                       loop: LoopRegion,
-                       sdfg: SDFG,
-                       read_state,
-                       internal_syms: Set[str],
-                       written: Set[str],
-                       bindings=None,
-                       loop_bounds=None):
+    def _smt_dep_class(
+        self,
+        read,
+        write,
+        loop: LoopRegion,
+        sdfg: SDFG,
+        read_state,
+        internal_syms: Set[str],
+        written: Set[str],
+        bindings=None,
+        loop_bounds=None,
+    ):
         """The verdict :meth:`_dep_class` could not reach, asked of the SMT oracle.
 
         Only ever consulted where the affine matcher already gave up (``'complex'``), and only
@@ -470,11 +484,12 @@ class BreakAntiDependence(ppl.Pass):
         """
         from dace.transformation.passes.analysis import smt_dependence
         from dace.transformation.passes.symbol_propagation import consistent_bindings, resolve_bindings
+
         if not smt_dependence.has_z3() or read_state is None:
-            return ('complex', None)
+            return ("complex", None)
         rb, wb = point_index(read), point_index(write)
         if rb is None or wb is None:
-            return ('complex', None)
+            return ("complex", None)
         ivar = loop.loop_variable
         guard = cfg_analysis.collect_enclosing_conditions(read_state, stop=loop)
         if bindings is None:
@@ -482,26 +497,26 @@ class BreakAntiDependence(ppl.Pass):
         exprs = [resolve_bindings(e, sdfg, expand_data_reads=True, bindings=bindings) for e in (rb, wb, guard)]
         for e in exprs:
             if ({str(sym) for sym in as_basic(e).free_symbols} - {ivar}) & internal_syms:
-                return ('complex', None)
+                return ("complex", None)
             if referenced_arrays(e) & written:
-                return ('complex', None)
+                return ("complex", None)
         rb, wb, guard = exprs
         if loop_bounds is None:
             loop_bounds = _smt_loop_bounds(loop)
         start, end, stride = loop_bounds
         if start is None or end is None or stride is None:
-            return ('complex', None)
+            return ("complex", None)
         read_guard = None if guard is sympy.true else guard
         ahead = smt_dependence.prove_read_ahead(rb, wb, ivar, start, end, stride, read_guard=read_guard)
         if ahead is not True:
-            return ('complex', None)
+            return ("complex", None)
         # Read-ahead only rules out the writes up to and including the reader's own iteration. When
         # no LATER iteration writes the element either, the two accesses never alias at all -- s115's
         # ``a[i] -= aa[j, i] * a[j]`` reads a[j] from below an ``i`` range that starts at j + 1. That
         # is 'none', not 'WAR': snapshotting it would pay a copy to break a dependence that is not
         # there, and the copy costs the caller an extra transient and an extra (degenerate) map.
         late = smt_dependence.prove_no_write_after_read(rb, wb, ivar, start, end, stride, read_guard=read_guard)
-        return ('none', None) if late is True else ('WAR', None)
+        return ("none", None) if late is True else ("WAR", None)
 
     def _walk_back_symbol_def(self, loop: LoopRegion, sym_name: str):
         """Find ``sym_name := expr`` on any interstate edge in the loop body.
@@ -569,7 +584,7 @@ class BreakAntiDependence(ppl.Pass):
         for e in loop.all_interstate_edges():
             for lhs, rhs in (e.data.assignments or {}).items():
                 rhs_str = str(rhs)
-                if '[' in rhs_str:
+                if "[" in rhs_str:
                     tainted_syms.add(lhs)
                     continue
                 try:
@@ -691,7 +706,8 @@ class BreakAntiDependence(ppl.Pass):
         # unwrapped: doing so mis-reads its argument as the bare iterator and would unsoundly
         # break an unrelated anti-dependence guarded on the wrong offset.
         int_cast_callees = frozenset(
-            {'int', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'intc', 'intp'})
+            {"int", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "intc", "intp"}
+        )
 
         def _strip_casts(node):
             while isinstance(node, ast.Call):
@@ -807,6 +823,7 @@ class BreakAntiDependence(ppl.Pass):
         written = written_data(loop)
         from dace.transformation.passes.analysis import smt_dependence
         from dace.transformation.passes.symbol_propagation import consistent_bindings
+
         # Same reason, for the SMT fallback's own invariants: ``resolve_bindings`` is a query and
         # the classification below never mutates (the rewrite runs after ``renamable`` is
         # assembled). Built on first use, so a loop the affine matcher settles pays nothing.
@@ -825,19 +842,21 @@ class BreakAntiDependence(ppl.Pass):
             for rkey, r in read_subsets.items():
                 for w in write_subsets.values():
                     c = self._dep_class(r, w, loop.loop_variable, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)
-                    if c[0] == 'complex':
+                    if c[0] == "complex":
                         if bindings is None and have_z3:
                             bindings, loop_bounds = consistent_bindings(sdfg), _smt_loop_bounds(loop)
-                        c = self._smt_dep_class(r,
-                                                w,
-                                                loop,
-                                                sdfg,
-                                                read_states[name].get(rkey),
-                                                internal_syms,
-                                                written,
-                                                bindings=bindings,
-                                                loop_bounds=loop_bounds)
-                    if c[0] == 'RAW' or c[0] == 'complex':
+                        c = self._smt_dep_class(
+                            r,
+                            w,
+                            loop,
+                            sdfg,
+                            read_states[name].get(rkey),
+                            internal_syms,
+                            written,
+                            bindings=bindings,
+                            loop_bounds=loop_bounds,
+                        )
+                    if c[0] == "RAW" or c[0] == "complex":
                         disqualified = True
                         break
                     classes.append(c)
@@ -855,17 +874,17 @@ class BreakAntiDependence(ppl.Pass):
             sym_guards: OrderedSet = OrderedSet()
             array_guards: OrderedSet[str] = OrderedSet()
             for kind, payload in classes:
-                if kind == 'WAR_symbolic':
+                if kind == "WAR_symbolic":
                     free = {str(s) for s in payload.free_symbols}
                     if free & internal_syms:
                         ok = False
                         break
                     sym_guards.add(payload)
-                elif kind == 'WAR_indirected':
+                elif kind == "WAR_indirected":
                     array_guards.add(payload)  # payload is the array name
             if not ok:
                 continue
-            if not (verdicts & {'WAR', 'WAR_symbolic', 'WAR_indirected'}):
+            if not (verdicts & {"WAR", "WAR_symbolic", "WAR_indirected"}):
                 continue
             renamable.append((name, sym_guards, array_guards))
         return renamable
@@ -885,9 +904,10 @@ class BreakAntiDependence(ppl.Pass):
         """
         desc = sdfg.arrays[arr_name]
         n_str = symbolic.symstr(desc.shape[0])
-        conn = f'__arr_{arr_name}'
-        tlet = tutil.add_abort_guard(pre, f'_break_antidep_array_guard_{arr_name}',
-                                     f'not detect_all_positive({conn}, ({n_str}))', {conn: None})
+        conn = f"__arr_{arr_name}"
+        tlet = tutil.add_abort_guard(
+            pre, f"_break_antidep_array_guard_{arr_name}", f"not detect_all_positive({conn}, ({n_str}))", {conn: None}
+        )
         pre.add_edge(pre.add_read(arr_name), None, tlet, conn, Memlet.from_array(arr_name, desc))
 
     def _emit_positive_guard(self, pre, expr) -> None:
@@ -909,8 +929,9 @@ class BreakAntiDependence(ppl.Pass):
         # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED, so the
         # same guard would get a different tasklet label, emitted C symbols and build hash per run.
         # Side-effecting, so dead-code elimination cannot prune the connector-less guard.
-        return tutil.add_abort_guard(pre, f'_break_antidep_guard_{zlib.crc32(expr_str.encode()) & 0xfffffff:x}',
-                                     f'not (({expr_str}) >= 0)')
+        return tutil.add_abort_guard(
+            pre, f"_break_antidep_guard_{zlib.crc32(expr_str.encode()) & 0xFFFFFFF:x}", f"not (({expr_str}) >= 0)"
+        )
 
     def _snapshot_window(self, loop: LoopRegion, name: str, sdfg: SDFG, read_subsets) -> Optional[Memlet]:
         """The copy memlet for ``name -> snap`` restricted to the elements the
@@ -938,6 +959,7 @@ class BreakAntiDependence(ppl.Pass):
         """
         from dace.sdfg import propagation
         from dace.transformation.passes.analysis import loop_analysis
+
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         stride = loop_analysis.get_loop_stride(loop)
@@ -945,8 +967,9 @@ class BreakAntiDependence(ppl.Pass):
             return None
         desc = sdfg.arrays[name]
         memlets = [Memlet(data=name, subset=copy.deepcopy(s)) for s in read_subsets]
-        window = propagation.propagate_subset(memlets, desc, [loop.loop_variable],
-                                              subsets.Range([(start, end, stride)])).subset
+        window = propagation.propagate_subset(
+            memlets, desc, [loop.loop_variable], subsets.Range([(start, end, stride)])
+        ).subset
         if window is None:
             return None
         # Symbols the loop DEFINES -- its iterator, nested map/loop iterators, and anything
@@ -1005,6 +1028,7 @@ class BreakAntiDependence(ppl.Pass):
         written = written_data(loop)
         from dace.transformation.passes.analysis import smt_dependence
         from dace.transformation.passes.symbol_propagation import consistent_bindings
+
         # Loop-invariant; the classification below only reads, the rewrite starts after ``to_move``.
         have_z3 = smt_dependence.has_z3()
         bindings, loop_bounds = None, None
@@ -1012,7 +1036,7 @@ class BreakAntiDependence(ppl.Pass):
         # Read edges to redirect: those whose subset is a strict read-ahead
         # against EVERY write (WAR / WAR_symbolic / WAR_indirected). A read that
         # is `none` (same index) or otherwise not purely read-ahead stays live.
-        ahead = {'WAR', 'WAR_symbolic', 'WAR_indirected'}
+        ahead = {"WAR", "WAR_symbolic", "WAR_indirected"}
         to_move = []
         # Read subsets with the same ndrange classify identically, so the verdict is
         # cached per subset instead of re-derived for every edge that carries it.
@@ -1033,18 +1057,20 @@ class BreakAntiDependence(ppl.Pass):
                         kinds = set()
                         for w in writes:
                             kind = self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)[0]
-                            if kind == 'complex':
+                            if kind == "complex":
                                 if bindings is None and have_z3:
                                     bindings, loop_bounds = consistent_bindings(sdfg), _smt_loop_bounds(loop)
-                                kind = self._smt_dep_class(rs,
-                                                           w,
-                                                           loop,
-                                                           sdfg,
-                                                           st,
-                                                           internal_syms,
-                                                           written,
-                                                           bindings=bindings,
-                                                           loop_bounds=loop_bounds)[0]
+                                kind = self._smt_dep_class(
+                                    rs,
+                                    w,
+                                    loop,
+                                    sdfg,
+                                    st,
+                                    internal_syms,
+                                    written,
+                                    bindings=bindings,
+                                    loop_bounds=loop_bounds,
+                                )[0]
                             kinds.add(kind)
                         verdict = bool(kinds) and kinds <= ahead
                         is_ahead[key] = verdict
@@ -1053,23 +1079,21 @@ class BreakAntiDependence(ppl.Pass):
         if not to_move:
             return  # no genuine read-ahead edge to break -> nothing (and no snapshot)
 
-        snap, _ = sdfg.add_transient(f'{name}_antidep_snap',
-                                     desc.shape,
-                                     desc.dtype,
-                                     storage=desc.storage,
-                                     find_new_name=True)
+        snap, _ = sdfg.add_transient(
+            f"{name}_antidep_snap", desc.shape, desc.dtype, storage=desc.storage, find_new_name=True
+        )
 
         # Snapshot copy `name -> snap` in a fresh state right before the loop, over the
         # window the redirected reads touch (see :meth:`_snapshot_window`).
         read_subsets = [e.data.get_src_subset(e, st) or e.data.subset for st, e in to_move]
         copy_mem = self._snapshot_window(loop, name, sdfg, read_subsets) or Memlet.from_array(name, desc)
-        pre = loop.parent_graph.add_state_before(loop, label=f'{name}_snapshot')
+        pre = loop.parent_graph.add_state_before(loop, label=f"{name}_snapshot")
         pre.add_nedge(pre.add_read(name), pre.add_write(snap), copy_mem)
 
         # Emit runtime positive-check tasklets for any symbolic guards.
-        for expr in (guards or ()):
+        for expr in guards or ():
             self._emit_positive_guard(pre, expr)
-        for arr_name in (array_guards or ()):
+        for arr_name in array_guards or ():
             self._emit_array_positive_guard(pre, arr_name, sdfg)
 
         # The snapshot is the device-neutral resolution: it costs a full copy of the read window
@@ -1077,13 +1101,15 @@ class BreakAntiDependence(ppl.Pass):
         # only the seam between chunks, where a full copy of the window is bandwidth the loop
         # itself would not have spent. A GPU has the bandwidth and would pay for the seam in
         # synchronization instead, so it keeps this form. Recorded, not decided, here.
-        loop.specialization_hint = (f'anti-dependence on {name} broken by snapshotting the read window.\n'
-                                    'Alternative: buffer only the seam between chunks.\n'
-                                    'CPU: the seam buffer is worth trying -- the full copy is the expensive '
-                                    'half here.\n'
-                                    'GPU: the snapshot is usually the cheaper of the two; a seam costs '
-                                    'synchronization.\n'
-                                    'Both are correct. Measure before choosing.')
+        loop.specialization_hint = (
+            f"anti-dependence on {name} broken by snapshotting the read window.\n"
+            "Alternative: buffer only the seam between chunks.\n"
+            "CPU: the seam buffer is worth trying -- the full copy is the expensive "
+            "half here.\n"
+            "GPU: the snapshot is usually the cheaper of the two; a seam costs "
+            "synchronization.\n"
+            "Both are correct. Measure before choosing."
+        )
 
         # Redirect only the read-ahead edges to a fresh `snap` source, keeping any
         # destination subset (copy edges carry an `other_subset`).
@@ -1130,8 +1156,10 @@ class BreakAntiDependence(ppl.Pass):
         applied = 0
 
         written = sorted(
-            dict.fromkeys(n.data for n in state.data_nodes()
-                          if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient))
+            dict.fromkeys(
+                n.data for n in state.data_nodes() if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient
+            )
+        )
         for arr in written:
             write_subsets = []
             for n in state.data_nodes():
@@ -1162,9 +1190,9 @@ class BreakAntiDependence(ppl.Pass):
                     # miscompile. (The old gate only skipped RAW/complex and required *some* WAR, so a
                     # read that was WAR vs one sibling write but 'none' vs another --
                     # ``A[i]=..; A[i+1]=..; d[i]=A[i+1]`` -- slipped through and read the stale value.)
-                    if not (kinds and all(k in ('WAR', 'WAR_symbolic') for k in kinds)):
+                    if not (kinds and all(k in ("WAR", "WAR_symbolic") for k in kinds)):
                         continue
-                    guards = {p for k, p in verdicts if k == 'WAR_symbolic'}
+                    guards = {p for k, p in verdicts if k == "WAR_symbolic"}
                     if any(str(s) in internal_syms for g in guards for s in as_basic(g).free_symbols):
                         continue
                     sym_guards |= guards
@@ -1176,14 +1204,12 @@ class BreakAntiDependence(ppl.Pass):
             # covers the window those edges read (see :meth:`_snapshot_window`), not the whole
             # array. The break itself is never declined because the copy looked expensive.
             desc = sdfg.arrays[arr]
-            snap, _ = sdfg.add_transient(f'{arr}_split_snap',
-                                         desc.shape,
-                                         desc.dtype,
-                                         storage=desc.storage,
-                                         find_new_name=True)
+            snap, _ = sdfg.add_transient(
+                f"{arr}_split_snap", desc.shape, desc.dtype, storage=desc.storage, find_new_name=True
+            )
             read_subsets = [e.data.get_src_subset(e, state) for _, e in fwd_edges]
             copy_mem = self._snapshot_window(loop, arr, sdfg, read_subsets) or Memlet.from_array(arr, desc)
-            pre = loop.parent_graph.add_state_before(loop, label=f'{arr}_split_snapshot')
+            pre = loop.parent_graph.add_state_before(loop, label=f"{arr}_split_snapshot")
             pre.add_nedge(pre.add_read(arr), pre.add_write(snap), copy_mem)
             # sorted: ``sym_guards`` is a set of sympy exprs (hashed via symbol-name strings). It is iterated
             # to EMIT tasklets into ``pre``, so its order fixes their node names/ids and the emitted C order.
@@ -1253,8 +1279,9 @@ class BreakAntiDependence(ppl.Pass):
         if not subs:
             return
         from dace.sdfg.replace import replace_dict
+
         inlined = {str(k) for k in subs}
-        str_repl = {str(k): f'({symbolic.symstr(v)})' for k, v in subs.items()}
+        str_repl = {str(k): f"({symbolic.symstr(v)})" for k, v in subs.items()}
         # Substitute the binding's RHS into every body memlet / tasklet so the
         # body indexes via the forward iterator directly.
         for st in loop.states():

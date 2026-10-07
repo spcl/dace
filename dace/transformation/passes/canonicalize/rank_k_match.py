@@ -29,6 +29,7 @@ BLAS primitive is defined to compute. Any deviation -- a different coefficient, 
 transposed operand, an extra term -- makes the comparison fail and the lift a clean
 no-op.
 """
+
 from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, TypedDict
 
 import sympy
@@ -48,6 +49,7 @@ MAX_RESOLVE_DEPTH = 64
 
 class LeafRoles(TypedDict):
     """Leaves of a resolved expression bucketed by role, as :func:`classify_leaves` returns them."""
+
     c: Optional[sympy.Symbol]
     coeffs: Dict[str, sympy.Symbol]
     row: Dict[str, sympy.Symbol]
@@ -57,12 +59,14 @@ class LeafRoles(TypedDict):
 
 class ArrayRead(NamedTuple):
     """One opaque array read appearing in a resolved expression."""
+
     array: str
     index: Tuple[object, ...]
 
 
 class RankKMatch(NamedTuple):
     """Operands and orientation of a recognised rank-k / rank-2k nest."""
+
     c: str
     a: str
     b: Optional[str]  # None for syrk
@@ -103,11 +107,9 @@ class StateValueResolver:
         self.by_key[key] = sym
         return sym
 
-    def value_at(self,
-                 node: nodes.AccessNode,
-                 index: Sequence[symbolic.SymbolicType],
-                 depth: int = 0,
-                 allow_wcr: bool = False) -> sympy.Basic:
+    def value_at(
+        self, node: nodes.AccessNode, index: Sequence[symbolic.SymbolicType], depth: int = 0, allow_wcr: bool = False
+    ) -> sympy.Basic:
         """Value stored into AccessNode ``node`` at ``index``.
 
         ``allow_wcr`` resolves a WCR write to the TERM being combined (the reduction
@@ -133,11 +135,12 @@ class StateValueResolver:
             return self.value_at(edge.src, subset_indices(edge.data.subset), depth + 1)
         raise ValueError(f"rank-k resolve: unsupported producer {type(edge.src).__name__}")
 
-    def through_map_exit(self, map_exit: nodes.MapExit, out_conn: str, index: Sequence[symbolic.SymbolicType],
-                         depth: int) -> sympy.Basic:
+    def through_map_exit(
+        self, map_exit: nodes.MapExit, out_conn: str, index: Sequence[symbolic.SymbolicType], depth: int
+    ) -> sympy.Basic:
         """Evaluate the tasklet inside ``map_exit``'s scope that produces ``index``,
         binding the map parameters from its write subset."""
-        in_conn = "IN_" + out_conn[len("OUT_"):] if out_conn.startswith("OUT_") else out_conn
+        in_conn = "IN_" + out_conn[len("OUT_") :] if out_conn.startswith("OUT_") else out_conn
         for edge in self.state.in_edges(map_exit):
             if edge.dst_conn != in_conn:
                 continue
@@ -152,8 +155,9 @@ class StateValueResolver:
             return self.eval_tasklet(edge.src, binding, depth, edge.src_conn)
         raise ValueError("rank-k resolve: no producer into map exit")
 
-    def eval_tasklet(self, tasklet: nodes.Tasklet, binding: Dict[str, object], depth: int,
-                     out_conn: str) -> sympy.Basic:
+    def eval_tasklet(
+        self, tasklet: nodes.Tasklet, binding: Dict[str, object], depth: int, out_conn: str
+    ) -> sympy.Basic:
         """Evaluate ``tasklet``'s assignment to ``out_conn``, resolving each input
         connector. ``out_conn`` picks the one line that defines it, so a tasklet with
         several statements (several out connectors) still resolves exactly."""
@@ -210,7 +214,7 @@ def unify(pattern: List[object], target: List[object], params: List[str]) -> Dic
 
 def source_access(state: SDFGState, entry: nodes.MapEntry, out_conn: str) -> Optional[nodes.AccessNode]:
     """The AccessNode feeding ``entry``'s ``OUT_x`` connector from outside the scope."""
-    in_conn = "IN_" + out_conn[len("OUT_"):] if out_conn.startswith("OUT_") else out_conn
+    in_conn = "IN_" + out_conn[len("OUT_") :] if out_conn.startswith("OUT_") else out_conn
     for edge in state.in_edges(entry):
         if edge.dst_conn == in_conn and isinstance(edge.src, nodes.AccessNode):
             return edge.src
@@ -221,8 +225,9 @@ def equals(a: object, b: object) -> bool:
     """Symbolic equality of two scalar expressions."""
     try:
         return bool(
-            symbolic.simplify(
-                as_expr(symbolic.pystr_to_symbolic(str(a))) - as_expr(symbolic.pystr_to_symbolic(str(b)))) == 0)
+            symbolic.simplify(as_expr(symbolic.pystr_to_symbolic(str(a))) - as_expr(symbolic.pystr_to_symbolic(str(b))))
+            == 0
+        )
     except Exception:
         return False
 
@@ -313,7 +318,8 @@ def sink_node(state: SDFGState) -> Optional[nodes.AccessNode]:
     if the state has zero or several. A frontend staging temporary is never a sink --
     it always feeds a consumer -- so this picks out the state's real output."""
     sinks = [
-        n for n in state.nodes()
+        n
+        for n in state.nodes()
         if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0 and state.out_degree(n) == 0
     ]
     if len(sinks) != 1:
@@ -394,8 +400,9 @@ def sink_write_subset(state: SDFGState, sink: nodes.AccessNode) -> Optional[subs
     return edges[0].data.subset
 
 
-def classify_leaves(resolver: StateValueResolver, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol,
-                    k: Optional[str]) -> Optional[LeafRoles]:
+def classify_leaves(
+    resolver: StateValueResolver, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, k: Optional[str]
+) -> Optional[LeafRoles]:
     """Bucket a resolved expression's leaves by role.
 
     :returns: a dict with ``'c'`` (the prior ``C[i,j]`` leaf), ``'coeffs'`` (leaves that
@@ -451,8 +458,9 @@ def is_single_element(desc: dt.Data) -> bool:
     return isinstance(desc, dt.Scalar) or (isinstance(desc, dt.Array) and all(str(s) == "1" for s in desc.shape))
 
 
-def match_beta_state(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol,
-                     n: symbolic.SymbolicType) -> Optional[Tuple[str, str]]:
+def match_beta_state(
+    state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, n: symbolic.SymbolicType
+) -> Optional[Tuple[str, str]]:
     """Match ``C[i, <triangle>] *= beta[0]``.
 
     :returns: ``(beta_array, uplo)``, or ``None``.
@@ -480,8 +488,9 @@ def match_beta_state(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: symp
     return beta_array, uplo
 
 
-def resolve_accumulate(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, k: str,
-                       n: symbolic.SymbolicType) -> Optional[Tuple[sympy.Basic, LeafRoles, str]]:
+def resolve_accumulate(
+    state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sympy.Symbol, k: str, n: symbolic.SymbolicType
+) -> Optional[Tuple[sympy.Basic, LeafRoles, str]]:
     """Resolve the inner ``k``-loop body's write to ``C[i, <triangle>]``.
 
     :returns: ``(value_expression, leaf_roles, uplo)``, or ``None`` if the state is not
@@ -547,8 +556,9 @@ def replace_loop_with_state(parent: ControlFlowRegion, loop: LoopRegion, label: 
         parent.add_edge(edge.src, state, edge.data)
     for edge in out_edges:
         condition = edge.data.condition.as_string if edge.data.condition is not None else "1"
-        parent.add_edge(state, edge.dst,
-                        InterstateEdge(condition=condition, assignments=dict(edge.data.assignments or {})))
+        parent.add_edge(
+            state, edge.dst, InterstateEdge(condition=condition, assignments=dict(edge.data.assignments or {}))
+        )
     parent.remove_node(loop)
     return state
 

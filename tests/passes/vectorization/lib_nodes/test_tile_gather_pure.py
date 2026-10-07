@@ -6,6 +6,7 @@ in-edge subset to locate the K-dim tile region. K=1 and K=2 are covered
 contiguously; non-unit ``dim_strides`` are covered in T6 once the
 strided-load AVX-512 intrinsic lands.
 """
+
 import numpy as np
 import pytest
 
@@ -40,7 +41,7 @@ def build_load_sdfg(src_shape, widths, has_mask, dtype=dace.float64):
     return sdfg
 
 
-@pytest.mark.parametrize("widths", [(8, ), (4, 8)])
+@pytest.mark.parametrize("widths", [(8,), (4, 8)])
 def test_tile_gather_pure_unmasked_contiguous(widths):
     """Unmasked load copies the leading tile region of SRC into DST."""
     sdfg = build_load_sdfg(src_shape=widths, widths=widths, has_mask=False)
@@ -70,7 +71,7 @@ def test_tile_gather_rejects_invalid_K():
     with pytest.raises(ValueError, match="length in"):
         TileGather(name="bad_K", widths=())
     with pytest.raises(ValueError, match="dim_strides length"):
-        TileGather(name="bad_stride_len", widths=(8, ), dim_strides=(1, 1))
+        TileGather(name="bad_stride_len", widths=(8,), dim_strides=(1, 1))
 
 
 # Replicate-factor spectrum
@@ -80,8 +81,9 @@ def build_replicate_load_sdfg(src_shape, widths, replicate_factor_per_dim):
     """Build a minimal SDFG exercising a TileGather with a non-trivial
     ``replicate_factor_per_dim``: source array is W/k elements per
     replicate dim; destination is W lanes per dim."""
-    sdfg = dace.SDFG(f"tile_load_replicate_{'x'.join(str(w) for w in widths)}_"
-                     f"{'x'.join(str(k) for k in replicate_factor_per_dim)}")
+    sdfg = dace.SDFG(
+        f"tile_load_replicate_{'x'.join(str(w) for w in widths)}_{'x'.join(str(k) for k in replicate_factor_per_dim)}"
+    )
     sdfg.add_array("SRC", src_shape, dace.float64, transient=False)
     sdfg.add_array("DST", widths, dace.float64, transient=False)
     state = sdfg.add_state("main")
@@ -106,7 +108,7 @@ def test_tile_gather_pure_replicate_k1(k):
     broadcast case -- covered by ``src_kind='Scalar'``, not this
     spectrum."""
     W = 8
-    sdfg = build_replicate_load_sdfg(src_shape=(W // k, ), widths=(W, ), replicate_factor_per_dim=(k, ))
+    sdfg = build_replicate_load_sdfg(src_shape=(W // k,), widths=(W,), replicate_factor_per_dim=(k,))
     rng = np.random.default_rng(seed=21)
     SRC = rng.random(W // k)
     DST = np.zeros(W)
@@ -117,7 +119,7 @@ def test_tile_gather_pure_replicate_k1(k):
 def test_tile_gather_pure_replicate_factor_1_is_contiguous():
     """``replicate_factor=1`` is exactly the contiguous endpoint of the
     spectrum -- the codegen reduces to a plain TileGather."""
-    sdfg = build_replicate_load_sdfg(src_shape=(8, ), widths=(8, ), replicate_factor_per_dim=(1, ))
+    sdfg = build_replicate_load_sdfg(src_shape=(8,), widths=(8,), replicate_factor_per_dim=(1,))
     rng = np.random.default_rng(seed=22)
     SRC = rng.random(8)
     DST = np.zeros(8)
@@ -135,16 +137,16 @@ def test_tile_gather_rejects_invalid_replicate_factor():
     non-dividing load instead raises ``NotImplementedError`` at *expansion*, not
     construction -- so the constructor must accept it."""
     with pytest.raises(ValueError, match="replicate_factor_per_dim"):
-        TileGather(name="bad_factor_dim", widths=(8, ), replicate_factor_per_dim=(1, 2))
+        TileGather(name="bad_factor_dim", widths=(8,), replicate_factor_per_dim=(1, 2))
     with pytest.raises(ValueError, match="must be >= 1"):
-        TileGather(name="bad_factor_zero", widths=(8, ), replicate_factor_per_dim=(0, ))
+        TileGather(name="bad_factor_zero", widths=(8,), replicate_factor_per_dim=(0,))
     # 3 does not divide 8, yet the constructor accepts it (divisibility is an
     # expansion-time concern, not a construction-time one).
-    TileGather(name="nondiv_ok", widths=(8, ), replicate_factor_per_dim=(3, ))
+    TileGather(name="nondiv_ok", widths=(8,), replicate_factor_per_dim=(3,))
 
 
-if __name__ == '__main__':
-    test_tile_gather_pure_unmasked_contiguous((8, ))
+if __name__ == "__main__":
+    test_tile_gather_pure_unmasked_contiguous((8,))
     test_tile_gather_pure_unmasked_contiguous((4, 8))
     test_tile_gather_pure_masked_writes_zero_on_inactive_lanes()
     test_tile_gather_rejects_invalid_K()

@@ -5,6 +5,7 @@ Uses separate ``_Bin`` and ``_Bout`` connectors to avoid the inout-codegen
 double-declaration. The expansion stages a cBLAS / cuBLAS rank-major copy
 of ``_Bin`` into ``_Bout``, then calls the in-place TRSM on ``_Bout``.
 """
+
 import copy
 
 import dace.library
@@ -18,19 +19,28 @@ from dace import memlet as mm, SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 from dace.ordered import OrderedSet
 from typing import List, TYPE_CHECKING
+
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
 
 
 def _cblas_flags(node):
-    return ('CblasLeft' if not node.side else 'CblasRight', 'CblasUpper' if node.uplo else 'CblasLower',
-            'CblasTrans' if node.transA else 'CblasNoTrans', 'CblasUnit' if node.unit_diag else 'CblasNonUnit')
+    return (
+        "CblasLeft" if not node.side else "CblasRight",
+        "CblasUpper" if node.uplo else "CblasLower",
+        "CblasTrans" if node.transA else "CblasNoTrans",
+        "CblasUnit" if node.unit_diag else "CblasNonUnit",
+    )
 
 
 def _gpu_flags(node, dialect):
     """(side, uplo, trans, diag): column-major sees A^T and B^T, and (op(A) B)^T = B^T op(A)^T."""
-    return (dialect.side(not node.side), dialect.fill(not node.uplo), dialect.op('T' if node.transA else 'N'),
-            dialect.diag(node.unit_diag))
+    return (
+        dialect.side(not node.side),
+        dialect.fill(not node.uplo),
+        dialect.op("T" if node.transA else "N"),
+        dialect.diag(node.unit_diag),
+    )
 
 
 def _copy_loop(prefix, ld_in, ld_out, m, n):
@@ -43,7 +53,6 @@ def _copy_loop(prefix, ld_in, ld_out, m, n):
 
 @dace.library.expansion
 class ExpandTrsmOpenBLAS(ExpandTransformation):
-
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
@@ -59,16 +68,13 @@ class ExpandTrsmOpenBLAS(ExpandTransformation):
         std::memcpy(_Bout, _Bin, sizeof({dt.ctype}) * ({m}) * ({ldb_in}));
         cblas_{prefix}trsm(CblasRowMajor, {side}, {uplo}, {trans}, {diag}, {m}, {n}, ({dt.ctype})({a}), _A, {lda}, _Bout, {ldb_out});
         """
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
 class ExpandTrsmMKL(ExpandTransformation):
-
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
@@ -78,7 +84,6 @@ class ExpandTrsmMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandTrsmGPUBLAS(ExpandTransformation):
-
     environments: List[type] = []
     dialect: gpu_dialect.GpuBlasDialect
 
@@ -91,17 +96,17 @@ class ExpandTrsmGPUBLAS(ExpandTransformation):
         a = node.alpha
         code = cls.environments[0].handle_setup_code(node)
         code += gpu_dialect.host_scalar_mode(
-            cls.dialect, f"""
+            cls.dialect,
+            f"""
         {dt.ctype} __alpha = ({dt.ctype})({a});
         gpuMemcpyAsync(_Bout, _Bin, sizeof({dt.ctype}) * ({m}) * ({ldb_in}),
                         gpuMemcpyDeviceToDevice, __dace_current_stream);
-        {cls.dialect.check_error}({cls.dialect.func(func, 'trsm')}({cls.dialect.handle}, {side}, {uplo}, {trans}, {diag}, {n}, {m}, &__alpha, _A, {lda}, _Bout, {ldb_out}));
-        """)
-        return dace.sdfg.nodes.Tasklet(node.name,
-                                       node.in_connectors,
-                                       node.out_connectors,
-                                       code,
-                                       language=dace.dtypes.Language.CPP)
+        {cls.dialect.check_error}({cls.dialect.func(func, "trsm")}({cls.dialect.handle}, {side}, {uplo}, {trans}, {diag}, {n}, {m}, &__alpha, _A, {lda}, _Bout, {ldb_out}));
+        """,
+        )
+        return dace.sdfg.nodes.Tasklet(
+            node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP
+        )
 
 
 @dace.library.expansion
@@ -124,7 +129,7 @@ class Trsm(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandTrsmOpenBLAS,
         "MKL": ExpandTrsmMKL,
         "cuBLAS": ExpandTrsmCuBLAS,
-        "rocBLAS": ExpandTrsmRocBLAS
+        "rocBLAS": ExpandTrsmRocBLAS,
     }
     default_implementation = None
 
@@ -135,7 +140,7 @@ class Trsm(dace.sdfg.nodes.LibraryNode):
     alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     def __init__(self, name, side=False, uplo=False, transA=False, unit_diag=False, alpha=1, **kwargs):
-        super().__init__(name, inputs=OrderedSet(('_A', '_Bin')), outputs={"_Bout"}, **kwargs)
+        super().__init__(name, inputs=OrderedSet(("_A", "_Bin")), outputs={"_Bout"}, **kwargs)
         self.side, self.uplo, self.transA, self.unit_diag, self.alpha = side, uplo, transA, unit_diag, alpha
 
     def validate(self, sdfg, state):
@@ -160,26 +165,28 @@ class Trsm(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_B, ldb_in), ldb_out, m, n
 
 
-@oprepo.replaces('dace.libraries.blas.trsm')
-@oprepo.replaces('dace.libraries.blas.Trsm')
-def trsm_libnode(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 A,
-                 B,
-                 result=None,
-                 side=False,
-                 uplo=False,
-                 transA=False,
-                 unit_diag=False,
-                 alpha=1):
+@oprepo.replaces("dace.libraries.blas.trsm")
+@oprepo.replaces("dace.libraries.blas.Trsm")
+def trsm_libnode(
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    A,
+    B,
+    result=None,
+    side=False,
+    uplo=False,
+    transA=False,
+    unit_diag=False,
+    alpha=1,
+):
     """Build a :class:`Trsm` node. ``result`` defaults to ``B`` for in-place semantics."""
     result = result if result is not None else B
     A_in, B_in = state.add_read(A), state.add_read(B)
     B_out = state.add_write(result)
-    libnode = Trsm('trsm', side=side, uplo=uplo, transA=transA, unit_diag=unit_diag, alpha=alpha)
+    libnode = Trsm("trsm", side=side, uplo=uplo, transA=transA, unit_diag=unit_diag, alpha=alpha)
     state.add_node(libnode)
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(B_in, None, libnode, '_Bin', mm.Memlet(B))
-    state.add_edge(libnode, '_Bout', B_out, None, mm.Memlet(result))
+    state.add_edge(A_in, None, libnode, "_A", mm.Memlet(A))
+    state.add_edge(B_in, None, libnode, "_Bin", mm.Memlet(B))
+    state.add_edge(libnode, "_Bout", B_out, None, mm.Memlet(result))
     return []

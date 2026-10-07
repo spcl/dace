@@ -4,6 +4,7 @@
 :class:`VectorizeConfig` bundles every vectorizer knob into one dataclass.
 ``__post_init__`` refuses a variant that is not a member of its enum.
 """
+
 import dataclasses
 
 from dace.dtypes import DeviceType
@@ -30,6 +31,7 @@ class VectorizeConfig:
         differ by up to 1 ULP from plain NumPy.
     :param device: Target device (CPU / GPU).
     """
+
     widths: tuple[int, ...]
     target_isa: ISA = ISA.AUTO
     remainder_strategy: RemainderStrategy = RemainderStrategy.MASKED_TAIL
@@ -43,9 +45,13 @@ class VectorizeConfig:
     device: DeviceType = DeviceType.CPU
 
     def __post_init__(self) -> None:
-        for name, enum_cls in (("target_isa", ISA), ("remainder_strategy", RemainderStrategy), ("branch_mode",
-                                                                                                BranchMode)):
+        for name, enum_cls in (
+            ("target_isa", ISA),
+            ("remainder_strategy", RemainderStrategy),
+            ("branch_mode", BranchMode),
+        ):
             if not isinstance(getattr(self, name), enum_cls):
-                raise TypeError(f"VectorizeConfig.{name} must be a {enum_cls.__name__} member, "
-                                f"got {getattr(self, name)!r}")
+                raise TypeError(
+                    f"VectorizeConfig.{name} must be a {enum_cls.__name__} member, got {getattr(self, name)!r}"
+                )
         self.widths = tuple(self.widths)

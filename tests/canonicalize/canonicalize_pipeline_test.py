@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" End-to-end unit tests for the full ``canonicalize`` pipeline.
+"""End-to-end unit tests for the full ``canonicalize`` pipeline.
 
-    Each kernel exercises a different stage path (lower-to-loops, fission,
-    normalize, parallelize, fuse, conditional recombination, indirection)
-    and asserts the canonicalized SDFG validates and is numerically
-    identical to a deep-copied pre-canonicalization run. Includes an
-    idempotence check (canonicalizing twice stays valid and value-
-    preserving). Kernels use the dace Python frontend.
+Each kernel exercises a different stage path (lower-to-loops, fission,
+normalize, parallelize, fuse, conditional recombination, indirection)
+and asserts the canonicalized SDFG validates and is numerically
+identical to a deep-copied pre-canonicalization run. Includes an
+idempotence check (canonicalizing twice stays valid and value-
+preserving). Kernels use the dace Python frontend.
 """
+
 import copy
 
 import numpy as np
@@ -18,8 +19,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
-N = dace.symbol('N')
-M = dace.symbol('M')
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 def nmaps(sdfg: dace.SDFG) -> int:
@@ -41,22 +42,23 @@ def structure(sdfg: dace.SDFG) -> str:
     """
     lines: list[str] = []
     for index, state in enumerate(sdfg.states()):
-        lines.append(f'STATE {index}')
+        lines.append(f"STATE {index}")
         ids = {n: i for i, n in enumerate(state.nodes())}
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode):
-                lines.append(f'  N{ids[node]} access {node.data}')
+                lines.append(f"  N{ids[node]} access {node.data}")
             elif isinstance(node, nodes.Tasklet):
-                lines.append(f'  N{ids[node]} tasklet {node.code.as_string}')
+                lines.append(f"  N{ids[node]} tasklet {node.code.as_string}")
             elif isinstance(node, nodes.MapEntry):
-                lines.append(f'  N{ids[node]} map {node.map.params} {node.map.range}')
+                lines.append(f"  N{ids[node]} map {node.map.params} {node.map.range}")
             else:
-                lines.append(f'  N{ids[node]} {type(node).__name__}')
+                lines.append(f"  N{ids[node]} {type(node).__name__}")
         lines.extend(
-            sorted(f'  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}' for e in state.edges()))
+            sorted(f"  E N{ids[e.src]}:{e.src_conn} -> N{ids[e.dst]}:{e.dst_conn} {e.data}" for e in state.edges())
+        )
     for region in sdfg.all_control_flow_regions(recursive=True):
-        lines.append(f'CFG {type(region).__name__} {len(region.nodes())}')
-    return '\n'.join(lines)
+        lines.append(f"CFG {type(region).__name__} {len(region.nodes())}")
+    return "\n".join(lines)
 
 
 @dace.program
@@ -67,7 +69,7 @@ def elemwise(a: dace.float64[N], b: dace.float64[N]):
 
 @dace.program
 def stencil1d(a: dace.float64[N], b: dace.float64[N]):
-    for i in dace.map[1:N - 1]:
+    for i in dace.map[1 : N - 1]:
         b[i] = a[i - 1] + a[i] + a[i + 1]
 
 
@@ -80,7 +82,7 @@ def two_independent(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], 
 
 @dace.program
 def jacobi2d(a: dace.float64[N, M], b: dace.float64[N, M]):
-    for i, j in dace.map[1:N - 1, 1:M - 1]:
+    for i, j in dace.map[1 : N - 1, 1 : M - 1]:
         b[i, j] = 0.25 * (a[i - 1, j] + a[i + 1, j] + a[i, j - 1] + a[i, j + 1])
 
 
@@ -116,7 +118,7 @@ def test_canonicalize_elementwise():
     out = np.zeros(n)
     sdfg(a=a.copy(), b=out, N=n)
     assert np.allclose(out, ref) and np.allclose(out, a * 2.0 + 1.0)
-    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the elementwise map did not survive as the one parallel map'
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), "the elementwise map did not survive as the one parallel map"
 
 
 def test_canonicalize_stencil_1d():
@@ -132,9 +134,9 @@ def test_canonicalize_stencil_1d():
     sdfg(a=a.copy(), b=out, N=n)
     assert np.allclose(out, ref)
     exp = np.zeros(n)
-    exp[1:n - 1] = a[0:n - 2] + a[1:n - 1] + a[2:n]
+    exp[1 : n - 1] = a[0 : n - 2] + a[1 : n - 1] + a[2:n]
     assert np.allclose(out, exp)
-    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the stencil did not stay one parallel map'
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), "the stencil did not stay one parallel map"
 
 
 def test_canonicalize_two_independent_fission_fuse_roundtrip():
@@ -151,7 +153,7 @@ def test_canonicalize_two_independent_fission_fuse_roundtrip():
     assert np.allclose(out_b, ref_b) and np.allclose(out_d, ref_d)
     assert np.allclose(out_b, a + 1.0) and np.allclose(out_d, c * 3.0)
     # Fission splits the body, fusion puts the two independent statements back under one map.
-    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), f'fission/fuse left {nmaps(sdfg)} maps, {nloops(sdfg)} loops'
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), f"fission/fuse left {nmaps(sdfg)} maps, {nloops(sdfg)} loops"
 
 
 def test_canonicalize_jacobi_2d():
@@ -167,9 +169,11 @@ def test_canonicalize_jacobi_2d():
     sdfg(a=a.copy(), b=out, N=n, M=m)
     assert np.allclose(out, ref)
     exp = np.zeros((n, m))
-    exp[1:n - 1, 1:m - 1] = 0.25 * (a[0:n - 2, 1:m - 1] + a[2:n, 1:m - 1] + a[1:n - 1, 0:m - 2] + a[1:n - 1, 2:m])
+    exp[1 : n - 1, 1 : m - 1] = 0.25 * (
+        a[0 : n - 2, 1 : m - 1] + a[2:n, 1 : m - 1] + a[1 : n - 1, 0 : m - 2] + a[1 : n - 1, 2:m]
+    )
     assert np.allclose(out, exp)
-    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the 2-D nest must stay one collapsed map'
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), "the 2-D nest must stay one collapsed map"
 
 
 def test_canonicalize_indirect_gather():
@@ -186,7 +190,7 @@ def test_canonicalize_indirect_gather():
     sdfg(a=a.copy(), idx=idx.copy(), b=out_b, c=c.copy(), e=out_e, N=n)
     assert np.allclose(out_b, ref_b) and np.allclose(out_e, ref_e)
     assert np.allclose(out_b, a[idx]) and np.allclose(out_e, c[idx])
-    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the indirection must not cost the parallel map'
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), "the indirection must not cost the parallel map"
 
 
 def test_canonicalize_strided_map_normalized():
@@ -204,10 +208,10 @@ def test_canonicalize_strided_map_normalized():
     exp[3:31:4] = a[3:31:4] + 5.0
     assert np.allclose(out, exp)
     # Constant trip count, so normalization unrolls the strided map into straight-line states.
-    assert (nmaps(sdfg), nloops(sdfg)) == (0, 0), f'the strided map was not unrolled: {nmaps(sdfg)} maps'
+    assert (nmaps(sdfg), nloops(sdfg)) == (0, 0), f"the strided map was not unrolled: {nmaps(sdfg)} maps"
 
 
-@pytest.mark.parametrize('av', [1, 0])
+@pytest.mark.parametrize("av", [1, 0])
 def test_canonicalize_guarded_conditional(av):
     rng = np.random.default_rng(42)
     n = 18
@@ -221,8 +225,8 @@ def test_canonicalize_guarded_conditional(av):
     sdfg(a=a.copy(), b=out, active=np.array([av], np.int32), N=n)
     assert np.allclose(out, ref), f"mismatch active={av}"
     assert np.allclose(out, a * 2.0 if av > 0 else np.full(n, 7.0))
-    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), 'the guarded body lost its parallel map'
-    assert nconds(sdfg) == 1, f'the data-dependent guard must survive; got {nconds(sdfg)} conditionals'
+    assert (nmaps(sdfg), nloops(sdfg)) == (1, 0), "the guarded body lost its parallel map"
+    assert nconds(sdfg) == 1, f"the data-dependent guard must survive; got {nconds(sdfg)} conditionals"
 
 
 def test_canonicalize_is_idempotent():
@@ -239,7 +243,7 @@ def test_canonicalize_is_idempotent():
     canonicalize(sdfg, validate=True)
     once = structure(sdfg)
     canonicalize(sdfg, validate=True)
-    assert structure(sdfg) == once, 'the second canonicalize rewrote its own output'
+    assert structure(sdfg) == once, "the second canonicalize rewrote its own output"
 
     out_b, out_d = np.zeros(n), np.zeros(n)
     sdfg(a=a.copy(), b=out_b, c=c.copy(), d=out_d, N=n)

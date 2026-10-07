@@ -28,6 +28,7 @@ Covered:
 
 GPU-executing tests fork before any CUDA use so a device fault cannot crash the pytest parent.
 """
+
 import os
 import shutil
 import traceback
@@ -52,7 +53,7 @@ M = dace.symbol("M")
 
 @dace.program
 def _add16(A: dace.float16[N], B: dace.float16[N], C: dace.float16[N]):
-    for i in dace.map[1:N - 1]:
+    for i in dace.map[1 : N - 1]:
         C[i] = A[i] + B[i]
 
 
@@ -60,7 +61,7 @@ def _add16(A: dace.float16[N], B: dace.float16[N], C: dace.float16[N]):
 def _neighbor16(A: dace.float16[N], D: dace.float16[N]):
     # A neighbour-read "stencil" shape (boundary lanes read A[i-1] / A[i+1]) but a SINGLE fp16 add,
     # so the NumPy oracle is unambiguous and the comparison is exactly bit-exact.
-    for i in dace.map[1:N - 1]:
+    for i in dace.map[1 : N - 1]:
         D[i] = A[i - 1] + A[i + 1]
 
 
@@ -71,14 +72,14 @@ def _where16(A: dace.float16[N], C: dace.float16[N]):
     # the literal must NOT upcast the array). Lowers to a same-write-set if/else -> ITE tasklet ->
     # TileITE in the vectorized (tiled) interior; the extent is non-divisible (1022 @ W=2), so a
     # scalar remainder tasklet ALSO carries the same ``ITE(cond, 0.0, A[i])`` shape, unconverted.
-    C[1:N - 1] = np.where(A[1:N - 1] > 0, 0.0, A[1:N - 1])
+    C[1 : N - 1] = np.where(A[1 : N - 1] > 0, 0.0, A[1 : N - 1])
 
 
 @dace.program
 def _add16_2d(A: dace.float16[M, N], B: dace.float16[M, N], C: dace.float16[M, N]):
     # Two-dim: only the innermost dim is tiled + fused, the outer ``i`` rides along as a prefix
     # param. The fused map keeps that prefix dim, and the else-branch tail loop must run per ``i``.
-    for i, j in dace.map[0:M, 1:N - 1]:
+    for i, j in dace.map[0:M, 1 : N - 1]:
         C[i, j] = A[i, j] + B[i, j]
 
 
@@ -87,7 +88,7 @@ def _stencil16_2d(A: dace.float16[M, N], B: dace.float16[M, N]):
     # The fp16 4-point stencil the widened (half2) load path targets: the ``A[i, j-1]`` / ``A[i, j+1]``
     # reads are the ones whose linear offset the alignment proof can pin from the guarded row-stride
     # parity, so the mask-free (full-tile) arm must carry an ``Align >= 4`` load.
-    for i, j in dace.map[1:M - 1, 1:N - 1]:
+    for i, j in dace.map[1 : M - 1, 1 : N - 1]:
         B[i, j] = (A[i, j - 1] + A[i, j + 1] + A[i - 1, j] + A[i + 1, j]) * dace.float16(0.25)
 
 
@@ -96,7 +97,7 @@ def _stencil16_2d_odd(A: dace.float16[M, N], B: dace.float16[M, N]):
     # Inner extent N-3, which is ODD whenever the row stride N is even -- and an even row stride is
     # what the widened fp16 path's runtime guard demands. So this is the shape whose masked tail arm
     # runs even at the W=2 default width (a W=2 tile over an even extent never reaches the else).
-    for i, j in dace.map[1:M - 1, 1:N - 2]:
+    for i, j in dace.map[1 : M - 1, 1 : N - 2]:
         B[i, j] = (A[i, j - 1] + A[i, j + 1]) * dace.float16(0.5)
 
 
@@ -118,8 +119,12 @@ def _prep(prog):
 
 def _top_maps(sdfg):
     return [
-        n for n, g in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)
-        and isinstance(g, dace.SDFGState) and g.sdfg is sdfg and g.scope_dict()[n] is None
+        n
+        for n, g in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry)
+        and isinstance(g, dace.SDFGState)
+        and g.sdfg is sdfg
+        and g.scope_dict()[n] is None
     ]
 
 
@@ -150,7 +155,8 @@ def test_branched_tail_refused_on_cpu():
     """The strategy is GPU-only: a CPU config raises ``NotImplementedError`` at construction."""
     with pytest.raises(NotImplementedError, match="BRANCHED_TAIL.*GPU-only"):
         VectorizeMultiDim(
-            VectorizeConfig(widths=(8, ), device=DeviceType.CPU, remainder_strategy=RemainderStrategy.BRANCHED_TAIL))
+            VectorizeConfig(widths=(8,), device=DeviceType.CPU, remainder_strategy=RemainderStrategy.BRANCHED_TAIL)
+        )
 
 
 def test_assume_even_opts_out_of_branched_tail():
@@ -160,9 +166,10 @@ def test_assume_even_opts_out_of_branched_tail():
     :func:`test_default_gpu_k1_is_branched_tail`.)"""
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 
-    even = VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=True))
-    assert not any(isinstance(p, FuseBranchedTailRemainder) for p in even.passes), \
+    even = VectorizeGPU(VectorizeConfig(widths=(2,), assume_even=True))
+    assert not any(isinstance(p, FuseBranchedTailRemainder) for p in even.passes), (
         "assume_even pipeline must NOT contain the branched-tail fuse pass"
+    )
 
     sdfg = _prep(_add16)
     even.apply_pass(sdfg, {})
@@ -176,9 +183,10 @@ def test_default_gpu_k1_is_branched_tail():
     :func:`test_default_gpu_k1_peels_a_masked_tail` pins WHICH branched strategy."""
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 
-    default = VectorizeGPU(VectorizeConfig(widths=(2, )))
-    assert any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes), \
+    default = VectorizeGPU(VectorizeConfig(widths=(2,)))
+    assert any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes), (
         "GPU K=1 default must be branched (fuse pass present)"
+    )
 
 
 def test_default_gpu_k1_peels_a_masked_tail():
@@ -189,13 +197,14 @@ def test_default_gpu_k1_peels_a_masked_tail():
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
 
-    default = VectorizeGPU(VectorizeConfig(widths=(2, )))
-    assert [p.tail_mode for p in default.passes if isinstance(p, SplitMapForTileRemainder)] == ["masked_branch"], \
+    default = VectorizeGPU(VectorizeConfig(widths=(2,)))
+    assert [p.tail_mode for p in default.passes if isinstance(p, SplitMapForTileRemainder)] == ["masked_branch"], (
         "GPU K=1 default must peel a MASKED tail (tail_mode='masked_branch')"
+    )
     assert any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes)
 
     # The explicit opt-in to the scalar-tail variant still peels a scalar tail.
-    scalar = VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL))
+    scalar = VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL))
     assert [p.tail_mode for p in scalar.passes if isinstance(p, SplitMapForTileRemainder)] == ["scalar"]
 
 
@@ -206,7 +215,7 @@ def test_default_gpu_fuses_a_masked_tile_remainder():
     from dace.libraries.tileops import TileMaskGen
 
     sdfg = _prep(_stencil16_2d)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     sdfg.validate()
     assert len(_top_maps(sdfg)) == 1, "the default must fuse to a single map"
     conds = _conditionals(sdfg)
@@ -234,14 +243,14 @@ def test_fusion_reads_each_boundary_descriptor_from_the_array_its_edge_carries()
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 
     sdfg = _prep(_add16)
-    unfused = VectorizeGPU(VectorizeConfig(widths=(2, )))
+    unfused = VectorizeGPU(VectorizeConfig(widths=(2,)))
     assert isinstance(unfused.passes[-1], FuseBranchedTailRemainder)
     unfused.passes = unfused.passes[:-1]
     unfused.apply_pass(sdfg, {})
     for name in [n for n, desc in sdfg.arrays.items() if not desc.transient]:
-        sdfg.replace(name, 'gpu_' + name)
+        sdfg.replace(name, "gpu_" + name)
 
-    FuseBranchedTailRemainder(widths=(2, )).apply_pass(sdfg, {})
+    FuseBranchedTailRemainder(widths=(2,)).apply_pass(sdfg, {})
     sdfg.validate()
     assert len(_conditionals(sdfg)) == 1
 
@@ -253,14 +262,14 @@ def test_default_gpu_emits_widened_load_and_no_scalar_tail():
     from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
 
     sdfg = _prep(_stencil16_2d)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,))).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert cu.count("__global__ void") == 1, "the default must emit exactly ONE kernel"
-    assert "dace::tileops::tile_load<dace::float16, 2, false, 4" in cu, \
+    assert "dace::tileops::tile_load<dace::float16, 2, false, 4" in cu, (
         "the mask-free arm must carry a WIDENED (Align >= 4) fp16 load"
-    assert "dace::tileops::tile_load<dace::float16, 2, true" in cu, \
-        "the remainder arm must carry a MASKED fp16 load"
+    )
+    assert "dace::tileops::tile_load<dace::float16, 2, true" in cu, "the remainder arm must carry a MASKED fp16 load"
     assert SCALAR_TAIL_MARKER not in cu, "no scalar-tail body may be emitted"
     assert "__rem_" not in cu, "no scalar remainder lane loop may be emitted"
 
@@ -270,16 +279,17 @@ def test_branched_tail_provably_nondivisible_does_not_raise():
     the fused path under ``branched_tail`` (the GPU K=1 default) -- one fused map over the ORIGINAL
     [1:1023) range."""
     with pytest.raises(ValueError, match="provably not a multiple of tile width 8"):
-        VectorizeGPU(VectorizeConfig(widths=(8, ), assume_even=True)).apply_pass(_prep(_add16_literal), {})
+        VectorizeGPU(VectorizeConfig(widths=(8,), assume_even=True)).apply_pass(_prep(_add16_literal), {})
 
     sdfg = _prep(_add16_literal)
-    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(8,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     sdfg.validate()
     maps = _top_maps(sdfg)
     assert len(maps) == 1, f"branched_tail must fuse to one map; got {len(maps)}"
     lb, ub, step = maps[0].map.range.ranges[-1]
-    assert (str(lb), str(ub), str(step)) == ("1", "1022", "8"), \
+    assert (str(lb), str(ub), str(step)) == ("1", "1022", "8"), (
         f"fused map must iterate the original element range strided by W; got {(str(lb), str(ub), str(step))}"
+    )
 
 
 def test_branched_tail_structure_if_vector_else_scalar():
@@ -287,7 +297,7 @@ def test_branched_tail_structure_if_vector_else_scalar():
     tile ops (masked copies and TileBinop) and NO scalar tasklet; the ``else`` branch holds a
     Sequential loop with the scalar tasklet."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(8,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     sdfg.validate()
     assert len(_top_maps(sdfg)) == 1
     conds = _conditionals(sdfg)
@@ -305,8 +315,9 @@ def test_branched_tail_structure_if_vector_else_scalar():
             yield from st.all_nodes_recursive()
 
     if_kinds = {type(n).__name__ for n, _ in _all_nodes_recursive(if_region)}
-    assert "TileBinop" in if_kinds and MaskedCopyLibraryNode.__name__ in if_kinds, \
+    assert "TileBinop" in if_kinds and MaskedCopyLibraryNode.__name__ in if_kinds, (
         f"vectorized tile ops must survive intact in the if-branch; got {sorted(if_kinds)}"
+    )
     assert "Tasklet" not in _node_types(if_region), "the if-branch must be tile ops, not a scalar tasklet"
 
     assert "MapEntry" in _node_types(else_region), "the else-branch must wrap a scalar loop (Sequential map)"
@@ -339,7 +350,7 @@ def test_pairs_are_matched_structurally_not_by_label():
     interior, _ = state.add_map(f"foo{TILE_MAIN_MARKER}", dict(i="0:64"))
     tail, _ = state.add_map(f"foo{SCALAR_TAIL_MARKER}", dict(i="64:70"))
 
-    pairs = FuseBranchedTailRemainder(widths=(8, ))._find_pairs(state)
+    pairs = FuseBranchedTailRemainder(widths=(8,))._find_pairs(state)
     assert pairs == [(interior, tail)], "the tail must pair with the interior it was split from"
     assert all(main is not whole for main, _ in pairs), "an unsplit main must not capture a sibling's tail"
 
@@ -357,7 +368,7 @@ def test_a_tail_is_consumed_by_only_one_main():
     main_b, _ = state.add_map(f"foo{TILE_MAIN_MARKER}", dict(i="0:32"))
     tail_b, _ = state.add_map(f"foo{SCALAR_TAIL_MARKER}", dict(i="32:35"))
 
-    pairs = FuseBranchedTailRemainder(widths=(8, ))._find_pairs(state)
+    pairs = FuseBranchedTailRemainder(widths=(8,))._find_pairs(state)
     assert sorted((id(m), id(t)) for m, t in pairs) == sorted([(id(main_a), id(tail_a)), (id(main_b), id(tail_b))])
 
 
@@ -365,7 +376,7 @@ def test_branched_tail_emits_single_kernel():
     """The emitted device (``.cu``) TU contains exactly ONE ``__global__`` kernel for the fused
     region -- the two-kernel remainder is folded into one -- with a split-residue-free bound."""
     sdfg = _prep(_add16)
-    VectorizeGPU(VectorizeConfig(widths=(8, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(8,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
     sdfg.expand_library_nodes()
     cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
     assert cu.count("__global__ void") == 1, "branched_tail must emit exactly ONE kernel for the tiled region"
@@ -395,14 +406,15 @@ def test_branched_tail_where_literal_arm_typed_not_bare_double():
     explicit fp16 dtype assertions below.
     """
     sdfg = _prep(_where16)
-    VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
 
     ites = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, TileITE)]
     assert len(ites) == 1, f"expected exactly one TileITE for the tiled interior; got {len(ites)}"
     ite = ites[0]
     assert ite.kind_t == "Symbol" and ite.expr_t == "0.0", (
         f"tiled-interior TileITE Symbol arm changed unexpectedly: kind_t={ite.kind_t!r} expr_t={ite.expr_t!r} "
-        "-- CastScalarIteLiteralArms must not touch an arm a TileITE will claim")
+        "-- CastScalarIteLiteralArms must not touch an arm a TileITE will claim"
+    )
 
     # The tiled TileITE's own operand and output descriptors -- the arrays the two fixes are
     # about -- stay fp16; nothing was widened to make dtype agreement easier.
@@ -437,10 +449,12 @@ def test_branched_tail_elementwise_bitexact(width):
     def work():
         import numpy as np
         import cupy
+
         sdfg = _prep(_add16)
         sdfg.name = f"bt_add16_w{width}"
-        VectorizeGPU(VectorizeConfig(widths=(width, ),
-                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(width,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(
+            sdfg, {}
+        )
         sdfg.expand_library_nodes()
         cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
@@ -454,7 +468,7 @@ def test_branched_tail_elementwise_bitexact(width):
         csr(A=cupy.asarray(A), B=cupy.asarray(B), C=(dC := cupy.asarray(C)), N=n)
         got = cupy.asnumpy(dC)
         exp = np.zeros(n, np.float16)
-        exp[1:n - 1] = A[1:n - 1] + B[1:n - 1]
+        exp[1 : n - 1] = A[1 : n - 1] + B[1 : n - 1]
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
     assert _run_in_fork(work) == 0
@@ -469,10 +483,12 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
     def work():
         import numpy as np
         import cupy
+
         sdfg = _prep(_neighbor16)
         sdfg.name = f"bt_neighbor16_w{width}"
-        VectorizeGPU(VectorizeConfig(widths=(width, ),
-                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(width,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(
+            sdfg, {}
+        )
         sdfg.expand_library_nodes()
         cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.title == "CUDA")
         assert cu.count("__global__ void") == 1
@@ -485,7 +501,7 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
         csr(A=cupy.asarray(A), D=(dD := cupy.asarray(D)), N=n)
         got = cupy.asnumpy(dD)
         exp = np.zeros(n, np.float16)
-        exp[1:n - 1] = A[0:n - 2] + A[2:n]
+        exp[1 : n - 1] = A[0 : n - 2] + A[2:n]
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
     assert _run_in_fork(work) == 0
@@ -501,10 +517,12 @@ def test_branched_tail_outer_param_bitexact(width):
     def work():
         import numpy as np
         import cupy
+
         sdfg = _prep(_add16_2d)
         sdfg.name = f"bt_add16_2d_w{width}"
-        VectorizeGPU(VectorizeConfig(widths=(width, ),
-                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(width,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(
+            sdfg, {}
+        )
         # Pin the fused shape: un-fused, this kernel would still be numerically right, so a bare
         # value check would pass without ever exercising the merge.
         assert len(_top_maps(sdfg)) == 1, "the prefix-param pair must fuse to a single map"
@@ -522,7 +540,7 @@ def test_branched_tail_outer_param_bitexact(width):
         csr(A=cupy.asarray(A), B=cupy.asarray(B), C=(dC := cupy.asarray(C)), M=m, N=n)
         got = cupy.asnumpy(dC)
         exp = C.copy()
-        exp[:, 1:n - 1] = A[:, 1:n - 1] + B[:, 1:n - 1]
+        exp[:, 1 : n - 1] = A[:, 1 : n - 1] + B[:, 1 : n - 1]
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
     assert _run_in_fork(work) == 0
@@ -539,9 +557,10 @@ def test_default_masked_tail_stencil_bitexact(width):
     def work():
         import numpy as np
         import cupy
+
         sdfg = _prep(_stencil16_2d_odd)
         sdfg.name = f"bmt_stencil16_w{width}"
-        VectorizeGPU(VectorizeConfig(widths=(width, ))).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(width,))).apply_pass(sdfg, {})
         assert len(_top_maps(sdfg)) == 1, "the default must fuse to a single map"
         assert len(_conditionals(sdfg)) == 1, "the fused body must be one if(full-tile)/else(masked)"
         sdfg.expand_library_nodes()
@@ -558,7 +577,7 @@ def test_default_masked_tail_stencil_bitexact(width):
         got = cupy.asnumpy(dB)
         exp = B.copy()
         # x * 0.5 is exact in binary FP, so the only rounding is the one fp16 add -- bit-exact.
-        exp[1:m - 1, 1:n - 2] = (A[1:m - 1, 0:n - 3] + A[1:m - 1, 2:n - 1]) * np.float16(0.5)
+        exp[1 : m - 1, 1 : n - 2] = (A[1 : m - 1, 0 : n - 3] + A[1 : m - 1, 2 : n - 1]) * np.float16(0.5)
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
     assert _run_in_fork(work) == 0
@@ -576,10 +595,12 @@ def test_branched_tail_where_literal_arm_bitexact():
     def work():
         import numpy as np
         import cupy
+
         sdfg = _prep(_where16)
         sdfg.name = "bt_where16"
-        VectorizeGPU(VectorizeConfig(widths=(2, ),
-                                     remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(sdfg, {})
+        VectorizeGPU(VectorizeConfig(widths=(2,), remainder_strategy=RemainderStrategy.BRANCHED_TAIL)).apply_pass(
+            sdfg, {}
+        )
         sdfg.expand_library_nodes()
         shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
         csr = sdfg.compile()
@@ -590,7 +611,7 @@ def test_branched_tail_where_literal_arm_bitexact():
         csr(A=cupy.asarray(A), C=(dC := cupy.asarray(C)), N=n)
         got = cupy.asnumpy(dC)
         exp = np.zeros(n, np.float16)
-        exp[1:n - 1] = np.where(A[1:n - 1] > 0, np.float16(0.0), A[1:n - 1])
+        exp[1 : n - 1] = np.where(A[1 : n - 1] > 0, np.float16(0.0), A[1 : n - 1])
         assert got.dtype == np.float16
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 

@@ -38,6 +38,7 @@ map, or a map still tagged ``is_warp_tile`` and waiting to become one -- those
 derive the block size from the thread-block map, and a preset ``gpu_block_size``
 would conflict at codegen.
 """
+
 from typing import Any, Dict, List, Optional
 
 from dace import SDFG, dtypes
@@ -68,7 +69,8 @@ def warp_width() -> int:
     inherits the other's shape.
     """
     from dace.codegen import common
-    return 64 if common.get_gpu_backend() == 'hip' else 32
+
+    return 64 if common.get_gpu_backend() == "hip" else 32
 
 
 #: A device map whose reduction is lowered as a block tree-reduce (a WCR map output, where the active
@@ -142,6 +144,7 @@ def is_block_reduce(node) -> bool:
     block (``gpucub::BlockReduce``, sized by the block) rather than sequentially per thread. A
     ``Sequential`` Reduce is a per-thread loop -- its block size does not deepen any tree."""
     from dace.libraries.standard.nodes.reduce import Reduce
+
     return isinstance(node, Reduce) and node.schedule != dtypes.ScheduleType.Sequential
 
 
@@ -208,7 +211,7 @@ class SelectGPUDeviceBlockSize(ppl.Pass):
     the thread-block level. See :func:`pick_gpu_block_size` for the selection logic.
     """
 
-    CATEGORY: str = 'Optimization'
+    CATEGORY: str = "Optimization"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes

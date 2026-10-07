@@ -5,6 +5,7 @@ One function per kernel, taking the same arguments as the DaCe / C++
 counterpart (input arrays in, output arrays in-place). Used by the
 correctness harness to verify the compiled kernel output.
 """
+
 import numpy as np
 
 
@@ -150,8 +151,9 @@ def ref_fission_dep_const_offset(a: np.ndarray, b: np.ndarray, x: np.ndarray, y:
         b[i] = y[i] * z[i]
 
 
-def ref_fission_dep_sym_offset(a: np.ndarray, b: np.ndarray, x: np.ndarray, y: np.ndarray, z: np.ndarray,
-                               k: int) -> None:
+def ref_fission_dep_sym_offset(
+    a: np.ndarray, b: np.ndarray, x: np.ndarray, y: np.ndarray, z: np.ndarray, k: int
+) -> None:
     """Body A symbolic-offset (``k``) carried dep, body B independent.
     Caller must initialize ``a[0..k-1]``."""
     n = a.shape[0]
@@ -234,9 +236,12 @@ def _heat3d_tiled(b: np.ndarray, a: np.ndarray, t: int) -> None:
                 for k in range(kk, kk + t):
                     for j in range(jj, jj + t):
                         for i in range(ii, ii + t):
-                            b[k, j, i] = (0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + 0.125 *
-                                          (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + 0.125 *
-                                          (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + a[k, j, i])
+                            b[k, j, i] = (
+                                0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i])
+                                + 0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i])
+                                + 0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1])
+                                + a[k, j, i]
+                            )
 
 
 def ref_heat3d_tiled_const(b: np.ndarray, a: np.ndarray) -> None:
@@ -260,10 +265,12 @@ def _heat3d_double_tiled(b: np.ndarray, a: np.ndarray, t1: int, t2: int) -> None
                             for k in range(kkk, kkk + t2):
                                 for j in range(jjj, jjj + t2):
                                     for i in range(iii, iii + t2):
-                                        b[k, j,
-                                          i] = (0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i]) + 0.125 *
-                                                (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i]) + 0.125 *
-                                                (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1]) + a[k, j, i])
+                                        b[k, j, i] = (
+                                            0.125 * (a[k + 1, j, i] - 2.0 * a[k, j, i] + a[k - 1, j, i])
+                                            + 0.125 * (a[k, j + 1, i] - 2.0 * a[k, j, i] + a[k, j - 1, i])
+                                            + 0.125 * (a[k, j, i + 1] - 2.0 * a[k, j, i] + a[k, j, i - 1])
+                                            + a[k, j, i]
+                                        )
 
 
 def ref_heat3d_double_tiled_const(b: np.ndarray, a: np.ndarray) -> None:
@@ -323,7 +330,7 @@ def ref_quasi_affine_reduce_odd(a: np.ndarray, out: np.ndarray) -> None:
 def ref_quasi_affine_pairwise_sum(a: np.ndarray, b: np.ndarray) -> None:
     """``b[i] = a[2*i] + a[2*i + 1]`` -- pairwise gather + add."""
     n = b.shape[0]
-    b[:] = a[0:2 * n:2] + a[1:2 * n:2]
+    b[:] = a[0 : 2 * n : 2] + a[1 : 2 * n : 2]
 
 
 def ref_quasi_affine_mod_k_stripe(a: np.ndarray, b: np.ndarray, c: np.ndarray, k: int) -> None:
@@ -609,8 +616,8 @@ def ref_fuse_diamond(out: np.ndarray, a: np.ndarray) -> None:
 def ref_loop_to_map_disjoint_strided(a: np.ndarray, b: np.ndarray) -> None:
     """Disjoint strided writes: ``a[2*i] = b[i] + 1``; ``a[2*i+1] = b[i] * 2``."""
     n = b.shape[0]
-    a[0:2 * n:2] = b + 1.0
-    a[1:2 * n:2] = b * 2.0
+    a[0 : 2 * n : 2] = b + 1.0
+    a[1 : 2 * n : 2] = b * 2.0
 
 
 def ref_loop_to_map_overlap_seq(a: np.ndarray, b: np.ndarray) -> None:
@@ -622,8 +629,9 @@ def ref_loop_to_map_overlap_seq(a: np.ndarray, b: np.ndarray) -> None:
         a[3 * i] = b[i] * 2.0
 
 
-def ref_loop_to_map_threshold_gather(out: np.ndarray, x: np.ndarray, y: np.ndarray, w: np.ndarray,
-                                     idx: np.ndarray) -> None:
+def ref_loop_to_map_threshold_gather(
+    out: np.ndarray, x: np.ndarray, y: np.ndarray, w: np.ndarray, idx: np.ndarray
+) -> None:
     """Per-cell threshold on gathered ``w[idx[i], k]`` selects the update
     for ``out[i, k]``."""
     n = out.shape[0]
@@ -685,7 +693,7 @@ def ref_disjoint_halves_gather(a: np.ndarray, c: np.ndarray) -> None:
     half read from the un-mutated ``a``) reproduces the sequential loop exactly."""
     n = a.shape[0]
     half = n // 2
-    a[:half] = a[:half] + a[half:2 * half] * c[:half]
+    a[:half] = a[:half] + a[half : 2 * half] * c[:half]
 
 
 def ref_halo_broadcast(a: np.ndarray, scale: float) -> None:

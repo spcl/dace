@@ -66,6 +66,7 @@ def test_tsvc_hardening_canonicals(kernel_name, branch_mode, remainder_strategy,
     orchestrator does not support.
     """
     from tests.passes.vectorization.helpers.harness import run_vectorization_test
+
     kernel = _resolve_canonical(kernel_name)
     # Use the divisible LEN per regime (the non-divisible variant is
     # already exercised in ``test_tsvc_vectorization``; here we focus on
@@ -81,10 +82,7 @@ def test_tsvc_hardening_canonicals(kernel_name, branch_mode, remainder_strategy,
     run_vectorization_test(
         dace_func=kernel.program,
         arrays=arrays,
-        params={
-            **sym,
-            **sparams
-        },
+        params={**sym, **sparams},
         vector_width=8,
         sdfg_name=f"tsvc_hardening_{kernel_name}",
         branch_mode=branch_mode,

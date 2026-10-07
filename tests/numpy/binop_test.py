@@ -162,20 +162,20 @@ def rshift(A, B):
 BITWISE_BINOPS = (bitand, bitor, bitxor, lshift, rshift)
 
 
-@pytest.mark.parametrize('kernel', BITWISE_BINOPS, ids=lambda k: k.__name__)
+@pytest.mark.parametrize("kernel", BITWISE_BINOPS, ids=lambda k: k.__name__)
 def test_bitwise_signed_uint64_rejected(kernel):
     """int32 op uint64 has no common integer type, so numpy's bitwise ufuncs reject it."""
     with pytest.raises(TypeError):
         dace.program(kernel).to_sdfg(simplify=False, A=np.ones((5, 5), np.int32), B=np.ones((5, 5), np.uint64))
 
 
-@pytest.mark.parametrize('kernel', BITWISE_BINOPS, ids=lambda k: k.__name__)
+@pytest.mark.parametrize("kernel", BITWISE_BINOPS, ids=lambda k: k.__name__)
 def test_bitwise_float_rejected(kernel):
     with pytest.raises(TypeError):
         dace.program(kernel).to_sdfg(simplify=False, A=np.ones((5, 5), np.float64), B=np.ones((5, 5), np.float64))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # generate this with
     # cat binop_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_add()
