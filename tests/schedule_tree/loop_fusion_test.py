@@ -239,6 +239,8 @@ def test_refine_not_read_before_written():
         return stree
 
     assert refine_loop_local_transients(make()) == 0
+    # Trusting reads (undefined before written, as with temporaries on the stack) refines it
+    assert refine_loop_local_transients(make(), trust_reads=True) == 1
 
 
 def test_refine_pointwise_to_scalar():
