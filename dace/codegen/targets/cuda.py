@@ -3285,18 +3285,24 @@ def _get_storagename(storage):
     return sname[sname.rindex("_") + 1 :]
 
 
+def kernel_read_only_data(scope_entry: nodes.MapEntry, state: SDFGState) -> Set[str]:
+    """The containers a kernel only reads: an input of the map that no access node in its scope receives
+    data into and no exit edge writes. A container written through a nested SDFG is caught too, since
+    that write surfaces in the scope as an incoming memlet. An empty memlet only orders its access node
+    after its source (``cpf.written_containers`` reads it the same way): counting it as a write made a
+    read-only ``b`` a non-const launcher parameter beside the entry's ``const`` one (tsvc s255)."""
+    scope_exit = state.exit_node(scope_entry)
+    written = {
+        node.data
+        for node in state.all_nodes_between(scope_entry, scope_exit)
+        if isinstance(node, nodes.AccessNode) and any(not e.data.is_empty() for e in state.in_edges(node))
+    }
+    written |= {e.data.data for e in state.out_edges(scope_exit) if not e.data.is_empty()}
+    return {e.data.data for e in state.in_edges(scope_entry) if not e.data.is_empty()} - written
+
+
 def _get_const_params(dfg_scope):
-    # Single source of truth for read-only (const) kernel arguments:
-    # ``sdutil.get_constant_data`` (dace/sdfg/utils.py), which the experimental CUDA
-    # code generator also uses. It derives writes from ``read_and_write_sets`` /
-    # ``all_nodes_between`` so a container written anywhere inside the scope -- e.g.
-    # a scatter accumulator written through a nested SDFG (the write surfaces in the
-    # parent as an incoming memlet) -- is correctly NOT const, whereas the previous
-    # scope-exit-only heuristic missed it and emitted a ``const T*`` argument that
-    # clashed with the nested function's non-const (written) parameter.
-    state = dfg_scope.graph
-    scope_entry = dfg_scope.source_nodes()[0]
-    return sdutil.get_constant_data(scope_entry, state)
+    return kernel_read_only_data(dfg_scope.source_nodes()[0], dfg_scope.graph)
 
 
 def stream_unaware_gpu_callbacks(top_sdfg: SDFG) -> List[Tuple[SDFGState, nodes.Tasklet, OrderedSet]]:

@@ -769,6 +769,32 @@ def test_array_wcr_section_covers_only_the_written_element():
     assert np.allclose(_run_arr(sd, X, A0), ref)
 
 
+def test_view_wcr_target_emits_section_clause():
+    """s311's ``pure`` Reduce accumulates through a View of ``sum_out[0]``; a contiguous view reduces as a
+    section like the array it views instead of one contended atomic per element."""
+    sd = dace.SDFG("wcr_view_elem")
+    sd.add_array("X", [KK], dace.float64)
+    sd.add_array("A", [NR], dace.float64)
+    sd.add_view("V", [1], dace.float64)
+    st = sd.add_state()
+    me, mx = st.add_map("outer", dict(k="0:%d" % KK), schedule=dace.ScheduleType.CPU_Multicore)
+    t = st.add_tasklet("acc", {"xin"}, {"vout"}, "vout = xin")
+    st.add_memlet_path(st.add_read("X"), me, t, dst_conn="xin", memlet=dace.Memlet(data="X", subset="k"))
+    view = st.add_access("V")
+    st.add_memlet_path(t, mx, view, src_conn="vout", memlet=dace.Memlet(data="V", subset="0", wcr="lambda a, b: a + b"))
+    st.add_edge(view, None, st.add_write("A"), "views", dace.Memlet(data="A", subset="2"))
+    sd.validate()
+    sd.openmp_array_reductions = True
+    _, src = _compile_and_read_src(sd)
+    pragma = [l for l in src.splitlines() if "#pragma omp parallel for" in l]
+    assert any(re.search(r"reduction\(\+:\w+\[0:1\]\)", l) for l in pragma), "\n".join(pragma)
+    X = np.random.default_rng(7).standard_normal(KK)
+    A0 = np.random.default_rng(8).standard_normal(NR)
+    ref = A0.copy()
+    ref[2] += X.sum()
+    assert np.allclose(_run_arr(sd, X, A0), ref)
+
+
 def test_array_wcr_two_spans_of_one_array_share_one_clause():
     """OpenMP refuses an array in two reduction clauses, so two written spans fall back to the
     whole buffer once."""
@@ -786,6 +812,7 @@ def test_array_wcr_two_spans_of_one_array_share_one_clause():
 
 
 if __name__ == "__main__":
+    test_view_wcr_target_emits_section_clause()
     test_array_wcr_section_covers_only_the_written_element()
     test_array_wcr_two_spans_of_one_array_share_one_clause()
     test_array_wcr_read_target_falls_back_to_atomic()
@@ -799,6 +826,7 @@ if __name__ == "__main__":
     for case in PER_OP_CASES:
         test_per_operator_emits_correct_omp_reduction_clause(*case)
         test_per_operator_suppresses_atomic_on_covered_target(*case)
+        test_per_operator_reduction_clause_carries_simd(*case)
     test_unsupported_op_falls_back_to_atomic()
     test_length_one_array_target_falls_back_to_atomic()
     test_array_wcr_emits_omp_array_section_clause()

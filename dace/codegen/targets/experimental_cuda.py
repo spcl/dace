@@ -32,6 +32,7 @@ from dace.codegen.targets.cuda import (
     gpu_cmake_options,
     gpu_runtime_code,
     gpu_scope_maps_recursive,
+    kernel_read_only_data,
     location_condition,
     location_index_exprs,
     plan_shared_memory,
@@ -1107,7 +1108,7 @@ class KernelSpec:
 
         self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
 
-        kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
+        kernel_const_data = kernel_read_only_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
         # A pointer (Array/View) arg may be ``const`` ONLY when it is read-only in this kernel, i.e. in
         # ``kernel_const_data`` (read-set minus write-set). ``get_constant_symbols`` can surface a WRITTEN

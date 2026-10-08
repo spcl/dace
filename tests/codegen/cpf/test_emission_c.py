@@ -686,6 +686,78 @@ def test_thread_local_storage_allocates_with_aligned_alloc():
     assert np.allclose(b, a * 2.0 + 1.0)
 
 
+@dace.program
+def c_gramschmidt(A: dace.float64[M, N], Q: dace.float64[M, N], R: dace.float64[N, N]):
+    for k in range(N):
+        nrm = np.dot(A[:, k], A[:, k])
+        R[k, k] = np.sqrt(nrm)
+        Q[:, k] = A[:, k] / R[k, k]
+        R[k, k + 1 :] = Q[:, k] @ A[:, k + 1 :]
+        A[:, k + 1 :] = A[:, k + 1 :] - Q[:, k][:, None] * R[k, k + 1 :][None, :]
+
+
+def test_a_library_expansion_writing_a_scalar_takes_a_pointer_in_c():
+    """The ``Dot`` inside gramschmidt's loop expands into a function that writes its result through a
+    scalar connector. That expansion happens after the signature scalars are promoted, so it reached C
+    as ``double& _result``; the promotion now sees it, and the result still reaches ``R``."""
+    sdfg, code = render_c(c_gramschmidt, "cpf_c_gramschmidt")
+    nested = re.findall(r"^static inline void \w+\(([^)]*)\)", code, re.M)
+    assert nested, f"this test needs a nested SDFG function, or it asserts nothing:\n{code}"
+    assert not any("&" in params for params in nested), nested
+    m, n = 12, 7
+    A = np.random.default_rng(0).random((m, n)) + np.eye(m, n)
+    Q, R = np.zeros((m, n)), np.zeros((n, n))
+    want_Q, want_R = np.linalg.qr(A)
+    signs = np.sign(np.diag(want_R))
+    run_c(sdfg, code, {"A": A.copy(), "Q": Q, "R": R, "M": m, "N": n}, "cpf_c_gramschmidt")
+    assert_matches({"Q": want_Q * signs, "R": want_R * signs[:, None]}, {"Q": Q, "R": R}, "cpf_c_gramschmidt")
+
+
+def accumulating_copy_sdfg(name: str) -> dace.SDFG:
+    """``out[2:N+2] += a[0:N]`` as ONE array-to-array edge carrying the accumulation."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("out", [N + 2], dace.float64)
+    state = sdfg.add_state()
+    memlet = dace.Memlet(data="a", subset="0:N", other_subset="2:N+2", wcr="lambda x, y: x + y")
+    state.add_edge(state.add_read("a"), None, state.add_write("out"), None, memlet)
+    return sdfg
+
+
+@pytest.mark.parametrize("language", ["c", "c++"])
+def test_an_accumulating_copy_renders_as_a_map_without_the_runtime(language: str):
+    """An accumulating copy is a reduction, so no copy node takes it and the generator fell back to
+    ``dace::CopyND::Accumulate``, refusing icon_scatter, seissol_tensor_contraction and spmm."""
+    name = "cpf_accumulating_copy_%s" % language.replace("+", "x")
+    rendering = render_sdfg(accumulating_copy_sdfg(name), language=language)
+    assert "CopyND" not in rendering.code, rendering.code
+    assert_standalone(rendering.code, name, language=language)
+    n = 37
+    a, out = np.random.default_rng(0).random(n), np.random.default_rng(1).random(n + 2)
+    expected = out.copy()
+    expected[2:] += a
+    library = build_standalone(rendering.code, name, language=language)
+    call_standalone(library, rendering.sdfg, {"a": a, "out": out, "N": n})
+    assert_matches({"out": expected}, {"out": out}, name)
+
+
+@pytest.mark.parametrize("language", ["c", "c++"])
+def test_a_one_element_accumulating_copy_from_a_scalar_renders_without_the_runtime(language: str):
+    """``out[3] += s`` from a Scalar: no map can index the scalar end, so it is one accumulating tasklet."""
+    name = "cpf_scalar_accumulate_%s" % language.replace("+", "x")
+    sdfg = dace.SDFG(name)
+    sdfg.add_scalar("s", dace.float64)
+    sdfg.add_array("out", [8], dace.float64)
+    state = sdfg.add_state()
+    memlet = dace.Memlet(data="s", subset="0", other_subset="3", wcr="lambda x, y: x + y")
+    state.add_edge(state.add_read("s"), None, state.add_write("out"), None, memlet)
+    rendering = render_sdfg(sdfg, language=language)
+    assert "CopyND" not in rendering.code, rendering.code
+    out = np.arange(8.0)
+    call_standalone(build_standalone(rendering.code, name, language=language), rendering.sdfg, {"s": 2.5, "out": out})
+    assert_matches({"out": np.arange(8.0) + np.eye(8)[3] * 2.5}, {"out": out}, name)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

@@ -887,6 +887,17 @@ __device__ inline void cpf_gpu_atomic(T *address, V value, Op op) {
     } while (assumed != old);
 }
 """,
+    "cpf_gpu_atomic_add_complex": """\
+//: A complex sum, applied atomically: the element is two words wide, which no compare-and-swap covers,
+//: and a sum of complex numbers is the sum of their parts, so each part is folded on its own.
+template <typename R, typename V>
+__device__ inline void cpf_gpu_atomic_add_complex(std::complex<R> *address, V value) {
+    const std::complex<R> v = static_cast<std::complex<R>>(value);
+    R *parts = reinterpret_cast<R *>(address);  // std::complex<R> is laid out as R[2]
+    atomicAdd(parts, v.real());
+    atomicAdd(parts + 1, v.imag());
+}
+""",
 }
 
 #: The CUDA unit's blocks: the same ones, with cub under its CUDA name.
@@ -1770,6 +1781,10 @@ def c_math_dispatch(name: str, types: Optional[Tuple[Optional[str], ...]]) -> Tu
     """
     base, family, arity = C_TYPED_MATH[name]
     count = 2 if arity == "first2" else arity
+    if types is not None and "complex128" in types:
+        # The widest type C has: whatever an untyped operand is, the call computes in it
+        # (contour_integral's ``np.power(z, slab_per_bc / 2 - n)``).
+        types = tuple("complex128" if dtype is None else dtype for dtype in types)
     if types is None or len(types) != count or any(dtype is None for dtype in types):
         raise NotImplementedError(
             f"CPF cannot pick the C function for {name}: the printer resolved the argument types as {types}"
@@ -2748,14 +2763,16 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     "    *out = (long long)found;\n"
     "    return status;\n"
     "}",
-    "inclusive_affine": "//: The first-order linear recurrence out[k] = c[k]*out[k-1] + d[k], entered at out[-1] = seed.\n"
+    "inclusive_affine": "//: The linear recurrence out[k] = c[k]*out[k-s] + d[k], class r entered at out[r-s] = seed[r].\n"
     "//: The carry is the affine MAP x -> a*x + b rather than a value, and map composition is\n"
     "//: associative, so a plain prefix scan over the maps computes the recurrence.\n"
     "//:\n"
-    "//: The seed is folded into element 0 rather than handed to cub as an init value, and that is\n"
-    "//: numerically load-bearing: element 0 comes out as the CONSTANT map {0, c[0]*seed + d[0]},\n"
-    "//: so every prefix including it carries a == 0 and the coefficient product never spans more\n"
-    "//: than one composed segment -- which is what keeps it off the overflow the closed form hits.\n"
+    "//: The seed is folded into each residue class's first element rather than handed to cub as an\n"
+    "//: init value, and that is numerically load-bearing: the element comes out as the CONSTANT map\n"
+    "//: {0, c*seed + d}, so every prefix including it carries a == 0 and the coefficient product never\n"
+    "//: spans more than one composed segment -- which is what keeps it off the overflow the closed form\n"
+    "//: hits. The maps are laid out class by class (k = r + j*s at r*len + j), so the same constant\n"
+    "//: first map restarts the one scan at every class boundary and it computes all s chains.\n"
     "template <typename E>\n"
     "struct cpf_affine_map { E a; E b; };\n"
     "template <typename E>\n"
@@ -2768,51 +2785,61 @@ HIP_DEVICE_INLINE_DEFINITIONS: Dict[str, str] = {
     "template <typename E, typename C, typename D, typename S>\n"
     "__global__ void cpf_affine_pack_kernel(const C *__restrict__ c, const D *__restrict__ d,\n"
     "                                       cpf_affine_map<E> *__restrict__ m, const S *__restrict__ seed_ptr,\n"
-    "                                       E seed_val, long long n) {\n"
-    "    const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n"
-    "    if (k >= n) return;\n"
+    "                                       E seed_val, long long n, long long stride, long long len) {\n"
+    "    const long long slot = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n"
+    "    if (slot >= stride * len) return;\n"
+    "    const long long r = slot / len, j = slot % len, k = r + j * stride;\n"
+    "    if (k >= n) {\n"
+    "        m[slot] = cpf_affine_map<E>{(E)1, (E)0};  // the identity pads a short class\n"
+    "        return;\n"
+    "    }\n"
     "    const E ck = (E)c[k];\n"
     "    const E dk = (E)d[k];\n"
-    "    // A device-resident seed arrives as a pointer; a host-readable one by value.\n"
-    "    if (k == 0) {\n"
-    "        const E s = (seed_ptr != nullptr) ? (E)(*seed_ptr) : seed_val;\n"
-    "        m[0] = cpf_affine_map<E>{(E)0, ck * s + dk};\n"
+    "    // A device-resident seed arrives as a pointer, one per class; a host-readable one by value.\n"
+    "    if (j == 0) {\n"
+    "        const E s = (seed_ptr != nullptr) ? (E)seed_ptr[r] : seed_val;\n"
+    "        m[slot] = cpf_affine_map<E>{(E)0, ck * s + dk};\n"
     "    } else {\n"
-    "        m[k] = cpf_affine_map<E>{ck, dk};\n"
+    "        m[slot] = cpf_affine_map<E>{ck, dk};\n"
     "    }\n"
     "}\n"
     "template <typename E>\n"
     "__global__ void cpf_affine_unpack_kernel(const cpf_affine_map<E> *__restrict__ m, E *__restrict__ out,\n"
-    "                                         long long n) {\n"
-    "    const long long k = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n"
-    "    if (k < n) out[k] = m[k].b;  // every composed prefix is constant, so b IS the value\n"
+    "                                         long long n, long long stride, long long len) {\n"
+    "    const long long slot = (long long)blockIdx.x * (long long)blockDim.x + (long long)threadIdx.x;\n"
+    "    if (slot >= stride * len) return;\n"
+    "    const long long k = slot / len + (slot % len) * stride;\n"
+    "    if (k < n) out[k] = m[slot].b;  // every composed prefix is constant, so b IS the value\n"
     "}\n"
     "template <typename E, typename C, typename D, typename S>\n"
     "static inline gpuError_t inclusive_affine(const C *coef, const D *delta, const S *seed_ptr, E seed_val,\n"
-    "                                          E *out, long long n, gpuStream_t stream) {\n"
+    "                                          E *out, long long n, long long stride, gpuStream_t stream) {\n"
     "    using M = cpf_affine_map<E>;\n"
     "    constexpr int block_threads = 256;\n"
     "    if (n <= 0) return gpuSuccess;\n"
+    "    if (stride > n) stride = n;\n"
+    "    const long long len = (n + stride - 1) / stride;\n"
+    "    const long long slots = stride * len;\n"
     "    cpf_affine_compose<E> op;\n"
     "    size_t cub_bytes = 0;\n"
     "    gpuError_t status = gpucub::DeviceScan::InclusiveScan(nullptr, cub_bytes, (M *)nullptr, (M *)nullptr,\n"
-    "                                                         op, n, stream);\n"
+    "                                                         op, slots, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
     "    // 256-byte alignment for the workspace that follows: cub assumes an allocation at least as\n"
     "    // aligned as gpuMalloc gives, and the maps sit in front of it in the one block.\n"
-    "    const size_t map_bytes = (((size_t)n * sizeof(M)) + 255u) & ~(size_t)255u;\n"
+    "    const size_t map_bytes = (((size_t)slots * sizeof(M)) + 255u) & ~(size_t)255u;\n"
     "    void *scratch = get_scratch<ScanTag>(map_bytes + cub_bytes, stream, &status);\n"
     "    if (scratch == nullptr) return status != gpuSuccess ? status : gpuErrorMemoryAllocation;\n"
     "    M *maps = (M *)scratch;\n"
     "    void *workspace = (char *)scratch + map_bytes;\n"
-    "    const unsigned blocks = (unsigned)((n + block_threads - 1) / block_threads);\n"
+    "    const unsigned blocks = (unsigned)((slots + block_threads - 1) / block_threads);\n"
     "    cpf_affine_pack_kernel<E, C, D, S><<<blocks, block_threads, 0, stream>>>(coef, delta, maps, seed_ptr,\n"
-    "                                                                            seed_val, n);\n"
+    "                                                                            seed_val, n, stride, len);\n"
     "    status = gpuGetLastError();\n"
     "    if (status != gpuSuccess) return status;\n"
-    "    status = gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, n, stream);\n"
+    "    status = gpucub::DeviceScan::InclusiveScan(workspace, cub_bytes, maps, maps, op, slots, stream);\n"
     "    if (status != gpuSuccess) return status;\n"
-    "    cpf_affine_unpack_kernel<E><<<blocks, block_threads, 0, stream>>>(maps, out, n);\n"
+    "    cpf_affine_unpack_kernel<E><<<blocks, block_threads, 0, stream>>>(maps, out, n, stride, len);\n"
     "    return gpuGetLastError();\n"
     "}",
     "segments_inclusive": "//: Independent inclusive scans over one buffer, the device side of a strided or segmented Scan: scan k\n"

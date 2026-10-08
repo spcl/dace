@@ -31,6 +31,7 @@ import pytest
 
 import dace
 from dace import data as dt
+from dace.codegen import common
 from dace.codegen.cpf import Rendering, render
 from dace.libraries.standard.nodes import Scan
 from dace.libraries.standard.nodes.scan import ScanOp
@@ -146,14 +147,22 @@ _DEFINITION_OF = re.compile(
 )
 
 
+def require_gpu_backend(backend: str) -> None:
+    """Skip a GPU test that builds ``backend``'s units on a machine whose GPU belongs to another vendor."""
+    found = common.get_gpu_backend()
+    if found != backend:
+        pytest.skip(f"builds {backend} units; this machine's GPU backend is {found}")
+
+
 def assert_no_unqualified_runtime_calls(code: str, label: str = "cpf") -> None:
     """Assert ``code`` calls no unqualified DaCe runtime function.
 
     Split out from :func:`assert_standalone` because these names carry no ``dace::`` marker: a leak
     surfaces only as an "undeclared identifier" from the compiler, at which point nothing points at
     the printer that emitted it. Definitions CPF emits itself are excluded -- a line that declares
-    the name is the fix, not the defect.
+    the name is the fix, not the defect, and so is a comment, which calls nothing.
     """
+    code = re.sub(r"//[^\n]*", "", code)
     defined = {match.group(1) for match in _DEFINITION_OF.finditer(code)}
     for match in _UNQUALIFIED_CALL.finditer(code):
         name = match.group(1)
@@ -223,6 +232,10 @@ def assert_standalone_units(rendering: Rendering, label: str = "cpf") -> None:
     assert launchers <= defined, (
         f"{label}: launchers the host unit calls and the device unit does not define: {launchers - defined}"
     )
+    for name, params in re.findall(r"^void (__cpf_runkernel_\w+)\((.*)\);$", rendering.code, re.MULTILINE):
+        assert f"void {name}({params})" in rendering.device_code, (
+            f"{label}: the host unit declares {name} with parameters the device unit does not define: {params}"
+        )
 
 
 #: Device preamble blocks that only some units carry, and the declaration each one must bring with
