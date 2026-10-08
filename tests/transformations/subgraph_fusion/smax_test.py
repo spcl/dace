@@ -5,7 +5,7 @@ from util import expand_maps, expand_reduce, fusion
 
 import dace
 import dace.libraries.standard as stdlib
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 
 dace_dtype = dace.float32

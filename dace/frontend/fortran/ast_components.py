@@ -628,40 +628,39 @@ class InternalFortranAst:
                             line_number=node.item.span,
                         )
                     )
+            elif size is None and attr_size is None:
+                self.symbols[actual_name.name] = init
+                vardecls.append(
+                    ast_internal_classes.Symbol_Decl_Node(
+                        name=actual_name.name, type=testtype, alloc=alloc, init=init, line_number=node.item.span
+                    )
+                )
+            elif attr_size is not None:
+                vardecls.append(
+                    ast_internal_classes.Symbol_Array_Decl_Node(
+                        name=actual_name.name,
+                        type=testtype,
+                        alloc=alloc,
+                        sizes=attr_size,
+                        offsets=attr_offset,
+                        kind=kind,
+                        init=init,
+                        line_number=node.item.span,
+                    )
+                )
             else:
-                if size is None and attr_size is None:
-                    self.symbols[actual_name.name] = init
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Decl_Node(
-                            name=actual_name.name, type=testtype, alloc=alloc, init=init, line_number=node.item.span
-                        )
+                vardecls.append(
+                    ast_internal_classes.Symbol_Array_Decl_Node(
+                        name=actual_name.name,
+                        type=testtype,
+                        alloc=alloc,
+                        sizes=size,
+                        offsets=offset,
+                        kind=kind,
+                        init=init,
+                        line_number=node.item.span,
                     )
-                elif attr_size is not None:
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Array_Decl_Node(
-                            name=actual_name.name,
-                            type=testtype,
-                            alloc=alloc,
-                            sizes=attr_size,
-                            offsets=attr_offset,
-                            kind=kind,
-                            init=init,
-                            line_number=node.item.span,
-                        )
-                    )
-                else:
-                    vardecls.append(
-                        ast_internal_classes.Symbol_Array_Decl_Node(
-                            name=actual_name.name,
-                            type=testtype,
-                            alloc=alloc,
-                            sizes=size,
-                            offsets=offset,
-                            kind=kind,
-                            init=init,
-                            line_number=node.item.span,
-                        )
-                    )
+                )
         return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
     def entity_decl(self, node: FASTNode):

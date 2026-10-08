@@ -4,10 +4,10 @@ import warnings
 
 from dace.data import Scalar
 
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from dace.frontend.fortran import ast_components
+from dace.frontend.fortran import ast_transforms
+from dace.frontend.fortran import ast_utils
+from dace.frontend.fortran import ast_internal_classes
 from typing import List, Optional
 from dace import dtypes
 from dace import Language as lang

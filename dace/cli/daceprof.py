@@ -315,16 +315,15 @@ def main():
         if report is None:
             if not args.save_data and not args.restore_data:
                 print("daceprof: No DaCe program calls detected or no report file generated.")
-        else:
-            if args.output:  # Save report
-                if args.csv:
-                    save_as_csv(args, report)
-                else:
-                    shutil.copyfile(report.filepath, args.output)
-            else:  # Print report
-                if report:
-                    print("daceprof: Report file saved at", os.path.abspath(report.filepath))
-                print_report(args, report)
+        elif args.output:  # Save report
+            if args.csv:
+                save_as_csv(args, report)
+            else:
+                shutil.copyfile(report.filepath, args.output)
+        else:  # Print report
+            if report:
+                print("daceprof: Report file saved at", os.path.abspath(report.filepath))
+            print_report(args, report)
 
         # Forward error code from internal application
         if errcode:

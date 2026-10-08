@@ -3,7 +3,7 @@
 
 import copy
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
-import dace.transformation.helpers as helpers
+from dace.transformation import helpers
 import networkx as nx
 from dace.sdfg.scope import ScopeTree
 from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol

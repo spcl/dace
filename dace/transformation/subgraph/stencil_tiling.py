@@ -18,8 +18,8 @@ from dace.transformation.subgraph import SubgraphFusion
 
 from copy import deepcopy as dcpy
 
-import dace.subsets as subsets
-import dace.symbolic as symbolic
+from dace import subsets
+from dace import symbolic
 
 import itertools
 import warnings

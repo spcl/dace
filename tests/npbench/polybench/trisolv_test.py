@@ -71,7 +71,7 @@ def run_trisolv(device_type: dace.dtypes.DeviceType):
 def run_trisolv_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]

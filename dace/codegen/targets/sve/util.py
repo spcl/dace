@@ -5,7 +5,7 @@ Utility functions for SVE: Contains many datatype mappings (Python to SVE) and f
 
 import numpy as np
 import dace
-import dace.dtypes as dtypes
+from dace import dtypes
 import ast
 import dace.codegen.targets
 from dace.codegen.targets.sve import infer as infer

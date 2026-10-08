@@ -123,7 +123,7 @@ def run_durbin(device_type: dace.dtypes.DeviceType):
 def run_durbin_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench small size)
     N = sizes["small"]

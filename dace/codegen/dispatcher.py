@@ -633,18 +633,16 @@ class TargetDispatcher(object):
             )
         elif num_satisfied == 1:
             target = satisfied_dispatchers[0]
-        else:  # num_satisfied == 0
-            # Otherwise use the generic copy dispatchers
-            if (src_storage, dst_storage, dst_schedule) in self._generic_copy_dispatchers:
-                target = self._generic_copy_dispatchers[(src_storage, dst_storage, dst_schedule)]
-            elif (src_storage, dst_storage, None) in self._generic_copy_dispatchers:
-                target = self._generic_copy_dispatchers[(src_storage, dst_storage, None)]
-            else:
-                raise RuntimeError(
-                    "Copy dispatcher for %s->%s with schedule %s"
-                    % (str(src_storage), str(dst_storage), str(dst_schedule))
-                    + " not found"
-                )
+        # Otherwise use the generic copy dispatchers
+        elif (src_storage, dst_storage, dst_schedule) in self._generic_copy_dispatchers:
+            target = self._generic_copy_dispatchers[(src_storage, dst_storage, dst_schedule)]
+        elif (src_storage, dst_storage, None) in self._generic_copy_dispatchers:
+            target = self._generic_copy_dispatchers[(src_storage, dst_storage, None)]
+        else:
+            raise RuntimeError(
+                "Copy dispatcher for %s->%s with schedule %s" % (str(src_storage), str(dst_storage), str(dst_schedule))
+                + " not found"
+            )
 
         return target
 

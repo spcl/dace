@@ -124,9 +124,8 @@ def parse_accesses(code, outputs: List[str]):
         _offset = next(iter(field_accesses[output].keys()))
         if offset is None:
             offset = _offset
-        else:
-            if _offset != offset:
-                raise ValueError(f"Inconsistent output offset for {node.label}: {offset} and {_offset}")
+        elif _offset != offset:
+            raise ValueError(f"Inconsistent output offset for {node.label}: {offset} and {_offset}")
 
     # If the offset is non-zero, rerun the converter to adjust
     if offset is not None and any(o != 0 for o in offset):
@@ -247,9 +246,8 @@ def validate_vector_lengths(vector_lengths, iterator_mapping):
         if dim_mask[-1] == True:
             if vector_length != expected:
                 raise ValueError(f"Field {field_name} has vectorization width {vector_length}, expected {expected}.")
-        else:
-            if vector_length != 1:
-                raise ValueError(
-                    f"Field {field_name} cannot be vectorized, because it doesn't read the innermost dimension."
-                )
+        elif vector_length != 1:
+            raise ValueError(
+                f"Field {field_name} cannot be vectorized, because it doesn't read the innermost dimension."
+            )
     return expected

@@ -589,7 +589,6 @@ def test_dependency_change():
         if not cont:
             irev = irev_next
             i = i_next
-            #
             t = t_next
             continue
         else:

@@ -6,7 +6,7 @@ from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 
 from collections import defaultdict
 from typing import Callable

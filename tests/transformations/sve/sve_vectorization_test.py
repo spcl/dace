@@ -2,7 +2,7 @@
 import dace
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 from dace import SDFG
-import dace.dtypes as dtypes
+from dace import dtypes
 
 N = dace.symbol("N")
 

@@ -7,7 +7,7 @@ pytest.importorskip("torch", reason="PyTorch not installed. Please install with:
 from dace.ml import DaceModule
 
 import torch
-import torch.nn as nn
+from torch import nn
 import torch.nn.functional as F
 
 from tests.utils import torch_tensors_close

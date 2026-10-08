@@ -8,7 +8,7 @@ import scipy
 import dace
 from dace.memlet import Memlet
 
-import dace.libraries.blas as blas
+from dace.libraries import blas
 
 from dace.libraries.standard.memory import aligned_ndarray
 

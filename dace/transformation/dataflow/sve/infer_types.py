@@ -7,8 +7,8 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.sdfg.nodes import Tasklet
-import dace.data as data
-import dace.dtypes as dtypes
+from dace import data
+from dace import dtypes
 from dace.sdfg.utils import dfs_topological_sort
 from dace.sdfg.type_inference import infer_types
 from typing import Tuple, DefaultDict

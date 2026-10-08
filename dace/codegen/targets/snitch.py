@@ -484,14 +484,13 @@ class SnitchCodeGen(TargetCodeGenerator):
                     node,
                 )
                 self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
+        elif nodedesc.storage is dtypes.StorageType.CPU_Heap or nodedesc.storage is dtypes.StorageType.Snitch_TCDM:
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            declaration_stream.write(f'// allocate scalar storage "{nodedesc.storage}"')
+            declaration_stream.write(f"{nodedesc.dtype.ctype} {name}[1];\n", cfg, state_id, node)
+            self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
         else:
-            if nodedesc.storage is dtypes.StorageType.CPU_Heap or nodedesc.storage is dtypes.StorageType.Snitch_TCDM:
-                ctypedef = dtypes.pointer(nodedesc.dtype).ctype
-                declaration_stream.write(f'// allocate scalar storage "{nodedesc.storage}"')
-                declaration_stream.write(f"{nodedesc.dtype.ctype} {name}[1];\n", cfg, state_id, node)
-                self.dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
-            else:
-                raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
     def deallocate_array(
         self,
@@ -683,28 +682,27 @@ class SnitchCodeGen(TargetCodeGenerator):
                     xfer = """*({dst}) = *({src});""".format(src=src_expr, dst=dst_expr)
                     callsite_stream.write(xfer, cfg, state_id, [src_node, dst_node])
                     return
-                else:
-                    if src_strides[0] == 1 and dst_strides[0] == 1:
-                        xfer = """__builtin_sdma_start_oned(
+                elif src_strides[0] == 1 and dst_strides[0] == 1:
+                    xfer = """__builtin_sdma_start_oned(
                                 (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {cfg});""".format(
-                            src=src_expr,
-                            dst=dst_expr,
-                            size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})",
-                            cfg="0",
-                        )
-                    else:
-                        xfer = """__builtin_sdma_start_twod(
+                        src=src_expr,
+                        dst=dst_expr,
+                        size=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})",
+                        cfg="0",
+                    )
+                else:
+                    xfer = """__builtin_sdma_start_twod(
                                 (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {sstride}, {dstride}, {nrep}, {cfg});""".format(
-                            src=src_expr,
-                            dst=dst_expr,
-                            size=f"sizeof({src_nodedesc.dtype.ctype})",
-                            sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
-                            dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
-                            nrep=cpp.sym2cpp(copy_shape[0]),
-                            cfg="0",
-                        )
+                        src=src_expr,
+                        dst=dst_expr,
+                        size=f"sizeof({src_nodedesc.dtype.ctype})",
+                        sstride=f"sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(src_strides[0])})",
+                        dstride=f"sizeof({dst_nodedesc.dtype.ctype})*({cpp.sym2cpp(dst_strides[0])})",
+                        nrep=cpp.sym2cpp(copy_shape[0]),
+                        cfg="0",
+                    )
 
             else:
                 raise NotImplementedError("Unsupported dimnesions")

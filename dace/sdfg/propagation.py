@@ -314,8 +314,7 @@ class AffineSMemlet(SeparableMemletPattern):
             if rt == 1:
                 result_skip = (result_end - result_begin - re + rb) / (node_re - node_rb)
                 try:
-                    if result_skip < 1:
-                        result_skip = 1
+                    result_skip = max(result_skip, 1)
                 except:
                     pass
                 result_tile = result_end - result_begin + 1 - (node_rlen - 1) * result_skip
@@ -427,14 +426,13 @@ class ConstantSMemlet(SeparableMemletPattern):
                 if matches[cst].free_symbols:
                     return False
 
-        else:  # Single element case
-            # Try to match a constant expression
-            if not dtypes.isconstant(dexpr):
-                matches = dexpr.match(cst)
-                if matches is None or len(matches) != 1:
-                    return False
-                if matches[cst].free_symbols:
-                    return False
+        # Try to match a constant expression
+        elif not dtypes.isconstant(dexpr):
+            matches = dexpr.match(cst)
+            if matches is None or len(matches) != 1:
+                return False
+            if matches[cst].free_symbols:
+                return False
 
         return True
 
@@ -872,26 +870,25 @@ def propagate_states(sdfg: "SDFG", concretize_dynamic_unbounded: bool = False) -
                 # number of executions.
                 if not (state.executions == 0 and state.dynamic_executions):
                     state.executions += proposed_executions
+            # If we have already visited this state, but it is NOT a loop
+            # guard, this means that we can reach this state via multiple
+            # different paths. If so, the number of executions for this
+            # state is given by the maximum number of executions among each
+            # of the paths reaching it. If the state additionally completely
+            # merges a previously branched out state tree, we know that the
+            # number of executions isn't dynamic anymore.
+            # The only exception to this rule: If the state is in an
+            # unannotated loop, i.e. should be annotated as dynamic
+            # unbounded instead, we do that.
+            elif (not concretize_dynamic_unbounded) and state in unannotated_cycle_states:
+                state.executions = 0
+                state.dynamic_executions = True
             else:
-                # If we have already visited this state, but it is NOT a loop
-                # guard, this means that we can reach this state via multiple
-                # different paths. If so, the number of executions for this
-                # state is given by the maximum number of executions among each
-                # of the paths reaching it. If the state additionally completely
-                # merges a previously branched out state tree, we know that the
-                # number of executions isn't dynamic anymore.
-                # The only exception to this rule: If the state is in an
-                # unannotated loop, i.e. should be annotated as dynamic
-                # unbounded instead, we do that.
-                if (not concretize_dynamic_unbounded) and state in unannotated_cycle_states:
-                    state.executions = 0
-                    state.dynamic_executions = True
+                state.executions = sympy.Max(state.executions, proposed_executions).doit()
+                if state in full_merge_states:
+                    state.dynamic_executions = False
                 else:
-                    state.executions = sympy.Max(state.executions, proposed_executions).doit()
-                    if state in full_merge_states:
-                        state.dynamic_executions = False
-                    else:
-                        state.dynamic_executions = state.dynamic_executions or proposed_dynamic
+                    state.dynamic_executions = state.dynamic_executions or proposed_dynamic
         elif proposed_dynamic and proposed_executions == 0:
             # We're propagating a dynamic unbounded number of executions, which
             # always gets propagated unconditionally. Propagate to all children.

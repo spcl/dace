@@ -6,7 +6,7 @@ pytest.importorskip(
     "transformers", reason="transformers not installed. Please install with: pip install dace[ml-testing]"
 )
 import torch
-import torch.nn as nn
+from torch import nn
 from transformers import LlamaForCausalLM, LlamaConfig
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close

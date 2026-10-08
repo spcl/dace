@@ -17,8 +17,8 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
     T(A) @ T(B) = T(B @ A)
     """
 
-    import dace.libraries.blas as blas  # Avoid slow imports
-    import dace.libraries.linalg as linalg  # Avoid slow imports
+    from dace.libraries import blas  # Avoid slow imports
+    from dace.libraries import linalg  # Avoid slow imports
 
     transpose_a = transformation.PatternNode(linalg.Transpose)
     at = transformation.PatternNode(nodes.AccessNode)
@@ -59,7 +59,7 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         return f"{transpose_a.name} -> {a_times_b.name} <- {transpose_b.name}"
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        import dace.libraries.linalg as linalg  # Avoid slow imports
+        from dace.libraries import linalg  # Avoid slow imports
 
         transpose_a = self.transpose_a
         _at = self.at

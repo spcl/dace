@@ -72,7 +72,7 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
 def run_jacobi_2d_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size)
     TSTEPS, N = (20, 30)

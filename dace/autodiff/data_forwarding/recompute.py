@@ -4,7 +4,7 @@ from typing import List
 
 # DaCe imports
 import dace
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 from dace.sdfg import SDFG, SDFGState, state as dstate
 from dace.sdfg.state import LoopRegion
 

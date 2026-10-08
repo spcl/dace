@@ -225,7 +225,7 @@ def run_adi(device_type: dace.dtypes.DeviceType):
 def run_adi_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size for smaller problem)
     _, N = sizes["mini"]

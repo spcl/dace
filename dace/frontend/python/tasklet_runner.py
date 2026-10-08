@@ -180,13 +180,12 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                     lhs = copy.deepcopy(cleaned_right)
                     lhs.ctx = ast.Store()
                     self.post_statements.append(_copy_location(ast.Assign(targets=[lhs], value=rhs), node))
+                elif wcr is not None:
+                    # Replace Assignments with lambda every time
+                    self.wcr_replacements[rname(node.value.left)] = (cleaned_right, wcr)
                 else:
-                    if wcr is not None:
-                        # Replace Assignments with lambda every time
-                        self.wcr_replacements[rname(node.value.left)] = (cleaned_right, wcr)
-                    else:
-                        # In-place replacement
-                        self.assign_replacements[rname(node.value.left)] = cleaned_right
+                    # In-place replacement
+                    self.assign_replacements[rname(node.value.left)] = cleaned_right
 
                 return None  # Remove from final tasklet code
 

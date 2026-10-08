@@ -485,13 +485,12 @@ class RedundantArray(pm.SingleStateTransformation):
             else:
                 # Something else, for example, Stream
                 return False
-        else:
-            # Two views connected to each other
-            if isinstance(in_desc, data.View):
-                # Merge will be ambiguous
-                if "views" in in_array.in_connectors and "views" in out_array.out_connectors:
-                    return False
-                return True
+        # Two views connected to each other
+        elif isinstance(in_desc, data.View):
+            # Merge will be ambiguous
+            if "views" in in_array.in_connectors and "views" in out_array.out_connectors:
+                return False
+            return True
 
         # Find occurrences in this and other states
         occurrences = [n for n in sdfg.data_nodes() if n.data == in_array.data]
@@ -892,9 +891,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             if a_subset.dims() > b1_subset.dims():
                 if find_dims_to_pop2(a_size, b_size) is None:
                     return False
-            else:
-                if find_dims_to_pop2(b_size, a_size) is None:
-                    return False
+            elif find_dims_to_pop2(b_size, a_size) is None:
+                return False
 
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
@@ -1044,10 +1042,9 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             else:
                 # Something else, for example, Stream
                 return False
-        else:
-            # Two views connected to each other
-            if isinstance(in_desc, data.View):
-                return False
+        # Two views connected to each other
+        elif isinstance(in_desc, data.View):
+            return False
 
         # Find occurrences in this and other states
         occurrences = [n for n in sdfg.data_nodes() if n.data == out_array.data]
@@ -1981,12 +1978,11 @@ class RemoveSliceView(pm.SingleStateTransformation):
                         # Fill in the subset from the original memlet
                         e.data.subset = copy.deepcopy(subset)
 
-                else:  # The memlet points to the other side, use ``other_subset``
-                    if e.data.other_subset is not None:
-                        e.data.other_subset = sdutil.compose_view_subset(mapping, subset, e.data.other_subset)
-                    elif subset is not None:
-                        # Fill in the subset from the original memlet
-                        e.data.other_subset = copy.deepcopy(subset)
+                elif e.data.other_subset is not None:
+                    e.data.other_subset = sdutil.compose_view_subset(mapping, subset, e.data.other_subset)
+                elif subset is not None:
+                    # Fill in the subset from the original memlet
+                    e.data.other_subset = copy.deepcopy(subset)
 
                 # NOTE: It's only necessary to modify one subset of the memlet, as the space of the other differs from
                 #       the view space.

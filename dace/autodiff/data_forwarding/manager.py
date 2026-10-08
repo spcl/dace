@@ -3,14 +3,14 @@ import copy
 from typing import List, Tuple, Optional
 
 # DaCe imports
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 from dace import config, data as dt
 from dace.sdfg import SDFGState, graph as dgraph
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
 import dace.autodiff.utils as ad_utils
-import dace.autodiff.data_forwarding as data_forwarding
+from dace.autodiff import data_forwarding
 
 
 class DataForwardingManager:

@@ -128,7 +128,7 @@ def ludcmp_jax_kernel(jnp, lax, A, b):
 def run_ludcmp_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]

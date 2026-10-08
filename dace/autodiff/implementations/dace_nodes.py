@@ -14,7 +14,7 @@ from typing import List, Tuple, TYPE_CHECKING
 
 # DaCe imports
 import dace
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 from dace import dtypes
 from dace.data import Reference, Structure
 from dace.sdfg import SDFGState

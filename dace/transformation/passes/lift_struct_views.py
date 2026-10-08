@@ -61,9 +61,8 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         if self.direction == "in":
             if not self.tasklet.add_in_connector(new_connector_name):
                 raise RuntimeError(f"Failed to add connector {new_connector_name}")
-        else:
-            if not self.tasklet.add_out_connector(new_connector_name):
-                raise RuntimeError(f"Failed to add connector {new_connector_name}")
+        elif not self.tasklet.add_out_connector(new_connector_name):
+            raise RuntimeError(f"Failed to add connector {new_connector_name}")
 
         # Construct the correct AST replacement node (direct access, i.e., name node).
         replacement = ast.Name(id=new_connector_name, ctx=ast.Load())
@@ -114,9 +113,8 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         if self.direction == "in":
             if not self.tasklet.add_in_connector(new_connector_name):
                 raise RuntimeError(f"Failed to add connector {new_connector_name}")
-        else:
-            if not self.tasklet.add_out_connector(new_connector_name):
-                raise RuntimeError(f"Failed to add connector {new_connector_name}")
+        elif not self.tasklet.add_out_connector(new_connector_name):
+            raise RuntimeError(f"Failed to add connector {new_connector_name}")
 
         # We first lift the slice into a separate view, and then the attribute access.
         slice_view_name = "v_" + self.data_node.data + "_slice"
@@ -495,9 +493,8 @@ class LiftStructViews(ppl.Pass):
         if direction == "in":
             if len(list(state.in_edges_by_connector(tasklet, connector))) == 0:
                 tasklet.remove_in_connector(connector)
-        else:
-            if len(list(state.out_edges_by_connector(tasklet, connector))) == 0:
-                tasklet.remove_out_connector(connector)
+        elif len(list(state.out_edges_by_connector(tasklet, connector))) == 0:
+            tasklet.remove_out_connector(connector)
 
         return new_names
 

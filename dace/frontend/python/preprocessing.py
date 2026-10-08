@@ -170,13 +170,12 @@ class ConditionalCodeResolver(ast.NodeTransformer):
                 else:
                     # Any other case is indeterminate, fall back to generic visit
                     return node
-            else:  # If not symbolic, check value directly
-                if result:
-                    # Only return "if" body
-                    return node.body
-                elif not result:
-                    # Only return "else" body
-                    return node.orelse
+            elif result:
+                # Only return "if" body
+                return node.body
+            elif not result:
+                # Only return "else" body
+                return node.orelse
 
         except SyntaxError:
             # Cannot evaluate if condition at compile time

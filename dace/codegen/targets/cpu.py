@@ -301,19 +301,18 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure):
                 offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                 value = f"{ptrname}[{offset}]"
-            else:
-                if field_name is not None:
-                    if isinstance(vdesc, data.ContainerArray):
-                        offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
-                        arrexpr = f"{ptrname}[{offset}]"
-                        stype = vdesc.stype
-                    else:
-                        arrexpr = f"{ptrname}"
-                        stype = vdesc
+            elif field_name is not None:
+                if isinstance(vdesc, data.ContainerArray):
+                    offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                    arrexpr = f"{ptrname}[{offset}]"
+                    stype = vdesc.stype
+                else:
+                    arrexpr = f"{ptrname}"
+                    stype = vdesc
 
-                    value = f"{arrexpr}->{field_name}"
-                    if isinstance(stype.members[field_name], data.Scalar):
-                        value = "&" + value
+                value = f"{arrexpr}->{field_name}"
+                if isinstance(stype.members[field_name], data.Scalar):
+                    value = "&" + value
 
         if not declared:
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
@@ -1049,51 +1048,50 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     [src_node, dst_node],
                 )
-            else:  # Conflicted WCR
-                if dynshape == 1:
-                    warnings.warn(
-                        "Performance warning: Emitting dynamically-shaped atomic write-conflict resolution of an array."
-                    )
-                    stream.write(
-                        """
+            elif dynshape == 1:
+                warnings.warn(
+                    "Performance warning: Emitting dynamically-shaped atomic write-conflict resolution of an array."
+                )
+                stream.write(
+                    """
                         dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
                         {copy_args});""".format(
-                            copy_tmpl=copy_tmpl,
-                            shape_tmpl=shape_tmpl,
-                            copy_args=", ".join(copy_args),
-                        ),
-                        cfg,
-                        state_id,
-                        [src_node, dst_node],
+                        copy_tmpl=copy_tmpl,
+                        shape_tmpl=shape_tmpl,
+                        copy_args=", ".join(copy_args),
+                    ),
+                    cfg,
+                    state_id,
+                    [src_node, dst_node],
+                )
+            elif copy_shape == [1]:  # Special case: accumulating one element
+                dst_expr = self.memlet_view_ctor(sdfg, memlet, dst_nodedesc.dtype, True)
+                stream.write(
+                    self.write_and_resolve_expr(
+                        sdfg, memlet, nc, dst_expr, "*(" + src_expr + ")", dtype=dst_nodedesc.dtype
                     )
-                elif copy_shape == [1]:  # Special case: accumulating one element
-                    dst_expr = self.memlet_view_ctor(sdfg, memlet, dst_nodedesc.dtype, True)
-                    stream.write(
-                        self.write_and_resolve_expr(
-                            sdfg, memlet, nc, dst_expr, "*(" + src_expr + ")", dtype=dst_nodedesc.dtype
-                        )
-                        + ";",
-                        cfg,
-                        state_id,
-                        [src_node, dst_node],
-                    )
-                else:
-                    warnings.warn(
-                        "Minor performance warning: Emitting statically-"
-                        "shaped atomic write-conflict resolution of an array."
-                    )
-                    stream.write(
-                        """
+                    + ";",
+                    cfg,
+                    state_id,
+                    [src_node, dst_node],
+                )
+            else:
+                warnings.warn(
+                    "Minor performance warning: Emitting statically-"
+                    "shaped atomic write-conflict resolution of an array."
+                )
+                stream.write(
+                    """
                         dace::CopyND{copy_tmpl}::{shape_tmpl}::Accumulate_atomic(
                         {copy_args});""".format(
-                            copy_tmpl=copy_tmpl,
-                            shape_tmpl=shape_tmpl,
-                            copy_args=", ".join(copy_args),
-                        ),
-                        cfg,
-                        state_id,
-                        [src_node, dst_node],
-                    )
+                        copy_tmpl=copy_tmpl,
+                        shape_tmpl=shape_tmpl,
+                        copy_args=", ".join(copy_args),
+                    ),
+                    cfg,
+                    state_id,
+                    [src_node, dst_node],
+                )
 
         #############################################################
         # Instrumentation: Post-copy
@@ -1326,52 +1324,51 @@ class CPUCodeGen(TargetCodeGenerator):
             memlet_params.append(memlet_expr + " + " + offset)
             dims = 0
 
-        else:
-            if isinstance(memlet.subset, subsets.Range):
-                dims = len(memlet.subset.ranges)
-                offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset)
-                if offset == "0":
-                    memlet_params.append(memlet_expr)
-                else:
-                    if def_type != DefinedType.Pointer:
-                        raise cgx.CodegenError(
-                            "Cannot offset address of connector {} of type {}".format(memlet_name, def_type)
-                        )
-                    memlet_params.append(memlet_expr + " + " + offset)
-
-                # Dimensions to remove from view (due to having one value)
-                indexdims = []
-                strides = sdfg.arrays[memlet.data].strides
-
-                # Figure out dimensions for scalar version
-                dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
-                for dim, (rb, re, rs) in enumerate(memlet.subset.ranges):
-                    try:
-                        # Check for number of elements in contiguous dimension
-                        # (with respect to vector length)
-                        if strides[dim] == 1 and (re - rb) == dimlen - 1:
-                            indexdims.append(dim)
-                        elif (re - rb) == 0:  # Elements in other dimensions
-                            indexdims.append(dim)
-                    except TypeError:
-                        # Cannot determine truth value of Relational
-                        pass
-
-                # Remove index (one scalar) dimensions
-                dims -= len(indexdims)
-
-                if dims > 0:
-                    strides = memlet.subset.absolute_strides(strides)
-                    # Filter out index dims
-                    strides = [s for i, s in enumerate(strides) if i not in indexdims]
-                    # Use vector length to adapt strides
-                    for i in range(len(strides) - 1):
-                        strides[i] /= dimlen
-                    memlet_params.extend(sym2cpp(strides))
-                    dims = memlet.subset.data_dims()
-
+        elif isinstance(memlet.subset, subsets.Range):
+            dims = len(memlet.subset.ranges)
+            offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset)
+            if offset == "0":
+                memlet_params.append(memlet_expr)
             else:
-                raise RuntimeError('Memlet type "%s" not implemented' % memlet.subset)
+                if def_type != DefinedType.Pointer:
+                    raise cgx.CodegenError(
+                        "Cannot offset address of connector {} of type {}".format(memlet_name, def_type)
+                    )
+                memlet_params.append(memlet_expr + " + " + offset)
+
+            # Dimensions to remove from view (due to having one value)
+            indexdims = []
+            strides = sdfg.arrays[memlet.data].strides
+
+            # Figure out dimensions for scalar version
+            dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
+            for dim, (rb, re, rs) in enumerate(memlet.subset.ranges):
+                try:
+                    # Check for number of elements in contiguous dimension
+                    # (with respect to vector length)
+                    if strides[dim] == 1 and (re - rb) == dimlen - 1:
+                        indexdims.append(dim)
+                    elif (re - rb) == 0:  # Elements in other dimensions
+                        indexdims.append(dim)
+                except TypeError:
+                    # Cannot determine truth value of Relational
+                    pass
+
+            # Remove index (one scalar) dimensions
+            dims -= len(indexdims)
+
+            if dims > 0:
+                strides = memlet.subset.absolute_strides(strides)
+                # Filter out index dims
+                strides = [s for i, s in enumerate(strides) if i not in indexdims]
+                # Use vector length to adapt strides
+                for i in range(len(strides) - 1):
+                    strides[i] /= dimlen
+                memlet_params.extend(sym2cpp(strides))
+                dims = memlet.subset.data_dims()
+
+        else:
+            raise RuntimeError('Memlet type "%s" not implemented' % memlet.subset)
 
         # If there is a type mismatch, cast pointer (used in vector
         # packing/unpacking)
@@ -1459,27 +1456,26 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_scalar:
                         # We can pre-read the value
                         result += "{} {} = {};".format(memlet_type, local_name, expr)
+                    # constexpr arrays
+                    elif memlet.data in self._frame.symbols_and_constants(sdfg):
+                        result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                    elif (
+                        var_type == DefinedType.Scalar
+                        and isinstance(conntype, dtypes.pointer)
+                        and not isinstance(desc.dtype, dtypes.opaque)
+                    ):
+                        # Scalar source feeding a pointer-typed connector (e.g. CopyLibraryNode
+                        # -> cudaMemcpyAsync from a host scalar argument). The connector's
+                        # pointer type wins over the source's scalar ctypedef, and the address
+                        # of the variable is what the callee wants; `define_out_memlet` already
+                        # does this on the write side. Skip opaque dtypes (MPI_Comm /
+                        # MPI_Request / GPU handles) -- the value is already a pointer-like
+                        # handle, so address-of adds an indirection the callee rejects
+                        # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
+                        result += "{}* {} = &{};".format(ctypedef, local_name, expr)
                     else:
-                        # constexpr arrays
-                        if memlet.data in self._frame.symbols_and_constants(sdfg):
-                            result += "const {} {} = {};".format(memlet_type, local_name, expr)
-                        elif (
-                            var_type == DefinedType.Scalar
-                            and isinstance(conntype, dtypes.pointer)
-                            and not isinstance(desc.dtype, dtypes.opaque)
-                        ):
-                            # Scalar source feeding a pointer-typed connector (e.g. CopyLibraryNode
-                            # -> cudaMemcpyAsync from a host scalar argument). The connector's
-                            # pointer type wins over the source's scalar ctypedef, and the address
-                            # of the variable is what the callee wants; `define_out_memlet` already
-                            # does this on the write side. Skip opaque dtypes (MPI_Comm /
-                            # MPI_Request / GPU handles) -- the value is already a pointer-like
-                            # handle, so address-of adds an indirection the callee rejects
-                            # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
-                            result += "{}* {} = &{};".format(ctypedef, local_name, expr)
-                        else:
-                            # Pointer reference
-                            result += "{} {} = {};".format(ctypedef, local_name, expr)
+                        # Pointer reference
+                        result += "{} {} = {};".format(ctypedef, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
@@ -1996,16 +1992,15 @@ class CPUCodeGen(TargetCodeGenerator):
                     sdfg_label = self._generated_nested_sdfg[hash]
                 else:
                     self._generated_nested_sdfg[hash] = sdfg_label
+            # Use the SDFG label to check if this has been already code generated.
+            # Check the hash of the formerly generated SDFG to check that we are not
+            # generating different SDFGs with the same name
+            elif sdfg_label in self._generated_nested_sdfg:
+                code_already_generated = True
+                if hash != self._generated_nested_sdfg[sdfg_label]:
+                    raise ValueError(f"Different Nested SDFGs have the same unique name: {sdfg_label}")
             else:
-                # Use the SDFG label to check if this has been already code generated.
-                # Check the hash of the formerly generated SDFG to check that we are not
-                # generating different SDFGs with the same name
-                if sdfg_label in self._generated_nested_sdfg:
-                    code_already_generated = True
-                    if hash != self._generated_nested_sdfg[sdfg_label]:
-                        raise ValueError(f"Different Nested SDFGs have the same unique name: {sdfg_label}")
-                else:
-                    self._generated_nested_sdfg[sdfg_label] = hash
+                self._generated_nested_sdfg[sdfg_label] = hash
 
         #########################################
         # Take care of nested SDFG I/O (arguments)

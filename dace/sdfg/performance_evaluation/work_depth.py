@@ -937,26 +937,25 @@ def control_flow_region_work_depth(
             else:
                 depth_map[region] = n_depth
                 work_map[region] = n_work
-        else:
-            # search heaviest and deepest path separately
-            if region in depth_map:  # and consequently also in work_map
-                # This cse value would appear in both arguments of the Max. Hence, for performance reasons,
-                # we pull it out of the Max expression.
-                # Example: We do cse + Max(a, b) instead of Max(cse + a, cse + b).
-                # This increases performance drastically, expecially since we avoid nesting Max expressions
-                # for cases where cse itself contains Max operators.
-                cse = common_subexpr_stack.pop()
-                if detailed_analysis:
-                    # This MAX should be covered in the more detailed analysis
-                    cond = condition_stack.pop()
-                    work_map[region] = cse[0] + sp.Piecewise((work_map[region], sp.Not(cond)), (n_work, cond))
-                    depth_map[region] = cse[1] + sp.Piecewise((depth_map[region], sp.Not(cond)), (n_depth, cond))
-                else:
-                    work_map[region] = cse[0] + sp.Max(work_map[region], n_work)
-                    depth_map[region] = cse[1] + sp.Max(depth_map[region], n_depth)
+        # search heaviest and deepest path separately
+        elif region in depth_map:  # and consequently also in work_map
+            # This cse value would appear in both arguments of the Max. Hence, for performance reasons,
+            # we pull it out of the Max expression.
+            # Example: We do cse + Max(a, b) instead of Max(cse + a, cse + b).
+            # This increases performance drastically, expecially since we avoid nesting Max expressions
+            # for cases where cse itself contains Max operators.
+            cse = common_subexpr_stack.pop()
+            if detailed_analysis:
+                # This MAX should be covered in the more detailed analysis
+                cond = condition_stack.pop()
+                work_map[region] = cse[0] + sp.Piecewise((work_map[region], sp.Not(cond)), (n_work, cond))
+                depth_map[region] = cse[1] + sp.Piecewise((depth_map[region], sp.Not(cond)), (n_depth, cond))
             else:
-                depth_map[region] = n_depth
-                work_map[region] = n_work
+                work_map[region] = cse[0] + sp.Max(work_map[region], n_work)
+                depth_map[region] = cse[1] + sp.Max(depth_map[region], n_depth)
+        else:
+            depth_map[region] = n_depth
+            work_map[region] = n_work
 
         out_edges = cfr.out_edges(region)
         # only advance after all incoming edges were visited (meaning that current work depth values of state are final).

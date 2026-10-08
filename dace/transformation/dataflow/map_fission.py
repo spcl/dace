@@ -643,12 +643,11 @@ class MapFission(transformation.SingleStateTransformation):
                                         e.data.subset = subsets.Range(map_ranges)
                                     else:
                                         e.data.subset = subsets.Range(map_ranges + e.data.subset.ranges)
-                            else:
-                                if e.data.other_subset:
-                                    if is_scalar_like:
-                                        e.data.other_subset = subsets.Range(map_ranges)
-                                    else:
-                                        e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
+                            elif e.data.other_subset:
+                                if is_scalar_like:
+                                    e.data.other_subset = subsets.Range(map_ranges)
+                                else:
+                                    e.data.other_subset = subsets.Range(map_ranges + e.data.other_subset.ranges)
 
         # A connector selecting one element of an augmented container becomes a view of it
         for state in parent.all_states():

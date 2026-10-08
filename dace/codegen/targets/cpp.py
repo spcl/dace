@@ -359,14 +359,13 @@ def emit_memlet_reference(
             if is_write is False:
                 typedef = make_const(typedef)
             ref = "&"
-        else:
-            # constexpr arrays
-            if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
-                ref = "*"
-                typedef = make_const(typedef)
-            elif is_write is False and const_read_only_array:
-                # ``is_write`` is a direction at one node, not "never written in the callee".
-                typedef = make_const(typedef)
+        # constexpr arrays
+        elif memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
+            ref = "*"
+            typedef = make_const(typedef)
+        elif is_write is False and const_read_only_array:
+            # ``is_write`` is a direction at one node, not "never written in the callee".
+            typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + "*")
         if is_write is False and not isinstance(desc, data.Structure):

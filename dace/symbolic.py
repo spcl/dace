@@ -1641,12 +1641,11 @@ def evaluate_optional_arrays(expr, sdfg):
                 # Equivalent to `None is x` for a non-optional x
                 return False
 
-        else:  # elem.args[0] is not None
-            if elem.args[1] == none:
-                cand = str(elem.args[0])
-                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
-                    # Equivalent to `x is None` for a non-optional x
-                    return False
+        elif elem.args[1] == none:
+            cand = str(elem.args[0])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `x is None` for a non-optional x
+                return False
 
         # Neither argument is None
         return None
@@ -3036,13 +3035,12 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
                         token_counts[token] -= 1
                         if token_counts[token] == 0:
                             tokens.discard(token)
-                else:
-                    if e < len(code) and s > 0:
-                        if code[s - 1].isdigit() and code[e] in "-+0123456789":
-                            # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
-                            token_counts[token] -= 1
-                            if token_counts[token] == 0:
-                                tokens.discard(token)
+                elif e < len(code) and s > 0:
+                    if code[s - 1].isdigit() and code[e] in "-+0123456789":
+                        # Discard only if the count of this token is now zero, as `e = 1e-5` will mean token e was found twice
+                        token_counts[token] -= 1
+                        if token_counts[token] == 0:
+                            tokens.discard(token)
 
     if symbols_to_ignore is None:
         return tokens

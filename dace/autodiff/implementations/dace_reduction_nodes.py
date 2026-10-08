@@ -14,7 +14,7 @@ import typing
 
 # DaCe core imports
 import dace
-import dace.dtypes as dtypes
+from dace import dtypes
 import dace.libraries.standard.nodes
 from dace import SDFGState, SDFG, Memlet
 from dace.sdfg.nodes import Node

@@ -2151,23 +2151,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                     # Rename argument in kernel prototype as necessary
                     aname = inner_ptrname
-            else:
-                if aname in sdfg.arrays:
-                    data_desc = sdfg.arrays[aname]
-                    ptrname = self.ptr(aname, data_desc, sdfg)
-                    is_global = data_desc.lifetime in (
-                        dtypes.AllocationLifetime.Global,
-                        dtypes.AllocationLifetime.Persistent,
-                        dtypes.AllocationLifetime.External,
-                    )
-                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
-                    self._in_device_code = True
-                    inner_ptrname = self.ptr(aname, data_desc, sdfg)
-                    self._in_device_code = False
-                    self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
+            elif aname in sdfg.arrays:
+                data_desc = sdfg.arrays[aname]
+                ptrname = self.ptr(aname, data_desc, sdfg)
+                is_global = data_desc.lifetime in (
+                    dtypes.AllocationLifetime.Global,
+                    dtypes.AllocationLifetime.Persistent,
+                    dtypes.AllocationLifetime.External,
+                )
+                defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                self._in_device_code = True
+                inner_ptrname = self.ptr(aname, data_desc, sdfg)
+                self._in_device_code = False
+                self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
 
-                    # Rename argument in kernel prototype as necessary
-                    aname = inner_ptrname
+                # Rename argument in kernel prototype as necessary
+                aname = inner_ptrname
 
             prototype_kernel_args[aname] = arg
 

@@ -84,16 +84,15 @@ def nested_if_else(x: dace.int64[N], y: dace.int64[N], z: dace.int64[N], sum: da
         if x[9] > 40:
             z[:] = x + y  # N work, 1 depth
         z[:] += 2 * x  # 2*N work, 2 depth     --> total outer if: 3*N work, 3 depth
+    elif y[9] > 30:
+        for i in range(K):
+            sum += x[i]  # K work, K depth
     else:
-        if y[9] > 30:
-            for i in range(K):
-                sum += x[i]  # K work, K depth
-        else:
-            for j in range(M):
-                sum += x[j]  # M work, M depth
-            z[:] = x + y  # N work, depth 1       --> total inner else: M+N work, M+1 depth
-            # --> total outer else: Max(K, M+N) work, Max(K, M+1) depth
-            # --> total over both branches: Max(K, M+N, 3*N) work, Max(K, M+1, 3) depth
+        for j in range(M):
+            sum += x[j]  # M work, M depth
+        z[:] = x + y  # N work, depth 1       --> total inner else: M+N work, M+1 depth
+        # --> total outer else: Max(K, M+N) work, Max(K, M+1) depth
+        # --> total over both branches: Max(K, M+N, 3*N) work, Max(K, M+1, 3) depth
 
 
 @dace.program

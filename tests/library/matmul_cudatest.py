@@ -3,7 +3,7 @@ import dace
 from dace.config import set_temporary
 from dace.library import change_default
 from dace.memlet import Memlet
-import dace.libraries.blas as blas
+from dace.libraries import blas
 import itertools
 import numpy as np
 import pytest

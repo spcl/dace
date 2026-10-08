@@ -1137,14 +1137,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     storage=self.transient_allocation,
                 )
 
-            else:
-                # don't modify data container - array is needed outside
-                # of subgraph.
+            # don't modify data container - array is needed outside
+            # of subgraph.
 
-                # hack: set lifetime to State if allocation has only been
-                # scope so far to avoid allocation issues
-                if sdfg.data(data_name).lifetime == dtypes.AllocationLifetime.Scope:
-                    sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
+            # hack: set lifetime to State if allocation has only been
+            # scope so far to avoid allocation issues
+            elif sdfg.data(data_name).lifetime == dtypes.AllocationLifetime.Scope:
+                sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
 
         # do one pass to adjust strides and the memlets of in-between transients
         for node in intermediate_nodes:

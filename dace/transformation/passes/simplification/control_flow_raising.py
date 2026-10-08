@@ -70,11 +70,10 @@ class ControlFlowRaising(ppl.Pass):
                 if oe.data.is_unconditional():
                     has_unconditional = True
                     break
+                elif full_cond_expression is None:
+                    full_cond_expression = oe.data.condition.code[0]
                 else:
-                    if full_cond_expression is None:
-                        full_cond_expression = oe.data.condition.code[0]
-                    else:
-                        full_cond_expression = astutils.and_expr(full_cond_expression, oe.data.condition.code[0])
+                    full_cond_expression = astutils.and_expr(full_cond_expression, oe.data.condition.code[0])
             # If there is no unconditional outgoing edge, there may be a catchall that is the negation of all other
             # conditions.
             # NOTE: Checking that for the general case is expensive. For now, we check it for the case of two outgoing
@@ -84,11 +83,10 @@ class ControlFlowRaising(ppl.Pass):
             #       and does not lead to any negative side effects.
             if has_unconditional:
                 insert_return = False
+            elif len(oedges) == 2 and oedges[0].data.condition_sympy() == sympy.Not(oedges[1].data.condition_sympy()):
+                insert_return = False
             else:
-                if len(oedges) == 2 and oedges[0].data.condition_sympy() == sympy.Not(oedges[1].data.condition_sympy()):
-                    insert_return = False
-                else:
-                    insert_return = True
+                insert_return = True
 
             if insert_return:
                 if full_cond_expression is None:

@@ -6,11 +6,11 @@ from dace.sdfg.utils import dfs_topological_sort
 from dace.sdfg.graph import MultiConnectorEdge
 import dace
 from dace import SDFG, SDFGState, subsets
-import dace.sdfg.nodes as nodes
-import dace.transformation.dataflow.sve.infer_types as infer_types
-import dace.dtypes as dtypes
-import dace.data as data
-import dace.symbolic as symbolic
+from dace.sdfg import nodes
+from dace.transformation.dataflow.sve import infer_types
+from dace import dtypes
+from dace import data
+from dace import symbolic
 from typing import Dict, Set, Tuple, Union, DefaultDict
 
 
@@ -376,11 +376,10 @@ class VectorInferenceGraph(DiGraph):
                 return dtype
             else:
                 raise VectorInferenceException("Cannot make vector into scalar")
+        elif inf_type == InferenceNode.Vector:
+            return dtypes.vector(dtype, self.vec_len)
         else:
-            if inf_type == InferenceNode.Vector:
-                return dtypes.vector(dtype, self.vec_len)
-            else:
-                return dtype
+            return dtype
 
     def _carries_vector_data(self, edge: MultiConnectorEdge[Memlet]) -> bool:
         if edge.data.data is None:

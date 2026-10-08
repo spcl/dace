@@ -1809,9 +1809,9 @@ class UnregisteredLibraryNode(LibraryNode):
         # Start with original json, then update the modified parts
         for pname, prop in curjson.items():
             if isinstance(prop, dict):  # Dictionary property update (e.g., attributes)
-                jsonobj[pname].update(curjson[pname])
+                jsonobj[pname].update(prop)
             else:  # Direct property update
-                jsonobj[pname] = curjson[pname]
+                jsonobj[pname] = prop
 
         return jsonobj
 

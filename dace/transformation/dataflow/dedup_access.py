@@ -9,7 +9,7 @@ from dace import sdfg as sd, subsets
 from dace.memlet import Memlet
 from dace.sdfg import dealias, nodes, graph as gr
 from dace.transformation import transformation as xf
-import dace.transformation.helpers as helpers
+from dace.transformation import helpers
 
 import warnings
 

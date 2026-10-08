@@ -13,13 +13,13 @@ import dace.dtypes
 import dace.sdfg.infer_types
 import dace.transformation.dataflow
 import dace.transformation.helpers
-import dace.codegen.targets.sve as sve
-import dace.codegen.targets.sve.util as util
+from dace.codegen.targets import sve
+from dace.codegen.targets.sve import util
 import dace.frontend.operations
-import dace.data as data
-import dace.dtypes as dtypes
-import dace.transformation.dataflow.sve.infer_types as infer_types
-import dace.sdfg.analysis.vector_inference as vector_inference
+from dace import data
+from dace import dtypes
+from dace.transformation.dataflow.sve import infer_types
+from dace.sdfg.analysis import vector_inference
 
 
 @make_properties

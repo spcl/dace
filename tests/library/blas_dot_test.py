@@ -3,7 +3,7 @@ import pytest
 
 import dace
 from dace.memlet import Memlet
-import dace.libraries.blas as blas
+from dace.libraries import blas
 import numpy as np
 
 ###############################################################################

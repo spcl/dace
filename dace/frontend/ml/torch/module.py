@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, OrderedDict, List, Optional, Set, Tuple,
 try:
     import torch
     from torch import Tensor
-    import torch.nn as nn
+    from torch import nn
     from torch.onnx import TrainingMode
 
     TORCH_AVAILABLE = True

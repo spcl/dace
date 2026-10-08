@@ -117,7 +117,7 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
 def run_syrk_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (polybench mini size) - note the order swap for this test
     M, N = sizes["mini"]

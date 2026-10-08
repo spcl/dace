@@ -6,7 +6,7 @@ import sympy as sp
 # DaCe imports
 import dace
 from dace.properties import CodeBlock
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 import dace.transformation.transformation as xf
 from dace import dtypes, data as dt
 from dace.sdfg import dealias, SDFG, SDFGState, state as dstate, utils as dace_utils

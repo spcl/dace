@@ -231,11 +231,10 @@ class DetectLoop(transformation.PatternTransformation):
             if not accept_missing_itvar:
                 # Either no consistent iteration variable found, or too many consistent iteration variables found
                 return None
+            elif len(itvar) == 0:
+                return ""
             else:
-                if len(itvar) == 0:
-                    return ""
-                else:
-                    return None
+                return None
 
         return next(iter(itvar))
 
@@ -376,11 +375,10 @@ class DetectLoop(transformation.PatternTransformation):
             if not accept_missing_itvar:
                 # Either no consistent iteration variable found, or too many consistent iteration variables found
                 return None
+            elif len(itvar) == 0:
+                return ""
             else:
-                if len(itvar) == 0:
-                    return ""
-                else:
-                    return None
+                return None
 
         return next(iter(itvar))
 
@@ -635,11 +633,10 @@ def rotated_loop_find_itvar(
         if not accept_missing_itvar:
             # Either no consistent iteration variable found, or too many consistent iteration variables found
             return None, None
+        elif len(filtered_candidates) == 0:
+            return "", None
         else:
-            if len(filtered_candidates) == 0:
-                return "", None
-            else:
-                return None, None
+            return None, None
     else:
         itvar = next(iter(filtered_candidates))
         if itvar in backedge_incremented:
@@ -706,16 +703,15 @@ def find_for_loop(
                 # More than one edge with the iteration variable as a free
                 # symbol, which is not legal. Invalid for loop.
                 return None
+        elif init_assignment is None:
+            init_assignment = assignment
+            init_edges.append(iedge)
+        elif init_assignment != assignment:
+            # More than one init assignment variations mean that this for
+            # loop is not valid.
+            return None
         else:
-            if init_assignment is None:
-                init_assignment = assignment
-                init_edges.append(iedge)
-            elif init_assignment != assignment:
-                # More than one init assignment variations mean that this for
-                # loop is not valid.
-                return None
-            else:
-                init_edges.append(iedge)
+            init_edges.append(iedge)
     if step_edge is None or len(init_edges) == 0 or init_assignment is None:
         # Less than two assignment variations, can't be a valid for loop.
         return None
@@ -830,9 +826,8 @@ def find_rotated_for_loop(
 
     if self_loop:
         step_edge = condition_edge
-    else:
-        if step_edge is None:
-            return None
+    elif step_edge is None:
+        return None
 
     # Get the init expression and the stride.
     start = symbolic.pystr_to_symbolic(init_assignment)

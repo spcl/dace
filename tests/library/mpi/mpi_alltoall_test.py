@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-import dace.libraries.mpi as mpi
+from dace.libraries import mpi
 import numpy as np
 import pytest
 

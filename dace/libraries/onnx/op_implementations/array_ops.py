@@ -403,8 +403,7 @@ class PureSliceAllConstant(ONNXForward):
         rng = [(0, s - 1, 1) for s in idesc.shape]
         for axis, start, end, step in zip(axes, starts, ends, steps):
             s = idesc.shape[axis]
-            if end > s:
-                end = s
+            end = min(end, s)
             rng[axis] = (start, end - 1, step)
 
         sbs = subsets.Range(rng)

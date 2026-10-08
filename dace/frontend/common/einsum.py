@@ -142,7 +142,7 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     gY = state.add_read("Y")
     gZ = state.add_write("Z")
 
-    import dace.libraries.blas as blas  # Avoid import loop
+    from dace.libraries import blas  # Avoid import loop
 
     libnode = blas.MatMul("einsum_gemm")
     libnode.alpha = alpha

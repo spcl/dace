@@ -3,8 +3,8 @@ from dace import data
 from dace.sdfg.graph import NodeNotFoundError
 import dace
 from dace import SDFG
-import dace.sdfg.nodes as nodes
-import dace.sdfg.analysis.vector_inference as vector_inference
+from dace.sdfg import nodes
+from dace.sdfg.analysis import vector_inference
 import pytest
 from dace.transformation.dataflow import MergeSourceSinkArrays
 

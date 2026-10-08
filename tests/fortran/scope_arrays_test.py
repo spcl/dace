@@ -2,8 +2,8 @@
 
 from dace.frontend.fortran import fortran_parser
 
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from dace.frontend.fortran import ast_transforms
+from dace.frontend.fortran import ast_internal_classes
 
 
 def test_fortran_frontend_parent():

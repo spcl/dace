@@ -6,7 +6,7 @@ import pytest
 import dace
 from dace.transformation.dataflow import TrivialTaskletElimination, GPUGridStridedTiling
 import numpy as np
-import scipy.sparse as sparse
+from scipy import sparse
 
 
 def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg.nodes.MapEntry]:

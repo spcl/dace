@@ -4,7 +4,7 @@ from typing import List, Tuple, TYPE_CHECKING
 import sympy as sp
 
 # DaCe imports
-import dace.sdfg.nodes as nodes
+from dace.sdfg import nodes
 from dace import dtypes, data as dt, symbolic
 from dace.sdfg import SDFGState, graph as dgraph, state as dstate
 from dace.memlet import Memlet

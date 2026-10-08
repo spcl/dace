@@ -4,7 +4,7 @@ import scipy
 import dace
 from dace.memlet import Memlet
 
-import dace.libraries.blas as blas
+from dace.libraries import blas
 
 
 def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args=None):

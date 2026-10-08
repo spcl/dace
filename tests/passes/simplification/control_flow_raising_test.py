@@ -48,17 +48,14 @@ def test_nested_if_chain(lowered_returns: bool):
     def nested_if_chain(i: dace.int64):
         if i < 2:
             return 0
+        elif i < 4:
+            return 1
+        elif i < 6:
+            return 2
+        elif i < 8:
+            return 3
         else:
-            if i < 4:
-                return 1
-            else:
-                if i < 6:
-                    return 2
-                else:
-                    if i < 8:
-                        return 3
-                    else:
-                        return 4
+            return 4
 
     sdfg = nested_if_chain.to_sdfg()
 

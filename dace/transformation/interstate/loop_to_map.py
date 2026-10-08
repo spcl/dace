@@ -14,7 +14,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
-import dace.transformation.helpers as helpers
+from dace.transformation import helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from ordered_set import OrderedSet

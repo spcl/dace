@@ -4,7 +4,7 @@ from unittest import mock
 
 import dace
 from dace.sdfg import utils
-import dace.dtypes as dtypes
+from dace import dtypes
 import dace.frontend.python.replacements.mpi as comm
 import numpy as np
 import pytest

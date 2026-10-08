@@ -6,7 +6,7 @@ import numpy as np
 from dace.subsets import Range
 from dace.transformation.dataflow import DeduplicateAccess
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
-import dace.transformation.helpers as helpers
+from dace.transformation import helpers
 
 N = dace.symbol("N")
 i = dace.symbol("i")

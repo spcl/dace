@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 
 import dace
-import dace.libraries.blas as blas
+from dace.libraries import blas
 
 from dace.library import change_default
 

@@ -558,23 +558,22 @@ class ONNXModel:
         elif len(shape) == 0:
             # this is a scalar
             self.sdfg.add_scalar(name, dtype, storage=storage)
+        elif name not in self.sdfg.arrays:
+            self.sdfg.add_array(name, shape, dtype, storage=storage, transient=False)
         else:
-            if name not in self.sdfg.arrays:
-                self.sdfg.add_array(name, shape, dtype, storage=storage, transient=False)
-            else:
-                existing_arr = self.sdfg.arrays[name]
-                if existing_arr.dtype != dtype:
-                    raise ValueError(
-                        "Invalid ONNX model; found two values with name '{}', but different dtypes ({} and {})".format(
-                            name, existing_arr.dtype, dtype
-                        )
+            existing_arr = self.sdfg.arrays[name]
+            if existing_arr.dtype != dtype:
+                raise ValueError(
+                    "Invalid ONNX model; found two values with name '{}', but different dtypes ({} and {})".format(
+                        name, existing_arr.dtype, dtype
                     )
-                if tuple(existing_arr.shape) != tuple(shape):
-                    raise ValueError(
-                        "Invalid ONNX model; found two values with name '{}', but different dimensions ({} and {})".format(
-                            name, existing_arr.shape, shape
-                        )
+                )
+            if tuple(existing_arr.shape) != tuple(shape):
+                raise ValueError(
+                    "Invalid ONNX model; found two values with name '{}', but different dimensions ({} and {})".format(
+                        name, existing_arr.shape, shape
                     )
+                )
 
         # we need to copy here because the weight_arr tensor is not writable
         self.weights[unclean_name] = torch.from_numpy(np_array.copy())

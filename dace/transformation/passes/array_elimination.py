@@ -161,22 +161,21 @@ class ArrayElimination(ppl.Pass):
                                     continue
                             else:
                                 state.add_edge(edge.src, edge.src_conn, first_node, edge.dst_conn, edge.data)
+                        elif edge.src_conn == "views":
+                            other_edges = list(state.out_edges_by_connector(first_node, "views"))
+                            if len(other_edges) != 1:
+                                raise InvalidSDFGNodeError(
+                                    "Multiple edges connected to views connector",
+                                    state.sdfg,
+                                    state.block_id,
+                                    state.node_id(first_node),
+                                )
+                            other_view_edge = other_edges[0]
+                            if other_view_edge.data != edge.data:
+                                # The memlets do not match, skip the node.
+                                continue
                         else:
-                            if edge.src_conn == "views":
-                                other_edges = list(state.out_edges_by_connector(first_node, "views"))
-                                if len(other_edges) != 1:
-                                    raise InvalidSDFGNodeError(
-                                        "Multiple edges connected to views connector",
-                                        state.sdfg,
-                                        state.block_id,
-                                        state.node_id(first_node),
-                                    )
-                                other_view_edge = other_edges[0]
-                                if other_view_edge.data != edge.data:
-                                    # The memlets do not match, skip the node.
-                                    continue
-                            else:
-                                state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+                            state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
                     # Remove merged node and associated edges
                     state.remove_node(node)
                     removed_nodes.add(node)

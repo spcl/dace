@@ -5,7 +5,7 @@ import copy
 from numbers import Integral
 from typing import Optional, Sequence, Set, Union
 
-import dace.dtypes as dtypes
+from dace import dtypes
 from dace import symbolic, serialize
 from dace.data.core import Data, SymbolMapping
 from dace.properties import Property, make_properties, ShapeProperty, SymbolicProperty, ListProperty

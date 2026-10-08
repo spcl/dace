@@ -17,7 +17,7 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
 )
-import dace.subsets as subsets
+from dace import subsets
 from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
@@ -2061,10 +2061,9 @@ def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: 
     for member_name, member_descriptor in descriptor.members.items():
         if _is_structure(member_descriptor):
             swaps_count = _change_structure_type(member_descriptor, from_type, to_type, swaps_count)
-        else:
-            if member_descriptor.dtype == from_type:
-                member_descriptor.dtype = to_type
-                swaps_count += 1
+        elif member_descriptor.dtype == from_type:
+            member_descriptor.dtype = to_type
+            swaps_count += 1
     return swaps_count
 
 

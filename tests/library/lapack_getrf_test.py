@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import dace.libraries.lapack as lapack
-import dace.libraries.linalg as linalg
+from dace.libraries import lapack
+from dace.libraries import linalg
 import numpy as np
 import pytest
 

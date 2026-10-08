@@ -4,7 +4,7 @@
 import numpy as np
 import pytest
 import dace
-import dace.libraries.blas as blas
+from dace.libraries import blas
 
 
 @pytest.mark.gpu

@@ -159,13 +159,12 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
             a1_idx.append(get_idx(i))
 
             all_idx_dict[get_idx(i)] = dim1
+        elif unidirectional:
+            raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
         else:
-            if unidirectional:
-                raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
-            else:
-                raise IndexError(
-                    "operands could not be broadcast together with shapes {}, {}".format(arr1_shape, arr2_shape)
-                )
+            raise IndexError(
+                "operands could not be broadcast together with shapes {}, {}".format(arr1_shape, arr2_shape)
+            )
 
     def to_string(idx):
         return ", ".join(reversed(idx))

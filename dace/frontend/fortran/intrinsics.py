@@ -1235,9 +1235,8 @@ class MathFunctions(IntrinsicTransformation):
         for f in funcs:
             if isinstance(f, dict):
                 res.extend([v.function for k, v in f.items() if v.function is not None])
-            else:
-                if f.function is not None:
-                    res.append(f.function)
+            elif f.function is not None:
+                res.append(f.function)
         return res
 
     @staticmethod

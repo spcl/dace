@@ -170,13 +170,13 @@ def propagate_assumptions_equal_symbols(condensed_assumptions):
             if isinstance(g, sp.Symbol):
                 for e in condensed_assumptions[g.name].equal:
                     if not isinstance(e, sp.Symbol):
-                        condensed_assumptions[sym].add_greater(e)
+                        assum.add_greater(e)
                         assum.greater.remove(g)
         for l in assum.lesser:
             if isinstance(l, sp.Symbol):
                 for e in condensed_assumptions[l.name].equal:
                     if not isinstance(e, sp.Symbol):
-                        condensed_assumptions[sym].add_lesser(e)
+                        assum.add_lesser(e)
                         assum.lesser.remove(l)
     return equality_subs1, equality_subs2
 
@@ -263,8 +263,7 @@ def parse_assumptions(assumptions, array_symbols):
     # How many assumptions does symbol with most assumptions have?
     curr_max = -1
     for _, assum in condensed_assumptions.items():
-        if assum.num_assumptions() > curr_max:
-            curr_max = assum.num_assumptions()
+        curr_max = max(curr_max, assum.num_assumptions())
 
     all_subs = []
     for i in range(curr_max):

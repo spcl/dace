@@ -12,7 +12,7 @@ import sympy as sp
 
 # DaCe imports
 import dace
-import dace.sdfg.utils as utils
+from dace.sdfg import utils
 from dace import dtypes, symbolic
 from dace import data as dt
 from dace.frontend.python.parser import DaceProgram
@@ -928,10 +928,9 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
         end = end.replace("(", "")
         end = end.replace(")", "")
         end = end.replace(" ", "")
-    else:
-        if expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
-            # Remove extra parenthesis
-            end = end[:-1]
+    elif expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
+        # Remove extra parenthesis
+        end = end[:-1]
 
     # Get the start from the initialization code
     init_code = loop.init_statement.as_string

@@ -395,15 +395,14 @@ class SVECodeGen(TargetCodeGenerator):
                         code.write(f"{edge.data.data} = {src_name};")
                     else:
                         raise util.NotSupportedError("Unsupported writeback")
+                elif util.is_vector(desc.dtype):
+                    ##################
+                    # Broadcast into scalar AccessNode
+                    code.write(f"{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});")
                 else:
-                    if util.is_vector(desc.dtype):
-                        ##################
-                        # Broadcast into scalar AccessNode
-                        code.write(f"{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});")
-                    else:
-                        ##################
-                        # Scalar write into scalar AccessNode
-                        code.write(f"{edge.data.data} = {src_name};")
+                    ##################
+                    # Scalar write into scalar AccessNode
+                    code.write(f"{edge.data.data} = {src_name};")
 
         else:
             raise util.NotSupportedError("Only writeback to Tasklets and AccessNodes is supported")

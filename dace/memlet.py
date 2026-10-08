@@ -153,13 +153,12 @@ class Memlet(object):
 
         if volume is not None:
             self.volume = volume
+        elif self.subset is not None:
+            self.volume = self.subset.num_elements()
+        elif self.other_subset is not None:
+            self.volume = self.other_subset.num_elements()
         else:
-            if self.subset is not None:
-                self.volume = self.subset.num_elements()
-            elif self.other_subset is not None:
-                self.volume = self.other_subset.num_elements()
-            else:
-                self.volume = 1
+            self.volume = 1
 
         self.dynamic = dynamic
         self.wcr = wcr

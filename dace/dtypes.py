@@ -1069,13 +1069,12 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.py_object, []))
                 ret_converters.append(lambda a, *args: a)
+            elif not self.is_scalar_function():
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                ret_converters.append(partial(_pyobject_converter, arg))
             else:
-                if not self.is_scalar_function():
-                    ret_arraypos.append(index + offset)
-                    ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                    ret_converters.append(partial(_pyobject_converter, arg))
-                else:
-                    ret_converters.append(lambda a, *args: a)
+                ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 

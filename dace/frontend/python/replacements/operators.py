@@ -278,11 +278,10 @@ def result_type(
             elif operator in ("Heaviside", "Arctan2", "Hypot") and max(type1, type2) < 2:
                 restype = dtypes.float64
             # All other arithmetic operators and cases of the above operators
+            elif numpy_version >= "2.0.0":
+                restype = np_result_type(dtypes_for_result_np2)
             else:
-                if numpy_version >= "2.0.0":
-                    restype = np_result_type(dtypes_for_result_np2)
-                else:
-                    restype = np_result_type(dtypes_for_result)
+                restype = np_result_type(dtypes_for_result)
 
             if dtype1 != restype:
                 left_cast = cast_str(restype)

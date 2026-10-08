@@ -306,7 +306,7 @@ def run_vadv(device_type: dace.dtypes.DeviceType):
 def run_vadv_autodiff():
     import jax
     import jax.numpy as jnp
-    import jax.lax as lax
+    from jax import lax
 
     # Initialize data (npbench small size)
     I, J, K = 4, 4, 3

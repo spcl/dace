@@ -19,7 +19,7 @@ from dace.libraries.onnx.schema import (
     ONNXTypeConstraint,
 )
 
-import dace.libraries.onnx.nodes.onnx_op as onnx_op
+from dace.libraries.onnx.nodes import onnx_op
 from dace.frontend.python.common import StringLiteral
 
 import onnx

@@ -11,7 +11,7 @@ from typing import IO
 from dace import dtypes
 from dace.codegen.targets.sve import preprocess as preprocess
 from dace.codegen.targets.sve import util as util
-import dace.frontend.python.astutils as astutils
+from dace.frontend.python import astutils
 from dace.codegen.targets.sve.type_compatibility import assert_type_compatibility
 import copy
 import collections
@@ -155,40 +155,39 @@ class SVEUnparser(cppunparse.CPPUnparser):
             else:
                 # Expecting anything else
                 raise util.NotSupportedError("Given a pointer, expected a scalar or vector")
-        else:
-            # Unparsing a scalar
-            if isinstance(expect, dtypes.vector):
-                # Expecting a vector: duplicate the scalar
-                if expect.type in [np.bool_, bool]:
-                    # Special case for duplicating boolean into predicate
-                    suffix = f"b{self.pred_bits}"
-                    # self.write(f'svptrue_{suffix}()')
-                    self.dispatch_expect(tree, expect.base_type)
-                    self.write(f" ? svptrue_{suffix}() : svpfalse_b()")
-                else:
-                    self.write(f"svdup_{util.TYPE_TO_SVE_SUFFIX[expect.type]}(")
-                    self.dispatch_expect(tree, expect.base_type)
-                    self.write(")")
-
-            elif isinstance(expect, dtypes.pointer):
-                # Expecting a pointer
-                raise util.NotSupportedError("Given a scalar, expected a pointer")
+        # Unparsing a scalar
+        elif isinstance(expect, dtypes.vector):
+            # Expecting a vector: duplicate the scalar
+            if expect.type in [np.bool_, bool]:
+                # Special case for duplicating boolean into predicate
+                suffix = f"b{self.pred_bits}"
+                # self.write(f'svptrue_{suffix}()')
+                self.dispatch_expect(tree, expect.base_type)
+                self.write(f" ? svptrue_{suffix}() : svpfalse_b()")
             else:
-                # Expecting a scalar: cast if needed
-                cast_ctype = None
-                if inf.type != expect.type:
-                    cast_ctype = expect.ctype
+                self.write(f"svdup_{util.TYPE_TO_SVE_SUFFIX[expect.type]}(")
+                self.dispatch_expect(tree, expect.base_type)
+                self.write(")")
 
-                # Special casting for `long long`
-                if expect.type == np.int64:
-                    cast_ctype = "int64_t"
-                elif expect.type == np.uint64:
-                    cast_ctype = "uint64_t"
+        elif isinstance(expect, dtypes.pointer):
+            # Expecting a pointer
+            raise util.NotSupportedError("Given a scalar, expected a pointer")
+        else:
+            # Expecting a scalar: cast if needed
+            cast_ctype = None
+            if inf.type != expect.type:
+                cast_ctype = expect.ctype
 
-                if cast_ctype:
-                    self.write(f"({cast_ctype}) ")
+            # Special casting for `long long`
+            if expect.type == np.int64:
+                cast_ctype = "int64_t"
+            elif expect.type == np.uint64:
+                cast_ctype = "uint64_t"
 
-                self.dispatch(tree)
+            if cast_ctype:
+                self.write(f"({cast_ctype}) ")
+
+            self.dispatch(tree)
 
     def generate_case_predicate(self, t: ast.If, acc_pred: str, id: int) -> str:
         test_pred = f"__pg_test_{self.if_depth}_{id}"

@@ -193,11 +193,10 @@ class CPPUnparser:
             else:
                 self.f.write(text)
             self.firstfill = False
+        elif self.indent_output:
+            self.f.write("\n" + "    " * (self._indent + self.indent_offset) + text)
         else:
-            if self.indent_output:
-                self.f.write("\n" + "    " * (self._indent + self.indent_offset) + text)
-            else:
-                self.f.write("\n" + text)
+            self.f.write("\n" + text)
 
     def write(self, text):
         """Append a piece of text to the current line"""
@@ -519,36 +518,34 @@ class CPPUnparser:
         if isinstance(value, (float, complex)):
             # Substitute overflowing decimal literal for AST infinities.
             self.write(result.replace("inf", INFSTR))
+        # Special case for strings of containing byte literals (but are still strings).
+        elif result.find("b'") >= 0:
+            self.write(result)
         else:
-            # Special case for strings of containing byte literals (but are still strings).
-            if result.find("b'") >= 0:
-                self.write(result)
-            else:
-                towrite = result
-                if result.startswith("'"):
-                    towrite = result[1:-1].replace('"', '\\"')
-                    towrite = f'"{towrite}"'
-                self.write(towrite)
+            towrite = result
+            if result.startswith("'"):
+                towrite = result[1:-1].replace('"', '\\"')
+                towrite = f'"{towrite}"'
+            self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
-        else:
-            if isinstance(value, (Number, np.bool_)):
-                self._Num(t)
-            elif isinstance(value, tuple):
-                self.write("(")
-                if len(value) == 1:
-                    self._write_constant(value[0])
-                    self.write(",")
-                else:
-                    interleave(lambda: self.write(", "), self._write_constant, value)
-                self.write(")")
-            elif value is Ellipsis:  # instead of `...` for Py2 compatibility
-                self.write("...")
+        elif isinstance(value, (Number, np.bool_)):
+            self._Num(t)
+        elif isinstance(value, tuple):
+            self.write("(")
+            if len(value) == 1:
+                self._write_constant(value[0])
+                self.write(",")
             else:
-                self._write_constant(t.value)
+                interleave(lambda: self.write(", "), self._write_constant, value)
+            self.write(")")
+        elif value is Ellipsis:  # instead of `...` for Py2 compatibility
+            self.write("...")
+        else:
+            self._write_constant(t.value)
 
     def _ClassDef(self, t):
         raise NotImplementedError("Classes are unsupported")

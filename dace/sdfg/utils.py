@@ -2418,11 +2418,10 @@ def get_control_flow_block_dominators(
                 if isinstance(v, AbstractControlFlowRegion):
                     if isinstance(v, (LoopRegion, ConditionalBlock)):
                         idom[k] = idom[v]
+                    elif v in added_sinks:
+                        idom[k] = idom[added_sinks[v]]
                     else:
-                        if v in added_sinks:
-                            idom[k] = idom[added_sinks[v]]
-                        else:
-                            idom[k] = v.sink_nodes()[0]
+                        idom[k] = v.sink_nodes()[0]
                     if idom[k] is not v:
                         changed = True
 
@@ -2775,15 +2774,13 @@ def _specialize_scalar_impl(root: "dace.SDFG", sdfg: "dace.SDFG", scalar_name: s
                 if isinstance(src, nd.MapEntry):
                     # Add a dep edge, to not invalidate the map
                     state.add_edge(src, None, dst, None, dace.memlet.Memlet())
-                else:
-                    if state.degree(src) == 0:
-                        state.remove_node(src)
+                elif state.degree(src) == 0:
+                    state.remove_node(src)
             if state.in_degree(dst) == 0:
                 if isinstance(dst, nd.MapExit):
                     state.add_edge(src, None, dst, None, dace.memlet.Memlet())
-                else:
-                    if state.degree(dst) == 0:
-                        state.remove_node(dst)
+                elif state.degree(dst) == 0:
+                    state.remove_node(dst)
 
         for node in state.nodes():
             if isinstance(node, nd.MapEntry):

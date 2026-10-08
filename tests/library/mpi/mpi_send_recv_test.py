@@ -2,7 +2,7 @@
 import dace
 from dace.sdfg import utils
 from dace.memlet import Memlet
-import dace.libraries.mpi as mpi
+from dace.libraries import mpi
 import numpy as np
 import pytest
 

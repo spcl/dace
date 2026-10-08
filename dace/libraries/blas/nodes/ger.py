@@ -3,7 +3,7 @@ from dace.properties import SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
 from dace.sdfg.nodes import LibraryNode
-import dace.library as library
+from dace import library
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace import data as dt, memlet as mm, subsets as sbs
 import dace

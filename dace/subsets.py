@@ -897,11 +897,10 @@ class Range(Subset):
             for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
                     new_subset.append((rb, re, rs, rt))
+                elif isinstance(other[idx], tuple):
+                    new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                 else:
-                    if isinstance(other[idx], tuple):
-                        new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
-                    else:
-                        new_subset.append(rb + rs * other[idx])
+                    new_subset.append(rb + rs * other[idx])
         elif other.data_dims() == 0 and all([r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other]):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.

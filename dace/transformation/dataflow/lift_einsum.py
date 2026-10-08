@@ -105,7 +105,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        import dace.libraries.blas as blas
+        from dace.libraries import blas
 
         map_exit = state.exit_node(self.map_entry)
 
