@@ -158,7 +158,7 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
 """
         global_stream.write(header_code, sdfg)
 
-        init_code = f'''
+        init_code = f"""
 if(getenv("LIKWID_PIN"))
 {{
     printf("Instrumentation must not be wrapped by likwid-perfctr. Results may be incorrect.\\n");
@@ -197,7 +197,7 @@ LIKWID_MARKER_INIT;
     int thread_id = omp_get_thread_num();
     likwid_pinThread(thread_id);
 }}
-'''
+"""
         codegen._initcode.write(init_code)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
@@ -218,7 +218,7 @@ double time[num_threads];
         local_stream.write(outer_code, sdfg)
 
         for region, cfg_id, state_id, node_id in self._regions:
-            report_code = f'''
+            report_code = f"""
 #pragma omp parallel
 {{
     int thread_id = omp_get_thread_num();
@@ -249,7 +249,7 @@ double time[num_threads];
         }}
     }}
 }}
-'''
+"""
             local_stream.write(report_code)
 
         exit_code = """
@@ -275,7 +275,7 @@ LIKWID_MARKER_CLOSE;
             region = f"state_{cfg_id}_{state_id}_{node_id}"
             self._regions.append((region, cfg_id, state_id, node_id))
 
-            marker_code = f'''
+            marker_code = f"""
 #pragma omp parallel
 {{
     LIKWID_MARKER_REGISTER("{region}");
@@ -297,7 +297,7 @@ LIKWID_MARKER_CLOSE;
     #pragma omp barrier
     LIKWID_MARKER_START("{region}");
 }}
-'''
+"""
             local_stream.write(marker_code)
 
     def on_state_end(
@@ -317,12 +317,12 @@ LIKWID_MARKER_CLOSE;
             node_id = -1
             region = f"state_{cfg_id}_{state_id}_{node_id}"
 
-            marker_code = f'''
+            marker_code = f"""
 #pragma omp parallel
 {{
     LIKWID_MARKER_STOP("{region}");
 }}
-'''
+"""
             local_stream.write(marker_code)
 
     def on_scope_entry(
@@ -349,7 +349,7 @@ LIKWID_MARKER_CLOSE;
         region = f"scope_{cfg_id}_{state_id}_{node_id}"
 
         self._regions.append((region, cfg_id, state_id, node_id))
-        marker_code = f'''
+        marker_code = f"""
 #pragma omp parallel
 {{
     LIKWID_MARKER_REGISTER("{region}");
@@ -357,7 +357,7 @@ LIKWID_MARKER_CLOSE;
     #pragma omp barrier
     LIKWID_MARKER_START("{region}");
 }}
-'''
+"""
         outer_stream.write(marker_code)
 
     def on_scope_exit(
@@ -379,12 +379,12 @@ LIKWID_MARKER_CLOSE;
         node_id = state.node_id(entry_node)
         region = f"scope_{cfg_id}_{state_id}_{node_id}"
 
-        marker_code = f'''
+        marker_code = f"""
 #pragma omp parallel
 {{
     LIKWID_MARKER_STOP("{region}");
 }}
-'''
+"""
         outer_stream.write(marker_code)
 
 
@@ -435,13 +435,13 @@ class LIKWIDInstrumentationGPU(InstrumentationProvider):
 """
         global_stream.write(header_code, sdfg)
 
-        init_code = f'''
+        init_code = f"""
 setenv("LIKWID_GPUS", "0", 0);
 setenv("LIKWID_GEVENTS", "{self._default_events}", 0);
 setenv("LIKWID_GPUFILEPATH", "{likwid_marker_file_gpu.absolute()}", 0);
 
 LIKWID_NVMARKER_INIT;
-'''
+"""
         codegen._initcode.write(init_code)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
@@ -449,7 +449,7 @@ LIKWID_NVMARKER_INIT;
             return
 
         for region, cfg_id, state_id, node_id in self._regions:
-            report_code = f'''
+            report_code = f"""
 {{
     double *events = (double*) malloc(MAX_NUM_EVENTS * sizeof(double));
     double time = 0.0;
@@ -471,7 +471,7 @@ LIKWID_NVMARKER_INIT;
 
     free(events);
 }}
-'''
+"""
             local_stream.write(report_code)
 
         exit_code = """
@@ -497,7 +497,7 @@ LIKWID_NVMARKER_CLOSE;
             region = f"state_{cfg_id}_{state_id}_{node_id}"
             self._regions.append((region, cfg_id, state_id, node_id))
 
-            marker_code = f'''
+            marker_code = f"""
 LIKWID_NVMARKER_REGISTER("{region}");
 
 LIKWID_NVMARKER_START("{region}");
@@ -505,7 +505,7 @@ LIKWID_NVMARKER_STOP("{region}");
 LIKWID_NVMARKER_RESET("{region}");
 
 LIKWID_NVMARKER_START("{region}");
-'''
+"""
             local_stream.write(marker_code)
 
     def on_state_end(
@@ -525,9 +525,9 @@ LIKWID_NVMARKER_START("{region}");
             node_id = -1
             region = f"state_{cfg_id}_{state_id}_{node_id}"
 
-            marker_code = f'''
+            marker_code = f"""
 LIKWID_NVMARKER_STOP("{region}");
-'''
+"""
             local_stream.write(marker_code)
 
     def on_scope_entry(
@@ -554,7 +554,7 @@ LIKWID_NVMARKER_STOP("{region}");
         region = f"scope_{cfg_id}_{state_id}_{node_id}"
 
         self._regions.append((region, cfg_id, state_id, node_id))
-        marker_code = f'''
+        marker_code = f"""
 LIKWID_NVMARKER_REGISTER("{region}");
 
 LIKWID_NVMARKER_START("{region}");
@@ -562,7 +562,7 @@ LIKWID_NVMARKER_STOP("{region}");
 LIKWID_NVMARKER_RESET("{region}");
 
 LIKWID_NVMARKER_START("{region}");
-'''
+"""
         outer_stream.write(marker_code)
 
     def on_scope_exit(
@@ -584,7 +584,7 @@ LIKWID_NVMARKER_START("{region}");
         node_id = state.node_id(entry_node)
         region = f"scope_{cfg_id}_{state_id}_{node_id}"
 
-        marker_code = f'''
+        marker_code = f"""
 LIKWID_NVMARKER_STOP("{region}");
-'''
+"""
         outer_stream.write(marker_code)

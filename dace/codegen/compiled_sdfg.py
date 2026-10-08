@@ -541,7 +541,7 @@ class CompiledSDFG:
             [
                 sys.executable,
                 "-c",
-                f'''
+                f"""
 import pickle
 from dace.codegen import compiled_sdfg as csd
 from dace.config import Config
@@ -563,7 +563,7 @@ with open(r"{temp_path}", "wb") as f:
         'args': data['args'],
         'kwargs': data['kwargs']
     }}, f)
-             ''',
+             """,
             ]
         )
 

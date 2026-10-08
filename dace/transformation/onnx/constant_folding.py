@@ -19,22 +19,22 @@ if TYPE_CHECKING:
 
 # blocklist of nondeterministic ops
 # fmt: off
-NONDETERMINISTIC_OPS = {'ONNXDropout',
-                        'ONNXGradient',
-                        'ONNXGraphCall',
-                        'ONNXIf',
-                        'ONNXLoop',
-                        'ONNXMomentum',
-                        'ONNXMultinomial',
-                        'ONNXRandomNormal',
-                        'ONNXRandomNormalLike',
-                        'ONNXRandomUniform',
-                        'ONNXRandomUniformLike',
-                        'ONNXSVMClassifier',
-                        'ONNXSVMRegressor',
-                        'ONNXScan',
-                        'ONNXTreeEnsembleClassifier',
-                        'ONNXTreeEnsembleRegressor'}
+NONDETERMINISTIC_OPS = {"ONNXDropout",
+                        "ONNXGradient",
+                        "ONNXGraphCall",
+                        "ONNXIf",
+                        "ONNXLoop",
+                        "ONNXMomentum",
+                        "ONNXMultinomial",
+                        "ONNXRandomNormal",
+                        "ONNXRandomNormalLike",
+                        "ONNXRandomUniform",
+                        "ONNXRandomUniformLike",
+                        "ONNXSVMClassifier",
+                        "ONNXSVMRegressor",
+                        "ONNXScan",
+                        "ONNXTreeEnsembleClassifier",
+                        "ONNXTreeEnsembleRegressor"}
 # fmt: on
 
 
