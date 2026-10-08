@@ -1094,7 +1094,7 @@ class DeriveSDFGConstraints(ppl.Pass):
         allow_none=True,
         category="Applicability",
         desc="Assume that all data containers have no dimension larger than "
-        + "this value. If None, no assumption is made.",
+        "this value. If None, no assumption is made.",
     )
 
     def modifies(self) -> ppl.Modifies:

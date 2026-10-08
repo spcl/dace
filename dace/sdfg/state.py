@@ -3545,9 +3545,9 @@ class LoopRegion(ControlFlowRegion):
         default=True,
         category="Semantics",
         desc="If False, the loop condition is checked before the update statement is"
-        + " executed. This only applies to inverted loops, turning them from a typical "
-        + "do-while style into a while(true) with a break before the update (at the end "
-        + "of an iteration) if the condition no longer holds.",
+        " executed. This only applies to inverted loops, turning them from a typical "
+        "do-while style into a while(true) with a break before the update (at the end "
+        "of an iteration) if the condition no longer holds.",
     )
     loop_variable = Property(dtype=str, default="", category="Semantics", desc="The loop variable, if given")
     unroll = Property(

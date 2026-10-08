@@ -280,7 +280,7 @@ def test_ifchain_manual():
 
 @pytest.mark.skip(
     reason="Switch-case are not allowed in the ConditionalBlock semantics, and are thus not "
-    + "generated with the new ControlFlowRaising pass."
+    "generated with the new ControlFlowRaising pass."
 )
 def test_switchcase():
     sdfg = dace.SDFG("switchcase")

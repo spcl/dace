@@ -314,7 +314,7 @@ class ControlFlowRegionPass(Pass):
         default=False,
         category="Applicability",
         desc="Whether or not to apply to conditional blocks. If false, do "
-        + "not apply to conditional blocks, but only their children.",
+        "not apply to conditional blocks, but only their children.",
     )
     top_down = properties.Property(
         dtype=bool,

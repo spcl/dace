@@ -643,7 +643,7 @@ class TargetDispatcher:
         else:
             raise RuntimeError(
                 f"Copy dispatcher for {str(src_storage)}->{str(dst_storage)} with schedule {str(dst_schedule)}"
-                + " not found"
+                " not found"
             )
 
         return target

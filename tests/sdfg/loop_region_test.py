@@ -273,9 +273,9 @@ def test_loop_to_stree_regular_while():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}assign i = 0\n"
-        + f"{tn.INDENTATION}while (i < 10):\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}assign i = (i + 1)"
+        f"{tn.INDENTATION}while (i < 10):\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}assign i = (i + 1)"
     )
 
 
@@ -288,10 +288,10 @@ def test_loop_to_stree_do_while():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}assign i = 10\n"
-        + f"{tn.INDENTATION}do:\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}assign i = (i + 1)\n"
-        + f"{tn.INDENTATION}while (i < 10)"
+        f"{tn.INDENTATION}do:\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}assign i = (i + 1)\n"
+        f"{tn.INDENTATION}while (i < 10)"
     )
 
 
@@ -304,10 +304,10 @@ def test_loop_to_stree_do_for():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}i = 0\n"
-        + f"{tn.INDENTATION}do:\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}i = (i + 1)\n"
-        + f"{tn.INDENTATION}while (i < 10)"
+        f"{tn.INDENTATION}do:\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}i = (i + 1)\n"
+        f"{tn.INDENTATION}while (i < 10)"
     )
 
 
@@ -320,11 +320,11 @@ def test_loop_to_stree_do_for_inverted_cond():
 
     assert stree.as_string() == (
         f"{tn.INDENTATION}i = 0\n"
-        + f"{tn.INDENTATION}while True:\n"
-        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
-        + f"{2 * tn.INDENTATION}if (not (i < 8)):\n"
-        + f"{3 * tn.INDENTATION}break\n"
-        + f"{2 * tn.INDENTATION}i = (i + 1)\n"
+        f"{tn.INDENTATION}while True:\n"
+        f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        f"{2 * tn.INDENTATION}if (not (i < 8)):\n"
+        f"{3 * tn.INDENTATION}break\n"
+        f"{2 * tn.INDENTATION}i = (i + 1)\n"
     )
 
 

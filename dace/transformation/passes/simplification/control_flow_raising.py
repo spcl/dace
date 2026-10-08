@@ -303,7 +303,7 @@ class ControlFlowRaising(ppl.Pass):
         if pass_retval and any(x > 0 for x in pass_retval):
             return (
                 f"Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, "
-                + f"and {pass_retval[3]} unstructured control flow regions"
+                f"and {pass_retval[3]} unstructured control flow regions"
             )
         else:
             return "No control flow lifted"

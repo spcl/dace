@@ -159,7 +159,7 @@ def main():
         dest="hash",
         action="store_true",
         help="If set, use the hash of JSON serialized properties for change checks instead of "
-        + "Python's dictionary equivalence checks. This makes changes order sensitive.",
+        "Python's dictionary equivalence checks. This makes changes order sensitive.",
         default=False,
     )
 
