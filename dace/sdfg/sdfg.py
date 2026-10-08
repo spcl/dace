@@ -188,6 +188,11 @@ def scope_bound_names(sdfg: "SDFG") -> Set[str]:
     return names
 
 
+def interstate_bound_names(sdfg: "SDFG") -> Set[str]:
+    """The names the interstate edges of ``sdfg`` (not of its nested SDFGs) assign; an edge types them by inference."""
+    return {name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments}
+
+
 def _replace_dict_keys(d, old, new):
     # Keys are names, but a replacement may be given as a symbolic expression
     old = str(old)
@@ -2099,8 +2104,9 @@ class SDFG(ControlFlowRegion):
             return True
         if name in self.constants_prop:
             return True
-        # Loop variables, map parameters and dynamic connectors bind their names without declaring them
-        return name in scope_bound_names(self)
+        # Loop variables, map parameters, dynamic connectors and interstate assignments bind their names without
+        # declaring them
+        return name in scope_bound_names(self) or name in interstate_bound_names(self)
 
     def is_name_free(self, name: str) -> bool:
         """Test if `name` is free, i.e. is not used by anything else."""

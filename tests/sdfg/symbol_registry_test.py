@@ -182,6 +182,20 @@ def test_frontend_loop_iterators_are_not_symbols():
     assert set(sdfg.symbols) == {"N"}
 
 
+@dace.program
+def iterator_after_loop_program(A: dace.float64[N]):
+    for i in range(10):
+        A[i] = A[i] + 1
+    A[0] = i
+
+
+def test_frontend_edge_assigned_names_are_not_symbols():
+    sdfg = iterator_after_loop_program.to_sdfg(simplify=False)
+    sdfg.validate()
+    assert set(sdfg.symbols) == {"N"}
+    assert any("i_last" in edge.data.assignments for edge in sdfg.all_interstate_edges())
+
+
 def test_validation_rejects_symbol_bound_by_a_map():
     sdfg = dace.SDFG("map_parameter_symbol")
     sdfg.add_array("A", [10], dace.float64)
@@ -216,6 +230,7 @@ def test_only_the_frontend_boundary_reads_symbol_declarations():
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
     test_frontend_loop_iterators_are_not_symbols()
+    test_frontend_edge_assigned_names_are_not_symbols()
     test_validation_rejects_symbol_bound_by_a_map()
     test_descriptor_sized_by_a_map_parameter_does_not_register_it()
     test_identical_readd_is_a_no_op()

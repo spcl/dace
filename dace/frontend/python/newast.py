@@ -40,7 +40,7 @@ from dace.sdfg.propagation import (
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.sdfg import scope_bound_names
+from dace.sdfg.sdfg import interstate_bound_names, scope_bound_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
@@ -768,8 +768,8 @@ def defined_type(defined: Any) -> dtypes.typeclass:
 
 
 def declare_read_symbol(sdfg: SDFG, name: str, dtype: dtypes.typeclass) -> None:
-    """Declares a symbol the program reads on the SDFG, unless a loop or map scope of the SDFG binds it."""
-    if name not in sdfg.symbols and name not in scope_bound_names(sdfg):
+    """Declares a symbol the program reads on the SDFG, unless a loop, map or interstate edge of the SDFG binds it."""
+    if name not in sdfg.symbols and name not in scope_bound_names(sdfg) and name not in interstate_bound_names(sdfg):
         sdfg.add_symbol(name, dtype)
 
 
@@ -1046,6 +1046,9 @@ class DefinedNames(collections.abc.Mapping):
             return pv.scope_arrays[scope_name]
         if scope_name in arrays:
             return arrays[scope_name]
+        bound = pv.edge_bound_symbols().get(name)
+        if bound is not None:
+            return bound
         return value if isinstance(value, symbolic.symbol) else MISSING
 
     def __getitem__(self, name: str) -> Any:
@@ -1177,7 +1180,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.symbols = dict()
         # Loop iterators whose loop has ended (Python keeps them readable), and the copies read in their place
         self.ended_loops: Dict[str, Tuple[LoopRegion, sympy.Expr, sympy.Expr, sympy.Expr]] = {}
-        self.iterator_copies: Dict[str, str] = {}
+        self.iterator_copies: Dict[str, symbolic.symbol] = {}
 
         # Indirections
         self.indirections = dict()
@@ -1344,16 +1347,22 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def symbol_types(self) -> Dict[str, dtypes.typeclass]:
         """The type of every symbol name the program can read here: the SDFG's declared symbols, and the declarations
-        of the program's own symbol objects (its globals and loop and map iterators) the SDFG does not declare."""
+        of the program's own symbol objects (its globals, loop and map iterators, and the names it assigns on interstate
+        edges) the SDFG does not declare."""
         types = {k: v.declaration.dtype for k, v in self.defined_dict().items() if isinstance(v, symbolic.symbol)}
         types.update(self.sdfg.symbols)
         return types
+
+    def edge_bound_symbols(self) -> Dict[str, symbolic.symbol]:
+        """The symbols the program assigns on interstate edges, which no SDFG declaration types."""
+        return {s.name: s for s in [*self.iterator_copies.values(), *self.promoted_scalars.values()]}
 
     def defined_dict(self) -> Dict[str, Any]:
         """The names ``defined`` resolves, merged into one dict: a later source overwrites an earlier one."""
         # Check parent SDFG arrays first
         result = {}
         result.update({k: v for k, v in self.globals.items() if isinstance(v, symbolic.symbol)})
+        result.update(self.edge_bound_symbols())
         result.update({k: self.sdfg.arrays[v] for k, v in self.scope_vars.items() if v in self.sdfg.arrays})
         result.update({k: self.scope_arrays[v] for k, v in self.scope_vars.items() if v in self.scope_arrays})
         result.update({k: self.sdfg.arrays[v] for k, v in self.variables.items() if v in self.sdfg.arrays})
@@ -1524,7 +1533,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self._on_block_added(state)
         return state
 
-    def _copy_out_iterator(self, name: str, node: ast.AST) -> str:
+    def _copy_out_iterator(self, name: str, node: ast.AST) -> symbolic.symbol:
         """Makes a loop iterator readable after its loop, as in Python: the loop body copies it at the start of every
         iteration, so the copy holds the last iterated value, also after a ``break``. A loop that may not run would
         leave the iterator unbound, so it is refused."""
@@ -1541,11 +1550,10 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(
                 self, node, f'Loop iterator "{name}" is read after a loop that may not run, which leaves it unbound'
             )
-        copy = self.sdfg.find_new_symbol(f"{name}_last")
-        self.sdfg.add_symbol(copy, loop.new_symbols(self.sdfg.symbols)[name])
+        copy = symbolic.symbol(self.sdfg.find_new_symbol(f"{name}_last"), loop.new_symbols(self.sdfg.symbols)[name])
         first = loop.start_block
         entry = loop.add_state(f"{name}_copy", is_start_block=True)
-        loop.add_edge(entry, first, dace.InterstateEdge(assignments={copy: name}))
+        loop.add_edge(entry, first, dace.InterstateEdge(assignments={copy.name: name}))
         self.iterator_copies[name] = copy
         return copy
 
@@ -2844,7 +2852,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
         did_break_symbol = "__dace_did_break_" + loop_region.label
-        self.sdfg.add_symbol(did_break_symbol, dace.int32)
         for iedge in self.cfg_target.in_edges(loop_region):
             iedge.data.assignments[did_break_symbol] = "0"
         oedges = self.cfg_target.out_edges(loop_region)
@@ -4419,7 +4426,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 isedge = self.cfg_target.edges_between(symassign_state, state)[0]
                 newsym = self.sdfg.find_new_symbol(f"sym_{local}")
                 desc = self.sdfg.arrays[local]
-                self.sdfg.add_symbol(newsym, desc.dtype)
                 if isinstance(desc, data.Array):
                     isedge.data.assignments[newsym] = f"{local}[0]"
                 else:
@@ -5653,14 +5659,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     if not sym:
                         sym = self.promoted_scalars.get(scalar)
                     if not sym:
-                        # A name that already means something else here would shadow it
-                        symname = f"__sym_{scalar}"
-                        if symname in self.sdfg.symbols:
-                            symname = data.find_new_name(
-                                symname, set(self.sdfg.symbols.keys()) | set(self.sdfg.arrays.keys())
-                            )
+                        symname = self.sdfg.find_new_symbol(f"__sym_{scalar}")
                         sym = dace.symbol(symname, dtype=desc.dtype)
-                        self.sdfg.add_symbol(symname, desc.dtype)
                         self.promoted_scalars[scalar] = sym
                         self.indirections[node_str] = sym
                     state = self._add_state(f"promote_{scalar}_to_{str(sym)}")
