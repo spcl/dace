@@ -2,12 +2,14 @@
 """File containing DaCe-serializable versions of graphs, nodes, and edges."""
 
 from collections import deque, OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 import itertools
 import uuid
 import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
-from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
 from ordered_set import OrderedSet
 
 
@@ -22,6 +24,23 @@ class EdgeNotFoundError(Exception):
 T = TypeVar("T")
 NodeT = TypeVar("NodeT")
 EdgeT = TypeVar("EdgeT")
+
+# ``id(graph) -> (graph, {id(node): index})`` while the graphs are frozen; the graph is kept to pin its id.
+_frozen_node_ids: ContextVar[Optional[Dict[int, Tuple[Any, Dict[int, int]]]]] = ContextVar(
+    "_frozen_node_ids", default=None
+)
+
+
+@contextmanager
+def frozen_node_ids() -> Iterator[None]:
+    """Answers ``OrderedDiGraph.node_id`` from an index built once per graph. Only for spans that add or
+    remove no nodes, e.g. serialization, where a linear scan per edge endpoint is quadratic."""
+    token = _frozen_node_ids.set({}) if _frozen_node_ids.get() is None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _frozen_node_ids.reset(token)
 
 
 @dace.serialize.serializable
@@ -669,6 +688,15 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
             raise NodeNotFoundError
 
     def node_id(self, node: NodeT) -> int:
+        frozen = _frozen_node_ids.get()
+        if frozen is not None:
+            entry = frozen.get(id(self))
+            if entry is None:
+                entry = frozen[id(self)] = (self, {id(n): i for i, n in enumerate(self._nodes.keys())})
+            try:
+                return entry[1][id(node)]
+            except KeyError:
+                raise NodeNotFoundError(node)
         try:
             return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
         except StopIteration:

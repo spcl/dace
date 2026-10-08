@@ -17,7 +17,7 @@ from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type
 import warnings
 
 import dace
-from dace.sdfg.graph import generate_element_id, SubgraphView
+from dace.sdfg.graph import frozen_node_ids, generate_element_id, SubgraphView
 import dace.serialize
 from dace import data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic
 from dace.sdfg.replace import replace_properties_dict
@@ -873,7 +873,7 @@ class SDFG(ControlFlowRegion):
         # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
         # Each nested SDFG re-pushes its own symbols, and the previous authority is
         # restored on exit.
-        with symbolic.serialization_symbol_dtypes(self.symbols):
+        with symbolic.serialization_symbol_dtypes(self.symbols), frozen_node_ids():
             tmp = super().to_json()
         if is_root:
             tmp["source_files"] = source_files
