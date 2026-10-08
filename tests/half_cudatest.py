@@ -8,14 +8,8 @@ import pytest
 N = dace.symbol("N")
 
 
-def _config():
-    # Prerequisite for tests: CUDA compute capability >= 6.0
-    dace.Config.set("compiler", "cuda", "cuda_arch", value="60")
-
-
 @pytest.mark.gpu
 def test_relu():
-    _config()
 
     @dace.program
     def halftest(A: dace.float16[N]):
@@ -36,7 +30,6 @@ def test_relu():
 
 @pytest.mark.gpu
 def test_relu_2():
-    _config()
 
     @dace.program
     def halftest(A: dace.float16[N]):
@@ -57,7 +50,6 @@ def test_relu_2():
 
 @pytest.mark.gpu
 def test_dropout():
-    _config()
 
     @dace.program
     def halftest(A: dace.float16[N], mask: dace.int32[N]):
