@@ -20,11 +20,9 @@ Scope is limited to:
     guaranteed by the detection pass.
 """
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import sympy
-
-from dace import SDFG, properties, symbolic
+from dace import SDFG, data, nodes, properties, symbolic
 from dace.ordered import OrderedSet
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
@@ -32,6 +30,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from dace.sdfg.narrowing import as_basic, as_expr
+from dace.sdfg.replace import replace_properties_dict
 
 
 @properties.make_properties
@@ -49,7 +48,7 @@ class SimplifyInductionVariables(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         loops = [n for n, _p in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
-        loops.sort(key=_loop_nesting_depth, reverse=True)
+        loops.sort(key=loop_nesting_depth, reverse=True)
         total = 0
         # Carried symbols that nested loops increment. Maps symbol name -> per-enclosing-loop
         # increment expression. Populated when a self-referential iedge IV is folded in an inner
@@ -60,17 +59,17 @@ class SimplifyInductionVariables(ppl.Pass):
         return total or None
 
 
-def _loop_nesting_depth(loop: LoopRegion) -> int:
+def loop_nesting_depth(loop: LoopRegion) -> int:
     depth = 0
     parent = loop.parent_graph
     while parent is not None:
         if isinstance(parent, LoopRegion):
             depth += 1
-        parent = getattr(parent, "parent_graph", None)
+        parent = parent.parent_graph
     return depth
 
 
-def _loop_trip_count(loop: LoopRegion) -> Optional[sympy.Expr]:
+def loop_trip_count(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """Return the number of iterations of ``loop`` if its bounds are simple enough.
 
     Mirrors the trip-count computation used by ``InductionVariableSubstitution``.
@@ -80,15 +79,12 @@ def _loop_trip_count(loop: LoopRegion) -> Optional[sympy.Expr]:
     stride = loop_analysis.get_loop_stride(loop)
     if start is None or end is None or stride is None:
         return None
-    try:
-        if int(str(symbolic.simplify(stride))) == 0:
-            return None
-    except Exception:
-        pass
+    if symbolic.simplify(stride) == 0:
+        return None
     return symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
 
 
-def _is_self_referential_incr(name: str, rhs: str) -> Optional[sympy.Expr]:
+def self_referential_step(name: str, rhs: str) -> Optional[symbolic.SymbolicType]:
     """If ``rhs`` equals ``name + step`` (or ``name - step``), return the signed
     loop-invariant step. Otherwise return ``None``.
     """
@@ -100,14 +96,14 @@ def _is_self_referential_incr(name: str, rhs: str) -> Optional[sympy.Expr]:
         if name not in {str(s) for s in rhs_sym.free_symbols} and name in {str(s) for s in unsimplified.free_symbols}:
             return None
         diff = symbolic.simplify(unsimplified)
-    except Exception:
+    except (SyntaxError, TypeError, ValueError):
         return None
     if name in {str(s) for s in as_basic(diff).free_symbols}:
         return None
     return diff
 
 
-def _fold_self_referential_iedge_ivs(
+def fold_self_referential_iedge_ivs(
     loop: LoopRegion,
     iv_edge_sites: Dict[str, list],
     nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]],
@@ -137,7 +133,7 @@ def _fold_self_referential_iedge_ivs(
         (lhs, rhs) = next(iter(edge.data.assignments.items()))
         if lhs != name:
             continue
-        step = _is_self_referential_incr(name, rhs)
+        step = self_referential_step(name, rhs)
         if step is None:
             continue
         # The closed form assumes the increment is loop-invariant. A step that
@@ -149,7 +145,7 @@ def _fold_self_referential_iedge_ivs(
         # Only fold when the counter is dead after the loop. If its post-loop
         # value is consumed, InductionVariableSubstitution owns the rewrite (it
         # materialises the exit value); folding here would drop the update.
-        if not _symbol_is_dead_outside_loop(loop, name):
+        if not symbol_is_dead_outside_loop(loop, name):
             continue
         # Determine whether the increment is before or after the body reads.
         # Post-increment (edge from empty start block): body sees ``sym + (t+1)*step``.
@@ -184,7 +180,7 @@ def _fold_self_referential_iedge_ivs(
         edge.data.assignments.pop(name, None)
         loop.replace_dict({name: closed}, replace_keys=False)
 
-        trip = _loop_trip_count(loop)
+        trip = loop_trip_count(loop)
         if trip is not None:
             nested_carries[name] = (loop, symbolic.simplify(trip * step))
         applied += 1
@@ -192,7 +188,7 @@ def _fold_self_referential_iedge_ivs(
     return applied
 
 
-def _fold_nested_carried_symbols(
+def fold_nested_carried_symbols(
     loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]
 ) -> int:
     """Close the outer carry for symbols incremented by an immediately nested loop.
@@ -201,9 +197,9 @@ def _fold_nested_carried_symbols(
     iteration variable can be used to express the counter's value as a derived IV.
     """
     # Only consume carries that belong to loops immediately nested inside this one.
-    immediate_nested = immediately_nested_loops(loop)
-    if not any(src_loop in immediate_nested for src_loop, per_iter in nested_carries.values()):
+    if not has_nested_carry(loop, nested_carries):
         return 0
+    immediate_nested = immediately_nested_loops(loop)
     applied = 0
     start = loop_analysis.get_init_assignment(loop)
     stride = loop_analysis.get_loop_stride(loop)
@@ -234,15 +230,20 @@ def immediately_nested_loops(loop: LoopRegion) -> OrderedSet[LoopRegion]:
     return OrderedSet(n for n in loop.nodes() if isinstance(n, LoopRegion))
 
 
+def has_nested_carry(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> bool:
+    """Whether a loop immediately nested in ``loop`` left a carried counter for it to close."""
+    nested = immediately_nested_loops(loop)
+    return any(src_loop in nested for src_loop, _ in nested_carries.values())
+
+
 def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, symbolic.SymbolicType]]) -> int:
     # Only fold derived IVs that came from interstate-edge assignments; skip
     # tasklet-derived entries (they refer to data descriptors, not symbols,
     # and folding them requires dataflow rewrites out of scope for v1).
-    iv_edge_sites = _collect_interstate_iv_sites(loop)
+    iv_edge_sites = collect_interstate_iv_sites(loop)
     # Every fold below needs an interstate assignment in the loop or a carry out of a nested loop.
     if not iv_edge_sites:
-        immediate_nested = immediately_nested_loops(loop)
-        if not any(src_loop in immediate_nested for src_loop, per_iter in nested_carries.values()):
+        if not has_nested_carry(loop, nested_carries):
             return 0
 
     ivs = loop_analysis.detect_induction_variables(loop)
@@ -254,7 +255,7 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
     # (s125/s126) where a scalar counter is incremented each inner iteration and
     # also carried by the outer loop. We must fold them before normal derived-IV
     # folding so the per-iteration increment is visible to the outer-loop pass.
-    applied += _fold_self_referential_iedge_ivs(loop, iv_edge_sites, nested_carries)
+    applied += fold_self_referential_iedge_ivs(loop, iv_edge_sites, nested_carries)
 
     if not ivs:
         return applied
@@ -263,7 +264,7 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
     # That way, when we later substitute a shallower IV, the expression we
     # just introduced (which still references the shallower IV) gets rewritten
     # too — leaving every subset in terms of the root loop variable.
-    def _depth(iv) -> int:
+    def basis_depth(iv) -> int:
         d = 0
         cur = iv
         while cur.basis is not None:
@@ -278,7 +279,7 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
     # not itself read the symbol. This catches loop-carried scalars whose
     # assignment sits on a mid-body edge (e.g. TSVC s292 ``im1 = i`` right
     # before the latch, with reads upstream in the body's first state).
-    derived = [iv for iv in derived if _assignment_dominates_uses(loop, iv.name, iv_edge_sites[iv.name])]
+    derived = [iv for iv in derived if assignment_dominates_uses(loop, iv.name, iv_edge_sites[iv.name])]
     # A symbol assigned only under a ``ConditionalBlock`` and live past the
     # loop (e.g. an argmax ``index``) is not a per-iteration IV: folding it
     # is unsound and its defining assignment cannot be removed, so the fold
@@ -287,18 +288,18 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
         iv
         for iv in derived
         if not (
-            _assignment_is_conditional_in_loop(loop, iv_edge_sites[iv.name])
-            and not _symbol_is_dead_outside_loop(loop, iv.name)
+            assignment_is_conditional_in_loop(loop, iv_edge_sites[iv.name])
+            and not symbol_is_dead_outside_loop(loop, iv.name)
         )
     ]
-    derived.sort(key=_depth, reverse=True)
+    derived.sort(key=basis_depth, reverse=True)
 
     for iv in derived:
         name = iv.name
         basis = iv.basis
         if basis is None:
             continue
-        dead = _symbol_is_dead_outside_loop(loop, name)
+        dead = symbol_is_dead_outside_loop(loop, name)
         if not dead and not loop_reads_symbol(loop, name):
             continue  # already folded: only the kept assignment is left, so a rerun must not report a change
         # Build the replacement: scale * basis + offset, parenthesized so later
@@ -309,6 +310,7 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
         # preserves the defining assignment on the interstate edge so we can
         # decide afterwards whether it's dead.
         loop.replace_dict({name: replacement}, replace_keys=False)
+        fold_into_loop_local_descriptors(loop, name, replacement)
 
         # Decide whether the defining assignment is dead.
         if dead:
@@ -318,18 +320,36 @@ def simplify_loop(loop: LoopRegion, nested_carries: Dict[str, Tuple[LoopRegion, 
             # unreferenced anywhere in the top-level SDFG, remove it. This
             # handles the case where the frontend reserved a scalar descriptor
             # to mirror the symbol.
-            _remove_dead_scalar(loop, name)
+            remove_dead_scalar(loop, name)
 
         applied += 1
 
     # A symbol carried by an immediately-nested inner loop can become a derived
     # IV of this loop once the inner loop's net per-iteration increment is known.
-    applied += _fold_nested_carried_symbols(loop, nested_carries)
+    applied += fold_nested_carried_symbols(loop, nested_carries)
 
     return applied
 
 
-def _collect_interstate_iv_sites(loop: LoopRegion) -> Dict[str, list]:
+def fold_into_loop_local_descriptors(loop: LoopRegion, name: str, replacement: str) -> None:
+    """Substitute ``name`` in the descriptors of the transients only ``loop`` accesses, which it allocates.
+
+    ``LoopRegion.replace_dict`` leaves the SDFG's descriptors alone, so a view whose extent names the folded
+    variable kept it read inside the loop and the fold reported a change on every rerun (mixed_precision_ir).
+    """
+    sdfg = loop.sdfg
+    inside = OrderedSet(loop.states())
+    accessed = OrderedSet(node.data for state in inside for node in state.data_nodes())
+    for state in sdfg.states():
+        if state not in inside:
+            accessed -= OrderedSet(node.data for node in state.data_nodes())
+    for container in accessed:
+        desc = sdfg.arrays[container]
+        if desc.transient and name in {str(sym) for sym in desc.free_symbols}:
+            replace_properties_dict(desc, {name: replacement}, sdfg=sdfg)
+
+
+def collect_interstate_iv_sites(loop: LoopRegion) -> Dict[str, list]:
     """Map each IV-candidate symbol name to the list of interstate edges that
     carry an assignment for it inside ``loop``.
     """
@@ -340,7 +360,7 @@ def _collect_interstate_iv_sites(loop: LoopRegion) -> Dict[str, list]:
     return sites
 
 
-def _assignment_is_conditional_in_loop(loop: LoopRegion, edges: list) -> bool:
+def assignment_is_conditional_in_loop(loop: LoopRegion, edges: list) -> bool:
     """Whether the symbol's assignment is branch-guarded inside the loop.
 
     :param loop: The enclosing ``LoopRegion``.
@@ -350,15 +370,15 @@ def _assignment_is_conditional_in_loop(loop: LoopRegion, edges: list) -> bool:
     """
     for edge in edges:
         for endpoint in (edge.src, edge.dst):
-            g = getattr(endpoint, "parent_graph", None)
-            while g is not None and g is not loop:
-                if isinstance(g, ConditionalBlock):
+            graph = endpoint.parent_graph
+            while graph is not None and graph is not loop:
+                if isinstance(graph, ConditionalBlock):
                     return True
-                g = getattr(g, "parent_graph", None)
+                graph = graph.parent_graph
     return False
 
 
-def _assignment_dominates_uses(loop: LoopRegion, name: str, edges: list) -> bool:
+def assignment_dominates_uses(loop: LoopRegion, name: str, edges: list) -> bool:
     """Return True iff the assignment(s) to ``name`` are guaranteed to execute
     before every read of ``name`` within one iteration of the loop.
 
@@ -382,13 +402,13 @@ def _assignment_dominates_uses(loop: LoopRegion, name: str, edges: list) -> bool
         return False
 
     # Collect read sites of ``name`` inside the loop.
-    readers = {state for state in loop.states() if _state_reads_symbol(state, name)}
+    readers = OrderedSet(state for state in loop.states() if state_reads_symbol(state, name))
     if not readers:
         return True  # Nothing to read — substitution is vacuously correct.
 
     # BFS from start_block over the loop's CFG, excluding the defining edge.
     # If any reader is reachable, the assignment doesn't dominate that read.
-    visited = {start}
+    visited = OrderedSet([start])
     stack = [start]
     excluded = (edge.src, edge.dst)
     while stack:
@@ -412,29 +432,15 @@ def _assignment_dominates_uses(loop: LoopRegion, name: str, edges: list) -> bool
     return True
 
 
-def _state_reads_symbol(state, name: str) -> bool:
-    from dace.sdfg import nodes as _nodes
-
-    if not hasattr(state, "edges"):
-        return False
-    try:
-        edges_iter = state.edges()
-    except Exception:
-        return False
-    for e in edges_iter:
-        m = e.data
-        if m is None:
-            continue
-        if m.subset is not None and name in {str(s) for s in m.subset.free_symbols}:
-            return True
-        if m.other_subset is not None and name in {str(s) for s in m.other_subset.free_symbols}:
-            return True
-    for n in state.nodes():
-        if isinstance(n, _nodes.Tasklet):
-            code_str = n.code.as_string if hasattr(n.code, "as_string") else str(n.code)
-            if code_str and _name_in_expr_string(name, code_str):
+def state_reads_symbol(state: SDFGState, name: str) -> bool:
+    """Whether a memlet subset or a tasklet's code in ``state`` names ``name``."""
+    for edge in state.edges():
+        for subset in (edge.data.subset, edge.data.other_subset):
+            if subset is not None and name in {str(sym) for sym in subset.free_symbols}:
                 return True
-    return False
+    return any(
+        isinstance(node, nodes.Tasklet) and name_in_expr_string(name, node.code.as_string) for node in state.nodes()
+    )
 
 
 def header_code(block: Any) -> List[CodeBlock]:
@@ -461,7 +467,7 @@ def loop_reads_symbol(loop: LoopRegion, name: str) -> bool:
     return any(name in code.get_free_symbols() for block in headers for code in header_code(block))
 
 
-def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
+def symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
     """Return True iff ``name`` is not referenced by any state/edge/memlet in
     the top-level SDFG outside this loop."""
     sdfg = loop.sdfg
@@ -470,8 +476,8 @@ def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
 
     # Nodes inside the loop itself are already substituted; we only need to
     # check the rest of the SDFG.
-    loop_states = set(loop.states())
-    loop_edges: Set[int] = {id(e) for e in loop.all_interstate_edges()}
+    loop_states = OrderedSet(loop.states())
+    loop_edges = OrderedSet(id(edge) for edge in loop.all_interstate_edges())
 
     # Check interstate-edge assignments and conditions everywhere in the SDFG.
     for edge in sdfg.all_interstate_edges():
@@ -479,63 +485,36 @@ def _symbol_is_dead_outside_loop(loop: LoopRegion, name: str) -> bool:
             continue
         # Assignments that reference ``name`` in their RHS are reads of the value.
         for rhs in edge.data.assignments.values():
-            if _name_in_expr_string(name, rhs):
+            if name_in_expr_string(name, rhs):
                 return False
-        if _name_in_expr_string(name, edge.data.condition.as_string):
+        if name_in_expr_string(name, edge.data.condition.as_string):
             return False
         # Note: an LHS assignment to ``name`` outside the loop is a write, not a
         # read of the loop-carried value (e.g. the pre-loop initializer), so it
         # does not make the symbol live here.
 
-    # Check memlets / tasklets in every state outside the loop.
-    for state in sdfg.states():
-        if state in loop_states:
-            continue
-        for e in state.edges():
-            m = e.data
-            if m is None:
-                continue
-            if m.subset is not None and name in {str(s) for s in m.subset.free_symbols}:
-                return False
-            if m.other_subset is not None and name in {str(s) for s in m.other_subset.free_symbols}:
-                return False
-        # Tasklet code reads.
-        for n in state.nodes():
-            if not hasattr(n, "code") or n.code is None:
-                continue
-            code_str = n.code.as_string if hasattr(n.code, "as_string") else str(n.code)
-            if code_str and _name_in_expr_string(name, code_str):
-                return False
-
-    return True
+    return not any(state_reads_symbol(state, name) for state in sdfg.states() if state not in loop_states)
 
 
-def _name_in_expr_string(name: str, expr: str) -> bool:
+def name_in_expr_string(name: str, expr: str) -> bool:
     """Approximate free-symbol check by parsing ``expr`` and inspecting free
     symbols. Falls back to a conservative ``True`` on parse failure."""
     if not expr:
         return False
     try:
-        e = symbolic.pystr_to_symbolic(expr)
-        return name in {str(s) for s in e.free_symbols}
-    except Exception:
-        # Conservative: assume the name might be referenced.
+        return name in {str(sym) for sym in symbolic.pystr_to_symbolic(expr).free_symbols}
+    except (SyntaxError, TypeError, ValueError):
         return True
 
 
-def _remove_dead_scalar(loop: LoopRegion, name: str) -> None:
+def remove_dead_scalar(loop: LoopRegion, name: str) -> None:
     sdfg = loop.sdfg
     if sdfg is None or name not in sdfg.arrays:
         return
     # Only remove transient scalars with no remaining AccessNodes.
     desc = sdfg.arrays[name]
-    from dace import data as _data
-    from dace.sdfg import nodes as _nodes
-
-    if not isinstance(desc, _data.Scalar) or not desc.transient:
+    if not isinstance(desc, data.Scalar) or not desc.transient:
         return
-    for state in sdfg.states():
-        for n in state.nodes():
-            if isinstance(n, _nodes.AccessNode) and n.data == name:
-                return
+    if any(node.data == name for state in sdfg.states() for node in state.data_nodes()):
+        return
     sdfg.remove_data(name, validate=False)

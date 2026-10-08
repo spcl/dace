@@ -5,14 +5,13 @@ import copy
 import signal
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import SimplifyInductionVariables
 
 
-def _build_derived_iv_sdfg(name="t"):
+def build_derived_iv_sdfg(name="t"):
     """Build an SDFG with a derived IV assignment ``j = 2*i + 1`` on an
     interstate edge, then a body state that reads ``A[j]`` and writes ``B[i]``.
     """
@@ -40,7 +39,7 @@ def _build_derived_iv_sdfg(name="t"):
 
 
 def test_folds_memlet_subset_and_removes_dead_assignment():
-    sdfg, loop = _build_derived_iv_sdfg()
+    sdfg, loop = build_derived_iv_sdfg()
     p = SimplifyInductionVariables()
     applied = p.apply_pass(sdfg, {})
     assert applied == 1
@@ -75,7 +74,7 @@ def test_no_action_when_no_derived_iv():
 
 
 def test_keeps_assignment_when_iv_live_outside_loop():
-    sdfg, loop = _build_derived_iv_sdfg()
+    sdfg, loop = build_derived_iv_sdfg()
     # Add a post-loop state that reads j — now j is live outside, and the
     # defining assignment must be kept.
     post = sdfg.add_state("post")
@@ -95,7 +94,7 @@ def test_keeps_assignment_when_iv_live_outside_loop():
 def test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_change():
     """The kept assignment is all a rerun finds. Counting its no-op substitution as a change kept simplify's
     fixed-point pipeline from ever converging (quantum espresso's cegterg looped for hours)."""
-    sdfg, loop = _build_derived_iv_sdfg()
+    sdfg, loop = build_derived_iv_sdfg()
     post = sdfg.add_state("post")
     sdfg.add_edge(loop, post, dace.InterstateEdge(assignments={"out": "j"}))
 
@@ -103,6 +102,22 @@ def test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_chan
     assert p.apply_pass(sdfg, {}) == 1
     assert p.apply_pass(sdfg, {}) is None
     assert any("j" in e.data.assignments for e in loop.all_interstate_edges())
+
+
+def test_a_derived_iv_folds_into_a_loop_local_descriptor_and_a_rerun_reports_no_change():
+    """mixed_precision_ir: a view sized by the IV kept naming it, since the loop's substitution does not reach the
+    SDFG's descriptors, so every rerun found the read again and simplify's fixed point looped forever."""
+    sdfg, loop = build_derived_iv_sdfg("descriptor_extent_iv")
+    sdfg.add_transient("buf", ["j"], dace.float64)
+    use = next(s for s in loop.states() if s.label == "use")
+    fill = use.add_tasklet("fill", {}, {"o": None}, "o = 1.0")
+    use.add_edge(fill, "o", use.add_access("buf"), None, dace.Memlet("buf[0]"))
+    sdfg.add_edge(loop, sdfg.add_state("post"), dace.InterstateEdge(assignments={"out": "j"}))
+
+    p = SimplifyInductionVariables()
+    assert p.apply_pass(sdfg, {}) == 1
+    assert "j" not in {str(sym) for sym in sdfg.arrays["buf"].free_symbols}
+    assert p.apply_pass(sdfg, {}) is None
 
 
 def test_chained_derived_ivs():
@@ -134,7 +149,7 @@ def test_chained_derived_ivs():
 
 
 def test_does_not_touch_basic_iv():
-    sdfg, loop = _build_derived_iv_sdfg("basic")
+    sdfg, loop = build_derived_iv_sdfg("basic")
     p = SimplifyInductionVariables()
     p.apply_pass(sdfg, {})
 
@@ -261,7 +276,7 @@ def test_end_to_end_numerical_preservation():
 # are either adapted or deliberately left for future work.
 
 
-def _simple_loop_with_derived(sdfg_name: str, derived_assignments):
+def simple_loop_with_derived(sdfg_name: str, derived_assignments):
     """Build a tiny loop scaffold: header -> body (start) -- edge(assignments) -> use.
     Caller adds reads/writes to `use` with memlets referencing derived symbols.
     Returns (sdfg, loop, body, use)."""
@@ -309,7 +324,7 @@ def test_llvm_multi_use_derived_iv():
     """LLVM addrec-gep.ll analog: one derived IV referenced at multiple subscript
     sites with different constant offsets (e.g., `j`, `j-1`, `j+1`). All must
     fold consistently."""
-    sdfg, loop, body, use = _simple_loop_with_derived("multi_use", {"j": "4*i + 2"})
+    sdfg, loop, body, use = simple_loop_with_derived("multi_use", {"j": "4*i + 2"})
     an_a = use.add_access("A")
     an_b = use.add_access("B")
     t = use.add_tasklet("t", {"r0", "r1", "r2"}, {"w"}, "w = r0 + r1 + r2")
@@ -358,7 +373,7 @@ def test_llvm_negative_scale_derived_iv():
     import sympy
     from dace import symbolic
 
-    sdfg, loop, body, use = _simple_loop_with_derived("neg_scale", {"j": "-i + N"})
+    sdfg, loop, body, use = simple_loop_with_derived("neg_scale", {"j": "-i + N"})
     an = use.add_access("A")
     t = use.add_tasklet("t", {"r"}, {}, "pass")
     use.add_edge(an, None, t, "r", dace.Memlet("A[j]"))
@@ -443,7 +458,7 @@ def test_llvm_nested_loop_outer_iv_as_invariant_inside_inner():
 def test_llvm_derived_iv_in_tasklet_code():
     """Derived IV appears inside tasklet body arithmetic (not only memlet
     subsets). Python-tasklet substitution via ASTFindReplace should rewrite."""
-    sdfg, loop, body, use = _simple_loop_with_derived("tl_code", {"j": "2*i + 1"})
+    sdfg, loop, body, use = simple_loop_with_derived("tl_code", {"j": "2*i + 1"})
     an = use.add_access("A")
     # Tasklet code reads `j` as a symbol (not through a memlet).
     t = use.add_tasklet("t", {}, {"w"}, "w = float(j) * 2.0 + 1.0")
@@ -599,10 +614,10 @@ def test_does_not_fold_conditional_argmax_iv():
 
     sdfg = copy.deepcopy(argmax.to_sdfg(simplify=False))
 
-    def _timeout(signum, frame):
+    def raise_timeout(signum, frame):
         raise TimeoutError("SDFG.simplify() did not converge (s315 regression)")
 
-    old = signal.signal(signal.SIGALRM, _timeout)
+    old = signal.signal(signal.SIGALRM, raise_timeout)
     signal.alarm(60)
     try:
         sdfg.simplify(validate=True, validate_all=True)
@@ -640,6 +655,25 @@ def test_counter_reseeded_without_reading_itself_is_not_folded():
 
 
 if __name__ == "__main__":
-    import pytest
-
-    pytest.main([__file__, "-v"])
+    test_folds_memlet_subset_and_removes_dead_assignment()
+    test_no_action_when_no_derived_iv()
+    test_keeps_assignment_when_iv_live_outside_loop()
+    test_a_derived_iv_live_after_the_loop_folds_once_and_a_rerun_reports_no_change()
+    test_a_derived_iv_folds_into_a_loop_local_descriptor_and_a_rerun_reports_no_change()
+    test_chained_derived_ivs()
+    test_does_not_touch_basic_iv()
+    test_llmr_interaction_unlocks_derived_iv_pattern()
+    test_end_to_end_numerical_preservation()
+    test_llvm_symbolic_bounds_with_derived_iv()
+    test_llvm_multi_use_derived_iv()
+    test_llvm_non_unit_step_basic_with_derived()
+    test_llvm_negative_scale_derived_iv()
+    test_nested_self_referential_counter_iv_closes_to_closed_form()
+    test_llvm_nested_loop_outer_iv_as_invariant_inside_inner()
+    test_llvm_derived_iv_in_tasklet_code()
+    test_llvm_reverse_loop_with_derived_iv()
+    test_llvm_rejects_loop_carried_mid_body_assignment()
+    test_llvm_rejects_conflicting_branch_assignments()
+    test_llvm_two_independent_derived_ivs_same_basis()
+    test_does_not_fold_conditional_argmax_iv()
+    test_counter_reseeded_without_reading_itself_is_not_folded()
