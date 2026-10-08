@@ -107,7 +107,7 @@ def mm_small(
                 None,
                 tasklet,
                 "j1",
-                Memlet.simple(B_node, ",".join(["i3", "i4"])),
+                Memlet.simple(B_node, "i3,i4"),
             )
     else:
         tasklet = state.add_tasklet("matmul_sequential", {"j0"}, {"out"}, "out=j0*" + B_node + "[i3, i4]")
@@ -134,7 +134,7 @@ def mm_small(
                 None,
                 tasklet,
                 "j0",
-                Memlet.simple(A_node, ",".join(["i2", "i3"])),
+                Memlet.simple(A_node, "i2,i3"),
             )
 
     if C_memlet:
@@ -160,7 +160,7 @@ def mm_small(
             None,
             Memlet.simple(
                 C_node,
-                ",".join(["i2", "i4"]),
+                "i2,i4",
                 wcr_str="lambda a,b:a+b",
                 wcr_conflict=False,
             ),

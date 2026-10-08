@@ -2062,7 +2062,7 @@ def implement_ufunc_outer(
                 map_range.update({f"__i{i}_{j}": f"0:{sz}" for j, sz in enumerate(shape)})
                 input_idx = ",".join([f"__i{i}_{j}" for j in range(len(shape))])
                 if output_idx:
-                    output_idx = ",".join([output_idx, input_idx])
+                    output_idx = f"{output_idx},{input_idx}"
                 else:
                     output_idx = input_idx
             else:

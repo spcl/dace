@@ -151,14 +151,7 @@ def generate_program_folder(
     if not os.path.exists(cachedir_tag):
         _write_file_atomically(
             cachedir_tag,
-            "\n".join(
-                [
-                    "Signature: 8a477f597d28d172789f06886806bc55",
-                    "# This file is a cache directory tag created by DaCe.",
-                    "# For information about cache directory tags, see:",
-                    "#	http://www.brynosaurus.com/cachedir/",
-                ]
-            ),
+            "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by DaCe.\n# For information about cache directory tags, see:\n#\thttp://www.brynosaurus.com/cachedir/",
         )
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
