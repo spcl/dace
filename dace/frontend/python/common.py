@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
@@ -117,6 +118,51 @@ class SDFGConvertible(object):
         """
         return SDFGClosure()
 
+    def __sdfg_guards__(self) -> Dict[str, Callable[[], Any]]:
+        """
+        Returns the conditions under which the SDFG most recently returned by ``__sdfg__`` remains valid, as a mapping
+        from a unique name to a callable that evaluates the guarded value. A program that uses this object evaluates
+        the callables on every call as part of its cache key, and parses the program again when a value changes.
+
+        :return: A dictionary from guard name to evaluator (empty by default).
+        """
+        return {}
+
+
+def structured_argument_name(name: str, path: Sequence[Any]) -> str:
+    """
+    Returns the name of the SDFG argument that receives one element of a structured (list, tuple, or dict) argument
+    of a call to an SDFG-convertible object, e.g., ``xs_0`` for ``xs[0]`` or ``d_w`` for ``d['w']``.
+
+    :param name: Name of the structured argument.
+    :param path: Indices and keys that lead from the argument to the element.
+    :return: The argument name.
+    """
+    return re.sub(r"\W", "_", "_".join([name] + [str(p) for p in path]))
+
+
+def flatten_structured_arguments(args: Sequence[Tuple[str, Any]], names: Set[str]) -> List[Tuple[str, Any]]:
+    """
+    Expands call arguments whose values are lists, tuples, or dicts into one argument per element, named with
+    :func:`structured_argument_name`. Elements whose names are not in ``names`` (the arguments and symbols of the
+    called SDFG) are dropped, as they were used as compile-time values.
+
+    :param args: The (name, value) arguments of the call.
+    :param names: The argument and symbol names of the called SDFG.
+    :return: The flattened arguments.
+    """
+    result = []
+    for name, value in args:
+        if isinstance(value, (list, tuple)):
+            elements = [(structured_argument_name(name, [i]), v) for i, v in enumerate(value)]
+        elif isinstance(value, dict):
+            elements = [(structured_argument_name(name, [str(k)]), v) for k, v in value.items()]
+        else:
+            result.append((name, value))
+            continue
+        result.extend((k, v) for k, v in flatten_structured_arguments(elements, names) if k in names)
+    return result
+
 
 @dataclass
 class SDFGClosure:
@@ -171,6 +217,19 @@ class SDFGClosure:
         for _, child in self.nested_closures:
             value += child.call_tree_length()
         return value
+
+    def guards(self) -> Dict[str, Callable[[], Any]]:
+        """
+        Returns the guards (see ``SDFGConvertible.__sdfg_guards__``) of the SDFG-convertible objects in this closure
+        and in its nested closures. Guards are known once the objects were converted, i.e., after parsing.
+        """
+        result = {}
+        for _, obj in self.closure_sdfgs.values():
+            if isinstance(obj, SDFGConvertible):
+                result.update(obj.__sdfg_guards__())
+        for _, child in self.nested_closures:
+            result.update(child.guards())
+        return result
 
     def combine_nested_closures(self):
         # Remove previous nested closures if there are any

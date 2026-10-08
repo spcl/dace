@@ -1515,11 +1515,16 @@ def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
     if len(vdesc.shape) > len(adesc.shape):
         return False
     try:
+        previous_ai = -1
         # Iterate over the View's strides.
         for vi, s in enumerate(vdesc.strides):
             # All of the View's strides must exist in the Array's strides.
             # Otherwise, it is not a slice but a reintepretation.
             ai = adesc.strides.index(s)
+            # The View must keep the order of the Array's dimensions; otherwise it permutes them (e.g., a transpose)
+            if ai <= previous_ai:
+                return False
+            previous_ai = ai
             # If the View's length is not clearly less or equal than
             # the Array's corresponding length, then we cannot confirm that
             # the View is a slice.

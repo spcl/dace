@@ -140,7 +140,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(blk, ReturnBlock):
                 has_return = True
         if has_return:
-            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
+            # Lowered returns end in `False` edges, which may lead to states that are now unreachable (e.g., the rest
+            # of a loop body). Removing them turns every return into a sink, which is reconnected below.
+            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True, eliminate_dead_states=True)
 
         #######################################################
         # Collect and update top-level SDFG metadata

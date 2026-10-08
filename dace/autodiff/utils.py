@@ -5,7 +5,7 @@ import copy
 import inspect
 import numbers
 import re
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import astunparse
 import sympy as sp
@@ -18,6 +18,7 @@ from dace import data as dt
 from dace.frontend.python.parser import DaceProgram
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, nodes as nd, state as dstate
 from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.while_to_for_loop import condition_terms
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardResult
@@ -415,6 +416,35 @@ def extract_indices(expression: str) -> Dict[str, List[str]]:
     return index_map
 
 
+class _CastRemover(ast.NodeTransformer):
+    """
+    Replaces casts with their argument: casts to DaCe types (``dace.float64(x)``) and floating-point casts with C type
+    names, which the Python frontend emits for casts through variables that hold a DaCe type (``double(x)``).
+    """
+
+    _FLOAT_CASTS = ("float", "double")
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        func = node.func
+        is_dace_cast = (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "dace"
+            and isinstance(vars(dace).get(func.attr), dtypes.typeclass)
+        )
+        is_float_cast = isinstance(func, ast.Name) and func.id in self._FLOAT_CASTS
+        if (is_dace_cast or is_float_cast) and len(node.args) == 1 and not node.keywords:
+            return node.args[0]
+        return node
+
+
+def _strip_casts(code: str) -> str:
+    """Removes casts to DaCe types from tasklet code, keeping the grouping of the expressions they wrap."""
+    tree = _CastRemover().visit(ast.parse(code))
+    return astunparse.unparse(tree).strip()
+
+
 def code_to_exprs(
     code: str, tasklet: nd.Tasklet, symbols: Dict[str, dtypes.typeclass]
 ) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
@@ -487,6 +517,8 @@ def symbolic_execution({}):
 {}
     return {}
     """
+    # Clean out type conversions from the code (they do not change the value symbolically)
+    code = _strip_casts(code)
     code_fn = code_fn.format(
         ", ".join(inputs),
         symbol_code,
@@ -494,9 +526,6 @@ def symbolic_execution({}):
         "\n".join("    " + line.strip() for line in code.split("\n")),
         ", ".join(outputs),
     )
-
-    # Clean out type conversions from the code
-    code_fn = re.sub(r"dace\.(float32|int32|float64|int64)\((.*?)\)", r"\2", code_fn)
 
     try:
         # need to have dace so things like `dace.float32(1)` work
@@ -730,118 +759,88 @@ def get_all_path_edges(
     raise AutoDiffException("Can't easily find path. Upgrade function.")
 
 
-def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, str, str]:
+def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> Tuple[str, Optional[str], str]:
     """
-    Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
-    The else statement could be None in case there is only an if statement. The current supported formats are the following:
-    1 - if cond:
-            out = expression_1
-    which would return ("out = expression_1", None, "if cond")
-    2- out = expression_1 if cond else expression 2
-    """
+    Given a conditional tasklet node, extract the if and else assignments and the condition. The else assignment is
+    None if there is only an if statement. The supported formats are:
 
+    1. ``out = expression_1 if condition else expression_2``, also wrapped in a call such as a cast
+       (``out = dace.float32(expression_1 if condition else expression_2)``), which is applied to both branches.
+    2. ``if condition: out = expression_1``
+
+    The condition may be any expression of the tasklet's inputs (see :func:`conditional_connectors`).
+
+    :return: A tuple ``(if assignment, else assignment or None, condition)``.
+    """
     tasklet_code = tasklet_node.code.as_string
+    try:
+        body = ast.parse(tasklet_code).body
+    except SyntaxError as ex:
+        raise AutoDiffException(f"Could not parse conditional tasklet code: {tasklet_code}") from ex
+    if len(body) != 1:
+        raise AutoDiffException(f"Expected a single conditional statement in tasklet code: {tasklet_code}")
+    stmt = body[0]
 
-    # check which type of assignment this is
-    if ":" in tasklet_code:
-        # get the conditional input connector through regular expression matching
-        matches = re.search(r"if (.)*:", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find 'if' statement in conditional tasklet code: {tasklet_code}")
-        conditional = matches.group()
-
-        # remove the conditional from the code to get the expression
-        if_statement = tasklet_code.replace(conditional, "")
-        if_statement = if_statement.replace("\n", "")
-
-        # remove indentation
-        if_statement = if_statement[3:]
-
-        # extract the in connector only
-        conditional = conditional.replace(":", "")
-        conditional = conditional.replace("if ", "")
-        if conditional not in tasklet_node.in_connectors:
-            raise AutoDiffException(
-                f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}"
-            )
-
-        else_statement = None
-
-        # match the out connector
-        matches = re.search(r"^(.)* =", if_statement)
-        if not matches:
-            raise AutoDiffException(f"Could not find output assignment in if statement: {if_statement}")
-        out_connector = matches.group()
-
-        # remove the assignment from the if statement
-        if_statement = if_statement.replace(out_connector, "")
-
-        # extract the out connector only
-        out_connector = out_connector[1:].replace(" =", "")
-
+    if isinstance(stmt, ast.If):
+        if stmt.orelse or len(stmt.body) != 1 or not isinstance(stmt.body[0], ast.Assign):
+            raise AutoDiffException(f"Expected a single assignment in the if statement of tasklet code: {tasklet_code}")
+        out_connector = _single_target(stmt.body[0], tasklet_code)
+        if_value, else_value, condition = stmt.body[0].value, None, stmt.test
+    elif isinstance(stmt, ast.Assign):
+        out_connector = _single_target(stmt, tasklet_code)
+        value, wrappers = stmt.value, []
+        # Unwrap single-argument calls (e.g., casts) around the conditional expression
+        while isinstance(value, ast.Call) and len(value.args) == 1 and not value.keywords:
+            wrappers.append(value)
+            value = value.args[0]
+        if not isinstance(value, ast.IfExp):
+            raise AutoDiffException(f"Could not find a conditional expression in tasklet code: {tasklet_code}")
+        if_value, else_value, condition = value.body, value.orelse, value.test
+        for wrapper in reversed(wrappers):
+            if_value = ast.Call(func=wrapper.func, args=[if_value], keywords=[])
+            else_value = ast.Call(func=wrapper.func, args=[else_value], keywords=[])
     else:
-        # get the conditional input connector through regular expression matching
-        matches = re.search(r"if (.)* else", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find 'if...else' statement in conditional tasklet code: {tasklet_code}")
-        conditional = matches.group()
+        raise AutoDiffException(f"Unsupported conditional tasklet code: {tasklet_code}")
 
-        # extract the in connector only
-        conditional = conditional.replace("if ", "")
-        conditional = conditional.replace(" else", "")
-
-        if conditional not in tasklet_node.in_connectors:
-            raise AutoDiffException(
-                f"Conditional '{conditional}' not found in tasklet input connectors: {list(tasklet_node.in_connectors.keys())}"
-            )
-
-        # get the if statement by matching what comes before the if until we encounter a parenthesis or =
-        matches = re.search(r"= \((.)* if", tasklet_code)
-        if not matches:
-            # try without the parenthesis
-            matches = re.search(r"= (.)* if", tasklet_code)
-            if not matches:
-                raise AutoDiffException(f"Could not find if expression pattern in tasklet code: {tasklet_code}")
-
-        if_statement = matches.group()
-
-        # extract the in statement only
-        if_statement = if_statement.replace("= (", "")
-        if_statement = if_statement.replace(" if", "")
-
-        # get the else statement by matching the else and what comes after it until we encounter a parenthesis
-        matches = re.search(r"else (.)*\)", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find else expression pattern in tasklet code: {tasklet_code}")
-        else_statement = matches.group()
-
-        # extract the in statement only
-        else_statement = else_statement.replace("else ", "")
-
-        # remove the last closing parenthesis if it exists
-        if else_statement.endswith(")"):
-            else_statement = else_statement[:-1]
-
-        # match the out connector
-        matches = re.search(r"^(.)* =", tasklet_code)
-        if not matches:
-            raise AutoDiffException(f"Could not find output assignment in tasklet code: {tasklet_code}")
-        out_connector = matches.group()
-
-        # extract the in statement only
-        out_connector = out_connector.replace(" =", "")
-
-    # sanity check this should be in the out connectors of the tasklet
     if out_connector not in tasklet_node.out_connectors:
         raise AutoDiffException(
             f"Output connector '{out_connector}' not found in tasklet output connectors: {list(tasklet_node.out_connectors.keys())}"
         )
+    conditional = astunparse.unparse(condition).strip()
+    conditional_connectors(conditional, tasklet_node)  # Validates the names the condition uses
 
-    # create the return expressions
-    if_expression = f"{out_connector} = {if_statement}"
-    else_expression = f"{out_connector} = {else_statement}" if else_statement else None
-
+    if_expression = f"{out_connector} = {astunparse.unparse(if_value).strip()}"
+    else_expression = f"{out_connector} = {astunparse.unparse(else_value).strip()}" if else_value is not None else None
     return if_expression, else_expression, conditional
+
+
+def _single_target(assign: ast.Assign, code: str) -> str:
+    if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+        raise AutoDiffException(f"Expected an assignment to a single output connector in tasklet code: {code}")
+    return assign.targets[0].id
+
+
+def conditional_connectors(conditional: str, tasklet_node: nd.Tasklet) -> Set[str]:
+    """
+    Returns the input connectors that the condition of a conditional tasklet reads (the backward tasklet evaluates the
+    same condition, so it needs them as inputs).
+
+    :raises AutoDiffException: If the condition reads names that are neither input connectors nor known functions.
+    """
+    names = {node.id for node in ast.walk(ast.parse(conditional)) if isinstance(node, ast.Name)}
+    connectors = names & set(tasklet_node.in_connectors.keys())
+    calls = {
+        node.func.id
+        for node in ast.walk(ast.parse(conditional))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    unknown = names - connectors - calls - {"True", "False", "None", "dace", "math", "np", "numpy"}
+    if unknown and not connectors and not calls:
+        raise AutoDiffException(
+            f"Conditional '{conditional}' reads {sorted(unknown)}, which are not tasklet input connectors: "
+            f"{list(tasklet_node.in_connectors.keys())}"
+        )
+    return connectors
 
 
 def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
@@ -888,6 +887,34 @@ class SympyCleaner(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def loop_bound_condition(loop: LoopRegion) -> str:
+    """
+    The comparison of a loop's condition that bounds its loop variable: the condition itself, or the term that
+    compares the loop variable in a conjunction (``i < end and <condition>``: a loop that may exit before ``end``).
+    """
+    terms = condition_terms(loop.loop_condition.as_string)
+    for term in terms:
+        if loop.loop_variable in {str(s) for s in symbolic.pystr_to_symbolic(term).free_symbols}:
+            return term
+    return loop.loop_condition.as_string
+
+
+def may_exit_early(loop: LoopRegion) -> bool:
+    """Whether a for loop's condition has terms besides the bound of its loop variable (e.g., that read data)."""
+    return len(condition_terms(loop.loop_condition.as_string)) > 1
+
+
+def loop_exit_symbol(loop: LoopRegion) -> Optional[str]:
+    """The symbol that the edges after a loop assign the final value of its loop variable to, if any."""
+    edges = loop.parent_graph.out_edges(loop)
+    for name, value in edges[0].data.assignments.items() if edges else []:
+        if value.strip() == loop.loop_variable and all(
+            edge.data.assignments.get(name, "").strip() == loop.loop_variable for edge in edges
+        ):
+            return name
+    return None
+
+
 def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     """
     Use regular expression matching to extract the start and end of the loop region.
@@ -898,7 +925,7 @@ def extract_loop_region_info(loop: LoopRegion) -> Tuple[str, str]:
     it = loop.loop_variable
 
     # Extract the end of the loop from the conditional statement
-    conditional = loop.loop_condition.as_string
+    conditional = loop_bound_condition(loop)
 
     stride_sign = get_stride_sign(loop)
 
@@ -972,3 +999,125 @@ def get_stride_sign(loop: LoopRegion) -> int:
     raise AutoDiffException(
         f"Expected the loop region {loop.label} to have a regular update statement. Instead got: {update_statement}"
     )
+
+
+def strided_extent(shape, strides):
+    """The number of elements a strided array spans."""
+    return sum((size - 1) * stride for size, stride in zip(shape, strides)) + 1
+
+
+def reconstruct_view(sdfg: SDFG, target: SDFGState, name: str) -> nodes.AccessNode:
+    """Adds the view ``name`` (and the views it views) to ``target``, as defined in another state of ``sdfg``."""
+    for state in sdfg.states():
+        if state is target:
+            continue
+        for node in state.data_nodes():
+            if node.data != name:
+                continue
+            edge = utils.get_view_edge(state, node)
+            if edge is None:
+                continue
+            viewed = edge.src if edge.dst is node else edge.dst
+            if isinstance(sdfg.arrays[viewed.data], dt.View):
+                source = reconstruct_view(sdfg, target, viewed.data)
+            else:
+                source = target.add_read(viewed.data)
+            view = target.add_access(name)
+            view.add_in_connector("views")
+            target.add_edge(source, None, view, "views", copy.deepcopy(edge.data))
+            return view
+    raise AutoDiffException(f"Cannot find the definition of view {name}")
+
+
+def view_as_array(desc: dt.View, transient: bool) -> dt.Array:
+    """An array with the shape and layout (strides) of the given view."""
+    return dt.Array(
+        desc.dtype,
+        desc.shape,
+        storage=desc.storage,
+        strides=desc.strides,
+        total_size=strided_extent(desc.shape, desc.strides),
+        transient=transient,
+    )
+
+
+def copy_view_at_exit(sdfg: SDFG, name: str) -> str:
+    """
+    Copies the view ``name`` into a new non-transient array with its layout, in a state appended to ``sdfg``.
+
+    Views only exist in the states that define them, so their values are passed on to the backward pass through such
+    a copy.
+
+    :param sdfg: The SDFG that defines the view.
+    :param name: The name of the view.
+    :return: The name of the copy.
+    """
+    desc = sdfg.arrays[name]
+    sinks = sdfg.sink_nodes()
+    if len(sinks) != 1:
+        raise AutoDiffException(f"Cannot forward view {name} from an SDFG with several sink blocks")
+    state = sdfg.add_state_after(sinks[0], label=f"forward_{name}")
+    copy_name = sdfg.add_datadesc(f"{name}_forwarded", view_as_array(desc, transient=False), find_new_name=True)
+    subset = ", ".join(f"0:{s}" for s in desc.shape) or "0"
+    state.add_nedge(
+        reconstruct_view(sdfg, state, name),
+        state.add_write(copy_name),
+        dace.Memlet(data=name, subset=subset, other_subset=subset),
+    )
+    return copy_name
+
+
+def view_definition(sdfg: SDFG, name: str) -> Optional[Tuple[nd.AccessNode, dgraph.MultiConnectorEdge]]:
+    """Returns an access node of the view ``name`` in ``sdfg`` together with the edge that defines it, if any."""
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            if node.data == name:
+                edge = utils.get_view_edge(state, node)
+                if edge is not None:
+                    return node, edge
+    return None
+
+
+def viewed_input(nsdfg_node: nd.NestedSDFG, name: str) -> Optional[str]:
+    """
+    Returns the read-only input of a nested SDFG that the view ``name`` inside it views, if there is one (e.g., the
+    view a library node expansion makes of an input connector).
+    """
+    if not isinstance(nsdfg_node.sdfg.arrays.get(name), dt.View):
+        return None
+    definition = view_definition(nsdfg_node.sdfg, name)
+    if definition is None:
+        return None
+    node, edge = definition
+    viewed = edge.src if edge.dst is node else edge.dst
+    if viewed.data in nsdfg_node.in_connectors and viewed.data not in nsdfg_node.out_connectors:
+        return viewed.data
+    return None
+
+
+def redefine_view(forward: SDFG, backward: SDFG, name: str) -> None:
+    """
+    Defines the view ``name`` wherever ``backward`` reads it, the way ``forward`` defines it, so that the backward
+    SDFG takes the data the view views instead.
+
+    :param forward: The SDFG that defines the view.
+    :param backward: The SDFG that reads the view.
+    :param name: The name of the view.
+    """
+    node, edge = view_definition(forward, name)
+    viewed = (edge.src if edge.dst is node else edge.dst).data
+    if viewed not in backward.arrays:
+        desc = copy.deepcopy(forward.arrays[viewed])
+        desc.transient = False
+        backward.add_datadesc(viewed, desc)
+    backward.arrays[name].transient = True
+    for state in backward.all_states():
+        for view in state.data_nodes():
+            if view.data != name or utils.get_view_edge(state, view) is not None:
+                continue
+            if state.in_degree(view) > 0:
+                raise AutoDiffException(f"The backward pass writes the forward view {name}")
+            view.add_in_connector("views")
+            memlet = copy.deepcopy(edge.data)
+            memlet.data = viewed
+            state.add_edge(state.add_read(viewed), None, view, "views", memlet)

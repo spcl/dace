@@ -7,6 +7,7 @@ as well as functions for creating arrays from descriptors.
 """
 
 import ctypes
+import sys
 
 from numbers import Number
 from typing import Any, Dict, Optional, Tuple
@@ -16,6 +17,12 @@ from numpy.typing import ArrayLike
 
 from dace import dtypes, symbolic
 from dace.data.core import Array, Data, Scalar
+
+
+def _is_torch_tensor(obj: Any) -> bool:
+    """Returns True for ``torch.Tensor`` objects (and subclasses) without importing PyTorch."""
+    torch = sys.modules.get("torch")
+    return torch is not None and isinstance(obj, torch.Tensor)
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -29,7 +36,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return obj.__descriptor__()
     elif not no_custom_desc and hasattr(obj, "descriptor"):
         return obj.descriptor
-    elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
+    elif _is_torch_tensor(obj):  # Including subclasses, e.g., ``torch.nn.Parameter``
         # special case for torch tensors. Maybe __array__ could be used here for a more
         # general solution, but torch doesn't support __array__ for cuda tensors.
         try:

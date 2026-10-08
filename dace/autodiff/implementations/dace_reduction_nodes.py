@@ -193,8 +193,9 @@ class ReverseReduce(BackwardImplementation):
         rev_input_conn_name = "input_gradient"
         rev_output_conn_name = "output_gradient"
 
-        result.required_grad_names[output_name] = rev_output_conn_name
-        result.given_grad_names[input_name] = rev_input_conn_name
+        # The gradient of the forward input is the reverse node's output, and vice versa
+        result.required_grad_names[input_name] = rev_output_conn_name
+        result.given_grad_names[output_name] = rev_input_conn_name
 
         sdfg.add_array(rev_input_conn_name, shape=out_desc.shape, dtype=out_desc.dtype, strides=out_desc.strides)
         sdfg.add_array(rev_output_conn_name, shape=in_desc.shape, dtype=in_desc.dtype, strides=in_desc.strides)

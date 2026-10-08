@@ -8,7 +8,7 @@ import dace
 from dace.properties import CodeBlock
 import dace.sdfg.nodes as nodes
 import dace.transformation.transformation as xf
-from dace import dtypes, data as dt
+from dace import dtypes, data as dt, symbolic
 from dace.sdfg import dealias, SDFG, SDFGState, state as dstate, utils as dace_utils
 from dace.sdfg.state import LoopRegion
 from dace.memlet import Memlet
@@ -32,6 +32,7 @@ from dace.autodiff.base_abc import (
     ExpansionTemplate,
 )
 import dace.autodiff.utils as ad_utils
+from dace.transformation.passes.analysis import loop_analysis
 from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 from dace.autodiff.data_forwarding.manager import DataForwardingManager
 
@@ -444,79 +445,64 @@ class BackwardPassGenerator:
         # Iterate through all the nodes in topological order
         nodes = dace_utils.dfs_topological_sort(graph, graph.source_nodes())
         for node in nodes:
-            # A list of the conditions on all the in edges for this state
-            in_edges_conditions: List[str] = []
-            if isinstance(node, SDFG) or isinstance(node, LoopRegion):
+            if isinstance(node, LoopRegion):
                 # if this is not a reversed loop region
-                if not node in self.reversed_loops_map:
+                if node not in self.reversed_loops_map:
                     continue
                 self._fill_interstate_edge_conditions_in_scope(node)
             else:
                 if not isinstance(node, SDFGState):
                     raise AutoDiffException(f"Expected SDFGState, got {type(node)}")
-                forward_state = node
-                parent_graph = forward_state.parent_graph
-
                 # if this is not a reversed state
                 if node not in self.reversed_states_map:
                     continue
 
-                # We will iterate through all the incoming edges to the forward state
-                edges_list = parent_graph.in_edges(forward_state)
+            # A list of the conditions on all the in edges for this block, and whether one of them is unconditional
+            in_edges_conditions: List[str] = []
+            unconditional = False
+            for edge in node.parent_graph.in_edges(node):
+                # Get the condition to get to the source block in the forward pass
+                src_state_condition = conditions_map[edge.src]
 
-                # If there are none, this is a start state
-                # If there is only one incoming edge, no condition necessary
-                if len(edges_list) < 2:
-                    conditions_map[forward_state] = "1"
+                # Add the condition in the current edge
+                current_edge_condition = edge.data.condition.as_string
 
-                for edge in edges_list:
-                    # Get the src state
-                    src_state = edge.src
+                # New backward edge condition
+                # Handle "1" (unconditional) to avoid creating expressions like "1 and condition"
+                if src_state_condition == "1" and current_edge_condition == "1":
+                    new_bwd_edge_condition = "1"
+                elif src_state_condition == "1":
+                    new_bwd_edge_condition = current_edge_condition
+                elif current_edge_condition == "1":
+                    new_bwd_edge_condition = src_state_condition
+                else:
+                    new_bwd_edge_condition = f"({src_state_condition}) and ({current_edge_condition})"
 
-                    # Get the condition to get to the source state in the forward pass
-                    src_state_condition = conditions_map[src_state]
+                bwd_edge = self._get_backward_state_edge(edge)
 
-                    # Add the condition in the current edge
-                    current_edge_condition = edge.data.condition.as_string
+                # Add the condition to the edge
+                bwd_edge.data.condition = CodeBlock(new_bwd_edge_condition)
 
-                    # New backward edge condition
-                    # Handle "1" (unconditional) to avoid creating expressions like "1 and condition"
-                    if src_state_condition == "1" and current_edge_condition == "1":
-                        new_bwd_edge_condition = "1"
-                    elif src_state_condition == "1":
-                        new_bwd_edge_condition = current_edge_condition
-                    elif current_edge_condition == "1":
-                        new_bwd_edge_condition = src_state_condition
-                    else:
-                        new_bwd_edge_condition = f"({src_state_condition}) and ({current_edge_condition})"
+                # If there is a special case for the first iteration of the backward state
+                if node in self.loop_states_view_map:
+                    # Get the corresponding edge between the loop states
+                    bwd_loop_edge = self._get_backward_loop_state_edge(edge)
 
-                    bwd_edge = self._get_backward_state_edge(edge)
+                    # Add the same condition to the edge
+                    bwd_loop_edge.data.condition = CodeBlock(new_bwd_edge_condition)
 
-                    # Add the condition to the edge
-                    bwd_edge.data.condition = CodeBlock(new_bwd_edge_condition)
-
-                    # If there is a special case for the first iteration of the backward state
-                    if forward_state in self.loop_states_view_map:
-                        # Get the corresponding edge between the loop states
-                        bwd_loop_edge = self._get_backward_loop_state_edge(edge)
-
-                        # Add the same condition to the edge
-                        bwd_loop_edge.data.condition = CodeBlock(new_bwd_edge_condition)
-
-                    # Add the forward condition to the list to update the conditions_map dict
-                    if new_bwd_edge_condition != "1":
-                        # Only add the condition if it exists
-                        in_edges_conditions.append(new_bwd_edge_condition)
+                if new_bwd_edge_condition == "1":
+                    unconditional = True
+                else:
+                    in_edges_conditions.append(new_bwd_edge_condition)
 
             # Update the conditions mapping
             # This will be the logical or of all the saved conditions
-            # because we can reach this state by taking any of the incoming edges
-            if len(in_edges_conditions) == 0:
+            # because we can reach this block by taking any of the incoming edges
+            if unconditional or len(in_edges_conditions) == 0:
                 condition_for_state = "1"
             else:
-                condition_for_state = in_edges_conditions[0]
-                for i in range(1, len(in_edges_conditions)):
-                    condition_for_state += f" or {in_edges_conditions[i]}"
+                condition_for_state = " or ".join(f"({condition})" for condition in in_edges_conditions)
 
             # Since we are doing topological sort before iterating
             conditions_map[node] = condition_for_state
@@ -549,7 +535,7 @@ class BackwardPassGenerator:
             # Prepare the condition for the new state
             loop_it = loop.loop_variable
             reversed_loop = self.reversed_loops_map[loop]
-            start, _ = self._extract_loop_region_info(reversed_loop)
+            start, _ = ad_utils.extract_loop_region_info(reversed_loop)
 
             # We only want the loop state to execute
             # in the first iteration of the reversed loop
@@ -582,6 +568,15 @@ class BackwardPassGenerator:
         This is necessary to make sure the control flow in the backward pass is correctly preserved.
         """
         # We will add an empty state to the backward pass which will have all the assignments
+        if not self.separate_sdfgs:
+            # The backward pass runs after the forward pass in the same SDFG, which assigned the symbols already
+            return
+        for loop in self.sdfg.all_control_flow_regions():
+            if isinstance(loop, LoopRegion) and loop.loop_variable and ad_utils.may_exit_early(loop):
+                raise AutoDiffException(
+                    f"Loop {loop.label} may exit early, which a separate backward SDFG cannot "
+                    "reverse (it does not know the number of iterations)"
+                )
 
         new_assignments = {}
         # Get all the interstate edges in the forward sdfg
@@ -608,17 +603,7 @@ class BackwardPassGenerator:
         if new_assignments:
             # Add the new state to the backward pass
             # First we get the start block of the backward pass
-            if self.separate_sdfgs:
-                bwd_start_block = self.backward_sdfg.start_block
-            else:
-                fwd_start_state = self.sdfg.start_block
-                if isinstance(fwd_start_state, LoopRegion):
-                    bwd_start_block = self.reversed_loops_map[fwd_start_state]
-                elif isinstance(fwd_start_state, SDFGState):
-                    bwd_start_block = self.reversed_states_map[fwd_start_state]
-                else:
-                    raise AutoDiffException("Need to add an assignments state but can't find the start block")
-            # TODO would this work on a loop region?
+            bwd_start_block = self.backward_sdfg.start_block
             self.backward_sdfg.add_state_before(
                 state=bwd_start_block, label="_bwd_interstate_assignments_state", assignments=new_assignments
             )
@@ -854,69 +839,79 @@ class BackwardPassGenerator:
         required_gradients_all_states = {n for n in self.required_gradients_data}
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
-        # Do the backward BFS iteratively
-        for state in reversed(self.state_order):
-            state_given_gradients: List[nodes.AccessNode] = []
+        # Do the backward BFS iteratively. In a loop, a state may need the gradient of data that a state before it
+        # (in the same iteration) reads; sweep again until the set of data with gradients no longer grows.
+        has_loops = any(isinstance(region, LoopRegion) for region in self.sdfg.all_control_flow_regions())
+        while True:
+            known_gradients = len(given_gradients_all_states)
+            self.loop_states_view_map.clear()
+            for state in reversed(self.state_order):
+                state_given_gradients: List[nodes.AccessNode] = []
 
-            for node in state:
-                if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
-                    state_given_gradients.append(node)
+                for node in state:
+                    if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
+                        state_given_gradients.append(node)
 
-            backward_nodes = {n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
-            nodes_list = list(backward_nodes)
-
-            # Clean up unwanted elements
-            self._remove_maps_without_input_connectors(nodes_list, state)
-            self._remove_onnx_attribute_accessnodes(nodes_list, state)
-
-            state_subgraph = dstate.StateSubgraphView(state, nodes_list)
-
-            state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(
-                state=state, state_subgraph=state_subgraph, view_nodes=nodes_list
-            )
-
-            # Add mapping
-            self.states_view_map[state] = state_subgraph
-
-            # In the case where this state is within a for loop
-            within_loop, _ = ad_utils.state_within_loop(state)
-            if within_loop:
-                # Other elements that are not within state_subgraph will need to be reversed
-                # We create a separate mapping for these elements
-
-                # Get all the access nodes that are used in the previous view
-                subgraph_an = [node.data for node in state_subgraph.nodes() if isinstance(node, nodes.AccessNode)]
-
-                # For each access node in this view
-                for state_node in state:
-                    if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an:
-                        state_given_gradients.append(state_node)
-
-                # Do reverse BFS starting from this new set of nodes
                 backward_nodes = {
                     n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]
                 }
+                nodes_list = list(backward_nodes)
 
-                view_nodes = list(backward_nodes)
+                # Clean up unwanted elements
                 self._remove_maps_without_input_connectors(nodes_list, state)
+                self._remove_onnx_attribute_accessnodes(nodes_list, state)
 
-                loop_state_subgraph = dstate.StateSubgraphView(state, view_nodes)
+                state_subgraph = dstate.StateSubgraphView(state, nodes_list)
 
-                loop_state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(
-                    state=state, state_subgraph=loop_state_subgraph, view_nodes=view_nodes
+                state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(
+                    state=state, state_subgraph=state_subgraph, view_nodes=nodes_list
                 )
 
-                # If the two views are different
-                # Here we only check if the number of nodes is the same
-                # Since states_view_map[state] is a subset of loop_states_view_map[state]
-                if len(state_subgraph) != len(loop_state_subgraph):
-                    self.loop_states_view_map[state] = loop_state_subgraph
+                # Add mapping
+                self.states_view_map[state] = state_subgraph
 
-            # Update the list of given gradients to use for states
-            for node in backward_nodes:
-                if isinstance(node, nodes.AccessNode) and node.data not in given_gradients_all_states:
-                    # We want all of the backward AccessNodes that made it to the intersection
-                    given_gradients_all_states.add(node.data)
+                # In the case where this state is within a for loop
+                within_loop, _ = ad_utils.state_within_loop(state)
+                if within_loop:
+                    # Other elements that are not within state_subgraph will need to be reversed
+                    # We create a separate mapping for these elements
+
+                    # Get all the access nodes that are used in the previous view
+                    subgraph_an = [node.data for node in state_subgraph.nodes() if isinstance(node, nodes.AccessNode)]
+
+                    # For each access node in this view
+                    for state_node in state:
+                        if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an:
+                            state_given_gradients.append(state_node)
+
+                    # Do reverse BFS starting from this new set of nodes
+                    backward_nodes = {
+                        n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]
+                    }
+
+                    view_nodes = list(backward_nodes)
+                    self._remove_maps_without_input_connectors(nodes_list, state)
+
+                    loop_state_subgraph = dstate.StateSubgraphView(state, view_nodes)
+
+                    loop_state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(
+                        state=state, state_subgraph=loop_state_subgraph, view_nodes=view_nodes
+                    )
+
+                    # If the two views are different
+                    # Here we only check if the number of nodes is the same
+                    # Since states_view_map[state] is a subset of loop_states_view_map[state]
+                    if len(state_subgraph) != len(loop_state_subgraph):
+                        self.loop_states_view_map[state] = loop_state_subgraph
+
+                # Update the list of given gradients to use for states
+                for node in backward_nodes:
+                    if isinstance(node, nodes.AccessNode) and node.data not in given_gradients_all_states:
+                        # We want all of the backward AccessNodes that made it to the intersection
+                        given_gradients_all_states.add(node.data)
+
+            if not has_loops or len(given_gradients_all_states) == known_gradients:
+                break
 
     def array_grad_name(self, forward_name: str) -> str:
         """Return the gradient name of a name from the forward pass."""
@@ -924,6 +919,21 @@ class BackwardPassGenerator:
             self.array_grad_map[forward_name] = self.backward_sdfg._find_new_name("gradient_" + forward_name)
 
         return self.array_grad_map[forward_name]
+
+    @staticmethod
+    def _accumulates_through_view(forward_state: SDFGState, edge) -> bool:
+        """
+        Returns whether ``edge`` writes a view into the data it views, and everything written into the view in this
+        state is accumulated (e.g., the view a library node expansion makes of an output connector). The data is then
+        accumulated into, not overwritten.
+        """
+        view = edge.src
+        if edge.src_conn != "views" or not isinstance(view, nodes.AccessNode):
+            return False
+        if not isinstance(forward_state.sdfg.arrays[view.data], dt.View):
+            return False
+        writes = forward_state.in_edges(view)
+        return len(writes) > 0 and all(e.data.wcr is not None for e in writes)
 
     def _integrate_reversed_nested_sdfgs(self) -> None:
         """
@@ -956,10 +966,28 @@ class BackwardPassGenerator:
         # only the grads of the inputs and the outputs are not transient
         cloned_datadesc.transient = data_name not in self.input_names and data_name not in self.output_names
 
+        # Gradients accumulate over the iterations of a reversed loop. A transient that only one state accesses would
+        # otherwise be allocated (and zeroed) every time the state executes.
+        if (
+            cloned_datadesc.transient
+            and not isinstance(cloned_datadesc, dt.View)
+            and cloned_datadesc.lifetime == dtypes.AllocationLifetime.Scope
+            and cloned_datadesc.storage not in (dtypes.StorageType.Register, dtypes.StorageType.GPU_Shared)
+            and self._accessed_in_loop(data_name)
+        ):
+            cloned_datadesc.lifetime = dtypes.AllocationLifetime.SDFG
+
         # Store references
         self.backward_grad_arrays[grad_name] = cloned_datadesc
         self.backward_sdfg.arrays[grad_name] = cloned_datadesc
         return cloned_datadesc
+
+    def _accessed_in_loop(self, data_name: str) -> bool:
+        """Whether a state inside a loop of the forward pass accesses ``data_name``."""
+        for state in self.sdfg.all_states():
+            if ad_utils.state_within_loop(state)[0] and any(node.data == data_name for node in state.data_nodes()):
+                return True
+        return False
 
     def _reverse_loop_conditional(self, loop: LoopRegion) -> str:
         """Given a loop region as a parameter, create the conditional for the reversed version of this loop."""
@@ -988,6 +1016,12 @@ class BackwardPassGenerator:
         it = loop.loop_variable
 
         stride_sign = ad_utils.get_stride_sign(loop)
+
+        # A loop that may exit before its end is reversed from the value of its loop variable at the exit
+        exit_value = ad_utils.loop_exit_symbol(loop)
+        if exit_value is not None:
+            stride = loop_analysis.get_loop_stride(loop)
+            return f"{it} = {exit_value} - ({symbolic.symstr(stride)})"
 
         # Get the loop end
         _, end = ad_utils.extract_loop_region_info(loop)
@@ -1202,7 +1236,7 @@ class BackwardPassGenerator:
         # Get the equivalent states in the backward pass
         if forward_state_src not in self.reversed_states_map and forward_state_src not in self.reversed_loops_map:
             raise AutoDiffException(f"Forward state source {forward_state_src} not found in reversed maps")
-        if forward_state_dst not in self.reversed_states_map and forward_state_src not in self.reversed_loops_map:
+        if forward_state_dst not in self.reversed_states_map and forward_state_dst not in self.reversed_loops_map:
             raise AutoDiffException(f"Forward state destination {forward_state_dst} not found in reversed maps")
 
         # Note that the src will become the destination
@@ -1432,6 +1466,23 @@ class BackwardPassGenerator:
         # TODO: How to more accurately check this?
         return "if" in tasklet_node.code.as_string
 
+    def _is_conditional_assignment(self, forward_state: SDFGState, node: nodes.Node) -> bool:
+        """Check if a node is the tasklet or nested SDFG of a conditional array assignment (``A[mask] = value``)."""
+        if isinstance(node, nodes.Tasklet):
+            return self._conditional_tasklet(node) and self._has_boolean_input(forward_state, node)
+        return isinstance(node, nodes.NestedSDFG) and self._conditional_nested_sdfg(forward_state, node)
+
+    def _has_boolean_input(self, forward_state: SDFGState, node: nodes.Node) -> bool:
+        """
+        Check if a node reads boolean data, as the tasklet of a conditional array assignment (``A[mask] = value``)
+        does. Conditional tasklets that compute their condition from their other inputs are differentiated like any
+        other tasklet (the backward tasklet evaluates the same condition).
+        """
+        return any(
+            edge.data.data is not None and self.sdfg.arrays[edge.data.data].dtype == dace.bool
+            for edge in forward_state.in_edges(node)
+        )
+
     def _conditional_nested_sdfg(self, forward_state: SDFGState, node: nodes.NestedSDFG):
         """Check if this NestedSDFG contains a conditional.
 
@@ -1634,9 +1685,7 @@ class BackwardPassGenerator:
                                 tree_edge.data.wcr = "lambda x, y: x + y"
 
                 # If this node is a tasklet with a condition, we add some modification to the backward state
-                elif (isinstance(node, nodes.Tasklet) and self._conditional_tasklet(node)) or (
-                    isinstance(node, nodes.NestedSDFG) and self._conditional_nested_sdfg(forward_state, node)
-                ):
+                elif self._is_conditional_assignment(forward_state, node):
                     # extract the conditional assignment block or fail if this is an unexpected structure
                     conditional_block = self._extract_conditional_array_assignment_block(
                         forward_state=forward_state, tasklet_node=node, subgraph=subgraph
@@ -1658,7 +1707,7 @@ class BackwardPassGenerator:
 
                         # Check if the node doesn't have a WCR
                         # If it does, this is not an overwrite and the gradients should not be cleared
-                        has_wcr = edge.data.wcr is not None
+                        has_wcr = edge.data.wcr is not None or self._accumulates_through_view(forward_state, edge)
 
                         # Check if the edge is dynamic, this means not all values are overwritten
                         # We will skip zeroing out the gradient in this case

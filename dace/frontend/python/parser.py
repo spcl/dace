@@ -213,6 +213,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         }
         self.symbols = set(k for k, v in self.global_vars.items() if isinstance(v, symbolic.symbol))
         self.closure_arg_mapping: Dict[str, Callable[[], Any]] = {}
+        #: Guards of SDFG-convertible objects in the closure (see ``SDFGConvertible.__sdfg_guards__``)
+        self.closure_guards: Dict[str, Callable[[], Any]] = {}
         self.resolver: pycommon.SDFGClosure = None
 
         # Add type annotations from decorator arguments (DEPRECATED)
@@ -429,6 +431,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
     def _eval_closure(self, arg: str, extra_constants: Optional[Dict[str, Any]] = None) -> Any:
         extra_constants = extra_constants or {}
+        if arg in self.closure_guards:
+            return self.closure_guards[arg]()
         if arg in self.closure_arg_mapping:
             return self.closure_arg_mapping[arg]()
         return eval(arg, self.global_vars, extra_constants)
@@ -1000,5 +1004,12 @@ class DaceProgram(pycommon.SDFGConvertible):
             # Set regenerate and recompile flags
             sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
+
+            # Closure arrays and guards that SDFG-convertible objects only report once converted join the closure
+            self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
+            self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
+            self.closure_guards = closure.guards()
+
+        self.closure_constant_keys |= set(self.closure_guards.keys())
 
         return sdfg, cached

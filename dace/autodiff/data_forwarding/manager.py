@@ -316,6 +316,7 @@ class DataForwardingManager:
 
         # First, replicate the AccessNode and add it to the backward pass
         # If it has not already been replicated and passed as a parameter
+        created_replica = replicated_node is None
         if replicated_node is None:
             replicated_node = copy.deepcopy(forward_node)
             backward_state.add_node(replicated_node)
@@ -354,9 +355,12 @@ class DataForwardingManager:
                 bwd_dst = self.bwd_generator._find_backward_entry_node_for_map_entry(
                     backward_state=backward_state, entry_node=dst
                 )
-                # Add the dst connector to the map
-                added = bwd_dst.add_in_connector(bwd_dst_conn)
-                assert added
+                # Add the dst connector to the map. If it exists, the data already enters this map (e.g., a tasklet
+                # reads the same array through two connectors, as in ``x * x``): reuse that path into the map.
+                if not bwd_dst.add_in_connector(bwd_dst_conn):
+                    if not any(True for _ in backward_state.in_edges_by_connector(bwd_dst, bwd_dst_conn)):
+                        raise AutoDiffException(f"Map connector {bwd_dst_conn} exists without an incoming edge")
+                    continue
 
             # If the destination is a map entry,
             if isinstance(src, nodes.MapEntry):
@@ -364,9 +368,8 @@ class DataForwardingManager:
                 bwd_src = self.bwd_generator._find_backward_entry_node_for_map_entry(
                     backward_state=backward_state, entry_node=src
                 )
-                # Add the src connector to the map
-                added = bwd_src.add_out_connector(bwd_src_conn)
-                assert added
+                # Add the src connector to the map (it exists if the path into the map is shared, see above)
+                bwd_src.add_out_connector(bwd_src_conn)
 
             if src is forward_node:
                 # If this is the node we replicated
@@ -392,6 +395,11 @@ class DataForwardingManager:
 
             # Add the edge to the backward state
             backward_state.add_edge(bwd_src, bwd_src_conn, bwd_dst, bwd_dst_conn, bwd_data)
+
+        # The replica is unused if the whole path into the target was shared with an earlier connection
+        if created_replica and backward_state.degree(replicated_node) == 0:
+            backward_state.remove_node(replicated_node)
+            return
 
         # If we just connected a view, we need to remove the view in connector
         data_desc = self.bwd_generator.sdfg.arrays[forward_node.data]

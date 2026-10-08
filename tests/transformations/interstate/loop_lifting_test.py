@@ -524,7 +524,55 @@ def test_lift_nested_for_loops_with_dataflow_guards():
     assert np.allclose(C, 1)
 
 
+def _loop_with_side_exit(data_dependent: bool) -> SDFG:
+    """
+    A loop whose body can also leave the loop directly (as ``break`` does): ``for i < N: A[i] = 1; if <exit>: break``.
+    The exit condition is symbolic or reads data.
+    """
+    sdfg = SDFG("loop_side_exit" + ("_data" if data_dependent else ""))
+    N = dace.symbol("N")
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", (N,), dace.int32)
+    sdfg.add_array("stop", (N,), dace.int32)
+    start = sdfg.add_state("start", is_start_block=True)
+    guard = sdfg.add_state("guard")
+    body = sdfg.add_state("body")
+    broken = sdfg.add_state("broken")
+    after = sdfg.add_state("after")
+    exit_condition = "stop[i] != 0" if data_dependent else "i >= 3"
+    sdfg.add_edge(start, guard, InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard, body, InterstateEdge(condition="i < N"))
+    sdfg.add_edge(guard, after, InterstateEdge(condition="i >= N"))
+    sdfg.add_edge(body, guard, InterstateEdge(condition=f"not ({exit_condition})", assignments={"i": "i + 1"}))
+    sdfg.add_edge(body, broken, InterstateEdge(condition=exit_condition))
+    sdfg.add_edge(broken, after, InterstateEdge())
+    tasklet = body.add_tasklet("mark", {}, {"out"}, "out = 1")
+    body.add_edge(tasklet, "out", body.add_access("A"), None, Memlet("A[i]"))
+    tasklet = broken.add_tasklet("mark_break", {}, {"out"}, "out = 7")
+    broken.add_edge(tasklet, "out", broken.add_access("A"), None, Memlet("A[N - 1]"))
+    return sdfg
+
+
+@pytest.mark.parametrize("data_dependent", (False, True))
+def test_loop_with_side_exit_keeps_exit(data_dependent):
+    """Lifting must not drop an exit edge from the loop body (the loop is either lifted with it, or not at all)."""
+    N = 10
+    stop = np.zeros((N,), dtype=np.int32)
+    stop[3] = 1
+    reference = np.zeros((N,), dtype=np.int32)
+    _loop_with_side_exit(data_dependent)(A=reference, stop=stop, N=N)
+    assert list(reference) == [1, 1, 1, 1, 0, 0, 0, 0, 0, 7]
+
+    sdfg = _loop_with_side_exit(data_dependent)
+    sdfg.apply_transformations_repeated([LoopLifting])
+    result = np.zeros((N,), dtype=np.int32)
+    sdfg(A=result, stop=stop, N=N)
+    assert np.array_equal(result, reference)
+
+
 if __name__ == "__main__":
+    test_loop_with_side_exit_keeps_exit(False)
+    test_loop_with_side_exit_keeps_exit(True)
     test_lift_regular_for_loop()
     test_lift_loop_llvm_canonical(True)
     test_lift_loop_llvm_canonical(False)

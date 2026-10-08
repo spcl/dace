@@ -1825,6 +1825,87 @@ def test_inline_connector_offset():
     assert np.allclose(B, expected)
 
 
+def _add_increment(region: dace.sdfg.state.ControlFlowRegion, label: str) -> dace.SDFGState:
+    state = region.add_state(label)
+    tasklet = state.add_tasklet("inc", {"inp"}, {"out"}, "out = inp + 1")
+    state.add_edge(state.add_read("a"), None, tasklet, "inp", dace.Memlet("a[0]"))
+    state.add_edge(tasklet, "out", state.add_write("a"), None, dace.Memlet("a[0]"))
+    return state
+
+
+def _add_conditional_return(
+    region: dace.sdfg.state.ControlFlowRegion, condition: str, dead_successor: bool
+) -> dace.sdfg.state.ConditionalBlock:
+    block = dace.sdfg.state.ConditionalBlock("maybe_return")
+    region.add_node(block, is_start_block=True)
+    branch = dace.sdfg.state.ControlFlowRegion("return_branch", sdfg=region.sdfg or region, parent=block)
+    ret = dace.sdfg.state.ReturnBlock("ret")
+    branch.add_node(ret, is_start_block=True)
+    if dead_successor:
+        # Edges leaving a return block are never taken
+        branch.add_edge(ret, branch.add_state("after_return"), dace.InterstateEdge())
+    block.add_branch(dace.properties.CodeBlock(condition), branch)
+    return block
+
+
+@pytest.mark.parametrize("dead_successor", (False, True))
+@pytest.mark.parametrize("shape", ("loop", "conditional", "region"))
+def test_multistate_inline_early_return(shape: str, dead_successor: bool):
+    """
+    Tests inlining a nested SDFG that returns early from within a loop, a conditional, or a nested region. Execution
+    must resume after the nested SDFG rather than end the outer SDFG.
+    """
+    inner = dace.SDFG("inner")
+    inner.add_symbol("N", dace.int64)
+    inner.add_array("a", [10], dace.float64)
+    if shape == "loop":
+        # for i in range(3): if i >= N: return; a[0] += 1
+        inner.add_symbol("i", dace.int64)
+        body = dace.sdfg.state.LoopRegion("loop", "i < 3", "i", "i = 0", "i = i + 1")
+        inner.add_node(body, is_start_block=True)
+        expected_increments = lambda n: min(max(n, 0), 3)
+    elif shape == "region":
+        # { if N < 1: return; a[0] += 1 }; a[0] += 1
+        body = dace.sdfg.state.ControlFlowRegion("region", sdfg=inner)
+        inner.add_node(body, is_start_block=True)
+        inner.add_edge(body, _add_increment(inner, "increment_after"), dace.InterstateEdge())
+        expected_increments = lambda n: 0 if n < 1 else 2
+    else:
+        # if N < 1: return; a[0] += 1
+        body = inner
+        expected_increments = lambda n: 0 if n < 1 else 1
+    block = _add_conditional_return(body, "i >= N" if shape == "loop" else "N < 1", dead_successor)
+    body.add_edge(block, _add_increment(body, "increment"), dace.InterstateEdge())
+
+    sdfg = dace.SDFG(unique_name("inline_early_return"))
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
+    state = sdfg.add_state()
+    node = state.add_nested_sdfg(inner, {"a"}, {"a"}, symbol_mapping={"N": "N"})
+    written = state.add_access("A")
+    state.add_edge(state.add_read("A"), None, node, "a", dace.Memlet("A[0:10]"))
+    state.add_edge(node, "a", written, None, dace.Memlet("A[0:10]"))
+    tasklet = state.add_tasklet("after_call", {"inp"}, {"out"}, "out = inp + 10")
+    state.add_edge(written, None, tasklet, "inp", dace.Memlet("A[0]"))
+    state.add_edge(tasklet, "out", state.add_write("B"), None, dace.Memlet("B[0]"))
+    sdfg.validate()
+
+    sdfg.simplify()
+    sdfg.validate()
+    assert count_nodes(sdfg, dace_nodes.NestedSDFG) == 0
+
+    csdfg = sdfg.compile()
+    for n in (0, 2, 10):
+        A = np.random.rand(10)
+        B = np.zeros(10)
+        expected = A.copy()
+        expected[0] += expected_increments(n)
+        csdfg(A=A, B=B, N=n)
+        assert np.allclose(A, expected)
+        assert np.isclose(B[0], expected[0] + 10)
+
+
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
@@ -1884,3 +1965,6 @@ if __name__ == "__main__":
     for inliner in [InlineSDFG, InlineMultistateSDFG]:
         test_inline_restates_nested_connectors(inliner)
     test_inline_connector_offset()
+    for shape in ["loop", "conditional", "region"]:
+        for dead_successor in [False, True]:
+            test_multistate_inline_early_return(shape=shape, dead_successor=dead_successor)
