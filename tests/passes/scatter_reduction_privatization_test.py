@@ -121,22 +121,22 @@ def test_pass_fires_on_weighted_histogram():
 # Refuse cases
 
 
-def _build_scatter_nsdfg(wcr: str, read_accumulator: bool = False) -> dace.SDFG:
+def _build_scatter_nsdfg(wcr: str, read_accumulator: bool = False, size: str = "bins") -> dace.SDFG:
     """A minimal map-body-NestedSDFG scatter ``acc[idx[i]] (wcr)= w[i]`` for refuse
     tests. ``wcr`` is the reducer lambda; ``read_accumulator`` also wires ``acc`` as a
-    map input (self-referential)."""
+    map input (self-referential); ``size`` is the accumulator's length."""
     sdfg = dace.SDFG("scatter_refuse")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("bins", dace.int64)
     sdfg.add_array("idx", [N], dace.int64)
     sdfg.add_array("w", [N], dace.float64)
-    sdfg.add_array("acc", [bins], dace.float64)
+    sdfg.add_array("acc", [size], dace.float64)
     st = sdfg.add_state("main")
 
     nsdfg = dace.SDFG("body_build_scatter_nsdfg")
     nsdfg.add_scalar("b_in", dace.int64)
     nsdfg.add_scalar("w_in", dace.float64)
-    nsdfg.add_array("oc", [bins], dace.float64)
+    nsdfg.add_array("oc", [size], dace.float64)
     nsdfg.add_symbol("bsym", dace.int64)
     nsdfg.add_scalar("b_scal", dace.int64, transient=True)
     s0 = nsdfg.add_state("s0", is_start_block=True)
@@ -157,18 +157,18 @@ def _build_scatter_nsdfg(wcr: str, read_accumulator: bool = False) -> dace.SDFG:
     in_conns = {"b_in", "w_in"}
     if read_accumulator:
         in_conns.add("acc_in")
-        nsdfg.add_array("acc_in", [bins], dace.float64)
-    node = st.add_nested_sdfg(nsdfg, in_conns, {"oc"}, symbol_mapping={"bins": "bins"})
+        nsdfg.add_array("acc_in", [size], dace.float64)
+    node = st.add_nested_sdfg(nsdfg, in_conns, {"oc"}, symbol_mapping={s: s for s in ("bins", size)})
     st.add_memlet_path(st.add_read("idx"), me, node, dst_conn="b_in", memlet=dace.Memlet(data="idx", subset="i"))
     st.add_memlet_path(st.add_read("w"), me, node, dst_conn="w_in", memlet=dace.Memlet(data="w", subset="i"))
     if read_accumulator:
         st.add_memlet_path(
-            st.add_read("acc"), me, node, dst_conn="acc_in", memlet=dace.Memlet(data="acc", subset="0:bins")
+            st.add_read("acc"), me, node, dst_conn="acc_in", memlet=dace.Memlet(data="acc", subset=f"0:{size}")
         )
     mx.add_in_connector("IN_acc")
     mx.add_out_connector("OUT_acc")
-    st.add_edge(node, "oc", mx, "IN_acc", dace.Memlet(data="acc", subset="0:bins"))
-    st.add_edge(mx, "OUT_acc", st.add_write("acc"), None, dace.Memlet(data="acc", subset="0:bins"))
+    st.add_edge(node, "oc", mx, "IN_acc", dace.Memlet(data="acc", subset=f"0:{size}"))
+    st.add_edge(mx, "OUT_acc", st.add_write("acc"), None, dace.Memlet(data="acc", subset=f"0:{size}"))
     return sdfg
 
 
@@ -185,6 +185,13 @@ def test_refuse_self_referential_accumulator():
     """A scatter whose map also READS the accumulator array is refused (a whole-buffer
     privatization would make those reads see the private identity copy)."""
     sdfg = _build_scatter_nsdfg("lambda x, y: (x + y)", read_accumulator=True)
+    assert PrivatizeScatterReduction().apply_pass(sdfg, {}) is None
+
+
+def test_refuse_accumulator_sized_by_the_map():
+    """``bins[ip[i]] += src[i]`` with ``bins`` as long as the loop: a private copy per thread costs the
+    thread count times the iteration space, so the scatter keeps its atomic."""
+    sdfg = _build_scatter_nsdfg("lambda x, y: (x + y)", size="N")
     assert PrivatizeScatterReduction().apply_pass(sdfg, {}) is None
 
 
