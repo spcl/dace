@@ -26,3 +26,5 @@ from dace.sdfg.analysis.schedule_tree.passes.transient_refinement import refine_
 from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import move_small_transients_to_stack
 from dace.sdfg.analysis.schedule_tree.passes.transient_reuse import reuse_transients
 from dace.sdfg.analysis.schedule_tree.passes.loop_range_reduction import reduce_loop_ranges
+from dace.sdfg.analysis.schedule_tree.passes.guard_coarsening import coarsen_guards
+from dace.sdfg.analysis.schedule_tree.passes.guard_coarsening import sink_into_guards

@@ -7,7 +7,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import sympy
 
-from dace import data, dtypes
+from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -295,3 +295,93 @@ def prune_empty(scope: tn.ScheduleTreeScope, index: AccessIndex) -> None:
     if len(kept) < len(scope.children):
         scope.children = []
         scope.add_children(kept)
+
+
+def condition_element_accesses(condition: ast.expr, containers: Dict[str, data.Data]) -> Optional[List[tuple]]:
+    """The container accesses of a condition as ``(container, element, AST node, conditional)``: subscripts with one
+    index per dimension, and single-element containers by name; ``conditional`` if the condition evaluates the access
+    only depending on the values of others (in a later operand of ``and``/``or``, a later comparison of a chain, an arm
+    of ``a if c else b``). ``None`` if an access is not a single element known before the condition (slices, indices
+    that read containers, arrays by name)."""
+    accesses = []
+
+    def visit(node: ast.AST, conditional: bool) -> bool:
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in containers:
+            indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            if (len(indices) != len(containers[node.value.id].shape) or any(isinstance(i, ast.Slice) for i in indices)
+                    or any(isinstance(n, ast.Name) and n.id in containers for i in indices for n in ast.walk(i))):
+                return False
+            element = f'{node.value.id}[{", ".join(ast.unparse(i) for i in indices)}]'
+            accesses.append((node.value.id, element, node, conditional))
+            return True
+        if isinstance(node, ast.Name) and node.id in containers:
+            if containers[node.id].total_size != 1:
+                return False
+            accesses.append((node.id, f'{node.id}[0]', node, False))  # Always in bounds
+            return True
+        if isinstance(node, ast.BoolOp):
+            return all(visit(v, conditional or k > 0) for k, v in enumerate(node.values))
+        if isinstance(node, ast.Compare):
+            return visit(node.left, conditional) and all(
+                visit(c, conditional or k > 0) for k, c in enumerate(node.comparators))
+        if isinstance(node, ast.IfExp):
+            return visit(node.test, conditional) and visit(node.body, True) and visit(node.orelse, True)
+        return all(visit(child, conditional) for child in ast.iter_child_nodes(node))
+
+    return accesses if visit(condition, False) else None
+
+
+def in_bounds(node: ast.Subscript, desc: data.Data, ranges: Dict[str, Tuple[int, int]]) -> bool:
+    """Whether every index of a subscript is within the shape of its container, for all values of the variables in
+    ``ranges`` (``(lowest, highest)`` by name), with no other names in the indices."""
+    indices = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    for index, size in zip(indices, desc.shape):
+        size = sympy.sympify(size)
+        try:
+            expr = sympy.expand(symbolic.pystr_to_symbolic(ast.unparse(index)))
+        except (TypeError, ValueError, SyntaxError, sympy.SympifyError):
+            return False
+        if not size.is_Integer or any(str(sym) not in ranges for sym in expr.free_symbols):
+            return False
+        low = high = expr
+        for sym in expr.free_symbols:
+            coefficient = sympy.diff(expr, sym)
+            if not coefficient.is_number:
+                return False  # Not linear
+            first, last = ranges[str(sym)]
+            low = low.subs(sym, first if coefficient > 0 else last)
+            high = high.subs(sym, last if coefficient > 0 else first)
+        if not (low.is_Integer and high.is_Integer and low >= 0 and high < size):
+            return False
+    return True
+
+
+def loop_ranges(node: tn.ScheduleTreeNode, repository) -> Dict[str, Tuple[int, int]]:
+    """``(lowest, highest)`` value of each variable of the loops and maps enclosing ``node`` with constant bounds."""
+    ranges: Dict[str, Tuple[int, int]] = {}
+    unknown: Set[str] = set()
+    scope = node.parent
+    while scope is not None:
+        for _, var, space in iteration_spaces(scope, repository):
+            if var in ranges or var in unknown:
+                continue  # Bound by an inner scope
+            first = None if space is None else sympy.sympify(space.start)
+            last = None if space is None else sympy.sympify(space.end)
+            if first is None or last is None or not first.is_Integer or not last.is_Integer:
+                unknown.add(var)
+            else:
+                ranges[var] = (int(min(first, last)), int(max(first, last)))
+        scope = scope.parent
+    return ranges
+
+
+class ReplaceAccesses(ast.NodeTransformer):
+    """Replaces AST nodes (by identity) with names."""
+
+    def __init__(self, names: Dict[int, str]):
+        self.names = names
+
+    def visit(self, node: ast.AST):
+        if id(node) in self.names:
+            return ast.copy_location(ast.Name(id=self.names[id(node)], ctx=ast.Load()), node)
+        return super().visit(node)
