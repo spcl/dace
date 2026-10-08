@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Functions for generating C++ code for control flow in SDFGs using control flow regions.
 """
@@ -23,6 +23,7 @@ from dace.sdfg.state import (
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.codegen.common import unparse_interstate_edge
+from dace.codegen.prettycode import CodeIOStream
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -219,6 +220,20 @@ def _conditional_block_to_code(
     return expr
 
 
+def allocation_on_entry(region: AbstractControlFlowRegion, codegen: "DaCeCodeGenerator") -> str:
+    """Generates the allocation of the data that is allocated when ``region`` is entered."""
+    stream = CodeIOStream()
+    codegen.allocate_arrays_in_scope(region.sdfg, region.parent_graph, region, stream, stream)
+    return stream.getvalue()
+
+
+def deallocation_on_exit(region: AbstractControlFlowRegion, codegen: "DaCeCodeGenerator") -> str:
+    """Generates the deallocation of the data that is deallocated when ``region`` is left."""
+    stream = CodeIOStream()
+    codegen.deallocate_arrays_in_scope(region.sdfg, region.parent_graph, region, stream, stream)
+    return stream.getvalue()
+
+
 def control_flow_region_to_code(
     region: AbstractControlFlowRegion,
     dispatch_state: Callable[[SDFGState], str],
@@ -260,6 +275,8 @@ def control_flow_region_to_code(
         visited.add(node)
 
         expr += "__state_{}_{}:;\n".format(region.cfg_id, re.sub(r"\s+", "_", node.label))
+        if isinstance(node, AbstractControlFlowRegion):
+            expr += allocation_on_entry(node, codegen)
         if isinstance(node, SDFGState):
             if node.number_of_nodes() > 0:
                 expr += "{\n"
@@ -282,6 +299,8 @@ def control_flow_region_to_code(
             expr += control_flow_region_to_code(node, dispatch_state, codegen, symbols)
         else:
             raise NotImplementedError(f"Control flow block {type(node)} not implemented")
+        if isinstance(node, AbstractControlFlowRegion):
+            expr += deallocation_on_exit(node, codegen)
 
         out_edges = region.out_edges(node)
         if len(out_edges) == 0:

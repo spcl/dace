@@ -20,6 +20,7 @@ class CopyToMap(xf.SingleStateTransformation):
     b = xf.PatternNode(nodes.AccessNode)
     ignore_strides = properties.Property(
         default=False,
+        category="Applicability",
         desc="Ignore the stride of the data container; Defaults to `False`.",
     )
 

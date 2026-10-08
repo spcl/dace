@@ -2,9 +2,10 @@
 """Memlet access policies: how a leaf memlet's addressing is realized in generated code.
 
 A *leaf* memlet is one that produces an address in generated code: the innermost memlet of a memlet path, i.e.
-the one bound to a tasklet, library node, nested SDFG connector or to an access node inside a scope, or a copy
-between two access nodes. Its :attr:`~dace.memlet.Memlet.access_policy` is a purely *descriptive* record of how that
-address (and, for some kinds, the data movement it drives) is meant to be realized. Policies never change the
+the one bound to a tasklet, library node or to an access node inside a scope, or a copy between two access nodes
+(a nested SDFG connector receives the whole container, so the leaves are the memlets inside the nested SDFG). Its
+:attr:`~dace.memlet.Memlet.access_policy` is a purely *descriptive* record of how that address (and, for some kinds,
+the data movement it drives) is meant to be realized. Policies never change the
 semantics of an SDFG and contain no code-level state; they are attached by analysis passes, tuners or by hand, and
 are *lowered* to ordinary SDFG constructs (symbols, loop statements, reference containers, tasklets) by
 :class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies` in the code-generation window.

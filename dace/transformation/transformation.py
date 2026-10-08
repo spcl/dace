@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 This file contains classes that describe data-centric transformations.
 
@@ -25,7 +25,7 @@ from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
-from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
+from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st, dealias
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
 from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
@@ -683,6 +683,21 @@ class PatternNode(Generic[T]):
         return state.node(node_id)
 
 
+def carry_over_connectors(state: SDFGState, node: nd.LibraryNode, expansion: nd.CodeNode) -> None:
+    """Add to ``expansion`` the wired connectors a pass added to ``node`` (e.g., a GPU stream).
+
+    Connectors without edges stay behind, since an expansion may rename its edges in place.
+    """
+    wired_in = {e.dst_conn for e in state.in_edges(node)}
+    wired_out = {e.src_conn for e in state.out_edges(node)}
+    for conn, ctype in node.in_connectors.items():
+        if conn in wired_in and conn not in expansion.in_connectors and conn not in expansion.out_connectors:
+            expansion.add_in_connector(conn, dtype=ctype)
+    for conn, ctype in node.out_connectors.items():
+        if conn in wired_out and conn not in expansion.out_connectors and conn not in expansion.in_connectors:
+            expansion.add_out_connector(conn, dtype=ctype)
+
+
 @make_properties
 class ExpandTransformation(PatternTransformation):
     """
@@ -717,8 +732,10 @@ class ExpandTransformation(PatternTransformation):
         node = state.node(self.subgraph[type(self)._match_node])
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
+            # Connector names only: a type inferred for the library node (a scalar for a one-element
+            # memlet) no longer holds once the connector stands for the whole container it is connected to
             expansion = state.add_nested_sdfg(
-                expansion, node.in_connectors, node.out_connectors, name=node.name, debuginfo=node.debuginfo
+                expansion, set(node.in_connectors), set(node.out_connectors), name=node.name, debuginfo=node.debuginfo
             )
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
@@ -732,6 +749,8 @@ class ExpandTransformation(PatternTransformation):
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
+
+            carry_over_connectors(state, node, expansion)
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
 
@@ -743,8 +762,9 @@ class ExpandTransformation(PatternTransformation):
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
 
-        # Fix nested schedules
+        # Fix nested schedules and aliasing
         if isinstance(expansion, nd.NestedSDFG):
+            dealias.integrate_nested_sdfg(expansion.sdfg)
             infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [node.schedule], True)
 
         type(self).postprocessing(sdfg, state, expansion)
@@ -790,9 +810,11 @@ class SubgraphTransformation(TransformationBase):
     class docstring for more information.
     """
 
-    cfg_id = Property(dtype=int, desc="ID of CFG to transform")
-    state_id = Property(dtype=int, desc="ID of state to transform subgraph within, or -1 to transform the SDFG")
-    subgraph = SetProperty(element_type=int, desc="Subgraph in transformation instance")
+    cfg_id = Property(dtype=int, category="(Debug)", desc="ID of CFG to transform")
+    state_id = Property(
+        dtype=int, category="(Debug)", desc="ID of state to transform subgraph within, or -1 to transform the SDFG"
+    )
+    subgraph = SetProperty(element_type=int, category="(Debug)", desc="Subgraph in transformation instance")
 
     def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], cfg_id: int = None, state_id: int = None):
         """

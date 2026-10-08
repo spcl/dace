@@ -92,15 +92,16 @@ def test_nested_symbol_mapping_referencing_outer_map_param_roundtrips():
     inner = dace.SDFG("inner")
     inner.add_symbol("first", dace.int32)
     inner.add_symbol("last", dace.int32)
-    inner.add_array("A0", (10,), dace.int32)
-    inner.add_array("B0", (10,), dace.int32)
+    # Connectors are the containers they are connected to (see ``dace.sdfg.dealias.integrate_nested_sdfg``)
+    inner.add_array("A0", (2, 10), dace.int32)
+    inner.add_array("B0", (2, 10), dace.int32)
     istate = inner.add_state("s", is_start_block=True)
     istate.add_mapped_tasklet(
         "plus",
         map_ranges={"j": "first:last"},
-        inputs={"__a": dace.Memlet(data="A0", subset="j")},
+        inputs={"__a": dace.Memlet(data="A0", subset="0, j")},
         code="__b = __a + 1",
-        outputs={"__b": dace.Memlet(data="B0", subset="j")},
+        outputs={"__b": dace.Memlet(data="B0", subset="0, j")},
         external_edges=True,
     )
 
@@ -113,9 +114,86 @@ def test_nested_symbol_mapping_referencing_outer_map_param_roundtrips():
     )
     state.add_memlet_path(a, me, nsdfg, memlet=dace.Memlet(data="A", subset="0, 0:10"), dst_conn="A0")
     state.add_memlet_path(nsdfg, mx, b, memlet=dace.Memlet(data="B", subset="0, 0:10"), src_conn="B0")
+    sdfg.validate()
 
     s1, s2 = _resave(sdfg)
     assert s1 == s2
+
+
+def _subset_symbols(sdfg: dace.SDFG):
+    """``{(data, subset text): {symbol name: dtype}}`` of the symbol instances in every memlet subset."""
+    result = {}
+    for s in sdfg.all_sdfgs_recursive():
+        for state in s.states():
+            for e in state.edges():
+                if e.data.subset is None:
+                    continue
+                instances = {}
+                for rng in e.data.subset.ndrange():
+                    for bound in rng:
+                        for sym in symbolic.pystr_to_symbolic(bound).free_symbols:
+                            instances[sym.name] = sym.dtype
+                if instances:
+                    result[(e.data.data, str(e.data.subset))] = instances
+    return result
+
+
+_N = dace.symbol("N")
+
+
+@dace.program
+def _plain(A: dace.float64[_N, 16], B: dace.float64[_N]):
+    for i in range(_N):
+        B[i] = A[i, 3] + 2 * A[i, 7]
+
+
+def test_literal_bound_does_not_widen_the_iteration_symbol():
+    """``range(N)`` declares the iterate like any other symbol; the ``0``/``1`` bounds do not widen it."""
+    sdfg = _plain.to_sdfg()
+    assert sdfg.symbols["i"] == symbolic.DEFAULT_SYMBOL_TYPE
+
+
+def test_literal_too_wide_for_the_default_still_widens():
+    """A bound that does not fit the default symbol type must still promote the iterate."""
+
+    @dace.program
+    def wide(A: dace.float64[2199023255552]):
+        for k in range(2199023255552):
+            A[k] = 1.0
+
+    declared = wide.to_sdfg().symbols["k"]
+    assert declared != symbolic.DEFAULT_SYMBOL_TYPE and declared.bytes == 8
+
+
+def test_subset_symbols_agree_with_their_declaration():
+    """A memlet subset's symbol instances must carry the dtype the symbol table declares."""
+    sdfg = _plain.to_sdfg()
+    declared = sdfg.symbols["i"]
+    for key, instances in _subset_symbols(sdfg).items():
+        assert instances.get("i", declared) == declared, f"{key} holds a stale {instances['i']} `i`"
+
+
+def test_loading_does_not_retype_subset_symbols():
+    """Serialization resolves symbols against the declaring scope, so a load must not re-type instances."""
+    sdfg = _plain.to_sdfg()
+    before = _subset_symbols(sdfg)
+    after = _subset_symbols(dace.SDFG.from_json(json.loads(json.dumps(sdfg.to_json()))))
+    assert before == after
+
+
+def test_bare_serialization_is_stable_across_a_load():
+    """Rendering a symbol outside SDFG serialization (no scope authority) must not change across a load."""
+    sdfg = _plain.to_sdfg()
+    restored = dace.SDFG.from_json(json.loads(json.dumps(sdfg.to_json())))
+
+    def rendered(g):
+        return sorted(
+            symbolic.serialize_symbolic(symbolic.symbol(name, dtype))
+            for instances in _subset_symbols(g).values()
+            for name, dtype in instances.items()
+        )
+
+    assert rendered(sdfg) == rendered(restored)
 
 
 if __name__ == "__main__":

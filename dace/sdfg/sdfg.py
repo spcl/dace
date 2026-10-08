@@ -10,6 +10,7 @@ import json
 from hashlib import md5, sha256
 import pathlib
 import random
+import re
 import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
@@ -88,6 +89,9 @@ class NestedDict(dict):
         super(NestedDict, self).__init__(mapping)
 
     def __getitem__(self, key):
+        # Fast path: an unqualified name has no members to walk, and this is on every sdfg.arrays[...]
+        if type(key) is str and "." not in key:
+            return super(NestedDict, self).__getitem__(key)
         tokens = key.split(".") if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
@@ -102,6 +106,8 @@ class NestedDict(dict):
         super(NestedDict, self).__setitem__(key, val)
 
     def __contains__(self, key):
+        if type(key) is str and "." not in key:  # fast path, as in __getitem__
+            return super(NestedDict, self).__contains__(key)
         tokens = key.split(".") if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__contains__(token)
@@ -142,6 +148,9 @@ def _nested_arrays_from_json(obj, context=None):
 
 
 def _replace_dict_keys(d, old, new):
+    # Keys are names, but a replacement may be given as a symbolic expression
+    old = str(old)
+    new = str(new)
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
@@ -149,6 +158,11 @@ def _replace_dict_keys(d, old, new):
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
         d[new] = d[old]
+        del d[old]
+
+
+def _remove_dict_keys(d, old):
+    if old in d:
         del d[old]
 
 
@@ -254,10 +268,12 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
 class LogicalGroup(object):
     """Logical element groupings on a per-SDFG level."""
 
-    nodes = ListProperty(element_type=tuple, desc="Nodes in this group given by [State, Node] id tuples")
-    states = ListProperty(element_type=int, desc="States in this group given by their ids")
-    name = Property(dtype=str, desc="Logical group name")
-    color = Property(dtype=str, desc="Color for the group, given as a hexadecimal string")
+    nodes = ListProperty(
+        element_type=tuple, category="General", desc="Nodes in this group given by [State, Node] id tuples"
+    )
+    states = ListProperty(element_type=int, category="General", desc="States in this group given by their ids")
+    name = Property(dtype=str, category="General", desc="Logical group name")
+    color = Property(dtype=str, category="General", desc="Color for the group, given as a hexadecimal string")
 
     def __init__(self, name, color, nodes=[], states=[]):
         self.nodes = nodes
@@ -288,6 +304,7 @@ class InterstateEdge(object):
     assignments = DictProperty(
         key_type=str,
         value_type=str,
+        category="Semantics",
         desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
         # NOTE: We serialize assignments as symbolic expressions but store them as strings of CodeBlocks (mostly with
         #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
@@ -299,8 +316,8 @@ class InterstateEdge(object):
             }
         ),
     )
-    condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
-    guid = Property(dtype=str, allow_none=False)
+    condition = CodeProperty(category="Semantics", desc="Transition condition", default=CodeBlock("1"))
+    guid = Property(dtype=str, allow_none=False, category="(Debug)")
 
     def __init__(
         self,
@@ -456,17 +473,16 @@ class InterstateEdge(object):
             for name, new_name in repl.items():
                 _replace_dict_keys(self.assignments, name, new_name)
 
+        # Rewrite only what names a key: re-spelling the rest would drop the parsed condition and its caches.
         for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
-            newv = astutils.unparse(vast)
-            if newv != v:
-                self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace(repl).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+            replacer = astutils.ASTFindReplace(repl)
+            vast = replacer.visit(ast.parse(v))
+            if replacer.replace_count > 0:
+                self.assignments[k] = astutils.unparse(vast)
+        replacer = astutils.ASTFindReplace(repl)
+        condition = replacer.visit(ast.parse(self.condition.as_string))
+        if replacer.replace_count > 0:
+            self.condition.as_string = astutils.unparse(condition)
             self._uncond = None
             self._cond_sympy = None
 
@@ -486,9 +502,19 @@ class InterstateEdge(object):
         assignments) to their type.
         """
 
+        if not self.assignments:
+            return {}
+
         if sdfg is not None:
-            alltypes = copy.copy(symbols)
-            alltypes.update({k: v.dtype for k, v in sdfg.arrays.items()})
+            arrays = sdfg.arrays
+            if all(isinstance(v, str) for v in self.assignments.values()):
+                # Type inference only looks up the identifiers of an expression, so only the data containers named
+                # in the assignments are needed (layered over the symbols, without copying either)
+                names = set(re.findall(r"[A-Za-z_]\w*", " ".join(self.assignments.values())))
+                alltypes = collections.ChainMap({k: arrays[k].dtype for k in names if k in arrays}, symbols)
+            else:
+                alltypes = copy.copy(symbols)
+                alltypes.update({k: v.dtype for k, v in arrays.items()})
         else:
             alltypes = symbols
 
@@ -572,60 +598,76 @@ class SDFG(ControlFlowRegion):
     the `Memlet` class documentation.
     """
 
-    name = Property(dtype=str, desc="Name of the SDFG")
-    arg_names = ListProperty(element_type=str, desc="Ordered argument names (used for calling conventions).")
+    name = Property(dtype=str, category="General", desc="Name of the SDFG")
+    arg_names = ListProperty(
+        element_type=str, category="Frontend", desc="Ordered argument names (used for calling conventions)."
+    )
     constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
         dtype=dict,
         default={},
+        category="General",
         desc="Compile-time constants. The dictionary maps between a constant name to "
         "a tuple of its type and the actual constant data.",
     )
     _arrays = Property(
         dtype=NestedDict,
+        category="General",
         desc="Data descriptors for this SDFG",
         to_json=_arrays_to_json,
         from_json=_nested_arrays_from_json,
     )
-    symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
+    symbols = DictProperty(str, dtypes.typeclass, category="General", desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
 
-    global_code = DictProperty(str, CodeBlock, desc="Code generated in a global scope on the output files.")
-    init_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_init` function.")
-    exit_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
+    global_code = DictProperty(
+        str, CodeBlock, category="Code Generation", desc="Code generated in a global scope on the output files."
+    )
+    init_code = DictProperty(
+        str, CodeBlock, category="Code Generation", desc="Code generated in the `__dace_init` function."
+    )
+    exit_code = DictProperty(
+        str, CodeBlock, category="Code Generation", desc="Code generated in the `__dace_exit` function."
+    )
 
-    orig_sdfg = OptionalSDFGReferenceProperty(allow_none=True)
-    transformation_hist = TransformationHistProperty()
+    orig_sdfg = OptionalSDFGReferenceProperty(allow_none=True, category="(Debug)")
+    transformation_hist = TransformationHistProperty(category="(Debug)")
 
-    logical_groups = ListProperty(element_type=LogicalGroup, desc="Logical groupings of nodes and edges")
+    logical_groups = ListProperty(
+        element_type=LogicalGroup, category="General", desc="Logical groupings of nodes and edges"
+    )
 
     openmp_sections = Property(
         dtype=bool,
         default=Config.get_bool("compiler", "cpu", "openmp_sections"),
+        category="Scheduling",
         desc="Whether to generate OpenMP sections in code",
     )
 
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     callback_mapping = DictProperty(
         str,
         str,
+        category="Frontend",
         desc="Mapping between callback name and its original callback "
         "(for when the same callback is used with a different signature)",
     )
 
     using_explicit_control_flow = Property(
-        dtype=bool, default=False, desc="Whether the SDFG contains explicit control flow constructs"
+        dtype=bool, default=False, category="(Debug)", desc="Whether the SDFG contains explicit control flow constructs"
     )
 
     build_folder = Property(
         dtype=str,
         default=None,
         allow_none=True,
+        category="Code Generation",
         desc="Returns the path to the build cache folder for SDFG. For a in dept "
         "description see ``_sdfg_build_folder_getter()``.",
         serialize_if=lambda sdfg: sdfg._build_folder is not None,
@@ -872,7 +914,8 @@ class SDFG(ControlFlowRegion):
             nci["sdfg"] = ret
 
             block = dace.serialize.from_json(n, context=nci)
-            ret.add_node(block)
+            # Resetting the CFG list walks the whole SDFG, so it is done once below rather than per region
+            ret.add_node(block, reset_cfg_list=False)
             nodelist.append(block)
 
         for e in edges:
@@ -881,6 +924,8 @@ class SDFG(ControlFlowRegion):
 
         if "start_block" in json_obj:
             ret._start_block = json_obj["start_block"]
+
+        ret.reset_cfg_list()
 
         if "source_files" in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj["source_files"])
@@ -995,13 +1040,13 @@ class SDFG(ControlFlowRegion):
         """
 
         repldict = {k: v for k, v in repldict.items() if k != v}
-        if symrepl:
+        if symrepl is None:
+            symrepl = {
+                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+                for k, v in repldict.items()
+            }
+        else:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
-
-        symrepl = symrepl or {
-            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
-            for k, v in repldict.items()
-        }
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
@@ -1014,6 +1059,16 @@ class SDFG(ControlFlowRegion):
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
+                else:
+                    _remove_dict_keys(self._arrays, name)
+                    if name in self.symbols:
+                        old_sym = self.symbols[name]
+                        del self.symbols[name]
+                        new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
+                        self.symbols.update({str(s): old_sym for s in new_syms})
+
+                    _remove_dict_keys(self.constants_prop, name)
+                    _remove_dict_keys(self.callback_mapping, name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1618,9 +1673,10 @@ class SDFG(ControlFlowRegion):
         write_set = set()
         for state in self.states():
             # Get dictionaries of subsets read and written from each state
-            rs, ws = state._read_and_write_sets()
-            read_set |= rs.keys()
-            write_set |= ws.keys()
+            rs, ws = state._read_and_write_subsets()
+            # NOTE: ``set |= dict.keys()`` creates a new set, so the sets are updated in-place instead
+            read_set.update(rs.keys())
+            write_set.update(ws.keys())
 
         array_names = self.arrays.keys()
         for edge in self.all_interstate_edges():
@@ -2319,13 +2375,13 @@ class SDFG(ControlFlowRegion):
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members
-            #  of strictures.
+            #  of structures.
             # NOTES: If `find_new_name` is `True` and the name (understood as a sequence of
             #   any characters) is not used, i.e. `assert self.is_name_free(name)`, then it
             #   is still "cleaned", i.e. dots are replaced with underscores. However, if
             #   `find_new_name` is `False` then this cleaning is not applied and it is possible
             #   to create names that are formally invalid. The above code reproduces the exact
-            #   same behaviour and is maintained for  compatibility. This behaviour is
+            #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
             name = self._find_new_name(name)
             name = name.replace(".", "_")
@@ -3087,7 +3143,7 @@ class SDFG(ControlFlowRegion):
         permissive: bool = False,
         states: Optional[List[Any]] = None,
         print_report: Optional[bool] = None,
-        order_by_transformation: bool = True,
+        order_by_transformation: bool = False,
         progress: Optional[bool] = None,
     ) -> int:
         """This function repeatedly applies a transformation or a set of
@@ -3140,7 +3196,7 @@ class SDFG(ControlFlowRegion):
         permissive: bool = False,
         states: Optional[List[Any]] = None,
         print_report: Optional[bool] = None,
-        order_by_transformation: bool = True,
+        order_by_transformation: bool = False,
         progress: Optional[bool] = None,
     ) -> int:
         """

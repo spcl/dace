@@ -20,16 +20,29 @@ class Vectorization(transformation.SingleStateTransformation):
     to be equal to the length of the vector and vectorizes the memlets.
     """
 
-    vector_len = Property(desc="Vector length", dtype=int, default=4)
-    propagate_parent = Property(desc="Propagate vector length through parent SDFGs", dtype=bool, default=False)
+    vector_len = Property(category="Parameters", desc="Vector length", dtype=int, default=4)
+    propagate_parent = Property(
+        category="Parameters", desc="Propagate vector length through parent SDFGs", dtype=bool, default=False
+    )
     strided_map = Property(
-        desc="Use strided map range (jump by vector length) instead of modifying memlets", dtype=bool, default=True
+        category="Parameters",
+        desc="Use strided map range (jump by vector length) instead of modifying memlets",
+        dtype=bool,
+        default=True,
     )
     preamble = Property(
-        dtype=bool, default=None, allow_none=True, desc="Force creation or skipping a preamble map without vectors"
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="Parameters",
+        desc="Force creation or skipping a preamble map without vectors",
     )
     postamble = Property(
-        dtype=bool, default=None, allow_none=True, desc="Force creation or skipping a postamble map without vectors"
+        dtype=bool,
+        default=None,
+        allow_none=True,
+        category="Parameters",
+        desc="Force creation or skipping a postamble map without vectors",
     )
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -49,7 +62,7 @@ class Vectorization(transformation.SingleStateTransformation):
         if not isinstance(tasklet, nodes.Tasklet):
             return False
 
-        param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
+        param = map_entry.map.params[-1]
         found = False
 
         # Strided maps cannot be vectorized
@@ -82,7 +95,7 @@ class Vectorization(transformation.SingleStateTransformation):
                         for ex in expr:
                             ex = symbolic.pystr_to_symbolic(ex)
                             symbols = ex.free_symbols
-                            if param in symbols:
+                            if any(str(sym) == param for sym in symbols):
                                 if array.strides[idx] == 1:
                                     found = True
                                 else:
@@ -90,7 +103,7 @@ class Vectorization(transformation.SingleStateTransformation):
                     else:
                         expr = symbolic.pystr_to_symbolic(expr)
                         symbols = expr.free_symbols
-                        if param in symbols:
+                        if any(str(sym) == param for sym in symbols):
                             if array.strides[idx] == 1:
                                 found = True
                             else:
@@ -113,14 +126,14 @@ class Vectorization(transformation.SingleStateTransformation):
         if self.preamble is not None:
             create_preamble = self.preamble
         else:
-            create_preamble = not ((dim_from % vector_size == 0) == True or dim_from == 0)
+            create_preamble = not symbolic.is_multiple(dim_from, vector_size)
         if self.postamble is not None:
             create_postamble = self.postamble
         else:
             if isinstance(dim_to, symbolic.SymExpr):
-                create_postamble = ((dim_to.approx + 1) % vector_size == 0) == False
+                create_postamble = not symbolic.is_multiple(dim_to.approx + 1, vector_size)
             else:
-                create_postamble = ((dim_to + 1) % vector_size == 0) == False
+                create_postamble = not symbolic.is_multiple(dim_to + 1, vector_size)
 
         # Determine new range for vectorized map
         if self.strided_map:

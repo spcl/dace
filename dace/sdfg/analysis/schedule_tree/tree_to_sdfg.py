@@ -7,11 +7,11 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final, Sequence
 
-from dace import symbolic
+from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, SDFGState, LoopRegion
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 
@@ -85,23 +85,17 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = start_state
         """Current SDFGState in the SDFG that we are building."""
 
-        self._current_nestedSDFG: int | None = None
-        """Id of the current nested SDFG if we are inside one."""
-
         self._known_data_outside_nestedSDFG: set[str] | None = None
         """In case we are inside a nested SDFG, this list previously accessed data (arrays and scalars) outside the nestedSDFG."""
 
         self._interstate_symbols: list[tn.AssignNode] = []
         """Interstate symbol assignments. Will be assigned with the next state transition."""
 
-        self._nviews_free: list[tn.NView] = []
-        """Keep track of NView (nested SDFG view) nodes that are "free" to be used."""
+        self._views: dict[str, tn.ViewNode] = {}
+        """Mapping of view container name -> ViewNode that defines the view."""
 
-        self._nviews_bound_per_scope: dict[int, list[tn.NView]] = {}
-        """Mapping of id(SDFG) -> list of active NView nodes in that SDFG."""
-
-        self._nviews_deferred_removal: dict[int, list[tn.NView]] = {}
-        """"Mapping of id(SDFG) -> list of NView nodes to be removed once we exit this nested SDFG."""
+        self._dynamic_scope_inputs: list[tn.DynScopeCopyNode] = []
+        """Dynamic scope inputs (e.g., dynamic map ranges) of the next dataflow scope."""
 
         # state management
         self._state_stack: list[SDFGState] = []
@@ -113,29 +107,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         ] = []
 
         self._max_nested_sdfg = max_nested_sdfg
-
-    def _apply_nview_array_override(self, array_name: str, sdfg: SDFG) -> bool:
-        """
-        Apply an NView override if applicable. Returns true if the NView was applied.
-
-        See `visit_NView()` for how we keep track of nested SDFG view nodes.
-        """
-        length = len(self._nviews_free)
-        for index, nview in enumerate(reversed(self._nviews_free), start=1):
-            if nview.target == array_name and nview not in self._nviews_deferred_removal[id(sdfg)]:
-                # Add the "override" data descriptor
-                sdfg.add_datadesc(nview.target, nview.view_desc.clone())
-                if nview.src_desc.transient:
-                    sdfg.arrays[nview.target].transient = False
-
-                # Keep track of used NViews per scope (to "free" them again once the scope ends)
-                self._nviews_bound_per_scope[id(sdfg)].append(nview)
-
-                # This NView is in use now, remove it from the free NViews.
-                del self._nviews_free[length - index]
-                return True
-
-        return False
 
     def _parent_sdfg_with_array(self, name: str, sdfg: SDFG) -> SDFG:
         """Find the closest parent SDFG containing an array with the given name."""
@@ -208,15 +179,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = self._parent_sdfg_with_array(memlet.data, sdfg)
 
-                        # Support for NView nodes
-                        use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                        if not use_nview:
-                            sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-                            # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                            if parent_sdfg.arrays[memlet.data].transient:
-                                sdfg.arrays[memlet.data].transient = False
+                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
+                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                        if parent_sdfg.arrays[memlet.data].transient:
+                            sdfg.arrays[memlet.data].transient = False
 
-                        # Dev note: nview.target and memlet.data are identical
                         assert memlet.data not in to_connect["inputs"]
                         to_connect["inputs"].add(memlet.data)
 
@@ -231,16 +198,19 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             if memlet.data not in sdfg.arrays:
                 raise ValueError(f"Parsing AssignNode {node} failed. Can't find {memlet.data} in {sdfg}.")
 
-    def _loop_state_name_prefix(self, node: tn.ForScope | tn.WhileScope) -> str:
+    def _loop_state_name_prefix(self, node: tn.LoopScope) -> str:
         if isinstance(node, tn.ForScope):
             return "for"
 
         if isinstance(node, tn.WhileScope):
             return "while"
 
-        raise NotImplementedError(f"Loop state name prefix not implemented for loop of type {type(node)}.")
+        if isinstance(node, tn.DoWhileScope):
+            return "do_while"
 
-    def _add_loop_region(self, node: tn.ForScope | tn.WhileScope, sdfg: SDFG) -> None:
+        return "loop"
+
+    def _add_loop_region(self, node: tn.LoopScope, sdfg: SDFG) -> None:
         current_state = self._current_state
         assert current_state is not None  # just to keep pyright happy
         cf_region = current_state.parent_graph
@@ -279,10 +249,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._add_loop_region(node, sdfg)
 
     def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        self._add_loop_region(node, sdfg)
 
     def visit_LoopScope(self, node: tn.LoopScope, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # General loops (e.g., do-for loops) are fully described by their loop region properties
+        self._add_loop_region(node, sdfg)
 
     def _ensure_data_descriptors(self, memlets: Sequence[Memlet], sdfg: SDFG) -> None:
         scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
@@ -292,15 +263,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 if memlet.data not in sdfg.arrays:
                     parent_sdfg = self._parent_sdfg_with_array(memlet.data, sdfg)
 
-                    # Support for  NView nodes
-                    use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[memlet.data].transient:
-                            sdfg.arrays[memlet.data].transient = False
+                    sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
+                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                    if parent_sdfg.arrays[memlet.data].transient:
+                        sdfg.arrays[memlet.data].transient = False
 
-                    # Dev note: memlet.data and nview.target are identical
                     assert memlet.data not in to_connect["inputs"]
                     to_connect["inputs"].add(memlet.data)
 
@@ -342,16 +309,30 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             assignments=self._pending_interstate_assignments(),
         )
 
-        # Check if there's an `ElseScope` following this node (in the parent's children).
+        self._process_next_conditional_block(node, conditional_block, merge_state)
+
+    def _process_next_conditional_block(
+        self, node: tn.ControlFlowScope, conditional_block: ConditionalBlock, merge_state: SDFGState
+    ) -> None:
+        """
+        Prepares the next branch of a conditional block after visiting the branch of ``node``.
+
+        If an ``ElifScope`` or ``ElseScope`` follows ``node`` in its parent's children, the merge state and the
+        conditional block are pushed onto the state stack for that branch. Otherwise, the merge state becomes the
+        current state.
+
+        :param node: The if or elif scope whose branch was visited.
+        :param conditional_block: The conditional block of the branch.
+        :param merge_state: The state after the conditional block.
+        """
         # Filter StateBoundaryNodes, which we inserted earlier, for this analysis.
         filtered = [n for n in node.parent.children if not isinstance(n, tn.StateBoundaryNode)]
-        if_index = _list_index(filtered, node)
-        has_else_branch = len(filtered) > if_index + 1 and isinstance(filtered[if_index + 1], tn.ElseScope)
+        index = _list_index(filtered, node)
+        has_next_branch = len(filtered) > index + 1 and isinstance(filtered[index + 1], (tn.ElifScope, tn.ElseScope))
 
-        if has_else_branch:
-            # push merge_state on the stack for later usage in `visit_ElseScope`
+        if has_next_branch:
+            # push merge_state and condition_block on the stack for later usage in `visit_ElifScope`/`visit_ElseScope`
             self._state_stack.append(merge_state)
-            # push condition_block on the stack for later usage in `visit_ElseScope`
             self._state_stack.append(conditional_block)
         else:
             self._current_state = merge_state
@@ -359,14 +340,44 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def visit_StateIfScope(self, node: tn.StateIfScope, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
+    def _add_loop_control_block(self, block: BreakBlock | ContinueBlock) -> None:
+        """
+        Adds a break or continue block after the current state. Statements that follow it in the same scope are
+        unreachable and are placed into a new state after the block.
+
+        :param block: The break or continue block to add.
+        """
+        cf_region = self._current_state.parent_graph
+        cf_region.add_node(block, ensure_unique_name=True)
+        _insert_and_split_assignments(self._current_state, block, assignments=self._pending_interstate_assignments())
+        self._current_state = _insert_and_split_assignments(block, label=f"after_{block.label}")
+
     def visit_BreakNode(self, node: tn.BreakNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        self._add_loop_control_block(BreakBlock(f"break_{id(node)}"))
 
     def visit_ContinueNode(self, node: tn.ContinueNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        self._add_loop_control_block(ContinueBlock(f"continue_{id(node)}"))
 
     def visit_ElifScope(self, node: tn.ElifScope, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # get ConditionalBlock and merge state from stack
+        conditional_block: ConditionalBlock = self._pop_state("if_scope")
+        merge_state = self._pop_state("merge_state")
+
+        elif_body = ControlFlowRegion("elif_body", sdfg=sdfg)
+        conditional_block.add_branch(node.condition, elif_body)
+
+        memlets = conditional_block.get_meta_read_memlets(self._ctx.root.containers, include_scalars=True)
+        self._ensure_data_descriptors(memlets, sdfg)
+
+        self._current_state = elif_body.add_state("elif_state", is_start_block=True)
+
+        # visit children inside the elif branch
+        self.visit(node.children, sdfg=sdfg)
+
+        if self._pending_interstate_assignments():
+            raise NotImplementedError("TODO: update edge with new assignments")
+
+        self._process_next_conditional_block(node, conditional_block, merge_state)
 
     def visit_ElseScope(self, node: tn.ElseScope, sdfg: SDFG) -> None:
         # get ConditionalBlock from stack
@@ -391,7 +402,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def _insert_nestedSDFG_in_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
-        outer_nestedSDFG = self._current_nestedSDFG
         outer_known_data = self._known_data_outside_nestedSDFG
 
         self._known_data_outside_nestedSDFG = set()
@@ -407,9 +417,6 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         old_state_label = self._current_state.label
         self._state_stack.append(self._current_state)
         self._dataflow_stack.append((inner_sdfg, {"inputs": set(), "outputs": set()}))
-        self._nviews_bound_per_scope[id(inner_sdfg)] = []
-        self._nviews_deferred_removal[id(inner_sdfg)] = []
-        self._current_nestedSDFG = id(inner_sdfg)
         self._current_state = start_state
 
         # visit children
@@ -440,20 +447,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             assert new_in_connector == True
             assert new_in_connector == new_out_connector
 
-            # Add Memlet for NView node (if applicable)
-            edge_added = False
-            for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
-                if name == nview.target:
-                    self._current_state.add_edge(
-                        map_entry, out_connector, nsdfg, name, Memlet.from_memlet(nview.memlet)
-                    )
-                    edge_added = True
-                    break
-
-            if not edge_added:
-                self._current_state.add_edge(
-                    map_entry, out_connector, nsdfg, name, Memlet.from_array(name, nsdfg.sdfg.arrays[name])
-                )
+            self._current_state.add_edge(
+                map_entry, out_connector, nsdfg, name, Memlet.from_array(name, nsdfg.sdfg.arrays[name])
+            )
 
         # Add empty memlet if we didn't add any in the loop above
         if self._current_state.out_degree(map_entry) < 1:
@@ -461,31 +457,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # connect nsdfg output memlets (to be propagated)
         for name in nsdfg.out_connectors:
-            # Add memlets for NView node (if applicable)
-            edge_added = False
-            for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
-                if name == nview.target:
-                    to_connect[name] = (nsdfg, Memlet.from_memlet(nview.memlet))
-                    edge_added = True
-                    break
-
-            if not edge_added:
-                to_connect[name] = (nsdfg, Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
-
-        # Move NViews back to "free" NViews for usage in a sibling scope.
-        for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
-            # If this NView ended in the current nested SDFG, don't add it back to the
-            # "free NView" nodes. We need to keep it alive until here to make sure that
-            # we can add the memlets above.
-            if nview in self._nviews_deferred_removal[id(inner_sdfg)]:
-                continue
-            self._nviews_free.append(nview)
-
-        del self._nviews_bound_per_scope[id(inner_sdfg)]
-        del self._nviews_deferred_removal[id(inner_sdfg)]
+            to_connect[name] = (nsdfg, Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
 
         # Restore current nested SDFG
-        self._current_nestedSDFG = outer_nestedSDFG
         self._known_data_outside_nestedSDFG = outer_known_data
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
@@ -496,6 +470,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # ---------
         map_entry = nodes.MapEntry(node.node.map)
         self._current_state.add_node(map_entry)
+
+        # connect dynamic map range inputs, which are read outside of the map
+        for dynamic_input in self._dynamic_scope_inputs:
+            map_entry.add_in_connector(dynamic_input.target)
+            source, source_conn = self._read_source(dynamic_input.memlet.data, sdfg)
+            self._current_state.add_edge(
+                source, source_conn, map_entry, dynamic_input.target, copy.deepcopy(dynamic_input.memlet)
+            )
+        self._dynamic_scope_inputs.clear()
+
         self._dataflow_stack.append((map_entry, dict()))
 
         # visit children inside the map
@@ -525,6 +509,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # connect potential input connectors on map_entry
         for connector in map_entry.in_connectors:
+            if not connector.startswith(PREFIX_PASSTHROUGH_IN):
+                continue  # dynamic map range inputs are already connected
             memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
 
             # connect to local access node (if available)
@@ -569,15 +555,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     if memlet_data not in sdfg.arrays:
                         parent_sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
 
-                        # Add support for NView nodes
-                        use_nview = self._apply_nview_array_override(memlet_data, sdfg)
-                        if not use_nview:
-                            sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
-                            # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                            if parent_sdfg.arrays[memlet_data].transient:
-                                sdfg.arrays[memlet_data].transient = False
+                        sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
+                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                        if parent_sdfg.arrays[memlet_data].transient:
+                            sdfg.arrays[memlet_data].transient = False
 
-                        # Dev note: nview.target and memlet_data are identical
                         outer_to_connect["inputs"].add(memlet_data)
 
                     # Add in_connector in case of read after write of "outside data"
@@ -646,17 +628,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 if name not in sdfg.arrays:
                     parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
 
-                    # Support for NView nodes
-                    use_nview = self._apply_nview_array_override(name, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[name].transient:
-                            sdfg.arrays[name].transient = False
+                    sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
+                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                    if parent_sdfg.arrays[name].transient:
+                        sdfg.arrays[name].transient = False
 
                 # Add out connector in any case because we don't know who (if anyone)
                 # is gonna read from it down the line.
-                # Dev not: name and nview.target are identical
                 outer_to_connect["outputs"].add(name)
 
             # connect "outside the map"
@@ -691,179 +669,220 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
-    def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
-        # Add Tasklet to current state
-        tasklet = node.node
-        self._current_state.add_node(tasklet)
-
+    def _local_access_cache(self) -> dict[str, nodes.AccessNode]:
+        """Returns the access node cache of the current state and tree scope."""
         cache_key = (self._current_state, id(self._ctx.current_scope))
         if cache_key not in self._ctx.access_cache:
             self._ctx.access_cache[cache_key] = {}
-        cache = self._ctx.access_cache[cache_key]
+        return self._ctx.access_cache[cache_key]
+
+    def _read_source(self, name: str, sdfg: SDFG) -> tuple[nodes.Node, str | None]:
+        """
+        Returns the node and output connector that provide the data container ``name`` for reading in the current
+        state and dataflow scope. Creates access nodes, map pass-through connectors, and nested SDFG inputs as
+        necessary.
+
+        :param name: The name of the data container to read.
+        :param sdfg: The SDFG that is currently being built.
+        :return: A tuple of the source node and its output connector.
+        """
+        cache = self._local_access_cache()
         scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
 
-        # Connect input memlets
-        for name, memlet in node.in_memlets.items():
-            # connect to local access node if possible
-            if memlet.data in cache:
-                cached_access = cache[memlet.data]
-                self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
-                continue
+        # Views are materialized in the scope they are used in, viewing their (pass-through) source
+        if name in self._views:
+            return self._add_view_access(name, sdfg, is_write=False), None
 
-            if isinstance(scope_node, nodes.MapEntry):
-                # get it from outside the map
-                connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}"
-                if connector_name not in scope_node.out_connectors:
-                    new_in_connector = scope_node.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
-                    new_out_connector = scope_node.add_out_connector(connector_name)
-                    assert new_in_connector == True
-                    assert new_in_connector == new_out_connector
+        # connect to local access node if possible
+        if name in cache:
+            return cache[name], None
 
-                self._current_state.add_edge(scope_node, connector_name, tasklet, name, memlet)
-                continue
+        if isinstance(scope_node, nodes.MapEntry):
+            # get it from outside the map
+            connector_name = f"{PREFIX_PASSTHROUGH_OUT}{name}"
+            if connector_name not in scope_node.out_connectors:
+                new_in_connector = scope_node.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{name}")
+                new_out_connector = scope_node.add_out_connector(connector_name)
+                assert new_in_connector == True
+                assert new_in_connector == new_out_connector
+            return scope_node, connector_name
 
-            if isinstance(scope_node, SDFG):
-                # Copy data descriptor from parent SDFG and add input connector
-                if memlet.data not in sdfg.arrays:
-                    parent_sdfg = self._parent_sdfg_with_array(memlet.data, sdfg)
+        if isinstance(scope_node, SDFG):
+            # Copy data descriptor from parent SDFG and add input connector
+            if name not in sdfg.arrays:
+                parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
 
-                    # Support for  NView nodes
-                    use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[memlet.data].transient:
-                            sdfg.arrays[memlet.data].transient = False
+                sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
 
-                    # Dev note: memlet.data and nview.target are identical
-                    to_connect["inputs"].add(memlet.data)
+                # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                if parent_sdfg.arrays[name].transient:
+                    sdfg.arrays[name].transient = False
 
-                # Add in_connector in case of read after (partial) write of "outside data"
-                if memlet.data in self._known_data_outside_nestedSDFG:
-                    to_connect["inputs"].add(memlet.data)
+                to_connect["inputs"].add(name)
+
+            # Add in_connector in case of read after (partial) write of "outside data"
+            if name in self._known_data_outside_nestedSDFG:
+                to_connect["inputs"].add(name)
+        else:
+            assert scope_node is None
+
+        # cache local read access
+        cache[name] = self._current_state.add_read(name)
+        return cache[name], None
+
+    def _connect_output(self, src: nodes.Node, src_conn: str | None, name: str, memlet: Memlet, sdfg: SDFG) -> None:
+        """
+        Connects a node in the current state to the data container ``name`` it writes to, creating access nodes and
+        registering map / nested SDFG outputs as necessary.
+
+        :param src: The node writing the data.
+        :param src_conn: The output connector of ``src``.
+        :param name: The name of the written data container.
+        :param memlet: The memlet on the edge from ``src`` to the written container.
+        :param sdfg: The SDFG that is currently being built.
+        """
+        cache = self._local_access_cache()
+        scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
+
+        # Writes to views go through a new view access node that writes into the view's source
+        if name in self._views:
+            view_access = self._add_view_access(name, sdfg, is_write=True)
+            self._current_state.add_edge(src, src_conn, view_access, None, memlet)
+            return
+
+        # only re-use cached write-only nodes, e.g. don't create a cycle for
+        # A[1] = tasklet(A[1]) or A[1] = copy A[0]
+        if name not in cache or cache[name] is src or self._current_state.out_degree(cache[name]) > 0:
+            # cache write access node
+            write_access_node = self._current_state.add_write(name)
+            cache[name] = write_access_node
+
+        access_node = cache[name]
+        self._current_state.add_memlet_path(src, access_node, src_conn=src_conn, memlet=memlet)
+
+        if isinstance(scope_node, nodes.MapEntry):
+            # copy the memlet since we already used it in the memlet path above
+            if memlet.data == name:
+                to_connect[name] = (access_node, copy.deepcopy(memlet))
             else:
-                assert scope_node is None
+                # Copy memlets refer to their source container, describe the written subset instead
+                if memlet.other_subset is not None:
+                    subset = copy.deepcopy(memlet.other_subset)
+                else:
+                    subset = subsets.Range.from_array(self._ctx.root.containers[name])
+                to_connect[name] = (access_node, Memlet(data=name, subset=subset))
+            return
 
-            # cache local read access
-            assert memlet.data not in cache
-            cache[memlet.data] = self._current_state.add_read(memlet.data)
-            cached_access = cache[memlet.data]
-            self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
+        if isinstance(scope_node, SDFG):
+            if name not in sdfg.arrays:
+                parent_sdfg: SDFG = self._parent_sdfg_with_array(name, sdfg)
 
-        # Add empty memlet if this tasklet is a source node
-        if isinstance(scope_node, nodes.MapEntry) and not node.in_memlets:
-            self._current_state.add_nedge(scope_node, tasklet, Memlet())
+                sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
 
-        # Connect output memlets
-        for name, memlet in node.out_memlets.items():
-            # only re-use cached write-only nodes, e.g. don't create a cycle for
-            # A[1] = tasklet(A[1])
-            if memlet.data not in cache or self._current_state.out_degree(cache[memlet.data]) > 0:
-                # cache write access node
-                write_access_node = self._current_state.add_write(memlet.data)
-                cache[memlet.data] = write_access_node
+                # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                if parent_sdfg.arrays[name].transient:
+                    sdfg.arrays[name].transient = False
 
-            access_node = cache[memlet.data]
-            self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
+            # Add out connector in any case because we don't know who (if anyone)
+            # is gonna read from it down the line.
+            to_connect["outputs"].add(name)
+        else:
+            assert scope_node is None
 
-            if isinstance(scope_node, nodes.MapEntry):
-                # copy the memlet since we already used it in the memlet path above
-                to_connect[memlet.data] = (access_node, copy.deepcopy(memlet))
-                continue
+    def _add_view_access(self, name: str, sdfg: SDFG, is_write: bool) -> nodes.AccessNode:
+        """
+        Adds an access node of a view to the current state and connects it to the viewed container.
 
-            if isinstance(scope_node, SDFG):
-                if memlet.data not in sdfg.arrays:
-                    parent_sdfg: SDFG = self._parent_sdfg_with_array(memlet.data, sdfg)
+        Reading views get an incoming ``views`` edge, writing views an outgoing one. The viewed container is accessed
+        like any other container, which resolves views of views and passes the container through surrounding maps
+        and nested SDFGs. View access nodes are not cached, such that every access observes the latest write to the
+        viewed container.
 
-                    # Support for NView nodes
-                    use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[memlet.data].transient:
-                            sdfg.arrays[memlet.data].transient = False
+        :param name: The name of the view container.
+        :param sdfg: The SDFG that is currently being built.
+        :param is_write: True if the view is written to, False if it is read.
+        :return: The new view access node.
+        """
+        view = self._views[name]
+        if name not in sdfg.arrays:
+            # The view is defined outside of the nested SDFG that is being built, re-create it in there
+            sdfg.add_datadesc(name, view.view_desc.clone())
+        view_access = self._current_state.add_access(name)
+        if is_write:
+            self._connect_output(view_access, "views", view.source, copy.deepcopy(view.memlet), sdfg)
+        else:
+            source, source_conn = self._read_source(view.source, sdfg)
+            self._current_state.add_edge(source, source_conn, view_access, "views", copy.deepcopy(view.memlet))
+        return view_access
 
-                # Add out connector in any case because we don't know who (if anyone)
-                # is gonna read from it down the line.
-                # Dev note: memlet.data and nview.target are identical
-                to_connect["outputs"].add(memlet.data)
-            else:
-                assert scope_node is None
+    def _add_code_node(
+        self,
+        code_node: nodes.CodeNode,
+        in_memlets: dict[str, Memlet] | set[Memlet],
+        out_memlets: dict[str, Memlet] | set[Memlet],
+        sdfg: SDFG,
+    ) -> None:
+        """
+        Adds a code node (tasklet or library node) to the current state and connects its inputs and outputs.
 
-        # Add empty memlet if this tasklet is a sink node
-        if isinstance(scope_node, nodes.MapEntry) and not node.out_memlets:
-            to_connect[f"tasklet_{id(tasklet)}"] = (tasklet, Memlet())
+        :param code_node: The code node to add.
+        :param in_memlets: The input memlets per connector, or a set of memlets for connector-less nodes.
+        :param out_memlets: The output memlets per connector, or a set of memlets for connector-less nodes.
+        :param sdfg: The SDFG that is currently being built.
+        """
+        self._current_state.add_node(code_node)
+        scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
+        inputs = in_memlets.items() if isinstance(in_memlets, dict) else [(None, memlet) for memlet in in_memlets]
+        outputs = out_memlets.items() if isinstance(out_memlets, dict) else [(None, memlet) for memlet in out_memlets]
+
+        for name, memlet in inputs:
+            source, source_conn = self._read_source(memlet.data, sdfg)
+            self._current_state.add_edge(source, source_conn, code_node, name, memlet)
+
+        # Add empty memlet if this code node is a source node
+        if isinstance(scope_node, nodes.MapEntry) and not in_memlets:
+            self._current_state.add_nedge(scope_node, code_node, Memlet())
+
+        for name, memlet in outputs:
+            self._connect_output(code_node, name, memlet.data, memlet, sdfg)
+
+        # Add empty memlet if this code node is a sink node
+        if isinstance(scope_node, nodes.MapEntry) and not out_memlets:
+            to_connect[f"tasklet_{id(code_node)}"] = (code_node, Memlet())
+
+    def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
+        self._add_code_node(node.node, node.in_memlets, node.out_memlets, sdfg)
 
     def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        self._add_code_node(node.node, node.in_memlets, node.out_memlets, sdfg)
 
     def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
-        # ensure we have an access_cache and fetch it
-        cache_key = (self._current_state, id(self._ctx.current_scope))
-        if cache_key not in self._ctx.access_cache:
-            self._ctx.access_cache[cache_key] = {}
-        access_cache = self._ctx.access_cache[cache_key]
-
-        # both, source and target nodes, may or may not exist (in this state)
-        src_name = node.memlet.data
-        if src_name not in access_cache:
-            # cache new read access
-            source_access_node = self._current_state.add_read(src_name)
-            access_cache[src_name] = source_access_node
-        source = access_cache[src_name]
-
-        target_name = node.target
-        # only re-use cached write-only nodes, e.g. don't create a cycle for
-        # field[5, 0, 0:73] = copy field[0, 0, 0:73]
-        if (
-            target_name not in access_cache
-            or self._current_state.out_degree(access_cache[target_name]) > 0
-            or src_name == target_name
-        ):
-            # cache new write access node
-            target_access_node = self._current_state.add_write(node.target)
-            access_cache[node.target] = target_access_node
-        target = access_cache[node.target]
-
-        self._current_state.add_memlet_path(source, target, memlet=node.memlet)
+        source, source_conn = self._read_source(node.memlet.data, sdfg)
+        self._connect_output(source, source_conn, node.target, node.memlet, sdfg)
 
     def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # Connected to the entry node of the following dataflow scope, see ``visit_MapScope``
+        self._dynamic_scope_inputs.append(node)
 
     def visit_ViewNode(self, node: tn.ViewNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
-
-    def visit_NView(self, node: tn.NView, sdfg: SDFG) -> None:
-        # Basic working principle:
-        #
-        # - NView and (artificial) NViewEnd nodes are added in parallel to mark the region where the view applies.
-        # - Keep a stack of NView nodes (per name) that is pushed/popped when NView and NViewEnd nodes are visited.
-        # - In between, when going "down into" a NestedSDFG, use the current NView (if it applies)
-        # - In between, when "coming back up" from a NestedSDFG, pop the NView from the stack.
-        # - AccessNodes will automatically pick up the right name (from the NestedSDFG's array list)
-        self._nviews_free.append(node)
-
-    def visit_NViewEnd(self, node: tn.NViewEnd, sdfg: SDFG) -> None:
-        # If bound to the current nested SDFG, defer cleanup
-        if self._current_nestedSDFG is not None:
-            currently_bound = self._nviews_bound_per_scope[self._current_nestedSDFG]
-            for index, nview in enumerate(reversed(currently_bound)):
-                if node.target == nview.target:
-                    # Bound to current nested SDFG. Slate for deferred removal once we exit that nested SDFG.
-                    self._nviews_deferred_removal[self._current_nestedSDFG].append(nview)
-                    return
-
-        length = len(self._nviews_free)
-        for index, nview in enumerate(reversed(self._nviews_free), start=1):
-            if node.target == nview.target:
-                # Stack semantics: remove from the back of the list
-                del self._nviews_free[length - index]
-                return
-
-        raise RuntimeError(f"No matching NView found for target {node.target} in {self._nviews_free}.")
+        # Views are connected lazily: every read or write of ``node.target`` creates a view access node that is
+        # connected to ``node.source`` in the state and scope of that access (see ``_add_view_access``).
+        self._views[node.target] = node
 
     def visit_RefSetNode(self, node: tn.RefSetNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        if isinstance(node.src_desc, nodes.CodeNode):
+            raise NotImplementedError("Setting references from code nodes is not yet supported.")
+
+        if node.target not in sdfg.arrays:
+            # The reference is set inside the nested SDFG that is being built
+            sdfg.add_datadesc(node.target, self._ctx.root.containers[node.target].clone())
+
+        source, source_conn = self._read_source(node.memlet.data, sdfg)
+        ref_access = self._current_state.add_access(node.target)
+        self._current_state.add_edge(source, source_conn, ref_access, "set", copy.deepcopy(node.memlet))
+
+        # Subsequent reads of the reference in this state and scope depend on the reference set
+        self._local_access_cache()[node.target] = ref_access
 
     def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
         # When creating a state boundary, include all inter-state assignments that precede it.
@@ -914,6 +933,13 @@ def from_schedule_tree(
 
     # Traverse tree and incrementally build SDFG, finally propagate memlets
     _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs).visit(stree, sdfg=result)
+
+    # Memlet directions (src/dst subsets) are determined when edges are added. Scope pass-through edges are
+    # connected later than the edges inside the scope, so re-initialize them before propagation.
+    for nested_sdfg in result.all_sdfgs_recursive():
+        for state in nested_sdfg.states():
+            for edge in state.edges():
+                edge.data.try_initialize(nested_sdfg, state, edge)
     propagation.propagate_memlets_sdfg(result)
 
     return result
@@ -991,70 +1017,118 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
     return stree
 
 
-def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
+def _view_source_memlets(memlets: Sequence[Memlet], views: dict[str, Memlet]) -> list[Memlet]:
+    """
+    Replaces memlets on views with memlets on the containers they view.
+
+    :param memlets: The memlets to resolve.
+    :param views: A mapping from view names to a memlet on the viewed container, covering the entire view.
+    :return: The resolved memlets.
+    """
+    result = []
+    for memlet in memlets:
+        visited = set()
+        while memlet.data in views and memlet.data not in visited:
+            visited.add(memlet.data)
+            memlet = views[memlet.data]
+        result.append(memlet)
+    return result
+
+
+def _unordered_access(
+    accesses: mmu.MemletDict[list[tn.ScheduleTreeNode]], memlet: Memlet, ordered_before: set[int]
+) -> bool:
+    """
+    Returns whether a previous access in the current state to the data in ``memlet`` might be performed in parallel
+    with the node being registered.
+
+    :param accesses: The reads or writes performed so far in the current state.
+    :param memlet: The memlet accessed by the node being registered.
+    :param ordered_before: IDs of the nodes ordered before the node being registered through the dataflow.
+    :return: True if an access to ``memlet`` exists that is not ordered before the node.
+    """
+    return memlet in accesses and any(id(a) not in ordered_before for a in accesses[memlet])
+
+
+def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope, views: dict[str, Memlet] | None = None):
     """
     Helper function that inserts boundaries after unmet memory dependencies.
+
+    Accesses to views are treated as accesses to the entire viewed subset of their source containers, such that
+    aliasing reads and writes are detected.
+
+    :param scope: The scope to insert state boundaries in.
+    :param views: Views defined before this scope, mapping view names to memlets on the viewed containers.
     """
     reads: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
     writes: mmu.MemletDict[list[tn.ScheduleTreeNode]] = mmu.MemletDict()
     parents: dict[int, set[int]] = defaultdict(set)
     boundaries_to_insert: list[int] = []
+    views = dict(views) if views is not None else {}
 
     for i, n in enumerate(scope.children):
+        # Views do not move data, but define an alias for subsequent nodes
+        if type(n) is tn.ViewNode:
+            views[n.target] = Memlet(data=n.source, subset=copy.deepcopy(n.memlet.subset))
+            continue
+
         if isinstance(n, (tn.StateBoundaryNode, tn.ControlFlowScope)):  # Clear state
             reads.clear()
             writes.clear()
             parents.clear()
             if isinstance(n, tn.ControlFlowScope):  # Insert memory boundaries recursively
-                _insert_memory_dependency_state_boundaries(n)
+                _insert_memory_dependency_state_boundaries(n, views)
             continue
 
         # If dataflow scope, insert state boundaries recursively and as a node
+        scope_views = views
         if isinstance(n, tn.DataflowScope):
-            _insert_memory_dependency_state_boundaries(n)
+            _insert_memory_dependency_state_boundaries(n, views)
 
-        inputs = n.input_memlets()
-        outputs = n.output_memlets()
+            # Views defined inside the scope may depend on its parameters, assume the entire source is accessed
+            scope_views = dict(views)
+            containers = scope.get_root().containers
+            for child in n.preorder_traversal():
+                if type(child) is tn.ViewNode and child.source in containers:
+                    scope_views[child.target] = Memlet.from_array(child.source, containers[child.source])
 
-        # Register reads
+        inputs = _view_source_memlets(n.input_memlets(), scope_views)
+        outputs = _view_source_memlets(n.output_memlets(), scope_views)
+
+        # Nodes that write this node's inputs (transitively) are ordered before it in the state
+        node_parents: set[int] = set()
+        for inp in inputs:
+            if inp in writes:
+                for parent in writes[inp]:
+                    node_parents.add(id(parent))
+                    node_parents.update(parents[id(parent)])
+
+        if isinstance(n, tn.AssignNode):
+            # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
+            hazard = any(inp in writes for inp in inputs)
+        else:
+            # Potential write/write or read/write data race: a previous write or read of the written data that is
+            # not ordered before this node (i.e., this node does not depend on it through the dataflow)
+            hazard = any(
+                _unordered_access(writes, o, node_parents) or _unordered_access(reads, o, node_parents) for o in outputs
+            )
+
+        if hazard:
+            # Insert a state boundary before this node, which then starts a new state
+            boundaries_to_insert.append(i)
+            reads.clear()
+            writes.clear()
+            parents.clear()
+            node_parents.clear()
+
+        # Register the accesses of this node, also when it starts a new state: later nodes in that state must be
+        # ordered with respect to them
+        parents[id(n)] = node_parents
         for inp in inputs:
             if inp not in reads:
                 reads[inp] = [n]
             else:
                 reads[inp].append(n)
-
-            # Transitively add parents
-            if inp in writes:
-                for parent in writes[inp]:
-                    parents[id(n)].add(id(parent))
-                    parents[id(n)].update(parents[id(parent)])
-
-        # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
-        if isinstance(n, tn.AssignNode) and any(inp in writes for inp in inputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
-            continue
-
-        # Write after write or potential write/write data race, insert state boundary
-        if any(o in writes and (o not in reads or any(id(r) not in parents for r in reads[o])) for o in outputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
-            continue
-
-        # Potential read/write data race: if any read is not in the parents of this node, it might
-        # be performed in parallel
-        if any(o in reads and any(id(r) not in parents for r in reads[o]) for o in outputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
-            continue
-
-        # Register writes after all hazards have been tested for
         for out in outputs:
             if out not in writes:
                 writes[out] = [n]

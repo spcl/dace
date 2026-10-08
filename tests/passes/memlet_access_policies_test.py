@@ -221,7 +221,7 @@ def test_nonaffine_left_alone():
     assert res["skipped"] >= 2
     LowerMemletAccessPolicies().apply_pass(sdfg, {})
     code = _code(sdfg)
-    assert "i * i" in code or "i*i" in code
+    assert any(square in code for square in ("i * i", "i*i", "ipow(i, 2)"))
     n = 8
     A = np.arange(64, dtype=np.float32)
     B = np.zeros(n, np.float32)
@@ -254,6 +254,44 @@ def test_loop_inside_map_nested_sdfg():
     B = np.zeros((4, n), np.float32)
     sdfg(A=A, B=B, N=n)
     np.testing.assert_allclose(B, A[:, :, 3] + A[:, :, 9])
+
+
+def test_nested_sdfg_binding_is_not_a_leaf():
+    """A nested SDFG receives the whole container (an equivalent descriptor, no offset), so the memlet binding it is
+    not addressed through a cursor even when its subset is affine in the enclosing loop variable."""
+    inner = dace.SDFG("binding_inner")
+    inner.add_array("a", [N, 4], dace.float32)
+    inner.add_array("b", [N, 4], dace.float32)
+    inner.add_symbol("i", dace.int64)
+    inner.add_state().add_mapped_tasklet(
+        "double",
+        dict(j="0:4"),
+        dict(x=dace.Memlet("a[i, j]")),
+        "y = x * 2",
+        dict(y=dace.Memlet("b[i, j]")),
+        external_edges=True,
+    )
+
+    sdfg = dace.SDFG("nested_sdfg_binding")
+    sdfg.add_array("A", [N, 4], dace.float32)
+    sdfg.add_array("B", [N, 4], dace.float32)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    nsdfg = state.add_nested_sdfg(inner, {"a"}, {"b"}, symbol_mapping={"N": "N", "i": "i"})
+    state.add_edge(state.add_read("A"), None, nsdfg, "a", dace.Memlet("A[i, 0:4]"))
+    state.add_edge(nsdfg, "b", state.add_write("B"), None, dace.Memlet("B[i, 0:4]"))
+    sdfg.validate()
+
+    AssignLoopCursors(scope="all").apply_pass(sdfg, {})
+    assert all(e.data.access_policy.is_default for e in state.edges())
+    LowerMemletAccessPolicies().apply_pass(sdfg, {})
+    sdfg.validate()
+    n = 5
+    A = np.random.default_rng(3).random((n, 4)).astype(np.float32)
+    B = np.zeros((n, 4), np.float32)
+    sdfg(A=A, B=B, N=n)
+    np.testing.assert_allclose(B, A * 2)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -750,6 +788,7 @@ if __name__ == "__main__":
     test_symbolic_extent_int64_and_assume_int32()
     test_nonaffine_left_alone()
     test_loop_inside_map_nested_sdfg()
+    test_nested_sdfg_binding_is_not_a_leaf()
     test_policy_survives_serialization()
     test_stale_policy_is_dropped_not_miscompiled()
     test_lowering_is_idempotent()

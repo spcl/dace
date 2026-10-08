@@ -96,20 +96,11 @@ Tasklets can be written in any language, as long as the code generator supports 
 Python (even if the source language is different), which allows the limited analysis (e.g., operation count). Other
 supported languages are C++, MLIR, SystemVerilog, and others (see :class:`~dace.dtypes.Language`).
 
-**Nested SDFG**: Nodes that contain an entire SDFG in a state. When invoked, the nested SDFG will be executed in that
-context, independently from other instances if parallel.
-The semantics are similar to a Tasklet: connectors specify input and output parameters, and there is acyclic dataflow
-going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is completely analyzable.
-
-Such nodes are useful when control flow is necessary in parallel regions. For example, when there is a loop inside a map,
-or when two separate components need to each run its own state machine.
-Several transformations (e.g., :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`, :class:`~dace.transformation.dataflow.map_fission.MapFission`)
-work directly with nested SDFGs, and the :ref:`simplify` tries to remove/inline them as much as possible.
-
-To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG. To
-pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
-symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
-this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
+**Nested SDFG**: Nodes that contain an entire SDFG in a state. Such nodes are useful when control flow is necessary in
+parallel regions. For example, when there is a loop inside a map, or when two separate components need to each run its
+own state machine. The semantics are similar to a Tasklet: connectors specify input and output parameters, and there is
+acyclic dataflow going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is completely analyzable.
+See more about nested SDFGs in :ref:`nested-sdfg`.
 
 .. figure:: images/scope.svg
   :name: scopefig
@@ -389,8 +380,8 @@ a read and a write). Several fields describe the data being moved:
 
 There are more properties you can set, see :class:`~dace.memlet.Memlet` for a full list.
 
-**Memlet access policies**: A leaf memlet (one that produces an address in generated code: a memlet connected to a tasklet,
-library node, or nested SDFG, or a copy between two access nodes) carries a ``access_policy`` property, a
+**Memlet access policies**: A leaf memlet (one that produces an address in generated code: a memlet connected to a tasklet
+or library node, or a copy between two access nodes; nested SDFGs receive whole containers) carries a ``access_policy`` property, a
 :class:`~dace.sdfg.memlet_access_policy.MemletAccessPolicy`, that describes *how its addressing is realized* in generated code.
 The policy is purely descriptive: it never changes the semantics of the SDFG, and it is lowered to ordinary SDFG
 constructs (symbols, loop statements, reference containers) in the code-generation window by
@@ -748,6 +739,69 @@ library node to the new SDFG. An example of such an expansion is Einstein summat
           sdfg = SDFG('einsum')
           ...
           return sdfg
+
+
+.. _nested-sdfg:
+
+Nested SDFGs
+------------
+
+Nested SDFGs are dataflow nodes that contain a nested state machine. They are used to encapsulate potentially cyclic
+control flow in the context of acyclic dataflow. A nested SDFG is defined by the :class:`~dace.sdfg.nodes.NestedSDFG` node,
+which contains a reference to an SDFG object, and a set of input and output connectors. When invoked, the nested SDFG
+will be executed in that context, independently from other instances if parallel, similarly to a function call.
+
+.. figure:: images/nested-sdfg.svg
+  :figwidth: 50%
+  :align: right
+  :alt: Nested SDFG example.
+
+  Nested SDFG example. The graph corresponds to the code ``if input[7] > 5: output[1] = 1; else: output[2] = 2``.
+  The memlets inside the nested SDFG address the same containers as the ones outside it.
+
+To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG.
+Within the nested SDFG, the data descriptors are set to be non-transient, meaning that they act as if they were
+function parameters. A valid SDFG specifies the same data descriptors in the nested SDFG as the data containers
+connected to it in the parent SDFG, and the memlets inside the nested SDFG address those containers the same way
+the parent does. In the figure, the input array is externally transient but internally non-transient (hence the thick
+edge), and the memlets inside (``input[7]``, ``output[1]``, ``output[2]``) are written the same way as they would be
+outside. If a reinterpretation or a subset of a container is needed, it is expressed with a view inside the nested SDFG.
+The memlets outside the nested SDFG represent the union of all the internal memlets that go into the nested SDFG, and
+the volume is the sum of all the volumes of the internal memlets. See more in :ref:`memprop`.
+
+To pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
+symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
+this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
+
+Since the connectors describe the parent's containers, their descriptors are written in the parent's symbols. When a
+nested SDFG is integrated into its parent (:func:`dace.sdfg.dealias.integrate_nested_sdfg`, which the frontends and
+transformations call once the node is connected, and which runs when a nested SDFG is loaded from a file), every entry
+of the symbol mapping that maps an internal symbol to a symbol of the parent is folded into the nested SDFG, by renaming
+the internal symbol to the parent's (see :func:`dace.sdfg.dealias.fold_symbol_mapping`). Entries that map to other
+expressions are kept. For example:
+
+.. code-block:: python
+
+  # The nested SDFG has an array ``a`` of shape ``[N]`` and a map over ``k`` in ``0:N``
+  node = state.add_nested_sdfg(nsdfg, {}, {'a'}, symbol_mapping={'N': 'M'})
+  state.add_edge(node, 'a', state.add_write('A'), None, dace.Memlet('A[0:M]'))  # ``A`` is of shape ``[M]``
+  node.symbol_mapping  # {'N': M}: stored as given
+
+  node.integrate_into_parent()
+  node.symbol_mapping  # {'M': M}
+  nsdfg.arrays['a']    # Of shape ``[M]``, the same descriptor as ``A``, and the map ranges over ``0:M``
+
+Internal names that would clash with the parent's symbols, such as a map parameter called ``M``, are renamed first.
+
+Transformations and passes apply within nested SDFGs as they do anywhere else. The :ref:`simplify` pipeline also
+tries to inline nested SDFGs into their parent (e.g., with :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`)
+whenever possible.
+
+.. note::
+  Nested SDFGs built under the earlier semantics, in which a connector describes the window the outer memlet
+  selects out of the container and the memlets inside are written relative to that window, can be brought to
+  this form with :func:`dace.sdfg.dealias.convert_legacy_nested_sdfgs`. Such a nested SDFG is not inlined until
+  it is converted.
 
 
 .. _memprop:

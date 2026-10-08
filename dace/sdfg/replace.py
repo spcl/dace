@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 tokenize_cpp = re.compile(r"\b\w+\b")
 
 
+def _symbol_name(sym) -> str:
+    """``str(sym)``, without invoking the SymPy printer for plain symbols."""
+    if type(sym) is symbolic.symbol or type(sym) is sp.Symbol:
+        return sym.name
+    return str(sym)
+
+
 def _internal_replace(sym, symrepl):
     # A SymExpr is a (exact, over-approximation) pair, not a sympy.Basic, so the guard below
     # would hand it back untouched. Strip-mined bounds are SymExprs and sit in the same range
@@ -39,7 +46,7 @@ def _internal_replace(sym, symrepl):
             tokens = s.split(".")
             for i in range(1, len(tokens)):
                 fsyms.add(".".join(tokens[:i]))
-    newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
+    newrepl = {k: v for k, v in symrepl.items() if _symbol_name(k) in fsyms}
     if not newrepl:
         return sym
 
@@ -72,12 +79,13 @@ def replace_dict(
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
-        if isinstance(new_name, str)
-        else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
+            if isinstance(new_name, str)
+            else new_name
+            for symname, new_name in repl.items()
+        }
 
     # Replace AccessNode with tasklet with constant value
     sdfg = subgraph.sdfg
@@ -103,9 +111,8 @@ def replace_dict(
                             outputs={f"{node.data}_value"},
                             code=f"{node.data}_value = {symrepl[node_data_symbolic]}",
                         )
-                        access_node_name, _ = sdfg.add_transient(
-                            f"{node.data}", [1], dtypes.typeclass(type(symrepl[node_data_symbolic])), find_new_name=True
-                        )
+                        # Type the container like the scalar it replaces, so connectors below keep matching
+                        access_node_name, _ = sdfg.add_transient(f"{node.data}", [1], desc.dtype, find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(
                             tasklet, f"{node.data}_value", tmp_an, None, Memlet.simple(access_node_name, "0")
@@ -134,7 +141,7 @@ def replace_dict(
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols:
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
-        if symrepl.keys() & edge.data.volume.free_symbols:
+        if repl.keys() & set(map(str, edge.data.volume.free_symbols)):
             edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
@@ -205,18 +212,63 @@ def replace_in_codeblock(
             afr.visit(stmt)
 
 
+def replace_list_property_item(
+    item: Any, element_type: type, repl: Dict[str, str], symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType]
+) -> Any:
+    """
+    Applies a replacement to a single element of a ``ListProperty``.
+
+    List properties do not only hold symbolic expressions (e.g., booleans, C declarations, or arbitrary
+    objects), so the replacement is dispatched on the declared element type.
+
+    :param item: The list element to replace in.
+    :param element_type: The list property's declared element type.
+    :param repl: Mapping from names to replacements.
+    :param symrepl: Symbolic version of ``repl``.
+    :return: The replaced element, or ``item`` itself if nothing applies.
+    """
+    # ``bool`` is a subclass of ``int``, so check the value and not only the declared type
+    if isinstance(item, bool) or element_type is bool:
+        return item
+
+    if element_type is str:
+        # String lists hold names (e.g., ``Map.params``): replace whole identifiers only
+        if not isinstance(item, str) or item not in repl:
+            return item
+        new_name = str(repl[item])
+        return new_name if new_name.isidentifier() else item
+
+    is_symbolic_type = element_type is symbolic.SymExpr or (
+        isinstance(element_type, type) and issubclass(element_type, sp.Basic)
+    )
+    if element_type in (int, float) or is_symbolic_type:
+        try:
+            newitem = symbolic.pystr_to_symbolic(str(item)).subs(symrepl)
+        except (AttributeError, TypeError, ValueError, SyntaxError, sp.SympifyError):
+            return item
+        if element_type in (int, float):
+            try:
+                return element_type(newitem)
+            except (AttributeError, TypeError, ValueError):
+                return item
+        return newitem
+
+    return item
+
+
 def replace_properties_dict(
     node: Any,
     repl: Dict[str, str],
     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
     sdfg: Optional["dace.SDFG"] = None,
 ):
-    symrepl = symrepl or {
-        symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
-        if isinstance(new_name, str)
-        else new_name
-        for symname, new_name in repl.items()
-    }
+    if symrepl is None:
+        symrepl = {
+            symbolic.pystr_to_symbolic(symname): symbolic.pystr_to_symbolic(new_name)
+            if isinstance(new_name, str)
+            else new_name
+            for symname, new_name in repl.items()
+        }
 
     for propclass, propval in node.properties():
         if propval is None:
@@ -225,13 +277,16 @@ def replace_properties_dict(
         if isinstance(propclass, properties.SymbolicProperty):
             # NOTE: `propval` can be a numeric constant instead of a symbolic expression.
             if not symbolic.issymbolic(propval):
-                setattr(node, pname, symbolic.pystr_to_symbolic(str(propval)).subs(symrepl))
+                setattr(node, pname, _internal_replace(symbolic.pystr_to_symbolic(str(propval)), symrepl))
             else:
-                setattr(node, pname, propval.subs(symrepl))
+                setattr(node, pname, _internal_replace(propval, symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])
-        elif isinstance(propclass, (properties.RangeProperty, properties.ShapeProperty)):
+        elif isinstance(propclass, properties.RangeProperty):
+            # A Range is mutable: substitute in place, which keeps its tile sizes.
+            propval.replace(symrepl)
+        elif isinstance(propclass, properties.ShapeProperty):
             setattr(node, pname, _replsym(list(propval), symrepl))
         elif isinstance(propclass, properties.CodeProperty):
             # Don't replace variables that appear as an input or an output
@@ -244,10 +299,14 @@ def replace_properties_dict(
         elif isinstance(propclass, properties.DictProperty) and pname == "symbol_mapping":
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
-                try:
-                    propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
-                except AttributeError:  # If the symbolified value has no subs
-                    pass
+                # A string round trip re-mints every symbol in the value with the default dtype and no assumptions.
+                if not isinstance(sym_mapping, sp.Basic):
+                    sym_mapping = symbolic.pystr_to_symbolic(str(sym_mapping))
+                propval[symname] = _internal_replace(sym_mapping, symrepl)
+        elif isinstance(propclass, properties.ListProperty):
+            newval = [replace_list_property_item(item, propclass.element_type, repl, symrepl) for item in propval]
+            if any(new is not old for new, old in zip(newval, propval)):
+                setattr(node, pname, newval)
 
 
 def replace_properties(

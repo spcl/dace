@@ -152,13 +152,16 @@ def flat_length(desc: dt.Data, subset) -> Optional[symbolic.SymbolicType]:
 def leaf_edges(state: SDFGState) -> Iterator[MultiConnectorEdge[Memlet]]:
     """Edges whose memlet produces an address in generated code: the innermost edge of each memlet path, i.e. the
     edge whose endpoint away from the memlet's data container is not a scope (map entry/exit) node. This covers
-    connector bindings of tasklets, library nodes and nested SDFGs, access nodes inside scopes fed through a map
-    entry, and access-node-to-access-node copies. View-defining edges (``views`` connector) and reference ``set``
-    edges are not leaves."""
+    connector bindings of tasklets and library nodes, access nodes inside scopes fed through a map entry, and
+    access-node-to-access-node copies. View-defining edges (``views`` connector) and reference ``set`` edges are not
+    leaves, and neither are nested SDFG bindings: a nested SDFG receives the whole container (an equivalent
+    descriptor, no offset) and addresses it inside, where its own leaf memlets are."""
     for e in state.edges():
         if e.data.is_empty() or e.data.data is None:
             continue
         if e.dst_conn in ("set", "views") or e.src_conn == "views":
+            continue
+        if isinstance(e.src, nodes.NestedSDFG) or isinstance(e.dst, nodes.NestedSDFG):
             continue
         src_scope, dst_scope = isinstance(e.src, _SCOPE_NODES), isinstance(e.dst, _SCOPE_NODES)
         if src_scope and dst_scope:

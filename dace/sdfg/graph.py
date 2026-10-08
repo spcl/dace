@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """File containing DaCe-serializable versions of graphs, nodes, and edges."""
 
 from collections import deque, OrderedDict
@@ -411,8 +411,20 @@ class Graph(Generic[NodeT, EdgeT]):
             yield from nx.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin: NodeT, end: NodeT) -> Sequence[NodeT]:
-        """Finds all nodes between begin and end. Returns None if there is any
-        path starting at begin that does not reach end."""
+        """Finds all nodes between begin and end.
+
+        Returns an EMPTY set if any path starting at begin does not reach end -- that is, if the
+        walk meets a node with no out-edges. The whole traversal is discarded in that case, not
+        just the dead-ending node, so a single sink empties the result even when every other node
+        reached end. A write-only scratch scalar is enough to trigger it.
+
+        A caller that wants "the nodes of this scope" therefore cannot use this: an empty answer
+        is indistinguishable from an empty scope, so a predicate written over the result reports
+        "nothing found" without having inspected anything. Use
+        :meth:`~dace.sdfg.state.SDFGState.scope_subgraph` for that question instead.
+
+        :note: The name says ``None`` in older docs; it has always returned a set.
+        """
         to_visit = [begin]
         seen = set()
         while len(to_visit) > 0:
@@ -648,7 +660,11 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def node(self, id: int) -> NodeT:
         try:
-            return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
+            if id >= 0:
+                # Same result as the scan below, without a Python-level loop over the nodes
+                return next(itertools.islice(self._nodes.keys(), id, None))
+            else:
+                return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
         except StopIteration:
             raise NodeNotFoundError
 
@@ -843,6 +859,9 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     def out_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
         return super().out_edges(node)
+
+    def all_edges(self, *nodes: NodeT) -> Iterable[MultiConnectorEdge[EdgeT]]:
+        return super().all_edges(*nodes)
 
     def edges_between(self, source: NodeT, destination: NodeT) -> List[MultiConnectorEdge[EdgeT]]:
         return super().edges_between(source, destination)

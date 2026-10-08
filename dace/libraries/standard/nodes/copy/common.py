@@ -345,7 +345,9 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
             f"{backend}MemcpyAsync({out_conn}, {in_conn}, {nbytes}, {_memcpy_kind(inp, out)}, {CURRENT_STREAM_NAME});"
         )
     else:
-        code = f"memcpy({out_conn}, {in_conn}, {nbytes});"
+        code = (
+            f"dace::CopyImpl<{inp.dtype.ctype}, 1>({in_conn}, {out_conn}, {sym2cpp(in_subset.num_elements_exact())});"
+        )
 
     return nodes.Tasklet(
         node.name,

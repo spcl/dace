@@ -105,6 +105,8 @@ class CPUCodeGen(TargetCodeGenerator):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
         self.calling_codegen = self
+        # Containers the calling code generator passes to nested SDFGs in addition to their connectors
+        self.extra_nsdfg_args = []
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -281,6 +283,7 @@ class CPUCodeGen(TargetCodeGenerator):
             codegen=self,
             ancestor=0,
             is_write=is_write,
+            use_offset=True,
             const_read_only_array=const_view,
         )
 
@@ -391,7 +394,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if nodedesc.storage == dtypes.StorageType.CPU_Heap or nodedesc.storage == dtypes.StorageType.Register:
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
@@ -476,7 +479,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
@@ -602,13 +605,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f"{nodedesc.dtype.ctype} *{name};\n", cfg, state_id, node)
-            aligned = ""
+            allocation = f"new {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}]"
             if _use_aligned_operator_new(nodedesc):
                 align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                aligned = f"(std::align_val_t({align_value}))"
-            allocation_stream.write(
-                f"{alloc_name} = new {aligned} {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}];\n", cfg, state_id, node
-            )
+                allocation = f"dace::aligned_new_array<{nodedesc.dtype.ctype}>({cpp.sym2cpp(arrsize)}, {align_value})"
+            allocation_stream.write(f"{alloc_name} = {allocation};\n", cfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -653,18 +654,16 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, "%s *" % nodedesc.dtype.ctype)
 
             # Allocate in each OpenMP thread
-            aligned = ""
+            allocation = f"new {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}]"
             if _use_aligned_operator_new(nodedesc):
                 align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                aligned = f"(std::align_val_t({align_value}))"
+                allocation = f"dace::aligned_new_array<{nodedesc.dtype.ctype}>({cpp.sym2cpp(arrsize)}, {align_value})"
 
             allocation_stream.write(
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {aligned}{ctype} [{arrsize}];""".format(
-                    aligned=aligned, ctype=nodedesc.dtype.ctype, name=alloc_name, arrsize=cpp.sym2cpp(arrsize)
-                ),
+                    {name} = {allocation};""".format(name=alloc_name, allocation=allocation),
                 cfg,
                 state_id,
                 node,
@@ -696,7 +695,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
-            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+            arrsize_bytes = nodedesc.total_size_in_bytes
 
         alloc_name = self.ptr(node.data, nodedesc, sdfg)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
@@ -720,18 +719,10 @@ class CPUCodeGen(TargetCodeGenerator):
             )
         ):
             if isinstance(nodedesc, data.Array):
-                # Memory from the aligned operator new[] must be released by the aligned operator
-                # delete[]. The direct operator call skips destructors and relies on the new-expression
-                # emitting no array cookie - both only hold for trivially destructible element types.
                 if _use_aligned_operator_new(nodedesc):
                     align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
                     callsite_stream.write(
-                        f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                        f'"aligned heap deallocation skips destructors");\n'
-                        f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));\n",
-                        cfg,
-                        state_id,
-                        node,
+                        f"dace::aligned_delete_array({alloc_name}, {align_value});\n", cfg, state_id, node
                     )
                 else:
                     callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
@@ -740,14 +731,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
-                # Aligned pairing + trivial-destructibility guard as above.
                 if _use_aligned_operator_new(nodedesc):
                     align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
-                    delete_stmt = (
-                        f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                        f'"aligned heap deallocation skips destructors"); '
-                        f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));"
-                    )
+                    delete_stmt = f"dace::aligned_delete_array({alloc_name}, {align_value});"
                 else:
                     delete_stmt = f"delete[] {alloc_name};"
             else:
@@ -952,11 +938,18 @@ class CPUCodeGen(TargetCodeGenerator):
                             [src_node, dst_node],
                         )
                     else:
-                        copysize = " * ".join([cpp.sym2cpp(s) for s in memlet.subset.size()])
+                        # The memlet narrows the connector's container to the element being pushed
+                        push_subset = memlet.subset
+                        if memlet.data != src_node.data and memlet.other_subset:
+                            push_subset = memlet.other_subset
+                        if push_subset is None:
+                            push_subset = subsets.Range.from_array(src_nodedesc)
+                        copysize = " * ".join([cpp.sym2cpp(s) for s in push_subset.size()])
                         stream.write(
-                            "{s}.push({arr}, {size});".format(
+                            "{s}.push(&{arr}[{off}], {size});".format(
                                 s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
                                 arr=self.ptr(src_node.data, src_nodedesc, sdfg),
+                                off=cpp.cpp_offset_expr(src_nodedesc, push_subset),
                                 size=copysize,
                             ),
                             cfg,
@@ -1913,6 +1906,30 @@ class CPUCodeGen(TargetCodeGenerator):
                         self._dispatcher, sdfg, out_memlet, uconn, codegen=self, conntype=node.out_connectors[uconn]
                     )
                 )
+
+        # Transients of the nested SDFG that the frame allocated in an ancestor scope must be passed in
+        for aname, adesc in node.sdfg.arrays.items():
+            if not adesc.transient or adesc.lifetime in (
+                dtypes.AllocationLifetime.Persistent,
+                dtypes.AllocationLifetime.External,
+            ):
+                continue
+            allocated_in = self._frame.where_allocated.get((node.sdfg, aname))
+            if allocated_in is None or allocated_in is node.sdfg:
+                continue
+            ptrname = cpp.ptr(aname, adesc, node.sdfg, self._frame)
+            if self._dispatcher.defined_vars.has(ptrname):
+                continue
+            # Already passed in by the calling code generator (e.g., in a GPU kernel)
+            if any(ptrname == extra for _, extra, _ in self.calling_codegen.extra_nsdfg_args):
+                continue
+            try:
+                defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, ancestor=1)
+            except KeyError:
+                continue
+            self._dispatcher.defined_vars.add(ptrname, defined_type, ctype, allow_shadowing=True)
+            memlet_references.append((ctype, ptrname, ptrname))
+
         return memlet_references
 
     def _generate_NestedSDFG(
@@ -2200,6 +2217,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result.write(map_header, cfg, state_id, node)
 
+        # Declare each map parameter with its inferred type rather than ``auto``, which would take the type of
+        # the range start alone (e.g., ``int`` for a literal ``0`` even when the end is a 64-bit symbol)
+        param_types = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg, node))
+
+        def param_ctype(param: str) -> str:
+            dtype = param_types.get(param)
+            return dtype.ctype if dtype is not None else "auto"
+
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("{\n", cfg, state_id, node)
 
@@ -2217,7 +2242,12 @@ class CPUCodeGen(TargetCodeGenerator):
             if tid_is_used or ntid_is_used:
                 function_stream.write("#include <omp.h>", cfg, state_id, node)
             if tid_is_used:
-                result.write(f"auto {node.map.params[0]} = omp_get_thread_num();", cfg, state_id, node)
+                result.write(
+                    f"{param_ctype(node.map.params[0])} {node.map.params[0]} = omp_get_thread_num();",
+                    cfg,
+                    state_id,
+                    node,
+                )
             if ntid_is_used:
                 result.write(f"auto __omp_num_threads = omp_get_num_threads();", cfg, state_id, node)
         else:
@@ -2233,8 +2263,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n"
-                    % (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    "for (%s %s = %s; %s < %s; %s += %s) {\n"
+                    % (param_ctype(var), var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,
@@ -2338,16 +2368,21 @@ class CPUCodeGen(TargetCodeGenerator):
         if instr is not None:
             instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
+        pe_type = node.new_symbols(sdfg, state_dfg, self._frame.symbols_defined_at(state_dfg, node)).get(
+            node.consume.pe_index
+        )
+
         result.write(
             "dace::Consume<{chunksz}>::template consume{cond}({stream_in}, "
             "{num_pes}, {condition}"
-            "[&](int {pe_index}, {element_or_chunk}) {{".format(
+            "[&]({pe_type} {pe_index}, {element_or_chunk}) {{".format(
                 chunksz=node.consume.chunksize,
                 cond="" if node.consume.condition is None else "_cond",
                 condition=condition_string,
                 stream_in=input_stream.data,  # TODO: stream arrays
                 element_or_chunk=chunk,
                 num_pes=cpp.sym2cpp(node.consume.num_pes),
+                pe_type=pe_type.ctype if pe_type is not None else "int",
                 pe_index=node.consume.pe_index,
             ),
             cfg,

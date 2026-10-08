@@ -42,18 +42,26 @@ class MultiExpansion(transformation.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     """
 
-    debug = Property(dtype=bool, desc="Debug Mode", default=False)
+    debug = Property(dtype=bool, category="Diagnostics", desc="Debug Mode", default=False)
     sequential_innermaps = Property(
-        dtype=bool, desc="Make all inner maps that arecreated during expansion sequential", default=False
+        dtype=bool,
+        category="Scheduling",
+        desc="Make all inner maps that arecreated during expansion sequential",
+        default=False,
     )
 
     check_contiguity = Property(
-        dtype=bool, desc="Don't allow expansion if last (contiguous)dimension is partially split", default=False
+        dtype=bool,
+        category="Applicability",
+        desc="Don't allow expansion if last (contiguous)dimension is partially split",
+        default=False,
     )
 
-    permutation_only = Property(dtype=bool, desc="Only allow permutations without inner splits", default=False)
+    permutation_only = Property(
+        dtype=bool, category="Applicability", desc="Only allow permutations without inner splits", default=False
+    )
 
-    allow_offset = Property(dtype=bool, desc="Offset ranges to zero", default=True)
+    allow_offset = Property(dtype=bool, category="Parameters", desc="Offset ranges to zero", default=True)
 
     def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -217,10 +225,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
                     # change all inner parameters to avoid naming conflicts
                     if secondp in inner_params:
                         replace(map_scope, secondp, secondp + "_inner")
-                        for other_entry in inner_params[secondp]:
-                            for i, p in enumerate(other_entry.map.params):
-                                if p == secondp:
-                                    other_entry.map.params[i] = secondp + "_inner"
                     # replace in outer maps as well if not coincidental
                     if firstp != secondp:
                         replace(map_scope, firstp, "__" + firstp + "_fused")
@@ -229,10 +233,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
                 for firstp, secondp in params_dict_map.items():
                     if firstp != secondp:
                         replace(map_scope, "__" + firstp + "_fused", secondp)
-
-                # now also replace the map variables inside maps
-                for i in range(len(map.params)):
-                    map.params[i] = params_dict_map[map.params[i]]
 
             if self.debug:
                 print("MultiExpansion::Params replaced")

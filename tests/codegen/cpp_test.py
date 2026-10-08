@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from functools import reduce
 from operator import mul
@@ -179,10 +179,10 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
         # Consult the active cpp_standard: C++ >= 17 emits the aligned
         # new/delete forms, earlier standards the plain ones.
         if _use_aligned_operator_new(a_desc):
-            assert f"A = new (std::align_val_t({array_a_alignment})) double" in code, "A is allocated on the heap."
-            assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, (
-                "A is deallocated from the heap."
+            assert f"A = dace::aligned_new_array<double>(10000, {array_a_alignment})" in code, (
+                "A is allocated on the heap."
             )
+            assert f"dace::aligned_delete_array(A, {array_a_alignment})" in code, "A is deallocated from the heap."
         else:
             assert "A = new double" in code, "A is allocated on the heap."
             assert "delete[] A" in code, "A is deallocated from the heap."
@@ -198,7 +198,7 @@ def test_pointer_argument_keeps_a_decimal_literal():
     # expression a pointer argument carries: `&A[(0.5 * j)]` became `&A[(0->5 * j)]`.
     N = symbol("N")
     nsdfg = SDFG("inner")
-    nsdfg.add_array("a", [N], dtypes.float64)
+    nsdfg.add_array("a", [1], dtypes.float64)
     nstate = nsdfg.add_state()
     tasklet = nstate.add_tasklet("z", {}, {"o"}, "o = 1.0")
     nstate.add_edge(tasklet, "o", nstate.add_write("a"), None, Memlet("a[0]"))
@@ -211,6 +211,7 @@ def test_pointer_argument_keeps_a_decimal_literal():
     nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {"a"}, symbol_mapping=dict(N="N", j="j"))
     state.add_nedge(entry, nsdfg_node, Memlet())
     state.add_memlet_path(nsdfg_node, exit, state.add_write("A"), src_conn="a", memlet=Memlet("A[0.5*j]"))
+    nsdfg_node.integrate_into_parent()
 
     code = codegen.generate_code(sdfg)[0].clean_code
     assert "&A[(0.5 * j)]" in code

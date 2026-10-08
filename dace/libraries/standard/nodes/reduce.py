@@ -8,8 +8,9 @@ import functools
 import platform
 import dace.serialize
 import dace.library
-from dace.sdfg import SDFG, SDFGState, devicelevel_block_size, propagation
+from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, propagation
 from dace.sdfg import graph
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import unparse
 from dace.properties import Property, LambdaProperty, ListProperty
 from dace.frontend.operations import detect_reduction_type
@@ -948,6 +949,21 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         # return reduce_node.expand(state)
 
 
+def storage_behind_views(state: SDFGState, node: dace.nodes.Node, declared: dtypes.StorageType) -> dtypes.StorageType:
+    """
+    Returns the storage of the container ``node`` ultimately views, or ``declared`` if it is not a view.
+
+    A view owns no storage, so its descriptor only declares whatever it was built with, which need not match the
+    container it aliases.
+    """
+    if not isinstance(node, dace.nodes.AccessNode):
+        return declared
+    viewed = sdutil.get_last_view_node(state, node)
+    if viewed is None:
+        return declared
+    return state.sdfg.arrays[viewed.data].storage
+
+
 @dace.library.expansion
 class ExpandReduceGPUAuto(pm.ExpandTransformation):
     """
@@ -974,11 +990,14 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         isqdim = insubset.squeeze()
         raw_input_data = sdfg.arrays[inedge.data.data]
         raw_output_data = sdfg.arrays[outedge.data.data]
-        warp_size = 64 if common.get_gpu_backend() == "hip" else 32
+        warp_size = common.gpu_warp_size()
 
         in_type = raw_input_data.dtype
 
-        if raw_input_data.storage != dtypes.StorageType.GPU_Global:
+        in_storage = storage_behind_views(state, inedge.src, raw_input_data.storage)
+        out_storage = storage_behind_views(state, outedge.dst, raw_output_data.storage)
+
+        if in_storage != dtypes.StorageType.GPU_Global:
             # data doesnt reside on GPU --> return pure expansion
             warnings.warn(
                 "Cannot use GPUAuto expansion: Input data does not reside on GPU. Falling back to Pure expansion"
@@ -1013,15 +1032,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG("reduce")
 
-        input_data = dcpy(raw_input_data)
-        input_data.transient = False
-        input_data.shape = schedule.in_shape
-        input_data.strides = schedule.in_strides
-        nsdfg.add_datadesc("_in", input_data)
-
-        output_data = dcpy(raw_output_data)
+        # Built rather than cloned: a clone would carry an ArrayView's class into the nested SDFG, and keep its
+        # offset at the rank of the original shape.
+        nsdfg.add_array("_in", schedule.in_shape, in_type, strides=schedule.in_strides, storage=in_storage)
         nsdfg.add_array(
-            "_out", schedule.out_shape, output_data.dtype, strides=schedule.out_strides, storage=output_data.storage
+            "_out", schedule.out_shape, raw_output_data.dtype, strides=schedule.out_strides, storage=out_storage
         )
 
         nstate = nsdfg.add_state()
@@ -1191,7 +1206,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 )
 
             # add warpReduce tasklet
-            ctype = output_data.dtype
+            ctype = raw_output_data.dtype
             redtype = detect_reduction_type(node.wcr)
             if redtype == dtypes.ReductionType.Custom:
                 raise NotImplementedError
@@ -1434,6 +1449,9 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 id_smem, final_inner_smem, src_conn="o", memlet=dace.Memlet("s_mem[0]", wcr=node.wcr)
             )
 
+            # Integrate only once every inner access node is connected
+            dealias.integrate_nested_sdfg(nested_sdfg)
+
             if mini_warps:
                 bme3, bmx3 = nstate.add_map(
                     "block",
@@ -1493,9 +1511,9 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     default_implementation = "pure"
 
     # Properties
-    axes = ListProperty(element_type=int, allow_none=True)
-    wcr = LambdaProperty(default="lambda a, b: a")
-    identity = Property(allow_none=True, to_json=lambda x: str(x))
+    axes = ListProperty(element_type=int, allow_none=True, category="Semantics")
+    wcr = LambdaProperty(default="lambda a, b: a", category="Semantics")
+    identity = Property(allow_none=True, to_json=lambda x: str(x), category="Semantics")
 
     def __init__(
         self,

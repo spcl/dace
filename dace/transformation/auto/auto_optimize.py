@@ -14,7 +14,7 @@ from typing import Set, Tuple, Union, List, Dict, Callable
 # Transformations
 from dace.transformation.passes import FullMapFusion
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh, pass_pipeline as ppl
@@ -633,9 +633,7 @@ def auto_optimize(
 
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
-        l2ms = sdfg.apply_transformations_repeated(
-            (LoopToMap, RefineNestedAccess), validate=False, validate_all=validate_all
-        )
+        l2ms = sdfg.apply_transformations_repeated(LoopToMap, validate=False, validate_all=validate_all)
         transformed = l2ms > 0
 
     # Collapse maps and eliminate trivial dimensions

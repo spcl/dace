@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, DefaultDict, Dict, Set, Tuple
 
+import numpy as np
+
 import dace
 from dace import data as dt
 from dace import dtypes
@@ -26,19 +28,59 @@ from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import explicit_cf_compatible
 
 
+def _is_signed_integer(dtype: dtypes.typeclass) -> bool:
+    return isinstance(dtype, dtypes.typeclass) and np.issubdtype(dtype.type, np.signedinteger)
+
+
+def is_lossless_integer_cast(node: ast.Call, symbols: Dict[str, dtypes.typeclass]) -> bool:
+    """
+    Returns True if the given call is a ``dace.<signed integer type>(name)`` cast that widens (or keeps) a signed
+    integer. Such a cast does not change the value of its argument, and the Python frontend inserts one on the
+    operand narrower than the result of a binary operation (e.g., ``dace.int64(i) - j`` for an ``int32`` symbol ``i``
+    and an ``int64`` scalar ``j``), where C's usual arithmetic conversions would widen the operand identically.
+
+    :param node: The call node to test.
+    :param symbols: A mapping from names (symbols and tasklet connectors) to their data types.
+    :return: True if the cast does not change the value of its argument.
+    :note: Dropping the cast can still change the result of the enclosing expression if another operand is not
+           already as wide (e.g., ``dace.int64(i) * dace.int64(j)`` for ``int32`` ``i`` and ``j``), so
+           :class:`AttributedCallDetector` accepts at most one widening cast per expression.
+    """
+    if not (isinstance(node.func, ast.Attribute) and astutils.rname(node.func.value) == "dace"):
+        return False
+    if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Name):
+        return False
+    target = getattr(dtypes, node.func.attr, None)
+    source = symbols.get(node.args[0].id)
+    return _is_signed_integer(target) and _is_signed_integer(source) and source.bytes <= target.bytes
+
+
 class AttributedCallDetector(ast.NodeVisitor):
     """
     Detects calls to functions that are attributes.
     """
 
-    def __init__(self):
+    def __init__(self, symbols: Dict[str, dtypes.typeclass]):
+        """
+        :param symbols: A mapping from names (symbols and tasklet connectors) to their data types, used to identify
+                        casts that can be dropped (see :func:`is_lossless_integer_cast`).
+        """
         self.detected = False
+        self.symbols = symbols
+        self.widening_casts = 0
 
     def visit_Call(self, node: ast.Call) -> Any:
         if isinstance(node.func, ast.Attribute):
             # Special case: calling attributed functions on constants (e.g., dace.int64(2))
             if len(node.args) == 1 and astutils.is_constant(node.args[0]) and astutils.rname(node.func.value) == "dace":
                 return self.generic_visit(node)
+            # Special case: widening a signed integer name (e.g., dace.int64(i) for an int32 symbol i). Only one
+            # widening cast is allowed, so that the remaining operands already carry the wider type.
+            if is_lossless_integer_cast(node, self.symbols):
+                if self.symbols[node.args[0].id].bytes < getattr(dtypes, node.func.attr).bytes:
+                    self.widening_casts += 1
+                if self.widening_casts <= 1:
+                    return self.generic_visit(node)
 
             self.detected = True
             return
@@ -47,12 +89,15 @@ class AttributedCallDetector(ast.NodeVisitor):
 
 class RemoveConstantAttributes(ast.NodeTransformer):
     """
-    Removes calls to functions that are attributes, if they point to a constant value for a cast.
+    Removes calls to functions that are attributes, if they point to a constant value for a cast, and drops lossless
+    integer casts of names (see :func:`is_lossless_integer_cast`).
     """
 
     def visit_Call(self, node: ast.Call) -> Any:
         # Assuming AttributedCallDetector already filtered relevant cases
         if isinstance(node.func, ast.Attribute):
+            if len(node.args) == 1 and isinstance(node.args[0], ast.Name):
+                return node.args[0]
             val = astutils.evalnode(node, {"dace": dace})
             return astutils.create_constant(val, node)
         return self.generic_visit(node)
@@ -212,7 +257,11 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
                         # symbolic module.
-                        detector = AttributedCallDetector()
+                        tasklet_types = {
+                            **sdfg.symbols,
+                            **{e.dst_conn: sdfg.arrays[e.data.data].dtype for e in state.in_edges(edge.src)},
+                        }
+                        detector = AttributedCallDetector(tasklet_types)
                         detector.visit(cb.code[0].value)
                         if detector.detected:
                             candidates.remove(candidate)
@@ -673,9 +722,15 @@ def translate_cpp_tasklet_to_python(code: str):
 class ScalarToSymbolPromotion(passes.Pass):
     CATEGORY: str = "Simplification"
 
-    ignore = props.SetProperty(element_type=str, default=set(), desc="Fields that should not be promoted.")
-    transients_only = props.Property(dtype=bool, default=True, desc="Promote only transients.")
-    integers_only = props.Property(dtype=bool, default=True, desc="Allow promotion of integer scalars only.")
+    ignore = props.SetProperty(
+        element_type=str, default=set(), category="Applicability", desc="Fields that should not be promoted."
+    )
+    transients_only = props.Property(
+        dtype=bool, default=True, category="Applicability", desc="Promote only transients."
+    )
+    integers_only = props.Property(
+        dtype=bool, default=True, category="Applicability", desc="Allow promotion of integer scalars only."
+    )
 
     def modifies(self) -> passes.Modifies:
         return passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges
