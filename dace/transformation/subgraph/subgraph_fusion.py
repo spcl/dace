@@ -437,7 +437,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         "from outside the maps are not"
                         "allowed yet."
                     )
-                    raise NotImplementedError()
+                    raise NotImplementedError
 
         return (in_nodes, intermediate_nodes, out_nodes)
 

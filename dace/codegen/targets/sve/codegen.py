@@ -109,7 +109,7 @@ class SVECodeGen(TargetCodeGenerator):
         else:
             ######################
             # Horizontal non-atomic reduction
-            raise NotImplementedError()
+            raise NotImplementedError
 
         return super().copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)
 

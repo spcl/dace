@@ -760,7 +760,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  this temporary is given by the Memlet that goes into the first MapExit.
             pre_exit_edges = list(state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:]))
             if len(pre_exit_edges) != 1:
-                raise NotImplementedError()
+                raise NotImplementedError
             pre_exit_edge = pre_exit_edges[0]
 
             (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(

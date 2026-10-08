@@ -11,7 +11,7 @@ for i, l in enumerate(content[4:]):
         end_idx = i + 4
         break
 else:
-    raise ValueError()
+    raise ValueError
 
 for author in content[4:end_idx]:
     names = author.strip().split()

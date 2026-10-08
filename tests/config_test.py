@@ -31,7 +31,7 @@ def test_temporary_config_exception():
         with temporary_config():
             Config.set(*path, value=new_value)
             assert Config.get(*path) == new_value
-            raise ValueError()
+            raise ValueError
     except ValueError:
         assert Config.get(*path) == initial_value
 
@@ -52,7 +52,7 @@ def test_set_temporary_exception():
     try:
         with set_temporary(*path, value=new_value):
             assert Config.get(*path) == new_value
-            raise ValueError()
+            raise ValueError
     except ValueError:
         assert Config.get(*path) == initial_value
 

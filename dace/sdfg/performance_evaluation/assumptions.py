@@ -70,7 +70,7 @@ class Assumptions:
     def add_equal(self, e):
         for x in self.equal:
             if not (isinstance(x, sp.Symbol) or isinstance(e, sp.Symbol)) and x != e:
-                raise ContradictingAssumptions()
+                raise ContradictingAssumptions
         self.equal.append(e)
         self.check_consistency()
 
@@ -80,16 +80,16 @@ class Assumptions:
             for e in self.equal:
                 for g in self.greater:
                     if (e <= g) == True:
-                        raise ContradictingAssumptions()
+                        raise ContradictingAssumptions
                 for l in self.lesser:
                     if (e >= l) == True:
-                        raise ContradictingAssumptions()
+                        raise ContradictingAssumptions
         else:
             # check if any greater > any lesser
             for g in self.greater:
                 for l in self.lesser:
                     if (g > l) == True:
-                        raise ContradictingAssumptions()
+                        raise ContradictingAssumptions
         return True
 
     def num_assumptions(self):

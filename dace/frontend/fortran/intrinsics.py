@@ -92,7 +92,7 @@ class DirectReplacement(IntrinsicTransformation):
     def replace_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
 
         if len(var.args) not in [1, 2]:
-            raise RuntimeError()
+            raise RuntimeError
 
         # get variable declaration for the first argument
         var_decl = scope_vars.get_var(var.parent, var.args[0].name)
@@ -115,14 +115,14 @@ class DirectReplacement(IntrinsicTransformation):
         rank = var.args[1]
         # we do not support symbolic argument to DIM - it must be a literal
         if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
-            raise NotImplementedError()
+            raise NotImplementedError
         value = int(rank.value)
         return (var_decl.sizes[value - 1], "INTEGER")
 
     def replace_bit_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
 
         if len(var.args) != 1:
-            raise RuntimeError()
+            raise RuntimeError
 
         # get variable declaration for the first argument
         var_decl = scope_vars.get_var(var.parent, var.args[0].name)
@@ -1098,7 +1098,7 @@ class MathFunctions(IntrinsicTransformation):
         elif fname == "ANINT":
             arg.name = ast_internal_classes.Name_Node(name="round")
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
         return arg
 
@@ -1182,7 +1182,7 @@ class MathFunctions(IntrinsicTransformation):
                         parent.args[idx] = new_call
                         break
             else:
-                raise NotImplementedError()
+                raise NotImplementedError
 
         def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
 

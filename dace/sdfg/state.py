@@ -194,7 +194,7 @@ class BlockGraphView:
         :param edge: An edge within a state (memlet).
         :return: A list of edges from a source node to a destination node.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @abc.abstractmethod
     def memlet_tree(self, edge: MultiConnectorEdge) -> mm.MemletTree:
@@ -206,7 +206,7 @@ class BlockGraphView:
         :return: A tree of edges whose root is the source/sink node (depending on direction) and associated children
                  edges.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @abc.abstractmethod
     def in_edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
@@ -216,7 +216,7 @@ class BlockGraphView:
         :param node: Destination node of edges.
         :param connector: Destination connector of edges.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @abc.abstractmethod
     def out_edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
@@ -226,7 +226,7 @@ class BlockGraphView:
         :param node: Source node of edges.
         :param connector: Source connector of edges.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @abc.abstractmethod
     def edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
@@ -236,7 +236,7 @@ class BlockGraphView:
         :param node: Source/destination node of edges.
         :param connector: Source/destination connector of edges.
         """
-        raise NotImplementedError()
+        raise NotImplementedError
 
     ###################################################################
     # Query, subgraph, and replacement methods
@@ -1205,7 +1205,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
         keep_defined_in_mapping: bool = False,
         with_contents: bool = True,
     ) -> tuple[set[str], set[str], set[str]]:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def used_symbols(
         self, all_symbols: bool, keep_defined_in_mapping: bool = False, with_contents: bool = True

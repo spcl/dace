@@ -206,7 +206,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
                 return self._handle_sliced_access(node, node.value)
             return self.generic_visit(node)
         else:
-            raise NotImplementedError()
+            raise NotImplementedError
 
 
 class InterstateEdgeRecoder(ast.NodeTransformer):

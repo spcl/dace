@@ -121,7 +121,7 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
 
     for op in (op_a, op_b):
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
-            raise SyntaxError()
+            raise SyntaxError
 
     arr_a = sdfg.arrays[op_a]
     arr_b = sdfg.arrays[op_b]
@@ -150,11 +150,11 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
         raise NotImplementedError
 
     if arr_a.shape[0] != arr_b.shape[0]:
-        raise SyntaxError()
+        raise SyntaxError
 
     if op_out:
         if not isinstance(op_out, str) or not op_out in sdfg.arrays.keys():
-            raise SyntaxError()
+            raise SyntaxError
     else:
         # Infer result type
         restype, _ = result_type([arr_a, arr_b], "Mul")
@@ -183,7 +183,7 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
 def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
     if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
-        raise SyntaxError()
+        raise SyntaxError
 
     inp_arr = sdfg.arrays[inp_op]
     out_arr = sdfg.add_transient(
@@ -208,7 +208,7 @@ def _solve(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: st
 
     for op in (op_a, op_b):
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
-            raise SyntaxError()
+            raise SyntaxError
 
     a_arr = sdfg.arrays[op_a]
     b_arr = sdfg.arrays[op_b]
@@ -233,7 +233,7 @@ def _solve(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: st
 def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
     if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
-        raise SyntaxError()
+        raise SyntaxError
 
     inp_arr = sdfg.arrays[inp_op]
     out_arr = pv.add_temp_transient(inp_arr.shape, inp_arr.dtype, storage=inp_arr.storage)
@@ -266,7 +266,7 @@ def _tensordot(
 
     for op in (op_a, op_b):
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
-            raise SyntaxError()
+            raise SyntaxError
 
     arr_a = sdfg.arrays[op_a]
     arr_b = sdfg.arrays[op_b]
