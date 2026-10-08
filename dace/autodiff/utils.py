@@ -815,8 +815,7 @@ def extract_conditional_expressions(tasklet_node: nd.Tasklet) -> tuple[str, str,
         else_statement = else_statement.replace("else ", "")
 
         # remove the last closing parenthesis if it exists
-        if else_statement.endswith(")"):
-            else_statement = else_statement[:-1]
+        else_statement = else_statement.removesuffix(")")
 
         # match the out connector
         matches = re.search(r"^(.)* =", tasklet_code)
@@ -857,7 +856,7 @@ def check_edges_type_in_state(subgraph: dstate.StateSubgraphView) -> None:
 
         if edge.data.data:
             edge_type = parent_sdfg.arrays[edge.data.data].dtype
-            if edge_type in [dace.string]:
+            if edge_type is dace.string:
                 raise AutoDiffException(
                     f"Expected Subgraph to differentiate to only contain float, int, and bool edges, but data {edge.data}"
                     f" on edge {edge} has type {edge_type}"

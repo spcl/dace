@@ -33,8 +33,7 @@ if TYPE_CHECKING:
 
 def _clean_loop_body(body: str) -> str:
     """Cleans loop body from extraneous continue statements."""
-    if body.endswith("continue;\n"):
-        body = body[: -len("continue;\n")]
+    body = body.removesuffix("continue;\n")
     return body
 
 

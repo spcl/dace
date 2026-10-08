@@ -51,14 +51,14 @@ def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> N
         no_removed = False
     if len(diff_sets[1]) > 0:
         if not no_removed:
-            print("")
+            print()
         print("Added elements:")
         for k in diff_sets[1]:
             print(all_id_elements_B[k])
         no_added = False
     if len(diff_sets[2]) > 0:
         if not no_removed or not no_added:
-            print("")
+            print()
         print("Changed elements:")
         for k in diff_sets[2]:
             print(all_id_elements_B[k])

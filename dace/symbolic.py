@@ -152,7 +152,7 @@ def _is_sympy_number(expr) -> bool:
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
-_sympy_clash = {k: v if v else getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
+_sympy_clash = {k: v or getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
 
 # SymPy 1.13 changes the behavior of `==` such that floats with different precisions
 # are always different.
@@ -2628,7 +2628,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         # always print as the operator; the bare names do so only in C++ (Python keeps
         # the ``func(a, b)`` spelling so it round-trips).
         name = str(expr.func)
-        base = name[2:] if name.startswith("__") else name
+        base = name.removeprefix("__")
         as_operator = name.startswith("__") or self.cpp_mode
         if base == "bitwise_invert" and as_operator:
             return f"(~({self._print(expr.args[0])}))"

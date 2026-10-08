@@ -328,10 +328,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
                         self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                 # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                if atype.endswith("*"):
-                    atype = atype[:-1]
-                if value.startswith("&"):
-                    value = value[1:]
+                atype = atype.removesuffix("*")
+                value = value.removeprefix("&")
             declaration_stream.write(f"{atype} {aname};", cfg, state_id, node)
         allocation_stream.write(f"{aname} = {value};", cfg, state_id, node)
 

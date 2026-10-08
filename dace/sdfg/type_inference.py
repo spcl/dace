@@ -407,7 +407,7 @@ def _Name(t, symbols, inferred_symbols):
         inferred_type = None
 
         # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
-        t_id = t.id[1:] if t.id.startswith("*") else t.id
+        t_id = t.id.removeprefix("*")
         if t_id.strip("()") in _py2c_typeconversion:
             inferred_type = _py2c_typeconversion[t_id.strip("()")]
         elif t_id in symbols:

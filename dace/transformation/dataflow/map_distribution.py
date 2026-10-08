@@ -67,8 +67,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
                     indices = a.min_element()
                     unmatched_indices = set(params)
                     for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                        unmatched_indices.discard(idx)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -277,8 +276,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                     indices = a.min_element()
                     unmatched_indices = set(params)
                     for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                        unmatched_indices.discard(idx)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -616,8 +614,7 @@ class StencilOperation(pm.SingleStateTransformation):
                             bidx = list(idx.free_symbols)[0]
                         else:
                             return False
-                        if bidx in unmatched_indices:
-                            unmatched_indices.remove(bidx)
+                        unmatched_indices.discard(bidx)
                     if len(unmatched_indices) > 0:
                         return False
             else:
@@ -698,8 +695,7 @@ class OuterProductOperation(pm.SingleStateTransformation):
                     for idx in indices:
                         if not isinstance(idx, sympy.Symbol):
                             return False
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                        unmatched_indices.discard(idx)
                     if len(unmatched_indices) == 0:
                         return False
                     outer_product_found = True
@@ -827,8 +823,7 @@ class ReductionNOperation(pm.SingleStateTransformation):
                     indices = a.min_element()
                     unmatched_indices = set(params)
                     for idx in indices:
-                        if idx in unmatched_indices:
-                            unmatched_indices.remove(idx)
+                        unmatched_indices.discard(idx)
                     if len(unmatched_indices) == len(params):
                         return False
             else:

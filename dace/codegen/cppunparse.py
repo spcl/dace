@@ -182,7 +182,7 @@ class CPPUnparser:
         self.language = language
 
         self.dispatch(tree)
-        print("", file=self.f)
+        print(file=self.f)
         self.f.flush()
 
     def fill(self, text=""):

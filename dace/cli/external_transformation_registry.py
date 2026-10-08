@@ -128,15 +128,13 @@ class TransformationRepoManager:
         parsed = urlparse(url)
         if parsed.path:
             path = parsed.path.strip("/")
-            if path.endswith(".git"):
-                path = path[:-4]
+            path = path.removesuffix(".git")
             return os.path.basename(path)
 
         # Handle SSH format
         if "@" in url and ":" in url:
             path = url.split(":")[-1]
-            if path.endswith(".git"):
-                path = path[:-4]
+            path = path.removesuffix(".git")
             return os.path.basename(path)
 
         raise ValueError(f"Could not extract repository name from URL: {url}")

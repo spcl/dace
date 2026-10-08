@@ -66,8 +66,7 @@ def print_result(filename, *args, n=None, **kwargs):
         fp.write("==BEGIN DUMP_ARRAYS==\n")
         fp.write("begin dump: {}\n".format("A"))
         for i in range(0, n):
-            for j in range(0, i + 1):
-                fp.write(f"{args[0][i, j]:.7f} ")
+            fp.writelines(f"{args[0][i, j]:.7f} " for j in range(0, i + 1))
             fp.write("\n")
         fp.write("\nend   dump: {}\n".format("A"))
         fp.write("==END   DUMP_ARRAYS==\n")
