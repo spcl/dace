@@ -12,17 +12,17 @@ from typing import Dict, Tuple
 
 
 def _dataview(data: Data, memlet: Memlet) -> Data:
-    """ Returns a data descriptor view of a data descriptor and a memlet. """
+    """Returns a data descriptor view of a data descriptor and a memlet."""
     result = deepcopy(data)
     result.shape = memlet.subset.size()
     return result
 
 
 def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[Dict[str, Data], Dict[str, Data]]:
-    """ Returns two dictionaries that map from input/output connectors to data
-        descriptors.
+    """Returns two dictionaries that map from input/output connectors to data
+    descriptors.
 
-        :return: Tuple of (input memlet mapping, output memlet mapping).
+    :return: Tuple of (input memlet mapping, output memlet mapping).
     """
     inputs: Dict[str, Data] = {}
     for edge in state.in_edges(node):
@@ -37,35 +37,35 @@ def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[D
 
 @dace.library.node
 class CodeLibraryNode(LibraryNode):
-    """ A convenience interface for nodes to generate specific code given
-        properties. """
+    """A convenience interface for nodes to generate specific code given
+    properties."""
 
     # Global properties
     implementations = {}
     default_implementation = None
 
-    inputdict = Property(dtype=dict, default={}, category='General')
-    outputdict = Property(dtype=dict, default={}, category='General')
+    inputdict = Property(dtype=dict, default={}, category="General")
+    outputdict = Property(dtype=dict, default={}, category="General")
 
     def has_side_effects(self, sdfg) -> bool:
         # By default, assume code library nodes have side effects unless said otherwise
         return True
 
     def generate_code(self, inputs: Dict[str, Data], outputs: Dict[str, Data]) -> str:
-        """ Method that is responsible for generating the code related to
-            this node.
+        """Method that is responsible for generating the code related to
+        this node.
 
-            :param inputs: A dictionary mapping input names (on node connectors)
-                           to data descriptors based on incoming memlets.
-            :param outputs: A dictionary mapping output names (on node connectors)
-                           to data descriptors based on outgoing memlets.
-            :return: A string representing C++ code to be injected instead
-                     of this node.
-            :note: This method must be overridden by subclasses.
+        :param inputs: A dictionary mapping input names (on node connectors)
+                       to data descriptors based on incoming memlets.
+        :param outputs: A dictionary mapping output names (on node connectors)
+                       to data descriptors based on outgoing memlets.
+        :return: A string representing C++ code to be injected instead
+                 of this node.
+        :note: This method must be overridden by subclasses.
         """
-        raise NotImplementedError('Must be overridden by subclasses')
+        raise NotImplementedError("Must be overridden by subclasses")
 
-    def __init__(self, input_names, output_names, *args, name='Custom Code', **kwargs):
+    def __init__(self, input_names, output_names, *args, name="Custom Code", **kwargs):
         # Store connector types, if given
         if isinstance(input_names, dict):
             self.inputdict = input_names
@@ -90,8 +90,8 @@ class Expansion(ExpandTransformation):
         # Generate the appropriate code
         code = node.generate_code(inputs, outputs)
         # Replace this node with a C++ tasklet
-        return Tasklet('custom_code', node.inputdict, node.outputdict, code, language=dtypes.Language.CPP)
+        return Tasklet("custom_code", node.inputdict, node.outputdict, code, language=dtypes.Language.CPP)
 
 
-CodeLibraryNode.register_implementation('default', Expansion)
-CodeLibraryNode.default_implementation = 'default'
+CodeLibraryNode.register_implementation("default", Expansion)
+CodeLibraryNode.default_implementation = "default"

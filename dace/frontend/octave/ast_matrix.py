@@ -6,7 +6,6 @@ import dace
 
 
 class AST_Matrix_Row(AST_Node):
-
     def __init__(self, context, elements):
         AST_Node.__init__(self, context)
         self.elements = elements
@@ -49,7 +48,6 @@ class AST_Matrix_Row(AST_Node):
 
 
 class AST_Matrix(AST_Node):
-
     def __init__(self, context, rows):
         AST_Node.__init__(self, context)
         self.rows = rows
@@ -72,8 +70,7 @@ class AST_Matrix(AST_Node):
         dims = -1
         for r in self.rows:
             if (dims > 0) and (r.get_dims() != dims):
-                raise ValueError("Matrices with unequal row lengths are currently not "
-                                 "supported.")
+                raise ValueError("Matrices with unequal row lengths are currently not supported.")
             else:
                 dims = r.get_dims()
         return [len(self.rows), dims]
@@ -116,16 +113,24 @@ class AST_Matrix(AST_Node):
             code += ", ".join(str(i) for i in vals) + "};\n"
             code += "out[i] = VALUES[i];"
 
-            tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'}, code, dace.Language.CPP)
-            me, mx = sdfg.nodes()[state].add_map('init', dict(i='0:' + str(arrlen)))
+            tasklet = sdfg.nodes()[state].add_tasklet("init", {}, {"out"}, code, dace.Language.CPP)
+            me, mx = sdfg.nodes()[state].add_map("init", dict(i="0:" + str(arrlen)))
             sdfg.nodes()[state].add_edge(me, None, tasklet, None, dace.memlet.Memlet())
-            sdfg.nodes()[state].add_edge(tasklet, "out", mx, None,
-                                         dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
-            sdfg.nodes()[state].add_edge(mx, None, trans, None,
-                                         dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
+            sdfg.nodes()[state].add_edge(
+                tasklet, "out", mx, None, dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg))
+            )
+            sdfg.nodes()[state].add_edge(
+                mx, None, trans, None, dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg))
+            )
 
-            print("The const expr " + str(self) + " will be stored in " + str(name) + ", values are: " +
-                  str(self.get_values_row_major()))
+            print(
+                "The const expr "
+                + str(self)
+                + " will be stored in "
+                + str(name)
+                + ", values are: "
+                + str(self.get_values_row_major())
+            )
         else:
             raise ValueError("Non-constant matrices are currently not supported")
 
@@ -140,7 +145,6 @@ class AST_Matrix(AST_Node):
 
 
 class AST_Transpose(AST_Node):
-
     def __init__(self, context, arg, op):
         AST_Node.__init__(self, context)
         self.arg = arg
@@ -164,8 +168,7 @@ class AST_Transpose(AST_Node):
         name = self.get_name_in_sdfg(sdfg)
         basetype = self.get_basetype()
         if basetype.is_complex():
-            raise NotImplementedError("Transpose of complex matrices not implemented (we might need "
-                                      "to conjugate)")
+            raise NotImplementedError("Transpose of complex matrices not implemented (we might need to conjugate)")
         if len(dims) != 2:
             raise NotImplementedError("Transpose only implemented for 2D matrices")
         sdfg.add_transient(name, dims, basetype, debuginfo=self.context)
@@ -177,14 +180,14 @@ class AST_Transpose(AST_Node):
         N = str(dims[0])
         M = str(dims[1])
         s = sdfg.nodes()[state]
-        map_entry, map_exit = s.add_map('transpose', dict(i='0:' + N, j='0:' + M))
-        map_entry.add_in_connector('IN_1')
-        map_entry.add_out_connector('OUT_1')
-        s.add_edge(A, None, map_entry, 'IN_1', dace.memlet.Memlet.simple(A, '0:' + N + ',0:' + M))
-        tasklet = s.add_tasklet('identity', {'a'}, {'out'}, 'out = a')
-        s.add_edge(map_entry, "OUT_1", tasklet, "a", dace.memlet.Memlet.simple(A, 'i,j'))
-        s.add_edge(tasklet, "out", map_exit, None, dace.memlet.Memlet.simple(resnode, 'j,i'))
-        s.add_edge(map_exit, None, resnode, None, dace.memlet.Memlet.simple(resnode, '0:' + M + ', 0:' + N))
+        map_entry, map_exit = s.add_map("transpose", dict(i="0:" + N, j="0:" + M))
+        map_entry.add_in_connector("IN_1")
+        map_entry.add_out_connector("OUT_1")
+        s.add_edge(A, None, map_entry, "IN_1", dace.memlet.Memlet.simple(A, "0:" + N + ",0:" + M))
+        tasklet = s.add_tasklet("identity", {"a"}, {"out"}, "out = a")
+        s.add_edge(map_entry, "OUT_1", tasklet, "a", dace.memlet.Memlet.simple(A, "i,j"))
+        s.add_edge(tasklet, "out", map_exit, None, dace.memlet.Memlet.simple(resnode, "j,i"))
+        s.add_edge(map_exit, None, resnode, None, dace.memlet.Memlet.simple(resnode, "0:" + M + ", 0:" + N))
         print("The result of expr " + str(self) + " will be stored in " + str(name))
 
     def replace_child(self, old, new):

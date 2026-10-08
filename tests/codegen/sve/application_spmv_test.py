@@ -5,19 +5,20 @@ import scipy
 import tests.codegen.sve.common as common
 import pytest
 
-W = dace.symbol('W')
-H = dace.symbol('H')
-nnz = dace.symbol('nnz')
+W = dace.symbol("W")
+H = dace.symbol("H")
+nnz = dace.symbol("nnz")
 
 
 @dace.program
-def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W],
-         b: dace.float32[H]):
+def spmv(
+    A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W], b: dace.float32[H]
+):
 
     @dace.mapscope(_[0:H])
     def compute_row(i):
 
-        @dace.map(_[A_row[i]:A_row[i + 1]])
+        @dace.map(_[A_row[i] : A_row[i + 1]])
         def compute(j):
             a << A_val[j]
             in_x << x[A_col[j]]
@@ -32,7 +33,7 @@ def test_spmv():
     H = 64
     nnz = 640
 
-    print('Sparse Matrix-Vector Multiplication %dx%d (%d non-zero elements)' % (W, H, nnz))
+    print("Sparse Matrix-Vector Multiplication %dx%d (%d non-zero elements)" % (W, H, nnz))
 
     A_row = dace.ndarray([H + 1], dtype=dace.uint32)
     A_col = dace.ndarray([nnz], dtype=dace.uint32)
@@ -45,7 +46,7 @@ def test_spmv():
     nnz_per_row = nnz // H
     nnz_last_row = nnz_per_row + (nnz % H)
     if nnz_last_row > W:
-        print('Too many nonzeros per row')
+        print("Too many nonzeros per row")
         exit(1)
 
     # RANDOMIZE SPARSE MATRIX
@@ -56,10 +57,9 @@ def test_spmv():
 
     # Fill column data
     for i in range(H - 1):
-        A_col[nnz_per_row*i:nnz_per_row*(i+1)] = \
-            np.sort(np.random.choice(W, nnz_per_row, replace=False))
+        A_col[nnz_per_row * i : nnz_per_row * (i + 1)] = np.sort(np.random.choice(W, nnz_per_row, replace=False))
     # Fill column data for last row
-    A_col[nnz_per_row * (H - 1):] = np.sort(np.random.choice(W, nnz_last_row, replace=False))
+    A_col[nnz_per_row * (H - 1) :] = np.sort(np.random.choice(W, nnz_last_row, replace=False))
 
     A_val[:] = np.random.rand(nnz).astype(dace.float32.type)
     #########################
@@ -74,8 +74,8 @@ def test_spmv():
 
     sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 
-    if dace.Config.get_bool('profiling'):
-        dace.timethis('spmv', 'scipy', 0, A_sparse.dot, x)
+    if dace.Config.get_bool("profiling"):
+        dace.timethis("spmv", "scipy", 0, A_sparse.dot, x)
 
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(H)
     print("Difference:", diff)

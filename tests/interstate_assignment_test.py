@@ -20,7 +20,7 @@ def _get_interstate_dependent_sdfg(assignments: Dict, symbols_at_start=False):
         sdfg.add_edge(s0, s1, dace.InterstateEdge(None, assignments=pre_assignments))
 
     for sid, s in [("1", s1), ("2", s2)]:
-        sdfg.add_array(f"array{sid}", (N, ), dace.int32, storage=dace.StorageType.CPU_Heap, transient=True)
+        sdfg.add_array(f"array{sid}", (N,), dace.int32, storage=dace.StorageType.CPU_Heap, transient=True)
         an = s.add_access(f"array{sid}")
         an2 = s.add_access(f"array{sid}")
         t = s.add_tasklet(f"tasklet{sid}", {"_in"}, {"_out"}, "_out = _in * 2")

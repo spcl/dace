@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" The symbol repository of an SDFG: the dtypes and facts of its parameters and of the names its scopes open. """
+"""The symbol repository of an SDFG: the dtypes and facts of its parameters and of the names its scopes open."""
+
 import enum
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -13,15 +14,22 @@ from dace.dtypes import validate_name
 from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.validation import InvalidSDFGError
-from dace.symbolic_facts import (Facts, InconsistentAssumptionsError, Predicate, Relation, RelationKind,
-                                 predicate_relation, relation_names)
+from dace.symbolic_facts import (
+    Facts,
+    InconsistentAssumptionsError,
+    Predicate,
+    Relation,
+    RelationKind,
+    predicate_relation,
+    relation_names,
+)
 
 if TYPE_CHECKING:
     from dace.sdfg.sdfg import SDFG, InterstateEdge
 
 #: What opens a scope: a loop (its iterator), a map or consume entry (its parameters and dynamic inputs), or an
 #: interstate edge (its assignments).
-ScopeOwner = Union[LoopRegion, nodes.EntryNode, 'InterstateEdge']
+ScopeOwner = Union[LoopRegion, nodes.EntryNode, "InterstateEdge"]
 
 UNSIGNED_TYPES = (dtypes.uint8, dtypes.uint16, dtypes.uint32, dtypes.uint64)
 
@@ -33,8 +41,9 @@ class SymbolInfo(NamedTuple):
 
 @dataclass(slots=True)
 class Scope:
-    """ The dtypes and sign predicates declared for names a scope opens, and the relations assumed in it. Which scopes
-    enclose which comes from the graph (``SymbolResolver.facts_at``), not from the repository. """
+    """The dtypes and sign predicates declared for names a scope opens, and the relations assumed in it. Which scopes
+    enclose which comes from the graph (``SymbolResolver.facts_at``), not from the repository."""
+
     types: dict[str, dtypes.typeclass] = field(default_factory=dict)
     predicates: dict[str, frozenset[Predicate]] = field(default_factory=dict)
     relations: OrderedSet[Relation] = field(default_factory=lambda: OrderedSet[Relation]([]))
@@ -47,22 +56,23 @@ class OwnerKind(enum.Enum):
 
 
 class ScopeKey(NamedTuple):
-    """ Where a scope owner sits in its SDFG: the block indices down to the region (or state) holding it, and its
-    position among the blocks (``LOOP``), nodes (``ENTRY``) or edges (``EDGE``) there. """
+    """Where a scope owner sits in its SDFG: the block indices down to the region (or state) holding it, and its
+    position among the blocks (``LOOP``), nodes (``ENTRY``) or edges (``EDGE``) there."""
+
     kind: OwnerKind
     graph: tuple[int, ...]
     position: int
 
     def to_json(self) -> dict[str, Any]:
-        return {'kind': self.kind.name, 'graph': list(self.graph), 'position': self.position}
+        return {"kind": self.kind.name, "graph": list(self.graph), "position": self.position}
 
     @classmethod
-    def from_json(cls, obj: dict[str, Any]) -> 'ScopeKey':
-        return cls(OwnerKind[obj['kind']], tuple(obj['graph']), obj['position'])
+    def from_json(cls, obj: dict[str, Any]) -> "ScopeKey":
+        return cls(OwnerKind[obj["kind"]], tuple(obj["graph"]), obj["position"])
 
 
 def scope_owners(graph: AbstractControlFlowRegion, path: tuple[int, ...] = ()) -> Iterator[tuple[ScopeKey, ScopeOwner]]:
-    """ Every loop, scope entry and interstate edge of an SDFG (not of its nested SDFGs), with its key. """
+    """Every loop, scope entry and interstate edge of an SDFG (not of its nested SDFGs), with its key."""
     for index, edge in enumerate(graph.edges()):
         yield ScopeKey(OwnerKind.EDGE, path, index), edge.data
     for index, block in enumerate(graph.nodes()):
@@ -77,7 +87,7 @@ def scope_owners(graph: AbstractControlFlowRegion, path: tuple[int, ...] = ()) -
 
 
 def bound_names(owner: ScopeOwner) -> set[str]:
-    """ The names a scope owner binds, which are the only ones its scope may open. """
+    """The names a scope owner binds, which are the only ones its scope may open."""
     if isinstance(owner, LoopRegion):
         return {owner.loop_variable} if owner.loop_variable else set()
     if isinstance(owner, nodes.MapEntry):
@@ -85,77 +95,86 @@ def bound_names(owner: ScopeOwner) -> set[str]:
     elif isinstance(owner, nodes.ConsumeEntry):
         params = [owner.consume.pe_index]
     elif isinstance(owner, nodes.EntryNode):
-        raise TypeError(f'Unknown scope entry {owner}')
+        raise TypeError(f"Unknown scope entry {owner}")
     else:
         return set(owner.assignments)
-    return {*params, *(connector for connector in owner.in_connectors if not connector.startswith('IN_'))}
+    return {*params, *(connector for connector in owner.in_connectors if not connector.startswith("IN_"))}
 
 
-def symbol_facts(types: dict[str, dtypes.typeclass], predicates: dict[str, frozenset[Predicate]],
-                 relations: Iterable[Relation]) -> Facts:
-    """ The facts of a symbol table; raises ``InconsistentAssumptionsError`` if they contradict. """
-    integers = frozenset(name for name, dtype in types.items()
-                         if dtype in dtypes.INTEGER_TYPES and dtype != dtypes.bool_)
+def symbol_facts(
+    types: dict[str, dtypes.typeclass], predicates: dict[str, frozenset[Predicate]], relations: Iterable[Relation]
+) -> Facts:
+    """The facts of a symbol table; raises ``InconsistentAssumptionsError`` if they contradict."""
+    integers = frozenset(
+        name for name, dtype in types.items() if dtype in dtypes.INTEGER_TYPES and dtype != dtypes.bool_
+    )
     # An unsigned type is a sign fact of its own
     unsigned = {name: frozenset({Predicate.NONNEGATIVE}) for name, dtype in types.items() if dtype in UNSIGNED_TYPES}
     signs = [
         predicate_relation(predicate, symbolic.symbol(name))
-        for name, named in [*predicates.items(), *unsigned.items()] for predicate in named
+        for name, named in [*predicates.items(), *unsigned.items()]
+        for predicate in named
     ]
     return Facts((*signs, *relations), integers)
 
 
 def scope_facts(scope: Scope) -> Facts:
-    """ The facts a scope declares on its own. """
+    """The facts a scope declares on its own."""
     return symbol_facts(scope.types, scope.predicates, scope.relations)
 
 
 def relation_to_json(relation: Relation) -> dict[str, str]:
     return {
-        'kind': relation.kind.name,
-        'lhs': symbolic.serialize_symbolic(relation.lhs),
-        'rhs': symbolic.serialize_symbolic(relation.rhs)
+        "kind": relation.kind.name,
+        "lhs": symbolic.serialize_symbolic(relation.lhs),
+        "rhs": symbolic.serialize_symbolic(relation.rhs),
     }
 
 
 def as_expr(value: Any) -> sympy.Expr:
     if not isinstance(value, sympy.Expr):
-        raise TypeError(f'{value} is not a symbolic expression')
+        raise TypeError(f"{value} is not a symbolic expression")
     return value
 
 
 def relation_from_json(obj: dict[str, str]) -> Relation:
-    return Relation(RelationKind[obj['kind']], as_expr(symbolic.deserialize_symbolic(obj['lhs'])),
-                    as_expr(symbolic.deserialize_symbolic(obj['rhs'])))
+    return Relation(
+        RelationKind[obj["kind"]],
+        as_expr(symbolic.deserialize_symbolic(obj["lhs"])),
+        as_expr(symbolic.deserialize_symbolic(obj["rhs"])),
+    )
 
 
 def scope_to_json(scope: Scope) -> dict[str, Any]:
-    result: dict[str, Any] = {'types': {name: dtype.to_json() for name, dtype in sorted(scope.types.items())}}
+    result: dict[str, Any] = {"types": {name: dtype.to_json() for name, dtype in sorted(scope.types.items())}}
     if scope.predicates:
-        result['predicates'] = {
-            name: sorted(predicate.name for predicate in named)
-            for name, named in sorted(scope.predicates.items())
+        result["predicates"] = {
+            name: sorted(predicate.name for predicate in named) for name, named in sorted(scope.predicates.items())
         }
     if scope.relations:
-        result['relations'] = [relation_to_json(relation) for relation in scope.relations]
+        result["relations"] = [relation_to_json(relation) for relation in scope.relations]
     return result
 
 
 def scope_from_json(obj: dict[str, Any], context: dict[str, Any] | None) -> Scope:
-    return Scope({
-        name: dtypes.json_to_typeclass(dtype, context)
-        for name, dtype in obj['types'].items()
-    }, {
-        name: frozenset(Predicate[predicate] for predicate in named)
-        for name, named in obj.get('predicates', {}).items()
-    }, OrderedSet(relation_from_json(relation) for relation in obj.get('relations', [])))
+    return Scope(
+        {name: dtypes.json_to_typeclass(dtype, context) for name, dtype in obj["types"].items()},
+        {
+            name: frozenset(Predicate[predicate] for predicate in named)
+            for name, named in obj.get("predicates", {}).items()
+        },
+        OrderedSet(relation_from_json(relation) for relation in obj.get("relations", [])),
+    )
 
 
 def inconsistent(name: str, declared: SymbolInfo, added: SymbolInfo) -> InconsistentAssumptionsError:
-    return InconsistentAssumptionsError(name, [
-        f'declared {declared.dtype} {sorted(p.name for p in declared.predicates)}',
-        f're-added as {added.dtype} {sorted(p.name for p in added.predicates)}'
-    ])
+    return InconsistentAssumptionsError(
+        name,
+        [
+            f"declared {declared.dtype} {sorted(p.name for p in declared.predicates)}",
+            f"re-added as {added.dtype} {sorted(p.name for p in added.predicates)}",
+        ],
+    )
 
 
 @dataclass(slots=True)
@@ -165,36 +184,39 @@ class SymbolRepo:
     for the names a loop, scope entry or interstate edge opens, only for owners that declare something. Which scopes
     enclose a point, and the facts holding there, come from the graph (``SymbolResolver.facts_at``).
     """
+
     params: Scope = field(default_factory=Scope)
     scopes: dict[ScopeOwner, Scope] = field(default_factory=dict)
 
     def scope(self, at: ScopeOwner | None) -> Scope:
-        """ The declarations of ``at`` (``None``: the parameters), created empty on first use. """
+        """The declarations of ``at`` (``None``: the parameters), created empty on first use."""
         if at is None:
             return self.params
         return self.scopes.setdefault(at, Scope())
 
     def facts(self) -> Facts:
-        """ The facts of the parameters, for explicit use in proofs. """
+        """The facts of the parameters, for explicit use in proofs."""
         return scope_facts(self.params)
 
-    def add(self,
-            name: str,
-            dtype: dtypes.typeclass,
-            predicates: frozenset[Predicate] = frozenset(),
-            at: ScopeOwner | None = None) -> None:
-        """ Declares a name in the scope of ``at``. Declaring it again with the same dtype and predicates does nothing.
+    def add(
+        self,
+        name: str,
+        dtype: dtypes.typeclass,
+        predicates: frozenset[Predicate] = frozenset(),
+        at: ScopeOwner | None = None,
+    ) -> None:
+        """Declares a name in the scope of ``at``. Declaring it again with the same dtype and predicates does nothing.
 
-            :raise ValueError: If ``at`` does not bind the name.
-            :raise InconsistentAssumptionsError: If the name is declared there with another dtype or other predicates,
-                                                 or the predicates contradict the facts there.
+        :raise ValueError: If ``at`` does not bind the name.
+        :raise InconsistentAssumptionsError: If the name is declared there with another dtype or other predicates,
+                                             or the predicates contradict the facts there.
         """
         if dtype.type is None:
             raise TypeError(f'Cannot declare symbol "{name}" with no type')
         if at is not None and name not in bound_names(at):
             raise ValueError(f'{at} does not bind "{name}"')
         if predicates and not isinstance(at, (LoopRegion, nodes.EntryNode, type(None))):
-            raise NotImplementedError('Facts declared for the names an interstate edge assigns are not supported')
+            raise NotImplementedError("Facts declared for the names an interstate edge assigns are not supported")
         scope = self.scope(at)
         added = SymbolInfo(dtype, predicates)
         if name in scope.types:
@@ -208,7 +230,7 @@ class SymbolRepo:
         scope.types[name] = dtype
 
     def set_type(self, name: str, dtype: dtypes.typeclass, at: ScopeOwner | None = None) -> None:
-        """ Changes the dtype of a declared name, keeping its facts. """
+        """Changes the dtype of a declared name, keeping its facts."""
         scope = self.scope(at)
         if name not in scope.types:
             raise KeyError(f'Symbol "{name}" is not declared in this scope')
@@ -216,7 +238,7 @@ class SymbolRepo:
         scope.types[name] = dtype
 
     def set_predicates(self, name: str, predicates: frozenset[Predicate], at: ScopeOwner | None = None) -> None:
-        """ Replaces the sign predicates of a declared name. """
+        """Replaces the sign predicates of a declared name."""
         scope = self.scope(at)
         if name not in scope.types:
             raise KeyError(f'Symbol "{name}" is not declared in this scope')
@@ -227,15 +249,15 @@ class SymbolRepo:
         scope.predicates = candidate
 
     def add_relation(self, relation: Relation, at: ScopeOwner | None = None) -> None:
-        """ Assumes a relation in the scope of ``at``; assuming a known relation again does nothing.
+        """Assumes a relation in the scope of ``at``; assuming a known relation again does nothing.
 
-            :raise KeyError: If a relation of the parameters names an undeclared parameter.
+        :raise KeyError: If a relation of the parameters names an undeclared parameter.
         """
         if at is None:
             for name in sorted(relation_names(relation) - self.params.types.keys()):
                 raise KeyError(f'Symbol "{name}" is not declared')
         if not isinstance(at, (LoopRegion, nodes.EntryNode, type(None))):
-            raise NotImplementedError('Facts declared for the names an interstate edge assigns are not supported')
+            raise NotImplementedError("Facts declared for the names an interstate edge assigns are not supported")
         scope = self.scope(at)
         if relation in scope.relations:
             return
@@ -243,9 +265,9 @@ class SymbolRepo:
         scope.relations.add(relation)
 
     def remove(self, name: str, at: ScopeOwner | None = None) -> None:
-        """ Removes a declared name.
+        """Removes a declared name.
 
-            :raise ValueError: If a relation of the same scope still names it.
+        :raise ValueError: If a relation of the same scope still names it.
         """
         scope = self.scope(at)
         if name not in scope.types:
@@ -257,13 +279,18 @@ class SymbolRepo:
         del scope.types[name]
 
     def replace(self, names: dict[str, str], replacements: Mapping[str, symbolic.SymbolicType]) -> None:
-        """ Renames declared names (``names``) in every scope, as ``SDFG.replace_dict`` does in the whole graph, and
+        """Renames declared names (``names``) in every scope, as ``SDFG.replace_dict`` does in the whole graph, and
         rewrites the relations. A name replaced by an expression becomes relations over it; a parameter's free symbols
-        are declared with its dtype. """
+        are declared with its dtype."""
         for owner, scope in [(None, self.params), *self.scopes.items()]:
             scope.relations = OrderedSet(
-                Relation(relation.kind, symbolic.replace_symbols(relation.lhs, replacements),
-                         symbolic.replace_symbols(relation.rhs, replacements)) for relation in scope.relations)
+                Relation(
+                    relation.kind,
+                    symbolic.replace_symbols(relation.lhs, replacements),
+                    symbolic.replace_symbols(relation.rhs, replacements),
+                )
+                for relation in scope.relations
+            )
             for name, new_name in names.items():
                 if name not in scope.types:
                     continue
@@ -279,46 +306,49 @@ class SymbolRepo:
                     raise TypeError(f'Cannot replace symbol "{name}" by {replacement}')
                 if owner is None:
                     scope.types.update({str(free): dtype for free in replacement.free_symbols})
-                scope.relations.update([
-                    predicate_relation(predicate, as_expr(replacement))
-                    for predicate in sorted(predicates, key=lambda p: p.name)
-                ])
+                scope.relations.update(
+                    [
+                        predicate_relation(predicate, as_expr(replacement))
+                        for predicate in sorted(predicates, key=lambda p: p.name)
+                    ]
+                )
 
-    def validate(self, sdfg: 'SDFG') -> None:
-        """ Raises ``InvalidSDFGError`` if a declaring owner is not in ``sdfg`` or does not bind the names it declares,
-        or if the parameters' facts contradict. The facts at each point are checked where they are derived. """
+    def validate(self, sdfg: "SDFG") -> None:
+        """Raises ``InvalidSDFGError`` if a declaring owner is not in ``sdfg`` or does not bind the names it declares,
+        or if the parameters' facts contradict. The facts at each point are checked where they are derived."""
         owned = list(scope_owners(sdfg))
         owners = {owner for _, owner in owned}
         bound = {name for _, owner in owned for name in bound_names(owner)}
         for owner, scope in [(None, self.params), *self.scopes.items()]:
             if owner is not None and owner not in owners:
-                raise InvalidSDFGError(f'The symbol scope of {owner} has no owner in the SDFG', sdfg, None)
+                raise InvalidSDFGError(f"The symbol scope of {owner} has no owner in the SDFG", sdfg, None)
             if owner is not None and not scope.types.keys() <= bound_names(owner):
-                raise InvalidSDFGError(f'{owner} does not bind the symbols {sorted(scope.types)} its scope declares',
-                                       sdfg, None)
+                raise InvalidSDFGError(
+                    f"{owner} does not bind the symbols {sorted(scope.types)} its scope declares", sdfg, None
+                )
             named = {*scope.predicates, *(name for relation in scope.relations for name in relation_names(relation))}
             visible = self.params.types.keys() | (bound if owner is not None else set())
             if not named <= visible:
-                raise InvalidSDFGError(f'Symbol facts name undeclared symbols {sorted(named - visible)}', sdfg, None)
+                raise InvalidSDFGError(f"Symbol facts name undeclared symbols {sorted(named - visible)}", sdfg, None)
         try:
             self.facts()
         except InconsistentAssumptionsError as error:
             raise InvalidSDFGError(str(error), sdfg, None) from error
 
-    def to_json(self, sdfg: 'SDFG') -> dict[str, Any]:
-        """ Serializes the repository with its scopes keyed by the position of their owners in ``sdfg``. A scope whose
-        owner is no longer in ``sdfg`` is left out; validation reports it. """
-        result: dict[str, Any] = {'params': scope_to_json(self.params)}
+    def to_json(self, sdfg: "SDFG") -> dict[str, Any]:
+        """Serializes the repository with its scopes keyed by the position of their owners in ``sdfg``. A scope whose
+        owner is no longer in ``sdfg`` is left out; validation reports it."""
+        result: dict[str, Any] = {"params": scope_to_json(self.params)}
         keys = {owner: key for key, owner in scope_owners(sdfg)} if self.scopes else {}
         live = [(keys[owner], scope) for owner, scope in self.scopes.items() if owner in keys]
         if live:
-            result['scopes'] = [{'owner': key.to_json(), **scope_to_json(scope)} for key, scope in live]
+            result["scopes"] = [{"owner": key.to_json(), **scope_to_json(scope)} for key, scope in live]
         return result
 
     @classmethod
-    def from_json(cls, obj: dict[str, Any], sdfg: 'SDFG', context: dict[str, Any] | None = None) -> 'SymbolRepo':
-        """ Loads a repository whose scopes are keyed by the position of their owners in ``sdfg``. """
-        owners = dict(scope_owners(sdfg)) if obj.get('scopes') else {}
+    def from_json(cls, obj: dict[str, Any], sdfg: "SDFG", context: dict[str, Any] | None = None) -> "SymbolRepo":
+        """Loads a repository whose scopes are keyed by the position of their owners in ``sdfg``."""
+        owners = dict(scope_owners(sdfg)) if obj.get("scopes") else {}
 
         def owner_at(key: dict[str, Any]) -> ScopeOwner:
             scope_key = ScopeKey.from_json(key)
@@ -326,6 +356,7 @@ class SymbolRepo:
                 raise KeyError(f'No scope owner at {scope_key} in SDFG "{sdfg.name}"')
             return owners[scope_key]
 
-        return cls(scope_from_json(obj['params'], context),
-                   {owner_at(scope['owner']): scope_from_json(scope, context)
-                    for scope in obj.get('scopes', [])})
+        return cls(
+            scope_from_json(obj["params"], context),
+            {owner_at(scope["owner"]): scope_from_json(scope, context) for scope in obj.get("scopes", [])},
+        )

@@ -54,9 +54,9 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def try_load(self, file_name) -> Dict:
         results = None
         if os.path.exists(file_name):
-            print(f'Using cached {file_name}')
+            print(f"Using cached {file_name}")
 
-            with open(file_name, 'r') as fp:
+            with open(file_name, "r") as fp:
                 results = json.load(fp)
 
         return results
@@ -95,10 +95,9 @@ class CutoutTuner(auto_tuner.AutoTuner):
             except:
                 continue
 
-        runtime = optim_utils.subprocess_measure(cutout=cutout,
-                                                 dreport=dreport_,
-                                                 repetitions=repetitions,
-                                                 timeout=timeout)
+        runtime = optim_utils.subprocess_measure(
+            cutout=cutout, dreport=dreport_, repetitions=repetitions, timeout=timeout
+        )
         return runtime
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict[Any, Any]:
@@ -113,7 +112,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
                     tuning_report[label] = None
                     continue
 
-                with open(fn, 'w') as fp:
+                with open(fn, "w") as fp:
                     json.dump(results, fp)
 
             best_config = min(results, key=results.get)
@@ -142,8 +141,9 @@ class CutoutTuner(auto_tuner.AutoTuner):
         all_configs = []
         for cutout_label in tuning_report:
             configs = tuning_report[cutout_label]
-            best_k_configs = [(key, value) for key, value in sorted(configs.items(), key=lambda item: item[1])
-                              ][:min(len(configs), k)]
+            best_k_configs = [(key, value) for key, value in sorted(configs.items(), key=lambda item: item[1])][
+                : min(len(configs), k)
+            ]
             best_k_configs = filter(lambda c: c[1] != math.inf, best_k_configs)
             best_k_configs = list(map(lambda c: (cutout_label, c[0]), best_k_configs))
 
@@ -164,7 +164,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
                 # Potential shape mismatch
                 if rep_arr.shape != sdfg_arr.shape:
                     # Check given data first
-                    if hasattr(kwargs[data], 'shape') and rep_arr.shape != kwargs[data].shape:
+                    if hasattr(kwargs[data], "shape") and rep_arr.shape != kwargs[data].shape:
                         sdfg.clear_data_reports()
                         dreport = None
                         break

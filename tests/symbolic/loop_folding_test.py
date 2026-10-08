@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" The loop-shaped expressions that must fold: range sizes, integer division and extrema. Symbols carry no
-assumptions of their own, so they fold from what the IR guarantees by definition, or from explicit facts. """
+"""The loop-shaped expressions that must fold: range sizes, integer division and extrema. Symbols carry no
+assumptions of their own, so they fold from what the IR guarantees by definition, or from explicit facts."""
+
 import sympy
 
 import dace
 from dace import subsets, symbolic
 from dace.codegen.targets.cpp import sym2cpp
 
-N, M, K, i = (dace.symbol(name) for name in ('N', 'M', 'K', 'i'))
+N, M, K, i = (dace.symbol(name) for name in ("N", "M", "K", "i"))
 
 
 def size(begin, end, step=1):
@@ -19,13 +20,13 @@ def test_unit_step_range_size_is_its_extent():
     assert size(i, N - 1) == N - i
     assert size(i, sympy.Min(N, i + 32) - 1) == sympy.Min(N, i + 32) - i
     assert subsets.Range([(0, N - 1, 1), (0, M - 1, 1)]).num_elements() == M * N
-    assert sym2cpp(size(0, N - 1)) == 'N'
+    assert sym2cpp(size(0, N - 1)) == "N"
 
 
 def test_strided_range_size_rounds_up():
     assert size(0, N - 1, 2) == sympy.ceiling(N / 2)
-    assert sym2cpp(size(0, N - 1, 2)) == 'int_ceil(N, 2)'
-    assert sym2cpp(size(0, N - 1, K)) == 'int_ceil(N, K)'
+    assert sym2cpp(size(0, N - 1, 2)) == "int_ceil(N, 2)"
+    assert sym2cpp(size(0, N - 1, K)) == "int_ceil(N, K)"
 
 
 def test_exact_integer_division_folds():
@@ -34,7 +35,7 @@ def test_exact_integer_division_folds():
     assert symbolic.int_floor(2 * N, 2) == N
     assert symbolic.int_ceil(2 * N, 2) == N
     assert symbolic.int_floor(4 * N + 8, 4) == N + 2
-    assert sym2cpp(symbolic.int_floor(N, K)) == '(N / K)'
+    assert sym2cpp(symbolic.int_floor(N, K)) == "(N / K)"
 
 
 def test_inexact_integer_division_stays():
@@ -48,7 +49,7 @@ def test_extrema_of_ordered_arguments_fold():
     assert sympy.Min(N, M) == sympy.Min(M, N)
 
 
-def facts(*relations: symbolic.Relation, integers: str = 'NMKi') -> symbolic.Facts:
+def facts(*relations: symbolic.Relation, integers: str = "NMKi") -> symbolic.Facts:
     return symbolic.Facts(relations, frozenset(integers))
 
 
@@ -82,7 +83,7 @@ def test_relations_fold_extrema():
     assert symbolic.simplify(sympy.Max(N, 11) + sympy.Max(N, 3), bounded) == N + 11
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_unit_step_range_size_is_its_extent()
     test_strided_range_size_rounds_up()
     test_exact_integer_division_folds()

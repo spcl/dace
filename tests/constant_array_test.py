@@ -5,25 +5,33 @@ from dace.transformation.dataflow.redundant_array import RedundantArray, Redunda
 from dace.transformation.interstate.state_fusion import StateFusion
 from scipy import ndimage
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 KERNEL = np.array([[0, -1, 0], [-1, 0, -1], [0, -1, 0]], dtype=np.float32)
 
 
 @dace.program
 def stencil3x3(A: dace.float32[N, N], B: dace.float32[N, N]):
 
-    @dace.map(_[1:N - 1, 1:N - 1])
+    @dace.map(_[1 : N - 1, 1 : N - 1])
     def a2b(y, x):
-        input << A[y - 1:y + 2, x - 1:x + 2]
+        input << A[y - 1 : y + 2, x - 1 : x + 2]
         out >> B[y, x]
-        out = (kernel[0, 0] * input[0, 0] + kernel[0, 1] * input[0, 1] + kernel[0, 2] * input[0, 2] +
-               kernel[1, 0] * input[1, 0] + kernel[1, 1] * input[1, 1] + kernel[1, 2] * input[1, 2] +
-               kernel[2, 0] * input[2, 0] + kernel[2, 1] * input[2, 1] + kernel[2, 2] * input[2, 2])
+        out = (
+            kernel[0, 0] * input[0, 0]
+            + kernel[0, 1] * input[0, 1]
+            + kernel[0, 2] * input[0, 2]
+            + kernel[1, 0] * input[1, 0]
+            + kernel[1, 1] * input[1, 1]
+            + kernel[1, 2] * input[1, 2]
+            + kernel[2, 0] * input[2, 0]
+            + kernel[2, 1] * input[2, 1]
+            + kernel[2, 2] * input[2, 2]
+        )
 
 
 def test():
     N = 20
-    print('Conv2D %dx%d' % (N, N))
+    print("Conv2D %dx%d" % (N, N))
 
     A = dace.ndarray([N, N], dtype=dace.float32)
     B = dace.ndarray([N, N], dtype=dace.float32)
@@ -31,27 +39,27 @@ def test():
     # Initialize arrays: Randomize A, zero B
     A[:] = dace.float32(0)
     B[:] = dace.float32(0)
-    A[1:N - 1, 1:N - 1] = np.random.rand((N - 2), (N - 2)).astype(dace.float32.type)
+    A[1 : N - 1, 1 : N - 1] = np.random.rand((N - 2), (N - 2)).astype(dace.float32.type)
     regression = np.ndarray([N - 2, N - 2], dtype=np.float32)
-    regression[:] = A[1:N - 1, 1:N - 1]
+    regression[:] = A[1 : N - 1, 1 : N - 1]
 
-    #print(A.view(type=np.ndarray))
+    # print(A.view(type=np.ndarray))
 
     #############################################
     # Run DaCe program
 
     sdfg = stencil3x3.to_sdfg()
-    sdfg.add_constant('kernel', KERNEL)
+    sdfg.add_constant("kernel", KERNEL)
     sdfg(A=A, B=B, N=N)
 
     # Regression
-    regression = ndimage.convolve(regression, KERNEL, mode='constant', cval=0.0)
+    regression = ndimage.convolve(regression, KERNEL, mode="constant", cval=0.0)
 
-    residual = np.linalg.norm(B[1:N - 1, 1:N - 1] - regression) / ((N - 2)**2)
+    residual = np.linalg.norm(B[1 : N - 1, 1 : N - 1] - regression) / ((N - 2) ** 2)
     print("Residual:", residual)
 
-    #print(A.view(type=np.ndarray))
-    #print(regression.view(type=np.ndarray))
+    # print(A.view(type=np.ndarray))
+    # print(regression.view(type=np.ndarray))
 
     assert residual <= 0.05
 
@@ -60,7 +68,7 @@ def test_constant_transient():
 
     @dace.program
     def ctrans(a: dace.float64[10]):
-        cst = np.array([1., 2., 3., 4., 5, 6, 7, 8, 9, 10])
+        cst = np.array([1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8, 9, 10])
         return a + cst
 
     a = np.random.rand(10)
@@ -81,7 +89,7 @@ def test_constant_transient_double_nested():
 
     @dace.program
     def ctrans(a: dace.float64[10]):
-        cst = np.array([1., 2., 3., 4., 5, 6, 7, 8, 9, 10])
+        cst = np.array([1.0, 2.0, 3.0, 4.0, 5, 6, 7, 8, 9, 10])
         return nested(a, cst)
 
     sdfg = ctrans.to_sdfg(simplify=False)
@@ -115,7 +123,7 @@ def test_constant_transient_double_nested_scalar():
     assign_state = sdfg.node(0)
     sdfg.remove_node(assign_state)
 
-    sdfg.add_constant('cst', 1.0, sdfg.arrays['cst'])
+    sdfg.add_constant("cst", 1.0, sdfg.arrays["cst"])
 
     a = np.random.rand(10).astype(np.float64)
     expected = a + 1.0

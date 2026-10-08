@@ -1,11 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" 2D histogram sample that showcases memlets with write-conflict resolution and unknown element. """
+"""2D histogram sample that showcases memlets with write-conflict resolution and unknown element."""
+
 import argparse
 import dace
 import numpy as np
 
-W = dace.symbol('W')
-H = dace.symbol('H')
+W = dace.symbol("W")
+H = dace.symbol("H")
 BINS = 256
 
 
@@ -26,10 +27,10 @@ def histogram(A: dace.float32[H, W], hist: dace.uint32[BINS]):
             out[min(int(a * BINS), BINS - 1)] = 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('W', type=int, nargs='?', default=32)
-    parser.add_argument('H', type=int, nargs='?', default=32)
+    parser.add_argument("W", type=int, nargs="?", default=32)
+    parser.add_argument("H", type=int, nargs="?", default=32)
     args = parser.parse_args()
 
     W = args.W
@@ -44,5 +45,5 @@ if __name__ == '__main__':
 
     # Check for correctness by calling numpy.histogram with the right arguments
     diff = np.linalg.norm(np.histogram(A, bins=BINS, range=(0.0, 1.0))[0][1:-1] - hist[1:-1])
-    print('Difference:', diff)
+    print("Difference:", diff)
     exit(0 if diff <= 1e-5 else 1)

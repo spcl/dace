@@ -2,9 +2,9 @@
 import numpy as np
 import dace
 
-M = dace.symbol('M')
-N = dace.symbol('N')
-K = dace.symbol('K')
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -26,5 +26,5 @@ def test():
     my_func(a=A, b=B, M=B.shape[0], N=B.shape[1], K=B.shape[1])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test()

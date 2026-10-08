@@ -8,6 +8,7 @@ illegal where an integer is required -- an array size, a subscript, or a loop bo
 constant, an integer-valued float literal, or a symbolic integer proven ``>= 0`` under the facts at the expression:
 the SDFG's facts and the enclosing iterator ranges (``K - i - 1`` with ``for i in range(K)``).
 """
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
@@ -43,6 +44,7 @@ def relaxed_exponent(exp: sympy.Expr, facts: symbolic.Facts) -> sympy.Expr | Non
 class PowerRelaxer:
     """One walk over an SDFG tree that rewrites every provable ``Pow`` in sizes, subscripts, bounds, conditions,
     interstate assignments and symbol mappings."""
+
     resolver: SymbolResolver
     relaxed: int = 0
 
@@ -66,8 +68,7 @@ class PowerRelaxer:
             sub.ranges = [tuple(self.relax(component, facts_of) for component in rng) for rng in sub.ranges]
         elif isinstance(sub, subsets.Indices):
             # ``Indices`` sets ``indices`` in its constructor without declaring it
-            sub.indices = [self.relax(idx, facts_of)
-                           for idx in sub.indices]  # pyright: ignore[reportAttributeAccessIssue]
+            sub.indices = [self.relax(idx, facts_of) for idx in sub.indices]  # pyright: ignore[reportAttributeAccessIssue]
 
     def relax_descriptor(self, desc: data.Array, facts_of: FactsOf) -> None:
         desc.shape = tuple(self.relax(item, facts_of) for item in desc.shape)
@@ -77,7 +78,7 @@ class PowerRelaxer:
 
     def relax_text(self, text: str, facts_of: FactsOf) -> str | None:
         """The rewritten Python expression, or None if it is unparseable or unchanged."""
-        if not text or '**' not in text:
+        if not text or "**" not in text:
             return None
         try:
             expr = symbolic.pystr_to_symbolic(text)
@@ -177,7 +178,7 @@ class PowerRelaxer:
 class RelaxIntegerPowers(ppl.Pass):
     """Lower non-negative-integer ``Pow`` to ``ipow`` across the SDFG's size, subscript and bound expressions."""
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes

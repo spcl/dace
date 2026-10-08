@@ -3,11 +3,10 @@ import unittest
 import dace
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 class MyTestCase(unittest.TestCase):
-
     def test_simple(self):
 
         @dace.program
@@ -41,5 +40,5 @@ class MyTestCase(unittest.TestCase):
         self.assertTrue(np.allclose(eyetest(N=5), np.eye(5, k=2)))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

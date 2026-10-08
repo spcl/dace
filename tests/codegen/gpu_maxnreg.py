@@ -18,10 +18,10 @@ def test_maxnreg():
         if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device:
             mapentry = n
 
-    assert '__launch_bounds__' in sdfg.generate_code()[1].code
+    assert "__launch_bounds__" in sdfg.generate_code()[1].code
     mapentry.map.gpu_maxnreg = 64
-    assert '__maxnreg__(64)' in sdfg.generate_code()[1].code and '__launch_bounds__' not in sdfg.generate_code()[1].code
+    assert "__maxnreg__(64)" in sdfg.generate_code()[1].code and "__launch_bounds__" not in sdfg.generate_code()[1].code
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_maxnreg()

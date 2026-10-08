@@ -12,7 +12,7 @@ from dace.autodiff import add_backward_pass
 # N
 sizes = {"mini": 30, "small": 90, "medium": 250, "large": 1300, "extra-large": 2800}
 
-N = dc.symbol('N', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
 
 
 @dc.program
@@ -26,7 +26,7 @@ def initialize(N, datatype=np.float64):
     beta = datatype(1.2)
     A = np.fromfunction(lambda i, j: ((i * j + 1) % N) / N, (N, N), dtype=datatype)
     B = np.fromfunction(lambda i, j: ((i * j + 2) % N) / N, (N, N), dtype=datatype)
-    x = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
+    x = np.fromfunction(lambda i: (i % N) / N, (N,), dtype=datatype)
 
     return alpha, beta, A, B, x
 
@@ -36,10 +36,10 @@ def gesummv_jax_kernel(jnp, alpha, beta, A, B, x):
 
 
 def run_gesummv(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Gesummv for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench small size)
     N = sizes["small"]
@@ -66,12 +66,13 @@ def run_gesummv_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
-    def autodiff_kernel(alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N],
-                        x: dc.float64[N]):
+    def autodiff_kernel(
+        alpha: dc.float64, beta: dc.float64, A: dc.float64[N, N], B: dc.float64[N, N], x: dc.float64[N]
+    ):
         C = gesummv_kernel(alpha, beta, A, B, x)
         return np.sum(C)
 
@@ -106,9 +107,8 @@ def test_autodiff():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

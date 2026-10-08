@@ -43,6 +43,7 @@ class InstrumentedDataReport:
     :seealso: dace.dtypes.DataInstrumentationType.Save
     :seealso: dace.dtypes.DataInstrumentationType.Restore
     """
+
     sdfg: SDFG
     folder: str
     files: Dict[str, List[str]]
@@ -67,14 +68,14 @@ class InstrumentedDataReport:
 
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
-            filenames = sorted([(*(int(s) for s in f.split('.')[0].split('_')), f) for f in filenames])
+            filenames = sorted([(*(int(s) for s in f.split(".")[0].split("_")), f) for f in filenames])
             for entry in filenames:
                 files.append(os.path.join(folder, aname, entry[-1]))
 
             self.files[aname] = files
 
     def keys(self) -> Set[str]:
-        """ Returns the array names available in this data report. """
+        """Returns the array names available in this data report."""
         return self.files.keys()
 
     def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
@@ -83,11 +84,11 @@ class InstrumentedDataReport:
 
         :return: A 2-tuple of (original buffer, array view)
         """
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             # Recreate runtime shape and strides from buffer
-            ndims, = struct.unpack('i', fp.read(4))
-            shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
-            strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
+            (ndims,) = struct.unpack("i", fp.read(4))
+            shape = struct.unpack("i" * ndims, fp.read(4 * ndims))
+            strides = struct.unpack("i" * ndims, fp.read(4 * ndims))
             strides = tuple(s * npdtype.itemsize for s in strides)
 
             # Make numpy array from data descriptor
@@ -97,7 +98,7 @@ class InstrumentedDataReport:
         return nparr, view
 
     def _read_symbol_file(self, filename: str, npdtype: np.dtype) -> Number:
-        with open(filename, 'rb') as fp:
+        with open(filename, "rb") as fp:
             npclass = getattr(np, str(npdtype))
             byteval = fp.read(npdtype.itemsize)
             val = npclass(byteval)
@@ -125,7 +126,7 @@ class InstrumentedDataReport:
             # The dump saves the symbols each state defines, which include loop variables and map parameters
             types = {name: dtype for state in self.sdfg.all_states() for name, dtype in state.defined_symbols().items()}
             if item not in types:
-                raise KeyError(f'Item {item} not found in report')
+                raise KeyError(f"Item {item} not found in report")
             npdtype = types[item].as_numpy_dtype()
             for i, file in enumerate(filenames):
                 val = self._read_symbol_file(file, npdtype)
@@ -160,7 +161,7 @@ class InstrumentedDataReport:
             val = self._read_symbol_file(file, dtype.as_numpy_dtype())
             self.loaded_values[item, 0] = val
         else:
-            raise KeyError(f'Item not found in report: {item}')
+            raise KeyError(f"Item not found in report: {item}")
 
     def update_report(self):
         """
@@ -172,8 +173,8 @@ class InstrumentedDataReport:
         for (k, i), loaded in self.loaded_values.items():
             if isinstance(loaded, np.ndarray):
                 dtype_bytes = loaded.dtype.itemsize
-                with open(self.files[k][i], 'wb') as fp:
-                    fp.write(struct.pack('i', loaded.ndim))
-                    fp.write(struct.pack('i' * loaded.ndim, *loaded.shape))
-                    fp.write(struct.pack('i' * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
+                with open(self.files[k][i], "wb") as fp:
+                    fp.write(struct.pack("i", loaded.ndim))
+                    fp.write(struct.pack("i" * loaded.ndim, *loaded.shape))
+                    fp.write(struct.pack("i" * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
                     loaded.tofile(fp)

@@ -38,15 +38,15 @@ def test_nest_oneelementmap():
 
 
 def test_internal_outarray():
-    sdfg = dace.SDFG('internal_outarr')
-    sdfg.add_array('A', [20], dace.float64)
+    sdfg = dace.SDFG("internal_outarr")
+    sdfg.add_array("A", [20], dace.float64)
     state = sdfg.add_state()
 
-    me, mx = state.add_map('_', dict(i='0:1'))
-    t = state.add_tasklet('doit', {}, {'a'}, 'a = 0')
-    w = state.add_write('A')
+    me, mx = state.add_map("_", dict(i="0:1"))
+    t = state.add_tasklet("doit", {}, {"a"}, "a = 0")
+    w = state.add_write("A")
     state.add_nedge(me, t, dace.Memlet())
-    state.add_edge(t, 'a', w, None, dace.Memlet('A[1]'))
+    state.add_edge(t, "a", w, None, dace.Memlet("A[1]"))
     state.add_nedge(w, mx, dace.Memlet())
 
     subgraph = StateSubgraphView(state, [t, w])
@@ -95,7 +95,7 @@ def test_nest_cf_simple_for_loop():
 
     @dace.program
     def simple_for_loop():
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         for i in range(10):
             A[i] = i
         return A
@@ -118,7 +118,7 @@ def test_nest_cf_simple_while_loop():
     @dace.program
     def simple_while_loop():
         i = 0
-        A = np.ndarray((10, ), dtype=np.int32)
+        A = np.ndarray((10,), dtype=np.int32)
         while i < 10:
             A[i] = i
             i = update(A[i])
@@ -197,7 +197,7 @@ def test_nest_cf_simple_if_chain():
 
 
 def test_nest_two_loops_with_same_variable():
-    """ Nesting a second region that defines the same symbol must name its symbol output consistently. """
+    """Nesting a second region that defines the same symbol must name its symbol output consistently."""
 
     @dace.program
     def two_loops(A: dace.float64[10], B: dace.float64[10]):
@@ -222,7 +222,7 @@ def test_nest_two_loops_with_same_variable():
     assert np.allclose(A, A_ref) and np.allclose(B, B_ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nest_oneelementmap()
     test_internal_outarray()
     test_symbolic_return()

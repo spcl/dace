@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Contains classes that implement the double buffering pattern. """
+"""Contains classes that implement the double buffering pattern."""
 
 import copy
 
@@ -12,12 +12,12 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
 class DoubleBuffering(transformation.SingleStateTransformation):
-    """ Implements the double buffering pattern, which pipelines reading
-        and processing data by creating a second copy of the memory.
-        In particular, the transformation takes a 1D map and all internal
-        (directly connected) transients, adds an additional dimension of size 2,
-        and turns the map into a for loop that processes and reads the data in a
-        double-buffered manner. Other memlets will not be transformed.
+    """Implements the double buffering pattern, which pipelines reading
+    and processing data by creating a second copy of the memory.
+    In particular, the transformation takes a 1D map and all internal
+    (directly connected) transients, adds an additional dimension of size 2,
+    and turns the map into a for loop that processes and reads the data in a
+    double-buffered manner. Other memlets will not be transformed.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -37,8 +37,13 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         # Verify the map can be transformed to a for-loop
         m2for = MapToForLoop()
-        m2for.setup_match(sdfg, sdfg.cfg_id, self.state_id,
-                          {MapToForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]}, expr_index)
+        m2for.setup_match(
+            sdfg,
+            sdfg.cfg_id,
+            self.state_id,
+            {MapToForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]},
+            expr_index,
+        )
         if not m2for.can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
@@ -67,13 +72,14 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         # Change condition of loop to one fewer iteration (so that the
         # final one reads from the last buffer)
         map_rstart, map_rend, map_rstride = map_entry.map.range[0]
-        map_rend = symbolic.pystr_to_symbolic('(%s) - (%s)' % (map_rend, map_rstride))
+        map_rend = symbolic.pystr_to_symbolic("(%s) - (%s)" % (map_rend, map_rstride))
         map_entry.map.range = subsets.Range([(map_rstart, map_rend, map_rstride)])
 
         ##############################
         # Gather transients to modify
-        transients_to_modify = set(edge.dst.data for edge in graph.out_edges(map_entry)
-                                   if isinstance(edge.dst, nodes.AccessNode))
+        transients_to_modify = set(
+            edge.dst.data for edge in graph.out_edges(map_entry) if isinstance(edge.dst, nodes.AccessNode)
+        )
 
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:
@@ -98,20 +104,21 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
                 # other_subset could be None. In that case, recreate from array
                 dataname = None
-                if (isinstance(src_node, nodes.AccessNode) and src_node.data in transients_to_modify):
+                if isinstance(src_node, nodes.AccessNode) and src_node.data in transients_to_modify:
                     dataname = src_node.data
-                elif (isinstance(dst_node, nodes.AccessNode) and dst_node.data in transients_to_modify):
+                elif isinstance(dst_node, nodes.AccessNode) and dst_node.data in transients_to_modify:
                     dataname = dst_node.data
                 if dataname is not None:
-                    subset = (edge.data.other_subset or subsets.Range.from_array(sdfg.arrays[dataname]))
+                    subset = edge.data.other_subset or subsets.Range.from_array(sdfg.arrays[dataname])
                     edge.data.other_subset = self._modify_memlet(sdfg, subset, dataname)
                     modified_subsets.append(edge.data.other_subset)
 
         ##############################
         # Turn map into for loop
         map_to_for = MapToForLoop()
-        map_to_for.setup_match(sdfg, self.cfg_id, self.state_id,
-                               {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
+        map_to_for.setup_match(
+            sdfg, self.cfg_id, self.state_id, {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index
+        )
         nsdfg_node, nstate = map_to_for.apply(graph, sdfg)
 
         ##############################
@@ -119,7 +126,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         edges_to_replace = []
         for node in nstate.source_nodes():
             for edge in nstate.out_edges(node):
-                if (isinstance(edge.dst, nodes.AccessNode) and edge.dst.data in transients_to_modify):
+                if isinstance(edge.dst, nodes.AccessNode) and edge.dst.data in transients_to_modify:
                     edges_to_replace.append(edge)
                     nstate.remove_edge(edge)
             if nstate.out_degree(node) == 0:
@@ -128,7 +135,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         ##############################
         # Add initial reads to initial nested state
         loop_block = nsdfg_node.sdfg.start_block
-        initial_state = nsdfg_node.sdfg.add_state_before(loop_block, '%s_init' % map_entry.map.label)
+        initial_state = nsdfg_node.sdfg.add_state_before(loop_block, "%s_init" % map_entry.map.label)
         for edge in edges_to_replace:
             initial_state.add_node(edge.src)
             rnode = edge.src
@@ -138,20 +145,20 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         # All instances of the map parameter in this state become the loop start
         sd.replace(initial_state, map_param, map_rstart)
         # Initial writes go to the appropriate buffer
-        init_expr = symbolic.pystr_to_symbolic('(%s / %s) %% 2' % (map_rstart, map_rstride))
-        sd.replace(initial_state, '__dace_db_param', init_expr)
+        init_expr = symbolic.pystr_to_symbolic("(%s / %s) %% 2" % (map_rstart, map_rstride))
+        sd.replace(initial_state, "__dace_db_param", init_expr)
 
         ##############################
         # Modify main state's memlets
 
         # Divide by loop stride
-        new_expr = symbolic.pystr_to_symbolic('(%s / %s) %% 2' % (map_param, map_rstride))
-        sd.replace(nstate, '__dace_db_param', new_expr)
+        new_expr = symbolic.pystr_to_symbolic("(%s / %s) %% 2" % (map_param, map_rstride))
+        sd.replace(nstate, "__dace_db_param", new_expr)
 
         ##############################
         # Add the main state's contents to the last state, modifying
         # memlets appropriately.
-        final_state = nsdfg_node.sdfg.add_state_after(loop_block, '%s_final_computation' % map_entry.map.label)
+        final_state = nsdfg_node.sdfg.add_state_after(loop_block, "%s_final_computation" % map_entry.map.label)
         dup_nstate = copy.deepcopy(nstate)
         final_state.add_nodes_from(dup_nstate.nodes())
         for e in dup_nstate.edges():
@@ -178,28 +185,31 @@ class DoubleBuffering(transformation.SingleStateTransformation):
             wnode = nstate.add_write(edge.dst.data)
             new_memlet = copy.deepcopy(edge.data)
             if new_memlet.data in transients_to_modify:
-                new_memlet.other_subset = self._replace_in_subset(new_memlet.other_subset, map_param,
-                                                                  '(%s + %s)' % (map_param, map_rstride))
+                new_memlet.other_subset = self._replace_in_subset(
+                    new_memlet.other_subset, map_param, "(%s + %s)" % (map_param, map_rstride)
+                )
             else:
-                new_memlet.subset = self._replace_in_subset(new_memlet.subset, map_param,
-                                                            '(%s + %s)' % (map_param, map_rstride))
+                new_memlet.subset = self._replace_in_subset(
+                    new_memlet.subset, map_param, "(%s + %s)" % (map_param, map_rstride)
+                )
 
             nstate.add_edge(rnode, edge.src_conn, wnode, edge.dst_conn, new_memlet)
 
-        nstate.label = '%s_double_buffered' % map_entry.map.label
+        nstate.label = "%s_double_buffered" % map_entry.map.label
         # Divide by loop stride
-        new_expr = symbolic.pystr_to_symbolic('((%s / %s) + 1) %% 2' % (map_param, map_rstride))
-        sd.replace(nstate, '__dace_db_param', new_expr)
+        new_expr = symbolic.pystr_to_symbolic("((%s / %s) + 1) %% 2" % (map_param, map_rstride))
+        sd.replace(nstate, "__dace_db_param", new_expr)
 
         # Remove symbol once done
-        nsdfg_node.sdfg.symbol_repo.remove('__dace_db_param')
-        del nsdfg_node.symbol_mapping['__dace_db_param']
+        nsdfg_node.sdfg.symbol_repo.remove("__dace_db_param")
+        del nsdfg_node.symbol_mapping["__dace_db_param"]
 
         # A connector selecting one element of the buffered transient becomes a view of it
         for state in nsdfg_node.sdfg.all_states():
             for node in state.nodes():
-                if (isinstance(node, nodes.NestedSDFG)
-                        and any(edge.data.data in transients_to_modify for edge in state.all_edges(node))):
+                if isinstance(node, nodes.NestedSDFG) and any(
+                    edge.data.data in transients_to_modify for edge in state.all_edges(node)
+                ):
                     node.integrate_into_parent()
 
         return nsdfg_node
@@ -211,7 +221,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
             # Already in the right shape, modify new dimension
             subset = list(subset)[1:]
 
-        new_subset = subsets.Range([('__dace_db_param', '__dace_db_param', 1)] + list(subset))
+        new_subset = subsets.Range([("__dace_db_param", "__dace_db_param", 1)] + list(subset))
         return new_subset
 
     @staticmethod
@@ -224,6 +234,6 @@ class DoubleBuffering(transformation.SingleStateTransformation):
             try:
                 new_subset[i] = tuple(d.subs(repldict) for d in dim)
             except TypeError:
-                new_subset[i] = (dim.subs(repldict) if symbolic.issymbolic(dim) else dim)
+                new_subset[i] = dim.subs(repldict) if symbolic.issymbolic(dim) else dim
 
         return new_subset

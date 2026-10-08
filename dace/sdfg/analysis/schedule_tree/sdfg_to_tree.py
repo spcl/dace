@@ -6,8 +6,15 @@ from typing import Dict, List, Set
 import dace
 from dace import data, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG, scope_bound_names
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
-                             UnstructuredControlFlow)
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+    UnstructuredControlFlow,
+)
 from dace.sdfg import dealias, utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.frontend.python import astutils
@@ -66,9 +73,14 @@ class _InterstateMemletReplacer(MemletReplacer):
 
     def visit_Compare(self, node: ast.Compare):
         # ``arr is [not] None`` refers to the container itself and must keep a bare name
-        if (len(node.ops) == 1 and isinstance(node.ops[0], (ast.Is, ast.IsNot)) and len(node.comparators) == 1
-                and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is None
-                and isinstance(node.left, ast.Name)):
+        if (
+            len(node.ops) == 1
+            and isinstance(node.ops[0], (ast.Is, ast.IsNot))
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Constant)
+            and node.comparators[0].value is None
+            and isinstance(node.left, ast.Name)
+        ):
             if node.left.id in self.array_filter:
                 node.left = self._rename(node.left)
             return node
@@ -110,11 +122,12 @@ def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEd
     :return: A new memlet.
     """
     # Shallow copy edge
-    edge = gr.MultiConnectorEdge(original.src, original.src_conn, original.dst, original.dst_conn,
-                                 copy.deepcopy(original.data), original.key)
+    edge = gr.MultiConnectorEdge(
+        original.src, original.src_conn, original.dst, original.dst_conn, copy.deepcopy(original.data), original.key
+    )
     edge.data.try_initialize(sdfg, state, edge)
 
-    if '.' in edge.data.data and edge.data.data.startswith(data + '.'):
+    if "." in edge.data.data and edge.data.data.startswith(data + "."):
         return edge.data
     if edge.data.data == data:
         return edge.data
@@ -168,8 +181,9 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
                 if e.data.data in input_mapping or e.data.data in output_mapping:
                     mapping = input_mapping if e.data.data in input_mapping else output_mapping
                     # ``dst`` is where the container sits on this edge, not which connector list names it
-                    aligns_to_dst = not (isinstance(mpath[0].src, dace.nodes.AccessNode)
-                                         and mpath[0].src.data == e.data.data)
+                    aligns_to_dst = not (
+                        isinstance(mpath[0].src, dace.nodes.AccessNode) and mpath[0].src.data == e.data.data
+                    )
                     memlet = align_memlet(state, e, aligns_to_dst)
                     memlet.data = mapping[e.data.data].data
                 e.data = memlet
@@ -256,18 +270,21 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
             nsdfg.replace_dict(replacements)
 
 
-def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
-                    viewed_name: str) -> tn.ViewNode:
+def _make_view_node(
+    state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str, viewed_name: str
+) -> tn.ViewNode:
     """
     Helper function to create a view schedule tree node from a memlet edge.
     """
     sdfg = state.parent
     normalized = normalize_memlet(sdfg, state, edge, viewed_name)
-    view_node = tn.ViewNode(target=view_name,
-                            source=viewed_name,
-                            memlet=normalized,
-                            src_desc=sdfg.arrays[viewed_name],
-                            view_desc=sdfg.arrays[view_name])
+    view_node = tn.ViewNode(
+        target=view_name,
+        source=viewed_name,
+        memlet=normalized,
+        src_desc=sdfg.arrays[viewed_name],
+        view_desc=sdfg.arrays[view_name],
+    )
     return view_node
 
 
@@ -297,9 +314,10 @@ def _replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG) -> None:
 
 
 def _prepare_schedule_tree_edges(
-    state: SDFGState
-) -> tuple[Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], Dict[nd.EntryNode,
-                                                                          List[gr.MultiConnectorEdge[Memlet]]]]:
+    state: SDFGState,
+) -> tuple[
+    Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]]
+]:
     """
     Creates a dictionary mapping edges to their corresponding schedule tree nodes, if relevant.
     This handles view edges, reference sets, and dynamic map inputs.
@@ -352,7 +370,7 @@ def _prepare_schedule_tree_edges(
                         continue
 
             # 2. Check for reference sets
-            if isinstance(e.dst, dace.nodes.AccessNode) and e.dst_conn == 'set':
+            if isinstance(e.dst, dace.nodes.AccessNode) and e.dst_conn == "set":
                 assert isinstance(e.dst.desc(sdfg), dace.data.Reference)
 
                 # Determine source
@@ -360,10 +378,9 @@ def _prepare_schedule_tree_edges(
                     src_desc = mtree.root().edge.src
                 else:
                     src_desc = sdfg.arrays[e.data.data]
-                result[e] = tn.RefSetNode(target=e.dst.data,
-                                          memlet=e.data,
-                                          src_desc=src_desc,
-                                          ref_desc=sdfg.arrays[e.dst.data])
+                result[e] = tn.RefSetNode(
+                    target=e.dst.data, memlet=e.data, src_desc=src_desc, ref_desc=sdfg.arrays[e.dst.data]
+                )
                 scope = state.entry_node(e.dst if mtree.downwards else e.src)
                 scope_to_edges[scope].append(e)
                 continue
@@ -505,8 +522,9 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     return result
 
 
-def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
-                          emit_goto_for_successors: bool = False) -> List[tn.ScheduleTreeNode]:
+def _isedge_schedule_tree(
+    edge: gr.Edge[InterstateEdge], emit_goto_for_successors: bool = False
+) -> List[tn.ScheduleTreeNode]:
     result: List[tn.ScheduleTreeNode] = []
     for aname, aval in edge.data.assignments.items():
         assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval}))
@@ -614,8 +632,8 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
 
 
 def _generate_views_in_scope(
-        edges: List[gr.MultiConnectorEdge[Memlet]],
-        edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]) -> List[tn.ScheduleTreeNode]:
+    edges: List[gr.MultiConnectorEdge[Memlet]], edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
+) -> List[tn.ScheduleTreeNode]:
     """
     Generates all view and reference set edges in the correct order. This function is intended to be used
     at the beginning of a scope.
@@ -723,13 +741,13 @@ def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = Tru
     return result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     s = time.time()
     sdfg = SDFG.from_file(sys.argv[1])
-    print('Loaded SDFG in', time.time() - s, 'seconds')
+    print("Loaded SDFG in", time.time() - s, "seconds")
     s = time.time()
     stree = as_schedule_tree(sdfg, in_place=True)
-    print('Created schedule tree in', time.time() - s, 'seconds')
+    print("Created schedule tree in", time.time() - s, "seconds")
 
-    with open('output_stree.txt', 'w') as fp:
-        fp.write(stree.as_string(-1) + '\n')
+    with open("output_stree.txt", "w") as fp:
+        fp.write(stree.as_string(-1) + "\n")

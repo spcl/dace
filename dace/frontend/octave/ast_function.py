@@ -6,7 +6,6 @@ from .ast_node import AST_Node
 
 
 class AST_EndFunc(AST_Node):
-
     def __init__(self, context):
         AST_Node.__init__(self, context)
 
@@ -24,7 +23,6 @@ class AST_EndFunc(AST_Node):
 
 
 class AST_Function(AST_Node):
-
     def __init__(self, context, name, args, retvals):
         AST_Node.__init__(self, context)
         self.name = name
@@ -33,8 +31,15 @@ class AST_Function(AST_Node):
         self.statements = None
 
     def __repr__(self):
-        return "AST_Function(" + self.name.get_name() + ", args=[" + ", ".join(
-            [str(x) for x in self.args]) + "], retvals=[" + ", ".join([str(x) for x in self.retvals]) + "])"
+        return (
+            "AST_Function("
+            + self.name.get_name()
+            + ", args=["
+            + ", ".join([str(x) for x in self.args])
+            + "], retvals=["
+            + ", ".join([str(x) for x in self.retvals])
+            + "])"
+        )
 
     def set_statements(self, stmtlist):
         self.statements = AST_Statements(None, stmtlist)
@@ -66,7 +71,6 @@ class AST_Function(AST_Node):
 
 
 class AST_Argument(AST_Node):
-
     def __init__(self, context, name, default=None):
         AST_Node.__init__(self, context)
         self.name = name
@@ -85,7 +89,6 @@ class AST_Argument(AST_Node):
 
 
 class AST_BuiltInFunCall(AST_Node):
-
     def __init__(self, context, funname, args):
         AST_Node.__init__(self, context)
         self.funname = funname
@@ -113,13 +116,13 @@ class AST_BuiltInFunCall(AST_Node):
 
     def get_dims(self):
         from .ast_matrix import AST_Matrix
+
         dims = None
         if self.funname.get_name() in ["zeros", "ones", "rand", "eye"]:
             # The dimensions for these functions are the arguments, but we
             # need to convert them to values, if we cannot they are symbolic
             for arg in self.args:
                 if not arg.is_constant():
-
                     return self.args
             if isinstance(self.args[0], AST_Matrix):
                 dims = self.args[0].get_values_row_major()
@@ -151,23 +154,24 @@ class AST_BuiltInFunCall(AST_Node):
             if len(dims) == 1:
                 s = sdfg.nodes()[state]
                 A = self.args[0].get_datanode(sdfg, state)
-                tasklet = sdfg.nodes()[state].add_tasklet('sqrt', {'in'}, {'out'}, "out=sqrt(in);", dace.Language.CPP)
+                tasklet = sdfg.nodes()[state].add_tasklet("sqrt", {"in"}, {"out"}, "out=sqrt(in);", dace.Language.CPP)
                 s.add_edge(A, None, tasklet, "in", dace.memlet.Memlet.from_array(A.data, A.desc(sdfg)))
-                s.add_edge(tasklet, "out", resnode, None,
-                           dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
+                s.add_edge(
+                    tasklet, "out", resnode, None, dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg))
+                )
             elif len(dims) == 2:
                 M = str(dims[0])
                 N = str(dims[1])
 
-                men, mex = sdfg.nodes()[state].add_map(self.funname.get_name() + 'map', dict(i="0:" + N, j="0:" + M))
+                men, mex = sdfg.nodes()[state].add_map(self.funname.get_name() + "map", dict(i="0:" + N, j="0:" + M))
                 tasklet = None
                 s = sdfg.nodes()[state]
                 A = self.args[0].get_datanode(sdfg, state)
                 s.add_edge(A, None, men, None, dace.memlet.Memlet.from_array(A.data, A.desc(sdfg)))
-                tasklet = sdfg.nodes()[state].add_tasklet('sqrt', {'in'}, {'out'}, "out=sqrt(in);", dace.Language.CPP)
-                s.add_edge(men, None, tasklet, "in", dace.memlet.Memlet.simple(A, 'i,j'))
-                s.add_edge(tasklet, "out", mex, None, dace.memlet.Memlet.simple(resnode, 'i,j'))
-                s.add_edge(mex, None, resnode, None, dace.memlet.Memlet.simple(resnode, '0:' + N + ',0:' + M))
+                tasklet = sdfg.nodes()[state].add_tasklet("sqrt", {"in"}, {"out"}, "out=sqrt(in);", dace.Language.CPP)
+                s.add_edge(men, None, tasklet, "in", dace.memlet.Memlet.simple(A, "i,j"))
+                s.add_edge(tasklet, "out", mex, None, dace.memlet.Memlet.simple(resnode, "i,j"))
+                s.add_edge(mex, None, resnode, None, dace.memlet.Memlet.simple(resnode, "0:" + N + ",0:" + M))
             else:
                 raise ValueError("sqrt of tensors with more than 2 dims not supported")
 
@@ -189,24 +193,25 @@ class AST_BuiltInFunCall(AST_Node):
             N = str(dims[1])
 
             s = sdfg.nodes()[state]
-            men, mex = s.add_map(self.funname.get_name() + 'map', dict(i="0:" + N, j="0:" + M))
+            men, mex = s.add_map(self.funname.get_name() + "map", dict(i="0:" + N, j="0:" + M))
             tasklet = None
             if self.funname.get_name() == "zeros":
-                tasklet = sdfg.nodes()[state].add_tasklet('zero', {}, {'out'}, "out=0")
+                tasklet = sdfg.nodes()[state].add_tasklet("zero", {}, {"out"}, "out=0")
                 s.add_edge(men, None, tasklet, None, dace.memlet.Memlet())
             elif self.funname.get_name() == "rand":
-                tasklet = sdfg.nodes()[state].add_tasklet('rand', {}, {'out'}, "out=drand48()")
+                tasklet = sdfg.nodes()[state].add_tasklet("rand", {}, {"out"}, "out=drand48()")
                 s.add_edge(men, None, tasklet, None, dace.memlet.Memlet())
             elif self.funname.get_name() == "sqrt":
                 A = self.args[0].get_datanode(sdfg, state)
-                tasklet = sdfg.nodes()[state].add_tasklet('sqrt', {'in'}, {'out'}, "out=sqrt(in)")
-                s.add_edge(men, None, tasklet, "in", dace.memlet.Memlet.simple(A, 'i,j'))
+                tasklet = sdfg.nodes()[state].add_tasklet("sqrt", {"in"}, {"out"}, "out=sqrt(in)")
+                s.add_edge(men, None, tasklet, "in", dace.memlet.Memlet.simple(A, "i,j"))
             else:
-                raise NotImplementedError("Code generation for " + str(self.funname.get_name()) +
-                                          " is not implemented.")
+                raise NotImplementedError(
+                    "Code generation for " + str(self.funname.get_name()) + " is not implemented."
+                )
             s = sdfg.nodes()[state]
-            s.add_edge(tasklet, "out", mex, None, dace.memlet.Memlet.simple(resnode, 'i,j'))
-            s.add_edge(mex, None, resnode, None, dace.memlet.Memlet.simple(resnode, '0:' + N + ',0:' + M))
+            s.add_edge(tasklet, "out", mex, None, dace.memlet.Memlet.simple(resnode, "i,j"))
+            s.add_edge(mex, None, resnode, None, dace.memlet.Memlet.simple(resnode, "0:" + N + ",0:" + M))
 
     def specialize(self):
         from .ast_matrix import AST_Matrix, AST_Matrix_Row

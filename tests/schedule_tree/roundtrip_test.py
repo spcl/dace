@@ -2,6 +2,7 @@
 """
 Tests conversion of schedule trees to SDFGs.
 """
+
 import dace
 import numpy as np
 import pytest
@@ -21,7 +22,7 @@ def _roundtrip(sdfg: dace.SDFG, expected_node_type: type) -> dace.SDFG:
     """
     stree = sdfg.as_schedule_tree()
     assert any(type(node) is expected_node_type for node in stree.preorder_traversal())
-    return stree.as_sdfg(simplify=dace.config.Config.get_bool('optimizer', 'automatic_simplification'))
+    return stree.as_sdfg(simplify=dace.config.Config.get_bool("optimizer", "automatic_simplification"))
 
 
 def test_implicit_inline_and_constants():
@@ -42,17 +43,17 @@ def test_implicit_inline_and_constants():
 
     # Inject constant into nested SDFG
     assert len(list(sdfg.all_sdfgs_recursive())) > 1
-    sdfg.add_constant('cst', 13)  # Add an unused constant
-    sdfg.cfg_list[-1].add_constant('cst', 1, dace.data.Scalar(dace.float64))
+    sdfg.add_constant("cst", 13)  # Add an unused constant
+    sdfg.cfg_list[-1].add_constant("cst", 1, dace.data.Scalar(dace.float64))
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
-    tasklet.code.as_string = tasklet.code.as_string.replace('12', 'cst')
+    tasklet.code.as_string = tasklet.code.as_string.replace("12", "cst")
 
     # Perform a roundtrip conversion
     stree = sdfg.as_schedule_tree()
     new_sdfg = stree.as_sdfg()
 
     assert len(list(new_sdfg.all_sdfgs_recursive())) == 1
-    assert new_sdfg.constants['cst_0'].dtype == np.float64
+    assert new_sdfg.constants["cst_0"].dtype == np.float64
 
     # Test SDFG
     a = np.random.rand(20, 20)
@@ -107,23 +108,23 @@ def test_view_read_after_write():
 
 
 def test_view_of_view():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [20, 20], dace.float64)
-    sdfg.add_array('B', [20, 20], dace.float64)
-    sdfg.add_view('Av', [400], dace.float64)
-    sdfg.add_view('Avv', [10, 40], dace.float64)
-    sdfg.add_view('Bv', [400], dace.float64)
-    sdfg.add_view('Bvv', [10, 40], dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [20, 20], dace.float64)
+    sdfg.add_array("B", [20, 20], dace.float64)
+    sdfg.add_view("Av", [400], dace.float64)
+    sdfg.add_view("Avv", [10, 40], dace.float64)
+    sdfg.add_view("Bv", [400], dace.float64)
+    sdfg.add_view("Bvv", [10, 40], dace.float64)
     state = sdfg.add_state()
-    av = state.add_access('Av')
-    bv = state.add_access('Bv')
-    bvv = state.add_access('Bvv')
-    avv = state.add_access('Avv')
-    state.add_edge(state.add_read('A'), None, av, None, dace.Memlet('A[0:20, 0:20]'))
-    state.add_edge(av, None, avv, 'views', dace.Memlet('Av[0:400]'))
-    state.add_edge(avv, None, bvv, None, dace.Memlet('Avv[0:10, 0:40]'))
-    state.add_edge(bvv, 'views', bv, None, dace.Memlet('Bv[0:400]'))
-    state.add_edge(bv, 'views', state.add_write('B'), None, dace.Memlet('Bv[0:400]'))
+    av = state.add_access("Av")
+    bv = state.add_access("Bv")
+    bvv = state.add_access("Bvv")
+    avv = state.add_access("Avv")
+    state.add_edge(state.add_read("A"), None, av, None, dace.Memlet("A[0:20, 0:20]"))
+    state.add_edge(av, None, avv, "views", dace.Memlet("Av[0:400]"))
+    state.add_edge(avv, None, bvv, None, dace.Memlet("Avv[0:10, 0:40]"))
+    state.add_edge(bvv, "views", bv, None, dace.Memlet("Bv[0:400]"))
+    state.add_edge(bv, "views", state.add_write("B"), None, dace.Memlet("Bv[0:400]"))
 
     new_sdfg = _roundtrip(sdfg, tn.ViewNode)
 
@@ -186,13 +187,13 @@ def test_view_passed_to_nested_sdfg():
 
 
 def test_dynamic_map_range():
-    H = dace.symbol('H')
-    nnz = dace.symbol('nnz')
+    H = dace.symbol("H")
+    nnz = dace.symbol("nnz")
 
     @dace.program
     def tester(A_row: dace.uint32[H + 1], A_val: dace.float32[nnz], b: dace.float32[H]):
         for i in dace.map[0:H]:
-            for j in dace.map[A_row[i]:A_row[i + 1]]:
+            for j in dace.map[A_row[i] : A_row[i + 1]]:
                 b[i] += A_val[j]
 
     new_sdfg = _roundtrip(tester.to_sdfg(), tn.DynScopeCopyNode)
@@ -205,25 +206,25 @@ def test_dynamic_map_range():
 
 
 def test_reference_set():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_symbol('n', dace.int32)
-    sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_array('B', [20], dace.float64)
-    sdfg.add_array('C', [20], dace.float64)
-    sdfg.add_reference('ref', [20], dace.float64)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_symbol("n", dace.int32)
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_array("B", [20], dace.float64)
+    sdfg.add_array("C", [20], dace.float64)
+    sdfg.add_reference("ref", [20], dace.float64)
 
     init = sdfg.add_state()
     s1 = sdfg.add_state()
     s2 = sdfg.add_state()
     end = sdfg.add_state()
-    sdfg.add_edge(init, s1, dace.InterstateEdge('n > 0'))
-    sdfg.add_edge(init, s2, dace.InterstateEdge('n <= 0'))
+    sdfg.add_edge(init, s1, dace.InterstateEdge("n > 0"))
+    sdfg.add_edge(init, s2, dace.InterstateEdge("n <= 0"))
     sdfg.add_edge(s1, end, dace.InterstateEdge())
     sdfg.add_edge(s2, end, dace.InterstateEdge())
 
-    s1.add_edge(s1.add_access('A'), None, s1.add_access('ref'), 'set', dace.Memlet('A[0:20]'))
-    s2.add_edge(s2.add_access('B'), None, s2.add_access('ref'), 'set', dace.Memlet('B[0:20]'))
-    end.add_nedge(end.add_access('ref'), end.add_access('C'), dace.Memlet('ref[0:20]'))
+    s1.add_edge(s1.add_access("A"), None, s1.add_access("ref"), "set", dace.Memlet("A[0:20]"))
+    s2.add_edge(s2.add_access("B"), None, s2.add_access("ref"), "set", dace.Memlet("B[0:20]"))
+    end.add_nedge(end.add_access("ref"), end.add_access("C"), dace.Memlet("ref[0:20]"))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
     new_sdfg = _roundtrip(sdfg, tn.RefSetNode)
@@ -255,24 +256,24 @@ def _inverted_loop_sdfg(name: str, loop: LoopRegion) -> dace.SDFG:
     Creates an SDFG that increments ``A[i]`` in the body of the given (inverted) loop.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_array("A", [10], dace.float64)
     if not loop.loop_variable:
-        sdfg.add_symbol('i', dace.int64)
-    init = sdfg.add_state('init', is_start_block=True)
+        sdfg.add_symbol("i", dace.int64)
+    init = sdfg.add_state("init", is_start_block=True)
     sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={} if loop.loop_variable else {'i': '0'}))
-    body = loop.add_state('body', is_start_block=True)
-    tasklet = body.add_tasklet('increment', {'inp'}, {'out'}, 'out = inp + 1')
-    body.add_edge(body.add_read('A'), None, tasklet, 'inp', dace.Memlet('A[i]'))
-    body.add_edge(tasklet, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={} if loop.loop_variable else {"i": "0"}))
+    body = loop.add_state("body", is_start_block=True)
+    tasklet = body.add_tasklet("increment", {"inp"}, {"out"}, "out = inp + 1")
+    body.add_edge(body.add_read("A"), None, tasklet, "inp", dace.Memlet("A[i]"))
+    body.add_edge(tasklet, "out", body.add_write("A"), None, dace.Memlet("A[i]"))
     if not loop.loop_variable:
-        loop.add_state_after(body, 'increment_i', assignments={'i': 'i + 1'})
+        loop.add_state_after(body, "increment_i", assignments={"i": "i + 1"})
     return sdfg
 
 
 def test_do_while_loop():
     # The condition never holds, the body is executed once
-    sdfg = _inverted_loop_sdfg('tester', LoopRegion('loop', 'i < 0', inverted=True))
+    sdfg = _inverted_loop_sdfg("tester", LoopRegion("loop", "i < 0", inverted=True))
     new_sdfg = _roundtrip(sdfg, tn.DoWhileScope)
 
     a = np.zeros(10)
@@ -280,16 +281,12 @@ def test_do_while_loop():
     assert np.allclose(a, [1] + [0] * 9)
 
 
-@pytest.mark.parametrize('update_before_condition', (False, True))
+@pytest.mark.parametrize("update_before_condition", (False, True))
 def test_do_for_loop(update_before_condition: bool):
-    loop = LoopRegion('loop',
-                      'i < 3',
-                      'i',
-                      'i = 0',
-                      'i = i + 1',
-                      inverted=True,
-                      update_before_condition=update_before_condition)
-    sdfg = _inverted_loop_sdfg('tester', loop)
+    loop = LoopRegion(
+        "loop", "i < 3", "i", "i = 0", "i = i + 1", inverted=True, update_before_condition=update_before_condition
+    )
+    sdfg = _inverted_loop_sdfg("tester", loop)
     new_sdfg = _roundtrip(sdfg, tn.LoopScope)
 
     a = np.zeros(10)
@@ -313,12 +310,12 @@ def test_transients_and_nested_sdfg() -> None:
             return state
 
         def get_if_block(sdfg: dace.SDFG) -> dace.sdfg.ControlFlowRegion:
-            if_block = ConditionalBlock('if_region', sdfg=sdfg)
-            then_body = dace.sdfg.ControlFlowRegion('then_body', sdfg=sdfg, parent=if_block)
-            then_state = then_body.add_state('then_state', is_start_block=True)
-            then_write = then_state.add_write('B')
-            then_tasklet = then_state.add_tasklet('write_zero', {}, {'out'}, 'out = 0')
-            then_state.add_edge(then_tasklet, 'out', then_write, None, dace.Memlet('B[0]'))
+            if_block = ConditionalBlock("if_region", sdfg=sdfg)
+            then_body = dace.sdfg.ControlFlowRegion("then_body", sdfg=sdfg, parent=if_block)
+            then_state = then_body.add_state("then_state", is_start_block=True)
+            then_write = then_state.add_write("B")
+            then_tasklet = then_state.add_tasklet("write_zero", {}, {"out"}, "out = 0")
+            then_state.add_edge(then_tasklet, "out", then_write, None, dace.Memlet("B[0]"))
             if_block.add_branch("tmp_condition", then_body)
             return if_block
 
@@ -326,16 +323,25 @@ def test_transients_and_nested_sdfg() -> None:
             state = sdfg.add_state("map_state")
             access_A = state.add_access("A")
             write_B = state.add_write("B")
-            state.add_mapped_tasklet("write_one", {"j": dace.subsets.Range.from_string("0:10")}, {},
-                                     "out = 1.0", {"out": dace.Memlet("A[15*i + 3*j]")},
-                                     external_edges=True,
-                                     output_nodes={"A": access_A})
-            state.add_mapped_tasklet("copy", {"k": dace.subsets.Range.from_string("10:20")},
-                                     {"read": dace.Memlet("A[k]")},
-                                     "write = read", {"write": dace.Memlet("B[k]")},
-                                     external_edges=True,
-                                     input_nodes={"A": access_A},
-                                     output_nodes={"B": write_B})
+            state.add_mapped_tasklet(
+                "write_one",
+                {"j": dace.subsets.Range.from_string("0:10")},
+                {},
+                "out = 1.0",
+                {"out": dace.Memlet("A[15*i + 3*j]")},
+                external_edges=True,
+                output_nodes={"A": access_A},
+            )
+            state.add_mapped_tasklet(
+                "copy",
+                {"k": dace.subsets.Range.from_string("10:20")},
+                {"read": dace.Memlet("A[k]")},
+                "write = read",
+                {"write": dace.Memlet("B[k]")},
+                external_edges=True,
+                input_nodes={"A": access_A},
+                output_nodes={"B": write_B},
+            )
             return state
 
         sdfg = dace.SDFG(name="nested")
@@ -359,12 +365,15 @@ def test_transients_and_nested_sdfg() -> None:
     _, B_desc = sdfg.add_array("B", [60], dace.float32)
     state = sdfg.add_state("state")
     access_A = state.add_access("A")
-    state.add_mapped_tasklet("fill", {"i": dace.subsets.Range.from_string("0:60")},
-                             inputs={},
-                             code="out = 42.42",
-                             outputs={"out": dace.Memlet("A[i]")},
-                             external_edges=True,
-                             output_nodes={"A": access_A})
+    state.add_mapped_tasklet(
+        "fill",
+        {"i": dace.subsets.Range.from_string("0:60")},
+        inputs={},
+        code="out = 42.42",
+        outputs={"out": dace.Memlet("A[i]")},
+        external_edges=True,
+        output_nodes={"A": access_A},
+    )
 
     read_B = state.add_read("B")
     map_entry, map_exit = state.add_map("second_map", {"i": dace.subsets.Range.from_string("0:2")})
@@ -381,14 +390,8 @@ def test_transients_and_nested_sdfg() -> None:
     nsdfg = nestedSDFG()
     nsdfg_node = state.add_nested_sdfg(
         nsdfg,
-        inputs={
-            "A": None,
-            "B": None
-        },
-        outputs={
-            "A": None,
-            "B": None
-        },
+        inputs={"A": None, "B": None},
+        outputs={"A": None, "B": None},
         name="nested_sdfg",
     )
     state.add_edge(map_entry, "OUT_A", nsdfg_node, "A", dace.Memlet.from_array("A", A_desc))
@@ -422,7 +425,7 @@ def test_transients_and_nested_sdfg() -> None:
     assert tmp_condition == dace.bool
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_implicit_inline_and_constants()
     test_name_propagation()
     test_view_of_slice()

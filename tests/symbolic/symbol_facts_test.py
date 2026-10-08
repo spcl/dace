@@ -5,16 +5,24 @@ import pytest
 import sympy
 
 from dace import dtypes, symbolic
-from dace.symbolic_facts import (Facts, InconsistentAssumptionsError, Predicate, Relation, RelationKind, Truth, ask,
-                                 predicate_relation)
+from dace.symbolic_facts import (
+    Facts,
+    InconsistentAssumptionsError,
+    Predicate,
+    Relation,
+    RelationKind,
+    Truth,
+    ask,
+    predicate_relation,
+)
 
-N = symbolic.symbol('N', dtypes.int64)
-K = symbolic.symbol('K', dtypes.int32)
-M = symbolic.symbol('M', dtypes.int64)
-ITERATOR = symbolic.symbol('i', dtypes.int32)
+N = symbolic.symbol("N", dtypes.int64)
+K = symbolic.symbol("K", dtypes.int32)
+M = symbolic.symbol("M", dtypes.int64)
+ITERATOR = symbolic.symbol("i", dtypes.int32)
 ZERO = sympy.Integer(0)
 ONE = sympy.Integer(1)
-INTEGERS = frozenset({'N', 'K', 'M', 'i'})
+INTEGERS = frozenset({"N", "K", "M", "i"})
 
 
 def facts_of(*relations: Relation) -> Facts:
@@ -63,13 +71,16 @@ def test_no_facts_prove_nothing():
 
 
 def test_strictness_needs_declared_integers():
-    facts = Facts((Relation(RelationKind.LT, K, N), ), frozenset())
+    facts = Facts((Relation(RelationKind.LT, K, N),), frozenset())
     assert ask(Relation(RelationKind.LE, K, N - 1), facts) is Truth.UNKNOWN
 
 
 def test_predicates_survive_elimination():
-    facts = facts_of(predicate_relation(Predicate.POSITIVE, N), predicate_relation(Predicate.POSITIVE, K),
-                     Relation(RelationKind.LT, K, N))
+    facts = facts_of(
+        predicate_relation(Predicate.POSITIVE, N),
+        predicate_relation(Predicate.POSITIVE, K),
+        Relation(RelationKind.LT, K, N),
+    )
     assert ask(Relation(RelationKind.LT, ZERO, N), facts) is Truth.TRUE
 
 
@@ -79,19 +90,29 @@ def test_int_floor_of_nonnegative_is_bounded():
     assert ask(Relation(RelationKind.LE, ZERO, floor), facts) is Truth.TRUE
     assert ask(Relation(RelationKind.LE, floor, N), facts) is Truth.TRUE
     assert ask(Relation(RelationKind.LE, N - 1, 2 * floor), facts) is Truth.TRUE
-    assert ask(Relation(RelationKind.LE, ONE, floor), facts_of(Relation(RelationKind.LE, sympy.Integer(2),
-                                                                        N))) is Truth.TRUE
+    assert (
+        ask(Relation(RelationKind.LE, ONE, floor), facts_of(Relation(RelationKind.LE, sympy.Integer(2), N)))
+        is Truth.TRUE
+    )
 
 
 def test_division_of_unknown_sign_is_not_bounded():
-    """ C++ truncates where Python rounds down, so nothing is known unless the numerator is nonnegative. """
-    assert ask(Relation(RelationKind.LE, ZERO, cast(sympy.Expr, symbolic.int_floor(N, 2))),
-               Facts.none()) is Truth.UNKNOWN
+    """C++ truncates where Python rounds down, so nothing is known unless the numerator is nonnegative."""
+    assert (
+        ask(Relation(RelationKind.LE, ZERO, cast(sympy.Expr, symbolic.int_floor(N, 2))), Facts.none()) is Truth.UNKNOWN
+    )
     shifted = sympy.Mod(ITERATOR - 2, 2, evaluate=False)
-    assert ask(Relation(RelationKind.LE, ZERO, shifted), facts_of(Relation(RelationKind.LE, ZERO,
-                                                                           ITERATOR))) is Truth.UNKNOWN
-    assert ask(Relation(RelationKind.LE, ZERO, cast(sympy.Expr, symbolic.int_floor(N, K))),
-               facts_of(predicate_relation(Predicate.NONNEGATIVE, N))) is Truth.UNKNOWN
+    assert (
+        ask(Relation(RelationKind.LE, ZERO, shifted), facts_of(Relation(RelationKind.LE, ZERO, ITERATOR)))
+        is Truth.UNKNOWN
+    )
+    assert (
+        ask(
+            Relation(RelationKind.LE, ZERO, cast(sympy.Expr, symbolic.int_floor(N, K))),
+            facts_of(predicate_relation(Predicate.NONNEGATIVE, N)),
+        )
+        is Truth.UNKNOWN
+    )
 
 
 def test_int_ceil_bounds():
@@ -121,24 +142,25 @@ def test_min_and_max_are_split_into_cases():
 
 
 def test_tiled_range_bounds_the_index():
-    tile = symbolic.symbol('T', dtypes.int64)
+    tile = symbolic.symbol("T", dtypes.int64)
     facts = Facts(
-        (Relation(RelationKind.LE, ZERO, ITERATOR), Relation(RelationKind.LE, ITERATOR,
-                                                             sympy.Min(N, tile + 32) - 1)), INTEGERS | {'T'})
+        (Relation(RelationKind.LE, ZERO, ITERATOR), Relation(RelationKind.LE, ITERATOR, sympy.Min(N, tile + 32) - 1)),
+        INTEGERS | {"T"},
+    )
     assert ask(Relation(RelationKind.LT, ITERATOR, N), facts) is Truth.TRUE
 
 
 def test_contradicting_predicates_raise():
-    with pytest.raises(InconsistentAssumptionsError, match='Inconsistent facts about relations'):
+    with pytest.raises(InconsistentAssumptionsError, match="Inconsistent facts about relations"):
         facts_of(predicate_relation(Predicate.POSITIVE, N), predicate_relation(Predicate.NEGATIVE, N))
 
 
 def test_contradicting_relations_raise():
-    with pytest.raises(InconsistentAssumptionsError, match='Inconsistent facts about relations'):
+    with pytest.raises(InconsistentAssumptionsError, match="Inconsistent facts about relations"):
         facts_of(Relation(RelationKind.LT, N, K), Relation(RelationKind.LT, K, N))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
     test_relations_chain_transitively()

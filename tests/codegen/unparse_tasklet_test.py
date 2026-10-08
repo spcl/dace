@@ -18,7 +18,7 @@ def test_integer_power():
 
     sdfg = powint.to_sdfg()
 
-    assert ':pow(' not in sdfg.generate_code()[0].clean_code
+    assert ":pow(" not in sdfg.generate_code()[0].clean_code
 
 
 def test_integer_power_constant():
@@ -32,9 +32,9 @@ def test_integer_power_constant():
                 b = a**myconst
 
     sdfg = powint.to_sdfg()
-    sdfg.add_constant('myconst', dace.float32(2.0))
+    sdfg.add_constant("myconst", dace.float32(2.0))
 
-    assert ':pow(' not in sdfg.generate_code()[0].clean_code
+    assert ":pow(" not in sdfg.generate_code()[0].clean_code
 
 
 def test_equality():
@@ -58,7 +58,7 @@ def test_pow_with_implicit_casting():
         return array**3.3
 
     rng = np.random.default_rng(42)
-    arr = rng.random((10, ), dtype=np.float32)
+    arr = rng.random((10,), dtype=np.float32)
     ref = f32_pow_failure.f(arr)
     val = f32_pow_failure(arr)
     assert np.allclose(ref, val)
@@ -67,40 +67,48 @@ def test_pow_with_implicit_casting():
 
 @pytest.mark.gpu
 def test_tasklets_with_same_local_name():
-    sdfg = dace.SDFG('tester')
-    sdfg.add_array('A', [4], dace.float32, dace.StorageType.GPU_Global)
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [4], dace.float32, dace.StorageType.GPU_Global)
     state = sdfg.add_state()
-    me, mx = state.add_map('kernel', dict(i='0:1'), schedule=dace.ScheduleType.GPU_Device)
+    me, mx = state.add_map("kernel", dict(i="0:1"), schedule=dace.ScheduleType.GPU_Device)
     t1 = state.add_tasklet(
-        'sgn', {'a'}, {'b'}, '''
+        "sgn",
+        {"a"},
+        {"b"},
+        """
 mylocal: dace.float32
 if a > 0:
     mylocal = 1
 else:
     mylocal = -1
 b = mylocal
-    ''')
+    """,
+    )
     t2 = state.add_tasklet(
-        'sgn', {'a'}, {'b'}, '''
+        "sgn",
+        {"a"},
+        {"b"},
+        """
 mylocal: dace.float32
 if a > 0:
     mylocal = 1
 else:
     mylocal = -1
 b = mylocal
-    ''')
+    """,
+    )
 
-    a = state.add_read('A')
-    b = state.add_write('A')
-    state.add_memlet_path(a, me, t1, dst_conn='a', memlet=dace.Memlet('A[0]'))
-    state.add_memlet_path(a, me, t2, dst_conn='a', memlet=dace.Memlet('A[1]'))
-    state.add_memlet_path(t1, mx, b, src_conn='b', memlet=dace.Memlet('A[2]'))
-    state.add_memlet_path(t2, mx, b, src_conn='b', memlet=dace.Memlet('A[3]'))
+    a = state.add_read("A")
+    b = state.add_write("A")
+    state.add_memlet_path(a, me, t1, dst_conn="a", memlet=dace.Memlet("A[0]"))
+    state.add_memlet_path(a, me, t2, dst_conn="a", memlet=dace.Memlet("A[1]"))
+    state.add_memlet_path(t1, mx, b, src_conn="b", memlet=dace.Memlet("A[2]"))
+    state.add_memlet_path(t2, mx, b, src_conn="b", memlet=dace.Memlet("A[3]"))
 
     sdfg.compile()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_integer_power()
     test_integer_power_constant()
     test_equality()

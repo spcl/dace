@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement a composite
-    Subgraph Fusion - Stencil Tiling Transformation
+"""This module contains classes that implement a composite
+Subgraph Fusion - Stencil Tiling Transformation
 """
 
 from dace.sdfg.state import SDFGState, StateSubgraphView
@@ -21,42 +21,42 @@ import warnings
 @make_properties
 @transformation.explicit_cf_compatible
 class CompositeFusion(transformation.SubgraphTransformation):
-    """ MultiExpansion + SubgraphFusion in one Transformation
-        Additional StencilTiling is also possible as a canonicalizing
-        transformation before fusion.
+    """MultiExpansion + SubgraphFusion in one Transformation
+    Additional StencilTiling is also possible as a canonicalizing
+    transformation before fusion.
     """
 
     debug = Property(category="Diagnostics", desc="Debug mode", dtype=bool, default=False)
 
     allow_expansion = Property(category="Applicability", desc="Allow MultiExpansion first", dtype=bool, default=True)
 
-    allow_tiling = Property(category="Applicability",
-                            desc="Allow StencilTiling (after MultiExpansion)",
-                            dtype=bool,
-                            default=False)
+    allow_tiling = Property(
+        category="Applicability", desc="Allow StencilTiling (after MultiExpansion)", dtype=bool, default=False
+    )
 
-    transient_allocation = EnumProperty(category="Memory",
-                                        desc="Storage Location to push transients to that are "
-                                        "fully contained within the subgraph.",
-                                        dtype=dtypes.StorageType,
-                                        default=dtypes.StorageType.Default)
+    transient_allocation = EnumProperty(
+        category="Memory",
+        desc="Storage Location to push transients to that are fully contained within the subgraph.",
+        dtype=dtypes.StorageType,
+        default=dtypes.StorageType.Default,
+    )
 
-    schedule_innermaps = Property(category="Scheduling",
-                                  desc="Schedule of inner fused maps",
-                                  dtype=dtypes.ScheduleType,
-                                  default=None,
-                                  allow_none=True)
+    schedule_innermaps = Property(
+        category="Scheduling",
+        desc="Schedule of inner fused maps",
+        dtype=dtypes.ScheduleType,
+        default=None,
+        allow_none=True,
+    )
 
-    stencil_unroll_loops = Property(category="Scheduling",
-                                    desc="Unroll inner stencil loops if they have size > 1",
-                                    dtype=bool,
-                                    default=False)
-    stencil_strides = ShapeProperty(dtype=tuple, default=(1, ), category="Parameters", desc="Stencil tile stride")
+    stencil_unroll_loops = Property(
+        category="Scheduling", desc="Unroll inner stencil loops if they have size > 1", dtype=bool, default=False
+    )
+    stencil_strides = ShapeProperty(dtype=tuple, default=(1,), category="Parameters", desc="Stencil tile stride")
 
-    expansion_split = Property(category="Applicability",
-                               desc="Allow MultiExpansion to split up maps, if enabled",
-                               dtype=bool,
-                               default=True)
+    expansion_split = Property(
+        category="Applicability", desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True
+    )
 
     def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         graph: SDFGState = subgraph.graph
@@ -87,8 +87,8 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 expansion.cfg_id = par_graph_copy.cfg_id
 
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
-                #expansion = MultiExpansion()
-                #expansion.setup_match(subgraph_copy)
+                # expansion = MultiExpansion()
+                # expansion.setup_match(subgraph_copy)
                 expansion.apply(sdfg_copy)
 
                 subgraph_fusion = SubgraphFusion()

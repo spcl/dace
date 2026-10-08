@@ -79,7 +79,7 @@ def test_invalid_scalar_access_decorator_syntax():
 
 
 def test_store_into_symbol_memlet():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(input: dace.int64[N]):
@@ -95,7 +95,7 @@ def test_store_into_symbol_memlet():
 
 
 def test_store_into_symbol():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def tester(input: dace.int64[N]):

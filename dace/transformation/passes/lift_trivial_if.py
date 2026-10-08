@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Simplification pass that removes ``ConditionalBlock`` nodes whose condition is provably constant."""
+
 import ast
 import re
 from functools import lru_cache
@@ -39,7 +40,7 @@ def _trivial_cond_check_cached(code_string: str, val: bool) -> bool:
     # sympy refuses to compare bool against an int. Try as best effort to rewrite boolean ops/literals to
     # arithmetic over 0/1 and let SymExpr.simplify reduce it.
     try:
-        tokens = re.split(r'(\s+|[()\[\]])', code_string)
+        tokens = re.split(r"(\s+|[()\[\]])", code_string)
         replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
         rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
         simplified = dace.symbolic.SymExpr(rewritten).simplify()
@@ -120,14 +121,16 @@ class LiftTrivialIf(ppl.Pass):
     def _trivially_true(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
         if self._trivial_cond_check(code, True):
             return True
-        return cfb is not None and (self._range_verdict(code, cfb) == 'true'
-                                    or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE)
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "true" or self._facts_verdict(code, cfb) is symbolic.Truth.TRUE
+        )
 
     def _trivially_false(self, code: CodeBlock, cfb: Optional[ConditionalBlock] = None) -> bool:
         if self._trivial_cond_check(code, False):
             return True
-        return cfb is not None and (self._range_verdict(code, cfb) == 'false'
-                                    or self._facts_verdict(code, cfb) is symbolic.Truth.FALSE)
+        return cfb is not None and (
+            self._range_verdict(code, cfb) == "false" or self._facts_verdict(code, cfb) is symbolic.Truth.FALSE
+        )
 
     @classmethod
     def _facts_verdict(cls, code: CodeBlock, cfb: ConditionalBlock) -> symbolic.Truth:
@@ -162,6 +165,7 @@ class LiftTrivialIf(ppl.Pass):
         the inclusive bounds under normal (no-break) termination."""
         from dace.sdfg.state import LoopRegion
         from dace.transformation.passes.analysis import loop_analysis
+
         ranges = []
         graph = cfb.parent_graph
         seen = set()
@@ -172,7 +176,7 @@ class LiftTrivialIf(ppl.Pass):
                 end = loop_analysis.get_loop_end(graph)
                 if start is not None and end is not None:
                     ranges.append((graph.loop_variable, start, end))
-            graph = getattr(graph, 'parent_graph', None)
+            graph = getattr(graph, "parent_graph", None)
         return ranges
 
     @staticmethod
@@ -197,37 +201,37 @@ class LiftTrivialIf(ppl.Pass):
         def single_point(x_lo, x_hi, target):  # provably start == end == target
             return nonneg(x_hi - x_lo) and not pos(x_hi - x_lo) and num(x_lo - target) == 0
 
-        if opname == 'Eq':  # i == c
+        if opname == "Eq":  # i == c
             if pos(start - c) or pos(c - end):
-                return 'false'
+                return "false"
             if single_point(start, end, c):
-                return 'true'
-        elif opname == 'NotEq':  # i != c
+                return "true"
+        elif opname == "NotEq":  # i != c
             if pos(start - c) or pos(c - end):
-                return 'true'
+                return "true"
             if single_point(start, end, c):
-                return 'false'
-        elif opname == 'Lt':  # i < c
+                return "false"
+        elif opname == "Lt":  # i < c
             if pos(c - end):
-                return 'true'
+                return "true"
             if nonneg(start - c):
-                return 'false'
-        elif opname == 'LtE':  # i <= c
+                return "false"
+        elif opname == "LtE":  # i <= c
             if nonneg(c - end):
-                return 'true'
+                return "true"
             if pos(start - c):
-                return 'false'
-        elif opname == 'Gt':  # i > c
+                return "false"
+        elif opname == "Gt":  # i > c
             if pos(start - c):
-                return 'true'
+                return "true"
             if nonneg(c - end):
-                return 'false'
-        elif opname == 'GtE':  # i >= c
+                return "false"
+        elif opname == "GtE":  # i >= c
             if nonneg(start - c):
-                return 'true'
+                return "true"
             if pos(c - end):
-                return 'false'
-        return 'unknown'
+                return "false"
+        return "unknown"
 
     def _range_verdict(self, code: CodeBlock, cfb: ConditionalBlock) -> str:
         """Whether guard ``code`` is a tautology (``'true'``) or contradiction
@@ -236,21 +240,21 @@ class LiftTrivialIf(ppl.Pass):
         and ``not(<compare>)``, matching the compared variable to the enclosing
         ``LoopRegion`` whose iterator it is."""
         if code is None or code.language != dace.dtypes.Language.Python:
-            return 'unknown'
+            return "unknown"
         ranges = self._loop_iter_ranges(cfb)
         if not ranges:
-            return 'unknown'
+            return "unknown"
         try:
             node = code.code[0]
         except (AttributeError, IndexError, TypeError):
-            return 'unknown'
+            return "unknown"
         if isinstance(node, ast.Expr):
             node = node.value
         negate = isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not)
         if negate:
             node = node.operand
         if not isinstance(node, ast.Compare) or len(node.ops) != 1:
-            return 'unknown'
+            return "unknown"
         left, op, right = node.left, node.ops[0], node.comparators[0]
         opname = type(op).__name__
 
@@ -263,26 +267,26 @@ class LiftTrivialIf(ppl.Pass):
             ivar, other = lname, right
         elif rname in ivar_to_range and lname not in ivar_to_range:
             ivar, other = rname, left
-            opname = {'Lt': 'Gt', 'LtE': 'GtE', 'Gt': 'Lt', 'GtE': 'LtE'}.get(opname, opname)
+            opname = {"Lt": "Gt", "LtE": "GtE", "Gt": "Lt", "GtE": "LtE"}.get(opname, opname)
         else:
-            return 'unknown'
+            return "unknown"
         try:
             c = symbolic.pystr_to_symbolic(ast.unparse(other))
         except Exception:
-            return 'unknown'
+            return "unknown"
         if symbolic.pystr_to_symbolic(ivar) in c.free_symbols:
-            return 'unknown'  # C must be loop-invariant
+            return "unknown"  # C must be loop-invariant
         start, end = ivar_to_range[ivar]
         verdict = self._cmp_verdict(opname, c, start, end, cfb.sdfg.facts())
-        if negate and verdict != 'unknown':
-            verdict = 'false' if verdict == 'true' else 'true'
+        if negate and verdict != "unknown":
+            verdict = "false" if verdict == "true" else "true"
         return verdict
 
     @staticmethod
     def _is_conjunction(expr) -> bool:
         # ``pystr_to_symbolic`` yields dace's own conjunction operator (whose
         # ``func`` is named ``AND``), not ``sympy.And``; accept either.
-        return isinstance(expr, sympy.And) or getattr(getattr(expr, 'func', None), '__name__', '') == 'AND'
+        return isinstance(expr, sympy.And) or getattr(getattr(expr, "func", None), "__name__", "") == "AND"
 
     def _flatten_conjuncts(self, expr) -> list:
         """All conjuncts of a (possibly nested) conjunction, flattened.
@@ -367,9 +371,9 @@ class LiftTrivialIf(ppl.Pass):
                     # Either one of them must be none
                     if cond1 is not None and cond2 is not None:
                         continue
-                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (((cond1, cfg1),
-                                                                             (cond2, cfg2)) if cond1 is not None else
-                                                                            ((cond2, cfg2), (cond1, cfg1)))
+                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (
+                        ((cond1, cfg1), (cond2, cfg2)) if cond1 is not None else ((cond2, cfg2), (cond1, cfg1))
+                    )
 
                     if self._trivially_true(not_none_cond, cfb):  # 2.1
                         cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))
@@ -438,4 +442,4 @@ class LiftTrivialIf(ppl.Pass):
         # were already repaired incrementally per splice (scoped to the moved subtree) -- no whole-SDFG
         # walk, and nothing to do when the pass removed nothing.
         sdfg.reset_cfg_list()
-        return {'lifted_conditionals': rmed_count}
+        return {"lifted_conditionals": rmed_count}

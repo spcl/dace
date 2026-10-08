@@ -11,37 +11,47 @@ from dace.transformation.passes.simplification.control_flow_raising import Contr
 
 def state_check_executions(state, expected, expected_dynamic=False):
     if state.executions != expected:
-        raise RuntimeError('Expected {} execution, got {}'.format(expected, state.executions))
+        raise RuntimeError("Expected {} execution, got {}".format(expected, state.executions))
     elif expected_dynamic and not state.dynamic_executions:
-        raise RuntimeError('Expected dynamic executions, got static')
+        raise RuntimeError("Expected dynamic executions, got static")
     elif state.dynamic_executions and not expected_dynamic:
-        raise RuntimeError('Expected static executions, got dynamic')
+        raise RuntimeError("Expected static executions, got dynamic")
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_conditional_fake_merge(with_regions):
-    sdfg = dace.SDFG('fake_merge')
+    sdfg = dace.SDFG("fake_merge")
 
-    state_init = sdfg.add_state('init')
-    state_a = sdfg.add_state('A')
-    state_b = sdfg.add_state('B')
-    state_c = sdfg.add_state('C')
-    state_d = sdfg.add_state('D')
-    state_e = sdfg.add_state('E')
+    state_init = sdfg.add_state("init")
+    state_a = sdfg.add_state("A")
+    state_b = sdfg.add_state("B")
+    state_c = sdfg.add_state("C")
+    state_d = sdfg.add_state("D")
+    state_e = sdfg.add_state("E")
 
-    sdfg.add_edge(state_init, state_a, InterstateEdge(assignments={
-        'i': '0',
-        'j': '0',
-    }))
-    sdfg.add_edge(state_a, state_b,
-                  InterstateEdge(condition=CodeProperty.from_string('i < 10', language=Language.Python)))
-    sdfg.add_edge(state_a, state_c,
-                  InterstateEdge(condition=CodeProperty.from_string('not (i < 10)', language=Language.Python)))
+    sdfg.add_edge(
+        state_init,
+        state_a,
+        InterstateEdge(
+            assignments={
+                "i": "0",
+                "j": "0",
+            }
+        ),
+    )
+    sdfg.add_edge(
+        state_a, state_b, InterstateEdge(condition=CodeProperty.from_string("i < 10", language=Language.Python))
+    )
+    sdfg.add_edge(
+        state_a, state_c, InterstateEdge(condition=CodeProperty.from_string("not (i < 10)", language=Language.Python))
+    )
     sdfg.add_edge(state_b, state_d, InterstateEdge())
-    sdfg.add_edge(state_c, state_d,
-                  InterstateEdge(condition=CodeProperty.from_string('j < 10', language=Language.Python)))
-    sdfg.add_edge(state_c, state_e,
-                  InterstateEdge(condition=CodeProperty.from_string('not (j < 10)', language=Language.Python)))
+    sdfg.add_edge(
+        state_c, state_d, InterstateEdge(condition=CodeProperty.from_string("j < 10", language=Language.Python))
+    )
+    sdfg.add_edge(
+        state_c, state_e, InterstateEdge(condition=CodeProperty.from_string("not (j < 10)", language=Language.Python))
+    )
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})
@@ -52,28 +62,28 @@ def test_conditional_fake_merge(with_regions):
     state_check_executions(state_e, 1, True)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_conditional_full_merge(with_regions):
-    sdfg = dace.SDFG('conditional_full_merge')
+    sdfg = dace.SDFG("conditional_full_merge")
 
-    sdfg.add_scalar('a', dace.int32)
-    sdfg.add_scalar('b', dace.int32)
+    sdfg.add_scalar("a", dace.int32)
+    sdfg.add_scalar("b", dace.int32)
 
-    init_state = sdfg.add_state('init_state')
-    if_guard_1 = sdfg.add_state('if_guard_1')
-    l_branch_1 = sdfg.add_state('l_branch_1')
-    if_guard_2 = sdfg.add_state('if_guard_2')
-    l_branch = sdfg.add_state('l_branch')
-    r_branch = sdfg.add_state('r_branch')
-    if_merge_1 = sdfg.add_state('if_merge_1')
-    if_merge_2 = sdfg.add_state('if_merge_2')
+    init_state = sdfg.add_state("init_state")
+    if_guard_1 = sdfg.add_state("if_guard_1")
+    l_branch_1 = sdfg.add_state("l_branch_1")
+    if_guard_2 = sdfg.add_state("if_guard_2")
+    l_branch = sdfg.add_state("l_branch")
+    r_branch = sdfg.add_state("r_branch")
+    if_merge_1 = sdfg.add_state("if_merge_1")
+    if_merge_2 = sdfg.add_state("if_merge_2")
 
     sdfg.add_edge(init_state, if_guard_1, dace.InterstateEdge())
-    sdfg.add_edge(if_guard_1, l_branch_1, dace.InterstateEdge(condition=CodeBlock('a < 10')))
+    sdfg.add_edge(if_guard_1, l_branch_1, dace.InterstateEdge(condition=CodeBlock("a < 10")))
     sdfg.add_edge(l_branch_1, if_guard_2, dace.InterstateEdge())
-    sdfg.add_edge(if_guard_1, if_merge_1, dace.InterstateEdge(condition=CodeBlock('not (a < 10)')))
-    sdfg.add_edge(if_guard_2, l_branch, dace.InterstateEdge(condition=CodeBlock('b < 10')))
-    sdfg.add_edge(if_guard_2, r_branch, dace.InterstateEdge(condition=CodeBlock('not (b < 10)')))
+    sdfg.add_edge(if_guard_1, if_merge_1, dace.InterstateEdge(condition=CodeBlock("not (a < 10)")))
+    sdfg.add_edge(if_guard_2, l_branch, dace.InterstateEdge(condition=CodeBlock("b < 10")))
+    sdfg.add_edge(if_guard_2, r_branch, dace.InterstateEdge(condition=CodeBlock("not (b < 10)")))
     sdfg.add_edge(l_branch, if_merge_2, dace.InterstateEdge())
     sdfg.add_edge(r_branch, if_merge_2, dace.InterstateEdge())
     sdfg.add_edge(if_merge_2, if_merge_1, dace.InterstateEdge())
@@ -102,29 +112,29 @@ def test_conditional_full_merge(with_regions):
     state_check_executions(if_merge_1, 1)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_while_inside_for(with_regions):
-    sdfg = dace.SDFG('while_inside_for')
+    sdfg = dace.SDFG("while_inside_for")
 
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_symbol('j', dace.int32)
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_symbol("j", dace.int32)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    loop_1 = sdfg.add_state('loop_1')
-    end_1 = sdfg.add_state('end_1')
-    guard_2 = sdfg.add_state('guard_2')
-    loop_2 = sdfg.add_state('loop_2')
-    end_2 = sdfg.add_state('end_2')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    loop_1 = sdfg.add_state("loop_1")
+    end_1 = sdfg.add_state("end_1")
+    guard_2 = sdfg.add_state("guard_2")
+    loop_2 = sdfg.add_state("loop_2")
+    end_2 = sdfg.add_state("end_2")
 
-    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < 20)')))
-    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock('i < 20')))
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock("not (i < 20)")))
+    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock("i < 20")))
     sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge())
-    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={"i": "i + 1"}))
 
-    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock('not (j < 20)')))
-    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock('j < 20')))
+    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock("not (j < 20)")))
+    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock("j < 20")))
     sdfg.add_edge(loop_2, guard_2, dace.InterstateEdge())
 
     if with_regions:
@@ -153,41 +163,41 @@ def test_while_inside_for(with_regions):
     state_check_executions(loop_2, 0, expected_dynamic=True)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_for_with_nested_full_merge_branch(with_regions):
-    sdfg = dace.SDFG('for_full_merge')
+    sdfg = dace.SDFG("for_full_merge")
 
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_scalar('a', dace.int32)
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_scalar("a", dace.int32)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    if_guard = sdfg.add_state('if_guard')
-    l_branch = sdfg.add_state('l_branch')
-    r_branch = sdfg.add_state('r_branch')
-    if_merge = sdfg.add_state('if_merge')
-    end_1 = sdfg.add_state('end_1')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    if_guard = sdfg.add_state("if_guard")
+    l_branch = sdfg.add_state("l_branch")
+    r_branch = sdfg.add_state("r_branch")
+    if_merge = sdfg.add_state("if_merge")
+    end_1 = sdfg.add_state("end_1")
 
-    lra = l_branch.add_access('a')
-    lt = l_branch.add_tasklet('t1', {'i1'}, {'o1'}, 'o1 = i1 + 5')
-    lwa = l_branch.add_access('a')
-    l_branch.add_edge(lra, None, lt, 'i1', dace.Memlet('a[0]'))
-    l_branch.add_edge(lt, 'o1', lwa, None, dace.Memlet('a[0]'))
+    lra = l_branch.add_access("a")
+    lt = l_branch.add_tasklet("t1", {"i1"}, {"o1"}, "o1 = i1 + 5")
+    lwa = l_branch.add_access("a")
+    l_branch.add_edge(lra, None, lt, "i1", dace.Memlet("a[0]"))
+    l_branch.add_edge(lt, "o1", lwa, None, dace.Memlet("a[0]"))
 
-    rra = r_branch.add_access('a')
-    rt = r_branch.add_tasklet('t2', {'i1'}, {'o1'}, 'o1 = i1 + 10')
-    rwa = r_branch.add_access('a')
-    r_branch.add_edge(rra, None, rt, 'i1', dace.Memlet('a[0]'))
-    r_branch.add_edge(rt, 'o1', rwa, None, dace.Memlet('a[0]'))
+    rra = r_branch.add_access("a")
+    rt = r_branch.add_tasklet("t2", {"i1"}, {"o1"}, "o1 = i1 + 10")
+    rwa = r_branch.add_access("a")
+    r_branch.add_edge(rra, None, rt, "i1", dace.Memlet("a[0]"))
+    r_branch.add_edge(rt, "o1", rwa, None, dace.Memlet("a[0]"))
 
-    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < 20)')))
-    sdfg.add_edge(guard_1, if_guard, dace.InterstateEdge(condition=CodeBlock('i < 20')))
-    sdfg.add_edge(if_guard, l_branch, dace.InterstateEdge(condition=CodeBlock('not (a < 10)')))
-    sdfg.add_edge(if_guard, r_branch, dace.InterstateEdge(condition=CodeBlock('a < 10')))
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock("not (i < 20)")))
+    sdfg.add_edge(guard_1, if_guard, dace.InterstateEdge(condition=CodeBlock("i < 20")))
+    sdfg.add_edge(if_guard, l_branch, dace.InterstateEdge(condition=CodeBlock("not (a < 10)")))
+    sdfg.add_edge(if_guard, r_branch, dace.InterstateEdge(condition=CodeBlock("a < 10")))
     sdfg.add_edge(l_branch, if_merge, dace.InterstateEdge())
     sdfg.add_edge(r_branch, if_merge, dace.InterstateEdge())
-    sdfg.add_edge(if_merge, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(if_merge, guard_1, dace.InterstateEdge(assignments={"i": "i + 1"}))
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})
@@ -214,34 +224,57 @@ def test_for_with_nested_full_merge_branch(with_regions):
     state_check_executions(if_merge, 20)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_for_inside_branch(with_regions):
-    sdfg = dace.SDFG('for_in_branch')
+    sdfg = dace.SDFG("for_in_branch")
 
-    state_init = sdfg.add_state('init')
-    branch_guard = sdfg.add_state('branch_guard')
-    loop_guard = sdfg.add_state('loop_guard')
-    loop_state = sdfg.add_state('loop_state')
-    branch_merge = sdfg.add_state('branch_merge')
+    state_init = sdfg.add_state("init")
+    branch_guard = sdfg.add_state("branch_guard")
+    loop_guard = sdfg.add_state("loop_guard")
+    loop_state = sdfg.add_state("loop_state")
+    branch_merge = sdfg.add_state("branch_merge")
 
-    sdfg.add_edge(state_init, branch_guard, InterstateEdge(assignments={
-        'i': '0',
-    }))
-    sdfg.add_edge(branch_guard, branch_merge,
-                  InterstateEdge(condition=CodeProperty.from_string('i < 10', language=Language.Python)))
     sdfg.add_edge(
-        branch_guard, loop_guard,
-        InterstateEdge(condition=CodeProperty.from_string('not (i < 10)', language=Language.Python),
-                       assignments={
-                           'j': '0',
-                       }))
-    sdfg.add_edge(loop_guard, loop_state,
-                  InterstateEdge(condition=CodeProperty.from_string('j < 10', language=Language.Python)))
-    sdfg.add_edge(loop_guard, branch_merge,
-                  InterstateEdge(condition=CodeProperty.from_string('not (j < 10)', language=Language.Python)))
-    sdfg.add_edge(loop_state, loop_guard, InterstateEdge(assignments={
-        'j': 'j + 1',
-    }))
+        state_init,
+        branch_guard,
+        InterstateEdge(
+            assignments={
+                "i": "0",
+            }
+        ),
+    )
+    sdfg.add_edge(
+        branch_guard,
+        branch_merge,
+        InterstateEdge(condition=CodeProperty.from_string("i < 10", language=Language.Python)),
+    )
+    sdfg.add_edge(
+        branch_guard,
+        loop_guard,
+        InterstateEdge(
+            condition=CodeProperty.from_string("not (i < 10)", language=Language.Python),
+            assignments={
+                "j": "0",
+            },
+        ),
+    )
+    sdfg.add_edge(
+        loop_guard, loop_state, InterstateEdge(condition=CodeProperty.from_string("j < 10", language=Language.Python))
+    )
+    sdfg.add_edge(
+        loop_guard,
+        branch_merge,
+        InterstateEdge(condition=CodeProperty.from_string("not (j < 10)", language=Language.Python)),
+    )
+    sdfg.add_edge(
+        loop_state,
+        loop_guard,
+        InterstateEdge(
+            assignments={
+                "j": "j + 1",
+            }
+        ),
+    )
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})
@@ -257,36 +290,64 @@ def test_for_inside_branch(with_regions):
     state_check_executions(branch_merge, 1, False)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_full_merge_inside_loop(with_regions):
-    sdfg = dace.SDFG('full_merge_inside_loop')
+    sdfg = dace.SDFG("full_merge_inside_loop")
 
-    state_init = sdfg.add_state('init')
-    intermittent = sdfg.add_state('intermittent')
-    loop_guard = sdfg.add_state('loop_guard')
-    branch_guard = sdfg.add_state('branch_guard')
-    branch_state = sdfg.add_state('branch_state')
-    branch_merge = sdfg.add_state('branch_merge')
-    loop_end = sdfg.add_state('loop_end')
+    state_init = sdfg.add_state("init")
+    intermittent = sdfg.add_state("intermittent")
+    loop_guard = sdfg.add_state("loop_guard")
+    branch_guard = sdfg.add_state("branch_guard")
+    branch_state = sdfg.add_state("branch_state")
+    branch_merge = sdfg.add_state("branch_merge")
+    loop_end = sdfg.add_state("loop_end")
 
-    sdfg.add_edge(state_init, intermittent, InterstateEdge(assignments={
-        'j': '0',
-    }))
-    sdfg.add_edge(intermittent, loop_guard, InterstateEdge(assignments={
-        'i': '0',
-    }))
-    sdfg.add_edge(loop_guard, branch_guard,
-                  InterstateEdge(condition=CodeProperty.from_string('i < 10', language=Language.Python)))
-    sdfg.add_edge(loop_guard, loop_end,
-                  InterstateEdge(condition=CodeProperty.from_string('not (i < 10)', language=Language.Python)))
-    sdfg.add_edge(branch_guard, branch_state,
-                  InterstateEdge(condition=CodeProperty.from_string('j < 10', language=Language.Python)))
-    sdfg.add_edge(branch_guard, branch_merge,
-                  InterstateEdge(condition=CodeProperty.from_string('not (j < 10)', language=Language.Python)))
+    sdfg.add_edge(
+        state_init,
+        intermittent,
+        InterstateEdge(
+            assignments={
+                "j": "0",
+            }
+        ),
+    )
+    sdfg.add_edge(
+        intermittent,
+        loop_guard,
+        InterstateEdge(
+            assignments={
+                "i": "0",
+            }
+        ),
+    )
+    sdfg.add_edge(
+        loop_guard, branch_guard, InterstateEdge(condition=CodeProperty.from_string("i < 10", language=Language.Python))
+    )
+    sdfg.add_edge(
+        loop_guard,
+        loop_end,
+        InterstateEdge(condition=CodeProperty.from_string("not (i < 10)", language=Language.Python)),
+    )
+    sdfg.add_edge(
+        branch_guard,
+        branch_state,
+        InterstateEdge(condition=CodeProperty.from_string("j < 10", language=Language.Python)),
+    )
+    sdfg.add_edge(
+        branch_guard,
+        branch_merge,
+        InterstateEdge(condition=CodeProperty.from_string("not (j < 10)", language=Language.Python)),
+    )
     sdfg.add_edge(branch_state, branch_merge, InterstateEdge())
-    sdfg.add_edge(branch_merge, loop_guard, InterstateEdge(assignments={
-        'i': 'i + 1',
-    }))
+    sdfg.add_edge(
+        branch_merge,
+        loop_guard,
+        InterstateEdge(
+            assignments={
+                "i": "i + 1",
+            }
+        ),
+    )
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})
@@ -303,37 +364,37 @@ def test_full_merge_inside_loop(with_regions):
     state_check_executions(loop_end, 1, False)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_while_with_nested_full_merge_branch(with_regions):
-    sdfg = dace.SDFG('while_full_merge')
+    sdfg = dace.SDFG("while_full_merge")
 
-    sdfg.add_scalar('a', dace.int32)
+    sdfg.add_scalar("a", dace.int32)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    if_guard = sdfg.add_state('if_guard')
-    l_branch = sdfg.add_state('l_branch')
-    r_branch = sdfg.add_state('r_branch')
-    if_merge = sdfg.add_state('if_merge')
-    end_1 = sdfg.add_state('end_1')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    if_guard = sdfg.add_state("if_guard")
+    l_branch = sdfg.add_state("l_branch")
+    r_branch = sdfg.add_state("r_branch")
+    if_merge = sdfg.add_state("if_merge")
+    end_1 = sdfg.add_state("end_1")
 
-    lra = l_branch.add_access('a')
-    lt = l_branch.add_tasklet('t1', {'i1'}, {'o1'}, 'o1 = i1 + 5')
-    lwa = l_branch.add_access('a')
-    l_branch.add_edge(lra, None, lt, 'i1', dace.Memlet('a[0]'))
-    l_branch.add_edge(lt, 'o1', lwa, None, dace.Memlet('a[0]'))
+    lra = l_branch.add_access("a")
+    lt = l_branch.add_tasklet("t1", {"i1"}, {"o1"}, "o1 = i1 + 5")
+    lwa = l_branch.add_access("a")
+    l_branch.add_edge(lra, None, lt, "i1", dace.Memlet("a[0]"))
+    l_branch.add_edge(lt, "o1", lwa, None, dace.Memlet("a[0]"))
 
-    rra = r_branch.add_access('a')
-    rt = r_branch.add_tasklet('t2', {'i1'}, {'o1'}, 'o1 = i1 + 10')
-    rwa = r_branch.add_access('a')
-    r_branch.add_edge(rra, None, rt, 'i1', dace.Memlet('a[0]'))
-    r_branch.add_edge(rt, 'o1', rwa, None, dace.Memlet('a[0]'))
+    rra = r_branch.add_access("a")
+    rt = r_branch.add_tasklet("t2", {"i1"}, {"o1"}, "o1 = i1 + 10")
+    rwa = r_branch.add_access("a")
+    r_branch.add_edge(rra, None, rt, "i1", dace.Memlet("a[0]"))
+    r_branch.add_edge(rt, "o1", rwa, None, dace.Memlet("a[0]"))
 
     sdfg.add_edge(init_state, guard_1, dace.InterstateEdge())
-    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (a < 20)')))
-    sdfg.add_edge(guard_1, if_guard, dace.InterstateEdge(condition=CodeBlock('a < 20')))
-    sdfg.add_edge(if_guard, l_branch, dace.InterstateEdge(condition=CodeBlock('not (a < 10)')))
-    sdfg.add_edge(if_guard, r_branch, dace.InterstateEdge(condition=CodeBlock('a < 10')))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock("not (a < 20)")))
+    sdfg.add_edge(guard_1, if_guard, dace.InterstateEdge(condition=CodeBlock("a < 20")))
+    sdfg.add_edge(if_guard, l_branch, dace.InterstateEdge(condition=CodeBlock("not (a < 10)")))
+    sdfg.add_edge(if_guard, r_branch, dace.InterstateEdge(condition=CodeBlock("a < 10")))
     sdfg.add_edge(l_branch, if_merge, dace.InterstateEdge())
     sdfg.add_edge(r_branch, if_merge, dace.InterstateEdge())
     sdfg.add_edge(if_merge, guard_1, dace.InterstateEdge())
@@ -360,43 +421,43 @@ def test_while_with_nested_full_merge_branch(with_regions):
     state_check_executions(if_merge, 0, expected_dynamic=True)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_3_fold_nested_loop_with_symbolic_bounds(with_regions):
-    N = dace.symbol('N')
-    M = dace.symbol('M')
-    K = dace.symbol('K')
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    K = dace.symbol("K")
 
-    sdfg = dace.SDFG('nest_3_symbolic')
+    sdfg = dace.SDFG("nest_3_symbolic")
 
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_symbol('j', dace.int32)
-    sdfg.add_symbol('k', dace.int32)
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_symbol("j", dace.int32)
+    sdfg.add_symbol("k", dace.int32)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    loop_1 = sdfg.add_state('loop_1')
-    end_1 = sdfg.add_state('end_1')
-    guard_2 = sdfg.add_state('guard_2')
-    loop_2 = sdfg.add_state('loop_2')
-    end_2 = sdfg.add_state('end_2')
-    guard_3 = sdfg.add_state('guard_3')
-    end_3 = sdfg.add_state('end_3')
-    loop_3 = sdfg.add_state('loop_3')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    loop_1 = sdfg.add_state("loop_1")
+    end_1 = sdfg.add_state("end_1")
+    guard_2 = sdfg.add_state("guard_2")
+    loop_2 = sdfg.add_state("loop_2")
+    end_2 = sdfg.add_state("end_2")
+    guard_3 = sdfg.add_state("guard_3")
+    end_3 = sdfg.add_state("end_3")
+    loop_3 = sdfg.add_state("loop_3")
 
-    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < N)')))
-    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock('i < N')))
-    sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge(assignments={'j': 0}))
-    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock("not (i < N)")))
+    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock("i < N")))
+    sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge(assignments={"j": 0}))
+    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={"i": "i + 1"}))
 
-    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock('not (j < M)')))
-    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock('j < M')))
-    sdfg.add_edge(loop_2, guard_3, dace.InterstateEdge(assignments={'k': 0}))
-    sdfg.add_edge(end_3, guard_2, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock("not (j < M)")))
+    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock("j < M")))
+    sdfg.add_edge(loop_2, guard_3, dace.InterstateEdge(assignments={"k": 0}))
+    sdfg.add_edge(end_3, guard_2, dace.InterstateEdge(assignments={"j": "j + 1"}))
 
-    sdfg.add_edge(guard_3, end_3, dace.InterstateEdge(condition=CodeBlock('not (k < K)')))
-    sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock('k < K')))
-    sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+    sdfg.add_edge(guard_3, end_3, dace.InterstateEdge(condition=CodeBlock("not (k < K)")))
+    sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock("k < K")))
+    sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={"k": "k + 1"}))
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})
@@ -437,39 +498,39 @@ def test_3_fold_nested_loop_with_symbolic_bounds(with_regions):
     state_check_executions(loop_3, M * N * K)
 
 
-@pytest.mark.parametrize('with_regions', [False, True])
+@pytest.mark.parametrize("with_regions", [False, True])
 def test_3_fold_nested_loop(with_regions):
-    sdfg = dace.SDFG('nest_3')
+    sdfg = dace.SDFG("nest_3")
 
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_symbol('j', dace.int32)
-    sdfg.add_symbol('k', dace.int32)
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_symbol("j", dace.int32)
+    sdfg.add_symbol("k", dace.int32)
 
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    loop_1 = sdfg.add_state('loop_1')
-    end_1 = sdfg.add_state('end_1')
-    guard_2 = sdfg.add_state('guard_2')
-    loop_2 = sdfg.add_state('loop_2')
-    end_2 = sdfg.add_state('end_2')
-    guard_3 = sdfg.add_state('guard_3')
-    end_3 = sdfg.add_state('end_3')
-    loop_3 = sdfg.add_state('loop_3')
+    init_state = sdfg.add_state("init")
+    guard_1 = sdfg.add_state("guard_1")
+    loop_1 = sdfg.add_state("loop_1")
+    end_1 = sdfg.add_state("end_1")
+    guard_2 = sdfg.add_state("guard_2")
+    loop_2 = sdfg.add_state("loop_2")
+    end_2 = sdfg.add_state("end_2")
+    guard_3 = sdfg.add_state("guard_3")
+    end_3 = sdfg.add_state("end_3")
+    loop_3 = sdfg.add_state("loop_3")
 
-    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < 20)')))
-    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock('i < 20')))
-    sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge(assignments={'j': 'i'}))
-    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={"i": 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock("not (i < 20)")))
+    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock("i < 20")))
+    sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge(assignments={"j": "i"}))
+    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={"i": "i + 1"}))
 
-    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock('not (j < 20)')))
-    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock('j < 20')))
-    sdfg.add_edge(loop_2, guard_3, dace.InterstateEdge(assignments={'k': 'i'}))
-    sdfg.add_edge(end_3, guard_2, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock("not (j < 20)")))
+    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock("j < 20")))
+    sdfg.add_edge(loop_2, guard_3, dace.InterstateEdge(assignments={"k": "i"}))
+    sdfg.add_edge(end_3, guard_2, dace.InterstateEdge(assignments={"j": "j + 1"}))
 
-    sdfg.add_edge(guard_3, end_3, dace.InterstateEdge(condition=CodeBlock('not (k < j)')))
-    sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock('k < j')))
-    sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+    sdfg.add_edge(guard_3, end_3, dace.InterstateEdge(condition=CodeBlock("not (k < j)")))
+    sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock("k < j")))
+    sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={"k": "k + 1"}))
 
     if with_regions:
         ControlFlowRaising().apply_pass(sdfg, {})

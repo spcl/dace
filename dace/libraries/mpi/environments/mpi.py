@@ -4,7 +4,6 @@ import dace.library
 
 @dace.library.environment
 class MPI:
-
     cmake_minimum_version = "3.6"
     cmake_packages = ["MPI"]
     cmake_files = []

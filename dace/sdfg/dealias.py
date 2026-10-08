@@ -2,6 +2,7 @@
 """
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
+
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.frontend.python import astutils
 from dace.memlet import Memlet
@@ -127,12 +128,10 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     if inner_replacements:
         symbolic.safe_replace(inner_replacements, lambda d: replace_datadesc_names(sdfg, d), value_as_string=True)
         parent_node.in_connectors = {
-            inner_replacements[c] if c in inner_replacements else c: t
-            for c, t in parent_node.in_connectors.items()
+            inner_replacements[c] if c in inner_replacements else c: t for c, t in parent_node.in_connectors.items()
         }
         parent_node.out_connectors = {
-            inner_replacements[c] if c in inner_replacements else c: t
-            for c, t in parent_node.out_connectors.items()
+            inner_replacements[c] if c in inner_replacements else c: t for c, t in parent_node.out_connectors.items()
         }
         for e in parent_state.all_edges(parent_node):
             if e.src_conn in inner_replacements:
@@ -154,8 +153,9 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
             # The names coinciding does not mean there is nothing to do: a connector can carry
             # the container's name while still describing a narrower window of it, in which case
             # the memlets inside are in the window's coordinates and still have to be unsqueezed.
-            equivalent = sdfg.arrays[name].is_equivalent(parent_sdfg.arrays[parent_name],
-                                                         symbol_mapping=parent_node.symbol_mapping)
+            equivalent = sdfg.arrays[name].is_equivalent(
+                parent_sdfg.arrays[parent_name], symbol_mapping=parent_node.symbol_mapping
+            )
             if name != parent_name or not equivalent:
                 if name != parent_name:
                     replacements[name] = parent_name
@@ -305,12 +305,10 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     if replacements:
         symbolic.safe_replace(replacements, lambda d: replace_datadesc_names(sdfg, d), value_as_string=True)
         parent_node.in_connectors = {
-            replacements[c] if c in replacements else c: t
-            for c, t in parent_node.in_connectors.items()
+            replacements[c] if c in replacements else c: t for c, t in parent_node.in_connectors.items()
         }
         parent_node.out_connectors = {
-            replacements[c] if c in replacements else c: t
-            for c, t in parent_node.out_connectors.items()
+            replacements[c] if c in replacements else c: t for c, t in parent_node.out_connectors.items()
         }
         for e in parent_state.all_edges(parent_node):
             if e.src_conn in replacements:
@@ -333,8 +331,9 @@ def dealias_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     symbols.forget(sdfg)
 
 
-def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_symbols: Set[str],
-                    parent_node: nd.NestedSDFG) -> bool:
+def _same_container(
+    parent_desc: data.Data, inner_desc: data.Data, available_symbols: Set[str], parent_node: nd.NestedSDFG
+) -> bool:
     """
     Says whether a connector's descriptor already describes the container it is connected to.
 
@@ -363,8 +362,9 @@ def _same_container(parent_desc: data.Data, inner_desc: data.Data, available_sym
     return inner_desc.is_equivalent(parent_desc, symbol_mapping=parent_node.symbol_mapping)
 
 
-def _view_strides(container_strides: Tuple[symbolic.SymbolicType, ...],
-                  subset: subsets.Subset) -> Optional[List[symbolic.SymbolicType]]:
+def _view_strides(
+    container_strides: Tuple[symbolic.SymbolicType, ...], subset: subsets.Subset
+) -> Optional[List[symbolic.SymbolicType]]:
     """
     Derives the strides a view of a container has from the part of it the view covers.
 
@@ -407,8 +407,9 @@ def _as_container(desc: data.Data) -> data.Data:
     return desc
 
 
-def _rebase_views(sdfg: SDFG, name: str, old_desc: data.Data,
-                  new_desc: data.Data) -> List[Tuple[str, data.Data, data.Data]]:
+def _rebase_views(
+    sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data
+) -> List[Tuple[str, data.Data, data.Data]]:
     """
     Restates every view of a container that was restated, so that it still covers the same elements.
 
@@ -475,7 +476,7 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 if name not in names:
                     continue
                 connector = edge.dst_conn if edge.dst is node else edge.src_conn
-                if connector is None or '.' in connector or connector not in node.sdfg.arrays:
+                if connector is None or "." in connector or connector not in node.sdfg.arrays:
                     continue
                 inner_desc = node.sdfg.arrays[connector]
                 # Literally the same descriptor: the replacement below is written in this SDFG's symbols, which a
@@ -494,8 +495,9 @@ def rebase_descendants(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 rebase_descendants(node.sdfg, connector, inner_desc, replacement)
 
 
-def _strides_after_squeeze(strides: Tuple[symbolic.SymbolicType, ...], window: subsets.Range,
-                           kept: int) -> Optional[List[symbolic.SymbolicType]]:
+def _strides_after_squeeze(
+    strides: Tuple[symbolic.SymbolicType, ...], window: subsets.Range, kept: int
+) -> Optional[List[symbolic.SymbolicType]]:
     """
     Selects the strides of a container that a window of it keeps.
 
@@ -583,7 +585,7 @@ def _widening_feasible(sdfg: SDFG, name: str, desc: data.Data, passed_symbols: S
                 if edge.data.data != name:
                     continue
                 conn = edge.dst_conn if edge.dst is node else edge.src_conn
-                if conn is None or '.' in conn or conn not in node.sdfg.arrays:
+                if conn is None or "." in conn or conn not in node.sdfg.arrays:
                     continue
                 inner = node.sdfg.arrays[conn]
                 if inner.transient or not _same_container(desc, inner, set(node.sdfg.symbols.keys()), node):
@@ -600,9 +602,15 @@ def _widening_feasible(sdfg: SDFG, name: str, desc: data.Data, passed_symbols: S
     return True
 
 
-def _restate_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data,
-                       mover: Callable[[str, data.Data, data.Data], Callable[[Memlet], Memlet]],
-                       passed_symbols: Set[str], symbol_types: Dict[str, dtypes.typeclass]) -> None:
+def _restate_container(
+    sdfg: SDFG,
+    name: str,
+    old_desc: data.Data,
+    new_desc: data.Data,
+    mover: Callable[[str, data.Data, data.Data], Callable[[Memlet], Memlet]],
+    passed_symbols: Set[str],
+    symbol_types: Dict[str, dtypes.typeclass],
+) -> None:
     """
     Restates container ``name`` as ``new_desc`` and moves every access of it accordingly.
 
@@ -645,7 +653,8 @@ def _restate_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                     edge.data = move(memlet)
                     edge.data.other_subset = other
             elif memlet.other_subset is not None and any(
-                    isinstance(n, nd.AccessNode) and n.data == name for n in (edge.src, edge.dst)):
+                isinstance(n, nd.AccessNode) and n.data == name for n in (edge.src, edge.dst)
+            ):
                 stand_in = Memlet(data=name, subset=copy.deepcopy(memlet.other_subset))
                 memlet.other_subset = move(stand_in).subset
 
@@ -660,7 +669,7 @@ def _restate_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 if edge.data.data != name:
                     continue
                 conn = edge.dst_conn if edge.dst is node else edge.src_conn
-                if conn is None or '.' in conn or conn not in node.sdfg.arrays or conn in seen:
+                if conn is None or "." in conn or conn not in node.sdfg.arrays or conn in seen:
                     continue
                 inner = node.sdfg.arrays[conn]
                 if inner.transient or not _same_container(old_desc, inner, set(node.sdfg.symbols.keys()), node):
@@ -677,8 +686,14 @@ def _restate_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: dat
                 _restate_container(node.sdfg, conn, inner, replacement, mover, passed_symbols, symbol_types)
 
 
-def _widen_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data, window: Memlet,
-                     symbol_types: Dict[str, dtypes.typeclass]) -> None:
+def _widen_container(
+    sdfg: SDFG,
+    name: str,
+    old_desc: data.Data,
+    new_desc: data.Data,
+    window: Memlet,
+    symbol_types: Dict[str, dtypes.typeclass],
+) -> None:
     """
     Restates container ``name`` as ``new_desc`` and adds the window's origin to every access of it
     (see ``_restate_container``).
@@ -709,8 +724,15 @@ def _widen_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.
     _restate_container(sdfg, name, old_desc, new_desc, mover, passed_symbols, symbol_types)
 
 
-def _rebase_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data.Data, offset: Optional[subsets.Range],
-                      squeeze: Optional[List[int]], symbol_types: Dict[str, dtypes.typeclass]) -> None:
+def _rebase_container(
+    sdfg: SDFG,
+    name: str,
+    old_desc: data.Data,
+    new_desc: data.Data,
+    offset: Optional[subsets.Range],
+    squeeze: Optional[List[int]],
+    symbol_types: Dict[str, dtypes.typeclass],
+) -> None:
     """
     Restates container ``name`` as ``new_desc`` and subtracts the new container's origin from every
     access of it (see ``_restate_container``).
@@ -738,7 +760,7 @@ def _rebase_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data
                 result.subset.pop(squeeze)
                 if len(result.subset) == 0:
                     # Every dimension is gone: the container is a scalar, addressed as its only element
-                    result.subset = subsets.Range.from_string('0')
+                    result.subset = subsets.Range.from_string("0")
             return result
 
         return rebase
@@ -749,10 +771,9 @@ def _rebase_container(sdfg: SDFG, name: str, old_desc: data.Data, new_desc: data
     _restate_container(sdfg, name, old_desc, new_desc, mover, passed_symbols, symbol_types)
 
 
-def rebase_connector(node: nd.NestedSDFG,
-                     connector: str,
-                     offset: Optional[subsets.Range] = None,
-                     squeeze: Optional[List[int]] = None) -> bool:
+def rebase_connector(
+    node: nd.NestedSDFG, connector: str, offset: Optional[subsets.Range] = None, squeeze: Optional[List[int]] = None
+) -> bool:
     """
     Restates a connector as the container it is now connected to, moving the memlets inside with it.
 
@@ -780,7 +801,7 @@ def rebase_connector(node: nd.NestedSDFG,
     sdfg = node.sdfg
     if sdfg is None or sdfg.parent is None:
         return False
-    if '.' in connector or connector not in sdfg.arrays:
+    if "." in connector or connector not in sdfg.arrays:
         return False
     old_desc = sdfg.arrays[connector]
     if old_desc.transient:
@@ -833,11 +854,13 @@ def rebase_connector(node: nd.NestedSDFG,
     return True
 
 
-def reduce_connector(nsdfg: SDFG,
-                     connector: str,
-                     reduced_desc: data.Data,
-                     offset: Optional[subsets.Range] = None,
-                     squeeze: Optional[List[int]] = None) -> None:
+def reduce_connector(
+    nsdfg: SDFG,
+    connector: str,
+    reduced_desc: data.Data,
+    offset: Optional[subsets.Range] = None,
+    squeeze: Optional[List[int]] = None,
+) -> None:
     """
     Restates a connector as the smaller container a transformation put behind it.
 
@@ -943,7 +966,7 @@ def _windowed_edges(sdfg: SDFG, symbol_types: Dict[str, dtypes.typeclass]):
         if edge.data.data not in parent_sdfg.arrays:
             continue
         connector = edge.dst_conn if edge.dst is parent_node else edge.src_conn
-        if not connector or '.' in connector or connector not in sdfg.arrays:
+        if not connector or "." in connector or connector not in sdfg.arrays:
             continue
         inner = sdfg.arrays[connector]
         outer = parent_sdfg.arrays[edge.data.data]
@@ -1175,9 +1198,9 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
         remove_symbol_aliases(sdfg, {sym: sym for sym in shadowed})
 
     # Track which data containers need to be added and converted to views
-    to_add_and_view: Dict[str,
-                          Tuple[str,
-                                data.Data]] = {}  # Maps connector name -> (parent data name, parent data descriptor)
+    to_add_and_view: Dict[
+        str, Tuple[str, data.Data]
+    ] = {}  # Maps connector name -> (parent data name, parent data descriptor)
     parent_mapping: Dict[str, str] = {}  # Maps connector name to parent data name
 
     # A descriptor adopted from the parent may be written in symbols the nested SDFG does not hold
@@ -1192,12 +1215,13 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
             # A dotted connector names a member of a structure. The member's descriptor is owned by
             # the structure that declares it rather than by ``arrays``, so it cannot be replaced or
             # shadowed by a view of its own; the structure holding it is what gets integrated.
-            if connector and '.' not in connector and connector in sdfg.arrays:
+            if connector and "." not in connector and connector in sdfg.arrays:
                 # Only process non-transient arrays
                 if not sdfg.arrays[connector].transient:
                     # If the parent data descriptor is equivalent to the inner data descriptor, simply copy it
-                    if _same_container(parent_sdfg.arrays[edge.data.data], sdfg.arrays[connector], available_symbols,
-                                       parent_node):
+                    if _same_container(
+                        parent_sdfg.arrays[edge.data.data], sdfg.arrays[connector], available_symbols, parent_node
+                    ):
                         # ``offset`` names the origin of the index space the memlets inside are
                         # written in -- the Fortran frontend uses it to keep one-based indices --
                         # and equivalence deliberately does not compare it. Adopting the parent's
@@ -1205,15 +1229,16 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                         # Only arrays carry a settable one; a scalar or a structure has no index
                         # space of its own to preserve.
                         old_desc = sdfg.arrays[connector]
-                        inner_offset = (copy.deepcopy(old_desc.offset) if isinstance(old_desc, data.Array) else None)
+                        inner_offset = copy.deepcopy(old_desc.offset) if isinstance(old_desc, data.Array) else None
                         sdfg.arrays[connector] = copy.deepcopy(parent_sdfg.arrays[edge.data.data])
                         if inner_offset is not None and isinstance(sdfg.arrays[connector], data.Array):
                             sdfg.arrays[connector].offset = inner_offset
 
                         # Make non-reference descriptor
                         if isinstance(
-                                sdfg.arrays[connector],
-                            (data.ArrayView, data.ContainerView, data.ArrayReference, data.ContainerArrayReference)):
+                            sdfg.arrays[connector],
+                            (data.ArrayView, data.ContainerView, data.ArrayReference, data.ContainerArrayReference),
+                        ):
                             sdfg.arrays[connector] = sdfg.arrays[connector].as_array()
                         elif isinstance(sdfg.arrays[connector], (data.StructureView, data.StructureReference)):
                             sdfg.arrays[connector] = sdfg.arrays[connector].as_structure()
@@ -1231,9 +1256,11 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                         # cannot both be it, and picking one would silently move the other's accesses.
                         _, _, other = to_add_and_view[connector]
                         if other.data != edge.data.data or other.subset != edge.data.subset:
-                            raise ValueError(f'Connector "{connector}" of nested SDFG "{sdfg.label}" describes a '
-                                             f'window of its container, but is read through {other} and written '
-                                             f'through {edge.data}. Use one window, or separate connectors.')
+                            raise ValueError(
+                                f'Connector "{connector}" of nested SDFG "{sdfg.label}" describes a '
+                                f"window of its container, but is read through {other} and written "
+                                f"through {edge.data}. Use one window, or separate connectors."
+                            )
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
     parent_names: Set[str] = set()  # The names of the parent containers being integrated
@@ -1317,9 +1344,9 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
         # using ND array program squeeze semantics.
         if len(view_desc.shape) < len(parent_desc.shape):
             try:
-                unsqueezed_dims = unsqueeze_memlet(Memlet.from_array(inner_name, view_desc),
-                                                   parent_memlet,
-                                                   return_dims=True)
+                unsqueezed_dims = unsqueeze_memlet(
+                    Memlet.from_array(inner_name, view_desc), parent_memlet, return_dims=True
+                )
                 # Every dimension that was squeezed should be removed from the view shape. A
                 # dimension the parent memlet walks with a step covers that many elements of the
                 # parent per element of the view, so the step multiplies the stride -- without it
@@ -1371,27 +1398,25 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
                     state.remove_edge(e)
 
                 # Connect view_write -> parent
-                state.add_edge(view_node_write, 'views', parent_access, None, copy.deepcopy(parent_memlet))
+                state.add_edge(view_node_write, "views", parent_access, None, copy.deepcopy(parent_memlet))
 
                 # Connect parent -> view_read (original view_node)
-                state.add_edge(parent_access, None, view_node, 'views', copy.deepcopy(parent_memlet))
+                state.add_edge(parent_access, None, view_node, "views", copy.deepcopy(parent_memlet))
 
             elif out_edges:
                 # Read only: parent -> view -> successors
-                state.add_edge(parent_access, None, view_node, 'views', copy.deepcopy(parent_memlet))
+                state.add_edge(parent_access, None, view_node, "views", copy.deepcopy(parent_memlet))
 
             else:  # in_edges only
                 # Write only: predecessors -> view -> parent
-                state.add_edge(view_node, 'views', parent_access, None, copy.deepcopy(parent_memlet))
+                state.add_edge(view_node, "views", parent_access, None, copy.deepcopy(parent_memlet))
 
     # Modify connector names on the nested SDFG node to match the parent SDFG
     parent_node.in_connectors = {
-        parent_mapping[c] if c in parent_mapping else c: t
-        for c, t in parent_node.in_connectors.items()
+        parent_mapping[c] if c in parent_mapping else c: t for c, t in parent_node.in_connectors.items()
     }
     parent_node.out_connectors = {
-        parent_mapping[c] if c in parent_mapping else c: t
-        for c, t in parent_node.out_connectors.items()
+        parent_mapping[c] if c in parent_mapping else c: t for c, t in parent_node.out_connectors.items()
     }
 
     # Update edges to use the new parent data names
@@ -1427,8 +1452,9 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
     symbols.forget(sdfg)
 
 
-def convert_legacy_nested_sdfgs(sdfg: SDFG,
-                                symbols: Optional[SymbolResolver] = None) -> List[Tuple[nd.NestedSDFG, str]]:
+def convert_legacy_nested_sdfgs(
+    sdfg: SDFG, symbols: Optional[SymbolResolver] = None
+) -> List[Tuple[nd.NestedSDFG, str]]:
     """
     Restates the nested SDFGs below ``sdfg`` that were assembled under the earlier semantics so that
     they follow the nested SDFG contract.
@@ -1558,8 +1584,7 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
         return {}
     # The following symbols will be introduced into the SDFG and are at risk of aliasing internal names.
     target_symbols = {
-        str(s)
-        for s in set().union(*(symbolic.free_symbols_and_functions(v) for v in symbol_mapping.values()))
+        str(s) for s in set().union(*(symbolic.free_symbols_and_functions(v) for v in symbol_mapping.values()))
     }
     if not target_symbols:
         return {}
@@ -1599,8 +1624,15 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
 
     # A rename target must also avoid every name that is spoken for further down the tree: a
     # grandchild's map parameter is as much of a clash as one in this SDFG.
-    taken_names = (used_symbols | defined_symbols | target_symbols | set(sdfg.arrays.keys())
-                   | set(sdfg.constants_prop.keys()) | set(symbol_mapping.keys()) | names_in_subtree(sdfg))
+    taken_names = (
+        used_symbols
+        | defined_symbols
+        | target_symbols
+        | set(sdfg.arrays.keys())
+        | set(sdfg.constants_prop.keys())
+        | set(symbol_mapping.keys())
+        | names_in_subtree(sdfg)
+    )
     repl_dict: Dict[str, str] = {}
     for sym in clashing:
         new_name = data.find_new_name(sym, taken_names)
