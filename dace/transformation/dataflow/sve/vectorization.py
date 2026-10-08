@@ -5,7 +5,7 @@ SVE Vectorization: This module offers all functionality to vectorize an SDFG for
 
 from dace.sdfg.state import SDFGState
 from dace.properties import make_properties, SymbolicProperty
-from dace.sdfg import nodes, SDFG, SDFGState
+from dace.sdfg import nodes, SDFG
 import dace.sdfg
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation

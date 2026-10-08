@@ -161,7 +161,7 @@ def _loop_region_to_code(
             if loop.unroll_factor >= 1:
                 expr += f"#pragma unroll {loop.unroll_factor}\n"
             else:
-                expr += f"#pragma unroll\n"
+                expr += "#pragma unroll\n"
         expr += f"for ({init}; {cond}; {update}) {{\n"
         expr += _clean_loop_body(control_flow_region_to_code(loop, dispatch_state, codegen, symbols))
         expr += "\n}\n"

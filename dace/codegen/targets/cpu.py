@@ -2211,7 +2211,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     node,
                 )
             if ntid_is_used:
-                result.write(f"auto __omp_num_threads = omp_get_num_threads();", cfg, state_id, node)
+                result.write("auto __omp_num_threads = omp_get_num_threads();", cfg, state_id, node)
         else:
             # Emit nested loops
             for i, r in enumerate(node.map.range):

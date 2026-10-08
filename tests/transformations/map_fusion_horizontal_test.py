@@ -50,7 +50,7 @@ def _make_horizontal_map_sdfg(common_ancestor: bool):
         map_ranges={"__i": "0:10"},
         inputs={"__in1": dace.Memlet("A[__i]"), "__in2": dace.Memlet("D[__i]")},
         code="__out = __in1 + __in2",
-        outputs={"__out": dace.Memlet(f"out[__i, 3]")},
+        outputs={"__out": dace.Memlet("out[__i, 3]")},
         input_nodes=input_nodes,
         output_nodes={out},
         external_edges=True,

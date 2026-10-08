@@ -79,7 +79,7 @@ def test_config_isolation_multi_thread():
         #  parent they are set to the default.
         initial_value = Config.get(CONFIG_KEY)
         assert initial_value == Config.get_default(CONFIG_KEY)
-        assert initial_value != "master", f"Configuration was inherited please update the test."
+        assert initial_value != "master", "Configuration was inherited please update the test."
 
         with temporary_config():
             Config.set(CONFIG_KEY, value="thread1")
@@ -103,7 +103,7 @@ def test_config_isolation_multi_thread():
 
         # This is just a reminder, that we would expect `master` if the context is inherit.
         #  This does not work, but it is nice to have a feedback if it works.
-        assert initial_value != "master", f"Configuration was inherited please update the test."
+        assert initial_value != "master", "Configuration was inherited please update the test."
 
         with temporary_config():
             Config.set(CONFIG_KEY, value="thread2")

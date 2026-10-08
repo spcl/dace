@@ -3,7 +3,6 @@ from collections import defaultdict
 from dace import data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
-from dace.sdfg import nodes
 from dace.sdfg.graph import Edge, SubgraphView
 from dace.sdfg import utils as sdutil
 from dace.sdfg.type_inference import infer_expr_type

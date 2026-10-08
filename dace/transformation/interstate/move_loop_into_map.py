@@ -7,7 +7,7 @@ from dace.transformation import helpers
 import networkx as nx
 from dace.sdfg.scope import ScopeTree
 from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.sdfg import nodes, propagation, utils as sdutil
+from dace.sdfg import propagation, utils as sdutil
 from dace.transformation import transformation
 from sympy import diff
 

@@ -732,7 +732,7 @@ class BackwardPassGenerator:
                 "_clear_" + backward_node.data + "_",
                 indices,
                 {},
-                f"__out = 0",
+                "__out = 0",
                 {
                     "__out": tasklet_memlet,
                 },
@@ -1508,8 +1508,8 @@ class BackwardPassGenerator:
         except Exception as e:
             # if this is not the structure we are expecting, fail
             raise AutoDiffException(
-                f"The boolean datatype in edges is limited to conditional array assingements."
-                f" This stucture is not supported."
+                "The boolean datatype in edges is limited to conditional array assingements."
+                " This stucture is not supported."
             ) from e
 
         return conditional_assingement_block_nodes

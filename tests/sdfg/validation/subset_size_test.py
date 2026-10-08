@@ -76,7 +76,7 @@ def test_an_to_an_memlet_with_negative_size():
     with pytest.raises(
         expected_exception=dace.sdfg.InvalidSDFGEdgeError,
         match=re.escape(
-            f"`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]"
+            "`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was [15, -11]"
         ),
     ):
         sdfg.validate()

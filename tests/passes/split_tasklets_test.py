@@ -157,17 +157,17 @@ def _generate_double_tasklet_sdfg(
                 t.add_in_connector(rhs_var)
             if not direct_connection_between_tasklets:
                 for lhs_var in lhs_vars:
-                    state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                    state.add_edge(t, lhs_var, tmp_access, None, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                     t.add_out_connector(lhs_var)
             else:
                 for lhs_var in lhs_vars:
-                    state.add_edge(t, lhs_var, added_tasklets[i + 1], "tmp", dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                    state.add_edge(t, lhs_var, added_tasklets[i + 1], "tmp", dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                     t.add_out_connector(lhs_var)
         elif i == 1:
             for rhs_var in rhs_vars:
                 if rhs_var == "tmp":
                     if not direct_connection_between_tasklets:
-                        state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr=f"tmp_Scalar[0]"))
+                        state.add_edge(tmp_access, None, t, rhs_var, dace.memlet.Memlet(expr="tmp_Scalar[0]"))
                         t.add_in_connector(rhs_var)
                     else:
                         # Handled already on the out connection

@@ -102,7 +102,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # for SSR spanning parallel maps, load the thread id here and put the ssr setup in a
         # parallel region
         if para:
-            callsite_stream.write(f"unsigned tid = omp_get_thread_num();")
+            callsite_stream.write("unsigned tid = omp_get_thread_num();")
 
         for ssr_id, ssr in enumerate(self.ssrs):
             if not ssr:
@@ -512,8 +512,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         ):
             # free array
             if nodedesc.storage == dtypes.StorageType.Snitch_SSR:
-                dbg(f"Check deallocation of SSR datatypes!!!")
-                callsite_stream.write(f"// free of an SSR type\n", cfg, state_id, node)
+                dbg("Check deallocation of SSR datatypes!!!")
+                callsite_stream.write("// free of an SSR type\n", cfg, state_id, node)
             if not symbolic.issymbolic(arrsize, sdfg.constants):
                 # don't free static allocations
                 return
@@ -737,8 +737,8 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         # in a parallel region, emit SSR in parallel section
         if para and ssr_region:
-            callsite_stream.write(f"#pragma omp parallel")
-            callsite_stream.write(f"{{")
+            callsite_stream.write("#pragma omp parallel")
+            callsite_stream.write("{")
 
         # emit the SSR setup calls if this map is is one of the ssrs
         if ssr_region:
@@ -757,9 +757,9 @@ class SnitchCodeGen(TargetCodeGenerator):
         # decorate woth omp pragma for parallel maps
         if para:
             if ssr_region:
-                s = f"#pragma omp for schedule(static)"
+                s = "#pragma omp for schedule(static)"
             else:
-                s = f"#pragma omp parallel for schedule(static)"
+                s = "#pragma omp parallel for schedule(static)"
             # append private variables
             private_vars = [
                 var for var in sdfg.shared_transients() if sdfg.arrays[var].storage == dace.dtypes.StorageType.Register
@@ -832,7 +832,7 @@ class SnitchCodeGen(TargetCodeGenerator):
             deallocated.add(child.data)
             self.dispatcher.dispatch_deallocate(sdfg, cfg, scope, state_id, child, None, callsite_stream)
 
-        dbg(f"  after dispatch_subgraph")
+        dbg("  after dispatch_subgraph")
 
         # disable SSR in loop body if any are enabled and we are in a parallel region
         if ssr_region:
@@ -844,8 +844,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         for param, rng in zip(entry_node.map.params, entry_node.map.range):
             dbg(f"  closing for parameter {param}")
             callsite_stream.write(
-                f"""// end loopy-loop
-                                    }}""",
+                """// end loopy-loop
+                                    }""",
                 cfg,
                 state_id,
                 entry_node,
@@ -855,9 +855,9 @@ class SnitchCodeGen(TargetCodeGenerator):
             # callsite_stream.write(f'// end ssr allocated: {len(self.ssr_configs)}')
             # if there is at least one SSR active, disable the region here
             if para:
-                callsite_stream.write(f"}} // omp parallel")
+                callsite_stream.write("} // omp parallel")
             else:
-                callsite_stream.write(f"__builtin_ssr_disable();")
+                callsite_stream.write("__builtin_ssr_disable();")
             # deallocate SSRs
             for i, x in enumerate([x for x in self.ssrs if x]):
                 if x["map"] == entry_node:

@@ -11,7 +11,6 @@ import http.server
 import threading
 
 import dace
-import tempfile
 
 
 def partialclass(cls, *args, **kwds):

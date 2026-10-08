@@ -7,7 +7,6 @@ from dace.frontend.python import memlet_parser
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.frontend.python import memlet_parser
 import itertools
 from typing import TypeVar, Any
 from collections.abc import Callable, Iterable, Generator

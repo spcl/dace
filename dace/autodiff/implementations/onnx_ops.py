@@ -110,7 +110,7 @@ class DefaultEinsumBackward(BackwardImplementation):
             nstate.add_node(einsum_node)
 
             # the first input is always the output grad
-            einsum_node.add_in_connector(f"Inputs__0")
+            einsum_node.add_in_connector("Inputs__0")
             nstate.add_edge(
                 access_output_grad,
                 None,
@@ -202,11 +202,11 @@ else:
             forward_node.label + "_backward",
             map_ranges=map_ranges,
             inputs={
-                f"__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
-                f"__input": dace.Memlet(f"input[{index_str}]"),
+                "__output_grad": dace.Memlet(f"output_grad[{index_str}]"),
+                "__input": dace.Memlet(f"input[{index_str}]"),
             },
             code=code,
-            outputs={f"__input_grad": dace.Memlet(f"input_grad[{index_str}]")},
+            outputs={"__input_grad": dace.Memlet(f"input_grad[{index_str}]")},
             external_edges=True,
         )
 
@@ -253,7 +253,7 @@ __data_grad = __output_grad * __mask * scale
                 "__ratio": dace.Memlet("ratio[0]"),
             },
             code=code,
-            outputs={f"__data_grad": dace.Memlet(f"data_grad[{index_str}]")},
+            outputs={"__data_grad": dace.Memlet(f"data_grad[{index_str}]")},
             external_edges=True,
         )
 
@@ -675,7 +675,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             name="init_axes",
             inputs={},
             outputs={"out": dace.pointer(dace.int64)},
-            code=f"\n".join([f"out[{i}] = {0};" for i, _ in enumerate(reduction_axes)]),
+            code="\n".join([f"out[{i}] = {0};" for i, _ in enumerate(reduction_axes)]),
             language=dace.Language.CPP,
         )
         nstate.add_edge(axes_tasklet, "out", axes_access, None, dace.Memlet(f"{axes_name}[0:{len(reduction_axes)}]"))

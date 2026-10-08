@@ -91,15 +91,15 @@ def make_sdfg():
             memlet=dace.Memlet(f"write_{s}_middle[i, 0:N]"),
         )
 
-    read_inner = state_inner.add_read(f"read_used_inner")
-    write_inner = state_inner.add_write(f"write_used_inner")
+    read_inner = state_inner.add_read("read_used_inner")
+    write_inner = state_inner.add_write("write_used_inner")
 
     state_inner.add_memlet_path(
-        read_inner, entry_inner, tasklet, dst_conn=f"read_tasklet", memlet=dace.Memlet(f"read_{s}_inner[j]")
+        read_inner, entry_inner, tasklet, dst_conn="read_tasklet", memlet=dace.Memlet(f"read_{s}_inner[j]")
     )
 
     state_inner.add_memlet_path(
-        tasklet, exit_inner, write_inner, src_conn=f"write_tasklet", memlet=dace.Memlet(f"write_{s}_inner[j]")
+        tasklet, exit_inner, write_inner, src_conn="write_tasklet", memlet=dace.Memlet(f"write_{s}_inner[j]")
     )
 
     # Create mapped nested SDFG where the map entry and exit would be orphaned

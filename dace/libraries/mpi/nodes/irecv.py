@@ -44,7 +44,7 @@ class ExpandIrecvMPI(ExpandTransformation):
         buffer_offset = 0  # this is here because the frontend already changes the pointer
         code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
         if ddt is not None:
-            code += f"""// MPI_Type_free(&newtype);
+            code += """// MPI_Type_free(&newtype);
             """
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,

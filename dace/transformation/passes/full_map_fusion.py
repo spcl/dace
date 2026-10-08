@@ -168,7 +168,7 @@ class FullMapFusion(ppl.Pass):
         if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
-                    f"Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor"
+                    "Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor"
                 )
 
     def modifies(self) -> ppl.Modifies:
@@ -193,7 +193,7 @@ class FullMapFusion(ppl.Pass):
         :return: The numbers of Maps that were fused or `None` if none were fused.
         """
         if ap.FindSingleUseData.__name__ not in pipeline_results:
-            raise ValueError(f"Expected to find `FindSingleUseData` in `pipeline_results`.")
+            raise ValueError("Expected to find `FindSingleUseData` in `pipeline_results`.")
 
         fusion_transforms = []
         if self.perform_vertical_map_fusion:

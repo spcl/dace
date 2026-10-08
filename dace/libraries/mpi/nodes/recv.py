@@ -35,7 +35,7 @@ class ExpandRecvMPI(ExpandTransformation):
             f"MPI_Recv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), MPI_COMM_WORLD, MPI_STATUS_IGNORE);"
         )
         if ddt is not None:
-            code += f"""// MPI_Type_free(&newtype);
+            code += """// MPI_Type_free(&newtype);
             """
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name, node.in_connectors, node.out_connectors, code, language=dace.dtypes.Language.CPP

@@ -54,7 +54,7 @@ class ExpandDotPure(ExpandTransformation):
             {"__i": f"0:{n}"},
             {"__x": dace.Memlet("_x[__i]"), "__y": dace.Memlet("_y[__i]")},
             mul_program,
-            {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
+            {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
             external_edges=True,
             output_nodes=None,
         )

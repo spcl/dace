@@ -38,7 +38,7 @@ def pure_graph(implementation, dtype, veclen):
 
     state.add_memlet_path(x, dot_node, dst_conn="_x", memlet=Memlet(f"x[0:{n}/{veclen}]"))
     state.add_memlet_path(y, dot_node, dst_conn="_y", memlet=Memlet(f"y[0:{n}/{veclen}]"))
-    state.add_memlet_path(dot_node, result, src_conn="_result", memlet=Memlet(f"r[0]"))
+    state.add_memlet_path(dot_node, result, src_conn="_result", memlet=Memlet("r[0]"))
 
     return sdfg
 

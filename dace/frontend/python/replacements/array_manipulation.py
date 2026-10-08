@@ -698,7 +698,7 @@ def _vstack(
     if not isinstance(tup, (tuple, list)):
         raise ValueError("List of arrays is not iterable, cannot compile stack call")
     if tup[0] not in sdfg.arrays:
-        raise TypeError(f"Index 0 is not an array")
+        raise TypeError("Index 0 is not an array")
 
     # In the 1-D case, stacking is performed along the first axis
     if len(sdfg.arrays[tup[0]].shape) == 1:
@@ -715,7 +715,7 @@ def _hstack(
     if not isinstance(tup, (tuple, list)):
         raise ValueError("List of arrays is not iterable, cannot compile stack call")
     if tup[0] not in sdfg.arrays:
-        raise TypeError(f"Index 0 is not an array")
+        raise TypeError("Index 0 is not an array")
 
     # In the 1-D case, concatenation is performed along the first axis
     if len(sdfg.arrays[tup[0]].shape) == 1:
@@ -731,7 +731,7 @@ def _dstack(
     if not isinstance(tup, (tuple, list)):
         raise ValueError("List of arrays is not iterable, cannot compile a stack call")
     if tup[0] not in sdfg.arrays:
-        raise TypeError(f"Index 0 is not an array")
+        raise TypeError("Index 0 is not an array")
     if len(sdfg.arrays[tup[0]].shape) < 3:
         raise NotImplementedError("dstack is not implemented for arrays that are smaller than 3D")
 

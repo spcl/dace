@@ -68,9 +68,6 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def space(self, **kwargs) -> Generator[Any, None, None]:
         raise NotImplementedError
 
-    def search(self, cutout: SDFG, measurements: int, **kwargs) -> dict:
-        raise NotImplementedError
-
     def pre_evaluate(self, **kwargs) -> dict:
         raise NotImplementedError
 

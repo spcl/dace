@@ -32,7 +32,6 @@ from typing import Any, Generic, TypeVar
 from collections.abc import Callable
 import pydoc
 import warnings
-from typing import TypeVar
 
 PassT = TypeVar("PassT", bound=ppl.Pass)
 

@@ -19,12 +19,12 @@ def test_shapen():
 
     shapes_tf = sess_tf.run(tf.shape_n(inpList))
     shapes_dace = sess_dace.run(tf.shape_n(inpList))
-    for dc, tf in zip(shapes_dace, shapes_tf):
+    for dc, tf_out in zip(shapes_dace, shapes_tf):
         try:
-            assert (dc == tf).all()
+            assert (dc == tf_out).all()
         except AssertionError:
             print(dc)
-            print(tf)
+            print(tf_out)
 
 
 @pytest.mark.tensorflow

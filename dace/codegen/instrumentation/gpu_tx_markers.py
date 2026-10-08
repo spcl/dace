@@ -6,7 +6,7 @@ from dace.codegen import common
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.memlet import Memlet
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.sdfg.sdfg import SDFG

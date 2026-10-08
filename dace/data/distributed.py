@@ -621,7 +621,7 @@ class RedistrArray(DistributedDescriptor):
             tmp += (
                 f"int cart_rank = dace::comm::cart_rank({len(grid_a.shape)}, __state->{grid_a.name}_dims, pcoords);\n"
             )
-        tmp += f"if (myrank == cart_rank) {{ // self-copy"
+        tmp += "if (myrank == cart_rank) { // self-copy"
         for i in range(len(array_b.shape)):
             tmp += f"""
                 __state->{self.name}_self_src[__state->{self.name}_self_copies * {len(array_a.shape)} + {i}] = lo{i};
@@ -640,7 +640,7 @@ class RedistrArray(DistributedDescriptor):
             }}
         """
         for i in range(len(array_b.shape)):
-            tmp += f"}}"
+            tmp += "}"
         tmp += "}"
         tmp += f"""
             if (__state->{array_a.pgrid}_valid) {{
@@ -707,7 +707,7 @@ class RedistrArray(DistributedDescriptor):
             }}
         """
         for i in range(len(array_b.shape)):
-            tmp += f"}}"
+            tmp += "}"
         tmp += "}"
         tmp += "}"
         return tmp

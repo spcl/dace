@@ -26,7 +26,7 @@ def find_map_entry(sdfg: SDFG):
         if isinstance(node, nodes.MapEntry):
             return node
 
-    raise NodeNotFoundError(f"Could not find map entry")
+    raise NodeNotFoundError("Could not find map entry")
 
 
 def vectorize(sdfg: SDFG) -> vector_inference.VectorInferenceGraph:

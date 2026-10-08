@@ -187,7 +187,6 @@ class InternalFortranAst:
             "Assignment_Stmt": self.assignment_stmt,
             "Pointer_Assignment_Stmt": self.pointer_assignment_stmt,
             "Where_Stmt": self.where_stmt,
-            "Forall_Stmt": self.forall_stmt,
             "Where_Construct": self.where_construct,
             "Where_Construct_Stmt": self.where_construct_stmt,
             "Masked_Elsewhere_Stmt": self.masked_elsewhere_stmt,
@@ -806,9 +805,6 @@ class InternalFortranAst:
         return node
 
     def forall_triplet_spec(self, node: FASTNode):
-        return node
-
-    def forall_stmt(self, node: FASTNode):
         return node
 
     def end_forall_stmt(self, node: FASTNode):

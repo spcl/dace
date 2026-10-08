@@ -15,7 +15,6 @@ import itertools
 import dace
 from dace import SDFG, SDFGState, nodes
 from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 from dace import config
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
@@ -330,7 +329,7 @@ class PureGemm(ONNXForward):
             )
             beta_scale_code = f"o = s + c * dace.{C_desc.dtype}({node.beta})"
             if node.beta == 1:
-                beta_scale_code = f"o = s + c"
+                beta_scale_code = "o = s + c"
 
             # Support broadcasting in C -> Y
             c_index = result[-len(C_desc.shape) :]

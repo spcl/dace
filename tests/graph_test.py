@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-from dace.sdfg.graph import *
+import dace
+from dace.sdfg.graph import Edge, OrderedDiGraph, OrderedMultiDiGraph
 
 
 class TestOrderedGraphs(unittest.TestCase):

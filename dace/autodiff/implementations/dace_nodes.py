@@ -394,7 +394,7 @@ class DaceNodeBackwardImplementations:
                 result.given_grad_names[output_conn] = rev_input_grad_name
 
                 # zero out the gradient
-                code = f"\n__zero_out_conn__ = 0.0"
+                code = "\n__zero_out_conn__ = 0.0"
                 rev_outputs = {}
                 rev_inputs = {rev_input_grad_name}
 

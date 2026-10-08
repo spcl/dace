@@ -4,12 +4,11 @@
 import ast
 import copy
 import re
-import copy
 from dace import nodes, dtypes, Memlet, data
 from dace.frontend.python import astutils
 from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
-from dace import Memlet, SDFG, SDFGState
+from dace import SDFG, SDFGState
 from dace.sdfg.propagation import propagate_memlets_state
 
 

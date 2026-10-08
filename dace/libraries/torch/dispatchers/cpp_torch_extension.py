@@ -306,7 +306,7 @@ def return_type_str(outputs: list[str]) -> str:
     :param outputs: List of output names.
     :return: The C++ return type string.
     """
-    return f"""{"Tensor" if len(outputs) == 1 else f"variable_list"}"""
+    return f"""{"Tensor" if len(outputs) == 1 else "variable_list"}"""
 
 
 def save_non_inputs_outputs(names: list[str]):

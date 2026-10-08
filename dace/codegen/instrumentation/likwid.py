@@ -205,13 +205,13 @@ LIKWID_MARKER_INIT;
         if not self._likwid_used or sdfg.parent is not None:
             return
 
-        outer_code = f"""
+        outer_code = """
 int num_threads;
 #pragma omp parallel
-{{
+{
     #pragma omp single
     num_threads = omp_get_num_threads();
-}}
+}
 
 double events[num_threads][MAX_NUM_EVENTS];
 double time[num_threads];

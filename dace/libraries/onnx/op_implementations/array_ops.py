@@ -180,7 +180,7 @@ class PureExpand(ONNXForward):
 
 
 @op_implementation(op="Expand", name="pure")
-class PureExpand(ONNXForward):
+class PureExpandNoOp(ONNXForward):
     """Handle no-op case for Expand"""
 
     @staticmethod
@@ -612,7 +612,7 @@ class PureGather(ONNXForward):
                 "__data": dace.Memlet(data_memlet_str),
                 "idx": dace.Memlet(indices_idx_str),
             },
-            code=f"__output = __data[idx]",
+            code="__output = __data[idx]",
             outputs={"__output": dace.Memlet(output_idx_str)},
             external_edges=True,
         )
@@ -674,8 +674,8 @@ class PureCast(ONNXForward):
             tasklet, _, _ = nstate.add_mapped_tasklet(
                 node.label + "_tasklet",
                 map_ranges=map_ranges,
-                inputs={f"__input": dace.Memlet(f"input[{index_str}]")},
-                code=f"__output = __input",
+                inputs={"__input": dace.Memlet(f"input[{index_str}]")},
+                code="__output = __input",
                 outputs={"__output": dace.Memlet(f"output[{index_str}]")},
                 external_edges=True,
             )

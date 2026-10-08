@@ -286,7 +286,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                     reduce_node_new.identity = dtypes.min_value(sdfg.arrays[out_storage_node.data].dtype)
                 else:
                     raise ValueError(
-                        f"Cannot infer reduction identity.Please specify the identity of node{{reduce_node_new}}"
+                        "Cannot infer reduction identity.Please specify the identity of node{reduce_node_new}"
                     )
 
         return

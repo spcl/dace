@@ -1041,7 +1041,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             inmm = dace.Memlet(f"_in[{','.join(input_subset)}]")
 
             if schedule.one_d_reduction:
-                outm = dace.Memlet(f"_out[0]", dynamic=True, wcr=node.wcr)
+                outm = dace.Memlet("_out[0]", dynamic=True, wcr=node.wcr)
 
                 # initialize output to zero
                 init_state = nsdfg.add_state()
@@ -1132,7 +1132,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 ime, imx = nstate.add_map(
                     "reduce_values",
                     {
-                        "_j0": subsets.Range([(f"_o0*1024", schedule.in_shape[0] - 1, 1024 * schedule.grid[0])]),
+                        "_j0": subsets.Range([("_o0*1024", schedule.in_shape[0] - 1, 1024 * schedule.grid[0])]),
                         "_i0": subsets.Range(
                             [
                                 (

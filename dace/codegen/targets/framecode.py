@@ -371,11 +371,11 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         # allocates against it -- persistent GPU arrays dereference __state->gpu_context, which
         # __dace_init_cuda never constructs when it bails out on a missing device. Leave here first.
         callsite_stream.write(
-            f"""
-    if (__result) {{
+            """
+    if (__result) {
         delete __state;
         return nullptr;
-    }}
+    }
 """,
             sdfg,
         )
@@ -395,11 +395,11 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
         callsite_stream.write(
-            f"""
-    if (__result) {{
+            """
+    if (__result) {
         delete __state;
         return nullptr;
-    }}
+    }
 """,
             sdfg,
         )
@@ -422,7 +422,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             if instr is not None:
                 instr.on_sdfg_exit_begin(sdfg, callsite_stream, global_stream)
         callsite_stream.write(
-            f"""
+            """
     int __err = 0;
 """,
             sdfg,

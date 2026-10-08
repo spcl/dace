@@ -52,9 +52,9 @@ class ExpandGerPure(ExpandTransformation):
         state = sdfg.add_state()
         state.add_mapped_tasklet(
             "ger",
-            {"_i": f"0:M", "_j": f"0:N"},
-            {"a": mm.Memlet("_A[_i, _j]"), "xin": mm.Memlet("_x[_i]"), "yin": mm.Memlet(f"_y[_j]")},
-            f"aout = alpha * xin * yin + a",
+            {"_i": "0:M", "_j": "0:N"},
+            {"a": mm.Memlet("_A[_i, _j]"), "xin": mm.Memlet("_x[_i]"), "yin": mm.Memlet("_y[_j]")},
+            "aout = alpha * xin * yin + a",
             {"aout": mm.Memlet("_res[_i, _j]")},
             external_edges=True,
         )

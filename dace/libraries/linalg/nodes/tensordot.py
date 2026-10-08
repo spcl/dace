@@ -76,7 +76,7 @@ class ExpandPure(ExpandTransformation):
         out_mem = dace.Memlet(expr=f"_out_tensor[{','.join(out_idx)}]", wcr="lambda x, y: x + y")
         inputs = {"_left": left_mem, "_right": right_mem}
         outputs = {"_out": out_mem}
-        code = f"_out = _left * _right"
+        code = "_out = _left * _right"
         state.add_mapped_tasklet(
             f"{node.label}_tasklet", {**outer_map_rng, **inner_map_rng}, inputs, code, outputs, external_edges=True
         )
@@ -289,7 +289,7 @@ class ExpandCuTensor(ExpandTransformation):
             if i in node.right_axes:
                 continue
             extents += f"extent[{i}] = {s};\n"
-        extents += f"""
+        extents += """
             std::vector<int64_t> extentA;
             for (auto mode : modeA) extentA.push_back(extent[mode]);
             std::vector<int64_t> extentB;

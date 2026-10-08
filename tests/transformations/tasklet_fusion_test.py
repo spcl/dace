@@ -28,7 +28,7 @@ def _make_sdfg(language: str, with_data: bool = False):
     lang = dtypes.Language.Python if language == "Python" else dtypes.Language.CPP
     endl = "\n" if language == "Python" else ";\n"
 
-    sdfg = dace.SDFG(f"map_with_tasklets")
+    sdfg = dace.SDFG("map_with_tasklets")
     sdfg.add_array("A", (N,), datatype)
     sdfg.add_array("B", (M,), datatype)
     sdfg.add_array("C", (M,), datatype)

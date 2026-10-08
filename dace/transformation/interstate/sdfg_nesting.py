@@ -13,7 +13,7 @@ from dace import memlet, Memlet, symbolic, dtypes
 from dace.sdfg import dealias, nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import utils as sdutil, propagation
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property

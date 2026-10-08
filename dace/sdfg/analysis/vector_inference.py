@@ -147,12 +147,12 @@ class VectorInferenceGraph(DiGraph):
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
-        for _, dst, data in self.out_edges(node, data=True):
+        for _, dst, edge_data in self.out_edges(node, data=True):
             # In default mode, vector constraints are propagated forwards
-            if data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Vector:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Vector:
                 dst.infer_as(InferenceNode.Vector)
             # In WCR mode, scalar constraints are propagated forwards
-            if data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Scalar:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Scalar:
                 dst.infer_as(InferenceNode.Scalar)
 
             self._forward(dst)
@@ -161,12 +161,12 @@ class VectorInferenceGraph(DiGraph):
         if node.inferred == InferenceNode.Unknown:
             # Nothing to propagate
             return
-        for src, _, data in self.in_edges(node, data=True):
+        for src, _, edge_data in self.in_edges(node, data=True):
             # In default mode, scalar constraints are propagated backwards
-            if data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Scalar:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_Default and node.inferred == InferenceNode.Scalar:
                 src.infer_as(InferenceNode.Scalar)
             # In WCR mode, vector constraints are propagated backwards
-            if data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Vector:
+            if edge_data["mode"] == VectorInferenceGraph.Propagate_WCR and node.inferred == InferenceNode.Vector:
                 src.infer_as(InferenceNode.Vector)
 
             self._backward(src)

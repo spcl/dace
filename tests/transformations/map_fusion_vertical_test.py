@@ -7,7 +7,6 @@ import dace
 import copy
 import uuid
 import pytest
-import uuid
 
 from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
 from dace.sdfg import nodes
@@ -485,7 +484,7 @@ def test_fusion_with_transient_scalar():
         state.add_memlet_path(v_node, mx1, t_node, memlet=dace.Memlet("T[i]"))
 
         me2, mx2 = state.add_map("map2", dict(j=f"0:{N}"))
-        tlet2 = state.add_tasklet("numeric", {"_inp"}, {"_out"}, f"_out = _inp + 1")
+        tlet2 = state.add_tasklet("numeric", {"_inp"}, {"_out"}, "_out = _inp + 1")
         state.add_memlet_path(t_node, me2, tlet2, dst_conn="_inp", memlet=dace.Memlet("T[j]"))
         state.add_memlet_path(tlet2, mx2, state.add_access("B"), src_conn="_out", memlet=dace.Memlet("B[j]"))
 
@@ -2309,7 +2308,7 @@ def _make_map_fusion_nested_sdfg_slicing(
         hood_tasklet = state.add_tasklet(
             "hood_tasklet",
             inputs={"__field", "__index"},
-            code=f"__out = __field[__index] if __index != -1 else 2147483647",
+            code="__out = __field[__index] if __index != -1 else 2147483647",
             outputs={"__out"},
         )
 

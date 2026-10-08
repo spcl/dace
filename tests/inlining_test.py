@@ -1346,7 +1346,7 @@ def test_singlestate_inline_with_symbol_mapping(outside_and_inner_symbol_have_sa
 
 def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.ConditionalBlock:
     if level <= 0:
-        raise ValueError(f"Expected positive level.")
+        raise ValueError("Expected positive level.")
     if_region = dace.sdfg.state.ConditionalBlock(f"if_{level}")
     then_body = dace.sdfg.state.ControlFlowRegion(f"then_body_{level}", sdfg=sdfg)
     if_region.add_branch(dace.sdfg.state.CodeBlock("__cond"), then_body)
@@ -1375,7 +1375,7 @@ def _make_nested_if_region(sdfg: dace.SDFG, level: int) -> dace.sdfg.state.Condi
 
 def _make_nested_control_flow_blocks_sdfg(level: int, size: int) -> dace.SDFG:
     if level <= 0:
-        raise ValueError(f"Expected positive level.")
+        raise ValueError("Expected positive level.")
     sdfg = dace.SDFG(unique_name("nested_control_flow_block_sdfg"))
     sdfg.add_symbol("__cond", dace.bool_)
     A, _ = sdfg.add_array("A", [size], dace.float64)

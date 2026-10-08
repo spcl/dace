@@ -246,7 +246,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             self.framecode = codegen
             self.uses_gpu = any(d.storage == dtypes.StorageType.GPU_Global for _, _, d in sdfg.arrays_recursive())
             codegen.statestruct.append("dace::DataSerializer *serializer;")
-            sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("");\n')
+            sdfg.append_init_code('__state->serializer = new dace::DataSerializer("");\n')
 
             # Add method that controls serializer input
             global_stream.write(self._generate_report_setter(sdfg))

@@ -5,7 +5,6 @@ import numpy as np
 
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
-from dace.sdfg.graph import SubgraphView
 
 N = dace.symbol("N")
 

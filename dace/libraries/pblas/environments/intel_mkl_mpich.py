@@ -18,7 +18,6 @@ class IntelMKLScaLAPACKMPICH:
     cmake_packages = ["MPI"]
     cmake_variables = {}
     cmake_compile_flags = []
-    cmake_libraries = []
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]

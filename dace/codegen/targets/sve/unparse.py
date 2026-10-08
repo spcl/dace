@@ -457,7 +457,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
     def _Call(self, t):
         res_type = self.infer(t)[0]
         if not res_type:
-            raise util.NotSupportedError(f"Unsupported call")
+            raise util.NotSupportedError("Unsupported call")
 
         if not isinstance(res_type, dtypes.vector):
             # Call does not involve any vectors (to our knowledge)

@@ -380,10 +380,10 @@ def nest_state_subgraph(
         if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes()
     )
     subgraph_transients = set()
-    for data in data_in_subgraph:
-        datadesc = sdfg.arrays[data]
-        if datadesc.transient and data not in other_nodes:
-            subgraph_transients.add(data)
+    for dname in data_in_subgraph:
+        datadesc = sdfg.arrays[dname]
+        if datadesc.transient and dname not in other_nodes:
+            subgraph_transients.add(dname)
 
     # All transients of edges between code nodes are also added to nested graph
     for edge in subgraph.edges():

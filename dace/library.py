@@ -4,7 +4,6 @@ import sys
 import types
 import contextlib
 import networkx as nx
-import types
 
 import dace.properties
 from dace.sdfg.nodes import LibraryNode, full_class_path

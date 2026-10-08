@@ -3,12 +3,10 @@
 Code generation: This module is responsible for converting an SDFG into SVE code.
 """
 
-from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.cpp import sym2cpp
 from dace import dtypes, memlet as mm
 from dace.sdfg import graph, state
@@ -17,17 +15,13 @@ from dace.codegen.targets.sve import util as util
 import copy
 from io import StringIO
 import dace.codegen.targets.sve.unparse
-from dace import dtypes
 from dace.codegen.targets import cpp as cpp
 from dace.frontend.operations import detect_reduction_type
 import dace.symbolic
-from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.dispatcher import DefinedType
-import copy
 import numpy as np
 from dace.codegen.targets.cpp import is_write_conflicted
 from dace import data, subsets
-from dace.frontend.operations import detect_reduction_type
 import dace.codegen.targets
 
 

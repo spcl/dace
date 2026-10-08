@@ -117,7 +117,7 @@ class PyTorchConvBackward(BackwardImplementation):
             nstate.add_read(result.given_grad_names["Y"]),
             None,
             tasklet,
-            f"_dY",
+            "_dY",
             nsdfg.make_array_memlet(result.given_grad_names["Y"]),
         )
         for name in sorted(required_forward_inputs):

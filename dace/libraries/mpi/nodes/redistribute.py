@@ -4,7 +4,6 @@ from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.codegen.targets import cpp
-from dace import subsets
 from dace.libraries.mpi.nodes.node import MPINode
 
 

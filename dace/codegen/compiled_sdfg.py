@@ -657,7 +657,7 @@ with open(r"{temp_path}", "wb") as f:
         :note: This is an advanced interface.
         """
         if self.argnames is None and len(args) != 0:
-            raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
+            raise KeyError("Passed positional arguments to an SDFG that does not accept them.")
         elif len(args) > 0 and self.argnames is not None:
             positional_arguments = {aname: avalue for aname, avalue in zip(self.argnames, args)}
             if not positional_arguments.keys().isdisjoint(kwargs.keys()):

@@ -100,31 +100,6 @@ def test_1fuse():
     expand_maps(sdfg, sdfg.nodes()[0])
     fusion(sdfg, sdfg.nodes()[0])
 
-    csdfg = sdfg.compile()
-    res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
-    del csdfg
-
-    print(np.linalg.norm(res1))
-    print(np.linalg.norm(res2))
-    assert np.allclose(res1, res2)
-    print("PASS")
-    return
-
-
-def test_1fuse():
-    sdfg = softmax.to_sdfg()
-    sdfg.name = "softmax_fused"
-    sdfg.simplify()
-    X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
-
-    csdfg = sdfg.compile()
-    res1 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
-    del csdfg
-
-    expand_reduce(sdfg, sdfg.nodes()[0])
-    expand_maps(sdfg, sdfg.nodes()[0])
-    fusion(sdfg, sdfg.nodes()[0])
-
     # sdfg.specialize({'SM':SM})
     csdfg = sdfg.compile()
     res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)

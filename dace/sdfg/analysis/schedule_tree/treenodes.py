@@ -5,7 +5,6 @@ import sympy
 
 from dace import nodes, data, subsets, dtypes, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg import InterstateEdge
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast

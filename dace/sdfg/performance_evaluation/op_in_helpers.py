@@ -8,7 +8,7 @@ from dace.data import Array
 import sympy as sp
 from scipy.optimize import curve_fit
 import numpy as np
-from dace import symbol, symbolic
+from dace import symbolic
 from dace.symbolic import symbol, pystr_to_symbolic
 
 

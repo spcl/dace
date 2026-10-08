@@ -18,7 +18,7 @@ from io import StringIO
 from typing import IO, TYPE_CHECKING, Optional
 
 import dace
-from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
+from dace import data, subsets, symbolic, dtypes, memlet as mmlt
 from dace.codegen import common, cppunparse
 from dace.codegen.common import sym2cpp, find_incoming_edges, codeblock_to_cpp
 from dace.codegen.dispatcher import DefinedType
@@ -650,24 +650,24 @@ def _check_range_conflicts(subset, a, itersym, b, step):
     found = False
     if isinstance(step, symbolic.SymExpr):
         step = step.approx
-    for rb, re, _ in subset.ndrange():
+    for rb, rend, _ in subset.ndrange():
         m = rb.match(a * itersym + b)
         if m is None:
             continue
         if (m[a] >= 1) != True:
             continue
-        if re != rb:
+        if rend != rb:
             if isinstance(rb, symbolic.SymExpr):
                 rb = rb.approx
-            if isinstance(re, symbolic.SymExpr):
-                re = re.approx
+            if isinstance(rend, symbolic.SymExpr):
+                rend = rend.approx
 
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) >= m[a] * step) != False:
+            if ((rend - rb) >= m[a] * step) != False:
                 continue
 
-            m = re.match(a * itersym + b)
+            m = rend.match(a * itersym + b)
             if m is None:
                 continue
             if (m[a] >= 1) != True:

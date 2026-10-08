@@ -12,7 +12,7 @@ def _replace_zero_with_one(memlet: dace.Memlet) -> dace.Memlet:
     if not isinstance(memlet.subset, dace.subsets.Range):
         return memlet
 
-    for i, (rb, re, rs) in enumerate(memlet.subset.ndrange()):
+    for i, (rb, rend, rs) in enumerate(memlet.subset.ndrange()):
         if rb == 0:
             memlet.subset.ranges[i] = (1, 1, rs)
     return memlet

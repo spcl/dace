@@ -792,7 +792,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # node containing the same data
                 if not inv_dims == invariant_dimensions[node]:
                     warnings.warn(
-                        f"SubgraphFusion::Data dimensions that are not propagated through differ"
+                        "SubgraphFusion::Data dimensions that are not propagated through differ"
                         "across multiple instances of access nodes for data {node.data}"
                         "Please check whether all memlets to AccessNodes containing"
                         "this data are sound."

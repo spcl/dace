@@ -430,7 +430,7 @@ class PureResize(ONNXForward):
             tasklet_code.append("}")
 
         tasklet = nstate.add_tasklet(
-            f"tasklet_reshape",
+            "tasklet_reshape",
             tasklet_inputs,
             {"__out": dace.pointer(out_data_desc.dtype)},
             "\n".join(tasklet_code),

@@ -79,7 +79,7 @@ def test_normalize_altered_iter():
     sdfg.add_array("A", [32], dace.float32)
     sdfg.add_array("B", [32], dace.float32)
 
-    loop = LoopRegion("loop", f"i < 32", "i", f"i = 2", f"i = i + 1")
+    loop = LoopRegion("loop", "i < 32", "i", "i = 2", "i = i + 1")
     sdfg.add_node(loop)
     s = loop.add_state("loop_body", is_start_block=True)
     a = s.add_access("A")
@@ -100,7 +100,7 @@ def test_normalize_nonlin_step():
     sdfg.add_array("A", [32], dace.float32)
     sdfg.add_array("B", [32], dace.float32)
 
-    loop = LoopRegion("loop", f"i < 32", "i", f"i = 0", f"i = i * i")
+    loop = LoopRegion("loop", "i < 32", "i", "i = 0", "i = i * i")
     sdfg.add_node(loop)
     s = loop.add_state("loop_body", is_start_block=True)
     a = s.add_access("A")
@@ -121,7 +121,7 @@ def test_normalize_altered_step():
     sdfg.add_array("B", [32], dace.float32)
     sdfg.add_symbol("step", dace.int32)
 
-    loop = LoopRegion("loop", f"i < 32", "i", f"i = 0", f"i = i + step")
+    loop = LoopRegion("loop", "i < 32", "i", "i = 0", "i = i + step")
     sdfg.add_node(loop)
     s = loop.add_state("loop_body", is_start_block=True)
     a = s.add_access("A")
@@ -143,7 +143,7 @@ def test_inequality():
     sdfg.add_array("B", [32], dace.float32)
     sdfg.add_symbol("step", dace.int32)
 
-    loop = LoopRegion("loop", f"i != 32", "i", f"i = 0", f"i = i + step")
+    loop = LoopRegion("loop", "i != 32", "i", "i = 0", "i = i + step")
     sdfg.add_node(loop)
     s = loop.add_state("loop_body", is_start_block=True)
     a = s.add_access("A")

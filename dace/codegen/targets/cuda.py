@@ -595,7 +595,6 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             backend=self.backend,
             backend_header=backend_header,
             pool_header=pool_header,
-            sdfg=self._global_sdfg,
         )
 
         return [self._codeobject]
@@ -1020,7 +1019,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if (sdfg, dataname) not in self.pool_release:  # If pooled, will be freed somewhere else
                     cudastream = common.gpu_stream_expr(getattr(node, "_cuda_stream", "nullptr"))
                     callsite_stream.write(
-                        f"DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n" % (self.backend, dataname, cudastream),
+                        "DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n" % (self.backend, dataname, cudastream),
                         cfg,
                         state_id,
                         node,
@@ -3651,9 +3650,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def _get_block_id(self) -> str:
         result = "blockIdx.x"
         if self._block_dims[1] != 1:
-            result += f" + gridDim.x * blockIdx.y"
+            result += " + gridDim.x * blockIdx.y"
         if self._block_dims[2] != 1:
-            result += f" + gridDim.x * gridDim.y * blockIdx.z"
+            result += " + gridDim.x * gridDim.y * blockIdx.z"
         return result
 
     def _generate_condition_from_location(

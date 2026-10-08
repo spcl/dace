@@ -19,7 +19,6 @@ from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (
-    DaceSyntaxError,
     SDFGClosure,
     SDFGConvertible,
     inverse_dict_lookup,

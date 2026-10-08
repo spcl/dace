@@ -35,7 +35,7 @@ class ExpandSendMPI(ExpandTransformation):
                 MPI_Send(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), MPI_COMM_WORLD);
                 """
         if ddt is not None:
-            code += f"""// MPI_Type_free(&newtype);
+            code += """// MPI_Type_free(&newtype);
             """
 
         tasklet = dace.sdfg.nodes.Tasklet(

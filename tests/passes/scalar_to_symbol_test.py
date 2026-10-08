@@ -498,7 +498,7 @@ def test_indirection_with_reindex(language):
     N = dace.symbol("N")
     S = dace.symbol("S")
 
-    sdfg = dace.SDFG(f"test_indirection_with_reindex")
+    sdfg = dace.SDFG("test_indirection_with_reindex")
     sdfg.add_array("A", shape=[N], dtype=dace.float32, transient=False)
     sdfg.add_array("index_0", shape=[1], dtype=dace.int32, transient=True)
     sdfg.add_array("index_1", shape=[1], dtype=dace.int32, transient=True)
