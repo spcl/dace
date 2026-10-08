@@ -56,7 +56,7 @@ def _placement(sdfg: dace.SDFG, name: str) -> Optional[bool]:
             desc = nsdfg.arrays[name]
             if isinstance(desc, dt.View):
                 return True
-            return dace.dtypes.is_dynamic_shared(desc.storage)
+            return desc.storage.dynamic
     raise KeyError(name)
 
 
@@ -218,12 +218,12 @@ def test_storage_type_attribute():
     dynamic = S.GPU_Shared(dynamic=True)
     assert dynamic == S.GPU_Shared and S.GPU_Shared == dynamic and dynamic != S.GPU_Global
     assert {S.GPU_Shared: "found"}[dynamic] == "found"
-    assert dace.dtypes.is_dynamic_shared(S.GPU_Shared) is None
-    assert dace.dtypes.is_dynamic_shared(S.GPU_Shared()) is None
-    assert dace.dtypes.is_dynamic_shared(dynamic) is True
-    assert dace.dtypes.is_dynamic_shared(S.GPU_Shared(dynamic=False)) is False
-    with pytest.raises(ValueError):
-        dace.dtypes.is_dynamic_shared(S.GPU_Global)
+    assert S.GPU_Shared.dynamic is None
+    assert S.GPU_Shared().dynamic is None
+    assert dynamic.dynamic is True
+    assert S.GPU_Shared(dynamic=False).dynamic is False
+    with pytest.raises(AttributeError):
+        S.GPU_Global.dynamic
 
 
 @pytest.mark.parametrize("storage", [S.GPU_Shared, S.GPU_Shared(dynamic=True), S.GPU_Shared(dynamic=False)])

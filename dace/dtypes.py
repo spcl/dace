@@ -34,7 +34,20 @@ class StorageType(ExtensibleAttributeEnum):
     """Available data storage types in the SDFG."""
 
     Default = auto()  #: Scope-default storage location
-    Register = auto()  #: Local data on registers, stack, or equivalent memory
+
+    @dataclass(frozen=True)
+    class Register:
+        """
+        Local data on registers, stack, or equivalent memory.
+
+        ``StorageType.Register`` is a template that compares equal to every instance, so it can be used as before;
+        instantiate it to force stack allocation, e.g., ``StorageType.Register(force=True)``.
+        """
+
+        #: Whether the array is always on the stack (``True``), a symbolically-sized one as a variable-length array.
+        #: Otherwise (``False``, also for the template) only constant sizes up to the stack size limit are.
+        force: bool = False
+
     CPU_Pinned = auto()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = auto()  #: Host memory allocated on heap
     CPU_ThreadLocal = auto()  #: Thread-local host memory
@@ -57,21 +70,6 @@ class StorageType(ExtensibleAttributeEnum):
     Snitch_TCDM = auto()  #: Cluster-private memory
     Snitch_L2 = auto()  #: External memory
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
-
-
-def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
-    """
-    Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
-
-    :param storage: A ``GPU_Shared`` storage type, either the template or an instance of it.
-    :return: The ``dynamic`` attribute of the storage type, or None if it is left to the code generator (which is also
-             the case for the bare template).
-    """
-    if storage != StorageType.GPU_Shared:
-        raise ValueError(f"Expected a GPU_Shared storage type, got {storage}")
-    if storage._is_template:
-        return None
-    return storage.dynamic
 
 
 class OMPScheduleType(Enum):
