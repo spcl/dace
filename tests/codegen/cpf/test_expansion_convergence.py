@@ -140,7 +140,7 @@ def render_many_fills() -> Dict[str, str]:
     comments/loop order, changed on every process.
     """
     from dace.codegen import codegen as dace_codegen
-    from dace.codegen.cpf import cpf_lowering, dialect_for, frame_object, prepare
+    from dace.codegen.cpf import cpf_lowering, dialect_for, prepare, split_units
 
     cpp = render(many_fills_sdfg(), language="c++").code
     c = render(many_fills_sdfg(), language="c").code
@@ -149,7 +149,7 @@ def render_many_fills() -> Dict[str, str]:
     with cpf_lowering.dialect_scope(dialect_for("c++")):
         prepare(raw)
         objects = dace_codegen.generate_code(raw)
-    codegen_cpp = frame_object(objects, raw.name).clean_code
+    codegen_cpp = split_units(objects, raw.name)[0].clean_code
     return {"cpf_c": c, "cpf_cpp": cpp, "codegen_cpp": codegen_cpp}
 
 

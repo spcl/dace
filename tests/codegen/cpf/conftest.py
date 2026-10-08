@@ -24,14 +24,14 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pytest
 
 import dace
 from dace import data as dt
-from dace.codegen.cpf import render
+from dace.codegen.cpf import Rendering, render
 from dace.libraries.standard.nodes import Scan
 from dace.libraries.standard.nodes.scan import ScanOp
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
@@ -206,6 +206,25 @@ def assert_standalone_device(code: str, label: str = "cpf") -> None:
     assert_every_gpu_name_is_declared(code, label)
 
 
+def assert_standalone_units(rendering: Rendering, label: str = "cpf") -> None:
+    """Assert a device rendering is the two units the GPU build contract names, each standalone.
+
+    The host unit holds the ``extern "C"`` entry and only launches; the device unit holds the
+    ``__global__`` kernels and DEFINES every launcher the host unit declares, so the two link.
+    """
+    assert rendering.device_code, f"{label}: a device dialect renders a device unit"
+    for unit in (rendering.code, rendering.device_code):
+        assert_standalone_device(unit, label)
+    assert rendering.code.count('extern "C" void') == 1, f"{label}: the host unit holds the one entry"
+    assert "__global__" not in rendering.code, f"{label}: the host unit only launches"
+    assert "__global__" in rendering.device_code, f"{label}: the kernels live in the device unit"
+    launchers = set(re.findall(r"\b(__cpf_runkernel_\w+)\(", rendering.code))
+    defined = set(re.findall(r"^\S.*\b(__cpf_runkernel_\w+)\([^;]*\)\s*$", rendering.device_code, re.MULTILINE))
+    assert launchers <= defined, (
+        f"{label}: launchers the host unit calls and the device unit does not define: {launchers - defined}"
+    )
+
+
 #: Device preamble blocks that only some units carry, and the declaration each one must bring with
 #: it. The preamble is selected from the finished text, so a use the selector cannot see ships a
 #: unit that fails to compile on an undeclared name -- which is what happened to the scan forms:
@@ -275,8 +294,8 @@ def canonical_gpu_sdfg(program: Any, name: str) -> dace.SDFG:
     return sdfg
 
 
-def render_gpu(program: Any, name: str, language: str = "hip") -> Tuple[dace.SDFG, str]:
-    """``(sdfg, code)`` for a ``@dace.program`` taken through the GPU pipeline and rendered as ``language``.
+def render_gpu(program: Any, name: str, language: str = "hip") -> Rendering:
+    """The rendering of a ``@dace.program`` taken through the GPU pipeline, as ``language``.
 
     The pipeline is the documented order and all three steps matter here: ``canonicalize`` leaves
     every choice parallel, ``offload_to_gpu`` moves the data and the maps onto the device, and
@@ -286,8 +305,7 @@ def render_gpu(program: Any, name: str, language: str = "hip") -> Tuple[dace.SDF
     sdfg = canonical_gpu_sdfg(program, name)
     offload_to_gpu(sdfg)
     finalize_for_target(sdfg, "gpu", validate=True)
-    rendering = render(sdfg, language=language)
-    return rendering.sdfg, rendering.code
+    return render(sdfg, language=language)
 
 
 def device_scan_sdfg(name: str, op: ScanOp, coefficients: bool = False, seed: bool = False) -> dace.SDFG:
