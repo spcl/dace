@@ -3,6 +3,7 @@
 Tests the extensible attributed enum class.
 """
 
+import pickle
 from dataclasses import dataclass
 from enum import auto, Enum
 
@@ -196,6 +197,20 @@ def test_serialization_nestedclass():
     assert plane_restored == plane
 
 
+def test_pickling():
+    """Templates, their instances and plain members pickle back to the same object; a nested dataclass alone does
+    not, since the enum member took its name."""
+    from dace.dtypes import StorageType
+
+    for member in (
+        StorageType.Register,
+        StorageType.Register(force=True),
+        StorageType.GPU_Shared(dynamic=False),
+        StorageType.CPU_Heap,
+    ):
+        assert pickle.loads(pickle.dumps(member)) is member
+
+
 if __name__ == "__main__":
     test_attrenum_creation()
     test_attrenum_dynamic_creation()
@@ -205,3 +220,4 @@ if __name__ == "__main__":
     test_attrenum_add_member()
     test_serialization()
     test_serialization_nestedclass()
+    test_pickling()
