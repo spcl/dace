@@ -1100,10 +1100,14 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         if kind == "seed" and isinstance(i, nodes.AccessNode):
                             # A source AccessNode may merge into a first-state node upstream of the seed
                             # writer, closing a cycle (ludcmp ``w = y[i]; w(+)= ...``); its consumers never merge.
+                            # A library node takes no ordering edge (it counts its inputs); it is ordered through ``i``.
                             for j in first_nodes:
                                 for k in dict.fromkeys(e.dst for e in second_state.out_edges(i)):
-                                    if j in first_state.nodes() and nx.has_path(second_state._nx, k, node):
-                                        first_state.add_nedge(j, k, memlet.Memlet())
+                                    if j not in first_state.nodes() or not nx.has_path(second_state._nx, k, node):
+                                        continue
+                                    target = i if isinstance(k, nodes.LibraryNode) else k
+                                    if not first_state.edges_between(j, target):
+                                        first_state.add_nedge(j, target, memlet.Memlet())
                             continue
                         # Plain reachability. (Do NOT use ``all_nodes_between``: it returns an
                         # EMPTY SET -- not None -- as soon as its DFS hits any sink that is not
