@@ -16,6 +16,7 @@ import pytest
 import dace
 from dace.codegen.cpf import render as render_sdfg
 from dace.libraries.standard.nodes.copy import CopyLibraryNode
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
 from tests.codegen.cpf.conftest import assert_matches, assert_standalone, build_standalone, call_standalone
@@ -109,6 +110,41 @@ def superseded_copy_sdfg() -> dace.SDFG:
     return sdfg
 
 
+def scalar_accumulation_sdfg(name: str) -> dace.SDFG:
+    """The icon_scatter shape: a private scalar accumulated into one element of ``out`` by a copy edge whose
+    memlet names only the destination."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("val", [1], dace.float64)
+    sdfg.add_array("out", [8], dace.float64)
+    sdfg.add_scalar("acc", dace.float64, transient=True)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet("double", {"v": None}, {"a": None}, "a = 2.0 * v")
+    acc = state.add_access("acc")
+    state.add_edge(state.add_read("val"), None, tasklet, "v", dace.Memlet("val[0]"))
+    state.add_edge(tasklet, "a", acc, None, dace.Memlet("acc[0]"))
+    state.add_edge(acc, None, state.add_write("out"), None, dace.Memlet("out[3]", wcr="lambda x, y: x + y"))
+    return sdfg
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_an_accumulating_copy_from_a_scalar_renders_without_copynd(language):
+    """``out[3] += acc`` with the source side omitted becomes an accumulating tasklet, not ``CopyND::Accumulate``."""
+    sdfg = named(scalar_accumulation_sdfg("scalar_accumulation"), language)
+    val, out = np.array([1.5]), np.arange(8, dtype=np.float64)
+    runs = render_and_run(sdfg, {"val": val, "out": out}, language)
+    expected = out.copy()
+    expected[3] += 3.0
+    assert_matches({"out": expected}, {"out": runs["cpf"]["out"]}, sdfg.name)
+    assert_matches({"out": expected}, {"out": runs["runtime"]["out"]}, f"{sdfg.name}/runtime")
+
+
+def test_finalize_leaves_no_accumulating_copy():
+    """The canonical CPU form compiles without ``dace::CopyND`` too, not only through CPF."""
+    sdfg = scalar_accumulation_sdfg("scalar_accumulation_finalized")
+    finalize_for_target(sdfg, "cpu")
+    assert all("CopyND" not in obj.clean_code for obj in sdfg.generate_code())
+
+
 @pytest.mark.parametrize("language", LANGUAGES)
 def test_a_converting_stage_in_copy_renders_as_an_explicit_cast(language):
     """A copy into a map whose inner transient has another dtype is a cast the copy node can carry."""
@@ -147,3 +183,15 @@ def test_a_copy_superseded_by_a_later_map_stays_superseded(language):
     runs = render_and_run(sdfg, {"rhs": rhs, "dcol": np.zeros(16)}, language)
     assert_matches({"dcol": 2.0 * rhs}, {"dcol": runs["cpf"]["dcol"]}, sdfg.name)
     assert_matches({"dcol": 2.0 * rhs}, {"dcol": runs["runtime"]["dcol"]}, f"{sdfg.name}/runtime")
+
+
+if __name__ == "__main__":
+    test_an_accumulating_copy_from_a_scalar_renders_without_copynd("c")
+    test_an_accumulating_copy_from_a_scalar_renders_without_copynd("c++")
+    test_finalize_leaves_no_accumulating_copy()
+    test_a_converting_stage_in_copy_renders_as_an_explicit_cast("c")
+    test_a_converting_stage_in_copy_renders_as_an_explicit_cast("c++")
+    test_overlapping_copies_into_one_node_keep_their_write_order("c")
+    test_overlapping_copies_into_one_node_keep_their_write_order("c++")
+    test_a_copy_superseded_by_a_later_map_stays_superseded("c")
+    test_a_copy_superseded_by_a_later_map_stays_superseded("c++")

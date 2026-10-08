@@ -48,12 +48,12 @@ from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tu
 from dace.ordered import OrderedSet
 
 from dace import data as dt, dtypes, cpf_lowering
-from dace.memlet import Memlet
 from dace.codegen import codegen
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config, set_temporary
-from dace.sdfg import SDFG, memlet_utils, nodes
+from dace.sdfg import SDFG, nodes
 from dace.transformation.passes.canonicalize.annotate_loop_kinds import AnnotateLoopKinds
+from dace.transformation.passes.canonicalize.finalize import explicit_accumulating_copies
 from dace.transformation.passes.scalar_promotion import PromoteScalarOutputsToArrays
 from dace.optionals import required
 
@@ -607,41 +607,6 @@ def refuse_by_value_returns(sdfg: SDFG) -> None:
             )
 
 
-def explicit_accumulating_copies(sdfg: SDFG) -> None:
-    """Turn every accumulating array-to-array copy into a map whose write keeps the accumulation, in place.
-
-    ``InsertExplicitCopies`` lifts plain copies into copy nodes CPF renders; an accumulating one is a
-    reduction rather than a copy, so the generator falls back to ``dace::CopyND::Accumulate``, which a
-    standalone unit cannot name (icon_scatter, seissol_tensor_contraction, spmm). As a map over the copied
-    elements each iteration accumulates into its own element, which the generator lowers like any WCR.
-
-    :param sdfg: the SDFG to rewrite, nested SDFGs included.
-    """
-    for nested in sdfg.all_sdfgs_recursive():
-        for state in nested.states():
-            for edge in list(state.edges()):
-                wcr = edge.data.wcr
-                if (
-                    wcr is None
-                    or not isinstance(edge.src, nodes.AccessNode)
-                    or not isinstance(edge.dst, nodes.AccessNode)
-                ):
-                    continue
-                source, target = edge.data.get_src_subset(edge, state), edge.data.get_dst_subset(edge, state)
-                if source is not None and target is not None and source.num_elements_exact() == 1:
-                    # One element, possibly a Scalar end, which a map cannot index: one accumulating tasklet.
-                    tasklet = state.add_tasklet("accumulate", {"__inp"}, {"__out"}, "__out = __inp")
-                    state.add_edge(edge.src, edge.src_conn, tasklet, "__inp", Memlet(data=edge.src.data, subset=source))
-                    state.add_edge(
-                        tasklet, "__out", edge.dst, edge.dst_conn, Memlet(data=edge.dst.data, subset=target, wcr=wcr)
-                    )
-                    state.remove_edge(edge)
-                elif memlet_utils.can_memlet_be_turned_into_a_map(edge, state, nested):
-                    _, map_exit = memlet_utils.memlet_to_map(edge, state, nested)
-                    for written in state.in_edges(map_exit) + state.out_edges(map_exit):
-                        written.data.wcr = wcr
-
-
 def refuse_runtime_scopes(sdfg: SDFG) -> None:
     """Refuse the constructs whose only implementation is a DaCe runtime class.
 
@@ -677,9 +642,9 @@ def refuse_runtime_scopes(sdfg: SDFG) -> None:
 def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None) -> None:
     """Make ``sdfg`` renderable as one host translation unit, in place.
 
-    Six things happen: every accumulating copy becomes a map (:func:`explicit_accumulating_copies`),
-    every library node is pointed at the best implementation a standalone unit
-    can compile and expanded (:func:`force_renderable_expansions`), every written signature scalar,
+    Six things happen: every library node is pointed at the best implementation a standalone unit
+    can compile and expanded (:func:`force_renderable_expansions`), every accumulating copy becomes a
+    tasklet or a map (:func:`~dace.transformation.passes.canonicalize.finalize.explicit_accumulating_copies`), every written signature scalar,
     the expansions' included, is promoted to a length-1 array so it is addressable
     (:class:`~dace.transformation.passes.scalar_promotion.PromoteScalarOutputsToArrays`), what that
     could not make renderable is refused (:func:`refuse_by_value_returns`), every loop still
@@ -706,8 +671,9 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
             + ". Render the CPU form of this SDFG, or the 'cuda' or 'hip' language for a device one."
         )
     refuse_runtime_scopes(sdfg)
-    explicit_accumulating_copies(sdfg)
     force_renderable_expansions(sdfg, provenance)
+    # After the expansions, which make accumulating copies of their own.
+    explicit_accumulating_copies(sdfg)
     # After the expansions: a Dot's or a pure Reduce's nested function writes its result through a
     # scalar connector the promotion has to see (gramschmidt, durbin, trmm, addusxx_g).
     PromoteScalarOutputsToArrays().apply_pass(sdfg, {})
