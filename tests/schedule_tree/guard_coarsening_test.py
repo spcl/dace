@@ -8,7 +8,7 @@ import numpy as np
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg.analysis.schedule_tree.passes import coarsen_guards, sink_into_guards
+from dace.sdfg.analysis.schedule_tree.passes import coarsen_guards, move_statements_to_readers, sink_into_guards
 from dace.sdfg.state import LoopRegion
 
 
@@ -49,6 +49,14 @@ def _tasklet(code: str, inputs: Dict[str, str], outputs: Dict[str, str]) -> tn.T
 
 def _if(condition: str, body: list) -> tn.IfScope:
     return tn.IfScope(condition=CodeBlock(condition), children=body)
+
+
+def _ancestors(node: tn.ScheduleTreeNode) -> list:
+    result = []
+    while node.parent is not None:
+        node = node.parent
+        result.append(node)
+    return result
 
 
 def _nodes(stree: tn.ScheduleTreeRoot, kind: type) -> list:
@@ -275,6 +283,109 @@ def test_sink_not_if_guard_changes_while_value_accumulates():
     assert sink_into_guards(stree) == 0
 
 
+def test_sink_shared_container_reused_elsewhere():
+    """The sum's container is later overwritten and read without a guard: those reads see other values."""
+    overwrite = _loop('j', 0, 4, [_loop('i', 0, 4, [_tasklet('s = d', {'d': 'dm[0, i, j]'}, {'s': 'sum0[i, j]'})])])
+    read = _tasklet('o = s', {'s': 'sum0[0, 0]'}, {'o': 'out[0]'})
+
+    def transform(stree):
+        assert sink_into_guards(stree) == 2  # The sum and its reset (the overwrite is read without a guard)
+
+    _same_results(lambda: _split_tree(after=[overwrite, read]), transform, [{
+        **i, 'out': np.zeros(1)
+    } for i in _column_inputs()])
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Moving statements to their readers
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _moving_tree(blocker_writes: str = None) -> tn.ScheduleTreeRoot:
+    """``for k, j, i: if U[k + 1, i, j] != 0: q -= U; dm = q * dp`` (fixes, then a value only the correction uses), then
+    a nest that counts columns to correct in ``Z`` (and optionally writes ``q``), then the correction under ``Z > 0``."""
+    stree = _root(
+        'move_to_readers', {
+            'q': ([8, 4, 4], dace.float64),
+            'dp': ([8, 4, 4], dace.float64),
+            'U': ([9, 4, 4], dace.float64),
+            'Z': ([4, 4], dace.int32),
+            'out': ([8, 4, 4], dace.float64)
+        }, {'dm': ([8, 4, 4], dace.float64)})
+    fix = _if('U[k + 1, i, j] != 0',
+              [_tasklet('o = x - u', {
+                  'x': 'q[k, i, j]',
+                  'u': 'U[k + 1, i, j]'
+              }, {'o': 'q[k, i, j]'})])
+    value = _tasklet('m = x * d', {'x': 'q[k, i, j]', 'd': 'dp[k, i, j]'}, {'m': 'dm[k, i, j]'})
+    count = [_if('q[7, i, j] < 0', [_tasklet('o = z + 1', {'z': 'Z[i, j]'}, {'o': 'Z[i, j]'})])]
+    if blocker_writes:
+        count.append(_tasklet('o = x * 2', {'x': f'q[{blocker_writes}, i, j]'}, {'o': f'q[{blocker_writes}, i, j]'}))
+    correct = _if('Z[i, j] > 0', [_tasklet('o = m', {'m': 'dm[k, i, j]'}, {'o': 'out[k, i, j]'})])
+    stree.add_children([
+        _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [fix, value])])]),
+        _loop('j', 0, 4, [_loop('i', 0, 4, count)]),
+        _loop('k', 0, 8, [_loop('j', 0, 4, [_loop('i', 0, 4, [correct])])]),
+    ])
+    return stree
+
+
+def _moving_inputs() -> List[Dict[str, np.ndarray]]:
+    rng = np.random.default_rng(4)
+    result = []
+    for negative in (False, True):
+        q = rng.random((8, 4, 4))
+        if negative:
+            q[7, 1, 2] = -1.0
+        u = np.zeros((9, 4, 4))
+        u[3, 0, 1] = 0.5
+        result.append({
+            'q': q,
+            'dp': rng.random((8, 4, 4)),
+            'U': u,
+            'Z': np.zeros((4, 4), dtype=np.int32),
+            'out': np.zeros((8, 4, 4))
+        })
+    return result
+
+
+def test_move_past_guard_assignment_then_sink():
+
+    def transform(stree):
+        assert move_statements_to_readers(stree) == 1
+        assert sink_into_guards(stree) == 1
+        # The fixes (now alone in their nest), the moved value and the correction
+        assert coarsen_guards(stree, levels=('nest', )) == 3
+
+    stree = _same_results(_moving_tree, transform, _moving_inputs())
+    # The value is computed after the counting nest (which writes Z), under the guard
+    order = [c for c in stree.children if type(c) in (tn.ForScope, tn.IfScope)]
+    writes = lambda node, name: any(m.data == name for n in node.preorder_traversal() if type(n) is tn.TaskletNode
+                                    for m in n.out_memlets.values())
+    counting = next(k for k, c in enumerate(order) if writes(c, 'Z'))
+    value = next(k for k, c in enumerate(order) if writes(c, 'dm'))
+    assert counting < value
+    guarded = [n for n in stree.preorder_traversal() if type(n) is tn.TaskletNode and writes(n, 'dm')]
+    assert all(
+        any(type(a) is tn.IfScope and a.condition.as_string.startswith('(Z') for a in _ancestors(n)) for n in guarded)
+
+
+def test_move_keeps_conflicting_iterations():
+    """The counting nest also writes ``q[7]``: the last iteration of ``k`` stays before it."""
+
+    def transform(stree):
+        assert move_statements_to_readers(stree) == 1
+        headers = [c.loop.loop_condition.as_string for c in stree.children if type(c) is tn.ForScope]
+        assert any('7' in h for h in headers[1:])
+
+    _same_results(lambda: _moving_tree(blocker_writes='7'), transform, _moving_inputs())
+
+
+def test_move_not_past_writes_of_every_iteration():
+    stree = _moving_tree(blocker_writes='0:8')
+    assert move_statements_to_readers(stree) == 0
+
+
 if __name__ == '__main__':
     test_coarsen_nest_and_rows()
     test_coarsen_counts()
@@ -287,3 +398,7 @@ if __name__ == '__main__':
     test_sink_not_if_guard_input_written_in_between()
     test_sink_not_if_read_unguarded()
     test_sink_not_if_guard_changes_while_value_accumulates()
+    test_sink_shared_container_reused_elsewhere()
+    test_move_past_guard_assignment_then_sink()
+    test_move_keeps_conflicting_iterations()
+    test_move_not_past_writes_of_every_iteration()
