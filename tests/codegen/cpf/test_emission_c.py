@@ -758,10 +758,6 @@ def test_a_one_element_accumulating_copy_from_a_scalar_renders_without_the_runti
     assert_matches({"out": np.arange(8.0) + np.eye(8)[3] * 2.5}, {"out": out}, name)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 def find_first_sdfg(name: str, implementation: str):
     """An SDFG whose only node is the search an early-exit loop would lower to.
 
@@ -1228,3 +1224,115 @@ def test_a_tasklet_call_on_a_symbol_an_interstate_edge_binds_is_typed_in_c():
     code = render_sdfg(sdfg, language="c").code
 
     assert "cpf_max_float64(" in code, code
+
+
+@dace.program
+def c_masked_store(a: dace.float64[N], eps: dace.float64, replacement: dace.float64):
+    a[a <= eps] = replacement
+
+
+def test_a_dynamic_scalar_read_binds_by_value_in_c():
+    """correlation's ``stddev[stddev <= eps] = 1.0`` reads its value through a dynamic memlet, which the
+    generator bound as a C++ reference that no C compiler accepts."""
+    name = "cpf_c_masked_store"
+    sdfg, code = render_c(c_masked_store, name)
+    a = np.linspace(-1.0, 1.0, 9)
+    expected = np.where(a <= 0.25, 7.0, a)
+    run_c(sdfg, code, {"a": a, "eps": 0.25, "replacement": 7.0, "N": a.size}, name)
+    assert_matches({"a": expected}, {"a": a}, name)
+
+
+@dace.program
+def c_fft_roundtrip(x: dace.complex128[N], y: dace.complex128[N], z: dace.complex128[N]):
+    y[:] = np.fft.fft(x)
+    z[:] = np.fft.ifft(y)
+
+
+def test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_in_c():
+    """fft_1d: the pure DFT's tasklet declares ``exponent`` in one statement and passes it to ``cos`` in the
+    next, then builds the twiddle as ``decltype(b)(re, im)``; C must still know the local's type and call the
+    complex builder."""
+    name = "cpf_c_fft_roundtrip"
+    sdfg, code = render_c(c_fft_roundtrip, name)
+    assert "decltype" not in code, code
+    n = 12
+    rng = np.random.default_rng(3)
+    x = rng.random(n) + 1j * rng.random(n)
+    y, z = np.zeros(n, dtype=np.complex128), np.zeros(n, dtype=np.complex128)
+    run_c(sdfg, code, {"x": x, "y": y, "z": z, "N": n}, name)
+    assert_matches({"y": np.fft.fft(x), "z": np.fft.ifft(np.fft.fft(x))}, {"y": y, "z": z}, name)
+
+
+if __name__ == "__main__":
+    test_entry_point_has_no_language_linkage()
+    test_two_dimensional_index_helper_carries_the_stride()
+    test_wcr_folds_into_an_openmp_reduction()
+    test_heap_transients_use_aligned_alloc_and_free()
+    test_maths_calls_the_math_h_function_for_the_argument_type()
+    test_a_nested_sdfg_function_takes_no_reference_and_agrees_with_cpp()
+    test_numeric_typecast_is_a_cast_expression()
+    test_matrix_multiply_renders_as_loops()
+    test_strided_copy_renders_as_a_loop()
+    test_scan_keeps_its_parallel_inscan_form()
+    test_output_builds_without_warnings()
+    test_rendering_is_deterministic()
+    test_fp32_maths_does_not_double_round()
+    test_complex_header_macro_is_undefined()
+    test_a_container_named_i_still_renders_and_runs()
+    test_gpu_schedules_are_refused_with_a_reason()
+    test_language_selects_the_dialect("c++")
+    test_language_selects_the_dialect("c")
+    test_an_unknown_language_is_refused()
+    test_index_helper_parses_its_arguments("probe_idx(2 + 1, 5)", 3 * 10 + 5)
+    test_index_helper_parses_its_arguments("probe_idx(probe_max(3L, 7L), 5)", 7 * 10 + 5)
+    test_index_helper_computes_in_int64()
+    for minmax_name in ("cpf_max", "cpf_min"):
+        for minmax_case in MINMAX_CASES:
+            test_the_typed_minmax_helper_compares_at_its_full_width(minmax_name, *minmax_case)
+    for first_operand_case in FIRST_OPERAND_CASES:
+        test_the_typed_minmax_keeps_the_first_operand_on_a_tie_or_a_nan(*first_operand_case)
+    test_a_minmax_the_c_dialect_cannot_type_is_refused_not_guessed(("complex128", "float64"))
+    test_a_minmax_the_c_dialect_cannot_type_is_refused_not_guessed(("float16", "float64"))
+    test_a_minmax_the_c_dialect_cannot_type_is_refused_not_guessed(None)
+    test_a_minmax_the_c_dialect_cannot_type_is_refused_not_guessed(("float64", None))
+    test_a_typed_minmax_helper_is_a_function_not_a_macro()
+    test_a_c_minmax_resolution_folds_through_the_typed_helper_and_keeps_the_accumulator("min")
+    test_a_c_minmax_resolution_folds_through_the_typed_helper_and_keeps_the_accumulator("max")
+    for leak_label, leak_line in LEAKS:
+        test_the_c_gate_rejects_each_cpp_construct(leak_label, leak_line)
+    for accepted_label, accepted_line in ACCEPTED:
+        test_the_c_gate_accepts_what_the_c_dialect_emits(accepted_label, accepted_line)
+    test_the_cpp_gate_still_allows_the_cpp_constructs()
+    test_thread_local_storage_allocates_with_aligned_alloc()
+    test_a_library_expansion_writing_a_scalar_takes_a_pointer_in_c()
+    test_an_accumulating_copy_renders_as_a_map_without_the_runtime("c")
+    test_an_accumulating_copy_renders_as_a_map_without_the_runtime("c++")
+    test_a_one_element_accumulating_copy_from_a_scalar_renders_without_the_runtime("c")
+    test_a_one_element_accumulating_copy_from_a_scalar_renders_without_the_runtime("c++")
+    test_find_first_becomes_a_function_over_the_names_its_predicate_reads_in_c("Auto")
+    test_find_first_becomes_a_function_over_the_names_its_predicate_reads_in_c("CPU")
+    test_custom_conflict_resolution_needs_no_lambda_in_c()
+    test_a_zero_fill_renders_without_the_cxx_standard_library()
+    test_a_non_byte_splat_fill_renders_as_a_loop_rather_than_a_memset()
+    test_the_scatter_guard_renders_without_the_dace_runtime()
+    for cast_ctype in ("int64_t", "int", "double", "size_t"):
+        test_a_cast_carried_through_a_symbolic_expression_renders_as_a_c_cast(cast_ctype)
+    test_a_conflicting_complex_accumulation_takes_a_critical_section_and_a_real_one_stays_atomic()
+    test_a_complex_sum_tree_reduces_through_its_own_declared_c_reduction()
+    test_a_map_holding_a_conflicting_accumulation_renders_without_simd()
+    test_a_literal_integer_power_of_an_untyped_symbol_renders_as_a_c_product()
+    test_the_expression_cache_does_not_serve_cpp_text_to_a_c_rendering()
+    test_a_cast_in_an_extent_renders_a_c_cast_expression_in_the_size_helper()
+    for cast_dialect in ATTRIBUTE_CAST_FORMS:
+        test_a_dace_typed_cast_on_an_interstate_edge_is_spelled_by_the_dialect(cast_dialect)
+    test_a_min_over_a_dace_typed_cast_calls_the_helper_typed_for_the_cast()
+    test_a_complex_literal_in_a_tasklet_body_is_built_component_wise()
+    test_a_complex_constant_keeps_its_width_in_c(np.complex64(1 - 2j), "cpf_complex64")
+    test_a_complex_constant_keeps_its_width_in_c(np.complex128(1 - 2j), "cpf_complex128")
+    test_a_complex_exponential_keeps_its_imaginary_part("c")
+    test_a_complex_exponential_keeps_its_imaginary_part("c++")
+    test_out_parameter_ufuncs_call_the_typed_helper_and_compute_what_numpy_does()
+    test_an_interstate_read_of_an_array_element_is_typed_in_c()
+    test_a_tasklet_call_on_a_symbol_an_interstate_edge_binds_is_typed_in_c()
+    test_a_dynamic_scalar_read_binds_by_value_in_c()
+    test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_in_c()

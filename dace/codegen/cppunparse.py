@@ -235,6 +235,9 @@ class CPPLocals(LocalScheme):
     def __init__(self):
         # Maps local name to a 3-tuple of line number, scope (measured in indentation) and type
         self.locals = {}
+        #: The C dialect's dace type name of each local a standalone printer declared, which every later
+        #: statement of the tasklet reads through its own printer.
+        self.c_types: Dict[str, str] = {}
 
     def is_defined(self, local_name, current_depth):
         return local_name in self.locals
@@ -258,6 +261,7 @@ class CPPLocals(LocalScheme):
 
         for var in toremove:
             del self.locals[var]
+            self.c_types.pop(var, None)
 
 
 def c_literal_type(value) -> Optional[str]:
@@ -345,8 +349,6 @@ class CPPUnparser:
         self.f = file
         #: The names among ``defined_symbols`` that are data, declared at exactly their dtype.
         self.data_names = frozenset(data_names or ())
-        #: Each local this unparser declared, with the C type of the value it was declared from.
-        self.c_local_types: Dict[str, Optional[str]] = {}
         self.future_imports = []
         self._indent = depth
         self.indent_output = indent_output
@@ -474,7 +476,7 @@ class CPPUnparser:
         )
         if comparison and not cpf_lowering.standalone_c():
             dtype = "bool"
-        self.c_local_types[name] = dtype
+        self.locals.c_types[name] = dtype
         return cpf_lowering.ctype_for(dtypes.dtype_to_typeclass(np.dtype(dtype).type).ctype)
 
     def c_type(self, node: ast.AST) -> Optional[str]:
@@ -488,8 +490,8 @@ class CPPUnparser:
         if isinstance(node, ast.Constant):
             return c_literal_type(node.value)
         if isinstance(node, ast.Name):
-            if node.id in self.c_local_types:
-                return self.c_local_types[node.id]
+            if node.id in self.locals.c_types:
+                return self.locals.c_types[node.id]
             dtype = self.c_scalar_type(self.c_name_dtype(node.id))
             if dtype is None or self.c_data_name(node.id):
                 return dtype
@@ -1624,7 +1626,31 @@ class CPPUnparser:
         else:
             self.emit_call(self.modulo_calls[function], [left, right])
 
+    def c_decltype_complex(self, t: ast.Call) -> bool:
+        """Write ``decltype(z)(re, im)``, a C++ functional cast building a complex of ``z``'s type, as C's builder.
+
+        :returns: whether ``t`` was that call over a complex ``z`` and was written.
+        """
+        callee = t.func
+        if not (
+            isinstance(callee, ast.Call)
+            and isinstance(callee.func, ast.Name)
+            and callee.func.id == "decltype"
+            and len(callee.args) == 1
+            and isinstance(callee.args[0], ast.Name)
+            and len(t.args) == 2
+        ):
+            return False
+        dtype = self.c_name_dtype(callee.args[0].id)
+        builder = cpf_lowering.C_COMPLEX_BUILDERS.get(dtype.ctype if isinstance(dtype, dtypes.typeclass) else dtype)
+        if builder is None:
+            return False
+        self.write("%s(%s)" % (builder, ", ".join(self.render(arg) for arg in t.args)))
+        return True
+
     def _Call(self, t: ast.Call):
+        if cpf_lowering.standalone_c() and self.c_decltype_complex(t):
+            return
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
             if t.func.id in self.modulo_calls and len(t.args) == 2 and not t.keywords:

@@ -2506,6 +2506,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_pointer:
                         _restrict = "" if "__restrict__" in memlet_type else "__restrict__ "
                         result += "{} {}{} = {};".format(memlet_type, _restrict, local_name, expr)
+                    elif cpf_lowering.standalone_c():
+                        # C has no references. shortcut: the element is read even on a path that skips it; bind a
+                        # pointer instead if a guarded read of an out-of-bounds element turns up.
+                        result += "{} {} = {};".format(memlet_type, local_name, expr)
                     else:
                         result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = DefinedType.Scalar if is_scalar else DefinedType.Pointer
