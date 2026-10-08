@@ -798,7 +798,45 @@ def test_redundant_second_array_across_map_exit():
     assert np.array_equal(b, ref_b)
 
 
+def test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit():
+    """gem: a nested SDFG inside a map writes ``tmp``, which is copied into a window of ``out``. Removing
+    ``tmp`` must restate the nested connector as ``out``, though the nested SDFG is not a direct writer."""
+    N, M = dace.symbol("N"), dace.symbol("M")
+    inner = dace.SDFG("redundant_array_nested_behind_map_exit_inner")
+    inner.add_array("t", [M], dace.float64)
+    inner.add_symbol("i", dace.int64)
+    istate = inner.add_state("w", is_start_block=True)
+    tasklet = istate.add_tasklet("w", {}, {"o"}, "o = 2.0 * i")
+    istate.add_edge(tasklet, "o", istate.add_write("t"), None, dace.Memlet("t[i]"))
+
+    sdfg = dace.SDFG("redundant_array_nested_behind_map_exit")
+    sdfg.add_array("out", [N], dace.float64)
+    sdfg.add_transient("tmp", [M], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    entry, exit_node = state.add_map("m", {"i": "0:M"})
+    nsdfg = state.add_nested_sdfg(inner, {}, {"t": None}, symbol_mapping={"i": "i", "M": "M"})
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    tmp = state.add_access("tmp")
+    state.add_memlet_path(nsdfg, exit_node, tmp, src_conn="t", memlet=dace.Memlet("tmp[0:M]"))
+    state.add_edge(tmp, None, state.add_write("out"), None, dace.Memlet("tmp[0:M] -> [N - M:N]"))
+    sdfg.validate()
+
+    assert sdfg.apply_transformations(RedundantArray, validate=False) == 1
+    sdfg.validate()
+    assert "tmp" not in sdfg.arrays
+
+    out = np.zeros(10)
+    sdfg(out=out, N=10, M=4)
+    assert np.array_equal(out, np.concatenate([np.zeros(6), 2.0 * np.arange(4)]))
+
+
 if __name__ == "__main__":
+    test_reshaping_with_redundant_arrays()
+    test_ordering_edge_is_not_a_redundant_copy()
+    test_redundant_scalar_copy_is_removed([1])
+    test_redundant_scalar_copy_is_removed([1, 1])
+    test_in_failure_partial_copy()
+    test_in_failure_extra_consumer()
     test_in()
     test_out()
     test_out_success()
@@ -818,3 +856,4 @@ if __name__ == "__main__":
     test_reshaping_not_zero_started_input(True)
     test_reshaping_not_zero_started_input(False)
     test_redundant_second_array_across_map_exit()
+    test_redundant_array_integrates_a_nested_sdfg_behind_a_map_exit()
