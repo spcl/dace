@@ -1385,6 +1385,13 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: Optional[SymbolResolver] = None):
             # Create a new access node for the parent data
             parent_access = state.add_access(parent_name)
 
+            # An empty ordering edge writes nothing: it orders the parent access the read goes through
+            if out_edges and in_edges and all(e.data.is_empty() for e in in_edges):
+                for e in in_edges:
+                    state.add_edge(e.src, e.src_conn, parent_access, None, e.data)
+                    state.remove_edge(e)
+                in_edges = []
+
             # Rewire the graph based on access pattern
             if in_edges and out_edges:
                 # Both read and write: need two view nodes
