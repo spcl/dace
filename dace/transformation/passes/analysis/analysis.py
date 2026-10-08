@@ -73,7 +73,7 @@ class ControlFlowBlockReachability(ppl.Pass):
 
     CATEGORY: str = 'Analysis'
 
-    contain_to_single_level = properties.Property(dtype=bool, default=False)
+    contain_to_single_level = properties.Property(dtype=bool, default=False, category='Parameters')
 
     def __init__(self, contain_to_single_level=False) -> None:
         super().__init__()
@@ -979,8 +979,14 @@ class FindReferenceSources(ppl.Pass):
 
     CATEGORY: str = 'Analysis'
 
-    trace_through_code = properties.Property(dtype=bool, default=False, desc='Trace inputs through tasklets.')
-    recursive = properties.Property(dtype=bool, default=False, desc='Add reference of reference dependencies.')
+    trace_through_code = properties.Property(dtype=bool,
+                                             default=False,
+                                             category='Parameters',
+                                             desc='Trace inputs through tasklets.')
+    recursive = properties.Property(dtype=bool,
+                                    default=False,
+                                    category='Parameters',
+                                    desc='Add reference of reference dependencies.')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -1067,6 +1073,7 @@ class DeriveSDFGConstraints(ppl.Pass):
     assume_max_data_size = properties.Property(dtype=int,
                                                default=None,
                                                allow_none=True,
+                                               category='Applicability',
                                                desc='Assume that all data containers have no dimension larger than ' +
                                                'this value. If None, no assumption is made.')
 

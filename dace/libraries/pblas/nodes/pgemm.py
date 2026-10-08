@@ -142,9 +142,9 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
-    m = dace.properties.SymbolicProperty(allow_none=True, default=None)
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
-    k = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    m = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
+    k = dace.properties.SymbolicProperty(allow_none=True, default=None, category='Semantics')
 
     def __init__(self, name, m=None, n=None, k=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)

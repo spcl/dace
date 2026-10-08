@@ -24,10 +24,14 @@ class FuseStates(ppl.Pass):
 
     CATEGORY: str = 'Simplification'
 
-    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race condition checks.')
+    permissive = properties.Property(dtype=bool,
+                                     default=False,
+                                     category='Applicability',
+                                     desc='If True, ignores some race condition checks.')
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
+                                   category='Diagnostics',
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
@@ -61,12 +65,19 @@ class InlineSDFGs(ppl.Pass):
 
     CATEGORY: str = 'Simplification'
 
-    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
+    permissive = properties.Property(dtype=bool,
+                                     default=False,
+                                     category='Applicability',
+                                     desc='If True, ignores some checks on inlining.')
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
+                                   category='Diagnostics',
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
-    multistate = properties.Property(dtype=bool, default=True, desc='If True, include multi-state inlining.')
+    multistate = properties.Property(dtype=bool,
+                                     default=True,
+                                     category='Applicability',
+                                     desc='If True, include multi-state inlining.')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -102,17 +113,24 @@ class InlineControlFlowRegions(ppl.Pass):
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
+                                   category='Diagnostics',
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
 
-    no_inline_loops = properties.Property(dtype=bool, default=True, desc='Whether to prevent inlining loops.')
+    no_inline_loops = properties.Property(dtype=bool,
+                                          default=True,
+                                          category='Applicability',
+                                          desc='Whether to prevent inlining loops.')
     no_inline_conditional = properties.Property(dtype=bool,
                                                 default=True,
+                                                category='Applicability',
                                                 desc='Whether to prevent inlining conditional blocks.')
     no_inline_function_call_regions = properties.Property(dtype=bool,
                                                           default=True,
+                                                          category='Applicability',
                                                           desc='Whether to prevent inlining function call regions.')
     no_inline_named_regions = properties.Property(dtype=bool,
                                                   default=True,
+                                                  category='Applicability',
                                                   desc='Whether to prevent inlining named control flow regions.')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:

@@ -404,11 +404,18 @@ class TensorDot(nodes.LibraryNode):
     implementations = {"pure": ExpandPure, "TTGT": ExpandTTGT, "cuTENSOR": ExpandCuTensor}
     default_implementation = None
 
-    left_axes = properties.ListProperty(element_type=int, default=[], desc="Left tensor's contracting modes")
-    right_axes = properties.ListProperty(element_type=int, default=[], desc="Right tensor's contracting modes")
+    left_axes = properties.ListProperty(element_type=int,
+                                        default=[],
+                                        category="Semantics",
+                                        desc="Left tensor's contracting modes")
+    right_axes = properties.ListProperty(element_type=int,
+                                         default=[],
+                                         category="Semantics",
+                                         desc="Right tensor's contracting modes")
     permutation = properties.ListProperty(element_type=int,
                                           allow_none=True,
                                           default=None,
+                                          category="Semantics",
                                           desc="Permutation of the output tensor")
 
     def __init__(self, name, left_axes=[], right_axes=[], permutation=None, *args, **kwargs):

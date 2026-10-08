@@ -281,10 +281,14 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         would force an expensive round-trip through the host scalar ABI.
     """
 
-    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(dtype=bool,
+                                    default=True,
+                                    category="Applicability",
+                                    desc="Recurse into nested SDFGs (transient-only there).")
     preserve_abi = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Convert non-transient length-1 arrays too, keeping the ABI intact by staging them into "
         "fresh transient scalars (copy-in/out) instead of rewriting the signature array. Default only "
         "scalarizes transients.")
@@ -292,16 +296,21 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         element_type=str,
         default=None,
         allow_none=True,
+        category="Applicability",
         desc="Optional whitelist restricting which top-level descriptors are eligible. ``None`` -- no "
         "restriction. A set -- only named descriptors that are ALSO eligible under the other gates are "
         "rewritten; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.")
     single_element = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Also rewrite a higher-rank single-element array (every dim == 1, e.g. a (1, 1) map-fusion "
         "scratch buffer), not just a rank-1 length-1 array.")
     skip_gpu_outputs = properties.Property(
-        dtype=bool, default=False, desc="Leave length-1 arrays that are outputs of GPU-scheduled maps as arrays.")
+        dtype=bool,
+        default=False,
+        category="Applicability",
+        desc="Leave length-1 arrays that are outputs of GPU-scheduled maps as arrays.")
 
     def __init__(self,
                  recursive: bool = True,
@@ -524,10 +533,14 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         forward pass). ``None`` (default) -- no restriction; an empty set rewrites nothing.
     """
 
-    recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
+    recursive = properties.Property(dtype=bool,
+                                    default=True,
+                                    category="Applicability",
+                                    desc="Recurse into nested SDFGs (transient-only there).")
     preserve_abi = properties.Property(
         dtype=bool,
         default=False,
+        category="Applicability",
         desc="Convert non-transient scalars too, keeping the ABI intact by staging them into fresh "
         "transient length-1 arrays (copy-in/out) instead of rewriting the signature scalar. Default "
         "only arrayizes transients.")
@@ -535,6 +548,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
         element_type=str,
         default=None,
         allow_none=True,
+        category="Applicability",
         desc="Optional whitelist restricting which top-level descriptors are eligible. ``None`` -- no "
         "restriction; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.")
 

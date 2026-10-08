@@ -28,8 +28,8 @@ def _heap_transient_sdfg(name: str) -> dace.SDFG:
 
 def test_aligned_allocation_property():
     """Checks if the `.alignment` property is honored."""
-    new_code = r'new\s*\(std::align_val_t\({alignment}\)\)\s*double\s*\[2\]\s*;'
-    del_code = r'::operator\s+delete\[\]\(tmp,\s*std::align_val_t\({alignment}\)\)\s*;'
+    new_code = r'dace::aligned_new_array<double>\(2, {alignment}\);'
+    del_code = r'dace::aligned_delete_array\(tmp, {alignment}\);'
     for alignment in [-1, 0, 64, 128]:
         name_suffix = str(alignment) if alignment >= 0 else f"m{str(abs(alignment))}"
         sdfg = _heap_transient_sdfg(f"sdfg_allocation_{name_suffix}")
@@ -53,13 +53,10 @@ def test_aligned_allocation_property():
 def test_heap_allocation_aligned_new_cpp17():
     """With cpp_standard >= 17 (the default), heap arrays use aligned operator new/delete."""
     code = _heap_transient_sdfg('aligned_new_probe').generate_code()[0].clean_code
-    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*\[2\]', code)
-    assert '::operator delete[](tmp, std::align_val_t(64));' in code
+    assert 'dace::aligned_new_array<double>(2, 64);' in code
+    assert 'dace::aligned_delete_array(tmp, 64);' in code
     assert 'DACE_ALIGN(64)[' not in code  # the attribute is invalid in a new expression
     assert 'delete[] tmp' not in code  # would pair the unaligned deallocation function
-    # The direct operator call skips destructors (and assumes no array cookie);
-    # a compile-time guard enforces the trivial-destructibility this relies on.
-    assert 'static_assert(std::is_trivially_destructible<double>::value' in code
 
 
 def test_heap_allocation_plain_new_below_cpp17():
@@ -90,7 +87,29 @@ def test_heap_transient_end_to_end():
     assert np.allclose(result, (p1 + p2) / 2.0 + 1.0)
 
 
+def test_heap_transient_with_destructor():
+    """A heap array of a type with a destructor compiles, and every element is destroyed."""
+    sdfg = dace.SDFG('aligned_alloc_destructor')
+    sdfg.append_global_code("""
+struct counted {
+    static inline int live = 0;
+    counted() { ++live; }
+    ~counted() { --live; }
+};
+DACE_EXPORTED int counted_live() { return counted::live; }
+""")
+    sdfg.add_transient('tmp', [8], dace.opaque('counted'), storage=dace.StorageType.CPU_Heap)
+    state = sdfg.add_state()
+    state.add_edge(state.add_tasklet('touch', {}, {'t'}, ''), 't', state.add_write('tmp'), None, dace.Memlet('tmp[0]'))
+    assert 'dace::aligned_new_array<counted>(8, 64)' in sdfg.generate_code()[0].clean_code
+
+    csdfg = sdfg.compile()
+    csdfg()
+    assert csdfg._lib.get_symbol('counted_live')() == 0
+
+
 if __name__ == '__main__':
     test_heap_allocation_aligned_new_cpp17()
     test_heap_allocation_plain_new_below_cpp17()
     test_heap_transient_end_to_end()
+    test_heap_transient_with_destructor()
