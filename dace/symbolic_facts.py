@@ -62,6 +62,17 @@ def predicate_relation(predicate: Predicate, expr: sympy.Expr) -> Relation:
     return Relation(RelationKind.NE, expr, zero)
 
 
+def comparison_relation(condition: sympy.Basic) -> Relation | None:
+    """The relation an order comparison (``<``, ``<=``, ``>``, ``>=``) states, or None for any other expression."""
+    if isinstance(condition, (sympy.StrictLessThan, sympy.LessThan)):
+        kind = RelationKind.LT if isinstance(condition, sympy.StrictLessThan) else RelationKind.LE
+        return Relation(kind, condition.lhs, condition.rhs)
+    if isinstance(condition, (sympy.StrictGreaterThan, sympy.GreaterThan)):
+        kind = RelationKind.LT if isinstance(condition, sympy.StrictGreaterThan) else RelationKind.LE
+        return Relation(kind, condition.rhs, condition.lhs)
+    return None
+
+
 class Facts:
     """
     Relations that may be assumed, and which symbol names are integers (from their dtypes). Passed explicitly to every

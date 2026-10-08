@@ -24,6 +24,7 @@ from dace.symbolic_facts import (  # noqa: F401
     RelationKind,
     Truth,
     ask,
+    comparison_relation,
     predicate_relation,
     provably_le,
     provably_nonnegative,

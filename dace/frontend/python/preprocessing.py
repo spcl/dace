@@ -139,21 +139,12 @@ class RewriteSympyEquality(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-_ORDERS = {
-    sympy.StrictLessThan: (symbolic.RelationKind.LT, False),
-    sympy.LessThan: (symbolic.RelationKind.LE, False),
-    sympy.StrictGreaterThan: (symbolic.RelationKind.LT, True),
-    sympy.GreaterThan: (symbolic.RelationKind.LE, True),
-}
-
-
 def _decide(condition: sympy.Basic, scope: Dict[str, Any]) -> symbolic.Truth:
     """Whether a comparison holds under what the program's own symbols (the symbols of ``scope``) were declared
     with, as the frontend declares them in the SDFG."""
-    if type(condition) not in _ORDERS:
+    relation = symbolic.comparison_relation(condition)
+    if relation is None:
         return symbolic.Truth.UNKNOWN
-    kind, flipped = _ORDERS[type(condition)]
-    lhs, rhs = (condition.rhs, condition.lhs) if flipped else (condition.lhs, condition.rhs)
     program_symbols = [value for value in scope.values() if isinstance(value, symbolic.symbol)]
     facts = symbolic.Facts(
         [
@@ -163,7 +154,7 @@ def _decide(condition: sympy.Basic, scope: Dict[str, Any]) -> symbolic.Truth:
         ],
         frozenset(declared.name for declared in program_symbols if declared.declaration.dtype in dtypes.INTEGER_TYPES),
     )
-    return symbolic.ask(symbolic.Relation(kind, lhs, rhs), facts)
+    return symbolic.ask(relation, facts)
 
 
 class ConditionalCodeResolver(ast.NodeTransformer):

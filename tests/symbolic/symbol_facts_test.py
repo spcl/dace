@@ -13,6 +13,7 @@ from dace.symbolic_facts import (
     RelationKind,
     Truth,
     ask,
+    comparison_relation,
     predicate_relation,
 )
 
@@ -160,6 +161,12 @@ def test_contradicting_relations_raise():
         facts_of(Relation(RelationKind.LT, N, K), Relation(RelationKind.LT, K, N))
 
 
+def test_comparisons_become_relations_with_the_smaller_side_first():
+    assert comparison_relation(sympy.Gt(N, K)) == Relation(RelationKind.LT, K, N)
+    assert comparison_relation(sympy.Le(N, K)) == Relation(RelationKind.LE, N, K)
+    assert comparison_relation(sympy.Eq(N, K)) is None
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -179,3 +186,4 @@ if __name__ == "__main__":
     test_tiled_range_bounds_the_index()
     test_contradicting_predicates_raise()
     test_contradicting_relations_raise()
+    test_comparisons_become_relations_with_the_smaller_side_first()
