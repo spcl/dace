@@ -28,7 +28,7 @@ from dace import SDFG, SDFGState, data, dtypes, memlet as mm, properties, subset
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg import tasklet_utils as tutil
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import ControlFlowBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -300,7 +300,9 @@ def insert_scatter_guard(
 
     # Capture the original CFG entry + definer states BEFORE adding the guard states, whose
     # new states would otherwise pollute the source-node set both queries depend on.
-    def_states = _find_definition_states(sdfg, idx_name) & set(region.states())
+    def_states = {
+        top_level_block(state, region) for state in _find_definition_states(sdfg, idx_name) & set(region.states())
+    }
     original_start = region.start_block
 
     check_state, trap_state, count_name, trap_sym = build_guard_states(
@@ -517,6 +519,14 @@ def _wire_owner_scratch(
     )
 
 
+def top_level_block(block, region):
+    """The block of ``region`` itself that holds ``block``, at any nesting depth: a definer inside a loop
+    is ordered by the loop it sits in (nfa_frontier)."""
+    while block.parent_graph is not region:
+        block = block.parent_graph
+    return block
+
+
 def _splice_guard_into_cfg(
     region: SDFG,
     idx_name: str,
@@ -524,7 +534,7 @@ def _splice_guard_into_cfg(
     trap_state: Optional[SDFGState],
     count_name: str,
     trap_sym: str,
-    def_states: Set[SDFGState],
+    def_states: Set[ControlFlowBlock],
     original_start,
 ) -> None:
     """Splice ``check -> [trap] -> downstream`` in at the earliest legal CFG point of ``region``

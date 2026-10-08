@@ -199,6 +199,26 @@ def test_guard_states_inserted_before_scatter():
     )
 
 
+@dace.program
+def scatter_through_loop_written_index(a: dace.float64[N], b: dace.float64[N], ip: dace.int64[N]):
+    for t in range(2):
+        for i in range(N):
+            ip[i] = (i * 3 + t) % N
+    for i in range(N):
+        a[ip[i]] = b[i]
+
+
+def test_guard_follows_the_loop_that_writes_the_index():
+    """nfa_frontier writes its index array inside a loop: the definer is a state of the loop's body, so
+    the guard goes after the loop holding it rather than failing to order a nested state."""
+    sdfg = scatter_through_loop_written_index.to_sdfg(simplify=True)
+    insert_scatter_guard(sdfg, "ip")
+    sdfg.validate()
+    check = next(s for s in sdfg.states() if "_scatter_guard_check_" in s.label)
+    assert check.parent_graph is sdfg
+    assert any(isinstance(e.src, LoopRegion) for e in sdfg.in_edges(check)), [e.src for e in sdfg.in_edges(check)]
+
+
 def test_guard_pass_emits_for_each_named_idx():
     """``GuardScatterConflicts(['ip'])`` emits one guard per named array."""
     sdfg = tsvc_vas.to_sdfg(simplify=True)
@@ -554,6 +574,7 @@ if __name__ == "__main__":
     test_s491_permutation_runs_cleanly()
     test_vas_permutation_runs_cleanly()
     test_guard_states_inserted_before_scatter()
+    test_guard_follows_the_loop_that_writes_the_index()
     test_guard_pass_emits_for_each_named_idx()
     test_guard_refuses_non_integer_idx()
     test_guard_refuses_unknown_idx_name()
