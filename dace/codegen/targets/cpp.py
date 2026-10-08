@@ -267,6 +267,10 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
             argument = framecode.region_arguments.get((sdfg, name)) if framecode is not None else None
             if argument is not None:
                 return argument
+            # The program function may hold the pointer in a local constant
+            pointer = framecode.function_pointers.get((sdfg, name)) if framecode is not None else None
+            if pointer is not None:
+                return pointer[0]
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'

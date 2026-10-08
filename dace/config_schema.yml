@@ -405,6 +405,17 @@ required:
                             generate "#pragma omp parallel sections" code around
                             them.
 
+                    hoist_persistent_pointers:
+                        type: bool
+                        default: true
+                        title: Load persistent data pointers once per call
+                        description: >
+                            If set to true, the program function loads the pointers to the
+                            persistent and external data of the top-level SDFG from the state
+                            struct into local constants on entry and accesses the data through
+                            them. Compilers then need not reload the pointers from the state
+                            struct, which they may fail to prove unchanged in large functions.
+
                     parallel_transfer_min_elements:
                         type: int
                         default: 262144

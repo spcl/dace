@@ -138,6 +138,9 @@ class DaCeCodeGenerator(object):
         self._state_local_cache: Dict[SDFG, Set[str]] = {}
         # The persistent data that the region function being generated receives as arguments (see ``cpp.ptr``)
         self.region_arguments: Dict[Tuple[SDFG, str], str] = {}
+        # The local constants that hold the pointers to persistent data in the program function while its states are
+        # generated (see ``cpp.ptr``), with the state struct members they are loaded from
+        self.function_pointers: Dict[Tuple[SDFG, str], Tuple[str, str]] = {}
         self._literal_cache: Dict[SDFG, Dict[str, str]] = {}
         # The functions of regions in separate translation units, by ``_region_function_key``
         self._region_functions: Dict[str, str] = {}
@@ -719,6 +722,41 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         self._symbol_uses_cache[sdfg] = uses
         return uses
 
+    def _hoist_persistent_pointers(self, sdfg: SDFG,
+                                   callsite_stream: CodeIOStream) -> Dict[Tuple[SDFG, str], Tuple[str, str]]:
+        """
+        Declares local constants with the pointers to the persistent and external CPU arrays of the top-level SDFG
+        at the beginning of the program function. Their state struct members do not change during a call, but
+        compilers reload them after stores they cannot prove unrelated, which they give up on in large functions.
+
+        :param sdfg: The top-level SDFG.
+        :param callsite_stream: The stream of the program function.
+        :return: The local constant and the state struct member of each array, by SDFG and name.
+        """
+        from dace.codegen.targets import cpp  # Avoid import loop
+
+        if not config.Config.get_bool('compiler', 'cpu', 'hoist_persistent_pointers'):
+            return {}
+        pointers: Dict[Tuple[SDFG, str], Tuple[str, str]] = {}
+        for name, desc in sdfg.arrays.items():
+            if (not desc.transient or type(desc) is not data.Array
+                    or desc.lifetime not in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
+                    or desc.storage
+                    not in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned)):
+                continue
+            member = cpp.ptr(name, desc, sdfg, self)
+            if not member.startswith('__state->'):
+                continue
+            try:
+                defined_type, ctype = self._dispatcher.defined_vars.get(member, is_global=True)
+            except KeyError:  # Not allocated by the CPU code generator
+                continue
+            local = '__p' + member[len('__state->'):]
+            callsite_stream.write(f'{ctype} const {local} = {member};', sdfg)
+            self._dispatcher.defined_vars.add_global(local, defined_type, ctype)
+            pointers[(sdfg, name)] = (local, member)
+        return pointers
+
     def _state_local_scalars(self, sdfg: SDFG) -> Set[str]:
         """
         The transient scalars of an SDFG whose value never crosses a state boundary: every state that reads one writes
@@ -867,11 +905,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             ptrname = cpp.ptr(name, desc, sdfg, self)
             defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
             param = ptrname
-            if ptrname.startswith('__state->'):
+            # A local constant of the program function stands for the state struct member it was loaded from
+            pointer = self.function_pointers.get((sdfg, name))
+            member = pointer[1] if pointer is not None and pointer[0] == ptrname else ptrname
+            if member.startswith('__state->'):
                 if not pass_persistent:
                     continue
                 # ``cpp.ptr`` names the argument instead of the state struct member while the body is generated
-                param = ptrname[len('__state->'):]
+                param = member[len('__state->'):]
                 persistent_arguments[(sdfg, name)] = param
                 persistent_types[param] = (defined_type, ctype)
             elif name in state_local:
@@ -908,6 +949,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         outer_arguments = self.region_arguments
         self.region_arguments = {**outer_arguments, **persistent_arguments}
+        # The locals of the program function do not exist in the region's function
+        outer_pointers = self.function_pointers
+        self.function_pointers = {}
         self._dispatcher.defined_vars.enter_scope(region)
         for param, (defined_type, ctype) in persistent_types.items():
             self._dispatcher.defined_vars.add(param, defined_type, ctype)
@@ -916,6 +960,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 cflow.deallocation_on_exit(region, self))
         self._dispatcher.defined_vars.exit_scope(region)
         self.region_arguments = outer_arguments
+        self.function_pointers = outer_pointers
 
         self._global_streams[sdfg] = outer_global_stream
         unit = self.current_translation_unit
@@ -1533,7 +1578,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         #######################################################################
         # Generate actual program body
 
+        if is_top_level:
+            self.function_pointers = self._hoist_persistent_pointers(sdfg, callsite_stream)
         states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
+        # Code generated from here on (e.g., deallocation in the exit function) uses the state struct
+        self.function_pointers = {}
 
         #######################################################################
 
