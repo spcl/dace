@@ -121,7 +121,8 @@ def _classify_view(
         is_viewed_src = False
 
     viewed_desc = sdfg.arrays[viewed_node.data]
-    assert viewed_desc.dtype == desc.dtype, "View and array must have the same dtype"
+    if viewed_desc.dtype != desc.dtype:
+        return None  # a reinterpreting view (mixed_precision_ir) has no element-for-element splice
 
     if viewed_subset is None:
         viewed_subset = subsets.Range.from_array(viewed_desc)
