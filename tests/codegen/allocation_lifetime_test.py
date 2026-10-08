@@ -656,9 +656,9 @@ def test_a_view_does_not_reallocate_the_array_it_views():
     use.add_edge(vnode, None, use.add_access("out"), None, dace.Memlet("tv[0] -> [i]"))
 
     code = sdfg.generate_code()[0].clean_code
-    allocations = re.findall(r"\bt = new\b", code)
-    assert len(allocations) == 1, (
-        f"'t' is allocated {len(allocations)} times; the second one is the view's, "
+    allocations = _count_heap_allocs(code, "double")  # ``t`` is the only heap-allocated array
+    assert allocations == 1, (
+        f"'t' is allocated {allocations} times; the second one is the view's, "
         "and it throws away what the fill state wrote"
     )
 
