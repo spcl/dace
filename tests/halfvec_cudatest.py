@@ -13,14 +13,8 @@ from dace.transformation.optimizer import Optimizer
 N = dace.symbol("N")
 
 
-def _config():
-    # Prerequisite for test: CUDA compute capability >= 6.0
-    dace.Config.set("compiler", "cuda", "cuda_arch", value="60")
-
-
 def _test_half(veclen):
     """Tests a set of elementwise operations on a vector half type."""
-    _config()
 
     @dace.program
     def halftest(A: dace.float16[N], B: dace.float16[N]):
@@ -60,7 +54,6 @@ def test_half8():
 @pytest.mark.gpu
 def test_exp_vec():
     """Tests an exp operator on a vector half type."""
-    _config()
 
     @dace.program
     def halftest(A: dace.float16[N]):
@@ -83,7 +76,6 @@ def test_exp_vec():
 @pytest.mark.gpu
 def test_relu_vec():
     """Tests a ReLU operator on a vector half type."""
-    _config()
 
     @dace.program
     def halftest(A: dace.float16[N]):
@@ -106,7 +98,6 @@ def test_relu_vec():
 @pytest.mark.gpu
 def test_dropout_vec():
     """Tests a dropout operator on a vector half type."""
-    _config()
 
     @dace.program
     def halftest(A: dace.float16[N], mask: dace.float16[N]):
@@ -131,7 +122,6 @@ def test_dropout_vec():
 @pytest.mark.gpu
 def test_gelu_vec():
     """Tests a GELU operator on a vector half type."""
-    _config()
     s2pi = math.sqrt(2.0 / math.pi)
 
     @dace.program

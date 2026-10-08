@@ -459,13 +459,6 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
 
         # If buffers are not on the GPU, copy them
         if needs_copy:
-            if node.beta != 0.0:
-                from dace.transformation.interstate import GPUTransformSDFG
-
-                nsdfg: dace.SDFG = ExpandCSRMVPure.expansion(node, state, sdfg)
-                nsdfg.apply_transformations(GPUTransformSDFG)
-                return nsdfg
-
             nsdfg = dace.SDFG("nested_spmv")
             copies = [("_a_rows", arows), ("_a_cols", acols), ("_a_vals", avals), ("_b", bdesc), ("_c", cdesc)]
             for name, desc in copies:
@@ -508,6 +501,13 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
             nstate.add_edge(gb, None, tasklet, "_conn_b", dace.Memlet.from_array("_b_gpu", bdesc))
             nstate.add_edge(tasklet, "_conn_c", gc, None, dace.Memlet.from_array("_c_gpu", cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array("_c", cdesc))
+            if node.beta != 0.0:
+                # cuSPARSE accumulates beta * C in place, so C starts from the input values
+                cin_desc = dc(nsdfg.arrays["_c"])
+                nsdfg.add_datadesc("_cin", cin_desc)
+                gcin = nstate.add_access("_c_gpu")
+                nstate.add_nedge(nstate.add_read("_cin"), gcin, dace.Memlet.from_array("_cin", cin_desc))
+                nstate.add_edge(gcin, None, tasklet, "_conn_cin", dace.Memlet.from_array("_c_gpu", cdesc))
 
             return nsdfg
         # End of copy to GPU
