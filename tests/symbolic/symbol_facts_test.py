@@ -167,6 +167,25 @@ def test_comparisons_become_relations_with_the_smaller_side_first():
     assert comparison_relation(sympy.Eq(N, K)) is None
 
 
+def test_divisibility_fact_proves_divisibility_by_a_factor():
+    facts = facts_of(Relation(RelationKind.DIVIDES, sympy.Integer(4), N))
+    assert ask(Relation(RelationKind.DIVIDES, sympy.Integer(2), N + 6), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.DIVIDES, sympy.Integer(8), N), facts) is Truth.UNKNOWN
+    assert ask(Relation(RelationKind.DIVIDES, sympy.Integer(4), N), Facts.none()) is Truth.UNKNOWN
+
+
+def test_exact_division_folds():
+    facts = facts_of(Relation(RelationKind.DIVIDES, K, N))
+    assert ask(Relation(RelationKind.EQ, symbolic.int_floor(N, K) * K, N), facts) is Truth.TRUE
+    assert ask(Relation(RelationKind.EQ, sympy.Mod(N, K), ZERO), facts) is Truth.TRUE
+
+
+def test_numeric_divisibility_is_decided():
+    assert ask(Relation(RelationKind.DIVIDES, sympy.Integer(3), sympy.Integer(7)), Facts.none()) is Truth.FALSE
+    with pytest.raises(InconsistentAssumptionsError):
+        facts_of(Relation(RelationKind.DIVIDES, sympy.Integer(3), sympy.Integer(7)))
+
+
 if __name__ == "__main__":
     test_positive_integer_is_at_least_one()
     test_strict_relation_implies_weak()
@@ -187,3 +206,6 @@ if __name__ == "__main__":
     test_contradicting_predicates_raise()
     test_contradicting_relations_raise()
     test_comparisons_become_relations_with_the_smaller_side_first()
+    test_divisibility_fact_proves_divisibility_by_a_factor()
+    test_exact_division_folds()
+    test_numeric_divisibility_is_decided()

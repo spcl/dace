@@ -25,6 +25,8 @@ class RelationKind(enum.Enum):
     LE = enum.auto()
     EQ = enum.auto()
     NE = enum.auto()
+    #: ``lhs`` divides ``rhs``: ``rhs`` is ``lhs`` times an integer
+    DIVIDES = enum.auto()
 
 
 class Relation(NamedTuple):
@@ -146,7 +148,7 @@ def with_integers(expr: sympy.Expr, integers: frozenset[str]) -> sympy.Expr:
             {
                 free: sympy.Symbol(free.name, integer=free.name in integers or None)
                 for free in expr.free_symbols
-                if isinstance(free, sympy.Symbol)
+                if isinstance(free, sympy.Symbol) and not isinstance(free, sympy.Dummy)
             }
         ),
     )
@@ -159,6 +161,7 @@ def linear_slacks(difference: sympy.Expr) -> list[sympy.Dummy]:
             free
             for free in difference.free_symbols
             if isinstance(free, sympy.Dummy)
+            and free.is_nonnegative  # A slack, not the quotient of a divisibility fact
             and cast(sympy.Expr, difference.coeff(free)).is_number
             and (poly := difference.as_poly(free)) is not None
             and poly.degree() == 1
@@ -225,12 +228,23 @@ def eliminate(
             sympy.sympify(side).atoms(sympy.Mod) for side in (relation.lhs, relation.rhs)
         ):
             continue
-        difference = reduced(relation, integers, substitution)
+        kind = relation.kind
+        if kind is RelationKind.DIVIDES:
+            # The multiple equals the divisor times an integer quotient
+            divisor, multiple = (rewritten(side, integers, substitution) for side in (relation.lhs, relation.rhs))
+            if divisor.is_number and multiple.is_number:
+                if not (multiple.is_zero if divisor.is_zero else (multiple / divisor).is_integer):
+                    raise InconsistentAssumptionsError("relations", [f"{relation.lhs} DIVIDES {relation.rhs}"])
+                continue
+            difference = sympy.expand(multiple - divisor * sympy.Dummy("quotient", integer=True))
+            kind = RelationKind.EQ
+        else:
+            difference = reduced(relation, integers, substitution)
         original = with_integers(cast(sympy.Expr, sympy.sympify(relation.rhs - relation.lhs)), integers)
-        if relation.kind is RelationKind.LT and difference.is_integer:
+        if kind is RelationKind.LT and difference.is_integer:
             difference -= 1
             original -= 1
-        if difference.is_negative or (relation.kind is RelationKind.EQ and difference.is_nonzero):
+        if difference.is_negative or (kind is RelationKind.EQ and difference.is_nonzero):
             raise InconsistentAssumptionsError("relations", [f"{relation.lhs} {relation.kind.name} {relation.rhs}"])
         # A relation over slacks only constrains earlier relations; solving it for a slack keeps it, and forgetting
         # that slack's own bound only proves less
@@ -241,7 +255,7 @@ def eliminate(
         coefficient = cast(sympy.Expr, difference.coeff(target))  # numeric, checked by linear_symbols
         slack = (
             sympy.Integer(0)
-            if relation.kind is RelationKind.EQ
+            if kind is RelationKind.EQ
             else sympy.Dummy("slack", integer=difference.is_integer, nonnegative=True)
         )
         if isinstance(slack, sympy.Dummy):
@@ -255,10 +269,14 @@ def eliminate(
     return substitution, slacks, tuple(residuals)
 
 
+def rewritten(expr: sympy.Expr, integers: frozenset[str], substitution: dict[sympy.Symbol, sympy.Expr]) -> sympy.Expr:
+    """``expr`` rewritten through the substitution."""
+    return sympy.expand(with_integers(sympy.sympify(expr), integers).xreplace(substitution))
+
+
 def reduced(relation: Relation, integers: frozenset[str], substitution: dict[sympy.Symbol, sympy.Expr]) -> sympy.Expr:
     """``rhs - lhs`` of the relation, rewritten through the substitution."""
-    difference = with_integers(sympy.sympify(relation.rhs - relation.lhs), integers)
-    return sympy.expand(difference.xreplace(substitution))
+    return rewritten(relation.rhs - relation.lhs, integers, substitution)
 
 
 class DivisionKind(enum.Enum):
@@ -326,6 +344,12 @@ def lowered(
                 for arg in atom.args
             )
             division = Division(division_kind(atom), numerator, denominator)
+            # An exact quotient (and its zero remainder) is the same under C's truncation and Python's rounding; an
+            # exact int_ceil is not, as C computes it as ``(x + y - 1) / y``
+            quotient = cast(sympy.Expr, sympy.cancel(numerator / denominator))
+            if division.kind is not DivisionKind.CEIL and quotient.is_integer:
+                replacements[atom] = quotient if division.kind is DivisionKind.FLOOR else sympy.Integer(0)
+                continue
             placeholder = next((known for known, existing in divisions.items() if existing == division), None)
             if placeholder is None:
                 # The name cannot be a program symbol, so the placeholder never meets the substitution
@@ -393,7 +417,19 @@ def by_cases(expr: sympy.Expr, kind: RelationKind, extremum: sympy.Expr, facts: 
     return truths.pop() if len(truths) == 1 else Truth.UNKNOWN
 
 
+def divides(query: Relation, facts: Facts) -> Truth:
+    """Whether ``lhs`` divides ``rhs``: true when their quotient is an integer under the facts."""
+    divisor, multiple = (rewritten(side, facts.integers, facts.substitution) for side in (query.lhs, query.rhs))
+    if divisor.is_zero:
+        return ask(Relation(RelationKind.EQ, query.rhs, sympy.Integer(0)), facts)
+    if cast(sympy.Expr, sympy.cancel(multiple / divisor)).is_integer:
+        return Truth.TRUE
+    return Truth.FALSE if divisor.is_number and multiple.is_number else Truth.UNKNOWN
+
+
 def ask(query: Relation, facts: Facts) -> Truth:
+    if query.kind is RelationKind.DIVIDES:
+        return divides(query, facts)
     expr = cast(sympy.Expr, sympy.sympify(query.rhs - query.lhs))
     extrema = sorted(expr.atoms(sympy.Min, sympy.Max), key=str)
     if extrema:
