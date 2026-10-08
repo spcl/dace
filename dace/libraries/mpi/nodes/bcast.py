@@ -3,11 +3,10 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, input_descriptor_name
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 @dace.library.expansion

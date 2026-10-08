@@ -7,9 +7,8 @@ import dace.sdfg.nodes
 from dace import dtypes
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import environments
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 @dace.library.expansion

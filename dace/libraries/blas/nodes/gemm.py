@@ -10,12 +10,11 @@ from dace import SDFG, SDFGState, dtypes, properties
 from dace import data as dt
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import environments
 from dace.libraries.blas.blas_helpers import check_access, dtype_to_cudadatatype, to_blastype, to_cublas_computetype
 from dace.libraries.blas.nodes.matmul import _get_codegen_gemm_opts, _get_matmul_operands
 from dace.symbolic import equal, equal_valued, symstr
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 def _is_complex(dtype):

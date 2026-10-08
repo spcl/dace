@@ -8,10 +8,8 @@ import dace.sdfg.nodes
 from dace import SDFG, SDFGState, dtypes
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import blas_helpers
+from dace.libraries.blas import blas_helpers, environments
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 @dace.library.expansion

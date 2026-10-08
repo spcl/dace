@@ -2,6 +2,7 @@
 import dace.library
 import dace.sdfg.nodes
 from dace import dtypes
+from dace.libraries.mpi import environments
 from dace.libraries.mpi.nodes.node import (
     MPINode,
     expanded_input_connectors,
@@ -9,8 +10,6 @@ from dace.libraries.mpi.nodes.node import (
     validate_integer_descriptor,
 )
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 @dace.library.expansion

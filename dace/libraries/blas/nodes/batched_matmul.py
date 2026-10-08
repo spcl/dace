@@ -8,6 +8,7 @@ from dace import data as dt
 from dace import dtypes, properties
 from dace import memlet as mm
 from dace.frontend.common import op_repository as oprepo
+from dace.libraries.blas import environments
 from dace.libraries.blas.blas_helpers import (
     check_access,
     check_one_device,
@@ -18,8 +19,6 @@ from dace.libraries.blas.blas_helpers import (
 from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
 from dace.symbolic import equal, symstr
 from dace.transformation.transformation import ExpandTransformation
-
-from .. import environments
 
 
 @dace.library.expansion
