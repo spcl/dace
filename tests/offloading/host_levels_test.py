@@ -102,10 +102,10 @@ def test_a_nested_host_level_computes_what_numpy_computes():
 
 
 def body_reading_a_device_element_on_the_host() -> dace.SDFG:
-    """``A`` handed over in device memory; ``A[0]`` bound to the scalar connector ``s`` of a nested SDFG whose
-    host loop adds ``s`` to every ``out[i]``."""
+    """``A`` handed over in device memory and bound whole to ``s`` of a nested SDFG whose host loop adds ``s[0]``
+    to every ``out[i]``."""
     body = dace.SDFG("add_on_the_host")
-    body.add_scalar("s", dace.float64)
+    body.add_array("s", [8], dace.float64)
     body.add_array("out", [8], dace.float64)
     loop = dace.sdfg.state.LoopRegion("over_out", "i < 8", "i", "i = 0", "i = i + 1")
     body.add_node(loop, is_start_block=True)
@@ -120,7 +120,7 @@ def body_reading_a_device_element_on_the_host() -> dace.SDFG:
     sdfg.add_array("out", [8], dace.float64)
     state = sdfg.add_state("call")
     call = state.add_nested_sdfg(body, {"s": None, "out": None}, {"out": None})
-    state.add_edge(state.add_read("A"), None, call, "s", dace.Memlet("A[0]"))
+    state.add_edge(state.add_read("A"), None, call, "s", dace.Memlet("A[0:8]"))
     state.add_edge(state.add_read("out"), None, call, "out", dace.Memlet("out[0:8]"))
     state.add_edge(call, "out", state.add_write("out"), None, dace.Memlet("out[0:8]"))
     sdfg.validate()
@@ -130,7 +130,7 @@ def body_reading_a_device_element_on_the_host() -> dace.SDFG:
 
 
 def test_a_device_element_a_body_reads_on_the_host_is_staged_on_the_host():
-    """npbench azimint_hist: a scalar connector bound to device memory and read by host code in the body."""
+    """npbench azimint_hist: an element of device memory read by host code in the body."""
     sdfg = body_reading_a_device_element_on_the_host()
     ppl.Pipeline([OffloadToAccelerator()]).apply_pass(sdfg, {})
     sdfg.validate()
