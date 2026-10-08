@@ -7,7 +7,9 @@ import copy
 import os
 import sympy
 import sys
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union, TYPE_CHECKING
+import types as pytypes
+from typing import Any, Dict, ForwardRef, List, Optional, Set, Tuple, Union, TYPE_CHECKING
+from collections.abc import Callable, Sequence
 from typing import get_origin, get_args
 import warnings
 
@@ -226,7 +228,9 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Keep a set of compile-time arguments to ignore
         self.constant_args = set(
-            pname for pname, pval in self.signature.parameters.items() if pval.annotation is dtypes.compiletime
+            pname
+            for pname, pval in self.signature.parameters.items()
+            if self._evaluate_annotation(pval.annotation) is dtypes.compiletime
         )
 
         if self.argnames is None:
@@ -560,14 +564,46 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg
 
-    def _evaluate_annotation(self, ann):
-        try:
-            return eval(ann.__forward_arg__, self.global_vars)
-        except AttributeError:
+    def _evaluate_annotation(self, ann: Any) -> Any:
+        """
+        Evaluates a string annotation (e.g., from ``from __future__ import annotations``) or a forward reference
+        (e.g., ``Optional["dace.float64[N]"]``) in the program's global scope.
+
+        :param ann: The annotation to evaluate.
+        :return: The evaluated annotation, the annotation itself if it is neither a string nor a forward reference,
+                 or ``inspect.Parameter.empty`` if evaluation failed.
+        """
+        if isinstance(ann, str):
+            expr = ann
+        elif isinstance(ann, ForwardRef):
+            expr = ann.__forward_arg__
+        else:
             return ann
+        try:
+            return eval(expr, self.global_vars)
         except:
-            # Evaluating arbitrary code - anything can happen. Good luck.
-            return dtypes.compiletime
+            # Evaluating arbitrary code - anything can happen. Treat as an unannotated argument.
+            return inspect.Parameter.empty
+
+    @staticmethod
+    def _split_optional_annotation(ann: Any) -> tuple[Any, bool]:
+        """
+        Splits a union type hint (``Optional[T]``, ``Union[T, None]``, ``T | None``) into its non-None type.
+
+        :param ann: The type hint.
+        :return: A 2-tuple of the type hint without ``None`` and whether ``None`` was part of the union.
+        :raises SyntaxError: If the union contains more than one type that is not ``None``.
+        """
+        if get_origin(ann) not in (Union, pytypes.UnionType):
+            return ann, False
+        hint_args = get_args(ann)
+        non_none_args = [arg for arg in hint_args if arg is not type(None)]
+        if len(non_none_args) != 1:
+            raise SyntaxError(
+                f"Unsupported type hint {ann}. Union type hints may only contain a single data type and None, "
+                "e.g., Optional[T], Union[T, None], or T | None."
+            )
+        return non_none_args[0], len(non_none_args) < len(hint_args)
 
     def _get_type_annotations(
         self, given_args: Tuple[Any], given_kwargs: Dict[str, Any]
@@ -599,7 +635,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 # Skip "self" argument
                 continue
 
-            ann = sig_arg.annotation
+            ann = self._evaluate_annotation(sig_arg.annotation)
             if self.ignore_type_hints:
                 ann = inspect._empty
 
@@ -653,29 +689,11 @@ class DaceProgram(pycommon.SDFGConvertible):
                         curarg = ann
 
                     try:
-                        # If annotation specifies a union, ensure it consists of only one type and NoneType
-                        if get_origin(ann) is Union:
-                            hint_args = get_args(ann)
-                            if len(hint_args) == 1:
-                                ann = hint_args[0]
-                            else:
-                                # Check for invalid Union type hints
-                                if (
-                                    len(hint_args) > 2
-                                    or len(hint_args) == 0
-                                    or (hint_args[0] is not type(None) and hint_args[1] is not type(None))
-                                ):
-                                    raise SyntaxError(
-                                        f'Argument "{aname}" can only have a type hint that can create a '
-                                        "data descriptor or use the Optional[T] or Union[T, None] type hints."
-                                    )
-                                # Set the annotation to be the not-None value, and the data descriptor to be optional
-                                ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
-                                is_optional = True
-
-                            if not is_constant:  # Reset curarg
-                                curarg = ann
+                        # If annotation specifies a union, use the not-None type and make the data descriptor optional
+                        ann, is_optional = self._split_optional_annotation(ann)
                         ann = self._evaluate_annotation(ann)
+                        if not is_constant:  # Reset curarg
+                            curarg = None if _is_empty(ann) else ann
 
                         # If annotation specifies to skip its data descriptor and favor JIT types
                         if create_datadescriptor(ann) is None:
@@ -759,7 +777,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                     types[aname].optional = True
 
         # Set __return* arrays from return type annotations
-        rettype = self.signature.return_annotation
+        rettype = self._evaluate_annotation(self.signature.return_annotation)
         if not self.ignore_type_hints and not _is_empty(rettype):
             if isinstance(rettype, tuple):
                 for i, subrettype in enumerate(rettype):
