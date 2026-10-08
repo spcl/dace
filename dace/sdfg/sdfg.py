@@ -1163,8 +1163,21 @@ class SDFG(ControlFlowRegion):
         self._symbol_repo.add_relation(relation)
 
     def facts(self) -> symbolic.Facts:
-        """The facts assumed about this SDFG's symbols, for explicit use in proofs."""
-        return self._symbol_repo.facts()
+        """The facts assumed about this SDFG's symbols, and that a symbol a data descriptor's dimension is equal to is
+        nonnegative, for explicit use in proofs."""
+        own = self._symbol_repo.facts()
+        extents = sorted(
+            {
+                dim.name
+                for desc in self._arrays.values()
+                for dim in getattr(desc, "shape", ())
+                if isinstance(dim, symbolic.symbol) and dim.name in self.symbols
+            }
+        )
+        if not extents:
+            return own
+        nonnegative = [symbolic.predicate_relation(symbolic.Predicate.NONNEGATIVE, symbolic.symbol(n)) for n in extents]
+        return symbolic.Facts((*own.relations, *nonnegative), own.integers)
 
     @property
     def symbol_repo(self) -> SymbolRepo:
@@ -2492,13 +2505,7 @@ class SDFG(ControlFlowRegion):
             scoped = scope_bound_names(sdfg) | bound_names
             scoped.update(name for edge in sdfg.all_interstate_edges() for name in edge.data.assignments)
             # Declared by name only: a symbol object inside an expression may be any symbol of that name (SymPy caches
-            # by name), so its own declaration is not this SDFG's. A dimension that is a single symbol is an extent,
-            # so that symbol is nonnegative; an undefined symbol is a placeholder with no facts.
-            extents = {
-                str(dim)
-                for dim in getattr(desc, "shape", ())
-                if isinstance(dim, symbolic.symbol) and not isinstance(dim, symbolic.UndefinedSymbol)
-            }
+            # by name), so its own declaration is not this SDFG's
             for sym in sorted(desc.free_symbols, key=str):
                 if (
                     isinstance(sym, symbolic.symbol)
@@ -2506,11 +2513,7 @@ class SDFG(ControlFlowRegion):
                     and sym.name not in sdfg.arg_names
                     and sym.name not in scoped
                 ):
-                    sdfg.add_symbol(
-                        sym.name,
-                        symbolic.DEFAULT_SYMBOL_TYPE,
-                        predicates=frozenset({symbolic.Predicate.NONNEGATIVE}) if sym.name in extents else frozenset(),
-                    )
+                    sdfg.add_symbol(sym.name, symbolic.DEFAULT_SYMBOL_TYPE)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import cast
 
+import pytest
 import sympy
 
 import dace
@@ -78,6 +79,29 @@ def test_nested_sdfg_inherits_outer_ranges_through_its_symbol_mapping():
     assert symbolic.ask(le("0", "k"), SymbolResolver().facts_at(inner_state)) is symbolic.Truth.TRUE
 
 
+def nested_with_positive_k(mapped: str) -> dace.SDFG:
+    outer = dace.SDFG("assumed_outer")
+    outer.add_symbol("N", dace.int64)
+    state = outer.add_state(is_start_block=True)
+    inner = dace.SDFG("assumed_inner")
+    inner.add_symbol("k", dace.int64, predicates=frozenset({symbolic.Predicate.POSITIVE}))
+    inner.add_state(is_start_block=True)
+    entry, exit_node = state.add_map("m", {"j": "0:N"})
+    nsdfg = state.add_nested_sdfg(inner, {}, {}, symbol_mapping={"k": mapped})
+    state.add_nedge(entry, nsdfg, dace.Memlet())
+    state.add_nedge(nsdfg, exit_node, dace.Memlet())
+    return outer
+
+
+def test_nested_sdfg_assumption_provable_from_the_mapping_is_valid():
+    nested_with_positive_k("j + 1").validate()
+
+
+def test_nested_sdfg_assumption_unprovable_from_the_mapping_is_invalid():
+    with pytest.raises(dace.sdfg.InvalidSDFGError, match="not provable"):
+        nested_with_positive_k("j").validate()
+
+
 def test_unsigned_symbol_is_nonnegative():
     sdfg = dace.SDFG("facts_at_unsigned")
     sdfg.add_symbol("U", dace.uint32)
@@ -91,4 +115,6 @@ if __name__ == "__main__":
     test_map_entry_does_not_know_its_own_parameter_range()
     test_step_of_unknown_sign_gives_no_range()
     test_nested_sdfg_inherits_outer_ranges_through_its_symbol_mapping()
+    test_nested_sdfg_assumption_provable_from_the_mapping_is_valid()
+    test_nested_sdfg_assumption_unprovable_from_the_mapping_is_invalid()
     test_unsigned_symbol_is_nonnegative()

@@ -955,6 +955,7 @@ class NestedSDFG(CodeNode):
             undeclared_symbols = sorted(s for s in symbols if s not in self.sdfg.symbols)
             if undeclared_symbols:
                 raise ValueError(f"Symbols {undeclared_symbols} are mapped into the nested SDFG but not declared in it")
+            self.validate_assumed_facts(state)
 
             # The shapes of connector descriptors are not "used" by the nested SDFG, but they are given by the mapping
             symbols |= connector_symbols
@@ -965,6 +966,34 @@ class NestedSDFG(CodeNode):
 
             # Recursively validate nested SDFG
             self.sdfg.validate(references, **context)
+
+    def validate_assumed_facts(self, state: "dace.sdfg.SDFGState") -> None:
+        """Raises if a predicate or relation the nested SDFG assumes about its mapped symbols is not provable, under the
+        facts at this node, for the values the node maps them to."""
+        # Avoid import loop
+        from dace.sdfg.state import SymbolResolver
+
+        params = self.sdfg.symbol_repo.params
+        assumed = [
+            dace.symbolic.predicate_relation(predicate, dace.symbolic.symbol(name))
+            for name, predicates in params.predicates.items()
+            for predicate in sorted(predicates, key=lambda p: p.name)
+        ]
+        mapped = {name: pystr_to_symbolic(value) for name, value in self.symbol_mapping.items()}
+        checked = [r for r in [*assumed, *params.relations] if dace.symbolic.relation_names(r) <= mapped.keys()]
+        if not checked:
+            return
+        facts = SymbolResolver().facts_at(state, self)
+        for relation in checked:
+            outer = dace.symbolic.Relation(
+                relation.kind,
+                dace.symbolic.replace_symbols(relation.lhs, mapped),
+                dace.symbolic.replace_symbols(relation.rhs, mapped),
+            )
+            if dace.symbolic.ask(outer, facts) is not dace.symbolic.Truth.TRUE:
+                raise ValueError(
+                    f"{self.label} assumes {relation}, which is not provable for the mapped values {outer}"
+                )
 
 
 # ------------------------------------------------------------------------------
