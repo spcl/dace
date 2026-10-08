@@ -5012,6 +5012,18 @@ def free_symbol_like(expr: Any, sym: Any) -> sympy.Symbol | None:
     return matches[0] if len(matches) == 1 else min(matches, key=structural_repr)
 
 
+def affine_coefficients(expr: Any, sym: Any) -> Tuple[Any, Any] | None:
+    """``(a, b)`` with ``expr == a*sym + b`` and neither depending on `sym` (matched by name), else ``None``."""
+    expr = pystr_to_symbolic(expr)
+    var = free_symbol_like(expr, pystr_to_symbolic(sym))
+    if var is None:
+        return sympy.Integer(0), expr
+    lead, const = expr.coeff(var, 1), expr.coeff(var, 0)
+    if var in lead.free_symbols or simplify(expr - (lead * var + const)) != 0:
+        return None
+    return lead, const
+
+
 def symbol_merge_key(sym: Any) -> tuple[int, str, str]:
     """Total order over same-named symbol instances, smallest = the one to keep.
 
