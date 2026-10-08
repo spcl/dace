@@ -3785,6 +3785,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 if count is None:
                     continue
                 length = written_span(desc, oedge.data.get_dst_subset(oedge, state), count)
+                # A section sized by the iteration space costs every thread a copy of it (scatter_accum_dup's
+                # ``bins[ip[i]] += src[i]``: 96 copies of ``LEN_1D`` doubles past any memory cap); atomics instead.
+                if symbolic.symlist(length).keys() & map_entry.map.range.free_symbols:
+                    continue
                 clause_target = "%s[0:%s]" % (var_name, cpp.sym2cpp(length))
                 whole_targets[oedge.dst.data] = "%s[0:%s]" % (var_name, cpp.sym2cpp(count))
             else:

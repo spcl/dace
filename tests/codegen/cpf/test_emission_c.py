@@ -1263,6 +1263,28 @@ def test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_i
     assert_matches({"y": np.fft.fft(x), "z": np.fft.ifft(np.fft.fft(x))}, {"y": y, "z": z}, name)
 
 
+@dace.program
+def c_scatter_accumulate(bins: dace.float64[N], src: dace.float64[N], ip: dace.int32[N]):
+    for i in dace.map[0:N]:
+        bins[ip[i]] += src[i]
+
+
+def test_a_scatter_sized_by_its_iteration_space_takes_atomics_not_an_array_reduction():
+    """scatter_accum_dup: an array-section reduction over ``bins[0:N]`` gives every thread a private ``N``-element
+    copy, which crashed at the benchmark size under its memory cap; such a section takes atomics."""
+    name = "cpf_c_scatter_accumulate"
+    sdfg, code = render_c_array_reductions(c_scatter_accumulate, name)
+    assert "reduction(+:bins" not in code and "#pragma omp atomic" in code, code
+    n = 64
+    rng = np.random.default_rng(5)
+    src, ip = rng.random(n), rng.integers(0, n // 4, n).astype(np.int32)
+    bins = np.zeros(n)
+    expected = bins.copy()
+    np.add.at(expected, ip, src)
+    run_c(sdfg, code, {"bins": bins, "src": src, "ip": ip, "N": n}, name)
+    assert_matches({"bins": expected}, {"bins": bins}, name)
+
+
 if __name__ == "__main__":
     test_entry_point_has_no_language_linkage()
     test_two_dimensional_index_helper_carries_the_stride()
@@ -1336,3 +1358,4 @@ if __name__ == "__main__":
     test_a_tasklet_call_on_a_symbol_an_interstate_edge_binds_is_typed_in_c()
     test_a_dynamic_scalar_read_binds_by_value_in_c()
     test_the_pure_dft_types_its_local_across_statements_and_builds_its_twiddle_in_c()
+    test_a_scatter_sized_by_its_iteration_space_takes_atomics_not_an_array_reduction()
