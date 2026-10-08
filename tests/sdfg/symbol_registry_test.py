@@ -1,5 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import json
+import pathlib
+import re
 
 import pytest
 import sympy
@@ -199,6 +201,18 @@ def test_descriptor_sized_by_a_map_parameter_does_not_register_it():
     assert "j" not in sdfg.symbols
 
 
+def test_only_the_frontend_boundary_reads_symbol_declarations():
+    """A symbol object's declaration is read where a user's symbol enters; everything else asks the SDFG."""
+    root = pathlib.Path(dace.__file__).parent
+    boundary = {"symbolic.py", "sdfg/sdfg.py", "sdfg/type_inference.py", "data/core.py", "data/creation.py"}
+    readers = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if re.search(r"\.declaration\b", path.read_text(encoding="utf-8"))
+    }
+    assert {r for r in readers if not r.startswith("frontend/python/")} <= boundary
+
+
 if __name__ == "__main__":
     test_loop_variable_cannot_be_added_as_symbol()
     test_frontend_loop_iterators_are_not_symbols()
@@ -219,3 +233,4 @@ if __name__ == "__main__":
     test_json_round_trip_keeps_facts()
     test_sdfg_without_facts_serializes_no_fact_keys()
     test_validation_rejects_facts_on_undeclared_symbols()
+    test_only_the_frontend_boundary_reads_symbol_declarations()
