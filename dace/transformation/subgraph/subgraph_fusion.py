@@ -117,14 +117,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for map in maps:
             if map.get_param_num() != base_map.get_param_num():
                 return False
-            if not all([p1 == p2 for (p1, p2) in zip(map.params, base_map.params)]):
+            if not all(p1 == p2 for (p1, p2) in zip(map.params, base_map.params)):
                 return False
             if not map.range == base_map.range:
                 return False
 
         # 1.3 check whether all map entries have the same schedule
         schedule = map_entries[0].schedule
-        if not all([entry.schedule == schedule for entry in map_entries]):
+        if not all(entry.schedule == schedule for entry in map_entries):
             return False
 
         # 2. check intermediate feasiblility
@@ -173,8 +173,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # this edge or further up in the memlet path. If not,
                     # we can still fuse!
                     in_in_edge = graph.memlet_path(in_edge)[-2]
-                    subset_params = set([str(s) for s in in_in_edge.data.subset.free_symbols])
-                    if any([p not in subset_params for p in in_edge.src.map.params]):
+                    subset_params = {str(s) for s in in_in_edge.data.subset.free_symbols}
+                    if any(p not in subset_params for p in in_edge.src.map.params):
                         return False
                 if in_edge.src in map_exits:
                     for iedge in graph.in_edges(in_edge.src):
@@ -234,9 +234,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # 2.4 Check for WCRs in out nodes: If there is one, the corresponding
         # data must never be accessed anywhere else
-        intermediate_data = set([n.data for n in intermediate_nodes])
-        in_data = set([n.data for n in in_nodes if isinstance(n, nodes.AccessNode)])
-        out_data = set([n.data for n in out_nodes if isinstance(n, nodes.AccessNode)])
+        intermediate_data = {n.data for n in intermediate_nodes}
+        in_data = {n.data for n in in_nodes if isinstance(n, nodes.AccessNode)}
+        out_data = {n.data for n in out_nodes if isinstance(n, nodes.AccessNode)}
 
         view_nodes = set()
         for node in chain(in_nodes, out_nodes, intermediate_nodes):
@@ -253,7 +253,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         ):
                             view_nodes.add(e.src)
 
-        view_data = set([n.data for n in view_nodes])
+        view_data = {n.data for n in view_nodes}
 
         for out_node in out_nodes:
             for in_edge in graph.in_edges(out_node):
@@ -292,7 +292,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     container_dict[node.data].append(node)
 
             # Check for read/write dependencies between input and output nodes
-            outputs = set(n.data for n in out_nodes)
+            outputs = {n.data for n in out_nodes}
             from dace.transformation.interstate import StateFusion
 
             for node in in_nodes:
@@ -546,7 +546,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 variant_dimensions.add(idx)
                         assert other_subset.dims() == subset_length
 
-        invariant_dimensions = set([i for i in range(subset_length)]) - variant_dimensions
+        invariant_dimensions = set(range(subset_length)) - variant_dimensions
         return invariant_dimensions
 
     def copy_edge(
@@ -679,7 +679,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         data_counter = defaultdict(int)
         data_counter_subgraph = defaultdict(int)
 
-        data_intermediate = set([node.data for node in intermediate_nodes])
+        data_intermediate = {node.data for node in intermediate_nodes}
 
         # do a full global search and count each data from each intermediate node
         scope_dict = graph.scope_dict()
@@ -1073,7 +1073,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             if storage is not None:
                 transient_array.storage = storage
 
-        data_intermediate = set([node.data for node in intermediate_nodes])
+        data_intermediate = {node.data for node in intermediate_nodes}
         for data_name in data_intermediate:
             if subgraph_contains_data[data_name] and isinstance(sdfg.data(data_name), dace.data.Array):
                 all_nodes = [n for n in intermediate_nodes if n.data == data_name]
@@ -1222,8 +1222,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # NOTE: Currently limited to intermediate data that do not have a separate output node
 
         # Filter out outputs
-        output_data = set([n.data for n in out_nodes])
-        true_intermediate_nodes = set([n for n in intermediate_nodes if n.data not in output_data])
+        output_data = {n.data for n in out_nodes}
+        true_intermediate_nodes = {n for n in intermediate_nodes if n.data not in output_data}
 
         # Sort intermediate nodes by data name
         intermediate_data = dict()

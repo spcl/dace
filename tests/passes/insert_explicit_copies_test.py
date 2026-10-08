@@ -936,7 +936,7 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
     sdfg_ref = program.to_sdfg(simplify=True)
     ref_exe = sdfg_ref.compile()
     ref_arrays = init_fn(**sizes)
-    ref_exe(**{k: v for k, v in ref_arrays.items()}, **sizes)
+    ref_exe(**dict(ref_arrays.items()), **sizes)
     ref_values = {k: ref_arrays[k].copy() for k in check_arrays}
 
     sdfg_pass = _copy.deepcopy(sdfg_ref)
@@ -945,7 +945,7 @@ def _run_and_compare(program, init_fn, check_arrays, sizes, name):
     sdfg_pass.expand_library_nodes()
     pass_exe = sdfg_pass.compile()
     pass_arrays = init_fn(**sizes)
-    pass_exe(**{k: v for k, v in pass_arrays.items()}, **sizes)
+    pass_exe(**dict(pass_arrays.items()), **sizes)
 
     for arr_name in check_arrays:
         np.testing.assert_allclose(

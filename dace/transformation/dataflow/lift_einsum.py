@@ -45,7 +45,7 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             if memlet.volume != 1 or memlet.subset.num_elements() != 1:
                 return False
-            ind = set(str(rb) for rb, _, _ in memlet.subset.ndrange())
+            ind = {str(rb) for rb, _, _ in memlet.subset.ndrange()}
             unique_chars |= ind
             if any(i != "0" and i not in self.map_entry.map.params for i in ind):
                 return False

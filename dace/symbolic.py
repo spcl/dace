@@ -2974,7 +2974,7 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> bool | No
             if isinstance(atom, UndefinedSymbol):
                 return None
 
-    if any([args is None for args in args]):
+    if any(args is None for args in args):
         return False
 
     facts = []

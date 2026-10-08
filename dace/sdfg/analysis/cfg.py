@@ -65,7 +65,7 @@ def all_dominators(
     tc = nx.transitive_closure_dag(g)
     alldoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = {cfg.start_block: set()}
     for node in tc:
-        alldoms[node] = set(dst for _, dst in tc.out_edges(node))
+        alldoms[node] = {dst for _, dst in tc.out_edges(node)}
 
     return alldoms
 
@@ -100,7 +100,7 @@ def all_postdominators(
     tc = nx.transitive_closure_dag(g)
     all_postdoms: dict[ControlFlowBlock, set[ControlFlowBlock]] = defaultdict(set)
     for node in tc:
-        all_postdoms[node] = set(dst for _, dst in tc.out_edges(node))
+        all_postdoms[node] = {dst for _, dst in tc.out_edges(node)}
 
     if remove_sink:
         cfg.remove_node(sink)

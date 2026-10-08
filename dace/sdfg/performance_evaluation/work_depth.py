@@ -348,7 +348,7 @@ _TYPECAST_NAMES = {"int", "float", "complex", "bool", "double"} | {
 _TYPECAST_NAMES |= {f"dace.{name}" for name in _TYPECAST_NAMES}
 
 PYFUNC_TO_ARITHMETICS = {
-    **{name: 0 for name in _TYPECAST_NAMES},
+    **dict.fromkeys(_TYPECAST_NAMES, 0),
     # Transcendental intrinsics each count as one realised operation (np.* and math.* both lower to
     # the bare C name in tasklet code); a user wanting hardware flop counts overrides these.
     "math.exp": 1,

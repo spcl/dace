@@ -11,7 +11,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 
 
 def get_missing_arguments_message(function_name, missing_arguments, argument_type):
-    names = list(map(lambda x: "'" + x + "'", missing_arguments))
+    names = ["'" + x + "'" for x in missing_arguments]
 
     if len(missing_arguments) == 1:
         arglist = names[0]

@@ -227,10 +227,10 @@ def _generate_and_transform_sdfg():
 def test_const_utilities_case_non_const_input_not_present_in_output():
     _, transformed_sdfg, original_state, transformed_state = _generate_and_transform_sdfg()
 
-    all_data_names = set(node.data for node in original_state.data_nodes())
-    transformed_sdfg_tmp_names = set(
+    all_data_names = {node.data for node in original_state.data_nodes()}
+    transformed_sdfg_tmp_names = {
         node.data for node in transformed_state.data_nodes() if transformed_sdfg.arrays[node.data].transient
-    )
+    }
     # Original state tests
     _check_map_entries(
         original_state, True, False, dace.dtypes.ScheduleType.GPU_Device, all_data_names - {"C"}, {"i", "N"}

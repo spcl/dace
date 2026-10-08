@@ -113,7 +113,7 @@ def _store_data(
     shape: list[int] = list(bwd_generator.sdfg.arrays[forward_an.data].shape)
 
     # If the shape is an expression:
-    free_symbols_dict = {sym: None for sym in bwd_generator.sdfg.free_symbols}
+    free_symbols_dict = dict.fromkeys(bwd_generator.sdfg.free_symbols)
     if any(symbolic.issymbolic(s, free_symbols_dict) for s in shape):
         # Otherwise, replace all the loop dependent allocations with the max length of the loop
         # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)

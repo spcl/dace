@@ -472,7 +472,7 @@ class SVECodeGen(TargetCodeGenerator):
         if len(current_map.params) > 1:
             raise util.NotSupportedError("SVE map must be one dimensional")
 
-        loop_types = list(set([util.get_base_type(sdfg.arrays[a].dtype) for a in sdfg.arrays]))
+        loop_types = list({util.get_base_type(sdfg.arrays[a].dtype) for a in sdfg.arrays})
 
         # Edge case if no arrays are used
         loop_type = loop_types[0] if len(loop_types) > 0 else dace.int64

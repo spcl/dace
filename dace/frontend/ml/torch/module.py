@@ -375,7 +375,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
                 # save the parameters as they are now for later access
                 self._exported_parameters = dict(
-                    (n, p) for n, p in itertools.chain(self.model.named_parameters(), self.model.named_buffers())
+                    itertools.chain(self.model.named_parameters(), self.model.named_buffers())
                 )
 
                 _onnx_delete_initializers(onnx_model_exported, input_names)

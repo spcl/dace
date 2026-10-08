@@ -237,7 +237,7 @@ class ConstantPropagation(ppl.Pass):
         if self.recursive:
             # Change result to set of tuples
             sid = sdfg.cfg_id
-            result = set((sid, sym) for sym in result) | nested_result
+            result = {(sid, sym) for sym in result} | nested_result
 
         # Return result
         if not result:

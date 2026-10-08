@@ -22,7 +22,7 @@ def find_map_entry(sdfg: dace.SDFG, map_name_list: list[str]) -> tuple[dace.sdfg
                     if map_name == node.map.params[0]:
                         ret_list[i] = node
     # check if all map entries are found
-    assert all([x is not None for x in ret_list])
+    assert all(x is not None for x in ret_list)
 
     # unpack if only one map entry is found
     if len(ret_list) == 1:

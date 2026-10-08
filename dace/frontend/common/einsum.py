@@ -280,7 +280,7 @@ def _create_einsum_internal(
     input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
 
     # Get output shape from chardict, or [1] for a scalar output
-    output_shape = list(map(lambda k: chardict[k], einsum.output)) or [1]
+    output_shape = [chardict[k] for k in einsum.output] or [1]
     output_index = ",".join(o for o in einsum.output) or "0"
 
     if output is None:

@@ -47,9 +47,9 @@ class ReferenceToView(ppl.Pass):
             return None
 
         # Filter out multi-source references and tasklet-set references
-        candidates = set(
+        candidates = {
             k for k, v in reference_sources.items() if len(v) == 1 and not isinstance(next(iter(v)), nodes.CodeNode)
-        )
+        }
 
         refsets = self.find_refsets(candidates, access_states)
 

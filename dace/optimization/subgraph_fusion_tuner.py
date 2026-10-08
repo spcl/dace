@@ -76,7 +76,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         yield 0, []
 
         for i, (subgraph, score) in enumerate(subgraphs):
-            yield i + 1, list(map(lambda m: cutout.start_state.node_id(m), subgraph))
+            yield i + 1, [cutout.start_state.node_id(m) for m in subgraph]
 
     def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
         cutout.start_state.instrument = self.instrument
@@ -146,7 +146,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
             subgraph_patterns.append(pattern_desc)
 
-        subgraph_patterns = [dict(s) for s in set(frozenset(d.items()) for d in subgraph_patterns)]
+        subgraph_patterns = [dict(s) for s in {frozenset(d.items()) for d in subgraph_patterns}]
         subgraph_patterns = [Counter(s) for s in subgraph_patterns]
 
         return subgraph_patterns
@@ -246,13 +246,13 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         # Apply
                         experiment_sdfg_ = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                         experiment_state_ = experiment_sdfg_.start_state
-                        experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
+                        experiment_maps_ids = [experiment_state_.node_id(me) for me in subgraph_maps]
 
                         # Unnecessary?
                         experiment_sdfg = copy.deepcopy(experiment_sdfg_)
                         experiment_state = experiment_sdfg.start_state
 
-                        experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
+                        experiment_maps = [experiment_state.node(m_id) for m_id in experiment_maps_ids]
                         experiment_subgraph = helpers.subgraph_from_maps(
                             sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps
                         )
@@ -307,7 +307,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:
         tasklets = filter(
-            lambda node: isinstance(node, dace.nodes.Tasklet), map(lambda edge: edge.dst, state.out_edges(map_entry))
+            lambda node: isinstance(node, dace.nodes.Tasklet), (edge.dst for edge in state.out_edges(map_entry))
         )
         tasklets = set(tasklets)
 

@@ -1265,7 +1265,7 @@ def _attach_view_edges(state: SDFGState, node: nd.AccessNode, viewed: str, subse
         for e in [e for e in state.out_edges(node) if e.data.is_empty()]:
             state.remove_edge(e)
             state.add_edge(viewed_node, None, e.dst, e.dst_conn, e.data)
-        read_edges = [e for e in state.out_edges(node)]
+        read_edges = list(state.out_edges(node))
         node.add_out_connector("views", force=True)
         state.add_edge(node, "views", viewed_node, None, mm.Memlet(data=viewed, subset=copy.deepcopy(subset)))
         if not is_read:
@@ -1521,7 +1521,7 @@ def local_transients(sdfg, dfg, entry_node, include_nested=False):
         current_scope = current_scope.parent
         defined_transients.update(_transients_in_scope(sdfg, current_scope, scope_children, False))
 
-    return sorted(list(transients - defined_transients))
+    return sorted(transients - defined_transients)
 
 
 def trace_nested_access(
@@ -2297,7 +2297,7 @@ def get_thread_local_data(sdfg: SDFG) -> list[str]:
     """
     # NOTE: We could exclude non-transient data here, but it is interesting to see if we find any non-transient data
     # only inside a Map.
-    data_to_check = {name: None for name in sdfg.arrays.keys()}
+    data_to_check = dict.fromkeys(sdfg.arrays.keys())
     for state in sdfg.nodes():
         scope_dict = state.scope_dict()
         for node in state.nodes():
@@ -2574,7 +2574,7 @@ def get_constant_data(
     """
 
     def _incoming_memlet(state: SDFGState, node: nd.AccessNode) -> bool:
-        return state.in_degree(node) > 0 and any([e.data is not None for e in state.in_edges(node)])
+        return state.in_degree(node) > 0 and any(e.data is not None for e in state.in_edges(node))
 
     if isinstance(scope, (SDFGState, ControlFlowRegion)):
         read_data, write_data = scope.read_and_write_sets()

@@ -524,7 +524,7 @@ class SymbolPropagation(ppl.Pass):
                 self._combine_syms(new_out_syms, out_syms[b])
 
             # Without an else branch, the incoming table is the implicit else.
-            has_non_conds = any([c is None for c, _ in cfg_blk.branches])
+            has_non_conds = any(c is None for c, _ in cfg_blk.branches)
             if not has_non_conds:
                 self._combine_syms(new_out_syms, in_syms[cfg_blk])
 

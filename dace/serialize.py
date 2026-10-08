@@ -300,7 +300,7 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
 
     remaining_properties = source_properties - ignore_properties
     # Ignore all metadata "properties" saved for editing
-    remaining_properties = set(prop for prop in remaining_properties if not prop.startswith("_meta"))
+    remaining_properties = {prop for prop in remaining_properties if not prop.startswith("_meta")}
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
         warnings.warn("Unused properties: {}".format(", ".join(sorted(remaining_properties))))

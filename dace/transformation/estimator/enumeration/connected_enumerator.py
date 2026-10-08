@@ -53,7 +53,7 @@ class ConnectedEnumerator(MapScoringEnumerator):
             go_next = list()
             if conditional_eval or self.prune == False or len(current) == 1:
                 go_next = list(
-                    set(m for c in current for m in self._adjacency_list[c] if m not in current and m not in forbidden)
+                    {m for c in current for m in self._adjacency_list[c] if m not in current and m not in forbidden}
                 )
 
                 # for determinism and correctness during pruning
@@ -65,7 +65,7 @@ class ConnectedEnumerator(MapScoringEnumerator):
 
         else:
             # special case at very beginning: explore every node
-            go_next = list(set(m for m in self._adjacency_list.keys()))
+            go_next = list(set(self._adjacency_list.keys()))
             go_next.sort(key=lambda me: self._labels[me])
 
         if len(go_next) > 0:

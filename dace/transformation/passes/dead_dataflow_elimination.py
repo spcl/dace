@@ -90,7 +90,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             writes = access_sets[state][1]
             descendants = reachable[state]
             descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
-            no_longer_used: set[str] = set(data for data in writes if data not in descendant_reads)
+            no_longer_used: set[str] = {data for data in writes if data not in descendant_reads}
 
             # Compute dead nodes
             dead_nodes: list[nodes.Node] = []
@@ -208,15 +208,15 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                         node.sdfg.arrays[conn].transient = True
 
             # Update read sets for the predecessor states to reuse
-            remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
-            remaining_data_containers = set(node.data for node in remaining_access_nodes)
-            removed_data_containers = set(
+            remaining_access_nodes = {n for n in (access_nodes - result[state]) if state.out_degree(n) > 0}
+            remaining_data_containers = {node.data for node in remaining_access_nodes}
+            removed_data_containers = {
                 n.data
                 for n in result[state]
                 if isinstance(n, nodes.AccessNode)
                 and n not in remaining_access_nodes
                 and n.data not in remaining_data_containers
-            )
+            }
             access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
 
         return result or None

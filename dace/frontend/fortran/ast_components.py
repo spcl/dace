@@ -42,7 +42,7 @@ def get_child(node: FASTNode | list[FASTNode], child_type: str | type[T] | list[
 
     elif isinstance(child_type, list):
         if all(isinstance(i, str) for i in child_type):
-            child_types = [i for i in child_type]
+            child_types = list(child_type)
         else:
             child_types = [i.__name__ for i in child_type]
         children_of_type = list(filter(lambda child: child.__class__.__name__ in child_types, children))

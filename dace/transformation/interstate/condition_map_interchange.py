@@ -44,10 +44,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     not isinstance(node, (MapEntry, MapExit))
                     and state.entry_node(node) is None
                     and any(
-                        [
-                            not isinstance(n, (MapEntry, MapExit))
-                            for n in set(state.successors(node)) | set(state.predecessors(node))
-                        ]
+                        not isinstance(n, (MapEntry, MapExit))
+                        for n in set(state.successors(node)) | set(state.predecessors(node))
                     )
                 ):
                     return False

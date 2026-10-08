@@ -464,7 +464,7 @@ class SubgraphView(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         # Is there an inherent reason why the nodes are in the same relative order than
         #  in their source graph. If there is no reason we can even drop the `sorted()`
         #  and store them in a `set`. Note as of Pathon 3.6, `dict` is ordered.
-        self._subgraph_nodes = {n: None for n in sorted(subgraph_nodes, key=lambda n: graph.node_id(n))}
+        self._subgraph_nodes = dict.fromkeys(sorted(subgraph_nodes, key=lambda n: graph.node_id(n)))
 
     def nodes(self) -> list[NodeT]:
         # TODO: The `Graph` interface defines that `nodes()` returns an `Iterable`, but here

@@ -163,7 +163,7 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: list[str], schedule: Sche
 
     # Deal with the inputs: Create tasklet to flip them and connect via memlets
     # for input in inputs:
-    for input in set([*inputs, *outputs]):
+    for input in {*inputs, *outputs}:
         if input in new_order:
             flipped_data = flipped_names_map[input]
             if input in inputs:

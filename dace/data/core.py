@@ -1258,7 +1258,7 @@ class Structure(Data):
         result = self.members.keys()
         for k, v in self.members.items():
             if isinstance(v, Structure):
-                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
+                result |= {f"{k}.{x}" for x in v.keys()}
         return result
 
     def clone(self):

@@ -949,13 +949,11 @@ class SnitchCodeGen(TargetCodeGenerator):
                 for oe in out_edges:
                     # an out edge can be a tree of memlet paths,
                     # get a list of all memlet paths
-                    leafs = list(
-                        [
-                            x.edge
-                            for x in state.memlet_tree(oe).traverse_children()
-                            if isinstance(x.edge.dst, dace.sdfg.nodes.Tasklet)
-                        ]
-                    )
+                    leafs = [
+                        x.edge
+                        for x in state.memlet_tree(oe).traverse_children()
+                        if isinstance(x.edge.dst, dace.sdfg.nodes.Tasklet)
+                    ]
                     memlet_paths += [state.memlet_path(leaf) for leaf in leafs]
 
                 for memlet_path in memlet_paths:

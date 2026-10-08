@@ -105,9 +105,9 @@ class Node:
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
         if isinstance(in_connectors, (set, list, KeysView)):
-            in_connectors = {k: None for k in in_connectors}
+            in_connectors = dict.fromkeys(in_connectors)
         if isinstance(out_connectors, (set, list, KeysView)):
-            out_connectors = {k: None for k in out_connectors}
+            out_connectors = dict.fromkeys(out_connectors)
 
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
@@ -948,7 +948,7 @@ class NestedSDFG(CodeNode):
 
         # Validate undefined symbols
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
+            symbols = {k for k in self.sdfg.used_symbols(False) if k not in connectors}
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
                 raise ValueError(f"Missing symbols on nested SDFG: {missing_symbols}")
@@ -1052,8 +1052,8 @@ class MapEntry(EntryNode):
 
     @property
     def free_symbols(self) -> set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
-        return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
+        return {k for k in self._map.range.free_symbols if k not in dyn_inputs}
 
     def new_symbols(self, sdfg, state, symbols) -> dict[str, dtypes.typeclass]:
         result = {}
@@ -1063,7 +1063,7 @@ class MapEntry(EntryNode):
         # by name, so an expression rebuilt from a string (any ``replace_dict`` substitution) mints
         # its names untyped, while deserialization rebuilds them from the declared table. The same
         # map would then report two different parameter types across a save/load round trip.
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype
@@ -1076,7 +1076,7 @@ class MapEntry(EntryNode):
         return result
 
     def new_symbol_names(self, sdfg, state) -> set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         return set(self._map.params) | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
     def used_symbols_within_scope(self, parent_state: "dace.SDFGState", all_symbols: bool = False) -> set[str]:
@@ -1439,7 +1439,7 @@ class ConsumeEntry(EntryNode):
 
     @property
     def free_symbols(self) -> set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
         result = set(map(str, self._consume.num_pes.free_symbols))
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
@@ -1453,7 +1453,7 @@ class ConsumeEntry(EntryNode):
         )
 
         # Add dynamic inputs
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith("IN_"))
+        dyn_inputs = {c for c in self.in_connectors if not c.startswith("IN_")}
 
         # Try to get connector type from connector
         for e in state.in_edges(self):

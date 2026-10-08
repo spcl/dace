@@ -869,10 +869,7 @@ class Range(Subset):
         if len(self.ranges) != len(other.ranges):
             return False
         return all(
-            [
-                (rb == orb and re == ore and rs == ors)
-                for (rb, re, rs), (orb, ore, ors) in zip(self.ranges, other.ranges)
-            ]
+            (rb == orb and re == ore and rs == ors) for (rb, re, rs), (orb, ore, ors) in zip(self.ranges, other.ranges)
         )
 
     def __ne__(self, other):
@@ -906,7 +903,7 @@ class Range(Subset):
                     new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                 else:
                     new_subset.append(rb + rs * other[idx])
-        elif other.data_dims() == 0 and all([r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other]):
+        elif other.data_dims() == 0 and all(r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.
             # For example, A[i, j] -> tmp[0]. The result of such a

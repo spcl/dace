@@ -214,7 +214,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(
             sdfg, graph, intermediate_nodes, map_entries, map_exits
         )
-        if any([s == False for s in subgraph_contains_data.values()]):
+        if any(s == False for s in subgraph_contains_data.values()):
             return False
 
         # get coverages for every map entry
@@ -245,8 +245,8 @@ class StencilTiling(transformation.SubgraphTransformation):
             map_coverage = coverages[map_entry][1]
 
             # final mapping map_parameter -> coverage will be stored here
-            param_parent_coverage = {p: None for p in map_entry.params}
-            param_children_coverage = {p: None for p in map_entry.params}
+            param_parent_coverage = dict.fromkeys(map_entry.params)
+            param_children_coverage = dict.fromkeys(map_entry.params)
             for child_entry in children_dict[map_entry]:
                 # get mapping data_name -> coverage
                 for data_name, cov in map_coverage.items():
@@ -302,7 +302,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         # 1.8: we want all sink maps to have the same range size
         assert len(sink_maps) > 0
         first_sink_map = next(iter(sink_maps))
-        if not all([map.range.size() == first_sink_map.range.size() for map in sink_maps]):
+        if not all(map.range.size() == first_sink_map.range.size() for map in sink_maps):
             return False
 
         return True
@@ -383,7 +383,7 @@ class StencilTiling(transformation.SubgraphTransformation):
 
             # now do mapping data name -> outer range
             # and from that infer mapping variable -> outer range
-            local_ranges = {dn: None for dn in coverage[map_entry][1].keys()}
+            local_ranges = dict.fromkeys(coverage[map_entry][1].keys())
             for data_name, cov in coverage[map_entry][1].items():
                 local_ranges[data_name] = subsets.union(local_ranges[data_name], cov)
                 # now look at proceeding maps
@@ -396,7 +396,7 @@ class StencilTiling(transformation.SubgraphTransformation):
 
             # final assignent: combine local_ranges and variable_mapping
             # together into inferred_ranges
-            inferred_ranges[map_entry] = {p: None for p in map.params}
+            inferred_ranges[map_entry] = dict.fromkeys(map.params)
             for data_name, ranges in local_ranges.items():
                 for param, r in zip(variable_mapping[data_name], ranges):
                     # create new range from this subset and assign

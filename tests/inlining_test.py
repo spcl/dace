@@ -106,9 +106,9 @@ def _make_chain_reduction_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     anames_s20 = ["T2"]
     anames_s30 = ["T3", "O"]
     sizes = dict()
-    sizes.update({name: 10 for name in anames_s10})
-    sizes.update({name: 20 for name in anames_s20})
-    sizes.update({name: 30 for name in anames_s30})
+    sizes.update(dict.fromkeys(anames_s10, 10))
+    sizes.update(dict.fromkeys(anames_s20, 20))
+    sizes.update(dict.fromkeys(anames_s30, 30))
 
     for name in anames_s10 + anames_s20 + anames_s30:
         outer_sdfg.add_array(
@@ -424,7 +424,7 @@ def test_multistate_inline_concurrent_subgraphs():
     dace.propagate_memlets_sdfg(sdfg)
     sdfg.apply_transformations_repeated((StateFusion, InlineSDFG))
     assert len(sdfg.nodes()) == 1
-    assert len([node for node in sdfg.start_state.data_nodes()]) == 3
+    assert len(list(sdfg.start_state.data_nodes())) == 3
 
     A = np.random.rand(10)
     B = np.random.rand(10)

@@ -82,15 +82,15 @@ class MapFission(transformation.SingleStateTransformation):
         subset = gr.SubgraphView(parent, schildren[None])
         if nested:
             # Views alias storage that already spans every iteration
-            return set(
+            return {
                 node.data
                 for node in subset.nodes()
                 if isinstance(node, nodes.AccessNode)
                 and sdfg.arrays[node.data].transient
                 and not isinstance(sdfg.arrays[node.data], dt.View)
-            )
+            }
         else:
-            return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode))
+            return {node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode)}
 
     @staticmethod
     def _internal_border_arrays(total_components, subgraphs):
@@ -134,7 +134,7 @@ class MapFission(transformation.SingleStateTransformation):
         else:  # Map with nested SDFG
             nsdfg_node = dcpy(self.nested_sdfg)
             # Make sure there are no other internal nodes in the map
-            if len(set(e.dst for e in graph.out_edges(map_node))) > 1:
+            if len({e.dst for e in graph.out_edges(map_node)}) > 1:
                 return False
 
             # Get NestedSDFG control flow components
@@ -224,15 +224,9 @@ class MapFission(transformation.SingleStateTransformation):
             # in other scopes or states
             if expr_index == 0:
                 # Find all nodes not in subgraph
-                not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
+                not_subgraph = {n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode)}
                 not_subgraph.update(
-                    set(
-                        n.data
-                        for s in sdfg.states()
-                        if s != graph
-                        for n in s.nodes()
-                        if isinstance(n, nodes.AccessNode)
-                    )
+                    {n.data for s in sdfg.states() if s != graph for n in s.nodes() if isinstance(n, nodes.AccessNode)}
                 )
 
                 for _, component_out in components:

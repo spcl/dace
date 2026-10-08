@@ -211,7 +211,7 @@ def argument_codegen(
 
     all_access_nodes = set()
     for state in sdfg.nodes():
-        all_access_nodes |= set(n.data for n in state.data_nodes())
+        all_access_nodes |= {n.data for n in state.data_nodes()}
 
     # Initialize all remaining parameters
     remaining = set(arglist).difference(itertools.chain(input_names, output_names))

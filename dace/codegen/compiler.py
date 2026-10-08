@@ -496,7 +496,7 @@ def configure_and_compile(
 
     # Get required environments are retrieve the CMake information
     with open(os.path.join(program_folder, "dace_environments.csv")) as f:
-        environments = set(l.strip() for l in f)
+        environments = {l.strip() for l in f}
 
     environments = dace.library.get_environments_and_dependencies(environments)
 
@@ -839,10 +839,10 @@ def get_environment_flags(environments) -> tuple[list[str], set[str]]:
         cmake_link_flags |= set(_get_or_eval(env.cmake_link_flags))
         # Make path absolute
         env_dir = os.path.dirname(env._dace_file_path)
-        cmake_files |= set(
+        cmake_files |= {
             (f if os.path.isabs(f) else os.path.join(env_dir, f)) + (".cmake" if not f.endswith(".cmake") else "")
             for f in _get_or_eval(env.cmake_files)
-        )
+        }
         headers = _get_or_eval(env.headers)
         if not isinstance(headers, dict):
             headers = {"frame": headers}

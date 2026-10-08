@@ -159,7 +159,7 @@ def test(device: str):
         np.linalg.norm(array_data[23][:, 1:-1, 1:-1, :] - array_data[22]) / 1680,
     ]
 
-    assert all([diff < 1e-7 for diff in diffs])
+    assert all(diff < 1e-7 for diff in diffs)
 
 
 if __name__ == "__main__":

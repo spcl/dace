@@ -156,7 +156,7 @@ class Pass:
 
         # Ignore abstract classes.
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not inspect.isabstract(sc))
+        result = {sc for sc in result if not inspect.isabstract(sc)}
 
         return result
 
@@ -444,7 +444,7 @@ class Pipeline(Pass):
 
     def __init__(self, passes: list[Pass]):
         self.passes = []
-        self._pass_names = set(type(p).__name__ for p in passes)
+        self._pass_names = {type(p).__name__ for p in passes}
         self.passes.extend(passes)
 
         # Add missing Pass dependencies
@@ -461,12 +461,12 @@ class Pipeline(Pass):
 
         :param passes: The passes to add dependencies for.
         """
-        unique_pass_types = set(type(p) for p in passes)
+        unique_pass_types = {type(p) for p in passes}
         check_if_unique: set[type[Pass]] = unique_pass_types
 
         if len(check_if_unique) != len(passes):
             pass_types = [type(p) for p in passes]
-            dups = set([x for x in pass_types if pass_types.count(x) > 1])
+            dups = {x for x in pass_types if pass_types.count(x) > 1}
             raise NameError(
                 "Duplicate pass types found in pipeline. Please use unique Pass type objects within one "
                 f"Pipeline. Duplicates: {dups}"

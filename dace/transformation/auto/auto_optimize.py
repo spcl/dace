@@ -255,7 +255,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     if prefer_partial_parallelism is None:
         prefer_partial_parallelism = config.Config.get_bool("optimizer", "autotile_partial_parallelism")
 
-    maps_to_consider: set[nodes.MapEntry] = set(me for _, me in edges_to_consider)
+    maps_to_consider: set[nodes.MapEntry] = {me for _, me in edges_to_consider}
 
     transformed: set[nodes.MapEntry] = set()
 

@@ -49,7 +49,7 @@ class ExpandReducePure(pm.ExpandTransformation):
             osqdim = [0]
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
         axes = [axis for axis in axes if axis in isqdim]
 
         # Create nested SDFG
@@ -191,7 +191,7 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
             osqdim = [0]
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
         axes = [axis for axis in axes if axis in isqdim]
 
         if not axes:  # Degenerate reduction
@@ -326,7 +326,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
 
         # Standardize axes
-        axes = node.axes if node.axes is not None else [i for i in range(input_dims)]
+        axes = node.axes if node.axes is not None else list(range(input_dims))
         sqaxes = [axis for axis in axes if axis in isqdim]
 
         if not sqaxes:  # Degenerate reduction
@@ -435,7 +435,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         output_data = sdfg.arrays[output_edge.data.data]
 
         # Standardize axes
-        axes = node.axes if node.axes is not None else [i for i in range(input_dims)]
+        axes = node.axes if node.axes is not None else list(range(input_dims))
         sqaxes = [axis for axis in axes if axis in isqdim]
 
         if not sqaxes:  # Degenerate reduction
@@ -983,7 +983,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             return ExpandReducePure.expansion(node, state, sdfg)
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else list(range(len(inedge.data.subset)))
         # this removes reduction of size 1 axes from the list
         axes = [axis for axis in axes if axis in isqdim]
 

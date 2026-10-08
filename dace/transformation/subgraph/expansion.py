@@ -101,7 +101,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                     # check every memlet for access
                     for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                         subset = dcpy(e.data.subset)
-                        subset.pop([i for i in range(subset.dims() - 1)])
+                        subset.pop(list(range(subset.dims() - 1)))
                         for s in subset.free_symbols:
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 warnings.warn("MultiExpansion::Contiguity fusion violation detected")
@@ -142,7 +142,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         maps = [entry.map for entry in map_entries]
 
         # in case of maps where all params and ranges already conincide, we can skip the whole process
-        if all([m.params == maps[0].params for m in maps]) and all([m.range == maps[0].range for m in maps]):
+        if all(m.params == maps[0].params for m in maps) and all(m.range == maps[0].range for m in maps):
             return
 
         if self.allow_offset:

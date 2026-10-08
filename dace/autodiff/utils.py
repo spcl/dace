@@ -197,8 +197,8 @@ def backward_program_for_node(
     data descriptors will match the data descriptors of the inputs/outputs they correspond to.
     """
 
-    input_names = set(inp.name for inp in forward_node.schema.inputs)
-    output_names = set(outp.name for outp in forward_node.schema.outputs)
+    input_names = {inp.name for inp in forward_node.schema.inputs}
+    output_names = {outp.name for outp in forward_node.schema.outputs}
 
     if input_names.intersection(output_names):
         # this is currently the case for only one onnx op

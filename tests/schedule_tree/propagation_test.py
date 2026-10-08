@@ -25,7 +25,7 @@ def test_stree_propagation_forloop():
     stree = tester.to_sdfg().as_schedule_tree()
     stree = t2s._insert_state_boundaries_to_tree(stree)
 
-    node_types = [n for n in stree.preorder_traversal()]
+    node_types = list(stree.preorder_traversal())
     assert isinstance(node_types[2], tn.ForScope)
     memlet = dace.Memlet("a[1:N]")
     memlet._is_data_src = False

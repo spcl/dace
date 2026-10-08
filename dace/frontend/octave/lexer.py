@@ -381,11 +381,11 @@ def main():
     while 1:
         try:
             line += raw_input("=>> ").decode("string_escape")
-            print(len(line), [c for c in line])
+            print(len(line), list(line))
         except EOFError:
             reload(sys.modules["lexer.py"])
             lexer.input(line)
-            print(list(tok for tok in lexer))
+            print(list(lexer))
             line = ""
 
 

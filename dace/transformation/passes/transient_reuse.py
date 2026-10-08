@@ -152,7 +152,7 @@ class TransientReuse(ppl.Pass):
                     mapping.add((buckets[i][0], buckets[i][j]))
 
             # For each mapping redirect edges and rename memlets in the state
-            for new, old in sorted(list(mapping)):
+            for new, old in sorted(mapping):
                 result.add(old)
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:

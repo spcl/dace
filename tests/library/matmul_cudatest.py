@@ -111,7 +111,7 @@ def test_types():
 
 
 # Try all data layouts
-LAYOUTS = map(lambda t: "".join(t), itertools.product(*([["C", "F"]] * 3)))
+LAYOUTS = ("".join(t) for t in itertools.product(*([["C", "F"]] * 3)))
 
 
 @pytest.mark.gpu

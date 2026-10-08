@@ -199,13 +199,13 @@ class CUDACodeGen(TargetCodeGenerator):
         # Better: Do this in a dedicated pass and do not e.g. recurse further into
         # a GPU_Device-scheduled map.
         # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
-        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+        old_nodes = {node for node, _ in sdfg.all_nodes_recursive()}
 
         sdfg.apply_transformations_once_everywhere(
             AddThreadBlockMap,
         )
 
-        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+        new_nodes = {node for node, _ in sdfg.all_nodes_recursive()} - old_nodes
 
         self._kernels_with_inserted_tb_maps = {
             n for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
@@ -323,11 +323,11 @@ class CUDACodeGen(TargetCodeGenerator):
         reachability = access_nodes = None
         for sdfg in top_sdfg.all_sdfgs_recursive():
             # Skip SDFGs without memory pool hints
-            pooled = set(
+            pooled = {
                 aname
                 for aname, arr in sdfg.arrays.items()
                 if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient
-            )
+            }
             if not pooled:
                 continue
             self.has_pool = True
@@ -354,11 +354,11 @@ class CUDACodeGen(TargetCodeGenerator):
             access_sets = access_nodes[sdfg.cfg_id]
             for state in sdfg.states():
                 # Find all data descriptors that will no longer be used after this state
-                last_state_arrays: set[str] = set(
+                last_state_arrays: set[str] = {
                     s
                     for s in access_sets
                     if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state}
-                )
+                }
 
                 anodes = list(state.data_nodes())
                 for aname in last_state_arrays:
@@ -398,7 +398,7 @@ class CUDACodeGen(TargetCodeGenerator):
                     self.pool_release[(sdfg, aname)] = (state, terminators)
 
             # If there is unfreed pooled memory, free at the end of the SDFG
-            unfreed = set(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
+            unfreed = {arr for arr in pooled if (sdfg, arr) not in self.pool_release}
             if unfreed:
                 # Find or make single sink node
                 sinks = sdfg.sink_nodes()
@@ -1931,7 +1931,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # not processed twice
                 # TODO this is not robust, replace by better solution
                 #  (or wait for new codegen)
-                entry_nodes = list(v for v in c.nodes() if len(list(c.predecessors(v))) == 0)
+                entry_nodes = [v for v in c.nodes() if len(list(c.predecessors(v))) == 0]
                 comp_same_entry = [comp for comp in components if comp != c and entry_nodes[0] in comp.nodes()]
                 skip_entry = len(comp_same_entry) > 0 and has_map
 
@@ -2058,7 +2058,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
         # TODO move this into _get_const_params(dfg_scope)
-        const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
+        const_params |= {(str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry)}
 
         # Store init/exit code streams
         old_entry_stream = self.scope_entry_stream
@@ -3806,12 +3806,12 @@ def _get_const_params(dfg_scope):
     sdfg = dfg_scope.parent
     scope_entry = dfg_scope.source_nodes()[0]
     scope_exit = dfg_scope.sink_nodes()[0]
-    input_params = set(e.data.data for e in state.in_edges(scope_entry))
-    output_params = set(e.data.data for e in state.out_edges(scope_exit))
-    toplevel_params = set(
+    input_params = {e.data.data for e in state.in_edges(scope_entry)}
+    output_params = {e.data.data for e in state.out_edges(scope_exit)}
+    toplevel_params = {
         node.data
         for node in dfg_scope.nodes()
         if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].toplevel
-    )
-    dynamic_inputs = set(e.data.data for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
+    }
+    dynamic_inputs = {e.data.data for e in dace.sdfg.dynamic_map_inputs(state, scope_entry)}
     return input_params - (output_params | toplevel_params | dynamic_inputs)

@@ -292,8 +292,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 return False
 
             # Get connected components.
-            first_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)]
-            second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
+            first_cc = list(nx.weakly_connected_components(first_state._nx))
+            second_cc = list(nx.weakly_connected_components(second_state._nx))
 
             # Find source/sink (data) nodes
             first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
@@ -590,7 +590,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for conn in self.connections_to_make:
                 if node in conn[1]:
                     for i in top2:
-                        if i not in [nodex for nodex in second_state.source_nodes()]:
+                        if i not in list(second_state.source_nodes()):
                             continue
                         paths = second_state.all_nodes_between(i, node)
                         direct_edges = second_state.edges_between(i, node)

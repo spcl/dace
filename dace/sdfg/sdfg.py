@@ -128,7 +128,7 @@ class NestedDict(dict):
         result = super().keys()
         for k, v in self.items():
             if isinstance(v, dt.Structure):
-                result |= set(map(lambda x: k + "." + x, v.keys()))
+                result |= {k + "." + x for x in v.keys()}
         return result
 
 
@@ -438,9 +438,9 @@ class InterstateEdge:
         """
         # all_symbols does not matter but need to provide something
         symbol_names = self.used_symbols(all_symbols=True, union_lhs_symbols=union_lhs_symbols)
-        assert all([isinstance(s, str) for s in symbol_names])
+        assert all(isinstance(s, str) for s in symbol_names)
         real_symbol_names = {s for s in symbol_names if s not in arrays}
-        assert all([isinstance(s, str) for s in real_symbol_names])
+        assert all(isinstance(s, str) for s in real_symbol_names)
         return real_symbol_names
 
     def used_arrays(self, arrays: dict[str, dt.Data], union_lhs_symbols: bool = False) -> set[str]:
@@ -452,9 +452,9 @@ class InterstateEdge:
         """
         # all_symbols does not matter but need to provide something
         symbol_names = self.used_symbols(all_symbols=True, union_lhs_symbols=union_lhs_symbols)
-        assert all([isinstance(s, str) for s in symbol_names])
+        assert all(isinstance(s, str) for s in symbol_names)
         used_array_names = {s for s in symbol_names if s in arrays}
-        assert all([isinstance(s, str) for s in used_array_names])
+        assert all(isinstance(s, str) for s in used_array_names)
         return used_array_names
 
     @property
@@ -1898,9 +1898,9 @@ class SDFG(ControlFlowRegion):
                 is_transient = desc.transient
                 is_toplevel = desc.toplevel
                 if include_nested_data:
-                    datanames = set([".".join(tokens[: i + 1]) for i in range(len(tokens))])
+                    datanames = {".".join(tokens[: i + 1]) for i in range(len(tokens))}
                 else:
-                    datanames = set([tokens[0]])
+                    datanames = {tokens[0]}
                 for dataname in datanames:
                     desc = self.arrays[dataname]
                     if is_transient:

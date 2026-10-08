@@ -143,7 +143,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
                 : min(len(configs), k)
             ]
             best_k_configs = filter(lambda c: c[1] != math.inf, best_k_configs)
-            best_k_configs = list(map(lambda c: (cutout_label, c[0]), best_k_configs))
+            best_k_configs = [(cutout_label, c[0]) for c in best_k_configs]
 
             all_configs.extend(best_k_configs)
 
@@ -152,7 +152,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
     @staticmethod
     def dry_run(sdfg: SDFG, *args, **kwargs) -> Any:
         # Check existing instrumented data for shape mismatch
-        kwargs.update({aname: a for aname, a in zip(sdfg.arg_names, args)})
+        kwargs.update(dict(zip(sdfg.arg_names, args)))
 
         dreport = sdfg.get_instrumented_data()
         if dreport is not None:

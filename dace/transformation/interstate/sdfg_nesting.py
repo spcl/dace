@@ -418,7 +418,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 node.environments |= nsdfg_node.environments
 
         # Collect isolated nodes before inlining
-        isolated_nodes = set(n for n in state.data_nodes() if state.degree(n) == 0)
+        isolated_nodes = {n for n in state.data_nodes() if state.degree(n) == 0}
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)

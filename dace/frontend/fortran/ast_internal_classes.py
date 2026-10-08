@@ -25,10 +25,10 @@ class FNode:
     def __eq__(self, o: object) -> bool:
         if type(self) is type(o):
             # check that all fields and attributes match
-            self_field_vals = list(map(lambda name: getattr(self, name, None), self._fields))
-            self_attr_vals = list(map(lambda name: getattr(self, name, None), self._attributes))
-            o_field_vals = list(map(lambda name: getattr(o, name, None), o._fields))
-            o_attr_vals = list(map(lambda name: getattr(o, name, None), o._attributes))
+            self_field_vals = [getattr(self, name, None) for name in self._fields]
+            self_attr_vals = [getattr(self, name, None) for name in self._attributes]
+            o_field_vals = [getattr(o, name, None) for name in o._fields]
+            o_attr_vals = [getattr(o, name, None) for name in o._attributes]
 
             return self_field_vals == o_field_vals and self_attr_vals == o_attr_vals
         return False

@@ -73,7 +73,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
         elif isinstance(func, dace.SDFG):
             compiled_sdfg(**keywords, **psize)
         else:
-            compiled_sdfg(**{n: arg for n, arg in zip(func.argnames, args)}, **psize)
+            compiled_sdfg(**dict(zip(func.argnames, args)), **psize)
 
         if FLAGS.save:
             if not isinstance(output_args, list):

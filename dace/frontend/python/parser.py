@@ -70,21 +70,18 @@ def _get_locals_and_globals(f):
 
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
-        result.update(
-            {k: v for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])}
-        )
+        result.update(dict(zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])))
 
     if sys.version_info >= (3, 14):
         # Python 3.14+: Also get locals from the annotate function
         if annotate_func is not None and annotate_func.__closure__ is not None:
             result.update(
-                {
-                    k: v
-                    for k, v in zip(
+                dict(
+                    zip(
                         annotate_func.__code__.co_freevars,
                         [_get_cell_contents_or_none(x) for x in annotate_func.__closure__],
                     )
-                }
+                )
             )
 
     return result
@@ -106,7 +103,7 @@ def infer_symbols_from_datadescriptor(
     :raise ValueError: If symbol values are ambiguous.
     """
     exclude = exclude or set()
-    exclude = set(symbolic.symbol(s) for s in exclude)
+    exclude = {symbolic.symbol(s) for s in exclude}
     equations = []
     symbols = set()
 
@@ -123,7 +120,7 @@ def infer_symbols_from_datadescriptor(
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, "itemsize", 1)
                 given_strides = [s // factor for s in arg_val.strides]
-            given_offset = [o for o in arg_val.offset] if hasattr(arg_val, "offset") else []
+            given_offset = list(arg_val.offset) if hasattr(arg_val, "offset") else []
             given_values += given_strides + given_offset
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
@@ -216,7 +213,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.default_args = {
             pname: pval.default for pname, pval in self.signature.parameters.items() if not _is_empty(pval.default)
         }
-        self.symbols = set(k for k, v in self.global_vars.items() if isinstance(v, symbolic.symbol))
+        self.symbols = {k for k, v in self.global_vars.items() if isinstance(v, symbolic.symbol)}
         self.closure_arg_mapping: dict[str, Callable[[], Any]] = {}
         self.resolver: pycommon.SDFGClosure = None
 
@@ -230,11 +227,11 @@ class DaceProgram(pycommon.SDFGConvertible):
                 pval._annotation = arg
 
         # Keep a set of compile-time arguments to ignore
-        self.constant_args = set(
+        self.constant_args = {
             pname
             for pname, pval in self.signature.parameters.items()
             if self._evaluate_annotation(pval.annotation) is dtypes.compiletime
-        )
+        }
 
         if self.argnames is None:
             self.argnames = []

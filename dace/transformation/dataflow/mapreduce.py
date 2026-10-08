@@ -46,9 +46,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
         tasklet = self.tasklet
 
         # Make sure that the array is only accessed by the map and the reduce
-        if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
+        if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):
             return False
-        if any([dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)]):
+        if any(dest != reduce_node for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
 
         tmem = next(e for e in graph.edges_between(tasklet, tmap_exit) if e.data.data == in_array.data).data
@@ -194,9 +194,9 @@ class MapWCRFusion(pm.SingleStateTransformation):
         rmap_entry = self.rmap_out_entry
 
         # Make sure that the array is only accessed by the map and the reduce
-        if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
+        if any(src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)):
             return False
-        if any([dest != rmap_entry for _, _, dest, _, memlet in graph.out_edges(in_array)]):
+        if any(dest != rmap_entry for _, _, dest, _, memlet in graph.out_edges(in_array)):
             return False
 
         # Make sure that there is a reduction in the second map

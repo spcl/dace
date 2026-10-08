@@ -1084,7 +1084,7 @@ class TFSession:
         if node.get_attr("keep_dims"):
             outputParams = [params[i] if outputShape[i] != 1 else "0" for i in range(len(mapParams))]
         else:
-            temp = set(mapParams[a] for a in reduction_axes)
+            temp = {mapParams[a] for a in reduction_axes}
             outputParams = list(set(mapParams) - temp)
             outputParams.sort()
         if len(outputParams) == 0:

@@ -102,7 +102,7 @@ class PatternTransformation(TransformationBase):
 
         # Ignore abstract classes
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not inspect.isabstract(sc))
+        result = {sc for sc in result if not inspect.isabstract(sc)}
 
         return result
 
@@ -761,7 +761,7 @@ class ExpandTransformation(PatternTransformation):
         # The node the expansion replaces is the one the user asked to measure.
         expansion.instrument = node.instrument
 
-        expansion.environments = copy.copy(set(map(lambda a: a.full_class_path(), type(self).environments)))
+        expansion.environments = copy.copy({a.full_class_path() for a in type(self).environments})
         sdutil.change_edge_dest(state, node, expansion)
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
@@ -842,7 +842,7 @@ class SubgraphTransformation(TransformationBase):
             subgraph = gr.SubgraphView(subgraph, subgraph.nodes())
 
         if isinstance(subgraph, gr.SubgraphView):
-            self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
+            self.subgraph = {subgraph.graph.node_id(n) for n in subgraph.nodes()}
 
             if isinstance(subgraph.graph, SDFGState):
                 self.cfg_id = subgraph.graph.parent_graph.cfg_id
@@ -871,7 +871,7 @@ class SubgraphTransformation(TransformationBase):
 
         # Ignore abstract classes
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not inspect.isabstract(sc))
+        result = {sc for sc in result if not inspect.isabstract(sc)}
 
         return result
 

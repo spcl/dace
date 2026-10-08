@@ -162,7 +162,7 @@ def test_expand_with_limits():
             assert state.out_degree(node) == 1
             assert len(node.out_connectors) == 1
             assert len(node.map.range.ranges) == 2
-            assert list(map(lambda x: x[1] - x[0] + 1, node.map.range.ranges)) == [30, 5]
+            assert [x[1] - x[0] + 1 for x in node.map.range.ranges] == [30, 5]
 
         map_entries.add(node)
 

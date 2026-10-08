@@ -76,7 +76,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
             for dst in blocks:
                 for edge in graph.edges_between(src, dst):
                     is_edges.append(edge)
-        return_blocks: set[ReturnBlock] = set([b for b in all_blocks if isinstance(b, ReturnBlock)])
+        return_blocks: set[ReturnBlock] = {b for b in all_blocks if isinstance(b, ReturnBlock)}
         if len(return_blocks) > 0:
             did_return_inner = "_did_ret_from_nsdfg"
             did_return_inner = sdfg._find_new_name(did_return_inner)
@@ -367,14 +367,14 @@ def nest_state_subgraph(
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
-    data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
+    data_in_subgraph = {n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode)}
     # Find other occurrences in SDFG
-    other_nodes = set(
+    other_nodes = {
         n.data
         for s in sdfg.states()
         for n in s.nodes()
         if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes()
-    )
+    }
     subgraph_transients = set()
     for dname in data_in_subgraph:
         datadesc = sdfg.arrays[dname]
@@ -440,9 +440,9 @@ def nest_state_subgraph(
 
     # Add scope symbols to the nested SDFG
     symbols_at_top = state.symbols_defined_at(top_scopenode)
-    defined_vars = set(
+    defined_vars = {
         symbolic.pystr_to_symbolic(s) for s in (state.symbols_defined_at(top_scopenode).keys() | sdfg.symbols)
-    )
+    }
     for v in defined_vars:
         if v in sdfg.symbols:
             sym = sdfg.symbols[v]
@@ -1214,7 +1214,7 @@ def find_contiguous_subsets(subset_list: list[subsets.Subset], dim: int = None) 
     :return: A list of contiguous subsets.
     """
     # Currently O(n^3) worst case. TODO: improve
-    subset_set = set(subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s for s in subset_list)
+    subset_set = {subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s for s in subset_list}
     while True:
         for sa, sb in itertools.product(subset_set, subset_set):
             if sa is sb:

@@ -361,7 +361,7 @@ class HoistState(transformation.SingleStateTransformation):
                 return False
             if nsdfg.sdfg.start_state.number_of_nodes() != 0:
                 return False
-            if any([not isinstance(x, SDFGState) for x in nsdfg.sdfg.nodes()]):
+            if any(not isinstance(x, SDFGState) for x in nsdfg.sdfg.nodes()):
                 return False
 
         # Must have at least two states with a hoistable source state

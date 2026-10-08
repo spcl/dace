@@ -70,11 +70,11 @@ class CodeLibraryNode(LibraryNode):
         if isinstance(input_names, dict):
             self.inputdict = input_names
         else:
-            self.inputdict = {k: None for k in set(input_names)}
+            self.inputdict = dict.fromkeys(set(input_names))
         if isinstance(output_names, dict):
             self.outputdict = output_names
         else:
-            self.outputdict = {k: None for k in set(output_names)}
+            self.outputdict = dict.fromkeys(set(output_names))
 
         super().__init__(name, *args, inputs=set(input_names), outputs=set(output_names), **kwargs)
 

@@ -111,7 +111,7 @@ def _test_quantitatively(sdfg, graph):
 
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
-    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
     sf = SubgraphFusion()
     sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph) == True

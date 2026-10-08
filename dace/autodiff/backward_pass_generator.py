@@ -854,7 +854,7 @@ class BackwardPassGenerator:
         backward_nodes: set[nodes.Node] = set()
         given_gradients_all_states = set(self.given_gradients_data)
 
-        required_gradients_all_states = {n for n in self.required_gradients_data}
+        required_gradients_all_states = set(self.required_gradients_data)
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
         # Do the backward BFS iteratively
@@ -1528,8 +1528,8 @@ class BackwardPassGenerator:
         At the moment this is just the target access node.
         """
         nodes_to_track: list[nodes.AccessNode] = []
-        gradient_nodes = [n for n in self.required_gradients_data]
-        gradient_nodes += [n for n in self.given_gradients_data]
+        gradient_nodes = list(self.required_gradients_data)
+        gradient_nodes += list(self.given_gradients_data)
 
         # get the subgraph difference
         difference = set(subgraph.nodes()).difference(set(block_nodes))

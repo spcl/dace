@@ -292,7 +292,7 @@ def _tensordot(
     dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
 
     if out_axes:
-        if list(sorted(out_axes)) != list(range(len(dot_shape))):
+        if sorted(out_axes) != list(range(len(dot_shape))):
             raise ValueError("Output axes is not a permutation of the output's modes.")
         dot_shape = [dot_shape[i] for i in out_axes]
 

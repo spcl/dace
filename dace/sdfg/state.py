@@ -88,7 +88,7 @@ def _make_iterators(ndrange):
     # Input can either be a dictionary or a list of pairs
     if isinstance(ndrange, list):
         params = [k for k, _ in ndrange]
-        ndrange = {k: v for k, v in ndrange}
+        ndrange = dict(ndrange)
     else:
         params = list(ndrange.keys())
 
@@ -685,7 +685,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     raise ValueError(f"Found cycles in state {self.label}: {cycles}")
                 raise RuntimeError(f"Leftover nodes in queue: {eq}")
 
-            entry_nodes = set(n for n in self.nodes() if isinstance(n, nd.EntryNode)) | {None}
+            entry_nodes = {n for n in self.nodes() if isinstance(n, nd.EntryNode)} | {None}
             if validate and len(result) != len(entry_nodes):
                 cycles = list(self.find_cycles())
                 if cycles:
@@ -775,7 +775,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         sdfg = state.sdfg
 
         # Start with SDFG global symbols
-        defined_syms = {k: v for k, v in sdfg.symbols.items()}
+        defined_syms = dict(sdfg.symbols.items())
 
         def update_if_not_none(dic, update):
             update = {k: v for k, v in update.items() if v is not None}
@@ -1687,7 +1687,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Create dummy SDFG with this state as the only one
         from dace.sdfg import SDFG
 
-        arrays = set(n.data for n in self.data_nodes())
+        arrays = {n.data for n in self.data_nodes()}
         sdfg = SDFG(self.label)
         sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
         sdfg.add_node(self)
@@ -1894,9 +1894,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
             warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
         if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
-            inputs = {k: None for k in inputs}
+            inputs = dict.fromkeys(inputs)
         if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
-            outputs = {k: None for k in outputs}
+            outputs = dict.fromkeys(outputs)
 
         tasklet = nd.Tasklet(
             name,
@@ -1966,9 +1966,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if any((isinstance(x, set) and len(x) > 1) for x in [inputs, outputs]):
             warnings.warn("Using sets for connectors is discouraged as it leads to indeterministic behavior.")
         if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
-            inputs = {k: None for k in inputs}
+            inputs = dict.fromkeys(inputs)
         if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
-            outputs = {k: None for k in outputs}
+            outputs = dict.fromkeys(outputs)
 
         s = nd.NestedSDFG(
             name,
@@ -3768,7 +3768,7 @@ class LoopRegion(ControlFlowRegion):
 
         # Check if we can normalize loop step
         # Iteration variable not altered in the loop body, increment not altered in body, step does not contain iteration variable, and Step is not one
-        step_free_syms = set([str(s) for s in step.free_symbols])
+        step_free_syms = {str(s) for s in step.free_symbols}
         can_norm_step = (
             itervar not in defined_syms
             and step_free_syms.isdisjoint(defined_syms)

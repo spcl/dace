@@ -178,7 +178,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             lhs: ast.Name = ast_node.targets[0]
             rhs: ast.BinOp = ast_node.value
             op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
-            inconns = list(edge.dst_conn for edge in inedges)
+            inconns = [edge.dst_conn for edge in inedges]
             if isinstance(rhs.left, ast.Name) and rhs.left.id in inconns:
                 inedge = inedges[inconns.index(rhs.left.id)]
                 new_rhs = rhs.right
@@ -281,7 +281,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         newstate = state.parent_graph.add_state_after(state)
 
         # Bookkeeping
-        nodes_to_move = set([tlet])
+        nodes_to_move = {tlet}
         boundary_nodes = set()
         orig_edges = set()
 

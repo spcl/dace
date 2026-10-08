@@ -301,14 +301,14 @@ class SDFGCutout(SDFG):
         for orig_node, new_node in in_translation.items():
             if isinstance(new_node, nd.Node):
                 if isinstance(orig_node, (nd.EntryNode, nd.ExitNode)):
-                    used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+                    used_connectors = {e.dst_conn for e in new_state.in_edges(new_node)}
                     for conn in new_node.in_connectors.keys() - used_connectors:
                         new_node.remove_in_connector(conn)
-                    used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+                    used_connectors = {e.src_conn for e in new_state.out_edges(new_node)}
                     for conn in new_node.out_connectors.keys() - used_connectors:
                         new_node.remove_out_connector(conn)
                 else:
-                    used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+                    used_connectors = {e.dst_conn for e in new_state.in_edges(new_node)}
                     for conn in new_node.in_connectors.keys() - used_connectors:
                         prune = True
                         for e in state.in_edges(orig_node):
@@ -322,7 +322,7 @@ class SDFGCutout(SDFG):
                                 break
                         if prune:
                             new_node.remove_in_connector(conn)
-                    used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+                    used_connectors = {e.src_conn for e in new_state.out_edges(new_node)}
                     for conn in new_node.out_connectors.keys() - used_connectors:
                         prune = True
                         for e in state.out_edges(orig_node):
@@ -769,7 +769,7 @@ def _reduce_in_configuration(
             # Edge starts in subgraph, ends outside.
             # If there's no path back inside, it's source is the proxy sink. Otherwise, it's source is set to the proxy
             # source and the volume is made 0, since the value will already be part of the cutout.
-            if any([n in nx.descendants(state.nx, proxy_edge_src) for n in subgraph_nodes]):
+            if any(n in nx.descendants(state.nx, proxy_edge_src) for n in subgraph_nodes):
                 proxy_edge_src = source
                 vol = 0
                 remain_free = True
@@ -1047,7 +1047,7 @@ def _cutout_determine_input_config(
             for dn in original_state.data_nodes():
                 if original_state.in_degree(dn) > 0:
                     iedges = original_state.in_edges(dn)
-                    if any([i.src not in in_translation for i in iedges]):
+                    if any(i.src not in in_translation for i in iedges):
                         if dn.data in check_for_write_before:
                             input_configuration.add(dn.data)
 
@@ -1107,7 +1107,7 @@ def _cutout_determine_output_configuration(
             for dn in original_state.data_nodes():
                 if original_state.out_degree(dn) > 0:
                     oedges = original_state.out_edges(dn)
-                    if any([o.dst not in in_translation for o in oedges]):
+                    if any(o.dst not in in_translation for o in oedges):
                         if dn.data in check_for_read_after:
                             system_state.add(dn.data)
 

@@ -545,7 +545,7 @@ class ONNXModel:
                 raise ValueError(f"Initializer tensor '{tensor.name}' has no type")
             unclean_name = tensor.name
             dtype = onnx_tensor_type_to_typeclass(tensor.data_type)
-            shape = [d for d in tensor.dims]
+            shape = list(tensor.dims)
             np_array = numpy_helper.to_array(tensor)
 
         name = clean_onnx_name(unclean_name)

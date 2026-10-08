@@ -40,7 +40,7 @@ def dependency_analysis(sdfg: SDFG) -> dict[str, set[str]]:
     dependencies = nx.transitive_closure(dependencies)
     result = {}
     for array in dependencies:
-        result[array] = {nbr for nbr in dependencies.neighbors(array)}
+        result[array] = set(dependencies.neighbors(array))
     return result
 
 

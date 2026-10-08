@@ -778,7 +778,7 @@ class struct(typeclass):
 
         ret = struct(json_obj["name"])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj["data"]}
-        ret._length = {k: v for k, v in json_obj["length"]}
+        ret._length = dict(json_obj["length"])
         ret.bytes = json_obj["bytes"]
 
         return ret
@@ -1586,7 +1586,7 @@ def paramdec(dec):
 
 def deduplicate(iterable):
     """Removes duplicates in the passed iterable."""
-    return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+    return type(iterable)(sorted(set(iterable), key=lambda x: iterable.index(x)))
 
 
 namere = re.compile(r"^[a-zA-Z_][a-zA-Z_0-9]*$")

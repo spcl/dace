@@ -449,10 +449,10 @@ class LoopToMap(xf.MultiStateTransformation):
         for state in sdfg.states():
             if state in loop_states:
                 continue
-            other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
+            other_access_nodes |= {n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient}
         # Add non-transient nodes from loop state
         for state in loop_states:
-            other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
+            other_access_nodes |= {n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient}
 
         # Lazy: it walks every state and edge, and the cheap refusals above take 41k of 44k.
         _, write_set = self.loop.read_and_write_sets()

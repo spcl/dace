@@ -164,9 +164,7 @@ def _initialize_onnx_registry():
         try:
             dace_schema = ONNXSchema.from_onnx_proto(schema)
             # If the schema has a parameter name that exists as both an input and an output, prepend "in_" and "out_"
-            intersecting_names = set(i.name for i in dace_schema.inputs).intersection(
-                o.name for o in dace_schema.outputs
-            )
+            intersecting_names = {i.name for i in dace_schema.inputs}.intersection(o.name for o in dace_schema.outputs)
             for name in intersecting_names:
                 in_cands = [i for i in dace_schema.inputs if i.name == name]
                 out_cands = [i for i in dace_schema.outputs if i.name == name]

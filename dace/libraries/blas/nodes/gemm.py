@@ -610,8 +610,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         size3 = out_memlet.subset.size()
         if size2 is not None:
             res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
-            fail = any([r is False for r in res])
-            success = all([r is True for r in res])
+            fail = any(r is False for r in res)
+            success = all(r is True for r in res)
             if fail:
                 raise ValueError("Input C matrix must match output matrix.")
             elif not success:
@@ -620,8 +620,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2:
             res = [equal(s0, s1) for s0, s1 in zip(size3, [size0[-2], size1[-1]])]
-            fail = any([r is False for r in res])
-            success = all([r is True for r in res])
+            fail = any(r is False for r in res)
+            success = all(r is True for r in res)
             if fail:
                 raise ValueError("Output to matrix-matrix product must agree in the m and n dimensions")
             elif not success:

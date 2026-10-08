@@ -477,7 +477,7 @@ class RedundantArray(pm.SingleStateTransformation):
                     e.dst.desc(sdfg) if isinstance(e.dst, nodes.AccessNode) else None
                     for e in graph.out_edges(out_array)
                 ]
-                if any([not desc or isinstance(desc, data.View) for desc in view_successors_desc]):
+                if any(not desc or isinstance(desc, data.View) for desc in view_successors_desc):
                     return False
             else:
                 # Something else, for example, Stream
@@ -526,7 +526,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 if path.downwards:
                     sources = [path.root().edge]
                 else:
-                    sources = [e for e in path.leaves()]
+                    sources = list(path.leaves())
                 for source_edge in sources:
                     if isinstance(source_edge.src, nodes.AccessNode):
                         if isinstance(source_edge.src.desc(sdfg), data.View):
@@ -560,7 +560,7 @@ class RedundantArray(pm.SingleStateTransformation):
         in_ancestors_desc = [
             e.src.desc(sdfg) if isinstance(e.src, nodes.AccessNode) else None for e in graph.in_edges(in_array)
         ]
-        if all([desc and isinstance(desc, data.View) for desc in in_ancestors_desc]):
+        if all(desc and isinstance(desc, data.View) for desc in in_ancestors_desc):
             for e in graph.in_edges(in_array):
                 a_subset, _ = _validate_subsets(e, sdfg.arrays)
                 graph.add_edge(
@@ -822,7 +822,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 if path.downwards:
                     sources = [path.root().edge]
                 else:
-                    sources = [e for e in path.leaves()]
+                    sources = list(path.leaves())
                 for source_edge in sources:
                     if not isinstance(source_edge.src, nodes.NestedSDFG):
                         continue
@@ -1026,7 +1026,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 view_ancestors_desc = [
                     e.src.desc(sdfg) if isinstance(e.src, nodes.AccessNode) else None for e in graph.in_edges(in_array)
                 ]
-                if any([not desc or isinstance(desc, data.View) for desc in view_ancestors_desc]):
+                if any(not desc or isinstance(desc, data.View) for desc in view_ancestors_desc):
                     return False
             elif isinstance(out_desc, data.View):
                 # Case Access -> View
@@ -1084,7 +1084,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 if not path.downwards:
                     sources = [path.root().edge]
                 else:
-                    sources = [e for e in path.leaves()]
+                    sources = list(path.leaves())
                 for source_edge in sources:
                     if isinstance(source_edge.dst, nodes.AccessNode):
                         if isinstance(source_edge.dst.desc(sdfg), data.View):
@@ -1134,7 +1134,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             out_successors_desc = [
                 e.dst.desc(sdfg) if isinstance(e.dst, nodes.AccessNode) else None for e in graph.out_edges(out_array)
             ]
-            if all([desc and isinstance(desc, data.View) for desc in out_successors_desc]):
+            if all(desc and isinstance(desc, data.View) for desc in out_successors_desc):
                 for e in graph.out_edges(out_array):
                     _, b_subset = _validate_subsets(e, sdfg.arrays)
                     graph.add_edge(
@@ -1256,7 +1256,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 if not path.downwards:
                     sources = [path.root().edge]
                 else:
-                    sources = [e for e in path.leaves()]
+                    sources = list(path.leaves())
                 for source_edge in sources:
                     if not isinstance(source_edge.dst, nodes.NestedSDFG):
                         continue

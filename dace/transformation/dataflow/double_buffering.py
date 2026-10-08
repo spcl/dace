@@ -77,9 +77,9 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         ##############################
         # Gather transients to modify
-        transients_to_modify = set(
+        transients_to_modify = {
             edge.dst.data for edge in graph.out_edges(map_entry) if isinstance(edge.dst, nodes.AccessNode)
-        )
+        }
 
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:

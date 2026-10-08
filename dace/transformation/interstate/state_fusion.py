@@ -283,8 +283,8 @@ class StateFusion(transformation.MultiStateTransformation):
                 return False
 
             # Get connected components.
-            first_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)]
-            second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
+            first_cc = list(nx.weakly_connected_components(first_state._nx))
+            second_cc = list(nx.weakly_connected_components(second_state._nx))
 
             # Find source/sink (data) nodes
             first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}

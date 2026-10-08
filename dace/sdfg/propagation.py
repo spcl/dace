@@ -1796,7 +1796,7 @@ def propagate_memlet(
         raise TypeError("Trying to propagate through a non-scope node")
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith("IN_"))
+    scope_node_symbols = {conn for conn in entry_node.in_connectors if not conn.startswith("IN_")}
     # Without a resolver, ask the state directly: `propagate_memlet()` is also called on graph views
     #  that only offer `symbols_defined_at()`.
     entry_node_symbols = (
@@ -1891,7 +1891,7 @@ def propagate_subset(
         for memlet in memlets:
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
-        defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+        defined_variables = {symbolic.pystr_to_symbolic(p) for p in defined_variables}
     else:
         defined_variables = set(defined_variables)
 

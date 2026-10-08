@@ -54,7 +54,7 @@ class DaceNodeBackwardImplementations:
         # sdfg fails otherwise
         deferred_edges = []
 
-        inputs = set(backward_result.given_grad_names[name] for name in sorted(given_gradients))
+        inputs = {backward_result.given_grad_names[name] for name in sorted(given_gradients)}
         # loop through the arrays that we need from the forward pass
         for name, desc in sorted(backward_input_arrays.items()):
             # if the name is not already passed to the reverse SDFG node ...
@@ -105,7 +105,7 @@ class DaceNodeBackwardImplementations:
             else:
                 inputs.add(name)
 
-        outputs = set(backward_result.required_grad_names[name] for name in required_gradients)
+        outputs = {backward_result.required_grad_names[name] for name in required_gradients}
 
         for inp in inputs:
             if inp in reverse_nsdfg.arrays:

@@ -28,7 +28,7 @@ class MapScoringEnumerator(Enumerator):
         self._scoring_function = scoring_function
 
     def list(self):
-        return list(e[0] for e in self.iterator())
+        return [e[0] for e in self.iterator()]
 
     def scores(self):
-        return list(e for e in self.iterator())
+        return list(self.iterator())

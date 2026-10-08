@@ -282,11 +282,11 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> dtyp
     elif isinstance(node, nodes.EntryNode):
         # The containers that decide are the ones outside the scope: an edge on the inside may name
         # a buffer the scope gathers into, which says nothing about the schedule the scope should have
-        memlets = set(
+        memlets = {
             e.data.data
             for e in state.in_edges(node)
             if not e.data.is_empty() and e.dst_conn and e.dst_conn.startswith("IN_")
-        )
+        }
         exit_node = state.exit_node(node)
         memlets.update(
             e.data.data
@@ -295,7 +295,7 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> dtyp
         )
     else:
         # Other nodes only need neighboring memlets
-        memlets = set(e.data.data for e in state.all_edges(node) if not e.data.is_empty())
+        memlets = {e.data.data for e in state.all_edges(node) if not e.data.is_empty()}
 
     # From memlets, use non-scalar data descriptors for decision
     constraints: set[dtypes.ScheduleType] = set()
@@ -539,4 +539,4 @@ def _get_addressed_arrays(state: SDFGState, edge: Edge[Memlet], outgoing: bool) 
     last_node = sdutil.get_all_view_nodes(state, last_node)
     if last_node is None:
         return {edge.data.data}
-    return set(n.data for n in last_node)
+    return {n.data for n in last_node}

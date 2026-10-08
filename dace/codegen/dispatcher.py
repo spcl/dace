@@ -407,7 +407,7 @@ class TargetDispatcher:
         """Dispatches a code generator for a scope subgraph of an
         `SDFGState`."""
 
-        start_nodes = list(v for v in dfg.nodes() if len(list(dfg.predecessors(v))) == 0)
+        start_nodes = [v for v in dfg.nodes() if len(list(dfg.predecessors(v))) == 0]
 
         # Mark nodes to skip in order to be able to skip
         nodes_to_skip = set()

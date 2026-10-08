@@ -726,9 +726,7 @@ class MapScope(DataflowScope):
         disallow_propagation: set[str] | None = None,
         **kwargs,
     ) -> MemletSet:
-        return super().input_memlets(
-            root, propagate={k: v for k, v in zip(self.node.map.params, self.node.map.range)}, **kwargs
-        )
+        return super().input_memlets(root, propagate=dict(zip(self.node.map.params, self.node.map.range)), **kwargs)
 
     def output_memlets(
         self,
@@ -738,9 +736,7 @@ class MapScope(DataflowScope):
         disallow_propagation: set[str] | None = None,
         **kwargs,
     ) -> MemletSet:
-        return super().output_memlets(
-            root, propagate={k: v for k, v in zip(self.node.map.params, self.node.map.range)}, **kwargs
-        )
+        return super().output_memlets(root, propagate=dict(zip(self.node.map.params, self.node.map.range)), **kwargs)
 
 
 @dataclass

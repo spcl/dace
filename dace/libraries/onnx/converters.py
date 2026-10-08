@@ -124,7 +124,7 @@ def attribute_proto_converters() -> dict[int, Callable]:
         elif k == "STRING":
             inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode("utf-8")
         elif k == "STRINGS":
-            inv_map[v] = lambda attr: list(map(lambda x: x.decode("utf-8"), get_proto_attr(attr, "strings")))
+            inv_map[v] = lambda attr: [x.decode("utf-8") for x in get_proto_attr(attr, "strings")]
         elif k == "TENSOR":
             inv_map[v] = lambda attr: to_array(get_proto_attr(attr, "t"))
     return inv_map

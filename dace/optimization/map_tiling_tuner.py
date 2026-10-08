@@ -45,7 +45,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         if key == "None":
             return None
 
-        return list(map(lambda k: int(k), key.split(".")))
+        return [int(k) for k in key.split(".")]
 
     def apply(self, config: list[int], label: str, **kwargs) -> None:
         if config is None:
@@ -70,7 +70,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
             "cutout": cutout.to_json(),
             "map_entry_id": cutout.start_state.node_id(map_entry),
             "measurements": measurements,
-            "key": lambda point: "None" if point is None else ".".join(map(lambda p: str(p), point)),
+            "key": lambda point: "None" if point is None else ".".join(str(p) for p in point),
         }
         return new_kwargs
 

@@ -277,7 +277,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
         # Make unique names for all control-flow blocks
-        node_names = set(cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True))
+        node_names = {cfr.label for cfr in sdfg.all_control_flow_blocks(recursive=True)}
         for node in nsdfg.all_control_flow_blocks(recursive=True):
             if node.label in node_names:
                 node_name = data.find_new_name(node.label, node_names)

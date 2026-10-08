@@ -243,7 +243,7 @@ class ControlFlowRaising(ppl.Pass):
             # Compute immediate dominators
             idom: dict[ControlFlowBlock, ControlFlowBlock] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
 
-            back_edges = set([(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)])
+            back_edges = {(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)}
 
             # DFS tree edges
             dfs_tree_edges = set(nx.dfs_edges(cfg.nx, cfg.start_block))
@@ -300,7 +300,7 @@ class ControlFlowRaising(ppl.Pass):
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured
 
     def report(self, pass_retval: tuple[int, int, int] | None):
-        if pass_retval and any([x > 0 for x in pass_retval]):
+        if pass_retval and any(x > 0 for x in pass_retval):
             return (
                 f"Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, "
                 + f"and {pass_retval[3]} unstructured control flow regions"

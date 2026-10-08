@@ -496,7 +496,7 @@ def _handle_connectors(
                 mm.Memlet(data=orig_edge.data.data, subset=subset),
             )
     # Remove connectors and edges
-    conns_to_remove = set(v[0] for v in mapping.values()) - ignore
+    conns_to_remove = {v[0] for v in mapping.values()} - ignore
     for conn in conns_to_remove:
         state.remove_edge(orig_edges[conn])
         if in_edges:
@@ -566,7 +566,7 @@ def _cpp_indirection_promoter(
                 do_not_remove.add(node_name)
 
     # Make all string replacements
-    for (begin, end), replacement in reversed(sorted(repl.items())):
+    for (begin, end), replacement in sorted(repl.items(), reverse=True):
         code = code[:begin] + replacement + code[end:]
 
     return code, in_mapping, out_mapping, do_not_remove

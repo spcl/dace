@@ -328,7 +328,7 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: dict[str, Any]) -> 
         def make_remake(kwnames):
 
             def remake_dict(args):
-                return {k: a for k, a in zip(kwnames, args)}
+                return dict(zip(kwnames, args))
 
             return remake_dict
 
@@ -410,7 +410,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: dict[str, Any]
                         unflattened.append(unflatten(all_args[i : i + skip]))
 
                 args = unflattened[:poscount]
-                kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
+                kwargs = dict(zip(keywords, unflattened[poscount:]))
                 return func(*args, **kwargs)
 
             return cb_func
@@ -420,7 +420,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: dict[str, Any]
 
             def cb_func(*all_args):
                 args = all_args[:poscount]
-                kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
+                kwargs = dict(zip(keywords, all_args[poscount:]))
                 return func(*args, **kwargs)
 
             return cb_func
@@ -1237,7 +1237,7 @@ class LoopUnroller(ast.NodeTransformer):
                     )
 
             elembody = [astutils.copy_tree(stmt) for stmt in node.body]
-            replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
+            replace = astutils.ASTFindReplace(dict(zip(to_replace, elem)))
             for stmt in elembody:
                 new_body.append(replace.visit(stmt))
 

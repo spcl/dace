@@ -63,8 +63,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
 
         # Cached lists
         cfbs = set(self.loop.all_control_flow_blocks())
-        states = set([s for s in cfbs if isinstance(s, SDFGState)])
-        interstate_edges = set(e for s in cfbs for e in s.parent_graph.in_edges(s) + s.parent_graph.out_edges(s))
+        states = {s for s in cfbs if isinstance(s, SDFGState)}
+        interstate_edges = {e for s in cfbs for e in s.parent_graph.in_edges(s) + s.parent_graph.out_edges(s)}
 
         # Find symbols depending on the loop variable
         sym_deps = {}
@@ -73,7 +73,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 sym_expr = symbolic.pystr_to_symbolic(v)
                 if k not in sym_deps:
                     sym_deps[k] = set()
-                str_set = set([str(s) for s in sym_expr.free_symbols])
+                str_set = {str(s) for s in sym_expr.free_symbols}
                 sym_deps[k].update(str_set)
 
         itervar_dep_syms = set()
@@ -138,7 +138,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
 
                     dst_subset = e.data.get_dst_subset(e, state)
                     for rb, re, _ in dst_subset.ndrange():
-                        str_set = set([str(s) for s in rb.free_symbols.union(re.free_symbols)])
+                        str_set = {str(s) for s in rb.free_symbols.union(re.free_symbols)}
                         if itervar_dep_syms.intersection(str_set):
                             return False
 

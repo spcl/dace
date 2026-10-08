@@ -125,7 +125,7 @@ def test_p1():
     )
     del csdfg
 
-    subgraph = SubgraphView(state, [node for node in state.nodes()])
+    subgraph = SubgraphView(state, list(state.nodes()))
     expansion = MultiExpansion()
     expansion.setup_match(subgraph)
     fusion = SubgraphFusion()

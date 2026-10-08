@@ -73,7 +73,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     csdfg(A=A, B=B1, N=100)
     del csdfg
 
-    subgraph = SubgraphView(graph, [n for n in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
     st = StencilTiling()
     st.setup_match(subgraph)
     st.tile_size = (tile_size,)
@@ -89,7 +89,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     del csdfg
 
     sdfg.simplify()
-    subgraph = SubgraphView(graph, [n for n in graph.nodes()])
+    subgraph = SubgraphView(graph, list(graph.nodes()))
     sf = SubgraphFusion()
     sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)

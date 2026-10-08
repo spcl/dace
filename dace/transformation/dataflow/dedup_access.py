@@ -44,8 +44,8 @@ class DeduplicateAccess(xf.SingleStateTransformation):
             return False
 
         # Two nodes must belong to same connector
-        edges1 = set(e.src_conn for e in graph.edges_between(map_entry, node1))
-        edges2 = set(e.src_conn for e in graph.edges_between(map_entry, node2))
+        edges1 = {e.src_conn for e in graph.edges_between(map_entry, node1)}
+        edges2 = {e.src_conn for e in graph.edges_between(map_entry, node2)}
         if len(edges1 & edges2) == 0:
             return False
 
@@ -90,8 +90,8 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         # 3. Create transients for subsets
         # 4. Redirect edges through new transients
 
-        edges1 = set(e.src_conn for e in graph.edges_between(map_entry, node1))
-        edges2 = set(e.src_conn for e in graph.edges_between(map_entry, node2))
+        edges1 = {e.src_conn for e in graph.edges_between(map_entry, node1)}
+        edges2 = {e.src_conn for e in graph.edges_between(map_entry, node2)}
 
         # Only apply to first connector (determinism)
         conn = sorted(edges1 & edges2)[0]
@@ -103,7 +103,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
         desc = sdfg.arrays[edges[0].data.data]
 
         # Get unique subsets
-        unique_subsets = set(e.data.subset for e in edges)
+        unique_subsets = {e.data.subset for e in edges}
 
         # Find largest contiguous subsets
         try:

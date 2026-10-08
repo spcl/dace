@@ -57,7 +57,7 @@ def find_new_name(name: str, existing_names: Container[str]) -> str:
 
 def deduplicate(iterable):
     """Removes duplicates in the passed iterable."""
-    return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+    return type(iterable)(sorted(set(iterable), key=lambda x: iterable.index(x)))
 
 
 def until(val, substr):

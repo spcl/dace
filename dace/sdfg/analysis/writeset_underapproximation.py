@@ -945,7 +945,7 @@ class UnderapproximateWrites(ppl.Pass):
         sdfg_iteration_variables = self.iteration_variables[sdfg] if sdfg in self.iteration_variables else set()
         state_iteration_variables = self.ranges_per_state[state].keys()
         iteration_variables_local = map_iteration_variables | sdfg_iteration_variables | state_iteration_variables
-        mapped_iteration_variables = set(map(lambda x: symbol_map(nsdfg.symbol_mapping, x), iteration_variables_local))
+        mapped_iteration_variables = {symbol_map(nsdfg.symbol_mapping, x) for x in iteration_variables_local}
         if mapped_iteration_variables:
             self.iteration_variables[nsdfg.sdfg] = mapped_iteration_variables
 
@@ -1381,7 +1381,7 @@ class UnderapproximateWrites(ppl.Pass):
             return Memlet()
 
         sdfg = dfg_state.parent
-        scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith("IN_"))
+        scope_node_symbols = {conn for conn in entry_node.in_connectors if not conn.startswith("IN_")}
         defined_vars = {
             symbolic.pystr_to_symbolic(s)
             for s in (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys())
@@ -1471,7 +1471,7 @@ class UnderapproximateWrites(ppl.Pass):
             for memlet in memlets:
                 defined_variables |= memlet.free_symbols
             defined_variables -= set(params)
-            defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+            defined_variables = {symbolic.pystr_to_symbolic(p) for p in defined_variables}
 
         # Propagate subset
         variable_context = [
@@ -1498,7 +1498,7 @@ class UnderapproximateWrites(ppl.Pass):
             else:
                 _subsets = [_subsets]
 
-            if len(list(set(_subsets) - set([None]))) == 0 or _subsets is None:
+            if len(list(set(_subsets) - {None})) == 0 or _subsets is None:
                 continue
 
             # iterate over all the subsets in the SubsetUnion of the current memlet and

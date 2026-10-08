@@ -285,7 +285,7 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
             if isinstance(cfg, ConditionalBlock):
                 continue
             blocks = cfg.nodes()
-            if len(blocks) != len(set([s.label for s in blocks])):
+            if len(blocks) != len({s.label for s in blocks}):
                 raise InvalidSDFGError("Found multiple blocks with the same name in " + cfg.name, sdfg, None)
 
         # Check the names of data descriptors and co.
@@ -1085,9 +1085,7 @@ def validate_state(
                 if e.data.is_empty():
                     if isinstance(dst_node, nd.ExitNode):
                         pass
-                    if isinstance(dst_node, nd.Tasklet) and all(
-                        {oe.data.is_empty() for oe in state.out_edges(dst_node)}
-                    ):
+                    if isinstance(dst_node, nd.Tasklet) and all(oe.data.is_empty() for oe in state.out_edges(dst_node)):
                         pass
                 else:
                     raise InvalidSDFGEdgeError(
@@ -1412,7 +1410,7 @@ def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: "dace.ControlFlowRe
     for edge in cfg.edges():
         if edge.data is not None and isinstance(edge.data, InterstateEdge):
             # sdfg.arrays return arrays and scalars, it is invalid to write to them
-            if any([key in cfg.sdfg.arrays for key in edge.data.assignments]):
+            if any(key in cfg.sdfg.arrays for key in edge.data.assignments):
                 raise InvalidSDFGInterstateEdgeError(
                     f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
                     cfg.sdfg,

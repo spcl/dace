@@ -470,7 +470,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                 )
                             ):
                                 global_code_nodes[state].append(node)
-                                gpu_scalars.update({k: None for k in scalars})
+                                gpu_scalars.update(dict.fromkeys(scalars))
                                 changed = True
 
         # Apply GPUTransformSDFG recursively to NestedSDFGs.

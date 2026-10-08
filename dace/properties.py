@@ -719,7 +719,7 @@ class DictProperty(Property):
             saved_dictionary = {k: self.value_type(v) for k, v in saved_dictionary.items()}
 
         # Sort by key before saving
-        return {k: v for k, v in sorted(saved_dictionary.items())} if None not in saved_dictionary else saved_dictionary
+        return dict(sorted(saved_dictionary.items())) if None not in saved_dictionary else saved_dictionary
 
     @staticmethod
     def from_string(s):
@@ -976,7 +976,7 @@ class SetProperty(Property):
     def to_json(self, l):
         if l is None:
             return None
-        return list(sorted(l))
+        return sorted(l)
 
     def from_json(self, l, sdfg=None):
         if l is None:
@@ -999,7 +999,7 @@ class SetProperty(Property):
         if isinstance(val, (frozenset, set)):
             pass
         elif len(val) != len(set(val)):
-            dups = set([x for x in val if val.count(x) > 1])
+            dups = {x for x in val if val.count(x) > 1}
             raise ValueError("Duplicates found in set: " + str(dups))
 
         # Cast to element type and ensure that it is a frozen set.

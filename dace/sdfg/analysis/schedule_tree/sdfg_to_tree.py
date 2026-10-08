@@ -342,7 +342,7 @@ def _prepare_schedule_tree_edges(
 
         # Part of a memlet path - only consider innermost memlets
         mtree = state.memlet_tree(edge)
-        all_edges = set(e for e in mtree)
+        all_edges = set(mtree)
         leaves = set(mtree.leaves())
         edges_to_ignore.update(all_edges - leaves)
 
@@ -502,11 +502,11 @@ def _state_schedule_tree(state: SDFGState) -> list[tn.ScheduleTreeNode]:
             if node.in_connectors:
                 in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             else:
-                in_memlets = set([e.data for e in state.in_edges(node)])
+                in_memlets = {e.data for e in state.in_edges(node)}
             if node.out_connectors:
                 out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
             else:
-                out_memlets = set([e.data for e in state.out_edges(node)])
+                out_memlets = {e.data for e in state.out_edges(node)}
             libnode = tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets)
             result.append(libnode)
         elif isinstance(node, dace.nodes.AccessNode):

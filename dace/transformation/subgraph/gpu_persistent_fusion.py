@@ -80,7 +80,7 @@ class GPUPersistentKernel(SubgraphTransformation):
             subgraph_blocks.add(nd)
             if isinstance(nd, AbstractControlFlowRegion):
                 subgraph_blocks.update(nd.all_control_flow_blocks())
-        subgraph_states = set([blk for blk in subgraph_blocks if isinstance(blk, SDFGState)])
+        subgraph_states = {blk for blk in subgraph_blocks if isinstance(blk, SDFGState)}
 
         # All states need to be GPU states
         for state in subgraph_states:
@@ -225,12 +225,12 @@ class GPUPersistentKernel(SubgraphTransformation):
             sdfg.add_edge(launch_state, exit_state_out, InterstateEdge())
 
         # Handle data for kernel
-        kernel_data = set(
+        kernel_data = {
             node.data for state in kernel_sdfg.states() for node in state.nodes() if isinstance(node, nodes.AccessNode)
-        )
-        other_data = set(
+        }
+        other_data = {
             node.data for state in other_states for node in state.nodes() if isinstance(node, nodes.AccessNode)
-        )
+        }
 
         # move Streams and Register data into the nested SDFG
         # normal data will be added as kernel argument

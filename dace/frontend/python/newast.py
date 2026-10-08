@@ -2724,7 +2724,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Make sure the entire sub-graph of the test_region copy has proper sdfg references and that each block has
             # a unique name in the SDFG.
-            loop_region.sdfg._labels = set(s.label for s in loop_region.sdfg.all_control_flow_blocks())
+            loop_region.sdfg._labels = {s.label for s in loop_region.sdfg.all_control_flow_blocks()}
             for block in test_region_copy.all_control_flow_blocks():
                 block.sdfg = loop_region.sdfg
                 block.label = data.find_new_name(block.label, loop_region.sdfg._labels)
@@ -3197,7 +3197,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     or indirect_indices
                     or (sqz_wsub.size() == sqz_osub.size() and sqz_wsub.size() == sqz_rsub.size())
                 ):
-                    map_range = {i: rng for i, rng in all_idx_tuples}
+                    map_range = dict(all_idx_tuples)
                     in1_memlet = Memlet.simple(rtarget_name, out_idx)
                     in1_memlet.subset.unsqueeze(rsqueezed)
                     in1_memlet.subset.offset(rtarget_subset, False)
@@ -4219,7 +4219,7 @@ class ProgramVisitor(ExtNodeVisitor):
             mapping = infer_symbols_from_datadescriptor(
                 sdfg,
                 {k: self.sdfg.arrays[v] for k, v in args if v in self.sdfg.arrays},
-                set(sym.arg for sym in node.keywords if sym.arg in symbols),
+                {sym.arg for sym in node.keywords if sym.arg in symbols},
             )
         except ValueError as ex:
             raise DaceSyntaxError(self, node, str(ex))
@@ -4232,7 +4232,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             required_args.extend(symbols)
         required_args = dtypes.deduplicate(required_args)
-        gargs = set(a[0] for a in args)
+        gargs = {a[0] for a in args}
         for rarg in required_args:
             if rarg not in gargs and rarg in self.sdfg.symbols:
                 args.append((rarg, rarg))
@@ -4246,7 +4246,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if aname not in required_args and aname not in all_args:
                 raise DaceSyntaxError(self, node, f'Invalid keyword argument "{aname}" in call to "{funcname}"')
         if len(args) != len(required_args):
-            gargs = set(a[0] for a in args)
+            gargs = {a[0] for a in args}
             if len(args) > len(required_args):
                 extra = set(gargs) - set(required_args)
                 raise DaceSyntaxError(
@@ -4421,7 +4421,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add return values as additional outputs
         rets = []
-        given_args = set(a for a, _ in args)
+        given_args = {a for a, _ in args}
         for arrname, arr in sdfg.arrays.items():
             if arrname.startswith("__return") and not arr.transient and arrname not in given_args:
                 # Add a transient to the current SDFG
@@ -5266,7 +5266,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Set(self, node: ast.Set):
         # Recursively loop over elements
-        return set(self.visit(a) for a in node.elts)
+        return {self.visit(a) for a in node.elts}
 
     def visit_Dict(self, node: ast.Dict):
         # Recursively loop over elements and return an ordered dictionary (for callback consistency)
@@ -5591,7 +5591,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = ((lower, upper, step),)
         elif isinstance(s, ast.Tuple):
             if multidim:  # Tuple inside the multi-dimensional index (i.e., "A[(1,2,3),]")
-                res = list(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
+                res = [self._parse_subscript_slice(d, multidim=True) for d in s.elts]
             else:
                 res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
         else:

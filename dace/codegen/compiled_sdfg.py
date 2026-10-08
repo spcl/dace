@@ -660,7 +660,7 @@ with open(r"{temp_path}", "wb") as f:
         if self.argnames is None and len(args) != 0:
             raise KeyError("Passed positional arguments to an SDFG that does not accept them.")
         elif len(args) > 0 and self.argnames is not None:
-            positional_arguments = {aname: avalue for aname, avalue in zip(self.argnames, args)}
+            positional_arguments = dict(zip(self.argnames, args))
             if not positional_arguments.keys().isdisjoint(kwargs.keys()):
                 raise ValueError(
                     f"The arguments were passed as both positional and keyword arguments: {set(positional_arguments.keys()).intersection(kwargs.keys())}"
