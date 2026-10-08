@@ -86,8 +86,11 @@ def _existence_test(flag: str, loops: List[tn.ForScope], guards: List[Tuple[ast.
             connectors.setdefault(element, f'__in{len(connectors)}')
     terms = []
     for condition, accesses in guards:
-        names = {id(node): connectors[element] for _, element, node, _ in accesses}
-        terms.append(f'bool({ast.unparse(ReplaceAccesses(names).visit(astutils.copy_tree(condition)))})')
+        # The accesses are replaced in a copy (the condition belongs to the scope), found by position in the walk
+        copied = astutils.copy_tree(condition)
+        copies = {id(original): new for original, new in zip(ast.walk(condition), ast.walk(copied))}
+        names = {id(copies[id(node)]): connectors[element] for _, element, node, _ in accesses}
+        terms.append(f'bool({ast.unparse(ReplaceAccesses(names).visit(copied))})')
     init = tn.TaskletNode(node=nodes.Tasklet('any_init', {}, {'__out'}, '__out = False'),
                           in_memlets={},
                           out_memlets={'__out': Memlet(f'{flag}[0]')})
