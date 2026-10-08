@@ -73,6 +73,15 @@ Memlet Consolidation
    :show-inheritance:
 
 
+Memlet Access Policies (Loop-Carried Address Cursors)
+-----------------------------------------------------
+
+.. automodule:: dace.transformation.passes.memlet_access_policies
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 State Fusion and SDFG Inlining
 ------------------------------
 
