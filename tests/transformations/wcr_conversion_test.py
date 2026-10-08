@@ -603,3 +603,60 @@ def test_aug_assign_keeps_the_other_read_of_the_same_array():
     a = np.arange(8, dtype=np.float64)
     sdfg(A=a)
     assert a[4] == 3.0 + 4.0
+
+
+def test_aug_assign_fission_keeps_the_binding_of_a_view_left_behind():
+    """mixed_precision_ir's ``y[i] -= Alu[i, :i] @ y[:i]``: the read view of ``y`` also feeds a producer that stays
+    in the first state, so its copy there must keep the edge binding it to ``y``, not dangle."""
+    sdfg = dace.SDFG("aug_assign_fission_shared_view")
+    sdfg.add_array("y", [8], dace.float64)
+    sdfg.add_view("yv", [8], dace.float64)
+    sdfg.add_scalar("s", dace.float64, transient=True)
+    state = sdfg.add_state()
+    read = state.add_access("yv")
+    state.add_edge(state.add_read("y"), None, read, "views", dace.Memlet("y[0:8]"))
+    head = state.add_tasklet("head", {"h": None}, {"o": None}, "o = 2.0 * h")
+    state.add_edge(read, None, head, "h", dace.Memlet("yv[0]"))
+    delta = state.add_access("s")
+    state.add_edge(head, "o", delta, None, dace.Memlet("s[0]"))
+    sub = state.add_tasklet("sub", {"cur": None, "d": None}, {"out": None}, "out = cur - d")
+    state.add_edge(read, None, sub, "cur", dace.Memlet("yv[3]"))
+    state.add_edge(delta, None, sub, "d", dace.Memlet("s[0]"))
+    write = state.add_access("yv")
+    state.add_edge(sub, "out", write, None, dace.Memlet("yv[3]"))
+    state.add_edge(write, "views", state.add_write("y"), None, dace.Memlet("y[0:8]"))
+    assert sdfg.apply_transformations_repeated(AugAssignToWCR) == 1
+    sdfg.validate()
+    y = np.arange(1.0, 9.0)
+    expected = y.copy()
+    expected[3] -= 2.0 * y[0]
+    sdfg(y=y)
+    assert np.array_equal(y, expected), y
+
+
+if __name__ == "__main__":
+    test_aug_assign_tasklet_lhs()
+    test_aug_assign_tasklet_lhs_brackets()
+    test_aug_assign_tasklet_rhs()
+    test_aug_assign_tasklet_rhs_brackets()
+    test_aug_assign_tasklet_lhs_cpp()
+    test_aug_assign_tasklet_lhs_brackets_cpp()
+    test_aug_assign_tasklet_rhs_brackets_cpp()
+    test_aug_assign_tasklet_func_lhs_cpp()
+    test_aug_assign_tasklet_func_rhs_cpp()
+    test_aug_assign_free_map()
+    test_aug_assign_state_fission_map()
+    test_free_map_permissive()
+    test_aug_assign_same_inconns()
+    test_aug_assign_copy_wrapped_rmw_match()
+    test_aug_assign_copy_wrapped_rmw_value_and_parallelize()
+    test_aug_assign_copy_wrapped_rmw_max()
+    test_aug_assign_copy_wrapped_rmw_subtract_left_only()
+    test_aug_assign_refuses_cross_element_operand()
+    test_aug_assign_cross_element_operand_trisolv_shape()
+    test_aug_assign_combine_copyback_map()
+    test_aug_assign_state_fission_is_order_stable()
+    test_aug_assign_matches_rmw_whose_delta_comes_from_a_tasklet()
+    test_aug_assign_fissions_an_access_node_delta_when_the_accumulator_is_written()
+    test_aug_assign_keeps_the_other_read_of_the_same_array()
+    test_aug_assign_fission_keeps_the_binding_of_a_view_left_behind()

@@ -453,21 +453,6 @@ def test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node():
     assert np.allclose(a, a0 - v0), f"got {a[:3]}"
 
 
-if __name__ == "__main__":
-    test_tasklet()
-    test_mapped_tasklet()
-    test_noncommutative_operand_order()
-    test_scalar_source_multidim_target_subset()
-    test_slice_source_offset_wcr()
-    test_symbolic_overapproximated_wcr_refused_no_typeerror()
-    test_mapexit_wcr_injective_reverts()
-    test_mapexit_wcr_reduction_kept()
-    test_nested_boundary_wcr_is_cleared_on_revert()
-    test_nested_boundary_wcr_survives_a_second_reducer()
-    test_augassign_operand_is_routed_through_an_access_node()
-    test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node()
-
-
 def test_the_output_binding_must_name_the_array_the_wcr_edge_writes():
     """A map exit with several outputs has one valid ``output`` binding per array.
 
@@ -612,3 +597,40 @@ def test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts():
     want = A - 2.0 * q[:, None]
     sdfg(A=A, q=q)
     assert np.allclose(A, want), np.max(np.abs(A - want))
+
+
+def test_a_wcr_into_a_view_reads_back_through_a_bound_view():
+    """mixed_precision_ir: reverting ``yv[3] (+)= v`` reads the destination back, and an unbound view access node
+    for that read made the SDFG invalid ("Ambiguous or invalid edge to/from a View access node")."""
+    sdfg = dace.SDFG("wcr_into_view_read_back")
+    sdfg.add_array("y", [8], dace.float64)
+    sdfg.add_view("yv", [8], dace.float64)
+    state = sdfg.add_state()
+    value = state.add_tasklet("value", {}, {"o": None}, "o = 5.0")
+    written = state.add_access("yv")
+    state.add_edge(value, "o", written, None, dace.Memlet("yv[3]", wcr="lambda a, b: a + b"))
+    state.add_edge(written, "views", state.add_write("y"), None, dace.Memlet("y[0:8]"))
+    assert sdfg.apply_transformations(WCRToAugAssign) == 1
+    sdfg.validate()
+    y = np.arange(8.0)
+    sdfg(y=y)
+    assert np.array_equal(y, np.arange(8.0) + 5.0 * np.eye(8)[3]), y
+
+
+if __name__ == "__main__":
+    test_tasklet()
+    test_mapped_tasklet()
+    test_noncommutative_operand_order()
+    test_scalar_source_multidim_target_subset()
+    test_slice_source_offset_wcr()
+    test_symbolic_overapproximated_wcr_refused_no_typeerror()
+    test_mapexit_wcr_injective_reverts()
+    test_mapexit_wcr_reduction_kept()
+    test_nested_boundary_wcr_is_cleared_on_revert()
+    test_nested_boundary_wcr_survives_a_second_reducer()
+    test_augassign_operand_is_routed_through_an_access_node()
+    test_augassign_operand_at_a_map_exit_is_routed_through_an_access_node()
+    test_the_output_binding_must_name_the_array_the_wcr_edge_writes()
+    test_a_scan_seeded_in_the_same_state_keeps_its_accumulator_load()
+    test_a_privatized_subtraction_on_a_nested_map_exit_chain_reverts()
+    test_a_wcr_into_a_view_reads_back_through_a_bound_view()
