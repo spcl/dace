@@ -102,6 +102,11 @@ def _inputs_with_negatives() -> List[Dict[str, np.ndarray]]:
 
 def test_coarsen_nest_and_rows():
     stree = _same_results(_borrowing_tree, lambda t: coarsen_guards(t) == 1 or None, _inputs_with_negatives())
+    # The tests read the guards' elements through memlets, not by name in their code
+    for test in _nodes(stree, tn.TaskletNode):
+        if test.node.label == 'any_guard':
+            assert 'A[' not in test.node.code.as_string and 'L[' not in test.node.code.as_string
+            assert {m.data for m in test.in_memlets.values()} >= {'A', 'L'}
     # The guards read both loop variables: only row tests, inside the k loop over i
     conditions = [n.condition.as_string for n in _nodes(stree, tn.IfScope)]
     assert any(c.startswith('__any_row') for c in conditions)
