@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""CPF: rendering an SDFG as one self-contained translation unit.
+"""CPF: rendering an SDFG as self-contained source.
 
 ``cpf(sdfg)`` returns C++ that a bare host compiler accepts -- ``g++ -std=c++20 -fopenmp`` with no
 ``-I``, no ``libdace``, no BLAS -- and that computes what the SDFG computes. ``cpf(sdfg,
@@ -25,6 +25,10 @@ three things and no more:
 The preamble is assembled LAST, from the emitted text, because that is the only point that knows
 which helpers were used. Deriving it from the SDFG instead would mean predicting the printers'
 output, and a helper reached through a tasklet body (not a memlet subset) would be missed.
+
+A device dialect (``'hip'``, ``'cuda'``) renders the SDFG the way DaCe builds it: TWO units, the host
+unit (``.cpp``, the ``extern "C"`` entry, which only launches) and the device unit (``.hip`` / ``.cu``,
+the ``__global__`` kernels and the launchers the host unit calls), both compiled by the device compiler.
 
 What CPF refuses, it refuses loudly -- see :func:`prepare`, and the standalone paths in
 ``framecode``. A rendering that quietly dropped an initializer, a caller-supplied buffer or a GPU
@@ -676,30 +680,6 @@ def prepare(sdfg: SDFG, provenance: Optional[Dict[str, Tuple[str, str]]] = None)
             desc.lifetime = demoted
 
 
-#: The qualifier run a generated helper is declared with, in any order and any subset: ``static
-#: constexpr inline`` for an ``<array>_idx`` index map, ``static consteval inline`` for an
-#: ``<array>_size`` extent, ``static DACE_HDFI constexpr`` for a device-callable one.
-_HELPER_QUALIFIERS = r"static(?:\s+(?:DACE_HDFI|constexpr|consteval|inline))+"
-
-#: A complete function definition on one line, which is the shape every generated helper has: the
-#: ``<array>_idx`` index maps and the ``<array>_size`` extents. Anchored on the closing brace so a
-#: PROTOTYPE (same prefix, ending in ``;``) never matches -- dropping a repeated declaration could
-#: remove the only one that precedes a use.
-ONE_LINE_DEFINITION = re.compile(_HELPER_QUALIFIERS + r"\b.*\}\s*$")
-
-#: An SDFG constant, which CPF emits as a namespace-scope ``constexpr`` OBJECT rather than a
-#: function -- so it ends in ``;`` and the closing-brace anchor above cannot see it. An initializer
-#: is required in the pattern because that is what distinguishes a definition from the declaration
-#: ``extern constexpr T name;``, which may repeat.
-CONSTANT_DEFINITION = re.compile(r"(?:static\s+)?constexpr\s+[\w:<>,\s*&]+\b\w+\s*=.*;\s*$")
-
-#: The definitions :func:`merged_object` may drop a repeat of. Matched against the line as WRITTEN,
-#: with no leading whitespace allowed: generated code indents everything inside a function body, so
-#: column zero is what says a definition is at namespace scope. Without that anchor a ``constexpr``
-#: local declared in two different kernels would look like one repeated definition, and dropping
-#: the second copy would delete the second kernel's own constant.
-DUPLICABLE_DEFINITIONS = (ONE_LINE_DEFINITION, CONSTANT_DEFINITION)
-
 #: Source languages a GPU target emits its own translation unit in. CUDA emits ``cu``; HIP emits
 #: plain ``cpp``, because hipcc compiles ``.cpp`` -- the SAME language the frame carries. So the
 #: language alone cannot tell the two apart there, and :data:`DEVICE_TARGET_TYPES` is what does.
@@ -721,76 +701,45 @@ def is_device_object(obj: CodeObject) -> bool:
     return obj.target_type in DEVICE_TARGET_TYPES or obj.language in DEVICE_LANGUAGES
 
 
-def frame_object(objects: List[CodeObject], name: str) -> CodeObject:
-    """The one translation unit CPF renders, out of what code generation produced.
+def split_units(objects: List[CodeObject], name: str) -> Tuple[CodeObject, Optional[CodeObject]]:
+    """The units CPF renders, out of what code generation produced: the frame, and under a device dialect
+    the one device object.
 
-    A second LINKABLE object means the SDFG was split across files -- a ``.cu`` for a GPU kernel, or
-    a separate unit per nest under ``codegen_params.split_nsdfg_translation_units``. Either way the
-    single-file contract is broken, and returning just the frame would return a unit that does not
-    contain the computation. Non-linkable objects (the call header, the sample ``main``) are
+    The frame holds the entry and, on a device dialect, calls ``__cpf_runkernel_*``; the device object
+    defines those launchers and the kernels. Any other split -- a device object under a host dialect,
+    a second device object, a separate unit per nest under
+    ``codegen_params.split_nsdfg_translation_units`` -- means a unit CPF does not render would hold
+    part of the computation. Non-linkable objects (the call header, the sample ``main``) are
     generated for every SDFG and are not part of the build, so they do not count.
 
     :param objects: what :func:`dace.codegen.codegen.generate_code` returned.
     :param name: the SDFG's name, for the message.
-    :returns: the frame code object.
-    :raises NotImplementedError: if the code was split across translation units.
+    :returns: the frame object, and the device object (``None`` under a host dialect).
+    :raises NotImplementedError: if the code was split any other way.
     """
     linkable = [obj for obj in objects if obj.linkable]
-    if len(linkable) == 1:
-        return linkable[0]
-    # A device rendering is EXPECTED to arrive in two pieces: the frame, which calls
-    # ``__dace_runkernel_*``, and the device object, which defines those and the kernels. One
-    # compiler builds both, so they are one unit here -- concatenated frame-first, since the frame
-    # already forward-declares every kernel launcher it calls.
-    if cpf_lowering.device():
-        # Neither label separates the two on every backend, so is_device_object takes either. A
-        # language-only filter refused every HIP rendering: hipcc compiles .cpp, so both objects
-        # came back ``language='cpp'``, both were classified as the frame, and no single frame was
-        # found.
-        frame = [obj for obj in linkable if not is_device_object(obj)]
-        rest = [obj for obj in linkable if is_device_object(obj)]
-        if len(frame) == 1:
-            return merged_object(frame[0], rest)
+    # Neither label separates the two on every backend, so is_device_object takes either: hipcc
+    # compiles .cpp, so both HIP objects come back ``language='cpp'``.
+    frame = [obj for obj in linkable if not is_device_object(obj)]
+    device = [obj for obj in linkable if is_device_object(obj)]
+    if len(frame) == 1 and len(device) <= (1 if cpf_lowering.device() else 0):
+        return frame[0], (device[0] if device else None)
     extra = ", ".join(f"{obj.name}.{obj.language}" for obj in linkable)
     raise NotImplementedError(
-        f"CPF renders one translation unit, but {name} generated {len(linkable)}: "
+        f"CPF renders the frame and at most one device unit, but {name} generated {len(linkable)}: "
         f"{extra}. Turn off the split-translation-unit codegen parameters."
     )
 
 
-def merged_object(frame: CodeObject, rest: List[CodeObject]) -> CodeObject:
-    """One code object holding the frame and the device objects, with the shared text emitted once.
+def state_struct(frame: str, name: str) -> str:
+    """The frame's ``<name>_state_t`` definition, which the device unit's launchers take a pointer to.
 
-    Every object repeats what it needs of the others, because separate compilation gives each unit
-    only what it declares itself: the ``<array>_idx`` and ``<array>_size`` helpers and the SDFG
-    constants are emitted into both. Concatenated, a repeated DEFINITION is a redefinition error, so
-    the second copy is dropped and the first stands. Repeated DECLARATIONS are left alone -- a
-    prototype may appear any number of times, and dropping one risks removing the only declaration
-    before a use, which is why ``DACE_EXPORTED void __dace_runkernel_*(...);`` survives in both.
-
-    Everything duplicated is a one-liner by construction -- a helper is
-    ``static <qualifiers> T name(...) {{ ... }}`` and a constant ``constexpr T name = ...;`` -- which
-    is why a line is the unit here rather than a parsed definition. Dropping the LATER copy keeps
-    every use preceded by a definition: the frame goes first and already uses the helpers it shares.
-
-    :param frame: the frame object, which goes first; it declares every launcher it calls.
-    :param rest: the device objects, which define them.
-    :returns: a new code object carrying the joined text under the frame's identity.
+    The frame defines it (it carries the stream context); the device object only names it. Repeating
+    the identical definition in the device unit is what separate compilation needs, and the one
+    definition rule allows. Empty when the frame defines no state.
     """
-    seen: Set[str] = set()
-    chunks: List[str] = []
-    for obj in [frame] + list(rest):
-        kept: List[str] = []
-        for line in obj.clean_code.splitlines():
-            if any(pattern.match(line) for pattern in DUPLICABLE_DEFINITIONS):
-                if line in seen:
-                    continue
-                seen.add(line)
-            kept.append(line)
-        chunks.append("\n".join(kept))
-    merged = copy.copy(frame)
-    merged.code = "\n\n".join(chunks)
-    return merged
+    match = re.search(rf"^struct {re.escape(name)}_state_t \{{.*?^\}};\n", frame, re.M | re.S)
+    return match.group(0) + "\n" if match else ""
 
 
 def written_containers(sdfg: SDFG) -> OrderedSet:
@@ -1181,7 +1130,7 @@ def device_backend(dialect: cpf_lowering.Dialect) -> contextlib.AbstractContextM
 
 
 class Rendering(NamedTuple):
-    """A rendered SDFG: the C++ text, and the SDFG that text was generated from.
+    """A rendered SDFG: its source, and the SDFG that source was generated from.
 
     The second field is not a convenience. CPF renders a PREPARED COPY -- library nodes expanded
     through renderable implementations, lifetimes demoted -- and preparation can change the
@@ -1194,7 +1143,8 @@ class Rendering(NamedTuple):
     parameters in, which is the arglist's order unless the caller supplied one of its own.
     """
 
-    #: The self-contained translation unit.
+    #: The self-contained translation unit; under a device dialect the HOST unit (``<name>.cpp``):
+    #: the ``extern "C"`` entry, which only launches.
     code: str
     #: The prepared copy that was rendered. Its ``arglist()`` names the entry point's parameters
     #: and gives their types; ``arguments`` is the ORDER the rendered text declares them in.
@@ -1203,6 +1153,9 @@ class Rendering(NamedTuple):
     #: ``tuple(sdfg.arglist())`` unless the caller asked for an order of its own, which is exactly
     #: when a consumer that read the arglist instead would call with its arguments shifted.
     arguments: Tuple[str, ...]
+    #: Under a device dialect, the DEVICE unit (``<name>.hip`` / ``<name>.cu``): the ``__global__``
+    #: kernels and the launchers ``code`` calls. Empty under a host dialect.
+    device_code: str = ""
 
 
 def render(
@@ -1217,11 +1170,11 @@ def render(
     :param sdfg: the SDFG to render. Not modified -- a copy is prepared and rendered.
     :param validate: validate the SDFG during code generation.
     :param language: ``'c++'`` (the default, C++20) or ``'c'`` (C23), which build with a bare host
-                     compiler, no ``-I``, no libdace, no BLAS; or a device unit, ``'cuda'`` (nvcc) or
-                     ``'hip'`` (hipcc), which adds only the toolkit's own headers. A device entry has
-                     the ``'c++'`` prototype, takes device pointers for ``GPU_Global`` arrays (the
-                     caller copies to and from the device) and synchronizes the device before it
-                     returns.
+                     compiler, no ``-I``, no libdace, no BLAS; or a device dialect, ``'cuda'`` (nvcc) or
+                     ``'hip'`` (hipcc), which renders a host unit and a device unit and adds only the
+                     toolkit's own headers. A device entry has the ``'c++'`` prototype, takes device
+                     pointers for ``GPU_Global`` arrays (the caller copies to and from the device) and
+                     synchronizes the device before it returns.
     :param order: the entry point's parameter names in the order the caller will pass them, for a
                   caller whose calling convention is fixed elsewhere. ``None`` keeps CPF's own
                   order (``arglist()``: arrays by name, then scalars by name). Must name exactly
@@ -1232,9 +1185,9 @@ def render(
                            other gate for. Pass ``False`` only where the caller compiles the
                            result itself.
     :returns: the :class:`Rendering`.
-    :raises NotImplementedError: if the SDFG needs anything a single host unit cannot hold; the
+    :raises NotImplementedError: if the SDFG needs anything the dialect's units cannot hold; the
                                  message names the construct.
-    :raises RuntimeError: if the finished unit is not self-contained, or does not compile.
+    :raises RuntimeError: if a finished unit is not self-contained, or does not compile.
     :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
                         set.
     """
@@ -1269,10 +1222,16 @@ def render(
                 # lifting, library expansion) add nodes whose debuginfo nothing here reads.
                 with set_temporary("compiler", "lineinfo", value="none"):
                     objects = codegen.generate_code(prepared, validate=validate)
-                body = frame_object(objects, sdfg.name).clean_code
+                frame, device = split_units(objects, sdfg.name)
+                body = frame.clean_code
                 # Type names reach the text from the entry signature and from declarations, neither
                 # of which goes through an expression printer, so the rename runs over the whole unit.
                 body = cpf_lowering.rewrite_ctypes(body, dialect)
+                device_body = ""
+                if device is not None:
+                    device_body = state_struct(body, sdfg.name) + cpf_lowering.rewrite_ctypes(
+                        device.clean_code, dialect
+                    )
                 # Nothing below changes the prepared SDFG, so one argument list serves both uses.
                 entry_arglist = prepared.arglist()
                 body = qualify_readonly_pointers(body, prepared, sdfg.name, entry_arglist)
@@ -1287,12 +1246,15 @@ def render(
                 if dialect in cpf_lowering.DEVICE_DIALECTS:
                     # Last, because the passes above match the DaCe spellings the generator wrote.
                     body = cpf_lowering.device_spell_out(body, dialect)
+                    device_body = cpf_lowering.device_spell_out(device_body, dialect)
     code = preamble(body, dialect) + body
-    verify(code, sdfg.name, dialect)
-    if check_compiles:
-        compile_check(code, sdfg.name, dialect)
+    device_code = preamble(device_body, dialect) + device_body if device_body else ""
+    for unit in filter(None, (code, device_code)):
+        verify(unit, sdfg.name, dialect)
+        if check_compiles:
+            compile_check(unit, sdfg.name, dialect)
     arguments = tuple(order) if order is not None else tuple(entry_arglist)
-    return Rendering(code, prepared, arguments)
+    return Rendering(code, prepared, arguments, device_code)
 
 
 def cpf(
@@ -1302,7 +1264,7 @@ def cpf(
     order: Optional[Sequence[str]] = None,
     check_compiles: bool = True,
 ) -> str:
-    """Render ``sdfg`` as one self-contained translation unit.
+    """Render ``sdfg`` as one self-contained host translation unit.
 
     The SDFG is copied first, so neither the lifetime demotions nor the code generator's own
     in-place lowering (library expansion, inlining, explicit copies) is visible to the caller.
@@ -1312,7 +1274,8 @@ def cpf(
 
     :param sdfg: the SDFG to render.
     :param validate: validate the SDFG during code generation.
-    :param language: ``'c++'`` (the default), ``'c'``, ``'cuda'`` or ``'hip'`` (see :func:`render`).
+    :param language: ``'c++'`` (the default) or ``'c'``. A device dialect renders two units, which
+                     :func:`render` returns.
     :param order: the entry point's parameter names in the caller's own order; ``None`` keeps
                   CPF's (see :func:`render`).
     :param check_compiles: compile the finished unit before returning it (see :func:`render`).
@@ -1323,4 +1286,6 @@ def cpf(
     :raises ValueError: if ``language`` is neither, or if ``order`` is not the entry's parameter
                         set.
     """
+    if dialect_for(language) in cpf_lowering.DEVICE_DIALECTS:
+        raise ValueError(f"CPF renders {language!r} as a host and a device unit: call render(), not cpf()")
     return render(sdfg, validate=validate, language=language, order=order, check_compiles=check_compiles).code

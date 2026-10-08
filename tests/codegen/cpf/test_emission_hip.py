@@ -1,12 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""CPF's DEVICE dialect: an SDFG with kernels in it, rendered as ONE self-contained ``.hip`` unit.
+"""CPF's DEVICE dialect: an SDFG with kernels in it, rendered as a host ``.cpp`` and a device ``.hip``.
 
 The host dialects render a program the compiler that builds them can already express. The device
-one has to hold two code objects in one file and reach two machines from one text, and that is
-where its failures live -- so every test here is about one of the four:
+one renders two units that must link and reach two machines, and that is where its failures live --
+so every test here is about one of the four:
 
-* a definition emitted into BOTH code objects, which is a redefinition once they are concatenated
-  (:func:`~dace.codegen.cpf.merged_object`), while a repeated PROTOTYPE must survive,
+* the two units' contract: the host unit holds the entry and only launches, the device unit holds
+  the kernels and defines every launcher the host unit calls, and each unit carries what it needs,
 * a write-conflict resolution reached on the DEVICE, where an ``omp atomic`` compiles and does
   nothing and the GPU thread-block tree reduction is spelled with runtime templates,
 * a library node whose operands are device-resident, which must not be re-pointed at a HOST
@@ -27,51 +27,34 @@ import dace
 from dace import cpf_lowering
 from dace.codegen import cpf
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.cpf import Rendering
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes import FindFirst, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
 
-from tests.codegen.cpf.conftest import assert_standalone_device, device_scan_sdfg, render_gpu
+from tests.codegen.cpf.conftest import assert_standalone_units, device_scan_sdfg, render_gpu
 
 N = dace.symbol("N")
 
 
-def duplicable_definitions(code: str):
-    """The namespace-scope definitions a repeat of would be a redefinition error.
-
-    Read with the emitter's own patterns rather than a second spelling of them: a test table that
-    drifted from :data:`~dace.codegen.cpf.DUPLICABLE_DEFINITIONS` would pass while the unit did not
-    compile. What is asserted from outside is the CONSEQUENCE -- each one appears once.
-    """
-    return [line for line in code.splitlines() if any(p.match(line) for p in cpf.DUPLICABLE_DEFINITIONS)]
+def both(rendering: Rendering) -> str:
+    """The two units' text together, for a construct whose unit the test is not about."""
+    return rendering.code + "\n" + rendering.device_code
 
 
-def test_shared_definitions_are_emitted_once_and_prototypes_are_not_dropped():
-    """A GPU SDFG generates two code objects, and separate compilation gives each one its own copy
-    of what it needs: the ``<array>_idx`` and ``<array>_size`` helpers, and the SDFG's constants.
-    Concatenated into one unit a second copy is a redefinition, so it is dropped.
-
-    The other half is the trap. A repeated DECLARATION must NOT be dropped: the frame calls
-    ``__cpf_runkernel_*`` and the device object defines it, so the prototype appears in both, and
-    removing the frame's copy would remove the only declaration before the call."""
+def test_the_host_unit_launches_and_the_device_unit_holds_the_kernels():
+    """The split the GPU build contract states: ``<kernel>.cpp`` holds the ``extern "C"`` entry and
+    only launches, ``<kernel>.hip`` holds the ``__global__`` kernels and the launchers the host unit
+    calls. The device unit repeats the state struct the launchers take a pointer to, identically."""
 
     @dace.program
     def blend(x: dace.float64[N], y: dace.float64[N]):
         y[:] = x * 2.0 + 1.0
 
-    _, code = render_gpu(blend, "cpf_hip_dedup")
-    assert_standalone_device(code, "cpf_hip_dedup")
-
-    definitions = duplicable_definitions(code)
-    assert definitions, "the device rendering emitted no namespace-scope definitions to check"
-    repeated = sorted({line for line in definitions if definitions.count(line) > 1})
-    assert not repeated, f"definition emitted more than once: {repeated}"
-
-    prototypes = re.findall(r"^.*\b__cpf_runkernel_\w+\([^;]*\);\s*$", code, re.MULTILINE)
-    assert prototypes, "the device rendering declared no kernel launcher"
-    assert len(prototypes) > len(set(prototypes)), (
-        "a launcher prototype must be allowed to repeat -- the frame declares what the device object defines"
-    )
+    rendering = render_gpu(blend, "cpf_hip_units")
+    assert_standalone_units(rendering, "cpf_hip_units")
+    state = cpf.state_struct(rendering.code, "cpf_hip_units")
+    assert state and state in rendering.device_code, "the device unit must define the state its launchers take"
 
 
 def test_the_hip_unit_calls_hip_runtime_functions_whichever_gpu_the_rendering_host_has():
@@ -84,13 +67,14 @@ def test_the_hip_unit_calls_hip_runtime_functions_whichever_gpu_the_rendering_ho
         for i in dace.map[0:N]:
             out[i] = (a[i] * a[i] + 1.0) * (a[i] * a[i] - 1.0)
 
-    _, code = render_gpu(fused, "cpf_hip_backend")
-    assert_standalone_device(code, "cpf_hip_backend")
+    rendering = render_gpu(fused, "cpf_hip_backend")
+    assert_standalone_units(rendering, "cpf_hip_backend")
 
-    assert "#include <hip/hip_runtime.h>" in code, "the header that declares the HIP runtime must be included"
-    assert re.search(r"\bhipStreamSynchronize\(gpu_streams\[", code), "the stream synchronize must be the HIP call"
-    assert re.search(r"\bhipLaunchKernel\(", code), "the kernel launch must be the HIP call"
-    assert re.findall(r"\bcuda[A-Z]\w*", code) == [], "a CUDA runtime name is undeclared in a HIP unit"
+    for unit in (rendering.code, rendering.device_code):
+        assert "#include <hip/hip_runtime.h>" in unit, "the header that declares the HIP runtime must be included"
+        assert re.findall(r"\bcuda[A-Z]\w*", unit) == [], "a CUDA runtime name is undeclared in a HIP unit"
+    assert re.search(r"\bhipStreamSynchronize\(gpu_streams\[", rendering.code), "the stream synchronize is the HIP call"
+    assert re.search(r"\bhipLaunchKernel\(", rendering.device_code), "the kernel launch must be the HIP call"
 
 
 def test_device_reduction_folds_without_a_runtime_functor():
@@ -105,8 +89,9 @@ def test_device_reduction_folds_without_a_runtime_functor():
     def total(a: dace.float64[N], out: dace.float64[1]):
         out[0] = np.sum(a)
 
-    _, code = render_gpu(total, "cpf_hip_reduce")
-    assert_standalone_device(code, "cpf_hip_reduce")
+    rendering = render_gpu(total, "cpf_hip_reduce")
+    assert_standalone_units(rendering, "cpf_hip_reduce")
+    code = rendering.device_code
 
     assert "gpucub::BlockReduce" in code, "the block fold must survive -- CPF renders the tree reduction, not a loop"
     assert "_wcr_fixed" not in code, "the reduction functor must not be the runtime template"
@@ -130,7 +115,7 @@ def test_each_gpu_scope_says_what_it_is_ahead_of_it():
         for i in range(N):
             a[i] = 2.0 * a[i]
 
-    code = render_gpu(scale, "cpf_hip_scope_hints")[1]
+    code = render_gpu(scale, "cpf_hip_scope_hints").device_code
     lines = [line.strip() for line in code.splitlines()]
     kernel = next(index for index, line in enumerate(lines) if line.startswith("__global__"))
     kernel_hint = ["// " + line for line in KernelScopeGenerator.SCOPE_HINT.splitlines()]
@@ -151,9 +136,9 @@ def test_a_block_tiled_reduction_folds_without_a_runtime_functor():
                 s += A[i, j] * x[j]
             y[i] = s
 
-    code = render_gpu(matvec, "cpf_hip_block_tiled_reduce")[1]
-    assert_standalone_device(code, "cpf_hip_block_tiled_reduce")
-    assert "gpucub::BlockReduce" in code, code
+    rendering = render_gpu(matvec, "cpf_hip_block_tiled_reduce")
+    assert_standalone_units(rendering, "cpf_hip_block_tiled_reduce")
+    assert "gpucub::BlockReduce" in rendering.device_code, rendering.device_code
 
 
 def test_conflicting_device_wcr_is_an_atomic_and_never_an_omp_pragma():
@@ -167,8 +152,9 @@ def test_conflicting_device_wcr_is_an_atomic_and_never_an_omp_pragma():
         for i in dace.map[0:N]:
             bins[idx[i]] += src[i]
 
-    _, code = render_gpu(scatter, "cpf_hip_scatter")
-    assert_standalone_device(code, "cpf_hip_scatter")
+    rendering = render_gpu(scatter, "cpf_hip_scatter")
+    assert_standalone_units(rendering, "cpf_hip_scatter")
+    code = both(rendering)
 
     assert "omp atomic" not in code and "omp critical" not in code, (
         "an OpenMP atomic in device code is ignored by the device compiler, so the accumulation would race"
@@ -204,10 +190,10 @@ def test_a_library_node_over_device_memory_takes_its_device_implementation():
     because ``pure`` renders. The device implementation is renderable too: CPF spells the search
     (``find_first_index_device``) the same way it spells the host one."""
     sdfg = device_find_first_sdfg("cpf_hip_findfirst")
-    code = cpf.cpf(sdfg, language="hip")
-    assert_standalone_device(code, "cpf_hip_findfirst")
+    rendering = cpf.render(sdfg, language="hip")
+    code = both(rendering)
     assert "find_first_index_device" in code, "the device search must be rendered, not the host one"
-    assert "__global__ void find_first_kernel" in code, "the search kernel is part of the unit"
+    assert "__global__ void find_first_kernel" in code, "the search kernel is part of the rendering"
 
 
 def test_the_host_implementation_still_wins_over_host_memory():
@@ -253,9 +239,8 @@ def test_a_host_level_node_over_device_memory_expands_into_a_kernel():
     this way (lulesh, cholesky, minife, quatrex_rgf, channel_flow, ls3df_scf,
     warpx_esirkepov_deposition), so the schedule is corrected where the implementation is chosen."""
     sdfg = host_level_gemm_sdfg("cpf_hip_host_gemm")
-    code = cpf.cpf(sdfg, language="hip")
-    assert_standalone_device(code, "cpf_hip_host_gemm")
-    assert "__global__" in code, "the pure expansion of a device-memory Gemm must become a kernel"
+    rendering = cpf.render(sdfg, language="hip")
+    assert_standalone_units(rendering, "cpf_hip_host_gemm")
 
 
 def test_the_schedule_correction_is_confined_to_host_level_device_memory():
@@ -306,11 +291,12 @@ def test_a_device_scan_renders_the_device_scan_and_its_scratch():
     and released by the exit one, neither of which a single self-contained call has. CPF defines
     the pool itself, over a buffer that allocates on first use and frees at static destruction, so
     the environment has nothing left to run and the rendering is admitted rather than refused."""
-    code = cpf.cpf(device_scan_sdfg("cpf_hip_scan", ScanOp.SUM), language="hip")
-    assert_standalone_device(code, "cpf_hip_scan")
+    rendering = cpf.render(device_scan_sdfg("cpf_hip_scan", ScanOp.SUM), language="hip")
+    code = both(rendering)
     assert "::gpucub::DeviceScan::ExclusiveScan" in code, "the device scan must survive as the device scan"
     assert "get_scratch<ScanTag>" in code, "the workspace must come from CPF's own pool"
-    assert code.count("static inline void *get_scratch(") == 1, "the pool is defined once"
+    for unit in (rendering.code, rendering.device_code):
+        assert unit.count("static inline void *get_scratch(") <= 1, "the pool is defined once per unit"
 
 
 def test_a_device_resident_scan_seed_is_read_where_it_lives():
@@ -319,8 +305,7 @@ def test_a_device_resident_scan_seed_is_read_where_it_lives():
     code dereference it, which validation rejects outright -- so the device expansion is the one to
     keep, and it reads the seed on the device where it lives."""
     sdfg = device_scan_sdfg("cpf_hip_affine", ScanOp.AFFINE, coefficients=True, seed=True)
-    code = cpf.cpf(sdfg, language="hip")
-    assert_standalone_device(code, "cpf_hip_affine")
+    code = both(cpf.render(sdfg, language="hip"))
     assert "inclusive_affine" in code, "the affine recurrence must render as the device scan over its affine maps"
     assert "__global__ void cpf_affine_pack_kernel" in code, "the map-packing kernel is part of the unit"
 
@@ -329,16 +314,14 @@ def test_a_device_scan_seed_is_read_at_its_type_inside_the_kernel():
     """The scan's input iterator reads the device seed at the element type inside the kernel, the
     same on both backends: no host staging, no ``FutureValue``, and no ``InclusiveScanInit``, which
     hipCUB on ROCm 6.3 does not have."""
-    code = cpf.cpf(device_scan_sdfg("cpf_hip_seeded_scan", ScanOp.SUM, seed=True), language="hip")
-    assert_standalone_device(code, "cpf_hip_seeded_scan")
+    code = both(cpf.render(device_scan_sdfg("cpf_hip_seeded_scan", ScanOp.SUM, seed=True), language="hip"))
     assert "const double* seed;" in code, code
     assert "static_cast<double>(*seed)" in code, code
     assert "InclusiveScanInit" not in code and "FutureValue" not in code, code
 
 
 def test_a_device_product_scan_multiplies_through_a_typed_functor():
-    code = cpf.cpf(device_scan_sdfg("cpf_hip_product_scan", ScanOp.PRODUCT), language="hip")
-    assert_standalone_device(code, "cpf_hip_product_scan")
+    code = both(cpf.render(device_scan_sdfg("cpf_hip_product_scan", ScanOp.PRODUCT), language="hip"))
     assert "DACE_CUB_MUL_OP" not in code and "#define" not in code, code
     assert "cpf_cub_multiplies()" in code, "the scan must pass the functor where the operator name was"
     assert "__host__ __device__ T operator()(const T& a, const T& b) const" in code, code
@@ -346,11 +329,20 @@ def test_a_device_product_scan_multiplies_through_a_typed_functor():
 
 @pytest.mark.gpu
 def test_a_device_product_scan_unit_builds_with_hipcc(tmp_path):
-    """The functor is what ``gpucub::DeviceScan`` instantiates, so the unit has to build, not only read right."""
-    source = tmp_path / "cpf_hip_product_build.cpp"
-    source.write_text(cpf.cpf(device_scan_sdfg("cpf_hip_product_build", ScanOp.PRODUCT), language="hip"))
-    command = ["hipcc", "-std=c++20", "-fPIC", "-shared", str(source), "-o", str(tmp_path / "unit.so")]
-    result = subprocess.run(command, capture_output=True, text=True)
+    """The functor is what ``gpucub::DeviceScan`` instantiates, so the units have to build and link, as the
+    judge builds a GPU submission: each unit compiled with ``-c``, then one shared library."""
+    rendering = cpf.render(device_scan_sdfg("cpf_hip_product_build", ScanOp.PRODUCT), language="hip")
+    objects = []
+    for suffix, text in ((".cpp", rendering.code), (".hip", rendering.device_code)):
+        source = tmp_path / f"cpf_hip_product_build{suffix}"
+        source.write_text(text)
+        objects.append(str(source) + ".o")
+        command = ["hipcc", "-std=c++20", "-fPIC", "-c", str(source), "-o", objects[-1]]
+        result = subprocess.run(command, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+    result = subprocess.run(
+        ["hipcc", "-shared", *objects, "-o", str(tmp_path / "unit.so")], capture_output=True, text=True
+    )
     assert result.returncode == 0, result.stderr
 
 
@@ -369,7 +361,7 @@ def test_the_host_dialects_do_not_see_the_device_selection(language):
 
 
 def code_object(name: str, language: str, target_type: str, linkable: bool = True) -> CodeObject:
-    """A CodeObject carrying only the labels :func:`~dace.codegen.cpf.frame_object` reads."""
+    """A CodeObject carrying only the labels :func:`~dace.codegen.cpf.split_units` reads."""
     return CodeObject(name, "", language, None, "title", target_type=target_type, linkable=linkable)
 
 
@@ -383,7 +375,7 @@ def code_object(name: str, language: str, target_type: str, linkable: bool = Tru
     ),
 )
 def test_the_device_object_is_found_however_the_backend_labels_it(device_language, device_target_type):
-    """A GPU rendering arrives as frame + device object, and the two are merged rather than refused.
+    """A GPU rendering arrives as frame + device object, and the two are rendered as its two units.
 
     Selecting the device object by LANGUAGE alone refused every HIP rendering: hipcc compiles
     ``.cpp``, so both objects came back ``language='cpp'``, both looked like the frame, and no
@@ -393,16 +385,20 @@ def test_the_device_object_is_found_however_the_backend_labels_it(device_languag
     frame = code_object("kern", "cpp", "")
     device = code_object("kern_cuda", device_language, device_target_type)
     with cpf_lowering.dialect_scope(cpf.LANGUAGES["hip"]):
-        assert cpf.frame_object([frame, device], "kern") is not None
+        assert cpf.split_units([frame, device], "kern") == (frame, device)
 
 
 def test_a_split_that_is_not_a_device_object_is_still_refused():
-    """The merge is for the device pair only. Two host units are the split-translation-unit case
-    the single-file contract cannot express, and it must keep saying so."""
+    """The split is for the frame and its device object only. Two host units are the
+    split-translation-unit case CPF cannot express, and a device object under a host dialect is a
+    kernel no unit would hold; both must keep saying so."""
     units = [code_object("kern", "cpp", ""), code_object("kern_part2", "cpp", "")]
     with cpf_lowering.dialect_scope(cpf.LANGUAGES["hip"]):
-        with pytest.raises(NotImplementedError, match="one translation unit"):
-            cpf.frame_object(units, "kern")
+        with pytest.raises(NotImplementedError, match="at most one device unit"):
+            cpf.split_units(units, "kern")
+    with cpf_lowering.dialect_scope(cpf.LANGUAGES["c++"]):
+        with pytest.raises(NotImplementedError, match="at most one device unit"):
+            cpf.split_units([code_object("kern", "cpp", ""), code_object("kern_cuda", "cpp", "hip")], "kern")
 
 
 def test_non_linkable_objects_do_not_count_as_a_split():
@@ -413,4 +409,4 @@ def test_non_linkable_objects_do_not_count_as_a_split():
         code_object("kern", "h", "../../include", linkable=False),
         code_object("kern_main", "cpp", "../../sample", linkable=False),
     ]
-    assert cpf.frame_object([frame] + extras, "kern") is frame
+    assert cpf.split_units([frame] + extras, "kern") == (frame, None)

@@ -50,7 +50,8 @@ def residue_class_oracle(values: np.ndarray, stride: int, combine) -> np.ndarray
 def test_cpf_renders_the_strided_device_scan_self_contained():
     """CPF defines the strided entry point the expansion calls, so the unit renders instead of raising
     "a DaCe runtime symbol ('dace::')", and the definition it carries is the chunked one."""
-    code = cpf.cpf(strided_device_scan("cpf_hip_strided_scan", 1000, ScanOp.SUM), language="hip")
+    rendering = cpf.render(strided_device_scan("cpf_hip_strided_scan", 1000, ScanOp.SUM), language="hip")
+    code = rendering.code + rendering.device_code
     assert "dace::" not in code, "the unit still names the DaCe runtime"
     assert "strided_inclusive_sum<double>(" in code, "the wrapper must call the strided entry point"
     assert "__global__ void cpf_chunk_totals_kernel" in code, "few classes must take the chunked path"
