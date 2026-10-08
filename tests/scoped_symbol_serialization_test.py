@@ -214,8 +214,40 @@ def test_a_state_serializes_its_edges_by_frozen_node_ids_and_releases_them():
     assert state.node_id(tasklet) == state.nodes().index(tasklet) == 1
 
 
-if __name__ == "__main__":
-    import pytest
+def test_serializing_a_map_scope_leaves_the_sdfg_symbol_table_alone():
+    """Each state reads ``sdfg.symbols`` in place as its outermost authority (a copy per state is
+    quadratic in large SDFGs), so opening a map scope must extend a new table, never this one."""
+    sdfg = dace.SDFG("readonly_authority")
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", (symbolic.symbol("N", dace.int64),), dace.float64)
+    first = sdfg.add_state()
+    second = sdfg.add_state_after(first)
+    for state in (first, second):
+        state.add_mapped_tasklet(
+            "m",
+            map_ranges={"i": "0:N"},
+            inputs={},
+            code="b = 1.0",
+            outputs={"b": dace.Memlet(data="A", subset="i")},
+            external_edges=True,
+        )
+    symbols = sdfg.symbols
+    before = dict(symbols)
+    s1, s2 = _resave(sdfg)
+    assert s1 == s2
+    assert sdfg.symbols is symbols and symbols == before
 
-    pytest.main([__file__, "-v"])
+
+if __name__ == "__main__":
+    test_scope_authority_overrides_and_restores()
+    test_scope_authority_only_overrides_named_symbols()
+    test_registered_sdfg_symbol_roundtrips_its_dtype()
+    test_map_iterator_dtype_follows_scope()
+    test_nested_symbol_mapping_referencing_outer_map_param_roundtrips()
+    test_literal_bound_does_not_widen_the_iteration_symbol()
+    test_literal_too_wide_for_the_default_still_widens()
+    test_subset_symbols_agree_with_their_declaration()
+    test_loading_does_not_retype_subset_symbols()
+    test_bare_serialization_is_stable_across_a_load()
     test_a_state_serializes_its_edges_by_frozen_node_ids_and_releases_them()
+    test_serializing_a_map_scope_leaves_the_sdfg_symbol_table_alone()
