@@ -1,4 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import itertools
 import warnings
 from collections.abc import Sequence
 from functools import reduce
@@ -820,13 +821,13 @@ class Range(Subset):
     def ndslice_to_string(slice, tile_sizes=None):
         if tile_sizes is None:
             return ", ".join([Range.dim_to_string(s) for s in slice])
-        return ", ".join([Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)])
+        return ", ".join(itertools.starmap(Range.dim_to_string, zip(slice, tile_sizes)))
 
     @staticmethod
     def ndslice_to_string_list(slice, tile_sizes=None):
         if tile_sizes is None:
             return [Range.dim_to_string(s) for s in slice]
-        return [Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)]
+        return list(itertools.starmap(Range.dim_to_string, zip(slice, tile_sizes)))
 
     def ndrange(self):
         return [(rb, re, rs) for rb, re, rs in self.ranges]
@@ -858,7 +859,7 @@ class Range(Subset):
 
         if isinstance(key, slice):
             indices = range(*key.indices(len(self.ranges)))
-            return self.ranges.__setitem__(key, [coerce(i, v) for i, v in zip(indices, value)])
+            return self.ranges.__setitem__(key, list(itertools.starmap(coerce, zip(indices, value))))
         return self.ranges.__setitem__(key, coerce(key, value))
 
     def __eq__(self, other):

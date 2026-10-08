@@ -486,7 +486,7 @@ class AST_translator:
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_call))
             matched = False
             for array_name, array in all_arrays.items():
-                if array_name in [sdfg_name]:
+                if array_name == sdfg_name:
                     matched = True
                     local_name = parameters[variables_in_call.index(variable_in_call)]
                     self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
@@ -574,7 +574,7 @@ class AST_translator:
             if not matched:
                 # This handles the case where the function is called with global variables
                 for array_name, array in all_arrays.items():
-                    if array_name in [globalsdfg_name]:
+                    if array_name == globalsdfg_name:
                         local_name = parameters[variables_in_call.index(variable_in_call)]
                         self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
                         self.all_array_names.append(self.name_mapping[new_sdfg][local_name.name])

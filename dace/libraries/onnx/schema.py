@@ -32,7 +32,7 @@ Example:
 """
 
 import enum
-from itertools import chain
+from itertools import chain, starmap
 
 import numpy as np
 import onnx
@@ -135,7 +135,7 @@ def onnx_representation(represents, **mapping):
         def get_prop_docstring(name, prop):
             return f":param {name}: {prop.__doc__}\n:type {name}: ``{prop._dtype.__name__ if prop._dtype is not None else type(prop._default).__name__}``, default ``{repr(prop._default)}``"
 
-        init_docstring += "\n".join(get_prop_docstring(name, prop) for name, prop in cls.__properties__.items())
+        init_docstring += "\n".join(starmap(get_prop_docstring, cls.__properties__.items()))
 
         cls.__init__.__doc__ = init_docstring
 

@@ -2948,7 +2948,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     indirect_indices
                     or boolarr
                     or len(ssize) != len(osize)
-                    or any(inequal_symbols(s, o) for s, o in zip(ssize, osize))
+                    or any(itertools.starmap(inequal_symbols, zip(ssize, osize)))
                     or op
                 ):
                     _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())

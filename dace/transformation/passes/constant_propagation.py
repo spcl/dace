@@ -343,8 +343,7 @@ class ConstantPropagation(ppl.Pass):
     def _assignments_in_loop(self, loop: LoopRegion) -> set[str]:
         assignments_within = set()
         for e in loop.all_interstate_edges():
-            for k in e.data.assignments.keys():
-                assignments_within.add(k)
+            assignments_within.update(e.data.assignments.keys())
         if loop.loop_variable is not None:
             assignments_within.add(loop.loop_variable)
         return assignments_within

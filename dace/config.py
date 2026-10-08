@@ -255,7 +255,7 @@ class _ConfigData(threading.local):
             assert filename is None
             self._config = yaml.load(file.read(), Loader=yaml.SafeLoader)
         else:
-            with open(filename if filename else self._cfg_filename) as f:
+            with open(filename or self._cfg_filename) as f:
                 self._config = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
         if self._config is None:

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Implementation selection for ``CopyLibraryNode``."""
 
+import itertools
 from typing import TYPE_CHECKING
 
 import dace
@@ -83,7 +84,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     # an element loop, which is strictly worse than the single call at any size.
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = len(inp.shape) == len(out.shape) and not any(
-        symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())
+        itertools.starmap(symbolic.inequal_symbols, zip(in_subset.size(), out_subset.size()))
     )
     if (
         {inp.storage, out.storage} <= host_storages

@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
 import functools
+import itertools
 import warnings
 from io import StringIO
 from typing import TYPE_CHECKING
@@ -2644,7 +2645,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             assert len(block_size) >= 1 and len(block_size) <= 3
 
             # Grid size = ceil(|S|/32) for first dimension, rest = |S|
-            grid_size = [int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)]
+            grid_size = list(itertools.starmap(int_ceil, zip(grid_size, block_size)))
 
         else:
             # Find all thread-block maps to determine overall block size
@@ -2668,7 +2669,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 if len(detected_block_sizes) == 0:
                     block_size = tbsize
                 else:
-                    block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
+                    block_size = list(itertools.starmap(sympy.Max, zip(block_size, tbsize)))
 
                 if block_size != tbsize or len(detected_block_sizes) == 0:
                     detected_block_sizes.append(tbsize)

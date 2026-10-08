@@ -303,7 +303,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         output_data = sdfg.arrays[outedge.data.data]
 
         # Standardize axes
-        axes = node.axes if node.axes else list(range(input_dims))
+        axes = node.axes or list(range(input_dims))
 
         # Create nested SDFG
         nsdfg = SDFG("reduce")

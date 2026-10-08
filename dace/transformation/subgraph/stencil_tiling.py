@@ -334,8 +334,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             element = next(e for e in queue if not children_dict[e] - set(topo_reversed))
             topo_reversed.append(element)
             queue.remove(element)
-            for parent in parent_dict[element]:
-                queue.add(parent)
+            queue.update(parent_dict[element])
 
         # main loop
         # first get coverage dicts for each map entry

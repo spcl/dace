@@ -1270,10 +1270,8 @@ def integrate_nested_sdfg(sdfg: SDFG, symbols: SymbolResolver | None = None):
     for parent_name, parent_desc, parent_memlet in to_add_and_view.values():
         # The parent data name itself may not alias internally-defined names
         parent_names.add(parent_name)
-        for sym in parent_desc.used_symbols(all_symbols=True):
-            parent_symbols.add(str(sym))
-        for sym in parent_memlet.used_symbols(all_symbols=True):
-            parent_symbols.add(str(sym))
+        parent_symbols.update(str(sym) for sym in parent_desc.used_symbols(all_symbols=True))
+        parent_symbols.update(str(sym) for sym in parent_memlet.used_symbols(all_symbols=True))
 
     if parent_names or parent_symbols:
         # Rename internal names that would clash with the symbols introduced from the parent. Since the mapping is

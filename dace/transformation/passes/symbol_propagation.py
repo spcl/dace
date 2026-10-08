@@ -273,7 +273,7 @@ class SymbolPropagation(ppl.Pass):
                 f"symbols, never introduce them."
             )
 
-        return propagated if propagated else None
+        return propagated or None
 
     def _eliminate_dead_iedge_assignments(self, sdfg: SDFG) -> set[str]:
         """Drop interstate-edge assignments whose LHS is no longer referenced anywhere."""

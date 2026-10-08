@@ -423,7 +423,7 @@ def cfr_misses(
             if len(possibilities) > 1:
                 print(f"\n\nWhich branch to take at {cfr.name}")
                 for i in range(len(possibilities)):
-                    print(f"({i}) for branch {possibilities[i] if possibilities[i] else 'else_branch'}")
+                    print(f"({i}) for branch {possibilities[i] or 'else_branch'}")
                 chosen = int(input("Choose an option from above: "))
                 # if the user chooses one, we check only that branch
                 branches = [possibilities[chosen]]

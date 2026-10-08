@@ -44,8 +44,7 @@ def _internal_replace(sym, symrepl):
     for s in set(fsyms):
         if "." in s:
             tokens = s.split(".")
-            for i in range(1, len(tokens)):
-                fsyms.add(".".join(tokens[:i]))
+            fsyms.update(".".join(tokens[:i]) for i in range(1, len(tokens)))
     newrepl = {k: v for k, v in symrepl.items() if _symbol_name(k) in fsyms}
     if not newrepl:
         return sym

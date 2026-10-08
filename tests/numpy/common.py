@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
 import inspect
+import itertools
 from collections import OrderedDict
 from collections.abc import Callable
 from copy import deepcopy as dc
@@ -123,7 +124,7 @@ def compare_numpy_output(
                 if validation_func:
                     # Works only with 1D inputs of the same size!
                     reference_input = [arr.tolist() for arr in inputs.values()]
-                    reference_result = [validation_func(*inp_args) for inp_args in zip(*reference_input)]
+                    reference_result = list(itertools.starmap(validation_func, zip(*reference_input)))
                 else:
                     with contextmgr:
                         reference_result = func(**reference_input)

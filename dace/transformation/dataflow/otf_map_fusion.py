@@ -94,8 +94,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 real_dimensions = set()
                 for access in memlet.subset:
                     start, _, _ = access
-                    for sym in start.free_symbols:
-                        real_dimensions.add(str(sym))
+                    real_dimensions.update(str(sym) for sym in start.free_symbols)
 
                 # Map defines more dimensions than WCR memlet has
                 if len(real_dimensions) == 0 or len(first_map_dims.difference(real_dimensions)) > 0:

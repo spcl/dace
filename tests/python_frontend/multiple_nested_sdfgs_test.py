@@ -84,7 +84,7 @@ def test_call_multiple_sdfgs():
             for src, _, _, _, _ in state.in_edges(n):
                 assert src.data in {"out_tmp", "tmp_sum"}
             for _, _, dst, _, _ in state.out_edges(n):
-                assert dst.data in {"output"}
+                assert dst.data == "output"
 
 
 def test_nested_sdfg_with_return_value():

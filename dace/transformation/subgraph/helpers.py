@@ -86,8 +86,7 @@ def outermost_scope_from_subgraph(graph, subgraph, scope_dict=None):
     if scope_dict is None:
         scope_dict = graph.scope_dict()
     scopes = set()
-    for element in subgraph:
-        scopes.add(scope_dict[element])
+    scopes.update(scope_dict[element] for element in subgraph)
     # usual case: Root of scope tree is in subgraph,
     # return None (toplevel scope)
     if None in scopes:
@@ -121,8 +120,7 @@ def outermost_scope_from_maps(graph, maps, scope_dict=None):
     if not scope_dict:
         scope_dict = graph.scope_dict()
     scopes = set()
-    for map in maps:
-        scopes.add(scope_dict[map])
+    scopes.update(scope_dict[map] for map in maps)
     # usual case: Root of scope tree is in subgraph,
     # return None (toplevel scope)
     if None in scopes:

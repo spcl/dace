@@ -3,6 +3,7 @@
 
 import copy
 import functools
+import itertools
 import os
 import warnings
 from collections import defaultdict
@@ -996,7 +997,7 @@ def validate_state(
                     )
 
                 # Bounds
-                if any(_is_negative_index(minel, off) for minel, off in zip(e.data.subset.min_element(), arr.offset)):
+                if any(itertools.starmap(_is_negative_index, zip(e.data.subset.min_element(), arr.offset))):
                     # In case of dynamic memlet, only output a warning
                     if e.data.dynamic:
                         warnings.warn(f"Potential negative out-of-bounds memlet subset: {e}")
@@ -1027,9 +1028,7 @@ def validate_state(
                     )
 
                 # Bounds
-                if any(
-                    _is_negative_index(minel, off) for minel, off in zip(e.data.other_subset.min_element(), arr.offset)
-                ):
+                if any(itertools.starmap(_is_negative_index, zip(e.data.other_subset.min_element(), arr.offset))):
                     if e.data.dynamic:
                         warnings.warn(f"Potential negative out-of-bounds memlet other_subset: {e}")
                     else:

@@ -797,7 +797,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
     @staticmethod
     def redirect_edge(graph, edge, new_src=None, new_src_conn=None, new_dst=None, new_dst_conn=None, new_data=None):
 
-        data = new_data if new_data else edge.data
+        data = new_data or edge.data
         if new_src and new_dst:
             ret = graph.add_edge(new_src, new_src_conn, new_dst, new_dst_conn, data)
             graph.remove_edge(edge)

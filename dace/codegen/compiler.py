@@ -118,7 +118,7 @@ def generate_program_folder(
             filelist.append(f"{target_name},{target_type},{basename}")
 
         # Generate the source map.
-        if sdfg and (folder_mode in ["development"]):
+        if sdfg and (folder_mode == "development"):
             if code_object.language == "cpp" and code_object.title == "Frame":
                 code_object.create_source_map(sdfg)
 
@@ -155,7 +155,7 @@ def generate_program_folder(
         )
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
-    if folder_mode in ["development"]:
+    if folder_mode == "development":
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     # The runtime's `report.save()` uses `std::ofstream` to open `<folder>/perf/report-*.json`.
@@ -163,7 +163,7 @@ def generate_program_folder(
     #  Technically we only need to create it if the SDFG is instrumented. But we will also
     #  create it in development mode. Furthermore, if there is no SDFG given, we also create
     #  it to be on the safe side.
-    if (folder_mode in ["development"]) or (sdfg is None) or sdfg.is_instrumented():
+    if (folder_mode == "development") or (sdfg is None) or sdfg.is_instrumented():
         os.makedirs(os.path.join(out_path, "perf"), exist_ok=True)
 
     # The folder mode file is always generated. In case it is missing we assume the old version.

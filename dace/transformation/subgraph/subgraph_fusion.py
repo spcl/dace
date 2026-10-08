@@ -409,8 +409,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         map_exits = [graph.exit_node(map_entry) for map_entry in map_entries]
         for map_entry, map_exit in zip(map_entries, map_exits):
-            for edge in graph.in_edges(map_entry):
-                in_nodes.add(edge.src)
+            in_nodes.update(edge.src for edge in graph.in_edges(map_entry))
             for edge in graph.out_edges(map_exit):
                 current_node = edge.dst
                 if len(graph.out_edges(current_node)) == 0:
@@ -572,7 +571,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         If new_data is specified, inserts new_data as a memlet, else
         else makes a deepcopy of the current edges memlet
         """
-        data = new_data if new_data else dcpy(edge.data)
+        data = new_data or dcpy(edge.data)
         src = edge.src if new_src is None else new_src
         src_conn = edge.src_conn if new_src is None else new_src_conn
         dst = edge.dst if new_dst is None else new_dst

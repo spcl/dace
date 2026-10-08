@@ -806,7 +806,7 @@ class BackwardPassGenerator:
         Gradients for these attributes should not be tracked since they represent control flow and not data flow.
         """
         attribute_to_remove = {"axis", "keepdims", "axes", "p", "dilations", "kernel_shape", "strides"}
-        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+        for node in nodes_list.copy():  # Iterate over a copy of the list to avoid modification issues
             if isinstance(node, nodes.AccessNode):
                 out_edges = state.out_edges(node)
                 if out_edges and all(
@@ -823,7 +823,7 @@ class BackwardPassGenerator:
         This is because we might need to zero out the gradient of this node.
         If no zeroing out is necessary, the node will be removed in the reverse_subgraph function cleanup at the end.
         """
-        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+        for node in nodes_list.copy():  # Iterate over a copy of the list to avoid modification issues
             if isinstance(node, nodes.MapEntry) and len(node.in_connectors) == 0:
                 nodes_list.remove(node)
                 # Remove the MapExit and everything in between

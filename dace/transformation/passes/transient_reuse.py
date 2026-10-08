@@ -146,8 +146,7 @@ class TransientReuse(ppl.Pass):
             # Construct final mapping (transient_reuse_i, some_transient)
             mapping = set()
             for i in range(len(buckets)):
-                for j in range(1, len(buckets[i])):
-                    mapping.add((buckets[i][0], buckets[i][j]))
+                mapping.update((buckets[i][0], buckets[i][j]) for j in range(1, len(buckets[i])))
 
             # For each mapping redirect edges and rename memlets in the state
             for new, old in sorted(mapping):
