@@ -1,19 +1,19 @@
-from abc import abstractmethod
 import copy
 import math
+from abc import abstractmethod
 from collections import namedtuple
 from typing import Any
 
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.frontend.fortran.ast_transforms import (
-    NodeVisitor,
     NodeTransformer,
+    NodeVisitor,
     ParentScopeAssigner,
     ScopeVarsDeclarations,
-    par_Decl_Range_Finder,
     mywalk,
+    par_Decl_Range_Finder,
 )
+from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 
 FASTNode = Any
 

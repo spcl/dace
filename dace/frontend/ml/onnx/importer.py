@@ -49,9 +49,9 @@ Note:
 import collections
 import copy
 import tempfile
+from collections import OrderedDict
 from itertools import chain, repeat
 from typing import Any
-from collections import OrderedDict
 
 import numpy as np
 
@@ -91,17 +91,17 @@ except ImportError:
     ONNXSIM_AVAILABLE = False
 
 import dace
-from dace import config, SDFG, SDFGState, data as dt, dtypes, nodes
+from dace import SDFG, SDFGState, config, dtypes, nodes
+from dace import data as dt
 from dace.codegen import compiled_sdfg
 from dace.frontend.python import parser
+from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
+from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
+from dace.libraries.onnx.schema import ONNXParameterType
 from dace.sdfg import utils as sdfg_utils
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.onnx import auto_optimize_onnx as auto_opt
 from dace.transformation.onnx import expand_onnx_nodes as onnx_node_expander
-
-from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
-from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
-from dace.libraries.onnx.schema import ONNXParameterType
 
 #: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
 if TORCH_AVAILABLE:

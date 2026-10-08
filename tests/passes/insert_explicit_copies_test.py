@@ -6,23 +6,25 @@ import importlib.util
 import os
 import sys
 
-import dace
 import numpy as np
 import pytest
+
+import dace
+import tests.polybench
 from dace import nodes
+from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutils
-from dace.libraries.standard.nodes.copy import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
-
-import tests.polybench
 
 # The polybench programs import their ``polybench`` harness as a top-level module, which only
 # resolves when run as scripts (own directory on sys.path); importing them as a package needs it too.
 sys.path.append(os.path.dirname(tests.polybench.__file__))
 
-from tests.polybench.correlation import correlation, init_array as _correlation_init_array
-from tests.polybench.covariance import covariance, init_array as _covariance_init_array
+from tests.polybench.correlation import correlation
+from tests.polybench.correlation import init_array as _correlation_init_array
+from tests.polybench.covariance import covariance
+from tests.polybench.covariance import init_array as _covariance_init_array
 
 # fdtd-2d.py's hyphenated filename is not a valid module identifier. Load it from
 # its path under a clean module name so the SDFG name (derived from the module

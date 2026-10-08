@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import numpy as np
-
 import argparse
+
+import numpy as np
 import scipy
 
 import dace
-from dace.memlet import Memlet
-
 from dace.libraries import blas
+from dace.memlet import Memlet
 
 
 def pure_graph(implementation, dtype, veclen):

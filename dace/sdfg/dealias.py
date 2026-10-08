@@ -3,18 +3,20 @@
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
 
+import ast
+import copy
+from collections.abc import Callable
+
 from dace import data, dtypes, subsets, symbolic, utils
 from dace.frontend.python import astutils
 from dace.memlet import Memlet
-from dace.sdfg import nodes as nd, utils as sdutil
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.memlet_utils import MemletReplacer
+from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SymbolResolver
-from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
-from collections.abc import Callable
-import ast
-import copy
 
 
 def names_in_subtree(sdfg: SDFG) -> set[str]:

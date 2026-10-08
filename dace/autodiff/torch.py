@@ -2,13 +2,12 @@
 
 import dace
 from dace import data as dt
-
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.autodiff.base_abc import AutoDiffException, BackwardResult
 
 try:
-    from dace.libraries.onnx.converters import clean_onnx_name
     from dace.frontend.ml.onnx import ONNXModel
+    from dace.libraries.onnx.converters import clean_onnx_name
 
     ONNX_AVAILABLE = True
 except ImportError:

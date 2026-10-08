@@ -3,11 +3,10 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
-from dace.frontend.python import astutils
-
 import sympy
 
 from dace import symbolic
+from dace.frontend.python import astutils
 from dace.sdfg.state import LoopRegion
 
 

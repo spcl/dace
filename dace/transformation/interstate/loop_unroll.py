@@ -4,12 +4,14 @@
 import ast
 import copy
 
-from dace import dtypes, sdfg as sd, symbolic
+from dace import dtypes, symbolic
+from dace import sdfg as sd
+from dace.frontend.python.astutils import ASTFindReplace
 from dace.properties import Property, make_properties
-from dace.sdfg import InterstateEdge, utils as sdutil
+from dace.sdfg import InterstateEdge
+from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
-from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 

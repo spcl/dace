@@ -1,9 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-from dace.memlet import Memlet
 import numpy as np
 import scipy
+
+import dace
+from dace.memlet import Memlet
 
 vec_width = 2
 vtype = dace.vector(dace.float32, vec_width)

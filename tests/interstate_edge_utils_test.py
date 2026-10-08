@@ -1,5 +1,6 @@
-import dace
 import pytest
+
+import dace
 
 
 def _get_sdfg() -> tuple[dace.SDFG, dace.InterstateEdge]:

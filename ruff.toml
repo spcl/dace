@@ -2,7 +2,7 @@ line-length = 120
 target-version = "py310"
 
 [lint]
-select = ["F", "UP"]
+select = ["F", "UP", "I"]
 ignore = ["UP031","F821","F841","F823"]
 
 [lint.per-file-ignores]

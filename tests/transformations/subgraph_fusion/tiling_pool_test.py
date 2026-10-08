@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-from dace.transformation.subgraph.stencil_tiling import StencilTiling
-from dace.transformation.subgraph import SubgraphFusion
-from dace.sdfg.graph import SubgraphView
+import itertools
 
 import numpy as np
 import pytest
-import itertools
+
+import dace
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
+from dace.transformation.subgraph.stencil_tiling import StencilTiling
 
 N = dace.symbol("N")
 

@@ -2,8 +2,10 @@
 from typing import Any
 
 from dace import SDFG, properties, transformation
-from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
-from dace.transformation.passes import analysis as ap, pattern_matching as pmp
+from dace.transformation import dataflow as dftrans
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes import analysis as ap
+from dace.transformation.passes import pattern_matching as pmp
 
 
 @properties.make_properties

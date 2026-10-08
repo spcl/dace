@@ -2,15 +2,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
-
 import scipy
 
 import dace
-from dace.memlet import Memlet
-
 from dace.libraries import blas
-
 from dace.libraries.standard.memory import aligned_ndarray
+from dace.memlet import Memlet
 
 
 def run_test(configs, target):

@@ -6,7 +6,8 @@ import pytest
 
 import dace
 from dace.sdfg import validation
-from dace.transformation import dataflow, transformation as xf
+from dace.transformation import dataflow
+from dace.transformation import transformation as xf
 from dace.transformation.passes import pattern_matching
 
 # The transformations of the pass, in this order. Each one matches once in the SDFG of `_make_sdfg()`.

@@ -3,12 +3,11 @@ import itertools
 from collections.abc import Iterator
 
 import dace.sdfg.nodes as nd
-from dace.sdfg import SDFG, SDFGState
-from dace.properties import Property, make_properties
-from dace.sdfg.graph import MultiConnectorEdge
-
 from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
-from dace.libraries.onnx.schema import ONNXSchema, ONNXParameterType
+from dace.libraries.onnx.schema import ONNXParameterType, ONNXSchema
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.graph import MultiConnectorEdge
 
 
 def get_missing_arguments_message(function_name, missing_arguments, argument_type):

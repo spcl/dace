@@ -2,11 +2,14 @@
 """General class for pattern replacement transformations."""
 
 import abc
-import dace
-from dace import nodes, data as dt
-from dace.transformation import transformation, helpers as xfh
 from typing import Any
+
+import dace
+from dace import data as dt
+from dace import nodes
 from dace.sdfg import graph as gr
+from dace.transformation import helpers as xfh
+from dace.transformation import transformation
 
 
 def make_onnx_path(*path_nodes: nodes.Node) -> gr.OrderedDiGraph:

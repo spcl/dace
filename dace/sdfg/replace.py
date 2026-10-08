@@ -3,8 +3,8 @@
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Optional
 from copy import deepcopy
+from typing import TYPE_CHECKING, Any, Optional
 
 import sympy as sp
 

@@ -11,12 +11,10 @@ import numpy as np
 
 import dace
 from dace import data as dt
-from dace import dtypes
+from dace import dtypes, nodes, subsets, symbolic
 from dace import memlet as mm
-from dace import nodes
 from dace import properties as props
 from dace import sdfg as sd
-from dace import subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import SDFG
 from dace.sdfg import graph as gr

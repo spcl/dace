@@ -7,9 +7,10 @@ import collections
 
 import networkx as nx
 
-from dace.sdfg import SDFG, SDFGState, nodes, utils as sdfg_utils
-from dace.transformation.passes import analysis
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdfg_utils
 from dace.sdfg.state import FunctionCallRegion
+from dace.transformation.passes import analysis
 
 AccessSets = dict[SDFGState, tuple[set[str], set[str]]]
 

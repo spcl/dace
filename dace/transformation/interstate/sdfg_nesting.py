@@ -1,23 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """SDFG nesting transformation."""
 
-from copy import deepcopy as dc
-import itertools
-import networkx as nx
-from functools import reduce
-import operator
 import copy
+import itertools
+import operator
 import warnings
+from copy import deepcopy as dc
+from functools import reduce
 
-from dace import memlet, Memlet, symbolic, dtypes
-from dace.sdfg import dealias, nodes, propagation, utils
-from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
-from dace.sdfg import SDFG, SDFGState
+import networkx as nx
+
+from dace import Memlet, data, dtypes, memlet, symbolic
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, SDFGState, dealias, nodes, propagation, utils
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.state import LoopRegion
-from dace.transformation import transformation, helpers
-from dace.properties import make_properties, Property
-from dace import data
+from dace.transformation import helpers, transformation
 
 
 def _is_view_of(state: SDFGState, node: nodes.Node, viewed: nodes.AccessNode) -> bool:

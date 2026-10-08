@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from dace.libraries.blas import blas_helpers
+from dace.transformation.transformation import ExpandTransformation
+
+from .. import environments
 
 
 @dace.library.expansion

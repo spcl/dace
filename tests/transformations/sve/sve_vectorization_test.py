@@ -1,8 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace import SDFG, dtypes
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
-from dace import SDFG
-from dace import dtypes
 
 N = dace.symbol("N")
 

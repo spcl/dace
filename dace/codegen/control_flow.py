@@ -4,11 +4,16 @@ Functions for generating C++ code for control flow in SDFGs using control flow r
 """
 
 import re
-from typing import TYPE_CHECKING
-from collections.abc import Callable
 import warnings
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
 from dace import dtypes
+from dace.codegen.common import unparse_interstate_edge
+from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.graph import Edge
+from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     BreakBlock,
@@ -21,10 +26,6 @@ from dace.sdfg.state import (
     SDFGState,
     UnstructuredControlFlow,
 )
-from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.graph import Edge
-from dace.codegen.common import unparse_interstate_edge
-from dace.codegen.prettycode import CodeIOStream
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator

@@ -1,11 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Helper function to compute GPU schedule for reduction node "GPUAuto" expansion."""
 
-from dace.data import Array
 import dataclasses
-from dace.frontend.python.replacements.utils import Size
+
 from sympy import Expr
+
 from dace import symbolic
+from dace.data import Array
+from dace.frontend.python.replacements.utils import Size
 
 
 def expr_is_contained(expr, other_expr):

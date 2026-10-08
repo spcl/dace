@@ -2,10 +2,10 @@
 import json
 import tempfile
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.state import LoopRegion
 

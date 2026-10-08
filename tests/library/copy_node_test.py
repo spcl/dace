@@ -2,20 +2,20 @@
 """Tests for ``CopyLibraryNode`` and its pure, CPU, CUDA, cross-storage, register, and shared-memory expansions."""
 
 import contextlib
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
+
+import numpy as np
+import pytest
 
 import dace
 from dace import symbolic
-from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph import GPUPersistentKernel
 from dace.libraries.standard.helper import collapse_shape_and_strides
 from dace.libraries.standard.nodes.copy import CopyLibraryNode, select_copy_implementation
-from dace.libraries.standard.nodes.fill import FillLibraryNode
 from dace.libraries.standard.nodes.copy.common import _make_expansion_sdfg, cuda2d_pitch_params
-
-import pytest
-import numpy as np
+from dace.libraries.standard.nodes.fill import FillLibraryNode
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import GPUPersistentKernel
 
 
 @dataclass

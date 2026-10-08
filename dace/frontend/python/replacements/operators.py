@@ -3,6 +3,15 @@
 Contains operator replacements (e.g., NumPy Mathematical Functions) for supported objects.
 """
 
+import warnings
+from collections.abc import Sequence
+from numbers import Number
+
+import numpy as np
+import sympy as sp
+
+import dace  # noqa: F401 (used during evaluation of data types, e.g. casting in replaced op)
+from dace import SDFG, Memlet, SDFGState, data, dtypes, subsets, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.common import StringLiteral
@@ -14,15 +23,6 @@ from dace.frontend.python.replacements.utils import (
     representative_num,
     sym_type,
 )
-from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
-
-from numbers import Number
-from collections.abc import Sequence
-import warnings
-
-import numpy as np
-import sympy as sp
-import dace  # noqa: F401 (used during evaluation of data types, e.g. casting in replaced op)
 
 numpy_version = np.lib.NumpyVersion(np.__version__)
 

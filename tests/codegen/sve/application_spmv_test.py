@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-import scipy
-from tests.codegen.sve import common
 import pytest
+import scipy
+
+import dace
+from tests.codegen.sve import common
 
 W = dace.symbol("W")
 H = dace.symbol("H")

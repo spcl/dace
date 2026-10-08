@@ -1,13 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Explicitly distributed Gesummv sample."""
 
-import dace as dc
-import numpy as np
 import os
 import sys
 import timeit
-from dace.sdfg.utils import load_precompiled_sdfg
+
+import numpy as np
 from mpi4py import MPI
+
+import dace as dc
+from dace.sdfg.utils import load_precompiled_sdfg
 
 lM = dc.symbol("lM", dtype=dc.int64, integer=True, positive=True)
 lN = dc.symbol("lN", dtype=dc.int64, integer=True, positive=True)

@@ -1,21 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
 from copy import deepcopy as dc
-from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal
+
 import dace.library
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
+from dace import data as dt
+from dace import dtypes, properties
+from dace import memlet as mm
+from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas.blas_helpers import (
-    to_blastype,
     check_access,
     check_one_device,
     dtype_to_cudadatatype,
+    to_blastype,
     to_cublas_computetype,
 )
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts
+from dace.libraries.blas.nodes.matmul import _get_batchmm_opts, _get_codegen_gemm_opts, _get_matmul_operands
+from dace.symbolic import equal, symstr
+from dace.transformation.transformation import ExpandTransformation
+
 from .. import environments
-import warnings
 
 
 @dace.library.expansion

@@ -2,21 +2,24 @@
 """Contains functions related to pattern matching in transformations."""
 
 import collections
-from dataclasses import dataclass
 import time
 import warnings
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
+from typing import Any
+
+import networkx as nx
+from networkx.algorithms import isomorphism as iso
 
 from dace import properties
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import graph as gr, nodes as nd
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
 from dace.sdfg.state import ControlFlowRegion
-import networkx as nx
-from networkx.algorithms import isomorphism as iso
-from typing import Any
-from collections.abc import Callable, Iterable, Iterator
 from dace.sdfg.validation import InvalidSDFGError
-from dace.transformation import transformation as xf, pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation as xf
 
 
 @dataclass

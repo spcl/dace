@@ -4,12 +4,12 @@
 import ast
 import copy
 import re
-from dace import nodes, dtypes, Memlet, data
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes
 from dace.frontend.python import astutils
-from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
-from dace import SDFG, SDFGState
 from dace.sdfg.propagation import propagate_memlets_state
+from dace.transformation import transformation
 
 
 class AugAssignToWCR(transformation.SingleStateTransformation):

@@ -1,11 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import numpy as np
 import pytest
+
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
-import numpy as np
 
 
 def test_simple_constants():

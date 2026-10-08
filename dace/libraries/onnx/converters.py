@@ -20,9 +20,11 @@ import re
 from collections.abc import Callable
 
 import onnx
-from dace import config, dtypes as dt
-from dace.dtypes import typeclass
 from onnx.numpy_helper import to_array
+
+from dace import config
+from dace import dtypes as dt
+from dace.dtypes import typeclass
 
 
 def get_proto_attr(proto, name: str):
@@ -59,7 +61,7 @@ def get_proto_attr(proto, name: str):
 
 
 def convert_onnx_proto(attribute):
-    from dace.libraries.onnx.schema import ONNXAttributeType, _KNOWN_ONNX_PROTOS, ONNXParameterType
+    from dace.libraries.onnx.schema import _KNOWN_ONNX_PROTOS, ONNXAttributeType, ONNXParameterType
 
     if type(attribute) in _KNOWN_ONNX_PROTOS:
         return _KNOWN_ONNX_PROTOS[type(attribute)].from_onnx_proto(attribute)

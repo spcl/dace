@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import collections
+
 import sympy as sp
 
-from dace import SDFG, InterstateEdge, SDFGState, symbolic, properties
+from dace import SDFG, InterstateEdge, SDFGState, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from dace.sdfg.state import (
@@ -15,7 +16,8 @@ from dace.sdfg.state import (
     ReturnBlock,
 )
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError, InvalidSDFGNodeError
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties

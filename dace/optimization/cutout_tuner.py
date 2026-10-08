@@ -1,11 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import os
-import math
-import dace
 import json
-
-from typing import Any
+import math
+import os
 from collections.abc import Generator
+from typing import Any
+
+import dace
 from dace.optimization import auto_tuner
 from dace.optimization import utils as optim_utils
 from dace.sdfg.sdfg import SDFG

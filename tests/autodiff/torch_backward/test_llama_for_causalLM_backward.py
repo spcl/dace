@@ -7,7 +7,8 @@ pytest.importorskip(
 )
 import torch
 from torch import nn
-from transformers import LlamaForCausalLM, LlamaConfig
+from transformers import LlamaConfig, LlamaForCausalLM
+
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 

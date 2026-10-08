@@ -1,9 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 
-from dace import SDFG, Memlet, SDFGState
+from dace import SDFG, Memlet, SDFGState, dtypes
+from dace import data as dt
 from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
@@ -11,10 +12,6 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
-from dace import data as dt
-from dace import dtypes
-
-from typing import Literal
 
 dirtype = Literal["in", "out"]
 

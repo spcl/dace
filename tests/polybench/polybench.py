@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from absl import app, flags
-import numpy as np
 import functools
+
+import numpy as np
+from absl import app, flags
+
 import dace
 
 flags.DEFINE_bool("simulate", False, "Use the DaCe python simulator")

@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
-from collections.abc import Callable, Sequence
 
 from dace import data
 from dace.sdfg.sdfg import SDFG

@@ -1,9 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.frontend.fortran import fortran_parser
-
-from dace.frontend.fortran import ast_transforms
-from dace.frontend.fortran import ast_internal_classes
+from dace.frontend.fortran import ast_internal_classes, ast_transforms, fortran_parser
 
 
 def test_fortran_frontend_parent():

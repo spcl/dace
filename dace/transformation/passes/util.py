@@ -1,8 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 
-from ..transformation import TransformationBase
 from ..pass_pipeline import Pass
+from ..transformation import TransformationBase
 
 
 def available_passes(all_passes: bool = False) -> set[type["Pass"]]:

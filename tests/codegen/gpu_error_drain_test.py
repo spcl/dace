@@ -6,10 +6,9 @@ import importlib
 from ctypes.util import find_library
 
 import numpy as np
-
-import dace
 import pytest
 
+import dace
 from dace.transformation.interstate import GPUTransformSDFG
 
 

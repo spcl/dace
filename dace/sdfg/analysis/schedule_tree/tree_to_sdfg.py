@@ -1,20 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import TracebackType
 from typing import Final
-from collections.abc import Sequence
 
 from dace import subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg import nodes, memlet_utils as mmu
-from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, SDFGState, LoopRegion
+from dace.sdfg import memlet_utils as mmu
+from dace.sdfg import nodes, propagation
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
-from dace.sdfg import propagation
+from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, SDFGState
 
 
 class StateBoundaryBehavior(Enum):

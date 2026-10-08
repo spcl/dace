@@ -1,6 +1,8 @@
-import dace
 import numpy as np
-from dace import nodes as nd, data as dt
+
+import dace
+from dace import data as dt
+from dace import nodes as nd
 from dace.transformation.interstate import InlineSDFG
 
 

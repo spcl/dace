@@ -2,19 +2,18 @@
 """DaCe Python parsing functionality and entry point to Python frontend."""
 
 import collections
-import itertools
-import tempfile
 import copy
+import itertools
 import os
-from typing import Any
+import tempfile
 from collections import OrderedDict
 from collections.abc import Callable
+from typing import Any
 
 # Try importing ML dependencies
 try:
     import torch
-    from torch import Tensor
-    from torch import nn
+    from torch import Tensor, nn
     from torch.onnx import TrainingMode
 
     TORCH_AVAILABLE = True
@@ -35,16 +34,16 @@ except ImportError:
 
 from dace import config, data
 from dace.codegen import compiled_sdfg
-from dace.sdfg import SDFG, nodes
-from dace.frontend.python import common as pycommon
 from dace.data import find_new_name
+from dace.frontend.python import common as pycommon
+from dace.sdfg import SDFG, nodes
 
 if TORCH_AVAILABLE and ONNX_AVAILABLE:
-    from dace.libraries.onnx.converters import clean_onnx_name
-    from dace.libraries.torch import dispatchers
     from dace.autodiff import torch as torch_autodiff
     from dace.autodiff.library import library as autodiff_library
     from dace.frontend.ml.onnx import ONNXModel
+    from dace.libraries.onnx.converters import clean_onnx_name
+    from dace.libraries.torch import dispatchers
     from dace.transformation.onnx import auto_optimize_onnx as auto_opt
 else:
     clean_onnx_name = None

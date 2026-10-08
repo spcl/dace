@@ -2,23 +2,24 @@
 import ast
 import collections
 import copy
-from dataclasses import dataclass
 import functools
 import inspect
 import numbers
-import numpy
 import re
-import sympy
 import warnings
-
-from typing import Any
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+import numpy
+import sympy
+
 import dace
 from dace import data, dtypes, symbolic
 from dace.config import Config
-from dace.sdfg import SDFG
 from dace.frontend.python import astutils
-from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral
+from dace.frontend.python.common import DaceSyntaxError, SDFGClosure, SDFGConvertible, StringLiteral
+from dace.sdfg import SDFG
 
 
 class DaceRecursionError(Exception):

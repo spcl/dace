@@ -1,11 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace.serialize
-from dace import symbolic
-import sympy as sp
+import warnings
+from collections.abc import Sequence
 from functools import reduce
 from typing import Union
-from collections.abc import Sequence
-import warnings
+
+import sympy as sp
+
+import dace.serialize
+from dace import symbolic
 from dace.config import Config
 
 

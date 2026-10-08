@@ -2,7 +2,8 @@
 from collections.abc import Callable
 
 import dace
-from dace import config, nodes as nd
+from dace import config
+from dace import nodes as nd
 from dace.libraries import blas
 from dace.sdfg.utils import expand_nodes
 from dace.transformation import dataflow

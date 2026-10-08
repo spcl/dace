@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.memlet import Memlet
-from dace.libraries import lapack
 import numpy as np
 import pytest
+
+import dace
+from dace.libraries import lapack
+from dace.memlet import Memlet
 
 ###############################################################################
 

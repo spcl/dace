@@ -1,18 +1,16 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 # dace imports
-from dace import subsets
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
-from dace import Memlet
-from dace.sdfg.nodes import Tasklet
-from dace import dtypes
-from dace import symbolic as sym
-from dace import DebugInfo as di
-from dace import Language as lang
 from numpy import finfo as finf
 from numpy import float64 as fl
 
+from dace import DebugInfo as di
+from dace import Language as lang
+from dace import Memlet, dtypes, subsets
+from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes
+from dace.sdfg import SDFG, InterstateEdge, SDFGState
+from dace.sdfg.nodes import Tasklet
 
 fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,

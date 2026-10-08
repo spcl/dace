@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
+from collections.abc import Callable
+
 from dace import data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
-from dace.sdfg.graph import Edge, SubgraphView
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import Edge, SubgraphView
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.utils import dfs_topological_sort
-from collections.abc import Callable
 
 #############################################################################
 # Connector type inference

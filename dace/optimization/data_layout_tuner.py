@@ -1,18 +1,19 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import defaultdict
-import dace
-import enum
 import copy
+import enum
 import itertools
-
+from collections import defaultdict
 from collections.abc import Generator, Sequence
+
 from numpy.typing import ArrayLike
 
-from dace import data as dt, SDFG, dtypes
-from dace.optimization import cutout_tuner
-from dace.transformation import helpers as xfh
-from dace.sdfg.analysis.cutout import SDFGCutout
+import dace
+from dace import SDFG, dtypes
+from dace import data as dt
 from dace.codegen.instrumentation.data import data_report
+from dace.optimization import cutout_tuner
+from dace.sdfg.analysis.cutout import SDFGCutout
+from dace.transformation import helpers as xfh
 
 try:
     from tqdm import tqdm

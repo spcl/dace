@@ -1,8 +1,10 @@
-import dace
-import numpy as np
 import copy
 import time
+
+import numpy as np
 import pytest
+
+import dace
 
 try:
     import cupy as cp

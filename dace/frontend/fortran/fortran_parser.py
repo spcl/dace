@@ -1,27 +1,22 @@
 # Copyright 2023-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import warnings
-
-from dace.data import Scalar
-
-from dace.frontend.fortran import ast_components
-from dace.frontend.fortran import ast_transforms
-from dace.frontend.fortran import ast_utils
-from dace.frontend.fortran import ast_internal_classes
-from dace import dtypes
-from dace import Language as lang
-from dace import data as dat
-from dace import SDFG, InterstateEdge, Memlet, pointer, nodes
-from dace import symbolic as sym
-from dace.sdfg import dealias
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from copy import deepcopy as dpcp
 
-from dace.properties import CodeBlock
-from fparser.two.parser import ParserFactory as pf
-from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
+from fparser.common.readfortran import FortranStringReader as fsr
+from fparser.two.parser import ParserFactory as pf
 from fparser.two.symbol_table import SymbolTable
+
+from dace import SDFG, InterstateEdge, Memlet, dtypes, nodes, pointer
+from dace import Language as lang
+from dace import data as dat
+from dace import symbolic as sym
+from dace.data import Scalar
+from dace.frontend.fortran import ast_components, ast_internal_classes, ast_transforms, ast_utils
+from dace.properties import CodeBlock
+from dace.sdfg import dealias
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 
 
 class AST_translator:

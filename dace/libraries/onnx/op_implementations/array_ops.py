@@ -20,23 +20,24 @@ Each implementation follows the ONNX specification and is designed to be:
 import copy
 from math import prod
 
-import dace
 import numpy as np
+
+import dace
 from dace import SDFG, SDFGState, subsets
-from dace.sdfg.nodes import Node
-from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
+from dace.libraries.onnx import converters
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
-from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.libraries.onnx.nodes import onnx_op
+from dace.libraries.onnx.op_implementations.common import iterables_equal
 from dace.libraries.onnx.op_implementations.utils import (
     empty_sdfg_for_node,
     op_implementation,
     program_for_node,
     python_pure_op_implementation,
 )
+from dace.sdfg.nodes import Node
+from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name
 from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
-from dace.libraries.onnx import converters
 
 # ==============================================================================
 # Concatenation Operations

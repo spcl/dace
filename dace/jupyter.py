@@ -2,8 +2,8 @@
 """Jupyter Notebook support for DaCe."""
 
 import os
-import urllib.request
 import urllib.error
+import urllib.request
 
 
 def _connected():
@@ -53,7 +53,7 @@ def preamble():
 
 
 def enable():
-    from IPython.display import display, HTML
+    from IPython.display import HTML, display
 
     display(HTML(preamble()))
 

@@ -3,21 +3,17 @@ import functools
 import json
 
 import dace
-from dace import dtypes
-from dace import data
-from dace import config
-from dace.sdfg import SDFG
-from dace.codegen.targets import framecode
-from dace.codegen.codeobject import CodeObject
+from dace import config, data, dtypes
 from dace.codegen import exceptions as exc
-from dace.config import Config
-from dace.sdfg import infer_types
-
+from dace.codegen.codeobject import CodeObject
 from dace.codegen.instrumentation import InstrumentationProvider
+from dace.codegen.targets import framecode
+from dace.config import Config
+from dace.sdfg import SDFG, infer_types
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -188,11 +184,12 @@ def generate_code(sdfg: SDFG, validate=True) -> list[CodeObject]:
         sdfg.validate()
 
     if Config.get_bool("testing", "serialization"):
-        from dace.sdfg import SDFG
         import difflib
         import filecmp
         import shutil
         import tempfile
+
+        from dace.sdfg import SDFG
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             sdfg.save(f"{tmp_dir}/test.sdfg", hash=False)

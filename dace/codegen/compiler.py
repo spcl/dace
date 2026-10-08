@@ -12,25 +12,23 @@ import os
 import pathlib
 import platform
 import re
-import shutil
 import shlex
+import shutil
 import subprocess
 import tempfile
 import uuid
-from typing import Literal, TypeVar, Optional, overload
-from collections.abc import Callable
 import warnings
+from collections.abc import Callable
 from functools import lru_cache
+from typing import Literal, Optional, TypeVar, overload
 
 import dace
-from dace.config import Config
-from dace.codegen import command_db
-from dace.codegen import compiler_family
-from dace.codegen import exceptions as cgx
-from dace.codegen.target import TargetCodeGenerator
-from dace.codegen.codeobject import CodeObject
+from dace.codegen import command_db, compiler_family
 from dace.codegen import compiled_sdfg as csd
-from dace.codegen.target import make_absolute
+from dace.codegen import exceptions as cgx
+from dace.codegen.codeobject import CodeObject
+from dace.codegen.target import TargetCodeGenerator, make_absolute
+from dace.config import Config
 
 T = TypeVar("T")
 

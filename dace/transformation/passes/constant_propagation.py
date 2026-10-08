@@ -3,16 +3,19 @@
 import ast
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
+
+import sympy
+
+from dace import SDFG, SDFGState, data, dtypes, properties, symbolic
+from dace.cli.progress import optional_progressbar
 from dace.frontend.python import astutils
+from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.cli.progress import optional_progressbar
-from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
-import sympy
-from typing import Any
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class _UnknownValue:

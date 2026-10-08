@@ -1,16 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains the access deduplication transformation."""
 
-from collections import defaultdict
 import copy
-
-from dace import sdfg as sd, subsets
-from dace.memlet import Memlet
-from dace.sdfg import dealias, nodes, graph as gr
-from dace.transformation import transformation as xf
-from dace.transformation import helpers
-
 import warnings
+from collections import defaultdict
+
+from dace import sdfg as sd
+from dace import subsets
+from dace.memlet import Memlet
+from dace.sdfg import dealias, nodes
+from dace.sdfg import graph as gr
+from dace.transformation import helpers
+from dace.transformation import transformation as xf
 
 
 class DeduplicateAccess(xf.SingleStateTransformation):

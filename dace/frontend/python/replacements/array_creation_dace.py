@@ -4,16 +4,16 @@ Contains definitions of new data containers (arrays, locals, streams) as per DaC
 array creation functions for NumPy that reuse the same functionality.
 """
 
-from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import DaceSyntaxError, StringLiteral
-from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size
-from dace import data, dtypes, Memlet, SDFG, SDFGState
-
 from copy import deepcopy as dcpy
 from numbers import Integral
 from typing import Any
 
 import numpy as np
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes
+from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import DaceSyntaxError, StringLiteral
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size
 
 
 @oprepo.replaces("dace.define_local")

@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Implementation of the performance instrumentation report."""
 
-from dataclasses import dataclass
 import json
-import numpy as np
 import re
-from typing import Any
-from io import StringIO
-
 from collections import defaultdict
+from dataclasses import dataclass
+from io import StringIO
+from typing import Any
+
+import numpy as np
 
 UUIDType = tuple[int, int, int]
 

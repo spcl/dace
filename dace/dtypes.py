@@ -3,21 +3,21 @@
 
 import builtins
 import ctypes
-import json
 import inspect
-import numpy
-import ml_dtypes
+import json
 import re
-from sympy import Float, Integer
 from collections import OrderedDict
 from dataclasses import dataclass
+from enum import Enum, auto
 from functools import wraps
-from typing import Any, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union
 
-from dace.config import Config
+import ml_dtypes
+import numpy
+from sympy import Float, Integer
 
-from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
+from dace.config import Config
 from dace.registry import undefined_safe_enum
 from dace.version import __version__
 
@@ -1016,6 +1016,7 @@ class callback(typeclass):
 
     def get_trampoline(self, pyfunc, other_arguments, refs, argument_to_pyobject):
         from functools import partial
+
         from dace import data, symbolic
 
         def _string_converter(a: str, *args):

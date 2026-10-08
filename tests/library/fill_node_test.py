@@ -4,11 +4,11 @@
 import contextlib
 from collections.abc import Sequence
 
+import numpy as np
+import pytest
+
 import dace
 from dace.libraries.standard.nodes.fill import FillLibraryNode, byte_pattern, select_fill_implementation
-
-import pytest
-import numpy as np
 
 
 def make_fill_sdfg(

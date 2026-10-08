@@ -947,8 +947,8 @@ def test_dynamic_write_slab_separated_by_iteration_var():
     """
     from dace import memlet as mm
     from dace.properties import CodeBlock
-    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
     from dace.sdfg.propagation import propagate_memlets_sdfg
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
     sdfg = dace.SDFG("for_it_35_repro")
     NLEV = dace.symbol("NLEV", dace.int32)

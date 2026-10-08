@@ -1,11 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for GPU grid-strided tiling transformation."""
 
-import pytest
-import dace
-from dace.transformation.dataflow import TrivialTaskletElimination, GPUGridStridedTiling
 import numpy as np
+import pytest
 from scipy import sparse
+
+import dace
+from dace.transformation.dataflow import GPUGridStridedTiling, TrivialTaskletElimination
 
 
 def find_map_entry(sdfg: dace.SDFG, map_name_list: list[str]) -> tuple[dace.sdfg.nodes.MapEntry]:

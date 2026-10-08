@@ -1,69 +1,66 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections.abc
-from collections import OrderedDict
 import copy
 import itertools
+import operator
 import sys
 import time
-from os import path
 import warnings
+from collections import OrderedDict
+from collections.abc import Callable, Iterable
 from numbers import Number
-from typing import Any, NamedTuple, Literal
-from collections.abc import Iterable, Callable
-import operator
+from os import path
+from typing import Any, Literal, NamedTuple
+
+import numpy
+import sympy
 
 import dace
-from dace import data, dtypes, subsets, symbolic, sdfg as sd
+from dace import data, dtypes, subsets, symbolic
+from dace import sdfg as sd
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python import astutils
+from dace.frontend.python import astutils, nested_call, preprocessing, replacements
+from dace.frontend.python.astutils import ExtNodeTransformer, ExtNodeVisitor, rname
 from dace.frontend.python.common import (
     SDFGClosure,
     SDFGConvertible,
-    inverse_dict_lookup,
     StringLiteral,
+    inverse_dict_lookup,
 )
-from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
-from dace.frontend.python.astutils import rname
-from dace.frontend.python import nested_call, replacements, preprocessing
-from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
-from dace.sdfg import nodes, dealias
+from dace.frontend.python.memlet_parser import DaceSyntaxError, MemletExpr, ParseMemlet, inner_eval_ast, parse_memlet
+from dace.memlet import Memlet
+from dace.properties import CodeBlock, LambdaProperty
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
 from dace.sdfg.propagation import (
+    align_memlet,
     propagate_memlet,
     propagate_memlets_map_scope,
     propagate_memlets_nested_sdfg,
-    propagate_subset,
     propagate_states,
-    align_memlet,
+    propagate_subset,
 )
-from dace.memlet import Memlet
-from dace.properties import LambdaProperty, CodeBlock
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,
     ContinueBlock,
     ControlFlowBlock,
+    ControlFlowRegion,
     FunctionCallRegion,
     LoopRegion,
-    ControlFlowRegion,
     NamedRegion,
 )
-from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_iteration_symbol_type
-from dace.symbolic import pystr_to_symbolic, inequal_symbols
+from dace.symbolic import inequal_symbols, pystr_to_symbolic
 from dace.utils import until
-
-import numpy
-import sympy
 
 numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
 # The following line registers replacements in oprepo
 import dace.frontend.python.replacements
-
-from dace.frontend.python.replacements.utils import sym_type, broadcast_to, broadcast_together
+from dace.frontend.python.replacements.utils import broadcast_to, broadcast_together, sym_type
 
 # Type hints
 Size = int | dace.symbolic.symbol

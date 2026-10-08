@@ -1,15 +1,18 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
-from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets_sdfg
-from dace.symbolic import symstr
+
+import numpy as np
+
 import dace.library
-from dace import SDFG, SDFGState
 import dace.sdfg.nodes
 import dace.sdfg.utils
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, check_access, to_cublas_computetype
+from dace import SDFG, SDFGState, dtypes, propagate_memlets_sdfg, properties
+from dace import data as dt
+from dace import memlet as mm
+from dace.libraries.blas.blas_helpers import check_access, to_blastype, to_cublas_computetype
 from dace.libraries.sparse import environments
-import numpy as np
+from dace.symbolic import symstr
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _is_complex(dtype):

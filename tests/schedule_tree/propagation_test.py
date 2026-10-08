@@ -3,13 +3,14 @@
 Tests schedule tree input/output memlet computation
 """
 
-import dace
-from dace.sdfg import nodes
-from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s, treenodes as tn
-from dace.properties import CodeBlock
-
 import numpy as np
 import pytest
+
+import dace
+from dace.properties import CodeBlock
+from dace.sdfg import nodes
+from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 
 def test_stree_propagation_forloop():

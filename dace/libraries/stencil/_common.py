@@ -3,12 +3,14 @@ import ast
 import collections
 import copy
 import functools
-import numpy as np
 import operator
 
+import numpy as np
+
 import dace
-from dace.frontend.python import astutils
 from dace.codegen.targets.cpp import sym2cpp
+from dace.frontend.python import astutils
+
 from .subscript_converter import SubscriptConverter
 
 

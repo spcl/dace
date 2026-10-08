@@ -1,17 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """This file implements the GreedyEnumerator class"""
 
-from dace.transformation.estimator.enumeration import Enumerator
-
-from dace.transformation.subgraph import helpers
-from dace.transformation.subgraph.composite import CompositeFusion
-from dace.properties import make_properties, Property
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.graph import SubgraphView
-
+import heapq
 from collections.abc import Callable
 
-import heapq
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.estimator.enumeration import Enumerator
+from dace.transformation.subgraph import helpers
+from dace.transformation.subgraph.composite import CompositeFusion
 
 
 class QueuedEntry:

@@ -1,15 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import numpy as np
+
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-import numpy as np
 from dace import Memlet
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import environments
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
-from dace.libraries.blas import environments as blas_environments
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):

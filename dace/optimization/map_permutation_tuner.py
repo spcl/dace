@@ -1,13 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import itertools
-
 from collections.abc import Generator
 
+import dace
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
-from dace.transformation import helpers as xfh
 from dace.sdfg.analysis.cutout import SDFGCutout
+from dace.transformation import helpers as xfh
 
 try:
     from tqdm import tqdm

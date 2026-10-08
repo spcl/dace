@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
-from dace import dtypes, data
 from typing import Any
+
+import numpy as np
+
+from dace import data, dtypes
 
 
 def to_blastype(dtype):

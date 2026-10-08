@@ -1,25 +1,26 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from copy import deepcopy as dcpy, copy
-from functools import reduce
 import operator
+from copy import copy
+from copy import deepcopy as dcpy
+from functools import reduce
 from typing import TYPE_CHECKING
 
 import dace
-from dace.sdfg.graph import generate_element_id
 import dace.serialize
-from dace import subsets, dtypes, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (
-    Property,
-    make_properties,
     DataProperty,
-    SubsetProperty,
-    SymbolicProperty,
     DebugInfoProperty,
     LambdaProperty,
+    Property,
+    SubsetProperty,
+    SymbolicProperty,
+    make_properties,
 )
+from dace.sdfg.graph import generate_element_id
 
 if TYPE_CHECKING:
     import dace.sdfg.graph

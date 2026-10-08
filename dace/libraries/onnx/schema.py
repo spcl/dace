@@ -31,9 +31,9 @@ Example:
         data_type: int
 """
 
+import enum
 from itertools import chain
 
-import enum
 import numpy as np
 import onnx
 

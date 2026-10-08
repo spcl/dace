@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import numpy as np
-
 import argparse
+
+import numpy as np
 import scipy
 
 import dace

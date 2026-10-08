@@ -1,8 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import OrderedDict
-import json
 import itertools
-
+import json
+from collections import OrderedDict
 
 from dace.optimization import cutout_tuner as ct
 from dace.optimization import utils as optim_utils

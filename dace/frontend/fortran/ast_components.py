@@ -1,12 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 # NOTE: Fortran2003 needs to be imported before Fortran2008 (circular import otherwise).
+from typing import TYPE_CHECKING, Any, TypeVar, overload
+
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
 from fparser.two import symbol_table
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import Name_Node
-from typing import Any, TypeVar, overload, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics

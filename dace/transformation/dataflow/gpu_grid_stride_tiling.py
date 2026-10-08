@@ -2,17 +2,18 @@
 """This module contains classes and functions that implement the grid-strided map tiling
 transformation."""
 
-import dace
 from copy import deepcopy as dcpy
+
+import sympy
+
+import dace
 from dace import dtypes, subsets, symbolic
-from dace.sdfg import SDFG, SDFGState
-from dace.properties import make_properties, Property, SymbolicProperty
-from dace.sdfg import nodes
+from dace.properties import Property, SymbolicProperty, make_properties
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.dataflow import MapInterchange
 from dace.transformation.dataflow.strip_mining import calc_set_image, calc_set_union
-import sympy
 
 
 @make_properties

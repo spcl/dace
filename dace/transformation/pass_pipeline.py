@@ -3,15 +3,16 @@
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
 
-from dace import properties, serialize
-from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
-
 import inspect
-from enum import Flag, auto
-from typing import Any, Union
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from enum import Flag, auto
+from typing import Any, Union
 
+from dace import properties, serialize
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import graph as gr
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
 

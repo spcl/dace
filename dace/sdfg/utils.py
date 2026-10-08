@@ -3,31 +3,38 @@
 
 import collections
 import copy
-import warnings
-import networkx as nx
 import time
+import warnings
+from collections.abc import Callable, Generator, Sequence
+from typing import Any, Optional
+
+import networkx as nx
 
 import dace.sdfg.nodes
-from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
+from dace import config, dtypes
+from dace import data as dt
+from dace import memlet as mm
+from dace import subsets as sbs
+from dace.cli.progress import optional_progressbar
+from dace.codegen import compiled_sdfg as csdfg
+from dace.codegen import compiler as sdfg_compiler
+from dace.properties import CodeBlock
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
+from dace.sdfg import propagation
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.nodes import NestedSDFG, Node
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     ConditionalBlock,
     ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
     SDFGState,
     StateSubgraphView,
-    LoopRegion,
-    ControlFlowRegion,
 )
-from dace.sdfg.scope import ScopeSubgraphView
-from dace.sdfg import nodes as nd, graph as gr, propagation
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
-from dace.cli.progress import optional_progressbar
-from typing import Any, Optional
-from collections.abc import Callable, Generator, Sequence
-from dace.properties import CodeBlock
 
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
@@ -1604,7 +1611,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                      shows progress bar.
     :return: The total number of states fused.
     """
-    from dace.transformation.interstate import StateFusion, BlockFusion  # Avoid import loop
+    from dace.transformation.interstate import BlockFusion, StateFusion  # Avoid import loop
 
     if progress is None and not config.Config.get_bool("progress"):
         progress = False
@@ -1727,7 +1734,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     :return: The total number of SDFGs inlined.
     """
     # Avoid import loops
-    from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
+    from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG
 
     counter = 0
     nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
@@ -2180,6 +2187,7 @@ def normalize_offsets(sdfg: SDFG):
     """
 
     import ast
+
     from dace.frontend.python import astutils
 
     for sd in sdfg.all_sdfgs_recursive():

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import copy
+
+import dace
 
 from .ast_node import AST_Node
 

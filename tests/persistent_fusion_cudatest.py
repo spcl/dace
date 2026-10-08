@@ -1,12 +1,13 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import numpy as np
 import networkx as nx
+import numpy as np
+import pytest
+
 import dace
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import BreakBlock, LoopRegion
 from dace.transformation.subgraph import GPUPersistentKernel
-import pytest
 
 N = dace.symbol("N")
 nnz = dace.symbol("nnz")

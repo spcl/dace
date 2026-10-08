@@ -5,14 +5,15 @@ pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
 import copy
+
 import numpy as np
 
 import dace
-from dace import transformation, data as dt
-from dace.libraries import blas
-import dace.library
-
 import dace.libraries.onnx as donnx
+import dace.library
+from dace import data as dt
+from dace import transformation
+from dace.libraries import blas
 from dace.transformation.onnx import expand_onnx_nodes
 
 

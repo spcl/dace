@@ -3,23 +3,24 @@
 
 import ctypes
 import os
+import pathlib
+import pickle
 import re
 import shutil
 import subprocess
-from typing import Any
-from collections.abc import Callable, Sequence
-import warnings
-import tempfile
-import pickle
-import pathlib
 import sys
+import tempfile
+import warnings
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 
-from dace import data as dt, dtypes, hooks, symbolic
-from dace.sdfg import nodes
+from dace import data as dt
+from dace import dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
+from dace.sdfg import nodes
 
 
 class ReloadableDLL:

@@ -7,29 +7,29 @@ Running the sample requires an NVIDIA GPU with Tensor Cores.
 """
 
 # General DaCe imports
+# Other imports
+import itertools
+
+import numpy as np
+
 import dace
 from dace import data as dt
-from dace.sdfg import nodes
-
-# Code generator imports and helpers
-from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
-# Frontend imports and helpers
-
-# Transformations
-from dace.transformation.interstate import GPUTransformSDFG
+# Code generator imports and helpers
+from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.sdfg import nodes
 
 # Type hints
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.dispatcher import DefinedType
 
-# Other imports
-import itertools
-import numpy as np
+# Frontend imports and helpers
+# Transformations
+from dace.transformation.interstate import GPUTransformSDFG
 
 ############################################################################
 # Tensor core code generator

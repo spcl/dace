@@ -2,19 +2,20 @@
 """Python interface for DaCe functions."""
 
 import inspect
+from collections import deque
+from collections.abc import Callable, Generator, Iterable, Iterator
 from typing import (
     Any,
+    Generic,
     TypeVar,
     overload,
-    Generic,
 )
-from collections.abc import Callable, Generator, Iterable, Iterator
+
 from typing_extensions import Self
 
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import ndloop, parser, tasklet_runner
-from collections import deque
 
 #############################################
 

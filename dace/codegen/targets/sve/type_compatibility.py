@@ -10,9 +10,10 @@ It is called almost everywhere in the SVEUnparser, because it checks whether:
     - Pointers are mixed with vectors or scalars
 """
 
+import collections
+
 from dace import dtypes
 from dace.codegen.targets.sve import util as util
-import collections
 
 
 class IncompatibleTypeError(Exception):

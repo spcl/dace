@@ -1,11 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data
-from dace.sdfg.graph import NodeNotFoundError
+import pytest
+
 import dace
-from dace import SDFG
+from dace import SDFG, data
 from dace.sdfg import nodes
 from dace.sdfg.analysis import vector_inference
-import pytest
+from dace.sdfg.graph import NodeNotFoundError
 from dace.transformation.dataflow import MergeSourceSinkArrays
 
 N = dace.symbol("N")

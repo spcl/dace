@@ -1,15 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """This file implements the BruteForceEnumerator class"""
 
-from dace.transformation.estimator.enumeration import MapScoringEnumerator
+import itertools
+from collections.abc import Callable
 
-from dace.transformation.subgraph import helpers
 from dace.properties import make_properties
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
-
-from collections.abc import Callable
-import itertools
+from dace.transformation.estimator.enumeration import MapScoringEnumerator
+from dace.transformation.subgraph import helpers
 
 
 @make_properties

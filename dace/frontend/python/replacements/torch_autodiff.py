@@ -3,21 +3,19 @@
 Integration with the dace python frontend
 """
 
-from collections.abc import Sequence
 import itertools
+from collections.abc import Sequence
 
-from dace import SDFG, SDFGState, data
 import dace.sdfg.sdfg
-from dace.frontend.python import common
-from dace.frontend.common import op_repository
-from dace.frontend.python import newast
-from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
-from dace.data import find_new_name
-from dace.sdfg.utils import expand_nodes
-from dace.libraries.onnx.op_implementations.common import iterables_equal
+from dace import SDFG, SDFGState, data
 from dace.autodiff import analysis as autodiff_analysis
-
-from dace.autodiff.library.library import ParameterArray, BackwardPass
+from dace.autodiff.library.library import BackwardPass, ParameterArray
+from dace.data import find_new_name
+from dace.frontend.common import op_repository
+from dace.frontend.python import common, newast
+from dace.libraries.onnx.op_implementations.common import iterables_equal
+from dace.sdfg.utils import expand_nodes
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 
 TensorOrTensors = str | Sequence[str]
 

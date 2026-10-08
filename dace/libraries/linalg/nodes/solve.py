@@ -1,18 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
+import numpy as np
+
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-import numpy as np
-
-from dace import Memlet, SDFG, SDFGState
-from dace import symbolic
-from dace.libraries.lapack import Getrf, Getrs
+from dace import SDFG, Memlet, SDFGState, symbolic
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import Getrf, Getrs, environments
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
-from dace.libraries.blas import environments as blas_environments
 
 
 def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):

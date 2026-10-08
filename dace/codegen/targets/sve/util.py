@@ -3,15 +3,17 @@
 Utility functions for SVE: Contains many datatype mappings (Python to SVE) and frequently used functions.
 """
 
-import numpy as np
-import dace
-from dace import dtypes
 import ast
-import dace.codegen.targets
-from dace.codegen.targets.sve import infer as infer
 import collections
 import itertools
+
 import numpy
+import numpy as np
+
+import dace
+import dace.codegen.targets
+from dace import dtypes
+from dace.codegen.targets.sve import infer as infer
 
 # Translation of types to C++ types
 _SVE_CTYPES = {

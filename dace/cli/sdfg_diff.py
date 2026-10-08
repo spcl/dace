@@ -2,11 +2,11 @@
 """SDFG diff tool."""
 
 import argparse
-from hashlib import sha256
 import json
 import os
 import platform
 import tempfile
+from hashlib import sha256
 
 try:
     from typing import Literal
@@ -14,12 +14,12 @@ except ImportError:
     from typing import Literal
 
 import dace
+import dace.serialize
 from dace import memlet as mlt
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock
-import dace.serialize
 
 DiffableT = ControlFlowBlock | nd.Node | MultiConnectorEdge[mlt.Memlet] | Edge[InterstateEdge]
 DiffSetsT = tuple[set[str], set[str], set[str]]

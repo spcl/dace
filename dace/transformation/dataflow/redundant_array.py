@@ -8,10 +8,9 @@ from collections.abc import Sequence
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
 
-from dace import data, dtypes
+from dace import data, dtypes, subsets, symbolic
 from dace import memlet as mm
-from dace import subsets, symbolic
-from dace.sdfg import dealias, SDFG, SDFGState, graph, nodes
+from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers
 from dace.transformation import transformation as pm

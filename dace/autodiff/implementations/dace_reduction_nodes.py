@@ -13,20 +13,19 @@ import copy
 
 # DaCe core imports
 import dace
-from dace import dtypes
+
+# Utility imports
+import dace.autodiff.utils as ad_utils
 import dace.libraries.standard.nodes
-from dace import SDFGState, SDFG, Memlet
-from dace.sdfg.nodes import Node
+from dace import SDFG, Memlet, SDFGState, dtypes
+
+# Autodiff imports
+from dace.autodiff.base_abc import AutoDiffException, BackwardContext, BackwardImplementation, BackwardResult
 
 # DaCe frontend imports
 from dace.frontend.operations import detect_reduction_type
 from dace.registry import autoregister_params
-
-# Autodiff imports
-from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult, AutoDiffException
-
-# Utility imports
-import dace.autodiff.utils as ad_utils
+from dace.sdfg.nodes import Node
 from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name, out_edge_with_name
 
 

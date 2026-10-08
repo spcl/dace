@@ -8,21 +8,20 @@ import ast
 import collections
 import copy
 import numbers
+from typing import TYPE_CHECKING
+
 import astunparse
 import sympy as sp
-from typing import TYPE_CHECKING
 
 # DaCe imports
 import dace
-from dace.sdfg import nodes
+import dace.autodiff.utils as ad_utils
 from dace import dtypes
-from dace.data import Reference, Structure
-from dace.sdfg import SDFGState
-from dace.data import find_new_name
 
 # Autodiff imports
-from dace.autodiff.base_abc import BackwardResult, AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.autodiff.base_abc import AutoDiffException, BackwardResult
+from dace.data import Reference, Structure, find_new_name
+from dace.sdfg import SDFGState, nodes
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator

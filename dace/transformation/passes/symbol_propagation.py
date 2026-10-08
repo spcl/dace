@@ -4,21 +4,23 @@ import ast
 import itertools
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
+
+from dace import SDFG, SDFGState, properties
+from dace import data as dt
+from dace.frontend.python import astutils
+from dace.sdfg import nodes
+from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
+    ConditionalBlock,
     ControlFlowBlock,
     ControlFlowRegion,
-    ConditionalBlock,
     LoopRegion,
 )
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace import SDFG, properties, SDFGState
-from typing import Any
-from dace import data as dt
-from dace.sdfg import nodes
-from dace.frontend.python import astutils
-from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.symbolic import pystr_to_symbolic
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 def free_symbol_names(value) -> frozenset[str]:

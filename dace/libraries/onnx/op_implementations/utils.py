@@ -1,18 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import inspect
 import copy
-from typing import Any
-from collections.abc import Callable
+import inspect
 import textwrap
+from collections.abc import Callable
+from typing import Any
 
 import dace
-from dace import SDFGState, SDFG, dtypes, nodes
+from dace import SDFG, SDFGState, dtypes, nodes
 from dace.frontend.python.parser import DaceProgram
-from dace.registry import autoregister
-
-from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
+from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
+from dace.registry import autoregister
 from dace.sdfg.utils import in_desc_with_name, out_desc_with_name
 
 

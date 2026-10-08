@@ -1,31 +1,34 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import deepcopy
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 import functools
 import itertools
 import warnings
-
-from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
-from dace.codegen import compiler_family, cppunparse, exceptions as cgx
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets import cpp
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
-from dace.codegen.target import TargetCodeGenerator, make_absolute
-from dace.codegen.dispatcher import DefinedType, TargetDispatcher
-from dace.frontend import operations
-from dace.sdfg import nodes, utils as sdutils
-from dace.sdfg import (
-    ScopeSubgraphView,
-    SDFG,
-    scope_contains_scope,
-    is_array_stream_view,
-    NodeNotExpandedError,
-    dynamic_map_inputs,
-)
-from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
-from dace.sdfg.validation import validate_memlet_data
+from copy import deepcopy
 from typing import TYPE_CHECKING, Optional
+
+from dace import Config, data, dtypes, registry, subsets, symbolic
+from dace import memlet as mmlt
+from dace.codegen import compiler_family, cppunparse
+from dace.codegen import exceptions as cgx
+from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
+from dace.codegen.dispatcher import DefinedType, TargetDispatcher
+from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.target import TargetCodeGenerator, make_absolute
+from dace.codegen.targets import cpp
+from dace.frontend import operations
+from dace.sdfg import (
+    SDFG,
+    NodeNotExpandedError,
+    ScopeSubgraphView,
+    dynamic_map_inputs,
+    is_array_stream_view,
+    nodes,
+    scope_contains_scope,
+)
+from dace.sdfg import utils as sdutils
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
+from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
+from dace.sdfg.validation import validate_memlet_data
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator

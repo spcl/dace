@@ -4,12 +4,11 @@ import pytest
 pytest.importorskip("onnx", reason="ONNX not installed. Please install with: pip install dace[ml]")
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
 
-from dace.ml import DaceModule
-
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
+from dace.ml import DaceModule
 from tests.utils import torch_tensors_close
 
 

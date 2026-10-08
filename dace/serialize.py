@@ -1,14 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dataclasses import is_dataclass
 import enum
 import json
+import warnings
+from dataclasses import is_dataclass
+
 import numpy as np
 import sympy
-import warnings
-from dace import attr_enum
+
 import dace.dtypes
-from dace import config
+from dace import attr_enum, config
 from dace.utils import until
 
 

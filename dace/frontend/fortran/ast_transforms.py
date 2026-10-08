@@ -1,7 +1,8 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.frontend.fortran import ast_internal_classes
 import copy
+
+from dace.frontend.fortran import ast_internal_classes
 
 
 def iter_fields(node: ast_internal_classes.FNode):

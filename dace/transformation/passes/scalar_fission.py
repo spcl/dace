@@ -4,7 +4,8 @@ from typing import Any
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
 
 

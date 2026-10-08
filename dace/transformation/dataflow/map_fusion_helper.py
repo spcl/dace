@@ -1,11 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Any
 from collections.abc import Iterable
+from typing import Any
 
 import dace
 from dace import symbolic
-from dace.sdfg import graph, nodes as nodes, validation
+from dace.sdfg import graph, validation
+from dace.sdfg import nodes as nodes
 from dace.transformation import helpers
 
 

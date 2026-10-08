@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
 
-from dace import dtypes, SDFG, SDFGState, symbolic, properties
-from dace.transformation import transformation as pm, helpers
+from dace import SDFG, SDFGState, dtypes, properties, symbolic
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
+from dace.transformation import helpers
+from dace.transformation import transformation as pm
 
 
 @properties.make_properties

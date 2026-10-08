@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """Example of a 7x7 stencil that dynamically generates custom boundary conditions executed in parallel."""
 
+import numpy as np
+
 import dace
 from dace import subsets
-import numpy as np
 
 H = dace.symbol("H")
 W = dace.symbol("W")

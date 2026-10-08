@@ -112,8 +112,8 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 @oprepo.replaces("dace.dot")
 @oprepo.replaces("numpy.dot")
 def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, op_out=None):
-    from dace.frontend.python.replacements.ufunc import implement_ufunc
     from dace.frontend.python.replacements.operators import result_type
+    from dace.frontend.python.replacements.ufunc import implement_ufunc
 
     # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
     # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html

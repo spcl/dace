@@ -1,14 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+import uuid
+
+import numpy as np
+import pytest
+
 import dace
 from dace import nodes as dace_nodes
-from dace.sdfg.state import FunctionCallRegion, NamedRegion
-from dace.transformation.interstate import InlineSDFG, StateFusion, InlineMultistateSDFG
 from dace.libraries import blas
 from dace.library import change_default
-import copy
-import numpy as np
-import uuid
-import pytest
+from dace.sdfg.state import FunctionCallRegion, NamedRegion
+from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusion
 
 W = dace.symbol("W")
 H = dace.symbol("H")

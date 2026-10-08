@@ -3,11 +3,11 @@
 Contains replacements of Python mathematical operations.
 """
 
+from numbers import Number
+
+from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, simple_call
-from dace import dtypes, symbolic, SDFG, SDFGState
-
-from numbers import Number
 
 
 @oprepo.replaces("exp")

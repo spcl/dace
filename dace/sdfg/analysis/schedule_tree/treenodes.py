@@ -1,17 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, Optional
+
 import sympy
 
-from dace import nodes, data, subsets, dtypes, symbolic
+from dace import data, dtypes, nodes, subsets, symbolic
+from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
-from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
+from dace.sdfg.sdfg import SDFG, InterstateEdge, memlets_in_ast
 from dace.sdfg.state import LoopRegion, SDFGState
-from dace.memlet import Memlet
-from typing import TYPE_CHECKING, Any, Literal, Optional
-from collections.abc import Iterable, Iterator
 
 if TYPE_CHECKING:
     from dace import SDFG

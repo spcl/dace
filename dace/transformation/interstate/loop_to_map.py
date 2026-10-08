@@ -1,22 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Loop to map transformation"""
 
-from collections import defaultdict
 import copy
-import sympy as sp
 import warnings
+from collections import defaultdict
 
-from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
-from dace.sdfg.type_inference import infer_expr_type
-from dace.sdfg import dealias, graph as gr
-from dace.sdfg import SDFG, SDFGState
+import sympy as sp
+from ordered_set import OrderedSet
+
+from dace import data as dt
+from dace import dtypes, memlet, nodes, properties, subsets, symbolic
+from dace import sdfg as sd
+from dace.sdfg import SDFG, SDFGState, dealias
+from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.type_inference import infer_expr_type
 from dace.transformation import helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from ordered_set import OrderedSet
 
 IndexExpr = str | int | symbolic.SymbolicType
 
@@ -622,7 +625,7 @@ class LoopToMap(xf.MultiStateTransformation):
         src_subset: subsets.Range,
         varying: set[str],
     ):
-        from dace.sdfg.propagation import propagate_subset, align_memlet
+        from dace.sdfg.propagation import align_memlet, propagate_subset
 
         a = sp.Wild("a", exclude=[itersym])
         b = sp.Wild("b", exclude=[itersym])

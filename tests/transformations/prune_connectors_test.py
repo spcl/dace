@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
-import numpy as np
-import os
 import copy
+import os
+
+import numpy as np
 
 import dace
+from dace.sdfg.state import StateSubgraphView
 from dace.transformation.dataflow import PruneConnectors
 from dace.transformation.helpers import nest_state_subgraph
-from dace.sdfg.state import StateSubgraphView
 
 
 def make_sdfg():

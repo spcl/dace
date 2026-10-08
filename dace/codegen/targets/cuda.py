@@ -2,32 +2,31 @@
 import ctypes
 import functools
 import warnings
+from io import StringIO
 from typing import TYPE_CHECKING
 
 import networkx as nx
 import sympy
-from io import StringIO
 
 import dace
-from dace import data as dt, Memlet
-from dace import dtypes, registry
-from dace import subsets, symbolic
+from dace import Memlet, dtypes, registry, subsets, symbolic
+from dace import data as dt
 from dace.codegen import common, compiler_family, cppunparse
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.codegen.targets import cpp
-from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (
     codeblock_to_cpp,
     cpp_array_expr,
+    mangle_dace_state_struct_name,
     memlet_copy_to_absolute_strides,
     sym2cpp,
     synchronize_streams,
     unparse_cr,
-    mangle_dace_state_struct_name,
 )
-from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import (
@@ -37,21 +36,23 @@ from dace.sdfg import (
     has_dynamic_map_inputs,
     is_array_stream_view,
     is_devicelevel_gpu,
+    memlet_utils,
     nodes,
     scope_contains_scope,
-    memlet_utils,
 )
-from dace.sdfg.scope import get_node_schedule
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import get_node_schedule
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-from dace.transformation import gpu_helpers, helpers as xfh
-from dace.transformation.passes import analysis as ap, gpu_shared_memory
+from dace.transformation import gpu_helpers
+from dace.transformation import helpers as xfh
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
+from dace.transformation.passes import analysis as ap
+from dace.transformation.passes import gpu_shared_memory
 
 if TYPE_CHECKING:
-    from dace.codegen.targets.framecode import DaCeCodeGenerator
     from dace.codegen.targets.cpu import CPUCodeGen
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 #: Host flags a device compiler must not be handed: warnings that only fire inside the CUDA headers,
 #: and position-independent code, which CMake already adds itself for a shared library.

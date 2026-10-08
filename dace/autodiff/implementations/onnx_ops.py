@@ -20,22 +20,22 @@ import numpy as np
 
 # DaCe core imports
 import dace
-from dace.frontend.common import einsum
-import dace.libraries
-from dace.registry import autoregister_params
-from dace import nodes as nd
-
-# ONNX-specific imports
-import dace.libraries.onnx as donnx
-from dace.libraries.onnx.op_implementations.linalg_ops import PureEinsum
-from dace.transformation.onnx.replacement import onnx_constant_or_none
 
 # Autodiff imports
 import dace.autodiff.utils as butils
-from dace.autodiff.base_abc import BackwardImplementation, BackwardContext, BackwardResult
+import dace.libraries
+
+# ONNX-specific imports
+import dace.libraries.onnx as donnx
+from dace import nodes as nd
+from dace.autodiff.base_abc import BackwardContext, BackwardImplementation, BackwardResult
+from dace.frontend.common import einsum
+from dace.libraries.onnx.op_implementations.linalg_ops import PureEinsum
+from dace.registry import autoregister_params
 
 # Utility imports
 from dace.sdfg.utils import in_desc_with_name
+from dace.transformation.onnx.replacement import onnx_constant_or_none
 
 
 def reverse_einsum_wrt_input(forward_node: "donnx.nodes.onnx_op.ONNXOp", input_name: str) -> tuple[list[str], str]:

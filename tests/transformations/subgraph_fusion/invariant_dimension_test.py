@@ -1,15 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation.subgraph import SubgraphFusion
-from dace.sdfg import utils
-from dace import subsets
-import numpy as np
-
 import itertools
 
-from dace.sdfg.graph import SubgraphView
-
+import numpy as np
 from util import fusion
+
+import dace
+from dace import subsets
+from dace.sdfg import utils
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
 
 N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 

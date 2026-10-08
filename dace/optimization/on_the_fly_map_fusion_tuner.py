@@ -1,20 +1,18 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import math
 import copy
-
-from collections.abc import Generator
+import math
 from collections import Counter
+from collections.abc import Generator
 
+import dace
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
+from dace.optimization import utils as optim_utils
 from dace.sdfg.analysis.cutout import SDFGCutout
-
+from dace.transformation import helpers as xfh
 from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
 from dace.transformation.subgraph import helpers
-from dace.transformation import helpers as xfh
-from dace.optimization import utils as optim_utils
 
 try:
     from tqdm import tqdm

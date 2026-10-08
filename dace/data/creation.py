@@ -7,7 +7,6 @@ as well as functions for creating arrays from descriptors.
 """
 
 import ctypes
-
 from numbers import Number
 from typing import Any
 

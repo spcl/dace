@@ -1,16 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import itertools
+from collections.abc import Sequence
+from numbers import Integral, Number
+from typing import Union
+
 import sympy as sp
 
+import dace
 from dace import dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
-from numbers import Integral, Number
-from typing import Union
-from collections.abc import Sequence
 
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
 RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
@@ -176,8 +177,8 @@ def _bcast(
     fcomm: str = None,
 ):
 
-    from dace.libraries.mpi.nodes.bcast import Bcast
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
+    from dace.libraries.mpi.nodes.bcast import Bcast
 
     libnode = Bcast("_Bcast_", fcomm)
     desc = sdfg.arrays[buffer]
@@ -249,8 +250,8 @@ def _Reduce(
     grid: str = None,
 ):
 
-    from dace.libraries.mpi.nodes.reduce import Reduce
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
+    from dace.libraries.mpi.nodes.reduce import Reduce
 
     libnode = Reduce("_Reduce_", op)
     desc = sdfg.arrays[buffer]
@@ -319,9 +320,9 @@ def _allreduce(
     pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_buffer: "InPlace", buffer: str, op: str, grid: str = None
 ):
 
-    from dace.libraries.mpi.nodes.allreduce import Allreduce
-
     from mpi4py import MPI
+
+    from dace.libraries.mpi.nodes.allreduce import Allreduce
 
     if isinstance(op, MPI.Op):
         op = _mpi4py_to_MPI(MPI, op)
@@ -373,8 +374,8 @@ def _scatter(
     root: str | sp.Expr | Number = 0,
 ):
 
-    from dace.libraries.mpi.nodes.scatter import Scatter
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
+    from dace.libraries.mpi.nodes.scatter import Scatter
 
     libnode = Scatter("_Scatter_")
     in_desc = sdfg.arrays[in_buffer]
@@ -407,8 +408,8 @@ def _gather(
     root: str | sp.Expr | Number = 0,
 ):
 
-    from dace.libraries.mpi.nodes.gather import Gather
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
+    from dace.libraries.mpi.nodes.gather import Gather
 
     libnode = Gather("_Gather_")
     in_desc = sdfg.arrays[in_buffer]

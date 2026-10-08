@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import numpy as np
+import pytest
 
 
 @pytest.mark.tensorflow
 def test_fused_batch_norm():
     import tensorflow as tf
     from tensorflow.python.ops import gen_nn_ops
+
     from dace.frontend.ml.tensorflow import TFSession
 
     num_channels = 3

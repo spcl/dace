@@ -2,8 +2,9 @@
 """Contains class decorators to ease creating classes and enumerations whose
 subclasses and values can be registered externally."""
 
-from dace import attr_enum
 from typing import TypeVar
+
+from dace import attr_enum
 
 T = TypeVar("T")
 E = TypeVar("E", bound=attr_enum.ExtensibleAttributeEnum)

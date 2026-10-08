@@ -3,7 +3,8 @@
 
 import networkx as nx
 
-from dace import data as dt, sdfg, subsets, memlet
+from dace import data as dt
+from dace import memlet, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil

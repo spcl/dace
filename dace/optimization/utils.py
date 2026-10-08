@@ -1,8 +1,10 @@
-import os
-import math
-import dace
 import itertools
+import math
+import os
+
 import numpy as np
+
+import dace
 
 
 def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):
@@ -75,9 +77,8 @@ def get_world_size():
         return 1
 
 
-import traceback
-
 import multiprocessing as mp
+import traceback
 
 if __name__ == "__main__":
     mp.set_start_method("spawn")

@@ -5,22 +5,23 @@ with Intel MKL and NVIDIA CUBLAS.
 """
 
 import click
-import dace
 import numpy as np
 
-# For optimizations
-from dace.transformation.dataflow import (
-    DoubleBuffering,
-    MapCollapse,
-    MapReduceFusion,
-    InLocalStorage,
-    AccumulateTransient,
-    Vectorization,
-)
-from dace.transformation import helpers as xfutil
+import dace
 
 # For library node implementations
 import dace.libraries.blas
+from dace.transformation import helpers as xfutil
+
+# For optimizations
+from dace.transformation.dataflow import (
+    AccumulateTransient,
+    DoubleBuffering,
+    InLocalStorage,
+    MapCollapse,
+    MapReduceFusion,
+    Vectorization,
+)
 
 # Define symbolic sizes for arbitrary inputs
 M = dace.symbol("M")

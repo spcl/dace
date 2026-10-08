@@ -4,18 +4,18 @@ Provides a transformation to add missing GPU_ThreadBlock maps to
 GPU_Device maps, along with helper functions.
 """
 
+# TODO: Move these helper functions to a separate utility module or class
+import functools
 import warnings
 
 import sympy
 
 from dace import Config, dtypes
 from dace.properties import make_properties
-from dace.sdfg import SDFG, SDFGState, nodes, utils as sdutil
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import helpers, transformation
 from dace.transformation.dataflow.tiling import MapTiling
-
-# TODO: Move these helper functions to a separate utility module or class
-import functools
 
 
 def to_3d_dims(dim_sizes: list) -> list:

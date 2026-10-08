@@ -1,11 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import copy
-import pytest
-import numpy as np
 
-from dace.libraries.sparse import CSRMV
+import numpy as np
+import pytest
 from scipy.sparse import csr_matrix
+
+import dace
+from dace.libraries.sparse import CSRMV
 
 N = dace.symbol("N")
 M = dace.symbol("M")

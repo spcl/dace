@@ -10,7 +10,7 @@ folded back to ``N``. Both functions now share the unit-denominator and exact-di
 import pytest
 import sympy
 
-from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, symstr, sympy_intdiv_fix
+from dace.symbolic import deserialize_symbolic, int_ceil, int_floor, pystr_to_symbolic, sympy_intdiv_fix, symstr
 
 N = pystr_to_symbolic("N")
 M = pystr_to_symbolic("M")

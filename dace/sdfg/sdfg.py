@@ -4,45 +4,47 @@ import collections
 import copy
 import ctypes
 import gzip
-from numbers import Integral
-import os
 import json
-from hashlib import md5, sha256
+import os
 import pathlib
 import random
 import re
 import shutil
 import sys
-from typing import Any, AnyStr, Optional, TYPE_CHECKING, Union
-from collections.abc import Sequence
 import warnings
+from collections.abc import Sequence
+from hashlib import md5, sha256
+from numbers import Integral
+from typing import TYPE_CHECKING, Any, AnyStr, BinaryIO, Optional, Union
 
 import dace
-from dace.sdfg.graph import generate_element_id, SubgraphView
 import dace.serialize
-from dace import data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic
-from dace.sdfg.replace import replace_properties_dict
-from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
+from dace import data as dt
+from dace import dtypes, hooks, symbolic
+from dace import memlet as mm
+from dace import subsets as sbs
 from dace.config import Config
-from dace.frontend.python import astutils
-from dace.sdfg import nodes as nd
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion, LoopRegion
-from dace.sdfg.type_inference import infer_expr_type
-from dace.data.distributed import ProcessGrid, SubArray, RedistrArray
+from dace.data.distributed import ProcessGrid, RedistrArray, SubArray
 from dace.dtypes import validate_name
+from dace.frontend.python import astutils
 from dace.properties import (
+    CodeBlock,
+    CodeProperty,
     DebugInfoProperty,
+    DictProperty,
     EnumProperty,
     ListProperty,
-    make_properties,
-    Property,
-    CodeProperty,
-    TransformationHistProperty,
     OptionalSDFGReferenceProperty,
-    DictProperty,
-    CodeBlock,
+    Property,
+    TransformationHistProperty,
+    make_properties,
 )
-from typing import BinaryIO
+from dace.sdfg import nodes as nd
+from dace.sdfg.graph import SubgraphView, generate_element_id
+from dace.sdfg.replace import replace_properties_dict
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.type_inference import infer_expr_type
+from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
@@ -63,9 +65,9 @@ LAUNCHER_RANK_VARS = (
 )
 
 if TYPE_CHECKING:
-    from dace.codegen.instrumentation.report import InstrumentationReport
-    from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+    from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
 
 
@@ -2746,7 +2748,8 @@ class SDFG(ControlFlowRegion):
         Returns `False` if the file does not exist.
         """
         # Avoid import loops
-        from dace.codegen import compiled_sdfg as cs, compiler
+        from dace.codegen import compiled_sdfg as cs
+        from dace.codegen import compiler
 
         build_folder = self.build_folder
         if folder_mode is None:

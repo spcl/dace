@@ -1,16 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
-import pytest
 import copy
 
+import numpy as np
+import pytest
+
 import dace
-from dace import nodes, data as dace_data
+from dace import data as dace_data
+from dace import nodes
 from dace.libraries.linalg import Transpose
 from dace.transformation.dataflow import (
     RedundantArray,
-    RedundantSecondArray,
     RedundantArrayCopying,
     RedundantArrayCopyingIn,
+    RedundantSecondArray,
 )
 
 from . import utility

@@ -1,15 +1,16 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes that implement the map-expansion transformation."""
 
-from dace.sdfg.utils import consolidate_edges
 import copy
+
 import dace
 from dace import dtypes, subsets, symbolic
-from dace.properties import EnumProperty, make_properties, Property
+from dace.properties import EnumProperty, Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation as pm
 from dace.sdfg.propagation import propagate_memlets_scope
+from dace.sdfg.utils import consolidate_edges
+from dace.transformation import transformation as pm
 
 
 @make_properties

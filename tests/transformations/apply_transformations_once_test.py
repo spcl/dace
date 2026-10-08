@@ -1,8 +1,10 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace import transformation as dace_transformation, properties as dace_properties
-from dace.sdfg import nodes as dace_nodes
 from typing import Any
+
+import dace
+from dace import properties as dace_properties
+from dace import transformation as dace_transformation
+from dace.sdfg import nodes as dace_nodes
 
 N = dace.symbol("N")
 

@@ -7,8 +7,7 @@ This module contains functions for converting data descriptors to ctypes.
 
 import ctypes
 import warnings
-
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import sympy as sp

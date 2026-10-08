@@ -1,14 +1,15 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Helper functions for compilation."""
 
+import copy
+import uuid
 from typing import Any
 
-import copy
 import numpy as np
-import dace
-import uuid
 
-from dace import SDFG, SDFGState, data as dace_data
+import dace
+from dace import SDFG, SDFGState
+from dace import data as dace_data
 from dace.sdfg import nodes
 
 

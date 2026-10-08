@@ -1,10 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
-
 from dace.sdfg import SDFG, nodes
-from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.state import LoopRegion
+from dace.sdfg.utils import inline_control_flow_regions
 
 
 def add_backward_pass(

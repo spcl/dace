@@ -4,11 +4,13 @@ Tests automatic detection and parsing of nested functions and methods that are
 not annotated with @dace decorators.
 """
 
-import dace
-from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dataclasses import dataclass
+
 import numpy as np
 import pytest
+
+import dace
+from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 
 
 @dataclass

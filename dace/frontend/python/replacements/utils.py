@@ -3,17 +3,16 @@
 Contains utility functions and types for replacements in the DaCe Python frontend.
 """
 
-from dace import data, dtypes, symbolic
-from dace import Memlet, SDFG, SDFGState
-from dace.frontend.python import astutils
-
 import itertools
-from numbers import Number, Integral
-from typing import TYPE_CHECKING
 from collections.abc import Sequence
+from numbers import Integral, Number
+from typing import TYPE_CHECKING
 
 import numpy as np
 import sympy as sp
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes, symbolic
+from dace.frontend.python import astutils
 
 ########################################################################
 # Type hint definitions

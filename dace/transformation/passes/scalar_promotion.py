@@ -16,12 +16,13 @@ the change through NestedSDFG connectors, and rewriting the state-machine slots 
 descriptor as text rather than through a memlet -- are identical whatever the criteria are.
 """
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, SDFGState, infer_types, nodes
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.length_one_array_scalar_conversion import (
     descriptor_is_written,
     rewrite_code_slots,

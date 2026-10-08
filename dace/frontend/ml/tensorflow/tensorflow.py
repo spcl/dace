@@ -2,18 +2,20 @@
 
 # TODO: This code should undergo major refactoring
 
-from functools import partial
-import numpy as np
 import re
-from typing import Any
 import warnings
+from functools import partial
+from typing import Any
+
+import numpy as np
 
 import dace
-from dace.memlet import Memlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
-from dace.sdfg.nodes import Tasklet, NestedSDFG
+from dace.memlet import Memlet
+from dace.sdfg.nodes import NestedSDFG, Tasklet
 from dace.symbolic import symstr
+
 from .winograd import winograd_convolution
 
 try:

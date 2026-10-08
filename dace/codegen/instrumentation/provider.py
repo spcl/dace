@@ -1,10 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.codegen.prettycode import CodeIOStream
 from dace.dtypes import DataInstrumentationType, InstrumentationType
-from dace.registry import make_registry
-
 from dace.memlet import Memlet
-from dace.sdfg import nodes, SDFG
+from dace.registry import make_registry
+from dace.sdfg import SDFG, nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 

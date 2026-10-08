@@ -2,23 +2,25 @@
 
 import collections.abc
 from collections import defaultdict, deque
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from typing import Any
 
 import sympy
-
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.subsets import Range
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
-from dace.sdfg.graph import Edge
-from dace.sdfg import nodes as nd, utils as sdutil
-from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.propagation import align_memlet
-from typing import Any
-from collections.abc import Iterable, Iterator
 from networkx.algorithms import shortest_paths as nxsp
 from ordered_set import OrderedSet
 
+from dace import SDFG, InterstateEdge, Memlet, SDFGState, properties, symbolic
+from dace import data as dt
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.graph import Edge
+from dace.sdfg.propagation import align_memlet
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.subsets import Range
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 WriteScopeDict = dict[

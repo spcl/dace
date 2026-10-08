@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 import dace
 import dace.sdfg.utils as sdutils
 from dace.transformation.passes.analysis.scope_data_and_symbol_analysis import ScopeDataAndSymbolAnalysis

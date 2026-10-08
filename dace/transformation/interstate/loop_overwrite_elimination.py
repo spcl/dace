@@ -1,15 +1,16 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Eliminates loop overwriting data containers"""
 
+import copy
+
+from dace import nodes, symbolic
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock, SDFGState
-from dace.transformation import transformation, helpers
-from dace.transformation.passes.analysis import loop_analysis
 from dace.sdfg.sdfg import InterstateEdge
-from dace import symbolic, nodes
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.subsets import intersects
-import copy
+from dace.transformation import helpers, transformation
+from dace.transformation.passes.analysis import loop_analysis
 
 
 @transformation.explicit_cf_compatible

@@ -4,8 +4,8 @@ Generates automatic reStructuredText documentation from a configuration schema Y
 """
 
 import os
-from typing import Any, TextIO
 from collections.abc import Iterator
+from typing import Any, TextIO
 
 import yaml
 

@@ -1,19 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Inline multi-state SDFGs."""
 
-from copy import deepcopy as dc
 import itertools
+from copy import deepcopy as dc
 
-from dace import Memlet, symbolic
-from dace.sdfg import dealias, nodes
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg import InterstateEdge, SDFG, SDFGState
-from dace.sdfg import utils as sdutil
-from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
-from dace.transformation import transformation, helpers
+from dace import Memlet, data, symbolic
 from dace.properties import make_properties
-from dace import data
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.sdfg.state import LoopRegion, ReturnBlock
+from dace.transformation import helpers, transformation
 
 
 @make_properties

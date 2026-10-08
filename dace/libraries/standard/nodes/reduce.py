@@ -2,27 +2,24 @@
 """File defining the reduction library node."""
 
 import ast
-from copy import deepcopy as dcpy
-import dace
 import functools
 import platform
-import dace.serialize
-import dace.library
-from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, propagation
-from dace.sdfg import graph
-from dace.sdfg import utils as sdutil
-from dace.frontend.python.astutils import unparse
-from dace.properties import Property, LambdaProperty, ListProperty
-from dace.frontend.operations import detect_reduction_type
-from dace import dtypes
-from dace import subsets
 import warnings
-from dace.sdfg import scope
-from dace.transformation import transformation as pm
-from dace.symbolic import symstr, issymbolic
-from dace.libraries.standard.environments.cuda import CUDA
+from copy import deepcopy as dcpy
 
+import dace
+import dace.library
+import dace.serialize
+from dace import dtypes, subsets
+from dace.frontend.operations import detect_reduction_type
+from dace.frontend.python.astutils import unparse
 from dace.libraries.standard import reduction_planner as red_planner
+from dace.libraries.standard.environments.cuda import CUDA
+from dace.properties import LambdaProperty, ListProperty, Property
+from dace.sdfg import SDFG, SDFGState, dealias, devicelevel_block_size, graph, propagation, scope
+from dace.sdfg import utils as sdutil
+from dace.symbolic import issymbolic, symstr
+from dace.transformation import transformation as pm
 
 
 @dace.library.expansion
@@ -664,7 +661,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
     @staticmethod
     def expansion(node: "Reduce", state: SDFGState, sdfg: SDFG):
         from dace.codegen.prettycode import CodeIOStream
-        from dace.codegen.targets.cpp import unparse_cr_split, cpp_array_expr
+        from dace.codegen.targets.cpp import cpp_array_expr, unparse_cr_split
 
         node.validate(sdfg, state)
         input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
@@ -848,7 +845,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         graph.add_edge(u=reduce_node, u_connector=None, v=new_exit, v_connector=None, memlet=memlet_out)
 
         ### add in and out local storage
-        from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage, OutLocalStorage
+        from dace.transformation.dataflow.local_storage import InLocalStorage, LocalStorage, OutLocalStorage
 
         in_local_storage_subgraph = {
             LocalStorage.node_a: graph.nodes().index(new_entry),

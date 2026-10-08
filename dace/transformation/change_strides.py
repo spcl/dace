@@ -4,10 +4,10 @@
 import sympy
 
 import dace
-from dace.dtypes import ScheduleType
-from dace.sdfg import SDFG, dealias, nodes, SDFGState
 from dace.data import Array, Scalar
+from dace.dtypes import ScheduleType
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
 
 
 def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> list[tuple[nodes.AccessNode, SDFGState | dace.SDFG]]:

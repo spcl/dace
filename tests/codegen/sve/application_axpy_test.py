@@ -1,10 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
+import pytest
 import scipy as sp
 
+import dace
 from tests.codegen.sve import common
-import pytest
 
 N = dace.symbol("N")
 

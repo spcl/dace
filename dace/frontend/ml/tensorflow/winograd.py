@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import numpy as np
 import re
-from dace.memlet import Memlet
-from dace import dtypes
 from math import ceil
+
+import numpy as np
+
+import dace
+from dace import dtypes
+from dace.memlet import Memlet
 
 
 def add_cublas_cusolver(sdfg: dace.SDFG):

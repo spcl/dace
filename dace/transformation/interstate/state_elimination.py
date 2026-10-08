@@ -3,9 +3,10 @@
 
 import networkx as nx
 
-from dace import data as dt, sdfg, symbolic
+from dace import data as dt
+from dace import sdfg, symbolic
 from dace.properties import CodeBlock
-from dace.sdfg import nodes, SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion

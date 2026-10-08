@@ -1,26 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import itertools
+
 import numpy as np
 import sympy as sp
 
+import dace
+from dace import config, data, dtypes, registry, subsets, symbolic
+from dace.codegen.common import update_persistent_desc
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.target import TargetCodeGenerator
+from dace.codegen.targets import cpp
+from dace.codegen.targets.cpp import sym2cpp
+from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.memlet import Memlet
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutils
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 from dace.transformation.dataflow.streaming_memory import _collect_map_ranges
-
-from dace import registry, data, dtypes, config, symbolic, subsets
-from dace.sdfg import nodes, utils as sdutils
-from dace.sdfg.scope import ScopeSubgraphView
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets import cpp
-from dace.codegen.common import update_persistent_desc
-from dace.codegen.target import TargetCodeGenerator
-from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.codegen.targets.cpp import sym2cpp
-from dace.codegen.dispatcher import DefinedType
 
 MAX_SSR_STREAMERS = 2
 # number of snitch cores executing parallel regions

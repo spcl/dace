@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.config import Config, set_temporary, temporary_config
 import threading
+
+from dace.config import Config, set_temporary, temporary_config
 
 
 def test_set_temporary():

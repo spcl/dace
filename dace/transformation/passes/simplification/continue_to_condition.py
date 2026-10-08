@@ -2,12 +2,13 @@
 import copy
 from typing import Any
 
-from dace import sdfg as sd, properties
+from dace import properties
+from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ContinueBlock, ConditionalBlock, LoopRegion
-from dace.transformation import transformation
-from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import ConditionalBlock, ContinueBlock, LoopRegion
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties

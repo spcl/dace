@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
+
 import dace
 from dace import dtypes
-from dace.transformation.dataflow import TaskletFusion, MapFusionVertical
+from dace.transformation.dataflow import MapFusionVertical, TaskletFusion
 from dace.transformation.optimizer import Optimizer
-import pytest
 
 datatype = dace.float32
 np_datatype = np.float32

@@ -1,6 +1,6 @@
 import nbformat
 import pytest
-from nbconvert.preprocessors import ExecutePreprocessor, CellExecutionError
+from nbconvert.preprocessors import CellExecutionError, ExecutePreprocessor
 
 BASE_PATH = "tutorials/"
 NOTEBOOK_PATHS = [

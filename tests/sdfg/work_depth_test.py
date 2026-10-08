@@ -1,28 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains test cases for the work depth analysis."""
 
+import numpy as np
 import pytest
+import sympy as sp
+from pytest import raises
+
 import dace
-from dace.symbolic import pystr_to_symbolic, simplify, SymbolicType
 from dace.frontend.python.parser import DaceProgram
+from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumptions
+from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.work_depth import (
     analyze_sdfg,
-    get_tasklet_work_depth,
-    get_tasklet_avg_par,
-    parse_assumptions,
     count_arithmetic_ops_code,
     count_depth_code,
+    get_tasklet_avg_par,
+    get_tasklet_work_depth,
+    parse_assumptions,
 )
-from dace.sdfg.performance_evaluation.helpers import get_uuid
-from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumptions
-import sympy as sp
-import numpy as np
-
 from dace.sdfg.utils import inline_control_flow_regions
-from dace.transformation.interstate import NestSDFG
+from dace.symbolic import SymbolicType, pystr_to_symbolic, simplify
 from dace.transformation.dataflow import MapExpansion
-
-from pytest import raises
+from dace.transformation.interstate import NestSDFG
 
 N = dace.symbol("N")
 M = dace.symbol("M")

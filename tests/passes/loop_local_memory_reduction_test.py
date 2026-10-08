@@ -1,12 +1,14 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests LoopLocalMemoryReduction transformation."""
 
-import numpy as np
 import copy
-import dace
-from dace.sdfg.state import LoopRegion, CodeBlock
-from dace.transformation.passes import LoopLocalMemoryReduction
 from typing import Any
+
+import numpy as np
+
+import dace
+from dace.sdfg.state import CodeBlock, LoopRegion
+from dace.transformation.passes import LoopLocalMemoryReduction
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for a specific option

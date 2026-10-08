@@ -13,8 +13,8 @@ import json
 import os
 import shutil
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 
 #: Fields of a compile-database entry that carry paths.
 FIELDS = ("directory", "command", "file", "output")

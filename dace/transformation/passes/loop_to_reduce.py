@@ -24,9 +24,10 @@ from typing import NamedTuple, Optional
 
 import sympy
 
-from dace import SDFG, SDFGState, data, dtypes, memlet as mm, nodes, properties, subsets, symbolic
+from dace import SDFG, SDFGState, data, dtypes, nodes, properties, subsets, symbolic
+from dace import memlet as mm
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.symbolic import AND, OR, bitwise_and, bitwise_or, Subscript
+from dace.symbolic import AND, OR, Subscript, bitwise_and, bitwise_or
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis

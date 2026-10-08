@@ -1,13 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-import re
 import json
 import os
+import re
 import socket
 from typing import TypedDict
+
 from dace import Config, dtypes
-from dace.sdfg import state
-from dace.sdfg import nodes
+from dace.sdfg import nodes, state
 
 
 class NodeInfo(TypedDict):

@@ -1,15 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from collections import defaultdict
 import copy
-from dace import data, Memlet, subsets, symbolic, dtypes
-from dace.frontend.python import memlet_parser
-from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
-from dace.sdfg.scope import is_devicelevel_gpu
-from dace.sdfg.graph import MultiConnectorEdge
 import itertools
-from typing import TypeVar, Any
-from collections.abc import Callable, Iterable, Generator
+from collections import defaultdict
+from collections.abc import Callable, Generator, Iterable
+from typing import Any, TypeVar
+
+from dace import Memlet, data, dtypes, subsets, symbolic
+from dace.frontend.python import memlet_parser
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import is_devicelevel_gpu
 
 
 class MemletReplacer(ast.NodeTransformer):

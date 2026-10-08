@@ -1,14 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """This file implements the ConnectedEnumerator class"""
 
-from dace.transformation.estimator.enumeration import MapScoringEnumerator
+from collections.abc import Callable
 
-from dace.transformation.subgraph import helpers
-from dace.properties import make_properties, Property
+from dace.properties import Property, make_properties
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
-
-from collections.abc import Callable
+from dace.transformation.estimator.enumeration import MapScoringEnumerator
+from dace.transformation.subgraph import helpers
 
 
 @make_properties

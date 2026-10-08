@@ -1,5 +1,6 @@
-import sys
 import re
+import sys
+
 from ply import lex
 from ply.lex import TOKEN
 

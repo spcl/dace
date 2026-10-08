@@ -1,17 +1,21 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains inter-state transformations of an SDFG to run on the GPU."""
 
-from ordered_set import OrderedSet
+from collections import defaultdict
+from copy import deepcopy as dc
 
-from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_memlets_sdfg
+from ordered_set import OrderedSet
+from sympy import floor
+
+from dace import data, dtypes, memlet, propagate_memlets_sdfg
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.properties import ListProperty, Property, make_properties
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
-from dace.transformation import transformation, helpers as xfh
-from dace.properties import ListProperty, Property, make_properties
-from collections import defaultdict
-from copy import deepcopy as dc
-from sympy import floor
+from dace.transformation import helpers as xfh
+from dace.transformation import transformation
 
 gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
 

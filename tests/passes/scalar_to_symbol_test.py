@@ -1,14 +1,14 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests the scalar to symbol promotion functionality."""
 
-import dace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes import scalar_to_symbol
-from dace.transformation import interstate as isxf
-
-from sympy import core as sympy_core
 import numpy as np
 import pytest
+from sympy import core as sympy_core
+
+import dace
+from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation import interstate as isxf
+from dace.transformation.passes import scalar_to_symbol
 
 
 def test_find_promotable():

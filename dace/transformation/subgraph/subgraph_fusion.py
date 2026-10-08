@@ -1,27 +1,25 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module contains classes that implement subgraph fusion."""
 
-import dace
+import warnings
+from collections import defaultdict
+from copy import deepcopy as dcpy
+from itertools import chain
+
 import networkx as nx
 
-from dace import dtypes, symbolic, subsets, data
-from dace.sdfg import nodes, SDFG
+import dace
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg.state import SDFGState, StateSubgraphView
-from dace.transformation import transformation
-from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.sdfg.propagation import _propagate_node, propagate_subset
-from dace.transformation.subgraph import helpers
+from dace.properties import EnumProperty, ListProperty, Property, make_properties
+from dace.sdfg import SDFG, dealias, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import _propagate_node, propagate_subset
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.utils import consolidate_edges_scope
+from dace.transformation import transformation
 from dace.transformation.helpers import find_contiguous_subsets
-from dace.sdfg import dealias
-
-from copy import deepcopy as dcpy
-import warnings
-
-from collections import defaultdict
-from itertools import chain
+from dace.transformation.subgraph import helpers
 
 
 @make_properties

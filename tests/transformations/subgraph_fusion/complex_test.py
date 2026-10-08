@@ -1,11 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
 import numpy as np
-
-from dace.sdfg.graph import SubgraphView
-
-from dace.transformation.subgraph import SubgraphFusion
 from util import expand_maps, expand_reduce, fusion
+
+import dace
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph import SubgraphFusion
 
 N, M, O = [dace.symbol(s) for s in ["N", "M", "O"]]
 

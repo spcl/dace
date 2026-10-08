@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
+import warnings
 from copy import deepcopy as dc
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.blas import blas_helpers
 from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
-import warnings
 
 
 def _get_transpose_input(node, state, sdfg):

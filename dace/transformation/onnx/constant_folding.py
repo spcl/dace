@@ -2,18 +2,17 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 
 import dace
-import torch
-from dace import config
-from dace.properties import make_properties
-from dace.transformation import transformation
-from dace.sdfg import nodes as nd
-from dace.sdfg import utils as sdutil
-
 import dace.libraries.onnx as donnx
+from dace import config
 from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
+from dace.properties import make_properties
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 
 if TYPE_CHECKING:
     from dace.frontend.ml.onnx import ONNXModel

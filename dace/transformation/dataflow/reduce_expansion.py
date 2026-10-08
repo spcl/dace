@@ -1,20 +1,19 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module contains classes that implement the reduce-map transformation."""
 
+from copy import deepcopy as dcpy
+
 from dace import dtypes
-from dace.sdfg import SDFG, nodes, utils, graph, dealias
+from dace.data import View
+from dace.frontend.operations import detect_reduction_type
 from dace.memlet import Memlet
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, dealias, graph, nodes, utils
+from dace.sdfg.propagation import propagate_memlets_scope
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
-from dace.properties import make_properties, Property
 from dace.symbolic import symstr
-from dace.data import View
-
-from dace.frontend.operations import detect_reduction_type
-from dace.sdfg.propagation import propagate_memlets_scope
-
-from copy import deepcopy as dcpy
+from dace.transformation import transformation
 
 
 @make_properties
@@ -214,7 +213,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             # create an in-transient between inner and outer map entry
             array_in = nstate.in_edges(outer_entry)[0].data.data
 
-            from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage
+            from dace.transformation.dataflow.local_storage import InLocalStorage, LocalStorage
 
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),

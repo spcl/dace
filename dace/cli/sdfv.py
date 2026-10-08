@@ -1,13 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """SDFG visualizer that uses Jinja, HTML5, and Javascript."""
 
-import json
-import tempfile
-import sys
-import os
-import platform
 import functools
 import http.server
+import json
+import os
+import platform
+import sys
+import tempfile
 import threading
 
 import dace

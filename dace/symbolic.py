@@ -2,25 +2,24 @@
 import ast
 import collections.abc
 import contextlib
-from collections import Counter
-from functools import lru_cache, cache
-import sympy
-import threading
 import pickle
 import re
+import threading
 import types
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from functools import cache, lru_cache
 from typing import (
+    TYPE_CHECKING,
     Any,
     Union,
-    TYPE_CHECKING,
 )
-from collections.abc import Callable, Iterable, Iterator, Mapping
-import numpy
 
+import numpy
+import packaging.version as packaging_version
+import sympy
 import sympy.abc
 import sympy.printing.str
-
-import packaging.version as packaging_version
 
 from dace import dtypes
 

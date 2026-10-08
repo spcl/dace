@@ -6,12 +6,12 @@ from dataclasses import dataclass
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
 from dace.frontend.python import astutils
-from dace.sdfg import nodes
+from dace.sdfg import infer_types, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
-from dace.sdfg import infer_types
 from dace.sdfg.state import ControlFlowBlock
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes import analysis as ap
 
 PROTECTED_NAMES = {"__pystate"}  #: A set of names that are not allowed to be erased

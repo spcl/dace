@@ -2,13 +2,13 @@
 """Precompiled DaCe program/method cache."""
 
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Callable
 
 import dace
-from dace import config
-from dace import data as dt, hooks
+from dace import config, hooks
+from dace import data as dt
 from dace.sdfg.sdfg import SDFG
 
 # Type hints

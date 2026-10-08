@@ -18,7 +18,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace import data as dt, nodes
+from dace import data as dt
+from dace import nodes
 from dace.codegen import common
 from dace.transformation.passes import gpu_shared_memory
 

@@ -3,16 +3,16 @@
 A set of built-in hooks.
 """
 
-from contextlib import contextmanager
 import fnmatch
 import os
-from typing import Any, TYPE_CHECKING, Union
 from collections.abc import Callable
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
-    from dace.dtypes import InstrumentationType, DataInstrumentationType
     from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+    from dace.dtypes import DataInstrumentationType, InstrumentationType
     from dace.sdfg import SDFG
 
 
@@ -49,7 +49,7 @@ def profile(
     :note: Running functions multiple times may affect the results of the program.
     """
     from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
-    from dace.hooks import on_compiled_sdfg_call, _COMPILED_SDFG_CALL_HOOKS
+    from dace.hooks import _COMPILED_SDFG_CALL_HOOKS, on_compiled_sdfg_call
 
     # TODO: By default, do not profile every invocation
 
@@ -144,8 +144,8 @@ def instrument(
     :param annotate_states: If True, instruments states in the SDFGs.
     :param annotate_sdfgs: If True, instruments whole SDFGs and sub-SDFGs.
     """
-    from dace.hooks import on_call
     from dace.codegen.instrumentation.report import InstrumentationReport
+    from dace.hooks import on_call
     from dace.sdfg import SDFGState
     from dace.sdfg.nodes import EntryNode, Tasklet
 
@@ -241,6 +241,7 @@ def instrument_data(
     :param verbose: If True, prints information about created and loaded instrumented data reports.
     """
     import ctypes
+
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.dtypes import DataInstrumentationType
     from dace.hooks import on_call, on_compiled_sdfg_call

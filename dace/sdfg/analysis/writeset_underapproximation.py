@@ -4,19 +4,17 @@ Pass derived from ``propagation.py`` that under-approximates write-sets of for-l
 """
 
 import copy
-from dataclasses import dataclass, field
 import itertools
 import warnings
 from collections import defaultdict
+from dataclasses import dataclass, field
 
 import sympy
 
 import dace
 from dace import SDFG, Memlet, data, dtypes, registry, subsets, symbolic
-from dace.sdfg import SDFGState
-from dace.sdfg import graph
+from dace.sdfg import SDFGState, graph, nodes, scope
 from dace.sdfg import graph as gr
-from dace.sdfg import nodes, scope
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.nodes import AccessNode, NestedSDFG
 from dace.sdfg.state import LoopRegion

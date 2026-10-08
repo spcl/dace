@@ -69,17 +69,18 @@
 ##########################################################################
 ### END OF astunparse LICENSES
 
-from functools import lru_cache
+import ast
 import inspect
 import sys
-import ast
-import numpy as np
 import warnings
-
-import sympy
-import dace
-from numbers import Number
+from functools import lru_cache
 from io import StringIO
+from numbers import Number
+
+import numpy as np
+import sympy
+
+import dace
 from dace import dtypes
 from dace.sdfg import type_inference
 

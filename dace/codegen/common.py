@@ -1,17 +1,19 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from copy import deepcopy
 import ctypes.util
-from dace import config, data, dtypes, sdfg as sd, symbolic
-from dace.sdfg import SDFG
-from dace.properties import CodeBlock
-from dace.codegen import cppunparse
-from dace.codegen.tools import gpu_runtime
-from functools import lru_cache
-from io import StringIO
 import os
 import subprocess
 import warnings
+from copy import deepcopy
+from functools import lru_cache
+from io import StringIO
+
+from dace import config, data, dtypes, symbolic
+from dace import sdfg as sd
+from dace.codegen import cppunparse
+from dace.codegen.tools import gpu_runtime
+from dace.properties import CodeBlock
+from dace.sdfg import SDFG
 
 
 def find_incoming_edges(node, dfg):

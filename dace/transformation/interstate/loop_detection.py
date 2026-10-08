@@ -1,14 +1,18 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Loop detection transformation"""
 
-import sympy as sp
-import networkx as nx
-from typing import AnyStr
 from collections.abc import Iterable
+from typing import AnyStr
 
-from dace import sdfg as sd, symbolic
-from dace.sdfg import graph as gr, utils as sdutil, InterstateEdge
-from dace.sdfg.state import ControlFlowRegion, ControlFlowBlock
+import networkx as nx
+import sympy as sp
+
+from dace import sdfg as sd
+from dace import symbolic
+from dace.sdfg import InterstateEdge
+from dace.sdfg import graph as gr
+from dace.sdfg import utils as sdutil
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.transformation import transformation
 
 

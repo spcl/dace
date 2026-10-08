@@ -3,19 +3,19 @@
 
 import contextlib
 import io
+from math import isclose
 from unittest import mock
 
-import pytest
-import dace
-import sympy as sp
 import numpy as np
-from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
-from dace.sdfg.performance_evaluation.helpers import get_uuid
-from dace.sdfg.utils import inline_control_flow_regions
-from dace.symbolic import pystr_to_symbolic, SymbolicType
-from dace.frontend.python.parser import DaceProgram
+import pytest
+import sympy as sp
 
-from math import isclose
+import dace
+from dace.frontend.python.parser import DaceProgram
+from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
+from dace.sdfg.utils import inline_control_flow_regions
+from dace.symbolic import SymbolicType, pystr_to_symbolic
 
 N = dace.symbol("N")
 M = dace.symbol("M")

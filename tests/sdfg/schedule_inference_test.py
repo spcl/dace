@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for default storage/schedule inference."""
 
-import dace
-from dace.sdfg.validation import InvalidSDFGNodeError
-from dace.sdfg.infer_types import set_default_schedule_and_storage_types
-from dace.transformation.helpers import get_parent_map
-from dace.transformation.auto.auto_optimize import apply_gpu_storage
 import pytest
+
+import dace
+from dace.sdfg.infer_types import set_default_schedule_and_storage_types
+from dace.sdfg.validation import InvalidSDFGNodeError
+from dace.transformation.auto.auto_optimize import apply_gpu_storage
+from dace.transformation.helpers import get_parent_map
 
 
 def test_default_schedule_autodetect():

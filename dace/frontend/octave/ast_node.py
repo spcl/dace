@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
-import dace
 from collections import OrderedDict
+
+import dace
 
 
 class AST_Node:
@@ -69,8 +70,8 @@ class AST_Node:
 
     def search_vardef_in_scope(self, name):
         from .ast_assign import AST_Assign
-        from .ast_values import AST_Ident
         from .ast_loop import AST_ForLoop
+        from .ast_values import AST_Ident
 
         current_node = self
 
@@ -241,7 +242,7 @@ class AST_Statements(AST_Node):
             stmts = None
             func = None
             for c in self.get_children():
-                from .ast_function import AST_Function, AST_EndFunc
+                from .ast_function import AST_EndFunc, AST_Function
 
                 if isinstance(c, AST_Function):
                     func = c

@@ -1,29 +1,34 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Automatic optimization routines for SDFGs."""
 
-import dace
-import sympy
-from dace.sdfg import infer_types
-from dace.sdfg.state import SDFGState, ControlFlowRegion
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.scope import is_devicelevel_gpu_kernel
-from dace import config, data as dt, dtypes, Memlet, symbolic
-from dace.sdfg import SDFG, nodes, graph as gr
 from collections.abc import Callable
 
-# Transformations
-from dace.transformation.passes import FullMapFusion
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
-from dace.transformation.interstate import LoopToMap
-from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import helpers as xfsh
-from dace.transformation import helpers as xfh, pass_pipeline as ppl
+import sympy
+
+import dace
+from dace import Memlet, config, dtypes, symbolic
+from dace import data as dt
 
 # Environments
-from dace.libraries.blas.environments import intel_mkl as mkl, openblas
+from dace.libraries.blas.environments import intel_mkl as mkl
+from dace.libraries.blas.environments import openblas
+from dace.sdfg import SDFG, infer_types, nodes
+from dace.sdfg import graph as gr
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.scope import is_devicelevel_gpu_kernel
+from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.transformation import helpers as xfh
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.dataflow import MapCollapse, ReduceExpansion, TrivialMapElimination
 
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
+from dace.transformation.interstate import LoopToMap
+
+# Transformations
+from dace.transformation.passes import FullMapFusion
+from dace.transformation.subgraph import helpers as xfsh
+from dace.transformation.subgraph.composite import CompositeFusion
 
 GraphViewType = SDFG | SDFGState | gr.SubgraphView | ControlFlowRegion
 
@@ -204,7 +209,8 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     # Avoid import loops
     from dace.codegen.targets import cpp
     from dace.frontend import operations
-    from dace.transformation import dataflow, helpers as xfh
+    from dace.transformation import dataflow
+    from dace.transformation import helpers as xfh
 
     # Determine on which nodes to run the operation
     graph = graph_or_subgraph

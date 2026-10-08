@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
+
+import dace.library
 from dace import dtypes
 from dace.data import Data
-from dace.properties import Property
-from dace.sdfg.nodes import Node, Tasklet, LibraryNode
-import dace.library
 from dace.memlet import Memlet
+from dace.properties import Property
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.nodes import LibraryNode, Node, Tasklet
 from dace.transformation.transformation import ExpandTransformation
 
 

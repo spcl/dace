@@ -1,13 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
+import io
 import os
 import platform
 import tempfile
 import threading
-import io
-from typing import Any
-import yaml
 import warnings
+from typing import Any
+
+import yaml
 
 
 @contextlib.contextmanager

@@ -1,15 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-
 from dace import Memlet
-from dace.libraries.lapack import Potrf
+from dace.libraries.blas import environments as blas_environments
+from dace.libraries.lapack import Potrf, environments
 from dace.libraries.linalg.nodes.transpose import Transpose
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.lapack import environments
-from dace.libraries.blas import environments as blas_environments
 
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):

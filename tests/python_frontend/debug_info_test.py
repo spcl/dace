@@ -1,8 +1,7 @@
-from dace import SDFG, SDFGState
-from dace import dtypes
-from dace.config import Config, temporary_config
-
 import pytest
+
+from dace import SDFG, SDFGState, dtypes
+from dace.config import Config, temporary_config
 
 
 @pytest.fixture()

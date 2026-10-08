@@ -3,13 +3,14 @@
 
 import argparse
 import csv
-import dace
-import numpy as np
 import timeit
 
+import numpy as np
 from mpi4py import MPI
-from dace.transformation.auto.auto_optimize import auto_optimize
+
+import dace
 from dace.sdfg import utils
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Symbols
 # Process grid

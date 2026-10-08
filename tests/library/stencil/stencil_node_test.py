@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 from dace.libraries.stencil import Stencil
-import numpy as np
 
 SIZE = dace.symbol("size")
 ROWS = dace.symbol("rows")

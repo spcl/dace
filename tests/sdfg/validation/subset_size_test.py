@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-
 import re
-import pytest
+
 import numpy as np
+import pytest
+
+import dace
 
 
 def _make_sdfg_with_zero_sized_an_to_an_memlet() -> tuple[dace.SDFG, dace.SDFGState]:

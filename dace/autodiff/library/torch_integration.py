@@ -14,7 +14,6 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 from dace import data
-
 from dace.autodiff.library.library import ParameterArray
 
 if TORCH_AVAILABLE:

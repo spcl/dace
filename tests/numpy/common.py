@@ -1,15 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
 import inspect
-from copy import deepcopy as dc
 from collections import OrderedDict
 from collections.abc import Callable
+from copy import deepcopy as dc
 
-import dace
 import numpy as np
 import pytest
-
 from numpy.random import default_rng
+
+import dace
 
 rng = default_rng(42)
 

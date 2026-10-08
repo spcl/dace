@@ -3,13 +3,13 @@
 Nesting and dealiasing tests for schedule trees.
 """
 
+import pytest
+
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.dataflow import RemoveSliceView
-
-import pytest
 
 N = dace.symbol("N")
 T = dace.symbol("T")

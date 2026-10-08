@@ -5,10 +5,17 @@ import ast
 import copy
 import itertools
 import warnings
+from collections.abc import Iterable
+
 from networkx import MultiDiGraph
 from ordered_set import OrderedSet
 
+from dace import data, dtypes, subsets, symbolic, typeclass
+from dace.memlet import Memlet
 from dace.properties import CodeBlock
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, graph, nodes, utils
+from dace.sdfg.graph import Edge, MultiConnectorEdge, SubgraphView
+from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
     ConditionalBlock,
@@ -17,17 +24,6 @@ from dace.sdfg.state import (
     LoopRegion,
     ReturnBlock,
 )
-from dace import subsets
-from collections.abc import Iterable
-
-from dace import data, dtypes, symbolic
-from dace.sdfg import nodes, utils
-from dace.sdfg.graph import Edge, SubgraphView, MultiConnectorEdge
-from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
-from dace.sdfg import graph
-from dace.memlet import Memlet
-from dace import typeclass
 
 
 def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | None = None) -> SDFGState:

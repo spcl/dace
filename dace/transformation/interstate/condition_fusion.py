@@ -1,10 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-from dace import sdfg as sd, properties
+
+from dace import properties
+from dace import sdfg as sd
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, ConditionalBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
 from dace.transformation import transformation as xf
 
 

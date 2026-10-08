@@ -2,24 +2,24 @@
 """Implements the PAPI counter performance instrumentation provider.
 Used for collecting CPU performance counters."""
 
-import dace
-from dace import dtypes, library, registry, symbolic
-from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.codegen.common import sym2cpp
-from dace.config import Config
-from dace.sdfg import nodes
-from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
-from dace.sdfg.graph import SubgraphView
-from dace.memlet import Memlet
-from dace.sdfg import scope_contains_scope
-from dace.sdfg.state import DataflowGraphView, SDFGState
-
-import sympy as sp
+import ast
 import ctypes.util
 import os
-import ast
 import subprocess
 import warnings
+
+import sympy as sp
+
+import dace
+from dace import dtypes, library, registry, symbolic
+from dace.codegen.common import sym2cpp
+from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.config import Config
+from dace.memlet import Memlet
+from dace.sdfg import nodes, scope_contains_scope
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
+from dace.sdfg.state import DataflowGraphView, SDFGState
 
 # Default sets of PAPI counters
 VECTOR_COUNTER_SET = (

@@ -1,10 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+from copy import deepcopy as dc
+from math import prod
+from typing import Any
+
 import dace
 from dace import properties, symbolic
-from copy import deepcopy as dc
-from typing import Any
-import warnings
-from math import prod
 
 
 def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):

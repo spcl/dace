@@ -1,10 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, library, properties, subsets, symbolic
-from dace.sdfg import nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from dace.codegen.targets import cpp
 from dace.libraries.mpi.nodes.node import MPINode
+from dace.sdfg import nodes
+from dace.transformation.transformation import ExpandTransformation
+
+from .. import environments
 
 
 @library.expansion

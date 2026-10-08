@@ -1,10 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from collections import defaultdict
 import copy
+import sys
+import time
+from collections import defaultdict
+
+import networkx as nx
+
 import dace
 from dace import data, symbolic
-from dace.sdfg.sdfg import InterstateEdge, SDFG
+from dace.frontend.python import astutils
+from dace.frontend.python.astutils import negate_expr
+from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg import dealias
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.sdfg.analysis.schedule_tree import passes as stpasses
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.memlet_utils import MemletReplacer
+from dace.sdfg.propagation import align_memlet
+from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import (
     ConditionalBlock,
     ControlFlowBlock,
@@ -14,19 +31,7 @@ from dace.sdfg.state import (
     SDFGState,
     UnstructuredControlFlow,
 )
-from dace.sdfg import dealias, utils as sdutil, graph as gr, nodes as nd
-from dace.sdfg.memlet_utils import MemletReplacer
-from dace.frontend.python import astutils
-from dace.frontend.python.astutils import negate_expr
-from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
 from dace.transformation.passes.analysis import StateReachability
-from dace.sdfg.propagation import align_memlet
-from dace.properties import CodeBlock
-from dace.memlet import Memlet
-
-import networkx as nx
-import time
-import sys
 
 NODE_TO_SCOPE_TYPE = {
     dace.nodes.MapEntry: tn.MapScope,

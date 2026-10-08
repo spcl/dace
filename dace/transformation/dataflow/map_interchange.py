@@ -1,12 +1,11 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Implements the map interchange transformation."""
 
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.propagation import propagate_memlet
 from dace.symbolic import symlist
 from dace.transformation import transformation
-from dace.sdfg.propagation import propagate_memlet
 
 
 class MapInterchange(transformation.SingleStateTransformation):

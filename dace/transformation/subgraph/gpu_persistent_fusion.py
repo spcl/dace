@@ -1,12 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+
 import dace
-from dace import nodes, Memlet
-from dace.sdfg import dealias, SDFG, SDFGState, InterstateEdge
-from dace.dtypes import StorageType, ScheduleType
+from dace import Memlet, nodes
+from dace.dtypes import ScheduleType, StorageType
 from dace.properties import Property, make_properties
-from dace.sdfg.state import AbstractControlFlowRegion
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, dealias
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import AbstractControlFlowRegion
 from dace.transformation.transformation import SubgraphTransformation
 
 

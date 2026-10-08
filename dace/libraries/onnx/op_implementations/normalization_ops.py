@@ -10,10 +10,10 @@ This module contains implementations of normalization operations including:
 
 import copy
 
-import dace
 import numpy as np
-from dace import SDFG, SDFGState, nodes
 
+import dace
+from dace import SDFG, SDFGState, nodes
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.op_implementations.utils import (
     in_desc_with_name,

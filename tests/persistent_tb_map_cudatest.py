@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+
 import dace
 from dace import nodes
 from dace.dtypes import ScheduleType

@@ -4,16 +4,18 @@
 import ast
 import re
 from functools import lru_cache
-from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock
-import dace
 from typing import Any
-from dace import SDFG, ControlFlowRegion
-from dace import symbolic
+
+import sympy
+
+import dace
+from dace import SDFG, ControlFlowRegion, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import ConditionalBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
-from dace.transformation import pass_pipeline as ppl, transformation
-import sympy
 
 
 @lru_cache(maxsize=16384, typed=True)

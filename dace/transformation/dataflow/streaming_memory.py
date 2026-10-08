@@ -1,15 +1,19 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from collections import defaultdict
 import copy
-import networkx as nx
 import warnings
+from collections import defaultdict
+
+import networkx as nx
 import sympy
 
-from dace.transformation import transformation as xf
-from dace import data, dtypes, nodes, properties, memlet as mm, subsets, symbolic, symbol, Memlet
-from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
+from dace import Memlet, data, dtypes, nodes, properties, subsets, symbol, symbolic
+from dace import memlet as mm
 from dace.libraries.standard import Gearbox
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import graph as gr
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation as xf
 
 
 def get_post_state(sdfg: SDFG, state: SDFGState):

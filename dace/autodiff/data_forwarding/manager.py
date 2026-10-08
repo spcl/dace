@@ -1,15 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 
-# DaCe imports
-from dace.sdfg import nodes
-from dace import config, data as dt
-from dace.sdfg import SDFGState, graph as dgraph
+import dace.autodiff.utils as ad_utils
+from dace import config
+from dace import data as dt
+from dace.autodiff import data_forwarding
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
-from dace.autodiff import data_forwarding
+
+# DaCe imports
+from dace.sdfg import SDFGState, nodes
+from dace.sdfg import graph as dgraph
 
 
 class DataForwardingManager:

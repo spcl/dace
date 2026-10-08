@@ -3,30 +3,29 @@
 or from the VS Code extension."""
 
 import argparse
-from dace.sdfg import nodes as nd
-from dace import dtypes, SDFG
-from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock
 import os
-import sympy as sp
-from copy import deepcopy
-from dace.symbolic import pystr_to_symbolic, SymExpr, symbol, simplify
 import re
 import warnings
+from copy import deepcopy
 
-from dace.sdfg.performance_evaluation.helpers import (
-    get_uuid,
-    get_static_symbols,
-    subs_till_fixed_point,
-    has_unstructured_control_flow,
-)
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
-from dace.transformation.pass_pipeline import FixedPointPipeline
+import sympy as sp
 
+from dace import SDFG, dtypes
 from dace.data import Array
-from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, AccessStack, fit_curve, plot, compute_mape
+from dace.sdfg import nodes as nd
+from dace.sdfg.performance_evaluation.helpers import (
+    get_static_symbols,
+    get_uuid,
+    has_unstructured_control_flow,
+    subs_till_fixed_point,
+)
+from dace.sdfg.performance_evaluation.op_in_helpers import AccessStack, CacheLineTracker, compute_mape, fit_curve, plot
 from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
-
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion, SDFGState
+from dace.symbolic import SymExpr, pystr_to_symbolic, simplify, symbol
+from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 
 
 class SymbolRange:

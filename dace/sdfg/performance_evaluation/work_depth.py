@@ -3,28 +3,29 @@
 from command line as a Python script."""
 
 import argparse
-from collections import deque
-from dace.sdfg import nodes as nd, propagation, InterstateEdge
-from dace import SDFG, SDFGState, dtypes
-from collections.abc import Callable, Sequence
-import os
-import sympy as sp
-from copy import deepcopy
-from dace.libraries.blas import MatMul, Dot, Gemm, Gemv
-from dace.libraries.standard import Reduce
-from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
-from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions, symbol, int_floor, simplify
 import ast
-import astunparse
+import os
 import warnings
+from collections import deque
+from collections.abc import Callable, Sequence
+from copy import deepcopy
 
-from dace.sdfg.performance_evaluation.helpers import get_uuid, get_static_symbols, has_unstructured_control_flow
+import astunparse
+import sympy as sp
+
+from dace import SDFG, SDFGState, dtypes
+from dace.libraries.blas import Dot, Gemm, Gemv, MatMul
+from dace.libraries.linalg import Cholesky, Inv, Solve, Transpose
+from dace.libraries.standard import Reduce
+from dace.sdfg import InterstateEdge, propagation
+from dace.sdfg import nodes as nd
 from dace.sdfg.performance_evaluation.assumptions import parse_assumptions
-from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
+from dace.sdfg.performance_evaluation.helpers import get_static_symbols, get_uuid, has_unstructured_control_flow
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.symbolic import free_symbols_and_functions, int_floor, pystr_to_symbolic, simplify, symbol
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import loop_analysis
-
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, ConditionalBlock
+from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 
 math_funcs = set()
 

@@ -5,16 +5,16 @@ Python scripts, modules, or existing instrumentation report files.
 """
 
 import argparse
-from contextlib import contextmanager
-import runpy
-import sys
 import os
+import runpy
 import shutil
+import sys
 import warnings
+from contextlib import contextmanager
 
 import dace
-from dace.codegen.instrumentation.report import InstrumentationReport
 from dace import dtypes
+from dace.codegen.instrumentation.report import InstrumentationReport
 
 ExitCode = int | str
 DEFAULT_REPETITIONS = 100

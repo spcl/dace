@@ -1,10 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.sdfg.graph import SubgraphView
 import numpy as np
 
+import dace
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
-
 
 N = dace.symbol("N")
 

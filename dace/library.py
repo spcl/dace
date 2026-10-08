@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import contextlib
 import inspect
 import sys
 import types
-import contextlib
+
 import networkx as nx
 
 import dace.properties
 from dace.sdfg.nodes import LibraryNode, full_class_path
-from dace.transformation.transformation import PatternTransformation, ExpandTransformation
+from dace.transformation.transformation import ExpandTransformation, PatternTransformation
 
 
 def register_implementation(implementation_name, expansion_cls, node_cls):

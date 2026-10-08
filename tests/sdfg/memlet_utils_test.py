@@ -1,11 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-import dace
+import re
+
 import numpy as np
 import pytest
-from dace.sdfg import graph, memlet_utils as mu
-import re
+
+import dace
+from dace.sdfg import graph
+from dace.sdfg import memlet_utils as mu
 
 
 def _replace_zero_with_one(memlet: dace.Memlet) -> dace.Memlet:

@@ -1,14 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import shutil  # which
-from typing import Optional, TYPE_CHECKING
 import warnings
+from typing import TYPE_CHECKING, Optional
 
-from dace import memlet as mm, data as dt, dtypes
-from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from dace.registry import make_registry
-from dace.codegen.prettycode import CodeIOStream
+from dace import data as dt
+from dace import dtypes
+from dace import memlet as mm
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.prettycode import CodeIOStream
+from dace.registry import make_registry
+from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
+from dace.sdfg import graph as gr
 from dace.sdfg.state import ControlFlowRegion
 
 if TYPE_CHECKING:

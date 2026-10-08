@@ -1,11 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace import nodes
-from dace.properties import CodeBlock
 import numpy as np
 import pytest
 
+import dace
+from dace import nodes
 from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+from dace.properties import CodeBlock
 
 
 def _instrument(sdfg: dace.SDFG, instr: dace.DataInstrumentationType, ignore: str | None = None):

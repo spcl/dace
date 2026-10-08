@@ -1,11 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import defaultdict
 import copy
+from collections import defaultdict
 from typing import Any
 
-from dace import SDFG, SDFGState, data, properties, Memlet
+from dace import SDFG, Memlet, SDFGState, data, properties
 from dace.sdfg import nodes
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.helpers import modified_symbols_between
 from dace.transformation.passes import analysis as ap
 

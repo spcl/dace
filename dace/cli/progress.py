@@ -7,8 +7,8 @@ except ImportError:
     tqdm = None
 
 import time
-from typing import TypeVar
 from collections.abc import Generator
+from typing import TypeVar
 
 from dace import config
 

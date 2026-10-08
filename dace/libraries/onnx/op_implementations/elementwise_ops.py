@@ -11,11 +11,10 @@ This module contains pure implementations of elementwise mathematical operations
 All operations support broadcasting where applicable.
 """
 
-import dace
 import numpy as np
-from dace import SDFG, SDFGState
-from dace.sdfg.nodes import Node
 
+import dace
+from dace import SDFG, SDFGState
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.op_implementations.utils import (
@@ -23,6 +22,7 @@ from dace.libraries.onnx.op_implementations.utils import (
     program_for_node,
     python_pure_op_implementation,
 )
+from dace.sdfg.nodes import Node
 from dace.sdfg.utils import in_desc_with_name, in_edge_with_name
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 

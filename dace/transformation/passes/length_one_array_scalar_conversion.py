@@ -42,9 +42,11 @@ from collections.abc import Callable
 import dace
 from dace import Memlet, dtypes, properties, subsets
 from dace.properties import CodeBlock
-from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 #: Rewrites one source-text slot; see :func:`rewrite_code_slots`.
 CodeSlotRewriter = Callable[[str], str]

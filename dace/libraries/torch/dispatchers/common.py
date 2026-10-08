@@ -13,11 +13,12 @@ including:
 import dataclasses
 from collections.abc import Callable
 
-import dace
 import torch
+
+import dace
 from dace.codegen.compiled_sdfg import CompiledSDFG
-from dace.libraries.onnx.converters import clean_onnx_name
 from dace.frontend.ml.onnx.importer import create_output_array
+from dace.libraries.onnx.converters import clean_onnx_name
 
 
 @dataclasses.dataclass

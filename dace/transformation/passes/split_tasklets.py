@@ -1,12 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
-import dace
-
-from dace import SDFG
-from dace.transformation import pass_pipeline as ppl, transformation
-
 import ast
+import copy
+
+import dace
+from dace import SDFG
 from dace.sdfg.nodes import CodeBlock
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class ASTSplitter:

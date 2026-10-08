@@ -1,27 +1,25 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 
-import dace.frontend.common.op_repository as dace_op_repo
-from dace.frontend.python.newast import ProgramVisitor
-from dace import config, SDFG, SDFGState
-from dace.properties import Property, ListProperty
-from dace.transformation.transformation import ExpandTransformation
+import onnx
 
+import dace.frontend.common.op_repository as dace_op_repo
+from dace import SDFG, SDFGState, config
+from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.newast import ProgramVisitor
+from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
 from dace.libraries.onnx.schema import (
-    ONNXSchema,
-    ONNXAttributeType,
     _ATTR_TYPE_TO_PYTHON_TYPE,
-    ONNXParameterType,
     ONNXAttribute,
+    ONNXAttributeType,
     ONNXParameter,
+    ONNXParameterType,
+    ONNXSchema,
     ONNXTypeConstraint,
 )
-
-from dace.libraries.onnx.nodes import onnx_op
-from dace.frontend.python.common import StringLiteral
-
-import onnx
+from dace.properties import ListProperty, Property
+from dace.transformation.transformation import ExpandTransformation
 
 
 def _get_typecons_docstring(cons: ONNXTypeConstraint) -> str:
@@ -158,8 +156,8 @@ def _initialize_onnx_registry():
     _REGISTRY_INITIALIZED = True
 
     # Import these here to avoid circular imports at module load time
-    from dace.libraries.onnx.forward_implementation_abc import ONNXForward
     import dace.libraries.onnx.op_implementations  # Registers implementations
+    from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 
     # Generate all of the Op Nodes
     for schema in _get_all_schemas():

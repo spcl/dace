@@ -3,8 +3,8 @@ import os
 
 from dace import dtypes, registry
 from dace.codegen import common
-from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.codegen.prettycode import CodeIOStream
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge

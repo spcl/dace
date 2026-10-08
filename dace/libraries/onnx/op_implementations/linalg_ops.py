@@ -13,14 +13,12 @@ import copy
 import itertools
 
 import dace
-from dace import SDFG, SDFGState, nodes
-from dace.sdfg.nodes import Node
-
-from dace import config
+from dace import SDFG, SDFGState, config, nodes
+from dace.frontend.common import create_einsum_sdfg
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes import onnx_op
 from dace.libraries.onnx.op_implementations.utils import in_desc_with_name, op_implementation, out_desc_with_name
-from dace.frontend.common import create_einsum_sdfg
+from dace.sdfg.nodes import Node
 
 # ============================================================================
 # Matrix Multiplication

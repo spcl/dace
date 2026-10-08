@@ -3,13 +3,12 @@
 Used for collecting CPU performance counters.
 """
 
-import dace
-import os
 import ctypes.util
-
+import os
 from pathlib import Path
 
-from dace import dtypes, registry, library
+import dace
+from dace import dtypes, library, registry
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config

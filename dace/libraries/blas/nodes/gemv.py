@@ -1,17 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace import properties, symbolic
+import warnings
+
+import numpy as np
+
 import dace.library
 import dace.sdfg.nodes
-from dace.sdfg import SDFG, SDFGState
 from dace import memlet as mm
-from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands
-from dace.libraries.blas import blas_helpers
+from dace import properties, symbolic
 from dace.frontend.common import op_repository as oprepo
-from dace.libraries.blas import environments
-import numpy as np
-import warnings
+from dace.libraries.blas import blas_helpers, environments
+from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.sdfg import SDFG, SDFGState
+from dace.transformation.transformation import ExpandTransformation
 
 
 @dace.library.expansion

@@ -2,15 +2,17 @@
 """Contains classes that distribute Map computations"""
 
 from copy import deepcopy
+from functools import reduce
 from numbers import Number
-import dace
+
 import sympy
+
+import dace
 from dace import data, subsets, symbolic
 from dace.sdfg import dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
 from dace.transformation.subgraph.helpers import subgraph_from_maps
-from functools import reduce
 
 
 class ElementWiseArrayOperation(pm.SingleStateTransformation):
@@ -125,7 +127,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
         root_tasklet = graph.add_tasklet("_set_root_", {}, {"__out"}, "__out = 0")
         graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
-        from dace.libraries.mpi import Bcast, Scatter, Gather
+        from dace.libraries.mpi import Bcast, Gather, Scatter
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):
@@ -343,7 +345,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
         graph.add_edge(root_tasklet, "__out", root_node, None, dace.Memlet.simple(root_name, "0"))
 
         from dace.libraries.mpi import Bcast
-        from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
+        from dace.libraries.pblas import BlockCyclicGather, BlockCyclicScatter
 
         inputs = set()
         for src, _, _, _, m in graph.in_edges(map_entry):

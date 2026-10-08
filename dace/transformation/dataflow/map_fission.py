@@ -1,17 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Map Fission transformation."""
 
-from copy import deepcopy as dcpy
 from collections import defaultdict
+from copy import deepcopy as dcpy
 from functools import reduce
-from dace import sdfg as sd, memlet as mm, subsets, data as dt
+
+from dace import data as dt
+from dace import memlet as mm
+from dace import sdfg as sd
+from dace import subsets
 from dace.properties import CodeBlock
-from dace.sdfg import nodes, graph as gr
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation import transformation, helpers
+from dace.transformation import helpers, transformation
 
 
 @transformation.explicit_cf_compatible

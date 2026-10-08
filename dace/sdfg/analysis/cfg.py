@@ -2,11 +2,14 @@
 """Various analyses related to control flow in SDFGs."""
 
 from collections import defaultdict
-from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
-import networkx as nx
-import sympy as sp
 from collections.abc import Iterator
 
+import networkx as nx
+import sympy as sp
+
+from dace.sdfg import InterstateEdge, SDFGState
+from dace.sdfg import graph as gr
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import (
     BreakBlock,
     ConditionalBlock,

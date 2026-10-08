@@ -1,11 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """Subgraph Transformation Helper API"""
 
+import copy
+
 from dace import subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
-
-import copy
 
 # ****************
 # Helper functions

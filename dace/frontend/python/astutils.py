@@ -2,14 +2,15 @@
 """Various AST parsing utilities for DaCe."""
 
 import ast
-import astunparse
 import copy
-from io import StringIO
 import inspect
 import numbers
+from io import StringIO
+from typing import Any
+
+import astunparse
 import numpy
 import sympy
-from typing import Any
 
 from dace import symbolic
 

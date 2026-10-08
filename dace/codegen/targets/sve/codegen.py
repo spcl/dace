@@ -3,26 +3,27 @@
 Code generation: This module is responsible for converting an SDFG into SVE code.
 """
 
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.target import TargetCodeGenerator
-from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from dace.codegen.targets.cpp import sym2cpp
-from dace import dtypes, memlet as mm
-from dace.sdfg import graph, state
-from dace.sdfg.scope import is_in_scope
-from dace.codegen.targets.sve import util as util
 import copy
 from io import StringIO
-import dace.codegen.targets.sve.unparse
-from dace.codegen.targets import cpp as cpp
-from dace.frontend.operations import detect_reduction_type
-import dace.symbolic
-from dace.codegen.dispatcher import DefinedType
+
 import numpy as np
-from dace.codegen.targets.cpp import is_write_conflicted
-from dace import data, subsets
+
 import dace.codegen.targets
+import dace.codegen.targets.sve.unparse
+import dace.symbolic
+from dace import data, dtypes, subsets
+from dace import memlet as mm
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.target import TargetCodeGenerator
+from dace.codegen.targets import cpp as cpp
+from dace.codegen.targets.cpp import is_write_conflicted, sym2cpp
+from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.codegen.targets.sve import util as util
+from dace.frontend.operations import detect_reduction_type
+from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, graph, nodes, state
+from dace.sdfg import graph as gr
+from dace.sdfg.scope import is_in_scope
 
 
 @dace.registry.autoregister_params(name="sve")

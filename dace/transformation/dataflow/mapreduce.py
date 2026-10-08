@@ -2,13 +2,11 @@
 """Contains classes and functions that implement the map-reduce-fusion
 transformation."""
 
-from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
-from dace.sdfg import nodes
 from dace.properties import Property, make_properties
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
-
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 

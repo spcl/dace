@@ -1,15 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Any
-from collections.abc import Iterable
-
 import itertools
+from collections.abc import Iterable
+from typing import Any
+
+from ordered_set import OrderedSet
+
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, dealias, graph, nodes, propagation
-from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.sdfg.type_inference import infer_expr_type
-from ordered_set import OrderedSet
+from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
 
 @properties.make_properties

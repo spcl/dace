@@ -2,30 +2,23 @@
 """This module contains classes and functions that implement the orthogonal
 stencil tiling transformation."""
 
-import dace
-from dace import dtypes, symbolic
-from dace.properties import make_properties, Property, ShapeProperty
-from dace.sdfg import nodes
-from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
-from dace.sdfg.propagation import _propagate_node
-
-from dace.transformation.dataflow.map_for_loop import MapToForLoop
-from dace.transformation.dataflow.map_expansion import MapExpansion
-from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.dataflow.strip_mining import StripMining
-from dace.transformation.subgraph import SubgraphFusion
-
-from copy import deepcopy as dcpy
-
-from dace import subsets
-
 import itertools
 import warnings
-
 from collections import defaultdict
+from copy import deepcopy as dcpy
 
-from dace.transformation.subgraph import helpers
+import dace
+from dace import dtypes, subsets, symbolic
+from dace.properties import Property, ShapeProperty, make_properties
+from dace.sdfg import nodes
+from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.state import SDFGState
+from dace.transformation import transformation
+from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.dataflow.map_expansion import MapExpansion
+from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.strip_mining import StripMining
+from dace.transformation.subgraph import SubgraphFusion, helpers
 
 
 @make_properties

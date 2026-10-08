@@ -1,9 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests used-symbols in code generation."""
 
-import dace
 import numpy
 import pytest
+
+import dace
 
 n0i, n0j, n0k = (dace.symbol(s, dtype=dace.int32) for s in ("n0i", "n0j", "n0k"))
 n1i, n1j, n1k = (dace.symbol(s, dtype=dace.int64) for s in ("n1i", "n1j", "n1k"))

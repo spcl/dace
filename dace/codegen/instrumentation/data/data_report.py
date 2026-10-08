@@ -1,13 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dataclasses import dataclass
-import struct
-from numbers import Number
 import os
-
-from dace import dtypes, SDFG
+import struct
+from dataclasses import dataclass
+from numbers import Number
 
 import numpy as np
 from numpy.typing import ArrayLike
+
+from dace import SDFG, dtypes
 
 
 @dataclass

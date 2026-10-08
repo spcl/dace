@@ -10,11 +10,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import dace
-from dace import data, nodes, dtypes, subsets, symbolic
-from dace.codegen.common import sym2cpp, get_gpu_backend
+from dace import data, dtypes, nodes, subsets, symbolic
+from dace.codegen.common import get_gpu_backend, sym2cpp
 from dace.libraries.standard.helper import (
-    CURRENT_STREAM_NAME,
     CPU_RESIDENT_STORAGES,
+    CURRENT_STREAM_NAME,
     GPU_RESIDENT_STORAGES,
     collapse_shape_and_strides,
 )

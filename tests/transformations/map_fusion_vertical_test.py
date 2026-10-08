@@ -1,16 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+import os
+import uuid
 from typing import Any
 
 import numpy as np
-import os
-import dace
-import copy
-import uuid
 import pytest
 
-from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
+import dace
+from dace import SDFG, SDFGState
+from dace import data as dace_data
+from dace import symbolic as dace_symbolic
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusion, MapFusionVertical, MapExpansion
+from dace.transformation.dataflow import MapExpansion, MapFusion, MapFusionVertical
 
 
 def count_nodes(

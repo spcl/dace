@@ -8,9 +8,10 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 import dace.registry
-from dace import config
-from dace.sdfg import SDFG, SDFGState, nodes as nd
 import dace.transformation.transformation as xf
+from dace import config
+from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import nodes as nd
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator

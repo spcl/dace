@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import TYPE_CHECKING
+
 import dace
 from dace.sdfg import SDFG, SDFGState
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor

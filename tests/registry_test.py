@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
 from enum import auto
-from dace import registry, attr_enum
+
+from dace import attr_enum, registry
 
 
 @registry.make_registry

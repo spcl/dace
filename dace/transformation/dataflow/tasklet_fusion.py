@@ -6,9 +6,10 @@ import re
 from typing import Any
 
 import astunparse
+
 import dace
 from dace.dtypes import Language
-from dace.properties import make_properties, Property
+from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm

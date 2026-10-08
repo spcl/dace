@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests automatic detection and baking of callbacks in the Python frontend."""
 
-import dace
+import time
+
 import numpy as np
 import pytest
-import time
+
+import dace
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
 

@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests loop unrolling functionality."""
 
+import numpy as np
+import pytest
+
 import dace
 from dace.frontend.python import astutils
 from dace.frontend.python.common import SDFGConvertible
-from dace.frontend.python.preprocessing import LoopUnroller, DaceSyntaxError
-import numpy as np
-import pytest
+from dace.frontend.python.preprocessing import DaceSyntaxError, LoopUnroller
 
 
 def test_native_unroll():

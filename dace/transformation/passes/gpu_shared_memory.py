@@ -16,11 +16,14 @@ import copy
 import warnings
 from dataclasses import dataclass, field
 
-from dace import config, data as dt, dtypes, properties, subsets, symbolic
+from dace import config, dtypes, properties, subsets, symbolic
+from dace import data as dt
 from dace.codegen import common
 from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState, nodes, utils as sdutil
-from dace.transformation import gpu_helpers, pass_pipeline as ppl
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import gpu_helpers
+from dace.transformation import pass_pipeline as ppl
 
 #: Alignment of every container in dynamic shared memory, which suffices for all types up to 16-byte vectors
 DYNAMIC_SHARED_MEMORY_ALIGNMENT = 16

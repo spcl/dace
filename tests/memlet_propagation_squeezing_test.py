@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.sdfg import propagation, dealias
 import numpy as np
+
+import dace
+from dace.sdfg import dealias, propagation
 
 
 def make_sdfg(squeeze, name):

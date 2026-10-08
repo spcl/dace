@@ -2,13 +2,13 @@
 """TensorDot library node and its pure / TTGT / cuTENSOR expansions."""
 
 import collections
-import dace
 
-from dace.libraries.linalg import environments
+import dace
 from dace import library, nodes, properties
-from dace.utils import prod as _prod
+from dace.libraries.linalg import environments
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod as _prod
 
 
 @library.expansion

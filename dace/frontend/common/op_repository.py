@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
-from typing import Any
 from collections.abc import Callable
+from typing import Any
+
 from dace.dtypes import paramdec
 
 MethodType = Callable[..., tuple[str]]

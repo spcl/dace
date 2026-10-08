@@ -8,10 +8,10 @@ import numpy as np
 
 import dace
 from dace import dtypes, subsets, symbolic
-from dace.utils import prod
-from dace.sdfg.nodes import AccessNode
-from dace.sdfg import SDFG, SDFGState, dealias
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState, dealias
+from dace.sdfg.nodes import AccessNode
+from dace.utils import prod
 
 
 def _is_sequential(index_list):

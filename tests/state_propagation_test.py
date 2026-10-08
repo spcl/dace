@@ -1,11 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
-from dace.dtypes import Language
-from dace.properties import CodeProperty, CodeBlock
-from dace.sdfg.sdfg import InterstateEdge
+
 import dace
+from dace.dtypes import Language
+from dace.properties import CodeBlock, CodeProperty
 from dace.sdfg.propagation import propagate_states
+from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 

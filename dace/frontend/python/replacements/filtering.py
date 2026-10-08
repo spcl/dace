@@ -4,9 +4,9 @@ Contains replacements for filtering functions. This module includes functions fr
 NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 
+from dace import SDFG, Memlet, SDFGState, data, dtypes, nodes, subsets
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
-from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
 
 
 def merge_node_expresses_where(arrays: dict, cond: str, left: str, right: str, out: str) -> bool:

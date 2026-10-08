@@ -3,7 +3,8 @@
 
 from dace import SDFG, InterstateEdge, properties
 from dace.sdfg.state import ControlFlowRegion, LoopRegion, ReturnBlock
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 @properties.make_properties

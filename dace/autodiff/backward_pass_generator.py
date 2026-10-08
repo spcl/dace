@@ -1,17 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections.abc import Sequence
+
 import sympy as sp
 
 # DaCe imports
 import dace
-from dace.properties import CodeBlock
-from dace.sdfg import nodes
 import dace.transformation.transformation as xf
-from dace import dtypes, data as dt
-from dace.sdfg import dealias, SDFG, SDFGState, state as dstate, utils as dace_utils
-from dace.sdfg.state import LoopRegion
+from dace import data as dt
+from dace import dtypes
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg import SDFG, SDFGState, dealias, nodes
+from dace.sdfg import state as dstate
+from dace.sdfg import utils as dace_utils
+from dace.sdfg.state import LoopRegion
 
 try:
     from dace.libraries.onnx.forward_implementation_abc import ONNXForward
@@ -24,16 +27,16 @@ except ImportError:
     ONNX_AVAILABLE = False
 
 # Autodiff imports
+import dace.autodiff.utils as ad_utils
 from dace.autodiff.base_abc import (
+    AutoDiffException,
     BackwardContext,
     BackwardResult,
-    AutoDiffException,
-    find_backward_implementation,
     ExpansionTemplate,
+    find_backward_implementation,
 )
-import dace.autodiff.utils as ad_utils
-from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 from dace.autodiff.data_forwarding.manager import DataForwardingManager
+from dace.autodiff.implementations.dace_nodes import DaceNodeBackwardImplementations
 
 
 class BackwardPassGenerator:

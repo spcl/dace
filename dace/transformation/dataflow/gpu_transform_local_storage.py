@@ -2,15 +2,17 @@
 """Contains classes and functions that implement the GPU transformation
 (with local storage)."""
 
-import copy
 import collections
+import copy
 import dataclasses
 
-from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
-from dace.sdfg import dealias, nodes, SDFGState
+from dace import data, dtypes, symbolic
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.properties import Property, make_properties
+from dace.sdfg import SDFGState, dealias, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import Property, make_properties
 
 
 @dataclasses.dataclass

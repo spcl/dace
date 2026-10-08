@@ -7,15 +7,16 @@ infer() has a lenient implementation: if something it not inferred (for example 
 This module is inspired by astunparse: https://github.com/simonpercivall/astunparse
 """
 
-import numpy as np
 import ast
-from dace import data, dtypes
-from dace import symbolic
-from dace.symbolic import symbol, SymExpr, symstr
-import sympy
 import sys
-import dace.frontend.python.astutils
 from collections.abc import Callable
+
+import numpy as np
+import sympy
+
+import dace.frontend.python.astutils
+from dace import data, dtypes, symbolic
+from dace.symbolic import SymExpr, symbol, symstr
 
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {

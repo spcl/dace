@@ -3,15 +3,15 @@
 SVE Infer Types: This module is responsible for inferring connector types in the SDFG.
 """
 
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import SDFGState
-from dace.sdfg import nodes, SDFG
-from dace.sdfg.nodes import Tasklet
-from dace import data
-from dace import dtypes
-from dace.sdfg.utils import dfs_topological_sort
-from dace.sdfg.type_inference import infer_types
 from collections import defaultdict
+
+from dace import data, dtypes
+from dace.sdfg import SDFG, nodes
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import Tasklet
+from dace.sdfg.state import SDFGState
+from dace.sdfg.type_inference import infer_types
+from dace.sdfg.utils import dfs_topological_sort
 
 
 class TypeInferenceDict(defaultdict[tuple[Tasklet, str, bool], dtypes.typeclass]):

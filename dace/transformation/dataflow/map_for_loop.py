@@ -3,8 +3,7 @@
 
 import dace
 from dace import symbolic
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation

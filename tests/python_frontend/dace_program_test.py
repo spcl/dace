@@ -1,11 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
-import numpy as np
-import re
 import os
+import re
 import shutil
 import time
+
+import numpy as np
+
+import dace
 
 
 def _program_name(function) -> str:

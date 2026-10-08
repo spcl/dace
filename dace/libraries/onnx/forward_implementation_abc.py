@@ -34,10 +34,9 @@ Example:
 import abc
 
 from dace import SDFG, SDFGState
+from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 from dace.registry import make_registry
 from dace.sdfg.nodes import Node
-
-from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 
 
 @make_registry

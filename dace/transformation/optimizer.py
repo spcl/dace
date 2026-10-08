@@ -5,8 +5,8 @@ dataflow graph representation."""
 import copy
 import os
 import re
-from typing import Any
 from collections.abc import Iterator
+from typing import Any
 
 import dace
 from dace.config import Config

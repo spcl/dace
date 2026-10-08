@@ -7,7 +7,6 @@ based on the abstraction described in [https://doi.org/10.1145/3276493].
 """
 
 import enum
-
 from abc import ABC, abstractmethod
 
 from dace import dtypes, serialize, symbolic

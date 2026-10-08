@@ -5,16 +5,18 @@ flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
 """
 
-from dace.codegen.prettycode import CodeIOStream
-from dace import attr_enum, config, data as dt, dtypes, nodes
-from dace.memlet import Memlet
-from dace.codegen import exceptions as cgx, prettycode
-from dace.codegen import target
-from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
-from dace.sdfg.graph import MultiConnectorEdge
-from enum import auto
 from collections.abc import Callable
+from enum import auto
 
+from dace import attr_enum, config, dtypes, nodes
+from dace import data as dt
+from dace.codegen import exceptions as cgx
+from dace.codegen import prettycode, target
+from dace.codegen.prettycode import CodeIOStream
+from dace.memlet import Memlet
+from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 
@@ -166,8 +168,8 @@ class TargetDispatcher:
 
     def __init__(self, framecode):
         # Avoid import loop
-        from dace.codegen.targets import framecode as fc
         from dace.codegen import instrumentation
+        from dace.codegen.targets import framecode as fc
 
         self.frame: fc.DaCeCodeGenerator = framecode
         self._used_targets: set[target.TargetCodeGenerator] = set()

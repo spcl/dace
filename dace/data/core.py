@@ -10,7 +10,6 @@ This module contains the base ``Data`` class and all core descriptor classes:
 import copy as cp
 import ctypes
 import dataclasses
-
 from collections import OrderedDict
 from numbers import Integral
 from typing import Any, Union

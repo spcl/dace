@@ -1,8 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
+from typing import TypeAlias
+
 import numpy as np
 from common import compare_numpy_output
-from typing import TypeAlias
+
+import dace
 
 
 def test_multiassign():

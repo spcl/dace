@@ -5,13 +5,13 @@ import functools
 import numpy as np
 
 import dace
-from dace import SDFGState, SDFG, dtypes
-from dace.sdfg import nodes
-from dace.sdfg.nodes import Node
+from dace import SDFG, SDFGState, dtypes
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 from dace.libraries.onnx.op_implementations.utils import op_implementation, program_for_node
-from dace.sdfg.utils import in_desc_with_name, out_desc_with_name, in_edge_with_name, out_edge_with_name
+from dace.sdfg import nodes
+from dace.sdfg.nodes import Node
+from dace.sdfg.utils import in_desc_with_name, in_edge_with_name, out_desc_with_name, out_edge_with_name
 
 
 def _prod(sequence):

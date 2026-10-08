@@ -1,11 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
+
 import dace
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
 from dace.sdfg.utils import consolidate_edges
-
-import pytest
 
 from .transformations import utility
 

@@ -1,23 +1,23 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from itertools import chain, repeat
-
-from contextlib import contextmanager
-from timeit import default_timer as timer
-import time
 import ast
-import numpy as np
-import sympy
 import os
 import sys
+import time
 import warnings
+from contextlib import contextmanager
+from itertools import chain, repeat
+from timeit import default_timer as timer
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import sympy
 
 from dace import dtypes
 from dace.config import Config
-from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dace.sdfg import SDFG
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.sdfg import SDFG
 
 
 class CompiledSDFGProfiler:

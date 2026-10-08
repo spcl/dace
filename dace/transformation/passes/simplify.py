@@ -1,26 +1,27 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
 from dataclasses import dataclass
 from typing import Any
-import warnings
 
 from dace import SDFG, config, properties
-from dace.transformation import helpers as xfh, transformation
+from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
-from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.reference_reduction import ReferenceToView
+from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
+from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
-from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
-from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
 SIMPLIFY_PASSES = [

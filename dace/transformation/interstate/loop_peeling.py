@@ -5,8 +5,8 @@ import sympy as sp
 
 from dace import sdfg as sd
 from dace import symbolic
+from dace.properties import CodeBlock, Property, make_properties
 from dace.sdfg.state import ControlFlowRegion
-from dace.properties import Property, make_properties, CodeBlock
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis

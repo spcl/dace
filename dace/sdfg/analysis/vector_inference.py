@@ -1,17 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from enum import Flag
-from networkx import DiGraph
-from dace.memlet import Memlet
-from dace.sdfg.utils import dfs_topological_sort
-from dace.sdfg.graph import MultiConnectorEdge
-import dace
-from dace import SDFG, SDFGState, subsets
-from dace.sdfg import nodes
-from dace.transformation.dataflow.sve import infer_types
-from dace import dtypes
-from dace import data
-from dace import symbolic
 from collections import defaultdict
+from enum import Flag
+
+from networkx import DiGraph
+
+import dace
+from dace import SDFG, SDFGState, data, dtypes, subsets, symbolic
+from dace.memlet import Memlet
+from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.utils import dfs_topological_sort
+from dace.transformation.dataflow.sve import infer_types
 
 
 class VectorInferenceFlags(Flag):

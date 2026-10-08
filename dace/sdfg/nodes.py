@@ -5,39 +5,42 @@ dataflow multigraph representation."""
 import ast
 import contextlib
 import contextvars
-from copy import deepcopy as dcpy
-from collections.abc import KeysView
-import dace
 import itertools
-import dace.serialize
-import sympy as sp
-from typing import Any, Optional, Union
-from dace.config import Config
-from dace.sdfg import graph
-from dace.frontend.python.astutils import rname
-from dace.properties import (
-    EnumProperty,
-    Property,
-    CodeProperty,
-    RangeProperty,
-    DebugInfoProperty,
-    SetProperty,
-    make_properties,
-    indirect_properties,
-    DataProperty,
-    SymbolicProperty,
-    ListProperty,
-    SDFGReferenceProperty,
-    DictProperty,
-    LibraryImplementationProperty,
-    CodeBlock,
-)
-from dace.symbolic import issymbolic, pystr_to_symbolic
-from dace import subsets as sbs, dtypes
-from dace.sdfg import tasklet_validation as tval
-from dace.sdfg.type_inference import infer_types, infer_iteration_symbol_type
 import pydoc
 import warnings
+from collections.abc import KeysView
+from copy import deepcopy as dcpy
+from typing import Any, Optional, Union
+
+import sympy as sp
+
+import dace
+import dace.serialize
+from dace import dtypes
+from dace import subsets as sbs
+from dace.config import Config
+from dace.frontend.python.astutils import rname
+from dace.properties import (
+    CodeBlock,
+    CodeProperty,
+    DataProperty,
+    DebugInfoProperty,
+    DictProperty,
+    EnumProperty,
+    LibraryImplementationProperty,
+    ListProperty,
+    Property,
+    RangeProperty,
+    SDFGReferenceProperty,
+    SetProperty,
+    SymbolicProperty,
+    indirect_properties,
+    make_properties,
+)
+from dace.sdfg import graph
+from dace.sdfg import tasklet_validation as tval
+from dace.sdfg.type_inference import infer_iteration_symbol_type, infer_types
+from dace.symbolic import issymbolic, pystr_to_symbolic
 
 # -----------------------------------------------------------------------------
 
@@ -417,7 +420,7 @@ class AccessNode(Node):
         return sdfg.arrays[self.data]
 
     def root_desc(self, sdfg):
-        from dace.sdfg import SDFGState, ScopeSubgraphView
+        from dace.sdfg import ScopeSubgraphView, SDFGState
 
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
             sdfg = sdfg.parent
@@ -841,7 +844,7 @@ class NestedSDFG(CodeNode):
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
-        from dace.sdfg.infer_types import infer_connector_types, infer_aliasing
+        from dace.sdfg.infer_types import infer_aliasing, infer_connector_types
 
         # Propagate aliasing information into SDFG
         infer_aliasing(self, sdfg, state)
@@ -1689,11 +1692,11 @@ class LibraryNode(CodeNode):
             # Old interface (still supported):
             result = node.expand(sdfg, state)
         """
-        from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
         import warnings
 
         # Handle both old and new signatures for backward compatibility
         from dace.sdfg.state import SDFGState
+        from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
 
         if isinstance(state_or_sdfg, SDFGState):
             # New interface: expand(state, implementation=None, **kwargs)

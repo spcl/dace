@@ -2,15 +2,18 @@
 """Moves a loop around a map into the map"""
 
 import copy
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
-from dace.transformation import helpers
+
 import networkx as nx
-from dace.sdfg.scope import ScopeTree
-from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
-from dace.sdfg import propagation, utils as sdutil
-from dace.transformation import transformation
 from sympy import diff
 
+from dace import Memlet, nodes, symbol, symbolic
+from dace import sdfg as sd
+from dace import subsets as sbs
+from dace.sdfg import propagation
+from dace.sdfg import utils as sdutil
+from dace.sdfg.scope import ScopeTree
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 

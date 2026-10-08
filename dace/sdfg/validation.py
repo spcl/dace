@@ -43,8 +43,8 @@ def validate_control_flow_region(
     references: set[int] = None,
     **context: bool,
 ):
-    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock, LoopRegion
     from dace.sdfg.scope import is_in_scope
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 
     if len(region.source_nodes()) > 1:
         try:

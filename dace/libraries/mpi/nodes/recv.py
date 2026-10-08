@@ -2,9 +2,10 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 from dace.libraries.mpi.nodes.node import MPINode, validate_integer_descriptor
+from dace.transformation.transformation import ExpandTransformation
+
+from .. import environments
 
 
 @dace.library.expansion

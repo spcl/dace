@@ -4,27 +4,31 @@ Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.
 testing or optimization.
 """
 
-import networkx as nx
-from networkx.algorithms.flow import edmondskarp
-import sympy as sp
-from collections import deque
 import copy
-from typing import Any, Union
-from numpy.typing import ArrayLike
+from collections import deque
 from numbers import Number
-from dace import data, DataInstrumentationType
-from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
+from typing import Any, Union
+
+import networkx as nx
+import sympy as sp
+from networkx.algorithms.flow import edmondskarp
+from numpy.typing import ArrayLike
+
+from dace import DataInstrumentationType, data
 from dace.memlet import Memlet
+from dace.sdfg import SDFG, InterstateEdge, SDFGState
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.state import ControlFlowBlock, StateSubgraphView, SubgraphView
+from dace.transformation.interstate.loop_detection import DetectLoop
+from dace.transformation.passes.analysis import StateReachability
 from dace.transformation.transformation import (
     MultiStateTransformation,
     PatternTransformation,
-    SubgraphTransformation,
     SingleStateTransformation,
+    SubgraphTransformation,
 )
-from dace.transformation.interstate.loop_detection import DetectLoop
-from dace.transformation.passes.analysis import StateReachability
 
 
 class SDFGCutout(SDFG):

@@ -1,18 +1,22 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from typing import TYPE_CHECKING
+
 import sympy as sp
 
-# DaCe imports
-from dace.sdfg import nodes
-from dace import dtypes, data as dt, symbolic
-from dace.sdfg import SDFGState, graph as dgraph, state as dstate
-from dace.memlet import Memlet
-from dace.sdfg.state import LoopRegion
+import dace.autodiff.utils as ad_utils
+from dace import data as dt
+from dace import dtypes, symbolic
 
 # Autodiff imports
 from dace.autodiff.base_abc import AutoDiffException
-import dace.autodiff.utils as ad_utils
+from dace.memlet import Memlet
+
+# DaCe imports
+from dace.sdfg import SDFGState, nodes
+from dace.sdfg import graph as dgraph
+from dace.sdfg import state as dstate
+from dace.sdfg.state import LoopRegion
 
 if TYPE_CHECKING:
     from dace.autodiff.backward_pass_generator import BackwardPassGenerator

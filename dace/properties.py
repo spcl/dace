@@ -1,24 +1,26 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from collections import OrderedDict
 import copy
 import functools
-import warnings
-from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
 import pydoc
 import re
-import sympy as sp
+import warnings
+from collections import OrderedDict
+from numbers import Number
+from typing import TYPE_CHECKING, Generic, TypeVar, Union
+
 import numpy as np
-import dace.subsets as sbs
+import sympy as sp
+from packaging.version import parse as parse_version
+
 import dace
 import dace.serialize
-from packaging.version import parse as parse_version
+import dace.subsets as sbs
 from dace import symbolic
-from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
-from numbers import Number
-from typing import Union, TypeVar, Generic, TYPE_CHECKING
+from dace.frontend.python.astutils import TaskletFreeSymbolVisitor, unparse
+from dace.symbolic import pystr_to_symbolic
 
 if TYPE_CHECKING:
     from dace.data import Data as dData

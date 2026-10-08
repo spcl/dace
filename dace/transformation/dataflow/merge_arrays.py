@@ -1,9 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.transformation import transformation
+from dace.sdfg import SDFGState, nodes, utils
 from dace.sdfg.graph import OrderedDiGraph
-from dace.sdfg import nodes, utils
-from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
+from dace.transformation import transformation
 
 
 class InMergeArrays(transformation.SingleStateTransformation):

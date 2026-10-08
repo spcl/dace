@@ -4,12 +4,11 @@
 import numpy as np
 
 import dace
-from dace import SDFG, SDFGState, nodes as nd
-
-from dace.libraries.onnx.op_implementations.utils import op_implementation, program_for_node
-from dace.libraries.onnx.nodes import onnx_op
+from dace import SDFG, SDFGState
+from dace import nodes as nd
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
-
+from dace.libraries.onnx.nodes import onnx_op
+from dace.libraries.onnx.op_implementations.utils import op_implementation, program_for_node
 from dace.sdfg.utils import in_desc_with_name
 
 

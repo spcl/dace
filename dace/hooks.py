@@ -3,17 +3,18 @@
 Module that provides hooks that can be used to extend DaCe functionality.
 """
 
-from typing import Any, TYPE_CHECKING
-from collections.abc import Callable, Generator
 import contextlib
-from contextlib import contextmanager, ExitStack
 import pydoc
-from dace import config
 import warnings
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager
+from typing import TYPE_CHECKING, Any
+
+from dace import config
 
 if TYPE_CHECKING:
-    from dace.sdfg import SDFG
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.sdfg import SDFG
 
 CallHookType = Callable[["SDFG"], None]
 CompiledCallHookType = Callable[["CompiledSDFG", tuple[Any, ...]], None]

@@ -1,8 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any
+
+import numpy as np
+
 import dace
 from dace import dtypes, nodes
-from typing import Any
-import numpy as np
 
 N = dace.symbol("N")
 

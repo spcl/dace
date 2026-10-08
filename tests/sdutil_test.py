@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
+
 import networkx as nx
+
 from dace.sdfg.utils import depth_limited_dfs_iter, depth_limited_search
 
 

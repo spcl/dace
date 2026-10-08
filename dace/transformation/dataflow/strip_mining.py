@@ -2,16 +2,18 @@
 """This module contains classes and functions that implement the strip-mining
 transformation."""
 
-import dace
 from copy import deepcopy as dcpy
-from dace import dtypes, subsets, symbolic
-from dace.sdfg import SDFG, SDFGState
-from dace.properties import EnumProperty, make_properties, Property, SymbolicProperty
-from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
-from dace.symbolic import issymbolic, overapproximate, SymExpr
-from dace.transformation import transformation, helpers as xfh
+
 import sympy
+
+import dace
+from dace import dtypes, subsets, symbolic
+from dace.properties import EnumProperty, Property, SymbolicProperty, make_properties
+from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import utils as sdutil
+from dace.symbolic import SymExpr, issymbolic, overapproximate
+from dace.transformation import helpers as xfh
+from dace.transformation import transformation
 
 
 def calc_set_image_index(map_idx, map_set, array_idx):

@@ -1,13 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes that implement the map-collapse transformation."""
 
+from dace.properties import make_properties
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symlist
-from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.properties import make_properties
 
 
 @make_properties

@@ -1,9 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-from dace.transformation import pass_pipeline as ppl, transformation
 from typing import NamedTuple
-from dace import properties
+
+import dace
 import dace.sdfg.utils as sdutils
+from dace import properties
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class ScopeAnalysis(NamedTuple):

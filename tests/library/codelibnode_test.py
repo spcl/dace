@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 from dace.data import Array
-from dace.properties import Property, make_properties
 from dace.libraries.standard.nodes import CodeLibraryNode
-import numpy as np
+from dace.properties import Property, make_properties
 
 
 @make_properties

@@ -1,7 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
-from typing import Any
 from collections.abc import Callable
+from typing import Any
+
+from ordered_set import OrderedSet
 
 from dace import SDFG, SDFGState, data, properties
 from dace.memlet import Memlet
@@ -9,19 +11,19 @@ from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.validation import InvalidSDFGNodeError
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.dataflow import (
     RedundantArray,
     RedundantReadSlice,
     RedundantSecondArray,
     RedundantWriteSlice,
+    RemoveSliceView,
     SqueezeViewRemove,
     UnsqueezeViewRemove,
-    RemoveSliceView,
 )
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
-from ordered_set import OrderedSet
 
 
 @properties.make_properties

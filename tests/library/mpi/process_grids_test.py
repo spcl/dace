@@ -1,12 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from unittest import mock
 
-import dace
-from dace.sdfg import utils
-from dace import dtypes
-import dace.frontend.python.replacements.mpi as comm
 import numpy as np
 import pytest
+
+import dace
+import dace.frontend.python.replacements.mpi as comm
+from dace import dtypes
+from dace.sdfg import utils
 
 
 class _MockProgramVisitor:

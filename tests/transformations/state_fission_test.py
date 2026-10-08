@@ -1,12 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-import dace
 import numpy as np
 import pytest
 
+import dace
 from dace.memlet import Memlet
-from dace.sdfg import nodes, graph
-from dace.transformation import helpers, dataflow
+from dace.sdfg import graph, nodes
+from dace.transformation import dataflow, helpers
 
 from .utility import count_nodes, unique_name
 

@@ -12,23 +12,25 @@ import math
 import numbers
 import re
 import warnings
-
-import sympy as sp
 from io import StringIO
 from typing import IO, TYPE_CHECKING, Optional
 
+import sympy as sp
+
 import dace
-from dace import data, subsets, symbolic, dtypes, memlet as mmlt
+from dace import data, dtypes, subsets, symbolic
+from dace import memlet as mmlt
 from dace.codegen import common, cppunparse
-from dace.codegen.common import sym2cpp, find_incoming_edges, codeblock_to_cpp
+from dace.codegen.common import codeblock_to_cpp, find_incoming_edges, sym2cpp
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr, propagation, utils as sdutil
 from dace.properties import LambdaProperty
-from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
+from dace.sdfg import SDFG, SDFGState, is_devicelevel_gpu, nodes, propagation
+from dace.sdfg import graph as gr
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:

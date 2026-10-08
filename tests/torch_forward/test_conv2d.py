@@ -2,11 +2,11 @@
 import pytest
 
 pytest.importorskip("torch", reason="PyTorch not installed. Please install with: pip install dace[ml]")
-import torch
-from torch import nn
-import torch.nn.functional as F
-
 import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import nn
+
 import dace
 from dace.ml import DaceModule
 

@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, registry
-from dace.sdfg.nodes import CodeNode, ConsumeEntry, ConsumeExit
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
+from dace.sdfg.nodes import CodeNode, ConsumeEntry, ConsumeExit
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.Timer)

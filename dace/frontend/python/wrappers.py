@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Types and wrappers used in DaCe's Python frontend."""
 
-import numpy
 import itertools
 from collections import deque
 from typing import Generic, TypeVar
+
+import numpy
 
 from dace import dtypes
 

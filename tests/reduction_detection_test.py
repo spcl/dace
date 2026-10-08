@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.frontend.operations import is_op_associative, is_op_commutative, detect_reduction_type
+from dace.frontend.operations import detect_reduction_type, is_op_associative, is_op_commutative
 
 
 def _test_type(wcr_str, red_type):

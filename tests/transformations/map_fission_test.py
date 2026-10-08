@@ -1,12 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import dace
-import pytest
-from dace.sdfg import dealias, nodes, utils as sdutils
-from dace.transformation.dataflow import MapFission
-from dace.transformation.interstate import InlineSDFG
-from dace.transformation.helpers import nest_state_subgraph
+
 import numpy as np
+import pytest
+
+import dace
+from dace.sdfg import dealias, nodes
+from dace.sdfg import utils as sdutils
+from dace.transformation.dataflow import MapFission
+from dace.transformation.helpers import nest_state_subgraph
+from dace.transformation.interstate import InlineSDFG
 
 
 def mapfission_sdfg():

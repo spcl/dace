@@ -1,5 +1,6 @@
-import dace
 import pytest
+
+import dace
 
 
 def create_assign_sdfg():

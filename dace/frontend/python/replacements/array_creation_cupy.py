@@ -3,14 +3,14 @@
 Adds CuPy support for array creation functions.
 """
 
-from dace.frontend.common import op_repository as oprepo
-import dace.frontend.python.memlet_parser as mem_parser
-from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type
-from dace import dtypes, symbolic, Memlet, SDFG, SDFGState
-
 from numbers import Number
 
 import numpy as np
+
+import dace.frontend.python.memlet_parser as mem_parser
+from dace import SDFG, Memlet, SDFGState, dtypes, symbolic
+from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type
 
 
 @oprepo.replaces("cupy._core.core.ndarray")

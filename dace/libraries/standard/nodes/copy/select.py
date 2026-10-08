@@ -11,8 +11,8 @@ from dace.libraries.standard.helper import (
     is_in_parallel_scope,
     is_parallel_cpu_transfer_size,
 )
+from dace.libraries.standard.nodes.copy.common import _both_packed_same_layout, _is_cross_cpu_gpu, cuda2d_pitch_params
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
-from dace.libraries.standard.nodes.copy.common import cuda2d_pitch_params, _both_packed_same_layout, _is_cross_cpu_gpu
 
 if TYPE_CHECKING:
     from dace.libraries.standard.nodes.copy.node import CopyLibraryNode

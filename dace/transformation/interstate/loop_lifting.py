@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from copy import deepcopy
+
 from dace import properties
 from dace.frontend.python import astutils
 from dace.sdfg.sdfg import SDFG, ControlFlowBlock, InterstateEdge

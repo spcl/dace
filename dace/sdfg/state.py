@@ -1,15 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes of a single SDFG state and dataflow subgraphs."""
 
-import ast
 import abc
+import ast
 import collections
 import copy
-import re
 import inspect
 import itertools
+import re
 import warnings
-import sympy
+from collections.abc import Callable, Iterable, Iterator
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -18,40 +18,39 @@ from typing import (
     Union,
     overload,
 )
-from collections.abc import Callable, Iterable, Iterator
+
+import sympy
 
 import dace
-from dace.frontend.python import astutils
-from dace.sdfg.replace import replace_in_codeblock
 import dace.serialize
 from dace import data as dt
-from dace import dtypes
+from dace import dtypes, serialize, symbolic
 from dace import memlet as mm
-from dace import serialize
 from dace import subsets as sbs
-from dace import symbolic
+from dace.frontend.python import astutils
 from dace.properties import (
     CodeBlock,
+    CodeProperty,
     DebugInfoProperty,
     DictProperty,
     EnumProperty,
     Property,
     SubsetProperty,
     SymbolicProperty,
-    CodeProperty,
     make_properties,
 )
 from dace.sdfg import nodes as nd
+from dace.sdfg import propagation as sdprop
 from dace.sdfg.graph import (
+    Edge,
     MultiConnectorEdge,
     NodeNotFoundError,
+    OrderedDiGraph,
     OrderedMultiDiConnectorGraph,
     SubgraphView,
-    OrderedDiGraph,
-    Edge,
     generate_element_id,
 )
-from dace.sdfg import propagation as sdprop
+from dace.sdfg.replace import replace_in_codeblock
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset

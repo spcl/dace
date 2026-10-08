@@ -3,9 +3,9 @@
 # The scope of the test is to verify that code nested SDFGs with a unique name is generated only once
 # The nested SDFG compute vector addition
 
-import dace
 import numpy as np
 
+import dace
 from dace.memlet import Memlet
 
 size_n = 32

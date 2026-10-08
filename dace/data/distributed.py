@@ -2,13 +2,12 @@
 """A module that contains type definitions for distributed SDFGs."""
 
 import copy
-from numbers import Integral
 from collections.abc import Sequence
+from numbers import Integral
 
-from dace import dtypes
-from dace import symbolic, serialize
+from dace import dtypes, serialize, symbolic
 from dace.data.core import Data, SymbolMapping
-from dace.properties import Property, make_properties, ShapeProperty, SymbolicProperty, ListProperty
+from dace.properties import ListProperty, Property, ShapeProperty, SymbolicProperty, make_properties
 
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
 RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic

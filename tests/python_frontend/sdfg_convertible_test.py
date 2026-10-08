@@ -1,11 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests custom SDFG-convertible objects."""
 
-import dace
-import numpy as np
-from dace.frontend.python.common import SDFGConvertible
 from types import SimpleNamespace
+
+import numpy as np
 import pytest
+
+import dace
+from dace.frontend.python.common import SDFGConvertible
 
 
 def test_daceprogram_constants_in_signature():

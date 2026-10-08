@@ -1,15 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """File containing DaCe-serializable versions of graphs, nodes, and edges."""
 
-from collections import deque, OrderedDict
 import itertools
 import uuid
-import networkx as nx
-from dace.dtypes import deduplicate
-import dace.serialize
-from typing import Any, Generic, TypeVar
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Sequence
+from typing import Any, Generic, TypeVar
+
+import networkx as nx
 from ordered_set import OrderedSet
+
+import dace.serialize
+from dace.dtypes import deduplicate
 
 
 class NodeNotFoundError(Exception):
