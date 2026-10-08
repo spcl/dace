@@ -4,7 +4,6 @@ from dace.data import Array
 from dace.properties import Property, make_properties
 from dace.libraries.standard.nodes import CodeLibraryNode
 import numpy as np
-from typing import Dict
 
 
 @make_properties
@@ -14,7 +13,7 @@ class MyNode(CodeLibraryNode):
     def __init__(self, *args, **kwargs):
         super().__init__(input_names=["inp"], output_names=["out"])
 
-    def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str, Array]):
+    def generate_code(self, inputs: dict[str, Array], outputs: dict[str, Array]):
         assert len(inputs) == 1
         assert len(outputs) == 1
         inarr = inputs["inp"]
@@ -46,7 +45,7 @@ class MyNode2(CodeLibraryNode):
     def __init__(self, *args, **kwargs):
         super().__init__(input_names=["inp"], output_names=["out"])
 
-    def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str, Array]):
+    def generate_code(self, inputs: dict[str, Array], outputs: dict[str, Array]):
         assert len(inputs) == 1
         assert len(outputs) == 1
         inarr = inputs["inp"]

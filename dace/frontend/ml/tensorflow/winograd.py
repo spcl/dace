@@ -223,12 +223,12 @@ def mm(
         name=label + "_" + "mm_tasklet",
         inputs={"a", "b"},
         outputs={"c"},
-        code="""
+        code=f"""
         cublasSetStream(handle, __dace_current_stream);
         cublasStatus_t status = cublasSgemm(
             handle,
-            CUBLAS_OP_{amode}, CUBLAS_OP_{bmode},
-            {m}, {n}, {k},
+            CUBLAS_OP_{A_mode}, CUBLAS_OP_{B_mode},
+            {Cshape[1]}, {Cshape[0]}, {Ashape[kdim_A]},
             const_pone,
             (float*)a, {lda},
             (float*)b, {ldb},
@@ -236,20 +236,8 @@ def mm(
             (float*)c, {ldc}
         );
         if (status)
-            printf("Multiplication {a}*{b}->{c} failed (status %d)\\n", status);
-        """.format(
-            a=A_node.data,
-            b=B_node.data,
-            c=C_node.data,
-            amode=A_mode,
-            bmode=B_mode,
-            m=Cshape[1],
-            n=Cshape[0],
-            k=Ashape[kdim_A],
-            lda=lda,
-            ldb=ldb,
-            ldc=ldc,
-        ),
+            printf("Multiplication {A_node.data}*{B_node.data}->{C_node.data} failed (status %d)\\n", status);
+        """,
         language=dace.dtypes.Language.CPP,
     )
 

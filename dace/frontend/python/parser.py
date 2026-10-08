@@ -8,7 +8,7 @@ import os
 import sympy
 import sys
 import types as pytypes
-from typing import Any, Dict, ForwardRef, List, Optional, Set, Tuple, Union, TYPE_CHECKING
+from typing import Any, ForwardRef, Union, TYPE_CHECKING
 from collections.abc import Callable, Sequence
 from typing import get_origin, get_args
 import warnings
@@ -28,10 +28,10 @@ try:
 except ImportError:
     mpi4py = None
 
-ArgTypes = Dict[str, Data]
+ArgTypes = dict[str, Data]
 
 
-def _get_argnames(f) -> List[str]:
+def _get_argnames(f) -> list[str]:
     """Returns a Python function's argument names."""
     try:
         return list(inspect.signature(f).parameters.keys())
@@ -88,8 +88,8 @@ def _get_locals_and_globals(f):
 
 
 def infer_symbols_from_datadescriptor(
-    sdfg: SDFG, args: Dict[str, Any], exclude: Optional[Set[str]] = None
-) -> Dict[str, Any]:
+    sdfg: SDFG, args: dict[str, Any], exclude: set[str] | None = None
+) -> dict[str, Any]:
     """
     Infers the values of SDFG symbols (not given as arguments) from the shapes
     and strides of input arguments (e.g., arrays).
@@ -154,7 +154,7 @@ def infer_symbols_from_datadescriptor(
     # Solve for all at once
     results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
     if len(results) > 1:
-        raise ValueError("Ambiguous values for symbols in inference. Options: %s" % str(results))
+        raise ValueError(f"Ambiguous values for symbols in inference. Options: {str(results)}")
     if len(results) == 0:
         raise ValueError("Cannot infer values for symbols in inference.")
 
@@ -214,7 +214,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             pname: pval.default for pname, pval in self.signature.parameters.items() if not _is_empty(pval.default)
         }
         self.symbols = set(k for k, v in self.global_vars.items() if isinstance(v, symbolic.symbol))
-        self.closure_arg_mapping: Dict[str, Callable[[], Any]] = {}
+        self.closure_arg_mapping: dict[str, Callable[[], Any]] = {}
         self.resolver: pycommon.SDFGClosure = None
 
         # Add type annotations from decorator arguments (DEPRECATED)
@@ -240,8 +240,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         self._cache = cached_program.DaceProgramCache(self._eval_closure)
         # These sets fill up after the first parsing of the program and stay
         # the same unless the argument types change
-        self.closure_array_keys: Set[str] = set()
-        self.closure_constant_keys: Set[str] = set()
+        self.closure_array_keys: set[str] = set()
+        self.closure_constant_keys: set[str] = set()
 
     # A modified version of deepcopy that reuses the closure as-is
     def __deepcopy__(self, memo):
@@ -259,7 +259,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 setattr(result, k, copy.deepcopy(v, memo))
         return result
 
-    def auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
+    def auto_optimize(self, sdfg: SDFG, symbols: dict[str, int] = None) -> SDFG:
         """Invoke automatic optimization heuristics on internal program."""
         # Avoid import loop
         from dace.transformation.auto import auto_optimize as autoopt
@@ -361,10 +361,10 @@ class DaceProgram(pycommon.SDFGConvertible):
             result += type(self._methodobj).__name__ + "_"
         return result + self.f.__name__
 
-    def __sdfg_signature__(self) -> Tuple[Sequence[str], Sequence[str]]:
+    def __sdfg_signature__(self) -> tuple[Sequence[str], Sequence[str]]:
         return self.argnames, self.constant_args
 
-    def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def __sdfg_closure__(self, reevaluate: dict[str, str] | None = None) -> dict[str, Any]:
         """
         Returns the closure arrays of the SDFG represented by the dace
         program as a mapping between array name and the corresponding value.
@@ -431,13 +431,13 @@ class DaceProgram(pycommon.SDFGConvertible):
         )
         return closure
 
-    def _eval_closure(self, arg: str, extra_constants: Optional[Dict[str, Any]] = None) -> Any:
+    def _eval_closure(self, arg: str, extra_constants: dict[str, Any] | None = None) -> Any:
         extra_constants = extra_constants or {}
         if arg in self.closure_arg_mapping:
             return self.closure_arg_mapping[arg]()
         return eval(arg, self.global_vars, extra_constants)
 
-    def _create_sdfg_args(self, sdfg: SDFG, args: Tuple[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_sdfg_args(self, sdfg: SDFG, args: tuple[Any], kwargs: dict[str, Any]) -> dict[str, Any]:
         # Start with default arguments, then add other arguments
         result = {**self.default_args}
         # Reconstruct keyword arguments
@@ -606,8 +606,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         return non_none_args[0], len(non_none_args) < len(hint_args)
 
     def _get_type_annotations(
-        self, given_args: Tuple[Any], given_kwargs: Dict[str, Any]
-    ) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any], Set[str]]:
+        self, given_args: tuple[Any], given_kwargs: dict[str, Any]
+    ) -> tuple[ArgTypes, dict[str, Any], dict[str, Any], set[str]]:
         """
         Obtains types from decorator and/or from type annotations in a function.
 
@@ -617,9 +617,9 @@ class DaceProgram(pycommon.SDFGConvertible):
                  mapping, extra global variable mapping, all given argument names)
         """
         types: ArgTypes = {}
-        arg_mapping: Dict[str, Any] = {}
-        gvar_mapping: Dict[str, Any] = {}
-        specified_args: Set[str] = set()
+        arg_mapping: dict[str, Any] = {}
+        gvar_mapping: dict[str, Any] = {}
+        specified_args: set[str] = set()
 
         # Filter symbols out of given keyword arguments
         given_kwargs = {k: v for k, v in given_kwargs.items() if k not in self.symbols}
@@ -895,8 +895,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         return key
 
     def _generate_pdp(
-        self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None
-    ) -> Tuple[SDFG, bool]:
+        self, args: tuple[Any], kwargs: dict[str, Any], simplify: bool | None = None
+    ) -> tuple[SDFG, bool]:
         """Generates the parsed AST representation of a DaCe program.
 
         :param args: The given arguments to the program.

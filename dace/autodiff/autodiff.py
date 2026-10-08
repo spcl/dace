@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Union, Optional
 
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
@@ -10,13 +9,13 @@ from dace.sdfg.state import LoopRegion
 
 def add_backward_pass(
     sdfg: SDFG,
-    outputs: List[Union[nodes.AccessNode, str]],
-    inputs: List[Union[nodes.AccessNode, str]],
+    outputs: list[nodes.AccessNode | str],
+    inputs: list[nodes.AccessNode | str],
     data_forwarding_strategy: str = "store_all",
-    data_to_recompute: Optional[List[str]] = None,
+    data_to_recompute: list[str] | None = None,
     simplify: bool = True,
     separate_sdfgs: bool = False,
-) -> Optional[SDFG]:
+) -> SDFG | None:
     """Experimental: Add a backward pass to `state` using reverse-mode automatic differentiation.
 
     ``inputs``, ``outputs`` and ``grads`` can be provided either as ``AccessNode`` nodes, or as ``str``, in which

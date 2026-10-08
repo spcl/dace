@@ -6,7 +6,6 @@ import tempfile
 import sys
 import os
 import platform
-from typing import Optional, Union
 import functools
 import http.server
 import threading
@@ -23,7 +22,7 @@ def partialclass(cls, *args, **kwds):
     return NewCls
 
 
-def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: bool = True, compress: bool = True):
+def view(sdfg: dace.SDFG, filename: str | int | None = None, verbose: bool = True, compress: bool = True):
     """
     View an sdfg in the system's HTML viewer
 
@@ -84,7 +83,7 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
         f.write(html)
 
     if verbose:
-        print("File saved at %s" % html_filename)
+        print(f"File saved at {html_filename}")
 
     if fd is not None:
         os.close(fd)
@@ -120,9 +119,9 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
         if system == "Windows":
             os.system(html_filename)
         elif system == "Darwin":
-            os.system("open %s" % html_filename)
+            os.system(f"open {html_filename}")
         else:
-            os.system("xdg-open %s" % html_filename)
+            os.system(f"xdg-open {html_filename}")
 
 
 def main():

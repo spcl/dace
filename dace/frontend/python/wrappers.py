@@ -4,7 +4,7 @@
 import numpy
 import itertools
 from collections import deque
-from typing import Deque, Generic, Type, TypeVar
+from typing import Generic, TypeVar
 
 from dace import dtypes
 
@@ -17,7 +17,7 @@ def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
     return numpy.ndarray(shape=shape, dtype=new_dtype, *args, **kwargs)
 
 
-stream: Type[Deque[T]] = deque
+stream: type[deque[T]] = deque
 
 
 class stream_array(Generic[T]):
@@ -37,10 +37,10 @@ class stream_array(Generic[T]):
     def shape(self):
         return self.shape
 
-    def __getitem__(self, key) -> Deque[T]:
+    def __getitem__(self, key) -> deque[T]:
         return self.queue_array.__getitem__(key)
 
-    def __getslice__(self, *args) -> Deque[T]:
+    def __getslice__(self, *args) -> deque[T]:
         return self.queue_array.__getslice__(*args)
 
 

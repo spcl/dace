@@ -9,7 +9,7 @@ as well as functions for creating arrays from descriptors.
 import ctypes
 
 from numbers import Number
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -137,7 +137,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
 
 def make_array_from_descriptor(
-    descriptor: Array, original_array: Optional[ArrayLike] = None, symbols: Optional[Dict[str, Any]] = None
+    descriptor: Array, original_array: ArrayLike | None = None, symbols: dict[str, Any] | None = None
 ) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
@@ -161,7 +161,7 @@ def make_array_from_descriptor(
             raise NotImplementedError("GPU memory can only be allocated in Python if cupy is installed")
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = cp.ndarray(shape=[total_size], dtype=dtype)
             view = cp.ndarray(
@@ -175,7 +175,7 @@ def make_array_from_descriptor(
     else:
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = np.ndarray([total_size], dtype=dtype)
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
@@ -197,7 +197,7 @@ def make_array_from_descriptor(
 
 
 def make_reference_from_descriptor(
-    descriptor: Array, original_array: ctypes.c_void_p, symbols: Optional[Dict[str, Any]] = None
+    descriptor: Array, original_array: ctypes.c_void_p, symbols: dict[str, Any] | None = None
 ) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor from the given pointer. Shares the memory
@@ -227,7 +227,7 @@ def make_reference_from_descriptor(
             raise NotImplementedError("GPU memory can only be referenced in Python if cupy is installed")
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
             view = cp.ndarray(
@@ -238,7 +238,7 @@ def make_reference_from_descriptor(
     else:
 
         def create_array(
-            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+            shape: tuple[int, ...], dtype: np.dtype, total_size: int, strides: tuple[int, ...]
         ) -> ArrayLike:
             buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])

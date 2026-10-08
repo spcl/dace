@@ -3,7 +3,7 @@
 
 import contextlib
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import dace
 from dace import symbolic
@@ -35,23 +35,23 @@ class _ArraySpec:
 
     shape: Sequence[int]
     storage: dace.dtypes.StorageType
-    strides: Optional[Sequence[int]] = None
-    total_size: Optional[int] = None
+    strides: Sequence[int] | None = None
+    total_size: int | None = None
     transient: bool = False
-    subset: Optional[str] = None
-    name: Optional[str] = None
-    dtype: Optional[dace.dtypes.typeclass] = None
+    subset: str | None = None
+    name: str | None = None
+    dtype: dace.dtypes.typeclass | None = None
 
 
 def _make_copy_sdfg(
     src: _ArraySpec,
     dst: _ArraySpec,
     *,
-    implementation: Optional[str] = None,
+    implementation: str | None = None,
     name: str = "copy_sdfg",
     libnode_name: str = "cp",
     dtype: dace.dtypes.typeclass = dace.float64,
-) -> Tuple[dace.SDFG, CopyLibraryNode]:
+) -> tuple[dace.SDFG, CopyLibraryNode]:
     """One-state SDFG copying ``src`` -> ``dst`` via a single ``CopyLibraryNode``.
 
     :param src: source-side array spec.
@@ -2036,7 +2036,7 @@ def test_symbolic_extent_expansions_keep_their_ranges_symbolic():
 
 def _make_in_kernel_copy_sdfg(
     src_storage: dace.dtypes.StorageType, dst_storage: dace.dtypes.StorageType
-) -> Tuple[dace.SDFG, CopyLibraryNode]:
+) -> tuple[dace.SDFG, CopyLibraryNode]:
     """A multi-element ``CopyLibraryNode`` sitting inside a ``GPU_Device`` map."""
     sdfg = dace.SDFG("in_kernel_copy")
     sdfg.add_array("src", [4, 8], dace.float64, storage=src_storage)

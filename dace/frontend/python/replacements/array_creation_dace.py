@@ -11,7 +11,7 @@ from dace import data, dtypes, Memlet, SDFG, SDFGState
 
 from copy import deepcopy as dcpy
 from numbers import Integral
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -24,7 +24,7 @@ def _define_local_ex(
     state: SDFGState,
     shape: Shape,
     dtype: dtypes.typeclass,
-    strides: Optional[Shape] = None,
+    strides: Shape | None = None,
     storage: dtypes.StorageType = dtypes.StorageType.Default,
     lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
 ):
@@ -116,8 +116,8 @@ def _define_literal_ex(
     subok: bool = False,
     ndmin: int = 0,
     like: Any = None,
-    storage: Optional[dtypes.StorageType] = None,
-    lifetime: Optional[dtypes.AllocationLifetime] = None,
+    storage: dtypes.StorageType | None = None,
+    lifetime: dtypes.AllocationLifetime | None = None,
 ):
     """Defines a literal array in a DaCe program."""
     if like is not None:
@@ -182,7 +182,7 @@ def _numpy_empty_like(
     attributes of prototype.
     """
     if prototype not in sdfg.arrays.keys():
-        raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=prototype))
+        raise DaceSyntaxError(pv, None, f"Prototype argument {prototype} is not SDFG data!")
     desc = sdfg.arrays[prototype]
     dtype = dtype or desc.dtype
     shape = shape or desc.shape

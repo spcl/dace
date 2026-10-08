@@ -17,7 +17,7 @@ Key Functions:
 
 import functools
 import re
-from typing import Callable, Dict, Union
+from collections.abc import Callable
 
 import onnx
 from dace import config, dtypes as dt
@@ -74,9 +74,7 @@ def convert_onnx_proto(attribute):
         elif attribute == onnx.defs.OpSchema.FormalParameterOption.Variadic:
             return ONNXParameterType.Variadic
         else:
-            raise NotImplementedError(
-                "Only single, optional and variadic formal parameters are supported, got".format(attribute)
-            )
+            raise NotImplementedError("Only single, optional and variadic formal parameters are supported, got")
 
     if type(attribute) is onnx.defs.OpSchema.AttrType:
         if attribute == onnx.defs.OpSchema.AttrType.FLOAT:
@@ -95,7 +93,7 @@ def convert_onnx_proto(attribute):
             return ONNXAttributeType.Tensor
         else:
             if config.Config.get_bool("debugprint"):
-                print("Got unsupported attribute type {}".format(attribute))
+                print(f"Got unsupported attribute type {attribute}")
             return ONNXAttributeType.Unsupported
 
     if type(attribute) is onnx.AttributeProto:
@@ -105,11 +103,11 @@ def convert_onnx_proto(attribute):
     if isinstance(attribute, (int, str, bool, float)):
         return attribute
 
-    raise NotImplementedError("No conversion implemented for {} (type {})".format(attribute, type(attribute)))
+    raise NotImplementedError(f"No conversion implemented for {attribute} (type {type(attribute)})")
 
 
 @functools.cache
-def attribute_proto_converters() -> Dict[int, Callable]:
+def attribute_proto_converters() -> dict[int, Callable]:
     """Maps ONNX AttributeProto type enums to the function extracting their value."""
     inv_map = {}
     for k, v in onnx.AttributeProto.AttributeType.items():
@@ -142,9 +140,7 @@ def convert_attribute_proto(proto):
     if onnx_type not in inv_map:
         type_str = {v: k for k, v in onnx.AttributeProto.AttributeType.items()}[onnx_type]
         raise NotImplementedError(
-            "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {}".format(
-                type_str
-            )
+            f"Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {type_str}"
         )
 
     return inv_map[onnx_type](proto)
@@ -169,7 +165,7 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
 
 
 @functools.cache
-def typeclass_to_onnx_tensor_type_map() -> Dict[typeclass, int]:
+def typeclass_to_onnx_tensor_type_map() -> dict[typeclass, int]:
     return {v: getattr(onnx.TensorProto.DataType, k.upper()) for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
 
 
@@ -178,7 +174,7 @@ def typeclass_to_onnx_tensor_type_int(dtype: typeclass) -> int:
 
 
 @functools.cache
-def onnx_tensor_type_to_typeclass_map() -> Dict[int, typeclass]:
+def onnx_tensor_type_to_typeclass_map() -> dict[int, typeclass]:
     return {
         v: ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
         for k, v in onnx.TensorProto.DataType.items()
@@ -191,16 +187,14 @@ def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
 
     if elem_type not in inv_map:
         raise ValueError(
-            "Got unsupported ONNX tensor type: {}".format(
-                {v: k for k, v in onnx.TensorProto.DataType.items()}[elem_type]
-            )
+            f"Got unsupported ONNX tensor type: { ({v: k for k, v in onnx.TensorProto.DataType.items()}[elem_type]) }"
         )
 
     return inv_map[elem_type]
 
 
 @functools.cache
-def typeclass_to_onnx_str_map() -> Dict[typeclass, str]:
+def typeclass_to_onnx_str_map() -> dict[typeclass, str]:
     return {v: k for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
 
 
@@ -208,12 +202,12 @@ def typeclass_to_onnx_str(dtype: typeclass) -> str:
     inv_map = typeclass_to_onnx_str_map()
 
     if dtype not in inv_map:
-        raise ValueError("Attempted to convert unsupported dace type to ONNX type: {}".format(dtype))
+        raise ValueError(f"Attempted to convert unsupported dace type to ONNX type: {dtype}")
 
     return inv_map[dtype]
 
 
-def onnx_type_str_to_typeclass(onnx_str) -> Union[typeclass, None]:
+def onnx_type_str_to_typeclass(onnx_str) -> typeclass | None:
     """Converts an onnx type string, like tensor(float16) to a dace typeclass"""
 
     results = re.findall(r"^tensor\((.+)\)", onnx_str)

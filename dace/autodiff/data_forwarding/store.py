@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 import sympy as sp
 
 # DaCe imports
@@ -71,7 +71,7 @@ def _store_data(
     forward_an: nodes.AccessNode,
     target_node: nodes.Node,
     edge: dgraph.MultiConnectorEdge,
-) -> Tuple[nodes.AccessNode, List[Memlet]]:
+) -> tuple[nodes.AccessNode, list[Memlet]]:
     """
     Given an edge leading an AccessNode or a map to the target node in the forward state,
     add a path from the connector for this AccessNode to store its values for all iterations.
@@ -106,7 +106,7 @@ def _store_data(
 
     # Get the new array shape
     # This will be the shape of the current array
-    shape: List[int] = list(bwd_generator.sdfg.arrays[forward_an.data].shape)
+    shape: list[int] = list(bwd_generator.sdfg.arrays[forward_an.data].shape)
 
     # If the shape is an expression:
     free_symbols_dict = {sym: None for sym in bwd_generator.sdfg.free_symbols}
@@ -401,7 +401,7 @@ def _connect_stored_data_to_target(
     source_node: nodes.AccessNode,
     forward_node: nodes.AccessNode,
     target_node: nodes.Node,
-    memlets: List[Memlet],
+    memlets: list[Memlet],
     starting_edge: dgraph.MultiConnectorEdge,
 ):
     """
@@ -634,7 +634,7 @@ def _find_map_exist_for_map_entry(map_entry: nodes.MapEntry, state: SDFGState) -
 
 
 def _get_symbol_upper_bound_from_loop(
-    bwd_generator: "BackwardPassGenerator", s: sp.Symbol, loops: List[LoopRegion]
+    bwd_generator: "BackwardPassGenerator", s: sp.Symbol, loops: list[LoopRegion]
 ) -> int:
     """
     Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
@@ -711,7 +711,7 @@ def _get_symbol_upper_bound_from_loop(
     return loop_size, loop_index
 
 
-def _get_all_enclosing_loops(forward_state: SDFGState) -> List[LoopRegion]:
+def _get_all_enclosing_loops(forward_state: SDFGState) -> list[LoopRegion]:
     """
     Check if this state will be executed several times within a loop.
     We check if any of the parents of this state is a loop region.

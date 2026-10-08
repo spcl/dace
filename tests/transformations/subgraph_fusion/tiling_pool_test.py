@@ -21,7 +21,7 @@ def stencil(A: dace.float64[2 * N], B: dace.float64[N]):
         in1 << A[2 * i]
         in2 << A[2 * i + 1]
         out1 >> tmp1[i]
-        out1 = (in1 + in2) / float(2.0)
+        out1 = (in1 + in2) / 2.0
 
     @dace.map
     def m2(i: _[1 : N - 1]):
@@ -41,7 +41,7 @@ def stencil_offset(A: dace.float64[2 * N], B: dace.float64[N]):
         in1 << A[2 * i]
         in2 << A[2 * i + 1]
         out1 >> tmp1[i]
-        out1 = (in1 + in2) / float(2.0)
+        out1 = (in1 + in2) / 2.0
 
     @dace.map
     def m2(i: _[0 : N - 2]):

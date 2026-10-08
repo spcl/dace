@@ -8,7 +8,7 @@ from dace.serialize import all_properties_to_json, set_properties_from_json
 
 
 @make_properties
-class MyObject(object):
+class MyObject:
     float_prop = Property(dtype=float, default=0.0)
 
     def __init__(self, p: float):
@@ -26,7 +26,7 @@ class MyObject(object):
 
 
 @make_properties
-class MyListObject(object):
+class MyListObject:
     list_prop = ListProperty(element_type=int)
 
     def __init__(self, p):

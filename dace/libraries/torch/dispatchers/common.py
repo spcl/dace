@@ -11,7 +11,7 @@ including:
 """
 
 import dataclasses
-from typing import Callable, List, Tuple, Union
+from collections.abc import Callable
 
 import dace
 import torch
@@ -36,11 +36,11 @@ class DaceTorchFunction:
     """
 
     function: Callable
-    compiled_sdfgs: List[CompiledSDFG]
-    ptr: List[torch.Tensor]
+    compiled_sdfgs: list[CompiledSDFG]
+    ptr: list[torch.Tensor]
 
 
-def get_arglist(module: "dace.frontend.ml.torch.DaceModule") -> Tuple[List[str], List[str]]:
+def get_arglist(module: "dace.frontend.ml.torch.DaceModule") -> tuple[list[str], list[str]]:
     """Get the list of forward-pass argument names for a module.
 
     :param module: The DaCe module to extract argument names from.
@@ -55,7 +55,7 @@ def get_arglist(module: "dace.frontend.ml.torch.DaceModule") -> Tuple[List[str],
 
 def compile_and_init_sdfgs(
     module: "dace.frontend.ml.torch.DaceModule", dummy_inputs
-) -> Union[Tuple[CompiledSDFG, torch.Tensor], Tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]]:
+) -> tuple[CompiledSDFG, torch.Tensor] | tuple[CompiledSDFG, torch.Tensor, CompiledSDFG, torch.Tensor]:
     """Compile SDFGs and initialize them using the provided dummy inputs.
 
     This function compiles the forward pass SDFG and optionally the backward pass

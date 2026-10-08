@@ -11,7 +11,6 @@ Operations implemented:
 """
 
 import copy
-import typing
 
 import dace
 from dace import SDFG, SDFGState
@@ -132,7 +131,7 @@ class PureResize(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         inp_name = "X"
         out_name = "Y"
@@ -236,10 +235,10 @@ class PureResize(ONNXForward):
 
         # Calculate input indices
         tasklet_code.append(
-            """
+            f"""
         // Calculate input indices for each dimension
-        int inp_indices[{}];
-        """.format(num_dims)
+        int inp_indices[{num_dims}];
+        """
         )
 
         # Declare all size variables at the beginning

@@ -2,7 +2,6 @@
 """Contains classes that implement the map-expansion transformation."""
 
 from dace.sdfg.utils import consolidate_edges
-from typing import List
 import copy
 import dace
 from dace import dtypes, subsets, symbolic
@@ -191,7 +190,7 @@ class MapExpansion(pm.SingleStateTransformation):
         from dace.sdfg.scope import ScopeTree
 
         scope = None
-        queue: List[ScopeTree] = graph.scope_leaves()
+        queue: list[ScopeTree] = graph.scope_leaves()
         while len(queue) > 0:
             tnode = queue.pop()
             if tnode.entry == entries[-1]:

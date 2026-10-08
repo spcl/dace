@@ -182,7 +182,7 @@ def test_melt_kernel():
     assert len(src_nodes) == 1
     assert len(dst_nodes) == 1
 
-    other_nodes = set(sdfg.nodes()).difference((src_nodes.union(dst_nodes)))
+    other_nodes = set(sdfg.nodes()).difference(src_nodes.union(dst_nodes))
     assert all({(sdfg.in_degree(n) == 1 and sdfg.out_degree(n) == 1) for n in other_nodes})
 
 

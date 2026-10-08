@@ -108,7 +108,7 @@ def interleave(inter, f, seq, **kwargs):
             f(x, **kwargs)
 
 
-class LocalScheme(object):
+class LocalScheme:
     def is_defined(self, local_name, current_depth):
         raise NotImplementedError("Abstract class")
 
@@ -950,7 +950,7 @@ class CPPUnparser:
 
     def _BoolOp(self, t):
         self.write("(")
-        s = " %s " % self.boolops[t.op.__class__]
+        s = f" {self.boolops[t.op.__class__]} "
         interleave(lambda: self.write(s), self.dispatch, t.values)
         self.write(")")
 

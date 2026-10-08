@@ -6,7 +6,7 @@ from fparser.two import symbol_table
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import Name_Node
-from typing import Any, List, Type, TypeVar, Union, overload, TYPE_CHECKING
+from typing import Any, TypeVar, overload, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -22,14 +22,14 @@ T = TypeVar("T")
 
 
 @overload
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: str) -> FASTNode: ...
+def get_child(node: FASTNode | list[FASTNode], child_type: str) -> FASTNode: ...
 
 
 @overload
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Type[T]) -> T: ...
+def get_child(node: FASTNode | list[FASTNode], child_type: type[T]) -> T: ...
 
 
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], List[Type[T]]]):
+def get_child(node: FASTNode | list[FASTNode], child_type: str | type[T] | list[type[T]]):
     if isinstance(node, list):
         children = node
     else:
@@ -48,18 +48,18 @@ def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type
 
     if len(children_of_type) == 1:
         return children_of_type[0]
-    raise ValueError("Expected only one child of type {} but found {}".format(child_type, children_of_type))
+    raise ValueError(f"Expected only one child of type {child_type} but found {children_of_type}")
 
 
 @overload
-def get_children(node: Union[FASTNode, List[FASTNode]], child_type: str) -> List[FASTNode]: ...
+def get_children(node: FASTNode | list[FASTNode], child_type: str) -> list[FASTNode]: ...
 
 
 @overload
-def get_children(node: Union[FASTNode, List[FASTNode]], child_type: Type[T]) -> List[T]: ...
+def get_children(node: FASTNode | list[FASTNode], child_type: type[T]) -> list[T]: ...
 
 
-def get_children(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], List[Type[T]]]):
+def get_children(node: FASTNode | list[FASTNode], child_type: str | type[T] | list[type[T]]):
     if isinstance(node, list):
         children = node
     else:
@@ -479,7 +479,7 @@ class InternalFortranAst:
     def assumed_shape_spec_list(self, node: FASTNode):
         return node
 
-    def parse_shape_specification(self, dim: f03.Explicit_Shape_Spec, size: List[FASTNode], offset: List[int]):
+    def parse_shape_specification(self, dim: f03.Explicit_Shape_Spec, size: list[FASTNode], offset: list[int]):
 
         dim_expr = [i for i in dim.children if i is not None]
 

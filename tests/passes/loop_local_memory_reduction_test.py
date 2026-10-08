@@ -6,11 +6,11 @@ import copy
 import dace
 from dace.sdfg.state import LoopRegion, CodeBlock
 from dace.transformation.passes import LoopLocalMemoryReduction
-from typing import Any, Dict
+from typing import Any
 
 
 # Checks if LoopLocalMemoryReduction applied at least N times and if memory footprint was reduced for a specific option
-def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: Dict[str, Any]):
+def check_transformation_option(orig_sdfg: dace.SDFG, N: int, options: dict[str, Any]):
     # Apply and validate
     orig_sdfg.validate()
     llmr_sdfg = copy.deepcopy(orig_sdfg)

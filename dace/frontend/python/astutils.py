@@ -9,7 +9,7 @@ import inspect
 import numbers
 import numpy
 import sympy
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
 
 from dace import symbolic
 
@@ -77,7 +77,7 @@ def is_constant(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant)
 
 
-def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
+def evalnode(node: ast.AST, gvars: dict[str, Any]) -> Any:
     """
     Tries to evaluate an AST node given only global variables.
 
@@ -137,7 +137,7 @@ def rname(node):
             name = value.id + "." + name
         else:
             raise NotImplementedError(
-                "Unsupported AST {n} node nested inside AST call node: {s}".format(n=type(value), s=unparse(value))
+                f"Unsupported AST {type(value)} node nested inside AST call node: {unparse(value)}"
             )
         return name
     if isinstance(node, ast.FunctionDef):  # form def func(...)
@@ -315,7 +315,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 
         missing_slices = len(arrdesc.shape) - len(astrange)
         if missing_slices < 0:
-            raise ValueError("Mismatching shape {} - range {} dimensions".format(arrdesc.shape, astrange))
+            raise ValueError(f"Mismatching shape {arrdesc.shape} - range {astrange} dimensions")
         for i in range(missing_slices):
             astrange.append((None, None, None))
 
@@ -366,7 +366,7 @@ def negate_expr(node):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
     if isinstance(node, str):
-        return "not ({})".format(node)
+        return f"not ({node})"
 
     from dace.properties import CodeBlock  # Avoid import loop
 
@@ -374,7 +374,7 @@ def negate_expr(node):
         node = node.code
     if isinstance(node, (list, tuple)):
         if len(node) > 1:
-            raise ValueError("negate_expr only expects single expressions, got: {}".format(node))
+            raise ValueError(f"negate_expr only expects single expressions, got: {node}")
         expr = node[0]
     else:
         expr = node
@@ -409,9 +409,9 @@ def and_expr(node_a, node_b):
 
     if isinstance(node_a, (list, tuple)):
         if len(node_a) > 1:
-            raise ValueError("and_expr only expects single expressions, got: {}".format(node_a))
+            raise ValueError(f"and_expr only expects single expressions, got: {node_a}")
         if len(node_b) > 1:
-            raise ValueError("and_expr only expects single expressions, got: {}".format(node_b))
+            raise ValueError(f"and_expr only expects single expressions, got: {node_b}")
         expr_a = node_a[0]
         expr_b = node_b[0]
     else:
@@ -565,7 +565,7 @@ class NameFound(Exception):
 
 
 class ASTFindReplace(ast.NodeTransformer):
-    def __init__(self, repldict: Dict[str, str], trigger_names: Set[str] = None):
+    def __init__(self, repldict: dict[str, str], trigger_names: set[str] = None):
         self.replace_count = 0
         self.repldict = repldict
         self.trigger_names = trigger_names or set()
@@ -599,7 +599,7 @@ class ASTFindReplace(ast.NodeTransformer):
 
 
 class FindAssignment(ast.NodeVisitor):
-    assignments: Dict[str, str]
+    assignments: dict[str, str]
     multiple: bool
 
     def __init__(self):
@@ -618,7 +618,7 @@ class FindAssignment(ast.NodeVisitor):
 class ASTReplaceAssignmentRHS(ast.NodeVisitor):
     repl_visitor: ASTFindReplace
 
-    def __init__(self, repl: Dict[str, str]):
+    def __init__(self, repl: dict[str, str]):
         self.repl_visitor = ASTFindReplace(repl)
 
     def visit_Assign(self, node: ast.Assign) -> Any:
@@ -627,7 +627,7 @@ class ASTReplaceAssignmentRHS(ast.NodeVisitor):
 
 
 class RemoveSubscripts(ast.NodeTransformer):
-    def __init__(self, keywords: Set[str]):
+    def __init__(self, keywords: set[str]):
         self.keywords = keywords
 
     def visit_Subscript(self, node: ast.Subscript):
@@ -683,11 +683,11 @@ class AnnotateTopLevel(ExtNodeTransformer):
 
 
 class ConstantExtractor(ast.NodeTransformer):
-    def __init__(self, globals: Dict[str, Any]):
+    def __init__(self, globals: dict[str, Any]):
         super().__init__()
         self.id = 0
         self.globals = globals
-        self.gvars: Dict[str, Any] = {}
+        self.gvars: dict[str, Any] = {}
 
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, ast.Load) and node.id in self.globals and self.globals[node.id] is SyntaxError:
@@ -704,7 +704,7 @@ class ConstantExtractor(ast.NodeTransformer):
 class ASTHelperMixin:
     """A mixin that adds useful helper functions for AST node transformers and visitors"""
 
-    def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
+    def generic_visit_filtered(self, node: ast.AST, filter: set[str] | None = None):
         """
         Modification of ast.NodeTransformer.generic_visit that visits all fields without the
         set of filtered fields.
@@ -766,7 +766,7 @@ class ASTHelperMixin:
         return node
 
 
-def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.Constant:
+def create_constant(value: Any, node: ast.AST | None = None) -> ast.Constant:
     """
     Cross-Python-AST-version helper function that creates an AST constant node from a given value.
 
@@ -782,7 +782,7 @@ def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.Constant:
     return newnode
 
 
-def escape_string(value: Union[bytes, str]):
+def escape_string(value: bytes | str):
     """
     Converts special Python characters in strings back to their parsable version (e.g., newline to ``\\n``)
     """
@@ -792,7 +792,7 @@ def escape_string(value: Union[bytes, str]):
     return value.encode("unicode_escape").decode("utf-8")
 
 
-def parse_function_arguments(node: ast.Call, argnames: List[str]) -> Dict[str, ast.AST]:
+def parse_function_arguments(node: ast.Call, argnames: list[str]) -> dict[str, ast.AST]:
     """
     Parses function arguments (both positional and keyword) from a Call node,
     based on the function's argument names. If an argument was not given, it will

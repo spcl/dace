@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Dict, List, Tuple
 import copy
 
 import dace
@@ -10,16 +9,16 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import StateSubgraphView
 from ordered_set import OrderedSet
 
-ScopeDictType = Dict[nd.Node, List[nd.Node]]
+ScopeDictType = dict[nd.Node, list[nd.Node]]
 
 
-class ScopeTree(object):
+class ScopeTree:
     """A class defining a scope, its parent and children scopes, and
     scope entry/exit nodes."""
 
     def __init__(self, entrynode: nd.EntryNode, exitnode: nd.ExitNode):
-        self.parent: "ScopeTree" = None
-        self.children: List["ScopeTree"] = []
+        self.parent: ScopeTree = None
+        self.children: list[ScopeTree] = []
         self.entry: nd.EntryNode = entrynode
         self.exit: nd.ExitNode = exitnode
 
@@ -60,7 +59,7 @@ class ScopeSubgraphView(StateSubgraphView):
 
 def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubgraphView:
     if not isinstance(entry_node, nd.EntryNode):
-        raise TypeError("Received {}: should be dace.nodes.EntryNode".format(type(entry_node).__name__))
+        raise TypeError(f"Received {type(entry_node).__name__}: should be dace.nodes.EntryNode")
     node_to_children = graph.scope_children()
     if include_exit:
         children_nodes = OrderedSet(node_to_children[entry_node])
@@ -151,7 +150,7 @@ def scope_contains_scope(sdict: ScopeDictType, node: nd.Node, other_node: nd.Nod
     return False
 
 
-def _scope_path(sdict: ScopeDictType, scope: nd.Node) -> List[nd.Node]:
+def _scope_path(sdict: ScopeDictType, scope: nd.Node) -> list[nd.Node]:
     """Returns the scopes from ``scope`` (inclusive) up to the outermost one that contains it."""
     result = []
     curnode = scope
@@ -216,7 +215,7 @@ def get_node_schedule(sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node
 
 
 def is_in_scope(
-    sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node: nd.Node, schedules: List[dtypes.ScheduleType]
+    sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node: nd.Node, schedules: list[dtypes.ScheduleType]
 ) -> bool:
     """Tests whether a node in an SDFG is contained within a certain set of
     scope schedules.
@@ -279,7 +278,7 @@ def is_devicelevel_gpu_kernel(sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGStat
 
 def devicelevel_block_size(
     sdfg: "dace.sdfg.SDFG", state: "dace.sdfg.SDFGState", node: nd.Node
-) -> Tuple[symbolic.SymExpr]:
+) -> tuple[symbolic.SymExpr]:
     """Returns the current thread-block size if the given node is enclosed in
     a GPU kernel, or None otherwise.
 

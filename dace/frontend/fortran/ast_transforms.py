@@ -1,7 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.frontend.fortran import ast_internal_classes
-from typing import Dict, List, Optional, Tuple
 import copy
 
 
@@ -33,7 +32,7 @@ def iter_child_nodes(node: ast_internal_classes.FNode):
                     yield item
 
 
-class NodeVisitor(object):
+class NodeVisitor:
     """
     A base node visitor class for Fortran ASTs.
     Subclass it and define your own visit_XXX methods, where
@@ -102,7 +101,7 @@ class FindFunctionAndSubroutines(NodeVisitor):
     """
 
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
+        self.nodes: list[ast_internal_classes.Name_Node] = []
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
         self.nodes.append(node.name)
@@ -118,7 +117,7 @@ class FindInputs(NodeVisitor):
     """
 
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
+        self.nodes: list[ast_internal_classes.Name_Node] = []
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
         self.nodes.append(node)
@@ -148,7 +147,7 @@ class FindOutputs(NodeVisitor):
     """
 
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
+        self.nodes: list[ast_internal_classes.Name_Node] = []
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if node.op == "=":
@@ -166,7 +165,7 @@ class FindFunctionCalls(NodeVisitor):
     """
 
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
+        self.nodes: list[ast_internal_classes.Name_Node] = []
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         self.nodes.append(node)
@@ -220,7 +219,7 @@ class CallExtractorNodeLister(NodeVisitor):
     """
 
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
+        self.nodes: list[ast_internal_classes.Call_Expr_Node] = []
 
     def visit_For_Stmt_Node(self, node: ast_internal_classes.For_Stmt_Node):
         return
@@ -343,7 +342,7 @@ class ParentScopeAssigner(NodeVisitor):
     def __init__(self):
         pass
 
-    def visit(self, node: ast_internal_classes.FNode, parent_node: Optional[ast_internal_classes.FNode] = None):
+    def visit(self, node: ast_internal_classes.FNode, parent_node: ast_internal_classes.FNode | None = None):
 
         parent_node_types = [
             ast_internal_classes.Subroutine_Subprogram_Node,
@@ -378,7 +377,7 @@ class ScopeVarsDeclarations(NodeVisitor):
 
     def __init__(self):
 
-        self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
+        self.scope_vars: dict[tuple[str, str], ast_internal_classes.FNode] = {}
 
     def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
         return self.scope_vars[(self._scope_name(scope), variable_name)]
@@ -402,7 +401,7 @@ class IndexExtractorNodeLister(NodeVisitor):
     """
 
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
+        self.nodes: list[ast_internal_classes.Array_Subscript_Node] = []
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -750,8 +749,8 @@ class ArrayLoopNodeLister(NodeVisitor):
     """
 
     def __init__(self):
-        self.nodes: List[ast_internal_classes.FNode] = []
-        self.range_nodes: List[ast_internal_classes.FNode] = []
+        self.nodes: list[ast_internal_classes.FNode] = []
+        self.range_nodes: list[ast_internal_classes.FNode] = []
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         rval_pardecls = [i for i in mywalk(node.rval) if isinstance(i, ast_internal_classes.ParDecl_Node)]

@@ -385,7 +385,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                     "_set_bsizes_",
                     {},
                     {"__out"},
-                    "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py),
+                    f"__out[0] = {(desc.shape[0]) // Px}; __out[1] = {(desc.shape[1]) // Py}",
                 )
                 graph.add_edge(
                     bsizes_tasklet, "__out", bsizes_access, None, dace.Memlet.from_array(bsizes_name, bsizes_arr)
@@ -460,7 +460,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
                     "_set_bsizes_",
                     {},
                     {"__out"},
-                    "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py),
+                    f"__out[0] = {(desc.shape[0]) // Px}; __out[1] = {(desc.shape[1]) // Py}",
                 )
                 graph.add_edge(
                     bsizes_tasklet, "__out", bsizes_access, None, dace.Memlet.from_array(bsizes_name, bsizes_arr)

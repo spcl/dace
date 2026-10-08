@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 from copy import deepcopy
-from typing import Optional
 from dace import properties
 from dace.frontend.python import astutils
 from dace.sdfg.sdfg import SDFG, ControlFlowBlock, InterstateEdge
@@ -31,7 +30,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
             return False
         return True
 
-    def _get_to_execute_before(self) -> Optional[ControlFlowBlock]:
+    def _get_to_execute_before(self) -> ControlFlowBlock | None:
         # Some loops may have a state that is executed before the condition check - specifically, this is the case for
         # the guard state in for/while loops (expr. index 0/1), and for the begin state in a self-loop (expr. index 6).
         if self.expr_index in (0, 1) and len(self.loop_guard.nodes()) > 0:
@@ -40,7 +39,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
             return self.loop_begin
         return None
 
-    def _get_to_guard_before_exec(self) -> Optional[ControlFlowBlock]:
+    def _get_to_guard_before_exec(self) -> ControlFlowBlock | None:
         # Some loops have a state executed at the end of the loop body that is only executed if the condition still
         # holds. This is the case for the latch state in loops with explicit test blocks before the latch
         # (expr. index 5/6/7).

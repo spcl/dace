@@ -5,7 +5,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import TracebackType
-from typing import Final, Sequence
+from typing import Final
+from collections.abc import Sequence
 
 from dace import subsets, symbolic
 from dace.memlet import Memlet

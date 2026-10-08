@@ -1,7 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from typing import Dict
 
 import sympy
 
@@ -115,7 +114,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         connector_product = 1  # Needed to compute alpha (input) coefficient
 
         # Map connectors from tasklet to library node
-        connectors: Dict[str, str] = {}
+        connectors: dict[str, str] = {}
         in_edges = []
         out_edge = None
         for e in state.in_edges(self.tasklet):
@@ -136,7 +135,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         einsum.alpha = symexpr / connector_product
 
         # Collect einsum string from sorted memlets
-        param_mapping: Dict[str, str] = {}
+        param_mapping: dict[str, str] = {}
         # letter_to_range: Dict[str, subsets.Range] = {}
         einsum_inputs = []
         einsum_output = ""

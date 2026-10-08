@@ -6,13 +6,12 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 
 import copy
-from typing import List, Dict
 
 # ****************
 # Helper functions
 
 
-def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
+def common_map_base_ranges(ranges: list[subsets.Range]) -> list[subsets.Range]:
     """Finds a maximal set of ranges that can be found
     in every instance of the ranges in the given list
     """
@@ -34,7 +33,7 @@ def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
     return range_base
 
 
-def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dict[nodes.Map, List]:
+def find_reassignment(maps: list[nodes.Map], common_ranges, offset=False) -> dict[nodes.Map, list]:
     """Provided a list of maps and their common base ranges
     (found via common_map_base_ranges()),
     for each map greedily assign each loop to an index so that

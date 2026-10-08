@@ -46,17 +46,17 @@ def _tensortype(tensor: tf.Tensor):
             try:
                 dtype = tensor.get_attr("T")
                 if dtype.as_numpy_dtype == object:
-                    raise NotImplementedError("Type %s is not a valid numpy type" % str(dtype))
+                    raise NotImplementedError(f"Type {str(dtype)} is not a valid numpy type")
                 return dtype.as_numpy_dtype
             except ValueError:
                 pass
-            raise TypeError("Ambiguous type for operation %s" % tensor)
+            raise TypeError(f"Ambiguous type for operation {tensor}")
 
     try:
         if tensor.dtype.as_numpy_dtype == object:
-            raise NotImplementedError("Type %s is not a valid numpy type" % str(tensor.dtype))
+            raise NotImplementedError(f"Type {str(tensor.dtype)} is not a valid numpy type")
     except KeyError:
-        raise TypeError("Type %s is not a valid numpy type" % str(tensor.dtype))
+        raise TypeError(f"Type {str(tensor.dtype)} is not a valid numpy type")
 
     if tensor.dtype.is_bool:
         return np.int32
@@ -82,7 +82,7 @@ def _find_node(state, node_id_or_label):
         for n in state.nodes():
             if n.label == node_id_or_label:
                 return n
-        raise LookupError("Node %s not found" % node_id_or_label)
+        raise LookupError(f"Node {node_id_or_label} not found")
     elif isinstance(node_id_or_label, int):
         return state.nodes()[node_id_or_label]
     else:
@@ -3258,7 +3258,7 @@ class TFSession:
 
         dtype = node.get_attr("DstT")
         if dtype.as_numpy_dtype == object:
-            raise NotImplementedError("Type %s is not a valid numpy type" % str(dtype))
+            raise NotImplementedError(f"Type {str(dtype)} is not a valid numpy type")
         castType = dace.typeclass(dtype.as_numpy_dtype).ctype
 
         for count, inp in enumerate(node.inputs):
@@ -3600,7 +3600,7 @@ class TFSession:
         for count, out in enumerate(node.outputs):
             label = string_builder(out.name)
             if "?" in str(_tensorshape(out)):
-                raise ValueError("Invalid shape {} for tensor {}".format(_tensorshape(out), label))
+                raise ValueError(f"Invalid shape {_tensorshape(out)} for tensor {label}")
             # Iterate over all output nodes
             # Try to find node in DaCe graph
             try:
@@ -3627,19 +3627,19 @@ class TFSession:
 
         if isinstance(data, Scalar):
             state.add_mapped_tasklet(
-                "reinit_%s" % arrname,
+                f"reinit_{arrname}",
                 [("unused", "0:1")],
                 {},
-                "out = %s" % value,
+                f"out = {value}",
                 {"out": dace.Memlet.simple(arrname, "0")},
                 external_edges=True,
             )
         else:
             state.add_mapped_tasklet(
-                "reinit_%s" % arrname,
-                [("o%d" % i, "0:%s" % symstr(shp)) for i, shp in enumerate(data.shape)],
+                f"reinit_{arrname}",
+                [("o%d" % i, f"0:{symstr(shp)}") for i, shp in enumerate(data.shape)],
                 {},
-                "out = %s" % value,
+                f"out = {value}",
                 {"out": dace.Memlet.simple(arrname, ",".join("o%d" % i for i in range(len(data.shape))))},
                 external_edges=True,
             )

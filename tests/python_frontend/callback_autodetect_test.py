@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests automatic detection and baking of callbacks in the Python frontend."""
 
-from typing import Dict, Union
 import dace
 import numpy as np
 import pytest
@@ -833,7 +832,7 @@ def test_unknown_pyobject():
             return f"MyCustomObject(q={self.q})"
 
     @dace_inhibitor
-    def checkit(obj: Union[MyCustomObject, Dict[str, Union[int, str]]]):
+    def checkit(obj: MyCustomObject | dict[str, int | str]):
         nonlocal last_seen
         nonlocal success_counter
         if obj == {"a": 1, "b": "2"}:

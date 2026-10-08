@@ -79,7 +79,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, prefix: str, target_dim: str):
         """Finds a variable that is not already defined in scope."""
-        candidate = "%s_%s" % (prefix, target_dim)
+        candidate = f"{prefix}_{target_dim}"
         index = 1
         defined_vars = set(str(s) for s in (state.symbols_defined_at(entry).keys() | sdfg.symbols.keys()))
         while candidate in defined_vars:

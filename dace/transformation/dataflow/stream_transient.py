@@ -207,9 +207,9 @@ class AccumulateTransient(transformation.SingleStateTransformation):
 
         init_state.add_mapped_tasklet(
             name="acctrans_init",
-            map_ranges={"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(temp_array.shape)},
+            map_ranges={"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(temp_array.shape)},
             inputs={},
-            code="out = %s" % self.identity,
+            code=f"out = {self.identity}",
             outputs={
                 "out": dace.Memlet.simple(
                     data=data_node.data, subset_str=",".join(["_o%d" % i for i, _ in enumerate(temp_array.shape)])

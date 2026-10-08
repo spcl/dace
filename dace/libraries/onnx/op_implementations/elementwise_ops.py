@@ -11,8 +11,6 @@ This module contains pure implementations of elementwise mathematical operations
 All operations support broadcasting where applicable.
 """
 
-import typing
-
 import dace
 import numpy as np
 from dace import SDFG, SDFGState
@@ -94,7 +92,7 @@ def Neg(X, Y):
     Y[:] = -X
 
 
-@python_pure_op_implementation(string=lambda X: "lambda x: dace.{}(1) / x".format(X.dtype.to_string()))
+@python_pure_op_implementation(string=lambda X: f"lambda x: dace.{X.dtype.to_string()}(1) / x")
 def Reciprocal(X, Y):
     Y[:] = dace.elementwise(string, X)
 
@@ -121,7 +119,7 @@ class PurePow(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         # Special case for constant exponents
         y_value = None
@@ -174,7 +172,7 @@ def Div(A, B, C):
 # ============================================================================
 
 
-@python_pure_op_implementation(cast_lambda=lambda X: "lambda x: max(x, dace.{}(0))".format(X.dtype.to_string()))
+@python_pure_op_implementation(cast_lambda=lambda X: f"lambda x: max(x, dace.{X.dtype.to_string()}(0))")
 def Relu(X, Y):
     Y[:] = dace.elementwise(cast_lambda, X)
 
@@ -198,7 +196,7 @@ class PureClip(ONNXForward):
         return onnx_constant_or_none(sdfg, min_node) is not None and onnx_constant_or_none(sdfg, max_node) is not None
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         min_node = next(state.in_edges_by_connector(node, "min")).src
         max_node = next(state.in_edges_by_connector(node, "max")).src

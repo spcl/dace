@@ -1,5 +1,4 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional, Set
 
 import networkx as nx
 
@@ -33,8 +32,8 @@ class TransientReuse(ppl.Pass):
         # If states changed
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
-        result: Set[str] = set()
+    def apply_pass(self, sdfg: SDFG, _) -> set[str] | None:
+        result: set[str] = set()
 
         memory_before = 0
         arrays = {}

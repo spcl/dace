@@ -439,7 +439,7 @@ def test_nested_promotion_connector(with_subscript):
     postfix = "a"
     if with_subscript:
         postfix = "b"
-    sdfg = dace.SDFG("testprog14{}".format(postfix))
+    sdfg = dace.SDFG(f"testprog14{postfix}")
     sdfg.add_array("A", [20, 20], dace.float64)
     sdfg.add_array("B", [1], dace.float64)
     sdfg.add_transient("scal", [1], dace.int32)

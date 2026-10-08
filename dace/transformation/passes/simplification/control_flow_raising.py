@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from typing import Dict, List, Optional, Tuple
 import warnings
 
 import networkx as nx
@@ -64,7 +63,7 @@ class ControlFlowRaising(ppl.Pass):
 
             # First check if there is an unconditional outgoing edge.
             has_unconditional = False
-            full_cond_expression: Optional[List[ast.AST]] = None
+            full_cond_expression: list[ast.AST] | None = None
             oedges = sdfg.out_edges(nd)
             for oe in oedges:
                 if oe.data.is_unconditional():
@@ -158,7 +157,7 @@ class ControlFlowRaising(ppl.Pass):
                     graph.add_edge(block, conditional, InterstateEdge())
 
                     # Populate branches.
-                    full_cond_expression: Optional[sympy.Basic] = None
+                    full_cond_expression: sympy.Basic | None = None
                     uncond_generated = False
                     for i, oe in enumerate(oedges):
                         branch_name = "branch_" + str(i) + "_" + block.label
@@ -242,7 +241,7 @@ class ControlFlowRaising(ppl.Pass):
                 continue
 
             # Compute immediate dominators
-            idom: Dict[ControlFlowBlock, ControlFlowBlock] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
+            idom: dict[ControlFlowBlock, ControlFlowBlock] = sdutil.immediate_dominators(cfg.nx, cfg.start_block)
 
             back_edges = set([(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)])
 
@@ -285,7 +284,7 @@ class ControlFlowRaising(ppl.Pass):
                 sdfg.reset_cfg_list()
         return lifted
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int, int]]:
+    def apply_pass(self, top_sdfg: SDFG, _) -> tuple[int, int, int] | None:
         lifted_returns = 0
         lifted_loops = 0
         lifted_unstructured = 0
@@ -300,7 +299,7 @@ class ControlFlowRaising(ppl.Pass):
         top_sdfg.reset_cfg_list()
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured
 
-    def report(self, pass_retval: Optional[Tuple[int, int, int]]):
+    def report(self, pass_retval: tuple[int, int, int] | None):
         if pass_retval and any([x > 0 for x in pass_retval]):
             return (
                 f"Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, "

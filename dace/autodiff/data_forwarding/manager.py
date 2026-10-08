@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import List, Tuple, Optional
 
 # DaCe imports
 from dace.sdfg import nodes
@@ -18,7 +17,7 @@ class DataForwardingManager:
 
         # The user specified strategy for forwarding
         # Whether to forward data through separate SDFGs
-        self.bwd_generator: "BackwardPassGenerator" = bwd_generator
+        self.bwd_generator: BackwardPassGenerator = bwd_generator
 
     def forward_data_to_backward_pass(self) -> None:
         """
@@ -41,14 +40,14 @@ class DataForwardingManager:
                 strategy_choice[index],
             )
 
-    def _get_overwrite_resolution_strategy(self) -> Tuple[List[str], List[Optional[nodes.NestedSDFG]]]:
+    def _get_overwrite_resolution_strategy(self) -> tuple[list[str], list[nodes.NestedSDFG | None]]:
         """
         Choose a strategy for resolving overwritten data that we need to forward to the backward pass.
         If the user wants a specific strategy, we use it.
         Otherwise, we evaluate what strategy is best for this specific node.
         """
-        strategy_choice: List[str] = []
-        recomputation_nsdfgs: List[Optional[nodes.NestedSDFG]] = []
+        strategy_choice: list[str] = []
+        recomputation_nsdfgs: list[nodes.NestedSDFG | None] = []
 
         # As preprocessing step,
         # We will store all of the global program inputs,
@@ -124,7 +123,7 @@ class DataForwardingManager:
         forward_node: nodes.AccessNode,
         target_node: nodes.Node,
         starting_edge: dgraph.MultiConnectorEdge,
-        recomputation_nsdfg: Optional[nodes.NestedSDFG],
+        recomputation_nsdfg: nodes.NestedSDFG | None,
         strategy: str,
     ):
         """
@@ -189,7 +188,7 @@ class DataForwardingManager:
                 starting_edge=starting_edge,
             )
 
-    def _check_node_overwrite(self, forward_state: SDFGState, node: nodes.AccessNode) -> Tuple[bool, bool]:
+    def _check_node_overwrite(self, forward_state: SDFGState, node: nodes.AccessNode) -> tuple[bool, bool]:
         """
         Given an AccessNode from the forward state, check if the data of this node has changed.
         We look at all the AccessNodes with the same data that occur after the 'node' parameter
@@ -306,7 +305,7 @@ class DataForwardingManager:
         forward_node: nodes.AccessNode,
         target_node: nodes.Node,
         starting_edge: dgraph.MultiConnectorEdge,
-        replicated_node: Optional[nodes.AccessNode] = None,
+        replicated_node: nodes.AccessNode | None = None,
     ):
         """
         Replicate and connect the forward AccessNode to the requesting node in the backward pass.

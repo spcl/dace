@@ -2,7 +2,6 @@
 
 from collections import defaultdict
 import copy
-from typing import Dict, List, Tuple
 import networkx as nx
 import warnings
 import sympy
@@ -30,13 +29,13 @@ def is_int(i):
 
 
 def _collect_map_ranges(
-    state: SDFGState, memlet_path: List[gr.MultiConnectorEdge[mm.Memlet]]
-) -> List[Tuple[str, subsets.Range]]:
+    state: SDFGState, memlet_path: list[gr.MultiConnectorEdge[mm.Memlet]]
+) -> list[tuple[str, subsets.Range]]:
     """
     Collects a list of parameters and ranges for every map (entry or exit)
     in the given memlet path.
     """
-    ranges: List[Tuple[str, subsets.Range]] = []
+    ranges: list[tuple[str, subsets.Range]] = []
     # Outgoing (write) memlet path
     if any(isinstance(e.src, nodes.MapExit) for e in memlet_path):
         for e in reversed(memlet_path):
@@ -50,7 +49,7 @@ def _collect_map_ranges(
     return ranges
 
 
-def _canonicalize_memlet(memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.Range]]) -> Tuple[symbolic.SymbolicType]:
+def _canonicalize_memlet(memlet: mm.Memlet, mapranges: list[tuple[str, subsets.Range]]) -> tuple[symbolic.SymbolicType]:
     """
     Turn a memlet subset expression (of a single element) into an expression
     that does not depend on the map symbol names.
@@ -63,8 +62,8 @@ def _canonicalize_memlet(memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.R
 def _do_memlets_correspond(
     memlet_a: mm.Memlet,
     memlet_b: mm.Memlet,
-    mapranges_a: List[Tuple[str, subsets.Range]],
-    mapranges_b: List[Tuple[str, subsets.Range]],
+    mapranges_a: list[tuple[str, subsets.Range]],
+    mapranges_b: list[tuple[str, subsets.Range]],
 ) -> bool:
     """
     Returns True if the two memlets correspond to each other, disregarding
@@ -145,7 +144,7 @@ class StreamingMemory(xf.SingleStateTransformation):
     )
 
     @classmethod
-    def expressions(cls) -> List[gr.SubgraphView]:
+    def expressions(cls) -> list[gr.SubgraphView]:
         return [
             sdutil.node_path_graph(cls.access, cls.entry),
             sdutil.node_path_graph(cls.exit, cls.access),
@@ -255,7 +254,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             else:
                 edges = state.in_edges(dnode)
 
-            mapping: Dict[Tuple[subsets.Range], List[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(list)
+            mapping: dict[tuple[subsets.Range], list[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(list)
             ranges = {}
             for edge in edges:
                 mpath = state.memlet_path(edge)
@@ -314,7 +313,7 @@ class StreamingMemory(xf.SingleStateTransformation):
         # To understand how many components we need to create, all map ranges
         # throughout memlet paths must match exactly. We thus create a
         # dictionary of unique ranges
-        mapping: Dict[Tuple[subsets.Range], List[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(list)
+        mapping: dict[tuple[subsets.Range], list[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(list)
         ranges = {}
         for edge in edges:
             mpath = state.memlet_path(edge)
@@ -322,7 +321,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             mapping[tuple(r[1] for r in ranges[edge])].append(edge)
 
         # Collect all edges with the same memory access pattern
-        components_to_create: Dict[Tuple[symbolic.SymbolicType], List[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(
+        components_to_create: dict[tuple[symbolic.SymbolicType], list[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(
             list
         )
         for edges_with_same_range in mapping.values():
@@ -366,17 +365,13 @@ class StreamingMemory(xf.SingleStateTransformation):
 
                 if not is_int(sdfg.arrays[dnode.data].shape[-1]):
                     warnings.warn(
-                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0".format(
-                            sym=sdfg.arrays[dnode.data].shape[-1], vec=vector_size
-                        )
+                        f"Using the MemoryBuffering transformation is potential unsafe since {sdfg.arrays[dnode.data].shape[-1]} is not an integer. There should be no issue if {sdfg.arrays[dnode.data].shape[-1]} % {vector_size} == 0"
                     )
 
                 for i in sdfg.arrays[dnode.data].strides:
                     if not is_int(i):
                         warnings.warn(
-                            "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0".format(
-                                sym=i, vec=vector_size
-                            )
+                            f"Using the MemoryBuffering transformation is potential unsafe since {i} is not an integer. There should be no issue if {i} % {vector_size} == 0"
                         )
 
                 if self.expr_index == 0:  # Read
@@ -496,7 +491,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             sdfg.arrays[arrname].shape = new_shape
 
             # Change strides
-            new_strides: List = list(sdfg.arrays[arrname].strides)
+            new_strides: list = list(sdfg.arrays[arrname].strides)
 
             for i in range(len(new_strides)):
                 if i == len(new_strides) - 1:  # Skip last dimension since it is always 1
@@ -569,9 +564,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                     if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) == map.params[-1]:
                         if not is_int(ranges[-1][1][1]):
                             warnings.warn(
-                                "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0".format(
-                                    sym=ranges[-1][1][1].args[1], vec=vector_size
-                                )
+                                f"Using the MemoryBuffering transformation is potential unsafe since {ranges[-1][1][1].args[1]} is not an integer. There should be no issue if {ranges[-1][1][1].args[1]} % {vector_size} == 0"
                             )
 
                         ranges[-1] = (
@@ -584,9 +577,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                             if isinstance(arg, symbol) and str(arg) == map.params[-1]:
                                 if not is_int(ranges[-1][1][1]):
                                     warnings.warn(
-                                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0".format(
-                                            sym=ranges[-1][1][1].args[1], vec=vector_size
-                                        )
+                                        f"Using the MemoryBuffering transformation is potential unsafe since {ranges[-1][1][1].args[1]} is not an integer. There should be no issue if {ranges[-1][1][1].args[1]} % {vector_size} == 0"
                                     )
 
                                 ranges[-1] = (
@@ -633,7 +624,7 @@ class StreamingComposition(xf.SingleStateTransformation):
     )
 
     @classmethod
-    def expressions(cls) -> List[gr.SubgraphView]:
+    def expressions(cls) -> list[gr.SubgraphView]:
         return [sdutil.node_path_graph(cls.first, cls.access, cls.second)]
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:

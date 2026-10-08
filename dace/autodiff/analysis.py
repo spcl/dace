@@ -3,7 +3,6 @@
 Analysis helpers for autodiff
 """
 
-from typing import Dict, Set, Tuple, Optional
 import collections
 
 import networkx as nx
@@ -12,10 +11,10 @@ from dace.sdfg import SDFG, SDFGState, nodes, utils as sdfg_utils
 from dace.transformation.passes import analysis
 from dace.sdfg.state import FunctionCallRegion
 
-AccessSets = Dict[SDFGState, Tuple[Set[str], Set[str]]]
+AccessSets = dict[SDFGState, tuple[set[str], set[str]]]
 
 
-def dependency_analysis(sdfg: SDFG) -> Dict[str, Set[str]]:
+def dependency_analysis(sdfg: SDFG) -> dict[str, set[str]]:
     """
     Analyze read dependencies of arrays in the SDFG.
 
@@ -44,7 +43,7 @@ def dependency_analysis(sdfg: SDFG) -> Dict[str, Set[str]]:
     return result
 
 
-def inverse_reachability(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
+def inverse_reachability(sdfg: SDFG) -> dict[SDFGState, set[SDFGState]]:
 
     reachability = analysis.StateReachability().apply_pass(sdfg, {})
     inverse_reachability = collections.defaultdict(set)
@@ -58,7 +57,7 @@ def inverse_reachability(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
 
 
 def is_previously_written(
-    sdfg: SDFG, state: SDFGState, node: nodes.Node, array_name: str, access_sets: Optional[AccessSets] = None
+    sdfg: SDFG, state: SDFGState, node: nodes.Node, array_name: str, access_sets: AccessSets | None = None
 ) -> bool:
     """
     Determine whether the given array name was written before the current node.

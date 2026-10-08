@@ -1,9 +1,8 @@
 import dace
-import typing
 import pytest
 
 
-def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
+def _get_sdfg() -> tuple[dace.SDFG, dace.InterstateEdge]:
     sdfg = dace.SDFG("interstate_util_test")
 
     # Add symbols and arrays
@@ -36,20 +35,20 @@ def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
 
 
 def test_read_symbols():
-    sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+    sdfg_and_edge: tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.read_symbols() == {"scalar2", "symbol1", "array1"}
 
 
 def test_used_symbols():
-    sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+    sdfg_and_edge: tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.used_symbols() == {"scalar2", "symbol1", "array1"}
     assert e.data.used_symbols(all_symbols=True) == e.data.used_symbols(all_symbols=False)
 
 
 def test_all_used_symbols():
-    sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+    sdfg_and_edge: tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.used_symbols(all_symbols=True, union_lhs_symbols=True) == {
         "scalar1",
@@ -65,21 +64,21 @@ def test_all_used_symbols():
 
 
 def test_all_read_sdfg_symbols():
-    sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+    sdfg_and_edge: tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     sdfg: dace.SDFG = sdfg_and_edge[0]
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.used_sdfg_symbols(arrays=sdfg.arrays, union_lhs_symbols=False) == {"symbol1"}
 
 
 def test_all_read_arrays():
-    sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+    sdfg_and_edge: tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     sdfg: dace.SDFG = sdfg_and_edge[0]
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.used_arrays(arrays=sdfg.arrays, union_lhs_symbols=False) == {"scalar2", "array1"}
 
 
 def test_all_used_arrays():
-    sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+    sdfg_and_edge: tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     sdfg: dace.SDFG = sdfg_and_edge[0]
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.used_arrays(arrays=sdfg.arrays, union_lhs_symbols=True) == {"scalar2", "scalar1", "array1"}
@@ -91,7 +90,7 @@ def test_writing_to_scalar_on_iedge_is_invalid():
         dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
         match="Assignment to a scalar or an array detected in an interstate edge",
     ):
-        sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+        sdfg_and_edge: tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
         sdfg: dace.SDFG = sdfg_and_edge[0]
         sdfg.validate()
 

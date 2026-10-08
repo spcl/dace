@@ -13,7 +13,6 @@ from numpy import finfo as finf
 from numpy import float64 as fl
 
 from dace.frontend.fortran import ast_internal_classes
-from typing import List, Set
 
 fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
@@ -24,7 +23,7 @@ fortrantypes2dacetypes = {
 
 
 def add_tasklet(
-    substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set[str], code: str, debuginfo: list, source: str
+    substate: SDFGState, name: str, vars_in: set[str], vars_out: set[str], code: str, debuginfo: list, source: str
 ):
     tasklet = substate.add_tasklet(
         name="T" + name,
@@ -91,12 +90,12 @@ class TaskletWriter:
 
     def __init__(
         self,
-        outputs: List[str],
-        outputs_changes: List[str],
+        outputs: list[str],
+        outputs_changes: list[str],
         sdfg: SDFG = None,
         name_mapping=None,
-        input: List[str] = None,
-        input_changes: List[str] = None,
+        input: list[str] = None,
+        input_changes: list[str] = None,
     ):
         self.outputs = outputs
         self.outputs_changes = outputs_changes

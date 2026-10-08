@@ -17,7 +17,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_solve_getrf_getrs_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG(f"matrix_solve_getrf_getrs_{implementation}_{dtype}")
     state = sdfg.add_state("dataflow")
 
     Ahost_arr = sdfg.add_array("A", [n, n], dtype, storage=dace.StorageType.Default)
@@ -118,7 +118,7 @@ def test_getrs(implementation, dtype, storage):
     )
 
     if np.allclose(np.dot(a1, b2), b1):
-        print("Test ran successfully for {}.".format(implementation))
+        print(f"Test ran successfully for {implementation}.")
     else:
         print(b2)
         print(np.dot(a1, b2) - b1)

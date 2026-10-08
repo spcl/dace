@@ -83,7 +83,7 @@ def test_regenerate_code():
     assert os.path.exists(source_filename)
 
     # Rewrite source code
-    with open(source_filename, "r") as f:
+    with open(source_filename) as f:
         source = f.read()
         source = re.sub(r"\b3\b", "4", source)
 

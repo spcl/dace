@@ -18,7 +18,6 @@ from dace.transformation.helpers import find_contiguous_subsets
 from dace.sdfg import dealias
 
 from copy import deepcopy as dcpy
-from typing import List, Optional, Tuple
 import warnings
 
 from collections import defaultdict
@@ -381,7 +380,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     @staticmethod
     def get_adjacent_nodes(
         sdfg, graph, map_entries
-    ) -> Tuple[List[nodes.AccessNode], List[nodes.AccessNode], List[nodes.AccessNode]]:
+    ) -> tuple[list[nodes.AccessNode], list[nodes.AccessNode], list[nodes.AccessNode]]:
         """
         For given map entries, finds a set of in, out and intermediate nodes as defined below
 
@@ -496,8 +495,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         self,
         sdfg: dace.sdfg.SDFG,
         graph: dace.sdfg.SDFGState,
-        map_entries: List[nodes.MapEntry],
-        map_exits: List[nodes.MapExit],
+        map_entries: list[nodes.MapEntry],
+        map_exits: list[nodes.MapExit],
         node: nodes.AccessNode,
     ):
         """
@@ -594,7 +593,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         name: str,
         nname: str,
         memlet: Memlet,
-        min_offset: Optional[List[symbolic.SymbolicType]] = None,
+        min_offset: list[symbolic.SymbolicType] | None = None,
     ):
         """
         DFS to replace strides and volumes of data that exhibits nested SDFGs
@@ -657,10 +656,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     def determine_compressible_nodes(
         sdfg: dace.sdfg.SDFG,
         graph: dace.sdfg.SDFGState,
-        intermediate_nodes: List[nodes.AccessNode],
-        map_entries: List[nodes.MapEntry],
-        map_exits: List[nodes.MapExit],
-        do_not_override: List[str] = [],
+        intermediate_nodes: list[nodes.AccessNode],
+        map_entries: list[nodes.MapEntry],
+        map_exits: list[nodes.MapExit],
+        do_not_override: list[str] = [],
     ):
         """
         Checks for all intermediate nodes whether they appear
@@ -712,10 +711,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         self,
         sdfg: dace.sdfg.SDFG,
         graph: dace.sdfg.SDFGState,
-        intermediate_nodes: List[nodes.AccessNode],
-        out_nodes: List[nodes.AccessNode],
-        map_entries: List[nodes.MapEntry],
-        map_exits: List[nodes.MapExit],
+        intermediate_nodes: list[nodes.AccessNode],
+        out_nodes: list[nodes.AccessNode],
+        map_entries: list[nodes.MapEntry],
+        map_exits: list[nodes.MapExit],
     ):
         """
         Creates cloned access nodes and data arrays for nodes that are both in intermediate nodes
@@ -766,9 +765,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         self,
         sdfg: dace.sdfg.SDFG,
         graph: dace.sdfg.SDFGState,
-        intermediate_nodes: List[nodes.AccessNode],
-        map_entries: List[nodes.MapEntry],
-        map_exits: List[nodes.MapExit],
+        intermediate_nodes: list[nodes.AccessNode],
+        map_entries: list[nodes.MapEntry],
+        map_exits: list[nodes.MapExit],
     ):
         """
         Determines the invariant dimensions for each node -- dimensions in
@@ -809,12 +808,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         self,
         sdfg: dace.sdfg.SDFG,
         graph: dace.sdfg.SDFGState,
-        in_nodes: List[nodes.AccessNode],
-        out_nodes: List[nodes.AccessNode],
-        intermediate_nodes: List[nodes.AccessNode],
-        map_entries: List[nodes.MapEntry],
-        map_exits: List[nodes.MapExit],
-        do_not_override: List[str] = [],
+        in_nodes: list[nodes.AccessNode],
+        out_nodes: list[nodes.AccessNode],
+        intermediate_nodes: list[nodes.AccessNode],
+        map_entries: list[nodes.MapEntry],
+        map_exits: list[nodes.MapExit],
+        do_not_override: list[str] = [],
     ):
         """
         Helper function that computes the following information:
@@ -853,7 +852,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         self,
         sdfg: dace.sdfg.SDFG,
         graph: dace.sdfg.SDFGState,
-        map_entries: List[nodes.MapEntry],
+        map_entries: list[nodes.MapEntry],
         do_not_override=None,
         **kwargs,
     ):

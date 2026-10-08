@@ -1,5 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple
 
 import dace
 
@@ -8,7 +7,7 @@ import pytest
 import numpy as np
 
 
-def _make_sdfg_with_zero_sized_an_to_an_memlet() -> Tuple[dace.SDFG, dace.SDFGState]:
+def _make_sdfg_with_zero_sized_an_to_an_memlet() -> tuple[dace.SDFG, dace.SDFGState]:
     """Generates an SDFG that performs a copy that has a zero size."""
     sdfg = dace.SDFG("zero_size_copy_sdfg")
     state = sdfg.add_state(is_start_block=True)

@@ -4,7 +4,8 @@ import math
 import dace
 import json
 
-from typing import Dict, Generator, Any, List, Tuple
+from typing import Any
+from collections.abc import Generator
 from dace.optimization import auto_tuner
 from dace.optimization import utils as optim_utils
 from dace.sdfg.sdfg import SDFG
@@ -51,26 +52,26 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def file_name(self, label: str) -> str:
         return f"{self._task}.{label}.tuning"
 
-    def try_load(self, file_name) -> Dict:
+    def try_load(self, file_name) -> dict:
         results = None
         if os.path.exists(file_name):
             print(f"Using cached {file_name}")
 
-            with open(file_name, "r") as fp:
+            with open(file_name) as fp:
                 results = json.load(fp)
 
         return results
 
-    def cutouts(self) -> Generator[Tuple[SDFGState, str], None, None]:
+    def cutouts(self) -> Generator[tuple[SDFGState, str], None, None]:
         raise NotImplementedError
 
     def space(self, **kwargs) -> Generator[Any, None, None]:
         raise NotImplementedError
 
-    def search(self, cutout: SDFG, measurements: int, **kwargs) -> Dict:
+    def search(self, cutout: SDFG, measurements: int, **kwargs) -> dict:
         raise NotImplementedError
 
-    def pre_evaluate(self, **kwargs) -> Dict:
+    def pre_evaluate(self, **kwargs) -> dict:
         raise NotImplementedError
 
     def evaluate(self, **kwargs) -> float:
@@ -100,7 +101,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         )
         return runtime
 
-    def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict[Any, Any]:
+    def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> dict[Any, Any]:
         tuning_report = {}
         for cutout, label in tqdm(list(self.cutouts())):
             fn = self.file_name(label)
@@ -124,7 +125,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return tuning_report
 
-    def search(self, cutout: SDFG, measurements: int, **kwargs) -> Dict[str, float]:
+    def search(self, cutout: SDFG, measurements: int, **kwargs) -> dict[str, float]:
         kwargs = self.pre_evaluate(cutout=cutout, measurements=measurements, **kwargs)
 
         results = {}
@@ -137,7 +138,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         return results
 
     @staticmethod
-    def top_k_configs(tuning_report, k: int) -> List[Tuple[str, float]]:
+    def top_k_configs(tuning_report, k: int) -> list[tuple[str, float]]:
         all_configs = []
         for cutout_label in tuning_report:
             configs = tuning_report[cutout_label]

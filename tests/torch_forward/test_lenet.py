@@ -15,7 +15,7 @@ from tests.utils import torch_tensors_close
 
 class LeNet(nn.Module):
     def __init__(self):
-        super(LeNet, self).__init__()
+        super().__init__()
         self.conv1 = nn.Conv2d(1, 6, (3, 3))
         self.conv2 = nn.Conv2d(6, 16, (3, 3))
         self.fc1 = nn.Linear(16 * 6 * 6, 120)  # 6*6 from image dimension

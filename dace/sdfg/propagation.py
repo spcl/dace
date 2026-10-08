@@ -9,7 +9,7 @@ import functools
 import itertools
 import warnings
 from collections import deque
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, Optional
 
 import sympy
 from sympy import Symbol, ceiling
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 @registry.make_registry
-class MemletPattern(object):
+class MemletPattern:
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
@@ -41,7 +41,7 @@ class MemletPattern(object):
 
 
 @registry.make_registry
-class SeparableMemletPattern(object):
+class SeparableMemletPattern:
     """Memlet pattern that can be applied to each of the dimensions
     separately."""
 
@@ -501,14 +501,7 @@ class GenericSMemlet(SeparableMemletPattern):
             neg_lastindex = node_rb
             if node_rs != 1:
                 pos_lastindex = symbolic.pystr_to_symbolic(
-                    "%s + int_floor(%s - %s, %s) * %s"
-                    % (
-                        symbolic.symstr(node_rb, cpp_mode=False),
-                        symbolic.symstr(node_re, cpp_mode=False),
-                        symbolic.symstr(node_rb, cpp_mode=False),
-                        symbolic.symstr(node_rs, cpp_mode=False),
-                        symbolic.symstr(node_rs, cpp_mode=False),
-                    )
+                    f"{symbolic.symstr(node_rb, cpp_mode=False)} + int_floor({symbolic.symstr(node_re, cpp_mode=False)} - {symbolic.symstr(node_rb, cpp_mode=False)}, {symbolic.symstr(node_rs, cpp_mode=False)}) * {symbolic.symstr(node_rs, cpp_mode=False)}"
                 )
                 neg_firstindex = pos_lastindex
 
@@ -1075,7 +1068,7 @@ def _collect_state_border_memlet_candidates(state: "SDFGState", border_memlets) 
                 border_memlets[direction][node.label].extend(_candidates_through_view(state, edge, direction))
 
 
-def _candidates_through_view(state: "SDFGState", edge, direction: str) -> List[Memlet]:
+def _candidates_through_view(state: "SDFGState", edge, direction: str) -> list[Memlet]:
     """
     Resolves a border candidate that reaches its container through a view.
 
@@ -1110,7 +1103,7 @@ def _candidates_through_view(state: "SDFGState", edge, direction: str) -> List[M
         return [edge.data]
 
     inner_edges = state.out_edges(view_node) if direction == "in" else state.in_edges(view_node)
-    result: List[Memlet] = []
+    result: list[Memlet] = []
     for inner in inner_edges:
         if inner.data.is_empty() or inner.data.data != view_node.data:
             return [edge.data]
@@ -1826,7 +1819,7 @@ def propagate_memlet(
 
     if arr is None:
         if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
+            raise KeyError(f'Data descriptor (Array, Stream) "{memlet.data}" not defined in SDFG.')
 
         # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
         #        so this test cannot be used
@@ -1855,18 +1848,18 @@ def propagate_memlet(
         new_memlet.dynamic = True
         return new_memlet
     else:
-        raise NotImplementedError("Unimplemented primitive: %s" % type(entry_node))
+        raise NotImplementedError(f"Unimplemented primitive: {type(entry_node)}")
 
 
 # External API
 def propagate_subset(
-    memlets: List[Memlet],
+    memlets: list[Memlet],
     arr: data.Data,
-    params: List[str],
+    params: list[str],
     rng: subsets.Subset,
     *,
-    defined_variables: Set[symbolic.SymbolicType] = None,
-    undefined_variables: Set[symbolic.SymbolicType] = None,
+    defined_variables: set[symbolic.SymbolicType] = None,
+    undefined_variables: set[symbolic.SymbolicType] = None,
     use_dst: bool = False,
 ) -> Memlet:
     """Tries to propagate a list of memlets through a range (computes the
@@ -1973,7 +1966,7 @@ def propagate_subset(
             old_subset = new_subset
             new_subset = subsets.union(new_subset, tmp_subset)
             if new_subset is None:
-                warnings.warn("Subset union failed between %s and %s " % (old_subset, tmp_subset))
+                warnings.warn(f"Subset union failed between {old_subset} and {tmp_subset} ")
                 break
 
     # Some unions failed
@@ -2001,7 +1994,7 @@ def propagate_subset(
     return new_memlet
 
 
-def _with_param_symbols(subset: subsets.Subset, params: List[symbolic.symbol]) -> subsets.Subset:
+def _with_param_symbols(subset: subsets.Subset, params: list[symbolic.symbol]) -> subsets.Subset:
     """
     Returns the subset with every symbol named like a parameter replaced by that parameter's own symbol object.
 
@@ -2030,7 +2023,7 @@ def _with_param_symbols(subset: subsets.Subset, params: List[symbolic.symbol]) -
     return subset
 
 
-def _freesyms(expr) -> Set:
+def _freesyms(expr) -> set:
     """
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.

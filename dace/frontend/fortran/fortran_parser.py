@@ -8,7 +8,6 @@ from dace.frontend.fortran import ast_components
 from dace.frontend.fortran import ast_transforms
 from dace.frontend.fortran import ast_utils
 from dace.frontend.fortran import ast_internal_classes
-from typing import List, Optional
 from dace import dtypes
 from dace import Language as lang
 from dace import data as dat
@@ -101,7 +100,7 @@ class AST_translator:
         return a
 
     def get_memlet_range(
-        self, sdfg: SDFG, variables: List[ast_internal_classes.FNode], var_name: str, var_name_tasklet: str
+        self, sdfg: SDFG, variables: list[ast_internal_classes.FNode], var_name: str, var_name_tasklet: str
     ) -> str:
         """
         This function returns the memlet range for the given variable.
@@ -123,7 +122,7 @@ class AST_translator:
             if o_v.name == var_name_tasklet:
                 return ast_utils.generate_memlet(o_v, sdfg, self)
 
-    def translate(self, node: ast_internal_classes.FNode, sdfg: SDFG, cfg: Optional[ControlFlowRegion] = None):
+    def translate(self, node: ast_internal_classes.FNode, sdfg: SDFG, cfg: ControlFlowRegion | None = None):
         """
         This function is responsible for translating the AST into a SDFG.
         :param node: The node to be translated

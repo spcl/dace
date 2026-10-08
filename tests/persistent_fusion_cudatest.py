@@ -156,7 +156,7 @@ def _make_sdfg():
 
 def init_scalar(state, node, value):
     tasklet = state.add_tasklet(
-        "set_%s" % node.data,
+        f"set_{node.data}",
         {},
         {"out"},
         """
@@ -334,7 +334,7 @@ def test_persistent_fusion():
     reference = nx.shortest_path(graph, source=srcnode)
     reference = np.array([len(reference[v]) - 1 if v in reference else np.iinfo(vtype).max for v in range(V)])
 
-    print("Breadth-First Search (E = {}, V = {})".format(E, V))
+    print(f"Breadth-First Search (E = {E}, V = {V})")
 
     # Allocate output arrays
     depth = np.ndarray([V], vtype)

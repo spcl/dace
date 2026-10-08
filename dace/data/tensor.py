@@ -9,7 +9,6 @@ based on the abstraction described in [https://doi.org/10.1145/3276493].
 import enum
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple, Union
 
 from dace import dtypes, serialize, symbolic
 from dace.data.core import Data, Scalar, Structure
@@ -147,7 +146,7 @@ class TensorIndex(ABC):
         pass
 
     @abstractmethod
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         """
         Generates the fields needed for the index.
 
@@ -233,7 +232,7 @@ class TensorIndexDense(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {}
 
     def __repr__(self) -> str:
@@ -302,7 +301,7 @@ class TensorIndexCompressed(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_pos": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
@@ -376,7 +375,7 @@ class TensorIndexSingleton(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
@@ -448,7 +447,7 @@ class TensorIndexRange(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
@@ -516,7 +515,7 @@ class TensorIndexOffset(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> dict[str, Data]:
         return {
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
@@ -554,12 +553,12 @@ class Tensor(Structure):
         self,
         value_dtype: dtypes.typeclass,
         tensor_shape,
-        indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
+        indices: list[tuple[TensorIndex, int | symbolic.SymExpr]],
         value_count: symbolic.SymExpr,
         name: str,
         transient: bool = False,
         storage: dtypes.StorageType = dtypes.StorageType.Default,
-        location: Dict[str, str] = None,
+        location: dict[str, str] = None,
         lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
         debuginfo: dtypes.DebugInfo = None,
     ):
@@ -673,11 +672,9 @@ class Tensor(Structure):
         # all tensor dimensions must occur exactly once in indices
         if not sorted(dimension_order) == list(range(num_dims)):
             raise TypeError(
-                (
-                    f"All tensor dimensions must be referenced exactly once in "
-                    f"tensor indices. (referenced dimensions: {dimension_order}; "
-                    f"tensor dimensions: {list(range(num_dims))})"
-                )
+                f"All tensor dimensions must be referenced exactly once in "
+                f"tensor indices. (referenced dimensions: {dimension_order}; "
+                f"tensor dimensions: {list(range(num_dims))})"
             )
 
         # assembling permanent and index specific fields
@@ -691,7 +688,7 @@ class Tensor(Structure):
         for lvl, index in enumerate(indices):
             fields.update(index.fields(lvl, value_count))
 
-        super(Tensor, self).__init__(fields, name, transient, storage, location, lifetime, debuginfo)
+        super().__init__(fields, name, transient, storage, location, lifetime, debuginfo)
 
     def __repr__(self):
         return f"{self.name} (dtype: {self.value_dtype}, shape: {list(self.tensor_shape)}, indices: {self.indices})"

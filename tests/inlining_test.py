@@ -5,7 +5,6 @@ from dace.sdfg.state import FunctionCallRegion, NamedRegion
 from dace.transformation.interstate import InlineSDFG, StateFusion, InlineMultistateSDFG
 from dace.libraries import blas
 from dace.library import change_default
-from typing import Optional, Tuple, Type, Union, List
 import copy
 import numpy as np
 import uuid
@@ -16,12 +15,12 @@ H = dace.symbol("H")
 
 
 def count_nodes(
-    graph: Union[dace.SDFG, dace.SDFGState],
-    node_type: Union[Tuple[Type, ...], Type],
+    graph: dace.SDFG | dace.SDFGState,
+    node_type: tuple[type, ...] | type,
     return_nodes: bool = False,
-) -> Union[int, List[dace_nodes.Node]]:
+) -> int | list[dace_nodes.Node]:
     states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
-    found_nodes: List[dace_nodes.Node] = []
+    found_nodes: list[dace_nodes.Node] = []
     for state_nodes in states:
         for node in state_nodes.nodes():
             if isinstance(node, node_type):
@@ -71,7 +70,7 @@ def test():
     myprogram.compile(dace.float32[W, H], dace.float32[H, W], dace.int32)
 
 
-def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG, dace_nodes.NestedSDFG]:
+def _make_chain_reduction_sdfg() -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG, dace_nodes.NestedSDFG]:
 
     def _make_nested_sdfg(name: str) -> dace.SDFG:
         sdfg = dace.SDFG(name)
@@ -671,7 +670,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     outside_uses_different_symbol: bool,
     separate_write_back_state: bool,
     map_outer_symbol: bool = False,
-) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+) -> tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     Args:
         outside_uses_symbol: The outside SDFG also uses a symbol, if `outside_uses_different_symbol` is
@@ -845,7 +844,7 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     outside_and_inner_symbol_have_same_meaning: bool,
     separate_write_back_state: bool,
-) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+) -> tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     The SDFGs created by this function are rather similar to
     `_make_sdfg_for_multistate_inlining_with_symbol_promotion()`, but there are some differences.
@@ -1523,8 +1522,8 @@ def test_inline_nested_accessnode():
 
 
 def _make_shared_inout_sdfg(
-    kind: str, in_map: bool, outer_context: Optional[str] = None
-) -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]:
+    kind: str, in_map: bool, outer_context: str | None = None
+) -> tuple[dace.SDFG, dace_nodes.NestedSDFG]:
     """
     Creates an SDFG with a nested SDFG whose connector ``A`` is both an input and an output bound to the same outer
     container, and whose (single) state reads and writes ``A`` through the same access node.
@@ -1730,7 +1729,7 @@ def test_inline_shared_inout_connector_rejected(outer_context: str, in_map: bool
         InlineSDFG.apply_to(sdfg, nested_sdfg=nested)
 
 
-def _constant_mapped_two_level_sdfg() -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]:
+def _constant_mapped_two_level_sdfg() -> tuple[dace.SDFG, dace_nodes.NestedSDFG]:
     """
     Builds ``Y = 2 * X`` over ``X[20, 3]`` through a nested SDFG in ``M`` and ``K``, mapped to the constants ``20``
     and ``3``. It copies its input to an ``[M, K]`` transient, which another nested SDFG within reads. Integration
@@ -1775,7 +1774,7 @@ def _constant_mapped_two_level_sdfg() -> Tuple[dace.SDFG, dace_nodes.NestedSDFG]
 
 
 @pytest.mark.parametrize("inliner", [InlineSDFG, InlineMultistateSDFG])
-def test_inline_restates_nested_connectors(inliner: Type):
+def test_inline_restates_nested_connectors(inliner: type):
     """
     Tests that inlining a nested SDFG whose symbols are mapped to constants restates the connectors of the nested
     SDFGs within it, which are written in the symbols the inlining replaces.

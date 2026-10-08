@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import dtypes, nodes
-from typing import Any, Dict, List, Union
+from typing import Any
 import numpy as np
 
 N = dace.symbol("N")
@@ -13,7 +13,7 @@ def arrayop(inp: dace.float32[N], out: dace.float32[N]):
         out[i] = 2 * inp[i]
 
 
-def key_exists(d: Union[List[Any], Dict[str, Any]], key: str):
+def key_exists(d: list[Any] | dict[str, Any], key: str):
     if isinstance(d, list):
         for item in d:
             if key_exists(item, key):

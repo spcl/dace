@@ -3,7 +3,6 @@
 
 import ast
 import copy
-from typing import List, Optional, Union
 
 from dace import dtypes, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
@@ -89,7 +88,7 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
-        unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
+        unrolled_iterations: list[ControlFlowRegion | SDFGState] = []
         for position, i in enumerate(offsets):
             # `position`, not `i`: for a negative stride `i` itself walks 0, -1, -2, ... and is
             # just as unsafe in a label. See instantiate_loop_iteration.
@@ -135,7 +134,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         loop: LoopRegion,
         value: symbolic.SymbolicType,
         index: int,
-        label_suffix: Optional[str] = None,
+        label_suffix: str | None = None,
     ) -> ControlFlowRegion:
         it_label = (
             loop.label

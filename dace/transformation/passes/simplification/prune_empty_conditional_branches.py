@@ -1,6 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Optional
 from dace import properties
 from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge
@@ -27,7 +26,7 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply(self, region: ControlFlowRegion, _) -> Optional[int]:
+    def apply(self, region: ControlFlowRegion, _) -> int | None:
         if not isinstance(region, ConditionalBlock):
             return None
         removed_branches = 0

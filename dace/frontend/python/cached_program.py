@@ -3,7 +3,8 @@
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any
+from collections.abc import Callable
 
 import dace
 from dace import config
@@ -11,10 +12,10 @@ from dace import data as dt, hooks
 from dace.sdfg.sdfg import SDFG
 
 # Type hints
-ArgTypes = Dict[str, dt.Data]
-ConstantTypes = Dict[str, Any]
+ArgTypes = dict[str, dt.Data]
+ConstantTypes = dict[str, Any]
 EvalCallback = Callable[[str], Any]
-SpecifiedArgs = Set[str]
+SpecifiedArgs = set[str]
 
 
 # Adapted from https://stackoverflow.com/a/2437645/6489142
@@ -98,7 +99,7 @@ class ProgramCacheEntry:
 
 
 class DaceProgramCache:
-    def __init__(self, evaluate: EvalCallback, size: Optional[int] = None) -> None:
+    def __init__(self, evaluate: EvalCallback, size: int | None = None) -> None:
         """
         Initializes a DaCe program cache.
 
@@ -114,21 +115,21 @@ class DaceProgramCache:
         """Clears the program cache."""
         self.cache.clear()
 
-    def _evaluate_constants(self, constants: Set[str], extra_constants: Dict[str, Any] = None) -> ConstantTypes:
+    def _evaluate_constants(self, constants: set[str], extra_constants: dict[str, Any] = None) -> ConstantTypes:
         # Evaluate closure constants at call time
         return {k: self.eval_callback(k, extra_constants) for k in constants}
 
-    def _evaluate_descriptors(self, arrays: Set[str], extra_constants: Dict[str, Any] = None) -> ConstantTypes:
+    def _evaluate_descriptors(self, arrays: set[str], extra_constants: dict[str, Any] = None) -> ConstantTypes:
         # Evaluate closure array types at call time
         return {k: dt.create_datadescriptor(self.eval_callback(k, extra_constants)) for k in arrays}
 
     def make_key(
         self,
         argtypes: ArgTypes,
-        specified_args: Set[str],
-        closure_types: Set[str],
-        closure_constants: Set[str],
-        extra_constants: Dict[str, Any] = None,
+        specified_args: set[str],
+        closure_types: set[str],
+        closure_constants: set[str],
+        extra_constants: dict[str, Any] = None,
     ) -> ProgramCacheKey:
         """Creates a program cache key from the given arguments."""
         adescs = self._evaluate_descriptors(closure_types, extra_constants)

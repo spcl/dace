@@ -13,7 +13,7 @@ import warnings
 
 from dace import dtypes
 from dace.config import Config
-from typing import Any, List, Tuple, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
@@ -26,7 +26,7 @@ class CompiledSDFGProfiler:
     (excluding init and shutdown).
     """
 
-    times: List[Tuple["SDFG", List[float]]]  #: The list of SDFGs and times for each SDFG called within the context.
+    times: list[tuple["SDFG", list[float]]]  #: The list of SDFGs and times for each SDFG called within the context.
 
     def __init__(
         self,
@@ -52,7 +52,7 @@ class CompiledSDFGProfiler:
         self.report = report.InstrumentationReport(None)
 
     @contextmanager
-    def __call__(self, compiled_sdfg: "CompiledSDFG", args: Tuple[Any, ...]):
+    def __call__(self, compiled_sdfg: "CompiledSDFG", args: tuple[Any, ...]):
         from dace.codegen.instrumentation import report  # Avoid import loop
 
         # zeros to overwrite start time, followed by indices for each repetition

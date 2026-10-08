@@ -40,7 +40,7 @@ class ExpandGemvPure(ExpandTransformation):
             trans_shape_a = shape_a
 
         if trans_shape_a[1] != shape_x[0]:
-            raise SyntaxError("Matrix-vector product size mismatch: {} vs. {}".format(trans_shape_a[1], shape_x[0]))
+            raise SyntaxError(f"Matrix-vector product size mismatch: {trans_shape_a[1]} vs. {shape_x[0]}")
 
         N, M = trans_shape_a[0], trans_shape_a[1]
 
@@ -50,7 +50,7 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=outer_array_x.storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=outer_array_y.storage)
 
-        mul_program = "__out = {} * __A * __x".format(node.alpha)
+        mul_program = f"__out = {node.alpha} * __A * __x"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -69,7 +69,7 @@ class ExpandGemvPure(ExpandTransformation):
         # Initialization map
         init_state.add_mapped_tasklet(
             "gemv_init",
-            {"_o%d" % i: "0:%s" % symbolic.symstr(d) for i, d in enumerate(shape_y)},
+            {"_o%d" % i: f"0:{symbolic.symstr(d)}" for i, d in enumerate(shape_y)},
             {},
             "out = 0",
             {"out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
@@ -79,7 +79,7 @@ class ExpandGemvPure(ExpandTransformation):
         # Multiplication map
         state.add_mapped_tasklet(
             "_GEMV_",
-            {"__i%d" % i: "0:%s" % s for i, s in enumerate([N, M])},
+            {"__i%d" % i: f"0:{s}" for i, s in enumerate([N, M])},
             {
                 "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
                 "__x": dace.Memlet("_x[__i1]"),
@@ -90,7 +90,7 @@ class ExpandGemvPure(ExpandTransformation):
             output_nodes=output_nodes,
         )
 
-        add_program = "__y_out = ({} * __y_in) + __tmp".format(node.beta)
+        add_program = f"__y_out = ({node.beta} * __y_in) + __tmp"
 
         memlet_idx = "__i"
 
@@ -98,7 +98,7 @@ class ExpandGemvPure(ExpandTransformation):
         if node.beta != 0:
             state.add_mapped_tasklet(
                 "_Add_",
-                {"__i": "0:{}".format(N)},
+                {"__i": f"0:{N}"},
                 {
                     "__y_in": dace.Memlet(f"_y[{memlet_idx}]"),
                     "__tmp": dace.Memlet(f"{mul_out}[__i]"),

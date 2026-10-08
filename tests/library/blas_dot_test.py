@@ -16,7 +16,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("dot_product_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG(f"dot_product_{implementation}_{dtype}")
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x" + suffix, [n], dtype, storage=storage, transient=transient)

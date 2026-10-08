@@ -2,7 +2,7 @@
 """Pass replacing implicit copy patterns with explicit ``CopyLibraryNode`` instances."""
 
 import copy
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import data, dtypes, nodes, properties, subsets, symbolic
 from dace.memlet import Memlet
@@ -130,7 +130,7 @@ class InsertExplicitCopies(ppl.Pass):
     def depends_on(self):
         return set()
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Lift every implicit copy in ``sdfg`` (and nested SDFGs) to a ``CopyLibraryNode``.
 
         :param sdfg: The SDFG to transform, recursively including nested SDFGs.

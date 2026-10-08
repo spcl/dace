@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import sympy as sp
-from typing import Dict
 
 from dace.symbolic import symbol
 
@@ -222,7 +221,7 @@ def parse_assumptions(assumptions, array_symbols):
         return {}, [({}, {})]
 
     # Gather assumptions, keeping only the strongest ones for each symbol.
-    condensed_assumptions: Dict[str, Assumptions] = {}
+    condensed_assumptions: dict[str, Assumptions] = {}
     for a in assumptions:
         if "==" in a:
             lhs, rhs = a.split("==")

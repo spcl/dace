@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set, Tuple, Union
+from typing import Any
 
 from dace import SDFG, Memlet, SDFGState
 from dace.frontend.python import astutils
@@ -21,20 +21,20 @@ dirtype = Literal["in", "out"]
 
 class RecodeAttributeNodes(ast.NodeTransformer):
     connector: str
-    data: Union[dt.Structure, dt.ContainerView]
+    data: dt.Structure | dt.ContainerView
     tasklet: nd.Tasklet
     direction: dirtype
     memlet: Memlet
     data_node: nd.AccessNode
     state: SDFGState
-    views_constructed: Set[str]
+    views_constructed: set[str]
 
     def __init__(
         self,
         state: SDFGState,
         data_node: nd.AccessNode,
         connector: str,
-        data: Union[dt.Structure, dt.ContainerView],
+        data: dt.Structure | dt.ContainerView,
         tasklet: nd.Tasklet,
         memlet: Memlet,
         direction: dirtype,
@@ -214,19 +214,19 @@ class RecodeAttributeNodes(ast.NodeTransformer):
 
 class InterstateEdgeRecoder(ast.NodeTransformer):
     sdfg: SDFG
-    element: Union[Edge[InterstateEdge], Tuple[ControlFlowBlock, CodeBlock]]
+    element: Edge[InterstateEdge] | tuple[ControlFlowBlock, CodeBlock]
     data_name: str
-    data: Union[dt.Structure, dt.ContainerArray]
-    views_constructed: Set[str]
+    data: dt.Structure | dt.ContainerArray
+    views_constructed: set[str]
     _lifting_state: SDFGState
 
     def __init__(
         self,
         sdfg: SDFG,
-        element: Union[Edge[InterstateEdge], Tuple[ControlFlowBlock, CodeBlock]],
+        element: Edge[InterstateEdge] | tuple[ControlFlowBlock, CodeBlock],
         data_name: str,
-        data: Union[dt.Structure, dt.ContainerArray],
-        lifting_state: Optional[SDFGState] = None,
+        data: dt.Structure | dt.ContainerArray,
+        lifting_state: SDFGState | None = None,
     ):
         self.sdfg = sdfg
         self.element = element
@@ -309,7 +309,7 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
         lift_state.add_edge(slice_view_node, None, attr_view_node, "views", attr_memlet)
         return self.generic_visit(replacement)
 
-    def _get_or_create_lifting_state(self) -> Tuple[SDFGState, nd.AccessNode]:
+    def _get_or_create_lifting_state(self) -> tuple[SDFGState, nd.AccessNode]:
         # Add a state for lifting before the access, if there isn't one that was created already.
         if self._lifting_state is None:
             if isinstance(self.element, Edge):
@@ -378,8 +378,8 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
             return self.generic_visit(node)
 
 
-def _data_containers_in_ast(node: ast.AST, arrnames: Set[str]) -> Set[str]:
-    result: Set[str] = set()
+def _data_containers_in_ast(node: ast.AST, arrnames: set[str]) -> set[str]:
+    result: set[str] = set()
     for subnode in ast.walk(node):
         if isinstance(subnode, (ast.Attribute, ast.Subscript)):
             data = astutils.rname(subnode.value)
@@ -409,7 +409,7 @@ class LiftStructViews(ppl.Pass):
     def depends_on(self):
         return []
 
-    def _lift_control_flow_region_access(self, cfg: ControlFlowRegion, result: Dict[str, Set[str]]) -> bool:
+    def _lift_control_flow_region_access(self, cfg: ControlFlowRegion, result: dict[str, set[str]]) -> bool:
         lifted_something = False
         lifting_state = None
         for code_block in cfg.get_meta_codeblocks():
@@ -429,7 +429,7 @@ class LiftStructViews(ppl.Pass):
                             lifted_something = True
         return lifted_something
 
-    def _lift_isedge(self, cfg: ControlFlowRegion, edge: Edge[InterstateEdge], result: Dict[str, Set[str]]) -> bool:
+    def _lift_isedge(self, cfg: ControlFlowRegion, edge: Edge[InterstateEdge], result: dict[str, set[str]]) -> bool:
         lifted_something = False
         for k in edge.data.assignments.keys():
             assignment = edge.data.assignments[k]
@@ -474,7 +474,7 @@ class LiftStructViews(ppl.Pass):
         data: dt.Structure,
         connector: str,
         direction: dirtype,
-    ) -> Set[str]:
+    ) -> set[str]:
         # Only handle Python at the moment.
         if not tasklet.language == dtypes.Language.Python:
             return
@@ -498,7 +498,7 @@ class LiftStructViews(ppl.Pass):
 
         return new_names
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, _) -> dict[str, set[str]] | None:
         """
         Lift struct member accesses to explicit views, returning a dictionary that indicates what accesses were lifted.
         :param sdfg: The SDFG to modify.
@@ -550,7 +550,7 @@ class LiftStructViews(ppl.Pass):
         else:
             return result
 
-    def report(self, pass_retval: Optional[Dict[str, Set[str]]]) -> Optional[str]:
+    def report(self, pass_retval: dict[str, set[str]] | None) -> str | None:
         if pass_retval is not None:
             total_lifted = 0
             all_lifted = set()

@@ -11,7 +11,8 @@ from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
 from dace.sdfg.state import LoopRegion, SDFGState
 from dace.memlet import Memlet
-from typing import TYPE_CHECKING, Any, Iterable, Iterator, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
+from collections.abc import Iterable, Iterator
 
 if TYPE_CHECKING:
     from dace import SDFG

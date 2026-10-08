@@ -99,7 +99,7 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
 
         if Config.get("compiler", "mpi", "executable"):
             compiler = make_absolute(Config.get("compiler", "mpi", "executable"))
-            options.append('-DMPI_CXX_COMPILER="{}"'.format(compiler))
+            options.append(f'-DMPI_CXX_COMPILER="{compiler}"')
 
         return options
 
@@ -141,13 +141,7 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
 
             callsite_stream.write("{\n", cfg, state_id, map_header)
             callsite_stream.write(
-                "%s %s = %s + __dace_comm_rank * (%s);\n"
-                % (
-                    symtypes[var],
-                    var,
-                    cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True)),
-                    cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True)),
-                ),
+                f"{symtypes[var]} {var} = {cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True))} + __dace_comm_rank * ({cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))});\n",
                 cfg,
                 state_id,
                 map_header,

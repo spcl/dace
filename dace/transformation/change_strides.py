@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """This module provides a function to change the stride in a given SDFG"""
 
-from typing import List, Union, Tuple
 import sympy
 
 import dace
@@ -11,7 +10,7 @@ from dace.data import Array, Scalar
 from dace.memlet import Memlet
 
 
-def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> List[Tuple[nodes.AccessNode, Union[SDFGState, dace.SDFG]]]:
+def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> list[tuple[nodes.AccessNode, SDFGState | dace.SDFG]]:
     """
     Find all access nodes in the SDFG of the given array name. Does not recourse into nested SDFGs.
 
@@ -30,7 +29,7 @@ def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> List[Tuple[nodes.Acce
     return found_nodes
 
 
-def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: ScheduleType) -> SDFG:
+def change_strides(sdfg: dace.SDFG, stride_one_values: list[str], schedule: ScheduleType) -> SDFG:
     """
     Change the strides of the arrays on the given SDFG such that the given dimension has stride 1. Returns a new SDFG.
 

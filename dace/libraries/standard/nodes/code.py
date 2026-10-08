@@ -8,7 +8,6 @@ import dace.library
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.transformation.transformation import ExpandTransformation
-from typing import Dict, Tuple
 
 
 def _dataview(data: Data, memlet: Memlet) -> Data:
@@ -18,17 +17,17 @@ def _dataview(data: Data, memlet: Memlet) -> Data:
     return result
 
 
-def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[Dict[str, Data], Dict[str, Data]]:
+def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> tuple[dict[str, Data], dict[str, Data]]:
     """Returns two dictionaries that map from input/output connectors to data
     descriptors.
 
     :return: Tuple of (input memlet mapping, output memlet mapping).
     """
-    inputs: Dict[str, Data] = {}
+    inputs: dict[str, Data] = {}
     for edge in state.in_edges(node):
         inputs[edge.dst_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
-    outputs: Dict[str, Data] = {}
+    outputs: dict[str, Data] = {}
     for edge in state.out_edges(node):
         outputs[edge.src_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
@@ -51,7 +50,7 @@ class CodeLibraryNode(LibraryNode):
         # By default, assume code library nodes have side effects unless said otherwise
         return True
 
-    def generate_code(self, inputs: Dict[str, Data], outputs: Dict[str, Data]) -> str:
+    def generate_code(self, inputs: dict[str, Data], outputs: dict[str, Data]) -> str:
         """Method that is responsible for generating the code related to
         this node.
 

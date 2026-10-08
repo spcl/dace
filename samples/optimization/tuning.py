@@ -130,4 +130,4 @@ if __name__ == "__main__":
     print("Fastest configuration for (%dx%dx%d) is:" % (M, K, N))
     print("  A with storage order %s, padding = %d" % (A_order, A_padding))
     print("  B with storage order %s, padding = %d" % (B_order, B_padding))
-    print("  Runtime: %f ms" % best_runtime)
+    print(f"  Runtime: {best_runtime:f} ms")

@@ -17,7 +17,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation, str(dtype)))
+    sdfg = dace.SDFG(f"matrix_lufact_getrf_{implementation}_{str(dtype)}")
     state = sdfg.add_state("dataflow")
 
     xhost_arr = sdfg.add_array("x", [n, n], dtype, storage=dace.StorageType.Default)
@@ -95,7 +95,7 @@ def test_getrf(implementation, dtype, storage):
     getrf_sdfg(x=A, result=lapack_status, pivots=pivots, n=size)
 
     if np.allclose(A, lu_ref):
-        print("Test ran successfully for {}.".format(implementation))
+        print(f"Test ran successfully for {implementation}.")
     else:
         raise ValueError("Validation error!")
 

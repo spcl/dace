@@ -181,7 +181,7 @@ if __name__ == "__main__":
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time))
+        print(f"Median is {ms_time}ms")
 
         alpha, beta, refA, refB, refx, refy = init_data(M, N, np.float64)
         shared_sdfg = gesummv_shared.compile()

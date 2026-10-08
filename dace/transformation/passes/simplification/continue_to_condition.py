@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Dict, Optional, Any
+from typing import Any
 
 from dace import sdfg as sd, properties
 from dace.sdfg import utils as sdutil
@@ -25,7 +25,7 @@ class ContinueToCondition(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> Any | None:
         for node, parent in sdfg.all_nodes_recursive():
             if self.can_be_applied(node):
                 self.apply(node, sdfg)

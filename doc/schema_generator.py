@@ -4,7 +4,8 @@ Generates automatic reStructuredText documentation from a configuration schema Y
 """
 
 import os
-from typing import Any, Dict, Iterator, TextIO, Tuple
+from typing import Any, TextIO
+from collections.abc import Iterator
 
 import yaml
 
@@ -16,7 +17,7 @@ def generate_docs():
 
     # Read metadata
     schema_yaml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dace", "config_schema.yml")
-    with open(schema_yaml_path, "r") as fp:
+    with open(schema_yaml_path) as fp:
         metadata = yaml.load(fp.read(), Loader=yaml.SafeLoader)
 
     # Write .rst file
@@ -39,11 +40,11 @@ See :ref:`config` for more information on how to use the interface.
             _write_entry_doc(fp, name, element)
 
 
-def _traverse_metadata(metadata: Dict[str, Any], top_name: str = "") -> Iterator[Tuple[str, Dict[str, Any]]]:
+def _traverse_metadata(metadata: dict[str, Any], top_name: str = "") -> Iterator[tuple[str, dict[str, Any]]]:
     yield top_name, metadata
     if "required" in metadata:
         ancestor_name = f"{top_name}." if top_name else ""
-        subelems: Dict[str, Any] = metadata["required"]
+        subelems: dict[str, Any] = metadata["required"]
         for key, val in sorted(subelems.items(), key=_sortkey):
             yield from _traverse_metadata(val, ancestor_name + key)
 
@@ -65,7 +66,7 @@ def _format_default(value: Any):
     return f"``{value}``"
 
 
-def _write_entry_doc(fp: TextIO, name: str, element: Dict[str, Any]) -> None:
+def _write_entry_doc(fp: TextIO, name: str, element: dict[str, Any]) -> None:
     TITLE_CHARACTERS = "-^~"
 
     # Category

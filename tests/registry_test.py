@@ -5,7 +5,7 @@ from dace import registry, attr_enum
 
 
 @registry.make_registry
-class ExtensibleClass(object):
+class ExtensibleClass:
     pass
 
 
@@ -53,7 +53,7 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(TypeError):
 
             @registry.autoregister
-            class Extension4(object):
+            class Extension4:
                 pass
 
     def test_enum_registry(self):

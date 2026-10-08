@@ -4,12 +4,12 @@ from dace.frontend.operations import is_op_associative, is_op_commutative, detec
 
 
 def _test_type(wcr_str, red_type):
-    assert detect_reduction_type("lambda a,b: %s" % wcr_str) == red_type
+    assert detect_reduction_type(f"lambda a,b: {wcr_str}") == red_type
 
 
 def _test_comm_assoc(wcr_str, comm, assoc):
-    assert is_op_commutative("lambda a,b: %s" % wcr_str) == comm
-    assert is_op_associative("lambda a,b: %s" % wcr_str) == assoc
+    assert is_op_commutative(f"lambda a,b: {wcr_str}") == comm
+    assert is_op_associative(f"lambda a,b: {wcr_str}") == assoc
 
 
 def test_expr_type():

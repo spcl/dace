@@ -2,7 +2,6 @@
 import numpy as np
 import pytest
 import copy
-from typing import Tuple
 
 import dace
 from dace import nodes, data as dace_data
@@ -19,7 +18,7 @@ from . import utility
 
 def test_reshaping_with_redundant_arrays():
 
-    def make_sdfg() -> Tuple[dace.SDFG, dace.nodes.AccessNode, dace.nodes.AccessNode, dace.nodes.AccessNode]:
+    def make_sdfg() -> tuple[dace.SDFG, dace.nodes.AccessNode, dace.nodes.AccessNode, dace.nodes.AccessNode]:
         sdfg = dace.SDFG("slicing_sdfg")
         _, input_desc = sdfg.add_array(
             "input",
@@ -512,7 +511,7 @@ def test_invalid_redundant_array_strided(order):
 
 def _make_reshaping_not_zero_started_input_sdfg(
     a_has_larger_rank_than_b: bool,
-) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
+) -> tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry]:
     sdfg = dace.SDFG(utility.unique_name("non_zero_offset_reshaping"))
     state = sdfg.add_state(is_start_block=True)
 

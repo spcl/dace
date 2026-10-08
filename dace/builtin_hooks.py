@@ -6,7 +6,8 @@ A set of built-in hooks.
 from contextlib import contextmanager
 import fnmatch
 import os
-from typing import Any, Callable, List, Optional, Tuple, TYPE_CHECKING, Union
+from typing import Any, TYPE_CHECKING, Union
+from collections.abc import Callable
 
 if TYPE_CHECKING:
     from dace.dtypes import InstrumentationType, DataInstrumentationType
@@ -80,9 +81,7 @@ def profile(
     profiler.report.save(filename)
 
 
-def _make_filter_function(
-    filter: Optional[Union[str, Callable[[Any], bool]]], with_attr: bool = True
-) -> Callable[[Any], bool]:
+def _make_filter_function(filter: str | Callable[[Any], bool] | None, with_attr: bool = True) -> Callable[[Any], bool]:
     """
     Internal helper that makes a filtering function.
 
@@ -112,7 +111,7 @@ def _make_filter_function(
 @contextmanager
 def instrument(
     itype: "InstrumentationType",
-    filter: Optional[Union[str, Callable[[Any], bool]]],
+    filter: str | Callable[[Any], bool] | None,
     annotate_maps: bool = True,
     annotate_tasklets: bool = False,
     annotate_states: bool = False,
@@ -155,7 +154,7 @@ def instrument(
 
     class Instrumenter:
         def __init__(self):
-            self.reports: List[InstrumentationReport] = []
+            self.reports: list[InstrumentationReport] = []
 
         @property
         def report(self):
@@ -198,8 +197,8 @@ def instrument(
 @contextmanager
 def instrument_data(
     ditype: "DataInstrumentationType",
-    filter: Optional[Union[str, Callable[[Any], bool]]],
-    restore_from: Optional[Union[str, "InstrumentedDataReport"]] = None,
+    filter: str | Callable[[Any], bool] | None,
+    restore_from: Union[str, "InstrumentedDataReport"] | None = None,
     verbose: bool = False,
 ):
     """
@@ -278,7 +277,7 @@ def instrument_data(
         # Restore data into compiled SDFG
         class DataRestoreHook:
             @contextmanager
-            def __call__(self, csdfg: "CompiledSDFG", args: Tuple[Any, ...]):
+            def __call__(self, csdfg: "CompiledSDFG", args: tuple[Any, ...]):
                 # Restore data from requested data report
                 set_report = csdfg.get_exported_function("__dace_set_instrumented_data_report")
                 if set_report is None:

@@ -2,7 +2,6 @@
 """Helper function to compute GPU schedule for reduction node "GPUAuto" expansion."""
 
 from dace.data import Array
-from typing import List
 import dataclasses
 from dace.frontend.python.replacements.utils import Size
 from sympy import Expr
@@ -122,7 +121,7 @@ def simplify_input(shape, strides, axes):
 
 
 def get_reduction_schedule(
-    in_array: Array, axes: List[int], use_vectorization=True, use_mini_warps=True, warp_size=32, wide_load_bytes=16
+    in_array: Array, axes: list[int], use_vectorization=True, use_mini_warps=True, warp_size=32, wide_load_bytes=16
 ):
     """
     Computes a data movement minimizing GPU reduction schedule depending on the input data shape and
@@ -140,17 +139,17 @@ def get_reduction_schedule(
 
     @dataclasses.dataclass
     class ReductionSchedule:
-        grid: List[Size]  #: dimension of the grid
-        block: List[Size]  #: dimension of the thread blocks
-        sequential: List[Size]  #: number of sequentially summed elements.
+        grid: list[Size]  #: dimension of the grid
+        block: list[Size]  #: dimension of the thread blocks
+        sequential: list[Size]  #: number of sequentially summed elements.
         # If len(sequential) == 3, then this list is of the form [start, end, stride]
         shared_mem_size: int  #: number of shared memory expansion has to allocate
 
-        in_shape: List[Size]  #: input tensor shape
-        in_strides: List[Size]  #: input tensor strides
-        out_shape: List[Size]  #: output tensor shape
-        out_strides: List[Size]  #: output tensor strides
-        axes: List[int]  #: axes to reduce
+        in_shape: list[Size]  #: input tensor shape
+        in_strides: list[Size]  #: input tensor strides
+        out_shape: list[Size]  #: output tensor shape
+        out_strides: list[Size]  #: output tensor strides
+        axes: list[int]  #: axes to reduce
         contiguous_dim: bool  #: whether reducing contiguous elements in memory or not
 
         vectorize: bool  #: whether vectorization will be used or not
@@ -160,10 +159,10 @@ def get_reduction_schedule(
         one_d_reduction: bool  #: True, if we have a 1D reduction (i.e. sum up all input elements to one output element)
 
         multi_axes: bool  #: True, if the reduction reduces multiple axes
-        additional_grid: List[Size]  #: For multi-axes reduction, we have additional grid dimensions
-        changed_in_shape: List[Size]  #: The input shape of the single axis reduction inside a multi-axes reduction
-        changed_in_strides: List[Size]  #: The input strides of the single axis reduction inside a multi-axes reduction
-        changed_axes: List[int]  #: The axis to reduce of the single axis reduction inside a multi-axes reduction
+        additional_grid: list[Size]  #: For multi-axes reduction, we have additional grid dimensions
+        changed_in_shape: list[Size]  #: The input shape of the single axis reduction inside a multi-axes reduction
+        changed_in_strides: list[Size]  #: The input strides of the single axis reduction inside a multi-axes reduction
+        changed_axes: list[int]  #: The axis to reduce of the single axis reduction inside a multi-axes reduction
 
         error: str  #: if not "", error contains the error reason as warning
 

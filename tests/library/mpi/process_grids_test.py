@@ -1,5 +1,4 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional
 from unittest import mock
 
 import dace
@@ -20,7 +19,7 @@ class _MockProgramVisitor:
         self._dispatcher = mock.MagicMock()
         self._dispatcher.defined_vars = set()
 
-    def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
+    def get_target_name(self, output_index: int | None = None, default: str | None = None) -> str:
         self._target_name_counter += 1
         return default or f"__pgrid{self._target_name_counter}"
 

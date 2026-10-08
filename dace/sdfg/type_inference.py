@@ -15,7 +15,7 @@ from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
 import dace.frontend.python.astutils
-from typing import Callable, Optional, Union
+from collections.abc import Callable
 
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
@@ -137,7 +137,7 @@ def infer_expr_type(code, symbols=None):
     if hasattr(parsed_ast, "body") and isinstance(parsed_ast.body[0], ast.Expr):
         return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
     else:
-        raise TypeError("Expected expression, got: {}".format(type(code)))
+        raise TypeError(f"Expected expression, got: {type(code)}")
 
 
 def _range_bound_type(bound, symbols) -> dtypes.typeclass:
@@ -172,7 +172,7 @@ def _range_bound_type(bound, symbols) -> dtypes.typeclass:
     return infer_expr_type(bound, symbols)
 
 
-def _literal_type(value: int) -> Optional[dtypes.typeclass]:
+def _literal_type(value: int) -> dtypes.typeclass | None:
     """The narrowest of the default symbol type and ``int64`` that holds ``value``, or None if neither does."""
     for dtype in (symbolic.DEFAULT_SYMBOL_TYPE, dtypes.int64):
         info = np.iinfo(dtype.type)
@@ -520,7 +520,7 @@ def _BoolOp(t, symbols, inferred_symbols):
     return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
 
-def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
+def _infer_dtype(t: ast.Name | ast.Attribute):
     name = dace.frontend.python.astutils.rname(t)
     if "." in name:
         dtype_str = name[name.rfind(".") + 1 :]

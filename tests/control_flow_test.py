@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional
 import pytest
 import dace
 import numpy as np
@@ -355,7 +354,7 @@ def test_fsm():
 
 def test_optional_parameters():
 
-    def optional_parameters_func(A: dace.int32[3], B: Optional[dace.int32[3]] = None):
+    def optional_parameters_func(A: dace.int32[3], B: dace.int32[3] | None = None):
         if B is None:
             A[1] = 3
         elif B is not None:

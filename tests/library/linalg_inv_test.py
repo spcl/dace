@@ -42,7 +42,7 @@ def make_sdfg(
     getri=True,
 ):
 
-    sdfg = dace.SDFG("linalg_inv_{}_{}_{}".format(implementation, dtype.__name__, id))
+    sdfg = dace.SDFG(f"linalg_inv_{implementation}_{dtype.__name__}_{id}")
     sdfg.add_symbol("n", dace.int64)
     state = sdfg.add_state("dataflow")
 
@@ -341,15 +341,11 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
     else:
         out_subset = tuple([slice(o, o + size) if i in out_dims else o for i, o in enumerate(out_offset)])
 
-    in_subset_str = ",".join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)]
-    )
+    in_subset_str = ",".join([f"{o}:{o + size}" if i in in_dims else str(o) for i, o in enumerate(in_offset)])
     if overwrite:
         out_subset_str = in_subset_str
     else:
-        out_subset_str = ",".join(
-            ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)]
-        )
+        out_subset_str = ",".join([f"{o}:{o + size}" if i in out_dims else str(o) for i, o in enumerate(out_offset)])
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str, overwrite, getri)
     if implementation == "cuSolverDn":
@@ -359,9 +355,7 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
         inv_sdfg = sdfg.compile()
     except (CompilerConfigurationError, CompilationError):
         warnings.warn(
-            "Configuration/compilation failed, library missing or misconfigured, skipping test for {}.".format(
-                implementation
-            )
+            f"Configuration/compilation failed, library missing or misconfigured, skipping test for {implementation}."
         )
         return
 

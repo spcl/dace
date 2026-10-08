@@ -3,7 +3,6 @@
 
 from copy import deepcopy as dc
 import itertools
-from typing import Dict, List
 
 from dace import Memlet, symbolic
 from dace.sdfg import dealias, nodes
@@ -38,8 +37,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     @staticmethod
     def _check_strides(
-        inner_strides: List[symbolic.SymbolicType],
-        outer_strides: List[symbolic.SymbolicType],
+        inner_strides: list[symbolic.SymbolicType],
+        outer_strides: list[symbolic.SymbolicType],
         memlet: Memlet,
         nested_sdfg: nodes.NestedSDFG,
     ) -> bool:
@@ -174,10 +173,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
-        inputs: Dict[str, MultiConnectorEdge] = {}
-        outputs: Dict[str, MultiConnectorEdge] = {}
-        input_set: Dict[str, str] = {}
-        output_set: Dict[str, str] = {}
+        inputs: dict[str, MultiConnectorEdge] = {}
+        outputs: dict[str, MultiConnectorEdge] = {}
+        input_set: dict[str, str] = {}
+        output_set: dict[str, str] = {}
         for e in nsdfg_state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
@@ -216,7 +215,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
-        sym_replacements: Dict[str, str] = {}
+        sym_replacements: dict[str, str] = {}
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)
@@ -228,7 +227,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Collect and modify access nodes as necessary
 
         # Mapping from nested transient name to top-level name
-        transients: Dict[str, str] = {}
+        transients: dict[str, str] = {}
 
         # All transients become transients of the parent (if data already
         # exists, find new name)

@@ -32,7 +32,6 @@ Example:
 """
 
 from itertools import chain
-from typing import List
 
 import enum
 import numpy as np
@@ -97,9 +96,7 @@ def onnx_representation(represents, **mapping):
 
             if type(onnx_proto) is not represents:
                 raise ValueError(
-                    "Unexpected protobuf '{}' (type {}), expected protobuf of type {}".format(
-                        onnx_proto, type(onnx_proto), represents
-                    )
+                    f"Unexpected protobuf '{onnx_proto}' (type {type(onnx_proto)}), expected protobuf of type {represents}"
                 )
 
             constructor_args = {}
@@ -136,13 +133,7 @@ def onnx_representation(represents, **mapping):
         )
 
         def get_prop_docstring(name, prop):
-            return ":param {}: {}\n:type {}: ``{}``, default ``{}``".format(
-                name,
-                prop.__doc__,
-                name,
-                prop._dtype.__name__ if prop._dtype is not None else type(prop._default).__name__,
-                repr(prop._default),
-            )
+            return f":param {name}: {prop.__doc__}\n:type {name}: ``{prop._dtype.__name__ if prop._dtype is not None else type(prop._default).__name__}``, default ``{repr(prop._default)}``"
 
         init_docstring += "\n".join(get_prop_docstring(name, prop) for name, prop in cls.__properties__.items())
 
@@ -151,9 +142,9 @@ def onnx_representation(represents, **mapping):
         cls.from_onnx_proto = from_onnx_proto
         cls.from_json = from_json
         cls.to_json = to_json
-        from_onnx_proto.__func__.__doc__ = " Construct an object from an ONNX proto of type ``{}``. ".format(represents)
-        from_json.__func__.__doc__ = " Construct an object json ".format(represents)
-        to_json.__doc__ = " Serialize to json ".format(represents)
+        from_onnx_proto.__func__.__doc__ = f" Construct an object from an ONNX proto of type ``{represents}``. "
+        from_json.__func__.__doc__ = " Construct an object json "
+        to_json.__doc__ = " Serialize to json "
 
         # register so that we're able to load it
         _KNOWN_ONNX_PROTOS[represents] = cls
@@ -187,7 +178,7 @@ class ONNXParameter:
     homogeneous = Property(dtype=bool, category="General", desc="Whether this parameter is homogeneous")
 
     def __repr__(self):
-        return "{} ({})".format(self.name, str(self.param_type))
+        return f"{self.name} ({str(self.param_type)})"
 
 
 class ONNXAttributeType(enum.Enum):
@@ -228,7 +219,7 @@ class ONNXAttribute:
 
     def validate(self):
         if self.required and self.attribute_type == ONNXAttributeType.Unsupported:
-            raise NotImplementedError("Required attribute '{}' has an unsupported type".format(self.name))
+            raise NotImplementedError(f"Required attribute '{self.name}' has an unsupported type")
 
     def __repr__(self):
         return self.name
@@ -301,16 +292,16 @@ class ONNXSchema:
     def __repr__(self):
         return self.domain + "." + self.name
 
-    def non_variadic_inputs(self) -> List[str]:
+    def non_variadic_inputs(self) -> list[str]:
         return [i.name for i in self.inputs if i.param_type is not ONNXParameterType.Variadic]
 
-    def variadic_inputs(self) -> List[str]:
+    def variadic_inputs(self) -> list[str]:
         return [i.name for i in self.inputs if i.param_type is ONNXParameterType.Variadic]
 
-    def non_variadic_outputs(self) -> List[str]:
+    def non_variadic_outputs(self) -> list[str]:
         return [i.name for i in self.outputs if i.param_type is not ONNXParameterType.Variadic]
 
-    def variadic_outputs(self) -> List[str]:
+    def variadic_outputs(self) -> list[str]:
         return [i.name for i in self.outputs if i.param_type is ONNXParameterType.Variadic]
 
     def validate(self):
@@ -327,7 +318,7 @@ class ONNXSchema:
 
                 if parsed_typeclass is None:
                     if config.Config.get_bool("debugprint"):
-                        print("Could not parse typeStr '{}' for parameter '{}'".format(param.type_str, param.name))
+                        print(f"Could not parse typeStr '{param.type_str}' for parameter '{param.name}'")
 
                 cons = ONNXTypeConstraint(cons_name, [parsed_typeclass] if parsed_typeclass is not None else [])
                 self.type_constraints[cons_name] = cons
@@ -338,24 +329,24 @@ class ONNXSchema:
             if (param.param_type == ONNXParameterType.Single or param.param_type == ONNXParameterType.Variadic) and len(
                 self.type_constraints[param.type_str].types
             ) == 0:
-                raise NotImplementedError("None of the types for parameter '{}' are supported".format(param.name))
+                raise NotImplementedError(f"None of the types for parameter '{param.name}' are supported")
 
         # check that all variadic parameter names do not contain "__"
         for param in chain(self.inputs, self.outputs):
             if param.param_type == ONNXParameterType.Variadic and "__" in param.name:
                 raise ValueError(
-                    "Unsupported parameter name '{}': variadic parameter names must not contain '__'".format(param.name)
+                    f"Unsupported parameter name '{param.name}': variadic parameter names must not contain '__'"
                 )
 
         # check that all inputs and outputs have unique names
         seen = set()
         for param in self.inputs:
             if param.name in seen:
-                raise ValueError("Got duplicate input parameter name '{}'".format(param.name))
+                raise ValueError(f"Got duplicate input parameter name '{param.name}'")
             seen.add(param.name)
 
         seen = set()
         for param in self.outputs:
             if param.name in seen:
-                raise ValueError("Got duplicate output parameter name '{}'".format(param.name))
+                raise ValueError(f"Got duplicate output parameter name '{param.name}'")
             seen.add(param.name)

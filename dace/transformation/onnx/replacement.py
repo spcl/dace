@@ -5,7 +5,7 @@ import abc
 import dace
 from dace import nodes, data as dt
 from dace.transformation import transformation, helpers as xfh
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 from dace.sdfg import graph as gr
 
 
@@ -53,7 +53,7 @@ def add_connecting_access_nodes(graph: gr.OrderedDiGraph):
         graph.remove_edge(e)
 
 
-def onnx_constant_or_none(sdfg: dace.SDFG, node_or_name: Union[nodes.AccessNode, str]) -> Optional[Any]:
+def onnx_constant_or_none(sdfg: dace.SDFG, node_or_name: nodes.AccessNode | str) -> Any | None:
     name = node_or_name if isinstance(node_or_name, str) else node_or_name.data
     if name not in sdfg._parent_onnx_model.clean_weights:
         return None
@@ -62,7 +62,7 @@ def onnx_constant_or_none(sdfg: dace.SDFG, node_or_name: Union[nodes.AccessNode,
 
 
 class ReplacementTransformation(transformation.SingleStateTransformation, abc.ABC):
-    _pattern: Optional[gr.OrderedDiGraph] = None
+    _pattern: gr.OrderedDiGraph | None = None
 
     @classmethod
     @abc.abstractmethod
@@ -72,8 +72,8 @@ class ReplacementTransformation(transformation.SingleStateTransformation, abc.AB
 
     @abc.abstractmethod
     def replacement(
-        self, subgraph: List[nodes.Node], sdfg: dace.SDFG, state: dace.SDFGState
-    ) -> Tuple[nodes.Node, Dict[str, Tuple[nodes.Node, Union[str, dt.Data]]]]:
+        self, subgraph: list[nodes.Node], sdfg: dace.SDFG, state: dace.SDFGState
+    ) -> tuple[nodes.Node, dict[str, tuple[nodes.Node, str | dt.Data]]]:
         """
         Defines replacement behavior for the transformation. This method returns
         a node (which could also be a nested SDFG if a subgraph should be
@@ -106,8 +106,8 @@ class ReplacementTransformation(transformation.SingleStateTransformation, abc.AB
 
     def can_be_applied(
         self,
-        graph: Union[dace.SDFG, dace.SDFGState],
-        candidate: Dict[transformation.PatternNode, int],
+        graph: dace.SDFG | dace.SDFGState,
+        candidate: dict[transformation.PatternNode, int],
         expr_index: int,
         sdfg: dace.SDFG,
         simplify: bool,

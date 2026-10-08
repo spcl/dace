@@ -14,7 +14,6 @@ from dace import dtypes, memlet as mm
 from dace.sdfg import graph, state
 from dace.sdfg.scope import is_in_scope
 from dace.codegen.targets.sve import util as util
-from typing import Optional
 import copy
 from io import StringIO
 import dace.codegen.targets.sve.unparse
@@ -219,7 +218,7 @@ class SVECodeGen(TargetCodeGenerator):
                     stride = edge.data.get_stride(sdfg, map)
 
                     # First part of the declaration is `type name`
-                    load_lhs = "{} {}".format(util.TYPE_TO_SVE[dst_type.type], dst_name)
+                    load_lhs = f"{util.TYPE_TO_SVE[dst_type.type]} {dst_name}"
 
                     # long long issue casting
                     ptr_cast = ""
@@ -229,18 +228,13 @@ class SVECodeGen(TargetCodeGenerator):
                         ptr_cast = "(uint64_t*) "
 
                     # Regular load and gather share the first arguments
-                    load_args = "{}, {}".format(
-                        util.get_loop_predicate(sdfg, state, edge.dst),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
-                    )
+                    load_args = f"{util.get_loop_predicate(sdfg, state, edge.dst)}, {ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen)}"
 
                     if stride == 1:
-                        code.write("{} = svld1({});".format(load_lhs, load_args))
+                        code.write(f"{load_lhs} = svld1({load_args});")
                     else:
                         code.write(
-                            "{} = svld1_gather_index({}, svindex_s{}(0, {}));".format(
-                                load_lhs, load_args, util.get_base_type(dst_type).bytes * 8, sym2cpp(stride)
-                            )
+                            f"{load_lhs} = svld1_gather_index({load_args}, svindex_s{util.get_base_type(dst_type).bytes * 8}(0, {sym2cpp(stride)}));"
                         )
                 else:
                     ##################
@@ -368,10 +362,7 @@ class SVECodeGen(TargetCodeGenerator):
                     elif src_type.type == np.uint64:
                         ptr_cast = "(uint64_t*) "
 
-                    store_args = "{}, {}".format(
-                        util.get_loop_predicate(sdfg, state, edge.src),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen),
-                    )
+                    store_args = f"{util.get_loop_predicate(sdfg, state, edge.src)}, {ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen)}"
 
                     if stride == 1:
                         code.write(f"svst1({store_args}, {src_name});")
@@ -618,8 +609,8 @@ class SVECodeGen(TargetCodeGenerator):
         name: str,
         desc: data.Data,
         sdfg: SDFG = None,
-        subset: Optional[subsets.Subset] = None,
-        is_write: Optional[bool] = None,
+        subset: subsets.Subset | None = None,
+        is_write: bool | None = None,
         ancestor: int = 0,
     ) -> str:
         """

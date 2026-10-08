@@ -6,7 +6,6 @@ This module contains classes that implement the OTF map fusion transformation.
 import copy
 import sympy
 
-from typing import List, Tuple
 
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
@@ -391,7 +390,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         return new_inter_nodes
 
     @staticmethod
-    def solve(first_params: List[str], write_accesses: Tuple, second_params: List[str], read_accesses: Tuple):
+    def solve(first_params: list[str], write_accesses: tuple, second_params: list[str], read_accesses: tuple):
         """
         Infers the memory access for the write memlet given the
         location/parameters of the read access.

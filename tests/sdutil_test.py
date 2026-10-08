@@ -4,7 +4,7 @@ import networkx as nx
 from dace.sdfg.utils import *
 
 
-class GraphSearchSpace(object):
+class GraphSearchSpace:
     def __init__(self, graph, graph_node):
         self.graph = graph
         self.node = graph_node

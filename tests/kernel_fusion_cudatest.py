@@ -58,7 +58,7 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
 
     # Add thread-block maps and edges as necessary
     if tbsize_1 is not None:
-        tbme1, tbmx1 = state.add_map("block_a", dict(k="0:%s" % tbsize_1), dace.ScheduleType.GPU_ThreadBlock)
+        tbme1, tbmx1 = state.add_map("block_a", dict(k=f"0:{tbsize_1}"), dace.ScheduleType.GPU_ThreadBlock)
         state.add_memlet_path(
             a,
             fme,
@@ -78,7 +78,7 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
         state.add_memlet_path(tasklet1, imx1, tmp, src_conn="t", memlet=dace.Memlet.simple("tmp", ind))
 
     if tbsize_2 is not None:
-        tbme2, tbmx2 = state.add_map("block_a", dict(k="0:%s" % tbsize_2), dace.ScheduleType.GPU_ThreadBlock)
+        tbme2, tbmx2 = state.add_map("block_a", dict(k=f"0:{tbsize_2}"), dace.ScheduleType.GPU_ThreadBlock)
         state.add_memlet_path(
             tmp, ime2, tbme2, tasklet2, dst_conn="t", memlet=dace.Memlet.simple("tmp", f"i, j*{tbsize_2} + k")
         )

@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dace import SDFG, properties, transformation
 from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
@@ -108,19 +108,19 @@ class FullMapFusion(ppl.Pass):
 
     def __init__(
         self,
-        perform_vertical_map_fusion: Optional[bool] = None,
-        perform_horizontal_map_fusion: Optional[bool] = None,
-        only_inner_maps: Optional[bool] = None,
-        only_toplevel_maps: Optional[bool] = None,
-        strict_dataflow: Optional[bool] = None,
-        assume_always_shared: Optional[bool] = None,
-        require_exclusive_intermediates: Optional[bool] = None,
-        require_all_intermediates: Optional[bool] = None,
-        only_if_common_ancestor: Optional[bool] = None,
-        consolidate_edges_only_if_not_extending: Optional[bool] = None,
-        never_consolidate_edges: Optional[bool] = None,
-        validate: Optional[bool] = None,
-        validate_all: Optional[bool] = None,
+        perform_vertical_map_fusion: bool | None = None,
+        perform_horizontal_map_fusion: bool | None = None,
+        only_inner_maps: bool | None = None,
+        only_toplevel_maps: bool | None = None,
+        strict_dataflow: bool | None = None,
+        assume_always_shared: bool | None = None,
+        require_exclusive_intermediates: bool | None = None,
+        require_all_intermediates: bool | None = None,
+        only_if_common_ancestor: bool | None = None,
+        consolidate_edges_only_if_not_extending: bool | None = None,
+        never_consolidate_edges: bool | None = None,
+        validate: bool | None = None,
+        validate_all: bool | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -180,7 +180,7 @@ class FullMapFusion(ppl.Pass):
     def depends_on(self):
         return [ap.FindSingleUseData]
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """
         Fuses all Maps that can be fused in the SDFG, including its nested SDFGs.
 

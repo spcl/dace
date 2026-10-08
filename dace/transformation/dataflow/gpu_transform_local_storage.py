@@ -5,7 +5,6 @@
 import copy
 import collections
 import dataclasses
-from typing import Dict, List
 
 from dace import data, dtypes, sdfg as sd, subsets as sbs, symbolic
 from dace.sdfg import dealias, nodes, SDFGState
@@ -21,7 +20,7 @@ class CloneWindow:
     #: The clone's origin, one index per dimension of the original container
     offset: sbs.Range
     #: The dimensions of the original container that the clone does not have
-    lost_dims: List[int]
+    lost_dims: list[int]
 
 
 def in_scope(graph, node, parent):
@@ -369,7 +368,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             out_cloned_arraynodes[array_node.data] = cloned_node
 
         # Origin and removed dimensions of each clone, relative to the original container
-        clone_windows: Dict[str, CloneWindow] = {}
+        clone_windows: dict[str, CloneWindow] = {}
 
         # Third, connect the cloned arrays to the originals
         for array_name, node in in_cloned_arraynodes.items():

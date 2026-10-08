@@ -1,7 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Helper functions for compilation."""
 
-from typing import Any, Union, Tuple, Type, List
+from typing import Any
 
 import copy
 import numpy as np
@@ -13,10 +13,10 @@ from dace.sdfg import nodes
 
 
 def count_nodes(
-    graph: Union[SDFG, SDFGState],
-    node_type: Union[Tuple[Type, ...], Type],
+    graph: SDFG | SDFGState,
+    node_type: tuple[type, ...] | type,
     return_nodes: bool = False,
-) -> Union[int, List[nodes.Node]]:
+) -> int | list[nodes.Node]:
     """Counts the number of nodes of a particular type in `graph`.
 
     If `graph` is an SDFGState then only count the nodes inside this state,

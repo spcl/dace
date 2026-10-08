@@ -18,7 +18,7 @@ from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
-from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from typing import Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.data import Data as dData
@@ -53,7 +53,7 @@ def _normalize_python_code(code: str) -> str:
     return unparse(ast.parse(code))
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _predates_symbolic_serialization(version: str) -> bool:
     """Whether an SDFG file of the given DaCe version stores symbolic expressions in the old string format."""
     return parse_version(version) < parse_version("2.0.0a4")
@@ -112,14 +112,14 @@ class Property(Generic[T]):
     """
 
     #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
-    attr_name: Optional[str] = None
-    private_name: Optional[str] = None
+    attr_name: str | None = None
+    private_name: str | None = None
 
     def __init__(
         self,
         getter=None,
         setter=None,
-        dtype: Type[T] = None,
+        dtype: type[T] = None,
         default=None,
         from_json=None,
         to_json=None,
@@ -205,12 +205,12 @@ class Property(Generic[T]):
             try:
                 dtype = self.dtype
                 if dtype is not None:
-                    self.__doc__ = "Object property of type %s" % dtype.__name__
+                    self.__doc__ = f"Object property of type {dtype.__name__}"
                 else:
-                    self.__doc__ = "Object property of type %s" % type(self).__name__
+                    self.__doc__ = f"Object property of type {type(self).__name__}"
             except (ImportError, AttributeError):
                 # Handle circular import case - defer docstring generation
-                self.__doc__ = "Object property of type %s" % type(self).__name__
+                self.__doc__ = f"Object property of type {type(self).__name__}"
 
     def __get__(self, obj, objtype=None) -> T:
         if obj is None:
@@ -234,7 +234,7 @@ class Property(Generic[T]):
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
-            raise ValueError("None not allowed for property {} in class {}".format(self.attr_name, type(obj).__name__))
+            raise ValueError(f"None not allowed for property {self.attr_name} in class {type(obj).__name__}")
 
         # Accept all DaCe/numpy typeclasses as Python native types
         if isinstance(val, np.number):
@@ -250,14 +250,10 @@ class Property(Generic[T]):
         if self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none):
             if isinstance(val, str):
                 raise TypeError(
-                    "Received str for property {} of type {}. Use from_string method of the property.".format(
-                        self.attr_name, self.dtype
-                    )
+                    f"Received str for property {self.attr_name} of type {self.dtype}. Use from_string method of the property."
                 )
             raise TypeError(
-                'Invalid type "{}" for property {}: expected {}'.format(
-                    type(val).__name__, self.attr_name, self.dtype.__name__
-                )
+                f'Invalid type "{type(val).__name__}" for property {self.attr_name}: expected {self.dtype.__name__}'
             )
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
@@ -267,7 +263,7 @@ class Property(Generic[T]):
             and (val is not None or not self.allow_none)
         ):
             if val not in self.choices:
-                raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
+                raise ValueError(f"Value {val} not present in choices: {self.choices}")
         setattr(obj, self.private_name, val)
 
     # Python Properties of this Property class
@@ -404,9 +400,7 @@ def make_properties(cls):
             duplicates = base.__properties__.keys() & own_properties.keys()
             if len(duplicates) != 0:
                 raise AttributeError(
-                    "Duplicate properties in class {} deriving from {}: {}".format(
-                        cls.__name__, base.__name__, duplicates
-                    )
+                    f"Duplicate properties in class {cls.__name__} deriving from {base.__name__}: {duplicates}"
                 )
             properties.update(base.__properties__)
     # Add the list of properties to the class
@@ -425,7 +419,7 @@ def make_properties(cls):
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
             if hasattr(obj, "_" + name):
-                raise PropertyError("Property {} already assigned in {}".format(name, type(obj).__name__))
+                raise PropertyError(f"Property {name} already assigned in {type(obj).__name__}")
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
                     setattr(obj, name, prop.default)
@@ -437,14 +431,12 @@ def make_properties(cls):
                 getattr(obj, name)
             except AttributeError:
                 if not prop.unmapped:
-                    raise PropertyError("Property {} is unassigned in __init__ for {}".format(name, cls.__name__))
+                    raise PropertyError(f"Property {name} is unassigned in __init__ for {cls.__name__}")
         # Assert that there are no fields in the object not captured by properties, unless they are prefixed with "_"
         for name, prop in obj.__dict__.items():
             if name not in properties and not name.startswith("_") and name not in dir(type(obj)):
                 raise PropertyError(
-                    '{} : Variable {} is neither a Property nor an internal variable (prefixed with "_")'.format(
-                        str(type(obj)), name
-                    )
+                    f'{str(type(obj))} : Variable {name} is neither a Property nor an internal variable (prefixed with "_")'
                 )
 
     # Replace the __init__ method
@@ -475,7 +467,7 @@ def indirect_property(cls, f, prop, override):
 
     # Add the property to the class
     if not override and hasattr(cls, prop_name):
-        raise TypeError('Property "{}" already exists in class "{}"'.format(prop_name, cls.__name__))
+        raise TypeError(f'Property "{prop_name}" already exists in class "{cls.__name__}"')
     setattr(cls, prop_name, prop_indirect)
 
 
@@ -523,7 +515,7 @@ class OrderedDictProperty(Property):
         return ret
 
 
-class ListProperty(Property[List[T]]):
+class ListProperty(Property[list[T]]):
     """Property type for lists."""
 
     def __init__(self, element_type: type[T], *args, **kwargs):
@@ -554,7 +546,7 @@ class ListProperty(Property[List[T]]):
             val = list(map(self.element_type, list(val)))
         elif isinstance(val, tuple):
             val = list(map(self.element_type, val))
-        super(ListProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     @staticmethod
     def to_string(l):
@@ -588,7 +580,7 @@ class ListProperty(Property[List[T]]):
         if data is None:
             return data
         if not isinstance(data, list):
-            raise TypeError("ListProperty expects a list input, got %s" % data)
+            raise TypeError(f"ListProperty expects a list input, got {data}")
         if _is_symbolic_type(self.element_type):
             return [_symbolic_deserializer(elem, context=context) for elem in data]
         if _is_symbolic_converter(self.element_type):
@@ -615,7 +607,7 @@ class TransformationHistProperty(Property):
         super().__init__(*args, **kwargs)
 
     def __set__(self, obj, val):
-        super(TransformationHistProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     def to_json(self, hist):
         if hist is None:
@@ -626,7 +618,7 @@ class TransformationHistProperty(Property):
         if data is None:
             return data
         if not isinstance(data, list):
-            raise TypeError("TransformationHistProperty expects a list input, got %s" % data)
+            raise TypeError(f"TransformationHistProperty expects a list input, got {data}")
         return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 
@@ -648,9 +640,9 @@ class DictProperty(Property):
         """
         kwargs["dtype"] = dict
         if not isinstance(key_type, type) and not callable(key_type):
-            raise TypeError("Expected type or callable, got: {}".format(key_type))
+            raise TypeError(f"Expected type or callable, got: {key_type}")
         if not isinstance(value_type, type) and not callable(value_type):
-            raise TypeError("Expected type or callable, got: {}".format(value_type))
+            raise TypeError(f"Expected type or callable, got: {value_type}")
         super().__init__(*args, **kwargs)
         self.key_type = key_type
         self.value_type = value_type
@@ -686,7 +678,7 @@ class DictProperty(Property):
                 )
                 for k, v in val.items()
             }
-        super(DictProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     @staticmethod
     def to_string(d):
@@ -735,7 +727,7 @@ class DictProperty(Property):
         if data is None:
             return data
         if not isinstance(data, dict):
-            raise TypeError("DictProperty expects a dictionary input, got %s" % data)
+            raise TypeError(f"DictProperty expects a dictionary input, got {data}")
         # If element knows how to convert itself, let it
         key_json = hasattr(self.key_type, "from_json")
         value_json = hasattr(self.value_type, "from_json")
@@ -836,10 +828,10 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
 class RangeProperty(Property[dace.subsets.Range]):
     """Custom Property type for `dace.subsets.Range` members."""
 
-    def __set__(self, obj, value: Union[dace.subsets.Range, List[int]]):
+    def __set__(self, obj, value: dace.subsets.Range | list[int]):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
-        super(RangeProperty, self).__set__(obj, value)
+        super().__set__(obj, value)
 
     @property
     def dtype(self):
@@ -946,7 +938,7 @@ class SetProperty(Property):
     ):
         if to_json is None:
             to_json = self.to_json
-        super(SetProperty, self).__init__(
+        super().__init__(
             getter=getter,
             setter=setter,
             dtype=frozenset,
@@ -990,7 +982,7 @@ class SetProperty(Property):
         return frozenset(l)
 
     def __get__(self, obj, objtype=None):
-        val = super(SetProperty, self).__get__(obj, objtype)
+        val = super().__get__(obj, objtype)
         if val is None:
             return val
 
@@ -999,7 +991,7 @@ class SetProperty(Property):
 
     def __set__(self, obj, val):
         if val is None:
-            return super(SetProperty, self).__set__(obj, val)
+            return super().__set__(obj, val)
 
         # Check for uniqueness
         if isinstance(val, (frozenset, set)):
@@ -1012,9 +1004,9 @@ class SetProperty(Property):
         try:
             new_set = frozenset(self._element_type(elem) for elem in val)
         except (TypeError, ValueError):
-            raise ValueError("Some elements could not be converted to %s" % (str(self._element_type)))
+            raise ValueError(f"Some elements could not be converted to {str(self._element_type)}")
 
-        super(SetProperty, self).__set__(obj, new_set)
+        super().__set__(obj, new_set)
 
 
 class LambdaProperty(Property):
@@ -1055,17 +1047,17 @@ class LambdaProperty(Property):
                 val = self.to_string(val)  # Store as string internally
             else:
                 raise TypeError("Lambda property must be either string or ast.Lambda")
-        super(LambdaProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
 
-class CodeBlock(object):
+class CodeBlock:
     """Helper class that represents code blocks with language.
     Used in `CodeProperty`, implemented as a list of AST statements if
     language is Python, or a string otherwise.
     """
 
     def __init__(
-        self, code: Union[str, List[ast.AST], "CodeBlock"], language: dace.dtypes.Language = dace.dtypes.Language.Python
+        self, code: Union[str, list[ast.AST], "CodeBlock"], language: dace.dtypes.Language = dace.dtypes.Language.Python
     ):
         if isinstance(code, CodeBlock):
             self.code = code.code
@@ -1082,7 +1074,7 @@ class CodeBlock(object):
         else:
             self.code = code
 
-    def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
+    def get_free_symbols(self, defined_syms: set[str] = None) -> set[str]:
         """
         Returns the set of free symbol names in this code block, excluding
         the given symbol names.
@@ -1261,8 +1253,8 @@ class SubsetProperty(Property):
             and not isinstance(val, sbs.Indices)
             and not isinstance(val, sbs.SubsetUnion)
         ):
-            raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
-        super(SubsetProperty, self).__set__(obj, val)
+            raise TypeError(f"Subset property must be either Range or Indices: got {type(val).__name__}")
+        super().__set__(obj, val)
 
     @staticmethod
     def from_string(s):
@@ -1309,7 +1301,7 @@ class SymbolicProperty(Property):
         if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 
-        super(SymbolicProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
     @staticmethod
     def from_string(s):
@@ -1355,7 +1347,7 @@ class DataProperty(Property):
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument to from_string method of ArrayProperty")
         if s not in sdfg.arrays:
-            raise ValueError("No data found in SDFG with name: {}".format(s))
+            raise ValueError(f"No data found in SDFG with name: {s}")
         return s
 
     @staticmethod
@@ -1379,7 +1371,7 @@ class DataProperty(Property):
                 # This is fine
                 # return "null" # Every SDFG has a 'null' element
                 return None
-            raise ValueError("No data found in SDFG with name: {}".format(s))
+            raise ValueError(f"No data found in SDFG with name: {s}")
         return s
 
 
@@ -1397,7 +1389,7 @@ class ReferenceProperty(Property):
         for node, _ in sdfg.all_nodes_recursive():
             if node.label == s:
                 return node
-        raise ValueError("No node found in SDFG with name: {}".format(s))
+        raise ValueError(f"No node found in SDFG with name: {s}")
 
     @staticmethod
     def to_string(obj):
@@ -1436,7 +1428,7 @@ class ShapeProperty(Property):
             val = tuple(val)
         if isinstance(val, tuple):
             val = tuple(dace.symbolic.UndefinedSymbol() if v == "?" else v for v in val)
-        super(ShapeProperty, self).__set__(obj, val)
+        super().__set__(obj, val)
 
 
 class TypeProperty(Property):
@@ -1450,9 +1442,9 @@ class TypeProperty(Property):
     def from_string(s):
         dtype = pydoc.locate(s)
         if dtype is None:
-            raise ValueError('No type "{}" found.'.format(s))
+            raise ValueError(f'No type "{s}" found.')
         if not isinstance(dtype, type):
-            raise ValueError('Object "{}" is not a type.'.format(dtype))
+            raise ValueError(f'Object "{dtype}" is not a type.')
         return dtype
 
     @staticmethod
@@ -1462,7 +1454,7 @@ class TypeProperty(Property):
         if isinstance(obj, str):
             return TypeProperty.from_string(obj)
         else:
-            raise TypeError("Cannot parse type from: {}".format(obj))
+            raise TypeError(f"Cannot parse type from: {obj}")
 
 
 class TypeClassProperty(Property):
@@ -1478,9 +1470,9 @@ class TypeClassProperty(Property):
 
     @staticmethod
     def from_string(s):
-        dtype = pydoc.locate("dace.dtypes.{}".format(s))
+        dtype = pydoc.locate(f"dace.dtypes.{s}")
         if dtype is None or not isinstance(dtype, dace.dtypes.typeclass):
-            raise ValueError("Not a valid data type: {}".format(s))
+            raise ValueError(f"Not a valid data type: {s}")
         return dtype
 
     @staticmethod
@@ -1504,7 +1496,7 @@ class TypeClassProperty(Property):
             # Let the deserializer handle this
             return dace.serialize.from_json(obj, context=context)
         else:
-            raise TypeError("Cannot parse type from: {}".format(obj))
+            raise TypeError(f"Cannot parse type from: {obj}")
 
 
 class NestedDataClassProperty(Property):
@@ -1525,7 +1517,7 @@ class NestedDataClassProperty(Property):
 
         dtype = getattr(dt, s, None)
         if dtype is None or not isinstance(dtype, dt.Data):
-            raise ValueError("Not a valid data type: {}".format(s))
+            raise ValueError(f"Not a valid data type: {s}")
         return dtype
 
     @staticmethod
@@ -1547,7 +1539,7 @@ class NestedDataClassProperty(Property):
             # Let the deserializer handle this
             return dace.serialize.from_json(obj, context=context)
         else:
-            raise TypeError("Cannot parse type from: {}".format(obj))
+            raise TypeError(f"Cannot parse type from: {obj}")
 
 
 class LibraryImplementationProperty(Property):

@@ -11,7 +11,6 @@ This module contains implementations of linear algebra operations including:
 
 import copy
 import itertools
-import typing
 
 import dace
 from dace import SDFG, SDFGState, nodes
@@ -41,7 +40,7 @@ class PureMatMul(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
 
         A_desc = in_desc_with_name(node, state, sdfg, "A")
@@ -110,7 +109,7 @@ class PureMatMul(ONNXForward):
                     arg2 = letter + arg2
                     result = letter + result
 
-        einsum_str = "{},{}->{}".format(arg1, arg2, result)
+        einsum_str = f"{arg1},{arg2}->{result}"
 
         # we lower to an ONNXEinsum node instead straight to the dace einsum to
         # make the autodiff simpler
@@ -149,7 +148,7 @@ class PureEinsum(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
@@ -191,7 +190,7 @@ class PureGemm(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
 
         A_desc = in_desc_with_name(node, state, sdfg, "A")
@@ -265,7 +264,7 @@ class PureGemm(ONNXForward):
         if node.transB == 1:
             arg2 = "".join(reversed(arg2))
 
-        einsum_str = "{},{}->{}".format(arg1, arg2, result)
+        einsum_str = f"{arg1},{arg2}->{result}"
 
         # we lower to an ONNXEinsum node instead straight to the dace einsum to
         # make the autodiff simpler

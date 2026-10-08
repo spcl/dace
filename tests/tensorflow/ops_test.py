@@ -53,7 +53,7 @@ def test_mean():
             print(output_dace)
             print(output_tf)
             print(tf.norm(output_dace - output_tf).eval(session=sess_tf))
-            raise AssertionError("mean test {i} failed".format(i=index))
+            raise AssertionError(f"mean test {index} failed")
 
     print("mean tests passed!")
 

@@ -12,7 +12,6 @@ from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
 from sympy import floor
-from typing import Dict, List, Set, Tuple
 
 gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
 
@@ -217,9 +216,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         # Step 0: SDFG metadata
 
         # Find all input and output data descriptors
-        input_nodes: List[Tuple[str, data.Data]] = []
-        output_nodes: List[Tuple[str, data.Data]] = []
-        global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
+        input_nodes: list[tuple[str, data.Data]] = []
+        output_nodes: list[tuple[str, data.Data]] = []
+        global_code_nodes: dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
         if self.host_maps is None:
             self.host_maps = []
         if self.host_data is None:
@@ -325,7 +324,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 if not found_full_write:
                     input_nodes.append((onodename, onode))
 
-        check_memlets: List[memlet.Memlet] = []
+        check_memlets: list[memlet.Memlet] = []
         for edge in sdfg.all_interstate_edges():
             check_memlets.extend(edge.data.get_read_memlets(sdfg.arrays))
         for blk in sdfg.all_control_flow_blocks():
@@ -385,7 +384,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 4: Change all top-level maps and library nodes to GPU schedule
 
-        gpu_nodes: Set[Tuple[SDFGState, nodes.Node]] = set()
+        gpu_nodes: set[tuple[SDFGState, nodes.Node]] = set()
         for state in sdfg.states():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -432,7 +431,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         # inside a GPU kernel.
 
         gpu_scalars = {}
-        nsdfgs: List[Tuple[nodes.NestedSDFG, SDFGState]] = []
+        nsdfgs: list[tuple[nodes.NestedSDFG, SDFGState]] = []
         changed = True
         # Iterates over Tasklets that not inside a GPU kernel. Such Tasklets must be moved inside a GPU kernel only
         # if they write to GPU memory. The check takes into account the fact that GPU kernels can read host-based
@@ -594,7 +593,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys()).union(data_already_on_gpu.keys())
 
-        def _create_copy_out(arrays_used: Set[str]) -> Dict[str, str]:
+        def _create_copy_out(arrays_used: set[str]) -> dict[str, str]:
             # Add copy-out nodes
             name_mapping = {}
             for nname in arrays_used:

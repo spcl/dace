@@ -3,7 +3,6 @@
 
 from collections import defaultdict
 import copy
-from typing import List
 
 from dace import sdfg as sd, subsets
 from dace.memlet import Memlet
@@ -60,7 +59,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
 
             # Matching condition: Bounding box union of subsets is smaller than
             # adding the subset sizes
-            memlets: List[Memlet] = [e.data for e in graph.out_edges(map_entry) if e.src_conn == conn]
+            memlets: list[Memlet] = [e.data for e in graph.out_edges(map_entry) if e.src_conn == conn]
             union_subset = memlets[0].subset
             for memlet in memlets[1:]:
                 union_subset = subsets.bounding_box_union(union_subset, memlet.subset)
@@ -124,7 +123,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
                     edge_mapping[ind].append(e)
                     break
             else:
-                raise ValueError("Failed to find contiguous subset for edge %s" % e.data)
+                raise ValueError(f"Failed to find contiguous subset for edge {e.data}")
 
         # Create transients for subsets and redirect edges
         for ind, subset in enumerate(contiguous_subsets):

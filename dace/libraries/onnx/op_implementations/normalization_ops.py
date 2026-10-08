@@ -9,7 +9,6 @@ This module contains implementations of normalization operations including:
 """
 
 import copy
-import typing
 
 import dace
 import numpy as np
@@ -132,7 +131,7 @@ class PureDropout(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> nodes.Node | SDFG:
         # Get descriptors
         data = in_desc_with_name(node, state, sdfg, "data")
         output = out_desc_with_name(node, state, sdfg, "output")

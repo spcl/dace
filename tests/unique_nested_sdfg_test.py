@@ -43,7 +43,7 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     # ---------- ----------
     # COMPUTE
     # ---------- ----------
-    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i="0:{}".format(n)))
+    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i=f"0:{n}"))
 
     vecAdd_tasklet = vecAdd_state.add_tasklet("vecAdd_task", ["x_con", "y_con"], ["z_con"], "z_con = x_con + y_con")
 

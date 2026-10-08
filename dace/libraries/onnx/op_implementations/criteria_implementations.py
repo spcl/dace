@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Union
 
 import numpy as np
 
@@ -44,7 +43,7 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Union[nd.Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> nd.Node | SDFG:
         """Generate the forward pass implementation for SoftmaxCrossEntropyLoss.
 
         :param node: The SoftmaxCrossEntropyLoss ONNX node.
@@ -66,7 +65,7 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
             def reduction(x):
                 return np.sum(x)
         else:
-            raise ValueError("Unsupported reduction: {}".format(node.reduction))
+            raise ValueError(f"Unsupported reduction: {node.reduction}")
         reduction = dace.program(reduction)
 
         # This implementation doesn't use ONNX LogSoftmax, and thus saves the

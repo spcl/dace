@@ -4,14 +4,13 @@
 import os
 import urllib.request
 import urllib.error
-import socket
 
 
 def _connected():
     try:
         urllib.request.urlopen("https://spcl.github.io/dace-webclient/dist/sdfv.js", timeout=1)
         return True
-    except (urllib.error.URLError, TimeoutError, socket.timeout):
+    except (urllib.error.URLError, TimeoutError):
         return False
 
 
@@ -39,7 +38,7 @@ def preamble():
     # Try to load dependencies from online sources
     if _connected():
         for dep in sdfv_js_deps:
-            result += '<script src="https://spcl.github.io/dace-webclient/dist/%s"></script>\n' % dep
+            result += f'<script src="https://spcl.github.io/dace-webclient/dist/{dep}"></script>\n'
         return result
 
     # Load local dependencies
@@ -47,7 +46,7 @@ def preamble():
     for dep in offline_sdfv_js_deps:
         file = os.path.join(root_path, "dist", dep)
         with open(file) as fp:
-            result += "<script>%s</script>\n" % fp.read()
+            result += f"<script>{fp.read()}</script>\n"
 
     # Run this code once
     return result

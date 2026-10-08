@@ -2,7 +2,6 @@
 
 import collections
 import sympy as sp
-from typing import List, Optional, Set, Tuple, Union
 
 from dace import SDFG, InterstateEdge, SDFGState, symbolic, properties
 from dace.properties import CodeBlock
@@ -35,7 +34,7 @@ class DeadStateElimination(ppl.Pass):
         # If connectivity or any edges were changed, some more states might be dead
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[Union[SDFGState, Edge[InterstateEdge]]]]:
+    def apply_pass(self, sdfg: SDFG, _) -> set[SDFGState | Edge[InterstateEdge]] | None:
         """
         Removes unreachable states throughout an SDFG.
 
@@ -46,8 +45,8 @@ class DeadStateElimination(ppl.Pass):
         :param initial_symbols: If not None, sets values of initial symbols.
         :return: A set of the removed states, or None if nothing was changed.
         """
-        result: Set[Union[ControlFlowBlock, InterstateEdge]] = set()
-        removed_regions: Set[ControlFlowRegion] = set()
+        result: set[ControlFlowBlock | InterstateEdge] = set()
+        removed_regions: set[ControlFlowRegion] = set()
         annotated = None
         for cfg in list(sdfg.all_control_flow_regions()):
             if cfg in removed_regions or isinstance(cfg, ConditionalBlock):
@@ -100,7 +99,7 @@ class DeadStateElimination(ppl.Pass):
 
     def find_dead_control_flow(
         self, cfg: ControlFlowRegion, set_unconditional_edges: bool = True
-    ) -> Tuple[Set[ControlFlowBlock], Set[Edge[InterstateEdge]], bool]:
+    ) -> tuple[set[ControlFlowBlock], set[Edge[InterstateEdge]], bool]:
         """
         Finds "dead" (unreachable) control flow in a CFG. A block is deemed unreachable if it is:
 
@@ -113,8 +112,8 @@ class DeadStateElimination(ppl.Pass):
         :return: A 3-tuple of (unreachable blocks, unreachable edges, were edges annotated).
         """
         sdfg = cfg.sdfg if cfg.sdfg is not None else cfg
-        visited: Set[ControlFlowBlock] = set()
-        dead_edges: Set[Edge[InterstateEdge]] = set()
+        visited: set[ControlFlowBlock] = set()
+        dead_edges: set[Edge[InterstateEdge]] = set()
         edges_annotated = False
 
         # Run a modified BFS where definitely False edges are not traversed, or if there is an
@@ -176,7 +175,7 @@ class DeadStateElimination(ppl.Pass):
         # Dead states are states that are not live (i.e., visited)
         return set(cfg.nodes()) - visited, dead_edges, edges_annotated
 
-    def _find_dead_branches(self, block: ConditionalBlock) -> List[Tuple[CodeBlock, ControlFlowRegion]]:
+    def _find_dead_branches(self, block: ConditionalBlock) -> list[tuple[CodeBlock, ControlFlowRegion]]:
         dead_branches = []
         unconditional = None
         for i, (cond, branch) in enumerate(block.branches):
@@ -208,7 +207,7 @@ class DeadStateElimination(ppl.Pass):
 
         return dead_branches
 
-    def report(self, pass_retval: Set[Union[SDFGState, Edge[InterstateEdge]]]) -> str:
+    def report(self, pass_retval: set[SDFGState | Edge[InterstateEdge]]) -> str:
         if pass_retval is not None and not pass_retval:
             return "DeadStateElimination annotated new unconditional edges."
 

@@ -10,7 +10,6 @@ import timeit
 from mpi4py import MPI
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.sdfg import utils
-from typing import Union
 
 # Symbols
 # Process grid
@@ -55,7 +54,7 @@ def adjust_size(size, scal_func, comm_size, divisor):
     return int(candidate)
 
 
-file_name = "dace_cpu_{n}_processes.csv".format(n=MPI.COMM_WORLD.Get_size())
+file_name = f"dace_cpu_{MPI.COMM_WORLD.Get_size()}_processes.csv"
 field_names = ["benchmark", "framework", "processes", "sizes", "time"]
 
 
@@ -89,7 +88,7 @@ def optimize_compile(program, rank, commworld, autoopt=True):
 
 
 # From https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
-def str2bool(v: Union[str, bool]) -> bool:
+def str2bool(v: str | bool) -> bool:
     if isinstance(v, bool):
         return v
     if v.lower() in ("yes", "true", "t", "y", "1"):
@@ -142,13 +141,13 @@ def run_atax(validate=False):
 
     if rank == 0:
         print("===== atax =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     M, N = sizes
     M = adjust_size(M, lambda x: np.sqrt(x), size, max(NPx, NPy))
     N = adjust_size(N, lambda x: np.sqrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((M, N)), flush=True)
+        print(f"adjusted sizes: {(M, N)}", flush=True)
 
     lM, lN = M // NPx, N // NPy
     lA, x, y = atax_distr_init(M, N, lM, lN, np.float64, i, j)
@@ -170,7 +169,7 @@ def run_atax(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("atax", (M, N), raw_time_list)
 
     if validate and rank == 0:
@@ -228,13 +227,13 @@ def run_bicg(validate=False):
 
     if rank == 0:
         print("===== bicg =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     M, N = sizes
     M = adjust_size(M, lambda x: np.sqrt(x), size, max(NPx, NPy))
     N = adjust_size(N, lambda x: np.sqrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((M, N)), flush=True)
+        print(f"adjusted sizes: {(M, N)}", flush=True)
 
     lM, lN = M // NPx, N // NPy
     lA, p, r, o1, o2 = bicg_distr_init(M, N, lM, lN, np.float64, i, j)
@@ -256,7 +255,7 @@ def run_bicg(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("bicg", (M, N), raw_time_list)
 
     if validate and rank == 0:
@@ -320,12 +319,12 @@ def run_doitgen(validate=False):
 
     if rank == 0:
         print("===== doitgen =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     K, M, N = sizes
     K = adjust_size(K, lambda x: x, size, size)
     if rank == 0:
-        print("adjusted sizes: {}".format((K, M, N)), flush=True)
+        print(f"adjusted sizes: {(K, M, N)}", flush=True)
 
     lK = K // size
     lA, C4 = doitgen_distr_init(K, M, N, lK, np.float64, rank)
@@ -350,7 +349,7 @@ def run_doitgen(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("doitgen", (K, M, N), raw_time_list)
 
     if validate:
@@ -419,14 +418,14 @@ def run_gemm(validate=False):
 
     if rank == 0:
         print("===== gemm =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     M, N, K = sizes
     M = adjust_size(M, lambda x: np.cbrt(x), size, max(NPx, NPy))
     N = adjust_size(N, lambda x: np.cbrt(x), size, max(NPx, NPy))
     K = adjust_size(K, lambda x: np.cbrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((M, N, K)), flush=True)
+        print(f"adjusted sizes: {(M, N, K)}", flush=True)
 
     lM, lN, lKx, lKy = M // NPx, N // NPy, K // NPx, K // NPy
     alpha, beta, lC, lA, lB = gemm_distr_init(M, N, K, lM, lN, lKy, lKx, np.float64, i, j)
@@ -451,7 +450,7 @@ def run_gemm(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("gemm", (M, N, K), raw_time_list)
 
     if validate:
@@ -537,12 +536,12 @@ def run_gemver(validate=False):
 
     if rank == 0:
         print("===== gemver =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     N = sizes[0]
     N = adjust_size(N, lambda x: np.sqrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((N,)), flush=True)
+        print(f"adjusted sizes: {(N,)}", flush=True)
 
     lNx, lNy = N // NPx, N // NPy
     alpha, beta, lA, lu1, lu2, lv1, lv2, w, x, y, z = gemver_distr_init(N, lNx, lNy, np.float64, i, j)
@@ -586,7 +585,7 @@ def run_gemver(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("gemver", (N,), raw_time_list)
 
     if validate and rank == 0:
@@ -656,12 +655,12 @@ def run_gesummv(validate=False):
 
     if rank == 0:
         print("===== gesummv =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     N = sizes[0]
     N = adjust_size(N, lambda x: np.sqrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((N,)), flush=True)
+        print(f"adjusted sizes: {(N,)}", flush=True)
 
     lNx, lNy = N // NPx, N // NPy
     alpha, beta, lA, lB, x, y = gesummv_distr_init(N, lNx, lNy, np.float64, i, j)
@@ -686,7 +685,7 @@ def run_gesummv(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("gesummv", (N,), raw_time_list)
 
     if validate and rank == 0:
@@ -759,7 +758,7 @@ def run_k2mm(validate=False):
 
     if rank == 0:
         print("===== k2mm =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     M, N, K, R = sizes
     M = adjust_size(M, lambda x: np.cbrt(x), size, max(NPx, NPy))
@@ -767,7 +766,7 @@ def run_k2mm(validate=False):
     K = adjust_size(K, lambda x: np.cbrt(x), size, max(NPx, NPy))
     R = adjust_size(R, lambda x: np.cbrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((M, N, K, R)), flush=True)
+        print(f"adjusted sizes: {(M, N, K, R)}", flush=True)
 
     lMx, lNx, lNy, lKx, lKy, lRy = M // NPx, N // NPx, N // NPy, K // NPx, K // NPy, R // NPy
     alpha, beta, lA, lB, lC, lD = k2mm_distr_init(M, N, K, R, lMx, lNy, lNx, lKy, lKx, lRy, np.float64, i, j)
@@ -811,7 +810,7 @@ def run_k2mm(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("k2mm", (M, N, K), raw_time_list)
 
     if validate:
@@ -883,7 +882,7 @@ def run_k3mm(validate=False):
 
     if rank == 0:
         print("===== k3mm =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     M, N, K, R, S = sizes
     M = adjust_size(M, lambda x: np.cbrt(x), size, max(NPx, NPy))
@@ -892,7 +891,7 @@ def run_k3mm(validate=False):
     R = adjust_size(R, lambda x: np.cbrt(x), size, max(NPx, NPy))
     S = adjust_size(S, lambda x: np.cbrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((M, N, K, R, S)), flush=True)
+        print(f"adjusted sizes: {(M, N, K, R, S)}", flush=True)
 
     lMx, lNx, lNy, lKx, lKy, lRx, lRy, lSy = (
         M // NPx,
@@ -945,7 +944,7 @@ def run_k3mm(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("k3mm", (M, N, K), raw_time_list)
 
     if validate:
@@ -1006,12 +1005,12 @@ def run_mvt(validate=False):
 
     if rank == 0:
         print("===== mvt =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     N = sizes[0]
     N = adjust_size(N, lambda x: np.sqrt(x), size, max(NPx, NPy))
     if rank == 0:
-        print("adjusted sizes: {}".format((N,)), flush=True)
+        print(f"adjusted sizes: {(N,)}", flush=True)
 
     lNx, lNy = N // NPx, N // NPy
     x1, x2, y_1, y_2, lA = mvt_distr_init(N, lNx, lNy, np.float64, i, j)
@@ -1039,7 +1038,7 @@ def run_mvt(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("mvt", (N,), raw_time_list)
 
     if validate and rank == 0:
@@ -1113,12 +1112,12 @@ def run_jacobi_1d(validate=False):
 
     if rank == 0:
         print("===== jacobi_1d =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     TSTEPS, N = sizes
     N = adjust_size(N, lambda x: x, size, size)
     if rank == 0:
-        print("adjusted sizes: {}".format((TSTEPS, N)), flush=True)
+        print(f"adjusted sizes: {(TSTEPS, N)}", flush=True)
 
     lN = N // size
     lA, lB = jacobi_1d_distr_init(N, lN, np.float64, rank)
@@ -1144,7 +1143,7 @@ def run_jacobi_1d(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("jacobi_1d", (TSTEPS, N), raw_time_list)
 
     if validate:
@@ -1258,12 +1257,12 @@ def run_jacobi_2d(validate=False):
 
     if rank == 0:
         print("===== jacobi_2d =====")
-        print("sizes: {}".format(sizes), flush=True)
+        print(f"sizes: {sizes}", flush=True)
 
     TSTEPS, N = sizes
     N = adjust_size(N, lambda x: np.sqrt(x), size, size)
     if rank == 0:
-        print("adjusted sizes: {}".format((TSTEPS, N)), flush=True)
+        print(f"adjusted sizes: {(TSTEPS, N)}", flush=True)
 
     lMx, lNy = N // NPx, N // NPy
     lA, lB = jacobi_2d_distr_init(N, lMx, lNy, np.float64, i, j)
@@ -1303,7 +1302,7 @@ def run_jacobi_2d(validate=False):
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time), flush=True)
+        print(f"Median is {ms_time}ms", flush=True)
         write_time("jacobi_2d", (TSTEPS, N), raw_time_list)
 
     if validate:

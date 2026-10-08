@@ -11,7 +11,7 @@ from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import ast
 from numbers import Integral
-from typing import Optional, Sequence, Union
+from collections.abc import Sequence
 import warnings
 
 import numpy as np
@@ -37,7 +37,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
                 UserWarning,
             )
         elif not res:
-            raise SyntaxError("Matrix dimension mismatch %s != %s" % (arr1.shape[-1], arr2.shape[-2]))
+            raise SyntaxError(f"Matrix dimension mismatch {arr1.shape[-1]} != {arr2.shape[-2]}")
 
         from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
 
@@ -58,9 +58,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
                 UserWarning,
             )
         elif not res:
-            raise SyntaxError(
-                "Number of matrix columns {} must matchsize of vector {}.".format(arr1.shape[1], arr2.shape[0])
-            )
+            raise SyntaxError(f"Number of matrix columns {arr1.shape[1]} must matchsize of vector {arr2.shape[0]}.")
 
         output_shape = (arr1.shape[0],)
 
@@ -72,7 +70,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
             )
         elif not res:
             raise SyntaxError(
-                "Size of vector {} must match number of matrix rows {} must match".format(arr1.shape[0], arr2.shape[0])
+                f"Size of vector {arr1.shape[0]} must match number of matrix rows {arr2.shape[0]} must match"
             )
 
         output_shape = (arr2.shape[1],)
@@ -85,14 +83,12 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
                 UserWarning,
             )
         elif not res:
-            raise SyntaxError(
-                "Vectors in vector product must have same size: {} vs. {}".format(arr1.shape[0], arr2.shape[0])
-            )
+            raise SyntaxError(f"Vectors in vector product must have same size: {arr1.shape[0]} vs. {arr2.shape[0]}")
 
         output_shape = (1,)
 
     else:  # Dunno what this is, bail
-        raise SyntaxError("Cannot multiply arrays with shapes: {} and {}".format(arr1.shape, arr2.shape))
+        raise SyntaxError(f"Cannot multiply arrays with shapes: {arr1.shape} and {arr2.shape}")
 
     type1 = arr1.dtype.type
     type2 = arr2.dtype.type
@@ -262,7 +258,7 @@ def _tensordot(
     state: SDFGState,
     op_a: str,
     op_b: str,
-    axes: Union[int, Sequence[int]] = 2,
+    axes: int | Sequence[int] = 2,
     out_axes: Sequence[int] = None,
 ):
 
@@ -322,11 +318,11 @@ def _einsum(
     state: SDFGState,
     einsum_string: StringLiteral,
     *arrays: str,
-    dtype: Optional[dtypes.typeclass] = None,
+    dtype: dtypes.typeclass | None = None,
     optimize: bool = False,
-    output: Optional[str] = None,
-    alpha: Optional[symbolic.SymbolicType] = 1.0,
-    beta: Optional[symbolic.SymbolicType] = 0.0,
+    output: str | None = None,
+    alpha: symbolic.SymbolicType | None = 1.0,
+    beta: symbolic.SymbolicType | None = 0.0,
 ):
     from dace.frontend.common.einsum import create_einsum_sdfg
 

@@ -1,5 +1,4 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional
 import dace
 from dace import nodes
 from dace.properties import CodeBlock
@@ -9,7 +8,7 @@ import pytest
 from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
 
 
-def _instrument(sdfg: dace.SDFG, instr: dace.DataInstrumentationType, ignore: Optional[str] = None):
+def _instrument(sdfg: dace.SDFG, instr: dace.DataInstrumentationType, ignore: str | None = None):
     # Set instrumentation on all access nodes
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.AccessNode):

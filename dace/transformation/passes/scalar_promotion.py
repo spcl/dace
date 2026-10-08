@@ -16,7 +16,8 @@ the change through NestedSDFG connectors, and rewriting the state-machine slots 
 descriptor as text rather than through a memlet -- are identical whatever the criteria are.
 """
 
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any
+from collections.abc import Callable
 
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, SDFGState, infer_types, nodes
@@ -31,7 +32,7 @@ from dace.transformation.passes.length_one_array_scalar_conversion import (
 PromotionRule = Callable[[SDFG, str], bool]
 
 #: Picks the storage of the array replacing ``sdfg.arrays[name]``; ``None`` keeps the scalar's own.
-StorageRule = Callable[[SDFG, str], Optional[dtypes.StorageType]]
+StorageRule = Callable[[SDFG, str], dtypes.StorageType | None]
 
 
 def invalidate_array_connectors(sdfg: SDFG):
@@ -58,7 +59,7 @@ def invalidate_array_connectors(sdfg: SDFG):
                         node.out_connectors[cname] = uninferred
 
 
-def promote_scalar_to_array(sdfg: SDFG, name: str, storage: Optional[dtypes.StorageType] = None) -> None:
+def promote_scalar_to_array(sdfg: SDFG, name: str, storage: dtypes.StorageType | None = None) -> None:
     """Replace the ``Scalar`` ``name`` with a length-1 ``Array``, in place, across the hierarchy.
 
     The descriptor is swapped, bare textual references become ``name[0]``, and every nested SDFG
@@ -98,7 +99,7 @@ def promote_scalar_to_array(sdfg: SDFG, name: str, storage: Optional[dtypes.Stor
         push_promotion_into_nested(state, name, storage)
 
 
-def push_promotion_into_nested(state: SDFGState, name: str, storage: Optional[dtypes.StorageType] = None) -> None:
+def push_promotion_into_nested(state: SDFGState, name: str, storage: dtypes.StorageType | None = None) -> None:
     """Promote the inner descriptor of every NestedSDFG in ``state`` that binds ``name`` as a Scalar.
 
     ``symbol_mapping`` values are handled by the shared ``rewrite_code_slots`` walk in
@@ -112,7 +113,7 @@ def push_promotion_into_nested(state: SDFGState, name: str, storage: Optional[dt
         if not isinstance(node, nodes.NestedSDFG):
             continue
 
-        handled_inner_names: Set[str] = set()  # If data is referenced as input and output.
+        handled_inner_names: set[str] = set()  # If data is referenced as input and output.
         for iedge in state.in_edges(node):
             if iedge.data.is_empty():
                 continue
@@ -134,9 +135,7 @@ def push_promotion_into_nested(state: SDFGState, name: str, storage: Optional[dt
                 promote_scalar_to_array(node.sdfg, inner_name, storage)
 
 
-def promote_matching_scalars(
-    sdfg: SDFG, needs_promotion: PromotionRule, storage_for: Optional[StorageRule] = None
-) -> int:
+def promote_matching_scalars(sdfg: SDFG, needs_promotion: PromotionRule, storage_for: StorageRule | None = None) -> int:
     """Promote every scalar in ``sdfg``'s hierarchy that ``needs_promotion`` accepts.
 
     Does NOT call :func:`invalidate_array_connectors`; whether a pass needs it unconditionally or
@@ -211,7 +210,7 @@ class PromoteScalarOutputsToArrays(ppl.Pass):
         # A library expansion can introduce a fresh scalar connector, which re-arms the pass.
         return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Nodes))
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> int | None:
         """Promote every matching scalar across the SDFG hierarchy.
 
         :param sdfg: the outermost SDFG, modified in place.
@@ -248,7 +247,7 @@ class PromoteScalarOutputsToArrays(ppl.Pass):
             return False
         return written_by_gpu_map_exit(sdfg, name)
 
-    def storage_for(self, sdfg: SDFG, name: str) -> Optional[dtypes.StorageType]:
+    def storage_for(self, sdfg: SDFG, name: str) -> dtypes.StorageType | None:
         """Storage for the new array: the scalar's own, or real device memory for a GPU kernel write."""
         if not self.gpu:
             return None

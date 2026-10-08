@@ -17,7 +17,8 @@ import shlex
 import subprocess
 import tempfile
 import uuid
-from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
+from typing import Literal, TypeVar, Optional, overload
+from collections.abc import Callable
 import warnings
 from functools import lru_cache
 
@@ -36,10 +37,10 @@ T = TypeVar("T")
 
 def generate_program_folder(
     sdfg,
-    code_objects: List[CodeObject],
+    code_objects: list[CodeObject],
     out_path: str,
     config=None,
-    folder_mode: Optional[str] = None,
+    folder_mode: str | None = None,
 ) -> str:
     """Writes all files required to configure and compile the DaCe program into the specified folder.
 
@@ -93,7 +94,7 @@ def generate_program_folder(
         os.makedirs(target_folder, exist_ok=True)
 
         # Write code to file
-        basename = "{}.{}".format(name, extension)
+        basename = f"{name}.{extension}"
         code_path = os.path.join(target_folder, basename)
         clean_code = code_object.clean_code
 
@@ -116,7 +117,7 @@ def generate_program_folder(
                 code_file.write(clean_code)
 
         if code_object.linkable == True:
-            filelist.append("{},{},{}".format(target_name, target_type, basename))
+            filelist.append(f"{target_name},{target_type},{basename}")
 
         # Generate the source map.
         if sdfg and (folder_mode in ["development"]):
@@ -326,7 +327,7 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def prepare_precompiled_header(targets) -> Optional[str]:
+def prepare_precompiled_header(targets) -> str | None:
     """Precompile ``<dace/dace.h>`` once per (runtime, compiler, flags), returning its dir or ``None``.
 
     The runtime umbrella header is most of the compile time of a small kernel; caching it across
@@ -425,7 +426,7 @@ def configure_and_compile(
     program_folder,
     program_name=None,
     output_stream=None,
-    folder_mode: Optional[str] = None,
+    folder_mode: str | None = None,
 ) -> pathlib.Path:
     """
     Configures and compiles a DaCe program in the specified folder into a shared library file.
@@ -462,7 +463,7 @@ def configure_and_compile(
     # We do this instead of iterating over source files in the directory to
     # avoid globbing files from previous compilations, such that we don't need
     # to wipe the directory for every compilation.
-    with open(os.path.join(program_folder, "dace_files.csv"), "r") as f:
+    with open(os.path.join(program_folder, "dace_files.csv")) as f:
         file_list = [line.strip().split(",") for line in f]
 
     # Get absolute paths and targets for all source files
@@ -496,14 +497,14 @@ def configure_and_compile(
         "-A x64" if os.name == "nt" else "",  # Windows-specific flag
         "-G Ninja" if use_ninja else "",
         '"' + os.path.join(dace_path, "codegen") + '"',
-        '-DDACE_SRC_DIR="{}"'.format(src_folder),
+        f'-DDACE_SRC_DIR="{src_folder}"',
         '-DDACE_FILES="{}"'.format(";".join(files)),
-        "-DDACE_PROGRAM_NAME={}".format(program_name),
+        f"-DDACE_PROGRAM_NAME={program_name}",
         "-DDACE_CPP_STANDARD={}".format(Config.get("compiler", "cpp_standard")),
     ]
 
     # Get required environments are retrieve the CMake information
-    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
+    with open(os.path.join(program_folder, "dace_environments.csv")) as f:
         environments = set(l.strip() for l in f)
 
     environments = dace.library.get_environments_and_dependencies(environments)
@@ -606,9 +607,9 @@ def configure_and_compile(
 
 
 def get_program_handle(
-    library_path: Union[pathlib.Path, str],
+    library_path: pathlib.Path | str,
     sdfg: "dace.SDFG",
-    stub_library_path: Union[pathlib.Path, str, None] = None,
+    stub_library_path: pathlib.Path | str | None = None,
 ) -> csd.CompiledSDFG:
     """Construct a  ``CompiledSDFG`` form a precompiled library directly.
 
@@ -642,18 +643,18 @@ def load_from_file(sdfg, binary_filename):
 
 
 @overload
-def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: Literal[False] = False) -> str: ...
+def get_folder_mode(object_folder: pathlib.Path | str, probe: Literal[False] = False) -> str: ...
 
 
 @overload
-def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: Literal[True]) -> Optional[str]: ...
+def get_folder_mode(object_folder: pathlib.Path | str, probe: Literal[True]) -> str | None: ...
 
 
 @overload
-def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool) -> Optional[str]: ...
+def get_folder_mode(object_folder: pathlib.Path | str, probe: bool) -> str | None: ...
 
 
-def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False) -> Optional[str]:
+def get_folder_mode(object_folder: pathlib.Path | str, probe: bool = False) -> str | None:
     """Inspect `object_folder` and determine which save mode the folder has.
 
     If the function finds the ``FOLDER_MODE`` file it will examine it to get the save mode.
@@ -672,7 +673,7 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
         raise NotADirectoryError("The build folder does not exists.")
 
     if (object_folder / "FOLDER_MODE").exists():
-        with open(object_folder / "FOLDER_MODE", "rt") as F:
+        with open(object_folder / "FOLDER_MODE") as F:
             folder_mode = F.readline().strip()
         if probe and folder_mode not in ("development", "production"):
             # E.g. an older DaCe version, which does not write the file atomically, might have left it empty.
@@ -705,10 +706,10 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
 
 
 def get_binary_name(
-    object_folder: Union[pathlib.Path, str],
+    object_folder: pathlib.Path | str,
     sdfg_name: str,
-    lib_extension: Optional[str] = None,
-    folder_mode: Optional[str] = None,
+    lib_extension: str | None = None,
+    folder_mode: str | None = None,
 ) -> pathlib.Path:
     """Returns the supposed location of the compiled library given the boundary conditions.
 
@@ -742,7 +743,7 @@ def get_binary_name(
     return pathlib.Path(os.path.join(*folder_hirarchy, f"lib{sdfg_name}.{lib_extension}"))
 
 
-def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
+def _get_stub_library_path(sdfg_lib_path: pathlib.Path | str) -> pathlib.Path:
     """Returns the supposed location of the compiled stub library given the path of the compiled library."""
     sdfg_lib_path = pathlib.Path(sdfg_lib_path)
     parent = sdfg_lib_path.parent
@@ -753,7 +754,7 @@ def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.P
 
 
 def load_precompiled_sdfg(
-    folder: Union[pathlib.Path, str],
+    folder: pathlib.Path | str,
     sdfg: Optional["dace.SDFG"] = None,
 ) -> csd.CompiledSDFG:
     """Loads a precompiled SDFG from ``folder``.
@@ -792,7 +793,7 @@ def load_precompiled_sdfg(
     )
 
 
-def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
+def _get_or_eval(value_or_function: T | Callable[[], T]) -> T:
     """
     Returns a stored value or lazily evaluates it. Used in environments
     for allowing potential runtime (rather than import-time) checks.
@@ -802,7 +803,7 @@ def _get_or_eval(value_or_function: Union[T, Callable[[], T]]) -> T:
     return value_or_function
 
 
-def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
+def get_environment_flags(environments) -> tuple[list[str], set[str]]:
     """
     Returns the CMake environment and linkage flags associated with the
     given input environments/libraries.
@@ -837,9 +838,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         for var in env_variables:
             if var in cmake_variables and cmake_variables[var] != env_variables[var]:
                 raise KeyError(
-                    "CMake variable {} was redefined from {} to {}.".format(
-                        var, cmake_variables[var], env_variables[var]
-                    )
+                    f"CMake variable {var} was redefined from {cmake_variables[var]} to {env_variables[var]}."
                 )
             cmake_variables[var] = env_variables[var]
         cmake_packages |= set(_get_or_eval(env.cmake_packages))
@@ -901,7 +900,7 @@ def identical_file_exists(filename: str, file_contents: str):
 
     # Read file in blocks and compare strings
     block_size = 65536
-    with open(filename, "r") as fp:
+    with open(filename) as fp:
         file_buffer = fp.read(block_size)
         while len(file_buffer) > 0:
             block = file_contents[:block_size]

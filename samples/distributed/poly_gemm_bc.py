@@ -237,7 +237,7 @@ if __name__ == "__main__":
 
     if rank == 0:
         ms_time = time_to_ms(raw_time)
-        print("Median is {}ms".format(ms_time))
+        print(f"Median is {ms_time}ms")
 
         alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
         shared_sdfg = gemm_shared.compile()

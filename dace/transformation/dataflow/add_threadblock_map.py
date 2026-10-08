@@ -16,10 +16,9 @@ from dace.transformation.dataflow.tiling import MapTiling
 
 # TODO: Move these helper functions to a separate utility module or class
 import functools
-from typing import List
 
 
-def to_3d_dims(dim_sizes: List) -> List:
+def to_3d_dims(dim_sizes: list) -> list:
     """
     Converts a list of dimension sizes to a 3D format.
 
@@ -56,7 +55,7 @@ def product(iterable):
     return functools.reduce(sympy.Mul, iterable, 1)
 
 
-def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: List):
+def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: list):
     """
     Validates that the given block size for a kernel does not exceed typical CUDA hardware limits.
 

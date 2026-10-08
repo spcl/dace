@@ -67,7 +67,7 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         init_state = sdfg.add_state()
         init_state.add_mapped_tasklet(
             "batched_matmul_init",
-            {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(shape_c)},
+            {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(shape_c)},
             {},
             "out = 0",
             {"out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(shape_c))]))},
@@ -82,12 +82,12 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         # Build map parameters: batch dimensions + M, N, K
         map_params = {}
         for i in range(num_batch_dims):
-            map_params["__i%d" % i] = "0:%s" % symstr(shape_c[i])
+            map_params["__i%d" % i] = f"0:{symstr(shape_c[i])}"
 
         # M, N, K dimensions
-        map_params["__im"] = "0:%s" % symstr(shape_a[-2])
-        map_params["__in"] = "0:%s" % symstr(shape_b[-1])
-        map_params["__ik"] = "0:%s" % symstr(shape_a[-1])
+        map_params["__im"] = f"0:{symstr(shape_a[-2])}"
+        map_params["__in"] = f"0:{symstr(shape_b[-1])}"
+        map_params["__ik"] = f"0:{symstr(shape_a[-1])}"
 
         # Build memlet access patterns
         # For A: if 2D, use [M, K]; if 3D+, use [batch_indices..., M, K]
@@ -280,7 +280,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         )
 
         dtype = cdesc.dtype.base_type
-        func = "%sgemm" % to_blastype(dtype.type)
+        func = f"{to_blastype(dtype.type)}gemm"
         if dtype == dace.float16:
             cdtype = "__half"
             factort = "Half"
@@ -326,7 +326,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             alpha = f"({cdtype} *)&alpha"
         else:
             alpha = constants[node.alpha]
-            beta = "__state->cublas_handle.Constants().%sZero()" % factort
+            beta = f"__state->cublas_handle.Constants().{factort}Zero()"
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)

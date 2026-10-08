@@ -10,7 +10,7 @@ def sredtest(A: vec3d[1]):
     with dace.tasklet:
         a >> A(1, lambda a, b: vec3d(x=a.x + b.x, y=a.y + b.y, z=a.z + b.z))[0]
 
-        a = vec3d(x=float(1.0), y=float(2.0), z=float(3.0))
+        a = vec3d(x=1.0, y=2.0, z=3.0)
 
 
 def test():

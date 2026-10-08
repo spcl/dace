@@ -3,7 +3,7 @@
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from copy import deepcopy
 
 import sympy as sp
@@ -69,8 +69,8 @@ def _replsym(symlist, symrepl):
 
 def replace_dict(
     subgraph: "StateSubgraphView",
-    repl: Dict[str, str],
-    symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+    repl: dict[str, str],
+    symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType] | None = None,
 ):
     """
     Finds and replaces all occurrences of a set of symbols/arrays in the given subgraph.
@@ -158,7 +158,7 @@ def replace(subgraph: "StateSubgraphView", name: str, new_name: str):
     replace_dict(subgraph, {name: new_name})
 
 
-def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> Optional[str]:
+def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> str | None:
     """C type ``name`` is declared with in ``sdfg``: a symbol's type, or a scalar's. ``None`` when
     ``name`` is neither, as a map parameter is."""
     if sdfg is None:
@@ -173,8 +173,8 @@ def declared_ctype(name: str, sdfg: Optional["dace.SDFG"]) -> Optional[str]:
 
 def replace_in_codeblock(
     codeblock: properties.CodeBlock,
-    repl: Dict[str, str],
-    node: Optional[Any] = None,
+    repl: dict[str, str],
+    node: Any | None = None,
     sdfg: Optional["dace.SDFG"] = None,
 ):
     code = codeblock.code
@@ -203,7 +203,7 @@ def replace_in_codeblock(
 
         else:
             warnings.warn(
-                "Replacement of %s with %s was not made for string tasklet code of language %s" % (name, new_name, lang)
+                f"Replacement of {name} with {new_name} was not made for string tasklet code of language {lang}"
             )
 
     elif codeblock.code is not None:
@@ -213,7 +213,7 @@ def replace_in_codeblock(
 
 
 def replace_list_property_item(
-    item: Any, element_type: type, repl: Dict[str, str], symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType]
+    item: Any, element_type: type, repl: dict[str, str], symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType]
 ) -> Any:
     """
     Applies a replacement to a single element of a ``ListProperty``.
@@ -258,8 +258,8 @@ def replace_list_property_item(
 
 def replace_properties_dict(
     node: Any,
-    repl: Dict[str, str],
-    symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+    repl: dict[str, str],
+    symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType] | None = None,
     sdfg: Optional["dace.SDFG"] = None,
 ):
     if symrepl is None:
@@ -310,12 +310,12 @@ def replace_properties_dict(
 
 
 def replace_properties(
-    node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str, new_name: str
+    node: Any, symrepl: dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str, new_name: str
 ):
     replace_properties_dict(node, {name: new_name}, symrepl)
 
 
-def replace_datadesc_names(sdfg: "dace.SDFG", repl: Dict[str, str]):
+def replace_datadesc_names(sdfg: "dace.SDFG", repl: dict[str, str]):
     """Reduced form of replace which only replaces data descriptor names."""
     # Replace in descriptor repository
     for aname, aval in list(sdfg.arrays.items()):

@@ -2,7 +2,7 @@
 import dace
 from dace import properties, symbolic
 from copy import deepcopy as dc
-from typing import Any, Dict
+from typing import Any
 import warnings
 from math import prod
 
@@ -36,11 +36,11 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
-            raise ValueError('Matrix multiplication connector "{}" not found.'.format(name))
+            raise ValueError(f'Matrix multiplication connector "{name}" not found.')
     return res_lhs, res_rhs, res_out
 
 
-def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides) -> Dict[str, Any]:
+def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides) -> dict[str, Any]:
     """
     Detects whether a matrix multiplication is a batched matrix multiplication
     and returns its parameters (strides, batch size), or an empty dictionary if
@@ -130,7 +130,7 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     return {"sa": stride_a, "sb": stride_b, "sc": stride_c, "b": batch_size, "batch_dims": result_batch_dims}
 
 
-def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> Dict[str, Any]:
+def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> dict[str, Any]:
     """Get option map for GEMM code generation (with column-major order)."""
     # Avoid import loops
     from dace.codegen.common import sym2cpp
@@ -217,7 +217,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                     beta = 1.0
                     cin = False
                 else:
-                    warnings.warn("Unsupported WCR in output of MatMul library node: {}".format(c[0].data.wcr))
+                    warnings.warn(f"Unsupported WCR in output of MatMul library node: {c[0].data.wcr}")
             gemm = Gemm(node.name + "gemm", location=node.location, alpha=node.alpha, beta=beta, cin=cin)
             return gemm
         elif is_batched and len(size_a) >= 2 and len(size_b) >= 2:
@@ -254,9 +254,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             c[0].src_conn = "_result"
             result = Dot(node.name + "dot", location=node.location)
         else:
-            raise NotImplementedError(
-                "Matrix multiplication not implemented for shapes: {} and {}".format(size_a, size_b)
-            )
+            raise NotImplementedError(f"Matrix multiplication not implemented for shapes: {size_a} and {size_b}")
 
         result.alpha = node.alpha
         result.beta = node.beta

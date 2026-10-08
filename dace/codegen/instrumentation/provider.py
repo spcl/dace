@@ -2,7 +2,6 @@
 from dace.codegen.prettycode import CodeIOStream
 from dace.dtypes import DataInstrumentationType, InstrumentationType
 from dace.registry import make_registry
-from typing import Dict, Type, Union
 
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG
@@ -11,14 +10,12 @@ from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 @make_registry
-class InstrumentationProvider(object):
+class InstrumentationProvider:
     """Instrumentation provider for SDFGs, states, scopes, and memlets. Emits
     code on event."""
 
     @staticmethod
-    def get_provider_mapping() -> Dict[
-        Union[InstrumentationType, DataInstrumentationType], Type["InstrumentationProvider"]
-    ]:
+    def get_provider_mapping() -> dict[InstrumentationType | DataInstrumentationType, type["InstrumentationProvider"]]:
         """
         Returns a dictionary that maps instrumentation types to provider
         class types, given the currently-registered extensions of this class.
@@ -290,9 +287,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_allocation_begin(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream
-    ) -> None:
+    def on_allocation_begin(self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, stream: CodeIOStream) -> None:
         """Event called at the beginning of an allocation code generation.
 
         :param sdfg: The generated SDFG object.
@@ -301,9 +296,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_allocation_end(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], lstream: CodeIOStream
-    ) -> None:
+    def on_allocation_end(self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, lstream: CodeIOStream) -> None:
         """Event called at the end of an allocation code generation.
 
         :param sdfg: The generated SDFG object.
@@ -313,7 +306,7 @@ class InstrumentationProvider(object):
         pass
 
     def on_deallocation_begin(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], stream: CodeIOStream
+        self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, stream: CodeIOStream
     ) -> None:
         """Event called at the beginning of a deallocation code generation.
 
@@ -323,9 +316,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_deallocation_end(
-        self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG], lstream: CodeIOStream
-    ) -> None:
+    def on_deallocation_end(self, sdfg: SDFG, scope: nodes.EntryNode | SDFGState | SDFG, lstream: CodeIOStream) -> None:
         """Event called at the end of a deallocation code generation.
 
         :param sdfg: The generated SDFG object.

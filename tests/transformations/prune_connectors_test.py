@@ -3,7 +3,6 @@ import argparse
 import numpy as np
 import os
 import copy
-from typing import Tuple
 
 import dace
 from dace.transformation.dataflow import PruneConnectors
@@ -157,7 +156,7 @@ of << i << "\\n";""",
 
 def _make_read_write_sdfg(
     conforming_memlet: bool,
-) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
+) -> tuple[dace.SDFG, dace.nodes.NestedSDFG]:
     """Creates an SDFG for the `test_read_write_{1, 2}` tests.
 
     The SDFG is rather synthetic, it has an input `in_arg` and adds to every element
@@ -281,7 +280,7 @@ def test_prune_connectors(n=None):
     assert np.allclose(arr_out, arr_in + 1)
 
     numbers_written = []
-    with open("prune_connectors_test.txt", "r") as f:
+    with open("prune_connectors_test.txt") as f:
         for line in f:
             numbers_written.append(int(line.strip()))
     assert all(sorted(numbers_written) == np.arange(n))

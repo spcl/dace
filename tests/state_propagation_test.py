@@ -11,7 +11,7 @@ from dace.transformation.passes.simplification.control_flow_raising import Contr
 
 def state_check_executions(state, expected, expected_dynamic=False):
     if state.executions != expected:
-        raise RuntimeError("Expected {} execution, got {}".format(expected, state.executions))
+        raise RuntimeError(f"Expected {expected} execution, got {state.executions}")
     elif expected_dynamic and not state.dynamic_executions:
         raise RuntimeError("Expected dynamic executions, got static")
     elif state.dynamic_executions and not expected_dynamic:

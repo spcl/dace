@@ -11,7 +11,7 @@ from dace.transformation.dataflow.sve import infer_types
 from dace import dtypes
 from dace import data
 from dace import symbolic
-from typing import Dict, Set, Tuple, Union, DefaultDict
+from collections import defaultdict
 
 
 class VectorInferenceFlags(Flag):
@@ -76,7 +76,7 @@ class VectorInferenceGraph(DiGraph):
         state: SDFGState,
         map_entry: nodes.MapEntry,
         vec_len,
-        initial_constraints: Dict[Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], int] = None,
+        initial_constraints: dict[tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, int] = None,
         flags: VectorInferenceFlags = None,
     ):
         """
@@ -113,9 +113,7 @@ class VectorInferenceGraph(DiGraph):
 
         # Stores a mapping from SDFG nodes/connectors to InferenceNode's
         # Used when constructing the internal inference graph
-        self.conn_to_node = DefaultDict[Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], InferenceNode](
-            lambda: None
-        )
+        self.conn_to_node = defaultdict[tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, InferenceNode](lambda: None)
 
         self.flags = flags
 
@@ -126,7 +124,7 @@ class VectorInferenceGraph(DiGraph):
             for n, t in initial_constraints.items():
                 self.set_constraint(n, t)
 
-    def set_constraint(self, conn: Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], infer_type: int):
+    def set_constraint(self, conn: tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, infer_type: int):
         """
         Allows to manually specify a constraint either on a Tasklet connector
         by providing a tuple `(node, connector, is_input)` or a Scalar AccessNode.
@@ -134,7 +132,7 @@ class VectorInferenceGraph(DiGraph):
         """
         self.conn_to_node[conn].infer_as(infer_type)
 
-    def get_constraint(self, conn: Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode]) -> int:
+    def get_constraint(self, conn: tuple[nodes.Tasklet, str, bool] | nodes.AccessNode) -> int:
         """
         Allows to obtain the inferred constraint for a Tasklet connector or AccessNode.
         Should be done after calling `infer()`.
@@ -209,7 +207,7 @@ class VectorInferenceGraph(DiGraph):
 
         return False
 
-    def _get_output_subsets(self, node: nodes.Tasklet) -> Dict[str, Set[str]]:
+    def _get_output_subsets(self, node: nodes.Tasklet) -> dict[str, set[str]]:
         """
         Computes for each output connector the set of input connectors for which
         if at least one of them is a vector, the output becomes a vector.
@@ -502,7 +500,7 @@ def infer_vectors(
     state: SDFGState,
     map_entry: nodes.MapEntry,
     vec_len,
-    initial_constraints: Dict[Union[Tuple[nodes.Tasklet, str, bool], nodes.AccessNode], int] = None,
+    initial_constraints: dict[tuple[nodes.Tasklet, str, bool] | nodes.AccessNode, int] = None,
     flags: VectorInferenceFlags = None,
     apply: bool = True,
 ) -> VectorInferenceGraph:

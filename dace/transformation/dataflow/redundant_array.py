@@ -3,7 +3,7 @@
 
 import copy
 import warnings
-from typing import Dict, List, Optional, Tuple, Sequence
+from collections.abc import Sequence
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -28,8 +28,8 @@ def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicTy
 
 
 def _validate_subsets(
-    edge: graph.MultiConnectorEdge, arrays: Dict[str, data.Data], src_name: str = None, dst_name: str = None
-) -> Tuple[subsets.Subset, ...]:
+    edge: graph.MultiConnectorEdge, arrays: dict[str, data.Data], src_name: str = None, dst_name: str = None
+) -> tuple[subsets.Subset, ...]:
     """Extracts and validates src and dst subsets from the edge."""
 
     # Find src and dst names
@@ -62,9 +62,7 @@ def _validate_subsets(
                 dst_expr = dst_subset.num_elements()
                 dst_expr_exact = dst_subset.num_elements_exact()
                 if src_expr != dst_expr and symbolic.inequal_symbols(src_expr_exact, dst_expr_exact):
-                    raise ValueError(
-                        "Source subset is missing (dst_subset: {}, src_shape: {}".format(dst_subset, desc.shape)
-                    )
+                    raise ValueError(f"Source subset is missing (dst_subset: {dst_subset}, src_shape: {desc.shape}")
             else:
                 src_subset = copy.deepcopy(dst_subset)
                 padding = len(desc.shape) - len(src_subset)
@@ -95,7 +93,7 @@ def _validate_subsets(
                 dst_expr_exact = dst_subset.num_elements_exact()
                 if src_expr != dst_expr and symbolic.inequal_symbols(src_expr_exact, dst_expr_exact):
                     raise ValueError(
-                        "Destination subset is missing (src_subset: {}, dst_shape: {}".format(src_subset, desc.shape)
+                        f"Destination subset is missing (src_subset: {src_subset}, dst_shape: {desc.shape}"
                     )
             else:
                 dst_subset = copy.deepcopy(src_subset)
@@ -123,7 +121,7 @@ def _validate_subsets(
 def find_dims_to_pop(
     a_size: Sequence[symbolic.SymbolicType],
     b_size: Sequence[symbolic.SymbolicType],
-) -> List[int]:
+) -> list[int]:
     """
     Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
@@ -171,7 +169,7 @@ def find_dims_to_pop(
 def find_dims_to_pop2(
     a_size: Sequence[symbolic.SymbolicType],
     b_size: Sequence[symbolic.SymbolicType],
-) -> Optional[List[int]]:
+) -> list[int] | None:
     """
     Determine how the first subset has to be squeezed to get to the dimension of the second subset.
 
@@ -554,7 +552,7 @@ class RedundantArray(pm.SingleStateTransformation):
         out_array: nodes.AccessNode,
         e1: graph.MultiConnectorEdge[mm.Memlet],
         b_subset: subsets.Subset,
-        b_dims_to_pop: List[int],
+        b_dims_to_pop: list[int],
     ):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
@@ -1297,7 +1295,7 @@ def _connector_describes_view(connector_desc: data.Data, view_desc: data.Data, v
 
 def _view_carries_a_connector(
     state: SDFGState,
-    edges: List[graph.MultiConnectorEdge[mm.Memlet]],
+    edges: list[graph.MultiConnectorEdge[mm.Memlet]],
     view_desc: data.Data,
     viewed_desc: data.Data,
     from_source: bool,
@@ -1530,7 +1528,7 @@ def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
     return True
 
 
-def _sliced_dims(adesc: data.Array, vdesc: data.View) -> List[int]:
+def _sliced_dims(adesc: data.Array, vdesc: data.View) -> list[int]:
     """Returns the Array dimensions viewed by a slice-View.
     NOTE: This method assumes that `_is_slice(adesc, vdesc) == True`.
     """
@@ -1883,7 +1881,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Gather metadata
         viewed: nodes.AccessNode
-        non_view_edges: List[graph.MultiConnectorEdge[mm.Memlet]]
+        non_view_edges: list[graph.MultiConnectorEdge[mm.Memlet]]
         is_src: bool
         if view_edge.dst is self.view:
             viewed = state.memlet_path(view_edge)[0].src
@@ -1941,7 +1939,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Gather metadata
         viewed: nodes.AccessNode
-        non_view_edges: List[graph.MultiConnectorEdge[mm.Memlet]]
+        non_view_edges: list[graph.MultiConnectorEdge[mm.Memlet]]
         subset: subsets.Range
         is_src: bool
         if view_edge.dst is self.view:

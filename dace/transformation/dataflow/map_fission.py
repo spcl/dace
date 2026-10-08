@@ -12,7 +12,6 @@ from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
-from typing import List, Optional, Tuple
 
 
 @transformation.explicit_cf_compatible
@@ -53,7 +52,7 @@ class MapFission(transformation.SingleStateTransformation):
         ]
 
     @staticmethod
-    def _components(subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+    def _components(subgraph: gr.SubgraphView) -> list[tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
@@ -145,7 +144,7 @@ class MapFission(transformation.SingleStateTransformation):
 
             if len(nsdfg_node.sdfg.nodes()) == 1:
                 child = nsdfg_node.sdfg.nodes()[0]
-                conditions: List[CodeBlock] = []
+                conditions: list[CodeBlock] = []
                 if isinstance(child, LoopRegion):
                     conditions.append(child.loop_condition)
                 elif isinstance(child, ConditionalBlock):
@@ -242,7 +241,7 @@ class MapFission(transformation.SingleStateTransformation):
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
-        nsdfg_node: Optional[nodes.NestedSDFG] = None
+        nsdfg_node: nodes.NestedSDFG | None = None
 
         # Obtain subgraph to perform fission to
         if self.expr_index == 0:  # Map with subgraph

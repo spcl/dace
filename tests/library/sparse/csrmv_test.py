@@ -78,8 +78,8 @@ def test_csrmv(alpha, beta, implementation, dtype):
     m = 8
 
     A = np.random.random((n, m)).astype(dtype.as_numpy_dtype())
-    B = np.random.random((m)).astype(dtype.as_numpy_dtype())
-    C = np.random.random((n)).astype(dtype.as_numpy_dtype())
+    B = np.random.random(m).astype(dtype.as_numpy_dtype())
+    C = np.random.random(n).astype(dtype.as_numpy_dtype())
     C_ = copy.deepcopy(C)
 
     A_csr = csr_matrix(A)

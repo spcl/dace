@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 import warnings
 
 from dace import SDFG, config, properties
@@ -94,16 +94,16 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self,
         validate: bool = False,
         validate_all: bool = False,
-        skip: Optional[Set[str]] = None,
+        skip: set[str] | None = None,
         verbose: bool = False,
         no_inline_function_call_regions: bool = False,
         no_inline_named_regions: bool = False,
-        pass_options: Optional[Dict[str, Any]] = None,
+        pass_options: dict[str, Any] | None = None,
     ):
         if skip:
-            passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
+            passes: list[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
         else:
-            passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES]
+            passes: list[ppl.Pass] = [p() for p in SIMPLIFY_PASSES]
 
         super().__init__(passes=passes)
         self.validate = validate
@@ -126,7 +126,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         for p in passes:
             p.set_opts(pass_opts)
 
-    def apply_subpass(self, sdfg: SDFG, p: ppl.Pass, state: Dict[str, Any]):
+    def apply_subpass(self, sdfg: SDFG, p: ppl.Pass, state: dict[str, Any]):
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
@@ -148,7 +148,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
                 return None
 
         if type(p) in _recursive_passes:  # If pass needs to run recursively, do so and modify return value
-            ret: Dict[int, Any] = {}
+            ret: dict[int, Any] = {}
             for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
                 if subret is not None:
@@ -179,7 +179,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
             sdfg.validate()
         return ret
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         result = super().apply_pass(sdfg, pipeline_results)
 
         if result is not None:

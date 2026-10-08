@@ -9,9 +9,10 @@ from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from numbers import Integral, Number
-from typing import Optional, Sequence, Tuple, Union
+from typing import Union
+from collections.abc import Sequence
 
-ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
+ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 ##### MPI Cartesian Communicators
@@ -73,7 +74,7 @@ def _cart_sub(
     sdfg: SDFG,
     state: SDFGState,
     parent_grid: str,
-    color: Sequence[Union[Integral, bool]],
+    color: Sequence[Integral | bool],
     exact_grid: RankType = None,
 ):
     """Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
@@ -118,9 +119,7 @@ def _cart_sub(
 
 
 @oprepo.replaces_method("ProcessGrid", "Sub")
-def _pgrid_sub(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, parent_grid: str, color: Sequence[Union[Integral, bool]]
-):
+def _pgrid_sub(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, parent_grid: str, color: Sequence[Integral | bool]):
     """Equivalent to `dace.comm.Cart_sub(parent_grid, color).
     :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
     :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
@@ -172,7 +171,7 @@ def _bcast(
     sdfg: SDFG,
     state: SDFGState,
     buffer: str,
-    root: Union[str, sp.Expr, Number] = 0,
+    root: str | sp.Expr | Number = 0,
     grid: str = None,
     fcomm: str = None,
 ):
@@ -190,7 +189,7 @@ def _bcast(
         storage = desc.storage
         root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         root_node = state.add_access(root_name)
-        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, "__out = {}".format(root))
+        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
     if grid:
         libnode.add_in_connector("_grid")
@@ -205,7 +204,7 @@ def _bcast(
 @oprepo.replaces_method("Cartcomm", "Bcast")
 @oprepo.replaces_method("Intracomm", "Bcast")
 def _intracomm_bcast(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, comm: str, buffer: str, root: Union[str, sp.Expr, Number] = 0
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, comm: str, buffer: str, root: str | sp.Expr | Number = 0
 ):
     """Equivalent to `dace.comm.Bcast(buffer, root)`."""
 
@@ -221,7 +220,7 @@ def _intracomm_bcast(
 
 @oprepo.replaces_method("ProcessGrid", "Bcast")
 def _pgrid_bcast(
-    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str, root: Union[str, sp.Expr, Number] = 0
+    pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str, root: str | sp.Expr | Number = 0
 ):
     """Equivalent to `dace.comm.Bcast(buffer, root, grid=pgrid)`."""
 
@@ -246,7 +245,7 @@ def _Reduce(
     state: SDFGState,
     buffer: str,
     op: str,
-    root: Union[str, sp.Expr, Number] = 0,
+    root: str | sp.Expr | Number = 0,
     grid: str = None,
 ):
 
@@ -263,7 +262,7 @@ def _Reduce(
         storage = desc.storage
         root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         root_node = state.add_access(root_name)
-        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, "__out = {}".format(root))
+        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
     if grid:
         libnode.add_in_connector("_grid")
@@ -371,7 +370,7 @@ def _scatter(
     state: SDFGState,
     in_buffer: str,
     out_buffer: str,
-    root: Union[str, sp.Expr, Number] = 0,
+    root: str | sp.Expr | Number = 0,
 ):
 
     from dace.libraries.mpi.nodes.scatter import Scatter
@@ -388,7 +387,7 @@ def _scatter(
         storage = in_desc.storage
         root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         root_node = state.add_access(root_name)
-        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, "__out = {}".format(root))
+        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
     state.add_edge(in_node, None, libnode, "_inbuffer", Memlet.from_array(in_buffer, in_desc))
     state.add_edge(root_node, None, libnode, "_root", Memlet.simple(root_node.data, "0"))
@@ -405,7 +404,7 @@ def _gather(
     state: SDFGState,
     in_buffer: str,
     out_buffer: str,
-    root: Union[str, sp.Expr, Number] = 0,
+    root: str | sp.Expr | Number = 0,
 ):
 
     from dace.libraries.mpi.nodes.gather import Gather
@@ -422,7 +421,7 @@ def _gather(
         storage = in_desc.storage
         root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         root_node = state.add_access(root_name)
-        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, "__out = {}".format(root))
+        root_tasklet = state.add_tasklet("_set_root_", {}, {"__out"}, f"__out = {root}")
         state.add_edge(root_tasklet, "__out", root_node, None, Memlet.simple(root_name, "0"))
     state.add_edge(in_node, None, libnode, "_inbuffer", Memlet.from_array(in_buffer, in_desc))
     state.add_edge(root_node, None, libnode, "_root", Memlet.simple(root_node.data, "0"))
@@ -441,8 +440,8 @@ def _send(
     sdfg: SDFG,
     state: SDFGState,
     buffer: str,
-    dst: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number] = 0,
+    dst: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number = 0,
 ):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.send import Send
@@ -472,7 +471,7 @@ def _send(
         storage = desc.storage
         dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         dst_node = state.add_access(dst_name)
-        dst_tasklet = state.add_tasklet("_set_dst_", {}, {"__out"}, "__out = {}".format(dst))
+        dst_tasklet = state.add_tasklet("_set_dst_", {}, {"__out"}, f"__out = {dst}")
         state.add_edge(dst_tasklet, "__out", dst_node, None, Memlet.simple(dst_name, "0"))
 
     tag_range = None
@@ -486,7 +485,7 @@ def _send(
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, "__out = {}".format(tag))
+        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
 
     if buf_range:
@@ -516,8 +515,8 @@ def _intracomm_send(
     state: SDFGState,
     icomm: str,
     buffer: str,
-    dst: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    dst: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.end(buffer, dst, tag)`."""
 
@@ -536,8 +535,8 @@ def _pgrid_send(
     state: SDFGState,
     pgrid: str,
     buffer: str,
-    dst: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    dst: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.Send(buffer, dst, tag, grid=pgrid)`."""
 
@@ -552,8 +551,8 @@ def _isend(
     sdfg: SDFG,
     state: SDFGState,
     buffer: str,
-    dst: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    dst: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
     request: str = None,
     grid: str = None,
 ):
@@ -603,7 +602,7 @@ def _isend(
         storage = desc.storage
         dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         dst_node = state.add_access(dst_name)
-        dst_tasklet = state.add_tasklet("_set_dst_", {}, {"__out"}, "__out = {}".format(dst))
+        dst_tasklet = state.add_tasklet("_set_dst_", {}, {"__out"}, f"__out = {dst}")
         state.add_edge(dst_tasklet, "__out", dst_node, None, Memlet.simple(dst_name, "0"))
 
     tag_range = None
@@ -617,7 +616,7 @@ def _isend(
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, "__out = {}".format(tag))
+        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
 
     if buf_range:
@@ -658,8 +657,8 @@ def _intracomm_isend(
     state: SDFGState,
     icomm: str,
     buffer: str,
-    dst: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    dst: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`."""
 
@@ -680,8 +679,8 @@ def _pgrid_isend(
     state: SDFGState,
     pgrid: str,
     buffer: str,
-    dst: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    dst: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`."""
 
@@ -697,8 +696,8 @@ def _recv(
     sdfg: SDFG,
     state: SDFGState,
     buffer: str,
-    src: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number] = 0,
+    src: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number = 0,
 ):
     from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.recv import Recv
@@ -728,7 +727,7 @@ def _recv(
         storage = desc.storage
         src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         src_node = state.add_access(src_name)
-        src_tasklet = state.add_tasklet("_set_src_", {}, {"__out"}, "__out = {}".format(src))
+        src_tasklet = state.add_tasklet("_set_src_", {}, {"__out"}, f"__out = {src}")
         state.add_edge(src_tasklet, "__out", src_node, None, Memlet.simple(src_name, "0"))
 
     tag_range = None
@@ -742,7 +741,7 @@ def _recv(
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, "__out = {}".format(tag))
+        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
 
     if buf_range:
@@ -772,8 +771,8 @@ def _intracomm_Recv(
     state: SDFGState,
     icomm: str,
     buffer: str,
-    src: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    src: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.Recv(buffer, src, tagq)`."""
 
@@ -792,8 +791,8 @@ def _pgrid_irecv(
     state: SDFGState,
     pgrid: str,
     buffer: str,
-    src: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    src: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.Recv(buffer, dst, tag, grid=pgrid)`."""
 
@@ -808,8 +807,8 @@ def _irecv(
     sdfg: SDFG,
     state: SDFGState,
     buffer: str,
-    src: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    src: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
     request: str = None,
     grid: str = None,
 ):
@@ -858,7 +857,7 @@ def _irecv(
         storage = desc.storage
         src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         src_node = state.add_access(src_name)
-        src_tasklet = state.add_tasklet("_set_src_", {}, {"__out"}, "__out = {}".format(src))
+        src_tasklet = state.add_tasklet("_set_src_", {}, {"__out"}, f"__out = {src}")
         state.add_edge(src_tasklet, "__out", src_node, None, Memlet.simple(src_name, "0"))
 
     tag_range = None
@@ -872,7 +871,7 @@ def _irecv(
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, "__out = {}".format(tag))
+        tag_tasklet = state.add_tasklet("_set_tag_", {}, {"__out"}, f"__out = {tag}")
         state.add_edge(tag_tasklet, "__out", tag_node, None, Memlet.simple(tag_name, "0"))
 
     if buf_range:
@@ -913,8 +912,8 @@ def _intracomm_irecv(
     state: SDFGState,
     icomm: str,
     buffer: str,
-    src: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    src: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`."""
 
@@ -935,8 +934,8 @@ def _pgrid_irecv(
     state: SDFGState,
     pgrid: str,
     buffer: str,
-    src: Union[str, sp.Expr, Number],
-    tag: Union[str, sp.Expr, Number],
+    src: str | sp.Expr | Number,
+    tag: str | sp.Expr | Number,
 ):
     """Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`."""
 
@@ -1009,12 +1008,12 @@ def _define_subarray(
     pv: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    array: Union[str, ShapeType],
-    subarray: Union[str, ShapeType],
+    array: str | ShapeType,
+    subarray: str | ShapeType,
     dtype: dtypes.typeclass = None,
     process_grid: str = None,
     correspondence: Sequence[Integral] = None,
-) -> Tuple[str, Optional[dace.sdfg.nodes.AccessNode]]:
+) -> tuple[str, dace.sdfg.nodes.AccessNode | None]:
     """Adds a sub-array descriptor to the DaCe Program.
     Sub-arrays are implemented (when `process_grid` is set) with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
 
@@ -1067,8 +1066,8 @@ def _subarray(
     pv: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
-    array: Union[str, ShapeType],
-    subarray: Union[str, ShapeType],
+    array: str | ShapeType,
+    subarray: str | ShapeType,
     dtype: dtypes.typeclass = None,
     process_grid: str = None,
     correspondence: Sequence[Integral] = None,
@@ -1295,7 +1294,7 @@ def _bcscatter(
     state: SDFGState,
     in_buffer: str,
     out_buffer: str,
-    block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]],
+    block_sizes: str | Sequence[sp.Expr | Number],
 ):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicScatter
@@ -1325,7 +1324,7 @@ def _bcscatter(
                 "_set_bsizes_",
                 {},
                 {"__out"},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]),
+                ";".join([f"__out[{i}] = {sz}" for i, sz in enumerate(block_sizes)]),
             )
             state.add_edge(bsizes_tasklet, "__out", bsizes_node, None, Memlet.from_array(bsizes_name, bsizes_desc))
     else:
@@ -1378,7 +1377,7 @@ def _bcgather(
     state: SDFGState,
     in_buffer: str,
     out_buffer: str,
-    block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]],
+    block_sizes: str | Sequence[sp.Expr | Number],
 ):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicGather
@@ -1408,7 +1407,7 @@ def _bcgather(
                 "_set_bsizes_",
                 {},
                 {"__out"},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]),
+                ";".join([f"__out[{i}] = {sz}" for i, sz in enumerate(block_sizes)]),
             )
             state.add_edge(bsizes_tasklet, "__out", bsizes_node, None, Memlet.from_array(bsizes_name, bsizes_desc))
     else:
@@ -1452,10 +1451,10 @@ def _distr_matmult(
     state: SDFGState,
     opa: str,
     opb: str,
-    shape: Sequence[Union[sp.Expr, Number]],
-    a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
-    b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
-    c_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+    shape: Sequence[sp.Expr | Number],
+    a_block_sizes: str | Sequence[sp.Expr | Number] = None,
+    b_block_sizes: str | Sequence[sp.Expr | Number] = None,
+    c_block_sizes: str | Sequence[sp.Expr | Number] = None,
 ):
 
     arra = sdfg.arrays[opa]
@@ -1491,7 +1490,7 @@ def _distr_matmult(
                 "_set_a_bsizes_",
                 {},
                 {"__out"},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(a_block_sizes)]),
+                ";".join([f"__out[{i}] = {sz}" for i, sz in enumerate(a_block_sizes)]),
             )
             state.add_edge(
                 a_bsizes_tasklet, "__out", a_bsizes_node, None, Memlet.from_array(a_bsizes_name, a_bsizes_desc)
@@ -1516,7 +1515,7 @@ def _distr_matmult(
                 "_set_b_sizes_",
                 {},
                 {"__out"},
-                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(b_block_sizes)]),
+                ";".join([f"__out[{i}] = {sz}" for i, sz in enumerate(b_block_sizes)]),
             )
             state.add_edge(
                 b_bsizes_tasklet, "__out", b_bsizes_node, None, Memlet.from_array(b_bsizes_name, b_bsizes_desc)

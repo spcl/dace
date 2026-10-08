@@ -3,7 +3,6 @@
 import ast
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Set, Tuple, Type
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
 from dace.frontend.python import astutils
@@ -52,7 +51,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         # If dataflow or states changed, new dead code may be exposed
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.CFG)
 
-    def depends_on(self) -> List[Type[ppl.Pass]]:
+    def depends_on(self) -> list[type[ppl.Pass]]:
         return [ap.ControlFlowBlockReachability, ap.AccessSets]
 
     def apply(self, region, pipeline_results):
@@ -69,15 +68,15 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         #  * Control flow block reachability
         #  * Read/write access sets per block
         sdfg = region if isinstance(region, SDFG) else region.sdfg
-        reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
+        reachable: dict[ControlFlowBlock, set[ControlFlowBlock]] = pipeline_results[
             ap.ControlFlowBlockReachability.__name__
         ][region.cfg_id]
-        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__]
-        result: Dict[SDFGState, Set[str]] = defaultdict(set)
+        access_sets: dict[ControlFlowBlock, tuple[set[str], set[str]]] = pipeline_results[ap.AccessSets.__name__]
+        result: dict[SDFGState, set[str]] = defaultdict(set)
 
         # Traverse region backwards
         try:
-            state_order: List[SDFGState] = list(
+            state_order: list[SDFGState] = list(
                 cfg.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=True)
             )
         except KeyError:
@@ -91,10 +90,10 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             writes = access_sets[state][1]
             descendants = reachable[state]
             descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
-            no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
+            no_longer_used: set[str] = set(data for data in writes if data not in descendant_reads)
 
             # Compute dead nodes
-            dead_nodes: List[nodes.Node] = []
+            dead_nodes: list[nodes.Node] = []
 
             # Propagate deadness backwards within a state
             for node in sdutil.dfs_topological_sort(state, reverse=True):
@@ -112,7 +111,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                 continue
 
             # Remove nodes while preserving scopes
-            scopes_to_reconnect: Set[nodes.Node] = set()
+            scopes_to_reconnect: set[nodes.Node] = set()
             for node in state.nodes():
                 # Look for scope exits that will be disconnected
                 if isinstance(node, nodes.ExitNode) and node not in dead_nodes:
@@ -141,7 +140,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             #############################################
             # Removal
             #############################################
-            predecessor_nsdfgs: Dict[nodes.NestedSDFG, Set[str]] = defaultdict(set)
+            predecessor_nsdfgs: dict[nodes.NestedSDFG, set[str]] = defaultdict(set)
             for node in dead_nodes:
                 # Remove memlet paths and connectors pertaining to dead nodes
                 try:
@@ -222,7 +221,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
         return result or None
 
-    def report(self, pass_retval: Dict[SDFGState, Set[str]]) -> str:
+    def report(self, pass_retval: dict[SDFGState, set[str]]) -> str:
         n = sum(len(v) for v in pass_retval.values())
         return f"Eliminated {n} nodes in {len(pass_retval)} states: {pass_retval}"
 
@@ -231,9 +230,9 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         node: nodes.Node,
         sdfg: SDFG,
         state: SDFGState,
-        dead_nodes: Set[nodes.Node],
-        no_longer_used: Set[str],
-        access_set: Tuple[Set[str], Set[str]],
+        dead_nodes: set[nodes.Node],
+        no_longer_used: set[str],
+        access_set: tuple[set[str], set[str]],
     ) -> bool:
         # Conditions for dead node:
         # * All successors are dead

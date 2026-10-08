@@ -56,7 +56,7 @@ def test_rounding_of_a_non_integer_expression_is_kept(rounding):
 def test_rounding_of_a_non_integer_expression_lowers_to_the_math_call(rounding, call):
     """The kept rounding must reach C++ as the matching math-library call."""
     x = pystr_to_symbolic("x")
-    assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == "(%s(sin(x)))" % call
+    assert symstr(rounding(sympy.sin(x)), cpp_mode=True) == f"({call}(sin(x)))"
 
 
 def test_ceiling_of_an_integer_prints_as_its_argument():

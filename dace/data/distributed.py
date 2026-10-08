@@ -3,14 +3,15 @@
 
 import copy
 from numbers import Integral
-from typing import Optional, Sequence, Set, Union
+from typing import Union
+from collections.abc import Sequence
 
 from dace import dtypes
 from dace import symbolic, serialize
 from dace.data.core import Data, SymbolMapping
 from dace.properties import Property, make_properties, ShapeProperty, SymbolicProperty, ListProperty
 
-ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
+ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 
@@ -24,7 +25,7 @@ class DistributedDescriptor(Data):
     def clone(self):
         return copy.deepcopy(self)
 
-    def is_equivalent(self, other: Data, symbol_mapping: Optional[SymbolMapping] = None) -> bool:
+    def is_equivalent(self, other: Data, symbol_mapping: SymbolMapping | None = None) -> bool:
         if type(self) is not type(other):
             return False
         replacements = symbolic.symbol_replacements(symbol_mapping)
@@ -62,8 +63,8 @@ class DistributedDescriptor(Data):
         return 0
 
 
-def _symbols_from_shape(shape) -> Set[symbolic.SymbolicType]:
-    result: Set[symbolic.SymbolicType] = set()
+def _symbols_from_shape(shape) -> set[symbolic.SymbolicType]:
+    result: set[symbolic.SymbolicType] = set()
     for s in shape:
         if isinstance(s, symbolic.sympy.Basic):
             result |= set(s.free_symbols)
@@ -131,7 +132,7 @@ class ProcessGrid(DistributedDescriptor):
         is_subgrid: bool,
         shape: ShapeType = None,
         parent_grid: str = None,
-        color: Sequence[Union[Integral, bool]] = None,
+        color: Sequence[Integral | bool] = None,
         exact_grid: RankType = None,
         root: RankType = 0,
     ):
@@ -371,7 +372,7 @@ class SubArray(DistributedDescriptor):
         ret.validate()
         return ret
 
-    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+    def used_symbols(self, all_symbols: bool) -> set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         if self.transient or all_symbols:
             result |= _symbols_from_shape(self.subshape)

@@ -19,7 +19,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default, data_layo
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("mm_{}_{}".format(dtype.type.__name__, data_layout))
+    sdfg = dace.SDFG(f"mm_{dtype.type.__name__}_{data_layout}")
     state = sdfg.add_state("dataflow")
 
     # Data layout is a 3-character string with either C (for row major)
@@ -95,7 +95,7 @@ def _test_matmul(implementation, dtype, impl_name, storage, data_layout="CCC", e
     diff = np.linalg.norm(ref - z)
     assert diff < eps
 
-    print("Test ran successfully for {}.".format(implementation))
+    print(f"Test ran successfully for {implementation}.")
 
 
 @pytest.mark.gpu

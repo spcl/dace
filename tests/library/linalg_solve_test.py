@@ -29,7 +29,7 @@ def make_sdfg(
     implementation, dtype, id=0, in_shape=[n, n], out_shape=[n, n], in_subset="0:n, 0:n", out_subset="0:n, 0:n"
 ):
 
-    sdfg = dace.SDFG("linalg_solve_{}_{}_{}".format(implementation, dtype.__name__, id))
+    sdfg = dace.SDFG(f"linalg_solve_{implementation}_{dtype.__name__}_{id}")
     sdfg.add_symbol("n", dace.int64)
     state = sdfg.add_state("dataflow")
 
@@ -113,12 +113,8 @@ def test_solve(implementation, dtype, size, shape):
     in_subset = tuple([slice(o, o + size) if i in in_dims else o for i, o in enumerate(in_offset)])
     out_subset = tuple([slice(o, o + size) if i in out_dims else o for i, o in enumerate(out_offset)])
 
-    in_subset_str = ",".join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)]
-    )
-    out_subset_str = ",".join(
-        ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)]
-    )
+    in_subset_str = ",".join([f"{o}:{o + size}" if i in in_dims else str(o) for i, o in enumerate(in_offset)])
+    out_subset_str = ",".join([f"{o}:{o + size}" if i in out_dims else str(o) for i, o in enumerate(out_offset)])
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str)
     if implementation == "cuSolverDn":

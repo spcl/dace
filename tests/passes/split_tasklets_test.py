@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import typing
 import dace
 import re
 import copy
@@ -77,7 +76,7 @@ _double_tasklet_sdfg_counter = 0
 
 
 def _generate_double_tasklet_sdfg(
-    expression_strs: typing.Tuple[str, str], direct_connection_between_tasklets: bool = False
+    expression_strs: tuple[str, str], direct_connection_between_tasklets: bool = False
 ) -> dace.SDFG:
     global _double_tasklet_sdfg_counter
     _double_tasklet_sdfg_counter += 1
@@ -252,13 +251,13 @@ def test_single_tasklet_split(expression_str: str):
 
 
 @pytest.mark.parametrize("expression_strs", example_double_expressions)
-def test_double_tasklet_split(expression_strs: typing.Tuple[str, str]):
+def test_double_tasklet_split(expression_strs: tuple[str, str]):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, False)
     _run_compile_and_comparison_test(sdfg)
 
 
 @pytest.mark.parametrize("expression_strs", example_double_expressions)
-def test_double_tasklet_split_direct_tasklet_connection(expression_strs: typing.Tuple[str, str]):
+def test_double_tasklet_split_direct_tasklet_connection(expression_strs: tuple[str, str]):
     sdfg = _generate_double_tasklet_sdfg(expression_strs, True)
     _run_compile_and_comparison_test(sdfg)
 

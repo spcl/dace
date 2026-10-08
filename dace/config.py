@@ -5,7 +5,7 @@ import platform
 import tempfile
 import threading
 import io
-from typing import Any, Dict, Optional
+from typing import Any
 import yaml
 import warnings
 
@@ -93,7 +93,7 @@ class _ConfigData(threading.local):
         return "_".join(("DACE",) + key_hierarchy)
 
     @staticmethod
-    def _coerce_env_value(envval: str, metadata: Dict[str, Any], envvar: str):
+    def _coerce_env_value(envval: str, metadata: dict[str, Any], envvar: str):
         """
         Coerces an environment variable string to the schema-declared type of a
         configuration entry.
@@ -249,12 +249,12 @@ class _ConfigData(threading.local):
         if "execution" in self._config and self._cfg_filename:
             self.save(all=False)
 
-    def load(self, filename: Optional[str] = None, file: Optional[io.FileIO] = None):
+    def load(self, filename: str | None = None, file: io.FileIO | None = None):
         if file is not None:
             assert filename is None
             self._config = yaml.load(file.read(), Loader=yaml.SafeLoader)
         else:
-            with open(filename if filename else self._cfg_filename, "r") as f:
+            with open(filename if filename else self._cfg_filename) as f:
                 self._config = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
         if self._config is None:
@@ -264,10 +264,10 @@ class _ConfigData(threading.local):
         self._add_defaults(self._config, self._config_metadata["required"])
         self._apply_env(self._config, self._config_metadata["required"])
 
-    def load_schema(self, filename: Optional[str] = None):
+    def load_schema(self, filename: str | None = None):
         if filename is None:
             filename = self._metadata_filename
-        with open(filename, "r") as f:
+        with open(filename) as f:
             self._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
     def extend(self, schema_filename: str):
@@ -276,10 +276,10 @@ class _ConfigData(threading.local):
 
         :param schema_filename: The schema file to load.
         """
-        with open(schema_filename, "r") as f:
+        with open(schema_filename) as f:
             new_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
-        def merge_dicts(d1: Dict[str, Any], d2: Dict[str, Any]):
+        def merge_dicts(d1: dict[str, Any], d2: dict[str, Any]):
             for k, v in d2.items():
                 if k in d1 and isinstance(d1[k], dict) and isinstance(v, dict):
                     merge_dicts(d1[k], v)
@@ -289,7 +289,7 @@ class _ConfigData(threading.local):
         merge_dicts(self._config_metadata["required"], new_metadata["required"])
         self._add_defaults(self._config, new_metadata["required"])
 
-    def save(self, path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
+    def save(self, path: str | None = None, all: bool = False, file: io.FileIO | None = None):
         what_to_save = self._config if all else self.nondefaults()
         if file is not None:
             assert path is None, "Specified both `path` and `file` in `Config.save()`."
@@ -389,12 +389,12 @@ class _ConfigData(threading.local):
 
         current_conf[key_hierarchy[-1]] = value
 
-    def nondefaults(self) -> Dict[str, Any]:
+    def nondefaults(self) -> dict[str, Any]:
         current_conf = self._config
         defaults = self._config_metadata
         system_default_key = "default_" + platform.system()
 
-        def traverse(conf: Dict[str, Any], defaults: Dict[str, Any], result: Dict[str, Any]):
+        def traverse(conf: dict[str, Any], defaults: dict[str, Any], result: dict[str, Any]):
             for k, v in conf.items():
                 if k not in defaults:  # Configuration entry no longer exists
                     continue
@@ -415,7 +415,7 @@ class _ConfigData(threading.local):
         return output
 
 
-class Config(object):
+class Config:
     """Interface to the DaCe hierarchical configuration file.
 
     :note: The data is stored inside a thread local, aka. `threading.local`,
@@ -442,7 +442,7 @@ class Config(object):
         return Config._data.extend(schema_filename=schema_filename)
 
     @staticmethod
-    def load(filename: Optional[str] = None, file: Optional[io.FileIO] = None):
+    def load(filename: str | None = None, file: io.FileIO | None = None):
         """
         Loads a configuration from an existing file.
 
@@ -453,7 +453,7 @@ class Config(object):
         return Config._data.load(filename=filename, file=file)
 
     @staticmethod
-    def load_schema(filename: Optional[str] = None):
+    def load_schema(filename: str | None = None):
         """
         Loads a configuration schema from an existing file.
 
@@ -463,7 +463,7 @@ class Config(object):
         return Config._data.load(filename=filename)
 
     @staticmethod
-    def save(path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
+    def save(path: str | None = None, all: bool = False, file: io.FileIO | None = None):
         """
         Saves the current configuration to a file.
 
@@ -577,5 +577,5 @@ class Config(object):
         """
         return Config._data.set(*key_hierarchy, value=value)
 
-    def nondefaults(self) -> Dict[str, Any]:
+    def nondefaults(self) -> dict[str, Any]:
         return Config._data.nondefaults()

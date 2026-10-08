@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import functools
-import typing
 
 import numpy as np
 
@@ -62,7 +61,7 @@ class PureMaxPool2D(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> nodes.Node | SDFG:
         """Generate the forward pass implementation for MaxPool2D.
 
         :param node: The MaxPool ONNX node.
@@ -219,7 +218,7 @@ class PureConv2D(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> nodes.Node | SDFG:
         """Generate the forward pass implementation for Conv2D.
 
         :param node: The Conv ONNX node.
@@ -420,7 +419,7 @@ class PureBatchNormalization(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[nodes.Node, SDFG]:
+    def forward(node: ONNXOp, state: SDFGState, sdfg: SDFG) -> nodes.Node | SDFG:
         """Generate the forward pass implementation for BatchNormalization.
 
         :param node: The BatchNormalization ONNX node.
@@ -528,7 +527,7 @@ class PureGlobalAveragePool(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: "ONNXOp", state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         """Generate the forward pass implementation for GlobalAveragePool.
 
         :param node: The GlobalAveragePool ONNX node.

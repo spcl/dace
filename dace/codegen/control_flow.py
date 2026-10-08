@@ -4,7 +4,8 @@ Functions for generating C++ code for control flow in SDFGs using control flow r
 """
 
 import re
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Set
+from typing import TYPE_CHECKING
+from collections.abc import Callable
 import warnings
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -36,7 +37,7 @@ def _clean_loop_body(body: str) -> str:
     return body
 
 
-def _child_of(node: SDFGState, parent: SDFGState, ptree: Dict[SDFGState, SDFGState]) -> bool:
+def _child_of(node: SDFGState, parent: SDFGState, ptree: dict[SDFGState, SDFGState]) -> bool:
     curnode = node
     while curnode is not None:
         if curnode is parent:
@@ -72,7 +73,7 @@ def _generate_interstate_edge_code(
     if len(edge.data.assignments) > 0:
         expr += ";\n".join(
             [
-                "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=codegen))
+                f"{variable} = {unparse_interstate_edge(value, sdfg, codegen=codegen)}"
                 for variable, value in edge.data.assignments.items()
             ]
             + [""]
@@ -96,7 +97,7 @@ def _loop_region_to_code(
     region: LoopRegion,
     dispatch_state: Callable[[SDFGState], str],
     codegen: "DaCeCodeGenerator",
-    symbols: Dict[str, dtypes.typeclass],
+    symbols: dict[str, dtypes.typeclass],
 ) -> str:
     """
     Converts a LoopRegion to C++ code with the correct control flow expressions.
@@ -172,7 +173,7 @@ def _conditional_block_to_code(
     region: ConditionalBlock,
     dispatch_state: Callable[[SDFGState], str],
     codegen: "DaCeCodeGenerator",
-    symbols: Dict[str, dtypes.typeclass],
+    symbols: dict[str, dtypes.typeclass],
 ) -> str:
     """
     Converts a ConditionalBlock to C++ code with the correct control flow expressions.
@@ -221,12 +222,12 @@ def control_flow_region_to_code(
     region: AbstractControlFlowRegion,
     dispatch_state: Callable[[SDFGState], str],
     codegen: "DaCeCodeGenerator",
-    symbols: Dict[str, dtypes.typeclass],
-    start: Optional[ControlFlowBlock] = None,
-    stop: Optional[ControlFlowBlock] = None,
-    generate_children_of: Optional[ControlFlowBlock] = None,
-    ptree: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
-    visited: Optional[Set[ControlFlowBlock]] = None,
+    symbols: dict[str, dtypes.typeclass],
+    start: ControlFlowBlock | None = None,
+    stop: ControlFlowBlock | None = None,
+    generate_children_of: ControlFlowBlock | None = None,
+    ptree: dict[ControlFlowBlock, ControlFlowBlock] | None = None,
+    visited: set[ControlFlowBlock] | None = None,
 ) -> str:
     """
     Converts a control flow region to C++ code with the correct control flow expressions.

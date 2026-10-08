@@ -10,7 +10,7 @@ from tests.utils import torch_tensors_close
 
 class Model(nn.Module):
     def __init__(self, new_shape):
-        super(Model, self).__init__()
+        super().__init__()
         self.new_shape = new_shape
 
     def forward(self, x):

@@ -12,7 +12,7 @@ from sympy import Float, Integer
 from collections import OrderedDict
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Union
 
 from dace.config import Config
 
@@ -51,7 +51,7 @@ class StorageType(ExtensibleAttributeEnum):
 
         #: Whether the data is placed in dynamic shared memory (``True``), in static shared memory (``False``), or where
         #: the code generator decides (``None``), based on its size and the static shared memory the kernel uses.
-        dynamic: Optional[bool] = None
+        dynamic: bool | None = None
 
     SVE_Register = auto()  #: SVE register
     Snitch_TCDM = auto()  #: Cluster-private memory
@@ -59,7 +59,7 @@ class StorageType(ExtensibleAttributeEnum):
     Snitch_SSR = auto()  #: Memory accessed by SSR streamer
 
 
-def is_dynamic_shared(storage: StorageType) -> Optional[bool]:
+def is_dynamic_shared(storage: StorageType) -> bool | None:
     """
     Returns whether a ``GPU_Shared`` storage type is placed in dynamic shared memory.
 
@@ -334,7 +334,7 @@ _DEFAULT_DATA_TYPES = {
 }
 
 
-class typeclass(object):
+class typeclass:
     """An extension of types that enables their use in DaCe.
 
     These types are defined for three reasons:
@@ -352,14 +352,14 @@ class typeclass(object):
                 else:
                     wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
-                raise ValueError("Unknown type: {}".format(wrapped_type))
+                raise ValueError(f"Unknown type: {wrapped_type}")
 
         # Only Python's scalar types consult the configuration; every other type paid the lookup.
         if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
             config_data_types = Config.get("compiler", "default_data_types")
             widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
             if widths is None:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(f"Unknown configuration for default_data_types: {config_data_types}")
             wrapped_type = widths[wrapped_type]
         elif wrapped_type is builtins.bool:
             # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
@@ -420,6 +420,14 @@ class typeclass(object):
     def __ne__(self, other):
         return other is not None and self.ctype != getattr(other, "ctype", False)
 
+    def __or__(self, other):
+        """Enables PEP 604 union type hints, e.g., ``dace.float64 | None``."""
+        # NOTE: ``self | other`` would recurse into this method
+        return Union[self, other]  # noqa: UP007
+
+    def __ror__(self, other):
+        return Union[other, self]  # noqa: UP007
+
     def __getitem__(self, s):
         """This is syntactic sugar that allows us to define an array type
         with the following syntax: ``dace.uint32[N,M]``
@@ -457,7 +465,7 @@ def max_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).max
 
-    raise TypeError('Unsupported type "%s" for maximum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for maximum')
 
 
 def min_value(dtype: typeclass):
@@ -470,7 +478,7 @@ def min_value(dtype: typeclass):
     elif numpy.issubdtype(nptype, numpy.floating):
         return numpy.finfo(nptype).min
 
-    raise TypeError('Unsupported type "%s" for minimum' % dtype)
+    raise TypeError(f'Unsupported type "{dtype}" for minimum')
 
 
 def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
@@ -675,7 +683,7 @@ class vector(typeclass):
 
     @property
     def ctype(self):
-        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+        return f"dace::vec<{self.vtype.ctype}, {self.veclen}>"
 
     @property
     def ctype_unaligned(self):
@@ -728,7 +736,7 @@ class struct(typeclass):
     Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
 
-    STRUCT_CTYPES: Dict[str, ctypes.Structure] = {}
+    STRUCT_CTYPES: dict[str, ctypes.Structure] = {}
 
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
@@ -835,7 +843,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ="\n".join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ="\n".join([f"    {t.ctype} {tname};" for tname, t in self._data.items()]),
         )
 
 
@@ -922,7 +930,7 @@ class callback(typeclass):
             elif isinstance(arg, str):
                 arg = json_to_typeclass(arg, {"version": __version__})
             else:
-                raise TypeError("Cannot resolve type from: {}".format(arg))
+                raise TypeError(f"Cannot resolve type from: {arg}")
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
@@ -1543,7 +1551,7 @@ def json_to_typeclass(obj, context=None):
     elif isinstance(obj, dict) and "type" in obj:
         return get_serializer(obj["type"]).from_json(obj, context)
     else:
-        raise ValueError("Cannot resolve: {}".format(obj))
+        raise ValueError(f"Cannot resolve: {obj}")
 
 
 def paramdec(dec):

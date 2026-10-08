@@ -8,7 +8,7 @@ from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-from typing import Set, List, Callable
+from collections.abc import Callable
 
 
 @make_properties
@@ -35,7 +35,7 @@ class ConnectedEnumerator(MapScoringEnumerator):
 
         self.calculate_topology(subgraph)
 
-    def traverse(self, current: List, forbidden: Set):
+    def traverse(self, current: list, forbidden: set):
         if len(current) > 0:
             # get current subgraph we are inspecting
             current_subgraph = helpers.subgraph_from_maps(self._sdfg, self._graph, current, self._scope_children)

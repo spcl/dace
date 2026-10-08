@@ -21,19 +21,19 @@ def polybench_dump(filename, args, output_args):
         fp.write("==BEGIN DUMP_ARRAYS==\n")
 
         for i, name in output_args:
-            fp.write("begin dump: %s\n" % name)
+            fp.write(f"begin dump: {name}\n")
             np.savetxt(
                 fp,
                 args[i].reshape(args[i].shape[0], functools.reduce(lambda a, b: a * b, args[i].shape[1:], 1)),
                 fmt="%0.7lf",
             )
-            fp.write("\nend   dump: %s\n" % name)
+            fp.write(f"\nend   dump: {name}\n")
 
         fp.write("==END   DUMP_ARRAYS==\n")
 
 
 def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
-    print("Polybench test %s, problem size: %s" % (func.name, FLAGS.size))
+    print(f"Polybench test {func.name}, problem size: {FLAGS.size}")
 
     # Initialize symbols with values from dataset size
     psize = sizes[_SIZE_TO_IND[FLAGS.size]]

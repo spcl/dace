@@ -8,7 +8,6 @@ from dace.frontend.python.common import StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace import dtypes, symbolic, Memlet, SDFG, SDFGState
 
-from typing import Optional
 
 import sympy as sp
 
@@ -27,7 +26,7 @@ def _fft_core(
     sdfg: SDFG,
     state: SDFGState,
     a: str,
-    n: Optional[symbolic.SymbolicType] = None,
+    n: symbolic.SymbolicType | None = None,
     axis=-1,
     norm: StringLiteral = StringLiteral("backward"),
     is_inverse: bool = False,
@@ -79,7 +78,7 @@ def _fft(
     sdfg: SDFG,
     state: SDFGState,
     a: str,
-    n: Optional[symbolic.SymbolicType] = None,
+    n: symbolic.SymbolicType | None = None,
     axis=-1,
     norm: StringLiteral = StringLiteral("backward"),
 ):

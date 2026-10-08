@@ -13,7 +13,7 @@ from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge
 from enum import auto
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from collections.abc import Callable
 
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
@@ -46,7 +46,7 @@ class DefinedMemlets:
     def exit_scope(self, parent):
         expected, _, _ = self._scopes.pop()
         if expected != parent:
-            raise ValueError("Exited scope {} mismatched current scope {}".format(parent.name, expected.name))
+            raise ValueError(f"Exited scope {parent.name} mismatched current scope {expected.name}")
 
     def has(self, name, ancestor: int = 0):
         try:
@@ -55,7 +55,7 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
+    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> tuple[DefinedType, str]:
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent
             if ancestor > 0:
@@ -82,17 +82,17 @@ class DefinedMemlets:
                 if name in scope:
                     return scope[name]
 
-        raise KeyError("Variable {} has not been defined".format(name))
+        raise KeyError(f"Variable {name} has not been defined")
 
     def add(self, name: str, dtype: DefinedType, ctype: str, ancestor: int = 0, allow_shadowing: bool = False):
         if not isinstance(name, str):
-            raise TypeError("Variable name type cannot be %s" % type(name).__name__)
+            raise TypeError(f"Variable name type cannot be {type(name).__name__}")
         if name.startswith("__state->"):
             return self.add_global(name, dtype, ctype)
 
         for _, scope, can_access_parent in reversed(self._scopes):
             if name in scope:
-                err_str = "Shadowing variable {} from type {} to {}".format(name, scope[name], dtype)
+                err_str = f"Shadowing variable {name} from type {scope[name]} to {dtype}"
                 if allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing"):
                     if not allow_shadowing:
                         print("WARNING: " + err_str)
@@ -107,7 +107,7 @@ class DefinedMemlets:
         Adds a global variable (top scope)
         """
         if not isinstance(name, str):
-            raise TypeError("Variable name type cannot be %s" % type(name).__name__)
+            raise TypeError(f"Variable name type cannot be {type(name).__name__}")
 
         self._scopes[0][1][name] = (dtype, ctype)
 
@@ -134,32 +134,32 @@ class DefinedMemlets:
                     del scope[name]
                     return
 
-        raise KeyError("Variable {} has not been defined".format(name))
+        raise KeyError(f"Variable {name} has not been defined")
 
 
 #############################################################################
 
 
-class TargetDispatcher(object):
+class TargetDispatcher:
     """Dispatches sub-SDFG generation (according to scope),
     storage<->storage copies, and storage<->tasklet copies to targets."""
 
-    _array_dispatchers: Dict[dtypes.StorageType, target.TargetCodeGenerator]
-    _map_dispatchers: Dict[dtypes.ScheduleType, target.TargetCodeGenerator]
+    _array_dispatchers: dict[dtypes.StorageType, target.TargetCodeGenerator]
+    _map_dispatchers: dict[dtypes.ScheduleType, target.TargetCodeGenerator]
 
-    _copy_dispatchers: Dict[
-        Tuple[dtypes.StorageType, dtypes.StorageType, dtypes.ScheduleType],
-        List[Tuple[Callable, target.TargetCodeGenerator]],
+    _copy_dispatchers: dict[
+        tuple[dtypes.StorageType, dtypes.StorageType, dtypes.ScheduleType],
+        list[tuple[Callable, target.TargetCodeGenerator]],
     ]
-    _generic_copy_dispatcher: Dict[
-        Tuple[dtypes.StorageType, dtypes.StorageType, dtypes.ScheduleType], target.TargetCodeGenerator
+    _generic_copy_dispatcher: dict[
+        tuple[dtypes.StorageType, dtypes.StorageType, dtypes.ScheduleType], target.TargetCodeGenerator
     ]
 
-    _node_dispatchers: List[Tuple[Callable, target.TargetCodeGenerator]]
-    _generic_node_dispatcher: Optional[target.TargetCodeGenerator]
+    _node_dispatchers: list[tuple[Callable, target.TargetCodeGenerator]]
+    _generic_node_dispatcher: target.TargetCodeGenerator | None
 
-    _state_dispatchers: List[Tuple[Callable, target.TargetCodeGenerator]]
-    _generic_state_dispatcher: Optional[target.TargetCodeGenerator]
+    _state_dispatchers: list[tuple[Callable, target.TargetCodeGenerator]]
+    _generic_state_dispatcher: target.TargetCodeGenerator | None
 
     _declared_arrays: DefinedMemlets
     _defined_vars: DefinedMemlets
@@ -170,11 +170,11 @@ class TargetDispatcher(object):
         from dace.codegen import instrumentation
 
         self.frame: fc.DaCeCodeGenerator = framecode
-        self._used_targets: Set[target.TargetCodeGenerator] = set()
+        self._used_targets: set[target.TargetCodeGenerator] = set()
         self._used_environments = set()
 
-        self.instrumentation: Dict[
-            Union[dtypes.InstrumentationType, dtypes.DataInstrumentationType], instrumentation.InstrumentationProvider
+        self.instrumentation: dict[
+            dtypes.InstrumentationType | dtypes.DataInstrumentationType, instrumentation.InstrumentationProvider
         ] = {}
 
         self._array_dispatchers = {}
@@ -231,7 +231,7 @@ class TargetDispatcher(object):
         """
 
         if not hasattr(dispatcher, "generate_state"):
-            raise TypeError('State dispatcher "{}" does not implement "generate_state"'.format(dispatcher))
+            raise TypeError(f'State dispatcher "{dispatcher}" does not implement "generate_state"')
         if predicate is None:
             self._generic_state_dispatcher = dispatcher
         else:
@@ -246,7 +246,7 @@ class TargetDispatcher(object):
         return list(self._state_dispatchers)
 
     def register_node_dispatcher(
-        self, dispatcher: target.TargetCodeGenerator, predicate: Optional[Callable] = None
+        self, dispatcher: target.TargetCodeGenerator, predicate: Callable | None = None
     ) -> None:
         """Registers a code generator that processes a single node, calling
         ``generate_node``.
@@ -274,7 +274,7 @@ class TargetDispatcher(object):
         return list(self._node_dispatchers)
 
     def register_map_dispatcher(
-        self, schedule_type: Union[List[dtypes.ScheduleType], dtypes.ScheduleType], func: target.TargetCodeGenerator
+        self, schedule_type: list[dtypes.ScheduleType] | dtypes.ScheduleType, func: target.TargetCodeGenerator
     ) -> None:
         """Registers a function that processes a scope, used when calling
         ``dispatch_subgraph`` and ``dispatch_scope``.
@@ -324,7 +324,7 @@ class TargetDispatcher(object):
         dst_storage: dtypes.StorageType,
         dst_schedule: dtypes.ScheduleType,
         func: target.TargetCodeGenerator,
-        predicate: Optional[Callable] = None,
+        predicate: Callable | None = None,
     ) -> None:
         """Registers code generation of data-to-data (or data from/to
         tasklet, if src/dst storage is StorageType.Register) copy
@@ -561,12 +561,12 @@ class TargetDispatcher(object):
     # Dispatches copy code for a memlet
     def get_copy_dispatcher(
         self,
-        src_node: Union[nodes.CodeNode, nodes.AccessNode],
-        dst_node: Union[nodes.CodeNode, nodes.AccessNode, nodes.EntryNode],
+        src_node: nodes.CodeNode | nodes.AccessNode,
+        dst_node: nodes.CodeNode | nodes.AccessNode | nodes.EntryNode,
         edge: MultiConnectorEdge[Memlet],
         sdfg: SDFG,
         state: SDFGState,
-    ) -> Optional[target.TargetCodeGenerator]:
+    ) -> target.TargetCodeGenerator | None:
         """
         (Internal) Returns a code generator that should be dispatched for a
         memory copy operation.
@@ -640,7 +640,7 @@ class TargetDispatcher(object):
             target = self._generic_copy_dispatchers[(src_storage, dst_storage, None)]
         else:
             raise RuntimeError(
-                "Copy dispatcher for %s->%s with schedule %s" % (str(src_storage), str(dst_storage), str(dst_schedule))
+                f"Copy dispatcher for {str(src_storage)}->{str(dst_storage)} with schedule {str(dst_schedule)}"
                 + " not found"
             )
 

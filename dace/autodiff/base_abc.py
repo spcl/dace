@@ -5,7 +5,6 @@ Abstract Base Classes for Autodiff
 
 import abc
 import dataclasses
-import typing
 from typing import TYPE_CHECKING
 
 import dace.registry
@@ -49,13 +48,13 @@ class BackwardResult:
     """
 
     #: Mapping from names of output connectors to the connector name of the gradient for that connector.
-    required_grad_names: typing.Dict[typing.Optional[str], typing.Optional[str]]
+    required_grad_names: dict[str | None, str | None]
 
     #: Mapping from names of input connectors to the connector name of the gradient for that connector.
-    given_grad_names: typing.Dict[typing.Optional[str], typing.Optional[str]]
+    given_grad_names: dict[str | None, str | None]
 
     #: Mapping from names of gradients to whether they should be zeroed out on initialization.
-    zero_init: typing.Dict[typing.Optional[str], typing.Optional[bool]]
+    zero_init: dict[str | None, bool | None]
 
     def __init__(self, required_grad_names, given_grad_names, zero_init=None):
         self.required_grad_names = required_grad_names
@@ -97,9 +96,9 @@ class BackwardImplementation(abc.ABC):
     def backward(
         forward_node: nd.Node,
         context: BackwardContext,
-        given_gradients: typing.List[typing.Optional[str]],
-        required_gradients: typing.List[typing.Optional[str]],
-    ) -> typing.Tuple[nd.Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[nd.Node, BackwardResult]:
         """Add the reverse node for a node from the forward pass to the backward pass, and return it.
 
         For each input connector with name ``n`` of the forward in required_gradients, the returned backward node must
@@ -125,7 +124,7 @@ import dace.autodiff.implementations
 
 def find_backward_implementation(
     forward_sdfg: SDFG, forward_state: SDFGState, node: nd.Node
-) -> typing.Optional[BackwardImplementation]:
+) -> BackwardImplementation | None:
     """Try to find the backward implementation for ``node``.
 
     :param forward_sdfg: The parent SDFG of the node.

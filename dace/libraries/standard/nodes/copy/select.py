@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Implementation selection for ``CopyLibraryNode``."""
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import dace
 from dace import dtypes, symbolic
@@ -120,7 +120,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     return impl or "MappedTasklet"
 
 
-def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> Optional[str]:
+def _refine_cuda_impl_for_subsets(node: "CopyLibraryNode", parent_state: dace.SDFGState) -> str | None:
     """Upgrade ``MemcpyCUDA1D`` to a more specific impl for non-contiguous subsets.
 
       both subsets contiguous                       -> ``None`` (keep CUDA1D)

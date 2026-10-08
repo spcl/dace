@@ -5,7 +5,8 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
-from typing import Container, Iterable, Union
+from typing import Union
+from collections.abc import Container, Iterable
 
 import sympy
 

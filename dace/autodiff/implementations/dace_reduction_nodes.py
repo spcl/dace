@@ -10,7 +10,6 @@ automatic differentiation.
 """
 
 import copy
-import typing
 
 # DaCe core imports
 import dace
@@ -60,9 +59,9 @@ class ReverseReduce(BackwardImplementation):
     def backward(
         forward_node: Node,
         context: BackwardContext,
-        given_gradients: typing.List[typing.Optional[str]],
-        required_gradients: typing.List[typing.Optional[str]],
-    ) -> typing.Tuple[Node, BackwardResult]:
+        given_gradients: list[str | None],
+        required_gradients: list[str | None],
+    ) -> tuple[Node, BackwardResult]:
         """Generate the backward pass for a reduction node.
 
         :param forward_node: The forward reduction node.
@@ -92,9 +91,9 @@ class ReverseReduce(BackwardImplementation):
         output_name = next(iter(given_gradients))
         out_desc = out_desc_with_name(forward_node, context.forward_state, context.forward_sdfg, output_name)
 
-        all_axes: typing.List[int] = list(range(len(in_desc.shape)))
-        reduce_axes: typing.List[int] = all_axes if forward_node.axes is None else forward_node.axes
-        non_reduce_axes: typing.List[int] = [i for i in all_axes if i not in reduce_axes]
+        all_axes: list[int] = list(range(len(in_desc.shape)))
+        reduce_axes: list[int] = all_axes if forward_node.axes is None else forward_node.axes
+        non_reduce_axes: list[int] = [i for i in all_axes if i not in reduce_axes]
 
         result = BackwardResult.empty()
 
@@ -112,9 +111,7 @@ class ReverseReduce(BackwardImplementation):
         )
 
     @staticmethod
-    def _reduced_index(
-        in_subset: dace.subsets.Range, out_subset: dace.subsets.Range, kept_axes: typing.List[int]
-    ) -> str:
+    def _reduced_index(in_subset: dace.subsets.Range, out_subset: dace.subsets.Range, kept_axes: list[int]) -> str:
         """
         Indexes the forward output container from the parameters ``i<d>`` of a map over the forward input subset.
 
@@ -162,9 +159,9 @@ class ReverseReduce(BackwardImplementation):
         output_name: str,
         in_desc,
         out_desc,
-        all_axes: typing.List[int],
-        non_reduce_axes: typing.List[int],
-    ) -> typing.Tuple[Node, BackwardResult]:
+        all_axes: list[int],
+        non_reduce_axes: list[int],
+    ) -> tuple[Node, BackwardResult]:
         """Backward pass for Sum/Max/Min reductions.
 
         - Sum: Broadcasts gradients uniformly across reduced dimensions

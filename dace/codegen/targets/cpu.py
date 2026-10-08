@@ -25,7 +25,7 @@ from dace.sdfg import (
 )
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import TYPE_CHECKING, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -97,9 +97,7 @@ class CPUCodeGen(TargetCodeGenerator):
             elif isinstance(arg_type, data.Structure):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
             else:
-                raise TypeError(
-                    "Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__, v=str(arg_type))
-                )
+                raise TypeError(f"Unrecognized argument type: {type(arg_type).__name__} (value {str(arg_type)})")
 
     def __init__(self, frame_codegen: "DaCeCodeGenerator", sdfg: SDFG):
         self._frame = frame_codegen
@@ -146,11 +144,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Always pinned, so the compiler the flags were chosen for is the one CMake uses. This wins
         # over a CMAKE_CXX_COMPILER set in a toolchain file passed through extra_cmake_args.
-        options.append('-DCMAKE_CXX_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
+        options.append(f'-DCMAKE_CXX_COMPILER="{make_absolute(compiler_family.host_compiler())}"')
 
         flags = compiler_family.cpu_args()
         if flags:
-            options.append('-DCMAKE_CXX_FLAGS="{}"'.format(flags))
+            options.append(f'-DCMAKE_CXX_FLAGS="{flags}"')
 
         return options
 
@@ -405,14 +403,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # Define pointer once
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             function_stream.write(
-                "{ctype} *{name} = nullptr;\n#pragma omp threadprivate({name})".format(
-                    ctype=nodedesc.dtype.ctype, name=name
-                ),
+                f"{nodedesc.dtype.ctype} *{name} = nullptr;\n#pragma omp threadprivate({name})",
                 cfg,
                 state_id,
                 node,
             )
-            self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, "%s *" % nodedesc.dtype.ctype)
+            self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, f"{nodedesc.dtype.ctype} *")
         else:
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
@@ -515,9 +511,9 @@ class CPUCodeGen(TargetCodeGenerator):
             )
         if isinstance(nodedesc, data.Scalar):
             if node.setzero:
-                declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
+                declaration_stream.write(f"{nodedesc.dtype.ctype} {name} = 0;\n", cfg, state_id, node)
             else:
-                declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
+                declaration_stream.write(f"{nodedesc.dtype.ctype} {name};\n", cfg, state_id, node)
             define_var(name, DefinedType.Scalar, nodedesc.dtype.ctype)
         elif isinstance(nodedesc, data.Stream):
             ###################################################################
@@ -552,9 +548,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 threadlocal_stores = [dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register]
                 if sdfg.arrays[nodedesc.sink].storage in threadlocal_stores or nodedesc.storage in threadlocal_stores:
                     threadlocal = "Threadlocal"
-                ctype = "dace::ArrayStreamView%s<%s>" % (threadlocal, arrnode.dtype.ctype)
+                ctype = f"dace::ArrayStreamView{threadlocal}<{arrnode.dtype.ctype}>"
                 declaration_stream.write(
-                    "%s %s (%s);\n" % (ctype, name, array_expr),
+                    f"{ctype} {name} ({array_expr});\n",
                     cfg,
                     state_id,
                     node,
@@ -566,11 +562,11 @@ class CPUCodeGen(TargetCodeGenerator):
             # Regular stream
 
             dtype = nodedesc.dtype.ctype
-            ctypedef = "dace::Stream<{}>".format(dtype)
+            ctypedef = f"dace::Stream<{dtype}>"
             if nodedesc.buffer_size != 0:
-                definition = "{} {}({});".format(ctypedef, name, nodedesc.buffer_size)
+                definition = f"{ctypedef} {name}({nodedesc.buffer_size});"
             else:
-                definition = "{} {};".format(ctypedef, name)
+                definition = f"{ctypedef} {name};"
 
             declaration_stream.write(definition, cfg, state_id, node)
             define_var(name, DefinedType.Stream, ctypedef)
@@ -585,9 +581,9 @@ class CPUCodeGen(TargetCodeGenerator):
             if nodedesc.storage == dtypes.StorageType.Register:
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn(
-                        "Variable-length array %s with size %s "
+                        f"Variable-length array {name} with size {cpp.sym2cpp(arrsize)} "
                         "detected and was allocated on the heap instead of "
-                        "%s" % (name, cpp.sym2cpp(arrsize), nodedesc.storage)
+                        f"{nodedesc.storage}"
                     )
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn(
@@ -613,7 +609,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if node.setzero:
                 allocation_stream.write(
-                    "memset(%s, 0, sizeof(%s)*%s);" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize))
+                    f"memset({alloc_name}, 0, sizeof({nodedesc.dtype.ctype})*{cpp.sym2cpp(arrsize)});"
                 )
             if nodedesc.start_offset != 0:
                 allocation_stream.write(f"{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n", cfg, state_id, node)
@@ -625,7 +621,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError("Start offset unsupported for registers")
             if node.setzero:
                 declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                    f"{nodedesc.dtype.ctype} {name}[{cpp.sym2cpp(arrsize)}]  DACE_ALIGN(64) = {{0}};\n",
                     cfg,
                     state_id,
                     node,
@@ -633,7 +629,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                f"{nodedesc.dtype.ctype} {name}[{cpp.sym2cpp(arrsize)}]  DACE_ALIGN(64);\n",
                 cfg,
                 state_id,
                 node,
@@ -645,12 +641,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             if not declared:
                 function_stream.write(
-                    "{ctype} *{name};\n#pragma omp threadprivate({name})".format(ctype=nodedesc.dtype.ctype, name=name),
+                    f"{nodedesc.dtype.ctype} *{name};\n#pragma omp threadprivate({name})",
                     cfg,
                     state_id,
                     node,
                 )
-                self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, "%s *" % nodedesc.dtype.ctype)
+                self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, f"{nodedesc.dtype.ctype} *")
 
             # Allocate in each OpenMP thread
             allocation = f"new {nodedesc.dtype.ctype} [{cpp.sym2cpp(arrsize)}]"
@@ -659,24 +655,24 @@ class CPUCodeGen(TargetCodeGenerator):
                 allocation = f"dace::aligned_new_array<{nodedesc.dtype.ctype}>({cpp.sym2cpp(arrsize)}, {align_value})"
 
             allocation_stream.write(
-                """
+                f"""
                 #pragma omp parallel
                 {{
-                    {name} = {allocation};""".format(name=alloc_name, allocation=allocation),
+                    {alloc_name} = {allocation};""",
                 cfg,
                 state_id,
                 node,
             )
             if node.setzero:
                 allocation_stream.write(
-                    "memset(%s, 0, sizeof(%s)*%s);" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize))
+                    f"memset({alloc_name}, 0, sizeof({nodedesc.dtype.ctype})*{cpp.sym2cpp(arrsize)});"
                 )
             if nodedesc.start_offset != 0:
                 allocation_stream.write(f"{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n", cfg, state_id, node)
 
             # Close OpenMP parallel section
             allocation_stream.write("}")
-            self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, "%s *" % nodedesc.dtype.ctype)
+            self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, f"{nodedesc.dtype.ctype} *")
         else:
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
@@ -755,9 +751,9 @@ class CPUCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         dfg: StateSubgraphView,
         state_id: int,
-        src_node: Union[nodes.Tasklet, nodes.AccessNode],
-        dst_node: Union[nodes.Tasklet, nodes.AccessNode],
-        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
+        src_node: nodes.Tasklet | nodes.AccessNode,
+        dst_node: nodes.Tasklet | nodes.AccessNode,
+        edge: tuple[nodes.Node, str | None, nodes.Node, str | None, mmlt.Memlet],
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
@@ -809,7 +805,7 @@ class CPUCodeGen(TargetCodeGenerator):
         dst_node: nodes.Node,
         dst_storage: dtypes.StorageType,
         dst_schedule: dtypes.ScheduleType,
-        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
+        edge: tuple[nodes.Node, str | None, nodes.Node, str | None, mmlt.Memlet],
         dfg: StateSubgraphView,
         stream: CodeIOStream,
     ) -> None:
@@ -864,7 +860,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 srcptr = self.ptr(src_node.data, src_nodedesc, sdfg)
                 defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
                 stream.write(
-                    "%s = %s;" % (vconn, cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)),
+                    f"{vconn} = {cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)};",
                     cfg,
                     state_id,
                     [src_node, dst_node],
@@ -896,12 +892,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     array_expr = cpp.cpp_offset_expr(dst_nodedesc, array_subset)
                     assert functools.reduce(lambda a, b: a * b, src_nodedesc.shape, 1) == 1
                     stream.write(
-                        "{s}.pop(&{arr}[{aexpr}], {maxsize});".format(
-                            s=self.ptr(src_node.data, src_nodedesc, sdfg),
-                            arr=self.ptr(dst_node.data, dst_nodedesc, sdfg),
-                            aexpr=array_expr,
-                            maxsize=cpp.sym2cpp(array_subset.num_elements()),
-                        ),
+                        f"{self.ptr(src_node.data, src_nodedesc, sdfg)}.pop(&{self.ptr(dst_node.data, dst_nodedesc, sdfg)}[{array_expr}], {cpp.sym2cpp(array_subset.num_elements())});",
                         cfg,
                         state_id,
                         [src_node, dst_node],
@@ -911,20 +902,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(src_nodedesc, (data.Scalar, data.Array)) and isinstance(dst_nodedesc, data.Stream):
                     if isinstance(src_nodedesc, data.Scalar):
                         stream.write(
-                            "{s}.push({arr});".format(
-                                s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                arr=self.ptr(src_node.data, src_nodedesc, sdfg),
-                            ),
+                            f"{self.ptr(dst_node.data, dst_nodedesc, sdfg)}.push({self.ptr(src_node.data, src_nodedesc, sdfg)});",
                             cfg,
                             state_id,
                             [src_node, dst_node],
                         )
                     elif hasattr(src_nodedesc, "src"):  # Array-stream view, ``src`` set by is_array_stream_view
                         stream.write(
-                            "{s}.push({arr});".format(
-                                s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                arr=self.ptr(src_nodedesc.src, sdfg.arrays[src_nodedesc.src], sdfg),
-                            ),
+                            f"{self.ptr(dst_node.data, dst_nodedesc, sdfg)}.push({self.ptr(src_nodedesc.src, sdfg.arrays[src_nodedesc.src], sdfg)});",
                             cfg,
                             state_id,
                             [src_node, dst_node],
@@ -938,12 +923,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             push_subset = subsets.Range.from_array(src_nodedesc)
                         copysize = " * ".join([cpp.sym2cpp(s) for s in push_subset.size()])
                         stream.write(
-                            "{s}.push(&{arr}[{off}], {size});".format(
-                                s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                arr=self.ptr(src_node.data, src_nodedesc, sdfg),
-                                off=cpp.cpp_offset_expr(src_nodedesc, push_subset),
-                                size=copysize,
-                            ),
+                            f"{self.ptr(dst_node.data, dst_nodedesc, sdfg)}.push(&{self.ptr(src_node.data, src_nodedesc, sdfg)}[{cpp.cpp_offset_expr(src_nodedesc, push_subset)}], {copysize});",
                             cfg,
                             state_id,
                             [src_node, dst_node],
@@ -984,11 +964,11 @@ class CPUCodeGen(TargetCodeGenerator):
             # Constant src/dst dimensions
             if not any(symbolic.issymbolic(s, sdfg.constants) for s in dst_strides):
                 # Constant destination
-                shape_tmpl = "template ConstDst<%s>" % ", ".join(cpp.sym2cpp(dst_strides))
+                shape_tmpl = "template ConstDst<{}>".format(", ".join(cpp.sym2cpp(dst_strides)))
                 dyndst = 0
             elif not any(symbolic.issymbolic(s, sdfg.constants) for s in src_strides):
                 # Constant source
-                shape_tmpl = "template ConstSrc<%s>" % ", ".join(cpp.sym2cpp(src_strides))
+                shape_tmpl = "template ConstSrc<{}>".format(", ".join(cpp.sym2cpp(src_strides)))
                 dynsrc = 0
             else:
                 # Both dynamic
@@ -1115,7 +1095,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ptrname = self.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
-            ptr = "%s + %s" % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self), indices)
+            ptr = f"{cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)} + {indices}"
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self)
 
@@ -1158,7 +1138,7 @@ class CPUCodeGen(TargetCodeGenerator):
         locals_defined: bool,
         function_stream: CodeIOStream,
         skip_wcr: bool = False,
-        codegen: Optional[TargetCodeGenerator] = None,
+        codegen: TargetCodeGenerator | None = None,
     ):
         codegen = codegen if codegen is not None else self
         state: SDFGState = cfg.nodes()[state_id]
@@ -1195,7 +1175,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     )
 
                 result.write(
-                    "%s = %s;" % (shared_data_name, edge.src_conn),
+                    f"{shared_data_name} = {edge.src_conn};",
                     cfg,
                     state_id,
                     [edge.src, edge.dst],
@@ -1219,7 +1199,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
                     raise SyntaxError(
-                        "Cannot copy memlet without a local connector: {} to {}".format(str(edge.src), str(edge.dst))
+                        f"Cannot copy memlet without a local connector: {str(edge.src)} to {str(edge.dst)}"
                     )
 
                 conntype = node.out_connectors[uconn]
@@ -1315,7 +1295,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif def_type == DefinedType.Scalar:
             memlet_expr = "&" + memlet_name
         else:
-            raise TypeError("Unsupported connector type {}".format(def_type))
+            raise TypeError(f"Unsupported connector type {def_type}")
 
         if isinstance(memlet.subset, subsets.Indices):
             offset = cpp.cpp_array_expr(sdfg, memlet, False, codegen=self)
@@ -1331,9 +1311,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet_params.append(memlet_expr)
             else:
                 if def_type != DefinedType.Pointer:
-                    raise cgx.CodegenError(
-                        "Cannot offset address of connector {} of type {}".format(memlet_name, def_type)
-                    )
+                    raise cgx.CodegenError(f"Cannot offset address of connector {memlet_name} of type {def_type}")
                 memlet_params.append(memlet_expr + " + " + offset)
 
             # Dimensions to remove from view (due to having one value)
@@ -1368,12 +1346,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 dims = memlet.subset.data_dims()
 
         else:
-            raise RuntimeError('Memlet type "%s" not implemented' % memlet.subset)
+            raise RuntimeError(f'Memlet type "{memlet.subset}" not implemented')
 
         # If there is a type mismatch, cast pointer (used in vector
         # packing/unpacking)
         if dtype != sdfg.arrays[memlet.data].dtype:
-            memlet_params[0] = "(%s *)(%s)" % (dtype.ctype, memlet_params[0])
+            memlet_params[0] = f"({dtype.ctype} *)({memlet_params[0]})"
 
         return "dace::ArrayView%s<%s, %d, 1, 1> (%s)" % (
             "Out" if is_output else "In",
@@ -1388,13 +1366,13 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet: mmlt.Memlet,
         output: bool,
         local_name: str,
-        conntype: Union[data.Data, dtypes.typeclass] = None,
+        conntype: data.Data | dtypes.typeclass = None,
         allow_shadowing: bool = False,
         codegen: Optional["CPUCodeGen"] = None,
     ):
         # TODO: Robust rule set
         if conntype is None:
-            raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
+            raise ValueError(f'Cannot define memlet for "{local_name}" without connector type')
         codegen = codegen or self
         # Convert from Data to typeclass
         if isinstance(conntype, data.Data):
@@ -1438,7 +1416,7 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
         if expr != ptr:
-            expr = "%s[%s]" % (ptr, expr)
+            expr = f"{ptr}[{expr}]"
         # If there is a type mismatch, cast pointer
         expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
 
@@ -1448,17 +1426,17 @@ class CPUCodeGen(TargetCodeGenerator):
             if output:
                 if not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
-                    result += "{} {};".format(memlet_type, local_name)
+                    result += f"{memlet_type} {local_name};"
                     defined = DefinedType.Scalar
 
             else:
                 if not memlet.dynamic:
                     if is_scalar:
                         # We can pre-read the value
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        result += f"{memlet_type} {local_name} = {expr};"
                     # constexpr arrays
                     elif memlet.data in self._frame.symbols_and_constants(sdfg):
-                        result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        result += f"const {memlet_type} {local_name} = {expr};"
                     elif (
                         var_type == DefinedType.Scalar
                         and isinstance(conntype, dtypes.pointer)
@@ -1472,18 +1450,18 @@ class CPUCodeGen(TargetCodeGenerator):
                         # MPI_Request / GPU handles) -- the value is already a pointer-like
                         # handle, so address-of adds an indirection the callee rejects
                         # (``MPI_Bcast`` expects ``MPI_Comm``, not ``MPI_Comm *``).
-                        result += "{}* {} = &{};".format(ctypedef, local_name, expr)
+                        result += f"{ctypedef}* {local_name} = &{expr};"
                     else:
                         # Pointer reference
-                        result += "{} {} = {};".format(ctypedef, local_name, expr)
+                        result += f"{ctypedef} {local_name} = {expr};"
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    memlet_type = "const %s" % memlet_type
+                    memlet_type = f"const {memlet_type}"
                     if is_pointer:
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        result += f"{memlet_type} {local_name} = {expr};"
                     else:
-                        result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                        result += f"{memlet_type} &{local_name} = {expr};"
                 defined = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
@@ -1496,10 +1474,10 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 # Just forward actions to the underlying object
                 memlet_type = ctypedef
-                result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                result += f"{memlet_type} &{local_name} = {expr};"
                 defined = DefinedType.Stream
         else:
-            raise TypeError("Unknown variable type: {}".format(var_type))
+            raise TypeError(f"Unknown variable type: {var_type}")
 
         if defined is not None:
             self._dispatcher.defined_vars.add(local_name, defined, memlet_type, allow_shadowing=allow_shadowing)
@@ -1509,7 +1487,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def memlet_stream_ctor(self, sdfg: SDFG, memlet: mmlt.Memlet) -> str:
         stream = sdfg.arrays[memlet.data]
         return memlet.data + (
-            "[{}]".format(cpp.cpp_offset_expr(stream, memlet.subset))
+            f"[{cpp.cpp_offset_expr(stream, memlet.subset)}]"
             if isinstance(stream, data.Stream) and stream.is_stream_array()
             else ""
         )
@@ -1525,7 +1503,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return self.memlet_view_ctor(sdfg, memlet, dtype, is_output)
 
         else:
-            raise NotImplementedError("Connector type {} not yet implemented".format(def_type))
+            raise NotImplementedError(f"Connector type {def_type} not yet implemented")
 
     #########################################################################
     # Dynamically-called node dispatchers
@@ -1668,7 +1646,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     )
 
                 # Allocate variable type
-                code = "%s %s;" % (ctype, local_name)
+                code = f"{ctype} {local_name};"
                 outer_stream_begin.write(code, cfg, state_id, [edge.src, dst_node])
                 if isinstance(arg_type, data.Scalar) or isinstance(arg_type, dtypes.typeclass):
                     self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar, ctype, ancestor=1)
@@ -1680,9 +1658,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     else:
                         self._dispatcher.defined_vars.add(local_name, DefinedType.Stream, ctype, ancestor=1)
                 else:
-                    raise TypeError("Unrecognized argument type: {}".format(type(arg_type).__name__))
+                    raise TypeError(f"Unrecognized argument type: {type(arg_type).__name__}")
 
-                inner_stream.write("%s %s;" % (ctype, edge.src_conn), cfg, state_id, [edge.src, edge.dst])
+                inner_stream.write(f"{ctype} {edge.src_conn};", cfg, state_id, [edge.src, edge.dst])
                 tasklet_out_connectors.add(edge.src_conn)
                 self._dispatcher.defined_vars.add(edge.src_conn, DefinedType.Scalar, ctype)
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1, ctype)
@@ -1842,7 +1820,7 @@ class CPUCodeGen(TargetCodeGenerator):
         return f"{sdfg_label}({args});"
 
     @staticmethod
-    def _mutated_descriptors(nsdfg: SDFG) -> Set[str]:
+    def _mutated_descriptors(nsdfg: SDFG) -> set[str]:
         """Descriptor names that may be mutated, i.e. must not become ``const`` arguments.
 
         ``read_and_write_sets`` records a write through a ``View`` against the view's own name, so a
@@ -1851,8 +1829,8 @@ class CPUCodeGen(TargetCodeGenerator):
         :param nsdfg: The nested SDFG to scan.
         :return: The names that are written.
         """
-        mutated: Set[str] = set()
-        view_parents: Set[str] = set()
+        mutated: set[str] = set()
+        view_parents: set[str] = set()
         for nstate in nsdfg.states():
             mutated |= nstate.read_and_write_sets()[1]
             for vn in nstate.nodes():
@@ -2023,7 +2001,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if inline:
             callsite_stream.write("{", cfg, state_id, node)
             for ref in memlet_references:
-                callsite_stream.write("%s %s = %s;" % ref, cfg, state_id, node)
+                callsite_stream.write("{} {} = {};".format(*ref), cfg, state_id, node)
             # Emit symbol mappings
             # We first emit variables of the form __dacesym_X = Y to avoid
             # overriding symbolic expressions when the symbol names match
@@ -2031,9 +2009,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 if symname in sdfg.constants:
                     continue
                 callsite_stream.write(
-                    "{dtype} __dacesym_{symname} = {symval};\n".format(
-                        dtype=node.sdfg.symbols[symname], symname=symname, symval=cpp.sym2cpp(symval)
-                    ),
+                    f"{node.sdfg.symbols[symname]} __dacesym_{symname} = {cpp.sym2cpp(symval)};\n",
                     cfg,
                     state_id,
                     node,
@@ -2042,9 +2018,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 if symname in sdfg.constants:
                     continue
                 callsite_stream.write(
-                    "{dtype} {symname} = __dacesym_{symname};\n".format(
-                        symname=symname, dtype=node.sdfg.symbols[symname]
-                    ),
+                    f"{node.sdfg.symbols[symname]} {symname} = __dacesym_{symname};\n",
                     cfg,
                     state_id,
                     node,
@@ -2197,7 +2171,7 @@ class CPUCodeGen(TargetCodeGenerator):
         for _, _, _skip in node.map.range:
             if (_skip > 0) != True:
                 result.write(
-                    'assert((%s) > 0 && "Map %s requires a positive step");\n' % (cpp.sym2cpp(_skip), node.map.label),
+                    f'assert(({cpp.sym2cpp(_skip)}) > 0 && "Map {node.map.label} requires a positive step");\n',
                     cfg,
                     state_id,
                     node,
@@ -2251,8 +2225,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 result.write(
-                    "for (%s %s = %s; %s < %s; %s += %s) {\n"
-                    % (param_ctype(var), var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    f"for ({param_ctype(var)} {var} = {cpp.sym2cpp(begin)}; {var} < {cpp.sym2cpp(end + 1)}; {var} += {cpp.sym2cpp(skip)}) {{\n",
                     cfg,
                     state_id,
                     node,
@@ -2326,12 +2299,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Take chunks into account
         if node.consume.chunksize == 1:
-            ctype = "const %s" % input_streamdesc.dtype.ctype
-            chunk = "%s& %s" % (ctype, "__dace_" + node.consume.label + "_element")
+            ctype = f"const {input_streamdesc.dtype.ctype}"
+            chunk = "{}& {}".format(ctype, "__dace_" + node.consume.label + "_element")
             self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_element", DefinedType.Scalar, ctype)
         else:
-            ctype = "const %s *" % input_streamdesc.dtype.ctype
-            chunk = "%s %s, size_t %s" % (
+            ctype = f"const {input_streamdesc.dtype.ctype} *"
+            chunk = "{} {}, size_t {}".format(
                 ctype,
                 "__dace_" + node.consume.label + "_elements",
                 "__dace_" + node.consume.label + "_numelems",
@@ -2343,7 +2316,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Take quiescence condition into account
         if node.consume.condition is not None:
-            condition_string = "[&]() { return %s; }, " % cppunparse.cppunparse(node.consume.condition.code, False)
+            condition_string = f"[&]() {{ return {cppunparse.cppunparse(node.consume.condition.code, False)}; }}, "
         else:
             condition_string = ""
 
@@ -2451,7 +2424,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         )
 
                     # Allocate variable type
-                    code = "%s %s;" % (ctype, local_name)
+                    code = f"{ctype} {local_name};"
                     result.write(code, cfg, state_id, [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar, ctype)
 
@@ -2648,8 +2621,8 @@ class CPUCodeGen(TargetCodeGenerator):
         name: str,
         desc: data.Data,
         sdfg: SDFG = None,
-        subset: Optional[subsets.Subset] = None,
-        is_write: Optional[bool] = None,
+        subset: subsets.Subset | None = None,
+        is_write: bool | None = None,
         ancestor: int = 0,
     ) -> str:
         """
@@ -2669,5 +2642,5 @@ class CPUCodeGen(TargetCodeGenerator):
         self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream, sdfg: SDFG
     ):
         isvar = data.Scalar(dtype)
-        callsite_stream.write("%s;\n" % (isvar.as_arg(with_types=True, name=name)), sdfg)
+        callsite_stream.write(f"{isvar.as_arg(with_types=True, name=name)};\n", sdfg)
         self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, dtype.ctype)

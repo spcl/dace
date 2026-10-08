@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains test cases for the work depth analysis."""
 
-from typing import Dict, List, Tuple
-
 import pytest
 import dace
 from dace.symbolic import pystr_to_symbolic, simplify, SymbolicType
@@ -210,7 +208,7 @@ def loop_var_dependent_work(x: dace.float64[N], y: dace.float64[N], z: dace.floa
 
 
 # (sdfg, (expected_work, expected_depth))
-work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[SymbolicType, SymbolicType]]] = {
+work_depth_test_cases: dict[str, tuple[DaceProgram, tuple[SymbolicType, SymbolicType]]] = {
     "single_map": (single_map, (N, 1)),
     "single_for_loop": (single_for_loop, (N, N)),
     "if_else": (if_else, (1000, 100)),
@@ -268,7 +266,7 @@ def test_work_depth(test_name):
     ]:
         pytest.skip("Malformed loop when not simplifying")
     test, correct = work_depth_test_cases[test_name]
-    w_d_map: Dict[str, sp.Expr] = {}
+    w_d_map: dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
     if "nested_sdfg" in test.name:
         sdfg.apply_transformations(NestSDFG)
@@ -312,7 +310,7 @@ def test_avg_par(test_name: str):
         pytest.skip("Malformed loop when not simplifying")
 
     test, correct = tests_cases_avg_par[test_name]
-    w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
+    w_d_map: dict[str, tuple[sp.Expr, sp.Expr]] = {}
     sdfg = test.to_sdfg()
     if "nested_sdfg" in test_name:
         sdfg.apply_transformations(NestSDFG)
@@ -330,7 +328,7 @@ def test_work_depth_bails_on_nonlocal_exit(prog: DaceProgram):
     """``break`` / ``continue`` / ``return`` are not supported (non-local exits are not modeled);
     the analysis must warn and produce a zero (work, depth) result rather than a wrong one."""
     sdfg = prog.to_sdfg()
-    w_d_map: Dict[str, sp.Expr] = {}
+    w_d_map: dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     assert w_d_map[get_uuid(sdfg)] == (0, 0)
@@ -343,7 +341,7 @@ def test_work_depth_bails_on_unstructured_control_flow():
     inline_control_flow_regions(sdfg)
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_explicit_control_flow = False
-    w_d_map: Dict[str, sp.Expr] = {}
+    w_d_map: dict[str, sp.Expr] = {}
     with pytest.warns(UserWarning, match="structured control flow"):
         analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     assert w_d_map[get_uuid(sdfg)] == (0, 0)
@@ -379,7 +377,7 @@ tests_for_exception = [
 
 
 @pytest.mark.parametrize("expr,assums,res", assumptions_tests)
-def test_assumption_system(expr: sp.Expr, assums: List[str], res: sp.Expr):
+def test_assumption_system(expr: sp.Expr, assums: list[str], res: sp.Expr):
     equality_subs, all_subs = parse_assumptions(assums, set())
     expr = expr.subs(equality_subs[0])
     expr = expr.subs(equality_subs[1])

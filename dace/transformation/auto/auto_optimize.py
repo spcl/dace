@@ -9,7 +9,8 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Dict, Callable
+from typing import Union
+from collections.abc import Callable
 
 # Transformations
 from dace.transformation.passes import FullMapFusion
@@ -220,7 +221,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         raise TypeError("Graph must be a state, an SDFG, a control flow region, or a subgraph of either")
     sdfg = graph.parent
 
-    edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()
+    edges_to_consider: set[tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()
     for edge in graph_or_subgraph.edges():
         if edge.data.wcr is not None:
             if isinstance(edge.src, (nodes.MapExit, nodes.NestedSDFG)) or isinstance(edge.dst, nodes.MapEntry):
@@ -249,16 +250,16 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     if prefer_partial_parallelism is None:
         prefer_partial_parallelism = config.Config.get_bool("optimizer", "autotile_partial_parallelism")
 
-    maps_to_consider: Set[nodes.MapEntry] = set(me for _, me in edges_to_consider)
+    maps_to_consider: set[nodes.MapEntry] = set(me for _, me in edges_to_consider)
 
-    transformed: Set[nodes.MapEntry] = set()
+    transformed: set[nodes.MapEntry] = set()
 
     # Heuristic: If the map is only partially conflicted, extract
     # parallel dimensions instead of tiling
     if prefer_partial_parallelism:
         for mapentry in maps_to_consider:
             # Check the write-conflicts of all WCR edges in map
-            conflicts: Set[str] = set()
+            conflicts: set[str] = set()
             for edge, me in edges_to_consider:
                 if me is not mapentry:
                     continue
@@ -298,8 +299,8 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         outer_mapexit = graph.exit_node(outer_mapentry)
 
         # Tuple of (transformation type, options, pattern)
-        to_apply: Tuple[
-            Union[dataflow.StreamTransient, dataflow.AccumulateTransient], Dict[str, Any], Dict[str, nodes.Node]
+        to_apply: tuple[
+            dataflow.StreamTransient | dataflow.AccumulateTransient, dict[str, Any], dict[str, nodes.Node]
         ] = None
         for e in graph.out_edges(mapexit):
             if isinstance(sdfg.arrays[e.data.data], dt.Stream):
@@ -351,7 +352,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         print(f"Optimized {len(transformed)} write-conflicted maps")
 
 
-def find_fast_library(device: dtypes.DeviceType) -> List[str]:
+def find_fast_library(device: dtypes.DeviceType) -> list[str]:
     from dace.codegen.common import get_gpu_backend
 
     # Returns the optimized library node implementations for the given target
@@ -413,8 +414,8 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 def set_fast_implementations(
     sdfg: SDFG,
     device: dtypes.DeviceType,
-    blocklist: List[str] = None,
-    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+    blocklist: list[str] = None,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], list[str]] = None,
 ) -> None:
     """
     Set fast library node implementations for the given device
@@ -490,7 +491,7 @@ def set_fast_implementations(
 
 def make_transients_persistent(
     sdfg: SDFG, device: dtypes.DeviceType, toplevel_only: bool = True
-) -> Dict[int, Set[str]]:
+) -> dict[int, set[str]]:
     """
     Helper function to change several storage and scheduling properties
 
@@ -506,11 +507,11 @@ def make_transients_persistent(
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
     :return: A dictionary mapping SDFG IDs to a set of transient arrays that were made persistent.
     """
-    result: Dict[int, Set[str]] = {}
+    result: dict[int, set[str]] = {}
     for nsdfg in sdfg.all_sdfgs_recursive():
-        fsyms: Set[str] = nsdfg.free_symbols
-        persistent: Set[str] = set()
-        not_persistent: Set[str] = set()
+        fsyms: set[str] = nsdfg.free_symbols
+        persistent: set[str] = set()
+        not_persistent: set[str] = set()
 
         for state in nsdfg.states():
             for dnode in state.data_nodes():
@@ -593,9 +594,9 @@ def auto_optimize(
     device: dtypes.DeviceType,
     validate: bool = True,
     validate_all: bool = False,
-    symbols: Dict[str, int] = None,
+    symbols: dict[str, int] = None,
     use_gpu_storage: bool = False,
-    find_fast_library_fn: Callable[[dtypes.DeviceType], List[str]] = None,
+    find_fast_library_fn: Callable[[dtypes.DeviceType], list[str]] = None,
 ) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent

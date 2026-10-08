@@ -3,7 +3,7 @@ import dace
 import math
 import copy
 
-from typing import Generator, Dict, List, Tuple
+from collections.abc import Generator
 from collections import Counter
 
 from dace import SDFG, dtypes
@@ -41,7 +41,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                 except AttributeError:
                     continue
 
-    def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
+    def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> tuple[int, list[int]]:
         fusion_id = int(key)
         if fusion_id == 0:
             return (0, [])
@@ -49,14 +49,14 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         sp = list(self.space(cutout=cutout))
         return sp[fusion_id]
 
-    def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
+    def space(self, cutout: dace.SDFG) -> Generator[list[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
         yield 0, []
 
         for i, (subgraph, score) in enumerate(subgraphs):
             yield i + 1, list(map(lambda m: cutout.start_state.node_id(m), subgraph))
 
-    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
+    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> dict:
         cutout.start_state.instrument = self.instrument
 
         new_kwargs = {
@@ -99,7 +99,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
         return self.measure(candidate, dreport, measurements)
 
-    def apply(self, config: Tuple[int, List[int]], label: str, **kwargs) -> None:
+    def apply(self, config: tuple[int, list[int]], label: str, **kwargs) -> None:
         if config[0] == 0:
             return
 
@@ -121,7 +121,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             fuse_counter = map_fusion.apply(state, sdfg)
             print(f"Fusing {fuse_counter} maps")
 
-    def _extract_patterns(self, configs: List[Tuple[str, List[int]]]):
+    def _extract_patterns(self, configs: list[tuple[str, list[int]]]):
         # Describe successful fusions as set of map descriptors
         subgraph_patterns = []
         for label, config in configs:

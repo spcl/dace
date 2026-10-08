@@ -4,7 +4,7 @@
 from collections import defaultdict
 import copy
 import sympy as sp
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Union
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -112,7 +112,7 @@ def _nested_reads_match_writes(
     return True
 
 
-def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
+def _dependent_indices(itervar: str, subset: subsets.Subset) -> set[int]:
     """Finds the indices or ranges of a subset that depend on the iteration
     variable. Returns their index in the subset's indices/ranges list.
     """
@@ -123,14 +123,14 @@ def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     }
 
 
-def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Range:
+def _sanitize_by_index(indices: set[int], subset: subsets.Subset) -> subsets.Range:
     """Keeps the indices or ranges of subsets that are in `indices`."""
     return subsets.Range([t for i, t in enumerate(subset.ndrange()) if i in indices])
 
 
 def _affine_coeffs(
     expr: IndexExpr, itersym: symbolic.symbol
-) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]:
+) -> tuple[symbolic.SymbolicType, symbolic.SymbolicType] | None:
     """``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if not affine. Derivative and
     value at zero, since ``expand`` + ``coeff`` hung on tiled indices; a derivative still naming
     ``itersym`` is the degree test."""
@@ -298,10 +298,10 @@ def _writes_may_overlap(
     return True
 
 
-def symbols_assigned_before_use(loop: LoopRegion, itervar: str) -> Optional[Set[str]]:
+def symbols_assigned_before_use(loop: LoopRegion, itervar: str) -> set[str] | None:
     """The symbols ``loop``'s body assigns, plus ``itervar``; ``None`` if an iteration reads one before assigning it."""
-    symbols_that_may_be_used: Set[str] = {itervar}
-    used_before_assignment: Set[str] = set()
+    symbols_that_may_be_used: set[str] = {itervar}
+    used_before_assignment: set[str] = set()
     # Blocks are visited in order, so a symbol not yet assigned in this iteration comes from the previous one.
     for block in cfg_analysis.blockorder_topological_sort(loop, recursive=True, ignore_nonstate_blocks=False):
         # ``read_symbols()`` sees only interstate-edge reads; a read in the block's dataflow (``b[im]``) counts too.
@@ -443,7 +443,7 @@ class LoopToMap(xf.MultiStateTransformation):
             return False
 
         # Get access nodes from other states to isolate local loop variables
-        other_access_nodes: Set[str] = set()
+        other_access_nodes: set[str] = set()
         for state in sdfg.states():
             if state in loop_states:
                 continue
@@ -455,7 +455,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # Lazy: it walks every state and edge, and the cheap refusals above take 41k of 44k.
         _, write_set = self.loop.read_and_write_sets()
 
-        write_memlets: Dict[str, List[memlet.Memlet]] = defaultdict(list)
+        write_memlets: dict[str, list[memlet.Memlet]] = defaultdict(list)
 
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
@@ -510,7 +510,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Two injective writes still collide across iterations (``A[5*i]``, ``A[3*i]`` at 15).
         for data, mmlts in write_memlets.items():
-            distinct: Dict[str, memlet.Memlet] = {}
+            distinct: dict[str, memlet.Memlet] = {}
             for m in mmlts:
                 if m.wcr is None:
                     distinct.setdefault(str(m.subset), m)
@@ -549,7 +549,7 @@ class LoopToMap(xf.MultiStateTransformation):
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
-        isread_set: Set[memlet.Memlet] = set()
+        isread_set: set[memlet.Memlet] = set()
         for e in self.loop.all_interstate_edges():
             isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
         for mmlt in isread_set:
@@ -564,7 +564,7 @@ class LoopToMap(xf.MultiStateTransformation):
             cfg_analysis.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=False)
         )
         # First check the outgoing edges of the loop itself.
-        reassigned_symbols: Set[str] = None
+        reassigned_symbols: set[str] = None
         for oe in graph.out_edges(self.loop):
             if symbols_that_may_be_used & oe.data.read_symbols():
                 return False
@@ -618,10 +618,10 @@ class LoopToMap(xf.MultiStateTransformation):
         start: symbolic.SymbolicType,
         end: symbolic.SymbolicType,
         step: symbolic.SymbolicType,
-        write_memlets: Dict[str, List[memlet.Memlet]],
+        write_memlets: dict[str, list[memlet.Memlet]],
         mmlt: memlet.Memlet,
         src_subset: subsets.Range,
-        varying: Set[str],
+        varying: set[str],
     ):
         from dace.sdfg.propagation import propagate_subset, align_memlet
 
@@ -677,7 +677,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         return True
 
-    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
+    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: list[SDFGState]) -> bool:
         """
         This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
         i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.
@@ -910,7 +910,7 @@ class LoopToMap(xf.MultiStateTransformation):
         sink_nodes = body.sink_nodes()
 
         # Check intermediate nodes
-        intermediate_nodes: List[nodes.AccessNode] = []
+        intermediate_nodes: list[nodes.AccessNode] = []
         for node in body.nodes():
             if isinstance(node, nodes.AccessNode) and body.in_degree(node) > 0 and node not in sink_nodes:
                 # Scalars written without WCR must be thread-local
@@ -964,7 +964,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Direct edges among source and sink access nodes must pass through a tasklet; gather
         # them in a list, since ``MultiConnectorEdge`` hashes by id().
-        direct_edges: List[gr.MultiConnectorEdge[memlet.Memlet]] = []
+        direct_edges: list[gr.MultiConnectorEdge[memlet.Memlet]] = []
         for n1 in source_nodes:
             if not isinstance(n1, nodes.AccessNode):
                 continue
@@ -997,7 +997,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
-        intermediate_sinks: Dict[str, nodes.AccessNode] = {}
+        intermediate_sinks: dict[str, nodes.AccessNode] = {}
         for n in intermediate_nodes:
             if isinstance(sdfg.arrays[n.data], dt.View):
                 continue

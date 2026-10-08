@@ -9,7 +9,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg import nodes
 
 from collections import defaultdict
-from typing import Callable
+from collections.abc import Callable
 import itertools
 
 

@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import itertools
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+from typing import Any
+from collections.abc import Callable
 from dace.dtypes import paramdec
 
-MethodType = Callable[..., Tuple[str]]
+MethodType = Callable[..., tuple[str]]
 
 
-def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
+def _get_all_bases(class_or_name: str | type) -> list[str]:
     """
     Returns a list of the current class name and all its base classes.
 
@@ -20,7 +21,7 @@ def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
     return [base.__name__ for base in class_or_name.__mro__]
 
 
-class Replacements(object):
+class Replacements:
     """
     A management singleton for functions that replace existing function calls
     with either an SDFG subgraph.
@@ -28,11 +29,11 @@ class Replacements(object):
     and operators such as `Array.__add__`.
     """
 
-    _rep: Dict[str, MethodType] = {}
-    _oprep: Dict[Tuple[str, str, str], MethodType] = {}
-    _ufunc_rep: Dict[str, MethodType] = {}
-    _method_rep: Dict[Tuple[str, str], MethodType] = {}
-    _attr_rep: Dict[Tuple[str, str], MethodType] = {}
+    _rep: dict[str, MethodType] = {}
+    _oprep: dict[tuple[str, str, str], MethodType] = {}
+    _ufunc_rep: dict[str, MethodType] = {}
+    _method_rep: dict[tuple[str, str], MethodType] = {}
+    _attr_rep: dict[tuple[str, str], MethodType] = {}
 
     @staticmethod
     def get(name: str):
@@ -42,7 +43,7 @@ class Replacements(object):
         return Replacements._rep[name]
 
     @staticmethod
-    def getop(class_or_name: Union[str, Type], optype: str, otherclass: Union[str, Type, None] = None):
+    def getop(class_or_name: str | type, optype: str, otherclass: str | type | None = None):
         """Returns an implementation of an operator."""
         all_op1_types = _get_all_bases(class_or_name)
         if otherclass is None:
@@ -61,7 +62,7 @@ class Replacements(object):
         return None
 
     @staticmethod
-    def get_ufunc(ufunc_method: Optional[str] = None):
+    def get_ufunc(ufunc_method: str | None = None):
         """Returns the implementation for NumPy universal functions."""
         if ufunc_method:
             if ufunc_method not in Replacements._ufunc_rep:
@@ -70,14 +71,14 @@ class Replacements(object):
         return Replacements._ufunc_rep["ufunc"]
 
     @staticmethod
-    def get_method(class_or_name: Union[str, Type], method_name: str):
+    def get_method(class_or_name: str | type, method_name: str):
         for classname in _get_all_bases(class_or_name):
             if (classname, method_name) in Replacements._method_rep:
                 return Replacements._method_rep[(classname, method_name)]
         return None
 
     @staticmethod
-    def get_attribute(class_or_name: Union[str, Type], attr_name: str):
+    def get_attribute(class_or_name: str | type, attr_name: str):
         for classname in _get_all_bases(class_or_name):
             if (classname, attr_name) in Replacements._attr_rep:
                 return Replacements._attr_rep[(classname, attr_name)]
@@ -85,7 +86,7 @@ class Replacements(object):
 
 
 @paramdec
-def replaces(func: Callable[..., Tuple[str]], name: str):
+def replaces(func: Callable[..., tuple[str]], name: str):
     """Registers a replacement sub-SDFG generator for a function.
 
     :param func: A function that receives an SDFG, SDFGState, and the original function
@@ -98,7 +99,7 @@ def replaces(func: Callable[..., Tuple[str]], name: str):
 
 @paramdec
 def replaces_operator(
-    func: Callable[[Any, Any, str, str], Tuple[str]], classname: str, optype: str, otherclass: str = None
+    func: Callable[[Any, Any, str, str], tuple[str]], classname: str, optype: str, otherclass: str = None
 ):
     """Registers a replacement sub-SDFG generator for an operator.
 
@@ -116,7 +117,7 @@ def replaces_operator(
 
 
 @paramdec
-def replaces_ufunc(func: Callable[..., Tuple[str]], name: str):
+def replaces_ufunc(func: Callable[..., tuple[str]], name: str):
     """Registers a replacement sub-SDFG generator for NumPy universal functions
     and methods.
 
@@ -132,7 +133,7 @@ def replaces_ufunc(func: Callable[..., Tuple[str]], name: str):
 
 
 @paramdec
-def replaces_method(func: Callable[..., Tuple[str]], classname: str, method_name: str):
+def replaces_method(func: Callable[..., tuple[str]], classname: str, method_name: str):
     """
     Registers a replacement sub-SDFG generator for methods on objects.
 
@@ -148,7 +149,7 @@ def replaces_method(func: Callable[..., Tuple[str]], classname: str, method_name
 
 
 @paramdec
-def replaces_attribute(func: Callable[..., Tuple[str]], classname: str, attr_name: str):
+def replaces_attribute(func: Callable[..., tuple[str]], classname: str, attr_name: str):
     """
     Registers a replacement sub-SDFG generator for object attributes.
 

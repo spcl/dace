@@ -72,7 +72,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         # Change condition of loop to one fewer iteration (so that the
         # final one reads from the last buffer)
         map_rstart, map_rend, map_rstride = map_entry.map.range[0]
-        map_rend = symbolic.pystr_to_symbolic("(%s) - (%s)" % (map_rend, map_rstride))
+        map_rend = symbolic.pystr_to_symbolic(f"({map_rend}) - ({map_rstride})")
         map_entry.map.range = subsets.Range([(map_rstart, map_rend, map_rstride)])
 
         ##############################
@@ -135,7 +135,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         ##############################
         # Add initial reads to initial nested state
         loop_block = nsdfg_node.sdfg.start_block
-        initial_state = nsdfg_node.sdfg.add_state_before(loop_block, "%s_init" % map_entry.map.label)
+        initial_state = nsdfg_node.sdfg.add_state_before(loop_block, f"{map_entry.map.label}_init")
         for edge in edges_to_replace:
             initial_state.add_node(edge.src)
             rnode = edge.src
@@ -145,20 +145,20 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         # All instances of the map parameter in this state become the loop start
         sd.replace(initial_state, map_param, map_rstart)
         # Initial writes go to the appropriate buffer
-        init_expr = symbolic.pystr_to_symbolic("(%s / %s) %% 2" % (map_rstart, map_rstride))
+        init_expr = symbolic.pystr_to_symbolic(f"({map_rstart} / {map_rstride}) % 2")
         sd.replace(initial_state, "__dace_db_param", init_expr)
 
         ##############################
         # Modify main state's memlets
 
         # Divide by loop stride
-        new_expr = symbolic.pystr_to_symbolic("(%s / %s) %% 2" % (map_param, map_rstride))
+        new_expr = symbolic.pystr_to_symbolic(f"({map_param} / {map_rstride}) % 2")
         sd.replace(nstate, "__dace_db_param", new_expr)
 
         ##############################
         # Add the main state's contents to the last state, modifying
         # memlets appropriately.
-        final_state = nsdfg_node.sdfg.add_state_after(loop_block, "%s_final_computation" % map_entry.map.label)
+        final_state = nsdfg_node.sdfg.add_state_after(loop_block, f"{map_entry.map.label}_final_computation")
         dup_nstate = copy.deepcopy(nstate)
         final_state.add_nodes_from(dup_nstate.nodes())
         for e in dup_nstate.edges():
@@ -186,18 +186,18 @@ class DoubleBuffering(transformation.SingleStateTransformation):
             new_memlet = copy.deepcopy(edge.data)
             if new_memlet.data in transients_to_modify:
                 new_memlet.other_subset = self._replace_in_subset(
-                    new_memlet.other_subset, map_param, "(%s + %s)" % (map_param, map_rstride)
+                    new_memlet.other_subset, map_param, f"({map_param} + {map_rstride})"
                 )
             else:
                 new_memlet.subset = self._replace_in_subset(
-                    new_memlet.subset, map_param, "(%s + %s)" % (map_param, map_rstride)
+                    new_memlet.subset, map_param, f"({map_param} + {map_rstride})"
                 )
 
             nstate.add_edge(rnode, edge.src_conn, wnode, edge.dst_conn, new_memlet)
 
-        nstate.label = "%s_double_buffered" % map_entry.map.label
+        nstate.label = f"{map_entry.map.label}_double_buffered"
         # Divide by loop stride
-        new_expr = symbolic.pystr_to_symbolic("((%s / %s) + 1) %% 2" % (map_param, map_rstride))
+        new_expr = symbolic.pystr_to_symbolic(f"(({map_param} / {map_rstride}) + 1) % 2")
         sd.replace(nstate, "__dace_db_param", new_expr)
 
         # Remove symbol once done

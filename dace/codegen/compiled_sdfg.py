@@ -6,7 +6,8 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union, Sequence
+from typing import Any
+from collections.abc import Callable, Sequence
 import warnings
 import tempfile
 import pickle
@@ -21,7 +22,7 @@ from dace.codegen import exceptions as cgx
 from dace.config import Config
 
 
-class ReloadableDLL(object):
+class ReloadableDLL:
     """
     A reloadable shared object (or dynamically linked library), which
     bypasses Python's dynamic library reloading issues.
@@ -157,7 +158,7 @@ class ReloadableDLL(object):
             # linker is used
             reason = ""
             if os.name == "posix":
-                result = subprocess.run(["ld", self._library_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                result = subprocess.run(["ld", self._library_filename], capture_output=True)
                 stderr = result.stderr.decode("utf-8")
                 reason = "Reason:\n" + "\n".join([l for l in stderr.split("\n") if "_start" not in l])
             raise RuntimeError(f"Could not load library {os.path.basename(self._library_filename)}. {reason}")
@@ -187,7 +188,7 @@ class ReloadableDLL(object):
         raise RuntimeError(f"Can not copy ReloadableDLL({self._library_filename})")
 
 
-class CompiledSDFG(object):
+class CompiledSDFG:
     """
     A compiled SDFG object that can be called through Python.
 
@@ -219,7 +220,7 @@ class CompiledSDFG(object):
            Python objects (pyobjects) returned directly.
     """
 
-    def __init__(self, sdfg, lib: ReloadableDLL, argnames: Optional[List[str]] = None):
+    def __init__(self, sdfg, lib: ReloadableDLL, argnames: list[str] | None = None):
         from dace.sdfg import SDFG
 
         self._sdfg: SDFG = sdfg
@@ -235,30 +236,30 @@ class CompiledSDFG(object):
         self._lastargs = None
 
         lib.load()  # Explicitly load the library
-        self._init = lib.get_symbol("__dace_init_{}".format(sdfg.name))
+        self._init = lib.get_symbol(f"__dace_init_{sdfg.name}")
         self._init.restype = ctypes.c_void_p
-        self._exit = lib.get_symbol("__dace_exit_{}".format(sdfg.name))
+        self._exit = lib.get_symbol(f"__dace_exit_{sdfg.name}")
         self._exit.restype = ctypes.c_int
-        self._cfunc = lib.get_symbol("__program_{}".format(sdfg.name))
+        self._cfunc = lib.get_symbol(f"__program_{sdfg.name}")
         # Present exactly when a GPU target emitted its init/exit pair, which is a sharper test than
         # the ``has_gpu_code`` heuristic below.
         self._gpu_last_error = self.get_exported_function("__dace_gpu_last_error", restype=ctypes.c_int)
 
         # Cache SDFG return values
-        self._return_syms: Dict[str, Any] = None
+        self._return_syms: dict[str, Any] = None
         # Contains the shape of the array or the name if the return array is passed as argument.
-        self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
+        self._retarray_shapes: list[tuple[str, np.dtype, dtypes.StorageType, tuple[int], tuple[int], int]] = []
         # Is only `True` if the return value is a scalar _and_ a ``pyobject``.
-        self._retarray_is_pyobject: List[bool] = []
-        self._return_arrays: List[np.ndarray] = []
-        self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
-        self._argument_to_pyobject: Dict[Any, Any] = {}  # Maps ctypes arguments back to original Python objects
+        self._retarray_is_pyobject: list[bool] = []
+        self._return_arrays: list[np.ndarray] = []
+        self._callback_retval_references: list[Any] = []  # Avoids garbage-collecting callback return values
+        self._argument_to_pyobject: dict[Any, Any] = {}  # Maps ctypes arguments back to original Python objects
 
         # If there are return values, the following is set to ``True`` only if it is a single value. Note that
         #  ``False`` either means that a tuple is returned or there are no return values.
         # NOTE: Necessary to handle the case of a tuple with one element.
         self._is_single_value_ret: bool = False
-        self._return_args: Tuple[str] = ()
+        self._return_args: tuple[str] = ()
         if "__return" in self._sdfg.arrays:
             assert not any(aname.startswith("__return_") for aname in self._sdfg.arrays.keys())
             self._is_single_value_ret = True
@@ -300,7 +301,7 @@ class CompiledSDFG(object):
             if aval.lifetime == dtypes.AllocationLifetime.External
         }
 
-    def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
+    def get_exported_function(self, name: str, restype=None) -> Callable[..., Any] | None:
         """
         Tries to find a symbol by name in the compiled SDFG, and convert it to a callable function
         with the (optionally) given return type (void by default). If no such function exists, returns None.
@@ -326,14 +327,14 @@ class CompiledSDFG(object):
 
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
 
-    def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
+    def _try_parse_state_struct(self) -> type[ctypes.Structure] | None:
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid import cycle
 
         # the path of the main sdfg file containing the state struct
         main_src_path = os.path.join(
             os.path.dirname(os.path.dirname(self._lib._library_filename)), "src", "cpu", self._sdfg.name + ".cpp"
         )
-        code = open(main_src_path, "r").read()
+        code = open(main_src_path).read()
 
         code_flat = code.replace("\n", " ")
 
@@ -365,7 +366,7 @@ class CompiledSDFG(object):
 
         return State
 
-    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
+    def get_workspace_sizes(self) -> dict[dtypes.StorageType, int]:
         """
         Returns the total external memory size to be allocated for this SDFG.
 
@@ -388,7 +389,7 @@ class CompiledSDFG(object):
                 "To use ``get_workspace_sizes()``, ``__call__()`` or ``initialize()`` must be called beforehand."
             )
 
-        result: Dict[dtypes.StorageType, int] = {}
+        result: dict[dtypes.StorageType, int] = {}
         for storage in self.external_memory_types:
             func = self._lib.get_symbol(f"__dace_get_external_memory_size_{storage.name}")
             func.restype = ctypes.c_size_t
@@ -475,7 +476,7 @@ class CompiledSDFG(object):
                     f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}'
                 )
 
-    def _get_error_text(self, result: Union[str, int]) -> str:
+    def _get_error_text(self, result: str | int) -> str:
         from dace.codegen import common  # Circular import
 
         if self.has_gpu_code:
@@ -634,7 +635,7 @@ with open(r"{temp_path}", "wb") as f:
                 self._libhandle = ctypes.c_void_p(0)
         self._lib.unload()
 
-    def construct_arguments(self, *args: Any, **kwargs: Any) -> Tuple[Tuple[Any], Tuple[Any]]:
+    def construct_arguments(self, *args: Any, **kwargs: Any) -> tuple[tuple[Any], tuple[Any]]:
         """
         Construct the argument vectors suitable for from its argument.
 
@@ -686,7 +687,7 @@ with open(r"{temp_path}", "wb") as f:
                     argtypes.append(typedict[a])
                     argnames.append(a)
                 except KeyError:
-                    raise KeyError('Missing program argument "{}"'.format(a))
+                    raise KeyError(f'Missing program argument "{a}"')
 
         else:
             if len(sig) > 0:
@@ -723,7 +724,7 @@ with open(r"{temp_path}", "wb") as f:
 
         return (newargs, initargs)
 
-    def convert_return_values(self) -> Union[Any, Tuple[Any, ...]]:
+    def convert_return_values(self) -> Any | tuple[Any, ...]:
         """
         Convert the return arguments.
 
@@ -756,8 +757,8 @@ with open(r"{temp_path}", "wb") as f:
         _: str,
         dtype: np.dtype,
         storage: dtypes.StorageType,
-        shape: Tuple[int],
-        strides: Tuple[int],
+        shape: tuple[int],
+        strides: tuple[int],
         total_size: int,
     ):
         ndarray = np.ndarray

@@ -26,13 +26,9 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
     if _is_complex(dtype):
         cast_value = complex(value)
 
-        return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
-        )
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({cast_value.real}, {cast_value.imag})"
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({value})"
 
 
 def _get_csrmv_operands(
@@ -71,7 +67,7 @@ def _get_csrmv_operands(
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError('Matrix multiplication connector "{}" not found.'.format(name))
+            raise ValueError(f'Matrix multiplication connector "{name}" not found.')
     return result
 
 
@@ -114,7 +110,7 @@ class ExpandCSRMVPure(ExpandTransformation):
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
                 "csrmv_init",
-                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(shape_c)},
+                {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(shape_c)},
                 {},
                 "out = 0",
                 {"out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(shape_c))]))},
@@ -139,7 +135,7 @@ class ExpandCSRMVPure(ExpandTransformation):
 
             init_state.add_mapped_tasklet(
                 "csrmv_init",
-                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(cdesc.shape)},
+                {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(cdesc.shape)},
                 {"_in": dace.Memlet.simple("_cin", ",".join(["_o%d" % i for i in range(len(cdesc.shape))]))},
                 f"_out = {node.beta} * _in",
                 {"_out": dace.Memlet.simple("_c", ",".join(["_o%d" % i for i in range(len(cdesc.shape))]))},
@@ -587,9 +583,7 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from matrix-vector product")
         if len(size_a_rowptr) != 1 or len(size_a_cols) != 1 or len(size_a_vals) != 1:
             raise ValueError(
-                "Expected rowptr,cols,vals of CSR matrix A as 1D array inputs, got {},{},{}".format(
-                    len(size_a_rowptr), len(size_a_cols), len(size_a_vals)
-                )
+                f"Expected rowptr,cols,vals of CSR matrix A as 1D array inputs, got {len(size_a_rowptr)},{len(size_a_cols)},{len(size_a_vals)}"
             )
         if len(size_b) != 1:
             raise ValueError("Matrix-vector product only supported on vector B")

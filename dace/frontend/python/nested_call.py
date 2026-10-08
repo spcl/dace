@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg import SDFG, SDFGState
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.python.newast import ProgramVisitor
@@ -26,7 +26,7 @@ class NestedCall:
     """
 
     state: SDFGState
-    last_state: Optional[SDFGState]
+    last_state: SDFGState | None
     pv: ProgramVisitor
     sdfg: SDFG
     count: int
@@ -44,7 +44,7 @@ class NestedCall:
             result = func(
                 self.pv,
                 self.sdfg,
-                self.add_state("{}_nested_call_{}_{}".format(self.state.label, self.count, func.__name__)),
+                self.add_state(f"{self.state.label}_nested_call_{self.count}_{func.__name__}"),
                 *args,
                 **kwargs,
             )

@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple
 
 import dace
 import numpy as np
@@ -36,7 +35,7 @@ def make_vecAdd_sdfg(symbol_name: str, sdfg_name: str, access_nodes_dict: dict, 
     # ---------- ----------
     # COMPUTE
     # ---------- ----------
-    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i="0:{}".format(n)))
+    vecMap_entry, vecMap_exit = vecAdd_state.add_map("vecAdd_map", dict(i=f"0:{n}"))
 
     vecAdd_tasklet = vecAdd_state.add_tasklet("vecAdd_task", ["x_con", "y_con"], ["z_con"], "z_con = x_con + y_con")
 
@@ -105,7 +104,7 @@ def make_nested_sdfg_cpu():
     return sdfg
 
 
-def _make_state_fission_with_access_nodes_sdfg() -> Tuple[
+def _make_state_fission_with_access_nodes_sdfg() -> tuple[
     dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode
 ]:
     sdfg = dace.SDFG(unique_name("split_with_access_nodes_sdfg"))
@@ -135,7 +134,7 @@ def _make_state_fission_with_access_nodes_sdfg() -> Tuple[
     return sdfg, state, a, tlet, b, c
 
 
-def _make_state_fission_with_map_sdfg() -> Tuple[
+def _make_state_fission_with_map_sdfg() -> tuple[
     dace.SDFG,
     dace.SDFGState,
     nodes.AccessNode,
@@ -190,7 +189,7 @@ def _make_state_fission_with_map_sdfg() -> Tuple[
     return sdfg, state, a, me, tlet, t, b, c
 
 
-def _make_state_fission_multiple_reads_sdfg() -> Tuple[
+def _make_state_fission_multiple_reads_sdfg() -> tuple[
     dace.SDFG,
     dace.SDFGState,
     nodes.AccessNode,
@@ -252,7 +251,7 @@ def _make_state_fission_multiple_reads_sdfg() -> Tuple[
     return sdfg, state, a, tlet1, tlet2, tlet3, b, c, d
 
 
-def _make_state_fission_multiple_writes_sdfg() -> Tuple[
+def _make_state_fission_multiple_writes_sdfg() -> tuple[
     dace.SDFG,
     dace.SDFGState,
     nodes.AccessNode,
@@ -313,7 +312,7 @@ def _make_state_fission_multiple_writes_sdfg() -> Tuple[
     return sdfg, state, a, tlet1, tlet2, tlet3, b, c
 
 
-def _make_state_fission_with_view_sdfg() -> Tuple[
+def _make_state_fission_with_view_sdfg() -> tuple[
     dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode
 ]:
     sdfg = dace.SDFG(unique_name("split_with_view"))
@@ -360,7 +359,7 @@ def _make_state_fission_with_view_sdfg() -> Tuple[
     return sdfg, state, ar, tlet1, tlet2, b, aw
 
 
-def _make_state_fission_with_empty_memlet_sdfg() -> Tuple[
+def _make_state_fission_with_empty_memlet_sdfg() -> tuple[
     dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode
 ]:
     sdfg = dace.SDFG(unique_name("split_with_empty_memlet_sdfg"))
@@ -399,7 +398,7 @@ def _make_state_fission_with_empty_memlet_sdfg() -> Tuple[
     return sdfg, state, ar, tlet1, tlet2, b, aw
 
 
-def _make_state_fission_tower_of_viewes() -> Tuple[
+def _make_state_fission_tower_of_viewes() -> tuple[
     dace.SDFG,
     dace.SDFGState,
     nodes.Tasklet,

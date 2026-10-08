@@ -129,7 +129,7 @@ def test_weights_ln():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.fc1 = nn.Linear(784, 120)
             self.fc2 = nn.Linear(120, 32)
             self.ln = nn.LayerNorm(32)
@@ -151,7 +151,7 @@ def test_layernorm():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.ln = nn.LayerNorm(3)
 
         def forward(self, x):
@@ -166,7 +166,7 @@ def test_weights():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.fc1 = nn.Linear(784, 120)
             self.fc2 = nn.Linear(120, 32)
             self.fc3 = nn.Linear(32, 10)
@@ -186,7 +186,7 @@ def test_nested_gradient_summation():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
 
         def forward(self, x):
@@ -205,7 +205,7 @@ def test_trans_add():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
 
         def forward(self, x):
             x = x + 1
@@ -221,7 +221,7 @@ def test_batched_matmul():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.fc1 = nn.Parameter(torch.ones([10, 5, 3]))
 
         def forward(self, x):
@@ -236,7 +236,7 @@ def test_scalar_forwarding():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.factor = nn.Parameter(torch.ones(()))
 
         def forward(self, x):
@@ -251,7 +251,7 @@ def test_scalar_buffer():
 
     class Module(torch.nn.Module):
         def __init__(self):
-            super(Module, self).__init__()
+            super().__init__()
             self.register_buffer("factor", torch.tensor(2))
 
         def forward(self, x):

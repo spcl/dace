@@ -7,7 +7,7 @@ Imported by both the node and its expansions, so it must not import either.
 import functools
 import operator
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import dace
 from dace import data, nodes, dtypes, subsets, symbolic
@@ -40,8 +40,8 @@ class CopyExpansion:
     out_name: str
     out: data.Data
     out_subset: dace.subsets.Range
-    in_shape_collapsed: List[symbolic.SymExpr]
-    out_shape_collapsed: List[symbolic.SymExpr]
+    in_shape_collapsed: list[symbolic.SymExpr]
+    out_shape_collapsed: list[symbolic.SymExpr]
 
 
 def _is_cross_cpu_gpu(
@@ -80,7 +80,7 @@ def _both_packed_same_layout(inp: data.Data, out: data.Data) -> bool:
     )
 
 
-def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], layout: str) -> List[symbolic.SymExpr]:
+def _delinearized_index(b_i: symbolic.symbol, shape: list[symbolic.SymExpr], layout: str) -> list[symbolic.SymExpr]:
     """Multi-dim index for a 1-D walker into a packed-layout array. Only C (row-major) and
     F (column-major) layouts are supported.
 
@@ -101,8 +101,8 @@ def _delinearized_index(b_i: symbolic.symbol, shape: List[symbolic.SymExpr], lay
 
 
 def cuda2d_pitch_params(
-    copy_shape: List[symbolic.SymExpr], src_strides: List[symbolic.SymExpr], dst_strides: List[symbolic.SymExpr]
-) -> Optional[Tuple[symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr]]:
+    copy_shape: list[symbolic.SymExpr], src_strides: list[symbolic.SymExpr], dst_strides: list[symbolic.SymExpr]
+) -> tuple[symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr] | None:
     """Element-count ``cudaMemcpy2DAsync`` pitch params ``(dpitch, spitch, width, height)`` for a
     2D (or ``(N, 1)``-promoted) copy, or ``None`` if not a single ``cudaMemcpy2DAsync``. Single
     source of truth for the ``MemcpyCUDA2D`` selector gate and the expander, so the two can't

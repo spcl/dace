@@ -33,7 +33,7 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
         storage,
     ) = arr_desc
 
-    sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
+    sdfg = dace.SDFG(f"{node.label}_sdfg")
 
     ain_arr = sdfg.add_array("_ain", ain_shape, dtype=ain_dtype, strides=ain_strides)
     ainout_arr = sdfg.add_array("_ainout", [n, n], dtype=ain_dtype, transient=True, storage=storage)
@@ -46,7 +46,7 @@ def _make_sdfg_getrs(node: "Solve", parent_state, parent_sdfg, implementation):
     ipiv_arr = sdfg.add_array("_pivots", [n], dtype=dace.int32, transient=True, storage=storage)
     info_arr = sdfg.add_array("_info", [1], dtype=dace.int32, transient=True, storage=storage)
 
-    state = sdfg.add_state("{l}_state".format(l=node.label))
+    state = sdfg.add_state(f"{node.label}_state")
 
     getrf_node = Getrf("getrf")
     getrf_node.implementation = implementation

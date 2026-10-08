@@ -3,7 +3,8 @@
 Integration with the dace python frontend
 """
 
-from typing import Optional, Union, Sequence
+from typing import Union
+from collections.abc import Sequence
 import itertools
 
 from dace import SDFG, SDFGState, data
@@ -28,7 +29,7 @@ def backward(
     sdfg: SDFG,
     state: SDFGState,
     tensors: TensorOrTensors,
-    grads: Optional[TensorOrTensors] = None,
+    grads: TensorOrTensors | None = None,
 ):
     """
     Adds a backward pass node to the SDFG.
@@ -74,16 +75,14 @@ def backward(
 
     for grad, tensor in zip(grads, tensors):
         if grad not in sdfg.arrays and grad not in sdfg.constants_prop:
-            raise common.DaceSyntaxError(pv, None, "Gradient {} is not an array".format(grad))
+            raise common.DaceSyntaxError(pv, None, f"Gradient {grad} is not an array")
         if tensor not in sdfg.arrays:
-            raise common.DaceSyntaxError(pv, None, "Tensor {} is not an array".format(tensor))
+            raise common.DaceSyntaxError(pv, None, f"Tensor {tensor} is not an array")
 
         grad_desc = sdfg.arrays[grad] if grad in sdfg.arrays else sdfg.constants_prop[grad][0]
 
         if not iterables_equal(grad_desc.shape, sdfg.arrays[tensor].shape):
-            raise common.DaceSyntaxError(
-                pv, None, "Gradient {} and tensor {} have different shapes".format(grad, tensor)
-            )
+            raise common.DaceSyntaxError(pv, None, f"Gradient {grad} and tensor {tensor} have different shapes")
 
     given_gradients = dict(zip(grads, tensors))
 
@@ -127,7 +126,7 @@ def grad(pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, arr: str) -> str:
     """
 
     if arr not in sdfg.arrays:
-        raise common.DaceSyntaxError(pv, None, "Array {} is not defined".format(arr))
+        raise common.DaceSyntaxError(pv, None, f"Array {arr} is not defined")
     desc = sdfg.arrays[arr]
     if not isinstance(desc, ParameterArray):
         raise common.DaceSyntaxError(
@@ -149,13 +148,13 @@ def requires_grad_(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self
     """
 
     if self not in sdfg.arrays:
-        raise common.DaceSyntaxError(pv, None, "Array {} is not defined".format(self))
+        raise common.DaceSyntaxError(pv, None, f"Array {self} is not defined")
     ParameterArray.make_parameter(sdfg, self)
 
 
 @op_repository.replaces_method("Array", "backward")
 @op_repository.replaces_method("Scalar", "backward")
-def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str, grad: Optional[str] = None):
+def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str, grad: str | None = None):
     """
     Alias for ``torch.autograd.backward(self)``
     """

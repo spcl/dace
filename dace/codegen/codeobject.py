@@ -6,7 +6,7 @@ from dace.properties import Property, DictProperty, SetProperty, make_properties
 
 
 @make_properties
-class CodeObject(object):
+class CodeObject:
     name = Property(dtype=str, category="Code Generation", desc="Filename to use")
     code = Property(dtype=str, category="Code Generation", desc="The code attached to this object")
     language = Property(
@@ -44,7 +44,7 @@ class CodeObject(object):
         environments=None,
         sdfg=None,
     ):
-        super(CodeObject, self).__init__()
+        super().__init__()
 
         self.name = name
         self.code = code

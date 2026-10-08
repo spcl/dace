@@ -15,7 +15,7 @@ import warnings
 
 import sympy as sp
 from io import StringIO
-from typing import IO, TYPE_CHECKING, Dict, Optional, Tuple, Union
+from typing import IO, TYPE_CHECKING, Optional
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
-def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
+def mangle_dace_state_struct_name(sdfg: SDFG | str) -> str:
     """This function creates a unique type name for the `SDFG`'s state `struct`.
 
     The function uses the `compiler.codegen_state_struct_suffix`
@@ -123,15 +123,15 @@ def copy_expr(
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.Object]:
-        return "{}{}{}".format(dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
+        return "{}{}{}".format(dt, expr, f" + {offset_cppstr}" if add_offset else "")
     elif def_type == DefinedType.StreamArray:
-        return "{}[{}]".format(expr, offset_cppstr)
+        return f"{expr}[{offset_cppstr}]"
     elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
         if add_offset:
-            raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
+            raise TypeError(f"Tried to offset address of scalar {data_name}: {offset_cppstr}")
 
         if def_type == DefinedType.Scalar:
-            return "{}&{}".format(dt, expr)
+            return f"{dt}&{expr}"
         else:
             return data_name
     else:
@@ -145,8 +145,8 @@ def memlet_copy_to_absolute_strides(
     edge: gr.MultiConnectorEdge[mmlt.Memlet],
     src_node: nodes.AccessNode,
     dst_node: nodes.AccessNode,
-    src_name_override: Optional[str] = None,
-    dst_name_override: Optional[str] = None,
+    src_name_override: str | None = None,
+    dst_name_override: str | None = None,
 ):
     memlet = edge.data
     copy_shape = memlet.subset.size_exact()
@@ -307,7 +307,7 @@ def emit_memlet_reference(
     is_write: bool = None,
     use_offset: bool = False,
     const_read_only_array: bool = False,
-) -> Tuple[str, str, str]:
+) -> tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -394,7 +394,7 @@ def emit_memlet_reference(
             typedef = defined_ctype
             defined_type = DefinedType.StreamArray
     else:
-        raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
+        raise TypeError(f'Unsupported memlet type "{defined_type.name}"')
 
     # Cast as necessary
     expr = codegen.make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
@@ -595,7 +595,7 @@ def cpp_array_expr(
             ptrname = codegen.ptr(name, desc, sdfg, memlet.subset)
         else:
             ptrname = ptr(name, desc, sdfg, framecode=framecode)
-        return "%s[%s]" % (ptrname, offset_cppstr)
+        return f"{ptrname}[{offset_cppstr}]"
     else:
         return offset_cppstr
 
@@ -606,9 +606,9 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
     """
     if src_dtype != dst_dtype:
         if is_scalar:
-            dst_expr = "*(%s *)(&%s)" % (src_dtype.ctype, dst_expr)
+            dst_expr = f"*({src_dtype.ctype} *)(&{dst_expr})"
         elif src_dtype.base_type != dst_dtype:
-            dst_expr = "(%s)(&%s)" % (src_dtype.ctype, dst_expr)
+            dst_expr = f"({src_dtype.ctype})(&{dst_expr})"
         elif defined_type == DefinedType.Pointer:
             dst_expr = "&" + dst_expr
     elif not is_scalar:
@@ -643,7 +643,7 @@ def cpp_ptr_expr(
     if offset_cppstr == "0":
         return dname
     else:
-        return "%s + %s" % (dname, offset_cppstr)
+        return f"{dname} + {offset_cppstr}"
 
 
 def _check_range_conflicts(subset, a, itersym, b, step):
@@ -856,7 +856,7 @@ def unparse_cr(sdfg, wcr_ast, dtype):
     ctype = "auto" if dtype is None else dtype.ctype
 
     # Construct a C++ lambda function out of a function
-    return "[] (%s) { %s }" % (", ".join("const %s& %s" % (ctype, a) for a in args), body_cpp)
+    return "[] ({}) {{ {} }}".format(", ".join(f"const {ctype}& {a}" for a in args), body_cpp)
 
 
 def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
@@ -906,22 +906,21 @@ def unparse_tasklet(
         ):
             if max_streams >= 0:
                 callsite_stream.write(
-                    "%sStream_t __dace_current_stream = %s;"
-                    % (common.get_gpu_backend(), common.gpu_stream_expr(node._cuda_stream)),
+                    f"{common.get_gpu_backend()}Stream_t __dace_current_stream = {common.gpu_stream_expr(node._cuda_stream)};",
                     cfg,
                     state_id,
                     node,
                 )
             else:
                 callsite_stream.write(
-                    "%sStream_t __dace_current_stream = nullptr;" % common.get_gpu_backend(),
+                    f"{common.get_gpu_backend()}Stream_t __dace_current_stream = nullptr;",
                     cfg,
                     state_id,
                     node,
                 )
 
         if node.language != dtypes.Language.CPP and node.language != dtypes.Language.MLIR:
-            raise ValueError("Only Python, C++ or MLIR code supported in CPU codegen, got: {}".format(node.language))
+            raise ValueError(f"Only Python, C++ or MLIR code supported in CPU codegen, got: {node.language}")
 
         if node.language == dtypes.Language.MLIR:
             # Inline import because mlir.utils depends on pyMLIR which may not be installed
@@ -1021,7 +1020,7 @@ def unparse_tasklet(
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, cfg, state_id, node)
+    callsite_stream.write(f"// Tasklet code ({node.label})\n", cfg, state_id, node)
     # Struct initializers only apply to calls of the SDFG's struct types or explicitly marked ones
     structs = frame.struct_types(sdfg) if frame is not None else StructInitializer.struct_types(sdfg)
     struct_initializer = None
@@ -1232,30 +1231,14 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             target = f"{ptrname}[{index}]"
                         else:
                             target = ptrname
-                        newnode = ast.Name(
-                            id="%s.push(%s);"
-                            % (
-                                target,
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            )
-                        )
+                        newnode = ast.Name(id=f"{target}.push({cppunparse.cppunparse(value, expr_semicolon=False)});")
                     else:
                         var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
-                            newnode = ast.Name(
-                                id="%s = %s;"
-                                % (
-                                    ptrname,
-                                    cppunparse.cppunparse(value, expr_semicolon=False),
-                                )
-                            )
+                            newnode = ast.Name(id=f"{ptrname} = {cppunparse.cppunparse(value, expr_semicolon=False)};")
                         elif isinstance(desc, data.View):
                             newnode = ast.Name(
-                                id="%s = %s;"
-                                % (
-                                    cpp_array_expr(self.sdfg, memlet, codegen=self.codegen),
-                                    cppunparse.cppunparse(value, expr_semicolon=False),
-                                )
+                                id=f"{cpp_array_expr(self.sdfg, memlet, codegen=self.codegen)} = {cppunparse.cppunparse(value, expr_semicolon=False)};"
                             )
                         else:
                             array_interface_name = self.codegen.ptr(
@@ -1289,7 +1272,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             )
         else:
             newnode = ast.Name(
-                id="%s[%s] = %s;" % (target, sym2cpp(subscript), cppunparse.cppunparse(value, expr_semicolon=False))
+                id=f"{target}[{sym2cpp(subscript)}] = {cppunparse.cppunparse(value, expr_semicolon=False)};"
             )
 
         return self._replace_assignment(newnode, node)
@@ -1305,7 +1288,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         # subscript), as otherwise the visitor will recursively descend into
         # the new expression and modify it erroneously.
         defined = set(self.memlets.keys()) | set(self.constants.keys())
-        newnode = ast.Name(id="%s[%s]" % (target, sym2cpp(subscript, defined)))
+        newnode = ast.Name(id=f"{target}[{sym2cpp(subscript, defined)}]")
 
         return ast.copy_location(newnode, node)
 
@@ -1400,7 +1383,7 @@ class StructInitializer(ExtNodeTransformer):
     """Replace struct creation calls with compound literal struct
     initializers in tasklets."""
 
-    def __init__(self, sdfg: SDFG, structs: Optional[Dict[str, dtypes.struct]] = None):
+    def __init__(self, sdfg: SDFG, structs: dict[str, dtypes.struct] | None = None):
         """
         :param sdfg: The SDFG containing the code.
         :param structs: The struct types of the data containers of ``sdfg`` by name (see ``struct_types``), if
@@ -1410,7 +1393,7 @@ class StructInitializer(ExtNodeTransformer):
         self._structs = structs
 
     @staticmethod
-    def struct_types(sdfg: Optional[SDFG]) -> Dict[str, dtypes.struct]:
+    def struct_types(sdfg: SDFG | None) -> dict[str, dtypes.struct]:
         """Returns the struct types of the data containers of an SDFG, by name."""
         structs = {}
         if sdfg is None:
@@ -1430,7 +1413,7 @@ class StructInitializer(ExtNodeTransformer):
         ):
             fields = ", ".join(
                 [
-                    ".%s = %s" % (rname(arg.arg), cppunparse.pyexpr2cpp(arg.value))
+                    f".{rname(arg.arg)} = {cppunparse.pyexpr2cpp(arg.value)}"
                     for arg in sorted(node.keywords, key=lambda x: x.arg)
                 ]
             )
@@ -1439,7 +1422,7 @@ class StructInitializer(ExtNodeTransformer):
             if node.func.id.startswith("__DACESTRUCT_"):
                 tname = node.func.id[len("__DACESTRUCT_") :]
 
-            return ast.copy_location(ast.Name(id="%s { %s }" % (tname, fields), ctx=ast.Load), node)
+            return ast.copy_location(ast.Name(id=f"{tname} {{ {fields} }}", ctx=ast.Load), node)
 
         return self.generic_visit(node)
 
@@ -1460,7 +1443,7 @@ def presynchronize_streams(
         if hasattr(e.src, "_cuda_stream"):
             cudastream = common.gpu_stream_expr(e.src._cuda_stream)
             callsite_stream.write(
-                "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (common.get_gpu_backend(), cudastream),
+                f"DACE_GPU_CHECK({common.get_gpu_backend()}StreamSynchronize({cudastream}));",
                 sdfg,
                 state_id,
                 [e.src, e.dst],
@@ -1539,7 +1522,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
             ):
                 if not synced_host:
                     callsite_stream.write(
-                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                         cfg,
                         state_id,
                         [edge.src, edge.dst],
@@ -1557,20 +1540,15 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
                 # ordering instead of establishing this one -- let the host wait instead.
                 if hasattr(edge, "_cuda_event"):
                     callsite_stream.write(
-                        """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
-DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));""".format(
-                            ev=edge._cuda_event,
-                            src_stream=cudastream,
-                            dst_stream=common.gpu_stream_expr(edge.dst._cuda_stream),
-                            backend=backend,
-                        ),
+                        f"""DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{edge._cuda_event}], {cudastream}));
+DACE_GPU_CHECK({backend}StreamWaitEvent({common.gpu_stream_expr(edge.dst._cuda_stream)}, __state->gpu_context->events[{edge._cuda_event}], 0));""",
                         cfg,
                         state_id,
                         [edge.src, edge.dst],
                     )
                 else:
                     callsite_stream.write(
-                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                         cfg,
                         state_id,
                         [edge.src, edge.dst],
@@ -1593,7 +1571,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->even
                 # If no stream at destination: the consumer runs on the host, so wait for the stream.
                 if not hasattr(e.dst, "_cuda_stream"):
                     callsite_stream.write(
-                        "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                        f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                         cfg,
                         state_id,
                         [e.src, e.dst],
@@ -1605,20 +1583,15 @@ DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->even
                     # Same as above: without an event of its own there is nothing to record into.
                     if hasattr(e, "_cuda_event"):
                         callsite_stream.write(
-                            """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
-DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));""".format(
-                                ev=e._cuda_event,
-                                src_stream=cudastream,
-                                dst_stream=common.gpu_stream_expr(e.dst._cuda_stream),
-                                backend=backend,
-                            ),
+                            f"""DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{e._cuda_event}], {cudastream}));
+DACE_GPU_CHECK({backend}StreamWaitEvent({common.gpu_stream_expr(e.dst._cuda_stream)}, __state->gpu_context->events[{e._cuda_event}], 0));""",
                             cfg,
                             state_id,
                             [e.src, e.dst],
                         )
                     else:
                         callsite_stream.write(
-                            "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (backend, cudastream),
+                            f"DACE_GPU_CHECK({backend}StreamSynchronize({cudastream}));",
                             cfg,
                             state_id,
                             [e.src, e.dst],

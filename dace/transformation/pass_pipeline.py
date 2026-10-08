@@ -8,13 +8,14 @@ from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
 import inspect
 from enum import Flag, auto
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Type, Union
+from typing import Any, Union
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
 
-def unique_dependencies(passes: Iterable["Pass"]) -> List[Union[Type["Pass"], "Pass"]]:
+def unique_dependencies(passes: Iterable["Pass"]) -> list[Union[type["Pass"], "Pass"]]:
     """
     Collects the dependencies of the given passes, preserving their listed order and removing duplicates.
 
@@ -80,7 +81,7 @@ class Pass:
     #: Set to True by the ``dace.transformation.explicit_cf_compatible`` decorator
     __explicit_cf_compatible__: bool = False
 
-    def depends_on(self) -> List[Union[Type["Pass"], "Pass"]]:
+    def depends_on(self) -> list[Union[type["Pass"], "Pass"]]:
         """
         If in the context of a ``Pipeline``, which other Passes need to run first.
 
@@ -106,7 +107,7 @@ class Pass:
         """
         raise NotImplementedError
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> Any | None:
         """
         Applies the pass to the given SDFG.
 
@@ -118,7 +119,7 @@ class Pass:
         """
         raise NotImplementedError
 
-    def report(self, pass_retval: Any) -> Optional[str]:
+    def report(self, pass_retval: Any) -> str | None:
         """
         Returns a user-readable string report based on the results of this pass.
 
@@ -127,12 +128,12 @@ class Pass:
         """
         return None
 
-    def to_json(self, parent=None) -> Dict[str, Any]:
+    def to_json(self, parent=None) -> dict[str, Any]:
         props = serialize.all_properties_to_json(self)
         return {"type": "Pass", "transformation": type(self).__name__, "CATEGORY": type(self).CATEGORY, **props}
 
     @staticmethod
-    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> "Pass":
+    def from_json(json_obj: dict[str, Any], context: dict[str, Any] = None) -> "Pass":
         pss = next(ext for ext in Pass.subclasses_recursive() if ext.__name__ == json_obj["transformation"])
 
         # Reconstruct the pass.
@@ -143,7 +144,7 @@ class Pass:
         return ret
 
     @classmethod
-    def subclasses_recursive(cls) -> Set[Type["Pass"]]:
+    def subclasses_recursive(cls) -> set[type["Pass"]]:
         """
         Returns all subclasses of this class, including subclasses of subclasses.
         """
@@ -158,7 +159,7 @@ class Pass:
 
         return result
 
-    def set_opts(self, opts: Dict[str, Any]) -> None:
+    def set_opts(self, opts: dict[str, Any]) -> None:
         pass_pattern = self.__class__.__name__ + "."
         for opt_name in opts:
             if not opt_name.startswith(pass_pattern):
@@ -201,7 +202,7 @@ class VisitorPass(Pass):
 
     CATEGORY: str = "Helper"
 
-    def generic_visit(self, element: Any, parent: Any, pipeline_results: Dict[str, Any]) -> Any:
+    def generic_visit(self, element: Any, parent: Any, pipeline_results: dict[str, Any]) -> Any:
         """
         A default method that is called for elements that do not have a special visitor.
 
@@ -213,7 +214,7 @@ class VisitorPass(Pass):
         """
         return None
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[Any, Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[Any, Any] | None:
         """
         Visits the given SDFG recursively, calling defined ``visit_*`` methods for each element.
 
@@ -260,7 +261,7 @@ class StatePass(Pass):
 
     CATEGORY: str = "Helper"
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[SDFGState, Any | None] | None:
         """
         Applies the pass to states of the given SDFG by calling ``apply`` on each state.
 
@@ -282,7 +283,7 @@ class StatePass(Pass):
             return None
         return result
 
-    def apply(self, state: SDFGState, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply(self, state: SDFGState, pipeline_results: dict[str, Any]) -> Any | None:
         """
         Applies this pass on the given state.
 
@@ -321,7 +322,7 @@ class ControlFlowRegionPass(Pass):
         desc="Whether or not to apply top down (i.e., parents before children)",
     )
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[int, Any | None] | None:
         """
         Applies the pass to control flow regions of the given SDFG by calling ``apply`` on each region.
 
@@ -344,7 +345,7 @@ class ControlFlowRegionPass(Pass):
             return None
         return result
 
-    def apply(self, region: ControlFlowRegion, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply(self, region: ControlFlowRegion, pipeline_results: dict[str, Any]) -> Any | None:
         """
         Applies this pass on the given control flow region.
 
@@ -371,8 +372,8 @@ class ScopePass(Pass):
     def apply_pass(
         self,
         sdfg: SDFG,
-        pipeline_results: Dict[str, Any],
-    ) -> Optional[Dict[nodes.EntryNode, Optional[Any]]]:
+        pipeline_results: dict[str, Any],
+    ) -> dict[nodes.EntryNode, Any | None] | None:
         """
         Applies the pass to the scopes of the given SDFG by calling ``apply`` on each scope entry node.
 
@@ -395,7 +396,7 @@ class ScopePass(Pass):
             return None
         return result
 
-    def apply(self, scope: nodes.EntryNode, state: SDFGState, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply(self, scope: nodes.EntryNode, state: SDFGState, pipeline_results: dict[str, Any]) -> Any | None:
         """
         Applies this pass on the given scope.
 
@@ -440,7 +441,7 @@ class Pipeline(Pass):
         element_type=Pass, default=[], category="(Debug)", desc="List of passes that this pipeline contains"
     )
 
-    def __init__(self, passes: List[Pass]):
+    def __init__(self, passes: list[Pass]):
         self.passes = []
         self._pass_names = set(type(p).__name__ for p in passes)
         self.passes.extend(passes)
@@ -448,19 +449,19 @@ class Pipeline(Pass):
         # Add missing Pass dependencies
         self._add_dependencies(passes)
 
-        self._depgraph: Optional[gr.OrderedDiGraph[Pass, None]] = None
+        self._depgraph: gr.OrderedDiGraph[Pass, None] | None = None
 
         # Keep track of what is modified as the pipeline is executing
         self._modified: Modifies = Modifies.Nothing
 
-    def _add_dependencies(self, passes: List[Pass]):
+    def _add_dependencies(self, passes: list[Pass]):
         """
         Verifies pass uniqueness in pipeline and adds missing dependencies from ``depends_on`` of each pass.
 
         :param passes: The passes to add dependencies for.
         """
         unique_pass_types = set(type(p) for p in passes)
-        check_if_unique: Set[Type[Pass]] = unique_pass_types
+        check_if_unique: set[type[Pass]] = unique_pass_types
 
         if len(check_if_unique) != len(passes):
             pass_types = [type(p) for p in passes]
@@ -515,7 +516,7 @@ class Pipeline(Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return any(p.should_reapply(modified) for p in self.passes)
 
-    def depends_on(self) -> List[Union[Type[Pass], Pass]]:
+    def depends_on(self) -> list[type[Pass] | Pass]:
         return unique_dependencies(self.passes)
 
     def _make_dependency_graph(self) -> gr.OrderedDiGraph:
@@ -553,7 +554,7 @@ class Pipeline(Pass):
         # * As other passes apply, all existing passes union with what the current pass modified
         # This allows us to check, for each pass, whether it (and its dependencies) should reapply since it was last
         # applied.
-        applied_passes: Dict[Pass, Modifies] = {}
+        applied_passes: dict[Pass, Modifies] = {}
 
         def reapply_recursive(p: Pass):
             """Reapply pass dependencies in a recursive fashion."""
@@ -584,7 +585,7 @@ class Pipeline(Pass):
                         applied_passes[old_pass] |= self._modified
                 applied_passes[pass_to_apply] = Modifies.Nothing
 
-    def apply_subpass(self, sdfg: SDFG, p: Pass, state: Dict[str, Any]) -> Optional[Any]:
+    def apply_subpass(self, sdfg: SDFG, p: Pass, state: dict[str, Any]) -> Any | None:
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
 
@@ -595,7 +596,7 @@ class Pipeline(Pass):
         """
         return p.apply_pass(sdfg, state)
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         state = pipeline_results
         retval = {}
         self._modified = Modifies.Nothing
@@ -610,7 +611,7 @@ class Pipeline(Pass):
             return retval
         return None
 
-    def to_json(self, parent=None) -> Dict[str, Any]:
+    def to_json(self, parent=None) -> dict[str, Any]:
         props = serialize.all_properties_to_json(self)
         return {"type": "Pipeline", "transformation": type(self).__name__, "CATEGORY": type(self).CATEGORY, **props}
 
@@ -626,7 +627,7 @@ class FixedPointPipeline(Pipeline):
 
     CATEGORY: str = "Helper"
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict[str, Any]) -> dict[str, Any] | None:
         """
         Applies the pipeline to the SDFG in repeated succession until the SDFG is no longer modified.
 

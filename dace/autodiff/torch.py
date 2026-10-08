@@ -1,5 +1,4 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple, Dict, List
 
 import dace
 from dace import data as dt
@@ -20,8 +19,8 @@ except ImportError:
 
 def make_backward_function(
     model,  # ONNXModel type hint removed for optional import
-    required_grads: List[str],
-) -> Tuple[dace.SDFG, dace.SDFG, BackwardResult, Dict[str, dt.Data]]:
+    required_grads: list[str],
+) -> tuple[dace.SDFG, dace.SDFG, BackwardResult, dict[str, dt.Data]]:
     """Convert an ONNXModel to a PyTorch differentiable function. This method should not be used on its own.
     Instead use the ``backward=True`` parameter of :class:`dace.ml.DaceModule`.
 
@@ -34,7 +33,7 @@ def make_backward_function(
         raise ImportError("make_backward_function requires ONNX. Install with: pip install dace[ml]")
 
     if len(model.sdfg.nodes()) != 1:
-        raise AutoDiffException("Expected to find exactly one SDFGState, found {}".format(len(model.sdfg.nodes())))
+        raise AutoDiffException(f"Expected to find exactly one SDFGState, found {len(model.sdfg.nodes())}")
 
     forward_sdfg = model.sdfg
 
@@ -67,7 +66,7 @@ def make_backward_function(
 
     for name, desc in backward_input_arrays.items():
         if name not in forward_sdfg.arrays:
-            raise AutoDiffException("Expected to find array with name '{}' in SDFG".format(name))
+            raise AutoDiffException(f"Expected to find array with name '{name}' in SDFG")
 
         forward_desc = forward_sdfg.arrays[name]
         # we will save this output and pass it to the backward pass

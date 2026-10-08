@@ -7,12 +7,12 @@ import json
 import os
 import platform
 import tempfile
-from typing import Dict, Set, Tuple, Union
+from typing import Union
 
 try:
     from typing import Literal
 except ImportError:
-    from typing_extensions import Literal
+    from typing import Literal
 
 import dace
 from dace import memlet as mlt
@@ -23,12 +23,12 @@ from dace.sdfg.state import ControlFlowBlock
 import dace.serialize
 
 DiffableT = Union[ControlFlowBlock, nd.Node, MultiConnectorEdge[mlt.Memlet], Edge[InterstateEdge]]
-DiffSetsT = Tuple[Set[str], Set[str], Set[str]]
+DiffSetsT = tuple[set[str], set[str], set[str]]
 
 
 def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> None:
-    all_id_elements_A: Dict[str, DiffableT] = dict()
-    all_id_elements_B: Dict[str, DiffableT] = dict()
+    all_id_elements_A: dict[str, DiffableT] = dict()
+    all_id_elements_B: dict[str, DiffableT] = dict()
 
     all_id_elements_A[sdfg_A.guid] = sdfg_A
     for n, _ in sdfg_A.all_nodes_recursive():
@@ -70,8 +70,8 @@ def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> N
 
 
 def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, eq_strategy=Union[Literal["hash", "=="]]) -> DiffSetsT:
-    all_id_elements_A: Dict[str, DiffableT] = dict()
-    all_id_elements_B: Dict[str, DiffableT] = dict()
+    all_id_elements_A: dict[str, DiffableT] = dict()
+    all_id_elements_B: dict[str, DiffableT] = dict()
 
     all_id_elements_A[sdfg_A.guid] = sdfg_A
     for n, _ in sdfg_A.all_nodes_recursive():
@@ -219,9 +219,9 @@ def main():
         if system == "Windows":
             os.system(html_filename)
         elif system == "Darwin":
-            os.system("open %s" % html_filename)
+            os.system(f"open {html_filename}")
         else:
-            os.system("xdg-open %s" % html_filename)
+            os.system(f"xdg-open {html_filename}")
     else:
         _print_diff(sdfg_A, sdfg_B, diff_sets)
 

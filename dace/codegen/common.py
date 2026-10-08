@@ -11,7 +11,6 @@ from functools import lru_cache
 from io import StringIO
 import os
 import subprocess
-from typing import Dict, List, Optional, Set, Union
 import warnings
 
 
@@ -42,7 +41,7 @@ def _sym2cpp(s, arrayexprs):
     return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
 
 
-def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
+def sym2cpp(s, arrayexprs: set[str] | None = None) -> str | list[str]:
     """
     Converts an array of symbolic variables (or one) to C++ strings.
 
@@ -65,7 +64,7 @@ def codeblock_to_cpp(cb: CodeBlock):
     elif cb.language == dtypes.Language.Python:
         return cppunparse.py2cpp(cb.code)
     else:
-        warnings.warn("Unrecognized language %s in codeblock" % cb.language)
+        warnings.warn(f"Unrecognized language {cb.language} in codeblock")
         return cb.as_string
 
 
@@ -92,7 +91,7 @@ def update_persistent_desc(desc: data.Data, sdfg: SDFG):
     return desc
 
 
-def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None, codegen=None) -> str:
+def unparse_interstate_edge(code_ast: ast.AST | str, sdfg: SDFG, symbols=None, codegen=None) -> str:
     from dace.codegen.targets.cpp import InterstateEdgeUnparser  # Avoid import loop
 
     # Convert from code to AST as necessary
@@ -104,7 +103,7 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     return strio.getvalue().strip()
 
 
-def gpu_stream_expr(stream: Union[int, str]) -> str:
+def gpu_stream_expr(stream: int | str) -> str:
     """Renders a ``_cuda_stream`` annotation as the C expression naming that stream.
 
     The annotation indexes the context's stream array, except for ``'nullptr'``: the legacy default
@@ -116,7 +115,7 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     return f"__state->gpu_context->streams[{stream}]"
 
 
-@lru_cache()
+@lru_cache
 def get_gpu_backend() -> str:
     """
     Returns the currently-selected GPU backend. If automatic,
@@ -165,7 +164,7 @@ def get_gpu_backend() -> str:
     )
 
 
-@lru_cache()
+@lru_cache
 def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     """
     Returns the GPU runtime library (CUDA / HIP) if exists. The result is cached for performance.
@@ -193,8 +192,8 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     return gpu_runtime.GPURuntime(backend, libpath)
 
 
-@lru_cache()
-def get_gpu_chiplet_count() -> Optional[int]:
+@lru_cache
+def get_gpu_chiplet_count() -> int | None:
     """
     Returns the number of chiplets (XCDs) of the GPU of this machine, or None if it cannot be determined.
 
@@ -251,7 +250,7 @@ def gpu_thread_id_type() -> dtypes.typeclass:
 
 def gpu_map_index_types(
     sdfg: SDFG, state: "sd.SDFGState", map_entry: "sd.nodes.MapEntry"
-) -> Dict[str, dtypes.typeclass]:
+) -> dict[str, dtypes.typeclass]:
     """
     Returns the type to declare each parameter of a GPU map with.
 
@@ -289,13 +288,13 @@ def gpu_dynamic_map_index_type(
     """
     result = gpu_thread_id_type()
 
-    def widen(types: Dict[str, dtypes.typeclass]) -> None:
+    def widen(types: dict[str, dtypes.typeclass]) -> None:
         nonlocal result
         for dtype in types.values():
             if dtype.bytes > result.bytes:
                 result = dtype
 
-    def visit(sdfg: SDFG, state: "sd.SDFGState", graph_nodes: List["sd.nodes.Node"]) -> None:
+    def visit(sdfg: SDFG, state: "sd.SDFGState", graph_nodes: list["sd.nodes.Node"]) -> None:
         for node in graph_nodes:
             if isinstance(node, sd.nodes.NestedSDFG):
                 for nstate in node.sdfg.states():

@@ -2,7 +2,6 @@
 """State elimination transformations"""
 
 import networkx as nx
-from typing import Dict, Set
 
 from dace import data as dt, sdfg, symbolic
 from dace.properties import CodeBlock
@@ -376,7 +375,7 @@ class HoistState(transformation.SingleStateTransformation):
             return False
 
         # Keep all data descriptors to check for potential issues
-        data_to_check: Set[str] = set()
+        data_to_check: set[str] = set()
 
         # Add data descriptors from interstate edge
         syms = nisedge.data.free_symbols
@@ -397,7 +396,7 @@ class HoistState(transformation.SingleStateTransformation):
 
         # Nested SDFG surrounding edges must contain all of the array
         # TODO(later): Allow this case (with offsetting)
-        outer_data_to_check: Set[str] = set()
+        outer_data_to_check: set[str] = set()
         for e in graph.in_edges(nsdfg):
             if e.dst_conn in data_to_check:
                 outer_data_to_check.add(e.data.data)
@@ -436,7 +435,7 @@ class HoistState(transformation.SingleStateTransformation):
         isedge = state.parent_graph.edges_between(new_state, state)[0]
 
         # Find relevant symbol and data descriptor mapping
-        mapping: Dict[str, str] = {}
+        mapping: dict[str, str] = {}
         mapping.update({k: str(v) for k, v in nsdfg.symbol_mapping.items()})
         mapping.update({k: next(iter(state.in_edges_by_connector(nsdfg, k))).data.data for k in nsdfg.in_connectors})
         mapping.update({k: next(iter(state.out_edges_by_connector(nsdfg, k))).data.data for k in nsdfg.out_connectors})

@@ -4,7 +4,6 @@
 from copy import deepcopy as dc
 import itertools
 import networkx as nx
-from typing import Dict, List, Set, Tuple, Union
 from functools import reduce
 import operator
 import copy
@@ -74,8 +73,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
     @staticmethod
     def _check_strides(
-        inner_strides: List[symbolic.SymbolicType],
-        outer_strides: List[symbolic.SymbolicType],
+        inner_strides: list[symbolic.SymbolicType],
+        outer_strides: list[symbolic.SymbolicType],
         memlet: Memlet,
         nested_sdfg: nodes.NestedSDFG,
     ) -> bool:
@@ -116,8 +115,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
     @staticmethod
     def _shared_connectors(
-        state: SDFGState, sdfg: SDFG, nested_sdfg: nodes.NestedSDFG, candidates: Set[str]
-    ) -> Set[str]:
+        state: SDFGState, sdfg: SDFG, nested_sdfg: nodes.NestedSDFG, candidates: set[str]
+    ) -> set[str]:
         """
         Returns the connectors that are both inputs and outputs of the nested SDFG, are bound to the same outer
         container with the same offsets, and whose inner access nodes can be kept as they are upon inlining. Such
@@ -321,8 +320,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         return True
 
     def _remove_edge_path(
-        self, state: SDFGState, edge_map: Dict[str, MultiConnectorEdge], unused: Set[str], reverse: bool = False
-    ) -> List[MultiConnectorEdge]:
+        self, state: SDFGState, edge_map: dict[str, MultiConnectorEdge], unused: set[str], reverse: bool = False
+    ) -> list[MultiConnectorEdge]:
         """Remove all edges along a path, until memlet tree contains siblings
         that should not be removed. Removes resulting isolated nodes as
         well. Operates in place.
@@ -424,11 +423,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
-        inputs: Dict[str, MultiConnectorEdge] = {}
-        outputs: Dict[str, MultiConnectorEdge] = {}
-        views: Dict[str, Tuple[str, Memlet]] = {}
-        input_set: Dict[str, str] = {}
-        output_set: Dict[str, str] = {}
+        inputs: dict[str, MultiConnectorEdge] = {}
+        outputs: dict[str, MultiConnectorEdge] = {}
+        views: dict[str, tuple[str, Memlet]] = {}
+        input_set: dict[str, str] = {}
+        output_set: dict[str, str] = {}
         for e in state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
@@ -471,7 +470,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         dealias.integrate_nested_sdfgs_within(nsdfg)
 
         # Access nodes that need to be reshaped
-        reshapes: Set[str] = set()
+        reshapes: set[str] = set()
         for aname, array in nsdfg.arrays.items():
             if array.transient:
                 continue
@@ -529,7 +528,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if isinstance(node, nodes.CodeNode) and not isinstance(node, (nodes.NestedSDFG, nodes.LibraryNode)):
                     taken.update(node.in_connectors, node.out_connectors)
         # Mapping from nested transient name to top-level name
-        transients: Dict[str, str] = {}
+        transients: dict[str, str] = {}
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode):
                 datadesc = nsdfg.arrays[node.data]
@@ -555,8 +554,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         transients[edge.data.data] = name
 
         # Collect nodes to add to top-level graph
-        new_incoming_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
-        new_outgoing_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
+        new_incoming_edges: dict[nodes.Node, MultiConnectorEdge] = {}
+        new_outgoing_edges: dict[nodes.Node, MultiConnectorEdge] = {}
 
         source_accesses = set()
         sink_accesses = set()
@@ -619,7 +618,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             )
             repldict[dname] = newname
 
-        orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str] = {}
+        orig_data: dict[nodes.AccessNode | MultiConnectorEdge, str] = {}
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode):
                 if "." in node.data:
@@ -806,14 +805,14 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
     def _modify_access_to_access(
         self,
-        input_edges: Dict[nodes.Node, MultiConnectorEdge],
+        input_edges: dict[nodes.Node, MultiConnectorEdge],
         nsdfg: SDFG,
         nstate: SDFGState,
         state: SDFGState,
-        orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str],
+        orig_data: dict[nodes.AccessNode | MultiConnectorEdge, str],
         inputs: bool = True,
-        edges_to_ignore: Set[MultiConnectorEdge] = None,
-    ) -> Set[MultiConnectorEdge]:
+        edges_to_ignore: set[MultiConnectorEdge] = None,
+    ) -> set[MultiConnectorEdge]:
         """
         Deals with access->access edges where both sides are non-transient.
         """
@@ -869,13 +868,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
     def _modify_memlet_path(
         self,
-        new_edges: Dict[nodes.Node, MultiConnectorEdge],
+        new_edges: dict[nodes.Node, MultiConnectorEdge],
         nstate: SDFGState,
         state: SDFGState,
-        inner_to_outer: Dict[nodes.Node, MultiConnectorEdge],
+        inner_to_outer: dict[nodes.Node, MultiConnectorEdge],
         inputs: bool,
-        edges_to_ignore: Set[MultiConnectorEdge],
-    ) -> Set[MultiConnectorEdge]:
+        edges_to_ignore: set[MultiConnectorEdge],
+    ) -> set[MultiConnectorEdge]:
         """Modifies memlet paths in an inlined SDFG. Returns set of modified
         edges.
         """
@@ -921,9 +920,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
     def _modify_reshape_data(
         self,
-        reshapes: Set[str],
-        repldict: Dict[str, str],
-        new_edges: Dict[str, MultiConnectorEdge],
+        reshapes: set[str],
+        repldict: dict[str, str],
+        new_edges: dict[str, MultiConnectorEdge],
         nstate: SDFGState,
         state: SDFGState,
         inputs: bool,
@@ -987,7 +986,7 @@ class InlineTransients(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.nsdfg)]
 
     @staticmethod
-    def _candidates(sdfg: SDFG, graph: SDFGState, nsdfg: nodes.NestedSDFG) -> Dict[str, str]:
+    def _candidates(sdfg: SDFG, graph: SDFGState, nsdfg: nodes.NestedSDFG) -> dict[str, str]:
         candidates = {}
         for e in graph.all_edges(nsdfg):
             if e.data.is_empty():

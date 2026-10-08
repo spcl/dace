@@ -11,7 +11,6 @@ This module contains implementations of reduction operations including:
 """
 
 import copy
-import typing
 
 import dace
 import numpy as np
@@ -50,7 +49,7 @@ class PureCumSum(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         axis = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axis").src.data].numpy().item()
 
         def prog(x, y):
@@ -87,7 +86,7 @@ class PureReduceMean(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         axes = None
         try:
             if (
@@ -139,7 +138,7 @@ class PureReduceSum(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         axes = None
         try:
             if (
@@ -191,7 +190,7 @@ class PureReduceMax(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         axes = None
         try:
             if (
@@ -238,7 +237,7 @@ class PureReduceMin(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
         axes = None
         try:
             if (
@@ -287,7 +286,7 @@ class PureSum(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Node | SDFG:
 
         nsdfg = dace.SDFG(node.name)
         input_names = []

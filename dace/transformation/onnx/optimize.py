@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Optional, Callable
+from collections.abc import Callable
 
 import dace
 from dace import config, nodes as nd
@@ -10,7 +10,7 @@ from dace.transformation.auto.auto_optimize import set_fast_implementations
 from dace.transformation.dataflow import CopyToMap
 
 
-def expand_onnx_nodes(sdfg: dace.SDFG, predicate: Optional[Callable[[nd.Node], bool]] = None):
+def expand_onnx_nodes(sdfg: dace.SDFG, predicate: Callable[[nd.Node], bool] | None = None):
     """Recursively expand all onnx library nodes in the SDFG, resulting in an SDFG that can be optimized by
     dace transformations. Will also specialize dace matmuls.
 

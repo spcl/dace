@@ -9,7 +9,8 @@ from dace.frontend.python import astutils
 
 import itertools
 from numbers import Number, Integral
-from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Union
+from collections.abc import Sequence
 
 import numpy as np
 import sympy as sp
@@ -77,9 +78,9 @@ def simple_call(
     else:
         state.add_mapped_tasklet(
             name=func,
-            map_ranges={"__i%d" % i: "0:%s" % n for i, n in enumerate(inparr.shape)},
+            map_ranges={"__i%d" % i: f"0:{n}" for i, n in enumerate(inparr.shape)},
             inputs={"__inp": Memlet.simple(inpname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
-            code="__out = {f}(__inp)".format(f=func),
+            code=f"__out = {func}(__inp)",
             outputs={"__out": Memlet.simple(outname, ",".join(["__i%d" % i for i in range(len(inparr.shape))]))},
             external_edges=True,
         )
@@ -92,7 +93,7 @@ def simple_call(
 ########################################################################
 
 
-def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
+def normalize_axes(axes: tuple[int], max_dim: int) -> list[int]:
     """Normalize a list of axes by converting negative dimensions to positive.
 
     :param dims: the list of dimensions, possibly containing negative ints.
@@ -162,9 +163,7 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
         elif unidirectional:
             raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
         else:
-            raise IndexError(
-                "operands could not be broadcast together with shapes {}, {}".format(arr1_shape, arr2_shape)
-            )
+            raise IndexError(f"operands could not be broadcast together with shapes {arr1_shape}, {arr2_shape}")
 
     def to_string(idx):
         return ", ".join(reversed(idx))
@@ -190,7 +189,7 @@ def complex_to_scalar(complex_type: dtypes.typeclass):
         return complex_type
 
 
-def representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
+def representative_num(dtype: dtypes.typeclass | Number) -> Number:
     if isinstance(dtype, dtypes.typeclass):
         nptype = dtype.type
     else:
@@ -224,7 +223,7 @@ def np_result_type(nptypes):
     return dtypes.dtype_to_typeclass(restype.type)
 
 
-def sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
+def sym_type(expr: symbolic.symbol | sp.Basic) -> dtypes.typeclass:
     if isinstance(expr, symbolic.symbol):
         return expr.dtype
     representative_value = expr.subs([(s, representative_num(s.dtype)) for s in expr.free_symbols])

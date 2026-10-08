@@ -2,7 +2,6 @@
 import ast
 from collections import defaultdict
 import copy
-from typing import Dict, List, Set
 import dace
 from dace import data, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
@@ -45,7 +44,7 @@ class _InterstateMemletReplacer(MemletReplacer):
     A bare reference to a non-scalar container (e.g., in ``A is not None``) is renamed as-is.
     """
 
-    def __init__(self, arrays: Dict[str, data.Data], mapping: Dict[str, Memlet]) -> None:
+    def __init__(self, arrays: dict[str, data.Data], mapping: dict[str, Memlet]) -> None:
         """
         :param arrays: The nested SDFG's data descriptors.
         :param mapping: A mapping from nested container names to the external memlets they are connected to.
@@ -87,7 +86,7 @@ class _InterstateMemletReplacer(MemletReplacer):
         return self.generic_visit(node)
 
 
-def _replace_interstate_edge_reads(sdfg: SDFG, mapping: Dict[str, Memlet]) -> None:
+def _replace_interstate_edge_reads(sdfg: SDFG, mapping: dict[str, Memlet]) -> None:
     """
     Replaces all reads of the given data containers in the inter-state edges of an SDFG with the corresponding
     accesses to the external memlets (see ``_InterstateMemletReplacer``).
@@ -145,7 +144,7 @@ def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEd
     return memlet
 
 
-def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping: Dict[str, Memlet]):
+def _replace_memlets(sdfg: SDFG, input_mapping: dict[str, Memlet], output_mapping: dict[str, Memlet]):
     """
     Replaces all uses of data containers in memlets and interstate edges in an SDFG.
 
@@ -220,7 +219,7 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
                 state.label = data.find_new_name(state.label, state_names_seen)
             state_names_seen.add(state.label)
 
-        replacements: Dict[str, str] = {}
+        replacements: dict[str, str] = {}
         parent_node = nsdfg.parent_nsdfg_node
 
         # Preserve top-level SDFG names
@@ -296,7 +295,7 @@ def _replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG) -> None:
     mapping = nsdfg.symbol_mapping
     sdfg = nsdfg.sdfg
     reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.cfg_id]
-    redefined_symbols: Dict[SDFGState, Set[str]] = defaultdict(set)
+    redefined_symbols: dict[SDFGState, set[str]] = defaultdict(set)
 
     # Collect redefined symbols
     for e in sdfg.edges():
@@ -316,7 +315,7 @@ def _replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG) -> None:
 def _prepare_schedule_tree_edges(
     state: SDFGState,
 ) -> tuple[
-    Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]]
+    dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], dict[nd.EntryNode, list[gr.MultiConnectorEdge[Memlet]]]
 ]:
     """
     Creates a dictionary mapping edges to their corresponding schedule tree nodes, if relevant.
@@ -324,8 +323,8 @@ def _prepare_schedule_tree_edges(
 
     :param state: The state.
     """
-    result: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode] = {}
-    scope_to_edges: Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]] = defaultdict(list)
+    result: dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode] = {}
+    scope_to_edges: dict[nd.EntryNode, list[gr.MultiConnectorEdge[Memlet]]] = defaultdict(list)
     edges_to_ignore = set()
     sdfg = state.parent
 
@@ -420,18 +419,18 @@ def _prepare_schedule_tree_edges(
     return result, scope_to_edges
 
 
-def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
+def _state_schedule_tree(state: SDFGState) -> list[tn.ScheduleTreeNode]:
     """
     Use scope-aware topological sort to get nodes by scope and return the schedule tree of this state.
 
     :param state: The state.
     :return: A string for the whole state
     """
-    result: List[tn.ScheduleTreeNode] = []
+    result: list[tn.ScheduleTreeNode] = []
     sdfg = state.parent
 
-    edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
-    scope_to_edges: Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]]
+    edge_to_stree: dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
+    scope_to_edges: dict[nd.EntryNode, list[gr.MultiConnectorEdge[Memlet]]]
     edge_to_stree, scope_to_edges = _prepare_schedule_tree_edges(state)
     edges_to_ignore = set()
 
@@ -439,7 +438,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     views = _generate_views_in_scope(scope_to_edges[None], edge_to_stree)
     result.extend(views)
 
-    scopes: List[List[tn.ScheduleTreeNode]] = []
+    scopes: list[list[tn.ScheduleTreeNode]] = []
     for node in sdutil.scope_aware_topological_sort(state):
         if isinstance(node, dace.nodes.EntryNode):
             # Handle dynamic scope inputs
@@ -524,13 +523,13 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
 
 def _isedge_schedule_tree(
     edge: gr.Edge[InterstateEdge], emit_goto_for_successors: bool = False
-) -> List[tn.ScheduleTreeNode]:
-    result: List[tn.ScheduleTreeNode] = []
+) -> list[tn.ScheduleTreeNode]:
+    result: list[tn.ScheduleTreeNode] = []
     for aname, aval in edge.data.assignments.items():
         assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval}))
         result.append(assign_node)
 
-    edge_body: List[tn.ScheduleTreeNode] = []
+    edge_body: list[tn.ScheduleTreeNode] = []
     if emit_goto_for_successors:
         goto_node = tn.GotoNode(target=edge.dst.label)
         edge_body.append(goto_node)
@@ -554,9 +553,9 @@ def _isedge_schedule_tree(
     return result
 
 
-def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
+def _block_schedule_tree(block: ControlFlowBlock) -> list[tn.ScheduleTreeNode]:
     if isinstance(block, ControlFlowRegion):
-        children: List[tn.ScheduleTreeNode] = []
+        children: list[tn.ScheduleTreeNode] = []
         if isinstance(block.start_block, SDFGState):
             first_state_node = tn.StateLabel(state=block.start_block)
             children.append(first_state_node)
@@ -564,8 +563,8 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
         if isinstance(block, UnstructuredControlFlow) or any(block.out_degree(n) > 1 for n in block.nodes()):
             # This control flow graph contains multiple outgoing edges from a single node, which indicates
             # unstructured control flow. This is represented through a GBlock that wraps everything.
-            subnodes: List[tn.ScheduleTreeNode] = []
-            processed_edges: Set[gr.Edge[InterstateEdge]] = set()
+            subnodes: list[tn.ScheduleTreeNode] = []
+            processed_edges: set[gr.Edge[InterstateEdge]] = set()
             for n in block.nodes():
                 subnodes.extend(_block_schedule_tree(n))
                 for oe in block.out_edges(n):
@@ -604,7 +603,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
         return children
 
     if isinstance(block, ConditionalBlock):
-        result: List[tn.ScheduleTreeNode] = []
+        result: list[tn.ScheduleTreeNode] = []
         if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1]))
         result.append(if_node)
         for cond, branch_body in block.branches[1:]:
@@ -632,13 +631,13 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
 
 
 def _generate_views_in_scope(
-    edges: List[gr.MultiConnectorEdge[Memlet]], edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
-) -> List[tn.ScheduleTreeNode]:
+    edges: list[gr.MultiConnectorEdge[Memlet]], edge_to_stree: dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
+) -> list[tn.ScheduleTreeNode]:
     """
     Generates all view and reference set edges in the correct order. This function is intended to be used
     at the beginning of a scope.
     """
-    result: List[tn.ScheduleTreeNode] = []
+    result: list[tn.ScheduleTreeNode] = []
 
     # Make a dependency graph of all the views
     g = nx.DiGraph()

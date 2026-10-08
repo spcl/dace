@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import shutil  # which
-from typing import List, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 import warnings
 
 from dace import memlet as mm, data as dt, dtypes
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 @make_registry
-class TargetCodeGenerator(object):
+class TargetCodeGenerator:
     """
     Interface dictating functions that generate code for:
 
@@ -28,7 +28,7 @@ class TargetCodeGenerator(object):
     #: Targets set it in their constructor; use ``get_framecode_generator`` to access it.
     _frame: Optional["DaCeCodeGenerator"] = None
 
-    def get_generated_codeobjects(self) -> List[CodeObject]:
+    def get_generated_codeobjects(self) -> list[CodeObject]:
         """
         Returns a list of generated ``CodeObject`` classes corresponding
         to files with generated code. If an empty list is returned
@@ -39,7 +39,7 @@ class TargetCodeGenerator(object):
         return []
 
     @staticmethod
-    def cmake_options() -> List[str]:
+    def cmake_options() -> list[str]:
         """
         Returns a list of CMake options that this target needs
         to be passed into the ``cmake`` command during configuration.
@@ -47,7 +47,7 @@ class TargetCodeGenerator(object):
         return []
 
     @staticmethod
-    def cmake_files() -> List[str]:
+    def cmake_files() -> list[str]:
         """
         Returns a list of CMake file paths that should be included
         during the CMake configuration step.
@@ -331,5 +331,5 @@ def make_absolute(path: str) -> str:
         executable = shutil.which(path)
         if not executable:
             executable = path
-            warnings.warn('Could not find executable "{}"'.format(path))
+            warnings.warn(f'Could not find executable "{path}"')
         return executable.replace("\\", "/")

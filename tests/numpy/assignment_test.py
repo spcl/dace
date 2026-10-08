@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 from common import compare_numpy_output
-from typing_extensions import TypeAlias
+from typing import TypeAlias
 
 
 def test_multiassign():

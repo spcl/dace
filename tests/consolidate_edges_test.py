@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Tuple
 import dace
 from dace import subsets as dace_sbs
 from dace.sdfg import nodes as dace_nodes
@@ -42,7 +41,7 @@ def test_consolidate_edges():
 def _make_sdfg_multi_usage_input(
     use_inner_access_node: bool,
     use_non_standard_memlet: bool,
-) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
+) -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode, dace_nodes.MapEntry]:
 
     # Needs to be 5, to trigger the Memlet propagation bug (could actually also be
     #   less but greater than 2.
@@ -215,7 +214,7 @@ def test_multi_use_value_input(
 def _make_multi_use_value_output(
     use_inner_access_node: bool,
     use_non_standard_memlet: bool,
-) -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode]:
+) -> tuple[dace.SDFG, dace.SDFGState, dace_nodes.AccessNode]:
 
     sdfg = dace.SDFG(utility.unique_name("multi_input_usage"))
     state = sdfg.add_state(is_start_block=True)

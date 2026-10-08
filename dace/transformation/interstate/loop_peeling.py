@@ -2,7 +2,6 @@
 """Loop peeling transformation"""
 
 import sympy as sp
-from typing import List, Optional
 
 from dace import sdfg as sd
 from dace import symbolic
@@ -37,7 +36,7 @@ class LoopPeeling(LoopUnroll):
         condition = pystr_to_symbolic(condition.as_string)
         itersym = pystr_to_symbolic(var)
         # Find condition by matching expressions
-        end: Optional[sp.Expr] = None
+        end: sp.Expr | None = None
         a = sp.Wild("a")
         op = ""
         match = condition.match(itersym < a)
@@ -73,7 +72,7 @@ class LoopPeeling(LoopUnroll):
 
         if self.begin:
             # Create states for loop subgraph
-            peeled_iterations: List[ControlFlowRegion] = []
+            peeled_iterations: list[ControlFlowRegion] = []
             for i in range(self.count):
                 # `i` is non-negative here, so it doubles as the label-safety fallback index.
                 current_index = start + (i * stride)
@@ -95,7 +94,7 @@ class LoopPeeling(LoopUnroll):
                 self.loop.init_statement = CodeBlock(f"{self.loop.loop_variable} = {new_start}")
         else:
             # Create states for loop subgraph
-            peeled_iterations: List[ControlFlowRegion] = []
+            peeled_iterations: list[ControlFlowRegion] = []
             for i in reversed(range(self.count)):
                 # `i` is non-negative here too, so it doubles as the label-safety fallback index.
                 current_index = pystr_to_symbolic(self.loop.loop_variable) + (i * stride)

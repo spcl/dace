@@ -7,7 +7,6 @@ with Intel MKL and NVIDIA CUBLAS.
 import click
 import dace
 import numpy as np
-from typing import Tuple
 
 # For optimizations
 from dace.transformation.dataflow import (
@@ -69,7 +68,7 @@ def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
-def find_map_and_state_by_param(sdfg: dace.SDFG, pname: str) -> Tuple[dace.nodes.MapEntry, dace.SDFGState]:
+def find_map_and_state_by_param(sdfg: dace.SDFG, pname: str) -> tuple[dace.nodes.MapEntry, dace.SDFGState]:
     """Finds the first map entry node by the given parameter name."""
     return next(
         (n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params
@@ -257,7 +256,7 @@ def cli(m, k, n, version, verify):
         # Call program
         C = matmul_lib(A, B)
     else:
-        raise ValueError("Invalid version %s" % version)
+        raise ValueError(f"Invalid version {version}")
 
     if verify:
         expected = A @ B

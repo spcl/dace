@@ -142,14 +142,14 @@ class TensorCoreCodegen(TargetCodeGenerator):
         # Tasklet -> Array
         if not src_desc:
             local_name = dfg.memlet_path(edge)[0].src_conn
-            callsite_stream.write("auto& %s = %s;" % (local_name, dst_node.data), cfg, state_id, [src_node, dst_node])
+            callsite_stream.write(f"auto& {local_name} = {dst_node.data};", cfg, state_id, [src_node, dst_node])
             return
 
         dst_desc = dst_node.desc(sdfg) if isinstance(dst_node, nodes.AccessNode) else None
         # Array -> Tasklet
         if not dst_desc:
             local_name = dfg.memlet_path(edge)[-1].dst_conn
-            callsite_stream.write("auto& %s = %s;" % (local_name, src_node.data), cfg, state_id, [src_node, dst_node])
+            callsite_stream.write(f"auto& {local_name} = {src_node.data};", cfg, state_id, [src_node, dst_node])
             return
 
         nontc_desc = dst_desc if "TensorCore" in src_desc.storage.name else src_desc
@@ -164,18 +164,16 @@ class TensorCoreCodegen(TargetCodeGenerator):
             other_expr = cpp_array_expr(sdfg, edge.data, framecode=self._frame)
         elif edge.data.other_subset is not None:
             offset_cppstr = cpp_offset_expr(nontc_desc, edge.data.other_subset)
-            other_expr = "%s[%s]" % (nontc_node.data, offset_cppstr)
+            other_expr = f"{nontc_node.data}[{offset_cppstr}]"
         else:
-            other_expr = "%s[0]" % nontc_node.data
+            other_expr = f"{nontc_node.data}[0]"
         #####################################################################
 
         # Emit copy code
         if "TensorCore" in dst_desc.storage.name:
             # GPU memory to Tensor Cores
             callsite_stream.write(
-                "wmma::load_matrix_sync({tc}, &{other}, {stride});".format(
-                    tc=dst_node.data, other=other_expr, stride=src_desc.strides[0 if row_major else 1]
-                ),
+                f"wmma::load_matrix_sync({dst_node.data}, &{other_expr}, {src_desc.strides[0 if row_major else 1]});",
                 cfg,
                 state_id,
                 [src_node, dst_node],

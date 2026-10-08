@@ -6,7 +6,6 @@ import argparse
 from dace.sdfg import nodes as nd
 from dace import dtypes, SDFG
 from dace.sdfg.state import SDFGState, ControlFlowRegion, LoopRegion, FunctionCallRegion, ConditionalBlock
-from typing import Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
@@ -161,7 +160,7 @@ def assignment_misses(edge, mapping, stack, clt, C, symbols, array_names):
                 dist = stack.touch(line_id)
                 misses += 1 if dist >= C or dist == -1 else 0
         except Exception as e:
-            warnings.warn("Skipping a cache-miss contribution from an unparsable edge assignment: %s" % e)
+            warnings.warn(f"Skipping a cache-miss contribution from an unparsable edge assignment: {e}")
     return misses
 
 
@@ -184,7 +183,7 @@ def update_map_iterators(map, mapping, symbols):
 
 def map_op_in(
     state: SDFGState,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     entry,
     mapping,
     stack,
@@ -233,7 +232,7 @@ def _edge_miss(edge, clt: CacheLineTracker, array_names, mapping, symbols, stack
 
 def scope_misses(
     state: SDFGState,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -350,7 +349,7 @@ def scope_misses(
 
 def cfr_misses(
     cfr: ControlFlowRegion,
-    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    op_in_map: dict[str, tuple[sp.Expr, sp.Expr]],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -503,7 +502,7 @@ def cfr_misses(
 
 def cfg_misses(
     cfg: ControlFlowRegion,
-    op_in_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+    op_in_map: dict[str, tuple[sp.Expr, sp.Expr]],
     mapping,
     stack: AccessStack,
     clt: CacheLineTracker,
@@ -569,7 +568,7 @@ def cfg_misses(
         except Exception:
             warnings.warn(
                 "Uncommon assignment on an interstate edge (e.g. bitwise operators); "
-                "analysis may give wrong results. Assignments: %s" % edge.data.assignments
+                f"analysis may give wrong results. Assignments: {edge.data.assignments}"
             )
         curr_state = edge.dst
         if curr_state == end:
@@ -584,7 +583,7 @@ def cfg_misses(
 
 def analyze_sdfg_op_in(
     sdfg: SDFG,
-    op_in_map: Dict[str, sp.Expr],
+    op_in_map: dict[str, sp.Expr],
     C,
     L,
     assumptions,
@@ -739,8 +738,8 @@ def analyze_sdfg_op_in(
                 mape = compute_mape(final_f, x_values[-test_set_size:], v[-test_set_size:], test_set_size)
                 if mape > 0.2:
                     warnings.warn(
-                        "High MAPE (%s) with R^2 = %s: the fit matches the test data but "
-                        "may not generalize; generating plots is suggested." % (mape, r_s)
+                        f"High MAPE ({mape}) with R^2 = {r_s}: the fit matches the test data but "
+                        "may not generalize; generating plots is suggested."
                     )
         calculate_op_in(op_in_map, work_map, not generate_plots)
 

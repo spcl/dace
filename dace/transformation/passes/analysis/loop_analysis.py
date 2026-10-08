@@ -3,7 +3,6 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
-from typing import Dict, Optional
 from dace.frontend.python import astutils
 
 import sympy
@@ -12,13 +11,13 @@ from dace import symbolic
 from dace.sdfg.state import LoopRegion
 
 
-def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_loop_end(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
     """
     if loop.loop_variable is None or loop.loop_variable == "":
         return None
-    end: Optional[symbolic.SymbolicType] = None
+    end: symbolic.SymbolicType | None = None
     a = sympy.Wild("a")
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
     itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
@@ -40,7 +39,7 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return end
 
 
-def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_init_assignment(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region's init statement to identify the exact init assignment expression.
     """
@@ -49,7 +48,7 @@ def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
         return None
 
     init_codes_list = init_stmt.code if isinstance(init_stmt.code, list) else [init_stmt.code]
-    assignments: Dict[str, str] = {}
+    assignments: dict[str, str] = {}
     for code in init_codes_list:
         visitor = astutils.FindAssignment()
         visitor.visit(code)
@@ -66,7 +65,7 @@ def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return None
 
 
-def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_update_assignment(loop: LoopRegion) -> symbolic.SymbolicType | None:
     """
     Parse a loop region's update statement to identify the exact update assignment expression.
     """
@@ -75,7 +74,7 @@ def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
         return None
 
     update_codes_list = update_stmt.code if isinstance(update_stmt.code, list) else [update_stmt.code]
-    assignments: Dict[str, str] = {}
+    assignments: dict[str, str] = {}
     for code in update_codes_list:
         visitor = astutils.FindAssignment()
         visitor.visit(code)
@@ -92,7 +91,7 @@ def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     return None
 
 
-def get_loop_stride(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_loop_stride(loop: LoopRegion) -> symbolic.SymbolicType | None:
     update_assignment = get_update_assignment(loop)
     if update_assignment:
         return update_assignment - symbolic.pystr_to_symbolic(loop.loop_variable)

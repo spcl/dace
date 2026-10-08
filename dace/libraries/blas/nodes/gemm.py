@@ -28,13 +28,9 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
     if _is_complex(dtype):
         cast_value = complex(value)
 
-        return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
-        )
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({cast_value.real}, {cast_value.imag})"
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return f"dace.{dace.dtype_to_typeclass(dtype).to_string()}({value})"
 
 
 @dace.library.expansion
@@ -87,7 +83,7 @@ class ExpandGemmPure(ExpandTransformation):
         if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
         else:
-            mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
+            mul_program = f"__out = {_cast_to_dtype_str(node.alpha, dtype_a)} * __a * __b"
 
         if equal_valued(1, node.beta):
             state = sdfg.add_state(node.label + "_state")
@@ -102,7 +98,7 @@ class ExpandGemmPure(ExpandTransformation):
         if equal_valued(0, node.beta):
             init_state.add_mapped_tasklet(
                 "gemm_init",
-                {"_o%d" % i: "0:%s" % symstr(d) for i, d in enumerate(shape_c)},
+                {"_o%d" % i: f"0:{symstr(d)}" for i, d in enumerate(shape_c)},
                 {},
                 "out = 0",
                 {"out": dace.Memlet.simple(mul_out, ",".join(["_o%d" % i for i in range(len(shape_c))]))},
@@ -113,7 +109,7 @@ class ExpandGemmPure(ExpandTransformation):
             pass
         else:
             # Beta map
-            add_program = "__y = ({} * __c)".format(_cast_to_dtype_str(node.beta, dtype_a))
+            add_program = f"__y = ({_cast_to_dtype_str(node.beta, dtype_a)} * __c)"
 
             # manually broadcasting C to [M, N]
             if list(shape_c) == [M, N]:
@@ -125,11 +121,11 @@ class ExpandGemmPure(ExpandTransformation):
             elif list(shape_c) == [N]:
                 memlet_idx = "__i1"
             else:
-                raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
+                raise ValueError(f"Could not broadcast input _c to ({M}, {N})")
 
             init_state.add_mapped_tasklet(
                 "gemm_init",
-                {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N])},
+                {"__i%d" % i: f"0:{s}" for i, s in enumerate([M, N])},
                 {
                     "__c": dace.Memlet.simple("_c", memlet_idx),
                 },
@@ -141,7 +137,7 @@ class ExpandGemmPure(ExpandTransformation):
         # Multiplication map
         state.add_mapped_tasklet(
             "gemm",
-            {"__i%d" % i: "0:%s" % s for i, s in enumerate([M, N, K])},
+            {"__i%d" % i: f"0:{s}" for i, s in enumerate([M, N, K])},
             {
                 "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
                 "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1"),
