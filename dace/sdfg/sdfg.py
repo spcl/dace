@@ -41,7 +41,7 @@ from dace.properties import (
     make_properties,
 )
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import SubgraphView, generate_element_id
+from dace.sdfg.graph import SubgraphView, frozen_node_ids, generate_element_id
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.type_inference import infer_expr_type
@@ -857,7 +857,7 @@ class SDFG(ControlFlowRegion):
         # (e.g. interstate-edge conditions/assignments) emit a deterministic dtype.
         # Each nested SDFG re-pushes its own symbols, and the previous authority is
         # restored on exit.
-        with symbolic.serialization_symbol_dtypes(self.symbols):
+        with symbolic.serialization_symbol_dtypes(self.symbols), frozen_node_ids():
             tmp = super().to_json()
         if is_root:
             tmp["source_files"] = source_files
