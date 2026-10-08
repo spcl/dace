@@ -32,7 +32,7 @@ from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes import FindFirst, Scan
 from dace.libraries.standard.nodes.scan import ScanOp
 
-from tests.codegen.cpf.conftest import assert_standalone_units, device_scan_sdfg, render_gpu
+from tests.codegen.cpf.conftest import assert_standalone_units, device_scan_sdfg, render_gpu, require_gpu_backend
 
 N = dace.symbol("N")
 
@@ -327,14 +327,13 @@ def test_a_device_product_scan_multiplies_through_a_typed_functor():
     assert "__host__ __device__ T operator()(const T& a, const T& b) const" in code, code
 
 
-@pytest.mark.gpu
-def test_a_device_product_scan_unit_builds_with_hipcc(tmp_path):
-    """The functor is what ``gpucub::DeviceScan`` instantiates, so the units have to build and link, as the
-    judge builds a GPU submission: each unit compiled with ``-c``, then one shared library."""
-    rendering = cpf.render(device_scan_sdfg("cpf_hip_product_build", ScanOp.PRODUCT), language="hip")
+def build_units(rendering: Rendering, tmp_path, name: str) -> None:
+    """Build the two units as the judge builds a GPU submission: each compiled with ``-c``, then one
+    shared library."""
+    require_gpu_backend("hip")
     objects = []
     for suffix, text in ((".cpp", rendering.code), (".hip", rendering.device_code)):
-        source = tmp_path / f"cpf_hip_product_build{suffix}"
+        source = tmp_path / f"{name}{suffix}"
         source.write_text(text)
         objects.append(str(source) + ".o")
         command = ["hipcc", "-std=c++20", "-fPIC", "-c", str(source), "-o", objects[-1]]
@@ -344,6 +343,55 @@ def test_a_device_product_scan_unit_builds_with_hipcc(tmp_path):
         ["hipcc", "-shared", *objects, "-o", str(tmp_path / "unit.so")], capture_output=True, text=True
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.gpu
+def test_a_device_product_scan_unit_builds_with_hipcc(tmp_path):
+    """The functor is what ``gpucub::DeviceScan`` instantiates, so the units have to build and link."""
+    build_units(cpf.render(device_scan_sdfg("cpf_hip_product_build", ScanOp.PRODUCT), language="hip"), tmp_path, "unit")
+
+
+@dace.program
+def s255(a: dace.float64[N], b: dace.float64[N]):
+    x = b[N - 1]
+    y = b[N - 2]
+    for i in range(N):
+        a[i] = (b[i] + x + y) * 0.333
+        y = x + 0.0
+        x = b[i]
+
+
+def test_a_read_only_operand_behind_an_ordering_edge_is_const_in_both_units():
+    """tsvc s255: the frontend orders ``y = x`` before ``x = b[i]`` with an empty memlet into ``b``. That
+    edge writes nothing, so ``b`` stays ``const`` in the launcher the host unit declares and the device
+    unit defines -- one of them non-const and the host call no longer matched any declaration."""
+    assert_standalone_units(render_gpu(s255, "cpf_hip_s255"), "cpf_hip_s255")
+
+
+@dace.program
+def gramschmidt(A: dace.float64[N, N], Q: dace.float64[N, N], R: dace.float64[N, N]):
+    for k in range(N):
+        nrm = np.dot(A[:, k], A[:, k])
+        R[k, k] = np.sqrt(nrm)
+        Q[:, k] = A[:, k] / R[k, k]
+        R[k, k + 1 :] = Q[:, k] @ A[:, k + 1 :]
+        A[:, k + 1 :] = A[:, k + 1 :] - Q[:, k][:, None] * R[k, k + 1 :][None, :]
+
+
+def test_a_nested_function_passes_the_state_to_its_launchers():
+    """A library node's expansion renders as a function of its own whose launches take ``__state``, so the
+    function takes it too (gramschmidt's Dot: ``use of undeclared identifier '__state'``)."""
+    rendering = render_gpu(gramschmidt, "cpf_hip_nested_state")
+    assert_standalone_units(rendering, "cpf_hip_nested_state")
+    assert re.search(r"^static inline void \w+\(cpf_hip_nested_state_state_t \*__state", rendering.code, re.M), (
+        rendering.code
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("program", "name"), [(s255, "cpf_hip_s255_build"), (gramschmidt, "cpf_hip_nested_build")])
+def test_the_units_build_with_hipcc(program, name, tmp_path):
+    build_units(render_gpu(program, name), tmp_path, name)
 
 
 @pytest.mark.parametrize("language", ("c++", "c"))

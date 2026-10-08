@@ -2,7 +2,7 @@
 
 import ast
 import copy
-from typing import Dict
+from typing import Dict, List
 
 import sympy
 
@@ -231,6 +231,8 @@ class LiftEinsum(xf.SingleStateTransformation):
         # COEFFICIENT, wired as the einsum's explicit ``_alpha`` scalar input
         # connector (the data read stays explicit; the expansion consumes it).
         connectors: Dict[str, str] = {}
+        # One map input can feed several operands (``centroids * centroids``), so each keeps its own.
+        operands: Dict[str, List[str]] = {}
         in_edges = []
         out_edge = None
         coeff_edges = []  # scalar-coefficient input edges (alpha-like)
@@ -243,7 +245,7 @@ class LiftEinsum(xf.SingleStateTransformation):
                 coeff_edges.append(e)
                 coeff_map_conns[state.memlet_path(e)[-2].dst_conn] = "_alpha"
                 continue
-            connectors[state.memlet_path(e)[-2].dst_conn] = e.dst_conn
+            operands.setdefault(state.memlet_path(e)[-2].dst_conn, []).append(e.dst_conn)
             connector_product *= symbolic.symbol(e.dst_conn)
             einsum.add_in_connector(e.dst_conn, self.tasklet.in_connectors[e.dst_conn])
             in_edges.append(e)
@@ -342,13 +344,12 @@ class LiftEinsum(xf.SingleStateTransformation):
         # Add new subgraph
         state.add_node(einsum)
         for e in state.in_edges(self.map_entry):
-            if e.dst_conn in connectors:  # einsum tensor operand
-                data = e.data
+            for operand in operands.get(e.dst_conn, ()):  # einsum tensor operands
+                data = copy.deepcopy(e.data)
                 if restrict:
-                    data = copy.deepcopy(e.data)
                     data.subset = copy.deepcopy(maprange)
-                state.add_edge(e.src, e.src_conn, einsum, connectors[e.dst_conn], data)
-            elif e.dst_conn in coeff_map_conns:  # runtime scalar coefficient (not restricted)
+                state.add_edge(e.src, e.src_conn, einsum, operand, data)
+            if e.dst_conn in coeff_map_conns:  # runtime scalar coefficient (not restricted)
                 state.add_edge(e.src, e.src_conn, einsum, coeff_map_conns[e.dst_conn], e.data)
         for e in state.out_edges(map_exit):
             e.data.wcr = None  # Cancel WCR now that it is nested in the einsum

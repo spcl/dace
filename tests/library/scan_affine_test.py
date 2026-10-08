@@ -317,29 +317,32 @@ def test_a_strided_affine_scan_takes_the_per_class_entry_point():
     assert "inclusive_affine_strided" in code, "strided affine scan did not take the per-class entry point"
 
 
-def build_affine_cuda_sdfg(seed_on_device: bool) -> dace.SDFG:
+def build_affine_cuda_sdfg(seed_on_device: bool, stride: int = 1) -> dace.SDFG:
     """The affine scan over device-global buffers, with the seed on whichever side is asked for.
 
     The seed's side is the branch that matters: the wrapper takes it as a pointer and as a value and
-    uses exactly one, because host code issuing the launch must not dereference a device address.
+    uses exactly one, because host code issuing the launch must not dereference a device address. A
+    carry distance ``stride`` takes one seed per residue class, which only a device seed can carry.
     """
     from dace import dtypes
 
-    sdfg = dace.SDFG(f"affine_scan_cuda_{int(seed_on_device)}")
+    sdfg = dace.SDFG(f"affine_scan_cuda_{int(seed_on_device)}_{stride}")
     for name in ("coef", "delta", "out"):
         sdfg.add_array(name, [N], dace.float64, storage=dtypes.StorageType.GPU_Global)
     seed_storage = dtypes.StorageType.GPU_Global if seed_on_device else dtypes.StorageType.Default
-    sdfg.add_array("seed", [1], dace.float64, storage=seed_storage)
+    sdfg.add_array("seed", [stride], dace.float64, storage=seed_storage)
     state = sdfg.add_state()
 
     node = Scan("affine", op=ScanOp.AFFINE)
+    node.stride = stride
     node.implementation = "CUDA"
     node.schedule = dtypes.ScheduleType.GPU_Device
     node.add_in_connector(INIT_CONNECTOR_NAME)
     state.add_node(node)
     state.add_edge(state.add_read("delta"), None, node, INPUT_CONNECTOR_NAME, dace.Memlet("delta[0:N]"))
     state.add_edge(state.add_read("coef"), None, node, COEF_CONNECTOR_NAME, dace.Memlet("coef[0:N]"))
-    state.add_edge(state.add_read("seed"), None, node, INIT_CONNECTOR_NAME, dace.Memlet("seed[0]"))
+    seed_subset = "seed[0]" if stride == 1 else f"seed[0:{stride}]"
+    state.add_edge(state.add_read("seed"), None, node, INIT_CONNECTOR_NAME, dace.Memlet(seed_subset))
     state.add_edge(node, OUTPUT_CONNECTOR_NAME, state.add_write("out"), None, dace.Memlet("out[0:N]"))
     sdfg.validate()
     return sdfg
@@ -377,6 +380,25 @@ def test_the_cuda_affine_scan_computes_the_recurrence(seed_on_device, n):
     assert np.allclose(cp.asnumpy(out), want, rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("n", [3, 17, 100003])
+def test_the_cuda_affine_scan_computes_a_strided_recurrence(n):
+    """``out[k] = c[k]*out[k-5] + d[k]`` is five chains, each entered at its own seed; the unit-stride
+    scan read every class as one chain (versioned_distance_update at K = 5)."""
+    import cupy as cp
+
+    stride = 5
+    sdfg = build_affine_cuda_sdfg(seed_on_device=True, stride=stride)
+    coef, delta, _ = contracting_inputs(n)
+    seed = np.arange(1, stride + 1, dtype=np.float64)
+    want = np.empty_like(delta)
+    for r in range(min(stride, n)):
+        want[r::stride] = affine_reference(coef[r::stride], delta[r::stride], seed[r])
+    out = cp.zeros(n, dtype=np.float64)
+    sdfg(coef=cp.asarray(coef), delta=cp.asarray(delta), out=out, seed=cp.asarray(seed), N=n)
+    assert np.allclose(cp.asnumpy(out), want, rtol=1e-12, atol=1e-12)
+
+
 if __name__ == "__main__":
     test_affine_scan_matches_sequential_recurrence("CPU", 40001)
     test_affine_scan_without_init_enters_at_zero()
@@ -386,4 +408,5 @@ if __name__ == "__main__":
     test_affine_scan_refuses_a_coefficient_of_the_wrong_length()
     test_affine_scan_refuses_shapes_without_a_lowering()
     test_the_cuda_affine_call_is_emitted_into_the_cuda_unit()
+    test_the_cuda_affine_scan_computes_a_strided_recurrence(100003)
     print("ok")

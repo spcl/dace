@@ -440,17 +440,26 @@ def standalone_wcr_expression(
     return None
 
 
-def standalone_gpu_atomic(operator: str, ptr: str, value: str) -> str:
+def standalone_gpu_atomic(operator: str, ptr: str, value: str, redtype, ctype: str) -> str:
     """One atomic read-modify-write on the device, in CPF's own spelling.
 
     ``cpf_gpu_atomic`` comes from :data:`~dace.cpf_lowering.HIP_DEVICE_BLOCKS` and takes the
     combination as a functor, so ONE helper covers every reduction an SDFG can carry -- HIP itself
-    spells only a few operator/type pairs as an intrinsic.
+    spells only a few operator/type pairs as an intrinsic. A complex element is two words wide, which
+    no compare-and-swap covers; its sum is the sum of its parts, so that one takes
+    ``cpf_gpu_atomic_add_complex``, and any other complex resolution is refused.
 
     :param operator: the binary functor, from :meth:`CPUCodeGen.standalone_wcr_operator`.
     :param ptr: the pointer expression for the accumulated element.
     :param value: the value to fold in.
+    :param redtype: the detected reduction type.
+    :param ctype: the accumulated element's C type.
+    :raises NotImplementedError: for a complex resolution other than a sum.
     """
+    if "complex" in ctype:
+        if redtype is not dtypes.ReductionType.Sum:
+            raise NotImplementedError(f"CPF has no device atomic for a complex {redtype.name} accumulation")
+        return f"cpf_gpu_atomic_add_complex({ptr}, {value})"
     return f"cpf_gpu_atomic({ptr}, {value}, {operator})"
 
 
@@ -478,6 +487,8 @@ def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
                 operator,
                 "{acc_ptr} + (({base_cpp}) + __bk_{id})".format(id=idstr, base_cpp=base_cpp, **red),
                 f"__bres_{idstr}",
+                red["redtype"],
+                red["ctype"],
             ),
         )
     else:
@@ -548,16 +559,18 @@ _COMPLEX_TYPES = (dtypes.complex64, dtypes.complex128)
 
 
 def _contiguous_element_count(desc):
-    """Element count if ``desc`` is a plain, 0-offset, C-contiguous ``Array`` buffer.
+    """Element count if ``desc`` is a plain, 0-offset, C-contiguous ``Array`` buffer or ``ArrayView``.
 
     Only such a buffer can be reduced as one flat ``A[0:count]`` OpenMP array section:
     the section covers the whole allocation contiguously, so the runtime's per-thread
-    private copy + final element-wise combine is a faithful whole-buffer reduction.
-    Returns ``None`` (caller falls back to atomics) for views, strided/padded layouts,
-    or anything whose contiguity can't be proven. ``count`` may be symbolic.
+    private copy + final element-wise combine is a faithful whole-buffer reduction. A
+    view is a pointer to its first element, so a contiguous one is reduced the same way
+    (a ``pure`` Reduce accumulates through a view of its output element, tsvc s311).
+    Returns ``None`` (caller falls back to atomics) for strided/padded layouts, other
+    subclasses, or anything whose contiguity can't be proven. ``count`` may be symbolic.
     """
-    # Exact type only -- subclasses (View, Reference, Stream) are not plain buffers.
-    if type(desc) is not data.Array:
+    # Exact types only -- other subclasses (Reference, Stream) are not plain buffers.
+    if type(desc) not in (data.Array, data.ArrayView):
         return None
     acc = 1
     exp = []
@@ -2033,7 +2046,7 @@ class CPUCodeGen(TargetCodeGenerator):
         )
         if cpf_lowering.device():
             return hint + standalone_gpu_atomic(
-                self.standalone_wcr_operator(sdfg, memlet, redtype, dtype, target), ptr, inname
+                self.standalone_wcr_operator(sdfg, memlet, redtype, dtype, target), ptr, inname, redtype, dtype.ctype
             )
         body = self.standalone_wcr(sdfg, memlet, redtype, ptr, inname, dtype, atomic=False)
         # OpenMP ``atomic`` takes only real arithmetic scalars; a complex accumulation takes the critical section.
@@ -2998,11 +3011,12 @@ class CPUCodeGen(TargetCodeGenerator):
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         arguments = []
 
-        # CPF emits no state struct at all (see framecode.generate_fileheader), so a nested function
+        # A host CPF emits no state struct (see framecode.generate_fileheader), so a nested function
         # cannot take a pointer to it. Anything that would have been READ through it -- persistent
         # buffers, instrumentation, environment handles -- is refused or demoted before rendering,
-        # so dropping the parameter drops nothing the body still needs.
-        if state_struct and cpf_lowering.standalone():
+        # so dropping the parameter drops nothing the body still needs. A device CPF keeps the struct
+        # for its stream context, and the kernel launchers a nested function calls take it.
+        if state_struct and cpf_lowering.standalone() and not cpf_lowering.device():
             state_struct = False
 
         if state_struct:
@@ -3039,7 +3053,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
         prepend = []
-        if state_struct and cpf_lowering.standalone():
+        if state_struct and cpf_lowering.standalone() and not cpf_lowering.device():
             state_struct = False  # matches generate_nsdfg_header, which drops the parameter
         if state_struct:
             prepend = ["__state"]
@@ -3735,9 +3749,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # costs the clause and drops the map onto the atomic path -- measured at 2662 ms
             # against 40 ms on tsvc s319, whose seed ``sum_val = 0`` is held in front of the
             # accumulating map by exactly such an edge.
+            # A View accumulator privatizes the memory it views: a read of the viewed array counts too.
+            viewed = sdutils.get_last_view_node(state, oedge.dst) if isinstance(desc, data.View) else None
+            accumulator_names = {oedge.dst.data} | ({viewed.data} if viewed is not None else set())
             if any(
                 isinstance(e.src, nodes.AccessNode)
-                and e.src.data == oedge.dst.data
+                and e.src.data in accumulator_names
                 and e.data is not None
                 and not e.data.is_empty()
                 for e in state.in_edges(map_entry)

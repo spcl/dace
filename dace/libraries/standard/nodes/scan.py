@@ -1213,8 +1213,9 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
 
     The header's monoid is affine-map composition, so the recurrence is a plain cub prefix scan
     over the maps -- see :file:`dace/runtime/include/dace/cuda/scan_affine.cuh` for why the seed is
-    folded into element 0 rather than handed to cub as an init value. Only the shape
-    :func:`refuse_unsupported_affine_flags` admits arrives here: one chain, unit stride, inclusive.
+    folded into each residue class's first element rather than handed to cub as an init value. Only the
+    shape :func:`refuse_unsupported_affine_flags` admits arrives here: one chain, inclusive, at any carry
+    distance (the header lays the classes out one after another and scans them as one sequence).
 
     The seed reaches the wrapper twice over, as a pointer and as a value, and exactly one of the
     two is live: a device-resident seed must not be dereferenced by the host code issuing the
@@ -1238,7 +1239,8 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
     wrapper = f"__dace_scan_affine_{global_code_id(sdfg, state, node)}"
     params = (
         f"const {c_ctype}* __sc_c, const {d_ctype}* __sc_d, const {s_ctype}* __sc_seed_ptr, "
-        f"{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, gpuStream_t __sc_stream"
+        f"{e_ctype} __sc_seed_val, {e_ctype}* __sc_out, long long __sc_n, long long __sc_stride, "
+        f"gpuStream_t __sc_stream"
     )
     prototype = f"DACE_EXPORTED gpuError_t {wrapper}({params});"
     sdfg.append_global_code(prototype + "\n")
@@ -1246,7 +1248,7 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
         f"{prototype}\n"
         f"gpuError_t {wrapper}({params}) {{\n"
         f"    return ::dace::cuda_scan::inclusive_affine<{e_ctype}, {c_ctype}, {d_ctype}, {s_ctype}>(\n"
-        f"        __sc_c, __sc_d, __sc_seed_ptr, __sc_seed_val, __sc_out, __sc_n, __sc_stream);\n"
+        f"        __sc_c, __sc_d, __sc_seed_ptr, __sc_seed_val, __sc_out, __sc_n, __sc_stride, __sc_stream);\n"
         f"}}\n",
         "cuda",
     )
@@ -1256,7 +1258,8 @@ def affine_cuda_tasklet(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG, ou
         inputs[init_connector(0)] = dtypes.pointer(required(seed).dtype.base_type) if on_device else None
     code = (
         f"DACE_GPU_CHECK({wrapper}({COEF_CONNECTOR_NAME}, {INPUT_CONNECTOR_NAME}, {seed_ptr}, {seed_val}, "
-        f"{OUTPUT_CONNECTOR_NAME}, ({_resolve_length(node, state, sdfg)}), __dace_current_stream));"
+        f"{OUTPUT_CONNECTOR_NAME}, ({_resolve_length(node, state, sdfg)}), ({sym2cpp(node.stride)}), "
+        f"__dace_current_stream));"
     )
     return nodes.Tasklet(
         node.name, inputs=inputs, outputs={OUTPUT_CONNECTOR_NAME: None}, code=code, language=dace.Language.CPP

@@ -308,6 +308,15 @@ def map_is_parallel(state: SDFGState, map_entry: nodes.MapEntry) -> bool:
     return map_entry.map.schedule != dtypes.ScheduleType.Sequential
 
 
+def accumulator_scales_with_map(desc: data.Data, map_entry: nodes.MapEntry) -> bool:
+    """True if the accumulator's size shares a symbol with the map's range, so a private copy per thread
+    costs ``T`` times the iteration space (``bins[ip[i]] += src[i]`` with ``bins`` of length ``N``: 96 private
+    ``N``-element copies, a stack overflow or a blown memory cap at large ``N``). Privatisation pays only for
+    a histogram whose bin count is independent of the iteration count; such an accumulator keeps the atomic."""
+    range_symbols = {str(s) for s in map_entry.map.range.free_symbols}
+    return bool(range_symbols & {str(s) for s in as_expr(desc.total_size).free_symbols})
+
+
 def resolve_root_data(state: SDFGState, node: nodes.AccessNode) -> str:
     """The underlying array name ``node`` ultimately accesses: follow a View chain to its
     root viewed AccessNode (:func:`~dace.sdfg.utils.get_last_view_node`), else ``node``'s
@@ -351,6 +360,8 @@ def surface_scatter_reduction(state: SDFGState, nsdfg: nodes.NestedSDFG, oc: str
     # so leave it untouched (the NormalizeWCR whole-buffer refuse-guard still protects it).
     if not map_is_parallel(state, map_entry):
         return False
+    if accumulator_scales_with_map(state.sdfg.arrays[accumulator.data], map_entry):
+        return False
     acc_root = resolve_root_data(state, accumulator)
     if any(
         isinstance(ie.src, nodes.AccessNode) and resolve_root_data(state, ie.src) == acc_root
@@ -369,6 +380,7 @@ __all__ = [
     "scatter_reduction_wcr_edge",
     "data_dependent_scatter_wcr_edge",
     "is_data_dependent_scatter_sink",
+    "accumulator_scales_with_map",
     "map_is_parallel",
     "resolve_root_data",
     "scatter_wcr_op",

@@ -24,6 +24,7 @@ from dace.frontend.python.parser import DaceProgram
 from dace.libraries.standard.nodes.scan import ScanOp
 
 from tests.codegen.cpf.conftest import (
+    require_gpu_backend,
     assert_matches,
     assert_standalone_units,
     canonical_gpu_sdfg,
@@ -79,6 +80,7 @@ def entry_prototypes(code: str, name: str) -> list[str]:
 
 def nvcc_library(rendering: Rendering, directory: pathlib.Path, name: str) -> pathlib.Path:
     """Build the two units with the nvcc on PATH, each with ``-c``, into one shared object; return its path."""
+    require_gpu_backend("cuda")
     nvcc = shutil.which("nvcc")
     assert nvcc is not None, "the gpu tests build the CUDA units with nvcc, which is not on PATH"
     library = directory / f"lib{name}.so"
