@@ -344,16 +344,13 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         nsdfg.arrays["_in"].transient = False
         nsdfg.arrays["_out"].transient = False
 
-        # The accumulator is the OUTPUT element type, as in ``dace::reduce``: an int8 mask summed into an int64
-        # total must not wrap at 127
-        nsdfg.add_transient("acc", [1], output_data.dtype, dtypes.StorageType.Register)
+        nsdfg.add_transient("acc", [1], input_data.dtype, dtypes.StorageType.Register)
 
         nstate = nsdfg.add_state()
 
         # The memlets carry the outer subsets verbatim, so the nested map parameters must not shadow a symbol they
         # use (an enclosing map's ``_o0``, for one)
         taken = {str(s) for s in inedge.data.subset.free_symbols | outedge.data.subset.free_symbols}
-        taken |= {str(sym) for sym in state.symbols_defined_at(node).keys()}
         prefix = "_"
         while any(name.startswith((prefix + "i", prefix + "o")) for name in taken):
             prefix += "_"

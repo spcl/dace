@@ -307,8 +307,11 @@ def hgemm(A: dace.float16[N, N], B: dace.float16[N, N], C: dace.float32[N, N]):
 if __name__ == "__main__":
     extend_dace()
 
-    # Prerequisite for sample: CUDA compute capability >= 70
-    dace.Config.set("compiler", "cuda", "cuda_arch", value="70")
+    # Prerequisite for sample: CUDA compute capability >= 70. A newer configured architecture, or the native
+    # one, stays: CUDA 13 no longer compiles for compute_70.
+    archs = [a for a in dace.Config.get("compiler", "cuda", "cuda_arch").split(",") if a.strip()]
+    if archs and max(int(a) for a in archs) < 70:
+        dace.Config.set("compiler", "cuda", "cuda_arch", value="70")
 
     A = np.random.rand(1024, 1024).astype(np.float16)
     B = np.random.rand(1024, 1024).astype(np.float16)
