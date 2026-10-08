@@ -37,7 +37,7 @@ def windowed_read_after_ordering_edge() -> dace.SDFG:
 def test_an_ordering_edge_into_a_read_window_does_not_write_it_back():
     """The empty edge orders the read; taken as a write it adds a copy back into the input-only ``A``."""
     sdfg = windowed_read_after_ordering_edge()
-    node = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+    node = next(n for n, parent in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
     node.integrate_into_parent()
     sdfg.validate()
     assert "A" not in node.out_connectors
