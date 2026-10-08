@@ -32,6 +32,7 @@ at every iteration; each access then adds only its loop-invariant ``immediate``.
 at one member's nest-invariant offset (the lowest one if it exists, else the coefficient-wise median) so that a
 window's base is added once, on loop entry, and the immediates are small differences.
 """
+
 import re
 import warnings
 from dataclasses import dataclass
@@ -56,7 +57,7 @@ _SCOPE_NODES = (nodes.EntryNode, nodes.ExitNode)
 _GPU_KERNEL_SCHEDULES = (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)
 _LANE_SCHEDULES = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
 _INT32_MAX_BYTES = 2**31
-_INIT_STATE_LABEL = '__dace_memlet_access_policy_init'
+_INIT_STATE_LABEL = "__dace_memlet_access_policy_init"
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -65,6 +66,7 @@ _INIT_STATE_LABEL = '__dace_memlet_access_policy_init'
 @dataclass
 class OffsetDecomposition:
     """Result of decomposing a memlet's base offset w.r.t. one loop (all offsets in elements)."""
+
     loop: LoopRegion
     variable: str
     stride: symbolic.SymbolicType  #: loop stride ``c``
@@ -156,7 +158,7 @@ def leaf_edges(state: SDFGState) -> Iterator[MultiConnectorEdge[Memlet]]:
     for e in state.edges():
         if e.data.is_empty() or e.data.data is None:
             continue
-        if e.dst_conn in ('set', 'views') or e.src_conn == 'views':
+        if e.dst_conn in ("set", "views") or e.src_conn == "views":
             continue
         src_scope, dst_scope = isinstance(e.src, _SCOPE_NODES), isinstance(e.dst, _SCOPE_NODES)
         if src_scope and dst_scope:
@@ -222,7 +224,7 @@ def inner_symbols(loop: LoopRegion) -> Set[str]:
     for state in loop.all_states():
         for node in state.nodes():
             if isinstance(node, nodes.EntryNode):
-                result.update(node.map.params if hasattr(node, 'map') else [])
+                result.update(node.map.params if hasattr(node, "map") else [])
     return result
 
 
@@ -255,12 +257,9 @@ def flat_addressable_array(desc: Optional[dt.Data]) -> bool:
     return isinstance(desc, dt.Array) and not isinstance(desc, dt.View)
 
 
-def decompose(desc: dt.Data,
-              memlet: Memlet,
-              loop: LoopRegion,
-              inner: Set[str],
-              lanes: Set[str],
-              outer: Optional[Set[str]] = None) -> Optional[OffsetDecomposition]:
+def decompose(
+    desc: dt.Data, memlet: Memlet, loop: LoopRegion, inner: Set[str], lanes: Set[str], outer: Optional[Set[str]] = None
+) -> Optional[OffsetDecomposition]:
     """Decompose ``memlet``'s base offset w.r.t. ``loop`` (see module docstring). ``None`` if the memlet is
     not cursor-addressable against this loop: dynamic, offset not affine in the loop variable, step depending on
     inner symbols, or the moved shape varying with the loop variable.
@@ -291,7 +290,7 @@ def decompose(desc: dt.Data,
     for dim in memlet.subset.size():
         if var in _names(sp.sympify(dim)):
             return None
-    for rng in (memlet.subset.ndrange() if hasattr(memlet.subset, 'ndrange') else []):
+    for rng in memlet.subset.ndrange() if hasattr(memlet.subset, "ndrange") else []:
         if var in _names(sp.sympify(rng[2])):
             return None
 
@@ -316,8 +315,9 @@ def decompose(desc: dt.Data,
     return OffsetDecomposition(loop, var, stride, delta, beta, class_base, immediate, lane_part, key)
 
 
-def analyze_edge(state: SDFGState, edge: MultiConnectorEdge[Memlet], loops: List[LoopRegion],
-                 inner_cache: Dict[LoopRegion, Set[str]]) -> Optional[OffsetDecomposition]:
+def analyze_edge(
+    state: SDFGState, edge: MultiConnectorEdge[Memlet], loops: List[LoopRegion], inner_cache: Dict[LoopRegion, Set[str]]
+) -> Optional[OffsetDecomposition]:
     """Decompose the edge's memlet against the innermost enclosing loop whose variable it depends on.
 
     :param loops: The loops enclosing ``state``, innermost first.
@@ -334,7 +334,7 @@ def analyze_edge(state: SDFGState, edge: MultiConnectorEdge[Memlet], loops: List
     for idx, loop in enumerate(loops):
         if loop not in inner_cache:
             inner_cache[loop] = inner_symbols(loop)
-        outer = {l.loop_variable for l in loops[idx + 1:] if l.loop_variable}
+        outer = {l.loop_variable for l in loops[idx + 1 :] if l.loop_variable}
         dec = decompose(desc, edge.data, loop, inner_cache[loop], lanes, outer)
         if dec is not None:
             return dec
@@ -351,27 +351,31 @@ class AssignLoopCursors(ppl.Pass):
     in an enclosing loop's induction variable (descriptive only; see module docstring). Memlets that are not
     cursor-addressable keep their (default copy-on-access) policy."""
 
-    scope = properties.Property(dtype=str,
-                                default='gpu',
-                                choices=['gpu', 'all'],
-                                desc='"gpu": only memlets inside GPU kernel map scopes; "all": every loop.')
-    cursor_type = properties.TypeClassProperty(default=None,
-                                               allow_none=True,
-                                               desc='Integer type of the cursor symbols (planner may override per '
-                                               'memlet). None = int32 when the array extent is provably < 2**31, '
-                                               'else int64.')
-    arrays = properties.SetProperty(element_type=str,
-                                    default=set(),
-                                    desc='If non-empty, only assign policies to memlets of these arrays.')
-    overwrite = properties.Property(dtype=bool,
-                                    default=True,
-                                    desc='Replace existing non-default policies (False keeps hand-set records).')
+    scope = properties.Property(
+        dtype=str,
+        default="gpu",
+        choices=["gpu", "all"],
+        desc='"gpu": only memlets inside GPU kernel map scopes; "all": every loop.',
+    )
+    cursor_type = properties.TypeClassProperty(
+        default=None,
+        allow_none=True,
+        desc="Integer type of the cursor symbols (planner may override per "
+        "memlet). None = int32 when the array extent is provably < 2**31, "
+        "else int64.",
+    )
+    arrays = properties.SetProperty(
+        element_type=str, default=set(), desc="If non-empty, only assign policies to memlets of these arrays."
+    )
+    overwrite = properties.Property(
+        dtype=bool, default=True, desc="Replace existing non-default policies (False keeps hand-set records)."
+    )
 
     def __init__(self, **props):
         super().__init__()
         for name, value in props.items():
-            if name not in ('scope', 'cursor_type', 'arrays', 'overwrite'):
-                raise TypeError(f'AssignLoopCursors has no property {name!r}')
+            if name not in ("scope", "cursor_type", "arrays", "overwrite"):
+                raise TypeError(f"AssignLoopCursors has no property {name!r}")
             setattr(self, name, value)
 
     def modifies(self) -> ppl.Modifies:
@@ -404,23 +408,25 @@ class AssignLoopCursors(ppl.Pass):
                         continue
                     if not flat_addressable_array(nsdfg.arrays.get(memlet.data)):
                         continue  # scalars carry no address arithmetic; views/references have no fixed base
-                    if self.scope == 'gpu' and not is_devicelevel_gpu(nsdfg, state, _scope_node(edge)):
+                    if self.scope == "gpu" and not is_devicelevel_gpu(nsdfg, state, _scope_node(edge)):
                         continue
                     dec = analyze_edge(state, edge, loops, inner_cache)
                     if dec is None:
                         skipped += 1
                         continue
                     classes.add((nsdfg.cfg_id, memlet.data) + dec.cursor_key)
-                    memlet.access_policy = LoopCursor(loop=dec.loop.label,
-                                                      variable=dec.variable,
-                                                      step=dec.step,
-                                                      base_invariant=dec.base_invariant,
-                                                      lane_part=dec.lane_part,
-                                                      cursor_type=self.cursor_type)
+                    memlet.access_policy = LoopCursor(
+                        loop=dec.loop.label,
+                        variable=dec.variable,
+                        step=dec.step,
+                        base_invariant=dec.base_invariant,
+                        lane_part=dec.lane_part,
+                        cursor_type=self.cursor_type,
+                    )
                     assigned += 1
         if assigned == 0:
             return None
-        return {'assigned': assigned, 'classes': len(classes), 'skipped': skipped}
+        return {"assigned": assigned, "classes": len(classes), "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -435,15 +441,19 @@ class LowerMemletAccessPolicies(ppl.Pass):
     library-node expansion; :func:`dace.codegen.codegen.generate_code` does so automatically. Idempotent: memlets
     that are already lowered are left alone."""
 
-    assume_int32 = properties.Property(dtype=bool,
-                                       default=False,
-                                       desc='Treat "auto" cursors as int32 even when the array extent is not '
-                                       'provably < 2**31 (caller guarantees 31-bit offsets).')
-    chain_outer_loops = properties.Property(dtype=bool,
-                                            default=True,
-                                            desc='Initialize an inner-loop cursor from an outer-loop cursor when '
-                                            'its entry value is affine in the outer loop variable (one add per '
-                                            'loop level, no multiplies), instead of recomputing it per entry.')
+    assume_int32 = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Treat "auto" cursors as int32 even when the array extent is not '
+        "provably < 2**31 (caller guarantees 31-bit offsets).",
+    )
+    chain_outer_loops = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="Initialize an inner-loop cursor from an outer-loop cursor when "
+        "its entry value is affine in the outer loop variable (one add per "
+        "loop level, no multiplies), instead of recomputing it per entry.",
+    )
 
     def __init__(self, assume_int32: bool = False, chain_outer_loops: bool = True):
         super().__init__()
@@ -465,7 +475,7 @@ class LowerMemletAccessPolicies(ppl.Pass):
                  'memlets': m, 'dropped': d}``), or ``None`` if there was nothing to lower.
         """
         totals: Dict[str, int] = {}
-        options = {'assume_int32': self.assume_int32, 'chain_outer_loops': self.chain_outer_loops}
+        options = {"assume_int32": self.assume_int32, "chain_outer_loops": self.chain_outer_loops}
         for nsdfg in sdfg.all_sdfgs_recursive():
             by_kind: Dict[Type[MemletAccessPolicy], List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]]] = {}
             for state in nsdfg.states():
@@ -488,7 +498,7 @@ def _statement_assignments(block: Optional[CodeBlock]) -> Dict[str, str]:
 def _append_statement(loop: LoopRegion, which: str, statement: str) -> None:
     """Append ``statement`` to the loop's init or update code block (code blocks may hold several statements)."""
     block: Optional[CodeBlock] = getattr(loop, which)
-    code = statement if block is None else f'{block.as_string}\n{statement}'
+    code = statement if block is None else f"{block.as_string}\n{statement}"
     setattr(loop, which, CodeBlock(code))
 
 
@@ -508,8 +518,9 @@ class _CursorTable:
         self.created = 0
 
     @staticmethod
-    def class_key(loop: LoopRegion, array: str, dtype: dtypes.typeclass, share_key: Optional[str],
-                  class_base: sp.Basic) -> Tuple:
+    def class_key(
+        loop: LoopRegion, array: str, dtype: dtypes.typeclass, share_key: Optional[str], class_base: sp.Basic
+    ) -> Tuple:
         """Cursor-class identity: same loop, array, cursor type, override key, per-iteration step and tracked base
         without the loop-variable term. Members of a class differ only by a loop-invariant immediate."""
         v = _symbol_named(class_base, loop.loop_variable)
@@ -518,8 +529,15 @@ class _CursorTable:
         base_wo_v = sp.expand(class_base - (v * delta if v is not None else 0))
         return (loop.label, array, dtype, share_key, str(step), str(base_wo_v))
 
-    def cursor_for(self, loop: LoopRegion, array: str, dtype: dtypes.typeclass, class_base: sp.Basic, anchor: sp.Basic,
-                   share_key: Optional[str]) -> Tuple[symbolic.symbol, sp.Basic]:
+    def cursor_for(
+        self,
+        loop: LoopRegion,
+        array: str,
+        dtype: dtypes.typeclass,
+        class_base: sp.Basic,
+        anchor: sp.Basic,
+        share_key: Optional[str],
+    ) -> Tuple[symbolic.symbol, sp.Basic]:
         """Return (creating if needed) the cursor symbol of ``loop`` that tracks ``class_base`` -- an expression
         affine in the loop variable and free of symbols defined inside the loop body -- together with the
         nest-invariant ``anchor`` the cursor additionally holds (the anchor requested here if the cursor is
@@ -556,10 +574,15 @@ class _CursorTable:
                 if vo is None:
                     continue
                 d_out = sp.expand(sp.diff(rest, vo))
-                if (d_out.has(sp.Derivative) or d_out.has(sp.floor) or d_out.has(sp.ceiling)
-                        or outer.loop_variable in _names(d_out) or (_names(rest) & inner_symbols(outer))
-                        or loop_analysis.get_init_assignment(outer) is None
-                        or loop_analysis.get_loop_stride(outer) is None):
+                if (
+                    d_out.has(sp.Derivative)
+                    or d_out.has(sp.floor)
+                    or d_out.has(sp.ceiling)
+                    or outer.loop_variable in _names(d_out)
+                    or (_names(rest) & inner_symbols(outer))
+                    or loop_analysis.get_init_assignment(outer) is None
+                    or loop_analysis.get_loop_stride(outer) is None
+                ):
                     break
                 # The outer cursor absorbs the invariant remainder, so the inner cursor starts exactly at it.
                 # A per-memlet ``share_key`` override applies to the memlet's own cursor only, so outer cursors
@@ -571,8 +594,8 @@ class _CursorTable:
         name = self._name(array, loop)
         self.sdfg.add_symbol(name, dtype)
         cursor = symbolic.symbol(name, dtype)
-        _append_statement(loop, 'init_statement', f'{name} = {_pystr(init_expr)}')
-        _append_statement(loop, 'update_statement', f'{name} = {_pystr(cursor + step)}')
+        _append_statement(loop, "init_statement", f"{name} = {_pystr(init_expr)}")
+        _append_statement(loop, "update_statement", f"{name} = {_pystr(cursor + step)}")
         self.classes[key] = (cursor, anchor)
         self.created += 1
         return cursor, anchor
@@ -580,10 +603,10 @@ class _CursorTable:
     def _name(self, array: str, loop: LoopRegion) -> str:
         """Deterministic identifier ``__dace_cur_<array>_<loop>`` (suffixed on collision, e.g. when one loop
         holds several cursor classes of the same array)."""
-        base = re.sub(r'\W', '_', f'__dace_cur_{array}_{loop.label}')
+        base = re.sub(r"\W", "_", f"__dace_cur_{array}_{loop.label}")
         name, n = base, 1
         while name in self.used:
-            name = f'{base}_{n}'
+            name = f"{base}_{n}"
             n += 1
         self.used.add(name)
         return name
@@ -604,7 +627,7 @@ class _References:
         if array in self.flat:
             return self.flat[array]
         desc = self.sdfg.arrays[array]
-        name = f'__dace_flat_{array}'
+        name = f"__dace_flat_{array}"
         if name not in self.sdfg.arrays:
             self.sdfg.add_reference(name, [desc.total_size], desc.dtype, storage=desc.storage)
             if self.init_state is None:
@@ -615,8 +638,13 @@ class _References:
                     self.init_state = self.sdfg.add_state_before(start, _INIT_STATE_LABEL, is_start_block=True)
             # ``from_array`` covers the whole array starting at index ``-offset``, i.e. the set points the flat
             # reference at the array's physical element 0 (cursors are physical offsets, see ``base_offset``).
-            self.init_state.add_edge(self.init_state.add_read(array), None, self.init_state.add_write(name), 'set',
-                                     Memlet.from_array(array, desc))
+            self.init_state.add_edge(
+                self.init_state.add_read(array),
+                None,
+                self.init_state.add_write(name),
+                "set",
+                Memlet.from_array(array, desc),
+            )
         self.flat[array] = name
         return name
 
@@ -634,17 +662,18 @@ class _References:
         flat = self.flat_reference(array)
         sizes = subset.size()
         total = sum((sp.sympify(s) - 1) * sp.sympify(st) for s, st in zip(sizes, desc.strides)) + 1
-        name = f'__dace_win_{array}_{self.windows}'
+        name = f"__dace_win_{array}_{self.windows}"
         self.windows += 1
         self.sdfg.add_reference(name, sizes, desc.dtype, storage=desc.storage, strides=desc.strides, total_size=total)
         win = state.add_access(name)
         set_memlet = Memlet(data=flat, subset=Range([(index, index, 1)]))
-        state.add_edge(self.node(state, flat, True), None, win, 'set', set_memlet)
+        state.add_edge(self.node(state, flat, True), None, win, "set", set_memlet)
         return win
 
 
-def _reroute(state: SDFGState, edge: MultiConnectorEdge[Memlet], new_root: nodes.AccessNode, is_read: bool,
-             new_memlet: Memlet) -> None:
+def _reroute(
+    state: SDFGState, edge: MultiConnectorEdge[Memlet], new_root: nodes.AccessNode, is_read: bool, new_memlet: Memlet
+) -> None:
     """Replace the memlet path of ``edge`` by one from/to ``new_root`` carrying ``new_memlet`` at the leaf
     (outer memlets are re-propagated through the scopes). The new path is added before the old one is removed,
     so scope nodes and the leaf connector are never orphaned in between."""
@@ -663,11 +692,13 @@ def _reroute(state: SDFGState, edge: MultiConnectorEdge[Memlet], new_root: nodes
         state.remove_node(old_root)
 
 
-def lower_loop_cursors(sdfg: SDFG,
-                       entries: List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]],
-                       assume_int32: bool = False,
-                       chain_outer_loops: bool = True,
-                       **_) -> Dict[str, int]:
+def lower_loop_cursors(
+    sdfg: SDFG,
+    entries: List[Tuple[SDFGState, MultiConnectorEdge[Memlet]]],
+    assume_int32: bool = False,
+    chain_outer_loops: bool = True,
+    **_,
+) -> Dict[str, int]:
     """Lower the :class:`~dace.sdfg.memlet_access_policy.LoopCursor` policies of one SDFG (see module docstring).
 
     :param sdfg: The SDFG owning the loops and memlets.
@@ -694,8 +725,10 @@ def lower_loop_cursors(sdfg: SDFG,
             continue
         loop = {l.label: l for l in enclosing_loops(state)}.get(policy.loop)
         if loop is None or loop.loop_variable != policy.variable:
-            warnings.warn(f'Memlet access policy of "{edge.data}" refers to loop "{policy.loop}" (variable '
-                          f'{policy.variable}) which no longer encloses it; dropping the policy.')
+            warnings.warn(
+                f'Memlet access policy of "{edge.data}" refers to loop "{policy.loop}" (variable '
+                f"{policy.variable}) which no longer encloses it; dropping the policy."
+            )
             edge.data.access_policy = _default()
             dropped += 1
             continue
@@ -705,8 +738,10 @@ def lower_loop_cursors(sdfg: SDFG,
     ordered = sorted(per_loop.items(), key=lambda item: len(_enclosing_loops_of_region(item[0])))
     for loop, loop_entries in ordered:
         if loop_analysis.get_init_assignment(loop) is None:
-            warnings.warn(f'Cannot lower memlet access policies of loop "{loop.label}": no recognizable init '
-                          'assignment; policies dropped.')
+            warnings.warn(
+                f'Cannot lower memlet access policies of loop "{loop.label}": no recognizable init '
+                "assignment; policies dropped."
+            )
             for _, edge in loop_entries:
                 edge.data.access_policy = _default()
             dropped += len(loop_entries)
@@ -724,8 +759,10 @@ def lower_loop_cursors(sdfg: SDFG,
             if root is not None and (is_read or flat_length(desc, memlet.subset) is not None):
                 dec = decompose(desc, memlet, loop, inner, lane_symbols(state, _scope_node(edge)))
             if dec is None or sp.expand(dec.step - policy.step) != 0:
-                warnings.warn(f'Memlet access policy of "{memlet}" is stale or not lowerable (recorded step '
-                              f'{policy.step}, derived {None if dec is None else dec.step}); dropping it.')
+                warnings.warn(
+                    f'Memlet access policy of "{memlet}" is stale or not lowerable (recorded step '
+                    f"{policy.step}, derived {None if dec is None else dec.step}); dropping it."
+                )
                 memlet.access_policy = _default()
                 dropped += 1
                 continue
@@ -739,16 +776,18 @@ def lower_loop_cursors(sdfg: SDFG,
             # Anchor the class at the nest-invariant offset of one member (see _choose_anchor), so that a window's
             # base offset is added once, on loop entry, and each access carries only its small difference.
             anchor = _choose_anchor([_invariant_part(dec.immediate, inner) for _, _, dec in items])
-            cursor, cursor_anchor = cursors.cursor_for(loop, array, dtypes_of[key], dec0.class_base, anchor,
-                                                       edge0.data.access_policy.share_key)
+            cursor, cursor_anchor = cursors.cursor_for(
+                loop, array, dtypes_of[key], dec0.class_base, anchor, edge0.data.access_policy.share_key
+            )
             for state, edge, dec in items:
                 _rewrite(state, edge, dec, cursor, cursor_anchor, refs)
                 lowered += 1
-    return {'cursors': cursors.created, 'memlets': lowered, 'dropped': dropped}
+    return {"cursors": cursors.created, "memlets": lowered, "dropped": dropped}
 
 
 def _default() -> MemletAccessPolicy:
     from dace.sdfg.memlet_access_policy import CopyOnAccess
+
     return CopyOnAccess()
 
 
@@ -758,8 +797,14 @@ def _cursor_dtype(policy: LoopCursor, desc: dt.Data, assume_int32: bool) -> dtyp
     return dtypes.int32 if (assume_int32 or extent_bytes_int32(desc)) else dtypes.int64
 
 
-def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDecomposition, cursor: symbolic.symbol,
-             cursor_anchor: sp.Basic, refs: _References) -> None:
+def _rewrite(
+    state: SDFGState,
+    edge: MultiConnectorEdge[Memlet],
+    dec: OffsetDecomposition,
+    cursor: symbolic.symbol,
+    cursor_anchor: sp.Basic,
+    refs: _References,
+) -> None:
     """Rewrite one loop-cursor memlet to address through the cursor: ``flat[cursor + immediate]`` for contiguous
     memlets, a window reference for non-contiguous reads."""
     old = edge.data
@@ -779,15 +824,17 @@ def _rewrite(state: SDFGState, edge: MultiConnectorEdge[Memlet], dec: OffsetDeco
         new_root = refs.window(state, array, old.subset, index)
         subset = Range([(0, sp.sympify(s) - 1, 1) for s in old.subset.size()])
         target, window = new_root.data, new_root.data
-    new_memlet = Memlet(data=target,
-                        subset=subset,
-                        other_subset=old.other_subset,
-                        volume=old.volume,
-                        dynamic=old.dynamic,
-                        wcr=old.wcr,
-                        wcr_nonatomic=old.wcr_nonatomic,
-                        allow_oob=old.allow_oob,
-                        debuginfo=old.debuginfo)
+    new_memlet = Memlet(
+        data=target,
+        subset=subset,
+        other_subset=old.other_subset,
+        volume=old.volume,
+        dynamic=old.dynamic,
+        wcr=old.wcr,
+        wcr_nonatomic=old.wcr_nonatomic,
+        allow_oob=old.allow_oob,
+        debuginfo=old.debuginfo,
+    )
     policy.cursor, policy.reference, policy.window, policy.immediate = cursor.name, flat, window, immediate
     new_memlet.access_policy = policy
     _reroute(state, edge, new_root, is_read, new_memlet)

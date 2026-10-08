@@ -29,6 +29,7 @@ Policies are plain dataclasses. Fields holding symbolic expressions or data type
 metadata ``kind='symbolic'`` / ``kind='dtype'`` so that the generic JSON (de)serialization in the base class can
 convert them.
 """
+
 import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
@@ -48,23 +49,23 @@ def _to_sym(value: SymbolicLike) -> Optional[symbolic.SymbolicType]:
 
 
 def _field_to_json(f: dataclasses.Field, value):
-    kind = f.metadata.get('kind')
+    kind = f.metadata.get("kind")
     if value is None:
         return None
-    if kind == 'symbolic':
+    if kind == "symbolic":
         return symbolic.serialize_symbolic(value)
-    if kind == 'dtype':
+    if kind == "dtype":
         return value.to_json()
     return value
 
 
 def _field_from_json(f: dataclasses.Field, value, context):
-    kind = f.metadata.get('kind')
+    kind = f.metadata.get("kind")
     if value is None:
         return None
-    if kind == 'symbolic':
+    if kind == "symbolic":
         return symbolic.deserialize_symbolic(value)
-    if kind == 'dtype':
+    if kind == "dtype":
         return dtypes.json_to_typeclass(value, context)
     return value
 
@@ -98,23 +99,24 @@ class MemletAccessPolicy:
         """
         return {}
 
-    def copy(self) -> 'MemletAccessPolicy':
+    def copy(self) -> "MemletAccessPolicy":
         return dataclasses.replace(self)
 
     def to_json(self):
-        result = {'type': type(self).__name__}
+        result = {"type": type(self).__name__}
         result.update({f.name: _field_to_json(f, getattr(self, f.name)) for f in dataclasses.fields(self)})
         return result
 
     @staticmethod
     def from_json(json_obj, context=None):
-        typename = json_obj['type']
-        if typename == 'MemletAccessPolicy':
+        typename = json_obj["type"]
+        if typename == "MemletAccessPolicy":
             raise TypeError('MemletAccessPolicy is abstract; the JSON "type" must name a policy kind')
         cls = dace.serialize.get_serializer(typename)
         kwargs = {
             f.name: _field_from_json(f, json_obj.get(f.name), context)
-            for f in dataclasses.fields(cls) if f.name in json_obj
+            for f in dataclasses.fields(cls)
+            if f.name in json_obj
         }
         return cls(**kwargs)
 
@@ -161,23 +163,24 @@ class LoopCursor(MemletAccessPolicy):
     :param window: Name of the per-iteration window reference, for non-contiguous memlets (set by the lowering).
     :param immediate: The loop-invariant element offset of this memlet relative to the cursor (set by the lowering).
     """
+
     loop: str
     variable: str
-    step: SymbolicLike = field(metadata={'kind': 'symbolic'})
-    base_invariant: SymbolicLike = field(default=0, metadata={'kind': 'symbolic'})
-    lane_part: SymbolicLike = field(default=0, metadata={'kind': 'symbolic'})
-    cursor_type: Optional[dtypes.typeclass] = field(default=None, metadata={'kind': 'dtype'})
+    step: SymbolicLike = field(metadata={"kind": "symbolic"})
+    base_invariant: SymbolicLike = field(default=0, metadata={"kind": "symbolic"})
+    lane_part: SymbolicLike = field(default=0, metadata={"kind": "symbolic"})
+    cursor_type: Optional[dtypes.typeclass] = field(default=None, metadata={"kind": "dtype"})
     share_key: Optional[str] = None
     cursor: Optional[str] = None
     reference: Optional[str] = None
     window: Optional[str] = None
-    immediate: SymbolicLike = field(default=None, metadata={'kind': 'symbolic'})
+    immediate: SymbolicLike = field(default=None, metadata={"kind": "symbolic"})
 
     def __post_init__(self):
-        for name in ('step', 'base_invariant', 'lane_part', 'immediate'):
+        for name in ("step", "base_invariant", "lane_part", "immediate"):
             setattr(self, name, _to_sym(getattr(self, name)))
         if self.cursor_type is not None and not isinstance(self.cursor_type, dtypes.typeclass):
-            raise TypeError(f'cursor_type must be a dace typeclass or None, got {self.cursor_type!r}')
+            raise TypeError(f"cursor_type must be a dace typeclass or None, got {self.cursor_type!r}")
 
     @property
     def is_lowered(self) -> bool:
@@ -186,4 +189,5 @@ class LoopCursor(MemletAccessPolicy):
     @classmethod
     def lower(cls, sdfg, entries, **options) -> Dict[str, int]:
         from dace.transformation.passes.memlet_access_policies import lower_loop_cursors  # avoid import cycle
+
         return lower_loop_cursors(sdfg, entries, **options)

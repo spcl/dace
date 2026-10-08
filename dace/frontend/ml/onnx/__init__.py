@@ -2,4 +2,4 @@
 
 from .importer import ONNXModel
 
-__all__ = ['ONNXModel']
+__all__ = ["ONNXModel"]

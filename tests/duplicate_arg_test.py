@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program

@@ -5,6 +5,7 @@ CloudSC is the scaling case: thousands of blocks nested many levels deep, where 
 is superlinear in nesting depth shows up as minutes rather than seconds. ConstantPropagation is the
 dominant term in ``simplify`` on this input.
 """
+
 import statistics
 import time
 
@@ -24,8 +25,8 @@ def test_build_cloudsc_sdfg_hands_out_private_copies():
     first = build_cloudsc_sdfg(simplify=False)
     second = build_cloudsc_sdfg(simplify=False)
     assert first is not second
-    first.add_symbol('canary', dace.int32)
-    assert 'canary' not in second.symbols
+    first.add_symbol("canary", dace.int32)
+    assert "canary" not in second.symbols
 
 
 @pytest.mark.long
@@ -41,11 +42,12 @@ def test_simplify_stays_within_its_time_budget():
         durations.append(time.perf_counter() - start)
 
     median = statistics.median(durations)
-    reps = ', '.join('%.1f' % d for d in durations)
-    assert median < SIMPLIFY_BUDGET_SECONDS, (f'median simplify took {median:.1f}s, budget is '
-                                              f'{SIMPLIFY_BUDGET_SECONDS:.0f}s; reps={reps}')
+    reps = ", ".join("%.1f" % d for d in durations)
+    assert median < SIMPLIFY_BUDGET_SECONDS, (
+        f"median simplify took {median:.1f}s, budget is {SIMPLIFY_BUDGET_SECONDS:.0f}s; reps={reps}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_build_cloudsc_sdfg_hands_out_private_copies()
     test_simplify_stays_within_its_time_budget()

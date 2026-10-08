@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared helpers for CopyLibraryNode and FillLibraryNode expansions."""
+
 from typing import Callable, List, Tuple
 
 import dace
@@ -11,20 +12,24 @@ from dace.sdfg.scope import is_in_scope
 CURRENT_STREAM_NAME = "__dace_current_stream"
 
 # Register is intentionally in neither set: resolves by scope (GPU register vs. host stack slot).
-GPU_RESIDENT_STORAGES = frozenset({
-    dtypes.StorageType.GPU_Global,
-    dtypes.StorageType.GPU_Shared,
-})
-CPU_RESIDENT_STORAGES = frozenset({
-    dtypes.StorageType.CPU_Heap,
-    dtypes.StorageType.CPU_Pinned,
-    dtypes.StorageType.CPU_ThreadLocal,
-})
+GPU_RESIDENT_STORAGES = frozenset(
+    {
+        dtypes.StorageType.GPU_Global,
+        dtypes.StorageType.GPU_Shared,
+    }
+)
+CPU_RESIDENT_STORAGES = frozenset(
+    {
+        dtypes.StorageType.CPU_Heap,
+        dtypes.StorageType.CPU_Pinned,
+        dtypes.StorageType.CPU_ThreadLocal,
+    }
+)
 
 
 def collapse_shape_and_strides(
-        subset: dace.subsets.Range,
-        strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
+    subset: dace.subsets.Range, strides: List[dace.symbolic.SymExpr]
+) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
     """Drop length-1 dims from a (subset, strides) pair; surviving strides scale by the subset step.
 
     A tiled dimension (``b:e:step:tile``) addresses ``tile`` contiguous elements per step, which no
@@ -58,7 +63,7 @@ def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> b
     :param num_elements: total contiguous element count (constant or symbolic).
     :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
     """
-    threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
+    threshold = int(dace.Config.get("compiler", "cpu", "parallel_transfer_min_elements"))
     try:
         return int(dace.symbolic.simplify(num_elements)) >= threshold
     except (TypeError, ValueError):
@@ -75,12 +80,17 @@ def is_in_parallel_scope(node: nodes.LibraryNode, parent_state: dace.SDFGState) 
     :param parent_state: state containing ``node``.
     :returns: ``True`` if a parallel map scope encloses the node, at any nesting depth.
     """
-    return is_in_scope(parent_state.sdfg, parent_state, node,
-                       [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default])
+    return is_in_scope(
+        parent_state.sdfg, parent_state, node, [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Default]
+    )
 
 
-def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
-                  select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str], library_cls: type):
+def auto_dispatch(
+    node: nodes.LibraryNode,
+    parent_state: dace.SDFGState,
+    select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str],
+    library_cls: type,
+):
     """Dispatch a library node's ``'Auto'`` implementation to the one ``select_fn`` picks, setting
     ``node.implementation`` so introspection reflects what was chosen.
 
@@ -91,6 +101,6 @@ def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
     :returns: whatever the resolved expansion returns.
     """
     impl_name = select_fn(node, parent_state)
-    assert impl_name != 'Auto', f"{select_fn.__name__} must not return 'Auto'."
+    assert impl_name != "Auto", f"{select_fn.__name__} must not return 'Auto'."
     node.implementation = impl_name
     return library_cls.implementations[impl_name].expansion(node, parent_state, parent_state.sdfg)

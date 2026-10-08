@@ -27,7 +27,7 @@ def test_slice_constant():
 
     outer(q)
     outer.f(ref)
-    assert (np.allclose(q, ref))
+    assert np.allclose(q, ref)
 
 
 def test_slice():
@@ -43,9 +43,9 @@ def test_slice():
 
     forloops(q)
     forloops.f(ref)
-    assert (np.allclose(q, ref))
+    assert np.allclose(q, ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_slice()
     test_slice_constant()

@@ -6,15 +6,15 @@ import numpy as np
 import pytest
 import subprocess
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 def was_vectorized(sdfg: dace.SDFG) -> bool:
-    """ Tests whether a binary contains 128-bit CUDA memory operations. """
+    """Tests whether a binary contains 128-bit CUDA memory operations."""
     csdfg: compiled_sdfg.CompiledSDFG = sdfg.compile()
-    output: bytes = subprocess.check_output(['cuobjdump', '-sass', csdfg.filename], stderr=subprocess.STDOUT)
+    output: bytes = subprocess.check_output(["cuobjdump", "-sass", csdfg.filename], stderr=subprocess.STDOUT)
     del csdfg
-    return b'.128' in output
+    return b".128" in output
 
 
 @dace.program
@@ -30,7 +30,7 @@ def cudahello(V: dace.float32[N], Vout: dace.float32[N]):
 def _test(sdfg):
     N = 52
 
-    print('Vector double CUDA %d' % (N))
+    print("Vector double CUDA %d" % (N))
 
     V = dace.ndarray([N], dace.float32)
     Vout = dace.ndarray([N], dace.float32)
@@ -66,7 +66,7 @@ def test_gpu_vec():
     _test(sdfg)
 
     # Skip if not CUDA
-    if common.get_gpu_backend() == 'cuda':
+    if common.get_gpu_backend() == "cuda":
         assert was_vectorized(sdfg)
 
 

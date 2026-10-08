@@ -18,7 +18,8 @@ class LiftEinsum(xf.SingleStateTransformation):
     Detects a tensor operation that can be represented by an Einstein-notation sum (einsum, e.g., matrix
     multiplication) and replaces the pattern with an ``Einsum`` library node.
     """
-    EINSUM_CHARS = 'ijklmnopqrstuvwxyzabcdefgh'
+
+    EINSUM_CHARS = "ijklmnopqrstuvwxyzabcdefgh"
 
     map_entry = xf.PatternNode(nodes.MapEntry)
     tasklet = xf.PatternNode(nodes.Tasklet)
@@ -47,7 +48,7 @@ class LiftEinsum(xf.SingleStateTransformation):
                 return False
             ind = set(str(rb) for rb, _, _ in memlet.subset.ndrange())
             unique_chars |= ind
-            if any(i != '0' and i not in self.map_entry.map.params for i in ind):
+            if any(i != "0" and i not in self.map_entry.map.params for i in ind):
                 return False
 
             # Keep track of input/output indices for WCR check
@@ -109,7 +110,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         map_exit = state.exit_node(self.map_entry)
 
         scope = state.scope_subgraph(self.map_entry)
-        einsum = blas.Einsum('einsum')
+        einsum = blas.Einsum("einsum")
 
         connector_product = 1  # Needed to compute alpha (input) coefficient
 
@@ -138,17 +139,17 @@ class LiftEinsum(xf.SingleStateTransformation):
         param_mapping: Dict[str, str] = {}
         # letter_to_range: Dict[str, subsets.Range] = {}
         einsum_inputs = []
-        einsum_output = ''
-        for e in (in_edges + [out_edge]):
+        einsum_output = ""
+        for e in in_edges + [out_edge]:
             # Create parameter mapping
             ind = [str(rb) for rb, _, _ in e.data.subset.ndrange()]
-            expr = ''
+            expr = ""
             for i in ind:
-                if i != '0' and i not in param_mapping:
+                if i != "0" and i not in param_mapping:
                     param_mapping[i] = self.EINSUM_CHARS[len(param_mapping)]
                     # pind = self.map_entry.map.params.index(i)
                     # letter_to_range[i] = subsets.Range(self.map_entry.map.range[pind])
-                expr += '' if i == '0' else param_mapping[i]
+                expr += "" if i == "0" else param_mapping[i]
             if e is out_edge:
                 einsum_output = expr
             else:

@@ -10,11 +10,11 @@ def perform_scan(sdfg: dace.SDFG) -> Dict[dace.SDFG, Set[str]]:
 
 
 def _make_all_single_use_data_but_one_unused_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('all_single_use_data_but_one_unused_sdfg')
+    sdfg = dace.SDFG("all_single_use_data_but_one_unused_sdfg")
     state1 = sdfg.add_state(is_start_block=True)
     state2 = sdfg.add_state_after(state1)
 
-    for name in 'abcde':
+    for name in "abcde":
         sdfg.add_array(
             name,
             shape=(10, 10),
@@ -22,8 +22,8 @@ def _make_all_single_use_data_but_one_unused_sdfg() -> dace.SDFG:
             transient=False,
         )
 
-    state1.add_nedge(state1.add_access('a'), state1.add_access('b'), sdfg.make_array_memlet('a'))
-    state2.add_nedge(state2.add_access('c'), state2.add_access('d'), sdfg.make_array_memlet('c'))
+    state1.add_nedge(state1.add_access("a"), state1.add_access("b"), sdfg.make_array_memlet("a"))
+    state2.add_nedge(state2.add_access("c"), state2.add_access("d"), sdfg.make_array_memlet("c"))
     sdfg.validate()
     return sdfg
 
@@ -34,7 +34,7 @@ def test_all_single_use_data_but_one_unused():
 
     # Because `e` is not used inside the SDFG, it is not included in the returned set,
     #  all other descriptors are included because they appear once.
-    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != 'e'}
+    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != "e"}
 
     single_use_set = perform_scan(sdfg)
 
@@ -44,10 +44,10 @@ def test_all_single_use_data_but_one_unused():
 
 
 def _make_multiple_access_same_state_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('multiple_access_same_state_sdfg')
+    sdfg = dace.SDFG("multiple_access_same_state_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
-    for name in 'abd':
+    for name in "abd":
         sdfg.add_array(
             name,
             shape=(10, 10),
@@ -55,8 +55,8 @@ def _make_multiple_access_same_state_sdfg() -> dace.SDFG:
             transient=False,
         )
 
-    state.add_nedge(state.add_access('a'), state.add_access('b'), sdfg.make_array_memlet('a'))
-    state.add_nedge(state.add_access('a'), state.add_access('d'), sdfg.make_array_memlet('a'))
+    state.add_nedge(state.add_access("a"), state.add_access("b"), sdfg.make_array_memlet("a"))
+    state.add_nedge(state.add_access("a"), state.add_access("d"), sdfg.make_array_memlet("a"))
     sdfg.validate()
     return sdfg
 
@@ -67,7 +67,7 @@ def test_multiple_access_same_state():
 
     # `a` is not single use data because there are multiple access nodes for it
     #  in a single state.
-    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != 'a'}
+    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != "a"}
     single_use_set = perform_scan(sdfg)
     assert len(single_use_set) == 1
     assert len(single_use_set[sdfg]) == 2
@@ -75,10 +75,10 @@ def test_multiple_access_same_state():
 
 
 def _make_multiple_single_access_node_same_state_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('multiple_single_access_node_same_state_sdfg')
+    sdfg = dace.SDFG("multiple_single_access_node_same_state_sdfg")
     state = sdfg.add_state(is_start_block=True)
 
-    for name in 'abd':
+    for name in "abd":
         sdfg.add_array(
             name,
             shape=(10, 10),
@@ -86,9 +86,9 @@ def _make_multiple_single_access_node_same_state_sdfg() -> dace.SDFG:
             transient=False,
         )
 
-    a = state.add_access('a')
-    state.add_nedge(a, state.add_access('b'), sdfg.make_array_memlet('a'))
-    state.add_nedge(a, state.add_access('d'), sdfg.make_array_memlet('a'))
+    a = state.add_access("a")
+    state.add_nedge(a, state.add_access("b"), sdfg.make_array_memlet("a"))
+    state.add_nedge(a, state.add_access("d"), sdfg.make_array_memlet("a"))
     assert state.out_degree(a) == 2
     sdfg.validate()
     return sdfg
@@ -109,11 +109,11 @@ def test_multiple_single_access_node_same_state_sdfg() -> dace.SDFG:
 
 
 def _make_multiple_access_different_states_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('multiple_access_different_states_sdfg')
+    sdfg = dace.SDFG("multiple_access_different_states_sdfg")
     state1 = sdfg.add_state(is_start_block=True)
     state2 = sdfg.add_state_after(state1)
 
-    for name in 'abd':
+    for name in "abd":
         sdfg.add_array(
             name,
             shape=(10, 10),
@@ -123,8 +123,8 @@ def _make_multiple_access_different_states_sdfg() -> dace.SDFG:
 
     # Note these edges are useless as `a` is written to twice. It is just to generate
     #  an additional case, i.e. the data are also written to.
-    state1.add_nedge(state1.add_access('b'), state1.add_access('a'), sdfg.make_array_memlet('a'))
-    state2.add_nedge(state2.add_access('d'), state2.add_access('a'), sdfg.make_array_memlet('a'))
+    state1.add_nedge(state1.add_access("b"), state1.add_access("a"), sdfg.make_array_memlet("a"))
+    state2.add_nedge(state2.add_access("d"), state2.add_access("a"), sdfg.make_array_memlet("a"))
     sdfg.validate()
     return sdfg
 
@@ -135,29 +135,29 @@ def test_multiple_access_different_states():
 
     # `a` is not included in the single use set, because it is used in two different states.
     single_use_set = perform_scan(sdfg)
-    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != 'a'}
+    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != "a"}
     assert len(single_use_set) == 1
     assert len(single_use_set[sdfg]) == 2
     assert expected_single_use_set == single_use_set[sdfg]
 
 
 def _make_access_only_on_interstate_edge_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('access_on_interstate_edge_sdfg')
+    sdfg = dace.SDFG("access_on_interstate_edge_sdfg")
 
-    for name in 'abcd':
+    for name in "abcd":
         sdfg.add_array(
             name,
             shape=(10, 10),
             dtype=dace.float64,
             transient=False,
         )
-    sdfg.add_scalar('e', dtype=dace.float64, transient=False)
+    sdfg.add_scalar("e", dtype=dace.float64, transient=False)
 
     state1 = sdfg.add_state(is_start_block=True)
-    state2 = sdfg.add_state_after(state1, assignments={'e_sym': 'e'})
+    state2 = sdfg.add_state_after(state1, assignments={"e_sym": "e"})
 
-    state1.add_nedge(state1.add_access('a'), state1.add_access('b'), sdfg.make_array_memlet('a'))
-    state2.add_nedge(state2.add_access('c'), state2.add_access('d'), sdfg.make_array_memlet('c'))
+    state1.add_nedge(state1.add_access("a"), state1.add_access("b"), sdfg.make_array_memlet("a"))
+    state2.add_nedge(state2.add_access("c"), state2.add_access("d"), sdfg.make_array_memlet("c"))
     sdfg.validate()
     return sdfg
 
@@ -168,7 +168,7 @@ def test_access_only_on_interstate_edge():
 
     # `e` is only accessed on the interstate edge. So it is technically an single use
     #  data. But by definition we handle this case as non single_use.
-    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != 'e'}
+    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != "e"}
     single_use_set = perform_scan(sdfg)
     assert len(single_use_set) == 1
     assert len(single_use_set[sdfg]) == 4
@@ -176,24 +176,24 @@ def test_access_only_on_interstate_edge():
 
 
 def _make_additional_access_on_interstate_edge_sdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('additional_access_on_interstate_edge_sdfg')
+    sdfg = dace.SDFG("additional_access_on_interstate_edge_sdfg")
 
-    for name in 'abcd':
+    for name in "abcd":
         sdfg.add_array(
             name,
             shape=(10, 10),
             dtype=dace.float64,
             transient=False,
         )
-    sdfg.add_scalar('e', dtype=dace.float64, transient=False)
-    sdfg.add_scalar('f', dtype=dace.float64, transient=False)
+    sdfg.add_scalar("e", dtype=dace.float64, transient=False)
+    sdfg.add_scalar("f", dtype=dace.float64, transient=False)
 
     state1 = sdfg.add_state(is_start_block=True)
-    state2 = sdfg.add_state_after(state1, assignments={'e_sym': 'e'})
+    state2 = sdfg.add_state_after(state1, assignments={"e_sym": "e"})
 
-    state1.add_nedge(state1.add_access('a'), state1.add_access('b'), sdfg.make_array_memlet('a'))
-    state2.add_nedge(state2.add_access('c'), state2.add_access('d'), sdfg.make_array_memlet('c'))
-    state2.add_nedge(state2.add_access('e'), state2.add_access('f'), dace.Memlet('f[0] -> [0]'))
+    state1.add_nedge(state1.add_access("a"), state1.add_access("b"), sdfg.make_array_memlet("a"))
+    state2.add_nedge(state2.add_access("c"), state2.add_access("d"), sdfg.make_array_memlet("c"))
+    state2.add_nedge(state2.add_access("e"), state2.add_access("f"), dace.Memlet("f[0] -> [0]"))
     sdfg.validate()
     return sdfg
 
@@ -204,7 +204,7 @@ def test_additional_access_on_interstate_edge():
 
     # There is one AccessNode for `a`, but as in `test_access_only_on_interstate_edge`
     #  `e` is also used on the inter state edge, so it is not included.
-    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != 'e'}
+    expected_single_use_set = {aname for aname in sdfg.arrays.keys() if aname != "e"}
     single_use_set = perform_scan(sdfg)
     assert len(single_use_set) == 1
     assert len(single_use_set[sdfg]) == 5
@@ -212,30 +212,30 @@ def test_additional_access_on_interstate_edge():
 
 
 def _make_access_nested_nsdfg() -> dace.SDFG:
-    sdfg = dace.SDFG('access_nested_nsdfg')
+    sdfg = dace.SDFG("access_nested_nsdfg")
 
-    for aname in 'ab':
+    for aname in "ab":
         sdfg.add_array(
             aname,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
 
     state = sdfg.add_state(is_start_block=True)
-    state.add_nedge(state.add_access('a'), state.add_access('b'), sdfg.make_array_memlet('a'))
+    state.add_nedge(state.add_access("a"), state.add_access("b"), sdfg.make_array_memlet("a"))
     sdfg.validate()
     return sdfg
 
 
 def _make_access_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFG]:
-    sdfg = dace.SDFG('access_nested_sdfg')
+    sdfg = dace.SDFG("access_nested_sdfg")
     nsdfg = _make_access_nested_nsdfg()
 
-    for aname in 'ab':
+    for aname in "ab":
         sdfg.add_array(
             aname,
-            shape=(10, ),
+            shape=(10,),
             dtype=dace.float64,
             transient=False,
         )
@@ -243,24 +243,24 @@ def _make_access_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFG]:
     state = sdfg.add_state(is_start_block=True)
     nsdfg_node = state.add_nested_sdfg(
         nsdfg,
-        inputs={'a'},
-        outputs={'b'},
+        inputs={"a"},
+        outputs={"b"},
         symbol_mapping={},
     )
 
     state.add_edge(
-        state.add_access('a'),
+        state.add_access("a"),
         None,
         nsdfg_node,
-        'a',
-        sdfg.make_array_memlet('a'),
+        "a",
+        sdfg.make_array_memlet("a"),
     )
     state.add_edge(
         nsdfg_node,
-        'b',
-        state.add_access('b'),
+        "b",
+        state.add_access("b"),
         None,
-        sdfg.make_array_memlet('b'),
+        sdfg.make_array_memlet("b"),
     )
     sdfg.validate()
     return sdfg, nsdfg
@@ -273,7 +273,7 @@ def test_access_nested_sdfg():
     # In the top and the nested SDFG `a` and `b` are both used once, so for
     #  both they are included in the single use set.
     #  Essentially tests if there is separation between the two.
-    expected_single_use_set = {'a', 'b'}
+    expected_single_use_set = {"a", "b"}
     single_use_sets = perform_scan(sdfg)
 
     assert len(single_use_sets) == 2
@@ -329,7 +329,7 @@ def test_conditional_block():
     assert single_use_set[sdfg] == expected_single_use_set
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_all_single_use_data_but_one_unused()
     test_multiple_access_same_state()
     test_multiple_single_access_node_same_state_sdfg()

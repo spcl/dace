@@ -14,7 +14,7 @@ from dace.autodiff import add_backward_pass
 # M, N
 sizes = {"mini": (28, 32), "small": (80, 100), "medium": (240, 260), "large": (1200, 1400), "extra-large": (2600, 3000)}
 
-M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
+M, N = (dc.symbol(s, dtype=dc.int32) for s in ("M", "N"))
 
 
 @dc.program
@@ -46,7 +46,7 @@ def covariance_jax_kernel(jnp, float_n, data):
 
 def ground_truth(M, N, float_n, data):
 
-    mean = np.empty((M, ), dtype=data.dtype)
+    mean = np.empty((M,), dtype=data.dtype)
     for j in range(M):
         mean[j] = 0.0
         for i in range(N):
@@ -116,7 +116,7 @@ def run_covariance_autodiff():
 
     # Initialize gradient computation data
     gradient_data = np.zeros_like(data)
-    gradient___return = np.ones((1, ), dtype=np.float32)
+    gradient___return = np.ones((1,), dtype=np.float32)
 
     # Define sum reduction for the output
     @dc.program
@@ -131,7 +131,7 @@ def run_covariance_autodiff():
 
     # Numerically validate vs JAX
     jax_kernel = lambda float_n, data: covariance_jax_kernel(jnp, float_n, data)
-    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0, ))
+    jax_grad = jax.jit(jax.grad(jax_kernel, argnums=1), static_argnums=(0,))
     jax_grad_data = jax_grad(float_n, data_jax)
     np.testing.assert_allclose(gradient_data, jax_grad_data, rtol=1e-5, atol=1e-8)
 
@@ -152,16 +152,15 @@ def test_autodiff():
     pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
+    last_value = os.environ.get("DACE_testing_serialization", "0")
+    os.environ["DACE_testing_serialization"] = "0"
     run_covariance_autodiff()
-    os.environ['DACE_testing_serialization'] = last_value
+    os.environ["DACE_testing_serialization"] = last_value
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

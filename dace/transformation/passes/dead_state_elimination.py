@@ -19,7 +19,7 @@ class DeadStateElimination(ppl.Pass):
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
@@ -68,8 +68,9 @@ class DeadStateElimination(ppl.Pass):
                         # If only one branch is left, and it is unconditionally executed, inline it.
                         if len(node.branches) == 1:
                             cond, branch = node.branches[0]
-                            if cond is None or self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string),
-                                                                        sdfg):
+                            if cond is None or self._is_definitely_true(
+                                symbolic.pystr_to_symbolic(cond.as_string), sdfg
+                            ):
                                 node.parent_graph.add_node(branch)
                                 for ie in cfg.in_edges(node):
                                     cfg.add_edge(ie.src, branch, ie.data)
@@ -80,8 +81,8 @@ class DeadStateElimination(ppl.Pass):
                     else:
                         result.add(node)
                         is_start = node is cfg.start_block
-                        replacement_pre = cfg.add_state_before(node, node.label + '_pre', is_start_block=is_start)
-                        replacement_post = cfg.add_state_after(node, node.label + '_post')
+                        replacement_pre = cfg.add_state_before(node, node.label + "_pre", is_start_block=is_start)
+                        replacement_post = cfg.add_state_after(node, node.label + "_post")
                         cfg.add_edge(replacement_pre, replacement_post, InterstateEdge())
                         cfg.remove_node(node)
 
@@ -91,9 +92,8 @@ class DeadStateElimination(ppl.Pass):
             return result or set()  # Return an empty set if edges were annotated
 
     def find_dead_control_flow(
-            self,
-            cfg: ControlFlowRegion,
-            set_unconditional_edges: bool = True) -> Tuple[Set[ControlFlowBlock], Set[Edge[InterstateEdge]], bool]:
+        self, cfg: ControlFlowRegion, set_unconditional_edges: bool = True
+    ) -> Tuple[Set[ControlFlowBlock], Set[Edge[InterstateEdge]], bool]:
         """
         Finds "dead" (unreachable) control flow in a CFG. A block is deemed unreachable if it is:
 
@@ -126,12 +126,13 @@ class DeadStateElimination(ppl.Pass):
                 if self.is_definitely_taken(e.data, sdfg):
                     # If more than one unconditional outgoing edge exist, fail with Invalid SDFG
                     if unconditional is not None:
-                        raise InvalidSDFGInterstateEdgeError('Multiple unconditional edges leave the same block', cfg,
-                                                             cfg.edge_id(e))
+                        raise InvalidSDFGInterstateEdgeError(
+                            "Multiple unconditional edges leave the same block", cfg, cfg.edge_id(e)
+                        )
                     unconditional = e
                     if set_unconditional_edges and not e.data.is_unconditional():
                         # Annotate edge as unconditional
-                        e.data.condition = CodeBlock('1')
+                        e.data.condition = CodeBlock("1")
                         edges_annotated = True
 
                     # Continue traversal through edge
@@ -170,7 +171,7 @@ class DeadStateElimination(ppl.Pass):
             if cond is None:
                 if not i == len(block.branches) - 1:
                     raise InvalidSDFGNodeError(
-                        'Conditional block detected, where else branch is not the last branch.',
+                        "Conditional block detected, where else branch is not the last branch.",
                         sdfg=block.sdfg,
                         state_id=block.block_id,
                         node_id=None,
@@ -188,21 +189,22 @@ class DeadStateElimination(ppl.Pass):
         else:
             # Check if any branches are certainly never taken.
             for cond, branch in block.branches:
-                if cond is not None and self._is_definitely_false(symbolic.pystr_to_symbolic(cond.as_string),
-                                                                  block.sdfg):
+                if cond is not None and self._is_definitely_false(
+                    symbolic.pystr_to_symbolic(cond.as_string), block.sdfg
+                ):
                     dead_branches.append([cond, branch])
 
         return dead_branches
 
     def report(self, pass_retval: Set[Union[SDFGState, Edge[InterstateEdge]]]) -> str:
         if pass_retval is not None and not pass_retval:
-            return 'DeadStateElimination annotated new unconditional edges.'
+            return "DeadStateElimination annotated new unconditional edges."
 
         states = [p for p in pass_retval if isinstance(p, SDFGState)]
-        return f'Eliminated {len(states)} states and {len(pass_retval) - len(states)} interstate edges.'
+        return f"Eliminated {len(states)} states and {len(pass_retval) - len(states)} interstate edges."
 
     def is_definitely_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
-        """ Returns True iff edge condition definitely evaluates to True. """
+        """Returns True iff edge condition definitely evaluates to True."""
         if edge.is_unconditional():
             return True
 
@@ -222,7 +224,7 @@ class DeadStateElimination(ppl.Pass):
         return False
 
     def is_definitely_not_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
-        """ Returns True iff edge condition definitely evaluates to False. """
+        """Returns True iff edge condition definitely evaluates to False."""
         if edge.is_unconditional():
             return False
 

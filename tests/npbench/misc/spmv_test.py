@@ -7,7 +7,7 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'nnz'))
+M, N, nnz = (dc.symbol(s, dtype=dc.int64) for s in ("M", "N", "nnz"))
 
 
 # Matrix-Vector Multiplication with the matrix given in Compressed Sparse Row
@@ -30,13 +30,14 @@ def spmv_kernel(A_row: dc.uint32[M + 1], A_col: dc.uint32[nnz], A_val: dc.float6
 
 def initialize(M, N, nnz):
     from numpy.random import default_rng
+
     rng = default_rng(42)
 
-    x = rng.random((N, ))
+    x = rng.random((N,))
 
     from scipy.sparse import random
 
-    matrix = random(M, N, density=nnz / (M * N), format='csr', dtype=np.float64, random_state=rng)
+    matrix = random(M, N, density=nnz / (M * N), format="csr", dtype=np.float64, random_state=rng)
     rows = np.uint32(matrix.indptr)
     cols = np.uint32(matrix.indices)
     vals = matrix.data
@@ -48,18 +49,18 @@ def ground_truth(A_row, A_col, A_val, x):
     y = np.empty(A_row.size - 1, A_val.dtype)
 
     for i in range(A_row.size - 1):
-        cols = A_col[A_row[i]:A_row[i + 1]]
-        vals = A_val[A_row[i]:A_row[i + 1]]
+        cols = A_col[A_row[i] : A_row[i + 1]]
+        vals = A_val[A_row[i] : A_row[i + 1]]
         y[i] = vals @ x[cols]
 
     return y
 
 
 def run_spmv(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs SPMV for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (custom size)
     M, N, nnz = 2048, 2048, 4096
@@ -71,7 +72,7 @@ def run_spmv(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         y = sdfg(A_rows, A_cols, np.copy(A_vals), x, M=M, N=N, nnz=nnz)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and Validate result
     y_ref = ground_truth(A_rows, A_cols, A_vals, x)
@@ -89,9 +90,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

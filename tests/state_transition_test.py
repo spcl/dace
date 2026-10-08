@@ -7,11 +7,11 @@ import pytest
 
 
 def test_state_transitions():
-    if not dace.config.Config.get_bool('optimizer', 'detect_control_flow'):
+    if not dace.config.Config.get_bool("optimizer", "detect_control_flow"):
         pytest.skip("Control flow not enabled. Skipping test.")
 
     sdfg = dace.SDFG("Transitions")
-    sdfg.add_array("x", (1, ), int)
+    sdfg.add_array("x", (1,), int)
 
     start = sdfg.add_state("start")
     left = sdfg.add_state("left")
@@ -44,14 +44,16 @@ def test_state_transitions():
     sdfg.add_edge(s0, s1_for_enter, for_assignment)
 
     for_entry = dace.InterstateEdge(
-        condition=dace.properties.CodeProperty.from_string("i < 16", language=dace.dtypes.Language.Python))
+        condition=dace.properties.CodeProperty.from_string("i < 16", language=dace.dtypes.Language.Python)
+    )
     sdfg.add_edge(s1_for_enter, s1_for_body, for_entry)
 
     for_continue = dace.InterstateEdge(assignments={"i": "i + 1"})
     sdfg.add_edge(s1_for_body, s1_for_enter, for_continue)
 
     for_exit = dace.InterstateEdge(
-        condition=dace.properties.CodeProperty.from_string("i >= 16", language=dace.dtypes.Language.Python))
+        condition=dace.properties.CodeProperty.from_string("i >= 16", language=dace.dtypes.Language.Python)
+    )
     sdfg.add_edge(s1_for_enter, s2, for_exit)
 
     s3_while_enter = sdfg.add_state("s3_while_enter")
@@ -68,14 +70,16 @@ def test_state_transitions():
     sdfg.add_edge(s2, s3_while_enter, while_enter)
 
     while_entry = dace.InterstateEdge(
-        condition=dace.properties.CodeProperty.from_string("i < 128", language=dace.dtypes.Language.Python))
+        condition=dace.properties.CodeProperty.from_string("i < 128", language=dace.dtypes.Language.Python)
+    )
     sdfg.add_edge(s3_while_enter, s3_while_body, while_entry)
 
     while_continue = dace.InterstateEdge()
     sdfg.add_edge(s3_while_body, s3_while_enter, while_continue)
 
     while_exit = dace.InterstateEdge(
-        condition=dace.properties.CodeProperty.from_string("i >= 128", language=dace.dtypes.Language.Python))
+        condition=dace.properties.CodeProperty.from_string("i >= 128", language=dace.dtypes.Language.Python)
+    )
     sdfg.add_edge(s3_while_enter, s4, while_exit)
 
     s5_then = sdfg.add_state("s5_then")
@@ -98,8 +102,9 @@ def test_state_transitions():
     sdfg.add_edge(s4, s6_else, dace.InterstateEdge(condition=dace.frontend.python.astutils.negate_expr(if_cond)))
 
     sdfg.add_edge(s5_then, s7_then_then, dace.InterstateEdge(condition=nested_if_cond))
-    sdfg.add_edge(s5_then, s8_end,
-                  dace.InterstateEdge(condition=dace.frontend.python.astutils.negate_expr(nested_if_cond)))
+    sdfg.add_edge(
+        s5_then, s8_end, dace.InterstateEdge(condition=dace.frontend.python.astutils.negate_expr(nested_if_cond))
+    )
 
     sdfg.add_edge(s7_then_then, s8_end, dace.InterstateEdge())
 
@@ -132,32 +137,32 @@ def test_state_transitions():
 
 
 def test_state_transition_array():
-    """ Toplevel array usage in interstate edge """
-    sdfg = dace.SDFG('sta_test')
-    sdfg.add_array('inp', [1], dace.float32)
-    sdfg.add_array('A', [1], dace.float32)
+    """Toplevel array usage in interstate edge"""
+    sdfg = dace.SDFG("sta_test")
+    sdfg.add_array("inp", [1], dace.float32)
+    sdfg.add_array("A", [1], dace.float32)
 
     s0 = sdfg.add_state()
     s1 = sdfg.add_state()
     s2 = sdfg.add_state()
 
     # Arrays
-    inp = s0.add_access('inp')
-    A = s0.add_access('A')
-    t = s0.add_tasklet('seta', {'a'}, {'b'}, 'b = a')
-    s0.add_edge(inp, None, t, 'a', dace.Memlet.from_array(inp.data, inp.desc(sdfg)))
-    s0.add_edge(t, 'b', A, None, dace.Memlet.from_array(A.data, A.desc(sdfg)))
+    inp = s0.add_access("inp")
+    A = s0.add_access("A")
+    t = s0.add_tasklet("seta", {"a"}, {"b"}, "b = a")
+    s0.add_edge(inp, None, t, "a", dace.Memlet.from_array(inp.data, inp.desc(sdfg)))
+    s0.add_edge(t, "b", A, None, dace.Memlet.from_array(A.data, A.desc(sdfg)))
 
-    A = s1.add_access('A')
-    t = s1.add_tasklet('geta', {'a'}, {}, 'printf("ok %f\\n", a + 1)')
-    s1.add_edge(A, None, t, 'a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
+    A = s1.add_access("A")
+    t = s1.add_tasklet("geta", {"a"}, {}, 'printf("ok %f\\n", a + 1)')
+    s1.add_edge(A, None, t, "a", dace.Memlet.from_array(A.data, A.desc(sdfg)))
 
-    A = s2.add_access('A')
-    t = s2.add_tasklet('geta', {'a'}, {}, 'printf("BAD %f\\n", a - 1)')
-    s2.add_edge(A, None, t, 'a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
+    A = s2.add_access("A")
+    t = s2.add_tasklet("geta", {"a"}, {}, 'printf("BAD %f\\n", a - 1)')
+    s2.add_edge(A, None, t, "a", dace.Memlet.from_array(A.data, A.desc(sdfg)))
 
-    sdfg.add_edge(s0, s1, dace.InterstateEdge('A[0] > 3'))
-    sdfg.add_edge(s0, s2, dace.InterstateEdge('A[0] <= 3'))
+    sdfg.add_edge(s0, s1, dace.InterstateEdge("A[0] > 3"))
+    sdfg.add_edge(s0, s2, dace.InterstateEdge("A[0] <= 3"))
 
     input = np.ndarray([1], np.float32)
     input[0] = 10

@@ -3,7 +3,7 @@ import dace
 import numpy as np
 import pytest
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -31,7 +31,7 @@ def test_nested_symbol():
 
 
 def test_nested_symbol_dynamic():
-    if not dace.Config.get_bool('optimizer', 'automatic_simplification'):
+    if not dace.Config.get_bool("optimizer", "automatic_simplification"):
         pytest.skip(reason="Test disabled (missing allocation lifetime support)")
         return
 
@@ -44,7 +44,7 @@ def test_nested_symbol_dynamic():
 
 
 def test_scal2sym():
-    N = dace.symbol('N', dace.float64)
+    N = dace.symbol("N", dace.float64)
 
     @dace.program
     def symarg(A: dace.float64[20]):
@@ -64,7 +64,7 @@ def test_scal2sym():
 
 
 def test_arr2sym():
-    N = dace.symbol('N', dace.float64)
+    N = dace.symbol("N", dace.float64)
 
     @dace.program
     def symarg(A: dace.float64[20]):
@@ -83,50 +83,68 @@ def test_arr2sym():
 
 
 def test_nested_symbol_in_args():
-    inner = dace.SDFG('inner')
-    state = inner.add_state('inner_state')
-    inner.add_symbol('rdt', stype=float)
-    inner.add_datadesc('field', dace.float64[10])
-    state.add_mapped_tasklet('tasklet',
-                             map_ranges={'i': "0:10"},
-                             inputs={},
-                             outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
-                             code="field_out = rdt",
-                             external_edges=True)
-    inner.arg_names = ['field', 'rdt']
+    inner = dace.SDFG("inner")
+    state = inner.add_state("inner_state")
+    inner.add_symbol("rdt", stype=float)
+    inner.add_datadesc("field", dace.float64[10])
+    state.add_mapped_tasklet(
+        "tasklet",
+        map_ranges={"i": "0:10"},
+        inputs={},
+        outputs={"field_out": dace.Memlet.simple("field", subset_str="i")},
+        code="field_out = rdt",
+        external_edges=True,
+    )
+    inner.arg_names = ["field", "rdt"]
 
     @dace.program
     def funct(field, dt):
         rdt = 1.0 / dt
         inner(field, rdt)
 
-    sdfg = funct.to_sdfg(np.random.randn(10, ), 1.0, simplify=False)
-    sdfg(np.random.randn(10, ), 1.0)
+    sdfg = funct.to_sdfg(
+        np.random.randn(
+            10,
+        ),
+        1.0,
+        simplify=False,
+    )
+    sdfg(
+        np.random.randn(
+            10,
+        ),
+        1.0,
+    )
 
 
 def test_nested_symbol_as_constant():
-    inner = dace.SDFG('inner')
-    state = inner.add_state('inner_state')
-    inner.add_symbol('rdt', stype=float)
-    inner.add_datadesc('field', dace.float64[10])
+    inner = dace.SDFG("inner")
+    state = inner.add_state("inner_state")
+    inner.add_symbol("rdt", stype=float)
+    inner.add_datadesc("field", dace.float64[10])
     tasklet, map_entry, map_exit = state.add_mapped_tasklet(
-        'tasklet',
-        map_ranges={'i': "0:10"},
+        "tasklet",
+        map_ranges={"i": "0:10"},
         inputs={},
-        outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
+        outputs={"field_out": dace.Memlet.simple("field", subset_str="i")},
         code="field_out = rdt",
-        external_edges=True)
-    inner.arg_names = ['field', 'rdt']
+        external_edges=True,
+    )
+    inner.arg_names = ["field", "rdt"]
     rdt = 1e30
 
     @dace.program
     def funct(field):
         inner(field, rdt)
 
-    funct(np.random.randn(10, ))
+    funct(
+        np.random.randn(
+            10,
+        )
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_nested_symbol()
     test_nested_symbol_dynamic()
     test_scal2sym()

@@ -4,7 +4,7 @@ import dace
 import pytest
 import numpy as np
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 
 @dace.program
@@ -33,7 +33,7 @@ def test_missing_arguments_regression():
 
     @dace.program
     def tester(x: dace.float64[20, 20]):
-        gdx = np.ones((10, ), dace.float64)
+        gdx = np.ones((10,), dace.float64)
         for T in range(2):
             nester(x, gdx, T)
 
@@ -50,7 +50,7 @@ def test_missing_arguments_2_regression():
         tester()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_extra_args()
     test_missing_arguments_regression()
     test_missing_arguments_2_regression()

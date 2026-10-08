@@ -12,7 +12,7 @@ from dace.autodiff import add_backward_pass
 # Dataset sizes
 # TSTEPS, N
 sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
-N = dc.symbol('N', dtype=dc.int64)
+N = dc.symbol("N", dtype=dc.int64)
 
 
 @dc.program
@@ -30,7 +30,7 @@ def ludcmp_kernel(A: dc.float64[N, N], b: dc.float64[N]):
     for i in range(N):
         y[i] = b[i] - A[i, :i] @ y[:i]
     for i in range(N - 1, -1, -1):
-        x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]
+        x[i] = (y[i] - A[i, i + 1 :] @ x[i + 1 :]) / A[i, i]
 
     return x, y
 
@@ -38,12 +38,12 @@ def ludcmp_kernel(A: dc.float64[N, N], b: dc.float64[N]):
 def initialize(N, datatype=np.float64):
     A = np.empty((N, N), dtype=datatype)
     for i in range(N):
-        A[i, :i + 1] = np.fromfunction(lambda j: (-j % N) / N + 1, (i + 1, ), dtype=datatype)
-        A[i, i + 1:] = 0.0
+        A[i, : i + 1] = np.fromfunction(lambda j: (-j % N) / N + 1, (i + 1,), dtype=datatype)
+        A[i, i + 1 :] = 0.0
         A[i, i] = 1.0
     A[:] = A @ np.transpose(A)
     fn = datatype(N)
-    b = np.fromfunction(lambda i: (i + 1) / fn / 2.0 + 4.0, (N, ), dtype=datatype)
+    b = np.fromfunction(lambda i: (i + 1) / fn / 2.0 + 4.0, (N,), dtype=datatype)
 
     return A, b
 
@@ -62,7 +62,7 @@ def ground_truth(A, b):
     for i in range(A.shape[0]):
         y[i] = b[i] - A[i, :i] @ y[:i]
     for i in range(A.shape[0] - 1, -1, -1):
-        x[i] = (y[i] - A[i, i + 1:] @ x[i + 1:]) / A[i, i]
+        x[i] = (y[i] - A[i, i + 1 :] @ x[i + 1 :]) / A[i, i]
 
     return x, y
 
@@ -137,7 +137,7 @@ def run_ludcmp_autodiff():
 
     # Initialize gradient computation data
     gradient_A = np.zeros_like(A)
-    gradient___return = np.ones((1, ), dtype=np.float64)
+    gradient___return = np.ones((1,), dtype=np.float64)
 
     # Define sum reduction for the output
     @dc.program
@@ -162,10 +162,10 @@ def run_ludcmp_autodiff():
 
 
 def run_ludcmp(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Ludcmp for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]
@@ -198,16 +198,15 @@ def test_autodiff():
     pytest.importorskip("jax", reason="jax not installed. Please install with: pip install dace[ml-testing]")
     # Serialization causes issues, we temporarily disable it
     # TODO: open an issue to fix the serialization stability problem
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
+    last_value = os.environ.get("DACE_testing_serialization", "0")
+    os.environ["DACE_testing_serialization"] = "0"
     run_ludcmp_autodiff()
-    os.environ['DACE_testing_serialization'] = last_value
+    os.environ["DACE_testing_serialization"] = last_value
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

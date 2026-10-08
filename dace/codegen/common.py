@@ -65,7 +65,7 @@ def codeblock_to_cpp(cb: CodeBlock):
     elif cb.language == dtypes.Language.Python:
         return cppunparse.py2cpp(cb.code)
     else:
-        warnings.warn('Unrecognized language %s in codeblock' % cb.language)
+        warnings.warn("Unrecognized language %s in codeblock" % cb.language)
         return cb.as_string
 
 
@@ -74,15 +74,19 @@ def update_persistent_desc(desc: data.Data, sdfg: SDFG):
     Replaces the symbols used in a persistent data descriptor according to NestedSDFG's symbol mapping.
     The replacement happens recursively up to the top-level SDFG.
     """
-    if (desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External) and sdfg.parent
-            and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)):
+    if (
+        desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
+        and sdfg.parent
+        and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)
+    ):
         newdesc = deepcopy(desc)
         csdfg = sdfg
         while csdfg.parent_sdfg:
             if any(str(s) not in csdfg.parent_nsdfg_node.symbol_mapping for s in newdesc.free_symbols):
                 raise ValueError("Persistent data descriptor depends on symbols defined in NestedSDFG scope.")
-            symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
-                                  lambda m: sd.replace_properties_dict(newdesc, m))
+            symbolic.safe_replace(
+                csdfg.parent_nsdfg_node.symbol_mapping, lambda m: sd.replace_properties_dict(newdesc, m)
+            )
             csdfg = csdfg.parent_sdfg
         return newdesc
     return desc
@@ -107,9 +111,9 @@ def gpu_stream_expr(stream: Union[int, str]) -> str:
     stream lives outside it. Going through here keeps that stream an ordinary one, passed to work
     and synchronized like any other.
     """
-    if stream == 'nullptr':
-        return 'nullptr'
-    return f'__state->gpu_context->streams[{stream}]'
+    if stream == "nullptr":
+        return "nullptr"
+    return f"__state->gpu_context->streams[{stream}]"
 
 
 @lru_cache()
@@ -120,43 +124,45 @@ def get_gpu_backend() -> str:
     then if an AMD device exists, or fail.
     Otherwise, chooses the configured backend in ``compiler.cuda.backend``.
     """
-    backend: str = config.Config.get('compiler', 'cuda', 'backend')
-    if backend and backend != 'auto':
+    backend: str = config.Config.get("compiler", "cuda", "backend")
+    if backend and backend != "auto":
         return backend
 
     def _try_execute(cmd: str) -> bool:
-        process = subprocess.Popen(cmd.split(' '), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
+        process = subprocess.Popen(cmd.split(" "), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
         errcode = process.wait()
         return errcode == 0
 
     # Test 1: Test for existence of *-smi
-    if _try_execute('nvidia-smi'):
-        return 'cuda'
-    if _try_execute('rocm-smi'):
-        return 'hip'
+    if _try_execute("nvidia-smi"):
+        return "cuda"
+    if _try_execute("rocm-smi"):
+        return "hip"
 
     # Test 2: Attempt to check with CMake
-    if _try_execute('cmake --find-package -DNAME=CUDA -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
-        return 'cuda'
-    if _try_execute('cmake --find-package -DNAME=HIP -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
-        return 'hip'
+    if _try_execute("cmake --find-package -DNAME=CUDA -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST"):
+        return "cuda"
+    if _try_execute("cmake --find-package -DNAME=HIP -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST"):
+        return "hip"
 
     # Test 3: Environment variables
-    if os.getenv('HIP_PLATFORM') == 'amd':
-        return 'hip'
-    elif os.getenv('CUDA_HOME'):
-        return 'cuda'
+    if os.getenv("HIP_PLATFORM") == "amd":
+        return "hip"
+    elif os.getenv("CUDA_HOME"):
+        return "cuda"
 
     # Test 4: Runtime libraries
-    if ctypes.util.find_library('amdhip64') and not ctypes.util.find_library('cudart'):
-        return 'hip'
-    elif ctypes.util.find_library('cudart') and not ctypes.util.find_library('amdhip64'):
-        return 'cuda'
+    if ctypes.util.find_library("amdhip64") and not ctypes.util.find_library("cudart"):
+        return "hip"
+    elif ctypes.util.find_library("cudart") and not ctypes.util.find_library("amdhip64"):
+        return "cuda"
 
-    raise RuntimeError('Cannot autodetect existence of NVIDIA or AMD GPU, please '
-                       'set the DaCe configuration entry ``compiler.cuda.backend`` '
-                       'or the ``DACE_compiler_cuda_backend`` environment variable '
-                       'to either "cuda" or "hip".')
+    raise RuntimeError(
+        "Cannot autodetect existence of NVIDIA or AMD GPU, please "
+        "set the DaCe configuration entry ``compiler.cuda.backend`` "
+        "or the ``DACE_compiler_cuda_backend`` environment variable "
+        'to either "cuda" or "hip".'
+    )
 
 
 @lru_cache()
@@ -165,22 +171,24 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     Returns the GPU runtime library (CUDA / HIP) if exists. The result is cached for performance.
     """
     backend = get_gpu_backend()
-    if backend == 'cuda':
-        libpath = ctypes.util.find_library('cudart')
-        if os.name == 'nt' and not libpath:  # Windows-based search
+    if backend == "cuda":
+        libpath = ctypes.util.find_library("cudart")
+        if os.name == "nt" and not libpath:  # Windows-based search
             for version in (12, 11, 10, 9):
-                libpath = ctypes.util.find_library(f'cudart64_{version}0')
+                libpath = ctypes.util.find_library(f"cudart64_{version}0")
                 if libpath:
                     break
-    elif backend == 'hip':
-        libpath = ctypes.util.find_library('amdhip64')
+    elif backend == "hip":
+        libpath = ctypes.util.find_library("amdhip64")
     else:
-        raise RuntimeError(f'Cannot obtain GPU runtime library for backend {backend}')
+        raise RuntimeError(f"Cannot obtain GPU runtime library for backend {backend}")
 
     if not libpath:
-        envname = 'PATH' if os.name == 'nt' else 'LD_LIBRARY_PATH'
-        raise RuntimeError(f'GPU runtime library for {backend} not found. Please set the {envname} '
-                           'environment variable to point to the libraries.')
+        envname = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
+        raise RuntimeError(
+            f"GPU runtime library for {backend} not found. Please set the {envname} "
+            "environment variable to point to the libraries."
+        )
 
     return gpu_runtime.GPURuntime(backend, libpath)
 
@@ -208,27 +216,29 @@ def get_gpu_chiplet_count() -> Optional[int]:
         try:
             processor_handles = amdsmi.amdsmi_get_processor_handles()
             if not processor_handles:
-                raise RuntimeError('`amdsmi` did not report any GPU.')
+                raise RuntimeError("`amdsmi` did not report any GPU.")
             chiplets = int(amdsmi.amdsmi_get_gpu_xcd_counter(processor_handles[0]))
             if chiplets < 1:
-                raise RuntimeError(f'`amdsmi` reported an invalid number of chiplets ({chiplets}).')
+                raise RuntimeError(f"`amdsmi` reported an invalid number of chiplets ({chiplets}).")
             return chiplets
         finally:
             amdsmi.amdsmi_shut_down()
     except Exception as e:
-        warnings.warn(f'Could not determine the number of GPU chiplets through `amdsmi`: {e}. The '
-                      'distribution of thread-blocks over chiplets is disabled. Set the '
-                      '`compiler.cuda.chiplet_number` configuration entry to the number of chiplets of '
-                      'the GPU (6 on MI300A) to enable it.')
+        warnings.warn(
+            f"Could not determine the number of GPU chiplets through `amdsmi`: {e}. The "
+            "distribution of thread-blocks over chiplets is disabled. Set the "
+            "`compiler.cuda.chiplet_number` configuration entry to the number of chiplets of "
+            "the GPU (6 on MI300A) to enable it."
+        )
         return None
 
 
 def platform_library_name(libname: str) -> str:
-    """ Get the filename of a library.
+    """Get the filename of a library.
 
-        :param libname: the name of the library.
-        :return: the filename of the library.
+    :param libname: the name of the library.
+    :return: the filename of the library.
     """
-    prefix = config.Config.get('compiler', 'library_prefix')
-    suffix = config.Config.get('compiler', 'library_extension')
+    prefix = config.Config.get("compiler", "library_prefix")
+    suffix = config.Config.get("compiler", "library_extension")
     return f"{prefix}{libname}.{suffix}"

@@ -3,7 +3,7 @@ import dace as dc
 import numpy as np
 import os
 
-N = dc.symbol('N')
+N = dc.symbol("N")
 
 
 @dc.program
@@ -158,11 +158,11 @@ def test_nested_offset_access_nested_dependency():
         return out
 
     inp = np.reshape(np.arange(6 * 5 * 5, dtype=np.float64), (6, 5, 5)).copy()
-    last_value = os.environ.get('DACE_testing_serialization', '0')
-    os.environ['DACE_testing_serialization'] = '0'
-    with dc.config.set_temporary('testing', 'serialization', value=False):
+    last_value = os.environ.get("DACE_testing_serialization", "0")
+    os.environ["DACE_testing_serialization"] = "0"
+    with dc.config.set_temporary("testing", "serialization", value=False):
         out = nested_offset_access_nested_dep(inp)
-    os.environ['DACE_testing_serialization'] = last_value
+    os.environ["DACE_testing_serialization"] = last_value
     ref = nested_offset_access_nested_dep.f(inp)
     assert np.allclose(out, ref)
 
@@ -266,9 +266,9 @@ def test_issue_1139():
     of transients (or add new ones via inlining, which is happening in this bug), the ``_temp_transients``
     field becomes out of date and renaming the fields during inlining removes data descriptors.
     """
-    XN = dc.symbol('XN')
-    YN = dc.symbol('YN')
-    N = dc.symbol('N')
+    XN = dc.symbol("XN")
+    YN = dc.symbol("YN")
+    N = dc.symbol("N")
 
     @dc.program
     def nester(start: dc.float64, stop: dc.float64, X: dc.float64[N]):
@@ -280,7 +280,7 @@ def test_issue_1139():
     def tester(xmin: dc.float64, xmax: dc.float64):
         a = np.ndarray((XN, YN), dtype=np.int64)
         b = np.ndarray((XN, YN), dtype=np.int64)
-        c = np.ndarray((XN, ), dtype=np.float64)
+        c = np.ndarray((XN,), dtype=np.float64)
         nester(xmin, xmax, c)
         return c
 
@@ -295,14 +295,12 @@ def test_issue_2100():
     Reproduction of issue #2100, where a nested SDFG with a fill operation
     would not register the filled array as an output, causing a validation failure.
     """
-    N = dc.symbol('N')
+    N = dc.symbol("N")
 
     @dc.program
     def global_matmul(C: dc.float32[N, N] @ dc.StorageType.GPU_Global):
         for i, j in dc.map[0:N:N, 0:N:N] @ dc.ScheduleType.GPU_Device:
-
             for l in dc.map[0:64] @ dc.ScheduleType.GPU_ThreadBlock:
-
                 c = dc.ndarray(
                     [N, N],
                     dtype=dc.float32,
@@ -313,7 +311,7 @@ def test_issue_2100():
                 for k in dc.map[0:1] @ dc.ScheduleType.Sequential:
                     c.fill(0.0)
 
-                C[i:i + N, j:j + N] = c[:, :]
+                C[i : i + N, j : j + N] = c[:, :]
 
     sdfg = global_matmul.to_sdfg(simplify=False)
     sdfg.validate()

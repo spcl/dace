@@ -9,7 +9,6 @@ import numpy as np
 def test_context_manager_decorator():
 
     class Ctx:
-
         def __init__(self) -> None:
             self.did_start = False
             self.should_pass = False
@@ -21,7 +20,7 @@ def test_context_manager_decorator():
             self.stop()
 
         def start(self, name: str):
-            if name == 'pass':
+            if name == "pass":
                 self.did_start = True
 
         def stop(self):
@@ -32,7 +31,7 @@ def test_context_manager_decorator():
 
     @dace.program
     def prog(A: dace.float64[20]):
-        with ctx.mgr('pass'):
+        with ctx.mgr("pass"):
             A[:] = 0
 
     A = np.random.rand(20)
@@ -78,7 +77,6 @@ def test_ctxmgr_name_clash():
             sdfg = ctxmgr_name_clashing_0.to_sdfg()
 
     for i, f in enumerate([ctxmgr_name_clashing_0, ctxmgr_name_clashing_1]):
-
         if i > 0:
             f.load_precompiled_sdfg(sdfg.build_folder)
 
@@ -98,6 +96,6 @@ def test_ctxmgr_name_clash():
         assert a_count > 0 and b_count > 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_context_manager_decorator()
     test_ctxmgr_name_clash()

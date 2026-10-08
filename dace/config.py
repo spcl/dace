@@ -42,7 +42,7 @@ def temporary_config():
             Config.set("optimizer", "autooptimize", value=True)
             foo()
     """
-    with tempfile.TemporaryFile(mode='w+t') as fp:
+    with tempfile.TemporaryFile(mode="w+t") as fp:
         Config.save(file=fp)
         try:
             yield Config
@@ -59,27 +59,27 @@ def _env2bool(envval):
     :return: True if the input value matches a valid TRUE
              value, or False otherwise.
     """
-    return str(envval).lower() in ['true', '1', 'y', 'yes', 'on', 'verbose']
+    return str(envval).lower() in ["true", "1", "y", "yes", "on", "verbose"]
 
 
 def _add_defaults(config, metadata):
-    """ Add defaults to configuration from metadata.
+    """Add defaults to configuration from metadata.
 
-        :return: True if configuration was modified, False otherwise.
+    :return: True if configuration was modified, False otherwise.
     """
     osname = platform.system()
     modified = False
     for k, v in metadata.items():
         # Recursive call for fields inside the dictionary
-        if v['type'] == 'dict':
+        if v["type"] == "dict":
             if k not in config:
                 modified = True
                 config[k] = {}
-            modified |= _add_defaults(config[k], v['required'])
+            modified |= _add_defaults(config[k], v["required"])
             continue
         # Empty list initialization (if no default is specified)
-        elif v['type'] == 'list':
-            if k not in config and 'default' not in v:
+        elif v["type"] == "list":
+            if k not in config and "default" not in v:
                 modified = True
                 config[k] = []
                 continue
@@ -87,10 +87,10 @@ def _add_defaults(config, metadata):
         if k not in config:
             modified = True
             # Per-OS default
-            if 'default_' + osname in v:
-                config[k] = v['default_' + osname]
+            if "default_" + osname in v:
+                config[k] = v["default_" + osname]
             else:
-                config[k] = v['default']
+                config[k] = v["default"]
     return modified
 
 
@@ -102,7 +102,7 @@ class _ConfigData(threading.local):
     """
 
     def __init__(self) -> None:
-        self.default_filename = '.dace.conf'
+        self.default_filename = ".dace.conf"
         self._config = {}
         self._config_metadata = {}
         self._cfg_filename = None
@@ -123,8 +123,8 @@ class _ConfigData(threading.local):
             return
 
         # Override default configuration file path
-        if 'DACE_CONFIG' in os.environ:
-            default_cfg_filename = os.environ['DACE_CONFIG']
+        if "DACE_CONFIG" in os.environ:
+            default_cfg_filename = os.environ["DACE_CONFIG"]
         else:
             home = os.path.expanduser("~")
             default_cfg_filename = os.path.join(home, self.default_filename)
@@ -132,7 +132,7 @@ class _ConfigData(threading.local):
         self._default_cfg_path = default_cfg_filename
 
         dace_path = os.path.dirname(os.path.abspath(__file__))
-        self._metadata_filename = os.path.join(dace_path, 'config_schema.yml')
+        self._metadata_filename = os.path.join(dace_path, "config_schema.yml")
 
         # Load configuration schema (for validation and defaults)
         self.load_schema(filename=None)
@@ -151,10 +151,10 @@ class _ConfigData(threading.local):
             # None of the files were found, load defaults from metadata
             self._cfg_filename = None
             self._config = {}
-            _add_defaults(self._config, self._config_metadata['required'])
+            _add_defaults(self._config, self._config_metadata["required"])
 
         # Check for old configurations to update the file
-        if 'execution' in self._config and self._cfg_filename:
+        if "execution" in self._config and self._cfg_filename:
             # Reset config to only nondefault ones
             self.save(all=False)
 
@@ -163,19 +163,19 @@ class _ConfigData(threading.local):
             assert filename is None
             self._config = yaml.load(file.read(), Loader=yaml.SafeLoader)
         else:
-            with open(filename if filename else self._cfg_filename, 'r') as f:
+            with open(filename if filename else self._cfg_filename, "r") as f:
                 self._config = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
         if self._config is None:
             self._config = {}
 
         # Add defaults from metadata
-        _add_defaults(self._config, self._config_metadata['required'])
+        _add_defaults(self._config, self._config_metadata["required"])
 
     def load_schema(self, filename: Optional[str] = None):
         if filename is None:
             filename = self._metadata_filename
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             self._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
     def extend(self, schema_filename: str):
@@ -184,7 +184,7 @@ class _ConfigData(threading.local):
 
         :param schema_filename: The schema file to load.
         """
-        with open(schema_filename, 'r') as f:
+        with open(schema_filename, "r") as f:
             new_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
         def merge_dicts(d1: Dict[str, Any], d2: Dict[str, Any]):
@@ -194,8 +194,8 @@ class _ConfigData(threading.local):
                 else:
                     d1[k] = v
 
-        merge_dicts(self._config_metadata['required'], new_metadata['required'])
-        _add_defaults(self._config, new_metadata['required'])
+        merge_dicts(self._config_metadata["required"], new_metadata["required"])
+        _add_defaults(self._config, new_metadata["required"])
 
     def save(self, path: Optional[str] = None, all: bool = False, file: Optional[io.FileIO] = None):
         if path is None and file is None:
@@ -211,48 +211,48 @@ class _ConfigData(threading.local):
                         # If any filesystem-related error happened during file save, move on to next candidate
                         continue
 
-                warnings.warn('No DaCe configuration file was able to be saved')
+                warnings.warn("No DaCe configuration file was able to be saved")
                 return
 
         # Write configuration file
         if file is not None:
             yaml.dump(self._config if all else self.nondefaults(), file, default_flow_style=False)
         else:
-            with open(path, 'w') as f:
+            with open(path, "w") as f:
                 yaml.dump(self._config if all else self.nondefaults(), f, default_flow_style=False)
 
     def get_metadata(self, *key_hierarchy):
         # Support for "a.b.c" in calls
-        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
-            key_hierarchy = key_hierarchy[0].split('.')
+        if len(key_hierarchy) == 1 and "." in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split(".")
 
         # Traverse the key hierarchy
         current_conf = self._config_metadata
         for key in key_hierarchy:
-            current_conf = current_conf['required'][key]
+            current_conf = current_conf["required"][key]
         return current_conf
 
     def get_default(self, *key_hierarchy):
         # Support for "a.b.c" in calls
-        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
-            key_hierarchy = key_hierarchy[0].split('.')
+        if len(key_hierarchy) == 1 and "." in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split(".")
 
         # Traverse the key hierarchy
         current_conf = self._config_metadata
         for key in key_hierarchy:
-            current_conf = current_conf['required'][key]
-        if 'default_' + platform.system() in current_conf:
-            return current_conf['default_' + platform.system()]
-        return current_conf['default']
+            current_conf = current_conf["required"][key]
+        if "default_" + platform.system() in current_conf:
+            return current_conf["default_" + platform.system()]
+        return current_conf["default"]
 
     def get(self, *key_hierarchy):
         # Support for "a.b.c" in calls
-        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
-            key_hierarchy = key_hierarchy[0].split('.')
+        if len(key_hierarchy) == 1 and "." in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split(".")
 
         # Environment variable override
         # NOTE: will only work if a specific key is accessed!
-        envvar = 'DACE_' + '_'.join(key_hierarchy)
+        envvar = "DACE_" + "_".join(key_hierarchy)
         if envvar in os.environ:
             return os.environ[envvar]
 
@@ -271,8 +271,8 @@ class _ConfigData(threading.local):
 
     def append(self, *key_hierarchy, value, autosave):
         # Support for "a.b.c" in calls
-        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
-            key_hierarchy = key_hierarchy[0].split('.')
+        if len(key_hierarchy) == 1 and "." in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split(".")
 
         # Traverse the key hierarchy up until the next to last element
         current_conf = self._config
@@ -287,8 +287,8 @@ class _ConfigData(threading.local):
 
     def set(self, *key_hierarchy, value, autosave):
         # Support for "a.b.c" in calls
-        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
-            key_hierarchy = key_hierarchy[0].split('.')
+        if len(key_hierarchy) == 1 and "." in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split(".")
 
         # Traverse the key hierarchy up until the next to last element
         current_conf = self._config
@@ -302,26 +302,26 @@ class _ConfigData(threading.local):
     def nondefaults(self) -> Dict[str, Any]:
         current_conf = self._config
         defaults = self._config_metadata
-        system_default_key = 'default_' + platform.system()
+        system_default_key = "default_" + platform.system()
 
         def traverse(conf: Dict[str, Any], defaults: Dict[str, Any], result: Dict[str, Any]):
             for k, v in conf.items():
                 if k not in defaults:  # Configuration entry no longer exists
                     continue
-                elif 'required' in defaults[k]:  # Traverse further
+                elif "required" in defaults[k]:  # Traverse further
                     internal = {}
-                    traverse(v, defaults[k]['required'], internal)
+                    traverse(v, defaults[k]["required"], internal)
                     if internal:
                         result[k] = internal
                 elif system_default_key in defaults[k]:
                     if v != defaults[k][system_default_key]:
                         result[k] = v
-                elif 'default' in defaults[k]:
-                    if v != defaults[k]['default']:
+                elif "default" in defaults[k]:
+                    if v != defaults[k]["default"]:
                         result[k] = v
 
         output = {}
-        traverse(current_conf, defaults['required'], output)
+        traverse(current_conf, defaults["required"], output)
         return output
 
 
@@ -387,29 +387,29 @@ class Config(object):
 
     @staticmethod
     def get_metadata(*key_hierarchy):
-        """ Returns the configuration specification of a given entry
-            from the schema.
+        """Returns the configuration specification of a given entry
+        from the schema.
 
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :return: Configuration specification as a dictionary.
+        :param key_hierarchy: A tuple of strings leading to the
+                              configuration entry.
+                              For example: ('a', 'b', 'c') would be
+                              configuration entry c which is in the
+                              path a->b.
+        :return: Configuration specification as a dictionary.
         """
         return Config._data.get_metadata(*key_hierarchy)
 
     @staticmethod
     def get_default(*key_hierarchy):
-        """ Returns the default value of a given configuration entry.
-            Takes into account current operating system.
+        """Returns the default value of a given configuration entry.
+        Takes into account current operating system.
 
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :return: Default configuration value.
+        :param key_hierarchy: A tuple of strings leading to the
+                              configuration entry.
+                              For example: ('a', 'b', 'c') would be
+                              configuration entry c which is in the
+                              path a->b.
+        :return: Default configuration value.
         """
         return Config._data.get_default(*key_hierarchy)
 
@@ -429,16 +429,16 @@ class Config(object):
 
     @staticmethod
     def get_bool(*key_hierarchy):
-        """ Returns the current value of a given boolean configuration entry.
-            This specialization allows more string types to be converted to
-            boolean, e.g., due to environment variable overrides.
+        """Returns the current value of a given boolean configuration entry.
+        This specialization allows more string types to be converted to
+        boolean, e.g., due to environment variable overrides.
 
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :return: Configuration entry value (as a boolean).
+        :param key_hierarchy: A tuple of strings leading to the
+                              configuration entry.
+                              For example: ('a', 'b', 'c') would be
+                              configuration entry c which is in the
+                              path a->b.
+        :return: Configuration entry value (as a boolean).
         """
         return Config._data.get_bool(*key_hierarchy)
 

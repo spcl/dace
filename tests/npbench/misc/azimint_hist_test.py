@@ -7,7 +7,7 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'bins', 'npt'))
+N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ("N", "bins", "npt"))
 
 
 def relerror(val, ref):
@@ -37,7 +37,7 @@ def compute_bin(x: dace.float64, bin_edges: dace.float64[bins + 1]):
 
 @dace.program
 def histogram(a: dace.float64[N], bin_edges: dace.float64[bins + 1]):
-    hist = np.ndarray((bins, ), dtype=np.int64)
+    hist = np.ndarray((bins,), dtype=np.int64)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
 
@@ -50,7 +50,7 @@ def histogram(a: dace.float64[N], bin_edges: dace.float64[bins + 1]):
 
 @dace.program
 def histogram_weights(a: dace.float64[N], bin_edges: dace.float64[bins + 1], weights: dace.float64[N]):
-    hist = np.ndarray((bins, ), dtype=weights.dtype)
+    hist = np.ndarray((bins,), dtype=weights.dtype)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
 
@@ -63,9 +63,9 @@ def histogram_weights(a: dace.float64[N], bin_edges: dace.float64[bins + 1], wei
 
 @dace.program
 def dace_azimint_hist(data: dace.float64[N], radius: dace.float64[N]):
-    bin_edges_u = np.ndarray((npt + 1, ), dtype=np.float64)
+    bin_edges_u = np.ndarray((npt + 1,), dtype=np.float64)
     histu = histogram(radius, bin_edges_u)
-    bin_edges_w = np.ndarray((npt + 1, ), dtype=np.float64)
+    bin_edges_w = np.ndarray((npt + 1,), dtype=np.float64)
     histw = histogram_weights(radius, bin_edges_w, data)
     return histw / histu
 
@@ -78,16 +78,17 @@ def numpy_azimint_hist(data, radius, npt):
 
 def initialize(N):
     from numpy.random import default_rng
+
     rng = default_rng(42)
-    data, radius = rng.random((N, )), rng.random((N, ))
+    data, radius = rng.random((N,)), rng.random((N,))
     return data, radius
 
 
 def run_azimint_hist(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs azimint-hist for the given device
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (npbench S size)
     N, npt = (400000, 1000)
@@ -99,7 +100,7 @@ def run_azimint_hist(device_type: dace.dtypes.DeviceType):
         sdfg = auto_optimize(sdfg, device_type)
         val = sdfg(data=data, radius=radius, N=N, npt=npt)
     else:
-        raise ValueError(f'Unsupported device type: {device_type}')
+        raise ValueError(f"Unsupported device type: {device_type}")
 
     # Compute ground truth and Validate result
     ref = numpy_azimint_hist(data, radius, npt)
@@ -107,7 +108,7 @@ def run_azimint_hist(device_type: dace.dtypes.DeviceType):
     err = 1e-10
     if device_type is dace.dtypes.DeviceType.GPU:
         err = 1e-3
-    assert (np.allclose(val, ref) or relerror(val, ref) < err)
+    assert np.allclose(val, ref) or relerror(val, ref) < err
     return sdfg
 
 
@@ -121,9 +122,8 @@ def test_gpu():
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default="cpu", choices=["cpu", "gpu"], help="Target platform")
 
     args = vars(parser.parse_args())
     target = args["target"]

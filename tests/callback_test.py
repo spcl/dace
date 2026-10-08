@@ -7,7 +7,7 @@ from dace.frontend.python.common import DaceSyntaxError
 
 
 def failed_test():
-    raise AssertionError('Should not be called')
+    raise AssertionError("Should not be called")
 
 
 def mysquarer(inp):
@@ -24,16 +24,17 @@ def consumer(inp):
 
 def arraysquarer(outp_array, inp_array):
     import numpy as np
+
     np.copyto(outp_array, np.square(inp_array))
 
 
-M = dace.symbolic.symbol('M')
-N = dace.symbolic.symbol('N')
-O = dace.symbolic.symbol('O')
-giveandtake = dace.symbol('giveandtake', dace.callback(dace.uint32, dace.uint32))
-take = dace.symbol('take', dace.callback(None, dace.uint32))
-give = dace.symbol('give', dace.callback(dace.uint32))
-donothing = dace.symbol('donothing', dace.callback(None))
+M = dace.symbolic.symbol("M")
+N = dace.symbolic.symbol("N")
+O = dace.symbolic.symbol("O")
+giveandtake = dace.symbol("giveandtake", dace.callback(dace.uint32, dace.uint32))
+take = dace.symbol("take", dace.callback(None, dace.uint32))
+give = dace.symbol("give", dace.callback(dace.uint32))
+donothing = dace.symbol("donothing", dace.callback(None))
 
 
 @dace.program
@@ -49,7 +50,7 @@ def callback_test(A: dace.uint32[2], B: dace.uint32[2]):
             donothing()
 
 
-arrfunc = dace.symbol('arrfunc', dtype=dace.callback(None, dace.float64[M, N, O], dace.float64[M, N, O]))
+arrfunc = dace.symbol("arrfunc", dtype=dace.callback(None, dace.float64[M, N, O], dace.float64[M, N, O]))
 
 
 @dace.program
@@ -61,8 +62,8 @@ def callback_with_arrays(out_arr: dace.float64[M, N, O], in_arr: dace.float64[M,
 
 
 def test_callback():
-    A = dace.ndarray((2, ), dtype=dace.int32)
-    B = dace.ndarray((2, ), dtype=dace.int32)
+    A = dace.ndarray((2,), dtype=dace.int32)
+    B = dace.ndarray((2,), dtype=dace.int32)
     A[:] = 5
     B[:] = 0
 
@@ -87,7 +88,7 @@ def test_callback_with_arrays():
 
 
 def test_invalid_callback():
-    cb = dace.symbol('cb', dace.callback(dace.uint32[5]))
+    cb = dace.symbol("cb", dace.callback(dace.uint32[5]))
 
     @dace.program
     def shouldfail(out):

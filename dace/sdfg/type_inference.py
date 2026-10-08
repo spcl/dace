@@ -1,10 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Type inference: traverses code and returns types for all undefined symbols according to C semantics
-    infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
-        return anything and it will not produce errors
+Type inference: traverses code and returns types for all undefined symbols according to C semantics
+infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
+    return anything and it will not produce errors
 
-    This module is inspired by astunparse: https://github.com/simonpercivall/astunparse
+This module is inspired by astunparse: https://github.com/simonpercivall/astunparse
 """
 
 import numpy as np
@@ -19,11 +19,11 @@ from typing import Callable, Union
 
 # Additional function names that can be used to infer types
 KNOWN_FUNCTIONS: dict[str, Callable[[list[dtypes.typeclass]], dtypes.typeclass]] = {
-    'abs': lambda arg_types: arg_types[0],
-    'log': lambda arg_types: arg_types[0],
-    'min': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
-    'max': lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
-    'round': lambda arg_types: dtypes.typeclass(int),
+    "abs": lambda arg_types: arg_types[0],
+    "log": lambda arg_types: arg_types[0],
+    "min": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    "max": lambda arg_types: dtypes.result_type_of(arg_types[0], *arg_types),
+    "round": lambda arg_types: dtypes.typeclass(int),
 }
 
 _cmpops = {
@@ -118,7 +118,8 @@ def infer_expr_type(code, symbols=None):
             parsed_ast = ast.parse(sympy.printing.pycode(code, allow_unknown_functions=True))
     elif isinstance(code, SymExpr):
         has_typed_constant = any(
-            isinstance(node, symbolic.TypedConstant) for node in sympy.preorder_traversal(code.expr))
+            isinstance(node, symbolic.TypedConstant) for node in sympy.preorder_traversal(code.expr)
+        )
         if has_typed_constant:
             parsed_ast = ast.parse(symstr(code.expr))
         else:
@@ -179,9 +180,11 @@ def _Assign(t, symbols, inferred_symbols):
                 _dispatch_lhs_tuple(target.elts, symbols, inferred_symbols)
             target = target.elts[0]
 
-        if not isinstance(
-                target,
-            (ast.Subscript, ast.Attribute)) and not target.id in symbols and not target.id in inferred_symbols:
+        if (
+            not isinstance(target, (ast.Subscript, ast.Attribute))
+            and not target.id in symbols
+            and not target.id in inferred_symbols
+        ):
             # the target is not already defined: we should try to infer the type looking at the value
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
             inferred_symbols[target.id] = inferred_type
@@ -262,7 +265,7 @@ def _AsyncFunctionDef(t, symbols, inferred_symbols):
 def _generic_For(t, symbols, inferred_symbols):
     if isinstance(t.target, ast.Tuple):
         if len(t.target.elts) == 1:
-            (elt, ) = t.target.elts
+            (elt,) = t.target.elts
             if elt.id not in symbols and elt not in inferred_symbols:
                 inferred_type = _dispatch(elt, symbols, inferred_symbols)
                 inferred_symbols[elt] = inferred_type
@@ -292,7 +295,7 @@ def _If(t, symbols, inferred_symbols):
     _dispatch(t.test, symbols, inferred_symbols)
     _dispatch(t.body, symbols, inferred_symbols)
 
-    while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
+    while t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If):
         t = t.orelse[0]
         _dispatch(t.test, symbols, inferred_symbols)
         _dispatch(t.body, symbols, inferred_symbols)
@@ -336,7 +339,7 @@ def _Name(t, symbols, inferred_symbols):
         inferred_type = None
 
         # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
-        t_id = t.id[1:] if t.id.startswith('*') else t.id
+        t_id = t.id[1:] if t.id.startswith("*") else t.id
         if t_id.strip("()") in _py2c_typeconversion:
             inferred_type = _py2c_typeconversion[t_id.strip("()")]
         elif t_id in symbols:
@@ -399,8 +402,8 @@ def _BinOp(t, symbols, inferred_symbols):
         # infer type and returns
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
-    elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, ast.Constant) and int(t.right.value) == t.right.value and t.right.value >= 0):
+    elif t.op.__class__.__name__ == "Pow":
+        if isinstance(t.right, ast.Constant) and int(t.right.value) == t.right.value and t.right.value >= 0:
             if t.right.value != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.value) - 1):
@@ -411,7 +414,6 @@ def _BinOp(t, symbols, inferred_symbols):
             type_right = _dispatch(t.right, symbols, inferred_symbols)
             return dtypes.result_type_of(type_left, type_right)
     else:
-
         # get left and right types for type inference
         type_left = _dispatch(t.left, symbols, inferred_symbols)
         type_right = _dispatch(t.right, symbols, inferred_symbols)
@@ -433,7 +435,7 @@ def _Compare(t, symbols, inferred_symbols):
         if isinstance(inf_type, dtypes.vector):
             # Make sure all occuring vectors are of same size
             if vec_len is not None and vec_len != inf_type.veclen:
-                raise SyntaxError('Inconsistent vector lengths in Compare')
+                raise SyntaxError("Inconsistent vector lengths in Compare")
             vec_len = inf_type.veclen
     return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
@@ -446,15 +448,15 @@ def _BoolOp(t, symbols, inferred_symbols):
         if isinstance(inf_type, dtypes.vector):
             # Make sure all occuring vectors are of same size
             if vec_len is not None and vec_len != inf_type.veclen:
-                raise SyntaxError('Inconsistent vector lengths in BoolOp')
+                raise SyntaxError("Inconsistent vector lengths in BoolOp")
             vec_len = inf_type.veclen
     return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
 
 def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
     name = dace.frontend.python.astutils.rname(t)
-    if '.' in name:
-        dtype_str = name[name.rfind('.') + 1:]
+    if "." in name:
+        dtype_str = name[name.rfind(".") + 1 :]
     else:
         dtype_str = name
 
@@ -469,8 +471,11 @@ def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
 
 def _Attribute(t, symbols, inferred_symbols):
     inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-    if (isinstance(inferred_type, dtypes.pointer) and isinstance(inferred_type.base_type, dtypes.struct)
-            and t.attr in inferred_type.base_type.fields):
+    if (
+        isinstance(inferred_type, dtypes.pointer)
+        and isinstance(inferred_type.base_type, dtypes.struct)
+        and t.attr in inferred_type.base_type.fields
+    ):
         return inferred_type.base_type.fields[t.attr]
     return inferred_type
 
@@ -490,12 +495,12 @@ def _Call(t, symbols, inferred_symbols):
 
     # In case of a typeless math function, determine the return type based on the arguments
     name = dace.frontend.python.astutils.rname(t)
-    idx = name.rfind('.')
+    idx = name.rfind(".")
     if idx > -1:
-        module = name[:name.rfind('.')]
+        module = name[: name.rfind(".")]
     else:
-        module = ''
-    if module == 'math':
+        module = ""
+    if module == "math":
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
     # Check in known functions
@@ -516,7 +521,7 @@ def _Subscript(t, symbols, inferred_symbols):
     slice_type = _dispatch(t.slice, symbols, inferred_symbols)
 
     if isinstance(slice_type, dtypes.pointer):
-        raise SyntaxError('Invalid syntax (pointer given as slice)')
+        raise SyntaxError("Invalid syntax (pointer given as slice)")
 
     # A slice as subscript (e.g. [0:N]) returns a pointer
     if isinstance(t.slice, ast.Slice):
@@ -525,7 +530,7 @@ def _Subscript(t, symbols, inferred_symbols):
     # A vector as subscript of a pointer returns a vector of the base type
     if isinstance(value_type, dtypes.pointer) and isinstance(slice_type, dtypes.vector):
         if not np.issubdtype(slice_type.type, np.integer):
-            raise SyntaxError('Subscript must be some integer type')
+            raise SyntaxError("Subscript must be some integer type")
         return dtypes.vector(value_type.base_type, slice_type.veclen)
 
     # Otherwise (some index as subscript) we return the base type
@@ -556,7 +561,7 @@ def _ExtSlice(t, symbols, inferred_symbols):
 # argument
 def _arg(t, symbols, inferred_symbols):
     if t.annotation:
-        #argument with annotation, we can derive the type
+        # argument with annotation, we can derive the type
         inferred_type = _dispatch(t.annotation, symbols, inferred_symbols)
         inferred_symbols[t.arg] = inferred_type
 
@@ -573,15 +578,15 @@ def _arguments(t, symbols, inferred_symbols):
 
         # varargs, or bare '*' if no varargs but keyword-only arguments present
         if t.vararg or getattr(t, "kwonlyargs", False):
-            raise SyntaxError('Invalid C++')
+            raise SyntaxError("Invalid C++")
 
         # keyword-only arguments
         if getattr(t, "kwonlyargs", False):
-            raise SyntaxError('Invalid C++')
+            raise SyntaxError("Invalid C++")
 
         # kwargs
         if t.kwarg:
-            raise SyntaxError('Invalid C++')
+            raise SyntaxError("Invalid C++")
 
 
 def _Lambda(t, symbols, inferred_symbols):
@@ -607,12 +612,12 @@ def _Continue(t, symbols, inferred_symbols):
 
 
 def _Assert(t, symbols, inferred_symbols):
-    #Nothing to infer
+    # Nothing to infer
     pass
 
 
 def _Print(t, symbols, inferred_symbols):
-    #Nothing to infer
+    # Nothing to infer
     pass
 
 
