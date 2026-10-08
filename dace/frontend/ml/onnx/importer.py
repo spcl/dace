@@ -776,7 +776,7 @@ class ONNXModel:
 
 def create_output_array(
     inferred_symbols: dict[str, int], desc: dt.Data, use_torch=False, zeros: bool = False
-) -> np.ndarray | torch.tensor:
+) -> np.ndarray | torch.Tensor:
     """Create the array for an output. This is either a numpy array or a torch tensor depending on `use_torch`
 
     When `self.force_torch_outputs` is True, the outputs will be tensors. Otherwise, the outputs will be tensors
