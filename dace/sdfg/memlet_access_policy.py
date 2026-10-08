@@ -2,10 +2,12 @@
 """Memlet access policies: how a leaf memlet's addressing is realized in generated code.
 
 A *leaf* memlet is one that produces an address in generated code: the innermost memlet of a memlet path, i.e.
-the one bound to a tasklet, library node or to an access node inside a scope, or a copy between two access nodes
-(a nested SDFG connector receives the whole container, so the leaves are the memlets inside the nested SDFG). Its
-:attr:`~dace.memlet.Memlet.access_policy` is a purely *descriptive* record of how that address (and, for some kinds,
-the data movement it drives) is meant to be realized. Policies never change the
+the one bound to a tasklet, library node or to an access node inside a scope, or a copy between two access nodes.
+Memlet paths are global: a nested SDFG connector receives the whole container (an equivalent descriptor, no
+offset), so a path continues through the chain of nested SDFGs to the leaf memlets inside them, and the policy of a
+leaf memlet may place its address computation anywhere along that path (e.g., relative to a loop of an enclosing
+SDFG). The leaf memlet's :attr:`~dace.memlet.Memlet.access_policy` is a purely *descriptive* record of how that
+address (and, for some kinds, the data movement it drives) is meant to be realized. Policies never change the
 semantics of an SDFG and contain no code-level state; they are attached by analysis passes, tuners or by hand, and
 are *lowered* to ordinary SDFG constructs (symbols, loop statements, reference containers, tasklets) by
 :class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies` in the code-generation window.
@@ -89,11 +91,12 @@ class MemletAccessPolicy:
     def lower(cls, sdfg, entries: List[Tuple[Any, Any]], **options) -> Dict[str, int]:
         """Materialize all memlets of this policy kind in one SDFG as ordinary SDFG constructs.
 
-        Called by :class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies` once per SDFG
-        and policy kind, with every ``(state, edge)`` whose memlet carries a policy of this kind. The default does
-        nothing (copy-on-access needs no lowering).
+        Called by :class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies` once per
+        policy kind, with every ``(state, edge)`` of the SDFG and its nested SDFGs whose memlet carries a policy of
+        this kind (the memlet paths cross nested SDFGs, so one lowering may touch several of them). The default
+        does nothing (copy-on-access needs no lowering).
 
-        :param sdfg: The SDFG (possibly nested) owning the states.
+        :param sdfg: The root SDFG.
         :param entries: ``(state, edge)`` pairs of the leaf memlets to lower.
         :param options: Lowering options forwarded from the pass.
         :return: A dictionary of counters for the pass report (e.g. ``{'memlets': n, 'dropped': d}``).
@@ -146,9 +149,13 @@ class LoopCursor(MemletAccessPolicy):
     ``flat[cursor + immediate]`` and accessed with its original shape (non-contiguous reads). Loop nests chain: an
     inner cursor is initialized from the enclosing loop's cursor, one addition per level and no multiplication.
 
-    :param loop: Label of the enclosing :class:`~dace.sdfg.state.LoopRegion` the policy is relative to.
+    :param loop: Label of the enclosing :class:`~dace.sdfg.state.LoopRegion` the policy is relative to, in the
+                 memlet's SDFG or in an SDFG enclosing it along the memlet's path (the innermost loop with this
+                 label and variable). The cursor lives in that loop's SDFG and is passed to the nested SDFGs
+                 between the loop and the memlet as a symbol.
     :param variable: The loop's induction variable.
     :param step: Elements the address advances per loop iteration (the loop stride is already folded in).
+                 ``step``, ``base_invariant`` and ``lane_part`` are in the symbols of the loop's SDFG.
     :param base_invariant: The part of the base element offset that does not depend on the loop variable or on
                            lane symbols (it may contain enclosing-loop variables, SDFG symbols, constants and
                            inner map parameters).
@@ -162,7 +169,8 @@ class LoopCursor(MemletAccessPolicy):
     :param cursor: Name of the materialized cursor symbol (set by the lowering).
     :param reference: Name of the flat reference the rewritten memlet addresses (set by the lowering).
     :param window: Name of the per-iteration window reference, for non-contiguous memlets (set by the lowering).
-    :param immediate: The loop-invariant element offset of this memlet relative to the cursor (set by the lowering).
+    :param immediate: The loop-invariant element offset of this memlet relative to the cursor, in the symbols of
+                      the memlet's SDFG (set by the lowering).
     """
 
     loop: str

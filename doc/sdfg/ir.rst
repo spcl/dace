@@ -381,12 +381,14 @@ a read and a write). Several fields describe the data being moved:
 There are more properties you can set, see :class:`~dace.memlet.Memlet` for a full list.
 
 **Memlet access policies**: A leaf memlet (one that produces an address in generated code: a memlet connected to a tasklet
-or library node, or a copy between two access nodes; nested SDFGs receive whole containers) carries a ``access_policy`` property, a
+or library node, or a copy between two access nodes) carries an ``access_policy`` property, a
 :class:`~dace.sdfg.memlet_access_policy.MemletAccessPolicy`, that describes *how its addressing is realized* in generated code.
 The policy is purely descriptive: it never changes the semantics of the SDFG, and it is lowered to ordinary SDFG
 constructs (symbols, loop statements, reference containers) in the code-generation window by
 :class:`~dace.transformation.passes.memlet_access_policies.LowerMemletAccessPolicies`, so that code generation itself knows
-nothing about policies. Two kinds exist today:
+nothing about policies. Memlet paths are global: nested SDFGs receive whole containers, so a path continues through
+the chain of nested SDFGs down to the leaf memlets inside them, and a policy may place the address computation of
+its leaf memlet anywhere along that path (e.g., relative to a loop of an enclosing SDFG). Two kinds exist today:
 
   * :class:`~dace.sdfg.memlet_access_policy.CopyOnAccess` (the default): the full offset expression is evaluated at every
     access and data moves at the access (or through the copy library node inserted for access-node-to-access-node
@@ -414,7 +416,9 @@ non-contiguous read is rewritten to a small *window* reference that is set to th
 accessed with the memlet's original shape. A class is anchored at the lowest member offset (or, for a stencil-like
 neighbourhood, at its centre) so that the base of an array window is applied once, on loop entry. In loop nests an
 inner cursor is initialized from the outer loop's cursor, so a nest walks each array with one addition per loop
-level, and successive inner nests under one outer loop keep sharing the outer loop's cursors. For example, the loop
+level, and successive inner nests under one outer loop keep sharing the outer loop's cursors. When the loop is in an
+enclosing SDFG, its cursor is passed to the nested SDFGs between the loop and the memlet as a symbol, and the flat
+reference is set at the entry of the memlet's own SDFG. For example, the loop
 
 .. code-block:: python
 

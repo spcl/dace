@@ -256,9 +256,15 @@ def test_loop_inside_map_nested_sdfg():
     np.testing.assert_allclose(B, A[:, :, 3] + A[:, :, 9])
 
 
-def test_nested_sdfg_binding_is_not_a_leaf():
-    """A nested SDFG receives the whole container (an equivalent descriptor, no offset), so the memlet binding it is
-    not addressed through a cursor even when its subset is affine in the enclosing loop variable."""
+def _nested_edges(sdfg: dace.SDFG):
+    """``(state, edge)`` of every edge in the nested SDFGs of ``sdfg`` (not in ``sdfg`` itself)."""
+    return [(st, e) for s in sdfg.all_sdfgs_recursive() if s is not sdfg for st in s.states() for e in st.edges()]
+
+
+def test_cursor_reaches_into_nested_sdfg():
+    """A nested SDFG receives the whole container (an equivalent descriptor, no offset), so the memlet path continues
+    inside it: the binding memlet keeps the default policy, and the memlets inside are addressed through a cursor of
+    the enclosing loop, which the nested SDFG receives as a symbol."""
     inner = dace.SDFG("binding_inner")
     inner.add_array("a", [N, 4], dace.float32)
     inner.add_array("b", [N, 4], dace.float32)
@@ -283,15 +289,143 @@ def test_nested_sdfg_binding_is_not_a_leaf():
     state.add_edge(nsdfg, "b", state.add_write("B"), None, dace.Memlet("B[i, 0:4]"))
     sdfg.validate()
 
-    AssignLoopCursors(scope="all").apply_pass(sdfg, {})
+    res = AssignLoopCursors(scope="all").apply_pass(sdfg, {})
+    assert res["assigned"] == 2 and res["classes"] == 2
     assert all(e.data.access_policy.is_default for e in state.edges())
-    LowerMemletAccessPolicies().apply_pass(sdfg, {})
+    policies = [e.data.access_policy for _, e in _nested_edges(sdfg) if not e.data.access_policy.is_default]
+    assert len(policies) == 2
+    assert all(p.loop == "loop" and p.variable == "i" and str(p.step) == "4" for p in policies)
+
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
+    assert low == {"cursors": 2, "memlets": 2, "dropped": 0}
+    cursors = _cursors(loop)
+    assert set(cursors) == {"__dace_cur_A_loop", "__dace_cur_B_loop"}
+    for name in cursors:
+        assert str(nsdfg.symbol_mapping[name]) == name and name in inner.symbols
+    for m in _policy_memlets(sdfg):
+        assert m.data == m.access_policy.reference and m.data in inner.arrays
+        assert str(m.access_policy.immediate) == "j"  # the inner map parameter, per access
     sdfg.validate()
     n = 5
     A = np.random.default_rng(3).random((n, 4)).astype(np.float32)
     B = np.zeros((n, 4), np.float32)
     sdfg(A=A, B=B, N=n)
     np.testing.assert_allclose(B, A * 2)
+
+
+def test_cursor_through_two_nested_levels_with_renamed_symbols():
+    """The path crosses two nested SDFGs whose symbol mappings rename and combine symbols (``k -> i``, ``jj -> 2*j``,
+    ``r -> k + 1``, ``s -> jj``). The offset is restated outward to ``8*i + 2*j``: the cursor of the outer loop
+    advances by 8, and the per-access immediate ``2*j`` -- a map parameter neither nested SDFG receives as such -- is
+    passed down to the innermost SDFG as a new symbol."""
+    innermost = dace.SDFG("innermost")
+    innermost.add_array("a", [N, 8], dace.float32)
+    innermost.add_array("b", [N, 8], dace.float32)
+    innermost.add_symbol("r", dace.int64)
+    innermost.add_symbol("s", dace.int64)
+    st2 = innermost.add_state()
+    t = st2.add_tasklet("double", {"x"}, {"y"}, "y = x * 2")
+    st2.add_edge(st2.add_read("a"), None, t, "x", dace.Memlet("a[r - 1, s]"))
+    st2.add_edge(t, "y", st2.add_write("b"), None, dace.Memlet("b[r - 1, s]"))
+
+    middle = dace.SDFG("middle")
+    middle.add_array("a", [N, 8], dace.float32)
+    middle.add_array("b", [N, 8], dace.float32)
+    middle.add_symbol("k", dace.int64)
+    middle.add_symbol("jj", dace.int64)
+    st1 = middle.add_state()
+    n2 = st1.add_nested_sdfg(innermost, {"a"}, {"b"}, symbol_mapping={"N": "N", "r": "k + 1", "s": "jj"})
+    st1.add_edge(st1.add_read("a"), None, n2, "a", dace.Memlet("a[k, jj]"))
+    st1.add_edge(n2, "b", st1.add_write("b"), None, dace.Memlet("b[k, jj]"))
+
+    sdfg = dace.SDFG("two_nested_levels")
+    sdfg.add_array("A", [N, 8], dace.float32)
+    sdfg.add_array("B", [N, 8], dace.float32)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    me, mx = state.add_map("cols", dict(j="0:4"))
+    n1 = state.add_nested_sdfg(middle, {"a"}, {"b"}, symbol_mapping={"N": "N", "k": "i", "jj": "2 * j"})
+    state.add_memlet_path(state.add_read("A"), me, n1, dst_conn="a", memlet=dace.Memlet("A[i, 2 * j]"))
+    state.add_memlet_path(n1, mx, state.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i, 2 * j]"))
+    sdfg.validate()
+
+    res = AssignLoopCursors(scope="all").apply_pass(sdfg, {})
+    assert res["assigned"] == 2 and res["classes"] == 2
+    assert all(e.data.access_policy.is_default for st in (state, st1) for e in st.edges())
+    assert all(m.access_policy.loop == "loop" and str(m.access_policy.step) == "8" for m in _policy_memlets(sdfg))
+
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
+    assert low == {"cursors": 2, "memlets": 2, "dropped": 0}
+    assert {name: str(init) for name, (init, _) in _cursors(loop).items()} == {
+        "__dace_cur_A_loop": "0",
+        "__dace_cur_B_loop": "0",
+    }
+    for name in _cursors(loop):
+        assert str(n1.symbol_mapping[name]) == name and str(n2.symbol_mapping[name]) == name
+    assert str(n1.symbol_mapping["__dace_ap_j"]) == "j" and str(n2.symbol_mapping["__dace_ap_j"]) == "__dace_ap_j"
+    for m in _policy_memlets(sdfg):
+        assert m.data in innermost.arrays and str(m.access_policy.immediate) == "2*__dace_ap_j"
+    sdfg.validate()
+    n = 5
+    A = np.random.default_rng(4).random((n, 8)).astype(np.float32)
+    B = np.zeros((n, 8), np.float32)
+    sdfg(A=A, B=B, N=n)
+    expected = np.zeros_like(B)
+    expected[:, ::2] = 2 * A[:, ::2]
+    np.testing.assert_allclose(B, expected)
+
+
+def test_nested_sdfgs_share_the_enclosing_loop_cursor():
+    """Memlets of the same array in two nested SDFGs under one loop differ only by an immediate, so they form one
+    cursor class: one cursor on the loop, passed to both nested SDFGs."""
+
+    def reader(name: str, col: int) -> dace.SDFG:
+        nested = dace.SDFG(name)
+        nested.add_array("a", [N, 4], dace.float32)
+        nested.add_array("out", [N], dace.float32)
+        nested.add_symbol("i", dace.int64)
+        st = nested.add_state()
+        t = st.add_tasklet("copy", {"x"}, {"y"}, "y = x")
+        st.add_edge(st.add_read("a"), None, t, "x", dace.Memlet(f"a[i, {col}]"))
+        st.add_edge(t, "y", st.add_write("out"), None, dace.Memlet("out[i]"))
+        return nested
+
+    sdfg = dace.SDFG("nested_share")
+    sdfg.add_array("A", [N, 4], dace.float32)
+    sdfg.add_array("B", [N], dace.float32)
+    sdfg.add_array("C", [N], dace.float32)
+    loop = LoopRegion("loop", "i < N", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state("body", is_start_block=True)
+    a = state.add_read("A")
+    for name, col, out in (("first", 1, "B"), ("second", 3, "C")):
+        node = state.add_nested_sdfg(reader(name, col), {"a"}, {"out"}, symbol_mapping={"N": "N", "i": "i"})
+        state.add_edge(a, None, node, "a", dace.Memlet(f"A[i, {col}]"))
+        state.add_edge(node, "out", state.add_write(out), None, dace.Memlet(f"{out}[i]"))
+    sdfg.validate()
+
+    res = AssignLoopCursors(scope="all").apply_pass(sdfg, {})
+    assert res["assigned"] == 4 and res["classes"] == 3
+    low = LowerMemletAccessPolicies().apply_pass(sdfg, {})
+    assert low == {"cursors": 3, "memlets": 4, "dropped": 0}
+    cur_a, init_a, step_a = _cursor_of(loop, "A")
+    assert str(init_a) == "1" and str(step_a) == "4"  # anchored at the lowest member, A[i, 1]
+    immediates = sorted(
+        str(m.access_policy.immediate) for m in _policy_memlets(sdfg) if m.access_policy.cursor == cur_a
+    )
+    assert immediates == ["0", "2"]
+    for node in state.nodes():
+        if isinstance(node, dace.nodes.NestedSDFG):
+            assert str(node.symbol_mapping[cur_a]) == cur_a
+    sdfg.validate()
+    n = 6
+    A = np.random.default_rng(5).random((n, 4)).astype(np.float32)
+    B = np.zeros(n, np.float32)
+    C = np.zeros(n, np.float32)
+    sdfg(A=A, B=B, C=C, N=n)
+    np.testing.assert_allclose(B, A[:, 1])
+    np.testing.assert_allclose(C, A[:, 3])
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -788,7 +922,9 @@ if __name__ == "__main__":
     test_symbolic_extent_int64_and_assume_int32()
     test_nonaffine_left_alone()
     test_loop_inside_map_nested_sdfg()
-    test_nested_sdfg_binding_is_not_a_leaf()
+    test_cursor_reaches_into_nested_sdfg()
+    test_cursor_through_two_nested_levels_with_renamed_symbols()
+    test_nested_sdfgs_share_the_enclosing_loop_cursor()
     test_policy_survives_serialization()
     test_stale_policy_is_dropped_not_miscompiled()
     test_lowering_is_idempotent()
