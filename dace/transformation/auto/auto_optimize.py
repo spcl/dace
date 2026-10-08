@@ -9,7 +9,6 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Union
 from collections.abc import Callable
 
 # Transformations
@@ -26,7 +25,7 @@ from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 # Enumerator
 from dace.transformation.estimator.enumeration import GreedyEnumerator
 
-GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
+GraphViewType = SDFG | SDFGState | gr.SubgraphView | ControlFlowRegion
 
 
 def greedy_fuse(

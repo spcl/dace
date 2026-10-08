@@ -4,7 +4,6 @@
 from collections import defaultdict
 import copy
 import sympy as sp
-from typing import Union
 import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
@@ -19,7 +18,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 from ordered_set import OrderedSet
 
-IndexExpr = Union[str, int, symbolic.SymbolicType]
+IndexExpr = str | int | symbolic.SymbolicType
 
 
 def _check_range(subset: subsets.Subset, a: IndexExpr, itersym: symbolic.symbol, b: IndexExpr, step: IndexExpr) -> bool:

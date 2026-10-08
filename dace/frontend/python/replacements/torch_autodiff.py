@@ -3,7 +3,6 @@
 Integration with the dace python frontend
 """
 
-from typing import Union
 from collections.abc import Sequence
 import itertools
 
@@ -20,7 +19,7 @@ from dace.autodiff import analysis as autodiff_analysis
 
 from dace.autodiff.library.library import ParameterArray, BackwardPass
 
-TensorOrTensors = Union[str, Sequence[str]]
+TensorOrTensors = str | Sequence[str]
 
 
 @op_repository.replaces("torch.autograd.backward")

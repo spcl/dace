@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
-from typing import Any, Union
+from typing import Any
 from dataclasses import dataclass
 
 from dace import data, dtypes, subsets
@@ -11,7 +11,7 @@ from dace.memlet import Memlet
 from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
 
-MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
+MemletType = ast.Call | ast.Attribute | ast.Subscript | ast.Name
 
 
 @dataclass

@@ -3,7 +3,6 @@
 
 import copy
 from numbers import Integral
-from typing import Union
 from collections.abc import Sequence
 
 from dace import dtypes
@@ -12,7 +11,7 @@ from dace.data.core import Data, SymbolMapping
 from dace.properties import Property, make_properties, ShapeProperty, SymbolicProperty, ListProperty
 
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
-RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
 
 
 class DistributedDescriptor(Data):

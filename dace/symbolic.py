@@ -699,7 +699,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: "dtypes.typeclass") -> dict[s
 
 
 # Type hint for symbolic expressions
-SymbolicType = Union[sympy.Basic, SymExpr]
+SymbolicType = sympy.Basic | SymExpr
 
 
 # http://stackoverflow.com/q/3844948/
@@ -1673,7 +1673,7 @@ def evaluate_optional_arrays(expr, sdfg):
 
 
 _SimpleASTNode = (ast.Constant, ast.Name)
-_SimpleASTNodeT = Union[ast.Constant, ast.Name]
+_SimpleASTNodeT = ast.Constant | ast.Name
 
 
 def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):

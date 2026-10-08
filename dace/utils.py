@@ -5,13 +5,12 @@ Utility functions for DaCe.
 This module provides general utility functions that are used across various parts of DaCe.
 """
 
-from typing import Union
 from collections.abc import Container, Iterable
 
 import sympy
 
 # Type alias for numeric or symbolic values
-NumericType = Union[int, float, sympy.Basic]
+NumericType = int | float | sympy.Basic
 
 
 def prod(sequence: Iterable[NumericType], start: NumericType = 1) -> NumericType:

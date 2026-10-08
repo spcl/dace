@@ -10,14 +10,13 @@ import runpy
 import sys
 import os
 import shutil
-from typing import Union
 import warnings
 
 import dace
 from dace.codegen.instrumentation.report import InstrumentationReport
 from dace import dtypes
 
-ExitCode = Union[int, str]
+ExitCode = int | str
 DEFAULT_REPETITIONS = 100
 
 

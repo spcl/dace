@@ -46,7 +46,7 @@ from typing import BinaryIO
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic]
-RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+RankType = Integral | str | symbolic.symbol | symbolic.SymExpr | symbolic.sympy.Basic
 
 #: How a launcher tells a task its rank, most specific first. Read instead of importing mpi4py,
 #: which is optional and initializes MPI. All are job-unique; node-local counters are not.

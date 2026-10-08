@@ -3,7 +3,7 @@
 Module that provides hooks that can be used to extend DaCe functionality.
 """
 
-from typing import Any, ContextManager, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable, Generator
 import contextlib
 from contextlib import contextmanager, ExitStack
@@ -210,7 +210,7 @@ def on_compiled_sdfg_call(
 
 
 def _as_context_manager(
-    begin_func: Callable[..., Any] | ContextManager, end_func: Callable[..., Any] | None = None
+    begin_func: Callable[..., Any] | contextlib.AbstractContextManager, end_func: Callable[..., Any] | None = None
 ) -> GeneratorType:
     """
     Returns a context manager from a begin and end functions, if not already given.

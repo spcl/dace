@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from dace.sdfg import SDFG
 
 NodeT = Union[nd.Node, "ControlFlowBlock"]
-EdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge["dace.sdfg.InterstateEdge"]]
+EdgeT = MultiConnectorEdge[mm.Memlet] | Edge["dace.sdfg.InterstateEdge"]
 GraphT = Union["ControlFlowRegion", "SDFGState"]
 
 

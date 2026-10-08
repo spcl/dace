@@ -13,11 +13,11 @@ from dace.transformation.passes.optional_arrays import OptionalArrayInference
 
 
 def test_type_hint():
-    assert Optional[dace.float64[20, 20]] == Union[dace.float64[20, 20], None]
+    assert Optional[dace.float64[20, 20]] == Union[dace.float64[20, 20], None]  # noqa: UP007, UP045
     assert dace.float64[20, 20] != dace.float32[20, 20]
     assert (
-        Union[None, dace.float64[20, 20], dace.float64[20, 21], dace.float64[20, 20], None]
-        == Optional[dace.float64[20, 20] | dace.float64[20, 21]]
+        Union[None, dace.float64[20, 20], dace.float64[20, 21], dace.float64[20, 20], None]  # noqa: UP007
+        == Optional[dace.float64[20, 20] | dace.float64[20, 21]]  # noqa: UP045
     )
 
 

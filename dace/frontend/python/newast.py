@@ -9,7 +9,7 @@ import time
 from os import path
 import warnings
 from numbers import Number
-from typing import Any, NamedTuple, Union, Literal
+from typing import Any, NamedTuple, Literal
 from collections.abc import Iterable, Callable
 import operator
 
@@ -67,10 +67,10 @@ import dace.frontend.python.replacements
 from dace.frontend.python.replacements.utils import sym_type, broadcast_to, broadcast_together
 
 # Type hints
-Size = Union[int, dace.symbolic.symbol]
+Size = int | dace.symbolic.symbol
 ShapeTuple = tuple[Size]
 ShapeList = list[Size]
-Shape = Union[ShapeTuple, ShapeList]
+Shape = ShapeTuple | ShapeList
 
 
 class DependencyType(NamedTuple):
@@ -373,7 +373,7 @@ _DISALLOWED_STMTS = DISALLOWED_STMTS + [
     "TypeVarTuple",
 ]
 
-TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
+TaskletType = ast.FunctionDef | ast.With | ast.For
 
 
 def _disallow_stmt(visitor, node):
