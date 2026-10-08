@@ -285,49 +285,6 @@ def parallel_region_trip_count(state: SDFGState, map_entry: nodes.MapEntry) -> s
         trip = trip * entry.map.range.num_elements()
 
 
-def hoist_loop_decls(node: nodes.MapEntry, will_have_openmp_pragma: bool = False) -> bool:
-    """Whether this map's induction variables are declared ahead of their loops (``T i = begin; for (;
-    ...)``) instead of in the for-statement's init clause, per ``codegen_params.loop_decl_style``.
-
-    Never for a loop that will be immediately preceded by an OpenMP directive: the pragma must be
-    immediately followed by a CANONICAL loop whose init clause declares the induction variable, so
-    hoisting leaves the pragma facing a declaration and the compiler rejects it ("loop nest
-    expected"). The knob therefore applies to sequential loops that do not get an OpenMP ``simd``
-    pragma, and to the non-innermost loops of a Sequential map even when ``MarkSIMDMaps`` marked
-    it.
-    """
-    if Config.get("compiler", "cpu", "codegen_params", "loop_decl_style") != "hoisted":
-        return False
-    return map_schedule_is_sequential(node) and not will_have_openmp_pragma
-
-
-def loop_exit_test(begin, end, skip, node: nodes.MapEntry, will_have_openmp_pragma: bool = False) -> Tuple[str, str]:
-    """The ``(comparison, bound)`` of a map loop's exit test, per ``codegen_params.loop_bound_cmp``.
-
-    Every spelling covers the identical iteration space ``[begin, end]`` at stride ``skip``.
-
-    ``ne`` supports any stride on a non-OpenMP loop. A naive ``i != end + 1`` is only correct when the
-    stride divides the range -- otherwise the counter steps OVER that bound, never compares equal, and
-    the loop does not terminate. So for a non-unit stride the bound is normalised to the first value
-    the counter actually LANDS on at or past the end, ``begin + int_ceil(end + 1 - begin, skip) *
-    skip``, which the induction variable is guaranteed to hit exactly.
-
-    On a loop that will be immediately preceded by an OpenMP directive, ``ne`` is legal ONLY with a
-    stride the compiler can see is +/-1: the canonical loop form the pragma requires rejects ``!=``
-    otherwise (``g++``: "increment is not constant 1 or -1 for '!=' condition"). A non-unit / symbolic
-    stride there falls back to ``<``.
-    """
-    mode = Config.get("compiler", "cpu", "codegen_params", "loop_bound_cmp")
-    if mode == "le":
-        return "<=", sym2cpp(end)
-    if mode == "ne":
-        if symbolic.pystr_to_symbolic(skip) == 1:
-            return "!=", sym2cpp(end + 1)
-        if not will_have_openmp_pragma:
-            return "!=", sym2cpp(begin + symbolic.int_ceil(end + 1 - begin, skip) * skip)
-    return "<", sym2cpp(end + 1)
-
-
 def gpu_block_reduction_write_slot(subset, base, length):
     """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
 
@@ -885,70 +842,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     if isinstance(node, nodes.MapEntry) and node.map.schedule in gpu_schedules:
                         return False
         return True
-
-    @staticmethod
-    def _rename_full_array_connectors_to_outer(sdfg, state, node):
-        """Rename each full-array connector of ``node`` to its OUTER array's name where that binding is
-        unambiguous, so the connector and the outer array share a name and codegen emits no alias at all
-        (the body just uses the outer pointer, in scope via ``can_access_parent``). Skips a rename that
-        would clash -- the same outer array bound through a SEPARATE in- and out-connector (an in/out name
-        clash), or a target name already used by a distinct nested array/symbol -- leaving those to the
-        ``__restrict__`` alias path. Mutates ``node.sdfg`` in place; only sound because a nest reaching the
-        inline path is generated exactly once, here.
-        """
-        bindings = {}  # outer array name -> list of (edge, connector, is_input)
-        for e in state.in_edges(node):
-            if e.data is not None and e.data.data is not None and e.dst_conn:
-                bindings.setdefault(e.data.data, []).append((e, e.dst_conn, True))
-        for e in state.out_edges(node):
-            if e.data is not None and e.data.data is not None and e.src_conn:
-                bindings.setdefault(e.data.data, []).append((e, e.src_conn, False))
-        for outer, binds in bindings.items():
-            conns = {conn for _, conn, _ in binds}
-            if len(conns) != 1:
-                continue  # in/out name clash: in- and out-connectors are distinct nested arrays -> alias
-            conn = next(iter(conns))
-            if conn == outer:
-                continue  # already the same name
-            if outer in node.sdfg.arrays or outer in node.sdfg.symbols or outer in node.sdfg.constants:
-                continue  # target name already taken inside the nest -> alias
-            node.sdfg.replace(conn, outer)  # rename the nested array + every reference to it
-            for e, _, is_input in binds:
-                if is_input:
-                    node.in_connectors[outer] = node.in_connectors.pop(conn)
-                    e.dst_conn = outer
-                else:
-                    node.out_connectors[outer] = node.out_connectors.pop(conn)
-                    e.src_conn = outer
-
-    @staticmethod
-    def _nsdfg_connectors_are_full_arrays(sdfg, state, node) -> bool:
-        """True iff EVERY in/out connector of ``node`` binds a whole outer array (full range, offset 0)
-        to a nested array of identical shape and strides -- the case where the two can be aliased with
-        one ``T* __restrict__`` pointer assignment instead of passed through a function argument. Rejects
-        scalars, sub-ranges, WCR and views, which each need real argument handling. Backs the
-        ``inline_full_array_nsdfg`` knob.
-        """
-        edges = [(e, e.dst_conn) for e in state.in_edges(node)] + [(e, e.src_conn) for e in state.out_edges(node)]
-        seen = False
-        for e, conn in edges:
-            if e.data is None or e.data.data is None:
-                continue
-            seen = True
-            if conn is None or e.data.wcr is not None or conn not in node.sdfg.arrays:
-                return False
-            outer = sdfg.arrays.get(e.data.data)
-            inner = node.sdfg.arrays[conn]
-            if outer is None or isinstance(outer, data.Scalar) or isinstance(inner, data.Scalar):
-                return False
-            if isinstance(outer, data.View) or isinstance(inner, data.View):
-                return False
-            full = subsets.Range.from_array(outer)
-            if e.data.subset is None or not (e.data.subset.covers(full) and full.covers(e.data.subset)):
-                return False
-            if list(inner.shape) != list(outer.shape) or list(inner.strides) != list(outer.strides):
-                return False
-        return seen
 
     def get_generated_codeobjects(self):
         objects = []
@@ -3298,22 +3191,6 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool("compiler", "inline_sdfgs")
         state_dfg = cfg.nodes()[state_id]
-        # inline_full_array_nsdfg: a CPU-only nest whose connectors are ALL whole outer arrays can be
-        # emitted inline via __restrict__ pointer aliases (see the inline branch below) instead of a
-        # function. Take the inline path -- which also enters the scopes with can_access_parent=True so
-        # the aliased outer pointers resolve. GPU nests (not cpu-only) fall through to do_external.
-        do_alias_inline = (
-            not inline
-            and self.calling_codegen is self
-            and Config.get_bool("compiler", "cpu", "codegen_params", "inline_full_array_nsdfg")
-            and self._nsdfg_subtree_is_cpu_only(node.sdfg)
-            and self._nsdfg_connectors_are_full_arrays(sdfg, state_dfg, node)
-        )
-        if do_alias_inline:
-            # Prefer renaming each connector to its outer array's name (no alias needed at all); only a
-            # connector that cannot be renamed without a clash keeps its __restrict__ alias below.
-            self._rename_full_array_connectors_to_outer(sdfg, state_dfg, node)
-            inline = True
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
         self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
 
@@ -3467,22 +3344,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if inline:
             callsite_stream.write("{", cfg, state_id, node)
-            # inline_full_array_nsdfg: a connector that already shares its outer array's NAME needs no
-            # binding at all (the outer pointer is in scope, can_access_parent=True); every other
-            # full-array connector is aliased with a single __restrict__ pointer assignment.
-            alias_same_name = set()
-            if do_alias_inline:
-                for e in list(state_dfg.in_edges(node)) + list(state_dfg.out_edges(node)):
-                    conn = e.dst_conn if e.dst is node else e.src_conn
-                    if conn is not None and e.data is not None and e.data.data == conn:
-                        alias_same_name.add(conn)
             for atype, aname, argval in memlet_references:
-                if do_alias_inline:
-                    if aname in alias_same_name:
-                        continue
-                    callsite_stream.write("%s __restrict__ %s = %s;" % (atype, aname, argval), cfg, state_id, node)
-                else:
-                    callsite_stream.write("%s %s = %s;" % (atype, aname, argval), cfg, state_id, node)
+                callsite_stream.write("%s %s = %s;" % (atype, aname, argval), cfg, state_id, node)
             # Emit symbol mappings
             # We first emit variables of the form __dacesym_X = Y to avoid
             # overriding symbolic expressions when the symbol names match
@@ -3952,27 +3815,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     return False
         return True
 
-    def map_loop_will_have_openmp_pragma(
-        self, sdfg: SDFG, state: SDFGState, map_entry: nodes.MapEntry, loop_idx: int
-    ) -> bool:
-        """Whether the ``for`` loop at dimension ``loop_idx`` of ``map_entry`` will be immediately
-        preceded by an OpenMP directive. OpenMP canonical form requires the loop after the directive to
-        declare its induction variable in the init clause and to use ``<``/``>`` (or ``<=``/``>=``)
-        with a non-unit stride; callers use this predicate to suppress non-canonical rewrites.
-        """
-        schedule = map_entry.map.schedule
-        if schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
-            return True
-        if schedule != dtypes.ScheduleType.Sequential:
-            return False
-        # ``simd`` goes on the innermost loop of a non-unrolled Sequential map, and only where
-        # ``MarkSIMDMaps`` marked the map -- the pass owns the decision, this reads its verdict.
-        if map_entry.map.unroll:
-            return False
-        if loop_idx != len(map_entry.map.range) - 1:
-            return False
-        return self.renders_simd(sdfg, state, map_entry)
-
     def _generate_MapEntry(
         self,
         sdfg: SDFG,
@@ -4194,19 +4036,13 @@ class CPUCodeGen(TargetCodeGenerator):
                     pragma = "#pragma omp simd"
                     will_have_openmp = True
 
-                comparison, bound = loop_exit_test(begin, end, skip, node, will_have_openmp)
                 init = "%s %s = %s" % (loop_ctypes[i], var, cpp.sym2cpp(begin))
-                if hoist_loop_decls(node, will_have_openmp):
-                    # Declared ahead of the loop, so it outlives it -- the map's encapsulating scope is
-                    # what bounds it (experimental keeps that brace when hoisting).
-                    result.write("%s;\n" % init, cfg, state_id, node)
-                    init = ""
                 if pragma is not None:
                     # ``#pragma omp simd`` must immediately precede the ``for``; ``None`` means
                     # ``MarkSIMDMaps`` did not mark this map.
                     result.write(pragma, cfg, state_id, node)
                 result.write(
-                    "for (%s; %s %s %s; %s += %s) {\n" % (init, var, comparison, bound, var, cpp.sym2cpp(skip)),
+                    "for (%s; %s < %s; %s += %s) {\n" % (init, var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,

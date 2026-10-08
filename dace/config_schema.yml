@@ -662,54 +662,6 @@ required:
 
                                     Default ``false`` reproduces today's output byte-identically: the lift
                                     and the recursive per-child codegen are both gated on this key.
-                            inline_full_array_nsdfg:
-                                type: bool
-                                default: false
-                                title: Inline a full-array nested SDFG as a __restrict__ pointer alias
-                                description: >
-                                    Applies to: legacy AND experimental_readable.
-
-                                    A nested SDFG (e.g. an outlined map nest) is normally emitted as its own
-                                    C++ function that the parent calls with the connector arrays as
-                                    arguments. When this key is on, a nested SDFG whose EVERY connector binds
-                                    a WHOLE outer array -- full range, offset 0, and the nested array has the
-                                    same shape and strides -- is instead emitted INLINE at the call site: no
-                                    function, no argument marshaling, just one pointer alias per connector,
-
-                                        T* __restrict__ <connector> = <outer array>;
-
-                                    (and nothing at all when the connector already has the same name as the
-                                    outer array). ``__restrict__`` records that the alias does not overlap the
-                                    other connectors -- the no-alias hint the function-argument form gets for
-                                    free -- so the optimizer keeps vectorizing across the (now inlined) body.
-
-                                    Only whole-array connectors qualify: a sub-range needs offset/stride math,
-                                    a scalar is passed by value, and a WCR output must go through the atomic
-                                    resolve path -- each of those keeps the function form. Because it inlines,
-                                    it shares ``inline_sdfgs``' constraint that a nested transient must not
-                                    shadow a name already live in the parent scope.
-
-                                    Default ``false`` keeps the function form, byte-identical to today.
-                            index_fn_qualifier:
-                                type: str
-                                default: inline_constexpr
-                                title: Qualifier on generated index/size helpers
-                                description: >
-                                    Applies to: experimental_readable ONLY (legacy inlines its offset
-                                    arithmetic and emits no ``<array>_idx`` / ``<array>_size`` helpers).
-
-                                    The linkage/inlining qualifier on the generated index and size
-                                    helpers. ``inline_constexpr`` (the default) emits
-                                    ``static DACE_HDFI constexpr`` -- ``inline`` is a hint the backend
-                                    already honours for these tiny functions at -O2, so they are inlined
-                                    and the access reads as ``p[i*S+j]`` to the vectorizer.
-                                    ``always_inline`` additionally attaches
-                                    ``__attribute__((always_inline))`` to FORCE inlining regardless of
-                                    the inliner's cost model -- useful only where a helper is (wrongly)
-                                    left out of line, which pins a vectorization precondition. Inlining
-                                    is the precondition for every downstream idiom/vectorization
-                                    decision, so leaving these helpers un-inlined is the failure mode
-                                    this guards against. ``inline_constexpr`` reproduces today's output.
                             loop_index_type:
                                 type: str
                                 default: inferred
@@ -736,57 +688,6 @@ required:
                                     not fixed; sweep it. This is DISTINCT from ``index_ctype``, which
                                     types the generated helper bodies, not the loop variable; if the two
                                     disagree the loop index converts at the call.
-                            loop_bound_cmp:
-                                type: str
-                                default: lt
-                                title: Map-loop bound comparison
-                                description: >
-                                    Applies to: legacy AND experimental_readable (shared map-loop
-                                    emitter).
-
-                                    How a map loop's exit test is spelled, for the identical iteration
-                                    space: ``lt`` emits ``i < end + 1`` (the default), ``le`` emits
-                                    ``i <= end`` (same range, without the ``+ 1`` add), ``ne`` emits
-                                    ``i != end + 1``.
-
-                                    ``ne`` supports any stride. A naive ``i != end + 1`` is correct only
-                                    when the stride divides the range -- otherwise the counter steps
-                                    OVER that bound, never compares equal, and the loop does not
-                                    terminate. So for a non-unit stride the bound is normalised to the
-                                    first value the counter actually LANDS on at or past the end,
-                                    ``begin + int_ceil(end + 1 - begin, skip) * skip``, which it is
-                                    guaranteed to hit exactly. Even so, ``ne`` forces the optimizer to
-                                    prove termination before it may vectorize or unroll, where ``<``
-                                    hands SCEV a trip count directly -- so ``ne`` is the pessimistic end
-                                    of this axis and exists to be measured, not recommended. ``lt``
-                                    reproduces today's output byte-for-byte.
-                            loop_decl_style:
-                                type: str
-                                default: for_init
-                                title: Map-loop induction variable declaration placement
-                                description: >
-                                    Applies to: legacy AND experimental_readable (shared map-loop
-                                    emitter).
-
-                                    Where a map loop's induction variable is declared, for the identical
-                                    loop: ``for_init`` (the default) declares it in the for-statement's
-                                    init clause, ``for (auto i = 0; ...)``; ``hoisted`` declares it ahead
-                                    of the loop, ``auto i = 0; for (; ...)``.
-
-                                    The variable's lifetime is the only difference: hoisted, it outlives
-                                    the loop, which is what makes this a style axis at all -- a longer
-                                    live range is a different input to register allocation. It also means
-                                    two sibling maps sharing a parameter name would collide, so hoisting
-                                    forces the map's encapsulating scope to be emitted (that brace is
-                                    exactly what bounds a declaration made ahead of the loop headers).
-
-                                    Applies to SEQUENTIAL maps only. An OpenMP pragma must be
-                                    immediately followed by a CANONICAL loop whose init clause declares
-                                    the induction variable, so hoisting it leaves the pragma facing a
-                                    declaration and the compiler rejects it outright ("loop nest
-                                    expected"). A CPU_Multicore / CPU_Persistent map therefore keeps
-                                    ``for_init`` regardless of this key. ``for_init`` reproduces today's
-                                    output byte-for-byte.
                             loop_access_form:
                                 type: str
                                 default: indexed
@@ -872,8 +773,8 @@ required:
                                     ``i = <expr>``, and NOTHING outside the loop uses the counter -- DaCe
                                     permits a subsequent block to read a counter's final value, which
                                     for-init scoping would break, so it is checked rather than assumed.
-                                    Map induction variables are NOT covered here: they already default to
-                                    a for-init declaration, and ``loop_decl_style`` is their axis.
+                                    Map induction variables are NOT covered here: they are always declared
+                                    in the for-init clause.
 
                                     SCALARS. A MUTABLE scope-lifetime value scalar (a ``dace.data.Scalar``
                                     transient that is reassigned) is deferred to the line immediately before the first

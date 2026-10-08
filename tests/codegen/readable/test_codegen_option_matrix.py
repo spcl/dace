@@ -9,17 +9,14 @@ silently changes the answer is a miscompile, and until now only a throwaway shel
 
 THE KERNEL (:func:`option_matrix_sdfg`) is a single, hand-built SDFG (not a ``@dace.program`` -- several
 arms need explicit control the frontend does not expose: a forced SEQUENTIAL map schedule for
-``loop_decl_style``/``loop_access_form``, and ``no_inline`` nested SDFGs for the split/inline knobs)
+``loop_access_form``, and ``no_inline`` nested SDFGs for the split knobs)
 that in one pass touches: a symbolic-size heap transient (``heap_ptr_restrict``), a write-once constant
 scalar (``const_init``) and a separate genuinely MUTABLE, twice-reassigned scalar
 (``scalar_init_style``/``decl_placement``) feeding a write-once length-1 array, two SEQUENTIAL strided maps
-(``loop_index_type``/``loop_bound_cmp``/
-``loop_decl_style``/``loop_access_form``/``index_ctype``), a direct array-to-array copy
+(``loop_index_type``/``loop_access_form``/``index_ctype``), a direct array-to-array copy
 (``explicit_copy``), and TWO separate top-level ``no_inline`` nested SDFGs: one with ONLY full-array
-connectors (``split_nsdfg_translation_units``/``external_translation_units``/
-``inline_full_array_nsdfg``) and one with a READ-ONLY SCALAR connector (``const_scalar_abi`` --
-per ``inline_full_array_nsdfg``'s own doc, a nest with any scalar connector never qualifies for that
-inlining, so it has to be a separate nest).
+connectors (``split_nsdfg_translation_units``/``external_translation_units``) and one with a READ-ONLY SCALAR
+connector (``const_scalar_abi``).
 
 Every arithmetic step is a small-integer multiply/add/subtract, so every intermediate value stays
 exact in float64 -- every arm is checked with ``np.array_equal``, never a tolerance.
@@ -29,8 +26,6 @@ implementation only special-cases one literal string per key, and these are OTHE
 that key's own schema prose (an internal classification label, or an unrelated flag) rather than a
 value the code branches on. Each is confirmed by reading the branch in question and is pinned below as
 its OWN regression test rather than silently "fixed":
-  - ``index_fn_qualifier = 'inline'``     -- only 'always_inline' is special-cased; byte-identical to
-                                             the default ('inline_constexpr').
   - ``decl_placement = 'inverted'``       -- only 'late' is special-cased; byte-identical to 'eager'
                                              ('inverted' names a LOOP shape in this key's own prose).
   - ``scalar_init_style = 'const'/'setzero'`` -- only 'fused' is special-cased; both fall through to
@@ -42,15 +37,6 @@ its OWN regression test rather than silently "fixed":
                                              not a value of the key itself).
 Each requested value is still exercised in the main compile+run matrix below (nothing is dropped), and
 each degenerate one additionally gets a dedicated codegen-only test documenting what it actually does.
-
-FORMERLY FAILING ARM. ``inline_full_array_nsdfg = True`` used to fail to COMPILE on this kernel:
-inlining rewrites the nest's ``io[io_idx(k)]`` to ``B[B_idx(k)]``, assuming a ``B_idx`` helper
-exists for the outer array, and back when the ``heap -> B`` copy lowered to a single ``std::memcpy``
-``B`` was never subscripted at the frame's top level, so no such helper was ever emitted. That copy
-is now the canonical parallel element map, which subscripts ``B`` in the frame and therefore emits
-``B_idx``; the arm compiles and matches. The underlying codegen gap (an array reached only by
-pointer still needs its index helper when a nest is inlined onto it) is no longer REACHABLE from
-this kernel -- the arm stays in the matrix as the regression guard for the shape it does cover.
 """
 
 import contextlib
@@ -109,8 +95,7 @@ def option_matrix_sdfg(name: str) -> dace.SDFG:
     init_buf.add_edge(acc1, None, t_buf, "ac", dace.Memlet("acc[0]"))
     init_buf.add_edge(t_buf, "o", init_buf.add_access("buf"), None, dace.Memlet("buf[0]"))
 
-    # Two SEQUENTIAL, strided (non-unit-stride) maps: loop_index_type / loop_bound_cmp /
-    # loop_decl_style / loop_access_form all gate on SEQUENTIAL, so an OpenMP map would leave them
+    # Two SEQUENTIAL, strided (non-unit-stride) maps: loop_index_type / loop_access_form gate on SEQUENTIAL, so an OpenMP map would leave them
     # vacuous. Together 0:N:2 and 1:N:2 cover the whole array (SIZE is even).
     compute = sdfg.add_state_after(init_buf, "compute")
     for parity, sign, label in ((0, "+", "even"), (1, "-", "odd")):
@@ -132,7 +117,7 @@ def option_matrix_sdfg(name: str) -> dace.SDFG:
     copy_state.add_edge(copy_state.add_read("heap"), None, copy_state.add_write("B"), None, dace.Memlet("heap[0:N]"))
 
     # Nested SDFG #1: ONLY a full-array connector (offset 0, whole range, matching shape/strides) --
-    # split_nsdfg_translation_units / external_translation_units / inline_full_array_nsdfg.
+    # split_nsdfg_translation_units / external_translation_units.
     inner = dace.SDFG(f"{name}_inner")
     inner.add_array("io", [N], dace.float64)
     ist = inner.add_state("scale", is_start_block=True)
@@ -148,7 +133,6 @@ def option_matrix_sdfg(name: str) -> dace.SDFG:
     nest_state.add_edge(nn, "io", nest_state.add_write("B"), None, dace.Memlet("B[0:N]"))
 
     # Nested SDFG #2: a full-array connector PLUS a READ-ONLY SCALAR connector (const_scalar_abi).
-    # Kept separate from #1 -- a scalar connector disqualifies a nest from inline_full_array_nsdfg.
     inner2 = dace.SDFG(f"{name}_inner2")
     inner2.add_array("io", [N], dace.float64)
     inner2.add_scalar("sc", dace.float64)
@@ -191,12 +175,7 @@ ARMS: Tuple[Tuple[str, Optional[Tuple[str, ...]], object], ...] = (
     ("index_ctype_int32", ("compiler", "cpu", "codegen_params", "index_ctype"), "int32"),
     ("heap_ptr_restrict_none", ("compiler", "cpu", "codegen_params", "heap_ptr_restrict"), "none"),
     ("heap_ptr_restrict_may_alias", ("compiler", "cpu", "codegen_params", "heap_ptr_restrict"), "may_alias"),
-    ("index_fn_qualifier_always_inline", ("compiler", "cpu", "codegen_params", "index_fn_qualifier"), "always_inline"),
-    ("index_fn_qualifier_inline", ("compiler", "cpu", "codegen_params", "index_fn_qualifier"), "inline"),
     ("loop_index_type_int32", ("compiler", "cpu", "codegen_params", "loop_index_type"), "int32"),
-    ("loop_bound_cmp_le", ("compiler", "cpu", "codegen_params", "loop_bound_cmp"), "le"),
-    ("loop_bound_cmp_ne", ("compiler", "cpu", "codegen_params", "loop_bound_cmp"), "ne"),
-    ("loop_decl_style_hoisted", ("compiler", "cpu", "codegen_params", "loop_decl_style"), "hoisted"),
     ("loop_access_form_ptr_increment", ("compiler", "cpu", "codegen_params", "loop_access_form"), "ptr_increment"),
     ("decl_placement_late", ("compiler", "cpu", "codegen_params", "decl_placement"), "late"),
     ("decl_placement_inverted", ("compiler", "cpu", "codegen_params", "decl_placement"), "inverted"),
@@ -209,10 +188,6 @@ ARMS: Tuple[Tuple[str, Optional[Tuple[str, ...]], object], ...] = (
     ("const_scalar_abi_by_value", ("compiler", "cpu", "codegen_params", "const_scalar_abi"), "by_value"),
     ("split_nsdfg_translation_units", ("compiler", "cpu", "codegen_params", "split_nsdfg_translation_units"), True),
     ("external_translation_units", ("compiler", "cpu", "codegen_params", "external_translation_units"), True),
-    # Formerly broken (see the module docstring): inlining rewrites the nest's `io[io_idx(k)]` to
-    # `B[B_idx(k)]`, which used to reference an undeclared helper because a `memcpy`'d `B` was never
-    # subscripted in the frame. The parallel element copy subscripts it, so `B_idx` is emitted.
-    ("inline_full_array_nsdfg", ("compiler", "cpu", "codegen_params", "inline_full_array_nsdfg"), True),
 )
 
 
@@ -294,29 +269,11 @@ def test_const_scalar_abi_by_value_drops_the_reference() -> None:
     assert "const double&  sc" not in arm
 
 
-def test_inline_full_array_nsdfg_inlines_the_full_array_nest_only() -> None:
-    """The all-full-array nest (``_inner_``) is inlined away entirely; the nest with a scalar
-    connector (``_inner2_``) is NEVER eligible and keeps its function form, per the schema."""
-    default = cpp_text("nv_inline_full")
-    arm = cpp_text("nv_inline_full", ("compiler", "cpu", "codegen_params", "inline_full_array_nsdfg"), True)
-    assert default != arm
-    assert "_inner_0_" in default
-    assert "_inner_0_" not in arm
-    assert "_inner2_0_" in arm
-
-
 def test_split_nsdfg_translation_units_splits_the_frame() -> None:
     default_objs = [o for o in option_matrix_sdfg("nv_split_default").generate_code() if o.language == "cpp"]
     with set_temporary("compiler", "cpu", "codegen_params", "split_nsdfg_translation_units", value=True):
         split_objs = [o for o in option_matrix_sdfg("nv_split_on").generate_code() if o.language == "cpp"]
     assert len(split_objs) > len(default_objs)
-
-
-def test_loop_bound_cmp_le_drops_the_plus_one() -> None:
-    default = cpp_text("nv_loop_bound_cmp")
-    arm = cpp_text("nv_loop_bound_cmp", ("compiler", "cpu", "codegen_params", "loop_bound_cmp"), "le")
-    assert default != arm
-    assert any(line.strip().startswith("for (int i = 0; i <= ") for line in arm.splitlines())
 
 
 def test_loop_access_form_ptr_increment_walks_the_sequential_maps() -> None:
@@ -332,14 +289,6 @@ def test_loop_access_form_ptr_increment_walks_the_sequential_maps() -> None:
 # here) to be indistinguishable from an existing value rather than a genuine third state. Each is
 # still exercised for the numeric invariant in ARMS above; these pin what it ACTUALLY does.
 # #
-def test_index_fn_qualifier_inline_is_not_a_recognized_value() -> None:
-    """Only the literal 'always_inline' is special-cased; 'inline' takes the same path as leaving the
-    key at its default ('inline_constexpr') -- byte-identical output."""
-    default = cpp_text("nv_ifq")
-    arm = cpp_text("nv_ifq", ("compiler", "cpu", "codegen_params", "index_fn_qualifier"), "inline")
-    assert arm == default
-
-
 def test_decl_placement_inverted_is_not_a_recognized_value() -> None:
     """Only 'late' is special-cased; 'inverted' -- a LOOP-SHAPE term from this key's own schema prose,
     not a settable value -- takes the same 'eager' path: byte-identical to the default."""
@@ -391,11 +340,8 @@ if __name__ == "__main__":
     test_heap_ptr_restrict_none_drops_restrict()
     test_explicit_copy_always_lifts_in_readable()
     test_const_scalar_abi_by_value_drops_the_reference()
-    test_inline_full_array_nsdfg_inlines_the_full_array_nest_only()
     test_split_nsdfg_translation_units_splits_the_frame()
-    test_loop_bound_cmp_le_drops_the_plus_one()
     test_loop_access_form_ptr_increment_walks_the_sequential_maps()
-    test_index_fn_qualifier_inline_is_not_a_recognized_value()
     test_decl_placement_inverted_is_not_a_recognized_value()
     for _value in ("const", "setzero"):
         test_scalar_init_style_recognizes_only_fused(_value)

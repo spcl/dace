@@ -32,7 +32,6 @@ from dace.codegen.targets.cpu import (
     LoopCounterIndex,
     aligned_new_value,
     decl_placement,
-    hoist_loop_decls,
     loop_counter_index,
     loop_local_counter_loop,
     loop_region_index_ctype,
@@ -159,10 +158,7 @@ def identifiers_in(blocks) -> Set[str]:
 
 
 def index_function_qualifier() -> str:
-    """Qualifier of the ``<array>_idx`` / ``<array>_size`` helpers, per
-    ``compiler.cpu.codegen_params.index_fn_qualifier``."""
-    if Config.get("compiler", "cpu", "codegen_params", "index_fn_qualifier") == "always_inline":
-        return "static __attribute__((always_inline)) inline constexpr"
+    """Qualifier of the ``<array>_idx`` / ``<array>_size`` helpers: the standalone CPF spelling or the in-tree one."""
     if cpf_lowering.standalone():
         return STANDALONE_INDEX_FUNCTION_QUALIFIER
     return INDEX_FUNCTION_QUALIFIER
@@ -348,11 +344,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def map_scope_needs_brace(self, sdfg, state_dfg, node: nodes.MapEntry) -> bool:
         """Whether the map's ``{ }`` scope bounds a declaration; without one the braces only nest."""
         if dynamic_map_inputs(state_dfg, node):
-            return True
-        if any(
-            hoist_loop_decls(node, self.map_loop_will_have_openmp_pragma(sdfg, state_dfg, node, i))
-            for i in range(len(node.map.range))
-        ):
             return True
         if self.walk_plan_for(sdfg, state_dfg, node):
             return True
