@@ -50,7 +50,7 @@ def prompt_directory(directory: Optional[str] = None) -> str:
                       ``dace_ai_prompts`` directory under the system temporary directory).
     :return: The directory.
     """
-    directory = directory or Config.get('ai', 'manual_dir') or os.path.join(tempfile.gettempdir(), 'dace_ai_prompts')
+    directory = directory or Config.get("ai", "manual_dir") or os.path.join(tempfile.gettempdir(), "dace_ai_prompts")
     os.makedirs(directory, exist_ok=True)
     return directory
 
@@ -64,8 +64,8 @@ def render_prompt(system: str, messages: List[Dict[str, str]]) -> str:
     :return: The full prompt, ending with the required response format.
     """
     schema = json.dumps(backend.RESPONSE_SCHEMA, indent=2)
-    conversation = '\n\n'.join(f'## {m["role"]}\n\n{m["content"]}' for m in messages)
-    return (f'# System\n\n{system}\n\n# Conversation\n\n{conversation}\n\n' + JSON_INSTRUCTIONS.format(schema=schema))
+    conversation = "\n\n".join(f"## {m['role']}\n\n{m['content']}" for m in messages)
+    return f"# System\n\n{system}\n\n# Conversation\n\n{conversation}\n\n" + JSON_INSTRUCTIONS.format(schema=schema)
 
 
 def exchange_paths(directory: str, prompt: str, name: str) -> Tuple[str, str]:
@@ -82,9 +82,9 @@ def exchange_paths(directory: str, prompt: str, name: str) -> Tuple[str, str]:
     :return: A tuple of (prompt path, response path).
     """
     digest = hashlib.sha256(prompt.encode()).hexdigest()[:12]
-    readable = ''.join(c if c.isalnum() or c in '-_' else '_' for c in name)
-    stem = os.path.join(directory, f'{readable}_{digest}')
-    return f'{stem}_prompt.md', f'{stem}_response.json'
+    readable = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    stem = os.path.join(directory, f"{readable}_{digest}")
+    return f"{stem}_prompt.md", f"{stem}_response.json"
 
 
 def read_saved(path: str) -> str:
@@ -95,10 +95,10 @@ def read_saved(path: str) -> str:
     :return: Its contents, or an empty string if it does not exist or is empty.
     """
     try:
-        with open(path, 'r') as fp:
+        with open(path, "r") as fp:
             return fp.read().strip()
     except OSError:
-        return ''
+        return ""
 
 
 def parse_response(response: str, described: str) -> backend.TaskletSpec:
@@ -115,8 +115,10 @@ def parse_response(response: str, described: str) -> backend.TaskletSpec:
     try:
         payload = json.loads(response)
     except json.JSONDecodeError as e:
-        raise AIExpansionError(f'The response for {described} is not valid JSON: {e}\nIt must be a single JSON '
-                               'object matching the schema at the end of the prompt.') from e
+        raise AIExpansionError(
+            f"The response for {described} is not valid JSON: {e}\nIt must be a single JSON "
+            "object matching the schema at the end of the prompt."
+        ) from e
     return backend.spec_from_dict(payload, raw=response)
 
 
@@ -139,7 +141,7 @@ def generate_prompt(node: nodes.LibraryNode, state: SDFGState) -> str:
     :return: The full, self-contained prompt.
     """
     ctx = collect_context(node, state, state.sdfg)
-    return render_prompt(prompts.SYSTEM_PROMPT, [{'role': 'user', 'content': prompts.build_user_prompt(ctx)}])
+    return render_prompt(prompts.SYSTEM_PROMPT, [{"role": "user", "content": prompts.build_user_prompt(ctx)}])
 
 
 def read_prompt_response(node: nodes.LibraryNode, state: SDFGState, response: str) -> AITasklet:
@@ -193,7 +195,7 @@ def generate_prompts(sdfg: SDFG, directory: Optional[str] = None) -> List[str]:
     for node, state in _ai_nodes(sdfg):
         prompt = generate_prompt(node, state)
         prompt_path, _ = exchange_paths(directory, prompt, node.name)
-        with open(prompt_path, 'w') as fp:
+        with open(prompt_path, "w") as fp:
             fp.write(prompt)
         written.append(prompt_path)
     return written
@@ -223,9 +225,9 @@ def read_prompt_responses(sdfg: SDFG, directory: Optional[str] = None) -> List[A
         if response:
             answered.append((node, state, response))
         else:
-            missing.append(f'{_describe(node)} ({prompt_path})')
+            missing.append(f"{_describe(node)} ({prompt_path})")
 
     if missing:
-        listing = '\n    '.join(missing)
-        warnings.warn(f'No saved response for {len(missing)} node(s), which remain library nodes:\n    {listing}')
+        listing = "\n    ".join(missing)
+        warnings.warn(f"No saved response for {len(missing)} node(s), which remain library nodes:\n    {listing}")
     return [read_prompt_response(node, state, response) for node, state, response in answered]

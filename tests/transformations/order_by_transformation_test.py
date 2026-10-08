@@ -37,7 +37,7 @@ def _make_sdfg() -> dace.SDFG:
     """
     sdfg = dace.SDFG("order_by_transformation")
     for array, transient in [("a", False), ("b", False), ("c", False), ("t", True), ("d", False)]:
-        sdfg.add_array(array, shape=(10, ), dtype=dace.float64, transient=transient)
+        sdfg.add_array(array, shape=(10,), dtype=dace.float64, transient=transient)
     first = sdfg.add_state(is_start_block=True)
     _add_maps(first, [("a", ""), ("b", "0:1")])
     second = sdfg.add_state_after(first)
@@ -51,13 +51,16 @@ def _apply(sdfg: dace.SDFG, order_by_transformation: bool) -> Tuple[List[str], i
     applied = []
     original_apply = pattern_matching.PatternMatchAndApplyRepeated._apply_and_validate
 
-    def _record(self: pattern_matching.PatternMatchAndApplyRepeated, match: xf.PatternTransformation, *args: Any,
-                **kwargs: Any) -> None:
+    def _record(
+        self: pattern_matching.PatternMatchAndApplyRepeated, match: xf.PatternTransformation, *args: Any, **kwargs: Any
+    ) -> None:
         applied.append(type(match).__name__)
         original_apply(self, match, *args, **kwargs)
 
-    with (mock.patch.object(pattern_matching.PatternMatchAndApplyRepeated, "_apply_and_validate", _record),
-          mock.patch.object(pattern_matching, "match_patterns", side_effect=pattern_matching.match_patterns) as spy):
+    with (
+        mock.patch.object(pattern_matching.PatternMatchAndApplyRepeated, "_apply_and_validate", _record),
+        mock.patch.object(pattern_matching, "match_patterns", side_effect=pattern_matching.match_patterns) as spy,
+    ):
         sdfg.apply_transformations_repeated(
             [xform() for xform in _TRANSFORMATIONS],
             validate=False,
@@ -89,14 +92,16 @@ def test_order_by_transformation() -> None:
 def test_apply_first_match_per_transformation() -> None:
     # `PatternMatchAndApply` applies, for each transformation in order, the first match of that transformation.
     sdfg = _make_sdfg()
-    applied = pattern_matching.PatternMatchAndApply([xform() for xform in _TRANSFORMATIONS],
-                                                    validate=False).apply_pass(sdfg, {})
+    applied = pattern_matching.PatternMatchAndApply([xform() for xform in _TRANSFORMATIONS], validate=False).apply_pass(
+        sdfg, {}
+    )
     assert list(applied.keys()) == ["MapFusionVertical", "TrivialMapElimination"]
     assert all(len(results) == 1 for results in applied.values())
 
 
-@pytest.mark.parametrize("order_by_transformation, last_applied", [(True, "TrivialMapElimination"),
-                                                                   (False, "MapFusionVertical")])
+@pytest.mark.parametrize(
+    "order_by_transformation, last_applied", [(True, "TrivialMapElimination"), (False, "MapFusionVertical")]
+)
 def test_validation_failure_names_last_applied_transformation(order_by_transformation: bool, last_applied: str) -> None:
     # Both transformations apply, in the order `test_order_by_transformation` established for this SDFG and
     #  mode; `last_applied` here is the second (last) one of that order, not just any applied transformation.

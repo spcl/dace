@@ -8,6 +8,7 @@ illegal where an integer is required -- an array size, a subscript, or a loop bo
 constant, an integer-valued float literal, or a symbolic integer proven ``>= 0`` by interval analysis over the
 enclosing iterator ranges (``K - i - 1`` with ``for i in range(K)``).
 """
+
 from dataclasses import dataclass
 from collections.abc import Iterable
 from typing import Any
@@ -32,24 +33,30 @@ Ranges = dict[str, Bounds]
 class SignFacts:
     """Names an SDFG declares positive, non-negative or integer, kept by name so that a same-named symbol that lost
     its assumptions is still covered."""
+
     positive: frozenset = frozenset()
     nonnegative: frozenset = frozenset()
     integer: frozenset = frozenset()
 
     @staticmethod
-    def of_sdfg(sdfg: SDFG) -> 'SignFacts':
+    def of_sdfg(sdfg: SDFG) -> "SignFacts":
         # The assumptions live on the symbol objects in the descriptors; ``sdfg.free_symbols`` only has names.
         syms = set()
         for desc in sdfg.arrays.values():
             if isinstance(desc, data.Array):
                 syms |= desc.free_symbols
         # An unsigned dtype is a sign fact sympy's assumptions do not carry
-        unsigned = frozenset(name for name, dtype in sdfg.symbols.items()
-                             if type(dtype) is dtypes.typeclass and dtype.as_numpy_dtype().kind == 'u')
+        unsigned = frozenset(
+            name
+            for name, dtype in sdfg.symbols.items()
+            if type(dtype) is dtypes.typeclass and dtype.as_numpy_dtype().kind == "u"
+        )
         nonnegative = frozenset(s.name for s in syms if s.is_nonnegative and not s.is_positive)
-        return SignFacts(positive=frozenset(s.name for s in syms if s.is_positive),
-                         nonnegative=nonnegative | unsigned,
-                         integer=frozenset(s.name for s in syms if s.is_integer) | unsigned)
+        return SignFacts(
+            positive=frozenset(s.name for s in syms if s.is_positive),
+            nonnegative=nonnegative | unsigned,
+            integer=frozenset(s.name for s in syms if s.is_integer) | unsigned,
+        )
 
     def assumptions(self, symbols: Iterable[sympy.Symbol]) -> list[sympy.logic.boolalg.Boolean]:
         facts = []
@@ -63,8 +70,9 @@ class SignFacts:
         return facts
 
 
-def ordered_range(begin: symbolic.SymbolicType, end: symbolic.SymbolicType,
-                  step: symbolic.SymbolicType | None) -> Bounds | None:
+def ordered_range(
+    begin: symbolic.SymbolicType, end: symbolic.SymbolicType, step: symbolic.SymbolicType | None
+) -> Bounds | None:
     """Inclusive ``(low, high)`` of ``begin..end`` by ``step``, or None when the sign of ``step`` is unknown: guessing
     ascending would prove a negative exponent non-negative."""
     if step is None:
@@ -121,6 +129,7 @@ def relaxed_exponent(exp: sympy.Expr, ranges: Ranges, facts: SignFacts) -> sympy
 class PowerRelaxer:
     """One walk over an SDFG tree that rewrites every provable ``Pow`` in sizes, subscripts, bounds, conditions,
     interstate assignments and symbol mappings."""
+
     relaxed: int = 0
 
     def relax(self, expr: Any, ranges: Ranges, facts: SignFacts) -> Any:
@@ -151,7 +160,7 @@ class PowerRelaxer:
 
     def relax_text(self, text: str, ranges: Ranges, facts: SignFacts) -> str | None:
         """The rewritten Python expression, or None if it is unparseable or unchanged."""
-        if not text or '**' not in text:
+        if not text or "**" not in text:
             return None
         try:
             expr = symbolic.pystr_to_symbolic(text)
@@ -193,8 +202,9 @@ class PowerRelaxer:
     def visit_sdfg(self, sdfg: SDFG, ranges: Ranges) -> None:
         self.visit_region(sdfg, ranges, SignFacts.of_sdfg(sdfg), set())
 
-    def visit_region(self, region: ControlFlowRegion, ranges: Ranges, facts: SignFacts,
-                     relaxed_arrays: set[str]) -> None:
+    def visit_region(
+        self, region: ControlFlowRegion, ranges: Ranges, facts: SignFacts, relaxed_arrays: set[str]
+    ) -> None:
         for iedge in region.edges():
             if iedge.data is None:
                 continue
@@ -237,7 +247,7 @@ class PowerRelaxer:
                     self.relax_subset(node.map.range, live, facts)
                     inner = dict(live)
                     for conn in node.in_connectors:
-                        if not conn.startswith('IN_'):
+                        if not conn.startswith("IN_"):
                             inner.pop(conn, None)
                     for param, (begin, end, step) in zip(node.map.params, node.map.range.ranges, strict=True):
                         bounds = ordered_range(begin, end, step)
@@ -281,7 +291,7 @@ def nested_ranges(nsdfg: nodes.NestedSDFG, ranges: Ranges) -> Ranges:
 class RelaxIntegerPowers(ppl.Pass):
     """Lower non-negative-integer ``Pow`` to ``ipow`` across the SDFG's size, subscript and bound expressions."""
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = "Simplification"
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Nodes

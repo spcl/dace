@@ -163,40 +163,47 @@ def _render_connector(conn: ConnectorInfo) -> str:
     :param conn: The connector to render.
     :return: The rendered description.
     """
-    lines = [f'- {conn.name} ({conn.direction}put)']
+    lines = [f"- {conn.name} ({conn.direction}put)"]
 
     points_at = None
     if conn.base_offset is not None and conn.data:
-        points_at = (f'{conn.data} + {conn.base_offset}' if conn.base_offset != '0' else f'{conn.data}')
-        points_at += '   (the first element of the memlet subset)'
+        points_at = f"{conn.data} + {conn.base_offset}" if conn.base_offset != "0" else f"{conn.data}"
+        points_at += "   (the first element of the memlet subset)"
 
     layout = None
     if conn.contiguous is not None:
-        extent = ' x '.join(conn.view_shape) if conn.view_shape else '?'
-        layout = (f'{extent} elements, contiguous'
-                  if conn.contiguous else f'{extent} elements, NOT contiguous -- a strided view into "{conn.data}"')
+        extent = " x ".join(conn.view_shape) if conn.view_shape else "?"
+        layout = (
+            f"{extent} elements, contiguous"
+            if conn.contiguous
+            else f'{extent} elements, NOT contiguous -- a strided view into "{conn.data}"'
+        )
 
     fields = [
-        ('declared as', f'{conn.ctype} {conn.name}'),
-        ('kind', 'pointer' if conn.is_pointer else 'scalar value'),
-        ('element type', conn.element_type),
-        ('container', f'{conn.container_kind} "{conn.data}"' if conn.data else None),
-        ('container shape', ' x '.join(conn.shape) if conn.shape else None),
-        ('container strides, in elements', ', '.join(conn.strides) if conn.strides else None),
-        ('storage',
-         f'{conn.storage} (resolved from {conn.storage_declared})' if conn.storage_declared else conn.storage),
-        ('memlet subset', conn.subset),
-        ('points at', points_at),
-        ('view', layout),
-        ('address element (i0, ...) as', conn.index_formula),
-        ('elements moved', conn.num_elements),
-        ('write-conflict resolution', conn.wcr),
-        ('dynamic memlet', 'yes' if conn.dynamic else None),
-        ('dereferenceable by this code',
-         'no -- not addressable from where this code runs' if not conn.dereferenceable else None),
+        ("declared as", f"{conn.ctype} {conn.name}"),
+        ("kind", "pointer" if conn.is_pointer else "scalar value"),
+        ("element type", conn.element_type),
+        ("container", f'{conn.container_kind} "{conn.data}"' if conn.data else None),
+        ("container shape", " x ".join(conn.shape) if conn.shape else None),
+        ("container strides, in elements", ", ".join(conn.strides) if conn.strides else None),
+        (
+            "storage",
+            f"{conn.storage} (resolved from {conn.storage_declared})" if conn.storage_declared else conn.storage,
+        ),
+        ("memlet subset", conn.subset),
+        ("points at", points_at),
+        ("view", layout),
+        ("address element (i0, ...) as", conn.index_formula),
+        ("elements moved", conn.num_elements),
+        ("write-conflict resolution", conn.wcr),
+        ("dynamic memlet", "yes" if conn.dynamic else None),
+        (
+            "dereferenceable by this code",
+            "no -- not addressable from where this code runs" if not conn.dereferenceable else None,
+        ),
     ]
-    lines.extend(f'    {key}: {value}' for key, value in fields if value)
-    return '\n'.join(lines)
+    lines.extend(f"    {key}: {value}" for key, value in fields if value)
+    return "\n".join(lines)
 
 
 def _render_nesting(frames: List[NestingFrame]) -> str:
@@ -209,22 +216,22 @@ def _render_nesting(frames: List[NestingFrame]) -> str:
     """
     lines = []
     for depth, frame in enumerate(reversed(frames)):
-        indent = '  ' * depth
+        indent = "  " * depth
         annotations = []
         if frame.schedule:
             annotations.append(frame.schedule)
         if frame.unroll:
-            annotations.append('unrolled')
+            annotations.append("unrolled")
         if frame.block_size:
-            annotations.append(f'block size {frame.block_size}')
-        suffix = f'  [{", ".join(annotations)}]' if annotations else ''
-        detail = f'  {frame.detail}' if frame.detail else ''
+            annotations.append(f"block size {frame.block_size}")
+        suffix = f"  [{', '.join(annotations)}]" if annotations else ""
+        detail = f"  {frame.detail}" if frame.detail else ""
         lines.append(f'{indent}{frame.kind} "{frame.label}"{detail}{suffix}')
         if frame.symbol_mapping:
-            mapping = ', '.join(f'{k} = {v}' for k, v in frame.symbol_mapping.items())
-            lines.append(f'{indent}  symbol mapping: {mapping}')
-    lines.append('  ' * len(frames) + '<-- your tasklet replaces the library node here')
-    return '\n'.join(lines)
+            mapping = ", ".join(f"{k} = {v}" for k, v in frame.symbol_mapping.items())
+            lines.append(f"{indent}  symbol mapping: {mapping}")
+    lines.append("  " * len(frames) + "<-- your tasklet replaces the library node here")
+    return "\n".join(lines)
 
 
 def build_user_prompt(ctx: ExpansionContext) -> str:
@@ -238,84 +245,95 @@ def build_user_prompt(ctx: ExpansionContext) -> str:
     target = ctx.target
     sections: List[str] = []
 
-    task = ['# Task', '', f'Library node type: {ctx.node_type}', f'Node name: {ctx.node_name}']
+    task = ["# Task", "", f"Library node type: {ctx.node_type}", f"Node name: {ctx.node_name}"]
     if ctx.class_docstring:
         task += [
-            '', f'Documentation of the {ctx.node_type} class, which defines the semantics you must '
-            'reproduce:', '',
-            textwrap.indent(ctx.class_docstring, '    ')
+            "",
+            f"Documentation of the {ctx.node_type} class, which defines the semantics you must reproduce:",
+            "",
+            textwrap.indent(ctx.class_docstring, "    "),
         ]
     if ctx.description:
         task += [
-            '', 'What this node must compute (written by the user of this SDFG):', '',
-            textwrap.indent(ctx.description.strip(), '    ')
+            "",
+            "What this node must compute (written by the user of this SDFG):",
+            "",
+            textwrap.indent(ctx.description.strip(), "    "),
         ]
     if ctx.node_properties:
-        task += ['', 'Node properties:']
-        task += [f'  {k} = {v}' for k, v in sorted(ctx.node_properties.items())]
-    sections.append('\n'.join(task))
+        task += ["", "Node properties:"]
+        task += [f"  {k} = {v}" for k, v in sorted(ctx.node_properties.items())]
+    sections.append("\n".join(task))
 
     if caps is not None:
         caps_lines = [
-            '# Capabilities of this slot',
-            '',
-            f'GPU device code: {"yes" if caps.device_level else "no"}',
-            f'Effective schedule: {caps.effective_schedule}',
-            f'__state available in the body: {"yes" if caps.state_available else "no"}',
-            f'__dace_current_stream in scope: {"yes" if caps.current_stream_available else "no"}',
-            f'Environments allowed: {caps.environments_allowed}',
+            "# Capabilities of this slot",
+            "",
+            f"GPU device code: {'yes' if caps.device_level else 'no'}",
+            f"Effective schedule: {caps.effective_schedule}",
+            f"__state available in the body: {'yes' if caps.state_available else 'no'}",
+            f"__dace_current_stream in scope: {'yes' if caps.current_stream_available else 'no'}",
+            f"Environments allowed: {caps.environments_allowed}",
         ]
         # Only relevant where the generated code could actually touch the GPU; on a pure host slot
         # it is a fact about the machine, and belongs in the target section instead.
         if caps.gpu_backend and (caps.device_level or caps.current_stream_available):
-            caps_lines.append(f'GPU backend: {caps.gpu_backend}')
+            caps_lines.append(f"GPU backend: {caps.gpu_backend}")
         if caps.block_size:
-            caps_lines.append(f'Enclosing thread-block size: {caps.block_size}')
+            caps_lines.append(f"Enclosing thread-block size: {caps.block_size}")
         not_deref = [name for name, ok in caps.dereferenceable.items() if not ok]
         if not_deref:
-            space = 'host memory' if caps.device_level else 'GPU memory'
-            caps_lines.append(f'Pointers you must NOT dereference here (they are in {space}): '
-                              f'{", ".join(sorted(not_deref))}')
-        sections.append('\n'.join(caps_lines))
+            space = "host memory" if caps.device_level else "GPU memory"
+            caps_lines.append(
+                f"Pointers you must NOT dereference here (they are in {space}): {', '.join(sorted(not_deref))}"
+            )
+        sections.append("\n".join(caps_lines))
 
-    sections.append('# Connectors (the variables in scope)\n\n' +
-                    ('\n'.join(_render_connector(c) for c in ctx.connectors) or '(none)'))
+    sections.append(
+        "# Connectors (the variables in scope)\n\n"
+        + ("\n".join(_render_connector(c) for c in ctx.connectors) or "(none)")
+    )
 
-    sections.append('# Where this node sits (outermost first)\n\n' + _render_nesting(ctx.nesting))
+    sections.append("# Where this node sits (outermost first)\n\n" + _render_nesting(ctx.nesting))
 
     if ctx.symbols:
-        sections.append('# Symbols in scope\n\n' + '\n'.join(f'  {k}: {v}' for k, v in sorted(ctx.symbols.items())))
+        sections.append("# Symbols in scope\n\n" + "\n".join(f"  {k}: {v}" for k, v in sorted(ctx.symbols.items())))
 
     if target is not None:
-        target_lines = ['# Target machine and compiler', '', f'Platform: {target.platform} ({target.machine})']
+        target_lines = ["# Target machine and compiler", "", f"Platform: {target.platform} ({target.machine})"]
         optional = [
-            ('CPU', target.cpu_model),
-            ('CPU ISA extensions', target.cpu_features),
-            ('Host compiler',
-             f'{target.host_compiler} ({target.compiler_family})' if target.compiler_family else target.host_compiler),
-            ('Host compiler flags', target.host_flags),
-            ('Build type', target.build_type),
-            ('C++ standard', target.cpp_standard),
-            ('GPU backend', target.gpu_backend),
-            ('GPU architectures to compile for', target.gpu_architectures),
-            ('GPU devices detected', target.gpu_names),
-            ('GPU compiler flags', target.gpu_flags),
+            ("CPU", target.cpu_model),
+            ("CPU ISA extensions", target.cpu_features),
+            (
+                "Host compiler",
+                f"{target.host_compiler} ({target.compiler_family})"
+                if target.compiler_family
+                else target.host_compiler,
+            ),
+            ("Host compiler flags", target.host_flags),
+            ("Build type", target.build_type),
+            ("C++ standard", target.cpp_standard),
+            ("GPU backend", target.gpu_backend),
+            ("GPU architectures to compile for", target.gpu_architectures),
+            ("GPU devices detected", target.gpu_names),
+            ("GPU compiler flags", target.gpu_flags),
         ]
-        target_lines += [f'{label}: {value}' for label, value in optional if value]
-        sections.append('\n'.join(target_lines))
+        target_lines += [f"{label}: {value}" for label, value in optional if value]
+        sections.append("\n".join(target_lines))
 
     if ctx.available_environments:
-        sections.append('# DaCe environments already available on this machine\n\n'
-                        'Name any of these in `use_environments`, copying the path verbatim, instead of describing '
-                        'the same library again in `environments`.\n\n' +
-                        '\n'.join(f'  {e}' for e in ctx.available_environments))
+        sections.append(
+            "# DaCe environments already available on this machine\n\n"
+            "Name any of these in `use_environments`, copying the path verbatim, instead of describing "
+            "the same library again in `environments`.\n\n" + "\n".join(f"  {e}" for e in ctx.available_environments)
+        )
 
-    extra = Config.get('ai', 'extra_instructions')
+    extra = Config.get("ai", "extra_instructions")
     if extra:
-        sections.append('# Additional instructions from the user\n\n' + extra)
+        sections.append("# Additional instructions from the user\n\n" + extra)
 
-    sections.append('Write the tasklet now.')
-    return '\n\n'.join(sections)
+    sections.append("Write the tasklet now.")
+    return "\n\n".join(sections)
 
 
 def build_repair_prompt(stderr: str, command: str) -> str:
@@ -326,14 +344,16 @@ def build_repair_prompt(stderr: str, command: str) -> str:
     :param command: The command line that was used to compile the probe.
     :return: The rendered prompt.
     """
-    return ('The generated code does not compile. This is the output of a standalone probe '
-            'compilation of your tasklet (the connectors and symbols were declared as function '
-            'parameters, and the state struct was rebuilt from your `state_fields`), so line '
-            'numbers will not match your snippet exactly.\n\n'
-            f'Command:\n\n    {command}\n\n'
-            f'Diagnostics:\n\n{textwrap.indent(stderr.strip(), "    ")}\n\n'
-            'Fix the problem and return the complete JSON object again, including any parts that '
-            'did not change. Do not remove functionality to make it compile.')
+    return (
+        "The generated code does not compile. This is the output of a standalone probe "
+        "compilation of your tasklet (the connectors and symbols were declared as function "
+        "parameters, and the state struct was rebuilt from your `state_fields`), so line "
+        "numbers will not match your snippet exactly.\n\n"
+        f"Command:\n\n    {command}\n\n"
+        f"Diagnostics:\n\n{textwrap.indent(stderr.strip(), '    ')}\n\n"
+        "Fix the problem and return the complete JSON object again, including any parts that "
+        "did not change. Do not remove functionality to make it compile."
+    )
 
 
 def build_feedback_prompt(feedback: str, context: str, standalone: bool = False) -> str:
@@ -353,17 +373,21 @@ def build_feedback_prompt(feedback: str, context: str, standalone: bool = False)
     :return: The rendered prompt.
     """
     if standalone:
-        return (f'{context}\n\n# Feedback on an earlier version\n\n'
-                'You have written code for this slot before. That version is not shown here -- the '
-                'conversation could not be recovered -- but this is the feedback on it:\n\n'
-                f'{textwrap.indent(feedback.strip(), "    ")}\n\n'
-                'Write the tasklet again, addressing that feedback. Return the complete JSON object.')
+        return (
+            f"{context}\n\n# Feedback on an earlier version\n\n"
+            "You have written code for this slot before. That version is not shown here -- the "
+            "conversation could not be recovered -- but this is the feedback on it:\n\n"
+            f"{textwrap.indent(feedback.strip(), '    ')}\n\n"
+            "Write the tasklet again, addressing that feedback. Return the complete JSON object."
+        )
 
-    return ('The tasklet you wrote above was accepted and used. This is feedback on it:\n\n'
-            f'{textwrap.indent(feedback.strip(), "    ")}\n\n'
-            'Revise it accordingly. Keep everything that was already correct -- this is an '
-            'improvement to working code, not a fresh start, and losing behavior that the feedback '
-            'did not ask you to change is a regression. The slot has not moved; the context you '
-            'were given still holds. If the feedback asks for something the contract in the system '
-            'prompt forbids, say so in `notes` and do the closest thing that is allowed.\n\n'
-            'Return the complete JSON object, including any parts that did not change.')
+    return (
+        "The tasklet you wrote above was accepted and used. This is feedback on it:\n\n"
+        f"{textwrap.indent(feedback.strip(), '    ')}\n\n"
+        "Revise it accordingly. Keep everything that was already correct -- this is an "
+        "improvement to working code, not a fresh start, and losing behavior that the feedback "
+        "did not ask you to change is a regression. The slot has not moved; the context you "
+        "were given still holds. If the feedback asks for something the contract in the system "
+        "prompt forbids, say so in `notes` and do the closest thing that is allowed.\n\n"
+        "Return the complete JSON object, including any parts that did not change."
+    )

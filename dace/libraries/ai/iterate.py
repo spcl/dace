@@ -37,23 +37,23 @@ NodeSelector = Union[str, AITasklet, None]
 
 @dataclass
 class Round:
-    """ One round of generation on a slot. """
+    """One round of generation on a slot."""
 
     number: int
     feedback: str
     outcome: str
-    started: str = ''
-    finished: str = ''
-    error: str = ''
+    started: str = ""
+    finished: str = ""
+    error: str = ""
 
     def __str__(self) -> str:
-        summary = self.feedback.strip().splitlines()[0] if self.feedback.strip() else '(initial generation)'
-        return f'round {self.number}  {self.outcome:9}  {summary}'
+        summary = self.feedback.strip().splitlines()[0] if self.feedback.strip() else "(initial generation)"
+        return f"round {self.number}  {self.outcome:9}  {summary}"
 
 
 @dataclass
 class SlotInfo:
-    """ A refinable slot found in an SDFG. """
+    """A refinable slot found in an SDFG."""
 
     name: str
     session: str
@@ -65,8 +65,8 @@ class SlotInfo:
     sdfg: SDFG
 
     def __str__(self) -> str:
-        flags = ''.join((' [pinned]' if self.pinned else '', ' [hand-edited]' if self.edited else ''))
-        return f'{self.name}  session={self.session}  round={self.round}{flags}'
+        flags = "".join((" [pinned]" if self.pinned else "", " [hand-edited]" if self.edited else ""))
+        return f"{self.name}  session={self.session}  round={self.round}{flags}"
 
 
 def code_fingerprint(tasklet: nodes.Tasklet) -> str:
@@ -79,9 +79,15 @@ def code_fingerprint(tasklet: nodes.Tasklet) -> str:
     :param tasklet: The tasklet to fingerprint.
     :return: A short hexadecimal digest.
     """
-    material = '\0'.join((tasklet.code.as_string, tasklet.code_global.as_string, tasklet.code_init.as_string,
-                          tasklet.code_exit.as_string))
-    return hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]
+    material = "\0".join(
+        (
+            tasklet.code.as_string,
+            tasklet.code_global.as_string,
+            tasklet.code_init.as_string,
+            tasklet.code_exit.as_string,
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
 
 
 def stamp(tasklet: AITasklet, session: str, round_number: int, node_json: Dict[str, Any]) -> None:
@@ -95,12 +101,13 @@ def stamp(tasklet: AITasklet, session: str, round_number: int, node_json: Dict[s
     """
     tasklet.provenance = json.dumps(
         {
-            'session': session,
-            'round': round_number,
-            'node': node_json,
-            'code_sha': code_fingerprint(tasklet),
+            "session": session,
+            "round": round_number,
+            "node": node_json,
+            "code_sha": code_fingerprint(tasklet),
         },
-        indent=1)
+        indent=1,
+    )
 
 
 def read(tasklet: nodes.Tasklet) -> Optional[Dict[str, Any]]:
@@ -110,7 +117,7 @@ def read(tasklet: nodes.Tasklet) -> Optional[Dict[str, Any]]:
     :param tasklet: The tasklet to inspect.
     :return: The decoded provenance, or ``None`` if it has none or it is unreadable.
     """
-    blob = getattr(tasklet, 'provenance', '')
+    blob = getattr(tasklet, "provenance", "")
     if not blob:
         return None
     try:
@@ -146,14 +153,17 @@ def sessions(sdfg: SDFG) -> List[SlotInfo]:
     for tasklet, state, owner in _iter_slots(sdfg):
         prov = read(tasklet)
         found.append(
-            SlotInfo(name=tasklet.label,
-                     session=prov.get('session', ''),
-                     round=int(prov.get('round', 0)),
-                     pinned=bool(prov.get('pinned')),
-                     edited=prov.get('code_sha', '') != code_fingerprint(tasklet),
-                     tasklet=tasklet,
-                     state=state,
-                     sdfg=owner))
+            SlotInfo(
+                name=tasklet.label,
+                session=prov.get("session", ""),
+                round=int(prov.get("round", 0)),
+                pinned=bool(prov.get("pinned")),
+                edited=prov.get("code_sha", "") != code_fingerprint(tasklet),
+                tasklet=tasklet,
+                state=state,
+                sdfg=owner,
+            )
+        )
     return found
 
 
@@ -168,9 +178,11 @@ def _select(sdfg: SDFG, node: NodeSelector) -> SlotInfo:
     """
     slots = sessions(sdfg)
     if not slots:
-        raise AIExpansionError(f'SDFG "{sdfg.name}" holds no AI-generated tasklets to refine. A tasklet can only be '
-                               'refined if it was produced by the "ai" implementation in a version of DaCe that '
-                               'records provenance.')
+        raise AIExpansionError(
+            f'SDFG "{sdfg.name}" holds no AI-generated tasklets to refine. A tasklet can only be '
+            'refined if it was produced by the "ai" implementation in a version of DaCe that '
+            "records provenance."
+        )
 
     if isinstance(node, AITasklet):
         matches = [s for s in slots if s.tasklet is node]
@@ -180,12 +192,12 @@ def _select(sdfg: SDFG, node: NodeSelector) -> SlotInfo:
         matches = [s for s in slots if s.name == node or s.tasklet.guid == node or s.session == node]
 
     if not matches:
-        listing = '\n'.join(f'  {s}' for s in slots)
+        listing = "\n".join(f"  {s}" for s in slots)
         raise AIExpansionError(f'No AI-generated tasklet matches {node!r} in SDFG "{sdfg.name}". Available:\n{listing}')
     if len(matches) > 1:
-        listing = '\n'.join(f'  {s}' for s in matches)
-        what = 'this SDFG holds more than one' if node is None else f'{node!r} is ambiguous'
-        raise AIExpansionError(f'Cannot tell which tasklet to use: {what}. Name one of:\n{listing}')
+        listing = "\n".join(f"  {s}" for s in matches)
+        what = "this SDFG holds more than one" if node is None else f"{node!r} is ambiguous"
+        raise AIExpansionError(f"Cannot tell which tasklet to use: {what}. Name one of:\n{listing}")
     return matches[0]
 
 
@@ -198,16 +210,18 @@ def _restore_node(slot: SlotInfo) -> nodes.LibraryNode:
     :raises AIExpansionError: If the recorded node cannot be deserialized.
     """
     prov = read(slot.tasklet)
-    node_json = (prov or {}).get('node')
+    node_json = (prov or {}).get("node")
     if not node_json:
         raise AIExpansionError(f'Tasklet "{slot.name}" records no library node, so it cannot be regenerated.')
 
-    context = {'sdfg': slot.sdfg, 'sdfg_state': slot.state}
+    context = {"sdfg": slot.sdfg, "sdfg_state": slot.state}
     restored = dace.serialize.from_json(node_json, context=context)
     if not isinstance(restored, nodes.LibraryNode):
-        raise AIExpansionError(f'The library node recorded on tasklet "{slot.name}" did not deserialize into a '
-                               f'library node but into {type(restored).__name__}. Its defining class may no longer '
-                               'be importable.')
+        raise AIExpansionError(
+            f'The library node recorded on tasklet "{slot.name}" did not deserialize into a '
+            f"library node but into {type(restored).__name__}. Its defining class may no longer "
+            "be importable."
+        )
 
     slot.state.add_node(restored)
     sdutil.change_edge_dest(slot.state, slot.tasklet, restored)
@@ -233,7 +247,7 @@ def _reinstate(slot: SlotInfo, library_node: nodes.LibraryNode, tasklet: AITaskl
     slot.state.remove_node(library_node)
 
 
-def refine(sdfg: SDFG, node: NodeSelector = None, message: str = '', **kwargs) -> AITasklet:
+def refine(sdfg: SDFG, node: NodeSelector = None, message: str = "", **kwargs) -> AITasklet:
     """
     Asks for a better version of a tasklet that already exists.
 
@@ -250,15 +264,18 @@ def refine(sdfg: SDFG, node: NodeSelector = None, message: str = '', **kwargs) -
     """
     slot = _select(sdfg, node)
     if slot.pinned:
-        raise AIExpansionError(f'Tasklet "{slot.name}" is pinned, so it will not be regenerated. Call '
-                               'dace.libraries.ai.unpin() first if that is what you want.')
+        raise AIExpansionError(
+            f'Tasklet "{slot.name}" is pinned, so it will not be regenerated. Call '
+            "dace.libraries.ai.unpin() first if that is what you want."
+        )
 
     if slot.edited:
         # Someone changed this code by hand. Regenerating from the recorded round would throw that
         # away silently, so the edit is what the next round builds on.
-        message = (f'{message}\n\n' if message else
-                   '') + ('Note: the code was edited by hand after you wrote it. This is what is in the program '
-                          f'now, and it is what you should revise:\n\n{slot.tasklet.code.as_string}')
+        message = (f"{message}\n\n" if message else "") + (
+            "Note: the code was edited by hand after you wrote it. This is what is in the program "
+            f"now, and it is what you should revise:\n\n{slot.tasklet.code.as_string}"
+        )
 
     prov = read(slot.tasklet) or {}
     # The node object itself, not a copy: reinstating it after a failure keeps any reference the
@@ -266,7 +283,7 @@ def refine(sdfg: SDFG, node: NodeSelector = None, message: str = '', **kwargs) -
     previous = slot.tasklet
     library_node = _restore_node(slot)
     try:
-        library_node.expand(slot.state, 'ai', feedback=message or ' ', session=prov.get('session'), **kwargs)
+        library_node.expand(slot.state, "ai", feedback=message or " ", session=prov.get("session"), **kwargs)
     except Exception:
         _reinstate(slot, library_node, previous)
         raise
@@ -289,12 +306,15 @@ def history(sdfg: SDFG, node: NodeSelector = None) -> List[Round]:
     if record is None:
         return []
     return [
-        Round(number=int(r.get('round', 0)),
-              feedback=r.get('feedback', ''),
-              outcome=r.get('outcome', ''),
-              started=r.get('started', ''),
-              finished=r.get('finished', ''),
-              error=r.get('error', '')) for r in record.rounds
+        Round(
+            number=int(r.get("round", 0)),
+            feedback=r.get("feedback", ""),
+            outcome=r.get("outcome", ""),
+            started=r.get("started", ""),
+            finished=r.get("finished", ""),
+            error=r.get("error", ""),
+        )
+        for r in record.rounds
     ]
 
 
@@ -317,14 +337,15 @@ def rollback(sdfg: SDFG, node: NodeSelector = None, *, round: int) -> AITasklet:
     record = ai_session.load(slot.session)
     spec = record.spec_of(round) if record is not None else None
     if spec is None:
-        available = ', '.join(str(r.number) for r in history(sdfg, node)) or 'none'
-        raise AIExpansionError(f'Round {round} of session "{slot.session}" has no code on record. '
-                               f'Rounds available: {available}.')
+        available = ", ".join(str(r.number) for r in history(sdfg, node)) or "none"
+        raise AIExpansionError(
+            f'Round {round} of session "{slot.session}" has no code on record. Rounds available: {available}.'
+        )
 
     from dace import dtypes
     from dace.properties import CodeBlock
 
-    language = dtypes.Language.Python if spec.language.upper() == 'PYTHON' else dtypes.Language.CPP
+    language = dtypes.Language.Python if spec.language.upper() == "PYTHON" else dtypes.Language.CPP
     tasklet = slot.tasklet
     tasklet.code = CodeBlock(spec.code, language)
     # The auxiliary blocks are always C++, whatever language the body is written in
@@ -336,7 +357,7 @@ def rollback(sdfg: SDFG, node: NodeSelector = None, *, round: int) -> AITasklet:
     tasklet.ignored_symbols = set(spec.ignored_symbols)
 
     prov = read(tasklet) or {}
-    stamp(tasklet, session=prov.get('session', slot.session), round_number=round, node_json=prov.get('node', {}))
+    stamp(tasklet, session=prov.get("session", slot.session), round_number=round, node_json=prov.get("node", {}))
     return tasklet
 
 
@@ -349,17 +370,17 @@ def show(sdfg: SDFG, node: NodeSelector = None) -> str:
     :return: The rendered description, which is also printed.
     """
     slot = _select(sdfg, node)
-    lines = [str(slot), '']
+    lines = [str(slot), ""]
     if slot.tasklet.code_global.as_string.strip():
-        lines += ['--- code_global ---', slot.tasklet.code_global.as_string, '']
-    lines += ['--- code ---', slot.tasklet.code.as_string]
-    for label, block in (('code_init', slot.tasklet.code_init), ('code_exit', slot.tasklet.code_exit)):
+        lines += ["--- code_global ---", slot.tasklet.code_global.as_string, ""]
+    lines += ["--- code ---", slot.tasklet.code.as_string]
+    for label, block in (("code_init", slot.tasklet.code_init), ("code_exit", slot.tasklet.code_exit)):
         if block.as_string.strip():
-            lines += ['', f'--- {label} ---', block.as_string]
+            lines += ["", f"--- {label} ---", block.as_string]
     if slot.tasklet.state_fields:
-        lines += ['', '--- state_fields ---'] + [f'  {f}' for f in slot.tasklet.state_fields]
+        lines += ["", "--- state_fields ---"] + [f"  {f}" for f in slot.tasklet.state_fields]
 
-    rendered = '\n'.join(lines)
+    rendered = "\n".join(lines)
     print(rendered)
     return rendered
 
@@ -397,5 +418,5 @@ def _set_pinned(sdfg: SDFG, node: NodeSelector, value: bool) -> None:
     """
     slot = _select(sdfg, node)
     prov = read(slot.tasklet) or {}
-    prov['pinned'] = value
+    prov["pinned"] = value
     slot.tasklet.provenance = json.dumps(prov, indent=1)

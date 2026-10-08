@@ -34,17 +34,17 @@ from typing import Any, Dict, List, Optional
 from dace.config import Config
 
 #: Name of the machine-readable index in every session directory.
-INDEX_NAME = 'session.json'
+INDEX_NAME = "session.json"
 
 #: Name of the resumable conversation in every session directory.
-CONVERSATION_NAME = 'conversation.json'
+CONVERSATION_NAME = "conversation.json"
 
 
 def enabled() -> bool:
     """
     :return: True if sessions should be written.
     """
-    return Config.get_bool('ai', 'sessions')
+    return Config.get_bool("ai", "sessions")
 
 
 def session_dir(create: bool = False) -> str:
@@ -54,9 +54,12 @@ def session_dir(create: bool = False) -> str:
     :param create: If True, the directory is created when it does not exist.
     :return: An absolute path. Defaults to ``~/.dace/ai_sessions`` when ``ai.session_dir`` is empty.
     """
-    configured = Config.get('ai', 'session_dir')
-    path = os.path.expanduser(os.path.expandvars(configured)) if configured else os.path.join(
-        os.path.expanduser('~'), '.dace', 'ai_sessions')
+    configured = Config.get("ai", "session_dir")
+    path = (
+        os.path.expanduser(os.path.expandvars(configured))
+        if configured
+        else os.path.join(os.path.expanduser("~"), ".dace", "ai_sessions")
+    )
     if create:
         os.makedirs(path, exist_ok=True)
     return path
@@ -69,8 +72,8 @@ def _sanitize(name: str) -> str:
     :param name: The name to clean.
     :return: The cleaned name, never empty.
     """
-    cleaned = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(name)).strip('_.')
-    return cleaned or 'unnamed'
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("_.")
+    return cleaned or "unnamed"
 
 
 def make_id(sdfg_name: str, node_name: str) -> str:
@@ -81,7 +84,7 @@ def make_id(sdfg_name: str, node_name: str) -> str:
     :param node_name: Name of the library node.
     :return: A path-safe, human-readable identifier.
     """
-    return f'{_sanitize(sdfg_name)}.{_sanitize(node_name)}'
+    return f"{_sanitize(sdfg_name)}.{_sanitize(node_name)}"
 
 
 class Session:
@@ -93,8 +96,9 @@ class Session:
     usable record behind.
     """
 
-    def __init__(self, session_id: str, directory: Optional[str], index: Dict[str, Any],
-                 conversation: List[Dict[str, str]]) -> None:
+    def __init__(
+        self, session_id: str, directory: Optional[str], index: Dict[str, Any], conversation: List[Dict[str, str]]
+    ) -> None:
         """
         :param session_id: The slot identifier.
         :param directory: Where to write, or ``None`` when sessions are disabled.
@@ -105,7 +109,7 @@ class Session:
         self.directory = directory
         self.index = index
         self.conversation = conversation
-        self.index.setdefault('rounds', [])
+        self.index.setdefault("rounds", [])
         self._round: Optional[Dict[str, Any]] = None
 
     @property
@@ -120,14 +124,14 @@ class Session:
         """
         :return: The recorded rounds, oldest first.
         """
-        return self.index['rounds']
+        return self.index["rounds"]
 
     @property
     def number(self) -> int:
         """
         :return: The number of the round currently open, or of the last completed one.
         """
-        return self._round['round'] if self._round is not None else len(self.rounds)
+        return self._round["round"] if self._round is not None else len(self.rounds)
 
     # -- writing ---------------------------------------------------------------------------------
 
@@ -138,7 +142,7 @@ class Session:
         """
         if self.directory is None or self._round is None:
             return None
-        path = os.path.join(self.directory, f'round_{self._round["round"]}')
+        path = os.path.join(self.directory, f"round_{self._round['round']}")
         if create:
             os.makedirs(path, exist_ok=True)
         return path
@@ -158,19 +162,19 @@ class Session:
         if directory is None:
             return
         try:
-            with open(os.path.join(directory, filename), 'w') as fp:
+            with open(os.path.join(directory, filename), "w") as fp:
                 fp.write(content)
         except OSError as e:
-            warnings.warn(f'Could not write the AI session file {filename}: {e}')
+            warnings.warn(f"Could not write the AI session file {filename}: {e}")
 
     def flush(self) -> None:
-        """ Rewrites the index and the conversation so an interrupted round still leaves a record. """
+        """Rewrites the index and the conversation so an interrupted round still leaves a record."""
         if self.directory is None:
             return
         self._write(INDEX_NAME, json.dumps(self.index, indent=1, default=str), in_round=False)
         self._write(CONVERSATION_NAME, json.dumps(self.conversation, indent=1), in_round=False)
 
-    def begin_round(self, feedback: str = '') -> None:
+    def begin_round(self, feedback: str = "") -> None:
         """
         Opens a new round.
 
@@ -178,15 +182,15 @@ class Session:
                          Empty for the first generation.
         """
         self._round = {
-            'round': len(self.rounds) + 1,
-            'feedback': feedback,
-            'started': datetime.datetime.now().isoformat(timespec='seconds'),
-            'outcome': 'incomplete',
-            'attempts': [],
+            "round": len(self.rounds) + 1,
+            "feedback": feedback,
+            "started": datetime.datetime.now().isoformat(timespec="seconds"),
+            "outcome": "incomplete",
+            "attempts": [],
         }
         self.rounds.append(self._round)
         if feedback:
-            self._write('feedback.md', feedback)
+            self._write("feedback.md", feedback)
         self.flush()
 
     def record_system_prompt(self, system: str) -> None:
@@ -195,8 +199,8 @@ class Session:
 
         :param system: The system prompt handed to the provider.
         """
-        self.index['system_prompt_chars'] = len(system)
-        self._write('system_prompt.md', system)
+        self.index["system_prompt_chars"] = len(system)
+        self._write("system_prompt.md", system)
         self.flush()
 
     def begin_attempt(self, index: int, prompt: str) -> Dict[str, Any]:
@@ -209,10 +213,10 @@ class Session:
         :param prompt: The user message this attempt sends.
         :return: The attempt record, to pass back to the other methods.
         """
-        attempt: Dict[str, Any] = {'attempt': index, 'prompt': prompt}
+        attempt: Dict[str, Any] = {"attempt": index, "prompt": prompt}
         if self._round is not None:
-            self._round['attempts'].append(attempt)
-        self._write(f'attempt_{index}_prompt.md' if index > 1 else 'prompt.md', prompt)
+            self._round["attempts"].append(attempt)
+        self._write(f"attempt_{index}_prompt.md" if index > 1 else "prompt.md", prompt)
         self.flush()
         return attempt
 
@@ -227,11 +231,11 @@ class Session:
         :param spec: The generated specification.
         :param cached: Whether the answer was reused rather than requested.
         """
-        attempt['cached'] = cached
-        attempt['answer'] = dataclasses.asdict(spec)
-        suffix = f'_{attempt["attempt"]}' if attempt['attempt'] > 1 else ''
-        raw = getattr(spec, 'raw_response', '')
-        self._write(f'answer{suffix}.json', raw or json.dumps(attempt['answer'], indent=1))
+        attempt["cached"] = cached
+        attempt["answer"] = dataclasses.asdict(spec)
+        suffix = f"_{attempt['attempt']}" if attempt["attempt"] > 1 else ""
+        raw = getattr(spec, "raw_response", "")
+        self._write(f"answer{suffix}.json", raw or json.dumps(attempt["answer"], indent=1))
         self.flush()
 
     def record_verification(self, attempt: Dict[str, Any], result: Any, source: str, device: bool) -> None:
@@ -247,24 +251,22 @@ class Session:
         :param source: The probe translation unit.
         :param device: Whether the probe was compiled as GPU device code.
         """
-        attempt['verification'] = {
-            'ok': result.ok,
-            'inconclusive': result.inconclusive,
-            'command': result.command,
-            'diagnostics': result.stderr,
+        attempt["verification"] = {
+            "ok": result.ok,
+            "inconclusive": result.inconclusive,
+            "command": result.command,
+            "diagnostics": result.stderr,
         }
-        suffix = f'_{attempt["attempt"]}' if attempt['attempt'] > 1 else ''
+        suffix = f"_{attempt['attempt']}" if attempt["attempt"] > 1 else ""
         if source:
-            self._write(f'probe{suffix}.{"cu" if device else "cpp"}', source)
+            self._write(f"probe{suffix}.{'cu' if device else 'cpp'}", source)
         if result.stderr:
-            self._write(f'probe{suffix}.log', f'{result.command}\n\n{result.stderr}')
+            self._write(f"probe{suffix}.log", f"{result.command}\n\n{result.stderr}")
         self.flush()
 
-    def record_outcome(self,
-                       outcome: str,
-                       detail: str = '',
-                       spec: Any = None,
-                       environments: Optional[List[str]] = None) -> None:
+    def record_outcome(
+        self, outcome: str, detail: str = "", spec: Any = None, environments: Optional[List[str]] = None
+    ) -> None:
         """
         Closes the open round.
 
@@ -278,14 +280,14 @@ class Session:
         """
         if self._round is None:
             return
-        self._round['outcome'] = outcome
+        self._round["outcome"] = outcome
         if detail:
-            self._round['error'] = detail
+            self._round["error"] = detail
         if environments is not None:
-            self._round['environments'] = list(environments)
-        self._round['finished'] = datetime.datetime.now().isoformat(timespec='seconds')
+            self._round["environments"] = list(environments)
+        self._round["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
         if spec is not None:
-            self._write('tasklet.json', json.dumps(dataclasses.asdict(spec), indent=1))
+            self._write("tasklet.json", json.dumps(dataclasses.asdict(spec), indent=1))
         self.flush()
 
     def record_node(self, node_json: Dict[str, Any]) -> None:
@@ -294,7 +296,7 @@ class Session:
 
         :param node_json: The output of ``node.to_json(state)``.
         """
-        self.index['node'] = node_json
+        self.index["node"] = node_json
         self.flush()
 
     # -- reading ---------------------------------------------------------------------------------
@@ -310,9 +312,9 @@ class Session:
 
         if self.directory is None:
             return None
-        path = os.path.join(self.directory, f'round_{round_number}', 'tasklet.json')
+        path = os.path.join(self.directory, f"round_{round_number}", "tasklet.json")
         try:
-            with open(path, 'r') as fp:
+            with open(path, "r") as fp:
                 return backend.spec_from_dict(json.load(fp))
         except (OSError, ValueError, KeyError):
             return None
@@ -330,15 +332,15 @@ def load(session_id: str) -> Optional[Session]:
     if not os.path.exists(index_path):
         return None
     try:
-        with open(index_path, 'r') as fp:
+        with open(index_path, "r") as fp:
             index = json.load(fp)
     except (OSError, ValueError) as e:
-        warnings.warn(f'Ignoring an unreadable AI session index at {index_path}: {e}')
+        warnings.warn(f"Ignoring an unreadable AI session index at {index_path}: {e}")
         return None
 
     conversation: List[Dict[str, str]] = []
     try:
-        with open(os.path.join(directory, CONVERSATION_NAME), 'r') as fp:
+        with open(os.path.join(directory, CONVERSATION_NAME), "r") as fp:
             conversation = json.load(fp)
     except (OSError, ValueError):
         pass
@@ -357,16 +359,16 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: Optional[str] = None) ->
     :return: The session. Writing is skipped, transparently, when ``ai.sessions`` is off or the
              directory cannot be created.
     """
-    session_id = session_id or make_id(getattr(sdfg, 'name', 'sdfg'), getattr(node, 'name', 'node'))
+    session_id = session_id or make_id(getattr(sdfg, "name", "sdfg"), getattr(node, "name", "node"))
     index = {
-        'id': session_id,
-        'sdfg': getattr(sdfg, 'name', None),
-        'state': getattr(state, 'label', None),
-        'node_type': type(node).__name__,
-        'node_name': getattr(node, 'name', None),
-        'provider': Config.get('ai', 'provider'),
-        'model': Config.get('ai', 'model'),
-        'created': datetime.datetime.now().isoformat(timespec='seconds'),
+        "id": session_id,
+        "sdfg": getattr(sdfg, "name", None),
+        "state": getattr(state, "label", None),
+        "node_type": type(node).__name__,
+        "node_name": getattr(node, "name", None),
+        "provider": Config.get("ai", "provider"),
+        "model": Config.get("ai", "model"),
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
     }
 
     if not enabled():
@@ -375,8 +377,8 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: Optional[str] = None) ->
     existing = load(session_id)
     if existing is not None:
         # Keep the identity recorded when the slot was first seen; refresh what may have changed
-        existing.index['provider'] = index['provider']
-        existing.index['model'] = index['model']
+        existing.index["provider"] = index["provider"]
+        existing.index["model"] = index["model"]
         return existing
 
     try:
@@ -384,7 +386,7 @@ def begin(node: Any, state: Any, sdfg: Any, session_id: Optional[str] = None) ->
         directory = os.path.join(root, session_id)
         os.makedirs(directory, exist_ok=True)
     except OSError as e:
-        warnings.warn(f'Could not create an AI session directory; continuing without one: {e}')
+        warnings.warn(f"Could not create an AI session directory; continuing without one: {e}")
         return Session(session_id, None, index, [])
 
     created = Session(session_id, directory, index, [])

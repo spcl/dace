@@ -18,7 +18,7 @@ def _copy_to_map(storage: dace.StorageType):
     B = dace.data.make_array_from_descriptor(desc_b, np.random.rand(3, 2))
     sdfg = somecopy.to_sdfg(A, B)
     assert sdfg.apply_transformations(CopyToMap) == 1
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         sdfg(A, B)
 
     assert np.allclose(B, A)
@@ -40,7 +40,7 @@ def _flatten_to_map(storage: dace.StorageType):
     if storage == dace.StorageType.GPU_Global:
         sdfg.apply_gpu_transformations()
 
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         sdfg(A, B)
 
     assert np.allclose(B, A.flatten())
@@ -66,50 +66,50 @@ def test_flatten_to_map_gpu():
 
 @pytest.mark.gpu
 def test_preprocess():
-    """ Tests preprocessing in the GPU code generator, adding CopyToMap automatically. """
-    sdfg = dace.SDFG('copytest')
+    """Tests preprocessing in the GPU code generator, adding CopyToMap automatically."""
+    sdfg = dace.SDFG("copytest")
 
     # Create two arrays with different allocation structure
     desc_inp = dace.data.Array(dace.float64, [20, 21, 22], strides=(1, 32, 32 * 21), total_size=14784)
     desc_out = dace.data.Array(dace.float64, [20, 21, 22], start_offset=5, total_size=20 * 21 * 22 + 5)
 
     # Construct graph
-    sdfg.add_datadesc('inp', desc_inp)
-    sdfg.add_datadesc('out', desc_out)
+    sdfg.add_datadesc("inp", desc_inp)
+    sdfg.add_datadesc("out", desc_out)
     gpudesc_inp = copy.deepcopy(desc_inp)
     gpudesc_inp.storage = dace.StorageType.GPU_Global
     gpudesc_inp.transient = True
     gpudesc_out = copy.deepcopy(desc_out)
     gpudesc_out.storage = dace.StorageType.GPU_Global
     gpudesc_out.transient = True
-    sdfg.add_datadesc('gpu_inp', gpudesc_inp)
-    sdfg.add_datadesc('gpu_out', gpudesc_out)
+    sdfg.add_datadesc("gpu_inp", gpudesc_inp)
+    sdfg.add_datadesc("gpu_out", gpudesc_out)
 
     state = sdfg.add_state()
-    a = state.add_read('inp')
-    b = state.add_read('gpu_inp')
-    c = state.add_read('gpu_out')
-    d = state.add_read('out')
-    state.add_nedge(a, b, dace.Memlet('inp'))
-    state.add_nedge(b, c, dace.Memlet('gpu_inp'))
-    state.add_nedge(c, d, dace.Memlet('gpu_out'))
+    a = state.add_read("inp")
+    b = state.add_read("gpu_inp")
+    c = state.add_read("gpu_out")
+    d = state.add_read("out")
+    state.add_nedge(a, b, dace.Memlet("inp"))
+    state.add_nedge(b, c, dace.Memlet("gpu_inp"))
+    state.add_nedge(c, d, dace.Memlet("gpu_out"))
 
     # Create arrays with matching layout
     inp = dace.data.make_array_from_descriptor(desc_inp, np.random.rand(20, 21, 22))
     out = dace.data.make_array_from_descriptor(desc_out, np.random.rand(20, 21, 22))
 
-    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+    with dace.config.set_temporary("compiler", "allow_view_arguments", value=True):
         sdfg(inp=inp, out=out)
 
     assert np.allclose(out, inp)
 
 
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     test_copy_to_map()
     test_flatten_to_map()
     try:
         import cupy  # noqa: F401
+
         test_copy_to_map_gpu()
         test_flatten_to_map_gpu()
         test_preprocess()

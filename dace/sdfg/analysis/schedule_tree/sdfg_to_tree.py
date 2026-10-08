@@ -6,8 +6,15 @@ from typing import Dict, List, Set
 import dace
 from dace import data, subsets, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
-                             UnstructuredControlFlow)
+from dace.sdfg.state import (
+    ConditionalBlock,
+    ControlFlowBlock,
+    ControlFlowRegion,
+    LoopRegion,
+    ReturnBlock,
+    SDFGState,
+    UnstructuredControlFlow,
+)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.memlet_utils import MemletReplacer
 from dace.sdfg.replace import replace_datadesc_names
@@ -65,9 +72,14 @@ class _InterstateMemletReplacer(MemletReplacer):
 
     def visit_Compare(self, node: ast.Compare):
         # ``arr is [not] None`` refers to the container itself and must keep a bare name
-        if (len(node.ops) == 1 and isinstance(node.ops[0], (ast.Is, ast.IsNot)) and len(node.comparators) == 1
-                and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is None
-                and isinstance(node.left, ast.Name)):
+        if (
+            len(node.ops) == 1
+            and isinstance(node.ops[0], (ast.Is, ast.IsNot))
+            and len(node.comparators) == 1
+            and isinstance(node.comparators[0], ast.Constant)
+            and node.comparators[0].value is None
+            and isinstance(node.left, ast.Name)
+        ):
             if node.left.id in self.array_filter:
                 node.left = self._rename(node.left)
             return node
@@ -109,7 +121,6 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
     :param sdfg: The SDFG to operate on.
     """
     for nsdfg in sdfg.all_sdfgs_recursive():
-
         if not nsdfg.parent:
             continue
 
@@ -175,9 +186,8 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
                 # Rewrite inter-state edge reads while the child descriptors still have their original
                 # (e.g., scalar) shapes, so that bare scalar reads are offset like the memlets below.
                 _replace_interstate_edge_reads(
-                    nsdfg,
-                    {name: parent_edges_inputs[name].data
-                     for name in child_names if name in parent_edges_inputs})
+                    nsdfg, {name: parent_edges_inputs[name].data for name in child_names if name in parent_edges_inputs}
+                )
                 for name in child_names:
                     child_arr = copy.deepcopy(parent_arr)
                     child_arr.transient = False
@@ -196,18 +206,18 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
                         # destination subset
                         if isinstance(src, nd.AccessNode) and src.data in child_names:
                             src_data = src.data
-                            new_src_memlet = unsqueeze_memlet(e.data,
-                                                              parent_edges_inputs[src.data].data,
-                                                              use_src_subset=True)
+                            new_src_memlet = unsqueeze_memlet(
+                                e.data, parent_edges_inputs[src.data].data, use_src_subset=True
+                            )
                         else:
                             src_data = None
                             new_src_memlet = None
                             # We need to take directionality of the memlet into account
                         if isinstance(dst, nd.AccessNode) and dst.data in child_names:
                             dst_data = dst.data
-                            new_dst_memlet = unsqueeze_memlet(e.data,
-                                                              parent_edges_outputs[dst.data].data,
-                                                              use_dst_subset=True)
+                            new_dst_memlet = unsqueeze_memlet(
+                                e.data, parent_edges_outputs[dst.data].data, use_dst_subset=True
+                            )
                         else:
                             dst_data = None
                             new_dst_memlet = None
@@ -236,8 +246,8 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
             struct_outside_replacements: Dict[str, str] = {}
             cleaned_replacements = {}
             for k, val in replacements.items():
-                if '.' in val:
-                    if '.' not in k:
+                if "." in val:
+                    if "." not in k:
                         struct_outside_replacements[k] = val
                     continue
                 else:
@@ -246,12 +256,10 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
 
             symbolic.safe_replace(replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
             parent_node.in_connectors = {
-                replacements[c] if c in replacements else c: t
-                for c, t in parent_node.in_connectors.items()
+                replacements[c] if c in replacements else c: t for c, t in parent_node.in_connectors.items()
             }
             parent_node.out_connectors = {
-                replacements[c] if c in replacements else c: t
-                for c, t in parent_node.out_connectors.items()
+                replacements[c] if c in replacements else c: t for c, t in parent_node.out_connectors.items()
             }
             for e in parent_state.all_edges(parent_node):
                 if e.src_conn in replacements:
@@ -271,11 +279,12 @@ def _normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorE
     :return: A new memlet.
     """
     # Shallow copy edge
-    edge = gr.MultiConnectorEdge(original.src, original.src_conn, original.dst, original.dst_conn,
-                                 copy.deepcopy(original.data), original.key)
+    edge = gr.MultiConnectorEdge(
+        original.src, original.src_conn, original.dst, original.dst_conn, copy.deepcopy(original.data), original.key
+    )
     edge.data.try_initialize(sdfg, state, edge)
 
-    if '.' in edge.data.data and edge.data.data.startswith(data + '.'):
+    if "." in edge.data.data and edge.data.data.startswith(data + "."):
         return edge.data
     if edge.data.data == data:
         return edge.data
@@ -406,18 +415,21 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
             nsdfg.replace_dict(replacements)
 
 
-def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
-                    viewed_name: str) -> tn.ViewNode:
+def _make_view_node(
+    state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str, viewed_name: str
+) -> tn.ViewNode:
     """
     Helper function to create a view schedule tree node from a memlet edge.
     """
     sdfg = state.parent
     normalized = _normalize_memlet(sdfg, state, edge, viewed_name)
-    view_node = tn.ViewNode(target=view_name,
-                            source=viewed_name,
-                            memlet=normalized,
-                            src_desc=sdfg.arrays[viewed_name],
-                            view_desc=sdfg.arrays[view_name])
+    view_node = tn.ViewNode(
+        target=view_name,
+        source=viewed_name,
+        memlet=normalized,
+        src_desc=sdfg.arrays[viewed_name],
+        view_desc=sdfg.arrays[view_name],
+    )
     return view_node
 
 
@@ -447,9 +459,10 @@ def _replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG) -> None:
 
 
 def _prepare_schedule_tree_edges(
-    state: SDFGState
-) -> tuple[Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], Dict[nd.EntryNode,
-                                                                          List[gr.MultiConnectorEdge[Memlet]]]]:
+    state: SDFGState,
+) -> tuple[
+    Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]]
+]:
     """
     Creates a dictionary mapping edges to their corresponding schedule tree nodes, if relevant.
     This handles view edges, reference sets, and dynamic map inputs.
@@ -502,7 +515,7 @@ def _prepare_schedule_tree_edges(
                         continue
 
             # 2. Check for reference sets
-            if isinstance(e.dst, dace.nodes.AccessNode) and e.dst_conn == 'set':
+            if isinstance(e.dst, dace.nodes.AccessNode) and e.dst_conn == "set":
                 assert isinstance(e.dst.desc(sdfg), dace.data.Reference)
 
                 # Determine source
@@ -510,10 +523,9 @@ def _prepare_schedule_tree_edges(
                     src_desc = mtree.root().edge.src
                 else:
                     src_desc = sdfg.arrays[e.data.data]
-                result[e] = tn.RefSetNode(target=e.dst.data,
-                                          memlet=e.data,
-                                          src_desc=src_desc,
-                                          ref_desc=sdfg.arrays[e.dst.data])
+                result[e] = tn.RefSetNode(
+                    target=e.dst.data, memlet=e.data, src_desc=src_desc, ref_desc=sdfg.arrays[e.dst.data]
+                )
                 scope = state.entry_node(e.dst if mtree.downwards else e.src)
                 scope_to_edges[scope].append(e)
                 continue
@@ -628,11 +640,13 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
 
                 if no_mapping:  # Must use view (NView = nested SDFG view)
                     if conn not in generated_nviews:
-                        nview_node = tn.NView(target=conn,
-                                              source=e.data.data,
-                                              memlet=e.data,
-                                              src_desc=sdfg.arrays[e.data.data],
-                                              view_desc=node.sdfg.arrays[conn])
+                        nview_node = tn.NView(
+                            target=conn,
+                            source=e.data.data,
+                            memlet=e.data,
+                            src_desc=sdfg.arrays[e.data.data],
+                            view_desc=node.sdfg.arrays[conn],
+                        )
                         result.append(nview_node)
                         generated_nviews.add(conn)
 
@@ -681,8 +695,9 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     return result
 
 
-def _isedge_schedule_tree(edge: gr.Edge[InterstateEdge],
-                          emit_goto_for_successors: bool = False) -> List[tn.ScheduleTreeNode]:
+def _isedge_schedule_tree(
+    edge: gr.Edge[InterstateEdge], emit_goto_for_successors: bool = False
+) -> List[tn.ScheduleTreeNode]:
     result: List[tn.ScheduleTreeNode] = []
     for aname, aval in edge.data.assignments.items():
         assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval}))
@@ -790,8 +805,8 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
 
 
 def _generate_views_in_scope(
-        edges: List[gr.MultiConnectorEdge[Memlet]],
-        edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]) -> List[tn.ScheduleTreeNode]:
+    edges: List[gr.MultiConnectorEdge[Memlet]], edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
+) -> List[tn.ScheduleTreeNode]:
     """
     Generates all view and reference set edges in the correct order. This function is intended to be used
     at the beginning of a scope.
@@ -898,13 +913,13 @@ def as_schedule_tree(sdfg: SDFG, *, in_place: bool = False, toplevel: bool = Tru
     return result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     s = time.time()
     sdfg = SDFG.from_file(sys.argv[1])
-    print('Loaded SDFG in', time.time() - s, 'seconds')
+    print("Loaded SDFG in", time.time() - s, "seconds")
     s = time.time()
     stree = as_schedule_tree(sdfg, in_place=True)
-    print('Created schedule tree in', time.time() - s, 'seconds')
+    print("Created schedule tree in", time.time() - s, "seconds")
 
-    with open('output_stree.txt', 'w') as fp:
-        fp.write(stree.as_string(-1) + '\n')
+    with open("output_stree.txt", "w") as fp:
+        fp.write(stree.as_string(-1) + "\n")

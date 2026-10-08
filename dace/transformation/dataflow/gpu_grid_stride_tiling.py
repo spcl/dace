@@ -1,6 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the grid-strided map tiling
-    transformation."""
+"""This module contains classes and functions that implement the grid-strided map tiling
+transformation."""
 
 import dace
 from copy import deepcopy as dcpy
@@ -78,12 +78,12 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         return True
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, prefix: str, target_dim: str):
-        """ Finds a variable that is not already defined in scope. """
-        candidate = '%s_%s' % (prefix, target_dim)
+        """Finds a variable that is not already defined in scope."""
+        candidate = "%s_%s" % (prefix, target_dim)
         index = 1
         defined_vars = set(str(s) for s in (state.symbols_defined_at(entry).keys() | sdfg.symbols.keys()))
         while candidate in defined_vars:
-            candidate = '%s%d_%s' % (prefix, index, target_dim)
+            candidate = "%s%d_%s" % (prefix, index, target_dim)
             index += 1
         return candidate
 
@@ -117,12 +117,18 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         i_range_new = (i_from + symbolic.pystr_to_symbolic(tile_i_dim_new) * i_step, i_to, block_dim * i_step)
 
         # Create the new maps
-        tile_o_map = nodes.Map(o_entry.map.label, [tile_o_dim_new],
-                               subsets.Range([tile_o_range_new]),
-                               schedule=dtypes.ScheduleType.GPU_Device)
-        tile_i_map = nodes.Map(i_entry.map.label, [tile_i_dim_new],
-                               subsets.Range([tile_i_range_new]),
-                               schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+        tile_o_map = nodes.Map(
+            o_entry.map.label,
+            [tile_o_dim_new],
+            subsets.Range([tile_o_range_new]),
+            schedule=dtypes.ScheduleType.GPU_Device,
+        )
+        tile_i_map = nodes.Map(
+            i_entry.map.label,
+            [tile_i_dim_new],
+            subsets.Range([tile_i_range_new]),
+            schedule=dtypes.ScheduleType.GPU_ThreadBlock,
+        )
 
         # Create the new map entries and exits
         tile_o_entry = nodes.MapEntry(tile_o_map)
@@ -160,21 +166,24 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
             entry_in_conn = {}
             entry_out_conn = {}
             for _src, src_conn, _dst, _, memlet in graph.out_edges(map_entry):
-                if (src_conn is not None and src_conn[:4] == 'OUT_'
-                        and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
+                if (
+                    src_conn is not None
+                    and src_conn[:4] == "OUT_"
+                    and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)
+                ):
                     new_subset = calc_set_image(
                         map_entry.map.params,
                         map_entry.map.range,
                         memlet.subset,
                     )
                     conn = src_conn[4:]
-                    key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
+                    key = (memlet.data, "IN_" + conn, "OUT_" + conn)
                     if key in new_in_edges.keys():
                         old_subset = new_in_edges[key].subset
                         new_in_edges[key].subset = calc_set_union(old_subset, new_subset)
                     else:
-                        entry_in_conn['IN_' + conn] = None
-                        entry_out_conn['OUT_' + conn] = None
+                        entry_in_conn["IN_" + conn] = None
+                        entry_out_conn["OUT_" + conn] = None
                         new_memlet = dcpy(memlet)
                         new_memlet.subset = new_subset
                         if memlet.dynamic:
@@ -183,10 +192,10 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
                             new_memlet.num_accesses = new_memlet.num_elements().simplify()
                         new_in_edges[key] = new_memlet
                 else:
-                    if src_conn is not None and src_conn[:4] == 'OUT_':
+                    if src_conn is not None and src_conn[:4] == "OUT_":
                         conn = src_conn[4:]
-                        in_conn = 'IN_' + conn
-                        out_conn = 'OUT_' + conn
+                        in_conn = "IN_" + conn
+                        out_conn = "OUT_" + conn
                     else:
                         in_conn = src_conn
                         out_conn = src_conn
@@ -205,21 +214,24 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
             exit_in_conn = {}
             exit_out_conn = {}
             for _src, _, _dst, dst_conn, memlet in graph.in_edges(map_exit):
-                if (dst_conn is not None and dst_conn[:3] == 'IN_'
-                        and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
+                if (
+                    dst_conn is not None
+                    and dst_conn[:3] == "IN_"
+                    and not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)
+                ):
                     new_subset = calc_set_image(
                         map_entry.map.params,
                         map_entry.map.range,
                         memlet.subset,
                     )
                     conn = dst_conn[3:]
-                    key = (memlet.data, 'IN_' + conn, 'OUT_' + conn)
+                    key = (memlet.data, "IN_" + conn, "OUT_" + conn)
                     if key in new_out_edges.keys():
                         old_subset = new_out_edges[key].subset
                         new_out_edges[key].subset = calc_set_union(old_subset, new_subset)
                     else:
-                        exit_in_conn['IN_' + conn] = None
-                        exit_out_conn['OUT_' + conn] = None
+                        exit_in_conn["IN_" + conn] = None
+                        exit_out_conn["OUT_" + conn] = None
                         new_memlet = dcpy(memlet)
                         new_memlet.subset = new_subset
                         if memlet.dynamic:
@@ -228,10 +240,10 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
                             new_memlet.num_accesses = new_memlet.num_elements().simplify()
                         new_out_edges[key] = new_memlet
                 else:
-                    if dst_conn is not None and dst_conn[:3] == 'IN_':
+                    if dst_conn is not None and dst_conn[:3] == "IN_":
                         conn = dst_conn[3:]
-                        in_conn = 'IN_' + conn
-                        out_conn = 'OUT_' + conn
+                        in_conn = "IN_" + conn
+                        out_conn = "OUT_" + conn
                     else:
                         in_conn = dst_conn
                         out_conn = dst_conn
@@ -251,7 +263,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         # TODO: what about map exit connectors?
         data_dict = {}  # map data array to new edge
         for e in graph.edges_between(o_entry, tile_i_entry):
-            if e.dst_conn is not None and e.dst_conn[:3] != 'IN_' and e.src_conn[:4] == 'OUT_':
+            if e.dst_conn is not None and e.dst_conn[:3] != "IN_" and e.src_conn[:4] == "OUT_":
                 # trim edges
                 graph.remove_edge(e)
                 # add edges between tile_i_entry and i_entry
@@ -262,7 +274,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
                 # add edges between o_entry and tile_i_entry
                 if e.data.data not in data_dict.keys():
                     # new edge data, add to data_dict
-                    in_conn = 'IN_' + e.src_conn[4:]
+                    in_conn = "IN_" + e.src_conn[4:]
                     o_entry.add_out_connector(e.src_conn)
                     tile_i_entry.add_in_connector(in_conn)
                     data_dict[e.data.data] = graph.add_edge(o_entry, e.src_conn, tile_i_entry, in_conn, dcpy(e.data))

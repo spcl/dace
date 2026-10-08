@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Implements the matrix-matrix product transpose transformation. """
+"""Implements the matrix-matrix product transpose transformation."""
 
 from copy import deepcopy as dcpy
 import dace
@@ -12,10 +12,11 @@ from dace.properties import make_properties
 
 @make_properties
 class MatrixProductTranspose(transformation.SingleStateTransformation):
-    """ Implements the matrix-matrix product transpose transformation.
+    """Implements the matrix-matrix product transpose transformation.
 
-        T(A) @ T(B) = T(B @ A)
+    T(A) @ T(B) = T(B @ A)
     """
+
     import dace.libraries.blas as blas  # Avoid slow imports
     import dace.libraries.linalg as linalg  # Avoid slow imports
 
@@ -47,7 +48,7 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         if len(edges) != 1:
             return False
         _, _, _, dst_conn, _ = edges[0]
-        if dst_conn != '_a':
+        if dst_conn != "_a":
             return False
         return True
 
@@ -67,10 +68,10 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         a_times_b = self.a_times_b
 
         for src, src_conn, _, _, memlet in graph.in_edges(transpose_a):
-            graph.add_edge(src, src_conn, a_times_b, '_b', memlet)
+            graph.add_edge(src, src_conn, a_times_b, "_b", memlet)
         graph.remove_node(transpose_a)
         for src, src_conn, _, _, memlet in graph.in_edges(transpose_b):
-            graph.add_edge(src, src_conn, a_times_b, '_a', memlet)
+            graph.add_edge(src, src_conn, a_times_b, "_a", memlet)
         graph.remove_node(transpose_b)
         graph.remove_node(_at)
         graph.remove_node(_bt)
@@ -83,10 +84,10 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
             break
         tmp_name, tmp_arr = sdfg.add_temp_transient(shape, a_times_b.dtype)
         tmp_acc = graph.add_access(tmp_name)
-        transpose_c = linalg.Transpose('_Transpose_', a_times_b.dtype)
+        transpose_c = linalg.Transpose("_Transpose_", a_times_b.dtype)
         for edge in graph.out_edges(a_times_b):
             _, _, dst, dst_conn, memlet = edge
             graph.remove_edge(edge)
-            graph.add_edge(transpose_c, '_out', dst, dst_conn, memlet)
-        graph.add_edge(a_times_b, '_c', tmp_acc, None, dace.Memlet.from_array(tmp_name, tmp_arr))
-        graph.add_edge(tmp_acc, None, transpose_c, '_inp', dace.Memlet.from_array(tmp_name, tmp_arr))
+            graph.add_edge(transpose_c, "_out", dst, dst_conn, memlet)
+        graph.add_edge(a_times_b, "_c", tmp_acc, None, dace.Memlet.from_array(tmp_name, tmp_arr))
+        graph.add_edge(tmp_acc, None, transpose_c, "_inp", dace.Memlet.from_array(tmp_name, tmp_arr))

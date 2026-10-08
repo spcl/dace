@@ -76,14 +76,17 @@ def _description_of(pv: ProgramVisitor, sdfg: SDFG, description: Any) -> str:
 
     if given is not None:
         raise DaceSyntaxError(
-            pv, None, 'The first argument of dace.ai must be a string describing what the node computes, '
-            f'but {given} was given. It has to be a string literal or a compile-time constant string, '
-            'since it is the specification handed to the model.')
+            pv,
+            None,
+            "The first argument of dace.ai must be a string describing what the node computes, "
+            f"but {given} was given. It has to be a string literal or a compile-time constant string, "
+            "since it is the specification handed to the model.",
+        )
     text = str(description).strip()
     if not text:
         raise DaceSyntaxError(
-            pv, None, 'The description given to dace.ai is empty, so there is nothing to '
-            'generate code from.')
+            pv, None, "The description given to dace.ai is empty, so there is nothing to generate code from."
+        )
     return text
 
 
@@ -103,14 +106,18 @@ def _container_of(pv: ProgramVisitor, sdfg: SDFG, argument: Any, described: str)
 
     if isinstance(argument, (Number, StringLiteral)) or symbolic.issymbolic(argument):
         raise DaceSyntaxError(
-            pv, None, f'{described} of dace.ai is a constant or a symbol, and only data containers can be '
-            'connected to a node. Symbols are already visible to the generated code by name, and a '
-            'constant can simply be stated in the description.')
-    raise DaceSyntaxError(pv, None, f'{described} of dace.ai is not a data container of this program.')
+            pv,
+            None,
+            f"{described} of dace.ai is a constant or a symbol, and only data containers can be "
+            "connected to a node. Symbols are already visible to the generated code by name, and a "
+            "constant can simply be stated in the description.",
+        )
+    raise DaceSyntaxError(pv, None, f"{described} of dace.ai is not a data container of this program.")
 
 
-def _input_connectors(pv: ProgramVisitor, sdfg: SDFG, inputs: Sequence[Any], named_inputs: Dict[str,
-                                                                                                Any]) -> Dict[str, str]:
+def _input_connectors(
+    pv: ProgramVisitor, sdfg: SDFG, inputs: Sequence[Any], named_inputs: Dict[str, Any]
+) -> Dict[str, str]:
     """
     Maps every input of the call to the connector it is read into.
 
@@ -123,14 +130,17 @@ def _input_connectors(pv: ProgramVisitor, sdfg: SDFG, inputs: Sequence[Any], nam
     """
     connectors: Dict[str, str] = {}
     for i, argument in enumerate(inputs):
-        connectors[f'_in{i}'] = _container_of(pv, sdfg, argument, f'Positional input {i}')
+        connectors[f"_in{i}"] = _container_of(pv, sdfg, argument, f"Positional input {i}")
 
     for keyword, argument in named_inputs.items():
-        connector = f'_{keyword}'
+        connector = f"_{keyword}"
         if connector in connectors:
             raise DaceSyntaxError(
-                pv, None, f'Two inputs of dace.ai map to the connector "{connector}": the keyword argument '
-                f'"{keyword}" collides with a positional input. Pass it by keyword under a different name.')
+                pv,
+                None,
+                f'Two inputs of dace.ai map to the connector "{connector}": the keyword argument '
+                f'"{keyword}" collides with a positional input. Pass it by keyword under a different name.',
+            )
         connectors[connector] = _container_of(pv, sdfg, argument, f'Input "{keyword}"')
 
     return connectors
@@ -149,22 +159,34 @@ def _output_connectors(pv: ProgramVisitor, sdfg: SDFG, out: Any) -> Dict[str, st
     names = list(out) if isinstance(out, (list, tuple)) else [out]
     if not names:
         raise DaceSyntaxError(
-            pv, None, 'The "out" argument of dace.ai is empty. Leave it out to have the '
-            'output allocated, or name the containers to write to.')
+            pv,
+            None,
+            'The "out" argument of dace.ai is empty. Leave it out to have the '
+            "output allocated, or name the containers to write to.",
+        )
 
-    containers = [_container_of(pv, sdfg, name, f'Output {i}') for i, name in enumerate(names)]
+    containers = [_container_of(pv, sdfg, name, f"Output {i}") for i, name in enumerate(names)]
     if len(set(containers)) != len(containers):
         raise DaceSyntaxError(
-            pv, None, 'The same container is given twice in the "out" argument of dace.ai. '
-            'A node cannot write to one container through two connectors.')
+            pv,
+            None,
+            'The same container is given twice in the "out" argument of dace.ai. '
+            "A node cannot write to one container through two connectors.",
+        )
 
     if len(containers) == 1:
-        return {'_out': containers[0]}
-    return {f'_out{i}': name for i, name in enumerate(containers)}
+        return {"_out": containers[0]}
+    return {f"_out{i}": name for i, name in enumerate(containers)}
 
 
-def _allocate_output(pv: ProgramVisitor, sdfg: SDFG, inputs: Dict[str, str], shape: Optional[Shape],
-                     dtype: Optional[dtypes.typeclass], storage: Optional[dtypes.StorageType]) -> str:
+def _allocate_output(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    inputs: Dict[str, str],
+    shape: Optional[Shape],
+    dtype: Optional[dtypes.typeclass],
+    storage: Optional[dtypes.StorageType],
+) -> str:
     """
     Adds the transient the node writes to when the call does not name one.
 
@@ -186,8 +208,11 @@ def _allocate_output(pv: ProgramVisitor, sdfg: SDFG, inputs: Dict[str, str], sha
 
     if prototype is None and (shape is None or dtype is None):
         raise DaceSyntaxError(
-            pv, None, 'dace.ai cannot tell what to allocate for the output of a node that has no inputs to '
-            'take it from. Give "shape" and "dtype", or write into an existing container with "out".')
+            pv,
+            None,
+            "dace.ai cannot tell what to allocate for the output of a node that has no inputs to "
+            'take it from. Give "shape" and "dtype", or write into an existing container with "out".',
+        )
 
     if dtype is None:
         dtype = prototype.dtype
@@ -204,7 +229,7 @@ def _allocate_output(pv: ProgramVisitor, sdfg: SDFG, inputs: Dict[str, str], sha
     return name
 
 
-def _node_name(sdfg: SDFG, base: str = 'ai') -> str:
+def _node_name(sdfg: SDFG, base: str = "ai") -> str:
     """
     Returns a name no other library node of this SDFG carries.
 
@@ -222,25 +247,27 @@ def _node_name(sdfg: SDFG, base: str = 'ai') -> str:
     if base not in taken:
         return base
     index = 1
-    while f'{base}_{index}' in taken:
+    while f"{base}_{index}" in taken:
         index += 1
-    return f'{base}_{index}'
+    return f"{base}_{index}"
 
 
-@oprepo.replaces('dace.ai')
-@oprepo.replaces('dace.frontend.python.interface.ai')
-def ai_node(pv: ProgramVisitor,
-            sdfg: SDFG,
-            state: SDFGState,
-            description: Union[StringLiteral, str],
-            *inputs: str,
-            out: Optional[Union[str, Sequence[str]]] = None,
-            shape: Optional[Shape] = None,
-            dtype: Optional[dtypes.typeclass] = None,
-            storage: Optional[dtypes.StorageType] = None,
-            name: Optional[Union[StringLiteral, str]] = None,
-            schedule: Optional[dtypes.ScheduleType] = None,
-            **named_inputs: str) -> Union[str, Tuple[str, ...]]:
+@oprepo.replaces("dace.ai")
+@oprepo.replaces("dace.frontend.python.interface.ai")
+def ai_node(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    description: Union[StringLiteral, str],
+    *inputs: str,
+    out: Optional[Union[str, Sequence[str]]] = None,
+    shape: Optional[Shape] = None,
+    dtype: Optional[dtypes.typeclass] = None,
+    storage: Optional[dtypes.StorageType] = None,
+    name: Optional[Union[StringLiteral, str]] = None,
+    schedule: Optional[dtypes.ScheduleType] = None,
+    **named_inputs: str,
+) -> Union[str, Tuple[str, ...]]:
     """
     Adds a node whose implementation is described in natural language.
 
@@ -271,37 +298,45 @@ def ai_node(pv: ProgramVisitor,
     # input connector, so passing a container to it is a mistake worth catching here
     if name is not None and (_is_container(sdfg, name) or not isinstance(name, (StringLiteral, str))):
         raise DaceSyntaxError(
-            pv, None, 'The "name" argument of dace.ai is the label of the node and must be a string. It is '
+            pv,
+            None,
+            'The "name" argument of dace.ai is the label of the node and must be a string. It is '
             'one of the keyword arguments that configure the node ("out", "shape", "dtype", "storage", '
-            '"name", "schedule"), so it cannot be used to name an input connector.')
+            '"name", "schedule"), so it cannot be used to name an input connector.',
+        )
 
     in_connectors = _input_connectors(pv, sdfg, inputs, named_inputs)
 
     if out is None:
-        out_connectors = {'_out': _allocate_output(pv, sdfg, in_connectors, shape, dtype, storage)}
+        out_connectors = {"_out": _allocate_output(pv, sdfg, in_connectors, shape, dtype, storage)}
     else:
         if shape is not None or dtype is not None or storage is not None:
             raise DaceSyntaxError(
-                pv, None, 'The "shape", "dtype" and "storage" arguments of dace.ai describe the output it '
+                pv,
+                None,
+                'The "shape", "dtype" and "storage" arguments of dace.ai describe the output it '
                 'allocates, so they cannot be combined with "out", which writes to a container that '
-                'already exists.')
+                "already exists.",
+            )
         out_connectors = _output_connectors(pv, sdfg, out)
 
-    node = AINode(str(name) if name is not None else _node_name(sdfg),
-                  text,
-                  inputs={connector: None
-                          for connector in in_connectors},
-                  outputs={connector: None
-                           for connector in out_connectors},
-                  schedule=schedule)
+    node = AINode(
+        str(name) if name is not None else _node_name(sdfg),
+        text,
+        inputs={connector: None for connector in in_connectors},
+        outputs={connector: None for connector in out_connectors},
+        schedule=schedule,
+    )
     state.add_node(node)
 
     for connector, container in in_connectors.items():
-        state.add_edge(state.add_read(container), None, node, connector,
-                       Memlet.from_array(container, sdfg.arrays[container]))
+        state.add_edge(
+            state.add_read(container), None, node, connector, Memlet.from_array(container, sdfg.arrays[container])
+        )
     for connector, container in out_connectors.items():
-        state.add_edge(node, connector, state.add_write(container), None,
-                       Memlet.from_array(container, sdfg.arrays[container]))
+        state.add_edge(
+            node, connector, state.add_write(container), None, Memlet.from_array(container, sdfg.arrays[container])
+        )
 
     written = tuple(out_connectors.values())
     return written[0] if len(written) == 1 else written

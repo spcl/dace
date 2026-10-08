@@ -52,23 +52,23 @@ def cpu_description() -> Dict[str, str]:
              (the marketing name of the CPU) and ``flags`` (a space-separated list of ISA
              extensions as reported by the kernel).
     """
-    info: Dict[str, str] = {'machine': platform.machine()}
+    info: Dict[str, str] = {"machine": platform.machine()}
     try:
-        with open('/proc/cpuinfo', 'r') as fp:
+        with open("/proc/cpuinfo", "r") as fp:
             for line in fp:
                 # 'Features' is the aarch64 spelling of 'flags'
-                if line.startswith('model name') and 'model' not in info:
-                    info['model'] = line.split(':', 1)[1].strip()
-                elif line.startswith(('flags', 'Features')) and 'flags' not in info:
-                    info['flags'] = line.split(':', 1)[1].strip()
-                if 'model' in info and 'flags' in info:
+                if line.startswith("model name") and "model" not in info:
+                    info["model"] = line.split(":", 1)[1].strip()
+                elif line.startswith(("flags", "Features")) and "flags" not in info:
+                    info["flags"] = line.split(":", 1)[1].strip()
+                if "model" in info and "flags" in info:
                     break
     except OSError:
         pass
     # platform.processor() is only a fallback: on Linux it usually just repeats the machine type
     processor = platform.processor()
-    if 'model' not in info and processor and processor != info['machine']:
-        info['model'] = processor
+    if "model" not in info and processor and processor != info["machine"]:
+        info["model"] = processor
     return info
 
 
@@ -79,7 +79,7 @@ def cpu_has_feature(feature: str) -> bool:
     :param feature: The kernel's name for the extension, e.g. ``'avx2'``.
     :return: True if the flag is reported, False if it is absent or unknown.
     """
-    return feature in cpu_description().get('flags', '').split()
+    return feature in cpu_description().get("flags", "").split()
 
 
 @functools.lru_cache(maxsize=1)
@@ -105,23 +105,23 @@ def gpu_architectures() -> Optional[str]:
     except RuntimeError:
         return None
 
-    if backend == 'cuda':
-        configured = Config.get('compiler', 'cuda', 'cuda_arch')
+    if backend == "cuda":
+        configured = Config.get("compiler", "cuda", "cuda_arch")
         if configured:
-            return ', '.join(f'sm_{a.strip()}' for a in configured.split(',') if a.strip())
-        out = _run(['nvidia-smi', '--query-gpu=compute_cap', '--format=csv,noheader'])
+            return ", ".join(f"sm_{a.strip()}" for a in configured.split(",") if a.strip())
+        out = _run(["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"])
         if out:
-            caps = sorted({'sm_' + line.strip().replace('.', '') for line in out.splitlines() if line.strip()})
-            return ', '.join(caps) or None
+            caps = sorted({"sm_" + line.strip().replace(".", "") for line in out.splitlines() if line.strip()})
+            return ", ".join(caps) or None
         return None
 
-    configured = Config.get('compiler', 'cuda', 'hip_arch')
+    configured = Config.get("compiler", "cuda", "hip_arch")
     if configured:
-        return ', '.join(a.strip() for a in configured.split(',') if a.strip())
-    out = _run(['rocm_agent_enumerator'])
+        return ", ".join(a.strip() for a in configured.split(",") if a.strip())
+    out = _run(["rocm_agent_enumerator"])
     if out:
-        archs = sorted({line.strip() for line in out.splitlines() if line.strip().startswith('gfx')})
-        return ', '.join(archs) or None
+        archs = sorted({line.strip() for line in out.splitlines() if line.strip().startswith("gfx")})
+        return ", ".join(archs) or None
     return None
 
 
@@ -132,10 +132,10 @@ def gpu_names() -> Optional[str]:
 
     :return: A comma-separated list of device names, or ``None``.
     """
-    out = _run(['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'])
+    out = _run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"])
     if out:
-        return ', '.join(sorted({line.strip() for line in out.splitlines() if line.strip()}))
-    out = _run(['rocm-smi', '--showproductname', '--csv'])
+        return ", ".join(sorted({line.strip() for line in out.splitlines() if line.strip()}))
+    out = _run(["rocm-smi", "--showproductname", "--csv"])
     if out:
         return out.splitlines()[-1].strip()
     return None

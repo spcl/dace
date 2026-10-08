@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Shared fixtures for the AI library node tests. """
+"""Shared fixtures for the AI library node tests."""
 
 import pytest
 
@@ -22,12 +22,12 @@ def isolated_from_the_users_ai_directories(request, tmp_path):
     second run of an expensive test free. Isolating those would also break them outright, since
     ``history`` and ``rollback`` read the session the run just wrote.
     """
-    if request.node.get_closest_marker('ai') is not None:
+    if request.node.get_closest_marker("ai") is not None:
         yield
         return
 
-    with dace.config.set_temporary('ai', 'sessions', value=False):
-        with dace.config.set_temporary('ai', 'session_dir', value=str(tmp_path / 'sessions')):
-            with dace.config.set_temporary('ai', 'cache', value=False):
-                with dace.config.set_temporary('ai', 'cache_dir', value=str(tmp_path / 'cache')):
+    with dace.config.set_temporary("ai", "sessions", value=False):
+        with dace.config.set_temporary("ai", "session_dir", value=str(tmp_path / "sessions")):
+            with dace.config.set_temporary("ai", "cache", value=False):
+                with dace.config.set_temporary("ai", "cache_dir", value=str(tmp_path / "cache")):
                     yield

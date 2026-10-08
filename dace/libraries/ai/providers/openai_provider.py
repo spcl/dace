@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" OpenAI backend for AI-generated library node expansions. """
+"""OpenAI backend for AI-generated library node expansions."""
 
 import json
 from typing import Dict, List
@@ -21,15 +21,15 @@ class OpenAIProvider:
         try:
             import openai  # Optional dependency: only needed when the 'ai' expansion is used
         except ImportError as e:
-            raise backend.missing_sdk_error('openai', 'openai', 'ai-openai', e)
+            raise backend.missing_sdk_error("openai", "openai", "ai-openai", e)
 
         self._openai = openai
-        key = backend.api_key('openai')
-        timeout = float(Config.get('ai', 'timeout'))
+        key = backend.api_key("openai")
+        timeout = float(Config.get("ai", "timeout"))
         try:
             self._client = openai.OpenAI(api_key=key, timeout=timeout) if key else openai.OpenAI(timeout=timeout)
         except Exception as e:
-            raise backend.missing_credentials_error('openai', str(e)) from e
+            raise backend.missing_credentials_error("openai", str(e)) from e
 
     def generate(self, system: str, messages: List[Dict[str, str]]) -> backend.TaskletSpec:
         """
@@ -40,33 +40,30 @@ class OpenAIProvider:
         :return: The tasklet described by the model.
         :raises AIExpansionError: If the request fails or the response cannot be interpreted.
         """
-        model = Config.get('ai', 'model')
+        model = Config.get("ai", "model")
         try:
             response = self._client.responses.create(
                 model=model,
                 instructions=system,
-                input=[{
-                    'role': m['role'],
-                    'content': m['content']
-                } for m in messages],
-                max_output_tokens=int(Config.get('ai', 'max_tokens')),
+                input=[{"role": m["role"], "content": m["content"]} for m in messages],
+                max_output_tokens=int(Config.get("ai", "max_tokens")),
                 text={
-                    'format': {
-                        'type': 'json_schema',
-                        'name': 'dace_tasklet',
-                        'strict': True,
-                        'schema': backend.RESPONSE_SCHEMA,
+                    "format": {
+                        "type": "json_schema",
+                        "name": "dace_tasklet",
+                        "strict": True,
+                        "schema": backend.RESPONSE_SCHEMA,
                     },
                 },
             )
         except self._openai.OpenAIError as e:
-            raise AIExpansionError(f'The OpenAI API request failed for model {model}: {e}') from e
+            raise AIExpansionError(f"The OpenAI API request failed for model {model}: {e}") from e
 
-        text = getattr(response, 'output_text', '') or ''
+        text = getattr(response, "output_text", "") or ""
         if not text.strip():
-            raise AIExpansionError('The model returned no content.')
+            raise AIExpansionError("The model returned no content.")
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as e:
-            raise AIExpansionError(f'The model response was not valid JSON: {e}') from e
+            raise AIExpansionError(f"The model response was not valid JSON: {e}") from e
         return backend.spec_from_dict(payload, raw=text)

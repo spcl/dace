@@ -13,7 +13,6 @@ from tests.utils import torch_tensors_close
 def test_multi_output(use_cpp_dispatcher: bool):
 
     class Module(torch.nn.Module):
-
         def forward(self, x):
             return x + 1, x * 2
 

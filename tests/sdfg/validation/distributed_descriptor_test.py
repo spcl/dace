@@ -17,21 +17,21 @@ from dace import data as dt
 
 def sdfg_with(name: str) -> dace.SDFG:
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [8], dace.float64)
-    sdfg.add_state('s', is_start_block=True)
+    sdfg.add_array("A", [8], dace.float64)
+    sdfg.add_state("s", is_start_block=True)
     return sdfg
 
 
 def test_process_grid_descriptor_validates():
-    sdfg = sdfg_with('pgrid')
+    sdfg = sdfg_with("pgrid")
     grid = sdfg.add_pgrid(shape=[2, 2])
     assert isinstance(sdfg.arrays[grid], dt.DistributedDescriptor)
-    assert sdfg.arrays[grid].transient, 'the checks under test only run for transients'
+    assert sdfg.arrays[grid].transient, "the checks under test only run for transients"
     sdfg.validate()
 
 
 def test_subarray_descriptor_validates():
-    sdfg = sdfg_with('subarray')
+    sdfg = sdfg_with("subarray")
     sub = sdfg.add_subarray(dace.float64, [16, 16], [8, 8])
     assert isinstance(sdfg.arrays[sub], dt.DistributedDescriptor)
     sdfg.validate()
@@ -52,25 +52,25 @@ def test_allocated_kinds_are_exactly_the_ones_with_strides():
     allocated = (dt.Array, dt.Scalar, dt.Stream, dt.Structure)
     for cls in {c for c in vars(dt).values() if inspect.isclass(c) and issubclass(c, dt.Data)}:
         if issubclass(cls, dt.DistributedDescriptor):
-            assert cls.strides is dt.DistributedDescriptor.strides, f'{cls.__name__} overrides the strides stub'
-            assert cls.total_size is dt.DistributedDescriptor.total_size, f'{cls.__name__} overrides total_size'
+            assert cls.strides is dt.DistributedDescriptor.strides, f"{cls.__name__} overrides the strides stub"
+            assert cls.total_size is dt.DistributedDescriptor.total_size, f"{cls.__name__} overrides total_size"
             continue
-        has_strides = 'strides' in dir(cls) and 'total_size' in dir(cls)
-        assert has_strides == issubclass(
-            cls, allocated), (f'{cls.__name__}: strides/total_size={has_strides} but covered-by-allowlist='
-                              f'{issubclass(cls, allocated)}')
+        has_strides = "strides" in dir(cls) and "total_size" in dir(cls)
+        assert has_strides == issubclass(cls, allocated), (
+            f"{cls.__name__}: strides/total_size={has_strides} but covered-by-allowlist={issubclass(cls, allocated)}"
+        )
 
 
 def test_allocation_checks_still_run_for_real_descriptors():
     """The skip must be scoped to DistributedDescriptor -- an undefined stride still raises."""
-    sdfg = sdfg_with('undef_stride')
-    sdfg.add_transient('T', [8], dace.float64)
-    sdfg.arrays['T'].strides = [dace.symbolic.UndefinedSymbol()]
-    with pytest.raises(dace.sdfg.validation.InvalidSDFGError, match='undefined symbol in stride'):
+    sdfg = sdfg_with("undef_stride")
+    sdfg.add_transient("T", [8], dace.float64)
+    sdfg.arrays["T"].strides = [dace.symbolic.UndefinedSymbol()]
+    with pytest.raises(dace.sdfg.validation.InvalidSDFGError, match="undefined symbol in stride"):
         sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_process_grid_descriptor_validates()
     test_subarray_descriptor_validates()
     test_allocated_kinds_are_exactly_the_ones_with_strides()

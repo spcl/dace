@@ -46,7 +46,7 @@ def test_return_override():
     assert np.allclose(result2, A * 2)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_oneret()
     test_multiret()
     test_nested_ret()

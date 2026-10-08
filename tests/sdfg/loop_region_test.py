@@ -7,155 +7,161 @@ from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as t
 
 
 def _make_regular_for_loop() -> SDFG:
-    sdfg = dace.SDFG('regular_for')
+    sdfg = dace.SDFG("regular_for")
     sdfg.using_explicit_control_flow = True
-    state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1',
-                       condition_expr='i < 10',
-                       loop_var='i',
-                       initialize_expr='i = 0',
-                       update_expr='i = i + 1',
-                       inverted=False)
+    state0 = sdfg.add_state("state0", is_start_block=True)
+    loop1 = LoopRegion(
+        label="loop1",
+        condition_expr="i < 10",
+        loop_var="i",
+        initialize_expr="i = 0",
+        update_expr="i = i + 1",
+        inverted=False,
+    )
     sdfg.add_node(loop1)
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [10], dace.float32)
-    state1 = loop1.add_state('state1', is_start_block=True)
-    acc_a = state1.add_access('A')
-    t1 = state1.add_tasklet('t1', None, {'a'}, 'a = i')
-    state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[i]'))
-    state3 = sdfg.add_state('state3')
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [10], dace.float32)
+    state1 = loop1.add_state("state1", is_start_block=True)
+    acc_a = state1.add_access("A")
+    t1 = state1.add_tasklet("t1", None, {"a"}, "a = i")
+    state1.add_edge(t1, "a", acc_a, None, dace.Memlet("A[i]"))
+    state3 = sdfg.add_state("state3")
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
     return sdfg
 
 
 def _make_regular_while_loop() -> SDFG:
-    sdfg = dace.SDFG('regular_while')
+    sdfg = dace.SDFG("regular_while")
     sdfg.using_explicit_control_flow = True
-    state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10')
-    sdfg.add_array('A', [10], dace.float32)
+    state0 = sdfg.add_state("state0", is_start_block=True)
+    loop1 = LoopRegion(label="loop1", condition_expr="i < 10")
+    sdfg.add_array("A", [10], dace.float32)
     sdfg.add_node(loop1)
-    state1 = loop1.add_state('state1', is_start_block=True)
-    state2 = loop1.add_state('state2')
-    acc_a = state1.add_access('A')
-    t1 = state1.add_tasklet('t1', None, {'a'}, 'a = i')
-    state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[i]'))
-    sdfg.add_symbol('i', dace.int32)
-    loop1.add_edge(state1, state2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    state3 = sdfg.add_state('state3')
-    sdfg.add_edge(state0, loop1, dace.InterstateEdge(assignments={'i': '0'}))
+    state1 = loop1.add_state("state1", is_start_block=True)
+    state2 = loop1.add_state("state2")
+    acc_a = state1.add_access("A")
+    t1 = state1.add_tasklet("t1", None, {"a"}, "a = i")
+    state1.add_edge(t1, "a", acc_a, None, dace.Memlet("A[i]"))
+    sdfg.add_symbol("i", dace.int32)
+    loop1.add_edge(state1, state2, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    state3 = sdfg.add_state("state3")
+    sdfg.add_edge(state0, loop1, dace.InterstateEdge(assignments={"i": "0"}))
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
     return sdfg
 
 
 def _make_do_while_loop() -> SDFG:
-    sdfg = dace.SDFG('do_while')
+    sdfg = dace.SDFG("do_while")
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('i', dace.int32)
-    state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', inverted=True)
+    sdfg.add_symbol("i", dace.int32)
+    state0 = sdfg.add_state("state0", is_start_block=True)
+    loop1 = LoopRegion(label="loop1", condition_expr="i < 10", inverted=True)
     sdfg.add_node(loop1)
-    sdfg.add_array('A', [10], dace.float32)
-    state1 = loop1.add_state('state1', is_start_block=True)
-    state2 = loop1.add_state('state2')
-    acc_a = state1.add_access('A')
-    t1 = state1.add_tasklet('t1', None, {'a'}, 'a = i')
-    state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[i]'))
-    loop1.add_edge(state1, state2, dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    state3 = sdfg.add_state('state3')
-    sdfg.add_edge(state0, loop1, dace.InterstateEdge(assignments={'i': '10'}))
+    sdfg.add_array("A", [10], dace.float32)
+    state1 = loop1.add_state("state1", is_start_block=True)
+    state2 = loop1.add_state("state2")
+    acc_a = state1.add_access("A")
+    t1 = state1.add_tasklet("t1", None, {"a"}, "a = i")
+    state1.add_edge(t1, "a", acc_a, None, dace.Memlet("A[i]"))
+    loop1.add_edge(state1, state2, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    state3 = sdfg.add_state("state3")
+    sdfg.add_edge(state0, loop1, dace.InterstateEdge(assignments={"i": "10"}))
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
     return sdfg
 
 
 def _make_do_for_loop() -> SDFG:
-    sdfg = dace.SDFG('do_for')
+    sdfg = dace.SDFG("do_for")
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [10], dace.float32)
-    state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1',
-                       condition_expr='i < 10',
-                       loop_var='i',
-                       initialize_expr='i = 0',
-                       update_expr='i = i + 1',
-                       inverted=True)
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [10], dace.float32)
+    state0 = sdfg.add_state("state0", is_start_block=True)
+    loop1 = LoopRegion(
+        label="loop1",
+        condition_expr="i < 10",
+        loop_var="i",
+        initialize_expr="i = 0",
+        update_expr="i = i + 1",
+        inverted=True,
+    )
     sdfg.add_node(loop1)
-    state1 = loop1.add_state('state1', is_start_block=True)
-    acc_a = state1.add_access('A')
-    t1 = state1.add_tasklet('t1', None, {'a'}, 'a = i')
-    state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[i]'))
-    state2 = loop1.add_state('state2')
+    state1 = loop1.add_state("state1", is_start_block=True)
+    acc_a = state1.add_access("A")
+    t1 = state1.add_tasklet("t1", None, {"a"}, "a = i")
+    state1.add_edge(t1, "a", acc_a, None, dace.Memlet("A[i]"))
+    state2 = loop1.add_state("state2")
     loop1.add_edge(state1, state2, dace.InterstateEdge())
-    state3 = sdfg.add_state('state3')
+    state3 = sdfg.add_state("state3")
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
     return sdfg
 
 
 def _make_do_for_inverted_cond_loop() -> SDFG:
-    sdfg = dace.SDFG('do_for_inverted_cond')
+    sdfg = dace.SDFG("do_for_inverted_cond")
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [10], dace.float32)
-    state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1',
-                       condition_expr='i < 8',
-                       loop_var='i',
-                       initialize_expr='i = 0',
-                       update_expr='i = i + 1',
-                       inverted=True,
-                       update_before_condition=False)
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_array("A", [10], dace.float32)
+    state0 = sdfg.add_state("state0", is_start_block=True)
+    loop1 = LoopRegion(
+        label="loop1",
+        condition_expr="i < 8",
+        loop_var="i",
+        initialize_expr="i = 0",
+        update_expr="i = i + 1",
+        inverted=True,
+        update_before_condition=False,
+    )
     sdfg.add_node(loop1)
-    state1 = loop1.add_state('state1', is_start_block=True)
-    acc_a = state1.add_access('A')
-    t1 = state1.add_tasklet('t1', None, {'a'}, 'a = i')
-    state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[i]'))
-    state2 = loop1.add_state('state2')
+    state1 = loop1.add_state("state1", is_start_block=True)
+    acc_a = state1.add_access("A")
+    t1 = state1.add_tasklet("t1", None, {"a"}, "a = i")
+    state1.add_edge(t1, "a", acc_a, None, dace.Memlet("A[i]"))
+    state2 = loop1.add_state("state2")
     loop1.add_edge(state1, state2, dace.InterstateEdge())
-    state3 = sdfg.add_state('state3')
+    state3 = sdfg.add_state("state3")
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
     return sdfg
 
 
 def _make_triple_nested_for_loop() -> SDFG:
-    sdfg = dace.SDFG('gemm')
+    sdfg = dace.SDFG("gemm")
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_symbol('j', dace.int32)
-    sdfg.add_symbol('k', dace.int32)
-    N = dace.symbol('N')
-    M = dace.symbol('M')
-    K = dace.symbol('K')
-    sdfg.add_symbol('N', dace.int32)
-    sdfg.add_array('A', [N, K], dace.float32)
-    sdfg.add_array('B', [K, M], dace.float32)
-    sdfg.add_array('C', [N, M], dace.float32)
-    sdfg.add_array('tmp', [N, M, K], dace.float32, transient=True)
-    i_loop = LoopRegion('outer', 'i < N', 'i', 'i = 0', 'i = i + 1')
-    j_loop = LoopRegion('middle', 'j < M', 'j', 'j = 0', 'j = j + 1')
-    k_loop = LoopRegion('inner', 'k < K', 'k', 'k = 0', 'k = k + 1')
-    reduce_state = sdfg.add_state('reduce')
+    sdfg.add_symbol("i", dace.int32)
+    sdfg.add_symbol("j", dace.int32)
+    sdfg.add_symbol("k", dace.int32)
+    N = dace.symbol("N")
+    M = dace.symbol("M")
+    K = dace.symbol("K")
+    sdfg.add_symbol("N", dace.int32)
+    sdfg.add_array("A", [N, K], dace.float32)
+    sdfg.add_array("B", [K, M], dace.float32)
+    sdfg.add_array("C", [N, M], dace.float32)
+    sdfg.add_array("tmp", [N, M, K], dace.float32, transient=True)
+    i_loop = LoopRegion("outer", "i < N", "i", "i = 0", "i = i + 1")
+    j_loop = LoopRegion("middle", "j < M", "j", "j = 0", "j = j + 1")
+    k_loop = LoopRegion("inner", "k < K", "k", "k = 0", "k = k + 1")
+    reduce_state = sdfg.add_state("reduce")
     sdfg.add_node(i_loop, is_start_block=True)
     sdfg.add_edge(i_loop, reduce_state, dace.InterstateEdge())
     i_loop.add_node(j_loop, is_start_block=True)
     j_loop.add_node(k_loop, is_start_block=True)
-    comp_state = k_loop.add_state('comp', is_start_block=True)
-    anode = comp_state.add_access('A')
-    bnode = comp_state.add_access('B')
-    tmpnode = comp_state.add_access('tmp')
-    tasklet = comp_state.add_tasklet('comp', {'a', 'b'}, {'t'}, 't = a * b')
-    comp_state.add_memlet_path(anode, tasklet, dst_conn='a', memlet=dace.Memlet.simple('A', 'i, k'))
-    comp_state.add_memlet_path(bnode, tasklet, dst_conn='b', memlet=dace.Memlet.simple('B', 'k, j'))
-    comp_state.add_memlet_path(tasklet, tmpnode, src_conn='t', memlet=dace.Memlet.simple('tmp', 'i, j, k'))
+    comp_state = k_loop.add_state("comp", is_start_block=True)
+    anode = comp_state.add_access("A")
+    bnode = comp_state.add_access("B")
+    tmpnode = comp_state.add_access("tmp")
+    tasklet = comp_state.add_tasklet("comp", {"a", "b"}, {"t"}, "t = a * b")
+    comp_state.add_memlet_path(anode, tasklet, dst_conn="a", memlet=dace.Memlet.simple("A", "i, k"))
+    comp_state.add_memlet_path(bnode, tasklet, dst_conn="b", memlet=dace.Memlet.simple("B", "k, j"))
+    comp_state.add_memlet_path(tasklet, tmpnode, src_conn="t", memlet=dace.Memlet.simple("tmp", "i, j, k"))
 
-    tmpnode2 = reduce_state.add_access('tmp')
-    cnode = reduce_state.add_access('C')
-    red = reduce_state.add_reduce('lambda a, b: a + b', (2, ), 0)
-    reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
-    reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
+    tmpnode2 = reduce_state.add_access("tmp")
+    cnode = reduce_state.add_access("C")
+    red = reduce_state.add_reduce("lambda a, b: a + b", (2,), 0)
+    reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple("tmp", "0:N, 0:M, 0:K"))
+    reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple("C", "0:N, 0:M"))
     return sdfg
 
 
@@ -195,7 +201,7 @@ def test_loop_do_while():
     a_validation[10] = 10
     sdfg(A=a_test)
     assert np.allclose(a_validation, a_test)
-    assert 'do {' in sdfg.generate_code()[0].code
+    assert "do {" in sdfg.generate_code()[0].code
 
 
 def test_loop_do_for():
@@ -251,8 +257,9 @@ def test_loop_to_stree_regular_for():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}for i = 0; (i < 10); i = (i + 1):\n' +
-                                 f'{2 * tn.INDENTATION}A[i] = tasklet()')
+    assert stree.as_string() == (
+        f"{tn.INDENTATION}for i = 0; (i < 10); i = (i + 1):\n" + f"{2 * tn.INDENTATION}A[i] = tasklet()"
+    )
 
 
 def test_loop_to_stree_regular_while():
@@ -262,8 +269,12 @@ def test_loop_to_stree_regular_while():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 0\n' + f'{tn.INDENTATION}while (i < 10):\n' +
-                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' + f'{2 * tn.INDENTATION}assign i = (i + 1)')
+    assert stree.as_string() == (
+        f"{tn.INDENTATION}assign i = 0\n"
+        + f"{tn.INDENTATION}while (i < 10):\n"
+        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        + f"{2 * tn.INDENTATION}assign i = (i + 1)"
+    )
 
 
 def test_loop_to_stree_do_while():
@@ -273,9 +284,13 @@ def test_loop_to_stree_do_while():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 10\n' + f'{tn.INDENTATION}do:\n' +
-                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
-                                 f'{2 * tn.INDENTATION}assign i = (i + 1)\n' + f'{tn.INDENTATION}while (i < 10)')
+    assert stree.as_string() == (
+        f"{tn.INDENTATION}assign i = 10\n"
+        + f"{tn.INDENTATION}do:\n"
+        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        + f"{2 * tn.INDENTATION}assign i = (i + 1)\n"
+        + f"{tn.INDENTATION}while (i < 10)"
+    )
 
 
 def test_loop_to_stree_do_for():
@@ -285,9 +300,13 @@ def test_loop_to_stree_do_for():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' + f'{tn.INDENTATION}do:\n' +
-                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' + f'{2 * tn.INDENTATION}i = (i + 1)\n' +
-                                 f'{tn.INDENTATION}while (i < 10)')
+    assert stree.as_string() == (
+        f"{tn.INDENTATION}i = 0\n"
+        + f"{tn.INDENTATION}do:\n"
+        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        + f"{2 * tn.INDENTATION}i = (i + 1)\n"
+        + f"{tn.INDENTATION}while (i < 10)"
+    )
 
 
 def test_loop_to_stree_do_for_inverted_cond():
@@ -297,10 +316,14 @@ def test_loop_to_stree_do_for_inverted_cond():
 
     stree = s2t.as_schedule_tree(sdfg)
 
-    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' + f'{tn.INDENTATION}while True:\n' +
-                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
-                                 f'{2 * tn.INDENTATION}if (not (i < 8)):\n' + f'{3 * tn.INDENTATION}break\n' +
-                                 f'{2 * tn.INDENTATION}i = (i + 1)\n')
+    assert stree.as_string() == (
+        f"{tn.INDENTATION}i = 0\n"
+        + f"{tn.INDENTATION}while True:\n"
+        + f"{2 * tn.INDENTATION}A[i] = tasklet()\n"
+        + f"{2 * tn.INDENTATION}if (not (i < 8)):\n"
+        + f"{3 * tn.INDENTATION}break\n"
+        + f"{2 * tn.INDENTATION}i = (i + 1)\n"
+    )
 
 
 def test_loop_to_stree_triple_nested_for():
@@ -315,39 +338,35 @@ def test_loop_to_stree_triple_nested_for():
 
 
 def test_nested_loop_iterators_are_defined_for_a_nested_sdfg():
-    sdfg = dace.SDFG('nested_loop_iterators')
+    sdfg = dace.SDFG("nested_loop_iterators")
     sdfg.using_explicit_control_flow = True
-    sdfg.add_symbol('N', dace.int64)
-    sdfg.add_array('A', ['N'], dace.float64)
-    outer = LoopRegion(label='outer',
-                       condition_expr='i < N',
-                       loop_var='i',
-                       initialize_expr='i = 0',
-                       update_expr='i = i + 1')
+    sdfg.add_symbol("N", dace.int64)
+    sdfg.add_array("A", ["N"], dace.float64)
+    outer = LoopRegion(
+        label="outer", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1"
+    )
     sdfg.add_node(outer, is_start_block=True)
-    inner = LoopRegion(label='inner',
-                       condition_expr='j < i',
-                       loop_var='j',
-                       initialize_expr='j = 0',
-                       update_expr='j = j + 1')
+    inner = LoopRegion(
+        label="inner", condition_expr="j < i", loop_var="j", initialize_expr="j = 0", update_expr="j = j + 1"
+    )
     outer.add_node(inner, is_start_block=True)
-    body = inner.add_state('body', is_start_block=True)
-    nsdfg = dace.SDFG('nested')
-    nsdfg.add_array('B', ['N'], dace.float64)
-    nstate = nsdfg.add_state('nstate')
-    tasklet = nstate.add_tasklet('t', {}, {'o'}, 'o = 1.0')
-    nstate.add_edge(tasklet, 'o', nstate.add_write('B'), None, dace.Memlet('B[j]'))
+    body = inner.add_state("body", is_start_block=True)
+    nsdfg = dace.SDFG("nested")
+    nsdfg.add_array("B", ["N"], dace.float64)
+    nstate = nsdfg.add_state("nstate")
+    tasklet = nstate.add_tasklet("t", {}, {"o"}, "o = 1.0")
+    nstate.add_edge(tasklet, "o", nstate.add_write("B"), None, dace.Memlet("B[j]"))
 
-    node = body.add_nested_sdfg(nsdfg, {}, {'B'}, symbol_mapping={'N': 'N'})
-    body.add_edge(node, 'B', body.add_write('A'), None, dace.Memlet('A'))
+    node = body.add_nested_sdfg(nsdfg, {}, {"B"}, symbol_mapping={"N": "N"})
+    body.add_edge(node, "B", body.add_write("A"), None, dace.Memlet("A"))
 
     defined = body.symbols_defined_at(node)
-    assert body.defined_symbols()['i'] == defined['i']
-    assert nsdfg.symbols['j'] == defined['j']
-    assert str(node.symbol_mapping['j']) == 'j'
+    assert body.defined_symbols()["i"] == defined["i"]
+    assert nsdfg.symbols["j"] == defined["j"]
+    assert str(node.symbol_mapping["j"]) == "j"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_loop_regular_for()
     test_loop_regular_while()
     test_loop_do_while()

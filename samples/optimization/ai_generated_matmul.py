@@ -43,14 +43,14 @@ import dace
 from dace.libraries import ai
 
 #: Reduction length. A symbol, so that the generated kernel is written once for any matrix size.
-N = dace.symbol('N')
+N = dace.symbol("N")
 
 #: Edge of the output tile one invocation of the kernel computes. Eight single-precision elements
 #: are one AVX2 register, which is what makes a register-blocked kernel natural here.
 TILE = 8
 
 #: Name of the node, and therefore of the slot that ``show``, ``refine`` and ``history`` address.
-KERNEL = 'gemm_tile'
+KERNEL = "gemm_tile"
 
 MICROKERNEL = f"""
 Compute one {TILE}x{TILE} output tile of a single-precision matrix multiplication:
@@ -85,12 +85,14 @@ the loads aligned and sequential where the strides allow it.
 @dace.program
 def matmul(A: dace.float32[N, N], B: dace.float32[N, N], C: dace.float32[N, N]):
     for ti, tj in dace.map[0:N:TILE, 0:N:TILE]:
-        C[ti:ti + TILE, tj:tj + TILE] = dace.ai(MICROKERNEL,
-                                                a=A[ti:ti + TILE, 0:N],
-                                                b=B[0:N, tj:tj + TILE],
-                                                shape=(TILE, TILE),
-                                                dtype=dace.float32,
-                                                name=KERNEL)
+        C[ti : ti + TILE, tj : tj + TILE] = dace.ai(
+            MICROKERNEL,
+            a=A[ti : ti + TILE, 0:N],
+            b=B[0:N, tj : tj + TILE],
+            shape=(TILE, TILE),
+            dtype=dace.float32,
+            name=KERNEL,
+        )
 
 
 def best_of(call, repeats: int = 3) -> float:
@@ -138,27 +140,31 @@ def measure(sdfg: dace.SDFG, size: int):
     theirs = best_of(lambda: np.matmul(a, b, out=expected))
     error = np.linalg.norm(c - expected) / np.linalg.norm(expected)
     if not np.isfinite(error) or error > 1e-5:
-        raise ValueError(f'The generated kernel does not compute A @ B (relative error {error:.2e}). Read it with '
-                         f'dace.libraries.ai.show(sdfg, "{KERNEL}"), then say so with '
-                         f'dace.libraries.ai.refine(sdfg, "{KERNEL}", "...").')
+        raise ValueError(
+            f"The generated kernel does not compute A @ B (relative error {error:.2e}). Read it with "
+            f'dace.libraries.ai.show(sdfg, "{KERNEL}"), then say so with '
+            f'dace.libraries.ai.refine(sdfg, "{KERNEL}", "...").'
+        )
 
-    print(f'Relative error: {error:.2e}   generated: {ours:.2f} ms   NumPy: {theirs:.2f} ms')
+    print(f"Relative error: {error:.2e}   generated: {ours:.2f} ms   NumPy: {theirs:.2f} ms")
     return ours, theirs
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('N', type=int, nargs='?', default=256)
-    parser.add_argument('--refine',
-                        nargs='?',
-                        const='',
-                        default=None,
-                        metavar='FEEDBACK',
-                        help='Ask the model for another round on the kernel. Without a message of your own, the '
-                        'measured runtime is handed back as the feedback.')
+    parser.add_argument("N", type=int, nargs="?", default=256)
+    parser.add_argument(
+        "--refine",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="FEEDBACK",
+        help="Ask the model for another round on the kernel. Without a message of your own, the "
+        "measured runtime is handed back as the feedback.",
+    )
     args = parser.parse_args()
     if args.N % TILE != 0:
-        parser.error(f'N must be a multiple of the tile size ({TILE})')
+        parser.error(f"N must be a multiple of the tile size ({TILE})")
 
     # Expanding explicitly, rather than letting compilation do it, so that the kernel can be read
     # before it runs. Everything from here on is an ordinary SDFG: it can be saved, transformed and
@@ -166,30 +172,31 @@ if __name__ == '__main__':
     sdfg = matmul.to_sdfg()
     sdfg.expand_library_nodes()
 
-    print('=== Generated kernel ===')
+    print("=== Generated kernel ===")
     ai.show(sdfg, KERNEL)
     ours, theirs = measure(sdfg, args.N)
 
     if args.refine is not None:
         # A refinement is the next round of the same conversation, and it is atomic: if the new
         # kernel fails to generate or to compile, the one measured above is left exactly as it was.
-        message = args.refine or FEEDBACK.format(n=args.N, tile=TILE, ours=ours, theirs=theirs,
-                                                 factor=ours / theirs).strip()
-        print('\n=== Feedback ===')
+        message = (
+            args.refine or FEEDBACK.format(n=args.N, tile=TILE, ours=ours, theirs=theirs, factor=ours / theirs).strip()
+        )
+        print("\n=== Feedback ===")
         print(message)
         ai.refine(sdfg, KERNEL, message)
 
-        print('\n=== Revised kernel ===')
+        print("\n=== Revised kernel ===")
         ai.show(sdfg, KERNEL)
         revised, _ = measure(sdfg, args.N)
         change = 100 * (ours - revised) / ours
-        print(f'The revised kernel is {abs(change):.1f}% {"faster" if change > 0 else "slower"} than the first one')
+        print(f"The revised kernel is {abs(change):.1f}% {'faster' if change > 0 else 'slower'} than the first one")
 
     # Every round is on disk, in the session for this slot, and can be restored without asking the
     # model anything: dace.libraries.ai.rollback(sdfg, KERNEL, round=1)
     rounds = ai.history(sdfg, KERNEL)
-    print('\n=== History ===')
+    print("\n=== History ===")
     for entry in rounds:
-        print(f'  {entry}')
+        print(f"  {entry}")
     if not rounds:
-        print('  (no session on disk -- sessions are off, or this answer came from the cache of another run)')
+        print("  (no session on disk -- sessions are off, or this answer came from the cache of another run)")

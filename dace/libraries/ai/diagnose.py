@@ -31,14 +31,18 @@ from dace.libraries.ai.exceptions import AIExpansionError
 from dace.sdfg import SDFG
 
 #: The annotation :class:`~dace.codegen.prettycode.CodeIOStream` leaves on every generated line.
-_ANNOTATION = re.compile(r'////__DACE:(\d+):(\d+):([\d,]+)')
+_ANNOTATION = re.compile(r"////__DACE:(\d+):(\d+):([\d,]+)")
 
 #: ``file:line:col: severity: message`` (GCC, Clang, nvcc) and ``file(line[,col]): severity ...``
 #: (MSVC). Only the leading position matters; the rest of the line is kept as the message.
-_POSIX_DIAGNOSTIC = re.compile(r'^\s*(?P<file>[^\s:][^:]*):(?P<line>\d+)(?::(?P<col>\d+))?:\s*'
-                               r'(?P<severity>error|warning|note|fatal error):\s*(?P<message>.*)$')
-_MSVC_DIAGNOSTIC = re.compile(r'^\s*(?P<file>[^\s(][^(]*)\((?P<line>\d+)(?:,(?P<col>\d+))?\)\s*:\s*'
-                              r'(?P<severity>error|warning|note)\s*(?P<message>.*)$')
+_POSIX_DIAGNOSTIC = re.compile(
+    r"^\s*(?P<file>[^\s:][^:]*):(?P<line>\d+)(?::(?P<col>\d+))?:\s*"
+    r"(?P<severity>error|warning|note|fatal error):\s*(?P<message>.*)$"
+)
+_MSVC_DIAGNOSTIC = re.compile(
+    r"^\s*(?P<file>[^\s(][^(]*)\((?P<line>\d+)(?:,(?P<col>\d+))?\)\s*:\s*"
+    r"(?P<severity>error|warning|note)\s*(?P<message>.*)$"
+)
 
 #: A location in the generated code: ``(cfg_id, state_id, node_id)``.
 Location = Tuple[int, int, int]
@@ -46,7 +50,7 @@ Location = Tuple[int, int, int]
 
 @dataclass
 class Diagnostic:
-    """ One line of compiler output that names a position. """
+    """One line of compiler output that names a position."""
 
     file: str
     line: int
@@ -55,15 +59,15 @@ class Diagnostic:
     column: Optional[int] = None
 
     def __str__(self) -> str:
-        position = f'{os.path.basename(self.file)}:{self.line}'
+        position = f"{os.path.basename(self.file)}:{self.line}"
         if self.column is not None:
-            position += f':{self.column}'
-        return f'{position}: {self.severity}: {self.message}'
+            position += f":{self.column}"
+        return f"{position}: {self.severity}: {self.message}"
 
 
 @dataclass
 class Attribution:
-    """ The result of matching a build's diagnostics against the generated tasklets. """
+    """The result of matching a build's diagnostics against the generated tasklets."""
 
     #: Diagnostics grouped by the tasklet they belong to, keyed by its label.
     by_slot: Dict[str, List[Diagnostic]] = field(default_factory=dict)
@@ -86,17 +90,20 @@ def parse_diagnostics(text: str) -> List[Diagnostic]:
     :return: One entry per diagnostic that names a file and a line, in order.
     """
     found: List[Diagnostic] = []
-    for raw in (text or '').splitlines():
+    for raw in (text or "").splitlines():
         match = _POSIX_DIAGNOSTIC.match(raw) or _MSVC_DIAGNOSTIC.match(raw)
         if match is None:
             continue
-        column = match.group('col')
+        column = match.group("col")
         found.append(
-            Diagnostic(file=match.group('file').strip(),
-                       line=int(match.group('line')),
-                       severity=match.group('severity').strip(),
-                       message=match.group('message').strip(),
-                       column=int(column) if column else None))
+            Diagnostic(
+                file=match.group("file").strip(),
+                line=int(match.group("line")),
+                severity=match.group("severity").strip(),
+                message=match.group("message").strip(),
+                column=int(column) if column else None,
+            )
+        )
     return found
 
 
@@ -113,17 +120,19 @@ def build_line_index(sdfg: SDFG) -> Dict[Tuple[str, int], Set[Location]]:
         # positional, so they match the SDFG in hand.
         objects = sdfg.generate_code()
     except Exception as e:
-        raise AIExpansionError(f'Could not regenerate the code of SDFG "{sdfg.name}" in order to attribute the '
-                               f'build diagnostics to a tasklet: {e}') from e
+        raise AIExpansionError(
+            f'Could not regenerate the code of SDFG "{sdfg.name}" in order to attribute the '
+            f"build diagnostics to a tasklet: {e}"
+        ) from e
 
     index: Dict[Tuple[str, int], Set[Location]] = {}
     for obj in objects:
         # The file on disk is `clean_code`, which strips the annotations as trailing comments
         # without removing any newline, so line numbers agree with the annotated text.
-        name = f'{obj.name}.{obj.language}'
-        for number, line in enumerate(obj.code.split('\n'), 1):
+        name = f"{obj.name}.{obj.language}"
+        for number, line in enumerate(obj.code.split("\n"), 1):
             for cfg_id, state_id, node_ids in _ANNOTATION.findall(line):
-                for node_id in node_ids.split(','):
+                for node_id in node_ids.split(","):
                     if not node_id:
                         continue
                     index.setdefault((name, number), set()).add((int(cfg_id), int(state_id), int(node_id)))
@@ -166,7 +175,8 @@ def attribute(sdfg: SDFG, diagnostics: List[Diagnostic]) -> Attribution:
         locations = index.get((basename, diagnostic.line), set())
         implicated = {
             slots[id(node)].name
-            for node in (_resolve(sdfg, loc) for loc in locations) if node is not None and id(node) in slots
+            for node in (_resolve(sdfg, loc) for loc in locations)
+            if node is not None and id(node) in slots
         }
         if not implicated:
             result.unattributed.append(diagnostic)
@@ -186,23 +196,23 @@ def _message_for(name: str, diagnostics: List[Diagnostic], others: List[str]) ->
     :return: The feedback text.
     """
     lines = [
-        'The program did not compile. Your tasklet was generated and verified on its own, but it '
-        'is built together with the rest of the program, and these diagnostics point at code you '
-        'wrote:',
-        '',
+        "The program did not compile. Your tasklet was generated and verified on its own, but it "
+        "is built together with the rest of the program, and these diagnostics point at code you "
+        "wrote:",
+        "",
     ]
-    lines += [f'    {d}' for d in diagnostics]
+    lines += [f"    {d}" for d in diagnostics]
     if others:
-        listing = ', '.join(f'"{o}"' for o in others)
+        listing = ", ".join(f'"{o}"' for o in others)
         lines += [
-            '',
-            f'The same build also implicated {listing}, which {"is" if len(others) == 1 else "are"} '
-            'generated the same way and emitted into the same translation unit. If the problem is a '
-            'name collision, rename what you define or give it internal linkage rather than '
-            'assuming the other one will change.',
+            "",
+            f"The same build also implicated {listing}, which {'is' if len(others) == 1 else 'are'} "
+            "generated the same way and emitted into the same translation unit. If the problem is a "
+            "name collision, rename what you define or give it internal linkage rather than "
+            "assuming the other one will change.",
         ]
-    lines += ['', 'Fix it and return the complete JSON object.']
-    return '\n'.join(lines)
+    lines += ["", "Fix it and return the complete JSON object."]
+    return "\n".join(lines)
 
 
 def repair(sdfg: SDFG, error: Any, **kwargs) -> List[str]:
@@ -222,25 +232,29 @@ def repair(sdfg: SDFG, error: Any, **kwargs) -> List[str]:
         # DaCe streams the compiler's output live and omits it from the exception when debugprint
         # is on (dace/codegen/compiler.py), so there may be nothing here to attribute. Say that,
         # rather than reporting it as "no generated code is at fault", which is a different claim.
-        raise AIExpansionError('The build failure carries no compiler diagnostics to attribute, so there is nothing '
-                               'to feed back. With DACE_debugprint set, DaCe prints the compiler output live and '
-                               'leaves it out of the exception. Use dace.libraries.ai.build(), which captures it, or '
-                               'pass the compiler output to repair() as text.')
+        raise AIExpansionError(
+            "The build failure carries no compiler diagnostics to attribute, so there is nothing "
+            "to feed back. With DACE_debugprint set, DaCe prints the compiler output live and "
+            "leaves it out of the exception. Use dace.libraries.ai.build(), which captures it, or "
+            "pass the compiler output to repair() as text."
+        )
 
     found = attribute(sdfg, diagnostics)
-    errors = {name: [d for d in ds if 'error' in d.severity] for name, ds in found.by_slot.items()}
+    errors = {name: [d for d in ds if "error" in d.severity] for name, ds in found.by_slot.items()}
     blamed = sorted(name for name, ds in errors.items() if ds)
     if not blamed:
         # Refining a tasklet because it was the only candidate would be worse than doing nothing
-        summary = '\n'.join(f'    {d}' for d in found.unattributed[:10]) or '    (no positioned diagnostics)'
-        raise AIExpansionError('The build failed, but none of the errors is in code generated by the "ai" '
-                               f'implementation, so there is nothing to ask a model to fix:\n{summary}')
+        summary = "\n".join(f"    {d}" for d in found.unattributed[:10]) or "    (no positioned diagnostics)"
+        raise AIExpansionError(
+            'The build failed, but none of the errors is in code generated by the "ai" '
+            f"implementation, so there is nothing to ask a model to fix:\n{summary}"
+        )
 
     refined = []
     for name in blamed:
         slot = next((s for s in iterate.sessions(sdfg) if s.name == name), None)
         if slot is None or slot.pinned:
-            if Config.get_bool('debugprint'):
+            if Config.get_bool("debugprint"):
                 print(f'[ai] Not refining tasklet "{name}": it is pinned or no longer present.')
             continue
         others = [o for o in blamed if o != name]
@@ -276,10 +290,10 @@ def build(sdfg: SDFG, rounds: int = 1, **kwargs):
             # DaCe prints the compiler's output live and drops it from the exception when
             # debugprint is on. The diagnostics are the entire point here, so take them in the
             # exception and re-emit them below rather than lose them to the terminal.
-            with set_temporary('debugprint', value=False):
+            with set_temporary("debugprint", value=False):
                 return sdfg.compile()
         except (cgx.CompilationError, cgx.CompilerConfigurationError) as e:
-            _detail('build diagnostics', str(e))
+            _detail("build diagnostics", str(e))
             if attempt == rounds:
                 raise
             try:
@@ -288,5 +302,4 @@ def build(sdfg: SDFG, rounds: int = 1, **kwargs):
                 # The build failure is not something a model can be asked to fix. Report the
                 # original failure, with the reason this could not help attached.
                 raise e from repair_error
-            _status(f'build failed; refined {", ".join(refined)} and rebuilding '
-                    f'(round {attempt + 1}/{rounds})')
+            _status(f"build failed; refined {', '.join(refined)} and rebuilding (round {attempt + 1}/{rounds})")

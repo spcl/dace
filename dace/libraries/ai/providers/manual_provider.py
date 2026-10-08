@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Copy-and-paste backend for AI-generated library node expansions. """
+"""Copy-and-paste backend for AI-generated library node expansions."""
 
 import sys
 from typing import Dict, List
@@ -60,26 +60,31 @@ class ManualProvider:
         # program does not ask the same question again
         reply = exchange.read_saved(response_path)
         if reply:
-            print(f'Reusing the saved answer for {node_type} "{node_name}" from {response_path}.',
-                  file=sys.stderr,
-                  flush=True)
+            print(
+                f'Reusing the saved answer for {node_type} "{node_name}" from {response_path}.',
+                file=sys.stderr,
+                flush=True,
+            )
         else:
-            with open(prompt_path, 'w') as fp:
+            with open(prompt_path, "w") as fp:
                 fp.write(prompt)
-            print(_INSTRUCTIONS.format(node_type=node_type,
-                                       node_name=node_name,
-                                       prompt_path=prompt_path,
-                                       response_path=response_path),
-                  file=sys.stderr,
-                  flush=True)
+            print(
+                _INSTRUCTIONS.format(
+                    node_type=node_type, node_name=node_name, prompt_path=prompt_path, response_path=response_path
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
             reply = sys.stdin.read().strip() or exchange.read_saved(response_path)
 
         if not reply:
-            raise AIExpansionError(f'No response was provided for {node_type} "{node_name}". Paste the model\'s '
-                                   f'JSON reply on standard input, or save it to {response_path} and run again. '
-                                   f'The prompt is in {prompt_path}.\nNote that the manual provider needs an '
-                                   'interactive terminal; set DACE_ai_provider to a different backend for '
-                                   'unattended runs.')
+            raise AIExpansionError(
+                f'No response was provided for {node_type} "{node_name}". Paste the model\'s '
+                f"JSON reply on standard input, or save it to {response_path} and run again. "
+                f"The prompt is in {prompt_path}.\nNote that the manual provider needs an "
+                "interactive terminal; set DACE_ai_provider to a different backend for "
+                "unattended runs."
+            )
 
         return exchange.parse_response(reply, f'{node_type} "{node_name}"')
 
@@ -91,11 +96,11 @@ def _describe(messages: List[Dict[str, str]]):
     :param messages: The conversation so far.
     :return: A tuple of (node type, node name), falling back to placeholders.
     """
-    node_type, node_name = 'a library node', '?'
-    for line in messages[0]['content'].splitlines():
-        if line.startswith('Library node type: '):
-            node_type = line.split(': ', 1)[1]
-        elif line.startswith('Node name: '):
-            node_name = line.split(': ', 1)[1]
+    node_type, node_name = "a library node", "?"
+    for line in messages[0]["content"].splitlines():
+        if line.startswith("Library node type: "):
+            node_type = line.split(": ", 1)[1]
+        elif line.startswith("Node name: "):
+            node_name = line.split(": ", 1)[1]
             break
     return node_type, node_name

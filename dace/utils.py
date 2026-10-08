@@ -48,20 +48,20 @@ def find_new_name(name: str, existing_names: Container[str]) -> str:
     if name not in existing_names:
         return name
     cur_offset = 0
-    new_name = name + '_' + str(cur_offset)
+    new_name = name + "_" + str(cur_offset)
     while new_name in existing_names:
         cur_offset += 1
-        new_name = name + '_' + str(cur_offset)
+        new_name = name + "_" + str(cur_offset)
     return new_name
 
 
 def deduplicate(iterable):
-    """ Removes duplicates in the passed iterable. """
+    """Removes duplicates in the passed iterable."""
     return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
 
 
 def until(val, substr):
-    """ Helper function that returns the substring of a string until a certain pattern. """
+    """Helper function that returns the substring of a string until a certain pattern."""
     if substr not in val:
         return val
-    return val[:val.find(substr)]
+    return val[: val.find(substr)]

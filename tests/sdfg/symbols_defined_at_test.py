@@ -18,10 +18,7 @@ def _make_sdfg(name: str, nested: bool = False) -> dace.SDFG:
     state = sdfg.add_state(is_start_block=True)
     state.add_mapped_tasklet(
         "comp",
-        map_ranges={
-            "__i": "0:N",
-            "__j": "0:10"
-        },
+        map_ranges={"__i": "0:N", "__j": "0:10"},
         inputs={"__in": dace.Memlet("a[__i, __j]")},
         outputs={"__out": dace.Memlet("b[__i, __j]")},
         code="__out = __in + 1.0",
@@ -61,10 +58,9 @@ def test_propagation_resolves_the_state_symbols_once_per_state():
     states = [state for nested in sdfg.all_sdfgs_recursive() for state in nested.states()]
     assert sum(len(state.edges()) for state in states) > len(states)
 
-    with mock.patch.object(SDFGState,
-                           "symbols_defined_at_state",
-                           autospec=True,
-                           side_effect=SDFGState.symbols_defined_at_state) as spy:
+    with mock.patch.object(
+        SDFGState, "symbols_defined_at_state", autospec=True, side_effect=SDFGState.symbols_defined_at_state
+    ) as spy:
         propagation.propagate_memlets_sdfg(sdfg)
 
     assert spy.call_count <= len(states)
@@ -96,7 +92,7 @@ def _make_sdfg_with_loop_region(name: str) -> tuple[dace.SDFG, SDFGState, SDFGSt
     sdfg = dace.SDFG(name)
     N = dace.symbol("N")
     for array in "abc":
-        sdfg.add_array(array, shape=(N, ), dtype=dace.float64, transient=False)
+        sdfg.add_array(array, shape=(N,), dtype=dace.float64, transient=False)
     top_level = sdfg.add_state("top_level", is_start_block=True)
     top_level.add_mapped_tasklet(
         "top_level_comp",
@@ -157,7 +153,7 @@ def test_declared_symbol_types_win_over_descriptor_instances():
     """A shape given as a string builds its symbols with the default dtype; the SDFG's declaration decides."""
     sdfg = dace.SDFG("declared_symbol_types")
     sdfg.add_symbol("N", dace.int64)
-    sdfg.add_array("a", shape=("N", ), dtype=dace.float64)
+    sdfg.add_array("a", shape=("N",), dtype=dace.float64)
     state = sdfg.add_state()
     me, _ = state.add_map("m", {"i": "0:N"})
 

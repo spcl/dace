@@ -27,17 +27,17 @@ def _device_sdfg() -> dace.SDFG:
 
     :return: The SDFG.
     """
-    sdfg = dace.SDFG('ai_gpu_fma')
-    for name in ('A', 'B', 'C', 'D'):
+    sdfg = dace.SDFG("ai_gpu_fma")
+    for name in ("A", "B", "C", "D"):
         sdfg.add_array(name, [N], dace.float32)
 
     state = sdfg.add_state()
-    entry, exit_node = state.add_map('kernel', {'i': f'0:{N}'}, schedule=dtypes.ScheduleType.GPU_Device)
-    node = AINode('fma', DEVICE_DESCRIPTION, inputs={'_a', '_b', '_c'}, outputs={'_out'})
+    entry, exit_node = state.add_map("kernel", {"i": f"0:{N}"}, schedule=dtypes.ScheduleType.GPU_Device)
+    node = AINode("fma", DEVICE_DESCRIPTION, inputs={"_a", "_b", "_c"}, outputs={"_out"})
     state.add_node(node)
-    for conn, array in (('_a', 'A'), ('_b', 'B'), ('_c', 'C')):
-        state.add_memlet_path(state.add_read(array), entry, node, dst_conn=conn, memlet=dace.Memlet(f'{array}[i]'))
-    state.add_memlet_path(node, exit_node, state.add_write('D'), src_conn='_out', memlet=dace.Memlet('D[i]'))
+    for conn, array in (("_a", "A"), ("_b", "B"), ("_c", "C")):
+        state.add_memlet_path(state.add_read(array), entry, node, dst_conn=conn, memlet=dace.Memlet(f"{array}[i]"))
+    state.add_memlet_path(node, exit_node, state.add_write("D"), src_conn="_out", memlet=dace.Memlet("D[i]"))
     sdfg.apply_gpu_transformations()
     return sdfg
 
@@ -48,12 +48,12 @@ def test_gpu_microkernel():
     sdfg = _device_sdfg()
     state = sdfg.states()[0]
     node = next(n for n in state.nodes() if isinstance(n, AINode))
-    node.expand(state, 'ai')
+    node.expand(state, "ai")
 
     tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
     body = tasklet.code.as_string
     # __state is not a kernel parameter, so device code must not reach for it
-    assert '__state' not in body
+    assert "__state" not in body
     assert not tasklet.state_fields
 
     rng = np.random.default_rng(0)
@@ -65,5 +65,5 @@ def test_gpu_microkernel():
     assert np.allclose(d, a * b + c, rtol=1e-5, atol=1e-5)
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-m', 'ai and gpu'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-m", "ai and gpu"])

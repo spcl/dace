@@ -42,7 +42,7 @@ class ExpandAI(ExpandTransformation):
 
     @staticmethod
     @functools.lru_cache(maxsize=None)
-    def for_node_class(node_class: Type[nodes.LibraryNode]) -> Type['ExpandAI']:
+    def for_node_class(node_class: Type[nodes.LibraryNode]) -> Type["ExpandAI"]:
         """
         Returns the expansion class bound to a specific library node type.
 
@@ -53,7 +53,7 @@ class ExpandAI(ExpandTransformation):
         :param node_class: The library node class being expanded.
         :return: A subclass of :class:`ExpandAI` whose ``_match_node`` is ``node_class``.
         """
-        subclass = type(f'ExpandAI_{node_class.__name__}', (ExpandAI, ), {'environments': []})
+        subclass = type(f"ExpandAI_{node_class.__name__}", (ExpandAI,), {"environments": []})
         subclass = dace.library.expansion(subclass)
         subclass._match_node = node_class
         return subclass
@@ -91,22 +91,22 @@ class ExpandAI(ExpandTransformation):
         from dace.libraries.ai.context import collect_context
         from dace.libraries.ai.exceptions import AIExpansionError
 
-        feedback = kwargs.get('feedback') or ''
-        response = kwargs.get('response')
+        feedback = kwargs.get("feedback") or ""
+        response = kwargs.get("response")
         described = f'{type(node).__name__} "{node.name}"'
         ctx = collect_context(node, parent_state, parent_sdfg)
-        record = ai_session.begin(node, parent_state, parent_sdfg, session_id=kwargs.get('session'))
+        record = ai_session.begin(node, parent_state, parent_sdfg, session_id=kwargs.get("session"))
         record.record_node(node.to_json(parent_state))
         record.begin_round(feedback)
         if record.path:
-            _status(f'{described}: session {record.id}, round {record.number} ({record.path})')
+            _status(f"{described}: session {record.id}, round {record.number} ({record.path})")
 
         # Resolved on first use rather than up front, so that an expansion answered entirely from
         # the cache needs neither a provider SDK nor an API key
         provider = None
         system = prompts.SYSTEM_PROMPT
         record.record_system_prompt(system)
-        _detail('system prompt', system)
+        _detail("system prompt", system)
 
         # A round with feedback continues the conversation: the model sees the code it wrote and
         # the critique of it, rather than being asked the original question again from scratch.
@@ -118,99 +118,107 @@ class ExpandAI(ExpandTransformation):
             prompt = prompts.build_user_prompt(ctx)
             if feedback:
                 prompt = prompts.build_feedback_prompt(feedback, prompt, standalone=True)
-        messages.append({'role': 'user', 'content': prompt})
+        messages.append({"role": "user", "content": prompt})
 
-        attempts = max(0, int(Config.get('ai', 'max_repair_attempts'))) + 1
-        should_verify = Config.get_bool('ai', 'verify')
+        attempts = max(0, int(Config.get("ai", "max_repair_attempts"))) + 1
+        should_verify = Config.get_bool("ai", "verify")
 
         spec = None
         environments: List[Any] = []
         try:
             for attempt in range(attempts):
                 entry = record.begin_attempt(attempt + 1, prompt)
-                _detail('user prompt' if attempt == 0 else 'repair prompt', prompt)
+                _detail("user prompt" if attempt == 0 else "repair prompt", prompt)
 
                 # Feedback changes the conversation and therefore the key on its own. A round with
                 # no feedback -- "just try again" -- would otherwise hash identically to the round
                 # before it and be handed back the very answer it is trying to replace.
-                salt = str(record.number) if not feedback and record.number > 1 else ''
+                salt = str(record.number) if not feedback and record.number > 1 else ""
                 cache_key = ai_cache.key(system, messages, salt=salt)
                 spec = None if response is not None else ai_cache.lookup(cache_key)
                 cached = spec is not None
                 if response is not None:
-                    _status(f'{described}: using the supplied response')
+                    _status(f"{described}: using the supplied response")
                     spec = response
                     ai_cache.store(cache_key, spec, system, messages)
                 elif cached:
-                    _status(f'{described}: reusing the cached answer for this prompt ({cache_key[:12]}), '
-                            f'attempt {attempt + 1}/{attempts}')
+                    _status(
+                        f"{described}: reusing the cached answer for this prompt ({cache_key[:12]}), "
+                        f"attempt {attempt + 1}/{attempts}"
+                    )
                 else:
-                    _status(f'{described}: asking {Config.get("ai", "provider")} '
-                            f'({Config.get("ai", "model")}), attempt {attempt + 1}/{attempts}')
+                    _status(
+                        f"{described}: asking {Config.get('ai', 'provider')} "
+                        f"({Config.get('ai', 'model')}), attempt {attempt + 1}/{attempts}"
+                    )
                     provider = provider or get_provider()
                     spec = provider.generate(system, messages)
                     ai_cache.store(cache_key, spec, system, messages)
                 record.record_answer(entry, spec, cached=cached)
-                _detail('answer', spec.raw_response or _echo(spec))
+                _detail("answer", spec.raw_response or _echo(spec))
                 environments = ai_environments.collect(spec)
                 if not should_verify:
-                    _status(f'{described}: verification is off (ai.verify), taking the code as generated')
+                    _status(f"{described}: verification is off (ai.verify), taking the code as generated")
                     break
 
                 result = verify.probe_compile(spec, ctx, environments)
-                record.record_verification(entry, result, result.source, ctx.capabilities is not None
-                                           and ctx.capabilities.device_level)
-                _detail('probe source', result.source)
+                record.record_verification(
+                    entry, result, result.source, ctx.capabilities is not None and ctx.capabilities.device_level
+                )
+                _detail("probe source", result.source)
                 if result.inconclusive:
-                    _status(f'{described}: probe compilation was inconclusive, taking the code as generated')
+                    _status(f"{described}: probe compilation was inconclusive, taking the code as generated")
                     break
                 if result.ok:
-                    _status(f'{described}: probe compiled cleanly ({result.command})')
+                    _status(f"{described}: probe compiled cleanly ({result.command})")
                     break
 
-                _status(f'{described}: probe compilation failed ({result.command})')
-                _detail('probe diagnostics', result.stderr)
+                _status(f"{described}: probe compilation failed ({result.command})")
+                _detail("probe diagnostics", result.stderr)
                 if response is not None:
                     # Not sent for repair: whoever supplied it chose not to use a provider
-                    raise AIExpansionError(f'The supplied response for {described} does not compile. '
-                                           f'Diagnostics:\n\n{result.stderr}')
+                    raise AIExpansionError(
+                        f"The supplied response for {described} does not compile. Diagnostics:\n\n{result.stderr}"
+                    )
                 if attempt == attempts - 1:
-                    raise AIExpansionError(f'The generated code for {described} still does not compile after '
-                                           f'{attempts} attempt(s). Last diagnostics:\n\n{result.stderr}')
-                _status(f'{described}: asking for a repair (attempt {attempt + 2}/{attempts})')
+                    raise AIExpansionError(
+                        f"The generated code for {described} still does not compile after "
+                        f"{attempts} attempt(s). Last diagnostics:\n\n{result.stderr}"
+                    )
+                _status(f"{described}: asking for a repair (attempt {attempt + 2}/{attempts})")
                 prompt = prompts.build_repair_prompt(result.stderr, result.command)
-                messages.append({'role': 'assistant', 'content': _echo(spec)})
-                messages.append({'role': 'user', 'content': prompt})
+                messages.append({"role": "assistant", "content": _echo(spec)})
+                messages.append({"role": "user", "content": prompt})
         except Exception as e:
-            record.record_outcome('failed', str(e))
+            record.record_outcome("failed", str(e))
             if record.path is None:
                 raise
             # Named in the message rather than only logged: the run that produced this cost a model
             # call, and the session is the only copy of what it said.
             if isinstance(e, AIExpansionError):
-                raise AIExpansionError(f'{e}\n\nThe full prompts and answers are in {record.path}') from e
-            warnings.warn(f'AI expansion of {described} failed; the prompts and answers are in {record.path}')
+                raise AIExpansionError(f"{e}\n\nThe full prompts and answers are in {record.path}") from e
+            warnings.warn(f"AI expansion of {described} failed; the prompts and answers are in {record.path}")
             raise
 
         cls.environments = list(environments)
-        env_paths = [env.full_class_path() for env in environments if hasattr(env, 'full_class_path')]
-        record.record_outcome('expanded', spec=spec, environments=env_paths)
+        env_paths = [env.full_class_path() for env in environments if hasattr(env, "full_class_path")]
+        record.record_outcome("expanded", spec=spec, environments=env_paths)
 
         # Persist the conversation *including* this answer, so the next round resumes from a
         # complete exchange rather than from a question with no reply
-        record.conversation = messages + [{'role': 'assistant', 'content': _echo(spec)}]
+        record.conversation = messages + [{"role": "assistant", "content": _echo(spec)}]
         record.flush()
 
-        _status(f'{described}: expanded into a tasklet' +
-                (f' using {len(environments)} environment(s)' if environments else ''))
+        _status(
+            f"{described}: expanded into a tasklet"
+            + (f" using {len(environments)} environment(s)" if environments else "")
+        )
         return ExpandAI._make_tasklet(node, spec, ctx, parent_state, record)
 
     @staticmethod
-    def _make_tasklet(node: nodes.LibraryNode,
-                      spec: Any,
-                      ctx: Any,
-                      state: SDFGState = None,
-                      record: Any = None) -> nodes.Tasklet:
+    def _make_tasklet(
+        node: nodes.LibraryNode, spec: Any, ctx: Any, state: SDFGState = None, record: Any = None
+    ) -> nodes.Tasklet:
         """
         Turns a generated specification into a tasklet.
 
@@ -239,20 +247,22 @@ class ExpandAI(ExpandTransformation):
         outputs = dict(node.out_connectors)
         for conn in ctx.connectors:
             if conn.conntype is not None:
-                (inputs if conn.direction == 'in' else outputs)[conn.name] = conn.conntype
+                (inputs if conn.direction == "in" else outputs)[conn.name] = conn.conntype
 
-        language = dtypes.Language.Python if spec.language.upper() == 'PYTHON' else dtypes.Language.CPP
-        tasklet = AITasklet(node.name,
-                            inputs=inputs,
-                            outputs=outputs,
-                            code=spec.code,
-                            language=language,
-                            state_fields=list(spec.state_fields),
-                            code_global=spec.code_global,
-                            code_init=spec.code_init,
-                            code_exit=spec.code_exit,
-                            side_effects=spec.side_effects or None,
-                            ignored_symbols=set(spec.ignored_symbols))
+        language = dtypes.Language.Python if spec.language.upper() == "PYTHON" else dtypes.Language.CPP
+        tasklet = AITasklet(
+            node.name,
+            inputs=inputs,
+            outputs=outputs,
+            code=spec.code,
+            language=language,
+            state_fields=list(spec.state_fields),
+            code_global=spec.code_global,
+            code_init=spec.code_init,
+            code_exit=spec.code_exit,
+            side_effects=spec.side_effects or None,
+            ignored_symbols=set(spec.ignored_symbols),
+        )
         if record is not None and state is not None:
             from dace.libraries.ai import iterate
 
@@ -273,8 +283,8 @@ def _status(message: str) -> None:
     """
     from dace.config import Config
 
-    if Config.get_bool('debugprint'):
-        print(f'[ai] {message}', flush=True)
+    if Config.get_bool("debugprint"):
+        print(f"[ai] {message}", flush=True)
 
 
 def _detail(label: str, body: Optional[str]) -> None:
@@ -290,11 +300,11 @@ def _detail(label: str, body: Optional[str]) -> None:
 
     from dace.config import Config
 
-    if Config.get('debugprint') != 'verbose' or not body or not body.strip():
+    if Config.get("debugprint") != "verbose" or not body or not body.strip():
         return
-    print(f'[ai] --- {label} ---', flush=True)
-    print(textwrap.indent(body.rstrip('\n'), '    '), flush=True)
-    print(f'[ai] --- end {label} ---', flush=True)
+    print(f"[ai] --- {label} ---", flush=True)
+    print(textwrap.indent(body.rstrip("\n"), "    "), flush=True)
+    print(f"[ai] --- end {label} ---", flush=True)
 
 
 def _echo(spec: Any) -> str:
@@ -309,18 +319,19 @@ def _echo(spec: Any) -> str:
 
     return json.dumps(
         {
-            'notes': spec.notes,
-            'language': spec.language,
-            'code': spec.code,
-            'code_global': spec.code_global,
-            'code_init': spec.code_init,
-            'code_exit': spec.code_exit,
-            'state_fields': spec.state_fields,
-            'side_effects': spec.side_effects,
-            'ignored_symbols': spec.ignored_symbols,
+            "notes": spec.notes,
+            "language": spec.language,
+            "code": spec.code,
+            "code_global": spec.code_global,
+            "code_init": spec.code_init,
+            "code_exit": spec.code_exit,
+            "state_fields": spec.state_fields,
+            "side_effects": spec.side_effects,
+            "ignored_symbols": spec.ignored_symbols,
             # Echoed too: the repair instruction asks for the complete object back, and the schema
             # marks these required, so omitting them would invite an invalid reply
-            'use_environments': spec.use_environments,
-            'environments': [dataclasses.asdict(env) for env in spec.environments],
+            "use_environments": spec.use_environments,
+            "environments": [dataclasses.asdict(env) for env in spec.environments],
         },
-        indent=1)
+        indent=1,
+    )

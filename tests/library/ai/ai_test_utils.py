@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Helpers shared by the tests of the AI library node expansion. """
+"""Helpers shared by the tests of the AI library node expansion."""
 
 import contextlib
 from typing import Callable, Dict, List, Optional
@@ -86,4 +86,4 @@ def prompt_of(provider: StubProvider) -> str:
     :param provider: The stub provider that was used.
     :return: The rendered user prompt.
     """
-    return provider.calls[0][0]['content']
+    return provider.calls[0][0]["content"]

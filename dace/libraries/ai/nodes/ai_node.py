@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" A library node whose implementation is described in natural language. """
+"""A library node whose implementation is described in natural language."""
 
 from typing import Any, Dict, Iterable, Union
 
@@ -30,22 +30,26 @@ class AINode(nodes.LibraryNode):
     """
 
     implementations = {}  # 'ai' is a reserved name, resolved by LibraryNode.expand
-    default_implementation = 'ai'
+    default_implementation = "ai"
 
-    description = properties.Property(dtype=str,
-                                      default='',
-                                      desc='Natural-language description of what this node must compute. This is '
-                                      'the specification handed to the model, so state the intended semantics, '
-                                      'the expected numerical behavior, and any implementation technique that is '
-                                      'required (e.g. "use AVX2 intrinsics").')
+    description = properties.Property(
+        dtype=str,
+        default="",
+        desc="Natural-language description of what this node must compute. This is "
+        "the specification handed to the model, so state the intended semantics, "
+        "the expected numerical behavior, and any implementation technique that is "
+        'required (e.g. "use AVX2 intrinsics").',
+    )
 
-    def __init__(self,
-                 name: str,
-                 description: str = '',
-                 *args,
-                 inputs: ConnectorSpec = None,
-                 outputs: ConnectorSpec = None,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        name: str,
+        description: str = "",
+        *args,
+        inputs: ConnectorSpec = None,
+        outputs: ConnectorSpec = None,
+        **kwargs,
+    ) -> None:
         """
         Creates an AI-implemented library node.
 
@@ -66,5 +70,7 @@ class AINode(nodes.LibraryNode):
         :raises ValueError: If the node has no description to generate code from.
         """
         if not self.description.strip():
-            raise ValueError(f'AI node "{self.name}" has no description, so there is nothing to generate code from. '
-                             'Set its `description` property to what the node must compute.')
+            raise ValueError(
+                f'AI node "{self.name}" has no description, so there is nothing to generate code from. '
+                "Set its `description` property to what the node must compute."
+            )

@@ -15,7 +15,6 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
     """
 
     class FindGotos(tn.ScheduleNodeVisitor):
-
         def __init__(self):
             self.gotos: Set[str] = set()
 
@@ -24,7 +23,6 @@ def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
                 self.gotos.add(node.target)
 
     class RemoveLabels(tn.ScheduleNodeTransformer):
-
         def __init__(self, labels_to_keep: Set[str]) -> None:
             self.labels_to_keep = labels_to_keep
             self.labels_seen = set()
@@ -50,7 +48,6 @@ def remove_empty_scopes(stree: tn.ScheduleTreeScope):
     """
 
     class RemoveEmptyScopes(tn.ScheduleNodeTransformer):
-
         def visit_scope(self, node: tn.ScheduleTreeScope):
             if len(node.children) == 0:
                 return None

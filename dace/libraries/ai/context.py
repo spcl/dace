@@ -31,7 +31,7 @@ from dace.sdfg.scope import devicelevel_block_size, get_node_schedule, is_device
 
 @dataclass
 class ConnectorInfo:
-    """ Everything known about one connector of the library node being expanded. """
+    """Everything known about one connector of the library node being expanded."""
 
     name: str
     direction: str  #: ``'in'`` or ``'out'``
@@ -79,7 +79,7 @@ class NestingFrame:
     kind: str  #: ``map``, ``consume``, ``scope``, ``loop``, ``conditional``, ``region``,
     #: ``nested_sdfg`` or ``sdfg``
     label: str
-    detail: str = ''  #: Human-readable description of the iteration space or condition
+    detail: str = ""  #: Human-readable description of the iteration space or condition
     schedule: Optional[str] = None
     unroll: Optional[bool] = None
     block_size: Optional[str] = None
@@ -104,7 +104,7 @@ class Capabilities:
     state_available: bool = True
     current_stream_available: bool = False
     block_size: Optional[str] = None
-    environments_allowed: str = 'full'  #: ``full`` or ``device-headers-only``
+    environments_allowed: str = "full"  #: ``full`` or ``device-headers-only``
     #: Per connector, whether the generated code may dereference the pointer *where it runs*. This
     #: is a match between the code's execution space and the data's storage space, not a property
     #: of the storage alone: GPU global memory is unreachable from the host and perfectly
@@ -129,7 +129,7 @@ class ResolvedDefaults:
 
 @dataclass
 class TargetInfo:
-    """ The compiler and hardware the generated code will be built for. """
+    """The compiler and hardware the generated code will be built for."""
 
     platform: str
     machine: str
@@ -148,12 +148,12 @@ class TargetInfo:
 
 @dataclass
 class ExpansionContext:
-    """ The complete context handed to the model for one library node expansion. """
+    """The complete context handed to the model for one library node expansion."""
 
     node_type: str
     node_name: str
-    description: str = ''
-    class_docstring: str = ''
+    description: str = ""
+    class_docstring: str = ""
     node_properties: Dict[str, str] = field(default_factory=dict)
     connectors: List[ConnectorInfo] = field(default_factory=list)
     nesting: List[NestingFrame] = field(default_factory=list)
@@ -173,13 +173,12 @@ def _describe_range(rng: Any) -> str:
     try:
         return str(rng)
     except Exception:
-        return '?'
+        return "?"
 
 
-def _scope_frame(entry: nodes.EntryNode,
-                 state: SDFGState,
-                 sdfg: SDFG,
-                 defaults: Optional[ResolvedDefaults] = None) -> NestingFrame:
+def _scope_frame(
+    entry: nodes.EntryNode, state: SDFGState, sdfg: SDFG, defaults: Optional[ResolvedDefaults] = None
+) -> NestingFrame:
     """
     Builds a nesting frame for a dataflow scope (map, consume or general scope).
 
@@ -190,27 +189,31 @@ def _scope_frame(entry: nodes.EntryNode,
     :return: The corresponding nesting frame.
     """
     if isinstance(entry, nodes.MapEntry):
-        params = ', '.join(entry.map.params)
-        detail = f'{params} = {_describe_range(entry.map.range)}'
+        params = ", ".join(entry.map.params)
+        detail = f"{params} = {_describe_range(entry.map.range)}"
         block_size = None
         if entry.map.schedule in dtypes.GPU_SCHEDULES:
             try:
                 bs = devicelevel_block_size(sdfg, state, entry)
-                block_size = ', '.join(str(b) for b in bs) if bs else None
+                block_size = ", ".join(str(b) for b in bs) if bs else None
             except Exception:
                 block_size = None
-        return NestingFrame(kind='map',
-                            label=entry.map.label,
-                            detail=detail,
-                            schedule=_resolved_schedule(entry, defaults),
-                            unroll=entry.map.unroll,
-                            block_size=block_size)
+        return NestingFrame(
+            kind="map",
+            label=entry.map.label,
+            detail=detail,
+            schedule=_resolved_schedule(entry, defaults),
+            unroll=entry.map.unroll,
+            block_size=block_size,
+        )
     if isinstance(entry, nodes.ConsumeEntry):
-        return NestingFrame(kind='consume',
-                            label=entry.consume.label,
-                            detail=f'{entry.consume.pe_index} < {entry.consume.num_pes}',
-                            schedule=_resolved_schedule(entry, defaults))
-    return NestingFrame(kind='scope', label=str(entry), schedule=_resolved_schedule(entry, defaults))
+        return NestingFrame(
+            kind="consume",
+            label=entry.consume.label,
+            detail=f"{entry.consume.pe_index} < {entry.consume.num_pes}",
+            schedule=_resolved_schedule(entry, defaults),
+        )
+    return NestingFrame(kind="scope", label=str(entry), schedule=_resolved_schedule(entry, defaults))
 
 
 def _region_frame(region: Any) -> NestingFrame:
@@ -223,25 +226,26 @@ def _region_frame(region: Any) -> NestingFrame:
     from dace.sdfg.state import ConditionalBlock, LoopRegion  # Avoid a cyclic import
 
     if isinstance(region, LoopRegion):
-        init = region.init_statement.as_string if region.init_statement is not None else ''
-        cond = region.loop_condition.as_string if region.loop_condition is not None else ''
-        update = region.update_statement.as_string if region.update_statement is not None else ''
-        var = region.loop_variable or '?'
-        return NestingFrame(kind='loop',
-                            label=region.label,
-                            detail=f'for {var}: init [{init}]; while [{cond}]; update [{update}]',
-                            schedule='sequential',
-                            unroll=region.unroll)
+        init = region.init_statement.as_string if region.init_statement is not None else ""
+        cond = region.loop_condition.as_string if region.loop_condition is not None else ""
+        update = region.update_statement.as_string if region.update_statement is not None else ""
+        var = region.loop_variable or "?"
+        return NestingFrame(
+            kind="loop",
+            label=region.label,
+            detail=f"for {var}: init [{init}]; while [{cond}]; update [{update}]",
+            schedule="sequential",
+            unroll=region.unroll,
+        )
     if isinstance(region, ConditionalBlock):
-        conds = [c.as_string if c is not None else 'else' for c, _ in region.branches]
-        return NestingFrame(kind='conditional', label=region.label, detail=' | '.join(conds))
-    return NestingFrame(kind='region', label=region.label)
+        conds = [c.as_string if c is not None else "else" for c, _ in region.branches]
+        return NestingFrame(kind="conditional", label=region.label, detail=" | ".join(conds))
+    return NestingFrame(kind="region", label=region.label)
 
 
-def collect_nesting(node: nodes.Node,
-                    state: SDFGState,
-                    sdfg: SDFG,
-                    defaults: Optional[ResolvedDefaults] = None) -> List[NestingFrame]:
+def collect_nesting(
+    node: nodes.Node, state: SDFGState, sdfg: SDFG, defaults: Optional[ResolvedDefaults] = None
+) -> List[NestingFrame]:
     """
     Walks outward from a node to the top-level SDFG, recording every enclosing scope.
 
@@ -278,18 +282,22 @@ def collect_nesting(node: nodes.Node,
         # 3. Nested SDFG boundary, or the top level
         nsdfg_node = cur_sdfg.parent_nsdfg_node
         if nsdfg_node is None:
-            symbols = ', '.join(f'{k}: {v}' for k, v in sorted(cur_sdfg.symbols.items()))
+            symbols = ", ".join(f"{k}: {v}" for k, v in sorted(cur_sdfg.symbols.items()))
             frames.append(
-                NestingFrame(kind='sdfg', label=cur_sdfg.name, detail=f'symbols: {symbols}' if symbols else ''))
+                NestingFrame(kind="sdfg", label=cur_sdfg.name, detail=f"symbols: {symbols}" if symbols else "")
+            )
             break
         mapping = {k: str(v) for k, v in sorted(nsdfg_node.symbol_mapping.items())}
-        schedule = getattr(nsdfg_node, 'schedule', None)
+        schedule = getattr(nsdfg_node, "schedule", None)
         frames.append(
-            NestingFrame(kind='nested_sdfg',
-                         label=nsdfg_node.label,
-                         detail=f'inner SDFG "{cur_sdfg.name}"',
-                         schedule=schedule.name if schedule is not None else None,
-                         symbol_mapping=mapping))
+            NestingFrame(
+                kind="nested_sdfg",
+                label=nsdfg_node.label,
+                detail=f'inner SDFG "{cur_sdfg.name}"',
+                schedule=schedule.name if schedule is not None else None,
+                symbol_mapping=mapping,
+            )
+        )
         cur_node = nsdfg_node
         cur_state = cur_sdfg.parent
         cur_sdfg = cur_sdfg.parent_sdfg
@@ -342,9 +350,9 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
         info.view_shape = tuple(str(s) for s in sizes)
 
         strides = list(desc.strides)
-        terms = [f'i{dim}' if str(stride) == '1' else f'i{dim}*{sym2cpp(stride)}' for dim, stride in enumerate(strides)]
-        ranges = ', '.join(f'i{dim} in 0:{sym2cpp(size)}' for dim, size in enumerate(sizes))
-        info.index_formula = f'{info.name}[{" + ".join(terms)}]  with {ranges}'
+        terms = [f"i{dim}" if str(stride) == "1" else f"i{dim}*{sym2cpp(stride)}" for dim, stride in enumerate(strides)]
+        ranges = ", ".join(f"i{dim} in 0:{sym2cpp(size)}" for dim, size in enumerate(sizes))
+        info.index_formula = f"{info.name}[{' + '.join(terms)}]  with {ranges}"
 
         # Contiguous only if the view's own packed strides match the container's
         packed, running = [], 1
@@ -358,8 +366,9 @@ def _describe_view(info: ConnectorInfo, desc: Any, memlet: Any) -> None:
         pass
 
 
-def _infer_conntype(node: nodes.LibraryNode, name: str, direction: str, state: SDFGState, sdfg: SDFG,
-                    edge: Any) -> Optional[dtypes.typeclass]:
+def _infer_conntype(
+    node: nodes.LibraryNode, name: str, direction: str, state: SDFGState, sdfg: SDFG, edge: Any
+) -> Optional[dtypes.typeclass]:
     """
     Determines the type a connector will have in the generated code.
 
@@ -385,7 +394,7 @@ def _infer_conntype(node: nodes.LibraryNode, name: str, direction: str, state: S
     :param edge: The edge attached to this connector, or ``None``.
     :return: The inferred type, or ``None`` if it cannot be determined.
     """
-    declared = (node.in_connectors if direction == 'in' else node.out_connectors).get(name)
+    declared = (node.in_connectors if direction == "in" else node.out_connectors).get(name)
     if declared is not None and declared.type is not None:
         return declared
 
@@ -395,7 +404,7 @@ def _infer_conntype(node: nodes.LibraryNode, name: str, direction: str, state: S
     desc = sdfg.arrays[memlet.data]
 
     scalar = bool(memlet.subset) and memlet.subset.num_elements() == 1
-    if direction == 'out':
+    if direction == "out":
         # A dynamic output without a write-conflict resolution has no single destination to write
         # back to, so it stays a pointer
         scalar &= not memlet.dynamic or memlet.wcr is not None
@@ -406,13 +415,15 @@ def _infer_conntype(node: nodes.LibraryNode, name: str, direction: str, state: S
     return desc.dtype if scalar else dtypes.pointer(desc.dtype)
 
 
-def _connector_info(name: str,
-                    conntype: Optional[dtypes.typeclass],
-                    direction: str,
-                    state: SDFGState,
-                    sdfg: SDFG,
-                    edge: Any,
-                    defaults: Optional[ResolvedDefaults] = None) -> ConnectorInfo:
+def _connector_info(
+    name: str,
+    conntype: Optional[dtypes.typeclass],
+    direction: str,
+    state: SDFGState,
+    sdfg: SDFG,
+    edge: Any,
+    defaults: Optional[ResolvedDefaults] = None,
+) -> ConnectorInfo:
     """
     Describes a single connector of the library node.
 
@@ -426,13 +437,15 @@ def _connector_info(name: str,
     """
     usable = conntype is not None and conntype.type is not None
     is_pointer = isinstance(conntype, dtypes.pointer)
-    element_type = conntype.base_type.ctype if is_pointer else (conntype.ctype if usable else 'auto')
-    info = ConnectorInfo(name=name,
-                         direction=direction,
-                         ctype=conntype.ctype if usable else 'auto',
-                         is_pointer=is_pointer,
-                         element_type=element_type,
-                         conntype=conntype if usable else None)
+    element_type = conntype.base_type.ctype if is_pointer else (conntype.ctype if usable else "auto")
+    info = ConnectorInfo(
+        name=name,
+        direction=direction,
+        ctype=conntype.ctype if usable else "auto",
+        is_pointer=is_pointer,
+        element_type=element_type,
+        conntype=conntype if usable else None,
+    )
     if edge is None:
         return info
 
@@ -445,13 +458,13 @@ def _connector_info(name: str,
     info.wcr = str(memlet.wcr) if memlet.wcr is not None else None
     info.dynamic = bool(memlet.dynamic)
 
-    data_name, desc = _descriptor_for(state, sdfg, edge, direction == 'in')
+    data_name, desc = _descriptor_for(state, sdfg, edge, direction == "in")
     if desc is None:
         return info
     info.data = data_name
     info.container_kind = type(desc).__name__
     info.dtype = str(desc.dtype)
-    info.data_ctype = getattr(desc.dtype, 'ctype', None)
+    info.data_ctype = getattr(desc.dtype, "ctype", None)
     # The resolved storage, not the declared one: "Default" says nothing about whether this
     # pointer may be dereferenced where the code runs, and it is what `dereferenceable` is computed
     # from. The declared value is reported alongside so the prompt does not appear to contradict
@@ -469,10 +482,9 @@ def _connector_info(name: str,
     return info
 
 
-def collect_connectors(node: nodes.LibraryNode,
-                       state: SDFGState,
-                       sdfg: SDFG,
-                       defaults: Optional[ResolvedDefaults] = None) -> List[ConnectorInfo]:
+def collect_connectors(
+    node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG, defaults: Optional[ResolvedDefaults] = None
+) -> List[ConnectorInfo]:
     """
     Describes every connector of a library node and the data behind it.
 
@@ -485,7 +497,7 @@ def collect_connectors(node: nodes.LibraryNode,
     out_edges = {e.src_conn: e for e in state.out_edges(node) if e.src_conn is not None}
 
     result = []
-    for direction, connectors, edges in (('in', node.in_connectors, in_edges), ('out', node.out_connectors, out_edges)):
+    for direction, connectors, edges in (("in", node.in_connectors, in_edges), ("out", node.out_connectors, out_edges)):
         # Sorted, because connectors are often declared as a set: an unstable order would make the
         # prompt differ between runs for no reason.
         for name in sorted(connectors):
@@ -495,11 +507,13 @@ def collect_connectors(node: nodes.LibraryNode,
     return result
 
 
-def collect_capabilities(node: nodes.LibraryNode,
-                         state: SDFGState,
-                         sdfg: SDFG,
-                         connectors: List[ConnectorInfo],
-                         defaults: Optional[ResolvedDefaults] = None) -> Capabilities:
+def collect_capabilities(
+    node: nodes.LibraryNode,
+    state: SDFGState,
+    sdfg: SDFG,
+    connectors: List[ConnectorInfo],
+    defaults: Optional[ResolvedDefaults] = None,
+) -> Capabilities:
     """
     Determines what the generated code is allowed to do at this point in the SDFG.
 
@@ -525,7 +539,8 @@ def collect_capabilities(node: nodes.LibraryNode,
     # A GPU stream is in scope for host code that operates on memory the device can reach
     touches_gpu_memory = any(
         storage is not dtypes.StorageType.Register and dtypes.can_access(dtypes.ScheduleType.GPU_Device, storage)
-        for storage in storages.values())
+        for storage in storages.values()
+    )
 
     try:
         backend = common.get_gpu_backend()
@@ -536,7 +551,7 @@ def collect_capabilities(node: nodes.LibraryNode,
     if device_level:
         try:
             bs = devicelevel_block_size(sdfg, state, node)
-            block_size = ', '.join(str(b) for b in bs) if bs else None
+            block_size = ", ".join(str(b) for b in bs) if bs else None
         except Exception:
             block_size = None
 
@@ -544,15 +559,16 @@ def collect_capabilities(node: nodes.LibraryNode,
     # unresolved one the SDFG carries
     schedule = (defaults.schedules if defaults else {}).get(node.guid) or get_node_schedule(sdfg, state, node)
 
-    return Capabilities(device_level=device_level,
-                        effective_schedule=schedule.name,
-                        gpu_backend=backend,
-                        state_available=not device_level,
-                        current_stream_available=not device_level and touches_gpu_memory,
-                        block_size=block_size,
-                        environments_allowed='device-headers-only' if device_level else 'full',
-                        dereferenceable={c.name: c.dereferenceable
-                                         for c in connectors})
+    return Capabilities(
+        device_level=device_level,
+        effective_schedule=schedule.name,
+        gpu_backend=backend,
+        state_available=not device_level,
+        current_stream_available=not device_level and touches_gpu_memory,
+        block_size=block_size,
+        environments_allowed="device-headers-only" if device_level else "full",
+        dereferenceable={c.name: c.dereferenceable for c in connectors},
+    )
 
 
 def collect_target_info(device_level: bool) -> TargetInfo:
@@ -574,21 +590,24 @@ def collect_target_info(device_level: bool) -> TargetInfo:
     try:
         host_flags = compiler_family.cpu_args()
     except Exception:
-        host_flags = Config.get('compiler', 'cpu', 'args')
+        host_flags = Config.get("compiler", "cpu", "args")
 
-    info = TargetInfo(platform=platform.system(),
-                      machine=cpu.get('machine', platform.machine()),
-                      cpu_model=cpu.get('model'),
-                      cpu_features=cpu.get('flags'),
-                      host_compiler=host_compiler,
-                      compiler_family=family,
-                      host_flags=host_flags,
-                      build_type=Config.get('compiler', 'build_type'),
-                      cpp_standard=Config.get('compiler', 'cpp_standard'))
+    info = TargetInfo(
+        platform=platform.system(),
+        machine=cpu.get("machine", platform.machine()),
+        cpu_model=cpu.get("model"),
+        cpu_features=cpu.get("flags"),
+        host_compiler=host_compiler,
+        compiler_family=family,
+        host_flags=host_flags,
+        build_type=Config.get("compiler", "build_type"),
+        cpp_standard=Config.get("compiler", "cpp_standard"),
+    )
 
     gpu_arch = sysinfo.gpu_architectures()
     if gpu_arch is not None or device_level:
         from dace.codegen import common
+
         try:
             backend = common.get_gpu_backend()
         except RuntimeError:
@@ -596,10 +615,10 @@ def collect_target_info(device_level: bool) -> TargetInfo:
         info.gpu_backend = backend
         info.gpu_architectures = gpu_arch
         info.gpu_names = sysinfo.gpu_names()
-        if backend == 'hip':
-            info.gpu_flags = Config.get('compiler', 'cuda', 'hip_args')
-        elif backend == 'cuda':
-            info.gpu_flags = Config.get('compiler', 'cuda', 'args')
+        if backend == "hip":
+            info.gpu_flags = Config.get("compiler", "cuda", "hip_args")
+        elif backend == "cuda":
+            info.gpu_flags = Config.get("compiler", "cuda", "args")
     return info
 
 
@@ -687,19 +706,21 @@ def infer_defaults(sdfg: SDFG) -> ResolvedDefaults:
     except Exception as e:
         # Inference raises on an ambiguous scope. Building a prompt must never be the thing that
         # fails an expansion, so fall back to the unresolved schedules.
-        if Config.get_bool('debugprint'):
-            print(f'[ai] Could not infer defaults for "{getattr(sdfg, "name", "?")}" ({e}); reporting schedules '
-                  'and storage as declared.')
+        if Config.get_bool("debugprint"):
+            print(
+                f'[ai] Could not infer defaults for "{getattr(sdfg, "name", "?")}" ({e}); reporting schedules '
+                "and storage as declared."
+            )
         return ResolvedDefaults()
 
     resolved = ResolvedDefaults()
     for nested in copied.all_sdfgs_recursive():
         for name, desc in nested.arrays.items():
-            if isinstance(getattr(desc, 'storage', None), dtypes.StorageType):
+            if isinstance(getattr(desc, "storage", None), dtypes.StorageType):
                 resolved.storage[(nested.guid, name)] = desc.storage
         for state in nested.states():
             for node in state.nodes():
-                schedule = getattr(node, 'schedule', None)
+                schedule = getattr(node, "schedule", None)
                 if isinstance(schedule, dtypes.ScheduleType):
                     resolved.schedules[node.guid] = schedule
     return resolved
@@ -718,7 +739,7 @@ def _annotate_resolved(declared: Any, inferred: Any) -> str:
     """
     if inferred is None or inferred == declared:
         return declared.name
-    return f'{inferred.name} (resolved from {declared.name})'
+    return f"{inferred.name} (resolved from {declared.name})"
 
 
 def _resolved_schedule(node: nodes.Node, defaults: Optional[ResolvedDefaults]) -> Optional[str]:
@@ -729,7 +750,7 @@ def _resolved_schedule(node: nodes.Node, defaults: Optional[ResolvedDefaults]) -
     :param defaults: The result of :func:`infer_defaults`, if available.
     :return: The schedule to report, or ``None`` if the node has none.
     """
-    declared = getattr(node, 'schedule', None)
+    declared = getattr(node, "schedule", None)
     if declared is None:
         return None
     return _annotate_resolved(declared, (defaults.schedules if defaults else {}).get(node.guid))
@@ -748,7 +769,7 @@ def collect_available_environments() -> List[str]:
 
     available = []
     for path, env in dace.library._DACE_REGISTERED_ENVIRONMENTS.items():
-        check = getattr(env, 'is_installed', None)
+        check = getattr(env, "is_installed", None)
         try:
             if check is None or check():
                 available.append(path)
@@ -774,10 +795,10 @@ def collect_class_docstring(node: nodes.LibraryNode) -> str:
     for cls in type(node).__mro__:
         if cls is nodes.LibraryNode:
             break
-        doc = cls.__dict__.get('__doc__')
+        doc = cls.__dict__.get("__doc__")
         if doc and doc.strip():
             return inspect.cleandoc(doc)
-    return ''
+    return ""
 
 
 def collect_symbols(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Dict[str, str]:
@@ -821,15 +842,27 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
 
     # Properties the model does not need: they describe the node's place in the graph rather than
     # what it computes, and are reported separately.
-    skipped = ('debuginfo', 'environments', 'in_connectors', 'out_connectors', 'implementation', 'instrument',
-               'location', 'label', 'name', 'description', 'guid', 'schedule')
+    skipped = (
+        "debuginfo",
+        "environments",
+        "in_connectors",
+        "out_connectors",
+        "implementation",
+        "instrument",
+        "location",
+        "label",
+        "name",
+        "description",
+        "guid",
+        "schedule",
+    )
     properties: Dict[str, str] = {}
     for prop, value in node.properties():
         if prop.attr_name in skipped or value is None:
             continue
         properties[prop.attr_name] = str(value)
 
-    description = str(getattr(node, 'description', '') or '').strip()
+    description = str(getattr(node, "description", "") or "").strip()
     return ExpansionContext(
         node_type=type(node).__name__,
         node_name=node.name,
@@ -837,11 +870,12 @@ def collect_context(node: nodes.LibraryNode, state: SDFGState, sdfg: SDFG) -> Ex
         # An explicit description is the specification; the class documentation
         # would only be generic background next to it (and for AINode it merely
         # describes this mechanism).
-        class_docstring='' if description else collect_class_docstring(node),
+        class_docstring="" if description else collect_class_docstring(node),
         node_properties=properties,
         connectors=connectors,
         nesting=nesting,
         capabilities=capabilities,
         symbols=collect_symbols(node, state, sdfg),
         target=collect_target_info(capabilities.device_level),
-        available_environments=collect_available_environments())
+        available_environments=collect_available_environments(),
+    )

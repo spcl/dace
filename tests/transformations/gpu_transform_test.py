@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Unit tests for the GPU to-device transformation. """
+"""Unit tests for the GPU to-device transformation."""
 
 import dace
 import numpy as np
@@ -8,7 +8,7 @@ from dace.transformation.interstate import GPUTransformSDFG
 
 
 def test_toplevel_transient_lifetime():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def program(A: dace.float64[20, 20]):
@@ -22,7 +22,7 @@ def test_toplevel_transient_lifetime():
     sdfg.apply_transformations(GPUTransformSDFG, options=dict(toplevel_trans=True))
 
     for name, desc in sdfg.arrays.items():
-        if name == 'tmp2' and type(desc) is dace.data.Array:
+        if name == "tmp2" and type(desc) is dace.data.Array:
             assert desc.lifetime is dace.AllocationLifetime.SDFG
         else:
             assert desc.lifetime is not dace.AllocationLifetime.SDFG
@@ -48,7 +48,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
 
     @dace.program
     def main_program(a: dace.int32):
-        out = np.ndarray((10, ), dtype=np.int32)
+        out = np.ndarray((10,), dtype=np.int32)
         nested_program(a, out)
         return out
 
@@ -80,7 +80,7 @@ def test_write_subset():
 
 def test_write_full():
 
-    M, N = dace.symbol('M'), dace.symbol('N')
+    M, N = dace.symbol("M"), dace.symbol("N")
 
     @dace.program
     def write_full(A: dace.int32[M, N]):
@@ -92,7 +92,7 @@ def test_write_full():
 
     for state in sdfg.states():
         for node in state.nodes():
-            if isinstance(node, dace.nodes.AccessNode) and node.data == 'A':
+            if isinstance(node, dace.nodes.AccessNode) and node.data == "A":
                 assert state.out_degree(node) == 0
 
 
@@ -127,7 +127,7 @@ def test_free_tasklet(transient, scalar):
     if scalar:
         arr_name, arr = sdfg.add_scalar("A", dace.float32, transient=transient)
     else:
-        arr_name, arr = sdfg.add_array("A", (4, ), dace.float32, transient=transient)
+        arr_name, arr = sdfg.add_array("A", (4,), dace.float32, transient=transient)
 
     an = state.add_access(arr_name)
 
@@ -136,17 +136,19 @@ def test_free_tasklet(transient, scalar):
 
     sdfg.validate()
 
-    sdfg.apply_gpu_transformations(validate=True,
-                                   validate_all=True,
-                                   permissive=True,
-                                   sequential_innermaps=True,
-                                   register_transients=False,
-                                   simplify=False)
+    sdfg.apply_gpu_transformations(
+        validate=True,
+        validate_all=True,
+        permissive=True,
+        sequential_innermaps=True,
+        register_transients=False,
+        simplify=False,
+    )
 
     sdfg.validate()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_toplevel_transient_lifetime()
     test_scalar_to_symbol_in_nested_sdfg()
     test_write_subset()

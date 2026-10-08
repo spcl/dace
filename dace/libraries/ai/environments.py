@@ -24,7 +24,7 @@ from dace.libraries.ai.backend import EnvironmentSpec
 from dace.libraries.ai.exceptions import AIExpansionError
 
 #: Prefix of every generated environment module, used to recognize them on reload.
-MODULE_PREFIX = 'dace_ai_env_'
+MODULE_PREFIX = "dace_ai_env_"
 
 _MODULE_TEMPLATE = '''\
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
@@ -68,9 +68,12 @@ def environment_dir(create: bool = False) -> str:
     :return: An absolute path. Defaults to ``~/.dace/ai_environments`` when
              ``ai.environment_dir`` is empty.
     """
-    configured = Config.get('ai', 'environment_dir')
-    path = os.path.expanduser(os.path.expandvars(configured)) if configured else os.path.join(
-        os.path.expanduser('~'), '.dace', 'ai_environments')
+    configured = Config.get("ai", "environment_dir")
+    path = (
+        os.path.expanduser(os.path.expandvars(configured))
+        if configured
+        else os.path.join(os.path.expanduser("~"), ".dace", "ai_environments")
+    )
     if create:
         os.makedirs(path, exist_ok=True)
     return path
@@ -83,9 +86,9 @@ def _sanitize(name: str) -> str:
     :param name: The requested name.
     :return: A safe class-name suffix.
     """
-    cleaned = re.sub(r'\W+', '_', name).strip('_')
+    cleaned = re.sub(r"\W+", "_", name).strip("_")
     if not cleaned or cleaned[0].isdigit():
-        cleaned = f'env_{cleaned}'
+        cleaned = f"env_{cleaned}"
     return cleaned
 
 
@@ -99,18 +102,20 @@ def render_environment(spec: EnvironmentSpec) -> str:
     :param spec: The environment requested by the model.
     :return: The module source.
     """
-    return _MODULE_TEMPLATE.format(classname=_sanitize(spec.name),
-                                   cmake_minimum_version=spec.cmake_minimum_version,
-                                   cmake_packages=list(spec.cmake_packages),
-                                   cmake_variables=dict(spec.cmake_variables),
-                                   cmake_includes=list(spec.cmake_includes),
-                                   cmake_libraries=list(spec.cmake_libraries),
-                                   cmake_compile_flags=list(spec.cmake_compile_flags),
-                                   cmake_link_flags=list(spec.cmake_link_flags),
-                                   headers=list(spec.headers),
-                                   state_fields=list(spec.state_fields),
-                                   init_code=spec.init_code,
-                                   finalize_code=spec.finalize_code)
+    return _MODULE_TEMPLATE.format(
+        classname=_sanitize(spec.name),
+        cmake_minimum_version=spec.cmake_minimum_version,
+        cmake_packages=list(spec.cmake_packages),
+        cmake_variables=dict(spec.cmake_variables),
+        cmake_includes=list(spec.cmake_includes),
+        cmake_libraries=list(spec.cmake_libraries),
+        cmake_compile_flags=list(spec.cmake_compile_flags),
+        cmake_link_flags=list(spec.cmake_link_flags),
+        headers=list(spec.headers),
+        state_fields=list(spec.state_fields),
+        init_code=spec.init_code,
+        finalize_code=spec.finalize_code,
+    )
 
 
 def _import_module(path: str):
@@ -124,7 +129,7 @@ def _import_module(path: str):
     module_name = os.path.splitext(os.path.basename(path))[0]
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise AIExpansionError(f'Could not load the generated environment module at {path}.')
+        raise AIExpansionError(f"Could not load the generated environment module at {path}.")
     module = importlib.util.module_from_spec(spec)
     # Registered in sys.modules before execution so that the environment's full class path, which
     # dace.library.environment derives from the module name, resolves consistently.
@@ -143,24 +148,26 @@ def materialize(spec: EnvironmentSpec) -> type:
     """
     classname = _sanitize(spec.name)
     directory = environment_dir(create=True)
-    path = os.path.join(directory, f'{MODULE_PREFIX}{classname.lower()}.py')
+    path = os.path.join(directory, f"{MODULE_PREFIX}{classname.lower()}.py")
     source = render_environment(spec)
 
     existing = None
     if os.path.exists(path):
-        with open(path, 'r') as fp:
+        with open(path, "r") as fp:
             existing = fp.read()
     if existing != source:
-        with open(path, 'w') as fp:
+        with open(path, "w") as fp:
             fp.write(source)
 
     module = _import_module(path)
     env = getattr(module, classname, None)
     if env is None:
-        raise AIExpansionError(f'The generated environment module {path} does not define {classname}.')
-    if Config.get_bool('debugprint'):
-        print(f'[ai] AI expansion registered environment {classname} (libraries: '
-              f'{", ".join(spec.cmake_libraries) or "none"}, headers: {", ".join(spec.headers) or "none"}) from {path}')
+        raise AIExpansionError(f"The generated environment module {path} does not define {classname}.")
+    if Config.get_bool("debugprint"):
+        print(
+            f"[ai] AI expansion registered environment {classname} (libraries: "
+            f"{', '.join(spec.cmake_libraries) or 'none'}, headers: {', '.join(spec.headers) or 'none'}) from {path}"
+        )
     return env
 
 
@@ -190,15 +197,17 @@ def resolve_installed(paths: List[str]) -> List[type]:
 
     resolved: List[type] = []
     for path in paths:
-        name = (path or '').strip()
+        name = (path or "").strip()
         if not name:
             continue
         try:
             env = dace.library.get_environment(name)
         except KeyError as e:
-            registered = ', '.join(sorted(dace.library._DACE_REGISTERED_ENVIRONMENTS)) or 'none'
-            error = AIExpansionError(f'The generated code asked to link against the DaCe environment "{name}", '
-                                     f'which is not registered. Registered environments: {registered}.')
+            registered = ", ".join(sorted(dace.library._DACE_REGISTERED_ENVIRONMENTS)) or "none"
+            error = AIExpansionError(
+                f'The generated code asked to link against the DaCe environment "{name}", '
+                f"which is not registered. Registered environments: {registered}."
+            )
             error.__cause__ = e
             raise error
         resolved.append(env)
@@ -219,7 +228,7 @@ def _deduplicate(environments: List[type]) -> List[type]:
     seen = set()
     distinct = []
     for env in environments:
-        key = env.full_class_path() if hasattr(env, 'full_class_path') else env
+        key = env.full_class_path() if hasattr(env, "full_class_path") else env
         if key in seen:
             continue
         seen.add(key)
@@ -252,13 +261,13 @@ def load_generated_environments(directory: Optional[str] = None) -> List[type]:
     except OSError:
         return loaded
     for entry in entries:
-        if not entry.startswith(MODULE_PREFIX) or not entry.endswith('.py'):
+        if not entry.startswith(MODULE_PREFIX) or not entry.endswith(".py"):
             continue
         path = os.path.join(directory, entry)
         try:
             module = _import_module(path)
         except Exception as e:  # A broken or hand-edited module must not break importing DaCe
-            warnings.warn(f'Could not load the generated DaCe environment at {path}: {e}')
+            warnings.warn(f"Could not load the generated DaCe environment at {path}: {e}")
             continue
-        loaded.extend(value for value in vars(module).values() if getattr(value, '_dace_library_environment', False))
+        loaded.extend(value for value in vars(module).values() if getattr(value, "_dace_library_environment", False))
     return loaded

@@ -9,7 +9,6 @@ from dace.libraries.mpi.nodes.node import MPINode, expanded_input_connectors, in
 
 @dace.library.expansion
 class ExpandAllreduceMPI(ExpandTransformation):
-
     environments = [environments.mpi.MPI]
 
     @staticmethod
@@ -20,38 +19,39 @@ class ExpandAllreduceMPI(ExpandTransformation):
             raise (NotImplementedError)
 
         comm = "MPI_COMM_WORLD"
-        grid = input_descriptor_name(node, parent_state, '_grid')
+        grid = input_descriptor_name(node, parent_state, "_grid")
         if grid:
             comm = "_grid"
 
-        buffer = '_inbuffer'
+        buffer = "_inbuffer"
         if in_place:
-            buffer = 'MPI_IN_PLACE'
+            buffer = "MPI_IN_PLACE"
 
         code = f"""
             MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str},
                           {node.op}, {comm});
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          expanded_input_connectors(node, parent_state),
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            expanded_input_connectors(node, parent_state),
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
 
 
 @dace.library.node
 class Allreduce(MPINode):
-
     # Global properties
     implementations = {
         "MPI": ExpandAllreduceMPI,
     }
     default_implementation = "MPI"
 
-    op = dace.properties.Property(dtype=str, default='MPI_SUM')
+    op = dace.properties.Property(dtype=str, default="MPI_SUM")
 
-    def __init__(self, name, op='MPI_SUM', *args, **kwargs):
+    def __init__(self, name, op="MPI_SUM", *args, **kwargs):
         super().__init__(name, *args, inputs={"_inbuffer"}, outputs={"_outbuffer"}, **kwargs)
         self.op = op
 
@@ -78,7 +78,7 @@ class Allreduce(MPINode):
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
-            if src_conn == '_outbuffer':
+            if src_conn == "_outbuffer":
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
 

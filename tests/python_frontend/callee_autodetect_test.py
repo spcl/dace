@@ -3,6 +3,7 @@
 Tests automatic detection and parsing of nested functions and methods that are
 not annotated with @dace decorators.
 """
+
 import dace
 from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dataclasses import dataclass
@@ -95,13 +96,13 @@ def test_function_that_needs_replacement():
         return np.allclose(a, a)
 
     A = np.random.rand(20)
-    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
+    with dace.config.set_temporary("frontend", "typed_callbacks_only", value=True):
         with pytest.raises(DaceSyntaxError):
             with pytest.warns(match="Automatically creating callback"):
                 notworking(A)
 
 
-@pytest.mark.parametrize('typed_callbacks', (False, True))
+@pytest.mark.parametrize("typed_callbacks", (False, True))
 def test_nested_autoparse(typed_callbacks):
 
     def notworking_nested(a):
@@ -113,9 +114,9 @@ def test_nested_autoparse(typed_callbacks):
 
     A = np.random.rand(20)
 
-    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=typed_callbacks):
+    with dace.config.set_temporary("frontend", "typed_callbacks_only", value=typed_callbacks):
         if typed_callbacks:
-            with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
+            with pytest.raises(DaceSyntaxError, match="numpy.allclose"):
                 with pytest.warns(match="Automatically creating callback"):
                     notworking2(A)
         else:
@@ -138,8 +139,8 @@ def test_nested_recursion_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
-        with pytest.raises(DaceSyntaxError, match='nested_a'):
+    with dace.config.set_temporary("frontend", "typed_callbacks_only", value=True):
+        with pytest.raises(DaceSyntaxError, match="nested_a"):
             with pytest.warns(match="due to recursion"):
                 recursive_autoparse(A)
 
@@ -160,8 +161,8 @@ def test_nested_recursion2_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
-        with pytest.raises(DaceSyntaxError, match='nested_'):
+    with dace.config.set_temporary("frontend", "typed_callbacks_only", value=True):
+        with pytest.raises(DaceSyntaxError, match="nested_"):
             with pytest.warns(match="due to recursion"):
                 recursive_autoparse(A)
 
@@ -180,8 +181,8 @@ def test_nested_autoparse_dec_fail():
         return notworking_nested(a)
 
     A = np.random.rand(20)
-    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
-        with pytest.raises(DaceSyntaxError, match='notworking_nested'):
+    with dace.config.set_temporary("frontend", "typed_callbacks_only", value=True):
+        with pytest.raises(DaceSyntaxError, match="notworking_nested"):
             with pytest.warns(match="Automatically creating callback"):
                 notworking3(A)
 
@@ -209,14 +210,14 @@ def test_autodetect_function_in_for():
 def test_error_handling():
 
     class NotConvertible(SDFGConvertible):
-
         def __call__(self, a):
             import numpy as np  # noqa: F401 (acts as an SDFG conversion inhibitor)
-            print('A very pythonic method', a)
+
+            print("A very pythonic method", a)
 
         def __sdfg__(self, *args, **kwargs):
             # Raise a special type of error that does not naturally occur in dace
-            raise NotADirectoryError('I am not really convertible')
+            raise NotADirectoryError("I am not really convertible")
 
         def __sdfg_signature__(self):
             return ([], [])
@@ -237,10 +238,9 @@ def test_nested_class_error_handling():
     def not_convertible(f):
 
         class NotConvertibleMethod(SDFGConvertible):
-
             def __sdfg__(self, *args, **kwargs):
                 # Raise a special type of error that does not naturally occur in dace
-                raise NotADirectoryError('I am not really convertible')
+                raise NotADirectoryError("I am not really convertible")
 
             def __sdfg_signature__(self):
                 return ([], [])
@@ -248,11 +248,11 @@ def test_nested_class_error_handling():
         return NotConvertibleMethod()
 
     class MaybeConvertible:
-
         @not_convertible
         def __call__(self, a):
             import numpy as np  # noqa: F401 (acts as an SDFG conversion inhibitor)
-            print('A very pythonic method', a)
+
+            print("A very pythonic method", a)
 
     A = np.random.rand(20)
 
@@ -308,7 +308,7 @@ def test_type_hints_in_nested_call():
     assert np.allclose(res, ref)
 
 
-@pytest.mark.parametrize('decorated', (False, True))
+@pytest.mark.parametrize("decorated", (False, True))
 def test_explicit_type_hints_in_nested_call(decorated):
     """
     Tests that type hints are not ignored if the nested function is decorated.
@@ -339,7 +339,7 @@ def test_explicit_type_hints_in_nested_call(decorated):
         assert np.allclose(A, a_ref)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_autodetect_function()
     test_autodetect_method()
     test_autodetect_callable_object()

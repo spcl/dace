@@ -68,15 +68,15 @@ def gemm_cpu() -> Tuple[dace.SDFG, Callable]:
     """
     from dace.libraries.blas.nodes.gemm import Gemm
 
-    sdfg = dace.SDFG('ai_scenario_gemm_cpu')
-    for name in ('A', 'B', 'C'):
+    sdfg = dace.SDFG("ai_scenario_gemm_cpu")
+    for name in ("A", "B", "C"):
         sdfg.add_array(name, [N, N], dace.float32, storage=dtypes.StorageType.CPU_Heap)
     state = sdfg.add_state()
-    gemm = Gemm('gemm')
+    gemm = Gemm("gemm")
     state.add_node(gemm)
-    state.add_edge(state.add_read('A'), None, gemm, '_a', dace.Memlet(f'A[0:{N}, 0:{N}]'))
-    state.add_edge(state.add_read('B'), None, gemm, '_b', dace.Memlet(f'B[0:{N}, 0:{N}]'))
-    state.add_edge(gemm, '_c', state.add_write('C'), None, dace.Memlet(f'C[0:{N}, 0:{N}]'))
+    state.add_edge(state.add_read("A"), None, gemm, "_a", dace.Memlet(f"A[0:{N}, 0:{N}]"))
+    state.add_edge(state.add_read("B"), None, gemm, "_b", dace.Memlet(f"B[0:{N}, 0:{N}]"))
+    state.add_edge(gemm, "_c", state.add_write("C"), None, dace.Memlet(f"C[0:{N}, 0:{N}]"))
 
     def check(compiled_sdfg):
         rng = np.random.default_rng(0)
@@ -94,32 +94,24 @@ def gemm_tile_avx() -> Tuple[dace.SDFG, Callable]:
 
     :return: The SDFG and a callable that runs and checks it.
     """
-    sdfg = dace.SDFG('ai_scenario_gemm_tile')
-    for name in ('A', 'B', 'C'):
+    sdfg = dace.SDFG("ai_scenario_gemm_tile")
+    for name in ("A", "B", "C"):
         sdfg.add_array(name, [N, N], dace.float32)
     state = sdfg.add_state()
-    entry, exit_node = state.add_map('tiles', {
-        'ti': f'0:{N}:{TILE}',
-        'tj': f'0:{N}:{TILE}'
-    },
-                                     schedule=dtypes.ScheduleType.CPU_Multicore)
-    node = AINode('gemm_tile', TILE_GEMM, inputs={'_a', '_b'}, outputs={'_c'})
+    entry, exit_node = state.add_map(
+        "tiles", {"ti": f"0:{N}:{TILE}", "tj": f"0:{N}:{TILE}"}, schedule=dtypes.ScheduleType.CPU_Multicore
+    )
+    node = AINode("gemm_tile", TILE_GEMM, inputs={"_a", "_b"}, outputs={"_c"})
     state.add_node(node)
-    state.add_memlet_path(state.add_read('A'),
-                          entry,
-                          node,
-                          dst_conn='_a',
-                          memlet=dace.Memlet(f'A[ti:ti+{TILE}, 0:{N}]'))
-    state.add_memlet_path(state.add_read('B'),
-                          entry,
-                          node,
-                          dst_conn='_b',
-                          memlet=dace.Memlet(f'B[0:{N}, tj:tj+{TILE}]'))
-    state.add_memlet_path(node,
-                          exit_node,
-                          state.add_write('C'),
-                          src_conn='_c',
-                          memlet=dace.Memlet(f'C[ti:ti+{TILE}, tj:tj+{TILE}]'))
+    state.add_memlet_path(
+        state.add_read("A"), entry, node, dst_conn="_a", memlet=dace.Memlet(f"A[ti:ti+{TILE}, 0:{N}]")
+    )
+    state.add_memlet_path(
+        state.add_read("B"), entry, node, dst_conn="_b", memlet=dace.Memlet(f"B[0:{N}, tj:tj+{TILE}]")
+    )
+    state.add_memlet_path(
+        node, exit_node, state.add_write("C"), src_conn="_c", memlet=dace.Memlet(f"C[ti:ti+{TILE}, tj:tj+{TILE}]")
+    )
 
     def check(compiled_sdfg):
         rng = np.random.default_rng(0)
@@ -137,27 +129,21 @@ def transpose_avx() -> Tuple[dace.SDFG, Callable]:
 
     :return: The SDFG and a callable that runs and checks it.
     """
-    sdfg = dace.SDFG('ai_scenario_transpose')
-    for name in ('A', 'B'):
+    sdfg = dace.SDFG("ai_scenario_transpose")
+    for name in ("A", "B"):
         sdfg.add_array(name, [N, N], dace.float32)
     state = sdfg.add_state()
-    entry, exit_node = state.add_map('tiles', {
-        'ti': f'0:{N}:{TILE}',
-        'tj': f'0:{N}:{TILE}'
-    },
-                                     schedule=dtypes.ScheduleType.CPU_Multicore)
-    node = AINode('transpose_tile', TILE_TRANSPOSE, inputs={'_in'}, outputs={'_out'})
+    entry, exit_node = state.add_map(
+        "tiles", {"ti": f"0:{N}:{TILE}", "tj": f"0:{N}:{TILE}"}, schedule=dtypes.ScheduleType.CPU_Multicore
+    )
+    node = AINode("transpose_tile", TILE_TRANSPOSE, inputs={"_in"}, outputs={"_out"})
     state.add_node(node)
-    state.add_memlet_path(state.add_read('A'),
-                          entry,
-                          node,
-                          dst_conn='_in',
-                          memlet=dace.Memlet(f'A[ti:ti+{TILE}, tj:tj+{TILE}]'))
-    state.add_memlet_path(node,
-                          exit_node,
-                          state.add_write('B'),
-                          src_conn='_out',
-                          memlet=dace.Memlet(f'B[tj:tj+{TILE}, ti:ti+{TILE}]'))
+    state.add_memlet_path(
+        state.add_read("A"), entry, node, dst_conn="_in", memlet=dace.Memlet(f"A[ti:ti+{TILE}, tj:tj+{TILE}]")
+    )
+    state.add_memlet_path(
+        node, exit_node, state.add_write("B"), src_conn="_out", memlet=dace.Memlet(f"B[tj:tj+{TILE}, ti:ti+{TILE}]")
+    )
 
     def check(compiled_sdfg):
         rng = np.random.default_rng(0)
@@ -180,21 +166,21 @@ def _gemm_gpu(name: str, inside_kernel: bool) -> Tuple[dace.SDFG, Callable]:
     from dace.libraries.blas.nodes.gemm import Gemm
 
     sdfg = dace.SDFG(name)
-    for array in ('A', 'B', 'C'):
+    for array in ("A", "B", "C"):
         sdfg.add_array(array, [N, N], dace.float32, storage=dtypes.StorageType.GPU_Global)
     state = sdfg.add_state()
-    gemm = Gemm('gemm')
+    gemm = Gemm("gemm")
     state.add_node(gemm)
-    subset = f'0:{N}, 0:{N}'
+    subset = f"0:{N}, 0:{N}"
     if inside_kernel:
-        entry, exit_node = state.add_map('grid', {'b': '0:1'}, schedule=dtypes.ScheduleType.GPU_Device)
-        state.add_memlet_path(state.add_read('A'), entry, gemm, dst_conn='_a', memlet=dace.Memlet(f'A[{subset}]'))
-        state.add_memlet_path(state.add_read('B'), entry, gemm, dst_conn='_b', memlet=dace.Memlet(f'B[{subset}]'))
-        state.add_memlet_path(gemm, exit_node, state.add_write('C'), src_conn='_c', memlet=dace.Memlet(f'C[{subset}]'))
+        entry, exit_node = state.add_map("grid", {"b": "0:1"}, schedule=dtypes.ScheduleType.GPU_Device)
+        state.add_memlet_path(state.add_read("A"), entry, gemm, dst_conn="_a", memlet=dace.Memlet(f"A[{subset}]"))
+        state.add_memlet_path(state.add_read("B"), entry, gemm, dst_conn="_b", memlet=dace.Memlet(f"B[{subset}]"))
+        state.add_memlet_path(gemm, exit_node, state.add_write("C"), src_conn="_c", memlet=dace.Memlet(f"C[{subset}]"))
     else:
-        state.add_edge(state.add_read('A'), None, gemm, '_a', dace.Memlet(f'A[{subset}]'))
-        state.add_edge(state.add_read('B'), None, gemm, '_b', dace.Memlet(f'B[{subset}]'))
-        state.add_edge(gemm, '_c', state.add_write('C'), None, dace.Memlet(f'C[{subset}]'))
+        state.add_edge(state.add_read("A"), None, gemm, "_a", dace.Memlet(f"A[{subset}]"))
+        state.add_edge(state.add_read("B"), None, gemm, "_b", dace.Memlet(f"B[{subset}]"))
+        state.add_edge(gemm, "_c", state.add_write("C"), None, dace.Memlet(f"C[{subset}]"))
 
     def check(compiled_sdfg):
         import cupy
@@ -215,7 +201,7 @@ def gemm_device() -> Tuple[dace.SDFG, Callable]:
 
     :return: The SDFG and a callable that runs and checks it on the GPU.
     """
-    return _gemm_gpu('ai_scenario_gemm_device', inside_kernel=True)
+    return _gemm_gpu("ai_scenario_gemm_device", inside_kernel=True)
 
 
 def gemm_host_gpu() -> Tuple[dace.SDFG, Callable]:
@@ -224,15 +210,15 @@ def gemm_host_gpu() -> Tuple[dace.SDFG, Callable]:
 
     :return: The SDFG and a callable that runs and checks it on the GPU.
     """
-    return _gemm_gpu('ai_scenario_gemm_host_gpu', inside_kernel=False)
+    return _gemm_gpu("ai_scenario_gemm_host_gpu", inside_kernel=False)
 
 
 SCENARIOS: Dict[str, Callable] = {
-    'gemm_cpu': gemm_cpu,
-    'gemm_tile_avx': gemm_tile_avx,
-    'transpose_avx': transpose_avx,
-    'gemm_device': gemm_device,
-    'gemm_host_gpu': gemm_host_gpu,
+    "gemm_cpu": gemm_cpu,
+    "gemm_tile_avx": gemm_tile_avx,
+    "transpose_avx": transpose_avx,
+    "gemm_device": gemm_device,
+    "gemm_host_gpu": gemm_host_gpu,
 }
 
 
@@ -247,33 +233,36 @@ def run(name: str) -> int:
     state = sdfg.states()[0]
     node = next(n for n in state.nodes() if isinstance(n, nodes.LibraryNode))
 
-    node.expand(state, 'ai')
+    node.expand(state, "ai")
     tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
 
-    print(f'=== generated tasklet for {name} ===')
+    print(f"=== generated tasklet for {name} ===")
     print(tasklet.code.as_string)
-    for label, block in (('code_global', tasklet.code_global), ('code_init', tasklet.code_init), ('code_exit',
-                                                                                                  tasklet.code_exit)):
-        text = block.as_string if block is not None else ''
+    for label, block in (
+        ("code_global", tasklet.code_global),
+        ("code_init", tasklet.code_init),
+        ("code_exit", tasklet.code_exit),
+    ):
+        text = block.as_string if block is not None else ""
         if text.strip():
-            print(f'--- {label} ---\n{text}')
+            print(f"--- {label} ---\n{text}")
     if tasklet.state_fields:
-        print(f'--- state_fields ---\n{tasklet.state_fields}')
+        print(f"--- state_fields ---\n{tasklet.state_fields}")
     if tasklet.environments:
-        print(f'--- environments ---\n{sorted(tasklet.environments)}')
+        print(f"--- environments ---\n{sorted(tasklet.environments)}")
 
     if check is None:
-        print(f'\n{name}: generated only (no runnable check for this scenario).')
+        print(f"\n{name}: generated only (no runnable check for this scenario).")
         return 0
 
-    print(f'\n{name}: compiling and running...')
+    print(f"\n{name}: compiling and running...")
     ok = check(sdfg)
-    print(f'{name}: {"CORRECT" if ok else "WRONG RESULT"}')
+    print(f"{name}: {'CORRECT' if ok else 'WRONG RESULT'}")
     return 0 if ok else 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in SCENARIOS:
-        print(f'usage: {sys.argv[0]} <{" | ".join(SCENARIOS)}>')
+        print(f"usage: {sys.argv[0]} <{' | '.join(SCENARIOS)}>")
         sys.exit(2)
     sys.exit(run(sys.argv[1]))

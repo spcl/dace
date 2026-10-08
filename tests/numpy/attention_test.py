@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-M = dace.symbol('M')
-N = dace.symbol('N')
-K = dace.symbol('K')
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
 
 
 @dace.program
@@ -51,26 +51,30 @@ def sdfg_transpose(A: dace.float32[M, K], B: dace.float32[K, M]):
 
 # sdfg_transpose.to_sdfg()
 
-Qsize = dace.symbol('Qsize')
-numHeads = dace.symbol('numHeads')
-projQsize = dace.symbol('projQsize')
-seqLenQ = dace.symbol('seqLenQ')
-seqLenK = dace.symbol('seqLenK')
-batchSize = dace.symbol('batchSize')
+Qsize = dace.symbol("Qsize")
+numHeads = dace.symbol("numHeads")
+projQsize = dace.symbol("projQsize")
+seqLenQ = dace.symbol("seqLenQ")
+seqLenK = dace.symbol("seqLenK")
+batchSize = dace.symbol("batchSize")
 
 
 @dace.program
-def attn_fwd(q: dace.float32[batchSize, Qsize, seqLenQ], k: dace.float32[batchSize, Qsize, seqLenK],
-             v: dace.float32[batchSize, Qsize, seqLenK], wq: dace.float32[numHeads, projQsize, Qsize],
-             wk: dace.float32[numHeads, projQsize, Qsize], wv: dace.float32[numHeads, projQsize, Qsize],
-             wo: dace.float32[numHeads, Qsize, projQsize], out: dace.float32[batchSize, Qsize, seqLenQ]):
+def attn_fwd(
+    q: dace.float32[batchSize, Qsize, seqLenQ],
+    k: dace.float32[batchSize, Qsize, seqLenK],
+    v: dace.float32[batchSize, Qsize, seqLenK],
+    wq: dace.float32[numHeads, projQsize, Qsize],
+    wk: dace.float32[numHeads, projQsize, Qsize],
+    wv: dace.float32[numHeads, projQsize, Qsize],
+    wo: dace.float32[numHeads, Qsize, projQsize],
+    out: dace.float32[batchSize, Qsize, seqLenQ],
+):
 
     for b in dace.map[0:batchSize]:
-
         outs = dace.define_local([numHeads, Qsize, seqLenQ], dace.float32)
 
         for h in dace.map[0:numHeads]:
-
             # q_bar = dace.define_local([projQsize, seqLenQ], dace.float32)
             k_bar = dace.define_local([projQsize, seqLenK], dace.float32)
             v_bar = dace.define_local([projQsize, seqLenK], dace.float32)
@@ -106,5 +110,5 @@ def test_attention():
     sdfg.compile()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_attention()

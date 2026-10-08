@@ -29,10 +29,12 @@ class AITasklet(nodes.Tasklet):
     :mod:`dace.codegen.targets.cpu`) -- and differs only in remembering its origin.
     """
 
-    provenance = Property(dtype=str,
-                          default='',
-                          desc='JSON recording the session, the round, and the serialized library '
-                          'node this tasklet was generated from. Empty if unknown.')
+    provenance = Property(
+        dtype=str,
+        default="",
+        desc="JSON recording the session, the round, and the serialized library "
+        "node this tasklet was generated from. Empty if unknown.",
+    )
 
     def to_json(self, parent):
         """
@@ -48,7 +50,7 @@ class AITasklet(nodes.Tasklet):
         :return: The serialized node.
         """
         jsonobj = super().to_json(parent)
-        jsonobj['classpath'] = f'{type(self).__module__}.{type(self).__name__}'
+        jsonobj["classpath"] = f"{type(self).__module__}.{type(self).__name__}"
         return jsonobj
 
     @staticmethod
@@ -67,6 +69,6 @@ class AITasklet(nodes.Tasklet):
         :param context: Deserialization context, carrying the SDFG and state.
         :return: The reconstructed tasklet.
         """
-        ret = AITasklet('dummylabel')
+        ret = AITasklet("dummylabel")
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret

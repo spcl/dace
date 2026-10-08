@@ -25,10 +25,10 @@ from ai_test_utils import prompt_of, stub_provider  # noqa: E402
 
 from dace.libraries.ai.backend import TaskletSpec  # noqa: E402
 
-N = dace.symbol('N')
+N = dace.symbol("N")
 M = 20
 
-ADD_DESCRIPTION = 'Write _out[i] = _a[i] + _b[i] for every element of the vectors.'
+ADD_DESCRIPTION = "Write _out[i] = _a[i] + _b[i] for every element of the vectors."
 
 
 def _ai_nodes(sdfg: dace.SDFG):
@@ -49,7 +49,7 @@ def _only_ai_node(sdfg: dace.SDFG) -> AINode:
     :return: The node.
     """
     found = _ai_nodes(sdfg)
-    assert len(found) == 1, f'expected one AI node, found {len(found)}'
+    assert len(found) == 1, f"expected one AI node, found {len(found)}"
     return found[0]
 
 
@@ -65,7 +65,7 @@ def test_call_becomes_an_ai_node():
     # The description is the specification, and is carried on the node rather than in the prompt only
     assert node.description == ADD_DESCRIPTION
     assert node.implementation is None
-    assert node.default_implementation == 'ai'
+    assert node.default_implementation == "ai"
 
 
 def test_keyword_inputs_name_their_connectors():
@@ -75,8 +75,8 @@ def test_keyword_inputs_name_their_connectors():
         return dace.ai(ADD_DESCRIPTION, a=A, b=B)
 
     node = _only_ai_node(prog.to_sdfg(simplify=False))
-    assert set(node.in_connectors) == {'_a', '_b'}
-    assert set(node.out_connectors) == {'_out'}
+    assert set(node.in_connectors) == {"_a", "_b"}
+    assert set(node.out_connectors) == {"_out"}
 
 
 def test_it_can_be_imported_by_name():
@@ -93,22 +93,22 @@ def test_connectors_keep_the_order_of_the_call():
 
     @dace.program
     def prog(A: dace.float64[M], B: dace.float64[M], C: dace.float64[M]):
-        return dace.ai('Write _out[i] = _x[i] + _y[i] + _z[i].', x=A, y=B, z=C)
+        return dace.ai("Write _out[i] = _x[i] + _y[i] + _z[i].", x=A, y=B, z=C)
 
     # The connectors are listed to the model in this order, and the prompt is what the answer cache
     # is keyed on, so an arbitrary order would cost a request on every run
     node = _only_ai_node(prog.to_sdfg(simplify=False))
-    assert list(node.in_connectors) == ['_x', '_y', '_z']
+    assert list(node.in_connectors) == ["_x", "_y", "_z"]
 
 
 def test_positional_inputs_are_numbered():
 
     @dace.program
     def prog(A: dace.float64[M], B: dace.float64[M]):
-        return dace.ai('Write _out[i] = _in0[i] + _in1[i].', A, B)
+        return dace.ai("Write _out[i] = _in0[i] + _in1[i].", A, B)
 
     node = _only_ai_node(prog.to_sdfg(simplify=False))
-    assert set(node.in_connectors) == {'_in0', '_in1'}
+    assert set(node.in_connectors) == {"_in0", "_in1"}
 
 
 def test_connectors_read_and_write_the_given_containers():
@@ -123,8 +123,8 @@ def test_connectors_read_and_write_the_given_containers():
 
     reads = {e.dst_conn: e.data.data for e in state.in_edges(node)}
     writes = {e.src_conn: e.data.data for e in state.out_edges(node)}
-    assert reads == {'_a': 'A', '_b': 'B'}
-    assert list(writes) == ['_out']
+    assert reads == {"_a": "A", "_b": "B"}
+    assert list(writes) == ["_out"]
     # The whole container is moved, so the generated code sees a pointer to all of it
     assert state.in_edges(node)[0].data.subset.num_elements() == M
 
@@ -148,7 +148,7 @@ def test_output_shape_and_type_can_be_given():
 
     @dace.program
     def prog(A: dace.float32[M, M]):
-        return dace.ai('Write the sum of every row of _a into _out.', a=A, shape=(M, ), dtype=dace.float64)
+        return dace.ai("Write the sum of every row of _a into _out.", a=A, shape=(M,), dtype=dace.float64)
 
     sdfg = prog.to_sdfg(simplify=False)
     node = _only_ai_node(sdfg)
@@ -163,7 +163,7 @@ def test_a_scalar_input_yields_a_scalar_output():
 
     @dace.program
     def prog(a: dace.float64):
-        return dace.ai('Write twice _x into _out.', x=a)
+        return dace.ai("Write twice _x into _out.", x=a)
 
     sdfg = prog.to_sdfg(simplify=False)
     node = _only_ai_node(sdfg)
@@ -183,43 +183,43 @@ def test_writing_into_an_existing_container():
     node = _only_ai_node(sdfg)
     state = next(s for s in sdfg.states() if node in s.nodes())
 
-    assert {e.src_conn: e.data.data for e in state.out_edges(node)} == {'_out': 'C'}
+    assert {e.src_conn: e.data.data for e in state.out_edges(node)} == {"_out": "C"}
     # Nothing was allocated for an output that already exists
-    assert not any(desc.transient for name, desc in sdfg.arrays.items() if name not in ('A', 'B', 'C'))
+    assert not any(desc.transient for name, desc in sdfg.arrays.items() if name not in ("A", "B", "C"))
 
 
 def test_several_outputs_are_numbered():
 
     @dace.program
     def prog(A: dace.float64[M], B: dace.float64[M], C: dace.float64[M]):
-        dace.ai('Write the sum of _a into _out0 and its product into _out1.', a=A, out=(B, C))
+        dace.ai("Write the sum of _a into _out0 and its product into _out1.", a=A, out=(B, C))
 
     sdfg = prog.to_sdfg(simplify=False)
     node = _only_ai_node(sdfg)
     state = next(s for s in sdfg.states() if node in s.nodes())
 
-    assert {e.src_conn: e.data.data for e in state.out_edges(node)} == {'_out0': 'B', '_out1': 'C'}
+    assert {e.src_conn: e.data.data for e in state.out_edges(node)} == {"_out0": "B", "_out1": "C"}
 
 
 def test_nodes_of_one_program_get_distinct_names():
 
     @dace.program
     def prog(A: dace.float64[M]):
-        B = dace.ai('Write twice _a into _out.', a=A)
-        return dace.ai('Write twice _a into _out.', a=B)
+        B = dace.ai("Write twice _a into _out.", a=A)
+        return dace.ai("Write twice _a into _out.", a=B)
 
     # The name identifies the slot's conversation, so two nodes must not share one
     names = sorted(node.name for node in _ai_nodes(prog.to_sdfg(simplify=False)))
-    assert names == ['ai', 'ai_1']
+    assert names == ["ai", "ai_1"]
 
 
 def test_the_node_can_be_named():
 
     @dace.program
     def prog(A: dace.float64[M]):
-        return dace.ai('Write twice _a into _out.', a=A, name='doubler')
+        return dace.ai("Write twice _a into _out.", a=A, name="doubler")
 
-    assert _only_ai_node(prog.to_sdfg(simplify=False)).name == 'doubler'
+    assert _only_ai_node(prog.to_sdfg(simplify=False)).name == "doubler"
 
 
 def test_the_description_reaches_the_model():
@@ -229,19 +229,19 @@ def test_the_description_reaches_the_model():
         return dace.ai(ADD_DESCRIPTION, a=A, b=B)
 
     sdfg = prog.to_sdfg(simplify=False)
-    with stub_provider(TaskletSpec(code='for (int i = 0; i < 20; ++i) _out[i] = _a[i] + _b[i];')) as provider:
+    with stub_provider(TaskletSpec(code="for (int i = 0; i < 20; ++i) _out[i] = _a[i] + _b[i];")) as provider:
         sdfg.expand_library_nodes()
 
     prompt = prompt_of(provider)
     assert ADD_DESCRIPTION in prompt
     # The connectors named at the call site are the ones the model is told about
-    assert '- _a (input)' in prompt
-    assert '- _b (input)' in prompt
-    assert '- _out (output)' in prompt
+    assert "- _a (input)" in prompt
+    assert "- _b (input)" in prompt
+    assert "- _out (output)" in prompt
 
 
 def test_it_compiles_and_runs():
-    code = 'for (int i = 0; i < N; ++i) { _out[i] = _a[i] + _b[i]; }'
+    code = "for (int i = 0; i < N; ++i) { _out[i] = _a[i] + _b[i]; }"
 
     @dace.program
     def prog(A: dace.float64[N], B: dace.float64[N]):
@@ -258,12 +258,12 @@ def test_it_compiles_and_runs():
 
 def test_it_runs_inside_a_map():
     # A scalar connector inside a map: one element per iteration, assigned rather than written through
-    code = '_out = 2.0 * _x;'
+    code = "_out = 2.0 * _x;"
 
     @dace.program
     def prog(A: dace.float64[N], B: dace.float64[N]):
         for i in dace.map[0:N]:
-            B[i] = dace.ai('Write twice the scalar _x into _out.', x=A[i])
+            B[i] = dace.ai("Write twice the scalar _x into _out.", x=A[i])
 
     rng = np.random.default_rng(0)
     a = rng.random(M)
@@ -273,11 +273,11 @@ def test_it_runs_inside_a_map():
 
     assert np.allclose(b, 2.0 * a)
     # The node sits inside the map, and the prompt says so
-    assert 'map' in prompt_of(provider).lower()
+    assert "map" in prompt_of(provider).lower()
 
 
 def test_it_runs_writing_into_a_given_container():
-    code = 'for (int i = 0; i < 20; ++i) { _out[i] = _a[i] + _b[i]; }'
+    code = "for (int i = 0; i < 20; ++i) { _out[i] = _a[i] + _b[i]; }"
 
     @dace.program
     def prog(A: dace.float64[M], B: dace.float64[M], C: dace.float64[M]):
@@ -295,11 +295,11 @@ def test_it_runs_writing_into_a_given_container():
 
 def test_symbols_do_not_have_to_be_passed():
     # The description refers to N, which is a symbol of the program and therefore in scope
-    code = 'for (int i = 0; i < N; ++i) { _out[i] = _a[i] * N; }'
+    code = "for (int i = 0; i < N; ++i) { _out[i] = _a[i] * N; }"
 
     @dace.program
     def prog(A: dace.float64[N]):
-        return dace.ai('Write _out[i] = _a[i] * N, where N is the length of the vector.', a=A)
+        return dace.ai("Write _out[i] = _a[i] * N, where N is the length of the vector.", a=A)
 
     rng = np.random.default_rng(0)
     a = rng.random(M)
@@ -307,7 +307,7 @@ def test_symbols_do_not_have_to_be_passed():
         result = prog(a)
 
     assert np.allclose(result, a * M)
-    assert 'N: int' in prompt_of(provider)
+    assert "N: int" in prompt_of(provider)
 
 
 def test_the_generated_tasklet_is_kept_in_the_sdfg():
@@ -317,12 +317,12 @@ def test_the_generated_tasklet_is_kept_in_the_sdfg():
         return dace.ai(ADD_DESCRIPTION, a=A, b=B)
 
     sdfg = prog.to_sdfg(simplify=False)
-    with stub_provider(TaskletSpec(code='for (int i = 0; i < 20; ++i) _out[i] = _a[i] + _b[i];')) as provider:
+    with stub_provider(TaskletSpec(code="for (int i = 0; i < 20; ++i) _out[i] = _a[i] + _b[i];")) as provider:
         sdfg.expand_library_nodes()
 
     assert not _ai_nodes(sdfg)
     tasklet = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.Tasklet))
-    assert '_out[i] = _a[i] + _b[i]' in tasklet.code.as_string
+    assert "_out[i] = _a[i] + _b[i]" in tasklet.code.as_string
 
     # Compiling the expanded SDFG does not ask again
     calls = len(provider.calls)
@@ -334,7 +334,7 @@ def test_the_schedule_can_be_given():
 
     @dace.program
     def prog(A: dace.float64[M]):
-        return dace.ai('Write twice _a into _out.', a=A, schedule=dace.ScheduleType.Sequential)
+        return dace.ai("Write twice _a into _out.", a=A, schedule=dace.ScheduleType.Sequential)
 
     assert _only_ai_node(prog.to_sdfg(simplify=False)).schedule == dtypes.ScheduleType.Sequential
 
@@ -343,9 +343,9 @@ def test_a_missing_description_is_rejected():
 
     @dace.program
     def prog(A: dace.float64[M]):
-        return dace.ai('   ', a=A)
+        return dace.ai("   ", a=A)
 
-    with pytest.raises(DaceSyntaxError, match='empty'):
+    with pytest.raises(DaceSyntaxError, match="empty"):
         prog.to_sdfg(simplify=False)
 
 
@@ -355,7 +355,7 @@ def test_a_non_string_description_is_rejected():
     def prog(A: dace.float64[M]):
         return dace.ai(A, a=A)
 
-    with pytest.raises(DaceSyntaxError, match='must be a string'):
+    with pytest.raises(DaceSyntaxError, match="must be a string"):
         prog.to_sdfg(simplify=False)
 
 
@@ -363,9 +363,9 @@ def test_a_symbol_cannot_be_an_input():
 
     @dace.program
     def prog(A: dace.float64[N]):
-        return dace.ai('Write _out[i] = _a[i] * _n.', a=A, n=N)
+        return dace.ai("Write _out[i] = _a[i] * _n.", a=A, n=N)
 
-    with pytest.raises(DaceSyntaxError, match='symbol'):
+    with pytest.raises(DaceSyntaxError, match="symbol"):
         prog.to_sdfg(simplify=False)
 
 
@@ -373,7 +373,7 @@ def test_the_output_cannot_be_described_twice():
 
     @dace.program
     def prog(A: dace.float64[M], B: dace.float64[M]):
-        dace.ai('Write twice _a into _out.', a=A, out=B, dtype=dace.float64)
+        dace.ai("Write twice _a into _out.", a=A, out=B, dtype=dace.float64)
 
     with pytest.raises(DaceSyntaxError, match='cannot be combined with "out"'):
         prog.to_sdfg(simplify=False)
@@ -383,9 +383,9 @@ def test_the_same_container_cannot_be_written_twice():
 
     @dace.program
     def prog(A: dace.float64[M], B: dace.float64[M]):
-        dace.ai('Write twice _a into _out0 and _out1.', a=A, out=(B, B))
+        dace.ai("Write twice _a into _out0 and _out1.", a=A, out=(B, B))
 
-    with pytest.raises(DaceSyntaxError, match='same container'):
+    with pytest.raises(DaceSyntaxError, match="same container"):
         prog.to_sdfg(simplify=False)
 
 
@@ -393,9 +393,9 @@ def test_a_container_cannot_name_the_node():
 
     @dace.program
     def prog(A: dace.float64[M]):
-        return dace.ai('Write twice _a into _out.', a=A, name=A)
+        return dace.ai("Write twice _a into _out.", a=A, name=A)
 
-    with pytest.raises(DaceSyntaxError, match='must be a string'):
+    with pytest.raises(DaceSyntaxError, match="must be a string"):
         prog.to_sdfg(simplify=False)
 
 
@@ -403,16 +403,16 @@ def test_an_output_cannot_be_inferred_without_inputs():
 
     @dace.program
     def prog(A: dace.float64[M]):
-        A[:] = dace.ai('Fill _out with ones.')
+        A[:] = dace.ai("Fill _out with ones.")
 
-    with pytest.raises(DaceSyntaxError, match='shape'):
+    with pytest.raises(DaceSyntaxError, match="shape"):
         prog.to_sdfg(simplify=False)
 
 
 def test_calling_outside_a_program_explains_itself():
-    with pytest.raises(NotImplementedError, match='inside a DaCe program'):
-        dace.ai('Write twice _a into _out.', a=np.zeros(M))
+    with pytest.raises(NotImplementedError, match="inside a DaCe program"):
+        dace.ai("Write twice _a into _out.", a=np.zeros(M))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])
