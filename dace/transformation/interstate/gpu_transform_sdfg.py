@@ -103,31 +103,50 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         9. Re-apply simplification to get rid of extra states and transients
     """
 
-    toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=True)
+    toplevel_trans = Property(category="Memory", desc="Make all GPU transients top-level", dtype=bool, default=True)
 
-    register_trans = Property(desc="Make all transients inside GPU maps registers", dtype=bool, default=True)
-
-    sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=True)
-
-    skip_scalar_tasklets = Property(
-        desc="If True, does not transform tasklets that manipulate (Default-stored) scalars", dtype=bool, default=True
+    register_trans = Property(
+        category="Memory", desc="Make all transients inside GPU maps registers", dtype=bool, default=True
     )
 
-    simplify = Property(desc="Reapply simplification after modifying graph", dtype=bool, default=True)
+    sequential_innermaps = Property(
+        category="Scheduling", desc="Make all internal maps Sequential", dtype=bool, default=True
+    )
+
+    skip_scalar_tasklets = Property(
+        category="Applicability",
+        desc="If True, does not transform tasklets that manipulate (Default-stored) scalars",
+        dtype=bool,
+        default=True,
+    )
+
+    simplify = Property(
+        category="Parameters", desc="Reapply simplification after modifying graph", dtype=bool, default=True
+    )
 
     exclude_copyin = Property(
-        desc="Exclude these arrays from being copied into the device (comma-separated)", dtype=str, default=""
+        category="Memory",
+        desc="Exclude these arrays from being copied into the device (comma-separated)",
+        dtype=str,
+        default="",
     )
 
     exclude_tasklets = Property(
-        desc="Exclude these tasklets from being processed as CPU tasklets (comma-separated)", dtype=str, default=""
+        category="Scheduling",
+        desc="Exclude these tasklets from being processed as CPU tasklets (comma-separated)",
+        dtype=str,
+        default="",
     )
 
     exclude_copyout = Property(
-        desc="Exclude these arrays from being copied out of the device (comma-separated)", dtype=str, default=""
+        category="Memory",
+        desc="Exclude these arrays from being copied out of the device (comma-separated)",
+        dtype=str,
+        default="",
     )
 
     host_maps = ListProperty(
+        category="Scheduling",
         desc="List of map GUIDs, the passed maps are not offloaded to the GPU",
         element_type=str,
         default=None,
@@ -135,6 +154,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
     )
 
     host_data = ListProperty(
+        category="Memory",
         desc="List of data names, the passed data are not offloaded to the GPU",
         element_type=str,
         default=None,

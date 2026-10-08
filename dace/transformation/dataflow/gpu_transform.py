@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains the GPU Transform Map transformation."""
 
 from dace import data, dtypes, sdfg as sd
@@ -19,13 +19,17 @@ class GPUTransformMap(transformation.SingleStateTransformation):
     outside it, generating CPU<->GPU memory copies automatically.
     """
 
-    fullcopy = Property(desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
+    fullcopy = Property(category="Memory", desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
-    toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=False)
+    toplevel_trans = Property(category="Memory", desc="Make all GPU transients top-level", dtype=bool, default=False)
 
-    register_trans = Property(desc="Make all transients inside GPU maps registers", dtype=bool, default=False)
+    register_trans = Property(
+        category="Memory", desc="Make all transients inside GPU maps registers", dtype=bool, default=False
+    )
 
-    sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=False)
+    sequential_innermaps = Property(
+        category="Scheduling", desc="Make all internal maps Sequential", dtype=bool, default=False
+    )
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
@@ -89,12 +93,10 @@ class GPUTransformMap(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG):
         if self.expr_index == 0:
             map_entry = self.map_entry
-            nsdfg_node = helpers.nest_state_subgraph(
-                sdfg, graph, graph.scope_subgraph(map_entry), full_data=self.fullcopy
-            )
+            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry))
         else:
             cnode = self.reduce
-            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]), full_data=self.fullcopy)
+            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]))
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG

@@ -161,6 +161,11 @@ def _replace_dict_keys(d, old, new):
         del d[old]
 
 
+def _remove_dict_keys(d, old):
+    if old in d:
+        del d[old]
+
+
 def _replace_dict_values(d, old, new):
     for k, v in d.items():
         if v == old:
@@ -263,10 +268,12 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars
 class LogicalGroup(object):
     """Logical element groupings on a per-SDFG level."""
 
-    nodes = ListProperty(element_type=tuple, desc="Nodes in this group given by [State, Node] id tuples")
-    states = ListProperty(element_type=int, desc="States in this group given by their ids")
-    name = Property(dtype=str, desc="Logical group name")
-    color = Property(dtype=str, desc="Color for the group, given as a hexadecimal string")
+    nodes = ListProperty(
+        element_type=tuple, category="General", desc="Nodes in this group given by [State, Node] id tuples"
+    )
+    states = ListProperty(element_type=int, category="General", desc="States in this group given by their ids")
+    name = Property(dtype=str, category="General", desc="Logical group name")
+    color = Property(dtype=str, category="General", desc="Color for the group, given as a hexadecimal string")
 
     def __init__(self, name, color, nodes=[], states=[]):
         self.nodes = nodes
@@ -297,6 +304,7 @@ class InterstateEdge(object):
     assignments = DictProperty(
         key_type=str,
         value_type=str,
+        category="Semantics",
         desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
         # NOTE: We serialize assignments as symbolic expressions but store them as strings of CodeBlocks (mostly with
         #       language=Python). In a future version, we will modify the value type to sympy.Basic and store the
@@ -308,8 +316,8 @@ class InterstateEdge(object):
             }
         ),
     )
-    condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
-    guid = Property(dtype=str, allow_none=False)
+    condition = CodeProperty(category="Semantics", desc="Transition condition", default=CodeBlock("1"))
+    guid = Property(dtype=str, allow_none=False, category="(Debug)")
 
     def __init__(
         self,
@@ -590,60 +598,76 @@ class SDFG(ControlFlowRegion):
     the `Memlet` class documentation.
     """
 
-    name = Property(dtype=str, desc="Name of the SDFG")
-    arg_names = ListProperty(element_type=str, desc="Ordered argument names (used for calling conventions).")
+    name = Property(dtype=str, category="General", desc="Name of the SDFG")
+    arg_names = ListProperty(
+        element_type=str, category="Frontend", desc="Ordered argument names (used for calling conventions)."
+    )
     constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
         dtype=dict,
         default={},
+        category="General",
         desc="Compile-time constants. The dictionary maps between a constant name to "
         "a tuple of its type and the actual constant data.",
     )
     _arrays = Property(
         dtype=NestedDict,
+        category="General",
         desc="Data descriptors for this SDFG",
         to_json=_arrays_to_json,
         from_json=_nested_arrays_from_json,
     )
-    symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
+    symbols = DictProperty(str, dtypes.typeclass, category="General", desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(
         dtype=dtypes.InstrumentationType,
+        category="Instrumentation",
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation,
     )
 
-    global_code = DictProperty(str, CodeBlock, desc="Code generated in a global scope on the output files.")
-    init_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_init` function.")
-    exit_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
+    global_code = DictProperty(
+        str, CodeBlock, category="Code Generation", desc="Code generated in a global scope on the output files."
+    )
+    init_code = DictProperty(
+        str, CodeBlock, category="Code Generation", desc="Code generated in the `__dace_init` function."
+    )
+    exit_code = DictProperty(
+        str, CodeBlock, category="Code Generation", desc="Code generated in the `__dace_exit` function."
+    )
 
-    orig_sdfg = OptionalSDFGReferenceProperty(allow_none=True)
-    transformation_hist = TransformationHistProperty()
+    orig_sdfg = OptionalSDFGReferenceProperty(allow_none=True, category="(Debug)")
+    transformation_hist = TransformationHistProperty(category="(Debug)")
 
-    logical_groups = ListProperty(element_type=LogicalGroup, desc="Logical groupings of nodes and edges")
+    logical_groups = ListProperty(
+        element_type=LogicalGroup, category="General", desc="Logical groupings of nodes and edges"
+    )
 
     openmp_sections = Property(
         dtype=bool,
         default=Config.get_bool("compiler", "cpu", "openmp_sections"),
+        category="Scheduling",
         desc="Whether to generate OpenMP sections in code",
     )
 
-    debuginfo = DebugInfoProperty(allow_none=True)
+    debuginfo = DebugInfoProperty(allow_none=True, category="Frontend")
 
     callback_mapping = DictProperty(
         str,
         str,
+        category="Frontend",
         desc="Mapping between callback name and its original callback "
         "(for when the same callback is used with a different signature)",
     )
 
     using_explicit_control_flow = Property(
-        dtype=bool, default=False, desc="Whether the SDFG contains explicit control flow constructs"
+        dtype=bool, default=False, category="(Debug)", desc="Whether the SDFG contains explicit control flow constructs"
     )
 
     build_folder = Property(
         dtype=str,
         default=None,
         allow_none=True,
+        category="Code Generation",
         desc="Returns the path to the build cache folder for SDFG. For a in dept "
         "description see ``_sdfg_build_folder_getter()``.",
         serialize_if=lambda sdfg: sdfg._build_folder is not None,
@@ -1016,13 +1040,13 @@ class SDFG(ControlFlowRegion):
         """
 
         repldict = {k: v for k, v in repldict.items() if k != v}
-        if symrepl:
+        if symrepl is None:
+            symrepl = {
+                symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+                for k, v in repldict.items()
+            }
+        else:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
-
-        symrepl = symrepl or {
-            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
-            for k, v in repldict.items()
-        }
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
@@ -1035,6 +1059,16 @@ class SDFG(ControlFlowRegion):
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
+                else:
+                    _remove_dict_keys(self._arrays, name)
+                    if name in self.symbols:
+                        old_sym = self.symbols[name]
+                        del self.symbols[name]
+                        new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
+                        self.symbols.update({str(s): old_sym for s in new_syms})
+
+                    _remove_dict_keys(self.constants_prop, name)
+                    _remove_dict_keys(self.callback_mapping, name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -2341,13 +2375,13 @@ class SDFG(ControlFlowRegion):
 
         if find_new_name:
             # These characters might be introduced through the creation of views to members
-            #  of strictures.
+            #  of structures.
             # NOTES: If `find_new_name` is `True` and the name (understood as a sequence of
             #   any characters) is not used, i.e. `assert self.is_name_free(name)`, then it
             #   is still "cleaned", i.e. dots are replaced with underscores. However, if
             #   `find_new_name` is `False` then this cleaning is not applied and it is possible
             #   to create names that are formally invalid. The above code reproduces the exact
-            #   same behaviour and is maintained for  compatibility. This behaviour is
+            #   same behavior and is maintained for compatibility. This behavior is
             #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
             name = self._find_new_name(name)
             name = name.replace(".", "_")

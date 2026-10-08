@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 from typing import Dict
 import dace
@@ -479,8 +479,8 @@ def test_nested_sdfg_in_map_nest():
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
@@ -518,14 +518,14 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert str(write_set) == "0:M, 0:N - 2"
+    assert str(write_set) == "0:M, 2:N"
 
 
 def test_map_in_nested_sdfg_in_map():
@@ -870,8 +870,8 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
     write_approx = result[sdfg.cfg_id].approximation
     write_set = None
     accessnode = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():
@@ -904,8 +904,8 @@ def test_loop_in_nested_sdfg_simple():
     write_approx = result[sdfg.cfg_id].approximation
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
             if node.data == "A":
                 accessnode = node
     for edge, memlet in write_approx.items():

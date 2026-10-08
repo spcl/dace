@@ -208,6 +208,31 @@ def _ndarray_transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: st
     return _transpose(pv, sdfg, state, arr, axes)
 
 
+@oprepo.replaces("numpy.broadcast_to")
+def broadcast_to(
+    pv: ProgramVisitor,
+    sdfg: SDFG,
+    state: SDFGState,
+    arr: str,
+    shape: Union[str, symbolic.SymbolicType, Sequence[Union[str, symbolic.SymbolicType]]],
+) -> str:
+    """Replicate ``arr`` across ``shape`` by the NumPy broadcasting rule, into a new transient rather than
+    NumPy's zero-stride view, whose writes would all alias."""
+    from dace.libraries.standard.nodes import Broadcast  # Avoid import loop
+
+    desc = sdfg.arrays[arr]
+    if isinstance(shape, (str, symbolic.symbol, Integral)):
+        shape = [shape]
+    newshape = [symbolic.pystr_to_symbolic(s) for s in shape]
+    out, out_desc = sdfg.add_transient(pv.get_target_name(), newshape, desc.dtype, desc.storage, find_new_name=True)
+    node = Broadcast("broadcast_to", dim=None)
+    state.add_node(node)
+    state.add_edge(state.add_read(arr), None, node, "_src", Memlet.from_array(arr, desc))
+    state.add_edge(node, "_dst", state.add_write(out), None, Memlet.from_array(out, out_desc))
+    node.validate(sdfg, state)  # Refuse a shape that does not broadcast here, not at expansion
+    return out
+
+
 @oprepo.replaces("numpy.reshape")
 def reshape(
     pv: ProgramVisitor,

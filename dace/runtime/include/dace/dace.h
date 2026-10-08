@@ -22,6 +22,7 @@
 #include "pyinterop.h"
 #include "reduction.h"
 #include "copy.h"
+#include "alloc.h"
 #include "stream.h"
 #include "os.h"
 #include "perf/reporting.h"

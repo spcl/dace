@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Data descriptor creation functions.
 
@@ -12,11 +12,7 @@ from numbers import Number
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
-
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike = Any
+from numpy.typing import ArrayLike
 
 from dace import dtypes, symbolic
 from dace.data.core import Array, Data, Scalar
@@ -165,7 +161,9 @@ def make_array_from_descriptor(
         except (ImportError, ModuleNotFoundError):
             raise NotImplementedError("GPU memory can only be allocated in Python if cupy is installed")
 
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+        def create_array(
+            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+        ) -> ArrayLike:
             buffer = cp.ndarray(shape=[total_size], dtype=dtype)
             view = cp.ndarray(
                 shape=shape, dtype=dtype, memptr=buffer.data, strides=[s * dtype.itemsize for s in strides]
@@ -177,7 +175,9 @@ def make_array_from_descriptor(
 
     else:
 
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+        def create_array(
+            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+        ) -> ArrayLike:
             buffer = np.ndarray([total_size], dtype=dtype)
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
@@ -227,7 +227,9 @@ def make_reference_from_descriptor(
         except (ImportError, ModuleNotFoundError):
             raise NotImplementedError("GPU memory can only be referenced in Python if cupy is installed")
 
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+        def create_array(
+            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+        ) -> ArrayLike:
             buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
             view = cp.ndarray(
                 shape=shape, dtype=dtype, memptr=buffer.data, strides=[s * dtype.itemsize for s in strides]
@@ -236,7 +238,9 @@ def make_reference_from_descriptor(
 
     else:
 
-        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+        def create_array(
+            shape: Tuple[int, ...], dtype: np.dtype, total_size: int, strides: Tuple[int, ...]
+        ) -> ArrayLike:
             buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size,))
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
