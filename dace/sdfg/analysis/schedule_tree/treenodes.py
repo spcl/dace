@@ -1013,7 +1013,7 @@ def validate_children_and_parents_align(stree: ScheduleTreeScope, *, root: bool 
 
 def loop_variant(
     loop: LoopRegion,
-) -> Literal["for"] | Literal["while"] | Literal["do-while"] | Literal["do-for-uncond-increment"] | Literal["do-for"]:
+) -> Literal["for", "while", "do-while", "do-for-uncond-increment", "do-for"]:
     if loop.update_statement and loop.init_statement and loop.loop_variable:
         if loop.inverted:
             if loop.update_before_condition:

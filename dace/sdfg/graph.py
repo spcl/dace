@@ -4,7 +4,7 @@
 import itertools
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any, Generic, TypeVar
 
 import networkx as nx
@@ -305,7 +305,7 @@ class Graph(Generic[NodeT, EdgeT]):
     def is_multigraph(self) -> bool:
         raise self._not_implemented_error()
 
-    def __iter__(self) -> Iterable[NodeT]:
+    def __iter__(self) -> Iterator[NodeT]:
         return iter(self.nodes())
 
     def __len__(self) -> int:

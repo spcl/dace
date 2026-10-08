@@ -206,7 +206,7 @@ def method(
 _MapT = TypeVar("_MapT")
 
 
-class MapGenerator(Generic[_MapT], Iterable[_MapT]):
+class MapGenerator(Iterable[_MapT], Generic[_MapT]):
     """
     An SDFG map generator class that allows applying operators on it, used
     for syntactic sugar.

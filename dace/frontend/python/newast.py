@@ -8,7 +8,7 @@ import sys
 import time
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from numbers import Number
 from os import path
 from typing import Any, Literal, NamedTuple
@@ -1028,7 +1028,7 @@ class DefinedNames(collections.abc.Mapping):
     def __contains__(self, name: str) -> bool:
         return self.lookup(name) is not MISSING
 
-    def __iter__(self) -> Iterable[str]:
+    def __iter__(self) -> Iterator[str]:
         return iter(self.materialize())
 
     def __len__(self) -> int:

@@ -1,6 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import collections
 import copy
 import functools
 import inspect
@@ -9,7 +8,7 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy
 import sympy
@@ -1470,7 +1469,7 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
 
     def __init__(self, filename: str) -> None:
         super().__init__()
-        self.visitor = collections.namedtuple("Visitor", "filename")
+        self.visitor = NamedTuple("Visitor", [("filename", str)])
         self.visitor.filename = filename
 
     def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):

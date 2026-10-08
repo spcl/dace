@@ -1,8 +1,7 @@
 import copy
 import math
 from abc import abstractmethod
-from collections import namedtuple
-from typing import Any
+from typing import Any, NamedTuple
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import (
@@ -51,8 +50,11 @@ class IntrinsicNodeTransformer(NodeTransformer):
 
 
 class DirectReplacement(IntrinsicTransformation):
-    Replacement = namedtuple("Replacement", "function")
-    Transformation = namedtuple("Transformation", "function")
+    class Replacement(NamedTuple):
+        function: Any
+
+    class Transformation(NamedTuple):
+        function: Any
 
     class ASTTransformation(IntrinsicNodeTransformer):
         def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
@@ -1052,8 +1054,14 @@ class Merge(LoopBasedReplacement):
 
 
 class MathFunctions(IntrinsicTransformation):
-    MathTransformation = namedtuple("MathTransformation", "function return_type")
-    MathReplacement = namedtuple("MathReplacement", "function replacement_function return_type")
+    class MathTransformation(NamedTuple):
+        function: Any
+        return_type: Any
+
+    class MathReplacement(NamedTuple):
+        function: Any
+        replacement_function: Any
+        return_type: Any
 
     def generate_scale(arg: ast_internal_classes.Call_Expr_Node):
 
