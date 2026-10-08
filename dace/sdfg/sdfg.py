@@ -1171,7 +1171,10 @@ class SDFG(ControlFlowRegion):
                 dim.name
                 for desc in self._arrays.values()
                 for dim in getattr(desc, "shape", ())
-                if isinstance(dim, symbolic.symbol) and dim.name in self.symbols
+                # An undefined symbol is a placeholder with no facts
+                if isinstance(dim, symbolic.symbol)
+                and not isinstance(dim, symbolic.UndefinedSymbol)
+                and dim.name in self.symbols
             }
         )
         if not extents:
