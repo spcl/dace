@@ -112,12 +112,8 @@ class MapInterchange(transformation.SingleStateTransformation):
         sdutil.change_edge_src(graph, outer_map_exit, inner_map_exit)
 
         # Add edges between the map entries and exits.
-        new_entry_edges = []
-        new_exit_edges = []
-        for e in entry_edges:
-            new_entry_edges.append(graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data))
-        for e in exit_edges:
-            new_exit_edges.append(graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data))
+        new_entry_edges = [graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data) for e in entry_edges]
+        new_exit_edges = [graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data) for e in exit_edges]
 
         # Repropagate memlets in modified region
         for e in new_entry_edges:

@@ -567,7 +567,7 @@ def _transformation_determine_affected_nodes(
         if transformation.cfg_id >= 0 and target_sdfg.cfg_list:
             target_sdfg = target_sdfg.cfg_list[transformation.cfg_id]
 
-        for k, _ in transformation._get_pattern_nodes().items():
+        for k in transformation._get_pattern_nodes().keys():
             try:
                 affected_nodes.add(getattr(transformation, k))
             except KeyError:

@@ -66,7 +66,7 @@ class Data:
     def _transient_setter(self, value):
         self._transient = value
         if isinstance(self, Structure):
-            for _, v in self.members.items():
+            for v in self.members.values():
                 if isinstance(v, Data):
                     v.transient = value
 
@@ -1198,7 +1198,7 @@ class Structure(Data):
     def free_symbols(self) -> set[symbolic.SymbolicType]:
         """Returns a set of undefined symbols in this data descriptor."""
         result = set()
-        for k, v in self.members.items():
+        for v in self.members.values():
             result |= v.free_symbols
         return result
 

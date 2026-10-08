@@ -30,10 +30,7 @@ class DistributedCutoutTuner:
                 existing_files.add(cutout_hash)
 
         # Filter cutouts
-        new_cutouts = []
-        for hash in cutouts:
-            if hash not in existing_files:
-                new_cutouts.append(hash)
+        new_cutouts = [hash for hash in cutouts if hash not in existing_files]
 
         # Split work
         rank = optim_utils.get_world_rank()
@@ -79,10 +76,7 @@ class DistributedSpaceTuner:
                 existing_files.add(cutout_hash)
 
         # Filter cutouts
-        new_cutouts = []
-        for hash in cutouts:
-            if hash not in existing_files:
-                new_cutouts.append(hash)
+        new_cutouts = [hash for hash in cutouts if hash not in existing_files]
 
         self._tuner.rank = rank
         self._tuner.num_ranks = num_ranks

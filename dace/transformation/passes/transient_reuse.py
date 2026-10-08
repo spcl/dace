@@ -114,9 +114,7 @@ class TransientReuse(ppl.Pass):
             # Find a final mapping, greedy coloring algorithm to find a mapping.
             # Only add a transient to a bucket if either there is a mapping from it to
             # all other elements of that bucket or there is a mapping from each element in the bucket to it.
-            buckets = []
-            for i in range(len(transients)):
-                buckets.append([])
+            buckets = [[] for _ in range(len(transients))]
 
             for n in transients:
                 for i in range(len(transients)):

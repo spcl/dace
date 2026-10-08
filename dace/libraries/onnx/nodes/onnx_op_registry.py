@@ -64,7 +64,7 @@ def _get_all_schemas():
         name_to_schemas[schema.name].append(schema)
 
     all_schemas = []
-    for name, schemas in name_to_schemas.items():
+    for schemas in name_to_schemas.values():
         all_schemas.extend(schemas)
 
     return all_schemas

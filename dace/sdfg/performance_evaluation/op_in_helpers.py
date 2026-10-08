@@ -119,9 +119,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 5))
     ax[0].scatter(x, cache_misses, label=f"C={C * L}, L={L}")
-    b = []
-    for curr in a:
-        b.append(sp.N(pystr_to_symbolic(sympy_f).subs(symbol_name, curr)))
+    b = [sp.N(pystr_to_symbolic(sympy_f).subs(symbol_name, curr)) for curr in a]
     ax[0].plot(a, b)
 
     c = []

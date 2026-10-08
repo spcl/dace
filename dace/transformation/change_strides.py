@@ -21,12 +21,12 @@ def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> list[tuple[nodes.Acce
     :return: List of the found access nodes together with their state
     :rtype: List[Tuple[nodes.AccessNode, Union[dace.SDFGState, dace.SDFG]]]
     """
-    found_nodes = []
-    for state in sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == array_name:
-                found_nodes.append((node, state))
-    return found_nodes
+    return [
+        (node, state)
+        for state in sdfg.states()
+        for node in state.nodes()
+        if isinstance(node, nodes.AccessNode) and node.data == array_name
+    ]
 
 
 def change_strides(sdfg: dace.SDFG, stride_one_values: list[str], schedule: ScheduleType) -> SDFG:

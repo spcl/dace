@@ -90,7 +90,7 @@ def compile_and_init_sdfgs(
     all_kwargs = {**inputs, **outputs, **symbols, **forwarded_transients, **module.dace_model.initialized_parameters}
 
     compiled.initialize(**all_kwargs)
-    for _, hook in module.post_compile_hooks.items():
+    for hook in module.post_compile_hooks.values():
         hook(compiled)
     handle_ptr = torch.tensor([compiled._libhandle.value]).squeeze(0)
 

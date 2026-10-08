@@ -107,9 +107,7 @@ def test_pgemv():
     def compile(sdfg):
         return utils.distributed_compile(sdfg, commworld)
 
-    sdfgs = []
-    for prog in (pdgemv, pdgemv_T, atax, bicg, gemver, gesummv):
-        sdfgs.append(optimize(prog))
+    sdfgs = [optimize(prog) for prog in (pdgemv, pdgemv_T, atax, bicg, gemver, gesummv)]
 
     # Test for different grids possible with the given number of MPI processes.
     grid_dims = grids[size]
@@ -125,9 +123,7 @@ def test_pgemv():
             if rank == 0:
                 print(f"Testing PBLAS GEMV on a [{NPx}, {NPy}] grid with sizes ({M}, {N}).", flush=True)
 
-            funcs = []
-            for sd in sdfgs:
-                funcs.append(compile(sd))
+            funcs = [compile(sd) for sd in sdfgs]
             func, func1, func2, func3, func4, func5 = funcs
 
             A = rng.random((M, N), dtype=np.float64)

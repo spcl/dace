@@ -149,7 +149,7 @@ class SVECodeGen(TargetCodeGenerator):
         # Temporary output registers
         for edge in state.out_edges(node):
             if self.generate_out_register(sdfg, state, edge, callsite_stream):
-                requires_wb.append(edge)
+                requires_wb.append(edge)  # noqa: PERF401
 
         # Tasklet code
         self.unparse_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream)

@@ -75,7 +75,7 @@ def program_for_node(
     connectors_to_remove = set(input_names).difference(params)
 
     annotations = {}
-    for name, param in params.items():
+    for name in params.keys():
         if name in input_names or ("__" in name and parse_variadic_param(name)[0] in variadic_input_names):
             annotations[name] = in_desc_with_name(node, state, sdfg, name)
         elif name in output_names or ("__" in name and parse_variadic_param(name)[0] in variadic_output_names):

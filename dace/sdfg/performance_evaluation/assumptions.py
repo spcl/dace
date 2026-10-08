@@ -261,12 +261,10 @@ def parse_assumptions(assumptions, array_symbols):
 
     # How many assumptions does symbol with most assumptions have?
     curr_max = -1
-    for _, assum in condensed_assumptions.items():
+    for assum in condensed_assumptions.values():
         curr_max = max(curr_max, assum.num_assumptions())
 
-    all_subs = []
-    for i in range(curr_max):
-        all_subs.append(({}, {}))
+    all_subs = [({}, {}) for _ in range(curr_max)]
 
     # Construct all the substitution dicts. In each substitution round we take at most one assumption for each
     # symbol. Each round has two dicts: First one swaps in the assumption and second one restores the initial

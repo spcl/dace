@@ -87,7 +87,7 @@ class EinsumParser:
     def is_bmm(self):
         if len(self.inputs) != 2:
             return False
-        for key, val in self.fields().items():
+        for val in self.fields().values():
             if not _is_sequential(val):
                 return False
         return True

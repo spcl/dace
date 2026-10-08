@@ -393,7 +393,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
 
                 self.sdfg.validate()
 
-                for _, hook in self.post_onnx_hooks.items():
+                for hook in self.post_onnx_hooks.values():
                     hook(self)
 
                 # choose the backend that will generate the function to call during
@@ -422,7 +422,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
                         torch_autodiff.make_backward_function(dace_model, required_gradients)
                     )
 
-                    for _, hook in self.post_autodiff_hooks.items():
+                    for hook in self.post_autodiff_hooks.values():
                         hook(self.forward_sdfg, self.backward_sdfg)
                     self.compiled_function = function_generator(self, dummy_inputs)
                 else:

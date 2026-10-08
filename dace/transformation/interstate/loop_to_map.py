@@ -833,7 +833,7 @@ class LoopToMap(xf.MultiStateTransformation):
         # Add NestedSDFG node
         cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
-            for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
+            for s in sdfg.parent_nsdfg_node.symbol_mapping.keys():
                 if s not in cnode.symbol_mapping:
                     cnode.symbol_mapping[s] = symbolic.pystr_to_symbolic(s)
                     # Other passes map symbols without declaring them; type it off the symbol.

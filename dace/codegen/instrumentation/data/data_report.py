@@ -63,13 +63,10 @@ class InstrumentedDataReport:
         # Prepare file mapping
         array_names = os.listdir(folder)
         for aname in array_names:
-            files = []
-
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
             filenames = sorted([(*(int(s) for s in f.split(".")[0].split("_")), f) for f in filenames])
-            for entry in filenames:
-                files.append(os.path.join(folder, aname, entry[-1]))
+            files = [os.path.join(folder, aname, entry[-1]) for entry in filenames]
 
             self.files[aname] = files
 

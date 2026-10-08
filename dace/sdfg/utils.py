@@ -1362,8 +1362,7 @@ def weakly_connected_component(dfg, node_in_component: Node) -> StateSubgraphVie
         if node in seen:
             continue
         seen.add(node)
-        for succ in dfg.successors(node):
-            to_search.append(succ)
+        to_search.extend(dfg.successors(node))
     to_search = [node_in_component]
     seen.remove(node_in_component)
     while to_search:
@@ -1410,9 +1409,7 @@ def concurrent_subgraphs(graph):
             if node in seen:
                 continue
             seen.add(node)
-            for e in graph.out_edges(node):
-                if e.dst not in seen:
-                    to_search.append(e.dst)
+            to_search.extend(e.dst for e in graph.out_edges(node) if e.dst not in seen)
         # If this component overlaps with any previously determined components,
         # fuse them
         to_delete = []
@@ -2414,7 +2411,7 @@ def get_control_flow_block_dominators(
         #   dominator of that loop or conditional.
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
-        for k, _ in idom.items():
+        for k in idom.keys():
             if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
                 next_dom = idom[k.parent_graph]
                 while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
@@ -2469,7 +2466,7 @@ def get_control_flow_block_dominators(
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
-        for k, _ in ipostdom.items():
+        for k in ipostdom.keys():
             if k.parent_graph is not sdfg and (
                 k is sinks_per_cfg[k.parent_graph] or isinstance(k.parent_graph, ConditionalBlock)
             ):

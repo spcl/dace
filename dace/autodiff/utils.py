@@ -215,7 +215,7 @@ def backward_program_for_node(
 
     inputs = {}
     outputs = {}
-    for name, _ in params.items():
+    for name in params.keys():
         if name in input_names:
             inputs[name] = copy.deepcopy(forward_in_desc_with_name(forward_node, context, name))
 
@@ -688,8 +688,7 @@ def get_map_nest_information(
                 # while we want the size so we add 1
                 shape_list.append(rng[1] + 1)
                 start_range.append(rng[0])
-            for par in edge_src.map.params:
-                param_list.append(par)
+            param_list.extend(edge_src.map.params)
 
     if not (len(param_list) == len(shape_list) == len(start_range)):
         raise AutoDiffException(

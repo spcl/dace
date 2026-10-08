@@ -715,12 +715,10 @@ class PAPIUtils:
     ) -> str:
         """Get the amount of bytes processed by `tasklet`. The formula is
         sum(inedges * size) + sum(outedges * size)"""
-        in_accum = []
         out_accum = []
         in_edges = dfg.in_edges(tasklet)
 
-        for ie in in_edges:
-            in_accum.append(PAPIUtils.get_memlet_byte_size(sdfg, ie.data))
+        in_accum = [PAPIUtils.get_memlet_byte_size(sdfg, ie.data) for ie in in_edges]
 
         out_accum.append(PAPIUtils.get_out_memlet_costs(sdfg, cfg, state_id, tasklet, dfg))
 

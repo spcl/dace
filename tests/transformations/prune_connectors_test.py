@@ -280,10 +280,8 @@ def test_prune_connectors(n=None):
 
     assert np.allclose(arr_out, arr_in + 1)
 
-    numbers_written = []
     with open("prune_connectors_test.txt") as f:
-        for line in f:
-            numbers_written.append(int(line.strip()))
+        numbers_written = [int(line.strip()) for line in f]
     assert all(sorted(numbers_written) == np.arange(n))
 
     os.remove("prune_connectors_test.txt")

@@ -1237,8 +1237,7 @@ class LoopUnroller(ast.NodeTransformer):
 
             elembody = [astutils.copy_tree(stmt) for stmt in node.body]
             replace = astutils.ASTFindReplace(dict(zip(to_replace, elem)))
-            for stmt in elembody:
-                new_body.append(replace.visit(stmt))
+            new_body.extend(replace.visit(stmt) for stmt in elembody)
 
         return new_body
 

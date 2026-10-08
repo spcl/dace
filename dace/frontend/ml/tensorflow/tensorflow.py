@@ -469,7 +469,7 @@ class TFSession:
         # Compile the SDFG
         if gpu:
             #    self.graph.apply_gpu_transformations()
-            for aname, array in self.graph.arrays.items():
+            for array in self.graph.arrays.values():
                 if array is None:
                     continue
                 if array.storage in [
@@ -743,9 +743,7 @@ class TFSession:
             node_name + "(" + ",".join(taskletOutputs) + ")",
         )
         self.callbackFunctionDict[node_name] = call_this
-        callback_types = []
-        for somenode in outputList:
-            callback_types.append(somenode.desc(self.graph))
+        callback_types = [somenode.desc(self.graph) for somenode in outputList]
         self.callbackTypeDict[node_name] = dace.data.Scalar(dace.callback(None, *callback_types))
         for _index, _out_dace in enumerate(outputList):
             self.state.add_edge(
@@ -2249,9 +2247,7 @@ class TFSession:
     def visit_ShapeN(self, node):
         outputLabels = [string_builder(op.name) for op in node.outputs]
 
-        inputNodes = []
-        for n in node.inputs:
-            inputNodes.append(self.create_and_add_input_node(n)[0])
+        inputNodes = [self.create_and_add_input_node(n)[0] for n in node.inputs]
 
         shapes = [
             np.array(input_tensor.shape, dtype=_tensortype(node.outputs[i]))
@@ -3751,10 +3747,7 @@ class TFSession:
         :param tensor: tf.Tensor.
         :return: List of dimensions as strings ["0:N","0:M"]
         """
-        dims = []
         shape = _tensorshape(tensor)
         if shape == 1:
             shape = [1]
-        for dim in shape:
-            dims.append("0:" + str(dim))
-        return dims
+        return ["0:" + str(dim) for dim in shape]

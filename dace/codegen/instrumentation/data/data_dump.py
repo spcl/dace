@@ -147,7 +147,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         state_id = cfg.node_id(state)
         local_stream.write(condition_preamble, cfg, state_id)
         defined_symbols = state.defined_symbols()
-        for sym, _ in defined_symbols.items():
+        for sym in defined_symbols.keys():
             local_stream.write(
                 f'__state->serializer->save_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n', cfg, state_id
             )

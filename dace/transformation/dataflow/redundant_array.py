@@ -252,8 +252,7 @@ def pop_dims(subset, dims):
     popped = []
     if isinstance(subset, subsets.Indices):
         indices = copy.deepcopy(subsets.Indices)
-        for i in dims:
-            popped.append(indices.pop(i))
+        popped.extend(indices.pop(i) for i in dims)
         return subsets.Indices(indices)
     else:
         ranges = copy.deepcopy(subset.ranges)
@@ -372,8 +371,7 @@ class RedundantArray(pm.SingleStateTransformation):
                     if isinstance(a.src, nodes.LibraryNode):
                         edges_to_check.append(a)
                     elif isinstance(a.src, nodes.AccessNode) and isinstance(sdfg.arrays[a.src.data], data.View):
-                        for b in graph.in_edges(a.src):
-                            edges_to_check.append(graph.memlet_path(b)[0])
+                        edges_to_check.extend(graph.memlet_path(b)[0] for b in graph.in_edges(a.src))
 
                 for a in edges_to_check:
                     if isinstance(a.src, nodes.LibraryNode):
@@ -491,9 +489,9 @@ class RedundantArray(pm.SingleStateTransformation):
 
         # Find occurrences in this and other states
         occurrences = [n for n in sdfg.data_nodes() if n.data == in_array.data]
-        for isedge in sdfg.all_interstate_edges():
-            if in_array.data in isedge.data.free_symbols:
-                occurrences.append(isedge)
+        occurrences.extend(
+            isedge for isedge in sdfg.all_interstate_edges() if in_array.data in isedge.data.free_symbols
+        )
 
         if len(occurrences) > 1:
             return False
@@ -939,8 +937,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     if isinstance(a.dst, nodes.LibraryNode):
                         edges_to_check.append(a)
                     elif isinstance(a.dst, nodes.AccessNode) and isinstance(sdfg.arrays[a.dst.data], data.View):
-                        for b in graph.out_edges(a.dst):
-                            edges_to_check.append(graph.memlet_path(b)[-1])
+                        edges_to_check.extend(graph.memlet_path(b)[-1] for b in graph.out_edges(a.dst))
 
                 for a in edges_to_check:
                     if isinstance(a.dst, nodes.LibraryNode):
@@ -1045,9 +1042,9 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # Find occurrences in this and other states
         occurrences = [n for n in sdfg.data_nodes() if n.data == out_array.data]
-        for isedge in sdfg.all_interstate_edges():
-            if out_array.data in isedge.data.free_symbols:
-                occurrences.append(isedge)
+        occurrences.extend(
+            isedge for isedge in sdfg.all_interstate_edges() if out_array.data in isedge.data.free_symbols
+        )
 
         if len(occurrences) > 1:
             return False

@@ -405,17 +405,15 @@ class Range(Subset):
             )
 
         ranges = obj["ranges"]
-        tuples = []
-
-        for r in ranges:
-            tuples.append(
-                (
-                    _symbolic_deserializer(r["start"], context),
-                    _symbolic_deserializer(r["end"], context),
-                    _symbolic_deserializer(r["step"], context),
-                    _symbolic_deserializer(r["tile"], context),
-                )
+        tuples = [
+            (
+                _symbolic_deserializer(r["start"], context),
+                _symbolic_deserializer(r["end"], context),
+                _symbolic_deserializer(r["step"], context),
+                _symbolic_deserializer(r["tile"], context),
             )
+            for r in ranges
+        ]
 
         return Range(tuples)
 

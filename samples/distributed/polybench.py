@@ -72,10 +72,8 @@ def write_csv(file_name, field_names, values, append=True):
 
 
 def write_time(bench, sz, time_list, append=True):
-    entries = []
     processes = MPI.COMM_WORLD.Get_size()
-    for t in time_list:
-        entries.append(dict(benchmark=bench, framework="dace_cpu", processes=processes, sizes=sz, time=t))
+    entries = [dict(benchmark=bench, framework="dace_cpu", processes=processes, sizes=sz, time=t) for t in time_list]
     write_csv(file_name, field_names, entries, append=append)
 
 

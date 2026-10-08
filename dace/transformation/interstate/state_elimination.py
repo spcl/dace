@@ -224,11 +224,11 @@ class StateAssignElimination(transformation.MultiStateTransformation):
 
 
 def _alias_assignments(sdfg: SDFG, edge: InterstateEdge):
-    assignments_to_consider = {}
-    for var, assign in edge.assignments.items():
-        if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(sdfg.arrays[assign], dt.Scalar)):
-            assignments_to_consider[var] = assign
-    return assignments_to_consider
+    return {
+        var: assign
+        for var, assign in edge.assignments.items()
+        if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(sdfg.arrays[assign], dt.Scalar))
+    }
 
 
 @transformation.explicit_cf_compatible

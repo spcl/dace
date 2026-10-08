@@ -124,7 +124,7 @@ class DaceNodeBackwardImplementations:
         )
 
         # If any input connectors point to symbols
-        for conn, _ in nsdfg.in_connectors.items():
+        for conn in nsdfg.in_connectors.keys():
             if conn in nsdfg.sdfg.symbols:
                 # We need to add a new symbol and create a mapping
                 new_symbol = find_new_name(conn, nsdfg.sdfg.symbols)

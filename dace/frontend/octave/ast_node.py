@@ -194,8 +194,7 @@ class AST_Statements(AST_Node):
 
     def __repr__(self):
         res = ["Statements:"]
-        for s in self.statements:
-            res.append("    " + str(s))
+        res.extend("    " + str(s) for s in self.statements)
         return "\n".join(res)
 
     def get_children(self):

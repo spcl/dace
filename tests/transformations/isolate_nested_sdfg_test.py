@@ -6,11 +6,7 @@ from dace.transformation.helpers import isolate_nested_sdfg
 
 def count_node(sdfg: dace.SDFG | dace.SDFGState, node_type, return_nodes: bool = False):
     states = [sdfg] if isinstance(sdfg, dace.SDFGState) else sdfg.states()
-    found_nodes = []
-    for state in states:
-        for node in state.nodes():
-            if isinstance(node, node_type):
-                found_nodes.append(node)
+    found_nodes = [node for state in states for node in state.nodes() if isinstance(node, node_type)]
 
     return found_nodes if return_nodes else len(found_nodes)
 

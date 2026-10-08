@@ -74,13 +74,13 @@ def onnx_representation(represents, **mapping):
 
         # initialize the mapping with identity
         # this means that by default, we will read the property of the protobuf using the same name as the property name
-        for name, _ in cls.__properties__.items():
+        for name in cls.__properties__.keys():
             if name not in mapping:
                 mapping[name] = name
 
         def __init__(self, *args, **kwargs):
             args = list(args)
-            for name, prop in self.__properties__.items():
+            for name in self.__properties__.keys():
                 if len(args) > 0:
                     # try to init all the positional args first
                     setattr(self, name, args.pop(0))
@@ -100,7 +100,7 @@ def onnx_representation(represents, **mapping):
                 )
 
             constructor_args = {}
-            for name, _ in cls.__properties__.items():
+            for name in cls.__properties__.keys():
                 if type(mapping[name]) is str:
                     # if the value of the mapping for that property is a string, read the attribute with that name
                     constructor_args[name] = convert_onnx_proto(get_proto_attr(onnx_proto, mapping[name]))

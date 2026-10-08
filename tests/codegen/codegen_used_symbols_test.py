@@ -88,7 +88,7 @@ def test_codegen_used_symbols_cpu_2():
 def test_codegen_used_symbols_gpu():
 
     sdfg = rprj3.to_sdfg()
-    for _, desc in sdfg.arrays.items():
+    for desc in sdfg.arrays.values():
         if not desc.transient and isinstance(desc, dace.data.Array):
             desc.storage = dace.StorageType.GPU_Global
     sdfg.apply_gpu_transformations()

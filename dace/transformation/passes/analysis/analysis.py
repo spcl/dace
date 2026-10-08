@@ -1074,7 +1074,7 @@ class FindReferenceSources(ppl.Pass):
 
             # Recursively add dependencies of reference dependencies
             if self.recursive:
-                for k, v in result.items():
+                for v in result.values():
                     for src in list(v):
                         if not isinstance(v, nd.CodeNode) and src.data in result:
                             v.update(result[src.data])

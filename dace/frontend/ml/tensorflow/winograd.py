@@ -750,9 +750,7 @@ def winograd_convolution(dace_session, tf_node):
             _conn,
             Memlet.from_array(_n_cpu, _n_cpu.desc(dace_session.graph)),
         )
-    callback_input_types = []
-    for somenode in debugNodes:
-        callback_input_types.append(somenode.desc(dace_session.graph))
+    callback_input_types = [somenode.desc(dace_session.graph) for somenode in debugNodes]
     dace_session.callbackFunctionDict[string_builder(tf_node.name) + "_printer"] = printer
     dace_session.callbackTypeDict[string_builder(tf_node.name) + "_printer"] = dace.data.Scalar(
         dace.callback(None, *callback_input_types)

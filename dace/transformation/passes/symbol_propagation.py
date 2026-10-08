@@ -210,10 +210,9 @@ class SymbolPropagation(ppl.Pass):
 
         before_free: set[str] = {str(s) for s in sdfg.free_symbols}
 
-        all_cfg_blks = dict()
-        for node, parent in sdfg.all_nodes_recursive():
-            if isinstance(node, ControlFlowBlock):
-                all_cfg_blks[node] = parent
+        all_cfg_blks = {
+            node: parent for node, parent in sdfg.all_nodes_recursive() if isinstance(node, ControlFlowBlock)
+        }
 
         # An unwritten Scalar of the top-level SDFG is read-only and propagates like a symbol.
         self._opaque_scalars: dict[SDFG, set[str]] = {}

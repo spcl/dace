@@ -65,17 +65,14 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: SDFGState | No
         for b in blocks:
             if isinstance(b, AbstractControlFlowRegion):
                 all_blocks.append(b)
-                for nb in b.all_control_flow_blocks():
-                    all_blocks.append(nb)
-                for e in b.all_interstate_edges():
-                    is_edges.append(e)
+                all_blocks.extend(b.all_control_flow_blocks())
+                is_edges.extend(b.all_interstate_edges())
             else:
                 all_blocks.append(b)
         states: list[SDFGState] = [b for b in all_blocks if isinstance(b, SDFGState)]
         for src in blocks:
             for dst in blocks:
-                for edge in graph.edges_between(src, dst):
-                    is_edges.append(edge)
+                is_edges.extend(graph.edges_between(src, dst))
         return_blocks: set[ReturnBlock] = {b for b in all_blocks if isinstance(b, ReturnBlock)}
         if len(return_blocks) > 0:
             did_return_inner = "_did_ret_from_nsdfg"
@@ -358,12 +355,8 @@ def nest_state_subgraph(
     inputs: list[MultiConnectorEdge] = []
     outputs: list[MultiConnectorEdge] = []
     for node in snodes:
-        for edge in state.in_edges(node):
-            if edge.src not in snodes:
-                inputs.append(edge)
-        for edge in state.out_edges(node):
-            if edge.dst not in snodes:
-                outputs.append(edge)
+        inputs.extend(edge for edge in state.in_edges(node) if edge.src not in snodes)
+        outputs.extend(edge for edge in state.out_edges(node) if edge.dst not in snodes)
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
@@ -1999,7 +1992,7 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
             swaps_count += 1
 
     # Swap array types
-    for array_name, array_desc in sdfg.arrays.items():
+    for array_desc in sdfg.arrays.values():
         if array_desc.dtype == from_type:
             array_desc.dtype = to_type
             swaps_count += 1
@@ -2054,7 +2047,7 @@ def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: 
     if not isinstance(descriptor, data.Structure):
         raise TypeError(f"Expected type with member attr but got {descriptor}")
 
-    for member_name, member_descriptor in descriptor.members.items():
+    for member_descriptor in descriptor.members.values():
         if _is_structure(member_descriptor):
             swaps_count = _change_structure_type(member_descriptor, from_type, to_type, swaps_count)
         elif member_descriptor.dtype == from_type:

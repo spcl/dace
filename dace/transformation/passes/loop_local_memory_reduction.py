@@ -346,7 +346,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         # Collect all read and write subsets of the array before the loop.
         loop_states = set(loop.all_states())
         subsets = set()
-        for k1, v1 in self.states_reach.items():
+        for v1 in self.states_reach.values():
             for k2, v2 in v1.items():
                 if len(v2.intersection(loop_states)) == 0 or k2 in loop_states:
                     continue

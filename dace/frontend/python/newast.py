@@ -1394,9 +1394,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 func_name = current_ast_node.func.attr
 
             # Get argument names
-            arg_names = []
-            for arg in current_ast_node.args[:3]:  # Limit to first 3 args to avoid overly long names
-                arg_names.append(self._get_name_from_node(arg))
+            # Limit to first 3 args to avoid overly long names
+            arg_names = [self._get_name_from_node(arg) for arg in current_ast_node.args[:3]]
 
             if arg_names:
                 result = f"{func_name}_{'_'.join(arg_names)}"
@@ -2973,10 +2972,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for i, idx in enumerate(inp_idx):
                         if not symbolic.issymbolic(pystr_to_symbolic(idx)):
                             offset_indices_to_ignore.add(i)
-                    fake_subset_offs_indices = []
-                    for i in range(len(fake_subset)):
-                        if i not in offset_indices_to_ignore:
-                            fake_subset_offs_indices.append(i)
+                    fake_subset_offs_indices = [i for i in range(len(fake_subset)) if i not in offset_indices_to_ignore]
                     fake_subset.offset(squeezed, True, indices=fake_subset_offs_indices)
 
                     # we access the inp subset using the computed offset
@@ -3927,9 +3923,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """
 
         if isinstance(node, (ast.List, ast.Tuple)):
-            shape = []
-            for length in node.elts:
-                shape.append(self._parse_value(length))
+            shape = [self._parse_value(length) for length in node.elts]
         elif isinstance(node, ast.Attribute):
             if node.attr != "shape":
                 raise DaceSyntaxError(self, node, f"Attribute {rname(node)} is not shape")
@@ -5414,7 +5408,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Consider array dims (rhs expression)
         has_array_indirection = False
-        for dim, arrname in expr.arrdims.items():
+        for arrname in expr.arrdims.values():
             # Boolean arrays only allowed as lhs
             if isinstance(arrname, str) and self.sdfg.arrays[arrname].dtype == dtypes.bool:
                 raise IndexError(
@@ -5781,7 +5775,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Broadcast all advanced indexing expressions together
         chunk_shape = None
         # Get the advanced indexing expressions
-        for _, arrname in expr.arrdims.items():
+        for arrname in expr.arrdims.values():
             if isinstance(arrname, str):  # Array or constant
                 if arrname in self.sdfg.arrays:
                     desc = self.sdfg.arrays[arrname]

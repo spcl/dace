@@ -145,7 +145,7 @@ def make_iterator_mapping(node, field_accesses, shape) -> dict[str, tuple[int]]:
     dimensions).
     """
     iterator_mapping: dict[str, tuple[int]] = {}
-    for field_name, accesses in field_accesses.items():
+    for field_name in field_accesses.keys():
         if field_name in node.iterator_mapping:
             iterators = node.iterator_mapping[field_name]
         else:

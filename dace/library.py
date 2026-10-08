@@ -92,7 +92,7 @@ def register_library(module_name, name):
         module.default_implementation = None
     _DACE_REGISTERED_LIBRARIES[name] = module
     # Register content
-    for key, value in module.__dict__.items():
+    for value in module.__dict__.values():
         if isinstance(value, type):
             if issubclass(value, LibraryNode):
                 register_node(value, module)
