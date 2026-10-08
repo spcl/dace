@@ -232,16 +232,22 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         out_mapping = {}
         out_state = None
         # A loop that initializes its variable binds it, so the variable is not visible after the loop
+        # A name an edge assigns without a declaration is typed by its edge, as code generation types it
+        types = {**sdfg.symbols, **nsdfg.symbols}
+        enclosing = graph
+        while enclosing is not None and enclosing is not sdfg:
+            types.update(enclosing.new_symbols(types))
+            enclosing = enclosing.parent_graph
+        for region in nsdfg.all_control_flow_regions():
+            types.update(region.new_symbols(types))
         for e in nsdfg.all_interstate_edges():
             ndefined_symbols.update(set(e.data.assignments.keys()))
+            types.update({k: v for k, v in e.data.new_symbols(nsdfg, types).items() if k not in types})
         if ndefined_symbols:
             out_state = nsdfg.add_state("symbolic_output")
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
             for s in ndefined_symbols:
-                if s in nsdfg.symbols:
-                    dtype = nsdfg.symbols[s]
-                else:
-                    dtype = sdfg.symbols[s]
+                dtype = types[s]
                 # The connector connects the two scalars by name, so it must be free in both SDFGs
                 name = sdfg._find_new_name(f"__sym_out_{s}")
                 suffix = 0
