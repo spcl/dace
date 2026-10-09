@@ -309,8 +309,10 @@ def validate_sdfg(sdfg: "dace.sdfg.SDFG", references: set[int] = None, **context
                 f"Symbols {scoped} are bound by a loop or map scope, so they cannot also be SDFG symbols", sdfg, None
             )
         # What the SDFG needs from outside must be declared as its parameters; ``__dace`` names are the code
-        # generator's own (e.g. the element count of a consume chunk)
-        undeclared = sorted(name for name in sdfg.free_symbols - sdfg.symbols.keys() if not name.startswith("__dace"))
+        # generator's own (e.g. the element count of a consume chunk). A nested SDFG's mapping of a symbol it does not
+        # use is only warned about (see ``NestedSDFG.validate``), so the used symbols are checked, not the free ones.
+        used = sdfg.used_symbols(all_symbols=False)
+        undeclared = sorted(name for name in used - sdfg.symbols.keys() if not name.startswith("__dace"))
         if undeclared:
             raise InvalidSDFGError(f"Free symbols {undeclared} are not declared as SDFG symbols", sdfg, None)
 

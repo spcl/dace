@@ -215,6 +215,24 @@ def test_descriptor_sized_by_a_map_parameter_does_not_register_it():
     assert "j" not in sdfg.symbols
 
 
+def test_unused_mapping_of_an_undeclared_symbol_is_only_warned_about():
+    """A nested SDFG mapping a symbol it never uses (left behind when ``MapToForLoop`` removes the dynamic range that
+    defined it) needs nothing from outside, so the outer SDFG is valid."""
+    inner = dace.SDFG("unused_mapping_inner")
+    inner.add_array("A", [10], dace.float64)
+    inner.add_symbol("M", dace.int64)
+    inner.add_state(is_start_block=True).add_mapped_tasklet(
+        "m", {"j": "0:10"}, {}, "a = 1.0", {"a": dace.Memlet("A[j]")}, external_edges=True
+    )
+    outer = dace.SDFG("unused_mapping_outer")
+    outer.add_array("A", [10], dace.float64)
+    state = outer.add_state(is_start_block=True)
+    node = state.add_nested_sdfg(inner, {}, {"A"}, symbol_mapping={"M": "M"})
+    state.add_edge(node, "A", state.add_write("A"), None, dace.Memlet("A[0:10]"))
+    with pytest.warns(UserWarning, match="maps to unused symbol"):
+        outer.validate()
+
+
 def test_only_the_frontend_boundary_reads_symbol_declarations():
     """A symbol object's declaration is read where a user's symbol enters; everything else asks the SDFG."""
     root = pathlib.Path(dace.__file__).parent
@@ -233,6 +251,7 @@ if __name__ == "__main__":
     test_frontend_edge_assigned_names_are_not_symbols()
     test_validation_rejects_symbol_bound_by_a_map()
     test_descriptor_sized_by_a_map_parameter_does_not_register_it()
+    test_unused_mapping_of_an_undeclared_symbol_is_only_warned_about()
     test_identical_readd_is_a_no_op()
     test_readd_with_other_predicates_raises()
     test_readd_with_other_type_raises()
