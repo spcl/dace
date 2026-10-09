@@ -120,9 +120,7 @@ def test_assume_even_single_strided_gpu_map_no_mask():
     )
 
 
-@pytest.mark.parametrize(
-    "group,implementation,lanes", [(TileGroup.BLOCK, "block", 2), (TileGroup.THREAD, "cuda", 1)]
-)
+@pytest.mark.parametrize("group,implementation,lanes", [(TileGroup.BLOCK, "block", 2), (TileGroup.THREAD, "cuda", 1)])
 def test_deferred_tile_nodes_are_cuda_stamped(group: TileGroup, implementation: str, lanes: int):
     """By default the GPU pipeline does NOT expand the tile lib nodes: the SDFG
     returns with ``TileBinop`` / ``TileGather`` present, each stamped with the

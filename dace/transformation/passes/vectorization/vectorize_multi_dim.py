@@ -33,7 +33,6 @@ from dace import properties, symbolic
 from dace.config import Config
 from dace.dtypes import DeviceType
 from dace.libraries.tileops.dispatch import TileGroup, select_tile_implementation
-from dace.transformation import helpers
 from dace.libraries.tileops.nodes import (
     MaskedCopyLibraryNode,
     TileBinop,
@@ -52,6 +51,7 @@ from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_map_entry
 from dace.sdfg.nodes import LibraryNode
 from dace.sdfg.state import ControlFlowRegion
+from dace.transformation import helpers
 from dace.transformation import pass_pipeline as ppl
 
 # Walker-primary pipeline. The walker (InsertTileLoadStore + PreparePerLaneIndices) stages tile

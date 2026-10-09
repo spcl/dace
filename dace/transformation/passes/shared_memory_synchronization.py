@@ -5,10 +5,10 @@ import warnings
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
+from dace.libraries.tileops.expansions import TILE_THREADS_MAP
 from dace.optionals import required
 from dace.ordered import OrderedSet
 from dace.sdfg.narrowing import as_map_entry
-from dace.libraries.tileops.expansions import TILE_THREADS_MAP
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG, Node
 from dace.sdfg.scope import is_in_scope
 from dace.sdfg.state import LoopRegion
