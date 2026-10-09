@@ -307,19 +307,9 @@ def devicelevel_block_size(
                 return gpu_helpers.dynamic_map_block_dims()
 
             scope = sdict[scope]
-        # Traverse up nested SDFGs
-        if sdfg.parent is not None:
-            if isinstance(sdfg.parent, SDFGState):
-                parent = sdfg.parent.parent
-            else:
-                parent = sdfg.parent
-            state, node = next(
-                (s, n)
-                for s in parent.nodes()
-                for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name
-            )
-        else:
-            parent = sdfg.parent
-        sdfg = parent
+        # Traverse up nested SDFGs, through the node that holds this one (wherever its state sits in the region tree)
+        if sdfg.parent is None:
+            return None
+        state, node = sdfg.parent, sdfg.parent_nsdfg_node
+        sdfg = state.sdfg
     return None

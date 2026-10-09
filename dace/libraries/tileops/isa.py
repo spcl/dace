@@ -1,7 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """What the ISA expansions of the tile nodes share: staging operands for a ``dace::tileops::tile_*`` call."""
 
-from collections.abc import Sequence
+import contextlib
+import contextvars
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
 import dace
@@ -12,12 +14,26 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.subsets import Subset
 
+_chunk: contextvars.ContextVar[int | None] = contextvars.ContextVar("tile_isa_chunk", default=None)
+
+
+@contextlib.contextmanager
+def isa_chunk(lanes: int) -> Iterator[None]:
+    """Within the block, an ISA call covers ``lanes`` lanes of its tile, one thread's share of a ``block`` lowering."""
+    token = _chunk.set(lanes)
+    try:
+        yield
+    finally:
+        _chunk.reset(token)
+
 
 def require_k1(node: nodes.LibraryNode) -> int:
-    """The tile width of a node whose ISA backend takes one dim; a node of more dims lowers ``pure``."""
+    """The lanes one ISA call of a node whose backend takes one dim covers: its tile width, or the chunk of
+    :func:`isa_chunk`. A node of more dims lowers ``pure``."""
     if len(node.widths) != 1:
         raise NotImplementedError(f"{node.label}: ISA tile-op backend is K=1 only; K>=2 lowers to 'pure'")
-    return node.widths[0]
+    chunk = _chunk.get()
+    return node.widths[0] if chunk is None else chunk
 
 
 def broadcast_ref(conn: str, subset: Subset) -> str:

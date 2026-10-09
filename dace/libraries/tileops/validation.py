@@ -200,7 +200,7 @@ def validate_mask_descriptor_lock(node_label: str, conn_name: str, desc: dace.da
     """Refuse any mask descriptor that breaks the design section 10.2 lock.
 
     The locked shape: ``Array(shape=widths, dtype=bool_, storage=Register,
-    transient=True)``. Anything else -- scalar masks, per-dim masks, non-bool
+    transient=True)``, or ``GPU_Shared`` storage for the mask of a block-level node. Anything else -- scalar masks, per-dim masks, non-bool
     predicates, non-Register storage, non-transient -- is rejected with a
     named error so the codegen never silently mis-emits.
 
@@ -221,7 +221,10 @@ def validate_mask_descriptor_lock(node_label: str, conn_name: str, desc: dace.da
         )
     if desc.dtype != dace.bool_:
         raise ValueError(f"{node_label}: {conn_name!r} mask dtype {desc.dtype} must be bool_ (section 10.2)")
-    if desc.storage != dace.dtypes.StorageType.Register:
-        raise ValueError(f"{node_label}: {conn_name!r} mask storage {desc.storage} must be Register (section 10.2)")
+    # A block-level tile node's mask is shared by the threads of the block, as its tiles are
+    if desc.storage not in (dace.dtypes.StorageType.Register, dace.dtypes.StorageType.GPU_Shared):
+        raise ValueError(
+            f"{node_label}: {conn_name!r} mask storage {desc.storage} must be Register or GPU_Shared (section 10.2)"
+        )
     if not desc.transient:
         raise ValueError(f"{node_label}: {conn_name!r} mask must be transient (section 10.2)")

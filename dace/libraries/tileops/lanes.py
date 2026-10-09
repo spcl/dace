@@ -6,8 +6,12 @@ decode. Register tiles are contiguous and row-major, so :func:`tile_offset` flat
 the per-lane body to :func:`nested_loops`.
 """
 
+import contextlib
+import contextvars
+import dataclasses
+import math
 import numbers
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 import sympy
 
@@ -18,6 +22,48 @@ from dace.symbolic import has_one_marker
 # accepted because CSR/COO index arrays are commonly ``uint32``; ``gather_lane_offset`` casts
 # the read to ``long long`` so an unsigned index cannot wrap the signed address sum.
 GATHER_INDEX_DTYPES = (dace.int32, dace.int64, dace.uint32, dace.uint64)
+
+
+@dataclasses.dataclass(slots=True)
+class LaneDistribution:
+    """The lanes of a tile spread over the ``threads`` threads of a group, thread ``thread`` taking every
+    ``threads``-th element in row-major order, so consecutive threads touch consecutive elements."""
+
+    thread: str
+    threads: int
+    #: How many lane loops were distributed; none means the node computed nothing per lane.
+    loops: int = 0
+
+
+_distribution: contextvars.ContextVar[LaneDistribution | None] = contextvars.ContextVar(
+    "tile_lane_distribution", default=None
+)
+
+
+@contextlib.contextmanager
+def distributed_lanes(distribution: LaneDistribution | None) -> Iterator[LaneDistribution | None]:
+    """Within the block, :func:`nested_loops` spreads its lanes as ``distribution`` says (``None``: one thread)."""
+    token = _distribution.set(distribution)
+    try:
+        yield distribution
+    finally:
+        _distribution.reset(token)
+
+
+def distributed_element_loop(elements: int, decode: Sequence[str], body: str, indent: str = "    ") -> str | None:
+    """The thread-strided loop over ``elements`` flat elements under the active distribution, or ``None`` without one.
+
+    :param decode: Statements naming the per-element indices from the flat index ``__e``.
+    """
+    distribution = _distribution.get()
+    if distribution is None:
+        return None
+    distribution.loops += 1
+    lines = [f"for (std::size_t __e = {distribution.thread}; __e < {elements}; __e += {distribution.threads}) {{"]
+    lines.extend(f"{indent}{line}" for line in decode)
+    lines.extend(f"{indent}{line}" for line in body.splitlines())
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def constant_trip_count(width: int | sympy.Basic) -> bool:
@@ -87,6 +133,9 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     """Wrap ``body`` in a K-fold nested for-loop iterating per-dim
     lane indices ``__l0, __l1, ...``.
 
+    Under :func:`distributed_lanes` a tile of constant widths is instead one thread-strided loop over its flat
+    elements that decodes the same lane indices, so the body is unchanged.
+
     Each fixed-width lane loop is preceded by ``#pragma unroll`` (guarded by
     :func:`constant_trip_count`): the trip count is the compile-time
     register-tile width -- the vector width -- so a full unroll strips the loop
@@ -105,6 +154,14 @@ def nested_loops(widths: Sequence[int], body: str, indent: str = "    ") -> str:
     :returns: A C++ snippet with the nested loops + indented body.
     """
     K = len(widths)
+    if all(constant_trip_count(w) for w in widths):
+        decode = [
+            f"const std::size_t __l{d} = (__e / {math.prod(int(w) for w in widths[d + 1 :])}) % {int(width)};"
+            for d, width in enumerate(widths)
+        ]
+        distributed = distributed_element_loop(math.prod(int(w) for w in widths), decode, body, indent)
+        if distributed is not None:
+            return distributed
     lines = []
     for d, w in enumerate(widths):
         if constant_trip_count(w):
@@ -151,7 +208,9 @@ def lane_invariant_assign(
         return f"{out_conn} = {rhs_expr};"
     if mask_elements == 1:
         return f"{out_conn} = _mask ? ({rhs_expr}) : {out_dtype}(0);"
-    any_lane = nested_loops(widths, f"__any_lane = __any_lane || _mask[{tile_offset(widths)}];")
+    # Every lane is read by the one thread that writes the lane-invariant output
+    with distributed_lanes(None):
+        any_lane = nested_loops(widths, f"__any_lane = __any_lane || _mask[{tile_offset(widths)}];")
     return f"bool __any_lane = false;\n{any_lane}\n{out_conn} = __any_lane ? ({rhs_expr}) : {out_dtype}(0);"
 
 

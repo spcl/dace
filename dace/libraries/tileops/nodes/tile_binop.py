@@ -82,6 +82,7 @@ class TileBinop(TileOp):
     false are zero.
     """
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandTileBinopPure,
         "scalar": ExpandTileBinopScalar,

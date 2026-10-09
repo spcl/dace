@@ -70,6 +70,7 @@ class TileMaskGen(TileOp):
     is one more conjunct.
     """
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandTileMaskGenPure,
         "scalar": ExpandTileMaskGenScalar,

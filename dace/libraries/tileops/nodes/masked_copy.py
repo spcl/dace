@@ -150,6 +150,7 @@ class MaskedCopyLibraryNode(CopyLibraryNode, TileOp):
     window onto one of other extents (a transposed tile) or of another dtype.
     """
 
+    lanes_independent = True
     implementations = {
         "pure": ExpandMaskedCopyPure,
         "scalar": ExpandMaskedCopyScalar,
