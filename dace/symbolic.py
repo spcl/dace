@@ -5022,6 +5022,21 @@ def tile_extent(max_elem: Any, min_elem: Any) -> Any:
     return max_elem + 1 - min_elem
 
 
+def slabs_disjoint(stride: Any, begin: Any, end: Any, step: Any = 1, reach: Any = None) -> bool:
+    """Whether the range ``begin:end+1:step`` and its shifts by nonzero multiples of the integer ``stride`` provably
+    never share an element: the range fits in ``|stride|`` (each argument of a ``Min`` term of ``end`` bounds it),
+    or every shift, at most ``|reach|``, is shorter than ``step`` and so falls between two of its elements."""
+    clamps = [term for term in sympy.Add.make_args(end) if isinstance(term, sympy.Min)]
+    ends = [arg + end - clamps[0] for arg in clamps[0].args] if len(clamps) == 1 else [end]
+    if any(
+        ask("nonnegative", simplify(bound - last - 1 + begin)) is True
+        for last in ends
+        for bound in (1, stride, -stride)
+    ):
+        return True
+    return reach is not None and any(ask("nonnegative", simplify(step - 1 - r)) is True for r in (reach, -reach))
+
+
 def affine_coefficients(expr: Any, sym: Any) -> Tuple[Any, Any] | None:
     """``(a, b)`` with ``expr == a*sym + b`` and neither depending on `sym` (matched by name), else ``None``."""
     expr = pystr_to_symbolic(expr)
