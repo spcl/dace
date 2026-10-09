@@ -1274,6 +1274,32 @@ def _merge_border_memlet_upper_bound(existing: Memlet, incoming: Memlet, array: 
     return result
 
 
+def _positive_step_range(start, stop, step):
+    """
+    Rewrites a decidably negative-step range dimension into its set-preserving
+    positive-step form.
+
+    A range dimension ``(start, stop, step)`` covers ``start, start + step, ...``
+    down to and including ``stop``, so a negative-step dimension denotes the
+    same index set as ``(stop + ((start - stop) % -step), start, -step)`` -- for
+    a unit step this is simply ``(stop, start, 1)``. Negative-step subsets are
+    non-canonical (``Range.covers()``, ``min_element()`` and ``max_element()``
+    do not handle them consistently), so propagation emits the positive-step
+    form. Dimensions whose step sign cannot be decided are returned unchanged,
+    and empty dimensions remain empty under the rewrite.
+
+    :param start: The dimension's first index.
+    :param stop: The dimension's last index (inclusive), also under a negative step.
+    :param step: The dimension's stride.
+    :return: An equivalent ``(start, stop, step)`` triple with a positive (or undecidable) step.
+    """
+    # This inequality needs to be checked exactly like this due to
+    # constraints in sympy/symbolic expressions, do not simplify!!!
+    if (step < 0) == True:
+        start, stop, step = stop + ((start - stop) % -step), start, -step
+    return start, stop, step
+
+
 def _propagate_border_memlet_candidates(
     candidates, arrays, direction: str, connector: str, params=None, rng=None, scale_by_range: bool = False
 ) -> Memlet:
