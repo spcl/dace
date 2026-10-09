@@ -9,6 +9,9 @@ than 1 are the lanes of the tile it makes, of which there are one to three dims 
 register array, ``dace.define_local([8], dace.float64, storage=dace.StorageType.Register)``. A call takes tiles or
 windows, copying a window into a new tile first, and returns a new tile.
 
+Tile nodes are supported by the new code generators: ``compiler.cpu.implementation: experimental_readable`` and
+``compiler.cuda.implementation: experimental``.
+
 Who runs a tile
 ---------------
 
