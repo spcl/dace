@@ -949,6 +949,17 @@ def _reps_for(est_ms: float) -> int:
     return max(MIN_REPS, min(REPS, int(BUDGET_MS / est_ms)))
 
 
+def warmup_for(reps: int) -> int:
+    """Untimed calls before the ``reps`` timed ones, after the call that sized ``reps``.
+
+    Warmup is FULL calls, so on the expensive tail it is priced like reps: two of them on a 20s
+    stencil cost 40s, as much as the entire rep floor. The sizing call has already warmed the caches
+    and faulted the pages, which is what warmup is for, so a kernel expensive enough to be sized
+    down gets none.
+    """
+    return WARMUP if reps > MIN_REPS else 0
+
+
 def _time_all_reps(ctx, sdfg):
     """All timed repetitions for one compiled SDFG, in milliseconds.
 
@@ -974,11 +985,7 @@ def _time_all_reps(ctx, sdfg):
         )
         return np.asarray([est_ms], dtype=float), True
     reps = _reps_for(est_ms)
-    # Warmup is FULL calls, so on the expensive tail it is priced like reps: two of them on a 20s
-    # stencil cost 40s, as much as the entire rep floor. The call above has already warmed the
-    # caches and faulted the pages, which is what warmup is for, so once a kernel is expensive
-    # enough to be sized down the second warmup buys nothing but wall clock.
-    warmup = WARMUP if reps > MIN_REPS else min(WARMUP, 1)
+    warmup = warmup_for(reps)
     with dace.profile(repetitions=reps, warmup=warmup, print_results=False) as prof:
         cs(**kw)
     sdfg, times = prof.times[-1]
@@ -1032,11 +1039,13 @@ def numpy_call(ctx: dict) -> tuple[Callable[..., Any], dict[str, Any]]:
 def time_reference(ctx: dict) -> np.ndarray:
     """All timed repetitions of this kernel's NUMPY reference, in milliseconds.
 
-    Treated EXACTLY like an arm: same warmup, same repetition count, call arguments resolved once
-    outside the timed region. Both corpora write their input arrays in place, so the inputs are
-    restored BETWEEN repetitions -- also outside the timed region: without it repetition ``k+1``
-    computes from repetition ``k``'s output, which is different data and therefore a different time;
-    inside it, the memcpy lands in the denominator and inflates every speedup on the figure.
+    Treated EXACTLY like an arm: one untimed call sizes the repetition count (:func:`_reps_for`) and
+    the warmup (:func:`warmup_for`), call arguments are resolved once outside the timed region. A flat
+    count here cost polybench ``floyd_warshall`` nine 37s numpy calls at its paper shape. Both corpora
+    write their input arrays in place, so the inputs are restored BETWEEN repetitions -- also outside
+    the timed region: without it repetition ``k+1`` computes from repetition ``k``'s output, which is
+    different data and therefore a different time; inside it, the memcpy lands in the denominator and
+    inflates every speedup on the figure.
 
     BLAS threads are deliberately NOT pinned down here: the agreed baseline is *parallel* numpy.
     """
@@ -1044,11 +1053,15 @@ def time_reference(ctx: dict) -> np.ndarray:
     if DENOMINATOR.get(suite) != "reference":
         raise RuntimeError(f"{suite} has no timeable reference; its denominator is {DENOMINATOR[suite]!r}")
     fn, call = numpy_call(ctx)
-    for warmup_iter in range(WARMUP):
+    PB.restore_inputs(call, ctx["arrays"])
+    t0 = time.perf_counter()
+    fn(**call)
+    reps = _reps_for((time.perf_counter() - t0) * 1000.0)
+    for warmup_iter in range(warmup_for(reps)):
         PB.restore_inputs(call, ctx["arrays"])
         fn(**call)
     times = []
-    for rep in range(REPS):
+    for rep in range(reps):
         PB.restore_inputs(call, ctx["arrays"])
         t0 = time.perf_counter()
         fn(**call)
